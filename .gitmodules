@@ -1,3 +1,0 @@
-[submodule "external/compile-time-lark"]
-	path = external/compile-time-lark
-	url = https://github.com/alexios-angel/compile-time-lark.git
