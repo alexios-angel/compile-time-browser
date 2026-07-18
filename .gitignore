@@ -4,7 +4,6 @@ build/
 .claude
 *.pch
 *.gch
-tests/engine
-tests/render
-tests/render-out.ppm
-tests/render-out.png
+tests/*
+!tests/*.cpp
+!tests/CMakeLists.txt
