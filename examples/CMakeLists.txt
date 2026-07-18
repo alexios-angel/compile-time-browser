@@ -1,12 +1,16 @@
+# windowed examples: need SDL3 (found by the top-level list). They run
+# under ctest with the dummy video driver for a bounded number of
+# frames via CTBROWSER_TEST_FRAMES, so CI exercises them headless.
 file(GLOB example-sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 
 foreach(source ${example-sources})
   get_filename_component(example "${source}" NAME_WE)
-  add_executable(ctcss-example-${example} "${source}")
-  target_link_libraries(ctcss-example-${example} PRIVATE ctcss::ctcss)
-  if(CTCSS_PCH AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.16")
-    target_precompile_headers(ctcss-example-${example} PRIVATE
-      "${PROJECT_SOURCE_DIR}/include/ctcss.hpp")
+  add_executable(ctbrowser-example-${example} "${source}")
+  target_link_libraries(ctbrowser-example-${example} PRIVATE ctbrowser::ctbrowser SDL3::SDL3)
+  if(TARGET ctbrowser-pch-anchor)
+    target_precompile_headers(ctbrowser-example-${example} REUSE_FROM ctbrowser-pch-anchor)
   endif()
-  add_test(NAME example-${example} COMMAND ctcss-example-${example})
+  add_test(NAME example-${example} COMMAND ctbrowser-example-${example})
+  set_tests_properties(example-${example} PROPERTIES
+    ENVIRONMENT "SDL_VIDEODRIVER=dummy;CTBROWSER_TEST_FRAMES=30")
 endforeach()

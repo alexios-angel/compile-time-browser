@@ -1,57 +1,44 @@
-# CLAUDE.md — compile-time-css (ctcss)
+# CLAUDE.md — compile-time-browser (ctbrowser)
 
-Header-only, compile-time (constexpr) CSS parser AND resolver. A
-stylesheet is a *type*: `ctcss::parse<...>()`, every accessor
-constexpr, malformed CSS a compile error (or `false` from `is_valid`).
-Selector matching and the cascade (`!important` → specificity → source
-order) are VALUE computations over flattened static views, so
-`matches()`/`query()` run in static_asserts against a compile-time DOM
-chain and equally at runtime (a browser restyling after a script
-mutation). Namespace `ctcss`. Work on `main`. Prefer `rg` over `grep`.
+The assembly of the compile-time web stack: ONE HTML source (markup +
+<style> + <script>) parses ENTIRELY at compile time — cthtml → DOM
+type, ctcss → sheet type, ctjs → script type, chained via the
+type→text→type pivot in page.hpp — and runs at runtime against a
+mutable DOM, the ctcss cascade, a block layout pass and an SDL3
+window. Namespace `ctbrowser`. C++20 only. Work on `main`. Prefer `rg`.
 
-## Build & test — "compiling the tests IS the test"
-Tests under `tests/*.cpp` are `static_assert` suites; each compiles to a `.o`.
+## Build & test
 ```bash
-make                                   # C++20 (default), one .o per test
-make CXX=clang++                       # clang
-make CXX=clang++ CXX_STANDARD=17       # C++17 path (variable-form API)
-make clean
-cmake -B build && cmake --build build && ctest --test-dir build
+git submodule update --init --recursive    # three bricks + their lark
+make            # bakes the COMBINED PCH once (JS tables = tens of
+                # minutes, ~4-6 GB - NEVER build in parallel with other
+                # grammar bakes on this 7.5 GB WSL2 box), then builds
+                # and RUNS the headless engine suite
+cmake -B build && cmake --build build -j && ctest --test-dir build   # + examples if SDL3 found
 ```
-Flags are `-O2 -pedantic -Wall -Wextra -Werror -Wconversion` — keep every
-change warning-clean. The PCH (`make pch`, automatic) bakes the grammar
-tables once — the CSS grammar is SMALL, so this is quick (unlike ctjs).
+Flags: `-O2 -pedantic -Wall -Wextra -Werror -Wconversion`. Tests are
+EXECUTABLES, SDL-free, headless. Examples need SDL3 (linuxbrew's here;
+`pkg-config sdl3` in examples/Makefile, `find_package(SDL3)` in CMake).
+CMake shares one PCH via the `ctbrowser-pch-anchor` target (REUSE_FROM).
 
 ## Layout
-- `include/ctcss.hpp` — umbrella; public API (`is_valid`, `parse`, `error_info/message`, `debug::*`).
-- `include/ctcss/grammar.hpp` — the CSS subset as a **lark grammar string**. TWO load-bearing tricks: a COMPOUND selector ("div.note#top") is ONE token (whitespace adjacency of compounds IS the descendant combinator — that's how it survives %ignore; ">" is child), and a declaration VALUE is one raw token up to `;`/`}`.
-- `include/ctcss/bind.hpp` — lowers the tree: splits COMPOUND text into typed tag/#id/.classes (tags fold to lowercase; a later #id wins), trims values, peels `!important` (also "! important", any case).
-- `include/ctcss/types.hpp` — `text`, `compound`, `sel_step<C, rel>` (rel = how the step attaches to the one on its LEFT), `selector` (packed specificity = ids*10000 + classes*100 + types), `declaration`, `rule` (with case-insensitive `property<"key">()`), `stylesheet`, `for_each_rule`.
-- `include/ctcss/match.hpp` — the browser seam: `element_ref{tag,id,classes}` (classes space-separated), per-selector/per-sheet STATIC VIEWS (`selector_data`, `sheet_data`: one `decl_entry` per selector × declaration), `matches()` (right-to-left with descendant backtracking), `query()` (the cascade), `entries()`.
-- `include/ctcss/values.hpp` — `parse_length` (px/em/rem/%/vw/vh, unitless 0), `parse_color` (#rgb[a]/#rrggbb[aa], rgb()/rgba() with clamping, named colors, transparent), all constexpr.
-- `include/ctcss/serialize.hpp` — minified CSS from the sheet type.
-- `external/compile-time-lark/` — git SUBMODULE (ctlark + ctll). Never edit here.
-- `tests/` (`document.cpp` — a real sheet end-to-end, `css.cpp` — the feature matrix, `cxx17.cpp`), `examples/` (`theme`, `wellformed`).
+- `include/ctbrowser.hpp` — umbrella, ENGINE only (no SDL): page + dom + layout + script + engine.
+- `include/ctbrowser/page.hpp` — the compile-time assembly. `to_fixed<Provider>()` re-enters a constexpr string_view as a ctll::fixed_string NTTP; `tag_text<Doc, Tag>` collects the concatenated text of every <style>/<script> element FROM THE DOM TYPE. `page<Src>`: doc_type/sheet_type/script_type/title().
+- `include/ctbrowser/dom.hpp` — runtime `node` tree (tag/id/classes/attrs/text/children/parent, inline_style map, canvas_w/h + pixels 0xAARRGGBB, layout rect x/y/w/h), `instantiate<DocType>()`, find_by_id/find_first/hit_test, class helpers, ctcss chain().
+- `include/ctbrowser/layout.hpp` — `style_fn` (std::function so the engine isn't templated on the sheet), `computed_style` (inline styles beat the sheet), block layout → `paint_cmd` list (box/text/canvas) + node rects. Skips head/style/script/title; display:none prunes; text wraps in square font_px glyphs.
+- `include/ctbrowser/script.hpp` — ctjs bindings: getElementById → element handle object (setText/addClass/...), getContext → canvas ctx (fillStyle property read back by fillRect/putPixel/clear natives — the real canvas idiom), setTitle; `deliver()` calls script fns if defined (onClick(id)/onKey(name,down)/onFrame(dt)).
+- `include/ctbrowser/engine.hpp` — `engine<Page>`: doc + title + resolver + script run with bindings; frame(viewport_w), click_at, key, tick. SDL-free; what the tests drive.
+- `include/ctbrowser/app.hpp` — SDL3 shell: run_app<Page>(app_options). Boxes = filled rects, text = font8x8 scaled, canvas = streaming SDL_Texture. `SDL_VIDEODRIVER=dummy` + `CTBROWSER_TEST_FRAMES=N` (env, read by run_app) = headless run.
+- `include/ctbrowser/font8x8.hpp` — GENERATED from public-domain font8x8 (dhepper); glyph_pixel(c,row,col).
+- `external/compile-time-{html,javascript,css}` — SUBMODULES (recursive: each carries lark). ctlark/ctll resolve through compile-time-html's copy — exactly ONE lark on the include path.
 
-## Semantics decisions (keep consistent; README documents all)
-- Chains are ROOT-FIRST, self-last. Tags match case-insensitively
-  (bind folds selector tags to lowercase; cthtml tags are lowercase);
-  classes/ids exact. The same element cannot satisfy two steps.
-- v0.1 rejects (compile errors): at-rules, pseudo-classes/elements,
-  attribute selectors, `+`/`~` combinators; `;`/`}` cannot appear
-  inside quoted values (the VALUE token stops there).
-- Values stay RAW text; typed parsing (`parse_length`/`parse_color`)
-  happens on demand. Property names fold to lowercase, lookups fold too.
-- Cascade in `query`: important > specificity > source order; order =
-  document position of the declaration (selector-list twins share it).
+## Decisions
+- Scripts MUTATE nodes but never create/remove them → bindings hold raw node pointers; `engine` is noncopyable, doc outlives script result.
+- Click delivery: deepest hit-test node, walk up to first non-empty id, call onClick(id).
+- Layout: px only; canvas box = its pixel size; backgrounds paint in a pre-pass (back-to-front), then text/canvas in traversal order.
+- The bricks' own semantics/limits apply verbatim (see their CLAUDE.md).
 
 ## GOTCHAS
-- **ctlark and ctll are a git SUBMODULE**: `git submodule update
-  --init` once; bump = checkout in submodule + commit gitlink; build
-  adds `<sub>/include` + `/ctlark` + `/ctll` to -I (quoted-include
-  fallback). CMake install flattens to include/{ctcss,ctlark,ctll}.
-- **single-header** — `make single-header` (needs `quom`); prepends LICENSE.
-- **Attribution** — CTLL is Hana Dusíková's (via `notre`, from CTRE);
-  the Lark grammar language is the lark-parser project's; CSS
-  semantics follow the W3C specs. Preserve `NOTICE` and `LICENSE`
-  (Apache-2.0 w/ LLVM Exceptions).
+- **Any grammar change in a brick re-bakes the combined PCH** (~30 min).
+- **Submodule bumps**: update the brick's gitlink AND check lark stays consistent across bricks (headers must be identical; only compile-time-html's copy is on the include path).
+- **Attribution**: preserve NOTICE (CTLL/CTRE via notre, lark-parser, font8x8 public domain, SDL zlib, not bundled).

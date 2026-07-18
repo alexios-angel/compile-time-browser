@@ -1,227 +1,161 @@
-> **Attribution:** this library is built on the CTLL compile-time LL(1)
-> parser from [CTRE](https://github.com/hanickadot/compile-time-regular-expressions)
-> by Hana Dusíková, via the [notre](https://github.com/alexios-angel/notre)
-> fork, and follows the architecture of its siblings
+> **Attribution:** built on
 > [compile-time-html](https://github.com/alexios-angel/compile-time-html),
-> [compile-time-javascript](https://github.com/alexios-angel/compile-time-javascript) and
-> [compile-time-json](https://github.com/alexios-angel/compile-time-json).
+> [compile-time-javascript](https://github.com/alexios-angel/compile-time-javascript)
+> and [compile-time-css](https://github.com/alexios-angel/compile-time-css)
+> (all on the CTLL parser from
+> [CTRE](https://github.com/hanickadot/compile-time-regular-expressions)
+> by Hana Dusíková, via [notre](https://github.com/alexios-angel/notre)),
+> rendered with [SDL3](https://libsdl.org). Text renders with the
+> public-domain [font8x8](https://github.com/dhepper/font8x8).
 > Apache License 2.0 with LLVM Exceptions; see [NOTICE](NOTICE).
 
-# ctcss — compile-time CSS
+# ctbrowser — the compile-time browser
 
-CSS parsed while your code compiles — and *resolved* there too. The
-stylesheet is a *type*: malformed CSS is a compile error, every
-accessor is `constexpr`, and selector matching plus the full cascade
-(`!important`, specificity, source order) are plain `constexpr`
-computations over element chains. Style a compile-time DOM in a
-`static_assert`; run the very same `query()` at runtime when a script
-has just flipped a class.
-
-```c++
-#include <ctcss.hpp>
-
-constexpr auto theme = ctcss::parse<R"(
-    p          { color: black; margin: 8px; }
-    div.note p { color: red !important; }
-    #main > ul { width: 640px; }
-)">();
-
-// the element chain body > div.note > p, root-first
-constexpr ctcss::element_ref chain[] = {{"body"}, {"div", "", "note wide"}, {"p"}};
-
-static_assert(ctcss::query(theme, chain, "color") == "red");    // cascade, resolved
-static_assert(ctcss::query(theme, chain, "margin") == "8px");
-static_assert(ctcss::parse_length("8px").value == 8);           // typed values
-static_assert(ctcss::parse_color("#f80").g == 136);
-static_assert(!ctcss::is_valid<"p { color red }">);             // typos fail the build
-```
-
-## What is supported (v0.1)
-
-* **rules**: selector lists (`h1, .title { ... }`) with declaration
-  blocks; the final semicolon is optional; `/* comments */` anywhere
-* **selectors**: type (`div`), universal (`*`), `.class`, `#id`,
-  compounds (`div.note#top.wide`), descendant combinator
-  (whitespace), child combinator (`>`) — in any combination
-* **declarations**: any `property: value` pair — property names fold
-  to lowercase (they match case-insensitively), values keep their raw
-  text exactly (font stacks, `url(...)`, shorthand lists all pass
-  through), `!important` is peeled off and flagged
-* **matching**: `ctcss::matches(selector, chain)` against
-  `element_ref` chains (tag/id/space-separated classes — exactly what
-  an HTML element knows); tags compare case-insensitively, classes
-  and ids exactly; descendant matching backtracks correctly
-* **the cascade**: `ctcss::query(sheet, chain, "property")` resolves
-  `!important` → specificity (ids, classes, types) → source order,
-  like a browser; `entries(sheet)` exposes the flattened
-  (selector × declaration) view the cascade runs on
-* **typed values**: `parse_length` (`px em rem % vw vh`, unitless
-  zero) and `parse_color` (`#rgb #rgba #rrggbb #rrggbbaa`,
-  `rgb()/rgba()`, the classic named colors, `transparent`) — all
-  `constexpr`, ready for a layout engine
-* **serialization**: `ctcss::serialize(sheet)` renders minified CSS
-  into static storage
-
-Not in v0.1 (all compile errors, documented): at-rules (`@media`,
-`@import`, `@font-face`), pseudo-classes/elements (`:hover`,
-`::before`), attribute selectors (`[href]`), sibling combinators
-(`+`, `~`), CSS variables/`calc()` resolution, and semicolons/braces
-inside quoted values.
-
-## API
+**One HTML string is the whole application.** The markup, the
+`<style>` and the `<script>` are parsed *while your code compiles* —
+by [cthtml](https://github.com/alexios-angel/compile-time-html),
+[ctcss](https://github.com/alexios-angel/compile-time-css) and
+[ctjs](https://github.com/alexios-angel/compile-time-javascript)
+respectively, chained type→text→type — so a missing quote in the HTML,
+a bad selector in the CSS or a missing semicolon in the JS **fails the
+build** with a caret diagnostic. At runtime there is no parsing at
+all: the DOM instantiates from its type, the script (compiled by the
+C++ optimizer into code specialized for that script) drives real DOM
+and `<canvas>` APIs, styles re-resolve through the CSS cascade after
+every mutation, and **SDL3** draws the result in a window on Windows,
+macOS, Linux and the BSDs — which is exactly the substrate multimedia
+software wants: games and emulators are a `<canvas>`, an `onFrame(dt)`
+and an `onKey` away.
 
 ```c++
-// syntax as a static property (never a compile error):
-template <ctll::fixed_string Src> constexpr bool ctcss::is_valid;
-ctcss::error_info<Src>();     // kind, byte offset, line, column
-ctcss::error_message<Src>();  // rendered caret diagnostic
+#include <ctbrowser.hpp>
+#include <ctbrowser/app.hpp>
+#include <SDL3/SDL_main.h>
 
-// the parsed sheet (a type); invalid CSS fails the build:
-constexpr auto sheet = ctcss::parse<Src>();
-sheet.rule_count();  sheet.rule_at<I>();
-rule.selector_count();  rule.selector_at<I>();  rule.decl_count();  rule.decl<I>();
-rule.property<"color">();          // raw value within this rule ("" if absent)
-decl.property();  decl.value();  decl.important();
-selector.specificity();            // ids*10000 + classes*100 + types
-selector.step<I>();                // compound + how it attaches (descendant/child)
+constexpr auto & app = ctbrowser::source<R"(<!DOCTYPE html>
+<title>counter</title>
+<style>
+    h1      { font-size: 32px; color: #222222; }
+    #count  { font-size: 48px; color: gray; }
+    #count.hot { color: #ff8800; }
+</style>
+<h1>Clicks</h1>
+<p id=count>0</p>
+<script>
+    let clicks = 0;
+    function onClick(id) {
+        clicks += 1;
+        let el = getElementById("count");
+        el.setText(String(clicks));
+        if (clicks >= 5) { el.addClass("hot"); }
+    }
+</script>)">;
 
-// matching and the cascade (equally valid in static_assert and at runtime):
-ctcss::element_ref{tag, id, classes};              // classes space-separated
-ctcss::matches(selector, chain);                   // chain root-first, self-last
-ctcss::query(sheet, chain, "property");            // cascade-resolved value ("" if none)
-ctcss::entries(sheet), ctcss::entry_count(sheet);  // the flattened cascade input
+// the initial style is a compile-time fact:
+constexpr ctcss::element_ref chain[] = {{"html"}, {"body"}, {"p", "count", ""}};
+static_assert(ctcss::query(decltype(app)::sheet_type{}, chain, "color") == "gray");
 
-// typed values:
-ctcss::parse_length("12px")   // -> {ok, value, unit}
-ctcss::parse_color("#ff8800") // -> {ok, r, g, b, a}
-
-// back to text:
-ctcss::serialize(sheet);   // minified, static storage
+int main(int, char **) { return ctbrowser::run_app<decltype(app)>(); }
 ```
 
-`ctcss::for_each_rule(sheet, f)` iterates rules with their own types.
-`ctcss::debug` bundles the [ctlark debugging
-toolbox](../compile-time-lark#debugging) with the CSS grammar baked
-in: `traced_parse<Src>()`, `parse_runtime(text)`,
-`dump_tokens<Src>()`, `dump_grammar()`.
+And the games proof — `examples/game.cpp` is pong written in page
+JavaScript on a `<canvas>`:
 
-## C++17
-
-With a pre-C++20 compiler, inputs and keys are `constexpr
-ctll::fixed_string` variables with linkage instead of string literals;
-matching and query are ordinary value calls and need nothing special:
-
-```c++
-static constexpr auto src = ctll::fixed_string{"p { color: red; }"};
-constexpr auto sheet = ctcss::parse<src>();
-constexpr ctcss::element_ref chain[] = {{"p"}};
-static_assert(ctcss::query(sheet, chain, "color") == std::string_view{"red"});
+```html
+<canvas id=game width=320 height=200></canvas>
+<script>
+    let ctx = getContext("game");
+    function onKey(key, down) { /* move the paddle */ }
+    function onFrame(dt) {
+        ctx.fillStyle = "#102030";
+        ctx.fillRect(0, 0, 320, 200);
+        ctx.fillStyle = "#ff8800";
+        ctx.fillRect(x - 4, y - 4, 8, 8);   // the ball, at 60fps
+    }
+</script>
 ```
 
-## How it works
+## What happens when
 
-The grammar layer is
-[ctlark](https://github.com/alexios-angel/compile-time-lark)
-(compile-time Lark). Two tricks make CSS tractable
-([`grammar.hpp`](include/ctcss/grammar.hpp)): a **compound selector is
-a single token** — CSS's descendant combinator is *whitespace*, which
-an `%ignore`-whitespace lexer would destroy, but with `div.note#top`
-as one token, adjacency of compound tokens IS the descendant
-combinator and `>` the child combinator — and a **declaration value is
-a single raw token** up to the `;` or `}`, cooked later. The binder
-([`bind.hpp`](include/ctcss/bind.hpp)) splits compounds into typed
-tag/#id/.classes parts and peels `!important`.
+**At compile time** ([`page.hpp`](include/ctbrowser/page.hpp)):
+cthtml parses the page into a DOM *type*; the text of every `<style>`
+element is collected *from that type* and re-entered into
+`ctcss::parse` as a template argument (`to_fixed`, the type→text→type
+pivot), and every `<script>` likewise into ctjs. You get
+`page::doc_type`, `page::sheet_type`, `page::script_type`,
+`page::title()` — and `static_assert`s over any of them, including
+full cascade resolution against element chains.
 
-Matching ([`match.hpp`](include/ctcss/match.hpp)) deliberately leaves
-the type level: every selector and stylesheet materializes a flat
-static VIEW (step tables; one `decl_entry` per selector ×
-declaration), and `matches()`/`query()` are plain `constexpr` loops
-over those views and an `element_ref` chain. That one design choice is
-what lets the same code style a compile-time DOM inside a
-`static_assert` and restyle a live one at runtime — the seam
-[compile-time-browser](#roadmap) needs, since scripts mutate classes
-at runtime.
+**At runtime**:
+* [`dom.hpp`](include/ctbrowser/dom.hpp) — the DOM type instantiates a
+  mutable tree (tag/id/classes/attributes/text/children, `<canvas>`
+  pixel buffers, inline styles); nodes are stable so script bindings
+  hold plain pointers
+* [`script.hpp`](include/ctbrowser/script.hpp) — the DOM API as ctjs
+  host bindings: `getElementById(id)` returns an element handle
+  (`text/setText/addClass/removeClass/toggleClass/hasClass/style/attr`),
+  `getContext(id)` returns a canvas context with the real idiom
+  (`ctx.fillStyle = "#f80"; ctx.fillRect(...)`, plus `putPixel` and
+  `clear` for emulator-style framebuffers), `setTitle` retitles the
+  window; events arrive as plain script functions `onClick(id)`,
+  `onKey(name, down)`, `onFrame(dt)`
+* [`layout.hpp`](include/ctbrowser/layout.hpp) — style resolution
+  (inline styles → the page stylesheet through ctcss's cascade) and
+  CSS-flavored block layout: `width/height/margin/padding/font-size`
+  in px, `background(-color)`/`color`, `display:none`, text wrapped in
+  the embedded 8×8 font scaled to font-size; produces a paint list +
+  hit-test rects
+* [`app.hpp`](include/ctbrowser/app.hpp) — the SDL3 shell: window,
+  renderer, event loop; boxes as filled rects, text via
+  [font8x8](https://github.com/dhepper/font8x8) (no font library
+  needed), each `<canvas>` streamed into an `SDL_Texture`;
+  `SDL_VIDEODRIVER=dummy` + `CTBROWSER_TEST_FRAMES=N` runs any app
+  headless (that is how CI drives the examples)
 
-Because the grammar work happens in headers, a **precompiled header**
-makes it a one-time cost (`make pch`, automatic — the CSS grammar is
-small, so this is quick), and an Earley parse needs a raised constexpr
-budget, carried by the Makefile and the CMake interface
-(`CTCSS_CONSTEXPR_LIMITS`):
+The engine ([`engine.hpp`](include/ctbrowser/engine.hpp)) is
+SDL-free: `ctbrowser::engine<Page>` instantiates the DOM, runs the
+script, lays out and delivers events — the whole test suite runs
+headless against it.
 
-```
-clang:  -fconstexpr-steps=500000000 -fconstexpr-depth=1024 -fbracket-depth=2048
-gcc:    -fconstexpr-ops-limit=3000000000 -fconstexpr-loop-limit=10000000 -fconstexpr-depth=1024
-```
+## v0.1 boundaries
 
-ctlark and ctll come in as a git submodule
-(`external/compile-time-lark` — clone with `--recurse-submodules` or
-run `git submodule update --init`); never edit under `external/`. The
-build adds the submodule's include directories so the headers'
-relative `"../ctlark.hpp"`-style includes resolve, and the CMake
-install flattens everything back to `include/{ctcss,ctlark,ctll}`.
+Everything the three bricks document applies (their subsets ARE this
+project's subsets). Browser-side: block layout only (no inline flow,
+floats or flex); px lengths; scripts mutate elements but do not
+create/remove them; no `<img>`, links or scrolling yet. The bricks'
+own APIs remain fully available alongside — `decltype(app)::doc_type`
+is an ordinary cthtml document, the sheet an ordinary ctcss sheet.
 
-## Building and integrating
-
-Header-only. Pick whichever fits your project:
-
-**CMake, as a subdirectory or via FetchContent:**
-
-```cmake
-add_subdirectory(compile-time-css)   # or FetchContent_MakeAvailable(ctcss)
-target_link_libraries(your-target PRIVATE ctcss::ctcss)
-```
-
-**CMake, installed** (`cmake -B build && cmake --install build`):
-
-```cmake
-find_package(ctcss 0.1 REQUIRED)
-target_link_libraries(your-target PRIVATE ctcss::ctcss)
-```
-
-The install also ships a `pkg-config` file (`ctcss.pc`). Tests and
-examples build only when ctcss is the top-level project
-(`CTCSS_BUILD_TESTS`, `CTCSS_BUILD_EXAMPLES`); `CTCSS_CXX_STANDARD`
-selects the advertised standard (default 20). CPack can produce
-TGZ/ZIP archives (plus DEB/RPM where the tooling exists), and
-`-DCTCSS_MODULE=ON` builds `ctcss.cppm` as a named C++ module
-(experimental).
-
-**No build system:** add `include/` plus the submodule's
-`external/compile-time-lark/include` (and its `ctlark`/`ctll`
-subdirectories) to your include path, or copy the amalgamated
-[`single-header/ctcss.hpp`](single-header/ctcss.hpp)
-(regenerate with `make single-header`, which needs the
-[quom](https://pypi.org/project/quom/) tool).
-
-Requires C++17 (C++20 for the string-literal API). Runnable demos live
-in [`examples/`](examples/).
-
-Run the tests (compilation is the test — the suite is `static_assert`s):
+## Building
 
 ```bash
-git submodule update --init            # ctlark + ctll (once, after cloning)
-make CXX=clang++                       # C++20
-make CXX=clang++ CXX_STANDARD=17
-# or through CMake/CTest:
-cmake -B build && cmake --build build && ctest --test-dir build
+git submodule update --init --recursive   # the three bricks (+ their lark)
+make            # bakes the combined grammar PCH ONCE (the JS tables are
+                # tens of minutes - one time), then builds + RUNS the
+                # headless engine suite
+# windowed examples (need SDL3; via CMake or the examples Makefile):
+cmake -B build && cmake --build build -j && ctest --test-dir build
+./build/examples/ctbrowser-example-counter
+./build/examples/ctbrowser-example-game
 ```
 
-## Roadmap
+SDL3 comes from your system (`find_package(SDL3)` /
+`pkg-config sdl3`); everything else is header-only C++20. The CMake
+install flattens `include/{ctbrowser,cthtml,ctjs,ctcss,ctlark,ctll}`
+side by side and ships `ctbrowser.pc`.
 
-ctcss is the third brick of a compile-time web stack, joining
-[compile-time-html](https://github.com/alexios-angel/compile-time-html)
-(the DOM as a type) and
-[compile-time-javascript](https://github.com/alexios-angel/compile-time-javascript)
-(scripts parsed at compile time, run at runtime). They meet in
-**compile-time-browser**: HTML parsed into a DOM type, CSS resolved
-against it at compile time, JS driving events at runtime — lowered
-into an SDL3 application, as if the page had been hand-written as
-native code. ctcss's `element_ref` chains are shaped exactly like
-cthtml's elements (tag + id + class attribute), and its runtime-capable
-`query()` is what restyles after a script mutation.
+## The stack
+
+| layer | repo | at compile time | at runtime |
+|-------|------|-----------------|------------|
+| markup | [compile-time-html](https://github.com/alexios-angel/compile-time-html) | page → DOM type | DOM instantiates, scripts mutate |
+| style | [compile-time-css](https://github.com/alexios-angel/compile-time-css) | `<style>` → sheet type, initial styles provable | same `query()` restyles after mutations |
+| behavior | [compile-time-javascript](https://github.com/alexios-angel/compile-time-javascript) | `<script>` → AST type, specialized by the optimizer | closures, DOM/canvas APIs, events |
+| output | [SDL3](https://libsdl.org) | — | window, input, textures, cross-platform |
 
 ## License
 
 Apache License 2.0 with LLVM Exceptions (see [LICENSE](LICENSE)).
-The CTLL parser is Hana Dusíková's work, via notre; see
-[NOTICE](NOTICE).
+CTLL is Hana Dusíková's work via notre; font8x8 is public domain
+(Daniel Hepper / Marcel Sondaar); SDL3 is zlib-licensed and not
+bundled; see [NOTICE](NOTICE).

@@ -1,0 +1,9 @@
+[submodule "external/compile-time-html"]
+	path = external/compile-time-html
+	url = https://github.com/alexios-angel/compile-time-html.git
+[submodule "external/compile-time-javascript"]
+	path = external/compile-time-javascript
+	url = https://github.com/alexios-angel/compile-time-javascript.git
+[submodule "external/compile-time-css"]
+	path = external/compile-time-css
+	url = https://github.com/alexios-angel/compile-time-css.git

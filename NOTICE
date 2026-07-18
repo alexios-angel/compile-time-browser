@@ -1,5 +1,11 @@
-This repository ("compile-time-css" / ctcss) is a derivative work
-built on:
+This repository ("compile-time-browser" / ctbrowser) is a derivative
+work built on:
+
+    compile-time-html  (cthtml)  https://github.com/alexios-angel/compile-time-html
+    compile-time-javascript (ctjs)  https://github.com/alexios-angel/compile-time-javascript
+    compile-time-css   (ctcss)  https://github.com/alexios-angel/compile-time-css
+
+each of which is built on:
 
     notre (a fork of Compile Time Regular Expressions)
     https://github.com/alexios-angel/notre
@@ -15,29 +21,25 @@ repository, reproduced unmodified from upstream).
 
 What is derived
 ---------------
-The CTLL compile-time LL(1) parser (ctll::fixed_string and supporting
-headers, provided by the compile-time-lark submodule) is copied from
-notre, where it descends from Hana Dusikova's CTRE with modifications.
-This repository began as a clone of its sibling compile-time-html
-(https://github.com/alexios-angel/compile-time-html) - itself a clone
-of compile-time-xml - and keeps that git history; the build and
-packaging scaffolding follows the sibling projects compile-time-json
-and compile-time-json5 (https://github.com/alexios-angel/). The CSS
-grammar, the stylesheet types, the selector-matching and cascade
-layer, the value parsers and the ctcss API are original to this
-repository.
+The three bricks arrive as git submodules under external/ and carry
+their own NOTICE files (CTLL/CTRE lineage, the Lark grammar language
+by Erez Shinan and the lark-parser project, the WHATWG entity data,
+the ECMA-262 and W3C CSS semantics). This repository began as a clone
+of compile-time-css - the chain runs compile-time-xml ->
+compile-time-html -> compile-time-css -> here - and keeps that git
+history. The page-assembly glue (type -> text -> type re-entry), the
+runtime DOM, the layout engine, the script bindings and the SDL3
+shell are original to this repository.
 
 Attribution for the parser architecture and the CTLL engine belongs to
 Hana Dusikova; this file preserves it as required by Section 4(c) of
 the Apache License 2.0.
 
-The grammar layer is ctlark
-(https://github.com/alexios-angel/compile-time-lark), a git submodule
-under external/: the CSS grammar is written in the Lark grammar
-language, designed by Erez Shinan and the lark-parser project
-(https://github.com/lark-parser/lark, MIT license); see ctlark's
-NOTICE for the full lineage, including the Tablewright-generated
-grammar-of-grammars table.
+The embedded 8x8 bitmap font (include/ctbrowser/font8x8.hpp) is
+PUBLIC DOMAIN: font8x8 by Daniel Hepper <daniel@hepper.net>
+(https://github.com/dhepper/font8x8), based on public-domain work by
+Marcel Sondaar / International Business Machines.
 
-The CSS language semantics implemented here (selectors, specificity,
-the cascade) follow the W3C CSS specifications.
+Simple DirectMedia Layer (SDL3, https://libsdl.org) is used as an
+external dependency and is NOT bundled; SDL is distributed under the
+zlib license.

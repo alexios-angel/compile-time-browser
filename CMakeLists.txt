@@ -1,137 +1,75 @@
-cmake_minimum_required(VERSION 3.14...4.3)
+cmake_minimum_required(VERSION 3.16...4.3)
 
-if(NOT CMAKE_EXPERIMENTAL_CXX_STD AND NOT CMAKE_CXX_MODULE_STD)
-    if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.30" AND CMAKE_VERSION VERSION_LESS_EQUAL "4.0")
-        set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "0e5b6991-d74f-4b3d-a41c-cf096e0b2508")
-    elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0" AND CMAKE_VERSION VERSION_LESS "4.0.3")
-        set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "a9e1cf81-9932-4810-974b-6eccaf14e457")
-    elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0.3" AND CMAKE_VERSION VERSION_LESS "4.3")
-        set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444")
-        set(CMAKE_CXX_MODULE_STD 1)
-    elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "4.3")
-        set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
-        set(CMAKE_CXX_MODULE_STD 1)
-    endif()
-endif()
-
-project(ctcss
-  HOMEPAGE_URL "https://github.com/alexios-angel/compile-time-css"
+project(ctbrowser
+  HOMEPAGE_URL "https://github.com/alexios-angel/compile-time-browser"
   VERSION 0.1.0
   LANGUAGES CXX)
-set(PROJECT_DESCRIPTION "Compile-time CSS: parse while you compile, match selectors and resolve the cascade with constexpr.")
+set(PROJECT_DESCRIPTION "Compile-time browser: HTML, CSS and JS parsed at compile time, rendered with SDL3.")
 
 include(CMakePackageConfigHelpers)
 include(CMakeDependentOption)
 include(GNUInstallDirs)
 include(CTest)
 
-find_program(CTCSS_DPKG_BUILDPACKAGE_FOUND dpkg-buildpackage)
-find_program(CTCSS_RPMBUILD_FOUND rpmbuild)
-
-cmake_dependent_option(CTCSS_BUILD_TESTS "Build ctcss tests" ON
+cmake_dependent_option(CTBROWSER_BUILD_TESTS "Build ctbrowser tests" ON
   "BUILD_TESTING;CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR" OFF)
-cmake_dependent_option(CTCSS_BUILD_EXAMPLES "Build ctcss examples" ON
+cmake_dependent_option(CTBROWSER_BUILD_EXAMPLES "Build ctbrowser examples (need SDL3)" ON
   "CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR" OFF)
-cmake_dependent_option(CTCSS_BUILD_PACKAGE "Build ctcss packages" ON
-  "CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR" OFF)
-cmake_dependent_option(CTCSS_BUILD_PACKAGE_DEB
-  "Create DEB package (${PROJECT_NAME})" ON
-  "CTCSS_BUILD_PACKAGE;CTCSS_DPKG_BUILDPACKAGE_FOUND" OFF)
-cmake_dependent_option(CTCSS_BUILD_PACKAGE_RPM
-  "Create RPM package (${PROJECT_NAME})" ON
-  "CTCSS_BUILD_PACKAGE;CTCSS_RPMBUILD_FOUND" OFF)
 
-option(CTCSS_MODULE "build C++ module (experimental)" OFF)
-# the ctlark grammar layer runs an Earley parse in the constant
+# the ctlark grammar layers run Earley parses in the constant
 # evaluator; the interface carries the raised limits so consumers do
 # not have to know the flags
-option(CTCSS_CONSTEXPR_LIMITS "Raise constexpr evaluation limits on the interface" ON)
-option(CTCSS_PCH "Precompile ctcss.hpp for tests and examples" ON)
+option(CTBROWSER_CONSTEXPR_LIMITS "Raise constexpr evaluation limits on the interface" ON)
+option(CTBROWSER_PCH "Precompile ctbrowser.hpp for tests and examples" ON)
 
-set(CTCSS_CONSTEXPR_OPTIONS
+set(CTBROWSER_CONSTEXPR_OPTIONS
   $<$<CXX_COMPILER_ID:Clang,AppleClang>:-fconstexpr-steps=500000000;-fconstexpr-depth=1024;-fbracket-depth=2048>
   $<$<CXX_COMPILER_ID:GNU>:-fconstexpr-ops-limit=3000000000;-fconstexpr-loop-limit=10000000;-fconstexpr-depth=1024>
   $<$<CXX_COMPILER_ID:MSVC>:/constexpr:steps500000000;/constexpr:depth1024>)
 
-# ctlark and ctll live in a git submodule (git submodule update --init).
-# The extra .../include/ctlark and .../include/ctll entries let the headers'
-# relative `"../ctlark.hpp"`-style quoted includes resolve through the
-# quoted-include fallback; the install keeps the flat include/{ctcss,ctlark,ctll}
-# layout, so installed consumers need neither.
-set(CTCSS_SUBMODULE_INCLUDE_DIRS
-  "${PROJECT_SOURCE_DIR}/external/compile-time-lark/include"
-  "${PROJECT_SOURCE_DIR}/external/compile-time-lark/include/ctlark"
-  "${PROJECT_SOURCE_DIR}/external/compile-time-lark/include/ctll")
-if(NOT EXISTS "${PROJECT_SOURCE_DIR}/external/compile-time-lark/include/ctlark.hpp")
+# The three bricks are git submodules (git submodule update --init
+# --recursive); each pins the same compile-time-lark, and the browser
+# resolves ctlark/ctll through compile-time-html's copy so exactly one
+# is in play. The extra .../ctlark and .../ctll entries let the
+# headers' relative quoted includes resolve.
+set(CTBROWSER_LARK "${PROJECT_SOURCE_DIR}/external/compile-time-html/external/compile-time-lark")
+set(CTBROWSER_SUBMODULE_INCLUDE_DIRS
+  "${PROJECT_SOURCE_DIR}/external/compile-time-html/include"
+  "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"
+  "${PROJECT_SOURCE_DIR}/external/compile-time-css/include"
+  "${CTBROWSER_LARK}/include"
+  "${CTBROWSER_LARK}/include/ctlark"
+  "${CTBROWSER_LARK}/include/ctll")
+if(NOT EXISTS "${CTBROWSER_LARK}/include/ctlark.hpp")
   message(FATAL_ERROR
-    "ctcss: the compile-time-lark submodule is missing - run `git submodule update --init`")
+    "ctbrowser: submodules are missing - run `git submodule update --init --recursive`")
 endif()
 
-set(CTCSS_HEADERS
-	include/ctcss.hpp
-	include/ctcss/bind.hpp
-	include/ctcss/grammar.hpp
-	include/ctcss/match.hpp
-	include/ctcss/serialize.hpp
-	include/ctcss/types.hpp
-	include/ctcss/values.hpp)
-file(GLOB_RECURSE CTCSS_CTLARK_HEADERS CONFIGURE_DEPENDS
-	external/compile-time-lark/include/*.hpp)
+add_library(${PROJECT_NAME} INTERFACE)
 
-if(CTCSS_MODULE)
-	if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.29.20240416")
-		add_library(${PROJECT_NAME})
+target_include_directories(${PROJECT_NAME} INTERFACE
+  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+  "$<BUILD_INTERFACE:${CTBROWSER_SUBMODULE_INCLUDE_DIRS}>"
+  $<INSTALL_INTERFACE:include>)
 
-		target_sources(${PROJECT_NAME} PUBLIC FILE_SET CXX_MODULES TYPE CXX_MODULES FILES ctcss.cppm)
-		target_sources(${PROJECT_NAME} PUBLIC FILE_SET HEADERS TYPE HEADERS
-		    BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include"
-		        "${CMAKE_CURRENT_SOURCE_DIR}/external/compile-time-lark/include"
-		    FILES ${CTCSS_HEADERS} ${CTCSS_CTLARK_HEADERS})
-		target_include_directories(${PROJECT_NAME} PUBLIC
-		    "$<BUILD_INTERFACE:${CTCSS_SUBMODULE_INCLUDE_DIRS}>")
-
-		# we are using `import std;`
-		if (NOT DEFINED CTCSS_CXX_STANDARD OR CTCSS_CXX_STANDARD LESS 23)
-			set(CTCSS_CXX_STANDARD 23)
-		endif()
-
-		target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_${CTCSS_CXX_STANDARD})
-		if(CTCSS_CONSTEXPR_LIMITS)
-			target_compile_options(${PROJECT_NAME} PUBLIC ${CTCSS_CONSTEXPR_OPTIONS})
-		endif()
-
-		install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}-targets
-			FILE_SET CXX_MODULES DESTINATION "${CMAKE_INSTALL_LIBDIR}/cxx/${PROJECT_NAME}"
-			FILE_SET HEADERS DESTINATION "include")
-	else()
-		message(FATAL_ERROR "unsupported cmake for c++ modules")
-	endif()
-else()
-	add_library(${PROJECT_NAME} INTERFACE)
-
-	target_include_directories(${PROJECT_NAME} INTERFACE
-	  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-	  "$<BUILD_INTERFACE:${CTCSS_SUBMODULE_INCLUDE_DIRS}>"
-	  $<INSTALL_INTERFACE:include>)
-
-	if (NOT CTCSS_CXX_STANDARD)
-	  set(CTCSS_CXX_STANDARD 20)
-	endif()
-
-	target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_${CTCSS_CXX_STANDARD})
-	if(CTCSS_CONSTEXPR_LIMITS)
-		target_compile_options(${PROJECT_NAME} INTERFACE ${CTCSS_CONSTEXPR_OPTIONS})
-	endif()
-	set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_SCAN_FOR_MODULES 0)
-
-	install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}-targets)
-	install(DIRECTORY include/ DESTINATION include
-	    FILES_MATCHING PATTERN *.hpp)
-	# the installed tree stays flat - include/{ctcss,ctlark,ctll} side by side -
-	# so the headers' relative includes keep working for installed consumers
-	install(DIRECTORY external/compile-time-lark/include/ DESTINATION include
-	    FILES_MATCHING PATTERN *.hpp)
+target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_20)
+if(CTBROWSER_CONSTEXPR_LIMITS)
+  target_compile_options(${PROJECT_NAME} INTERFACE ${CTBROWSER_CONSTEXPR_OPTIONS})
 endif()
+set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_SCAN_FOR_MODULES 0)
+
+install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}-targets)
+install(DIRECTORY include/ DESTINATION include FILES_MATCHING PATTERN *.hpp)
+# the installed tree stays flat - include/{ctbrowser,cthtml,ctjs,ctcss,
+# ctlark,ctll} side by side - so relative includes keep working
+install(DIRECTORY external/compile-time-html/include/ DESTINATION include
+    FILES_MATCHING PATTERN *.hpp)
+install(DIRECTORY external/compile-time-javascript/include/ DESTINATION include
+    FILES_MATCHING PATTERN *.hpp)
+install(DIRECTORY external/compile-time-css/include/ DESTINATION include
+    FILES_MATCHING PATTERN *.hpp)
+install(DIRECTORY "${CTBROWSER_LARK}/include/" DESTINATION include
+    FILES_MATCHING PATTERN *.hpp)
 
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
@@ -149,7 +87,7 @@ configure_package_config_file(
   NO_SET_AND_CHECK_MACRO
   NO_CHECK_REQUIRED_COMPONENTS_MACRO)
 
-write_basic_package_version_file(ctcss-config-version.cmake
+write_basic_package_version_file(ctbrowser-config-version.cmake
   VERSION ${PROJECT_VERSION}
   COMPATIBILITY SameMajorVersion)
 
@@ -162,46 +100,32 @@ install(
     "${PROJECT_BINARY_DIR}/${PROJECT_NAME}-config.cmake"
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME})
 
-if(CTCSS_BUILD_TESTS)
+# One shared PCH: baking the three grammars' Earley tables (the JS one
+# is tens of minutes) must happen ONCE - the anchor owns the PCH and
+# every test/example REUSE_FROMs it.
+if(CTBROWSER_PCH AND (CTBROWSER_BUILD_TESTS OR CTBROWSER_BUILD_EXAMPLES))
+  file(WRITE "${CMAKE_BINARY_DIR}/ctbrowser-pch-anchor.cpp"
+    "int ctbrowser_pch_anchor_symbol = 0;\n")
+  add_library(ctbrowser-pch-anchor OBJECT "${CMAKE_BINARY_DIR}/ctbrowser-pch-anchor.cpp")
+  target_link_libraries(ctbrowser-pch-anchor PRIVATE ctbrowser::ctbrowser)
+  target_precompile_headers(ctbrowser-pch-anchor PRIVATE
+    "${PROJECT_SOURCE_DIR}/include/ctbrowser.hpp")
+endif()
+
+if(CTBROWSER_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
 
-if(CTCSS_BUILD_EXAMPLES)
-  add_subdirectory(examples)
+if(CTBROWSER_BUILD_EXAMPLES)
+  find_package(SDL3 CONFIG QUIET)
+  if(SDL3_FOUND)
+    add_subdirectory(examples)
+  else()
+    message(STATUS "ctbrowser: SDL3 not found - skipping examples (install SDL3 or set SDL3_DIR)")
+  endif()
 endif()
-
-if (NOT CTCSS_BUILD_PACKAGE)
-  return()
-endif()
-
-list(APPEND source-generators TBZ2 TGZ TXZ ZIP)
-
-if (CTCSS_BUILD_PACKAGE_DEB)
-  list(APPEND binary-generators "DEB")
-endif()
-
-if (CTCSS_BUILD_PACKAGE_RPM)
-  list(APPEND binary-generators "RPM")
-endif()
-
-set(CPACK_SOURCE_GENERATOR ${source-generators})
-set(CPACK_GENERATOR ${binary-generators})
-
-set(CPACK_PACKAGE_FILE_NAME "${PROJECT_NAME}-${PROJECT_VERSION}")
-set(CPACK_SOURCE_PACKAGE_FILE_NAME "${CPACK_PACKAGE_FILE_NAME}")
-
-set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Alexios Angel")
-set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "${PROJECT_DESCRIPTION}")
-set(CPACK_DEBIAN_PACKAGE_NAME "lib${PROJECT_NAME}-dev")
-
-set(CPACK_RPM_PACKAGE_NAME "lib${PROJECT_NAME}-devel")
 
 set(PKG_CONFIG_FILE_NAME "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.pc")
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/packaging/pkgconfig.pc.in" "${PKG_CONFIG_FILE_NAME}" @ONLY)
 install(FILES "${PKG_CONFIG_FILE_NAME}"
-	DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig"
-)
-
-list(APPEND CPACK_SOURCE_IGNORE_FILES /.git/ /build/ .gitignore .DS_Store)
-
-include(CPack)
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")

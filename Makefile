@@ -1,8 +1,6 @@
-.PHONY: default all clean pch single-header single-header/ctcss.hpp
+.PHONY: default all run-tests clean pch
 
 default: all
-
-CXX_STANDARD := 20
 
 PYTHON := python3
 
@@ -14,57 +12,53 @@ else
 CONSTEXPR_FLAGS := -fconstexpr-ops-limit=3000000000 -fconstexpr-loop-limit=10000000 -fconstexpr-depth=1024
 endif
 
-# ctlark and ctll come from a git submodule (run `git submodule update --init`
-# once after cloning). The extra <sub>/include/ctlark and <sub>/include/ctll
-# entries let the headers' relative `"../ctlark.hpp"`-style quoted includes
-# resolve through the quoted-include -I fallback (the compiler appends the
-# literal "../ctlark.hpp" to each -I dir).
+# The three bricks come in as git submodules (run `git submodule update
+# --init --recursive` once after cloning); every brick pins the SAME
+# compile-time-lark, and the browser resolves ctlark/ctll through
+# compile-time-html's copy so exactly one is in play.
+LARK := external/compile-time-html/external/compile-time-lark
 SUBMODULE_INCLUDES := \
-	-Iexternal/compile-time-lark/include \
-	-Iexternal/compile-time-lark/include/ctlark \
-	-Iexternal/compile-time-lark/include/ctll
+	-Iexternal/compile-time-html/include \
+	-Iexternal/compile-time-javascript/include \
+	-Iexternal/compile-time-css/include \
+	-I$(LARK)/include \
+	-I$(LARK)/include/ctlark \
+	-I$(LARK)/include/ctll
 
-override CXXFLAGS := $(CXXFLAGS) -std=c++$(CXX_STANDARD) -Iinclude $(SUBMODULE_INCLUDES) $(CONSTEXPR_FLAGS) -O2 -pedantic -Wall -Wextra -Werror -Wconversion
+override CXXFLAGS := $(CXXFLAGS) -std=c++20 -Iinclude $(SUBMODULE_INCLUDES) $(CONSTEXPR_FLAGS) -O2 -pedantic -Wall -Wextra -Werror -Wconversion
 
-# precompiled header: parsing the XML grammar text and compiling its
-# tables happens once here instead of once per translation unit
+# precompiled header: parsing the HTML + JavaScript + CSS grammars and
+# compiling their Earley tables happens ONCE here - the JS grammar is
+# the long pole (tens of minutes) - and every translation unit after
+# starts from the baked result
 ifeq ($(CXX_IS_CLANG),yes)
-PCH := ctcss.pch
+PCH := ctbrowser.pch
 PCH_USE = -include-pch $(PCH)
 else
-PCH := include/ctcss.hpp.gch
+PCH := include/ctbrowser.hpp.gch
 PCH_USE =
 endif
 
+# engine tests are EXECUTABLES and run headless - no SDL needed; the
+# page markup parses during compilation, the checks run after
 TESTS := $(wildcard tests/*.cpp)
-OBJECTS := $(TESTS:%.cpp=%.o)
-DEPENDENCY_FILES := $(OBJECTS:%.o=%.d)
+BINARIES := $(TESTS:%.cpp=%)
+DEPENDENCY_FILES := $(TESTS:%.cpp=%.d)
 
-all: $(OBJECTS)
+all: run-tests
 
-$(OBJECTS): %.o: %.cpp $(PCH)
-	$(CXX) $(CXXFLAGS) $(PCH_USE) -MMD -c $< -o $@
+$(BINARIES): %: %.cpp $(PCH)
+	$(CXX) $(CXXFLAGS) $(PCH_USE) -MMD $< -o $@
+
+run-tests: $(BINARIES)
+	@for t in $(BINARIES); do printf '== %s\n' "$$t"; ./$$t || exit 1; done
 
 pch: $(PCH)
 
-$(PCH): include/ctcss.hpp
+$(PCH): include/ctbrowser.hpp
 	$(CXX) $(CXXFLAGS) -x c++-header $< -o $@
 
 -include $(DEPENDENCY_FILES)
 
 clean:
-	rm -f $(OBJECTS) $(DEPENDENCY_FILES) ctcss.pch include/ctcss.hpp.gch
-
-# needs python3 with the quom package
-single-header: single-header/ctcss.hpp
-
-single-header/ctcss.hpp:
-	$(PYTHON) -m quom include/ctcss.hpp ctcss.hpp.tmp \
-		-I external/compile-time-lark/include \
-		-I external/compile-time-lark/include/ctlark \
-		-I external/compile-time-lark/include/ctll
-	echo "/*" > single-header/ctcss.hpp
-	cat LICENSE >> single-header/ctcss.hpp
-	echo "*/" >> single-header/ctcss.hpp
-	cat ctcss.hpp.tmp >> single-header/ctcss.hpp
-	rm ctcss.hpp.tmp
+	rm -f $(BINARIES) $(DEPENDENCY_FILES) ctbrowser.pch include/ctbrowser.hpp.gch
