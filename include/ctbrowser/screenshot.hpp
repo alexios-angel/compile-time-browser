@@ -13,6 +13,7 @@
 #include "stb_image_write.h"
 #pragma GCC diagnostic pop
 #ifndef CTBROWSER_IN_A_MODULE
+#include <fstream>
 #include <string>
 #include <string_view>
 #endif
@@ -31,19 +32,15 @@ namespace detail {
 // tests byte-compare as goldens
 inline bool write_ppm(const char * path, int w, int h, const unsigned char * rgba,
                       int pitch) {
-	SDL_IOStream * io = SDL_IOFromFile(path, "wb");
-	if (io == nullptr) { return false; }
-	char header[64];
-	const int n = SDL_snprintf(header, sizeof(header), "P6\n%d %d\n255\n", w, h);
-	SDL_WriteIO(io, header, static_cast<size_t>(n));
+	std::ofstream out{path, std::ios::binary};
+	out << "P6\n" << w << ' ' << h << "\n255\n";
 	for (int y = 0; y < h; ++y) {
 		const unsigned char * row = rgba + static_cast<size_t>(y) * static_cast<size_t>(pitch);
 		for (int x = 0; x < w; ++x) {
-			SDL_WriteIO(io, row + x * 4, 3); // RGB of RGBA
+			out.write(reinterpret_cast<const char *>(row + x * 4), 3); // RGB of RGBA
 		}
 	}
-	SDL_CloseIO(io);
-	return true;
+	return static_cast<bool>(out);
 }
 
 } // namespace detail

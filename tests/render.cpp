@@ -11,6 +11,7 @@
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -114,21 +115,25 @@ int main() {
 	}
 
 	// golden compare (byte-exact; the software renderer is deterministic)
-	const char * golden_path = "tests/golden/render.ppm";
+	namespace fs = std::filesystem;
+	const fs::path golden_path = "tests/golden/render.ppm";
 	if (std::getenv("REGOLDEN") != nullptr) {
-		std::ifstream src("tests/render-out.ppm", std::ios::binary);
-		std::ofstream dst(golden_path, std::ios::binary);
-		dst << src.rdbuf();
-		std::printf("golden regenerated: %s\n", golden_path);
-	} else if (std::ifstream gold{golden_path, std::ios::binary}) {
-		std::ifstream cur("tests/render-out.ppm", std::ios::binary);
+		std::error_code ec;
+		fs::create_directories(golden_path.parent_path(), ec);
+		CHECK(fs::copy_file("tests/render-out.ppm", golden_path,
+		                    fs::copy_options::overwrite_existing, ec));
+		std::printf("golden regenerated: %s\n", golden_path.c_str());
+	} else if (fs::exists(golden_path)) {
+		std::ifstream gold{golden_path, std::ios::binary};
+		std::ifstream cur{"tests/render-out.ppm", std::ios::binary};
 		const std::string a((std::istreambuf_iterator<char>(gold)),
 		                    std::istreambuf_iterator<char>());
 		const std::string b((std::istreambuf_iterator<char>(cur)),
 		                    std::istreambuf_iterator<char>());
 		CHECK(a == b);
 	} else {
-		std::printf("note: no golden at %s (run REGOLDEN=1 ./tests/render)\n", golden_path);
+		std::printf("note: no golden at %s (run REGOLDEN=1 ./tests/render)\n",
+		            golden_path.c_str());
 	}
 
 	if (failures == 0) { std::printf("render suite: all checks passed\n"); }

@@ -170,15 +170,10 @@ struct layout_pass {
 	}
 
 	static std::string_view trimmed(std::string_view v) {
-		while (!v.empty() && (v.front() == ' ' || v.front() == '\n' || v.front() == '\t' ||
-		                      v.front() == '\r')) {
-			v.remove_prefix(1);
-		}
-		while (!v.empty() &&
-		       (v.back() == ' ' || v.back() == '\n' || v.back() == '\t' || v.back() == '\r')) {
-			v.remove_suffix(1);
-		}
-		return v;
+		constexpr std::string_view ws = " \t\n\r";
+		const size_t begin = v.find_first_not_of(ws);
+		if (begin == std::string_view::npos) { return {}; }
+		return v.substr(begin, v.find_last_not_of(ws) - begin + 1);
 	}
 
 	int inherited_font(node & n, const computed_style &) {

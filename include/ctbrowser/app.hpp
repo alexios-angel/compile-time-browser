@@ -13,7 +13,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 #endif
 #ifndef CTBROWSER_IN_A_MODULE
-#include <fstream>
+#include <filesystem>
 #include <map>
 #include <string>
 #include <utility>
@@ -52,6 +52,23 @@ struct app_options {
 };
 
 namespace detail {
+
+// Resolve an asset path independently of the CURRENT DIRECTORY: try it
+// as-is (cwd), then relative to the executable's directory, then to
+// its parent. A game must find its sprites no matter where it was
+// launched from - "" when nothing exists (callers log loudly).
+inline std::string resolve_asset(const std::string & path) {
+	namespace fs = std::filesystem;
+	std::error_code ignored;
+	if (fs::exists(path, ignored)) { return path; }
+	if (const char * base = SDL_GetBasePath()) {
+		for (const fs::path candidate :
+		     {fs::path{base} / path, fs::path{base}.parent_path().parent_path() / path}) {
+			if (fs::exists(candidate, ignored)) { return candidate.string(); }
+		}
+	}
+	return {};
+}
 
 inline void draw_text(SDL_Renderer * r, const paint_cmd & cmd) {
 	const float scale = static_cast<float>(cmd.font_px) / 8.0f;
@@ -145,8 +162,9 @@ inline std::string probe_font() {
 	    "/System/Library/Fonts/Helvetica.ttc",
 	    "C:\\Windows\\Fonts\\arial.ttf",
 	};
+	std::error_code ignored;
 	for (const char * c : candidates) {
-		if (std::ifstream{c}.good()) { return c; }
+		if (std::filesystem::exists(c, ignored)) { return c; }
 	}
 	return {};
 }
@@ -196,9 +214,59 @@ template <typename Page> int run_app(app_options opts = {}) {
 	bool want_fullscreen = opts.fullscreen;
 	bool fullscreen_dirty = false;
 
+	// the engine's BMP reader runs against the literal path first; this
+	// shell decoder then retries with cwd-independent path resolution -
+	// and, with SDL3_image, decodes PNG/JPG/WebP too. Failures LOG: a
+	// missing sprite sheet must never be a silently invisible game.
+	auto image_decoder = [](const std::string & path) -> image {
+		const std::string resolved = detail::resolve_asset(path);
+		if (resolved.empty()) {
+			SDL_Log("ctbrowser: loadImage: no such file: %s", path.c_str());
+			return {};
+		}
+		if (image bmp = load_bmp(resolved); bmp.ok()) { return bmp; }
+#ifdef CTBROWSER_WITH_IMAGE
+		SDL_Surface * s = IMG_Load(resolved.c_str());
+		if (s == nullptr) {
+			SDL_Log("ctbrowser: loadImage: undecodable: %s", resolved.c_str());
+			return {};
+		}
+		SDL_Surface * argb = SDL_ConvertSurface(s, SDL_PIXELFORMAT_ARGB8888);
+		SDL_DestroySurface(s);
+		if (argb == nullptr) { return {}; }
+		image out;
+		out.w = argb->w;
+		out.h = argb->h;
+		out.pixels.resize(static_cast<size_t>(argb->w) * static_cast<size_t>(argb->h));
+		for (int y = 0; y < argb->h; ++y) {
+			const uint32_t * row = reinterpret_cast<const uint32_t *>(
+			    static_cast<const unsigned char *>(argb->pixels) +
+			    static_cast<size_t>(y) * static_cast<size_t>(argb->pitch));
+			for (int x = 0; x < argb->w; ++x) {
+				out.pixels[static_cast<size_t>(y) * static_cast<size_t>(argb->w) +
+				           static_cast<size_t>(x)] = row[x];
+			}
+		}
+		SDL_DestroySurface(argb);
+		return out;
+#else
+		SDL_Log("ctbrowser: loadImage: not a readable BMP (install SDL3_image "
+		        "for PNG/JPG): %s",
+		        resolved.c_str());
+		return {};
+#endif
+	};
+
 	engine<Page> e{{
 	    {"playSound", ctjs::native([&mixer](const std::vector<ctjs::value> & a) -> ctjs::value {
-		     return ctjs::value{!a.empty() && mixer.play(a[0].to_string())};
+		     if (a.empty()) { return ctjs::value{false}; }
+		     const std::string resolved = detail::resolve_asset(a[0].to_string());
+		     if (resolved.empty()) {
+			     SDL_Log("ctbrowser: playSound: no such file: %s",
+			             a[0].to_string().c_str());
+			     return ctjs::value{false};
+		     }
+		     return ctjs::value{mixer.play(resolved)};
 	     },
 	     "playSound")},
 	    {"setVolume", ctjs::native([&mixer](const std::vector<ctjs::value> & a) -> ctjs::value {
@@ -218,7 +286,7 @@ template <typename Page> int run_app(app_options opts = {}) {
 		     return {};
 	     },
 	     "setFullscreen")},
-	}};
+	}, image_decoder};
 
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
 		SDL_Log("ctbrowser: SDL_Init failed: %s", SDL_GetError());
@@ -238,32 +306,6 @@ template <typename Page> int run_app(app_options opts = {}) {
 		                                 SDL_LOGICAL_PRESENTATION_LETTERBOX);
 	}
 
-#ifdef CTBROWSER_WITH_IMAGE
-	// PNG/JPG/WebP sprites decode through SDL3_image into the engine's
-	// plain pixel registry (the built-in BMP path already tried first)
-	e.images.decoder = [](const std::string & path) -> image {
-		SDL_Surface * s = IMG_Load(path.c_str());
-		if (s == nullptr) { return {}; }
-		SDL_Surface * argb = SDL_ConvertSurface(s, SDL_PIXELFORMAT_ARGB8888);
-		SDL_DestroySurface(s);
-		if (argb == nullptr) { return {}; }
-		image out;
-		out.w = argb->w;
-		out.h = argb->h;
-		out.pixels.resize(static_cast<size_t>(argb->w) * static_cast<size_t>(argb->h));
-		for (int y = 0; y < argb->h; ++y) {
-			const uint32_t * row = reinterpret_cast<const uint32_t *>(
-			    static_cast<const unsigned char *>(argb->pixels) +
-			    static_cast<size_t>(y) * static_cast<size_t>(argb->pitch));
-			for (int x = 0; x < argb->w; ++x) {
-				out.pixels[static_cast<size_t>(y) * static_cast<size_t>(argb->w) +
-				           static_cast<size_t>(x)] = row[x];
-			}
-		}
-		SDL_DestroySurface(argb);
-		return out;
-	};
-#endif
 
 	{ // scope: GPU/font resources release before the SDL teardown below
 #ifdef CTBROWSER_WITH_TTF

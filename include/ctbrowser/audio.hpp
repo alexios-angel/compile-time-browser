@@ -138,15 +138,11 @@ private:
 
 	// drop streams that finished playing
 	void reap() {
-		std::vector<SDL_AudioStream *> live;
-		for (SDL_AudioStream * s : streams_) {
-			if (SDL_GetAudioStreamQueued(s) > 0) {
-				live.push_back(s);
-			} else {
-				SDL_DestroyAudioStream(s);
-			}
-		}
-		streams_ = std::move(live);
+		std::erase_if(streams_, [](SDL_AudioStream * s) {
+			if (SDL_GetAudioStreamQueued(s) > 0) { return false; }
+			SDL_DestroyAudioStream(s);
+			return true;
+		});
 	}
 
 	std::map<std::string, wav_data> cache_;

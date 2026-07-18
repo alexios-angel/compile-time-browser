@@ -4,6 +4,7 @@
 #include <cthtml.hpp>
 #include <ctcss.hpp>
 #ifndef CTBROWSER_IN_A_MODULE
+#include <charconv>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -120,13 +121,8 @@ namespace detail {
 
 inline int parse_int_attr(std::string_view v, int fallback) {
 	int out = 0;
-	bool any = false;
-	for (const char c : v) {
-		if (c < '0' || c > '9') { break; }
-		out = out * 10 + (c - '0');
-		any = true;
-	}
-	return any ? out : fallback;
+	const auto r = std::from_chars(v.data(), v.data() + v.size(), out);
+	return r.ec == std::errc{} ? out : fallback;
 }
 
 // instantiate the runtime tree from the compile-time DOM type

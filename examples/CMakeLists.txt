@@ -3,6 +3,10 @@
 # frames via CTBROWSER_TEST_FRAMES, so CI exercises them headless.
 file(GLOB example-sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 
+# assets sit next to the built binaries so the shell's executable-
+# relative path resolution finds them no matter the launch directory
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/assets" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+
 foreach(source ${example-sources})
   get_filename_component(example "${source}" NAME_WE)
   add_executable(ctbrowser-example-${example} "${source}")

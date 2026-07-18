@@ -28,7 +28,7 @@ public:
 	document doc;
 	std::string title;
 	image_store images;
-	std::set<std::string> keys_down;
+	std::set<std::string, std::less<>> keys_down; // transparent: string_view lookups
 	double mouse_x = 0;
 	double mouse_y = 0;
 	bool mouse_down = false;
@@ -36,9 +36,14 @@ public:
 	text_measure_fn measure; // shell-installed when a real font loads
 	ctjs::run_result script;
 
-	explicit engine(std::vector<ctjs::binding> extra = {})
+	// the image decoder must arrive HERE, not be assigned afterwards:
+	// the page's script runs inside this constructor, and loadImage
+	// calls at script startup already need it
+	explicit engine(std::vector<ctjs::binding> extra = {},
+	                std::function<image(const std::string &)> image_decoder = {})
 	    : doc(instantiate<typename Page::doc_type>()),
 	      title(Page::title()),
+	      images{{}, std::move(image_decoder)},
 	      resolve([](const ctcss::element_ref * chain, size_t n, std::string_view prop) {
 		      return ctcss::query(typename Page::sheet_type{}, chain, n, prop);
 	      }),
@@ -62,9 +67,9 @@ public:
 	}
 	void key(std::string_view name, bool down) {
 		if (down) {
-			keys_down.insert(std::string{name});
-		} else {
-			keys_down.erase(std::string{name});
+			keys_down.emplace(name);
+		} else if (const auto it = keys_down.find(name); it != keys_down.end()) {
+			keys_down.erase(it);
 		}
 		deliver(script, "onKey", name, down);
 	}
@@ -92,7 +97,7 @@ private:
 		out.push_back({"isKeyDown",
 		               ctjs::native([this](const std::vector<ctjs::value> & a) -> ctjs::value {
 			               return ctjs::value{!a.empty() &&
-			                                  keys_down.count(a[0].to_string()) > 0};
+			                                  keys_down.contains(a[0].to_string())};
 		               },
 		               "isKeyDown")});
 		out.push_back({"mouseX", ctjs::native([this](const std::vector<ctjs::value> &) {
