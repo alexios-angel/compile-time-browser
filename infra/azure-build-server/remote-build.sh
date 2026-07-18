@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Sync the working tree (incl. submodules) to the build server and run the build there.
+# Usage: ./remote-build.sh [make target ...]     (default: the top-level `make`,
+#        which bakes the combined PCH if stale, then builds + runs the headless suite)
+set -euo pipefail
+cd "$(dirname "$0")"
+
+ip=$(./server.sh ip)
+if [[ -z "$ip" ]]; then
+  echo "no public ip in terraform output — has this been applied?" >&2
+  exit 1
+fi
+
+repo_root=$(git -C .. rev-parse --show-toplevel)
+
+# rsync the whole tree including submodule checkouts; leave remote build
+# artifacts in place so the ~30 min PCH bake is reused across syncs.
+rsync -az --delete \
+  --exclude '.git/' \
+  --exclude 'build/' \
+  --exclude 'infra/azure-build-server/.terraform/' \
+  --exclude '*.tfstate*' \
+  --filter 'protect *.pch' --filter 'protect *.gch' --filter 'protect build/' \
+  "$repo_root"/ "ubuntu@$ip:ctbrowser/"
+
+ssh "ubuntu@$ip" "cd ctbrowser && make ${*:-}"

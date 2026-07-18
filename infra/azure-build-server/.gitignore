@@ -1,0 +1,10 @@
+# NOTE: .terraform.lock.hcl is intentionally NOT ignored — commit it so
+# provider versions are reproducible (it holds only hashes, no secrets).
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
+backend.hcl
+tfplan
+*.tfplan
