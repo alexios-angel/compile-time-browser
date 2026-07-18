@@ -29,6 +29,11 @@ namespace ctbrowser {
 using style_fn =
     std::function<std::string_view(const ctcss::element_ref *, size_t, std::string_view)>;
 
+// measure a text run's width in pixels at a font size; when absent the
+// layout assumes the embedded font's square glyphs (width == font_px).
+// The SDL shell installs a TTF-backed measure when a real font loads.
+using text_measure_fn = std::function<int(std::string_view, int)>;
+
 struct computed_style {
 	const node * n;
 	const style_fn * resolve;
@@ -74,7 +79,13 @@ inline bool skipped_tag(std::string_view tag) {
 
 struct layout_pass {
 	const style_fn * resolve;
+	const text_measure_fn * measure;
 	std::vector<paint_cmd> * out;
+
+	int text_width(std::string_view t, int font_px) const {
+		if (measure != nullptr && *measure) { return (*measure)(t, font_px); }
+		return static_cast<int>(t.size()) * font_px;
+	}
 
 	// lay out `n` with its content starting at (x, y), `width` available
 	// for the border box; returns the border-box height
@@ -104,23 +115,22 @@ struct layout_pass {
 
 		int cursor = n.y + padding;
 
-		// direct text first, wrapped to the content width
+		// direct text first, wrapped to the content width (greedy, by
+		// measured width - square-glyph estimate without a font)
 		std::string_view text = n.text;
 		const ctcss::color fg = cs.color_of("color", {true, 0, 0, 0, 255});
 		if (!trimmed(text).empty()) {
-			// glyphs are square: an 8x8 bitmap scaled to font_px x font_px
-			const int chars_per_line = content_w / font_px > 0 ? content_w / font_px : 1;
-			std::string line;
 			std::string_view rest = trimmed(text);
 			while (!rest.empty()) {
-				const size_t take = rest.size() > static_cast<size_t>(chars_per_line)
-				                        ? static_cast<size_t>(chars_per_line)
-				                        : rest.size();
+				size_t take = rest.size();
+				while (take > 1 && text_width(rest.substr(0, take), font_px) > content_w) {
+					--take;
+				}
 				paint_cmd cmd;
 				cmd.what = paint_cmd::kind::text;
 				cmd.x = n.x + padding;
 				cmd.y = cursor;
-				cmd.w = static_cast<int>(take) * font_px;
+				cmd.w = text_width(rest.substr(0, take), font_px);
 				cmd.h = font_px;
 				cmd.argb = pack_argb(fg);
 				cmd.text = std::string{rest.substr(0, take)};
@@ -209,9 +219,10 @@ inline void collect_backgrounds(node & n, const style_fn & resolve,
 
 // lay the document out for a viewport and produce the paint list
 inline std::vector<paint_cmd> layout(document & doc, int viewport_w,
-                                     const style_fn & resolve) {
+                                     const style_fn & resolve,
+                                     const text_measure_fn & measure = {}) {
 	std::vector<paint_cmd> content;
-	detail::layout_pass pass{&resolve, &content};
+	detail::layout_pass pass{&resolve, &measure, &content};
 	if (doc.root) { (void)pass.place(*doc.root, 0, 0, viewport_w); }
 	std::vector<paint_cmd> out;
 	if (doc.root) { detail::collect_backgrounds(*doc.root, resolve, out); }

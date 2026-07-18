@@ -3,28 +3,52 @@
 
 #include "engine.hpp"
 #include "font8x8.hpp"
+#include "audio.hpp"
+#include "screenshot.hpp"
 #include <SDL3/SDL.h>
+#ifdef CTBROWSER_WITH_IMAGE
+#include <SDL3_image/SDL_image.h>
+#endif
+#ifdef CTBROWSER_WITH_TTF
+#include <SDL3_ttf/SDL_ttf.h>
+#endif
 #ifndef CTBROWSER_IN_A_MODULE
+#include <fstream>
 #include <map>
 #include <string>
+#include <utility>
 #endif
 
 // The SDL3 shell: a window, a renderer, an event loop. Boxes render as
 // filled rects, text as the embedded 8x8 font scaled to the computed
 // font-size, and every <canvas> streams its pixel buffer into an SDL
-// texture. Mouse clicks hit-test the layout and reach the script's
-// onClick(id); keys reach onKey(name, down); every frame calls
-// onFrame(dt). SDL3 carries this everywhere it runs - Windows, macOS,
-// Linux, the BSDs - and `SDL_VIDEODRIVER=dummy` runs it headless
-// (paired with max_frames, that is how CI drives it).
+// texture. Input flows into the engine (polling state + onKey/onClick/
+// onMouse* events), sound plays through the audio mixer, and
+// screenshots capture the renderer to PNG. SDL3 carries all of it to
+// Windows, macOS, Linux and the BSDs.
+//
+// Headless operation (tests, CI): SDL_VIDEODRIVER=dummy renders in
+// software, SDL_AUDIODRIVER=dummy swallows sound, CTBROWSER_TEST_FRAMES
+// bounds the run (and switches to a fixed 1/60s timestep for
+// deterministic frames), CTBROWSER_SCREENSHOT=path captures the last
+// frame.
 
 namespace ctbrowser {
 
 struct app_options {
 	int width = 800;
 	int height = 600;
-	int max_frames = 0;      // 0 = run until quit; >0 = auto-exit (tests/CI)
-	bool clear_white = true; // page background
+	int max_frames = 0;          // 0 = run until quit; >0 = auto-exit (tests/CI)
+	double fixed_dt = 0;         // 0 = real time; >0 = deterministic timestep
+	int logical_w = 0;           // >0: fixed-resolution presentation,
+	int logical_h = 0;           //     letterboxed and scaled to the window
+	bool fullscreen = false;
+	bool clear_white = true;     // page background
+	std::string screenshot_path; // capture to PNG...
+	int screenshot_frame = -1;   // ...at this frame (-1 = the last one)
+	// a TrueType font for page text (SDL3_ttf builds); "" probes common
+	// system locations and falls back to the embedded 8x8 font
+	std::string font_path;
 };
 
 namespace detail {
@@ -50,6 +74,85 @@ inline void draw_text(SDL_Renderer * r, const paint_cmd & cmd) {
 	}
 }
 
+#ifdef CTBROWSER_WITH_TTF
+
+// TrueType page text: fonts opened per size, glyphs rendered white
+// and tinted with a color mod, textures cached per (text, size)
+struct ttf_text {
+	SDL_Renderer * renderer = nullptr;
+	std::string path;
+	std::map<int, TTF_Font *> fonts;
+	std::map<std::pair<std::string, int>, SDL_Texture *> cache;
+
+	bool ok() const { return !path.empty(); }
+
+	TTF_Font * font(int px) {
+		if (const auto it = fonts.find(px); it != fonts.end()) { return it->second; }
+		TTF_Font * f = TTF_OpenFont(path.c_str(), static_cast<float>(px));
+		fonts.emplace(px, f);
+		return f;
+	}
+	int measure(std::string_view text, int px) {
+		TTF_Font * f = font(px);
+		if (f == nullptr) { return static_cast<int>(text.size()) * px; }
+		int w = 0, h = 0;
+		TTF_GetStringSize(f, text.data(), text.size(), &w, &h);
+		return w;
+	}
+	void draw(const paint_cmd & cmd) {
+		TTF_Font * f = font(cmd.font_px);
+		if (f == nullptr) { return; }
+		SDL_Texture * t = nullptr;
+		const std::pair<std::string, int> key{cmd.text, cmd.font_px};
+		if (const auto it = cache.find(key); it != cache.end()) {
+			t = it->second;
+		} else {
+			if (cache.size() > 256) { // texts change rarely; cap the cache
+				for (auto & [k, tex] : cache) { SDL_DestroyTexture(tex); }
+				cache.clear();
+			}
+			SDL_Surface * s = TTF_RenderText_Blended(f, cmd.text.c_str(), cmd.text.size(),
+			                                         SDL_Color{255, 255, 255, 255});
+			if (s == nullptr) { return; }
+			t = SDL_CreateTextureFromSurface(renderer, s);
+			SDL_DestroySurface(s);
+			if (t == nullptr) { return; }
+			cache.emplace(key, t);
+		}
+		SDL_SetTextureColorMod(t, static_cast<Uint8>((cmd.argb >> 16) & 0xFF),
+		                       static_cast<Uint8>((cmd.argb >> 8) & 0xFF),
+		                       static_cast<Uint8>(cmd.argb & 0xFF));
+		SDL_SetTextureAlphaMod(t, static_cast<Uint8>((cmd.argb >> 24) & 0xFF));
+		float tw = 0, th = 0;
+		SDL_GetTextureSize(t, &tw, &th);
+		const SDL_FRect dst{static_cast<float>(cmd.x), static_cast<float>(cmd.y), tw, th};
+		SDL_RenderTexture(renderer, t, nullptr, &dst);
+	}
+	~ttf_text() {
+		for (auto & [k, t] : cache) { SDL_DestroyTexture(t); }
+		for (auto & [px, f] : fonts) {
+			if (f != nullptr) { TTF_CloseFont(f); }
+		}
+	}
+};
+
+// find a usable font when none was configured
+inline std::string probe_font() {
+	static const char * candidates[] = {
+	    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+	    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+	    "/usr/share/fonts/TTF/DejaVuSans.ttf",
+	    "/System/Library/Fonts/Helvetica.ttc",
+	    "C:\\Windows\\Fonts\\arial.ttf",
+	};
+	for (const char * c : candidates) {
+		if (std::ifstream{c}.good()) { return c; }
+	}
+	return {};
+}
+
+#endif // CTBROWSER_WITH_TTF
+
 struct canvas_textures {
 	SDL_Renderer * renderer = nullptr;
 	std::map<const node *, SDL_Texture *> cache;
@@ -60,6 +163,7 @@ struct canvas_textures {
 		                                    SDL_TEXTUREACCESS_STREAMING, n->canvas_w,
 		                                    n->canvas_h);
 		SDL_SetTextureScaleMode(t, SDL_SCALEMODE_NEAREST);
+		SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND); // clearRect shows the page
 		cache.emplace(n, t);
 		return t;
 	}
@@ -70,34 +174,114 @@ struct canvas_textures {
 
 } // namespace detail
 
-// run a page as a windowed application; returns the process exit code.
-// CTBROWSER_TEST_FRAMES=N in the environment bounds the run (CI uses
-// it with SDL_VIDEODRIVER=dummy to drive examples headless).
+// run a page as a windowed application; returns the process exit code
 template <typename Page> int run_app(app_options opts = {}) {
 	if (opts.max_frames == 0) {
 		if (const char * env = SDL_getenv("CTBROWSER_TEST_FRAMES")) {
 			opts.max_frames = SDL_atoi(env);
 		}
 	}
-	engine<Page> e;
+	if (opts.screenshot_path.empty()) {
+		if (const char * env = SDL_getenv("CTBROWSER_SCREENSHOT")) {
+			opts.screenshot_path = env;
+		}
+	}
+	if (opts.fixed_dt == 0 && opts.max_frames > 0) {
+		opts.fixed_dt = 1.0 / 60.0; // bounded runs are deterministic runs
+	}
+
+	// shell state the script bindings feed
+	audio_mixer mixer;
+	std::string pending_shot;
+	bool want_fullscreen = opts.fullscreen;
+	bool fullscreen_dirty = false;
+
+	engine<Page> e{{
+	    {"playSound", ctjs::native([&mixer](const std::vector<ctjs::value> & a) -> ctjs::value {
+		     return ctjs::value{!a.empty() && mixer.play(a[0].to_string())};
+	     },
+	     "playSound")},
+	    {"setVolume", ctjs::native([&mixer](const std::vector<ctjs::value> & a) -> ctjs::value {
+		     if (!a.empty()) { mixer.set_volume(static_cast<float>(a[0].to_number())); }
+		     return {};
+	     },
+	     "setVolume")},
+	    {"screenshot", ctjs::native([&pending_shot](const std::vector<ctjs::value> & a) -> ctjs::value {
+		     if (!a.empty()) { pending_shot = a[0].to_string(); }
+		     return {};
+	     },
+	     "screenshot")},
+	    {"setFullscreen", ctjs::native([&want_fullscreen, &fullscreen_dirty](
+	                                       const std::vector<ctjs::value> & a) -> ctjs::value {
+		     want_fullscreen = !a.empty() && a[0].truthy();
+		     fullscreen_dirty = true;
+		     return {};
+	     },
+	     "setFullscreen")},
+	}};
 
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
 		SDL_Log("ctbrowser: SDL_Init failed: %s", SDL_GetError());
 		return 1;
 	}
-	SDL_Window * window =
-	    SDL_CreateWindow(e.title.c_str(), opts.width, opts.height, SDL_WINDOW_RESIZABLE);
+	SDL_Window * window = SDL_CreateWindow(
+	    e.title.c_str(), opts.width, opts.height,
+	    SDL_WINDOW_RESIZABLE | (want_fullscreen ? SDL_WINDOW_FULLSCREEN : 0));
 	SDL_Renderer * renderer = window ? SDL_CreateRenderer(window, nullptr) : nullptr;
 	if (renderer == nullptr) {
 		SDL_Log("ctbrowser: window/renderer failed: %s", SDL_GetError());
 		SDL_Quit();
 		return 1;
 	}
+	if (opts.logical_w > 0 && opts.logical_h > 0) {
+		SDL_SetRenderLogicalPresentation(renderer, opts.logical_w, opts.logical_h,
+		                                 SDL_LOGICAL_PRESENTATION_LETTERBOX);
+	}
+
+#ifdef CTBROWSER_WITH_IMAGE
+	// PNG/JPG/WebP sprites decode through SDL3_image into the engine's
+	// plain pixel registry (the built-in BMP path already tried first)
+	e.images.decoder = [](const std::string & path) -> image {
+		SDL_Surface * s = IMG_Load(path.c_str());
+		if (s == nullptr) { return {}; }
+		SDL_Surface * argb = SDL_ConvertSurface(s, SDL_PIXELFORMAT_ARGB8888);
+		SDL_DestroySurface(s);
+		if (argb == nullptr) { return {}; }
+		image out;
+		out.w = argb->w;
+		out.h = argb->h;
+		out.pixels.resize(static_cast<size_t>(argb->w) * static_cast<size_t>(argb->h));
+		for (int y = 0; y < argb->h; ++y) {
+			const uint32_t * row = reinterpret_cast<const uint32_t *>(
+			    static_cast<const unsigned char *>(argb->pixels) +
+			    static_cast<size_t>(y) * static_cast<size_t>(argb->pitch));
+			for (int x = 0; x < argb->w; ++x) {
+				out.pixels[static_cast<size_t>(y) * static_cast<size_t>(argb->w) +
+				           static_cast<size_t>(x)] = row[x];
+			}
+		}
+		SDL_DestroySurface(argb);
+		return out;
+	};
+#endif
+
+	{ // scope: GPU/font resources release before the SDL teardown below
+#ifdef CTBROWSER_WITH_TTF
+	detail::ttf_text ttf{renderer, {}, {}, {}};
+	if (TTF_Init()) {
+		ttf.path = opts.font_path.empty() ? detail::probe_font() : opts.font_path;
+		if (ttf.ok()) {
+			e.measure = [&ttf](std::string_view text, int px) {
+				return ttf.measure(text, px);
+			};
+		}
+	}
+#endif
 
 	detail::canvas_textures textures{renderer, {}};
 	std::string shown_title = e.title;
 	Uint64 last = SDL_GetTicks();
-	int frames = 0;
+	int frame = 0;
 	bool running = true;
 	while (running) {
 		SDL_Event ev;
@@ -106,8 +290,15 @@ template <typename Page> int run_app(app_options opts = {}) {
 				case SDL_EVENT_QUIT:
 					running = false;
 					break;
+				case SDL_EVENT_MOUSE_MOTION:
+					SDL_ConvertEventToRenderCoordinates(renderer, &ev);
+					e.mouse_move(ev.motion.x, ev.motion.y);
+					break;
 				case SDL_EVENT_MOUSE_BUTTON_DOWN:
-					e.click_at(static_cast<int>(ev.button.x), static_cast<int>(ev.button.y));
+				case SDL_EVENT_MOUSE_BUTTON_UP:
+					SDL_ConvertEventToRenderCoordinates(renderer, &ev);
+					e.mouse_button(ev.button.x, ev.button.y,
+					               ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
 					break;
 				case SDL_EVENT_KEY_DOWN:
 				case SDL_EVENT_KEY_UP:
@@ -120,8 +311,14 @@ template <typename Page> int run_app(app_options opts = {}) {
 			}
 		}
 
+		if (fullscreen_dirty) {
+			fullscreen_dirty = false;
+			SDL_SetWindowFullscreen(window, want_fullscreen);
+		}
+
 		const Uint64 now = SDL_GetTicks();
-		const double dt = static_cast<double>(now - last) / 1000.0;
+		const double dt =
+		    opts.fixed_dt > 0 ? opts.fixed_dt : static_cast<double>(now - last) / 1000.0;
 		last = now;
 		e.tick(dt);
 
@@ -130,10 +327,15 @@ template <typename Page> int run_app(app_options opts = {}) {
 			SDL_SetWindowTitle(window, shown_title.c_str());
 		}
 
-		int win_w = opts.width;
-		int win_h = opts.height;
-		SDL_GetWindowSize(window, &win_w, &win_h);
-		const std::vector<paint_cmd> paints = e.frame(win_w);
+		int view_w = opts.width;
+		int view_h = opts.height;
+		if (opts.logical_w > 0) {
+			view_w = opts.logical_w;
+			view_h = opts.logical_h;
+		} else {
+			SDL_GetWindowSize(window, &view_w, &view_h);
+		}
+		const std::vector<paint_cmd> paints = e.frame(view_w);
 
 		if (opts.clear_white) {
 			SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
@@ -156,6 +358,12 @@ template <typename Page> int run_app(app_options opts = {}) {
 					break;
 				}
 				case paint_cmd::kind::text:
+#ifdef CTBROWSER_WITH_TTF
+					if (ttf.ok()) {
+						ttf.draw(cmd);
+						break;
+					}
+#endif
 					detail::draw_text(renderer, cmd);
 					break;
 				case paint_cmd::kind::canvas: {
@@ -169,11 +377,29 @@ template <typename Page> int run_app(app_options opts = {}) {
 				}
 			}
 		}
+
+		// screenshots capture BEFORE present (the composed frame)
+		const bool auto_shot =
+		    !opts.screenshot_path.empty() &&
+		    ((opts.screenshot_frame >= 0 && frame == opts.screenshot_frame) ||
+		     (opts.screenshot_frame < 0 && opts.max_frames > 0 &&
+		      frame == opts.max_frames - 1));
+		if (auto_shot) { save_screenshot(renderer, opts.screenshot_path.c_str()); }
+		if (!pending_shot.empty()) {
+			save_screenshot(renderer, pending_shot.c_str());
+			pending_shot.clear();
+		}
+
 		SDL_RenderPresent(renderer);
 
-		if (opts.max_frames > 0 && ++frames >= opts.max_frames) { running = false; }
+		if (opts.max_frames > 0 && ++frame >= opts.max_frames) { running = false; }
+		else if (opts.max_frames == 0) { ++frame; }
 	}
+	} // resource scope
 
+#ifdef CTBROWSER_WITH_TTF
+	TTF_Quit();
+#endif
 	SDL_DestroyRenderer(renderer);
 	SDL_DestroyWindow(window);
 	SDL_Quit();

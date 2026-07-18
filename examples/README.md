@@ -10,3 +10,4 @@ headless (`SDL_VIDEODRIVER=dummy`, `CTBROWSER_TEST_FRAMES=30`).
 |------|-------|
 | [`counter.cpp`](counter.cpp) | the hero: an interactive page - clicks flow into the page's own JS, the DOM mutates, CSS restyles, the layout reflows, the title updates. Initial styles are `static_assert`ed |
 | [`game.cpp`](game.cpp) | the games proof: pong written in page JavaScript on a `<canvas>` - `onFrame(dt)` physics, `onKey` paddle control, `fillStyle`/`fillRect` drawing streamed through an SDL texture |
+| [`invaders.cpp`](invaders.cpp) | the engine proof: space invaders - BMP sprite sheet (`drawImageRegion`), WAV sound (`playSound`), polled input (`isKeyDown`), `fillText` HUD, and a 320×240 playfield scaled pixel-perfect to the window (`logical_w/h`). Assets regenerate with `python3 tools/gen-assets.py` |

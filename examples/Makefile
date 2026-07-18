@@ -18,6 +18,18 @@ SUBMODULE_INCLUDES := \
 
 SDL_CFLAGS := $(shell pkg-config --cflags sdl3)
 SDL_LIBS := $(shell pkg-config --libs sdl3)
+ifeq ($(shell pkg-config --exists sdl3-image 2>/dev/null && echo yes),yes)
+SDL_CFLAGS += -DCTBROWSER_WITH_IMAGE $(shell pkg-config --cflags sdl3-image)
+SDL_LIBS += $(shell pkg-config --libs sdl3-image)
+endif
+ifeq ($(shell pkg-config --exists sdl3-mixer 2>/dev/null && echo yes),yes)
+SDL_CFLAGS += -DCTBROWSER_WITH_MIXER $(shell pkg-config --cflags sdl3-mixer)
+SDL_LIBS += $(shell pkg-config --libs sdl3-mixer)
+endif
+ifeq ($(shell pkg-config --exists sdl3-ttf 2>/dev/null && echo yes),yes)
+SDL_CFLAGS += -DCTBROWSER_WITH_TTF $(shell pkg-config --cflags sdl3-ttf)
+SDL_LIBS += $(shell pkg-config --libs sdl3-ttf)
+endif
 
 CXXFLAGS := -std=c++20 -I../include $(SUBMODULE_INCLUDES) $(SDL_CFLAGS) $(CONSTEXPR_FLAGS) -O2 -pedantic -Wall -Wextra -Werror -Wconversion
 

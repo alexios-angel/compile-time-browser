@@ -117,6 +117,54 @@ SDL-free: `ctbrowser::engine<Page>` instantiates the DOM, runs the
 script, lays out and delivers events — the whole test suite runs
 headless against it.
 
+## The game engine surface (v0.2)
+
+Games and emulators talk to the engine through the page's own script:
+
+* **canvas 2D**: `fillRect`, `clearRect` (transparent, the page shows
+  through), `strokeRect`/`strokeStyle`, `putPixel` (emulator
+  framebuffers), plus the documented extensions `fillCircle(x, y, r)`,
+  `fillText(text, x, y[, scale])` (the embedded 8×8 font) and sprites:
+  `loadImage(path)` with `drawImage(img, dx, dy[, dw, dh])` and
+  `drawImageRegion(img, sx, sy, sw, sh, dx, dy, dw, dh)` — BMP
+  (24/32bpp, alpha honored) built in; PNG/JPG/WebP and more when
+  [SDL3_image](https://github.com/libsdl-org/SDL_image) is installed
+* **input**: polled - `isKeyDown("Left")`, `mouseX()`, `mouseY()`,
+  `isMouseDown()` - and evented - `onKey(name, down)`,
+  `onMouseMove(x, y)`, `onMouseDown(x, y)`, `onClick(id)`;
+  `element.rect()` converts mouse to element-local coordinates
+* **sound**: `playSound(path)` and `setVolume(v)` — with
+  [SDL3_mixer](https://github.com/libsdl-org/SDL_mixer) installed,
+  sounds mix properly on pooled tracks and WAV/OGG/MP3/FLAC all load;
+  without it, a built-in fallback plays plain WAV through raw SDL
+  audio streams
+* **text**: page text renders in a real TrueType font when
+  [SDL3_ttf](https://github.com/libsdl-org/SDL_ttf) is installed
+  (`app_options.font_path`, or automatic probing of common system
+  fonts), with proper text measurement feeding the layout's line
+  wrapping; the embedded public-domain 8×8 font remains the
+  zero-dependency fallback — canvas `fillText` always uses it, so
+  golden images stay deterministic
+* **presentation**: `app_options.logical_w/h` renders a fixed
+  resolution letterboxed and scaled to the window (pixel-perfect
+  retro), `fullscreen` + `setFullscreen(bool)`, `fixed_dt` for
+  deterministic timesteps
+* **screenshots**: `app_options.screenshot_path` /
+  `CTBROWSER_SCREENSHOT=path` env / `screenshot("shot.png")` from
+  script - PNG via the vendored public-domain stb_image_write (a
+  `.ppm` path writes raw pixels, which is what the golden tests
+  compare)
+* **Math**: the ctjs runtime carries the full game-loop set -
+  `sin cos tan atan atan2 hypot exp log floor round abs min max
+  sqrt pow random` (seeded, reproducible) and friends
+
+`examples/invaders.cpp` uses all of it at once. Rendering is verified
+two ways: `tests/render.cpp` drives the REAL SDL shell headless
+(dummy video driver = deterministic software renderer), samples pixels
+at known coordinates and byte-compares a golden image
+(`REGOLDEN=1 ./tests/render` regenerates); CI uploads every example's
+screenshot as an artifact so a human can look at what was drawn.
+
 ## v0.1 boundaries
 
 Everything the three bricks document applies (their subsets ARE this
@@ -140,9 +188,16 @@ cmake -B build && cmake --build build -j && ctest --test-dir build
 ```
 
 SDL3 comes from your system (`find_package(SDL3)` /
-`pkg-config sdl3`); everything else is header-only C++20. The CMake
-install flattens `include/{ctbrowser,cthtml,ctjs,ctcss,ctlark,ctll}`
-side by side and ships `ctbrowser.pc`.
+`pkg-config sdl3`); everything else is header-only C++20. The
+**satellite libraries are optional and auto-detected** — install them
+for the full experience (Homebrew/Linuxbrew:
+`brew install sdl3_image sdl3_mixer sdl3_ttf`; they also ship on every
+platform SDL does) and the build defines
+`CTBROWSER_WITH_IMAGE/MIXER/TTF` and links them; without them the
+built-in fallbacks (BMP sprites, WAV streams, 8×8 font) keep every
+feature working. The CMake install flattens
+`include/{ctbrowser,cthtml,ctjs,ctcss,ctlark,ctll}` side by side and
+ships `ctbrowser.pc`.
 
 ## The stack
 

@@ -52,6 +52,22 @@ using app = ctbrowser::page<R"(<!DOCTYPE html>
 	ctx.fillRect(0, 0, 64, 32);
 	ctx.fillStyle = "#ff0000";
 	ctx.fillRect(10, 10, 4, 4);
+	function drawMore() {
+		ctx.fillStyle = "#ffaa33";
+		ctx.fillCircle(50, 16, 5);
+		ctx.fillStyle = "#ffffff";
+		ctx.fillText("HI", 0, 20);
+		ctx.strokeStyle = "#00ff00";
+		ctx.strokeRect(0, 0, 64, 32);
+		ctx.clearRect(30, 0, 2, 2);
+		let img = loadImage("examples/assets/sprites.bmp");
+		ctx.drawImage(img, 20, 2);
+		ctx.drawImageRegion(img, 16, 0, 8, 8, 0, 0, 8, 8);
+		return img;
+	}
+	function pollLeft() { return isKeyDown("Left"); }
+	function pollMouse() { return mouseX() + "," + mouseY() + "," + isMouseDown(); }
+	function panelWidth() { return getElementById("panel").rect().w; }
 	setTitle("booted");
 	console.log("script ran");
 </script>)">;
@@ -115,6 +131,43 @@ int main() {
 	e.key("H", true);
 	(void)e.frame(800);
 	CHECK(note->h > 0);
+
+	// --- v0.2 engine surface
+
+	// canvas 2D upgrades + sprites, all headless (plain pixel buffers)
+	ctjs::value img = e.script.call("drawMore");
+	CHECK(img.to_number() >= 0); // the sprite sheet loaded
+	const auto px = [&](int x, int y) {
+		return game->pixels[static_cast<size_t>(y) * 64 + static_cast<size_t>(x)];
+	};
+	CHECK(px(50, 16) == 0xFFFFAA33u);        // fillCircle center, orange
+	CHECK(px(0, 31) == 0xFF00FF00u);         // strokeRect bottom-left, green
+	CHECK(px(30, 0) == 0x00000000u);         // clearRect -> transparent
+	CHECK(px(22, 2) == 0xFF66FF66u);         // alien sprite pixel via drawImage
+	CHECK(px(3, 0) == 0xFFFFAA33u);          // ship pixel via drawImageRegion
+	{
+		int text_px = 0; // fillText("HI") left a white glyph trail
+		for (int y = 20; y < 28; ++y) {
+			for (int x = 0; x < 16; ++x) {
+				if (px(x, y) == 0xFFFFFFFFu) { ++text_px; }
+			}
+		}
+		CHECK(text_px > 8);
+	}
+
+	// input polling state
+	CHECK(!e.script.call("pollLeft").truthy());
+	e.key("Left", true);
+	CHECK(e.script.call("pollLeft").truthy());
+	e.key("Left", false);
+	CHECK(!e.script.call("pollLeft").truthy());
+	e.mouse_move(5, 7);
+	e.mouse_button(5, 7, true);
+	CHECK(e.script.call("pollMouse").to<std::string>() == "5,7,true");
+	e.mouse_button(5, 7, false);
+
+	// element .rect() reads live layout
+	CHECK(e.script.call("panelWidth").to<int>() == 300);
 
 	// inline styles from script win over the sheet
 	CHECK(e.script["onClick"].is_function());

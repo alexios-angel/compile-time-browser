@@ -40,6 +40,15 @@ PUBLIC DOMAIN: font8x8 by Daniel Hepper <daniel@hepper.net>
 (https://github.com/dhepper/font8x8), based on public-domain work by
 Marcel Sondaar / International Business Machines.
 
-Simple DirectMedia Layer (SDL3, https://libsdl.org) is used as an
-external dependency and is NOT bundled; SDL is distributed under the
-zlib license.
+The PNG writer (include/ctbrowser/stb_image_write.h) is stb_image_write
+v1.16 by Sean Barrett and contributors (https://github.com/nothings/stb),
+used under its PUBLIC DOMAIN (Unlicense) option.
+
+The example assets (examples/assets/) are generated deterministically
+by tools/gen-assets.py in this repository and carry no third-party
+content.
+
+Simple DirectMedia Layer (SDL3, https://libsdl.org) and its optional
+satellite libraries SDL3_image, SDL3_mixer and SDL3_ttf are used as
+external dependencies and are NOT bundled; all are distributed under
+the zlib license.
