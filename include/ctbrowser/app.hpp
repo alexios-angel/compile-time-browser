@@ -94,7 +94,7 @@ template <typename Page> int run_app(app_options opts = {}) {
 		return 1;
 	}
 
-	detail::canvas_textures textures{renderer};
+	detail::canvas_textures textures{renderer, {}};
 	std::string shown_title = e.title;
 	Uint64 last = SDL_GetTicks();
 	int frames = 0;
