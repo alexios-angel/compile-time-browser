@@ -10,8 +10,13 @@ file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/assets" DESTINATION "${CMAKE_CURRENT_BINA
 foreach(source ${example-sources})
   get_filename_component(example "${source}" NAME_WE)
   add_executable(ctbrowser-example-${example} "${source}")
-  if(example STREQUAL "pong" AND TARGET ctbrowser-pong-inc)
-    add_dependencies(ctbrowser-example-${example} ctbrowser-pong-inc)
+  if(TARGET ctbrowser-${example}-inc)
+    add_dependencies(ctbrowser-example-${example} ctbrowser-${example}-inc)
+  endif()
+  if(example STREQUAL "fetchboard" AND CTBROWSER_EXAMPLES_FETCH)
+    target_compile_options(ctbrowser-example-${example} PRIVATE
+      "--fetch-allow=https://example.com/"
+      "--fetch-allow=https://raw.githubusercontent.com/**")
   endif()
   target_link_libraries(ctbrowser-example-${example} PRIVATE ctbrowser::ctbrowser SDL3::SDL3 ${CTBROWSER_SAT_LIBS})
   target_compile_definitions(ctbrowser-example-${example} PRIVATE ${CTBROWSER_SAT_DEFS})

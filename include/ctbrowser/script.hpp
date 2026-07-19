@@ -40,6 +40,15 @@
 //    DOM event objects (e.code "ArrowRight", e.clientX),
 //    requestAnimationFrame, alert, document.location.reload - enough
 //    that an unmodified MDN-tutorial page (examples/pong.html) runs.
+//
+// And the network, resolved at BUILD time:
+//   const response = await fetch("https://.../config.json");
+//   const config = await response.json();   // also text(), bytes()
+// fetch() serves from the embedded-asset registry - every fetch("...")
+// literal was already fetched at compile time by assets.hpp on
+// --fetch-allow builds - so the promises are settled by construction
+// (which is the exact subset ctjs implements). Un-baked URLs reject
+// with a TypeError, the same shape a real network failure has.
 
 namespace ctbrowser {
 
@@ -52,6 +61,17 @@ struct dom_events {
 	std::map<std::string, std::vector<ctjs::value>, std::less<>> listeners;
 	std::vector<ctjs::value> raf;
 	double raf_id = 0;
+	// setTimeout/setInterval: fired by the engine's tick() against the
+	// same now_ms clock performance.now exposes
+	struct timer_entry {
+		double id;
+		double due_ms;
+		double interval_ms;
+		bool repeat;
+		ctjs::value fn;
+	};
+	std::vector<timer_entry> timers;
+	double timer_seq = 0;
 	std::vector<std::string> alerts;
 	bool reload = false;
 	double now_ms = 0;
@@ -81,9 +101,42 @@ struct dom_events {
 		cx = nullptr;
 		listeners.clear();
 		raf.clear();
+		timers.clear();
 		alerts.clear();
 		reload = false;
 		tracked.clear();
+	}
+
+	// fire everything due at now_ms. Handlers may add or clear timers
+	// mid-flight, so each round re-scans from the start and moves the
+	// fired entry out first; the round cap keeps a 0ms-retimer chain
+	// from wedging the frame
+	void run_timers() {
+		for (int rounds = 0; rounds < 64; ++rounds) {
+			bool fired = false;
+			for (size_t i = 0; i < timers.size(); ++i) {
+				if (timers[i].due_ms > now_ms) { continue; }
+				timer_entry t = timers[i];
+				if (t.repeat) {
+					timers[i].due_ms = t.due_ms + (t.interval_ms > 1.0 ? t.interval_ms : 1.0);
+				} else {
+					timers.erase(timers.begin() + static_cast<ptrdiff_t>(i));
+				}
+				invoke(t.fn, {});
+				fired = true;
+				break;
+			}
+			if (!fired) { return; }
+		}
+	}
+
+	void clear_timer(double id) {
+		for (size_t i = 0; i < timers.size(); ++i) {
+			if (timers[i].id == id) {
+				timers.erase(timers.begin() + static_cast<ptrdiff_t>(i));
+				return;
+			}
+		}
 	}
 
 	void invoke(const ctjs::value & fn, std::vector<ctjs::value> args) {
@@ -916,6 +969,34 @@ inline std::vector<ctjs::binding> dom_bindings(document & doc, std::string & tit
 		         return ctjs::value{++ev.raf_id};
 	         },
 	         "requestAnimationFrame")});
+	{
+		// setTimeout/setInterval share the engine clock; fired by tick()
+		const auto arm = [&ev](bool repeat, const char * name) {
+			return ctjs::value::function(
+			    [&ev, repeat](ctjs::context & cx, const std::vector<ctjs::value> & a)
+			        -> ctjs::value {
+				    ev.cx = &cx;
+				    if (a.empty() || !a[0].is_function()) { return ctjs::value{0.0}; }
+				    const double ms = a.size() > 1 ? a[1].to_number() : 0.0;
+				    ev.timers.push_back({++ev.timer_seq, ev.now_ms + (ms > 0 ? ms : 0),
+				                         ms > 0 ? ms : 0, repeat, a[0]});
+				    return ctjs::value{ev.timer_seq};
+			    },
+			    name);
+		};
+		out.push_back({"setTimeout", arm(false, "setTimeout")});
+		out.push_back({"setInterval", arm(true, "setInterval")});
+		const auto disarm = [&ev](const char * name) {
+			return ctjs::value::function(
+			    [&ev](ctjs::context &, const std::vector<ctjs::value> & a) -> ctjs::value {
+				    if (!a.empty() && a[0].is_number()) { ev.clear_timer(a[0].as_number()); }
+				    return ctjs::value{};
+			    },
+			    name);
+		};
+		out.push_back({"clearTimeout", disarm("clearTimeout")});
+		out.push_back({"clearInterval", disarm("clearInterval")});
+	}
 	out.push_back({"alert",
 	               ctjs::value::function(
 	                   [&ev](ctjs::context &, const std::vector<ctjs::value> & a) {
@@ -925,6 +1006,63 @@ inline std::vector<ctjs::binding> dom_bindings(document & doc, std::string & tit
 		                   return ctjs::value{};
 	                   },
 	                   "alert")});
+	out.push_back(
+	    {"fetch",
+	     ctjs::native(
+	         [&images](const std::vector<ctjs::value> & a) -> ctjs::value {
+		         // the web fetch(), backed by COMPILE-TIME fetching: every
+		         // fetch("https://...") literal in the page's script was
+		         // fetched during the build (assets.hpp, --fetch-allow
+		         // gated) into the embedded-asset registry, so the promise
+		         // this returns is already settled - which is exactly the
+		         // subset ctjs promises implement. A URL that was not (or
+		         // could not be) baked in rejects like a network failure.
+		         const std::string url = a.empty() ? "" : a[0].to_string();
+		         const embedded_asset * hit = find_asset(images.embedded, url);
+		         if (hit == nullptr) {
+			         return ctjs::make_promise(
+			             ctjs::make_error("TypeError", "Failed to fetch: " + url), true);
+		         }
+		         std::string body{reinterpret_cast<const char *>(hit->data), hit->size};
+		         ctjs::object_t r;
+		         r.set("ok", ctjs::value{true});
+		         r.set("status", ctjs::value{200});
+		         r.set("url", ctjs::value{url});
+		         r.set("text", ctjs::value::function(
+		                           [body](ctjs::context &, const std::vector<ctjs::value> &) {
+			                           return ctjs::make_promise(ctjs::value{body}, false);
+		                           },
+		                           "text"));
+		         r.set("json",
+		               ctjs::value::function(
+		                   [body](ctjs::context &, const std::vector<ctjs::value> &)
+		                       -> ctjs::value {
+			                   try {
+				                   size_t i = 0;
+				                   ctjs::value parsed = ctjs::detail::json_value(body, i, 0);
+				                   ctjs::detail::json_ws(body, i);
+				                   if (i != body.size()) { ctjs::detail::json_fail(i); }
+				                   return ctjs::make_promise(std::move(parsed), false);
+			                   } catch (const ctjs::js_throw & ex) {
+				                   return ctjs::make_promise(ex.thrown, true);
+			                   }
+		                   },
+		                   "json"));
+		         r.set("bytes", ctjs::value::function(
+		                            [body](ctjs::context &, const std::vector<ctjs::value> &) {
+			                            ctjs::array_t bytes;
+			                            bytes.reserve(body.size());
+			                            for (const char c : body) {
+				                            bytes.push_back(ctjs::value{static_cast<double>(
+				                                static_cast<unsigned char>(c))});
+			                            }
+			                            return ctjs::make_promise(
+			                                ctjs::value::array(std::move(bytes)), false);
+		                            },
+		                            "bytes"));
+		         return ctjs::make_promise(ctjs::value::object(std::move(r)), false);
+	         },
+	         "fetch")});
 	out.push_back({"loadImage",
 	               ctjs::native([&images](const std::vector<ctjs::value> & a) -> ctjs::value {
 		               if (a.empty()) { return ctjs::value{-1.0}; }

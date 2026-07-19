@@ -2,6 +2,7 @@
 #define CTBROWSER__ASSETS__HPP
 
 #include "embed.hpp"
+#include "fetch.hpp"
 #include "image.hpp"
 #ifndef CTBROWSER_IN_A_MODULE
 #include <array>
@@ -13,23 +14,33 @@
 #endif
 
 // AUTOMATIC compile-time assets. The page's script is a compile-time
-// string, so the engine can SEE every loadImage("...")/playSound("...")
-// literal at compile time - and with the std::embed clang it bakes
-// those files straight into the binary via ctbrowser::try_embed
-// (embed.hpp) and registers them itself. No per-example boilerplate:
-// a TU opts in with one guarded #depend directive (see embed.hpp).
-// Everything is OPPORTUNISTIC: no builtin, no #depend, or no file ->
-// that asset silently stays a runtime filesystem load.
+// string, so the engine can SEE every loadImage("...")/playSound("...")/
+// fetch("...") literal at compile time - and with the std::embed clang
+// it bakes those resources straight into the binary and registers them
+// itself. File paths go through ctbrowser::try_embed (embed.hpp); an
+// http(s):// URL goes through ctbrowser::try_fetch (fetch.hpp) instead
+// - scripts, stylesheets, fonts, JSON data, sprites: whatever the URL
+// serves is fetched AT COMPILE TIME and embedded, which is also what
+// backs the script-visible `await fetch(url)` (script.hpp). No
+// per-example boilerplate: a TU opts in with one guarded #depend
+// directive (see embed.hpp), and URL fetches additionally need the
+// build to pass --fetch-allow=<url-glob> (nothing is allowed by
+// default, so offline/default builds never touch the network).
+// Everything is OPPORTUNISTIC: no builtin, no #depend, no file, or no
+// --fetch-allow -> that asset silently stays a runtime load (files) or
+// a rejected fetch (URLs).
 
 namespace ctbrowser {
 
 namespace detail {
 
 // find the string literal arguments of loadImage("...") / playSound("...")
+// / fetch("...")
 template <typename Src> struct script_asset_scan {
 	static constexpr std::string_view text = Src::get();
-	static constexpr std::array<std::string_view, 2> needles{"loadImage(\"",
-	                                                         "playSound(\""};
+	static constexpr std::array<std::string_view, 3> needles{"loadImage(\"",
+	                                                         "playSound(\"",
+	                                                         "fetch(\""};
 
 	// {offset, length} of the path at position i, or length 0
 	static consteval std::pair<size_t, size_t> ref_at(size_t i) {
@@ -71,9 +82,27 @@ template <typename Src> struct script_asset_scan {
 
 #ifdef CTBROWSER_HAS_STD_EMBED
 
+constexpr bool is_fetch_url(std::string_view path) {
+	return path.starts_with("http://") || path.starts_with("https://");
+}
+
 template <typename Src, size_t I> struct auto_embedded {
 	static constexpr std::string_view path = script_asset_scan<Src>::path(I);
-	static constexpr std::span<const unsigned char> blob = try_embed<unsigned char>(path);
+	// URLs fetch over the network AT COMPILE TIME (allow-list gated),
+	// everything else embeds from the filesystem; either way the bytes
+	// land in the same registry under the exact literal the script uses
+	static consteval std::span<const unsigned char> load() {
+		if constexpr (is_fetch_url(path)) {
+#ifdef CTBROWSER_HAS_STD_FETCH
+			return try_fetch<unsigned char>(path);
+#else
+			return {};
+#endif
+		} else {
+			return try_embed<unsigned char>(path);
+		}
+	}
+	static constexpr std::span<const unsigned char> blob = load();
 };
 
 template <typename Src, size_t... I>

@@ -50,10 +50,20 @@ $(PCH): ../include/ctbrowser.hpp
 	@ulimit -s unlimited 2>/dev/null; $(CXX) $(filter-out $(SDL_CFLAGS),$(CXXFLAGS)) -x c++-header $< -o $@
 
 # real .html pages become raw-string .inc literals (see tools/html-to-inc.py)
-pong.inc: pong.html ../tools/html-to-inc.py
+pong.inc fetchboard.inc: %.inc: %.html ../tools/html-to-inc.py
 	python3 ../tools/html-to-inc.py $< > $@
 
 pong: pong.inc
+fetchboard: fetchboard.inc
+
+# make FETCH=1: authorize the compile-time fetches in fetchboard.html,
+# so the build's constant evaluator performs the HTTP GETs and embeds
+# the responses. Without it the build never touches the network and the
+# page's catch branches explain what is missing.
+ifneq ($(FETCH),)
+CXXFLAGS += --fetch-allow=https://example.com/ \
+            '--fetch-allow=https://raw.githubusercontent.com/**'
+endif
 
 %: %.cpp $(PCH)
 	@ulimit -s unlimited 2>/dev/null; $(CXX) $(CXXFLAGS) $(PCH_USE) $< -o $@ $(SDL_LIBS)
@@ -62,6 +72,6 @@ run: all
 	@for t in $(TARGETS); do printf '== %s ==\n' "$$t"; ./$$t; echo; done
 
 clean:
-	rm -f $(TARGETS) pong.inc
+	rm -f $(TARGETS) pong.inc fetchboard.inc
 
 .PHONY: all run clean

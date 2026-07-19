@@ -117,6 +117,7 @@ public:
 	void tick(double dt) {
 		deliver(script, "onFrame", dt);
 		ev.now_ms += dt * 1000.0;
+		ev.run_timers(); // setTimeout/setInterval due by the new clock
 		// requestAnimationFrame: swap the list out first - callbacks
 		// re-register themselves for the NEXT frame
 		std::vector<ctjs::value> due;

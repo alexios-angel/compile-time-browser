@@ -161,22 +161,30 @@ if(SDL3_FOUND)
   message(STATUS "ctbrowser: SDL3 found; satellites: ${CTBROWSER_SAT_DEFS}")
 endif()
 
-# pong.html -> examples/pong.inc: the REAL .html file becomes a
-# raw-string literal that #include's into the page<...> template
-# argument (consumed by tests/pong.cpp and examples/pong.cpp)
+# *.html -> examples/*.inc: the REAL .html file becomes a raw-string
+# literal that #include's into the page<...> template argument
+# (consumed by tests/pong.cpp and examples/{pong,fetchboard}.cpp)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
-  add_custom_command(
-    OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/examples/pong.inc"
-    COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tools/html-to-inc.py"
-            "${CMAKE_CURRENT_SOURCE_DIR}/examples/pong.html"
-            "${CMAKE_CURRENT_SOURCE_DIR}/examples/pong.inc"
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/examples/pong.html"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tools/html-to-inc.py"
-    COMMENT "Wrapping examples/pong.html as a raw-string literal")
-  add_custom_target(ctbrowser-pong-inc
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/examples/pong.inc")
+  foreach(html-page pong fetchboard)
+    add_custom_command(
+      OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/examples/${html-page}.inc"
+      COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tools/html-to-inc.py"
+              "${CMAKE_CURRENT_SOURCE_DIR}/examples/${html-page}.html"
+              "${CMAKE_CURRENT_SOURCE_DIR}/examples/${html-page}.inc"
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/examples/${html-page}.html"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tools/html-to-inc.py"
+      COMMENT "Wrapping examples/${html-page}.html as a raw-string literal")
+    add_custom_target(ctbrowser-${html-page}-inc
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/examples/${html-page}.inc")
+  endforeach()
 endif()
+
+# -DCTBROWSER_EXAMPLES_FETCH=ON: authorize fetchboard.html's compile-
+# time fetches (the constant evaluator performs the HTTP GETs and
+# embeds the responses). OFF = never touch the network; the page's
+# catch branches explain what is missing.
+option(CTBROWSER_EXAMPLES_FETCH "compile-time-fetch the example pages' URLs" OFF)
 
 if(CTBROWSER_BUILD_TESTS)
   add_subdirectory(tests)

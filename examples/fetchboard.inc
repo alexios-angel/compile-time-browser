@@ -1,0 +1,56 @@
+R"ctb(<!DOCTYPE html>
+<html>
+<head>
+<title>fetchboard — the network, at compile time</title>
+<style>
+	body { background: #101418; color: #e8e8e8; }
+	h1 { color: #ffb454; font-size: 18px; margin: 12px; }
+	.card { background: #1b222b; margin: 12px; padding: 10px; font-size: 12px; }
+	#example { color: #7fd962; }
+	#presets { color: #73b8ff; }
+	#status { color: #f26d78; margin: 12px; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>resources on this page were fetched at COMPILE time</h1>
+<div class="card" id="example">fetching example.com…</div>
+<div class="card" id="presets">fetching pinned JSON…</div>
+<div id="status"></div>
+<script>
+	// Both URLs below were fetched DURING THE BUILD (std::fetch inside
+	// the compiler's constant evaluator) and embedded into this binary;
+	// await fetch(url) just unwraps the already-settled bytes. Build
+	// with `make FETCH=1 fetchboard` to bake them in - without the
+	// flag the fetches reject and the catch branches show why.
+	async function boot() {
+		try {
+			const page = await fetch("https://example.com/");
+			const html = await page.text();
+			document.getElementById("example").setText(
+				"example.com => HTTP " + page.status + ", " + html.length +
+				" bytes of HTML, fetched before this program ever ran");
+		} catch (e) {
+			document.getElementById("example").setText(
+				"example.com was not baked in - rebuild with FETCH=1 (" + e.message + ")");
+		}
+		try {
+			// pinned to a commit: immutable content, reproducible build
+			const r = await fetch("https://raw.githubusercontent.com/alexios-angel/embed/7d5d3eb3a43a15fa34fd274632f5d5c99545db73/CMakePresets.json");
+			const doc = await r.json();
+			let names = [];
+			for (const p of doc.configurePresets) { names.push(p.name); }
+			document.getElementById("presets").setText(
+				"embed@7d5d3eb CMakePresets.json => version " + doc.version +
+				", configurePresets: " + names.join(", "));
+		} catch (e) {
+			document.getElementById("presets").setText(
+				"pinned JSON was not baked in - rebuild with FETCH=1 (" + e.message + ")");
+		}
+	}
+	boot();
+	document.getElementById("status").setText(
+		"no sockets were opened at runtime; there is nothing to be offline from");
+</script>
+</body>
+</html>
+)ctb"

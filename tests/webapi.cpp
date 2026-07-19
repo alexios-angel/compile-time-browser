@@ -53,6 +53,18 @@ using app = ctbrowser::page<R"(<!DOCTYPE html>
 	function loop(ts) { frames = frames + 1; requestAnimationFrame(loop); }
 	requestAnimationFrame(loop);
 	var dpr = window.devicePixelRatio;
+
+	// timers share the tick clock: 5 frames at 60fps = ~83ms
+	var timeout_fired = false;
+	var interval_count = 0;
+	var cancelled_fired = false;
+	setTimeout(() => { timeout_fired = true; }, 50);
+	var iv = setInterval(() => {
+		interval_count += 1;
+		if (interval_count >= 3) { clearInterval(iv); }
+	}, 20);
+	var dead = setTimeout(() => { cancelled_fired = true; }, 10);
+	clearTimeout(dead);
 </script>
 </body>)">;
 
@@ -89,6 +101,13 @@ int main() {
 	CHECK(e.script["frames"].to_number() == 5);
 	CHECK(e.ev.raf.size() == 1);
 	CHECK(e.script["dpr"].to_number() == 1.0);
+
+	// timers: the 50ms timeout fired, the 20ms interval ran exactly 3
+	// times before clearing itself, the cancelled timeout never ran
+	CHECK(e.script["timeout_fired"].to<bool>());
+	CHECK(e.script["interval_count"].to_number() == 3);
+	CHECK(!e.script["cancelled_fired"].to<bool>());
+	CHECK(e.ev.timers.empty()); // nothing left armed
 
 	if (failures == 0) { std::printf("webapi suite: all checks passed\n"); }
 	return failures == 0 ? 0 : 1;
