@@ -49,6 +49,7 @@ using app = ctbrowser::page<R"(<!DOCTYPE html>
     box.rotation.y += 0.08;
     scene.render();
   });
+  window.addEventListener("resize", function () { engine.resize(); });
 </script>)">;
 
 static_assert(app::script_valid, "the Babylon script must parse");
@@ -144,6 +145,17 @@ int main() {
 		CHECK(blueBox > 100);        // the box renders
 		CHECK(redThrough == 0);      // ...and occludes the interior sphere (outward winding)
 	}
+
+	// window resize: resize_viewport fires the DOM "resize" event, whose
+	// listener calls engine.resize(), which resizes the canvas to the
+	// new viewport (so the 3D view fills the resized window)
+	e.resize_viewport(500, 400);
+	CHECK(c->canvas_w == 500 && c->canvas_h == 400);
+	e.tick(1.0 / 60.0);                          // renders at the new size
+	CHECK(c->pixels.size() == static_cast<size_t>(500) * 400);
+	size_t nonClearBig = 0;
+	for (uint32_t p : c->pixels) { if (p != clear) { ++nonClearBig; } }
+	CHECK(nonClearBig > 500);                    // still rendering after resize
 
 	if (failures == 0) { std::printf("babylon suite: all checks passed\n"); }
 	return failures ? 1 : 0;

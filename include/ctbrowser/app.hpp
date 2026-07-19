@@ -180,20 +180,26 @@ inline std::string probe_font() {
 
 struct canvas_textures {
 	SDL_Renderer * renderer = nullptr;
-	std::map<const node *, SDL_Texture *> cache;
+	struct entry { SDL_Texture * tex; int w, h; };
+	std::map<const node *, entry> cache;
 
 	SDL_Texture * of(node * n) {
-		if (const auto it = cache.find(n); it != cache.end()) { return it->second; }
+		if (const auto it = cache.find(n); it != cache.end()) {
+			// the canvas kept its size: reuse; else recreate (engine.resize)
+			if (it->second.w == n->canvas_w && it->second.h == n->canvas_h) { return it->second.tex; }
+			SDL_DestroyTexture(it->second.tex);
+			cache.erase(it);
+		}
 		SDL_Texture * t = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
 		                                    SDL_TEXTUREACCESS_STREAMING, n->canvas_w,
 		                                    n->canvas_h);
 		SDL_SetTextureScaleMode(t, SDL_SCALEMODE_NEAREST);
 		SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND); // clearRect shows the page
-		cache.emplace(n, t);
+		cache.emplace(n, entry{t, n->canvas_w, n->canvas_h});
 		return t;
 	}
 	~canvas_textures() {
-		for (auto & [n, t] : cache) { SDL_DestroyTexture(t); }
+		for (auto & [n, e] : cache) { SDL_DestroyTexture(e.tex); }
 	}
 };
 
@@ -368,6 +374,16 @@ template <typename Page> int run_app(app_options opts = {}) {
 		if (fullscreen_dirty) {
 			fullscreen_dirty = false;
 			SDL_SetWindowFullscreen(window, want_fullscreen);
+		}
+
+		// keep the viewport in sync with the window BEFORE the frame runs;
+		// a size change fires a DOM "resize" event so scripts can react
+		// (BabylonJS: window.addEventListener('resize', ()=>engine.resize()))
+		{
+			int vw = opts.width, vh = opts.height;
+			if (opts.logical_w > 0) { vw = opts.logical_w; vh = opts.logical_h; }
+			else { SDL_GetWindowSize(window, &vw, &vh); }
+			e.resize_viewport(vw, vh);
 		}
 
 		const Uint64 now = SDL_GetTicks();

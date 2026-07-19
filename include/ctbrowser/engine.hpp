@@ -80,6 +80,17 @@ public:
 		return cmds;
 	}
 
+	// keep the viewport dimensions current; on a change, refresh
+	// window.innerWidth/innerHeight and dispatch a DOM "resize" event so
+	// scripts (e.g. BabylonJS's engine.resize()) can react
+	void resize_viewport(int w, int h) {
+		if (ev.viewport_w == w && ev.viewport_h == h) { return; }
+		ev.viewport_w = w;
+		ev.viewport_h = h;
+		ev.refresh_tracked();
+		ev.dispatch("resize", ctjs::value{});
+	}
+
 	// --- event delivery (missing handlers are quietly skipped)
 
 	void click_at(int x, int y) {

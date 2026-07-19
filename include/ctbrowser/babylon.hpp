@@ -1171,7 +1171,18 @@ inline value make_engine(const worldptr & W, dom_events & ev, const std::vector<
 	h->set("getFps", value::function([W](ctjs::context &, const std::vector<value> &) {
 		return value{W->last_dt_ms > 0 ? 1000.0 / W->last_dt_ms : 60.0};
 	}, "getFps"));
-	h->set("resize", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "resize"));
+	// engine.resize(): match the canvas drawing buffer to the current
+	// viewport (window inner size) so the 3D view fills the resized window
+	h->set("resize", value::function([W, &ev](ctjs::context &, const std::vector<value> &) -> value {
+		if (W->target != nullptr && ev.viewport_w > 0 && ev.viewport_h > 0 &&
+		    (W->target->canvas_w != ev.viewport_w || W->target->canvas_h != ev.viewport_h)) {
+			ctbrowser::node * n = W->target;
+			n->canvas_w = ev.viewport_w;
+			n->canvas_h = ev.viewport_h;
+			n->pixels.assign(static_cast<size_t>(n->canvas_w) * static_cast<size_t>(n->canvas_h), 0xFF000000u);
+		}
+		return value{};
+	}, "resize"));
 	h->set("dispose", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "dispose"));
 	h->set("displayLoadingUI", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "displayLoadingUI"));
 	h->set("hideLoadingUI", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "hideLoadingUI"));
