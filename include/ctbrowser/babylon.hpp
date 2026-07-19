@@ -34,7 +34,11 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
+#include <memory>
+#include <string>
+#include <string_view>
 #include <vector>
 #include <boost/qvm/vec.hpp>
 #include <boost/qvm/vec_access.hpp>
@@ -363,6 +367,282 @@ private:
 
 } // namespace r3d
 
+// ============================================================
+//  gltf — a minimal binary-glTF (GLB) loader. Pure C++ (+ r3d), no
+//  ctjs. Parses the GLB container, a small JSON subset, and triangle
+//  primitives (POSITION + indices), baking each node's transform into
+//  world-space geometry. PBR baseColorFactor -> flat diffuse (no
+//  textures / PBR / IBL; no nested node hierarchy).
+// ============================================================
+namespace gltf {
+
+// --- a tiny JSON value (enough to navigate a glTF document)
+struct jval;
+using jarr = std::vector<jval>;
+using jobj = std::vector<std::pair<std::string, jval>>;
+struct jval {
+	enum kind { nul, boolean, number, string, array, object } k = nul;
+	double num = 0;
+	bool boo = false;
+	std::string str;
+	std::shared_ptr<jarr> arr;
+	std::shared_ptr<jobj> obj;
+
+	const jval * get(std::string_view key) const {
+		if (k != object || !obj) { return nullptr; }
+		for (const auto & kv : *obj) { if (kv.first == key) { return &kv.second; } }
+		return nullptr;
+	}
+	const jval & operator[](size_t i) const {
+		static const jval empty;
+		return (k == array && arr && i < arr->size()) ? (*arr)[i] : empty;
+	}
+	size_t size() const {
+		return k == array && arr ? arr->size() : (k == object && obj ? obj->size() : 0);
+	}
+	double as_num(double d = 0) const { return k == number ? num : d; }
+	int as_int(int d = 0) const { return k == number ? static_cast<int>(num) : d; }
+	std::string as_str() const { return k == string ? str : std::string{}; }
+};
+
+struct jparser {
+	const char * p;
+	const char * e;
+	void ws() { while (p < e && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) { ++p; } }
+	jval value() {
+		ws();
+		if (p >= e) { return {}; }
+		const char c = *p;
+		if (c == '{') { return object(); }
+		if (c == '[') { return array(); }
+		if (c == '"') { jval v; v.k = jval::string; v.str = str(); return v; }
+		if (c == 't') { p += 4; jval v; v.k = jval::boolean; v.boo = true; return v; }
+		if (c == 'f') { p += 5; jval v; v.k = jval::boolean; v.boo = false; return v; }
+		if (c == 'n') { p += 4; return {}; }
+		return number();
+	}
+	std::string str() {
+		std::string s;
+		if (p < e) { ++p; } // opening quote
+		while (p < e && *p != '"') {
+			char c = *p++;
+			if (c == '\\' && p < e) {
+				const char x = *p++;
+				switch (x) {
+					case 'n': s += '\n'; break;
+					case 't': s += '\t'; break;
+					case 'r': s += '\r'; break;
+					case 'b': s += '\b'; break;
+					case 'f': s += '\f'; break;
+					case 'u': {
+						unsigned cp = 0;
+						for (int i = 0; i < 4 && p < e; ++i) {
+							const char h = *p++;
+							cp = cp * 16 + static_cast<unsigned>(h <= '9' ? h - '0' : (h | 0x20) - 'a' + 10);
+						}
+						if (cp < 0x80) { s += static_cast<char>(cp); }
+						else if (cp < 0x800) { s += static_cast<char>(0xC0 | (cp >> 6)); s += static_cast<char>(0x80 | (cp & 0x3F)); }
+						else { s += static_cast<char>(0xE0 | (cp >> 12)); s += static_cast<char>(0x80 | ((cp >> 6) & 0x3F)); s += static_cast<char>(0x80 | (cp & 0x3F)); }
+						break;
+					}
+					default: s += x;
+				}
+			} else {
+				s += c;
+			}
+		}
+		if (p < e) { ++p; } // closing quote
+		return s;
+	}
+	jval number() {
+		const char * s = p;
+		while (p < e && (*p == '-' || *p == '+' || *p == '.' || *p == 'e' || *p == 'E' ||
+		                 (*p >= '0' && *p <= '9'))) { ++p; }
+		jval v;
+		v.k = jval::number;
+		v.num = std::strtod(std::string(s, p).c_str(), nullptr);
+		return v;
+	}
+	jval array() {
+		jval v; v.k = jval::array; v.arr = std::make_shared<jarr>(); ++p; ws();
+		if (p < e && *p == ']') { ++p; return v; }
+		while (p < e) {
+			v.arr->push_back(value()); ws();
+			if (p < e && *p == ',') { ++p; continue; }
+			if (p < e && *p == ']') { ++p; break; }
+			break;
+		}
+		return v;
+	}
+	jval object() {
+		jval v; v.k = jval::object; v.obj = std::make_shared<jobj>(); ++p; ws();
+		if (p < e && *p == '}') { ++p; return v; }
+		while (p < e) {
+			ws();
+			std::string key = str();
+			ws();
+			if (p < e && *p == ':') { ++p; }
+			jval val = value();
+			v.obj->emplace_back(std::move(key), std::move(val));
+			ws();
+			if (p < e && *p == ',') { ++p; continue; }
+			if (p < e && *p == '}') { ++p; break; }
+			break;
+		}
+		return v;
+	}
+};
+inline jval json_parse(std::string_view s) {
+	jparser jp{s.data(), s.data() + s.size()};
+	jp.ws();
+	return jp.value();
+}
+
+// --- the parsed model
+struct material { std::string name; r3d::rgba base{0.8, 0.8, 0.8, 1}; };
+struct primitive {
+	std::vector<r3d::vec3> verts;
+	std::vector<std::array<int, 3>> tris;
+	int material = -1;
+	std::string node_name;
+};
+struct model {
+	std::vector<primitive> prims;
+	std::vector<material> materials;
+	r3d::vec3 bmin{}, bmax{};
+	bool ok = false;
+};
+
+// node "matrix" is column-major (glTF spec) -> our a[row][col]
+inline r3d::mat4 node_matrix(const jval & node) {
+	if (const jval * m = node.get("matrix")) {
+		if (m->size() == 16) {
+			r3d::mat4 M = r3d::identity();
+			for (int c = 0; c < 4; ++c)
+				for (int r = 0; r < 4; ++r) M.a[r][c] = (*m)[static_cast<size_t>(c * 4 + r)].as_num();
+			return M;
+		}
+	}
+	r3d::mat4 T = r3d::identity(), R = r3d::identity(), S = r3d::identity();
+	if (const jval * t = node.get("translation"))
+		T = r3d::translation((*t)[0].as_num(), (*t)[1].as_num(), (*t)[2].as_num());
+	if (const jval * s = node.get("scale"))
+		S = r3d::scaling((*s)[0].as_num(1), (*s)[1].as_num(1), (*s)[2].as_num(1));
+	if (const jval * q = node.get("rotation")) {
+		// quaternion (x,y,z,w) -> rotation matrix
+		const double x = (*q)[0].as_num(), y = (*q)[1].as_num(), z = (*q)[2].as_num(), w = (*q)[3].as_num(1);
+		R.a[0][0] = 1 - 2 * (y * y + z * z); R.a[0][1] = 2 * (x * y - z * w); R.a[0][2] = 2 * (x * z + y * w);
+		R.a[1][0] = 2 * (x * y + z * w); R.a[1][1] = 1 - 2 * (x * x + z * z); R.a[1][2] = 2 * (y * z - x * w);
+		R.a[2][0] = 2 * (x * z - y * w); R.a[2][1] = 2 * (y * z + x * w); R.a[2][2] = 1 - 2 * (x * x + y * y);
+	}
+	return T * (R * S);
+}
+
+inline model parse_glb(const unsigned char * data, size_t len) {
+	model out;
+	if (len < 20 || std::memcmp(data, "glTF", 4) != 0) { return out; }
+	auto rd32 = [&](size_t o) { uint32_t v; std::memcpy(&v, data + o, 4); return v; };
+	const uint32_t jlen = rd32(12);
+	std::string_view json(reinterpret_cast<const char *>(data) + 20, jlen);
+	const size_t off = 20 + jlen;
+	const unsigned char * bin = nullptr;
+	if (off + 8 <= len) { bin = data + off + 8; }
+	if (bin == nullptr) { return out; }
+
+	const jval doc = json_parse(json);
+	const jval * accessors = doc.get("accessors");
+	const jval * bufferViews = doc.get("bufferViews");
+	const jval * meshes = doc.get("meshes");
+	const jval * nodes = doc.get("nodes");
+	const jval * mats = doc.get("materials");
+	if (accessors == nullptr || bufferViews == nullptr || meshes == nullptr || nodes == nullptr) { return out; }
+
+	if (mats != nullptr) {
+		for (size_t i = 0; i < mats->size(); ++i) {
+			const jval & m = (*mats)[i];
+			material mm;
+			mm.name = m.get("name") ? m.get("name")->as_str() : ("mat" + std::to_string(i));
+			if (const jval * pbr = m.get("pbrMetallicRoughness")) {
+				if (const jval * bc = pbr->get("baseColorFactor")) {
+					if (bc->size() >= 3) {
+						mm.base = {(*bc)[0].as_num(1), (*bc)[1].as_num(1), (*bc)[2].as_num(1),
+						           bc->size() > 3 ? (*bc)[3].as_num(1) : 1.0};
+					}
+				}
+			}
+			out.materials.push_back(mm);
+		}
+	}
+
+	auto acc_view = [&](int acc, size_t & count, size_t & stride, int & ctype) -> const unsigned char * {
+		const jval & a = (*accessors)[static_cast<size_t>(acc)];
+		count = static_cast<size_t>(a.get("count") ? a.get("count")->as_num() : 0);
+		ctype = a.get("componentType") ? a.get("componentType")->as_int() : 5126;
+		const int bvi = a.get("bufferView") ? a.get("bufferView")->as_int() : 0;
+		const size_t aoff = a.get("byteOffset") ? static_cast<size_t>(a.get("byteOffset")->as_num()) : 0;
+		const jval & bv = (*bufferViews)[static_cast<size_t>(bvi)];
+		const size_t boff = bv.get("byteOffset") ? static_cast<size_t>(bv.get("byteOffset")->as_num()) : 0;
+		stride = bv.get("byteStride") ? static_cast<size_t>(bv.get("byteStride")->as_num()) : 0;
+		return bin + boff + aoff;
+	};
+
+	bool first = true;
+	for (size_t ni = 0; ni < nodes->size(); ++ni) {
+		const jval & node = (*nodes)[ni];
+		if (node.get("mesh") == nullptr) { continue; }
+		const r3d::mat4 xf = node_matrix(node);
+		const int mi = node.get("mesh")->as_int();
+		const jval & mesh = (*meshes)[static_cast<size_t>(mi)];
+		const jval * prims = mesh.get("primitives");
+		if (prims == nullptr) { continue; }
+		for (size_t pi = 0; pi < prims->size(); ++pi) {
+			const jval & pr = (*prims)[pi];
+			const jval * attr = pr.get("attributes");
+			if (attr == nullptr || attr->get("POSITION") == nullptr || pr.get("indices") == nullptr) { continue; }
+			primitive out_p;
+			out_p.node_name = node.get("name") ? node.get("name")->as_str() : "";
+			out_p.material = pr.get("material") ? pr.get("material")->as_int() : -1;
+
+			// POSITION (VEC3 float), transformed by the node matrix
+			size_t vcount, vstride; int vtype;
+			const unsigned char * vp = acc_view(attr->get("POSITION")->as_int(), vcount, vstride, vtype);
+			if (vstride == 0) { vstride = 12; }
+			out_p.verts.reserve(vcount);
+			for (size_t i = 0; i < vcount; ++i) {
+				float f[3];
+				std::memcpy(f, vp + i * vstride, 12);
+				const r3d::vec4 w = r3d::xform(xf, r3d::V3(f[0], f[1], f[2]));
+				const r3d::vec3 v = r3d::V3(w.a[0], w.a[1], w.a[2]);
+				out_p.verts.push_back(v);
+				if (first) { out.bmin = out.bmax = v; first = false; }
+				for (int c = 0; c < 3; ++c) {
+					out.bmin.a[c] = std::min(out.bmin.a[c], v.a[c]);
+					out.bmax.a[c] = std::max(out.bmax.a[c], v.a[c]);
+				}
+			}
+			// indices (ubyte/ushort/uint) -> triangles
+			size_t icount, istride; int itype;
+			const unsigned char * ip = acc_view(pr.get("indices")->as_int(), icount, istride, itype);
+			const size_t comp = itype == 5121 ? 1 : (itype == 5123 ? 2 : 4);
+			std::vector<int> idx;
+			idx.reserve(icount);
+			for (size_t i = 0; i < icount; ++i) {
+				uint32_t v = 0;
+				std::memcpy(&v, ip + i * comp, comp);
+				idx.push_back(static_cast<int>(v));
+			}
+			for (size_t i = 0; i + 2 < idx.size(); i += 3) {
+				out_p.tris.push_back({idx[i], idx[i + 1], idx[i + 2]});
+			}
+			out.prims.push_back(std::move(out_p));
+		}
+	}
+	out.ok = !out.prims.empty();
+	return out;
+}
+
+} // namespace gltf
+
 #ifndef CTBROWSER_BABYLON_RENDER_ONLY
 // ============================================================
 //  BABYLON.* bindings — factory-style ctjs natives over a shared world.
@@ -424,6 +704,9 @@ struct scene_rec {
 	objptr handle;
 	std::vector<int> mesh_ids, light_ids;
 	int active_camera = -1;
+	std::vector<std::pair<std::string, objptr>> materials; // for getMaterialById
+	r3d::vec3 bmin{}, bmax{}; // model bounds (for createDefaultCamera)
+	bool has_bounds = false;
 };
 struct world {
 	ctbrowser::node * target = nullptr;
@@ -569,8 +852,15 @@ inline void do_render(const worldptr & W, int scene_id) {
 		           (r3d::rotationYPR(rot.a[0], rot.a[1], rot.a[2]) *
 		            r3d::scaling(s.a[0], s.a[1], s.a[2]));
 		const objptr mat = child_obj(M.handle, "material");
-		it.diffuse = mat ? read_color(child_obj(mat, "diffuseColor"), r3d::rgba{0.9, 0.9, 0.9, 1})
-		                 : r3d::rgba{0.85, 0.85, 0.85, 1};
+		// StandardMaterial uses diffuseColor; glTF/OpenPBR/PBR use
+		// baseColor/albedoColor - honor whichever the material carries
+		r3d::rgba mc{0.85, 0.85, 0.85, 1};
+		if (mat) {
+			if (child_obj(mat, "baseColor")) { mc = read_color(child_obj(mat, "baseColor"), mc); }
+			else if (child_obj(mat, "albedoColor")) { mc = read_color(child_obj(mat, "albedoColor"), mc); }
+			else { mc = read_color(child_obj(mat, "diffuseColor"), mc); }
+		}
+		it.diffuse = mc;
 		it.cull = M.cull;
 		items.push_back(it);
 	}
@@ -619,6 +909,45 @@ inline value make_material(std::string name) {
 	m->set("alpha", value{1.0});
 	m->set("wireframe", value{false});
 	return value{m};
+}
+
+// add a parsed glTF model's meshes + materials into a scene
+inline void load_model(const worldptr & W, const objptr & scene, const gltf::model & mdl) {
+	const int si = index_of(scene, "__scene");
+	if (si < 0 || si >= static_cast<int>(W->scenes.size())) { return; }
+	scene_rec & sc = W->scenes[static_cast<size_t>(si)];
+
+	std::vector<objptr> mat_handles;
+	for (const gltf::material & gm : mdl.materials) {
+		objptr mh = objptr::make();
+		mh->set("name", value{gm.name});
+		mh->set("id", value{gm.name});
+		mh->set("baseColor", make_color3(gm.base.r, gm.base.g, gm.base.b));
+		mh->set("diffuseColor", make_color3(gm.base.r, gm.base.g, gm.base.b));
+		mat_handles.push_back(mh);
+		sc.materials.emplace_back(gm.name, mh);
+	}
+	for (const gltf::primitive & p : mdl.prims) {
+		const int id = static_cast<int>(W->meshes.size());
+		objptr h = objptr::make();
+		h->set("name", value{p.node_name});
+		h->set("id", value{p.node_name});
+		h->set("__mesh", value{static_cast<double>(id)});
+		h->set("position", make_vector3(0, 0, 0));
+		h->set("rotation", make_vector3(0, 0, 0));
+		h->set("scaling", make_vector3(1, 1, 1));
+		if (p.material >= 0 && p.material < static_cast<int>(mat_handles.size())) {
+			h->set("material", value{mat_handles[static_cast<size_t>(p.material)]});
+		} else {
+			h->set("material", value{});
+		}
+		r3d::geo g{p.verts, p.tris};
+		W->meshes.push_back(mesh_rec{std::move(g), h, true, false, true});
+		sc.mesh_ids.push_back(id);
+	}
+	sc.bmin = mdl.bmin;
+	sc.bmax = mdl.bmax;
+	sc.has_bounds = mdl.ok;
 }
 
 inline value make_light(const worldptr & W, int type, std::string name, r3d::vec3 dir,
@@ -755,7 +1084,53 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 	}
 	h->set("getEngine", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "getEngine"));
-	W->scenes.push_back(scene_rec{h, {}, {}, -1});
+
+	// --- model-viewer helpers (glTF loading path)
+	h->set("getMaterialById", value::function([W, id](ctjs::context &, const std::vector<value> & a) -> value {
+		if (id < 0 || id >= static_cast<int>(W->scenes.size()) || a.empty()) { return value{}; }
+		const std::string name = a[0].to_string();
+		for (const auto & mm : W->scenes[static_cast<size_t>(id)].materials) {
+			if (mm.first == name) { return value{mm.second}; }
+		}
+		return value{};
+	}, "getMaterialById"));
+	h->set("getMaterialByName", h->find("getMaterialById") ? *h->find("getMaterialById") : value{});
+	h->set("createDefaultCamera", value::function([W, id, &ev](ctjs::context &, const std::vector<value> &) -> value {
+		if (id < 0 || id >= static_cast<int>(W->scenes.size())) { return value{}; }
+		scene_rec & sc = W->scenes[static_cast<size_t>(id)];
+		r3d::vec3 c = r3d::V3(0, 0, 0);
+		double rad = 2.0;
+		if (sc.has_bounds) {
+			c = r3d::V3((sc.bmin.a[0] + sc.bmax.a[0]) * 0.5, (sc.bmin.a[1] + sc.bmax.a[1]) * 0.5,
+			            (sc.bmin.a[2] + sc.bmax.a[2]) * 0.5);
+			rad = 0.001;
+			for (int k = 0; k < 3; ++k) { rad = std::max(rad, sc.bmax.a[k] - sc.bmin.a[k]); }
+		}
+		const objptr target = make_vector3(c.a[0], c.a[1], c.a[2]).as_object();
+		return make_camera_arc(W, ev, "default_camera", -M_PI / 2, M_PI / 2.5, rad * 2.2, target, sc.handle);
+	}, "createDefaultCamera"));
+	h->set("createDefaultLight", value::function([W, id](ctjs::context &, const std::vector<value> &) -> value {
+		if (id < 0 || id >= static_cast<int>(W->scenes.size())) { return value{}; }
+		return make_light(W, 0, "default_light", r3d::V3(0, 1, 0), W->scenes[static_cast<size_t>(id)].handle);
+	}, "createDefaultLight"));
+	for (const char * nm : {"createDefaultSkybox", "createDefaultEnvironment"}) {
+		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
+	}
+	// debug inspector: no-ops satisfying `await scene.debugLayer.show(...).select(...)`
+	{
+		object_t dbg;
+		dbg.set("show", value::function([](ctjs::context &, const std::vector<value> &) -> value {
+			object_t d;
+			d.set("select", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "select"));
+			return ctjs::make_promise(value::object(std::move(d)), false);
+		}, "show"));
+		dbg.set("hide", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "hide"));
+		h->set("debugLayer", value::object(std::move(dbg)));
+	}
+
+	scene_rec srec;
+	srec.handle = h;
+	W->scenes.push_back(std::move(srec));
 	return value{h};
 }
 
@@ -800,14 +1175,49 @@ inline value make_engine(const worldptr & W, dom_events & ev, const std::vector<
 	h->set("dispose", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "dispose"));
 	h->set("displayLoadingUI", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "displayLoadingUI"));
 	h->set("hideLoadingUI", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "hideLoadingUI"));
+	{
+		object_t hi;
+		hi.set("isMobile", value{false});
+		h->set("hostInformation", value::object(std::move(hi)));
+	}
 	return value{h};
 }
 
 // --- geometry option readers for MeshBuilder
 inline double opt(const objptr & o, const char * k, double dflt) { return num_prop(o, k, dflt); }
 
-inline value build_babylon(const worldptr & W, dom_events & ev) {
+inline value build_babylon(const worldptr & W, dom_events & ev, image_store & images) {
 	auto B = objptr::make();
+
+	// AppendSceneAsync(url, scene, opts): resolve the .glb from the
+	// embedded-asset registry (same path as fetch), parse it, add its
+	// meshes/materials to the scene; returns a settled (resolved) promise.
+	auto append_scene = value::function([W, &images](ctjs::context &, const std::vector<value> & a) -> value {
+		const std::string url = a.empty() ? "" : a[0].to_string();
+		const objptr scene = arg_obj(a, 1);
+		const ctbrowser::embedded_asset * hit = ctbrowser::find_asset(images.embedded, url);
+		if (hit == nullptr) {
+			return ctjs::make_promise(ctjs::make_error("Error", "glTF not embedded (build with --fetch-allow): " + url), true);
+		}
+		const gltf::model mdl = gltf::parse_glb(reinterpret_cast<const unsigned char *>(hit->data), hit->size);
+		if (mdl.ok) { load_model(W, scene, mdl); }
+		return ctjs::make_promise(value{}, false);
+	}, "AppendSceneAsync");
+	B->set("AppendSceneAsync", append_scene);
+	B->set("appendSceneAsync", append_scene);
+	B->set("ImportMeshAsync", append_scene);
+	// CubeTexture / environment: stubbed (no IBL) so scripts don't throw
+	{
+		object_t ct;
+		ct.set("CreateFromPrefilteredData", value::function([](ctjs::context &, const std::vector<value> &) -> value {
+			object_t o; o.set("__cubeTexture", value{true}); return value::object(std::move(o));
+		}, "CreateFromPrefilteredData"));
+		value CubeTexture = value::function([](ctjs::context &, const std::vector<value> &) -> value {
+			object_t o; o.set("__cubeTexture", value{true}); return value::object(std::move(o));
+		}, "CubeTexture");
+		set_static(CubeTexture, "CreateFromPrefilteredData", *ct.find("CreateFromPrefilteredData"));
+		B->set("CubeTexture", CubeTexture);
+	}
 
 	// Vector3 (callable + statics)
 	value Vector3 = value::function([](ctjs::context &, const std::vector<value> & a) -> value {
@@ -914,9 +1324,9 @@ inline value build_babylon(const worldptr & W, dom_events & ev) {
 // Install the BABYLON global (a fresh software-rendered 3D world) into
 // the engine's binding set. Called from engine::all_bindings, so it is
 // present for the initial script run and after location.reload().
-inline void install(std::vector<ctjs::binding> & out, dom_events & ev) {
+inline void install(std::vector<ctjs::binding> & out, dom_events & ev, image_store & images) {
 	auto W = std::make_shared<detail::world>();
-	out.push_back({"BABYLON", detail::build_babylon(W, ev)});
+	out.push_back({"BABYLON", detail::build_babylon(W, ev, images)});
 }
 
 #endif // CTBROWSER_BABYLON_RENDER_ONLY

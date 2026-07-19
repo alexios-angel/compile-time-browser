@@ -68,7 +68,8 @@ fetchboard: fetchboard.inc
 # page's catch branches explain what is missing.
 ifneq ($(FETCH),)
 CXXFLAGS += --fetch-allow=https://example.com/ \
-            '--fetch-allow=https://raw.githubusercontent.com/**'
+            '--fetch-allow=https://raw.githubusercontent.com/**' \
+            '--fetch-allow=https://assets.babylonjs.com/**'
 endif
 
 %: %.cpp $(PCH)

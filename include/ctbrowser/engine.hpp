@@ -156,7 +156,7 @@ private:
 		               },
 		               "isMouseDown")});
 		// core BabylonJS API, backed by a software 3D rasterizer into <canvas>
-		babylon::install(out, ev);
+		babylon::install(out, ev, images);
 		for (ctjs::binding & b : extra) { out.push_back(std::move(b)); }
 		return out;
 	}

@@ -38,9 +38,10 @@ namespace detail {
 // / fetch("...")
 template <typename Src> struct script_asset_scan {
 	static constexpr std::string_view text = Src::get();
-	static constexpr std::array<std::string_view, 3> needles{"loadImage(\"",
+	static constexpr std::array<std::string_view, 4> needles{"loadImage(\"",
 	                                                         "playSound(\"",
-	                                                         "fetch(\""};
+	                                                         "fetch(\"",
+	                                                         "AppendSceneAsync(\""};
 
 	// {offset, length} of the path at position i, or length 0
 	static consteval std::pair<size_t, size_t> ref_at(size_t i) {
