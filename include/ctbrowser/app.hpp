@@ -343,34 +343,14 @@ template <typename Page> int run_app(app_options opts = {}) {
 	Uint64 frame_start_ns = SDL_GetTicksNS();
 	int frame = 0;
 	bool running = true;
-	while (running) {
-		SDL_Event ev;
-		while (SDL_PollEvent(&ev)) {
-			switch (ev.type) {
-				case SDL_EVENT_QUIT:
-					running = false;
-					break;
-				case SDL_EVENT_MOUSE_MOTION:
-					SDL_ConvertEventToRenderCoordinates(renderer, &ev);
-					e.mouse_move(ev.motion.x, ev.motion.y);
-					break;
-				case SDL_EVENT_MOUSE_BUTTON_DOWN:
-				case SDL_EVENT_MOUSE_BUTTON_UP:
-					SDL_ConvertEventToRenderCoordinates(renderer, &ev);
-					e.mouse_button(ev.button.x, ev.button.y,
-					               ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
-					break;
-				case SDL_EVENT_KEY_DOWN:
-				case SDL_EVENT_KEY_UP:
-					if (!ev.key.repeat) {
-						e.key(SDL_GetKeyName(ev.key.key), ev.type == SDL_EVENT_KEY_DOWN);
-					}
-					break;
-				default:
-					break;
-			}
-		}
 
+	bool in_render = false;
+	// one full frame: fullscreen, viewport (+ resize event), tick, layout,
+	// paint. Factored out so the live-resize event watch below can drive it
+	// while the OS modal resize loop has our while() blocked.
+	std::function<void()> render_one = [&]() {
+		if (in_render) { return; }
+		in_render = true;
 		if (fullscreen_dirty) {
 			fullscreen_dirty = false;
 			SDL_SetWindowFullscreen(window, want_fullscreen);
@@ -447,6 +427,58 @@ template <typename Page> int run_app(app_options opts = {}) {
 				}
 			}
 		}
+		in_render = false;
+	};
+
+	// live window resize: while the user drags a window edge the OS runs a
+	// modal loop that blocks our while(); an SDL event watch still fires
+	// there, so we render + present from it to track the drag smoothly.
+	struct resize_watch { std::function<void()> * render; SDL_Renderer * renderer; };
+	resize_watch rw{&render_one, renderer};
+	SDL_EventFilter watch_cb = [](void * ud, SDL_Event * we) -> bool {
+		static bool in_watch = false;
+		auto * st = static_cast<resize_watch *>(ud);
+		if (!in_watch && (we->type == SDL_EVENT_WINDOW_RESIZED ||
+		                  we->type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED ||
+		                  we->type == SDL_EVENT_WINDOW_EXPOSED)) {
+			in_watch = true;
+			(*st->render)();
+			SDL_RenderPresent(st->renderer);
+			in_watch = false;
+		}
+		return true;
+	};
+	SDL_AddEventWatch(watch_cb, &rw);
+
+	while (running) {
+		SDL_Event ev;
+		while (SDL_PollEvent(&ev)) {
+			switch (ev.type) {
+				case SDL_EVENT_QUIT:
+					running = false;
+					break;
+				case SDL_EVENT_MOUSE_MOTION:
+					SDL_ConvertEventToRenderCoordinates(renderer, &ev);
+					e.mouse_move(ev.motion.x, ev.motion.y);
+					break;
+				case SDL_EVENT_MOUSE_BUTTON_DOWN:
+				case SDL_EVENT_MOUSE_BUTTON_UP:
+					SDL_ConvertEventToRenderCoordinates(renderer, &ev);
+					e.mouse_button(ev.button.x, ev.button.y,
+					               ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+					break;
+				case SDL_EVENT_KEY_DOWN:
+				case SDL_EVENT_KEY_UP:
+					if (!ev.key.repeat) {
+						e.key(SDL_GetKeyName(ev.key.key), ev.type == SDL_EVENT_KEY_DOWN);
+					}
+					break;
+				default:
+					break;
+			}
+		}
+
+		render_one();
 
 		// screenshots capture BEFORE present (the composed frame)
 		const bool auto_shot =
@@ -474,6 +506,7 @@ template <typename Page> int run_app(app_options opts = {}) {
 		if (opts.max_frames > 0 && ++frame >= opts.max_frames) { running = false; }
 		else if (opts.max_frames == 0) { ++frame; }
 	}
+	SDL_RemoveEventWatch(watch_cb, &rw);
 	} // resource scope
 
 #ifdef CTBROWSER_WITH_TTF
