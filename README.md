@@ -87,10 +87,12 @@ pivot), and every `<script>` likewise into ctjs. You get
 full cascade resolution against element chains.
 
 **At runtime**:
+
 * [`dom.hpp`](include/ctbrowser/dom.hpp) — the DOM type instantiates a
   mutable tree (tag/id/classes/attributes/text/children, `<canvas>`
   pixel buffers, inline styles); nodes are stable so script bindings
   hold plain pointers
+
 * [`script.hpp`](include/ctbrowser/script.hpp) — the DOM API as ctjs
   host bindings: `getElementById(id)` returns an element handle
   (`text/setText/addClass/removeClass/toggleClass/hasClass/style/attr`),
@@ -99,12 +101,14 @@ full cascade resolution against element chains.
   `clear` for emulator-style framebuffers), `setTitle` retitles the
   window; events arrive as plain script functions `onClick(id)`,
   `onKey(name, down)`, `onFrame(dt)`
+
 * [`layout.hpp`](include/ctbrowser/layout.hpp) — style resolution
   (inline styles → the page stylesheet through ctcss's cascade) and
   CSS-flavored block layout: `width/height/margin/padding/font-size`
   in px, `background(-color)`/`color`, `display:none`, text wrapped in
   the embedded 8×8 font scaled to font-size; produces a paint list +
   hit-test rects
+
 * [`app.hpp`](include/ctbrowser/app.hpp) — the SDL3 shell: window,
   renderer, event loop; boxes as filled rects, text via
   [font8x8](https://github.com/dhepper/font8x8) (no font library
@@ -129,15 +133,18 @@ Games and emulators talk to the engine through the page's own script:
   `drawImageRegion(img, sx, sy, sw, sh, dx, dy, dw, dh)` — BMP
   (24/32bpp, alpha honored) built in; PNG/JPG/WebP and more when
   [SDL3_image](https://github.com/libsdl-org/SDL_image) is installed
+
 * **input**: polled - `isKeyDown("Left")`, `mouseX()`, `mouseY()`,
   `isMouseDown()` - and evented - `onKey(name, down)`,
   `onMouseMove(x, y)`, `onMouseDown(x, y)`, `onClick(id)`;
   `element.rect()` converts mouse to element-local coordinates
+
 * **sound**: `playSound(path)` and `setVolume(v)` — with
   [SDL3_mixer](https://github.com/libsdl-org/SDL_mixer) installed,
   sounds mix properly on pooled tracks and WAV/OGG/MP3/FLAC all load;
   without it, a built-in fallback plays plain WAV through raw SDL
   audio streams
+
 * **text**: page text renders in a real TrueType font when
   [SDL3_ttf](https://github.com/libsdl-org/SDL_ttf) is installed
   (`app_options.font_path`, or automatic probing of common system
@@ -145,15 +152,18 @@ Games and emulators talk to the engine through the page's own script:
   wrapping; the embedded public-domain 8×8 font remains the
   zero-dependency fallback — canvas `fillText` always uses it, so
   golden images stay deterministic
+
 * **presentation**: `app_options.logical_w/h` renders a fixed
   resolution letterboxed and scaled to the window (pixel-perfect
   retro), `fullscreen` + `setFullscreen(bool)`, `fixed_dt` for
   deterministic timesteps
+
 * **screenshots**: `app_options.screenshot_path` /
   `CTBROWSER_SCREENSHOT=path` env / `screenshot("shot.png")` from
   script - PNG via the vendored public-domain stb_image_write (a
   `.ppm` path writes raw pixels, which is what the golden tests
   compare)
+
 * **Math**: the ctjs runtime carries the full game-loop set -
   `sin cos tan atan atan2 hypot exp log floor round abs min max
   sqrt pow random` (seeded, reproducible) and friends
