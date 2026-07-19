@@ -40,9 +40,7 @@ struct computed_style {
 	std::vector<ctcss::element_ref> chain;
 
 	std::string_view get(std::string_view prop) const {
-		if (const auto it = n->inline_style.find(prop); it != n->inline_style.end()) {
-			return it->second;
-		}
+		if (n->inline_style.has(prop)) { return n->inline_style.get(prop); }
 		return (*resolve)(chain.data(), chain.size(), prop);
 	}
 	int px(std::string_view prop, int fallback) const {

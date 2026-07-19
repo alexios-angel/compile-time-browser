@@ -352,7 +352,7 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 	o.set("style", ctjs::value::function(
 	                   [n](ctjs::context &, const std::vector<ctjs::value> & a) {
 		                   if (a.size() >= 2) {
-			                   n->inline_style[a[0].to_string()] = a[1].to_string();
+			                   n->inline_style.set(a[0].to_string(), a[1].to_string());
 		                   }
 		                   return ctjs::value{};
 	                   },

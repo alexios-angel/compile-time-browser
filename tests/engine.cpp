@@ -173,7 +173,7 @@ int main() {
 	CHECK(e.script["onClick"].is_function());
 	ctbrowser::node * h1 = e.doc.root->find_first("h1");
 	CHECK(h1 != nullptr);
-	h1->inline_style["color"] = "red";
+	h1->inline_style.set("color", "red");
 	{
 		ctbrowser::computed_style cs{h1, &e.resolve, h1->chain()};
 		CHECK(cs.get("color") == std::string_view{"red"});
