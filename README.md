@@ -178,11 +178,16 @@ screenshot as an artifact so a human can look at what was drawn.
 ## v0.1 boundaries
 
 Everything the three bricks document applies (their subsets ARE this
-project's subsets). Browser-side: block layout only (no inline flow,
-floats or flex); px lengths; scripts mutate elements but do not
-create/remove them; no `<img>`, links or scrolling yet. The bricks'
-own APIs remain fully available alongside — `decltype(app)::doc_type`
-is an ordinary cthtml document, the sheet an ordinary ctcss sheet.
+project's subsets). Browser-side:
+
+- block layout only (no inline flow, floats or flex)
+- px lengths
+- scripts mutate elements but do not create/remove them
+- no `<img>`, links or scrolling yet
+
+The bricks' own APIs remain fully available alongside —
+`decltype(app)::doc_type` is an ordinary cthtml document, the sheet an
+ordinary ctcss sheet.
 
 ## Building
 
