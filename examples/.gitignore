@@ -6,3 +6,5 @@
 !*.cpp
 !assets
 !assets/**
+!*.inc
+!*.html

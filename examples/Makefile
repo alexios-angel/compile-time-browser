@@ -1,11 +1,14 @@
-CXX ?= c++
-
-CXX_IS_CLANG := $(shell $(CXX) --version 2>/dev/null | grep -qi clang && echo yes)
-ifeq ($(CXX_IS_CLANG),yes)
-CONSTEXPR_FLAGS := -fconstexpr-steps=500000000 -fconstexpr-depth=1024 -fbracket-depth=2048
-else
-CONSTEXPR_FLAGS := -fconstexpr-ops-limit=3000000000 -fconstexpr-loop-limit=10000000 -fconstexpr-depth=1024
+# THE compiler: the project's std::embed clang (see the root Makefile);
+# no other compiler is supported. C++23 and up.
+ifeq ($(origin CXX),default)
+CXX := ../tools/clang-std-embed/bin/clang++
+ifeq ($(wildcard $(CXX)),)
+$(error ../tools/clang-std-embed/bin/clang++ not found - install the std::embed toolchain first)
 endif
+endif
+
+# --embed-dir: asset paths in scripts are repo-root-relative
+CONSTEXPR_FLAGS := -fconstexpr-steps=500000000 -fconstexpr-depth=1024 -fbracket-depth=16384 --embed-dir=$(CURDIR)/..
 
 LARK := ../external/compile-time-html/external/compile-time-lark
 SUBMODULE_INCLUDES := \
@@ -31,33 +34,34 @@ SDL_CFLAGS += -DCTBROWSER_WITH_TTF $(shell pkg-config --cflags sdl3-ttf)
 SDL_LIBS += $(shell pkg-config --libs sdl3-ttf)
 endif
 
-CXXFLAGS := -std=c++20 -I../include $(SUBMODULE_INCLUDES) $(SDL_CFLAGS) $(CONSTEXPR_FLAGS) -O2 -pedantic -Wall -Wextra -Werror -Wconversion
+CXXFLAGS := -std=c++23 -I../include $(SUBMODULE_INCLUDES) $(SDL_CFLAGS) $(CONSTEXPR_FLAGS) -O2 -pedantic -Wall -Wextra -Werror -Wconversion
 
 SOURCES := $(wildcard *.cpp)
 TARGETS := $(SOURCES:%.cpp=%)
 
 # reuse (or build) the grammar PCH from the repo root - the one-time
-# slow step; gcc picks up ../include/ctbrowser.hpp.gch automatically
-ifeq ($(CXX_IS_CLANG),yes)
+# slow step
 PCH := ../ctbrowser.pch
 PCH_USE = -include-pch $(PCH)
-else
-PCH := ../include/ctbrowser.hpp.gch
-PCH_USE =
-endif
 
 all: $(TARGETS)
 
 $(PCH): ../include/ctbrowser.hpp
-	$(CXX) $(filter-out $(SDL_CFLAGS),$(CXXFLAGS)) -x c++-header $< -o $@
+	@ulimit -s unlimited 2>/dev/null; $(CXX) $(filter-out $(SDL_CFLAGS),$(CXXFLAGS)) -x c++-header $< -o $@
+
+# real .html pages become raw-string .inc literals (see tools/html-to-inc.py)
+pong.inc: pong.html ../tools/html-to-inc.py
+	python3 ../tools/html-to-inc.py $< > $@
+
+pong: pong.inc
 
 %: %.cpp $(PCH)
-	$(CXX) $(CXXFLAGS) $(PCH_USE) $< -o $@ $(SDL_LIBS)
+	@ulimit -s unlimited 2>/dev/null; $(CXX) $(CXXFLAGS) $(PCH_USE) $< -o $@ $(SDL_LIBS)
 
 run: all
 	@for t in $(TARGETS); do printf '== %s ==\n' "$$t"; ./$$t; echo; done
 
 clean:
-	rm -f $(TARGETS)
+	rm -f $(TARGETS) pong.inc
 
 .PHONY: all run clean

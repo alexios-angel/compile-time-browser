@@ -40,7 +40,7 @@ using scene = ctbrowser::page<R"(<!DOCTYPE html>
 	ctx.fillStyle = "#ffaa33";
 	ctx.fillCircle(32, 32, 10);
 	ctx.fillStyle = "#ffffff";
-	ctx.fillText("HI", 2, 2);
+	ctx.fillText("HI", 2, 10);
 	let img = loadImage("examples/assets/sprites.bmp");
 	ctx.drawImage(img, 40, 40);
 </script>)">;

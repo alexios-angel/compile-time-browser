@@ -1,5 +1,14 @@
 cmake_minimum_required(VERSION 3.16...4.3)
 
+# THE compiler: the project's own std::embed clang, C++23 and up (must
+# be chosen BEFORE project() locks the toolchain). std::embed
+# (__builtin_std_embed) is load-bearing - assets.hpp - so a compiler
+# without it, including stock clang, is unsupported; verified below.
+if(NOT CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX}
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/clang-std-embed/bin/clang++")
+  set(CMAKE_CXX_COMPILER "${CMAKE_CURRENT_SOURCE_DIR}/tools/clang-std-embed/bin/clang++")
+endif()
+
 project(ctbrowser
   HOMEPAGE_URL "https://github.com/alexios-angel/compile-time-browser"
   VERSION 0.1.0
@@ -10,6 +19,22 @@ include(CMakePackageConfigHelpers)
 include(CMakeDependentOption)
 include(GNUInstallDirs)
 include(CTest)
+
+# verify the chosen compiler really is the std::embed clang
+include(CheckCXXSourceCompiles)
+check_cxx_source_compiles([[
+#if !defined(__has_builtin) || !__has_builtin(__builtin_std_embed)
+#error no std::embed builtin
+#endif
+int main() { return 0; }
+]] CTBROWSER_HAS_STD_EMBED_BUILTIN)
+if(NOT CTBROWSER_HAS_STD_EMBED_BUILTIN)
+  message(FATAL_ERROR
+    "ctbrowser supports ONLY the std::embed clang toolchain "
+    "(tools/clang-std-embed; fetch the clang-std-embed release from the "
+    "embed repo). Found: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} "
+    "without __builtin_std_embed.")
+endif()
 
 cmake_dependent_option(CTBROWSER_BUILD_TESTS "Build ctbrowser tests" ON
   "BUILD_TESTING;CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR" OFF)
@@ -23,9 +48,8 @@ option(CTBROWSER_CONSTEXPR_LIMITS "Raise constexpr evaluation limits on the inte
 option(CTBROWSER_PCH "Precompile ctbrowser.hpp for tests and examples" ON)
 
 set(CTBROWSER_CONSTEXPR_OPTIONS
-  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-fconstexpr-steps=500000000;-fconstexpr-depth=1024;-fbracket-depth=2048>
-  $<$<CXX_COMPILER_ID:GNU>:-fconstexpr-ops-limit=3000000000;-fconstexpr-loop-limit=10000000;-fconstexpr-depth=1024>
-  $<$<CXX_COMPILER_ID:MSVC>:/constexpr:steps500000000;/constexpr:depth1024>)
+  -fconstexpr-steps=500000000 -fconstexpr-depth=1024 -fbracket-depth=16384
+  --embed-dir=${PROJECT_SOURCE_DIR})
 
 # The three bricks are git submodules (git submodule update --init
 # --recursive); each pins the same compile-time-lark, and the browser
@@ -52,7 +76,7 @@ target_include_directories(${PROJECT_NAME} INTERFACE
   "$<BUILD_INTERFACE:${CTBROWSER_SUBMODULE_INCLUDE_DIRS}>"
   $<INSTALL_INTERFACE:include>)
 
-target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_20)
+target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_23)
 if(CTBROWSER_CONSTEXPR_LIMITS)
   target_compile_options(${PROJECT_NAME} INTERFACE ${CTBROWSER_CONSTEXPR_OPTIONS})
 endif()
@@ -135,6 +159,23 @@ if(SDL3_FOUND)
     list(APPEND CTBROWSER_SAT_LIBS SDL3_ttf::SDL3_ttf)
   endif()
   message(STATUS "ctbrowser: SDL3 found; satellites: ${CTBROWSER_SAT_DEFS}")
+endif()
+
+# pong.html -> examples/pong.inc: the REAL .html file becomes a
+# raw-string literal that #include's into the page<...> template
+# argument (consumed by tests/pong.cpp and examples/pong.cpp)
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+  add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/examples/pong.inc"
+    COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tools/html-to-inc.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/examples/pong.html"
+            "${CMAKE_CURRENT_SOURCE_DIR}/examples/pong.inc"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/examples/pong.html"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/html-to-inc.py"
+    COMMENT "Wrapping examples/pong.html as a raw-string literal")
+  add_custom_target(ctbrowser-pong-inc
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/examples/pong.inc")
 endif()
 
 if(CTBROWSER_BUILD_TESTS)

@@ -4,7 +4,10 @@ build/
 .claude
 *.pch
 *.gch
+*.pch.tmp
 tests/*
 !tests/*.cpp
 !tests/CMakeLists.txt
 tools/clang-std-embed/
+examples/pong.inc
+*.log

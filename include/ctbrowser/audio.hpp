@@ -1,6 +1,7 @@
 #ifndef CTBROWSER__AUDIO__HPP
 #define CTBROWSER__AUDIO__HPP
 
+#include "image.hpp" // embedded_asset / find_asset
 #include <SDL3/SDL.h>
 #ifdef CTBROWSER_WITH_MIXER
 #include <SDL3_mixer/SDL_mixer.h>
@@ -26,6 +27,9 @@ namespace ctbrowser {
 
 class audio_mixer {
 public:
+	// compile-time-embedded assets, consulted before the filesystem
+	const std::vector<embedded_asset> * embedded = nullptr;
+
 	audio_mixer() = default;
 	audio_mixer(const audio_mixer &) = delete;
 	audio_mixer & operator=(const audio_mixer &) = delete;
@@ -63,7 +67,12 @@ private:
 	}
 	MIX_Audio * load(const std::string & path) {
 		if (const auto it = cache_.find(path); it != cache_.end()) { return it->second; }
-		MIX_Audio * a = MIX_LoadAudio(mixer_, path.c_str(), true);
+		MIX_Audio * a = nullptr;
+		if (const embedded_asset * em = find_asset(embedded, path)) {
+			a = MIX_LoadAudio_IO(mixer_, SDL_IOFromConstMem(em->data, em->size), true,
+			                     true);
+		}
+		if (a == nullptr) { a = MIX_LoadAudio(mixer_, path.c_str(), true); }
 		cache_.emplace(path, a); // nullptr negative-caches the miss
 		return a;
 	}
@@ -87,6 +96,9 @@ private:
 
 class audio_mixer {
 public:
+	// compile-time-embedded assets, consulted before the filesystem
+	const std::vector<embedded_asset> * embedded = nullptr;
+
 	audio_mixer() = default;
 	audio_mixer(const audio_mixer &) = delete;
 	audio_mixer & operator=(const audio_mixer &) = delete;
@@ -129,7 +141,12 @@ private:
 			return it->second.data != nullptr ? &it->second : nullptr;
 		}
 		wav_data wav;
-		if (!SDL_LoadWAV(path.c_str(), &wav.spec, &wav.data, &wav.len)) {
+		bool ok = false;
+		if (const embedded_asset * em = find_asset(embedded, path)) {
+			ok = SDL_LoadWAV_IO(SDL_IOFromConstMem(em->data, em->size), true, &wav.spec,
+			                    &wav.data, &wav.len);
+		}
+		if (!ok && !SDL_LoadWAV(path.c_str(), &wav.spec, &wav.data, &wav.len)) {
 			cache_.emplace(path, wav_data{}); // negative-cache the miss
 			return nullptr;
 		}

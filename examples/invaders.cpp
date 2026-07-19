@@ -94,11 +94,27 @@ using app = ctbrowser::page<R"(<!DOCTYPE html>
 			ctx.fillRect(bullet.x, bullet.y, 2, 6);
 		}
 		ctx.fillStyle = "#ffffff";
-		ctx.fillText("SCORE " + score, 4, 4);
+		ctx.fillText("SCORE " + score, 4, 12);
 	}
 </script>)">;
 
 static_assert(app::script_valid);
+
+// OPPORTUNISTIC compile-time assets: the ENGINE reads the script's
+// loadImage/playSound literals at compile time and, on a
+// std::embed-capable compiler (tools/clang-std-embed), bakes those
+// files into the binary itself (assets.hpp). All this TU contributes
+// is the #depend gate the patched compiler requires before its
+// constant evaluator may read files; other compilers skip the
+// directive and fall back to runtime loading of the same files.
+#if defined(__has_builtin)
+#	if __has_builtin(__builtin_std_embed)
+#		pragma clang diagnostic push
+#		pragma clang diagnostic ignored "-Wc++2d-extensions"
+#depend "examples/assets/**"
+#		pragma clang diagnostic pop
+#	endif
+#endif
 
 int main(int, char **) {
 	ctbrowser::app_options o;

@@ -188,7 +188,7 @@ cmake -B build && cmake --build build -j && ctest --test-dir build
 ```
 
 SDL3 comes from your system (`find_package(SDL3)` /
-`pkg-config sdl3`); everything else is header-only C++20. The
+`pkg-config sdl3`); everything else is header-only C++23 (clang only). The
 **satellite libraries are optional and auto-detected** — install them
 for the full experience (Homebrew/Linuxbrew:
 `brew install sdl3_image sdl3_mixer sdl3_ttf`; they also ship on every

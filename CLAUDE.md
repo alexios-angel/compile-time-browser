@@ -5,7 +5,13 @@ The assembly of the compile-time web stack: ONE HTML source (markup +
 type, ctcss → sheet type, ctjs → script type, chained via the
 type→text→type pivot in page.hpp — and runs at runtime against a
 mutable DOM, the ctcss cascade, a block layout pass and an SDL3
-window. Namespace `ctbrowser`. C++20 only. Work on `main`. Prefer `rg`.
+window. Namespace `ctbrowser`. **ONLY the project's std::embed clang
+is supported, C++23 and up** — tools/clang-std-embed (fork:
+alexios-angel/llvm-project branch std-embed; distributed via the embed
+repo's clang-std-embed GitHub release, which CI and the build server
+fetch). std::embed is load-bearing (assets.hpp); Makefiles error and
+CMake FATAL_ERRORs without __builtin_std_embed. No gcc/MSVC/stock-clang
+paths. Work on `main`. Prefer `rg`.
 
 ## Build & test
 ```bash
@@ -21,13 +27,26 @@ EXECUTABLES, SDL-free, headless. Examples need SDL3 (linuxbrew's here;
 `pkg-config sdl3` in examples/Makefile, `find_package(SDL3)` in CMake).
 CMake shares one PCH via the `ctbrowser-pch-anchor` target (REUSE_FROM).
 
+## Compile times (measured 2026-07, std::embed clang, 8-core server)
+- PCH bake: ~90 s (gcc took 31 min — clang's constexpr evaluator is ~20x
+  faster here). Recipes run `ulimit -s unlimited`: the Earley folds at
+  `-fbracket-depth=16384` out-grow clang's 8 MB default stack (SEGFAULT).
+- Page TU: ~70 s, of which ~95% is FRONTEND constexpr evaluation
+  (EvaluateAsInitializer 67 s; backend only 3.5 s) → `-O0`/FAST modes
+  are pointless; use `make -j` for multiple TUs.
+- `-fexperimental-new-constant-interpreter`: DO NOT — >5 min, killed.
+- Chained per-page PCH (base pch → page pch with
+  `template class ctbrowser::engine<the_page>;` forced instantiation):
+  TU drops 71 s → 40 s. Opt-in recipe only (per-page pch complexity);
+  the real remaining lever is ctjs interpreter instantiation cost.
+
 ## Layout
 - `include/ctbrowser.hpp` — umbrella, ENGINE only (no SDL): page + dom + layout + script + engine.
 - `include/ctbrowser/page.hpp` — the compile-time assembly. `to_fixed<Provider>()` re-enters a constexpr string_view as a ctll::fixed_string NTTP; `tag_text<Doc, Tag>` collects the concatenated text of every <style>/<script> element FROM THE DOM TYPE. `page<Src>`: doc_type/sheet_type/script_type/title().
 - `include/ctbrowser/dom.hpp` — runtime `node` tree (tag/id/classes/attrs/text/children/parent, inline_style map, canvas_w/h + pixels 0xAARRGGBB, layout rect x/y/w/h), `instantiate<DocType>()`, find_by_id/find_first/hit_test, class helpers, ctcss chain().
 - `include/ctbrowser/layout.hpp` — `style_fn` (std::function so the engine isn't templated on the sheet), `computed_style` (inline styles beat the sheet), block layout → `paint_cmd` list (box/text/canvas) + node rects. Skips head/style/script/title; display:none prunes; text wraps in square font_px glyphs.
-- `include/ctbrowser/script.hpp` — ctjs bindings: getElementById → element handle object (setText/addClass/...), getContext → canvas ctx (fillStyle property read back by fillRect/putPixel/clear natives — the real canvas idiom), setTitle; `deliver()` calls script fns if defined (onClick(id)/onKey(name,down)/onFrame(dt)).
-- `include/ctbrowser/engine.hpp` — `engine<Page>`: doc + title + resolver + script run with bindings; frame(viewport_w), click_at, key, tick. SDL-free; what the tests drive.
+- `include/ctbrowser/script.hpp` — ctjs bindings: getElementById → element handle object (setText/addClass/... + live width/height/offsetLeft + getContext("2d")/addEventListener), getContext → canvas ctx (fillStyle property read back by fillRect/putPixel/clear natives — the real canvas idiom; 2D path API beginPath/rect/arc/fill, partial arcs degrade to discs; fillText is DOM-style: y = BASELINE, size from ctx.font px → font8x8 integer scale), setTitle; `deliver()` calls script fns if defined (onClick(id)/onKey(name,down)/onFrame(dt)). WEB PLATFORM globals: `document` (getElementById/addEventListener/location.reload), requestAnimationFrame, alert; `dom_events` holds the registered callbacks + the ctjs context to call them (detail::dom_key_code maps SDL names → DOM codes, "Right"→"ArrowRight"). tests/pong.cpp runs the UNMODIFIED MDN breakout (examples/pong.html → generated raw-string examples/pong.inc via tools/html-to-inc.py, #include'd as the page<> NTTP).
+- `include/ctbrowser/engine.hpp` — `engine<Page>`: doc + title + resolver + script run with bindings; frame(viewport_w) (also refreshes handle offsetLeft/width), click_at, key/mouse_* (deliver conventions AND dispatch DOM listeners), tick (onFrame + rAF pump + location.reload re-instantiation). SDL-free; what the tests drive.
 - `include/ctbrowser/app.hpp` — SDL3 shell: run_app<Page>(app_options). Boxes = filled rects, text = font8x8 scaled, canvas = streaming SDL_Texture. `SDL_VIDEODRIVER=dummy` + `CTBROWSER_TEST_FRAMES=N` (env, read by run_app) = headless run.
 - `include/ctbrowser/font8x8.hpp` — GENERATED from public-domain font8x8 (dhepper); glyph_pixel(c,row,col).
 - `external/compile-time-{html,javascript,css}` — SUBMODULES (recursive: each carries lark). ctlark/ctll resolve through compile-time-html's copy — exactly ONE lark on the include path.
@@ -39,7 +58,9 @@ CMake shares one PCH via the `ctbrowser-pch-anchor` target (REUSE_FROM).
 - The bricks' own semantics/limits apply verbatim (see their CLAUDE.md).
 
 ## v0.2 game-engine surface
-- `image.hpp` (engine, SDL-free): mini BMP reader (24/32bpp, compression 0/3, top-down or bottom-up) + `image_store` behind loadImage/drawImage — sprite tests run headless.
+- `image.hpp` (engine, SDL-free): mini BMP reader (24/32bpp, compression 0/3, top-down or bottom-up; parse_bmp works from memory) + `image_store` behind loadImage/drawImage — sprite tests run headless. `embedded_asset` = compile-time-embedded bytes; image_store and audio_mixer consult `embedded` before the filesystem.
+- `embed.hpp` — the PUBLIC compile-time file API: `ctbrowser::embed<T=std::byte>(path[, offset])` → consteval span into compiler-materialized storage (missing/un-#depend-ed file = compile error whose undefined-function name spells the reason); `try_embed` = empty span instead (opportunistic). Lookup is EMBED-DIRS ONLY (never call-site-relative; --embed-dir carries the repo root) — same meaning from every frame, and it avoids the anchor-frame walk that crashed pre-23dd34f8f compilers. Protocol per phd::embed (CC0, see NOTICE).
+- `assets.hpp` — AUTOMATIC std::embed: the engine constexpr-scans the page's script for loadImage("...")/playSound("...") literals and try_embed's each (auto_assets<Page> → engine ctor merge; app_options.assets/user entries win). OPPORTUNISTIC at every step: no builtin / no `#depend` / missing file → that asset silently loads at runtime. A TU opts in with ONE guarded line: `#if defined(__has_builtin) && __has_builtin(__builtin_std_embed)` + `#depend "examples/assets/**"` + `#endif` (compilers without the builtin skip the directive - unknown directives in false #if groups are not processed). Builds pass `--embed-dir=<repo root>` on clang so script paths resolve.
 - Canvas ctx additions (script.hpp): clearRect→TRANSPARENT (canvas textures get SDL_BLENDMODE_BLEND so the page shows through), strokeRect/strokeStyle, fillCircle, fillText (font8x8 into pixels), drawImage/drawImageRegion (nearest, alpha-test a==0).
 - Input state lives ON the engine (keys_down set, mouse x/y/down), fed by the shell, exposed as isKeyDown/mouseX/mouseY/isMouseDown; engine ctor takes `extra` bindings — the shell injects playSound/setVolume (audio.hpp mixer), screenshot, setFullscreen.
 - Screenshots (screenshot.hpp, shell): SDL_RenderReadPixels → PNG via vendored stb_image_write; a `.ppm` path writes raw P6 (golden-comparable). Works under the dummy driver.

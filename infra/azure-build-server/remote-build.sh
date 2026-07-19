@@ -15,12 +15,16 @@ repo_root=$(git -C .. rev-parse --show-toplevel)
 
 # rsync the whole tree including submodule checkouts; leave remote build
 # artifacts in place so the ~30 min PCH bake is reused across syncs.
+# tools/clang-std-embed stays local: the server installs its own copy
+# from the embed repo's GitHub release (see user_data.sh)
 rsync -az --delete \
   --exclude '.git/' \
   --exclude 'build/' \
+  --exclude 'tools/clang-std-embed/' \
   --exclude 'infra/azure-build-server/.terraform/' \
   --exclude '*.tfstate*' \
   --filter 'protect *.pch' --filter 'protect *.gch' --filter 'protect build/' \
+  --filter 'protect tools/clang-std-embed/' \
   "$repo_root"/ "ubuntu@$ip:ctbrowser/"
 
 ssh "ubuntu@$ip" "cd ctbrowser && make ${*:-}"

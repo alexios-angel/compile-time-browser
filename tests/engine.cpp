@@ -56,7 +56,7 @@ using app = ctbrowser::page<R"(<!DOCTYPE html>
 		ctx.fillStyle = "#ffaa33";
 		ctx.fillCircle(50, 16, 5);
 		ctx.fillStyle = "#ffffff";
-		ctx.fillText("HI", 0, 20);
+		ctx.fillText("HI", 0, 28); // y = BASELINE (DOM): glyphs land at y 20..27
 		ctx.strokeStyle = "#00ff00";
 		ctx.strokeRect(0, 0, 64, 32);
 		ctx.clearRect(30, 0, 2, 2);

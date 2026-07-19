@@ -1,27 +1,24 @@
 name: Tests
 on: [push, pull_request]
+# ONLY the project's std::embed clang is supported (std::embed is
+# load-bearing - assets.hpp). CI fetches the toolchain from the embed
+# repo's GitHub release; the Makefile/CMake refuse anything else.
+env:
+  CLANG_STD_EMBED_RELEASE: https://github.com/alexios-angel/embed/releases/download/clang-std-embed-23dd34f8f924/clang-std-embed-23dd34f8f924-linux-x86_64.tar.xz
 jobs:
-  gcc:
-    name: "GCC 14 (C++20)"
+  make:
+    name: "make (std::embed clang, C++23)"
     runs-on: ubuntu-latest
     steps:
-      - run: sudo apt-get install g++-14
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - run: make CXX=g++-14
-  clang:
-    name: "Clang 18 (C++20)"
-    runs-on: ubuntu-latest
-    steps:
-      - name: "Install Clang"
-        uses: egor-tensin/setup-clang@v1
-        with:
-          version: 18
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - run: make CXX=clang++
+      - name: "Install the std::embed clang toolchain"
+        run: |
+          mkdir -p tools/clang-std-embed
+          curl -fsSL "$CLANG_STD_EMBED_RELEASE" | tar -xJ --strip-components=1 -C tools/clang-std-embed
+          tools/clang-std-embed/bin/clang++ --version
+      - run: make
   cmake:
     name: "CMake (configure, build, ctest)"
     runs-on: ubuntu-latest
@@ -29,6 +26,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: "Install the std::embed clang toolchain"
+        run: |
+          mkdir -p tools/clang-std-embed
+          curl -fsSL "$CLANG_STD_EMBED_RELEASE" | tar -xJ --strip-components=1 -C tools/clang-std-embed
+          tools/clang-std-embed/bin/clang++ --version
       - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build -j
       - run: ctest --test-dir build --output-on-failure

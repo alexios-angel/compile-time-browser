@@ -40,6 +40,9 @@ struct app_options {
 	int height = 600;
 	int max_frames = 0;          // 0 = run until quit; >0 = auto-exit (tests/CI)
 	double fixed_dt = 0;         // 0 = real time; >0 = deterministic timestep
+	int max_fps = 60;            // interactive frame cap (0 = uncapped); browsers
+	                             // throttle requestAnimationFrame the same way -
+	                             // fixed-step pages (examples/pong.html) depend on it
 	int logical_w = 0;           // >0: fixed-resolution presentation,
 	int logical_h = 0;           //     letterboxed and scaled to the window
 	bool fullscreen = false;
@@ -49,6 +52,10 @@ struct app_options {
 	// a TrueType font for page text (SDL3_ttf builds); "" probes common
 	// system locations and falls back to the embedded 8x8 font
 	std::string font_path;
+	// compile-time-embedded assets (std::embed / #embed builds), keyed
+	// by the exact strings scripts pass to loadImage/playSound; loaders
+	// fall back to the filesystem for anything not listed
+	std::vector<embedded_asset> assets;
 };
 
 namespace detail {
@@ -62,7 +69,7 @@ inline std::string resolve_asset(const std::string & path) {
 	std::error_code ignored;
 	if (fs::exists(path, ignored)) { return path; }
 	if (const char * base = SDL_GetBasePath()) {
-		for (const fs::path candidate :
+		for (const fs::path & candidate :
 		     {fs::path{base} / path, fs::path{base}.parent_path().parent_path() / path}) {
 			if (fs::exists(candidate, ignored)) { return candidate.string(); }
 		}
@@ -286,7 +293,8 @@ template <typename Page> int run_app(app_options opts = {}) {
 		     return {};
 	     },
 	     "setFullscreen")},
-	}, image_decoder};
+	}, image_decoder, opts.assets};
+	mixer.embedded = &e.assets;
 
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
 		SDL_Log("ctbrowser: SDL_Init failed: %s", SDL_GetError());
@@ -305,6 +313,9 @@ template <typename Page> int run_app(app_options opts = {}) {
 		SDL_SetRenderLogicalPresentation(renderer, opts.logical_w, opts.logical_h,
 		                                 SDL_LOGICAL_PRESENTATION_LETTERBOX);
 	}
+	// vsync where the driver honors it; the explicit pacing below covers
+	// the rest (dummy driver, disabled compositors, >60 Hz displays)
+	SDL_SetRenderVSync(renderer, 1);
 
 
 	{ // scope: GPU/font resources release before the SDL teardown below
@@ -323,6 +334,7 @@ template <typename Page> int run_app(app_options opts = {}) {
 	detail::canvas_textures textures{renderer, {}};
 	std::string shown_title = e.title;
 	Uint64 last = SDL_GetTicks();
+	Uint64 frame_start_ns = SDL_GetTicksNS();
 	int frame = 0;
 	bool running = true;
 	while (running) {
@@ -433,6 +445,15 @@ template <typename Page> int run_app(app_options opts = {}) {
 		}
 
 		SDL_RenderPresent(renderer);
+
+		// interactive runs pace like a browser paces requestAnimationFrame;
+		// bounded (test/CI) runs sprint through their frames instead
+		if (opts.max_frames == 0 && opts.max_fps > 0) {
+			const Uint64 target_ns = 1000000000ull / static_cast<Uint64>(opts.max_fps);
+			const Uint64 elapsed_ns = SDL_GetTicksNS() - frame_start_ns;
+			if (elapsed_ns < target_ns) { SDL_DelayNS(target_ns - elapsed_ns); }
+			frame_start_ns = SDL_GetTicksNS();
+		}
 
 		if (opts.max_frames > 0 && ++frame >= opts.max_frames) { running = false; }
 		else if (opts.max_frames == 0) { ++frame; }

@@ -4,6 +4,7 @@
 #include "page.hpp"
 #include "dom.hpp"
 #include "image.hpp"
+#include "assets.hpp"
 #include "layout.hpp"
 #include "script.hpp"
 #ifndef CTBROWSER_IN_A_MODULE
@@ -27,6 +28,12 @@ template <typename Page> class engine {
 public:
 	document doc;
 	std::string title;
+	// compile-time-embedded assets: every loadImage/playSound literal
+	// in the page's script, baked in AUTOMATICALLY on std::embed-capable
+	// builds (see assets.hpp; other compilers fall back to runtime file
+	// loads), plus anything the caller passes explicitly (which wins).
+	// Declared before images: the store keeps a pointer into it.
+	std::vector<embedded_asset> assets;
 	image_store images;
 	std::set<std::string, std::less<>> keys_down; // transparent: string_view lookups
 	double mouse_x = 0;
@@ -34,27 +41,41 @@ public:
 	bool mouse_down = false;
 	style_fn resolve;
 	text_measure_fn measure; // shell-installed when a real font loads
+	dom_events ev;           // MUST precede script: bindings capture it
+
+private:
+	// saved for do_reload; declared before script so it copies BEFORE
+	// the constructor moves `extra` into all_bindings
+	std::vector<ctjs::binding> extra_;
+
+public:
 	ctjs::run_result script;
 
 	// the image decoder must arrive HERE, not be assigned afterwards:
 	// the page's script runs inside this constructor, and loadImage
 	// calls at script startup already need it
 	explicit engine(std::vector<ctjs::binding> extra = {},
-	                std::function<image(const std::string &)> image_decoder = {})
+	                std::function<image(const std::string &)> image_decoder = {},
+	                std::vector<embedded_asset> embedded = {})
 	    : doc(instantiate<typename Page::doc_type>()),
 	      title(Page::title()),
-	      images{{}, std::move(image_decoder)},
+	      assets(detail::merge_assets(std::move(embedded), auto_assets<Page>())),
+	      images{{}, std::move(image_decoder), &assets},
 	      resolve([](const ctcss::element_ref * chain, size_t n, std::string_view prop) {
 		      return ctcss::query(typename Page::sheet_type{}, chain, n, prop);
 	      }),
+	      extra_(extra),
 	      script(Page::script_type::run(all_bindings(std::move(extra)))) { }
 
 	engine(const engine &) = delete;
 	engine & operator=(const engine &) = delete;
 
-	// one layout pass for a viewport width; updates node rects too
+	// one layout pass for a viewport width; updates node rects (and
+	// the offsetLeft/width properties on exposed element handles) too
 	std::vector<paint_cmd> frame(int viewport_w) {
-		return ctbrowser::layout(doc, viewport_w, resolve, measure);
+		std::vector<paint_cmd> cmds = ctbrowser::layout(doc, viewport_w, resolve, measure);
+		ev.refresh_tracked();
+		return cmds;
 	}
 
 	// --- event delivery (missing handlers are quietly skipped)
@@ -72,11 +93,13 @@ public:
 			keys_down.erase(it);
 		}
 		deliver(script, "onKey", name, down);
+		ev.dispatch(down ? "keydown" : "keyup", detail::key_event(name));
 	}
 	void mouse_move(double x, double y) {
 		mouse_x = x;
 		mouse_y = y;
 		deliver(script, "onMouseMove", x, y);
+		ev.dispatch("mousemove", detail::mouse_event(x, y));
 	}
 	void mouse_button(double x, double y, bool down) {
 		mouse_x = x;
@@ -84,16 +107,33 @@ public:
 		mouse_down = down;
 		if (down) {
 			deliver(script, "onMouseDown", x, y);
+			ev.dispatch("mousedown", detail::mouse_event(x, y));
 			click_at(static_cast<int>(x), static_cast<int>(y));
+		} else {
+			ev.dispatch("mouseup", detail::mouse_event(x, y));
 		}
 	}
 	void tick(double dt) {
 		deliver(script, "onFrame", dt);
+		ev.now_ms += dt * 1000.0;
+		// requestAnimationFrame: swap the list out first - callbacks
+		// re-register themselves for the NEXT frame
+		std::vector<ctjs::value> due;
+		due.swap(ev.raf);
+		for (const ctjs::value & fn : due) { ev.invoke(fn, {ctjs::value{ev.now_ms}}); }
+		if (ev.reload) { do_reload(); }
+	}
+
+	// document.location.reload(): fresh DOM, fresh script run
+	void do_reload() {
+		ev.reset();
+		doc = instantiate<typename Page::doc_type>();
+		script = Page::script_type::run(all_bindings(extra_));
 	}
 
 private:
 	std::vector<ctjs::binding> all_bindings(std::vector<ctjs::binding> extra) {
-		std::vector<ctjs::binding> out = dom_bindings(doc, title, images);
+		std::vector<ctjs::binding> out = dom_bindings(doc, title, images, ev);
 		out.push_back({"isKeyDown",
 		               ctjs::native([this](const std::vector<ctjs::value> & a) -> ctjs::value {
 			               return ctjs::value{!a.empty() &&
