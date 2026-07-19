@@ -175,9 +175,11 @@ inline geo make_box(double size) {
 	g.verts = { V3(-h,-h,-h), V3(h,-h,-h), V3(h,h,-h), V3(-h,h,-h),
 	            V3(-h,-h, h), V3(h,-h, h), V3(h,h, h), V3(-h,h, h) };
 	const int f[6][4] = { {0,1,2,3}, {5,4,7,6}, {4,0,3,7}, {1,5,6,2}, {3,2,6,7}, {4,5,1,0} };
+	// wound so each face normal points OUTWARD (else backface culling
+	// keeps the interior faces and the cube renders inside-out)
 	for (auto & q : f) {
-		g.tris.push_back({q[0], q[1], q[2]});
-		g.tris.push_back({q[0], q[2], q[3]});
+		g.tris.push_back({q[0], q[2], q[1]});
+		g.tris.push_back({q[0], q[3], q[2]});
 	}
 	return g;
 }

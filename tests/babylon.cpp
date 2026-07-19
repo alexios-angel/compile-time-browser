@@ -116,6 +116,35 @@ int main() {
 	for (uint32_t p : c->pixels) { if (p != clear) { ++stillRendering; } }
 	CHECK(stillRendering > 500);                // orbiting keeps a valid render
 
+	// renderer regression: a SOLID box must occlude a bright sphere placed
+	// INSIDE it. Guards the box winding — inward-facing normals get the
+	// near faces backface-culled and the box renders inside-out.
+	{
+		namespace r3d = ctbrowser::babylon::r3d;
+		const int RW = 64, RH = 64;
+		std::vector<uint32_t> buf(static_cast<size_t>(RW) * RH, 0);
+		r3d::geo box = r3d::make_box(2.0);
+		r3d::geo inside = r3d::make_sphere(1.0, 12);
+		r3d::view v;
+		v.vp_view = r3d::lookAtLH(r3d::V3(1.5, 1.5, -5), r3d::V3(0, 0, 0), r3d::V3(0, 1, 0));
+		v.vp_proj = r3d::perspectiveFovLH(0.8, 1.0, 0.1, 100.0);
+		std::vector<r3d::draw_item> items = {
+		    {&inside, r3d::translation(0, 0, 0), {1.0, 0.05, 0.05, 1}, true},
+		    {&box, r3d::translation(0, 0, 0), {0.2, 0.3, 0.9, 1}, true},
+		};
+		std::vector<r3d::light> lights = {{0, r3d::V3(0, 1, 0), 1.0, {1, 1, 1, 1}}};
+		r3d::renderer rr;
+		rr.render(buf.data(), RW, RH, v, items, lights);
+		size_t redThrough = 0, blueBox = 0;
+		for (uint32_t p : buf) {
+			const uint32_t r = (p >> 16) & 0xFF, g = (p >> 8) & 0xFF, b = p & 0xFF;
+			if (r > g && r > b && r > 120) { ++redThrough; }
+			if (b > r && b > 80) { ++blueBox; }
+		}
+		CHECK(blueBox > 100);        // the box renders
+		CHECK(redThrough == 0);      // ...and occludes the interior sphere (outward winding)
+	}
+
 	if (failures == 0) { std::printf("babylon suite: all checks passed\n"); }
 	return failures ? 1 : 0;
 }
