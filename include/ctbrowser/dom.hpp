@@ -155,9 +155,72 @@ template <typename Elem> void instantiate_into(node & out, node * parent) {
 // the live document: owns the tree, remembers the html root
 struct document {
 	std::unique_ptr<node> root; // the <html> element
+	// document.createElement products not yet appendChild'd anywhere:
+	// they live here so their node* stays valid either way
+	std::vector<std::unique_ptr<node>> detached;
 
 	node * body() { return root ? root->find_first("body") : nullptr; }
 	node * by_id(std::string_view id) { return root ? root->find_by_id(id) : nullptr; }
+
+	// the web's node factory: scripts MAY create elements (this
+	// deliberately relaxes the original never-create rule - p5 and
+	// friends boot via document.createElement("canvas")). Pointers stay
+	// stable: children are unique_ptr, appends never move nodes.
+	node * create_element(std::string_view tag) {
+		auto n = std::make_unique<node>();
+		n->tag = tag;
+		if (n->is_canvas()) {
+			n->canvas_w = 300; // spec defaults
+			n->canvas_h = 150;
+			n->pixels.assign(300 * 150, 0xFF000000u);
+		}
+		node * raw = n.get();
+		detached.push_back(std::move(n));
+		return raw;
+	}
+
+	// move a detached (or reparent an attached) node under parent
+	node * append_child(node * parent, node * child) {
+		if (parent == nullptr || child == nullptr) { return child; }
+		std::unique_ptr<node> owned;
+		for (auto it = detached.begin(); it != detached.end(); ++it) {
+			if (it->get() == child) {
+				owned = std::move(*it);
+				detached.erase(it);
+				break;
+			}
+		}
+		if (!owned && child->parent != nullptr) {
+			auto & sibs = child->parent->children;
+			for (auto it = sibs.begin(); it != sibs.end(); ++it) {
+				if (it->get() == child) {
+					owned = std::move(*it);
+					sibs.erase(it);
+					break;
+				}
+			}
+		}
+		if (!owned) { return child; } // not ours to move (e.g. root)
+		child->parent = parent;
+		parent->children.push_back(std::move(owned));
+		return child;
+	}
+
+	// detach from the tree (kept alive in `detached`: script handles
+	// still hold node*)
+	node * remove_child(node * parent, node * child) {
+		if (parent == nullptr || child == nullptr) { return child; }
+		auto & sibs = parent->children;
+		for (auto it = sibs.begin(); it != sibs.end(); ++it) {
+			if (it->get() == child) {
+				child->parent = nullptr;
+				detached.push_back(std::move(*it));
+				sibs.erase(it);
+				break;
+			}
+		}
+		return child;
+	}
 };
 
 // build the runtime document from a compile-time DOM type

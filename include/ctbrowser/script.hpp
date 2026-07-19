@@ -6,6 +6,8 @@
 #include "font8x8.hpp"
 #include <ctjs.hpp>
 #ifndef CTBROWSER_IN_A_MODULE
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <map>
@@ -46,14 +48,34 @@ namespace ctbrowser {
 // captured at registration time and lives in the engine's run_result
 struct dom_events {
 	ctjs::context * cx = nullptr;
+	document * doc = nullptr; // set by make_document; createElement et al
 	std::map<std::string, std::vector<ctjs::value>, std::less<>> listeners;
 	std::vector<ctjs::value> raf;
 	double raf_id = 0;
 	std::vector<std::string> alerts;
 	bool reload = false;
 	double now_ms = 0;
+	// every element handle carries "__node", an index here - how one
+	// handle's native (appendChild) resolves ANOTHER handle's node
+	std::vector<node *> handle_nodes;
+
+	double track_node(node * n) {
+		handle_nodes.push_back(n);
+		return static_cast<double>(handle_nodes.size() - 1);
+	}
+	node * node_of(const ctjs::value & handle) {
+		if (!handle.is_object()) { return nullptr; }
+		const ctjs::value * id = handle.as_object()->find("__node");
+		if (id == nullptr || !id->is_number()) { return nullptr; }
+		const size_t i = static_cast<size_t>(id->as_number());
+		return i < handle_nodes.size() ? handle_nodes[i] : nullptr;
+	}
 	// element handles whose layout-derived properties refresh per frame
 	std::vector<std::pair<std::shared_ptr<ctjs::object_t>, node *>> tracked;
+	// the window object + the viewport the engine last laid out
+	std::shared_ptr<ctjs::object_t> window_obj;
+	int viewport_w = 0;
+	int viewport_h = 0;
 
 	void reset() {
 		cx = nullptr;
@@ -92,6 +114,10 @@ struct dom_events {
 			       ctjs::value{static_cast<double>(canvas ? n->canvas_h : n->h)});
 			o->set("offsetLeft", ctjs::value{static_cast<double>(n->x)});
 			o->set("offsetTop", ctjs::value{static_cast<double>(n->y)});
+		}
+		if (window_obj) {
+			window_obj->set("innerWidth", ctjs::value{viewport_w});
+			window_obj->set("innerHeight", ctjs::value{viewport_h});
 		}
 	}
 };
@@ -166,6 +192,7 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 	o.set("height", ctjs::value{static_cast<double>(n->is_canvas() ? n->canvas_h : n->h)});
 	o.set("offsetLeft", ctjs::value{static_cast<double>(n->x)});
 	o.set("offsetTop", ctjs::value{static_cast<double>(n->y)});
+	o.set("__node", ctjs::value{ev->track_node(n)});
 	o.set("getContext", ctjs::value::function(
 	                        [n, images, ev](ctjs::context & cx, const std::vector<ctjs::value> &) {
 		                        ev->cx = &cx;
@@ -173,6 +200,58 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 		                                              : ctjs::value{};
 	                        },
 	                        "getContext"));
+	o.set("appendChild",
+	      ctjs::value::function(
+	          [n, ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
+		          ev->cx = &cx;
+		          if (!a.empty() && ev->doc != nullptr) {
+			          if (node * child = ev->node_of(a[0])) {
+				          ev->doc->append_child(n, child);
+			          }
+		          }
+		          return a.empty() ? ctjs::value{} : a[0]; // returns the child
+	          },
+	          "appendChild"));
+	o.set("removeChild",
+	      ctjs::value::function(
+	          [n, ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
+		          ev->cx = &cx;
+		          if (!a.empty() && ev->doc != nullptr) {
+			          if (node * child = ev->node_of(a[0])) {
+				          ev->doc->remove_child(n, child);
+			          }
+		          }
+		          return a.empty() ? ctjs::value{} : a[0];
+	          },
+	          "removeChild"));
+	o.set("setAttribute",
+	      ctjs::value::function(
+	          [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+		          if (a.size() >= 2) {
+			          const std::string key = a[0].to_string();
+			          const std::string val = a[1].to_string();
+			          bool found = false;
+			          for (auto & [k, v] : n->attributes) {
+				          if (k == key) {
+					          v = val;
+					          found = true;
+				          }
+			          }
+			          if (!found) { n->attributes.emplace_back(key, val); }
+			          if (key == "id") { n->id = val; }
+			          if (key == "class") { n->classes = val; }
+			          if (n->is_canvas() && (key == "width" || key == "height")) {
+				          const int d = parse_int_attr(val, 0);
+				          if (key == "width") { n->canvas_w = d; }
+				          else { n->canvas_h = d; }
+				          n->pixels.assign(static_cast<size_t>(n->canvas_w) *
+				                               static_cast<size_t>(n->canvas_h),
+				                           0x00000000u);
+			          }
+		          }
+		          return ctjs::value{};
+	          },
+	          "setAttribute"));
 	o.set("addEventListener",
 	      ctjs::value::function(
 	          [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
@@ -361,71 +440,271 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 		             return ctjs::value{};
 	             },
 	             "strokeRect"));
-	// --- the 2D path API. Shapes accumulate between beginPath and
-	// fill; arc() with a full sweep is a disc, and partial arcs
-	// DEGRADE to the full disc (documented approximation - games draw
-	// balls, not pie charts)
-	struct path_shape {
-		bool is_rect;
-		double x, y, w, h; // rect
-		double cx, cy, r;  // circle
+	// --- the 2D path API with a REAL transform stack. Per spec, path
+	// verbs transform their points by the CURRENT matrix as they are
+	// appended (so rasterization is matrix-free): subpaths are device-
+	// space polylines, fill() scanline-fills them (even-odd), stroke()
+	// draws lineWidth-thick segments. arc() honors its angles by
+	// sampling; rect() appends a closed 4-point subpath.
+	struct ctx2d {
+		double a = 1, b = 0, c = 0, d = 1, e = 0, f = 0; // CTM [a c e; b d f]
+		std::vector<std::array<double, 6>> stack;
+		struct sub {
+			std::vector<std::pair<double, double>> pts;
+			bool closed = false;
+		};
+		std::vector<sub> subs;
+
+		std::pair<double, double> tx(double x, double y) const {
+			return {a * x + c * y + e, b * x + d * y + f};
+		}
+		void mul(double a2, double b2, double c2, double d2, double e2, double f2) {
+			const double na = a * a2 + c * b2;
+			const double nb = b * a2 + d * b2;
+			const double nc = a * c2 + c * d2;
+			const double nd = b * c2 + d * d2;
+			const double ne = a * e2 + c * f2 + e;
+			const double nf = b * e2 + d * f2 + f;
+			a = na; b = nb; c = nc; d = nd; e = ne; f = nf;
+		}
+		sub & cur() {
+			if (subs.empty()) { subs.emplace_back(); }
+			return subs.back();
+		}
 	};
-	auto path = std::make_shared<std::vector<path_shape>>();
-	const auto disc = [put](int cx, int cy, int r, uint32_t c) {
-		for (int y = -r; y <= r; ++y) {
-			for (int x = -r; x <= r; ++x) {
-				if (x * x + y * y <= r * r) { put(cx + x, cy + y, c); }
+	auto st = std::make_shared<ctx2d>();
+	// even-odd scanline fill of every subpath (closing them implicitly)
+	const auto fill_subs = [st, put](uint32_t col) {
+		double miny = 1e300, maxy = -1e300;
+		for (const auto & s : st->subs) {
+			for (const auto & [px, py] : s.pts) {
+				miny = std::min(miny, py);
+				maxy = std::max(maxy, py);
+			}
+		}
+		if (miny > maxy) { return; }
+		for (int y = static_cast<int>(std::floor(miny)); y <= static_cast<int>(std::ceil(maxy));
+		     ++y) {
+			const double sy = y + 0.5;
+			std::vector<double> xs;
+			for (const auto & s : st->subs) {
+				const size_t n = s.pts.size();
+				if (n < 2) { continue; }
+				for (size_t i = 0; i < n; ++i) {
+					const auto [x1, y1] = s.pts[i];
+					const auto [x2, y2] = s.pts[(i + 1) % n];
+					if ((y1 <= sy) == (y2 <= sy)) { continue; }
+					xs.push_back(x1 + (sy - y1) / (y2 - y1) * (x2 - x1));
+				}
+			}
+			std::sort(xs.begin(), xs.end());
+			for (size_t i = 0; i + 1 < xs.size(); i += 2) {
+				for (int x = static_cast<int>(std::ceil(xs[i] - 0.5));
+				     x < static_cast<int>(std::ceil(xs[i + 1] - 0.5)) + 1; ++x) {
+					put(x, y, col);
+				}
 			}
 		}
 	};
+	// a lineWidth-thick segment as a filled quad
+	const auto thick_seg = [put](double x1, double y1, double x2, double y2, double w,
+	                             uint32_t col) {
+		const double dx = x2 - x1;
+		const double dy = y2 - y1;
+		const double len = std::hypot(dx, dy);
+		if (len == 0) { return; }
+		const double nx = -dy / len * (w / 2);
+		const double ny = dx / len * (w / 2);
+		const int minx = static_cast<int>(std::floor(std::min({x1 - std::fabs(nx), x2 - std::fabs(nx)})));
+		const int maxx = static_cast<int>(std::ceil(std::max({x1 + std::fabs(nx), x2 + std::fabs(nx)})));
+		const int miny = static_cast<int>(std::floor(std::min({y1 - std::fabs(ny) - w, y2 - std::fabs(ny) - w})));
+		const int maxy = static_cast<int>(std::ceil(std::max({y1 + std::fabs(ny) + w, y2 + std::fabs(ny) + w})));
+		for (int y = miny; y <= maxy; ++y) {
+			for (int x = minx; x <= maxx; ++x) {
+				// distance from pixel center to the segment
+				const double px = x + 0.5 - x1;
+				const double py = y + 0.5 - y1;
+				const double t = std::clamp((px * dx + py * dy) / (len * len), 0.0, 1.0);
+				const double ddx = px - t * dx;
+				const double ddy = py - t * dy;
+				if (ddx * ddx + ddy * ddy <= (w / 2) * (w / 2)) { put(x, y, col); }
+			}
+		}
+	};
+	ctx->set("lineWidth", ctjs::value{1.0});
+	ctx->set("globalAlpha", ctjs::value{1.0});
+	const auto num_prop = [ctx](const char * name, double fallback) {
+		const ctjs::value * v = ctx->find(name);
+		return v != nullptr && v->is_number() ? v->as_number() : fallback;
+	};
+	ctx->set("save", ctjs::value::function(
+	                     [st](ctjs::context &, const std::vector<ctjs::value> &) {
+		                     st->stack.push_back({st->a, st->b, st->c, st->d, st->e, st->f});
+		                     return ctjs::value{};
+	                     },
+	                     "save"));
+	ctx->set("restore", ctjs::value::function(
+	                        [st](ctjs::context &, const std::vector<ctjs::value> &) {
+		                        if (!st->stack.empty()) {
+			                        const auto m = st->stack.back();
+			                        st->stack.pop_back();
+			                        st->a = m[0]; st->b = m[1]; st->c = m[2];
+			                        st->d = m[3]; st->e = m[4]; st->f = m[5];
+		                        }
+		                        return ctjs::value{};
+	                        },
+	                        "restore"));
+	ctx->set("translate", ctjs::value::function(
+	                          [st](ctjs::context &, const std::vector<ctjs::value> & a) {
+		                          if (a.size() >= 2) {
+			                          st->mul(1, 0, 0, 1, a[0].to_number(), a[1].to_number());
+		                          }
+		                          return ctjs::value{};
+	                          },
+	                          "translate"));
+	ctx->set("rotate", ctjs::value::function(
+	                       [st](ctjs::context &, const std::vector<ctjs::value> & a) {
+		                       if (!a.empty()) {
+			                       const double t = a[0].to_number();
+			                       st->mul(std::cos(t), std::sin(t), -std::sin(t),
+			                               std::cos(t), 0, 0);
+		                       }
+		                       return ctjs::value{};
+	                       },
+	                       "rotate"));
+	ctx->set("scale", ctjs::value::function(
+	                      [st](ctjs::context &, const std::vector<ctjs::value> & a) {
+		                      if (a.size() >= 2) {
+			                      st->mul(a[0].to_number(), 0, 0, a[1].to_number(), 0, 0);
+		                      }
+		                      return ctjs::value{};
+	                      },
+	                      "scale"));
+	ctx->set("resetTransform", ctjs::value::function(
+	                               [st](ctjs::context &, const std::vector<ctjs::value> &) {
+		                               st->a = st->d = 1;
+		                               st->b = st->c = st->e = st->f = 0;
+		                               return ctjs::value{};
+	                               },
+	                               "resetTransform"));
 	ctx->set("beginPath", ctjs::value::function(
-	                          [path](ctjs::context &, const std::vector<ctjs::value> &) {
-		                          path->clear();
+	                          [st](ctjs::context &, const std::vector<ctjs::value> &) {
+		                          st->subs.clear();
 		                          return ctjs::value{};
 	                          },
 	                          "beginPath"));
 	ctx->set("closePath", ctjs::value::function(
-	                          [](ctjs::context &, const std::vector<ctjs::value> &) {
+	                          [st](ctjs::context &, const std::vector<ctjs::value> &) {
+		                          if (!st->subs.empty()) { st->subs.back().closed = true; }
 		                          return ctjs::value{};
 	                          },
 	                          "closePath"));
+	ctx->set("moveTo", ctjs::value::function(
+	                       [st](ctjs::context &, const std::vector<ctjs::value> & a) {
+		                       if (a.size() >= 2) {
+			                       st->subs.emplace_back();
+			                       st->subs.back().pts.push_back(
+			                           st->tx(a[0].to_number(), a[1].to_number()));
+		                       }
+		                       return ctjs::value{};
+	                       },
+	                       "moveTo"));
+	ctx->set("lineTo", ctjs::value::function(
+	                       [st](ctjs::context &, const std::vector<ctjs::value> & a) {
+		                       if (a.size() >= 2) {
+			                       st->cur().pts.push_back(
+			                           st->tx(a[0].to_number(), a[1].to_number()));
+		                       }
+		                       return ctjs::value{};
+	                       },
+	                       "lineTo"));
 	ctx->set("rect", ctjs::value::function(
-	                     [path](ctjs::context &, const std::vector<ctjs::value> & a) {
+	                     [st](ctjs::context &, const std::vector<ctjs::value> & a) {
 		                     if (a.size() >= 4) {
-			                     path->push_back({true, a[0].to_number(), a[1].to_number(),
-			                                      a[2].to_number(), a[3].to_number(), 0, 0,
-			                                      0});
+			                     const double x = a[0].to_number();
+			                     const double y = a[1].to_number();
+			                     const double w = a[2].to_number();
+			                     const double h = a[3].to_number();
+			                     ctx2d::sub s;
+			                     s.pts = {st->tx(x, y), st->tx(x + w, y),
+			                              st->tx(x + w, y + h), st->tx(x, y + h)};
+			                     s.closed = true;
+			                     st->subs.push_back(std::move(s));
 		                     }
 		                     return ctjs::value{};
 	                     },
 	                     "rect"));
 	ctx->set("arc", ctjs::value::function(
-	                    [path](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                    if (a.size() >= 3) {
-			                    path->push_back({false, 0, 0, 0, 0, a[0].to_number(),
-			                                     a[1].to_number(), a[2].to_number()});
+	                    [st](ctjs::context &, const std::vector<ctjs::value> & a) {
+		                    if (a.size() >= 5) {
+			                    const double cx = a[0].to_number();
+			                    const double cy = a[1].to_number();
+			                    const double r = a[2].to_number();
+			                    double t0 = a[3].to_number();
+			                    double t1 = a[4].to_number();
+			                    const bool ccw = a.size() >= 6 && a[5].truthy();
+			                    if (!ccw && t1 < t0) { t1 += 6.283185307179586; }
+			                    if (ccw && t0 < t1) { t0 += 6.283185307179586; }
+			                    const int steps =
+			                        std::max(8, static_cast<int>(std::fabs(t1 - t0) * r / 2));
+			                    auto & s = st->cur();
+			                    for (int i = 0; i <= steps; ++i) {
+				                    const double t = t0 + (t1 - t0) * i / steps;
+				                    s.pts.push_back(st->tx(cx + r * std::cos(t),
+				                                           cy + r * std::sin(t)));
+			                    }
 		                    }
 		                    return ctjs::value{};
 	                    },
 	                    "arc"));
 	ctx->set("fill", ctjs::value::function(
-	                     [path, fill, disc, style_of](ctjs::context &,
-	                                                  const std::vector<ctjs::value> &) {
-		                     const uint32_t c = style_of();
-		                     for (const path_shape & s : *path) {
-			                     if (s.is_rect) {
-				                     fill(static_cast<int>(s.x), static_cast<int>(s.y),
-				                          static_cast<int>(s.w), static_cast<int>(s.h),
-				                          c);
-			                     } else {
-				                     disc(static_cast<int>(s.cx),
-				                          static_cast<int>(s.cy), static_cast<int>(s.r),
-				                          c);
-			                     }
-		                     }
+	                     [st, fill_subs, style_of](ctjs::context &,
+	                                               const std::vector<ctjs::value> &) {
+		                     fill_subs(style_of());
 		                     return ctjs::value{};
 	                     },
 	                     "fill"));
+	ctx->set("stroke",
+	         ctjs::value::function(
+	             [st, thick_seg, stroke_of, num_prop](ctjs::context &,
+	                                                  const std::vector<ctjs::value> &) {
+		             const uint32_t col = stroke_of();
+		             const double w = num_prop("lineWidth", 1.0);
+		             for (const auto & s : st->subs) {
+			             const size_t n = s.pts.size();
+			             for (size_t i = 0; i + 1 < n; ++i) {
+				             thick_seg(s.pts[i].first, s.pts[i].second,
+				                       s.pts[i + 1].first, s.pts[i + 1].second, w, col);
+			             }
+			             if (s.closed && n > 2) {
+				             thick_seg(s.pts[n - 1].first, s.pts[n - 1].second,
+				                       s.pts[0].first, s.pts[0].second, w, col);
+			             }
+		             }
+		             return ctjs::value{};
+	             },
+	             "stroke"));
+	ctx->set("measureText",
+	         ctjs::value::function(
+	             [ctx](ctjs::context &, const std::vector<ctjs::value> & a) {
+		             const std::string text = a.empty() ? "" : a[0].to_string();
+		             int px = 10;
+		             if (const ctjs::value * fv = ctx->find("font")) {
+			             const std::string spec = fv->to_string();
+			             int v = 0;
+			             for (size_t i = 0; i < spec.size() && spec[i] >= '0' && spec[i] <= '9';
+			                  ++i) {
+				             v = v * 10 + (spec[i] - '0');
+			             }
+			             if (v > 0) { px = v; }
+		             }
+		             const int scale = px >= 8 ? px / 8 : 1;
+		             ctjs::object_t m;
+		             m.set("width", ctjs::value{static_cast<double>(text.size()) * 8.0 *
+		                                        static_cast<double>(scale)});
+		             return ctjs::value::object(std::move(m));
+	             },
+	             "measureText"));
 	// a filled circle - not in the 2D spec, but games want one (documented
 	// extension, like drawImageRegion below)
 	ctx->set("fillCircle",
@@ -529,7 +808,19 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 // location.reload() escape hatch (the engine re-instantiates the DOM
 // and re-runs the script - navigation, compile-time style)
 inline ctjs::value make_document(document & doc, image_store & images, dom_events & ev) {
+	ev.doc = &doc;
 	ctjs::object_t d;
+	d.set("createElement",
+	      ctjs::value::function(
+	          [&doc, &images, &ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
+		          ev.cx = &cx;
+		          if (a.empty()) { return ctjs::value{}; }
+		          node * n = doc.create_element(a[0].to_string());
+		          return element_handle(n, &images, &ev);
+	          },
+	          "createElement"));
+	d.set("body", ctjs::value{}); // filled below once the tree exists
+	if (node * b = doc.body()) { d.set("body", element_handle(b, &images, &ev)); }
 	d.set("getElementById",
 	      ctjs::value::function(
 	          [&doc, &images, &ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
@@ -588,6 +879,34 @@ inline std::vector<ctjs::binding> dom_bindings(document & doc, std::string & tit
 	               },
 	               "getContext")});
 	out.push_back({"document", detail::make_document(doc, images, ev)});
+	{
+		// the window object: the environment surface libraries probe.
+		// addEventListener shares the document's listener registry;
+		// performance.now is the engine's clock (now_ms)
+		auto w = std::make_shared<ctjs::object_t>();
+		w->set("innerWidth", ctjs::value{0});
+		w->set("innerHeight", ctjs::value{0});
+		w->set("devicePixelRatio", ctjs::value{1.0});
+		w->set("addEventListener",
+		       ctjs::value::function(
+		           [&ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
+			           ev.cx = &cx;
+			           if (a.size() >= 2 && a[1].is_function()) {
+				           ev.listeners[a[0].to_string()].push_back(a[1]);
+			           }
+			           return ctjs::value{};
+		           },
+		           "addEventListener"));
+		ctjs::object_t perf;
+		perf.set("now", ctjs::value::function(
+		                    [&ev](ctjs::context &, const std::vector<ctjs::value> &) {
+			                    return ctjs::value{ev.now_ms};
+		                    },
+		                    "now"));
+		w->set("performance", ctjs::value::object(std::move(perf)));
+		ev.window_obj = w;
+		out.push_back({"window", ctjs::value{w}});
+	}
 	out.push_back(
 	    {"requestAnimationFrame",
 	     ctjs::value::function(

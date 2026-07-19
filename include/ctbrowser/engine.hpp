@@ -74,6 +74,7 @@ public:
 	// the offsetLeft/width properties on exposed element handles) too
 	std::vector<paint_cmd> frame(int viewport_w) {
 		std::vector<paint_cmd> cmds = ctbrowser::layout(doc, viewport_w, resolve, measure);
+		ev.viewport_w = viewport_w;
 		ev.refresh_tracked();
 		return cmds;
 	}

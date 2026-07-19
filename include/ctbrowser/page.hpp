@@ -1,6 +1,7 @@
 #ifndef CTBROWSER__PAGE__HPP
 #define CTBROWSER__PAGE__HPP
 
+#include "embed.hpp"
 #include <cthtml.hpp>
 #include <ctcss.hpp>
 #include <ctjs.hpp>
@@ -36,10 +37,42 @@ template <typename Provider> consteval auto to_fixed() {
 	return ctll::fixed_string<v.size()>{buf};
 }
 
+// --- external scripts: <script src="..."> resolves AT COMPILE TIME.
+// The src path (repo-root-relative, like every asset path; the build
+// passes --embed-dir) is a compile-time string, so std::embed reads
+// the FILE during constant evaluation and its text joins the page's
+// script chain in document order - the web's shared-global in-order
+// semantics, settled before the program exists. The consuming TU
+// gates file reads with one #depend directive (see embed.hpp).
+
+template <typename Node> struct script_text_of {
+	static constexpr std::string_view get() {
+		if constexpr (Node::template has_attribute<"src">()) {
+#ifdef CTBROWSER_HAS_STD_EMBED
+			constexpr auto bytes = ctbrowser::embed<char>(
+			    std::string_view{Node::template attribute<"src">().view()});
+			return std::string_view{bytes.data(), bytes.size()};
+#else
+			return {};
+#endif
+		} else {
+			return std::string_view{Node::text()};
+		}
+	}
+};
+
 // --- collect the concatenated text of every <tag> element in the
-// document type (document order, '\n' between pieces)
+// document type (document order, '\n' between pieces); script elements
+// contribute their EMBEDDED src file when they have one
 
 template <typename Node, typename Tag> struct tag_collect {
+	static constexpr std::string_view piece() noexcept {
+		if constexpr (Tag::view() == std::string_view{"script"}) {
+			return script_text_of<Node>::get();
+		} else {
+			return std::string_view{Node::text()};
+		}
+	}
 	template <size_t... I>
 	static constexpr size_t children_size(std::index_sequence<I...>) noexcept {
 		return (tag_collect<decltype(Node::template child<I>()), Tag>::size() + ... + 0);
@@ -47,7 +80,7 @@ template <typename Node, typename Tag> struct tag_collect {
 	static constexpr size_t size() noexcept {
 		if constexpr (Node::type == cthtml::kind::element) {
 			size_t n = 0;
-			if (Node::name() == Tag::view()) { n += Node::text().size() + 1; }
+			if (Node::name() == Tag::view()) { n += piece().size() + 1; }
 			n += children_size(std::make_index_sequence<Node::child_count()>{});
 			return n;
 		} else {
@@ -63,7 +96,7 @@ template <typename Node, typename Tag> struct tag_collect {
 	static constexpr char * fill(char * at) noexcept {
 		if constexpr (Node::type == cthtml::kind::element) {
 			if (Node::name() == Tag::view()) {
-				for (const char c : Node::text()) { *at++ = c; }
+				for (const char c : piece()) { *at++ = c; }
 				*at++ = '\n';
 			}
 			return children_fill(at, std::make_index_sequence<Node::child_count()>{});
@@ -108,7 +141,8 @@ template <CTJS_STRING_INPUT Src> struct page {
 	}
 	using sheet_type = decltype(sheet());
 
-	// the page's JS, parsed at compile time (a ctjs script)
+	// the page's JS, parsed at compile time (a ctjs script). External
+	// <script src> files were embedded into the chain by tag_collect.
 	using script_type = ctjs::script_t<detail::to_fixed<script_source>()>;
 
 	// the <title> text ("" when absent)
