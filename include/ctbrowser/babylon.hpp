@@ -42,10 +42,12 @@
 #include <vector>
 #include <boost/qvm/vec.hpp>
 #include <boost/qvm/vec_access.hpp>
-#include <boost/qvm/vec_operations.hpp>
 #include <boost/qvm/mat.hpp>
-#include <boost/qvm/mat_operations.hpp>
-#include <boost/qvm/vec_mat_operations.hpp>
+#include <bit>
+#include <boost/math/ccmath/sqrt.hpp>
+#include <boost/math/ccmath/floor.hpp>
+#include <boost/math/ccmath/ceil.hpp>
+#include <boost/math/ccmath/fabs.hpp>
 #endif
 
 namespace ctbrowser::babylon {
@@ -62,25 +64,36 @@ using vec3 = boost::qvm::vec<double, 3>;
 using vec4 = boost::qvm::vec<double, 4>;
 using mat4 = boost::qvm::mat<double, 4, 4>;
 
-inline vec3 V3(double x, double y, double z) noexcept {
+namespace bmc = boost::math::ccmath; // constexpr sqrt/floor/ceil/fabs
+
+constexpr vec3 V3(double x, double y, double z) noexcept {
 	vec3 v;
 	v.a[0] = x; v.a[1] = y; v.a[2] = z;
 	return v;
 }
 
-// --- vector helpers (QVM for dot/cross/normalize; component math inline)
-inline vec3 sub(const vec3 & a, const vec3 & b) noexcept { return V3(a.a[0]-b.a[0], a.a[1]-b.a[1], a.a[2]-b.a[2]); }
-inline double dot3(const vec3 & a, const vec3 & b) noexcept { return boost::qvm::dot(a, b); }
-inline vec3 cross3(const vec3 & a, const vec3 & b) noexcept { return boost::qvm::cross(a, b); }
-inline vec3 norm3(const vec3 & a) noexcept {
-	const double m = boost::qvm::mag(a);
-	return m > 1e-12 ? V3(a.a[0]/m, a.a[1]/m, a.a[2]/m) : V3(0, 0, 0);
+// --- vector helpers (hand-rolled so they fold at compile time; the QVM
+// operator overloads aren't constexpr, so we don't use them)
+constexpr vec3 sub(const vec3 & a, const vec3 & b) noexcept {
+	return V3(a.a[0] - b.a[0], a.a[1] - b.a[1], a.a[2] - b.a[2]);
+}
+constexpr double dot3(const vec3 & a, const vec3 & b) noexcept {
+	return a.a[0] * b.a[0] + a.a[1] * b.a[1] + a.a[2] * b.a[2];
+}
+constexpr vec3 cross3(const vec3 & a, const vec3 & b) noexcept {
+	return V3(a.a[1] * b.a[2] - a.a[2] * b.a[1], a.a[2] * b.a[0] - a.a[0] * b.a[2],
+	          a.a[0] * b.a[1] - a.a[1] * b.a[0]);
+}
+constexpr double mag3(const vec3 & a) noexcept { return bmc::sqrt(dot3(a, a)); }
+constexpr vec3 norm3(const vec3 & a) noexcept {
+	const double m = mag3(a);
+	return m > 1e-12 ? V3(a.a[0] / m, a.a[1] / m, a.a[2] / m) : V3(0, 0, 0);
 }
 
 // --- colors
 struct rgba { double r = 1, g = 1, b = 1, a = 1; };
 
-inline uint32_t pack(const rgba & c, double lit) noexcept {
+constexpr uint32_t pack(const rgba & c, double lit) noexcept {
 	auto ch = [&](double v) -> uint32_t {
 		double s = v * lit * 255.0;
 		s = s < 0 ? 0 : (s > 255 ? 255 : s);
@@ -91,53 +104,117 @@ inline uint32_t pack(const rgba & c, double lit) noexcept {
 	return (A << 24) | (ch(c.r) << 16) | (ch(c.g) << 8) | ch(c.b);
 }
 
+// --- fast CONSTEXPR trig. Inspired by a lookup-table technique (Kevin P.
+// Rice, StackOverflow): a SINGLE per-degree cos table drives BOTH cos and
+// sin - since sin x = cos(90-x) - with quadrant symmetry and linear
+// interpolation. Accurate to ~1e-4, and unlike std::sin/std::cos/std::tan
+// (not constexpr until C++26) it evaluates at COMPILE TIME. Angles: radians.
+inline constexpr int kCosTable[91] = {
+    64000, 63990, 63961, 63912, 63844, 63756, 63649, 63523, 63377, 63212,
+    63028, 62824, 62601, 62360, 62099, 61819, 61521, 61204, 60868, 60513,
+    60140, 59749, 59340, 58912, 58467, 58004, 57523, 57024, 56509, 55976,
+    55426, 54859, 54275, 53675, 53058, 52426, 51777, 51113, 50433, 49737,
+    49027, 48301, 47561, 46807, 46038, 45255, 44458, 43648, 42824, 41988,
+    41138, 40277, 39402, 38516, 37618, 36709, 35788, 34857, 33915, 32962,
+    32000, 31028, 30046, 29055, 28056, 27048, 26031, 25007, 23975, 22936,
+    21889, 20836, 19777, 18712, 17641, 16564, 15483, 14397, 13306, 12212,
+    11113, 10012,  8907,  7800,  6690,  5578,  4464,  3350,  2234,  1117,
+        0};
+
+// cos of x degrees, x in [0,90], interpolated between table samples
+constexpr double cos_deg01(double x) noexcept {
+	if (x <= 0.0) { return 1.0; }
+	if (x >= 90.0) { return 0.0; }
+	const int i = static_cast<int>(x);
+	const double frac = x - static_cast<double>(i);
+	const double a = static_cast<double>(kCosTable[i]);
+	const double b = static_cast<double>(kCosTable[i + 1]);
+	return (a + (b - a) * frac) * 0.000015625; // * 1/64000
+}
+
+// sin AND cos of a radian angle, together (the whole point of the table)
+constexpr void fsincos(double rad, double & s, double & c) noexcept {
+	double deg = rad * 57.295779513082320876; // 180/pi
+	const long k = static_cast<long>(deg * (1.0 / 360.0));
+	deg -= 360.0 * static_cast<double>(k);
+	if (deg < 0.0) { deg += 360.0; }               // now in [0, 360)
+	const int quad = static_cast<int>(deg * (1.0 / 90.0)) & 3;
+	const double d = deg - 90.0 * static_cast<double>(quad); // [0, 90)
+	const double cd = cos_deg01(d);                // cos(d)
+	const double sd = cos_deg01(90.0 - d);         // sin(d) = cos(90-d)
+	switch (quad) {
+		case 0: c = cd;  s = sd;  break;
+		case 1: c = -sd; s = cd;  break;            // 90 + d
+		case 2: c = -cd; s = -sd; break;            // 180 + d
+		default: c = sd; s = -cd; break;            // 270 + d
+	}
+}
+constexpr double fcos(double rad) noexcept { double s = 0, c = 0; fsincos(rad, s, c); return c; }
+constexpr double fsin(double rad) noexcept { double s = 0, c = 0; fsincos(rad, s, c); return s; }
+constexpr double ftan(double rad) noexcept {
+	double s = 0, c = 0;
+	fsincos(rad, s, c);
+	return c != 0.0 ? s / c : 0.0;
+}
+
 // --- matrix builders (explicit element fills, column-vector M*p)
-inline mat4 identity() noexcept {
+constexpr mat4 identity() noexcept {
 	mat4 m;
 	for (int r = 0; r < 4; ++r)
 		for (int c = 0; c < 4; ++c) m.a[r][c] = (r == c) ? 1.0 : 0.0;
 	return m;
 }
-inline mat4 translation(double x, double y, double z) noexcept {
+constexpr mat4 translation(double x, double y, double z) noexcept {
 	mat4 m = identity();
 	m.a[0][3] = x; m.a[1][3] = y; m.a[2][3] = z;
 	return m;
 }
-inline mat4 scaling(double x, double y, double z) noexcept {
+constexpr mat4 scaling(double x, double y, double z) noexcept {
 	mat4 m = identity();
 	m.a[0][0] = x; m.a[1][1] = y; m.a[2][2] = z;
 	return m;
 }
-inline mat4 rotationX(double t) noexcept {
+constexpr mat4 rotationX(double t) noexcept {
 	mat4 m = identity();
-	const double c = std::cos(t), s = std::sin(t);
+	const double c = fcos(t), s = fsin(t);
 	m.a[1][1] = c; m.a[1][2] = -s; m.a[2][1] = s; m.a[2][2] = c;
 	return m;
 }
-inline mat4 rotationY(double t) noexcept {
+constexpr mat4 rotationY(double t) noexcept {
 	mat4 m = identity();
-	const double c = std::cos(t), s = std::sin(t);
+	const double c = fcos(t), s = fsin(t);
 	m.a[0][0] = c; m.a[0][2] = s; m.a[2][0] = -s; m.a[2][2] = c;
 	return m;
 }
-inline mat4 rotationZ(double t) noexcept {
+constexpr mat4 rotationZ(double t) noexcept {
 	mat4 m = identity();
-	const double c = std::cos(t), s = std::sin(t);
+	const double c = fcos(t), s = fsin(t);
 	m.a[0][0] = c; m.a[0][1] = -s; m.a[1][0] = s; m.a[1][1] = c;
 	return m;
 }
-// Babylon mesh.rotation Vector3 (rx,ry,rz) = yaw-pitch-roll, applied YXZ
-inline mat4 rotationYPR(double rx, double ry, double rz) noexcept {
-	return rotationY(ry) * rotationX(rx) * rotationZ(rz);
+// 4x4 matrix multiply (hand-rolled; QVM's operator* is not constexpr)
+constexpr mat4 matmul(const mat4 & a, const mat4 & b) noexcept {
+	mat4 m;
+	for (int r = 0; r < 4; ++r)
+		for (int c = 0; c < 4; ++c) {
+			double sum = 0.0;
+			for (int k = 0; k < 4; ++k) { sum += a.a[r][k] * b.a[k][c]; }
+			m.a[r][c] = sum;
+		}
+	return m;
 }
-inline mat4 mul(const mat4 & a, const mat4 & b) noexcept { return a * b; }
+// Babylon mesh.rotation Vector3 (rx,ry,rz) = yaw-pitch-roll, applied YXZ
+constexpr mat4 rotationYPR(double rx, double ry, double rz) noexcept {
+	return matmul(rotationY(ry), matmul(rotationX(rx), rotationZ(rz)));
+}
+constexpr mat4 mul(const mat4 & a, const mat4 & b) noexcept { return matmul(a, b); }
 
 // left-handed perspective (column-vector: clip = P * viewPos)
-inline mat4 perspectiveFovLH(double fov, double aspect, double zn, double zf) noexcept {
+constexpr mat4 perspectiveFovLH(double fov, double aspect, double zn, double zf) noexcept {
 	mat4 m;
 	for (int r = 0; r < 4; ++r)
 		for (int c = 0; c < 4; ++c) m.a[r][c] = 0.0;
-	const double f = 1.0 / std::tan(fov * 0.5);
+	const double f = 1.0 / ftan(fov * 0.5);
 	m.a[0][0] = f / aspect;
 	m.a[1][1] = f;
 	m.a[2][2] = zf / (zf - zn);
@@ -146,7 +223,7 @@ inline mat4 perspectiveFovLH(double fov, double aspect, double zn, double zf) no
 	return m;
 }
 // left-handed lookAt (column-vector view matrix)
-inline mat4 lookAtLH(const vec3 & eye, const vec3 & target, const vec3 & up) noexcept {
+constexpr mat4 lookAtLH(const vec3 & eye, const vec3 & target, const vec3 & up) noexcept {
 	const vec3 z = norm3(sub(target, eye));       // forward, +Z into screen
 	const vec3 x = norm3(cross3(up, z));          // right
 	const vec3 y = cross3(z, x);                   // true up
@@ -159,7 +236,7 @@ inline mat4 lookAtLH(const vec3 & eye, const vec3 & target, const vec3 & up) noe
 }
 
 // transform a point (w=1); returns the full vec4 (keep w for the divide)
-inline vec4 xform(const mat4 & m, const vec3 & p) noexcept {
+constexpr vec4 xform(const mat4 & m, const vec3 & p) noexcept {
 	vec4 v;
 	const double px = p.a[0], py = p.a[1], pz = p.a[2];
 	for (int r = 0; r < 4; ++r)
@@ -173,7 +250,7 @@ struct geo {
 	std::vector<std::array<int, 3>> tris;
 };
 
-inline geo make_box(double size) {
+constexpr geo make_box(double size) {
 	const double h = size * 0.5;
 	geo g;
 	g.verts = { V3(-h,-h,-h), V3(h,-h,-h), V3(h,h,-h), V3(-h,h,-h),
@@ -188,7 +265,7 @@ inline geo make_box(double size) {
 	return g;
 }
 
-inline geo make_sphere(double diameter, int segments) {
+constexpr geo make_sphere(double diameter, int segments) {
 	const double rad = diameter * 0.5;
 	const int seg = segments < 3 ? 3 : (segments > 24 ? 24 : segments);
 	const int rings = seg, sectors = seg * 2;
@@ -197,9 +274,9 @@ inline geo make_sphere(double diameter, int segments) {
 		const double phi = M_PI * (double(i) / rings);       // 0..pi
 		for (int j = 0; j <= sectors; ++j) {
 			const double theta = 2.0 * M_PI * (double(j) / sectors);
-			g.verts.push_back(V3(rad * std::sin(phi) * std::cos(theta),
-			                     rad * std::cos(phi),
-			                     rad * std::sin(phi) * std::sin(theta)));
+			g.verts.push_back(V3(rad * fsin(phi) * fcos(theta),
+			                     rad * fcos(phi),
+			                     rad * fsin(phi) * fsin(theta)));
 		}
 	}
 	const int stride = sectors + 1;
@@ -213,7 +290,7 @@ inline geo make_sphere(double diameter, int segments) {
 	return g;
 }
 
-inline geo make_ground(double width, double height) {
+constexpr geo make_ground(double width, double height) {
 	const double x = width * 0.5, z = height * 0.5;
 	geo g;
 	g.verts = { V3(-x, 0, -z), V3(x, 0, -z), V3(x, 0, z), V3(-x, 0, z) };
@@ -221,18 +298,18 @@ inline geo make_ground(double width, double height) {
 	return g;
 }
 
-inline geo make_cylinder(double height, double diameter, int tess) {
+constexpr geo make_cylinder(double height, double diameter, int tess) {
 	const double r = diameter * 0.5, hh = height * 0.5;
 	const int n = tess < 3 ? 3 : (tess > 48 ? 48 : tess);
 	geo g;
 	const int top0 = 0, bot0 = n; // ring vertices
 	for (int i = 0; i < n; ++i) {
 		const double a = 2.0 * M_PI * (double(i) / n);
-		g.verts.push_back(V3(r * std::cos(a), hh, r * std::sin(a)));
+		g.verts.push_back(V3(r * fcos(a), hh, r * fsin(a)));
 	}
 	for (int i = 0; i < n; ++i) {
 		const double a = 2.0 * M_PI * (double(i) / n);
-		g.verts.push_back(V3(r * std::cos(a), -hh, r * std::sin(a)));
+		g.verts.push_back(V3(r * fcos(a), -hh, r * fsin(a)));
 	}
 	const int topC = static_cast<int>(g.verts.size()); g.verts.push_back(V3(0, hh, 0));
 	const int botC = static_cast<int>(g.verts.size()); g.verts.push_back(V3(0, -hh, 0));
@@ -268,7 +345,7 @@ struct view {
 class renderer {
 public:
 	// rasterize into a raw ARGB8888 span (row-major, stride = w)
-	void render(uint32_t * px, int w, int h, const view & vw,
+	constexpr void render(uint32_t * px, int w, int h, const view & vw,
 	            const std::vector<draw_item> & items,
 	            const std::vector<light> & lights) {
 		if (px == nullptr || w <= 0 || h <= 0) { return; }
@@ -279,7 +356,7 @@ public:
 
 		for (const draw_item & it : items) {
 			if (it.g == nullptr) { continue; }
-			const mat4 mvp = vw.vp_proj * (vw.vp_view * it.world);
+			const mat4 mvp = matmul(vw.vp_proj, matmul(vw.vp_view, it.world));
 			for (const auto & tri : it.g->tris) {
 				raster_tri(px, w, h, it, mvp, tri, lights);
 			}
@@ -289,7 +366,7 @@ public:
 private:
 	std::vector<double> zbuf_;
 
-	double shade(const vec3 & N, const std::vector<light> & lights) const {
+	constexpr double shade(const vec3 & N, const std::vector<light> & lights) const {
 		double lit = 0.0;
 		for (const light & L : lights) {
 			const vec3 d = norm3(L.direction);
@@ -302,7 +379,7 @@ private:
 		return lit < 0 ? 0 : (lit > 1 ? 1 : lit);
 	}
 
-	void raster_tri(uint32_t * px, int w, int h, const draw_item & it, const mat4 & mvp,
+	constexpr void raster_tri(uint32_t * px, int w, int h, const draw_item & it, const mat4 & mvp,
 	                const std::array<int, 3> & tri, const std::vector<light> & lights) {
 		const vec3 & p0 = it.g->verts[static_cast<size_t>(tri[0])];
 		const vec3 & p1 = it.g->verts[static_cast<size_t>(tri[1])];
@@ -326,7 +403,7 @@ private:
 		scr(c0, x0, y0, z0); scr(c1, x1, y1, z1); scr(c2, x2, y2, z2);
 
 		const double area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
-		if (std::fabs(area) < 1e-9) { return; }             // degenerate
+		if (bmc::fabs(area) < 1e-9) { return; }             // degenerate
 		if (it.cull && area <= 0) { return; }                // backface (CW in screen space)
 
 		const vec3 N = norm3(cross3(sub(V3(w1.a[0], w1.a[1], w1.a[2]), V3(w0.a[0], w0.a[1], w0.a[2])),
@@ -336,10 +413,10 @@ private:
 		const double lit = shade(area > 0 ? N : V3(-N.a[0], -N.a[1], -N.a[2]), lights);
 		const uint32_t color = pack(it.diffuse, lit);
 
-		int minx = static_cast<int>(std::floor(std::min({x0, x1, x2})));
-		int maxx = static_cast<int>(std::ceil (std::max({x0, x1, x2})));
-		int miny = static_cast<int>(std::floor(std::min({y0, y1, y2})));
-		int maxy = static_cast<int>(std::ceil (std::max({y0, y1, y2})));
+		int minx = static_cast<int>(bmc::floor(std::min({x0, x1, x2})));
+		int maxx = static_cast<int>(bmc::ceil(std::max({x0, x1, x2})));
+		int miny = static_cast<int>(bmc::floor(std::min({y0, y1, y2})));
+		int maxy = static_cast<int>(bmc::ceil(std::max({y0, y1, y2})));
 		minx = std::max(minx, 0); miny = std::max(miny, 0);
 		maxx = std::min(maxx, w - 1); maxy = std::min(maxy, h - 1);
 		const double inv = 1.0 / area;
@@ -362,7 +439,7 @@ private:
 		}
 	}
 
-	static vec4 mvp_point(const mat4 & mvp, const vec3 & p) noexcept { return xform(mvp, p); }
+	static constexpr vec4 mvp_point(const mat4 & mvp, const vec3 & p) noexcept { return xform(mvp, p); }
 };
 
 } // namespace r3d
@@ -385,31 +462,78 @@ struct jval {
 	double num = 0;
 	bool boo = false;
 	std::string str;
-	std::shared_ptr<jarr> arr;
-	std::shared_ptr<jobj> obj;
+	std::unique_ptr<jarr> arr;   // unique_ptr is constexpr (shared_ptr is not)
+	std::unique_ptr<jobj> obj;
 
-	const jval * get(std::string_view key) const {
+	// move-only; the destructor is defined OUT OF LINE (below) where the
+	// recursive jarr/jobj vector element type is complete - otherwise the
+	// unique_ptr member destructors can't be instantiated
+	constexpr jval() = default;
+	constexpr jval(jval &&) = default;
+	constexpr jval & operator=(jval &&) = default;
+	jval(const jval &) = delete;
+	jval & operator=(const jval &) = delete;
+	constexpr ~jval();
+
+	constexpr const jval * get(std::string_view key) const {
 		if (k != object || !obj) { return nullptr; }
 		for (const auto & kv : *obj) { if (kv.first == key) { return &kv.second; } }
 		return nullptr;
 	}
-	const jval & operator[](size_t i) const {
-		static const jval empty;
-		return (k == array && arr && i < arr->size()) ? (*arr)[i] : empty;
-	}
-	size_t size() const {
+	// unchecked: callers index only valid array positions (sizes guarded)
+	constexpr const jval & operator[](size_t i) const { return (*arr)[i]; }
+	constexpr size_t size() const {
 		return k == array && arr ? arr->size() : (k == object && obj ? obj->size() : 0);
 	}
-	double as_num(double d = 0) const { return k == number ? num : d; }
-	int as_int(int d = 0) const { return k == number ? static_cast<int>(num) : d; }
-	std::string as_str() const { return k == string ? str : std::string{}; }
+	constexpr double as_num(double d = 0) const { return k == number ? num : d; }
+	constexpr int as_int(int d = 0) const { return k == number ? static_cast<int>(num) : d; }
+	constexpr std::string as_str() const { return k == string ? str : std::string{}; }
 };
+// jarr (vector<jval>) and jobj are complete here -> the unique_ptr member
+// destructors can be instantiated
+constexpr jval::~jval() = default;
+
+// constexpr helpers (std::strtod/memcpy/memcmp/to_string aren't constexpr)
+constexpr double parse_double(const char * s, const char * e) noexcept {
+	double sign = 1.0;
+	if (s < e && *s == '-') { sign = -1.0; ++s; } else if (s < e && *s == '+') { ++s; }
+	double val = 0.0;
+	while (s < e && *s >= '0' && *s <= '9') { val = val * 10.0 + (*s - '0'); ++s; }
+	if (s < e && *s == '.') {
+		++s;
+		double f = 0.1;
+		while (s < e && *s >= '0' && *s <= '9') { val += (*s - '0') * f; f *= 0.1; ++s; }
+	}
+	if (s < e && (*s == 'e' || *s == 'E')) {
+		++s;
+		int esign = 1;
+		if (s < e && *s == '-') { esign = -1; ++s; } else if (s < e && *s == '+') { ++s; }
+		int ex = 0;
+		while (s < e && *s >= '0' && *s <= '9') { ex = ex * 10 + (*s - '0'); ++s; }
+		double pw = 1.0;
+		for (int i = 0; i < ex; ++i) { pw *= 10.0; }
+		val = esign > 0 ? val * pw : val / pw;
+	}
+	return sign * val;
+}
+constexpr uint32_t read_u32le(const unsigned char * p) noexcept {
+	return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
+	       (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
+}
+constexpr float read_f32le(const unsigned char * p) noexcept { return std::bit_cast<float>(read_u32le(p)); }
+constexpr std::string cstr_int(size_t v) {
+	if (v == 0) { return "0"; }
+	std::string r;
+	while (v != 0) { r += static_cast<char>('0' + v % 10); v /= 10; }
+	for (size_t i = 0, j = r.size() - 1; i < j; ++i, --j) { const char t = r[i]; r[i] = r[j]; r[j] = t; }
+	return r;
+}
 
 struct jparser {
 	const char * p;
 	const char * e;
-	void ws() { while (p < e && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) { ++p; } }
-	jval value() {
+	constexpr void ws() { while (p < e && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) { ++p; } }
+	constexpr jval value() {
 		ws();
 		if (p >= e) { return {}; }
 		const char c = *p;
@@ -421,7 +545,7 @@ struct jparser {
 		if (c == 'n') { p += 4; return {}; }
 		return number();
 	}
-	std::string str() {
+	constexpr std::string str() {
 		std::string s;
 		if (p < e) { ++p; } // opening quote
 		while (p < e && *p != '"') {
@@ -454,17 +578,17 @@ struct jparser {
 		if (p < e) { ++p; } // closing quote
 		return s;
 	}
-	jval number() {
+	constexpr jval number() {
 		const char * s = p;
 		while (p < e && (*p == '-' || *p == '+' || *p == '.' || *p == 'e' || *p == 'E' ||
 		                 (*p >= '0' && *p <= '9'))) { ++p; }
 		jval v;
 		v.k = jval::number;
-		v.num = std::strtod(std::string(s, p).c_str(), nullptr);
+		v.num = parse_double(s, p);
 		return v;
 	}
-	jval array() {
-		jval v; v.k = jval::array; v.arr = std::make_shared<jarr>(); ++p; ws();
+	constexpr jval array() {
+		jval v; v.k = jval::array; v.arr = std::make_unique<jarr>(); ++p; ws();
 		if (p < e && *p == ']') { ++p; return v; }
 		while (p < e) {
 			v.arr->push_back(value()); ws();
@@ -474,8 +598,8 @@ struct jparser {
 		}
 		return v;
 	}
-	jval object() {
-		jval v; v.k = jval::object; v.obj = std::make_shared<jobj>(); ++p; ws();
+	constexpr jval object() {
+		jval v; v.k = jval::object; v.obj = std::make_unique<jobj>(); ++p; ws();
 		if (p < e && *p == '}') { ++p; return v; }
 		while (p < e) {
 			ws();
@@ -492,7 +616,7 @@ struct jparser {
 		return v;
 	}
 };
-inline jval json_parse(std::string_view s) {
+constexpr jval json_parse(std::string_view s) {
 	jparser jp{s.data(), s.data() + s.size()};
 	jp.ws();
 	return jp.value();
@@ -514,7 +638,7 @@ struct model {
 };
 
 // node "matrix" is column-major (glTF spec) -> our a[row][col]
-inline r3d::mat4 node_matrix(const jval & node) {
+constexpr r3d::mat4 node_matrix(const jval & node) {
 	if (const jval * m = node.get("matrix")) {
 		if (m->size() == 16) {
 			r3d::mat4 M = r3d::identity();
@@ -524,32 +648,32 @@ inline r3d::mat4 node_matrix(const jval & node) {
 		}
 	}
 	r3d::mat4 T = r3d::identity(), R = r3d::identity(), S = r3d::identity();
-	if (const jval * t = node.get("translation"))
+	if (const jval * t = node.get("translation"); t != nullptr && t->size() >= 3)
 		T = r3d::translation((*t)[0].as_num(), (*t)[1].as_num(), (*t)[2].as_num());
-	if (const jval * s = node.get("scale"))
+	if (const jval * s = node.get("scale"); s != nullptr && s->size() >= 3)
 		S = r3d::scaling((*s)[0].as_num(1), (*s)[1].as_num(1), (*s)[2].as_num(1));
-	if (const jval * q = node.get("rotation")) {
+	if (const jval * q = node.get("rotation"); q != nullptr && q->size() >= 4) {
 		// quaternion (x,y,z,w) -> rotation matrix
 		const double x = (*q)[0].as_num(), y = (*q)[1].as_num(), z = (*q)[2].as_num(), w = (*q)[3].as_num(1);
 		R.a[0][0] = 1 - 2 * (y * y + z * z); R.a[0][1] = 2 * (x * y - z * w); R.a[0][2] = 2 * (x * z + y * w);
 		R.a[1][0] = 2 * (x * y + z * w); R.a[1][1] = 1 - 2 * (x * x + z * z); R.a[1][2] = 2 * (y * z - x * w);
 		R.a[2][0] = 2 * (x * z - y * w); R.a[2][1] = 2 * (y * z + x * w); R.a[2][2] = 1 - 2 * (x * x + y * y);
 	}
-	return T * (R * S);
+	return r3d::matmul(T, r3d::matmul(R, S));
 }
 
-inline model parse_glb(const unsigned char * data, size_t len) {
+constexpr model parse_glb(const unsigned char * data, size_t len) {
 	model out;
-	if (len < 20 || std::memcmp(data, "glTF", 4) != 0) { return out; }
-	auto rd32 = [&](size_t o) { uint32_t v; std::memcpy(&v, data + o, 4); return v; };
+	if (len < 20 || !(data[0] == 'g' && data[1] == 'l' && data[2] == 'T' && data[3] == 'F')) { return out; }
+	auto rd32 = [&](size_t o) { return read_u32le(data + o); };
 	const uint32_t jlen = rd32(12);
-	std::string_view json(reinterpret_cast<const char *>(data) + 20, jlen);
+	const std::string json_str(data + 20, data + 20 + jlen); // char copy (no reinterpret_cast)
 	const size_t off = 20 + jlen;
 	const unsigned char * bin = nullptr;
 	if (off + 8 <= len) { bin = data + off + 8; }
 	if (bin == nullptr) { return out; }
 
-	const jval doc = json_parse(json);
+	const jval doc = json_parse(json_str);
 	const jval * accessors = doc.get("accessors");
 	const jval * bufferViews = doc.get("bufferViews");
 	const jval * meshes = doc.get("meshes");
@@ -561,7 +685,7 @@ inline model parse_glb(const unsigned char * data, size_t len) {
 		for (size_t i = 0; i < mats->size(); ++i) {
 			const jval & m = (*mats)[i];
 			material mm;
-			mm.name = m.get("name") ? m.get("name")->as_str() : ("mat" + std::to_string(i));
+			mm.name = m.get("name") ? m.get("name")->as_str() : ("mat" + cstr_int(i));
 			if (const jval * pbr = m.get("pbrMetallicRoughness")) {
 				if (const jval * bc = pbr->get("baseColorFactor")) {
 					if (bc->size() >= 3) {
@@ -575,10 +699,13 @@ inline model parse_glb(const unsigned char * data, size_t len) {
 	}
 
 	auto acc_view = [&](int acc, size_t & count, size_t & stride, int & ctype) -> const unsigned char * {
+		count = 0; stride = 0; ctype = 5126;
+		if (acc < 0 || acc >= static_cast<int>(accessors->size())) { return nullptr; }
 		const jval & a = (*accessors)[static_cast<size_t>(acc)];
 		count = static_cast<size_t>(a.get("count") ? a.get("count")->as_num() : 0);
 		ctype = a.get("componentType") ? a.get("componentType")->as_int() : 5126;
 		const int bvi = a.get("bufferView") ? a.get("bufferView")->as_int() : 0;
+		if (bvi < 0 || bvi >= static_cast<int>(bufferViews->size())) { return nullptr; }
 		const size_t aoff = a.get("byteOffset") ? static_cast<size_t>(a.get("byteOffset")->as_num()) : 0;
 		const jval & bv = (*bufferViews)[static_cast<size_t>(bvi)];
 		const size_t boff = bv.get("byteOffset") ? static_cast<size_t>(bv.get("byteOffset")->as_num()) : 0;
@@ -592,6 +719,7 @@ inline model parse_glb(const unsigned char * data, size_t len) {
 		if (node.get("mesh") == nullptr) { continue; }
 		const r3d::mat4 xf = node_matrix(node);
 		const int mi = node.get("mesh")->as_int();
+		if (mi < 0 || mi >= static_cast<int>(meshes->size())) { continue; }
 		const jval & mesh = (*meshes)[static_cast<size_t>(mi)];
 		const jval * prims = mesh.get("primitives");
 		if (prims == nullptr) { continue; }
@@ -606,12 +734,13 @@ inline model parse_glb(const unsigned char * data, size_t len) {
 			// POSITION (VEC3 float), transformed by the node matrix
 			size_t vcount, vstride; int vtype;
 			const unsigned char * vp = acc_view(attr->get("POSITION")->as_int(), vcount, vstride, vtype);
+			if (vp == nullptr) { continue; }
 			if (vstride == 0) { vstride = 12; }
 			out_p.verts.reserve(vcount);
 			for (size_t i = 0; i < vcount; ++i) {
-				float f[3];
-				std::memcpy(f, vp + i * vstride, 12);
-				const r3d::vec4 w = r3d::xform(xf, r3d::V3(f[0], f[1], f[2]));
+				const r3d::vec4 w = r3d::xform(xf, r3d::V3(read_f32le(vp + i * vstride),
+				                                          read_f32le(vp + i * vstride + 4),
+				                                          read_f32le(vp + i * vstride + 8)));
 				const r3d::vec3 v = r3d::V3(w.a[0], w.a[1], w.a[2]);
 				out_p.verts.push_back(v);
 				if (first) { out.bmin = out.bmax = v; first = false; }
@@ -623,12 +752,13 @@ inline model parse_glb(const unsigned char * data, size_t len) {
 			// indices (ubyte/ushort/uint) -> triangles
 			size_t icount, istride; int itype;
 			const unsigned char * ip = acc_view(pr.get("indices")->as_int(), icount, istride, itype);
+			if (ip == nullptr) { continue; }
 			const size_t comp = itype == 5121 ? 1 : (itype == 5123 ? 2 : 4);
 			std::vector<int> idx;
 			idx.reserve(icount);
 			for (size_t i = 0; i < icount; ++i) {
 				uint32_t v = 0;
-				std::memcpy(&v, ip + i * comp, comp);
+				for (size_t b = 0; b < comp; ++b) { v |= static_cast<uint32_t>(ip[i * comp + b]) << (8 * b); }
 				idx.push_back(static_cast<int>(v));
 			}
 			for (size_t i = 0; i + 2 < idx.size(); i += 3) {
@@ -816,9 +946,9 @@ inline void do_render(const worldptr & W, int scene_id) {
 			const double beta = num_prop(cam.handle, "beta", 1);
 			const double radius = num_prop(cam.handle, "radius", 10);
 			target = read_vec3(child_obj(cam.handle, "target"), r3d::V3(0, 0, 0));
-			eye = r3d::V3(target.a[0] + radius * std::cos(alpha) * std::sin(beta),
-			              target.a[1] + radius * std::cos(beta),
-			              target.a[2] + radius * std::sin(alpha) * std::sin(beta));
+			eye = r3d::V3(target.a[0] + radius * r3d::fcos(alpha) * r3d::fsin(beta),
+			              target.a[1] + radius * r3d::fcos(beta),
+			              target.a[2] + radius * r3d::fsin(alpha) * r3d::fsin(beta));
 		} else { // Free: explicit position, look toward its target/forward
 			eye = read_vec3(child_obj(cam.handle, "position"), r3d::V3(0, 0, -10));
 			target = read_vec3(child_obj(cam.handle, "target"), r3d::V3(0, 0, 0));
@@ -848,9 +978,9 @@ inline void do_render(const worldptr & W, int scene_id) {
 		const r3d::vec3 s = read_vec3(child_obj(M.handle, "scaling"), r3d::V3(1, 1, 1));
 		r3d::draw_item it;
 		it.g = &M.geom;
-		it.world = r3d::translation(p.a[0], p.a[1], p.a[2]) *
-		           (r3d::rotationYPR(rot.a[0], rot.a[1], rot.a[2]) *
-		            r3d::scaling(s.a[0], s.a[1], s.a[2]));
+		it.world = r3d::matmul(r3d::translation(p.a[0], p.a[1], p.a[2]),
+		                       r3d::matmul(r3d::rotationYPR(rot.a[0], rot.a[1], rot.a[2]),
+		                                   r3d::scaling(s.a[0], s.a[1], s.a[2])));
 		const objptr mat = child_obj(M.handle, "material");
 		// StandardMaterial uses diffuseColor; glTF/OpenPBR/PBR use
 		// baseColor/albedoColor - honor whichever the material carries

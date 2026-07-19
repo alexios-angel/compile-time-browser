@@ -5,8 +5,53 @@
 // (non-clear, opaque geometry) and animates (a rotating box changes
 // pixels between frames) - no SDL, no GPU.
 #include <ctbrowser.hpp>
+#include <array>
+#include <cmath>
 #include <cstdio>
 #include <vector>
+
+// fast CONSTEXPR trig (lookup-table idea): std::sin/std::cos are not
+// constexpr until C++26, but these evaluate at COMPILE TIME -
+namespace ftrig = ctbrowser::babylon::r3d;
+static_assert(ftrig::fcos(0.0) == 1.0);
+static_assert(ftrig::fsin(0.0) == 0.0);
+static_assert(ftrig::fcos(3.141592653589793) < -0.999);         // cos(pi) ~ -1
+static_assert(ftrig::fsin(1.5707963267948966) > 0.999);          // sin(pi/2) ~ 1
+static_assert(ftrig::fcos(1.5707963267948966) < 1e-3 &&
+              ftrig::fcos(1.5707963267948966) > -1e-3);           // cos(pi/2) ~ 0
+// ...and a whole rotation matrix folds at compile time from it:
+static_assert(ftrig::rotationY(3.141592653589793).a[0][0] < -0.999);
+
+// the ENTIRE software renderer is constexpr: geometry + matrices + a
+// z-buffered, lit, perspective rasterization all fold at COMPILE TIME
+// (fast-table trig + Boost.Math ccmath give constexpr sqrt/floor/...).
+constexpr int ct_box_render() {
+	ftrig::geo box = ftrig::make_box(2.0);
+	constexpr int W = 32, H = 32;
+	std::array<uint32_t, W * H> px{};
+	ftrig::view vw;
+	vw.clear = {0.1, 0.1, 0.15, 1};
+	vw.vp_view = ftrig::lookAtLH(ftrig::V3(1.5, 1.8, -4), ftrig::V3(0, 0, 0), ftrig::V3(0, 1, 0));
+	vw.vp_proj = ftrig::perspectiveFovLH(0.8, 1.0, 0.1, 100.0);
+	std::vector<ftrig::draw_item> items{ftrig::draw_item{&box, ftrig::identity(), {0.9, 0.3, 0.2, 1}, true}};
+	std::vector<ftrig::light> lights{ftrig::light{0, ftrig::V3(0, 1, 0), 1.0, {1, 1, 1, 1}}};
+	ftrig::renderer rr;
+	rr.render(px.data(), W, H, vw, items, lights);
+	const uint32_t clear = ftrig::pack(vw.clear, 1.0);
+	int n = 0;
+	for (uint32_t p : px) { if (p != clear) { ++n; } }
+	return n;
+}
+static_assert(ct_box_render() > 40, "the whole 3D renderer rasterizes a box at compile time");
+
+// the glTF loader is constexpr too: its JSON parser (unique_ptr recursion
+// + a constexpr number parser replacing strtod) folds at compile time
+namespace gltfns = ctbrowser::babylon::gltf;
+static_assert([] {
+	auto d = gltfns::json_parse(R"({"nodes":[{"mesh":0}],"v":[0.5,-1.6e-2,3],"n":"core"})");
+	return d.get("nodes")->size() == 1 && (*d.get("v"))[0].as_num() == 0.5 &&
+	       d.get("v")->size() == 3 && d.get("n")->as_str() == "core";
+}(), "glTF JSON parses at compile time");
 
 static int failures = 0;
 #define CHECK(cond)                                                          \
@@ -156,6 +201,18 @@ int main() {
 	size_t nonClearBig = 0;
 	for (uint32_t p : c->pixels) { if (p != clear) { ++nonClearBig; } }
 	CHECK(nonClearBig > 500);                    // still rendering after resize
+
+	// fast trig accuracy vs std:: over a few full turns
+	{
+		double maxerr = 0.0;
+		for (int i = -3600; i <= 3600; ++i) {
+			const double a = i * (3.141592653589793 / 1800.0); // 0.1 deg steps, +/-2 turns
+			maxerr = std::max(maxerr, std::fabs(ftrig::fcos(a) - std::cos(a)));
+			maxerr = std::max(maxerr, std::fabs(ftrig::fsin(a) - std::sin(a)));
+		}
+		std::printf("fast-trig max abs error vs std over +/-2 turns: %.3e\n", maxerr);
+		CHECK(maxerr < 3e-4);
+	}
 
 	if (failures == 0) { std::printf("babylon suite: all checks passed\n"); }
 	return failures ? 1 : 0;
