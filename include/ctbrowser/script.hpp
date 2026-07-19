@@ -91,9 +91,9 @@ struct dom_events {
 		return i < handle_nodes.size() ? handle_nodes[i] : nullptr;
 	}
 	// element handles whose layout-derived properties refresh per frame
-	std::vector<std::pair<std::shared_ptr<ctjs::object_t>, node *>> tracked;
+	std::vector<std::pair<ctjs::rc<ctjs::object_t>, node *>> tracked;
 	// the window object + the viewport the engine last laid out
-	std::shared_ptr<ctjs::object_t> window_obj;
+	ctjs::rc<ctjs::object_t> window_obj;
 	int viewport_w = 0;
 	int viewport_h = 0;
 
@@ -381,7 +381,7 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 }
 
 inline ctjs::value canvas_context(node * n, image_store * images) {
-	auto ctx = std::make_shared<ctjs::object_t>();
+	auto ctx = ctjs::rc<ctjs::object_t>::make();
 	ctx->set("fillStyle", ctjs::value{"#000000"});
 	ctx->set("strokeStyle", ctjs::value{"#000000"});
 	ctx->set("font", ctjs::value{"10px sans-serif"});
@@ -936,7 +936,7 @@ inline std::vector<ctjs::binding> dom_bindings(document & doc, std::string & tit
 		// the window object: the environment surface libraries probe.
 		// addEventListener shares the document's listener registry;
 		// performance.now is the engine's clock (now_ms)
-		auto w = std::make_shared<ctjs::object_t>();
+		auto w = ctjs::rc<ctjs::object_t>::make();
 		w->set("innerWidth", ctjs::value{0});
 		w->set("innerHeight", ctjs::value{0});
 		w->set("devicePixelRatio", ctjs::value{1.0});
