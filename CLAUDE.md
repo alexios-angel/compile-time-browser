@@ -53,7 +53,7 @@ CMake shares one PCH via the `ctbrowser-pch-anchor` target (REUSE_FROM).
 - `external/compile-time-{html,javascript,css}` — SUBMODULES (recursive: each carries lark). ctlark/ctll resolve through compile-time-html's copy — exactly ONE lark on the include path.
 
 ## Decisions
-- Scripts MUTATE nodes but never create/remove them → bindings hold raw node pointers; `engine` is noncopyable, doc outlives script result.
+- Scripts may MUTATE and (since the web-platform sweep) CREATE/detach nodes — document owns every node (tree or detached) so raw node* in bindings never dangle; `engine` is noncopyable, doc outlives script result.
 - Click delivery: deepest hit-test node, walk up to first non-empty id, call onClick(id).
 - Layout: px only; canvas box = its pixel size; backgrounds paint in a pre-pass (back-to-front), then text/canvas in traversal order.
 - The bricks' own semantics/limits apply verbatim (see their CLAUDE.md).
