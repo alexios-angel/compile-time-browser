@@ -7,6 +7,7 @@
 #include "assets.hpp"
 #include "layout.hpp"
 #include "script.hpp"
+#include "babylon.hpp"
 #ifndef CTBROWSER_IN_A_MODULE
 #include <set>
 #endif
@@ -154,6 +155,8 @@ private:
 			               return ctjs::value{mouse_down};
 		               },
 		               "isMouseDown")});
+		// core BabylonJS API, backed by a software 3D rasterizer into <canvas>
+		babylon::install(out, ev);
 		for (ctjs::binding & b : extra) { out.push_back(std::move(b)); }
 		return out;
 	}

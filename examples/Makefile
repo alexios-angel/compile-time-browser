@@ -34,7 +34,13 @@ SDL_CFLAGS += -DCTBROWSER_WITH_TTF $(shell pkg-config --cflags sdl3-ttf)
 SDL_LIBS += $(shell pkg-config --libs sdl3-ttf)
 endif
 
-CXXFLAGS := -std=c++23 -I../include $(SUBMODULE_INCLUDES) $(SDL_CFLAGS) $(CONSTEXPR_FLAGS) -O2 -pedantic -Wall -Wextra -Werror -Wconversion
+# Boost (header-only Boost.QVM powers the software 3D math in babylon.hpp):
+# find the first include root that actually carries boost/qvm.
+BOOST_ROOTS := /home/linuxbrew/.linuxbrew/include /opt/homebrew/include /usr/local/include /usr/include
+BOOST_INC_DIR := $(firstword $(foreach d,$(BOOST_ROOTS),$(if $(wildcard $(d)/boost/qvm),$(d))))
+BOOST_INCLUDE := $(if $(BOOST_INC_DIR),-I$(BOOST_INC_DIR),)
+
+CXXFLAGS := -std=c++23 -I../include $(SUBMODULE_INCLUDES) $(BOOST_INCLUDE) $(SDL_CFLAGS) $(CONSTEXPR_FLAGS) -O2 -pedantic -Wall -Wextra -Werror -Wconversion
 
 SOURCES := $(wildcard *.cpp)
 TARGETS := $(SOURCES:%.cpp=%)
