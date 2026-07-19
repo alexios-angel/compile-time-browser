@@ -2,6 +2,7 @@
 #define CTBROWSER__LAYOUT__HPP
 
 #include "dom.hpp"
+#include <ctjs/cfunction.hpp>
 #ifndef CTBROWSER_IN_A_MODULE
 #include <functional>
 #include <string>
@@ -10,10 +11,12 @@
 #endif
 
 // Style resolution and block layout. The style resolver is a
-// std::function so the engine is not templated on the sheet type -
-// the app glue captures `ctcss::query(Page::sheet_type{}, ...)` once.
-// Inline styles a script set (element.setStyle) win over the sheet,
-// like the style attribute would.
+// constexpr type-erased callable (ctjs::cfunction, not std::function)
+// so the engine is not templated on the sheet type - the app glue
+// captures `ctcss::query(Page::sheet_type{}, ...)` once - AND the whole
+// layout pass folds at compile time (ctcss::query is constexpr; see the
+// static_assert in tests/dom.cpp). Inline styles a script set
+// (element.setStyle) win over the sheet, like the style attribute would.
 //
 // Layout is CSS-flavored block stacking, enough for real UI and for
 // hosting <canvas>: every element is a block box; width/height/
@@ -27,28 +30,28 @@ namespace ctbrowser {
 
 // resolve one property for one node chain ("" = unset)
 using style_fn =
-    std::function<std::string_view(const ctcss::element_ref *, size_t, std::string_view)>;
+    ctjs::cfunction<std::string_view(const ctcss::element_ref *, size_t, std::string_view)>;
 
 // measure a text run's width in pixels at a font size; when absent the
 // layout assumes the embedded font's square glyphs (width == font_px).
 // The SDL shell installs a TTF-backed measure when a real font loads.
-using text_measure_fn = std::function<int(std::string_view, int)>;
+using text_measure_fn = ctjs::cfunction<int(std::string_view, int)>;
 
 struct computed_style {
 	const node * n;
 	const style_fn * resolve;
 	std::vector<ctcss::element_ref> chain;
 
-	std::string_view get(std::string_view prop) const {
+	constexpr std::string_view get(std::string_view prop) const {
 		if (n->inline_style.has(prop)) { return n->inline_style.get(prop); }
 		return (*resolve)(chain.data(), chain.size(), prop);
 	}
-	int px(std::string_view prop, int fallback) const {
+	constexpr int px(std::string_view prop, int fallback) const {
 		const ctcss::length l = ctcss::parse_length(get(prop));
 		if (!l.ok || (l.u != ctcss::unit::px && l.u != ctcss::unit::none)) { return fallback; }
 		return static_cast<int>(l.value);
 	}
-	ctcss::color color_of(std::string_view prop, ctcss::color fallback) const {
+	constexpr ctcss::color color_of(std::string_view prop, ctcss::color fallback) const {
 		const ctcss::color c = ctcss::parse_color(get(prop));
 		return c.ok ? c : fallback;
 	}
@@ -66,12 +69,12 @@ struct paint_cmd {
 
 namespace detail {
 
-inline uint32_t pack_argb(ctcss::color c) {
+constexpr uint32_t pack_argb(ctcss::color c) {
 	return (static_cast<uint32_t>(c.a) << 24) | (static_cast<uint32_t>(c.r) << 16) |
 	       (static_cast<uint32_t>(c.g) << 8) | static_cast<uint32_t>(c.b);
 }
 
-inline bool skipped_tag(std::string_view tag) {
+constexpr bool skipped_tag(std::string_view tag) {
 	return tag == "head" || tag == "style" || tag == "script" || tag == "title";
 }
 
@@ -80,14 +83,14 @@ struct layout_pass {
 	const text_measure_fn * measure;
 	std::vector<paint_cmd> * out;
 
-	int text_width(std::string_view t, int font_px) const {
+	constexpr int text_width(std::string_view t, int font_px) const {
 		if (measure != nullptr && *measure) { return (*measure)(t, font_px); }
 		return static_cast<int>(t.size()) * font_px;
 	}
 
 	// lay out `n` with its content starting at (x, y), `width` available
 	// for the border box; returns the border-box height
-	int place(node & n, int x, int y, int width) {
+	constexpr int place(node & n, int x, int y, int width) {
 		if (skipped_tag(n.tag)) {
 			n.x = n.y = n.w = n.h = 0;
 			return 0;
@@ -167,14 +170,14 @@ struct layout_pass {
 		return n.h + 2 * margin;
 	}
 
-	static std::string_view trimmed(std::string_view v) {
+	static constexpr std::string_view trimmed(std::string_view v) {
 		constexpr std::string_view ws = " \t\n\r";
 		const size_t begin = v.find_first_not_of(ws);
 		if (begin == std::string_view::npos) { return {}; }
 		return v.substr(begin, v.find_last_not_of(ws) - begin + 1);
 	}
 
-	int inherited_font(node & n, const computed_style &) {
+	constexpr int inherited_font(node & n, const computed_style &) {
 		for (node * p = n.parent; p != nullptr; p = p->parent) {
 			computed_style pcs{p, resolve, p->chain()};
 			const int v = pcs.px("font-size", -1);
@@ -185,7 +188,7 @@ struct layout_pass {
 };
 
 // backgrounds, painted back-to-front before content
-inline void collect_backgrounds(node & n, const style_fn & resolve,
+constexpr void collect_backgrounds(node & n, const style_fn & resolve,
                                 std::vector<paint_cmd> & out) {
 	if (detail::skipped_tag(n.tag) || n.w == 0 || n.h == 0) {
 		for (const auto & c : n.children) { collect_backgrounds(*c, resolve, out); }
@@ -211,7 +214,7 @@ inline void collect_backgrounds(node & n, const style_fn & resolve,
 } // namespace detail
 
 // lay the document out for a viewport and produce the paint list
-inline std::vector<paint_cmd> layout(document & doc, int viewport_w,
+constexpr std::vector<paint_cmd> layout(document & doc, int viewport_w,
                                      const style_fn & resolve,
                                      const text_measure_fn & measure = {}) {
 	std::vector<paint_cmd> content;

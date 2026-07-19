@@ -73,6 +73,27 @@ static int failures = 0;
 
 using Page = ctbrowser::page<PAGE_HTML>;
 
+// ===================== compile-time: layout folds too ==================
+// The style resolver is a constexpr callable (ctjs::cfunction) over the
+// page's compile-time stylesheet, and ctcss::query is constexpr - so a
+// whole layout pass runs during constant evaluation.
+
+constexpr bool layout_compile_time() {
+	ctbrowser::document d = ctbrowser::instantiate<Page::doc_type>();
+	ctbrowser::style_fn resolve =
+	    [](const ctcss::element_ref * c, size_t n, std::string_view p) {
+		    return ctcss::query(Page::sheet_type{}, c, n, p);
+	    };
+	std::vector<ctbrowser::paint_cmd> cmds = ctbrowser::layout(d, 800, resolve);
+	bool saw_hello = false, saw_canvas = false;
+	for (const ctbrowser::paint_cmd & cmd : cmds) {
+		if (cmd.what == ctbrowser::paint_cmd::kind::text && cmd.text == "Hello") { saw_hello = true; }
+		if (cmd.what == ctbrowser::paint_cmd::kind::canvas) { saw_canvas = true; }
+	}
+	return !cmds.empty() && saw_hello && saw_canvas;
+}
+static_assert(layout_compile_time(), "ctbrowser layout must fold at compile time");
+
 static bool same_tree(const ctbrowser::node * a, const ctbrowser::node * b) {
 	if ((a == nullptr) != (b == nullptr)) { return false; }
 	if (a == nullptr) { return true; }
@@ -89,8 +110,9 @@ static bool same_tree(const ctbrowser::node * a, const ctbrowser::node * b) {
 }
 
 int main() {
-	// the constexpr path also runs fine at runtime
+	// the constexpr paths also run fine at runtime
 	CHECK(dom_compile_time());
+	CHECK(layout_compile_time());
 
 	// value path (runtime string) reproduces the compile-time TYPE path
 	ctbrowser::document typed = ctbrowser::instantiate<Page::doc_type>();
