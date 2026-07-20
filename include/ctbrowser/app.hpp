@@ -85,7 +85,7 @@ inline void draw_text(SDL_Renderer * r, const paint_cmd & cmd) {
 	                       static_cast<Uint8>((cmd.argb >> 24) & 0xFF));
 	float pen_x = static_cast<float>(cmd.x);
 	const float pen_y = static_cast<float>(cmd.y);
-	for (const char c : cmd.text) {
+	for (const char32_t c : cmd.text) { // UTF-32 code points
 		for (int row = 0; row < 8; ++row) {
 			for (int col = 0; col < 8; ++col) {
 				if (!glyph_pixel(c, row, col)) { continue; }
@@ -122,18 +122,20 @@ struct ttf_text {
 		fonts.emplace(px, f);
 		return f;
 	}
-	int measure(std::string_view text, int px) {
+	int measure(std::u32string_view text, int px) {
 		TTF_Font * f = font(px);
+		const std::string utf8 = utf32_to_utf8(text); // SDL_ttf takes UTF-8
 		if (f == nullptr) { return static_cast<int>(text.size()) * px; }
 		int w = 0, h = 0;
-		TTF_GetStringSize(f, text.data(), text.size(), &w, &h);
+		TTF_GetStringSize(f, utf8.data(), utf8.size(), &w, &h);
 		return w;
 	}
 	void draw(const paint_cmd & cmd) {
 		TTF_Font * f = font(cmd.font_px);
 		if (f == nullptr) { return; }
 		SDL_Texture * t = nullptr;
-		const std::pair<std::string, int> key{cmd.text, cmd.font_px};
+		const std::string utf8 = utf32_to_utf8(cmd.text); // SDL_ttf takes UTF-8
+		const std::pair<std::string, int> key{utf8, cmd.font_px};
 		if (const auto it = cache.find(key); it != cache.end()) {
 			t = it->second;
 		} else {
@@ -141,7 +143,7 @@ struct ttf_text {
 				for (auto & [k, tex] : cache) { SDL_DestroyTexture(tex); }
 				cache.clear();
 			}
-			SDL_Surface * s = TTF_RenderText_Blended(f, cmd.text.c_str(), cmd.text.size(),
+			SDL_Surface * s = TTF_RenderText_Blended(f, utf8.c_str(), utf8.size(),
 			                                         SDL_Color{255, 255, 255, 255});
 			if (s == nullptr) { return; }
 			t = SDL_CreateTextureFromSurface(renderer, s);
@@ -374,7 +376,7 @@ template <typename Page> int run_app(app_options opts = {}) {
 			ttf.path = !face.empty() ? face : detail::probe_font();
 		}
 		if (ttf.ok()) {
-			e.measure = [&ttf](std::string_view text, int px) {
+			e.measure = [&ttf](std::u32string_view text, int px) {
 				return ttf.measure(text, px);
 			};
 		}

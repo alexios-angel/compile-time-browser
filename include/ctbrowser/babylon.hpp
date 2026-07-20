@@ -27,6 +27,7 @@
 #ifndef CTBROWSER_BABYLON_RENDER_ONLY
 #include "dom.hpp"
 #include "script.hpp"
+#include "utf.hpp"
 #endif
 
 #ifndef CTBROWSER_IN_A_MODULE
@@ -1085,7 +1086,8 @@ inline void set_static(value & fn, const char * name, value v) {
 inline void overlay_text(uint32_t * px, int w, int h, int x0, int y0, std::string_view s,
                          int scale, uint32_t argb) {
 	int pen = x0;
-	for (const char ch : s) {
+	for (std::size_t i = 0; i < s.size();) { // decode UTF-8 -> code points
+		const char32_t ch = ctbrowser::utf8_next(s, i);
 		for (int row = 0; row < 8; ++row) {
 			for (int col = 0; col < 8; ++col) {
 				if (!ctbrowser::detail::glyph_pixel(ch, row, col)) { continue; }

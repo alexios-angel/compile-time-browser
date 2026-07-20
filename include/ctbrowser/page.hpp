@@ -60,15 +60,14 @@ constexpr std::size_t put_utf8(char * out, char32_t c) noexcept {
 }
 
 template <ctll::fixed_string Src> struct html_bytes {
-	static constexpr std::size_t length = [] {
-		std::size_t n = 0;
-		for (std::size_t i = 0; i < Src.size(); ++i) { n += utf8_len(Src.content[i]); }
-		return n;
-	}();
+	// ctll::fixed_string stores the source as char32_t, but WITHOUT the UTF-8
+	// decode (CTRE_STRING_IS_UTF8 is not set) each unit is one raw source byte
+	// (0..255). The source is already UTF-8, so copy the bytes verbatim; do NOT
+	// re-encode them as code points (that double-encodes every multi-byte glyph).
+	static constexpr std::size_t length = Src.size();
 	static constexpr auto compute() noexcept {
 		std::array<char, length + 1> out{};
-		std::size_t k = 0;
-		for (std::size_t i = 0; i < Src.size(); ++i) { k += put_utf8(out.data() + k, Src.content[i]); }
+		for (std::size_t i = 0; i < Src.size(); ++i) { out[i] = static_cast<char>(Src.content[i]); }
 		return out;
 	}
 	static constexpr std::array<char, length + 1> storage = compute();

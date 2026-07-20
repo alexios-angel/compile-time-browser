@@ -56,7 +56,7 @@ int main() {
 	// positioned ancestor, so they rendered at the top instead of below it)
 	bool gamma_aligned = false;
 	for (const ctbrowser::paint_cmd & p : paints) {
-		if (p.what == ctbrowser::paint_cmd::kind::text && p.text == "Gamma" &&
+		if (p.what == ctbrowser::paint_cmd::kind::text && p.text == U"Gamma" &&
 		    p.y >= opt2->y && p.y < opt2->y + opt2->h) {
 			gamma_aligned = true;
 		}

@@ -88,7 +88,7 @@ constexpr bool layout_compile_time() {
 	std::vector<ctbrowser::paint_cmd> cmds = ctbrowser::layout(d, 800, resolve);
 	bool saw_hello = false, saw_canvas = false;
 	for (const ctbrowser::paint_cmd & cmd : cmds) {
-		if (cmd.what == ctbrowser::paint_cmd::kind::text && cmd.text == "Hello") { saw_hello = true; }
+		if (cmd.what == ctbrowser::paint_cmd::kind::text && cmd.text == U"Hello") { saw_hello = true; }
 		if (cmd.what == ctbrowser::paint_cmd::kind::canvas) { saw_canvas = true; }
 	}
 	return !cmds.empty() && saw_hello && saw_canvas;

@@ -2,6 +2,7 @@
 #define CTBROWSER__LAYOUT__HPP
 
 #include "dom.hpp"
+#include "utf.hpp"
 #include <ctjs/cfunction.hpp>
 #ifndef CTBROWSER_IN_A_MODULE
 #include <functional>
@@ -32,10 +33,10 @@ namespace ctbrowser {
 using style_fn =
     ctjs::cfunction<std::string_view(const ctcss::element_ref *, size_t, std::string_view)>;
 
-// measure a text run's width in pixels at a font size; when absent the
-// layout assumes the embedded font's square glyphs (width == font_px).
-// The SDL shell installs a TTF-backed measure when a real font loads.
-using text_measure_fn = ctjs::cfunction<int(std::string_view, int)>;
+// measure a UTF-32 text run's width in pixels at a font size; when absent the
+// layout assumes the embedded font's square glyphs (width == font_px per code
+// point). The SDL shell installs a TTF-backed measure when a real font loads.
+using text_measure_fn = ctjs::cfunction<int(std::u32string_view, int)>;
 
 struct computed_style {
 	const node * n;
@@ -62,7 +63,7 @@ struct paint_cmd {
 	kind what = kind::box;
 	int x = 0, y = 0, w = 0, h = 0;
 	uint32_t argb = 0;      // box fill / text color
-	std::string text;       // kind::text
+	std::u32string text;    // kind::text (UTF-32 code points)
 	int font_px = 16;       // kind::text
 	node * canvas_node = nullptr; // kind::canvas
 };
@@ -94,9 +95,9 @@ struct layout_pass {
 
 	static constexpr int UNSET = -1000000;
 
-	constexpr int text_width(std::string_view t, int font_px) const {
+	constexpr int text_width(std::u32string_view t, int font_px) const {
 		if (measure != nullptr && *measure) { return (*measure)(t, font_px); }
-		return static_cast<int>(t.size()) * font_px;
+		return static_cast<int>(t.size()) * font_px; // one square glyph per code point
 	}
 
 	// resolve a CSS length to px: px/unitless absolute; % of `basis`; vw/vh of the
@@ -285,24 +286,23 @@ struct layout_pass {
 			return n.h + 2 * margin;
 		}
 
-		// direct text first, wrapped to the content width (greedy, by
-		// measured width - square-glyph estimate without a font)
-		std::string_view text = n.text;
+		// direct text, decoded to UTF-32 code points once, then wrapped to the
+		// content width (measured width, or one square glyph per code point)
+		const std::u32string text = utf8_to_utf32(n.text);
 		const ctcss::color fg = text_color(n); // CSS color inherits from ancestors
 		const std::string_view align = text_align(n);
-		if (!trimmed(text).empty()) {
-			// hard-break on '\n' (from <br>) into lines, then greedily wrap each
-			// line to the content width
-			std::string_view remain = text;
+		if (!trimmed(std::u32string_view{text}).empty()) {
+			// hard-break on U+000A (from <br>) into lines, then greedily wrap each
+			std::u32string_view remain = text;
 			bool more = true;
 			while (more) {
-				const size_t nl = remain.find('\n');
-				const std::string_view line =
-				    trimmed(nl == std::string_view::npos ? remain : remain.substr(0, nl));
+				const size_t nl = remain.find(U'\n');
+				const std::u32string_view line =
+				    trimmed(nl == std::u32string_view::npos ? remain : remain.substr(0, nl));
 				if (line.empty()) {
 					cursor += font_px + font_px / 4; // blank row (e.g. consecutive <br>)
 				} else {
-					std::string_view rest = line;
+					std::u32string_view rest = line;
 					while (!rest.empty()) {
 						size_t take = rest.size();
 						while (take > 1 && text_width(rest.substr(0, take), font_px) > content_w) {
@@ -319,14 +319,14 @@ struct layout_pass {
 						cmd.w = tw;
 						cmd.h = font_px;
 						cmd.argb = pack_argb(fg);
-						cmd.text = std::string{rest.substr(0, take)};
+						cmd.text = u32str(rest.substr(0, take));
 						cmd.font_px = font_px;
 						out->push_back(cmd);
 						cursor += font_px + font_px / 4;
 						rest.remove_prefix(take);
 					}
 				}
-				if (nl == std::string_view::npos) { more = false; }
+				if (nl == std::u32string_view::npos) { more = false; }
 				else { remain.remove_prefix(nl + 1); }
 			}
 		}
@@ -364,6 +364,20 @@ struct layout_pass {
 		if (begin == std::string_view::npos) { return {}; }
 		return v.substr(begin, v.find_last_not_of(ws) - begin + 1);
 	}
+	// materialize a u32string from a view (the string_view-taking basic_string ctor
+	// is not usable in constexpr on this libstdc++, so build it by hand)
+	static constexpr std::u32string u32str(std::u32string_view v) {
+		std::u32string s;
+		for (const char32_t c : v) { s.push_back(c); }
+		return s;
+	}
+	// trim leading/trailing ASCII whitespace from a UTF-32 run
+	static constexpr std::u32string_view trimmed(std::u32string_view v) {
+		static constexpr char32_t ws[] = {U' ', U'\t', U'\n', U'\r', 0};
+		const size_t begin = v.find_first_not_of(ws);
+		if (begin == std::u32string_view::npos) { return {}; }
+		return v.substr(begin, v.find_last_not_of(ws) - begin + 1);
+	}
 
 	// render a <select>: the collapsed control (selected option + down-arrow) into
 	// `out`, and, when open, the popup option list into `overlays` (painted last,
@@ -375,7 +389,7 @@ struct layout_pass {
 		const int nopt = n.option_count();
 		const std::string_view align = text_align(n);
 		node * sel = n.nth_option(n.selected_option());
-		const std::string_view label = sel != nullptr ? trimmed(sel->text) : std::string_view{};
+		const std::u32string label = sel != nullptr ? utf8_to_utf32(trimmed(sel->text)) : std::u32string{};
 		const int arrow = font_px * 2 / 3;
 		const int tw = text_width(label, font_px);
 		int tx = n.x + padding;
@@ -390,7 +404,7 @@ struct layout_pass {
 			c.w = tw;
 			c.h = font_px;
 			c.argb = pack_argb(fg);
-			c.text = std::string{label};
+			c.text = label;
 			c.font_px = font_px;
 			out->push_back(c);
 		}
@@ -413,7 +427,7 @@ struct layout_pass {
 			int ow = 0;
 			for (int i = 0; i < nopt; ++i) {
 				if (node * o = n.nth_option(i)) {
-					const int w2 = text_width(trimmed(o->text), font_px);
+					const int w2 = text_width(utf8_to_utf32(trimmed(o->text)), font_px);
 					if (w2 > ow) { ow = w2; }
 				}
 			}
@@ -443,7 +457,7 @@ struct layout_pass {
 					hl.argb = 0xFF2A4A8Au;
 					overlays->push_back(hl);
 				}
-				const std::string_view ot = trimmed(opt->text);
+				const std::u32string ot = utf8_to_utf32(trimmed(opt->text));
 				paint_cmd t;
 				t.what = paint_cmd::kind::text;
 				t.x = ox + padding + font_px / 4;
@@ -451,7 +465,7 @@ struct layout_pass {
 				t.w = text_width(ot, font_px);
 				t.h = font_px;
 				t.argb = 0xFFFFFFFFu;
-				t.text = std::string{ot};
+				t.text = ot;
 				t.font_px = font_px;
 				overlays->push_back(t);
 				opt->x = ox;

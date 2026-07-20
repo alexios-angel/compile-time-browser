@@ -4,6 +4,7 @@
 #include "dom.hpp"
 #include "image.hpp"
 #include "font8x8.hpp"
+#include "utf.hpp"
 #include <ctjs.hpp>
 #ifndef CTBROWSER_IN_A_MODULE
 #include <algorithm>
@@ -1001,7 +1002,8 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 			             const int y = static_cast<int>(a[2].to_number()) - 8 * scale;
 			             const uint32_t c = style_of();
 			             int pen = x;
-			             for (const char ch : text) {
+			             for (size_t ci = 0; ci < text.size();) { // decode UTF-8
+				             const char32_t ch = ctbrowser::utf8_next(text, ci);
 				             for (int row = 0; row < 8; ++row) {
 					             for (int col = 0; col < 8; ++col) {
 						             if (!glyph_pixel(ch, row, col)) { continue; }
