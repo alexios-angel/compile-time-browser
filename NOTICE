@@ -41,8 +41,10 @@ PUBLIC DOMAIN: font8x8 by Daniel Hepper <daniel@hepper.net>
 Marcel Sondaar / International Business Machines.
 
 The PNG writer (include/ctbrowser/stb_image_write.h) is stb_image_write
-v1.16 by Sean Barrett and contributors (https://github.com/nothings/stb),
-used under its PUBLIC DOMAIN (Unlicense) option.
+v1.16, and the image loader (include/ctbrowser/stb_image.h, used to decode
+glTF baseColor textures at runtime) is stb_image v2.30, both by Sean
+Barrett and contributors (https://github.com/nothings/stb), used under
+their PUBLIC DOMAIN (Unlicense) option.
 
 The example assets (examples/assets/) are generated deterministically
 by tools/gen-assets.py in this repository and carry no third-party

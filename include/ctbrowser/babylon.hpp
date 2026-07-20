@@ -13,8 +13,10 @@
 // FreeCamera / HemisphericLight & DirectionalLight / StandardMaterial /
 // MeshBuilder.CreateBox|Sphere|Ground|Cylinder (+ legacy Mesh.Create*) /
 // Vector3 / Color3 / Color4 / engine.runRenderLoop / scene.render, with
-// flat-shaded, z-buffered, perspective 3D and basic ArcRotate mouse
-// orbit. INTENTIONALLY OUT OF SCOPE: textures, PBR, glTF/GLB loading,
+// flat/textured, z-buffered, perspective 3D and basic ArcRotate mouse
+// orbit. glTF/GLB models load (SceneLoader.ImportMeshAsync) with their
+// baseColor TEXTURES (PNG/JPEG, decoded at runtime and sampled with
+// perspective-correct UVs). INTENTIONALLY OUT OF SCOPE: PBR lighting,
 // physics, particles, post-processing, shadows, animations, GUI,
 // Observables, WebGL/shader parity. Unknown APIs are simply undefined;
 // a few commonly-probed ones are harmless no-ops.
@@ -50,6 +52,23 @@
 #include <glm/gtx/euler_angles.hpp>      // glm::yawPitchRoll
 #endif
 
+// stb_image (public domain, Sean Barrett) - decodes glTF baseColor PNG/JPEG
+// textures at RUNTIME into RGBA for the software sampler. STB_IMAGE_STATIC gives
+// the loader internal linkage so it is safe to carry in the shared PCH; the
+// vendored C header is wrapped so its style passes -Werror -Wconversion. This is
+// runtime-only (never the constexpr renderer path).
+#ifndef CTBROWSER_IN_A_MODULE
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_NO_STDIO
+#define STBI_ONLY_PNG
+#define STBI_ONLY_JPEG
+#include "stb_image.h"
+#pragma clang diagnostic pop
+#endif
+
 namespace ctbrowser::babylon {
 
 // ============================================================monospace
@@ -62,6 +81,7 @@ namespace ctbrowser::babylon {
 
 namespace r3d {
 
+using vec2 = glm::dvec2;
 using vec3 = glm::dvec3;
 using vec4 = glm::dvec4;
 using mat4 = glm::dmat4;
@@ -94,6 +114,7 @@ constexpr double fceil(double x) noexcept {
 }
 
 constexpr vec3 V3(double x, double y, double z) noexcept { return vec3(x, y, z); }
+constexpr vec2 V2(double x, double y) noexcept { return vec2(x, y); }
 
 // --- vector helpers via GLM. GLM's construction/+/-/dot/cross and matrix
 // products are constexpr on this toolchain, so they fold in the compile-time
@@ -283,7 +304,51 @@ constexpr vec4 xform(const mat4 & m, const vec3 & p) noexcept { return m * vec4(
 struct geo {
 	std::vector<vec3> verts;
 	std::vector<std::array<int, 3>> tris;
+	std::vector<vec2> uvs; // parallel to verts; empty => untextured (flat colour)
 };
+
+// --- a decoded RGBA texture: 0xAARRGGBB texels (same packing as the canvas),
+// row-major, origin top-left. Built at runtime from PNG/JPEG bytes; the
+// rasterizer samples it via perspective-correct per-vertex UVs.
+struct texture {
+	int w = 0, h = 0;
+	std::vector<uint32_t> texel;
+	constexpr bool valid() const noexcept { return w > 0 && h > 0 && !texel.empty(); }
+	// nearest-neighbour sample, UVs wrapped into [0,1) (v runs downward, glTF-style)
+	constexpr uint32_t sample(double u, double v) const noexcept {
+		if (!valid()) { return 0xFFFFFFFFu; }
+		const double uu = u - ffloor(u), vv = v - ffloor(v);
+		int tx = static_cast<int>(uu * w), ty = static_cast<int>(vv * h);
+		tx = tx < 0 ? 0 : (tx >= w ? w - 1 : tx);
+		ty = ty < 0 ? 0 : (ty >= h ? h - 1 : ty);
+		return texel[static_cast<size_t>(ty) * static_cast<size_t>(w) + static_cast<size_t>(tx)];
+	}
+};
+
+#ifndef CTBROWSER_IN_A_MODULE
+// decode encoded image bytes (PNG/JPEG) into a shared texture; null on failure.
+// RUNTIME ONLY (calls stb_image) - never reached during constexpr evaluation.
+inline std::shared_ptr<texture> decode_texture(const unsigned char * data, size_t len) {
+	if (data == nullptr || len == 0) { return nullptr; }
+	int tw = 0, th = 0, comp = 0;
+	unsigned char * p = stbi_load_from_memory(data, static_cast<int>(len), &tw, &th, &comp, 4);
+	if (p == nullptr || tw <= 0 || th <= 0) {
+		if (p != nullptr) { stbi_image_free(p); }
+		return nullptr;
+	}
+	auto t = std::make_shared<texture>();
+	t->w = tw;
+	t->h = th;
+	const size_t n = static_cast<size_t>(tw) * static_cast<size_t>(th);
+	t->texel.resize(n);
+	for (size_t i = 0; i < n; ++i) {
+		const uint32_t r = p[i * 4 + 0], g = p[i * 4 + 1], b = p[i * 4 + 2], a = p[i * 4 + 3];
+		t->texel[i] = (a << 24) | (r << 16) | (g << 8) | b;
+	}
+	stbi_image_free(p);
+	return t;
+}
+#endif
 
 constexpr geo make_box(double size) {
 	const double h = size * 0.5;
@@ -364,6 +429,7 @@ struct draw_item {
 	mat4 world = identity();
 	rgba diffuse{1, 1, 1, 1};
 	bool cull = true;
+	const texture * tex = nullptr; // null => flat `diffuse`; else sampled per pixel
 };
 struct light {
 	int type = 0;              // 0 = hemispheric, 1 = directional
@@ -426,6 +492,17 @@ private:
 		const double eps = 1e-6;
 		if (c0[3] <= eps || c1[3] <= eps || c2[3] <= eps) { return; } // near-plane guard
 
+		// perspective-correct texture setup: per-vertex 1/w and the triangle's UVs
+		const bool textured = it.tex != nullptr && it.tex->valid() &&
+		                      it.g->uvs.size() == it.g->verts.size();
+		const double iw0 = 1.0 / c0[3], iw1 = 1.0 / c1[3], iw2 = 1.0 / c2[3];
+		vec2 uv0{}, uv1{}, uv2{};
+		if (textured) {
+			uv0 = it.g->uvs[static_cast<size_t>(tri[0])];
+			uv1 = it.g->uvs[static_cast<size_t>(tri[1])];
+			uv2 = it.g->uvs[static_cast<size_t>(tri[2])];
+		}
+
 		// screen coords + depth
 		const double W = w, H = h;
 		auto scr = [&](const vec4 & c, double & sx, double & sy, double & sz) {
@@ -466,10 +543,23 @@ private:
 				const double depth = b0 * z0 + b1 * z1 + b2 * z2;
 				if (depth < 0 || depth > 1) { continue; }
 				const size_t idx = static_cast<size_t>(py) * static_cast<size_t>(w) + static_cast<size_t>(pxi);
-				if (depth < zbuf_[idx]) {
-					zbuf_[idx] = depth;
-					px[idx] = color;
+				if (depth >= zbuf_[idx]) { continue; }
+				uint32_t out = color;
+				if (textured) {
+					// perspective-correct barycentric interpolation of the UVs
+					const double wa = b0 * iw0, wb = b1 * iw1, wc = b2 * iw2;
+					const double isum = 1.0 / (wa + wb + wc);
+					const double u = (wa * uv0[0] + wb * uv1[0] + wc * uv2[0]) * isum;
+					const double v = (wa * uv0[1] + wb * uv1[1] + wc * uv2[1]) * isum;
+					const uint32_t t = it.tex->sample(u, v);
+					if (((t >> 24) & 0xFFu) < 8u) { continue; } // alpha-tested texel: skip
+					const rgba tc{it.diffuse.r * static_cast<double>((t >> 16) & 0xFFu) / 255.0,
+					              it.diffuse.g * static_cast<double>((t >> 8) & 0xFFu) / 255.0,
+					              it.diffuse.b * static_cast<double>(t & 0xFFu) / 255.0, 1.0};
+					out = pack(tc, lit);
 				}
+				zbuf_[idx] = depth;
+				px[idx] = out;
 			}
 		}
 	}
@@ -658,16 +748,22 @@ constexpr jval json_parse(std::string_view s) {
 }
 
 // --- the parsed model
-struct material { std::string name; r3d::rgba base{0.8, 0.8, 0.8, 1}; };
+// base defaults to WHITE (the glTF baseColorFactor default) so a baseColor
+// TEXTURE is sampled untinted; base_tex indexes model.textures (-1 = none).
+struct material { std::string name; r3d::rgba base{1, 1, 1, 1}; int base_tex = -1; };
 struct primitive {
 	std::vector<r3d::vec3> verts;
 	std::vector<std::array<int, 3>> tris;
+	std::vector<r3d::vec2> uvs; // TEXCOORD_0, parallel to verts (empty = none)
 	int material = -1;
 	std::string node_name;
 };
 struct model {
 	std::vector<primitive> prims;
 	std::vector<material> materials;
+	// encoded image bytes per glTF texture index (PNG/JPEG), decoded at runtime;
+	// parse stays constexpr - only the byte ranges are copied here, never decoded
+	std::vector<std::vector<unsigned char>> textures;
 	r3d::vec3 bmin{}, bmax{};
 	bool ok = false;
 };
@@ -728,8 +824,37 @@ constexpr model parse_glb(const unsigned char * data, size_t len) {
 						           bc->size() > 3 ? (*bc)[3].as_num(1) : 1.0};
 					}
 				}
+				if (const jval * bt = pbr->get("baseColorTexture")) {
+					mm.base_tex = bt->get("index") ? bt->get("index")->as_int() : -1;
+				}
 			}
 			out.materials.push_back(mm);
+		}
+	}
+
+	// resolve each glTF texture -> its source image's encoded bytes (a GLB image
+	// is a bufferView slice of the binary chunk). We copy the raw PNG/JPEG bytes;
+	// decoding happens later at runtime (parse_glb stays constexpr).
+	if (const jval * textures = doc.get("textures")) {
+		const jval * images = doc.get("images");
+		for (size_t i = 0; i < textures->size(); ++i) {
+			std::vector<unsigned char> bytes;
+			const jval * src = (*textures)[i].get("source");
+			if (images != nullptr && src != nullptr) {
+				const int im = src->as_int();
+				if (im >= 0 && im < static_cast<int>(images->size())) {
+					if (const jval * bvj = (*images)[static_cast<size_t>(im)].get("bufferView")) {
+						const int bvi = bvj->as_int();
+						if (bvi >= 0 && bvi < static_cast<int>(bufferViews->size())) {
+							const jval & bv = (*bufferViews)[static_cast<size_t>(bvi)];
+							const size_t bo = bv.get("byteOffset") ? static_cast<size_t>(bv.get("byteOffset")->as_num()) : 0;
+							const size_t bl = bv.get("byteLength") ? static_cast<size_t>(bv.get("byteLength")->as_num()) : 0;
+							bytes.assign(bin + bo, bin + bo + bl);
+						}
+					}
+				}
+			}
+			out.textures.push_back(std::move(bytes));
 		}
 	}
 
@@ -787,6 +912,28 @@ constexpr model parse_glb(const unsigned char * data, size_t len) {
 					out.bmax[c] = std::max(out.bmax[c], v[c]);
 				}
 			}
+			// TEXCOORD_0 (VEC2) -> per-vertex UVs, parallel to verts. Float, or
+			// normalized ubyte/ushort per the glTF accessor's componentType.
+			if (const jval * tc = attr->get("TEXCOORD_0")) {
+				size_t tcount, tstride; int ttype;
+				const unsigned char * tp = acc_view(tc->as_int(), tcount, tstride, ttype);
+				if (tp != nullptr) {
+					const size_t st = tstride != 0 ? tstride
+					                  : (ttype == 5126 ? 8u : (ttype == 5123 ? 4u : 2u));
+					out_p.uvs.reserve(tcount);
+					for (size_t i = 0; i < tcount; ++i) {
+						const unsigned char * e = tp + i * st;
+						double u = 0, v = 0;
+						if (ttype == 5126) { u = read_f32le(e); v = read_f32le(e + 4); }
+						else if (ttype == 5123) {
+							u = (e[0] | (e[1] << 8)) / 65535.0;
+							v = (e[2] | (e[3] << 8)) / 65535.0;
+						} else { u = e[0] / 255.0; v = e[1] / 255.0; }
+						out_p.uvs.push_back(r3d::V2(u, v));
+					}
+				}
+			}
+
 			// indices (ubyte/ushort/uint) -> triangles
 			size_t icount, istride; int itype;
 			const unsigned char * ip = acc_view(pr.get("indices")->as_int(), icount, istride, itype);
@@ -879,6 +1026,7 @@ struct mesh_rec {
 	r3d::mat4 frozen_matrix{};             // the world matrix captured at freeze time
 	bool has_pivot = false;                // setPivotPoint: rotate/scale about `pivot`
 	r3d::vec3 pivot{};
+	std::shared_ptr<r3d::texture> tex{};   // glTF baseColor texture (shared across clones)
 };
 struct light_rec { objptr handle; int type; };
 struct camera_rec { objptr handle; int type; bool attached = false; };
@@ -1336,6 +1484,8 @@ inline r3d::draw_item build_draw_item(const worldptr & W, int mi) {
 	const double vis = num_prop(M.handle, "visibility", 1.0);
 	if (vis < 1.0) { mc.r *= vis; mc.g *= vis; mc.b *= vis; }
 	it.diffuse = mc;
+	// glTF baseColor texture (sampled per pixel, tinted by `diffuse`)
+	it.tex = (M.tex && M.tex->valid()) ? M.tex.get() : nullptr;
 	it.cull = M.cull;
 	return it;
 }
@@ -1587,6 +1737,7 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 		r3d::geo geo = src.geom;
 		const bool cull = src.cull;
 		const int ssid = src.scene_id;
+		std::shared_ptr<r3d::texture> stex = src.tex; // clones share the texture
 		const r3d::vec3 p = read_vec3(child_obj(src.handle, "position"), r3d::V3(0, 0, 0));
 		const r3d::vec3 r = read_vec3(child_obj(src.handle, "rotation"), r3d::V3(0, 0, 0));
 		const r3d::vec3 s = read_vec3(child_obj(src.handle, "scaling"), r3d::V3(1, 1, 1));
@@ -1608,6 +1759,7 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 		rec.handle = nh;
 		rec.cull = cull;
 		rec.scene_id = ssid;
+		rec.tex = std::move(stex);
 		W->meshes.push_back(std::move(rec));
 		if (ssid >= 0 && ssid < static_cast<int>(W->scenes.size())) {
 			W->scenes[static_cast<std::size_t>(ssid)].mesh_ids.push_back(nid);
@@ -1801,6 +1953,11 @@ inline void load_model(const worldptr & W, const objptr & scene, const gltf::mod
 		mat_handles.push_back(mh);
 		sc.materials.emplace_back(gm.name, mh);
 	}
+	// decode each glTF texture once (runtime); primitives share by index
+	std::vector<std::shared_ptr<r3d::texture>> tex_decoded(mdl.textures.size());
+	for (size_t i = 0; i < mdl.textures.size(); ++i) {
+		tex_decoded[i] = r3d::decode_texture(mdl.textures[i].data(), mdl.textures[i].size());
+	}
 	for (const gltf::primitive & p : mdl.prims) {
 		const int id = static_cast<int>(W->meshes.size());
 		objptr h = objptr::make();
@@ -1810,13 +1967,18 @@ inline void load_model(const worldptr & W, const objptr & scene, const gltf::mod
 		h->set("position", make_vector3(0, 0, 0));
 		h->set("rotation", make_vector3(0, 0, 0));
 		h->set("scaling", make_vector3(1, 1, 1));
+		std::shared_ptr<r3d::texture> ptex;
 		if (p.material >= 0 && p.material < static_cast<int>(mat_handles.size())) {
 			h->set("material", value{mat_handles[static_cast<size_t>(p.material)]});
+			const int bt = mdl.materials[static_cast<size_t>(p.material)].base_tex;
+			if (bt >= 0 && bt < static_cast<int>(tex_decoded.size())) { ptex = tex_decoded[static_cast<size_t>(bt)]; }
 		} else {
 			h->set("material", value{});
 		}
-		r3d::geo g{p.verts, p.tris};
-		W->meshes.push_back(mesh_rec{std::move(g), h, true, false, true, {}, si});
+		r3d::geo g{p.verts, p.tris, p.uvs};
+		mesh_rec rec{std::move(g), h, true, false, true, {}, si};
+		rec.tex = std::move(ptex);
+		W->meshes.push_back(std::move(rec));
 		sc.mesh_ids.push_back(id);
 		decorate_mesh(W, h, id);
 	}
@@ -2433,18 +2595,35 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 			if (hit != nullptr) { mdl = gltf::parse_glb(hit->data, hit->size); }
 			if (mdl.ok && !mdl.prims.empty()) {
 				r3d::geo merged;
-				r3d::rgba col{0.8, 0.8, 0.8, 1};
+				r3d::rgba col{1, 1, 1, 1};
+				std::shared_ptr<r3d::texture> mtex; // first baseColor texture found
 				for (const gltf::primitive & p : mdl.prims) {
 					const int off = static_cast<int>(merged.verts.size());
 					for (const r3d::vec3 & v : p.verts) { merged.verts.push_back(v); }
 					for (const std::array<int, 3> & t : p.tris) {
 						merged.tris.push_back({t[0] + off, t[1] + off, t[2] + off});
 					}
+					// keep UVs parallel to verts (pad missing prims with zeros)
+					if (p.uvs.size() == p.verts.size()) {
+						for (const r3d::vec2 & uv : p.uvs) { merged.uvs.push_back(uv); }
+					} else {
+						for (size_t k = 0; k < p.verts.size(); ++k) { merged.uvs.push_back(r3d::V2(0, 0)); }
+					}
 					if (p.material >= 0 && p.material < static_cast<int>(mdl.materials.size())) {
 						col = mdl.materials[static_cast<size_t>(p.material)].base;
+						const int bt = mdl.materials[static_cast<size_t>(p.material)].base_tex;
+						if (!mtex && bt >= 0 && bt < static_cast<int>(mdl.textures.size())) {
+							mtex = r3d::decode_texture(mdl.textures[static_cast<size_t>(bt)].data(),
+							                           mdl.textures[static_cast<size_t>(bt)].size());
+						}
 					}
 				}
+				if (!mtex) { merged.uvs.clear(); } // no texture => flat-colour path
+				const int bid = static_cast<int>(W->meshes.size()); // id make_mesh will assign
 				body = make_mesh(W, std::move(merged), base, true, scene);
+				if (mtex && bid < static_cast<int>(W->meshes.size())) {
+					W->meshes[static_cast<size_t>(bid)].tex = mtex;
+				}
 				auto mh = objptr::make(); // a material so it isn't the default gray
 				mh->set("diffuseColor", make_color3(col.r, col.g, col.b));
 				mh->set("baseColor", make_color3(col.r, col.g, col.b));
