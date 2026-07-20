@@ -2407,19 +2407,46 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		}
 		return value{o};
 	}, "Sound"));
-	// --- SceneLoader.ImportMeshAsync: resolves {meshes:[__root__, <name>]} where
-	// <name> is a box named after the file (real GLB loading is a later step)
+	// --- SceneLoader.ImportMeshAsync(meshNames, rootUrl, filename, scene):
+	// resolves {meshes:[__root__, model]}. The real GLB (rootUrl+filename) is
+	// loaded from the embedded registry when present - its primitives merged into
+	// ONE mesh (the game clones meshes[1] per alien) - else a box placeholder.
 	{
 		object_t sl;
-		sl.set("ImportMeshAsync", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
-			std::string file = a.size() > 2 ? a[2].to_string() : std::string{};
-			const std::size_t slash = file.find_last_of("/\\");
-			if (slash != std::string::npos) { file = file.substr(slash + 1); }
-			const std::size_t dot = file.rfind('.');
-			if (dot != std::string::npos) { file = file.substr(0, dot); }
+		sl.set("ImportMeshAsync", value::function([W, &images](ctjs::context &, const std::vector<value> & a) -> value {
+			const std::string root_url = a.size() > 1 ? a[1].to_string() : std::string{};
+			const std::string fname = a.size() > 2 ? a[2].to_string() : std::string{};
+			const std::string url = root_url + fname; // e.g. "/assets/models/Alien_1.glb"
+			std::string base = fname;                 // display name: strip dir + ext
+			if (const std::size_t s = base.find_last_of("/\\"); s != std::string::npos) { base = base.substr(s + 1); }
+			if (const std::size_t d = base.rfind('.'); d != std::string::npos) { base = base.substr(0, d); }
 			const objptr scene = arg_obj(a, 3);
 			const value root = make_mesh(W, r3d::make_box(0.01), "__root__", true, scene);
-			const value body = make_mesh(W, r3d::make_box(2.0), file, true, scene);
+			value body;
+			const ctbrowser::embedded_asset * hit = ctbrowser::find_asset(images.embedded, url);
+			gltf::model mdl;
+			if (hit != nullptr) { mdl = gltf::parse_glb(hit->data, hit->size); }
+			if (mdl.ok && !mdl.prims.empty()) {
+				r3d::geo merged;
+				r3d::rgba col{0.8, 0.8, 0.8, 1};
+				for (const gltf::primitive & p : mdl.prims) {
+					const int off = static_cast<int>(merged.verts.size());
+					for (const r3d::vec3 & v : p.verts) { merged.verts.push_back(v); }
+					for (const std::array<int, 3> & t : p.tris) {
+						merged.tris.push_back({t[0] + off, t[1] + off, t[2] + off});
+					}
+					if (p.material >= 0 && p.material < static_cast<int>(mdl.materials.size())) {
+						col = mdl.materials[static_cast<size_t>(p.material)].base;
+					}
+				}
+				body = make_mesh(W, std::move(merged), base, true, scene);
+				auto mh = objptr::make(); // a material so it isn't the default gray
+				mh->set("diffuseColor", make_color3(col.r, col.g, col.b));
+				mh->set("baseColor", make_color3(col.r, col.g, col.b));
+				if (body.is_object()) { body.as_object()->set("material", value{mh}); }
+			} else {
+				body = make_mesh(W, r3d::make_box(2.0), base, true, scene); // placeholder
+			}
 			auto res = objptr::make();
 			res->set("meshes", value::array({root, body}));
 			res->set("particleSystems", value::array({}));

@@ -52,6 +52,10 @@ CodeMan38 (Cody Boisclair), used and redistributed under the SIL Open
 Font License, Version 1.1 (the license text is alongside the font at
 examples/assets/fonts/OFL.txt).
 
+The Space Invaders 3D models (examples/assets/models/*.glb: Alien_1/2/3,
+Player_1, MotherShip) are from John Pitchers' Space-Invaders
+(https://github.com/johnpitchers/Space-Invaders), used under CC0.
+
 Simple DirectMedia Layer (SDL3, https://libsdl.org) and its optional
 satellite libraries SDL3_image, SDL3_mixer and SDL3_ttf are used as
 external dependencies and are NOT bundled; all are distributed under
