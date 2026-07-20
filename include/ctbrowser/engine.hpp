@@ -72,7 +72,14 @@ public:
 		      return ctcss::query(css_sheet, chain, n, prop);
 	      }),
 	      extra_(extra),
-	      script(ctjs::run_value(Page::script_text(), all_bindings(std::move(extra)))) { }
+	      script(ctjs::run_value(Page::script_text(), all_bindings(std::move(extra)))) {
+		// CTBROWSER_DEBUG: surface a page script that threw during its top-level
+		// run (construction/init), with the captured call-stack trace
+		if (detail::debug_on() && !script.ok()) {
+			std::fprintf(stderr, "ctbrowser: page script did not run cleanly:\n%s\n",
+			             script.exception_stack().c_str());
+		}
+	}
 
 	engine(const engine &) = delete;
 	engine & operator=(const engine &) = delete;

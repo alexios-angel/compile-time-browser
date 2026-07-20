@@ -10,6 +10,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <set>
@@ -51,6 +52,22 @@
 // with a TypeError, the same shape a real network failure has.
 
 namespace ctbrowser {
+
+namespace detail {
+// CTBROWSER_DEBUG (any value): diagnostics print full JS error stacks and the
+// engine reports a failed page script. Cheap: getenv is read once.
+inline bool debug_on() {
+	static const bool on = std::getenv("CTBROWSER_DEBUG") != nullptr;
+	return on;
+}
+// the error's captured call-stack trace ("Msg\n  at f\n  at g"), else its message
+inline std::string error_trace(const ctjs::value & v) {
+	if (v.is_object()) {
+		if (const ctjs::value * s = v.as_object()->find("stack")) { return s->to_string(); }
+	}
+	return ctjs::error_to_string(v);
+}
+} // namespace detail
 
 // script-registered callbacks (addEventListener / requestAnimationFrame)
 // plus the interpreter context needed to call them back; the context is
@@ -145,7 +162,8 @@ struct dom_events {
 			(void)ctjs::call_value(*cx, fn, std::move(args));
 		} catch (const ctjs::js_throw & ex) {
 			std::fprintf(stderr, "ctbrowser: uncaught (in listener): %s\n",
-			             ctjs::error_to_string(ex.thrown).c_str());
+			             detail::debug_on() ? detail::error_trace(ex.thrown).c_str()
+			                                : ctjs::error_to_string(ex.thrown).c_str());
 		}
 	}
 
