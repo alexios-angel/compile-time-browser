@@ -75,17 +75,17 @@ using app = ctbrowser::page<R"(<!DOCTYPE html>
 // --- the compile-time claims
 
 // the whole page is valid (HTML + CSS + JS all parsed during this build)
-static_assert(app::script_valid);
+static_assert(ctjs::vp::is_valid(app::script_text()));
 static_assert(app::title() == "engine test");
 // the extracted stylesheet is a real ctcss sheet
-static_assert(app::sheet_type::rule_count() == 6);
+static_assert(ctcss::parse_value(app::style_text()).rule_count() == 6);
 // initial styles resolve AT COMPILE TIME against the page structure
 constexpr ctcss::element_ref count_chain[] = {
     {"html"}, {"body"}, {"div", "panel", ""}, {"p", "count", ""}};
-static_assert(ctcss::query(app::sheet_type{}, count_chain, "color") == "gray");
+static_assert(ctcss::query(ctcss::parse_value(app::style_text()), count_chain, "color") == "gray");
 constexpr ctcss::element_ref hot_chain[] = {
     {"html"}, {"body"}, {"div", "panel", ""}, {"p", "count", "hot"}};
-static_assert(ctcss::query(app::sheet_type{}, hot_chain, "color") == "#ff8800");
+static_assert(ctcss::query(ctcss::parse_value(app::style_text()), hot_chain, "color") == "#ff8800");
 
 int main() {
 	ctbrowser::engine<app> e;

@@ -50,7 +50,7 @@ window.addEventListener('resize', function(){
 });
 </script>)">;
 
-static_assert(app::script_valid, "the basic-scene script must parse");
+static_assert(ctjs::vp::is_valid(app::script_text()), "the basic-scene script must parse");
 
 int main(int, char **) {
 	ctbrowser::app_options opts;

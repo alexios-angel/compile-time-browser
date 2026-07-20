@@ -349,6 +349,57 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 		                      return ctjs::value{!a.empty() && n->has_class(a[0].to_string())};
 	                      },
 	                      "hasClass"));
+	// the DOM classList API (add/remove/contains/toggle over node classes)
+	{
+		ctjs::object_t cl;
+		cl.set("add", ctjs::value::function(
+		                  [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+			                  for (const auto & v : a) { n->add_class(v.to_string()); }
+			                  return ctjs::value{};
+		                  },
+		                  "add"));
+		cl.set("remove", ctjs::value::function(
+		                     [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+			                     for (const auto & v : a) { n->remove_class(v.to_string()); }
+			                     return ctjs::value{};
+		                     },
+		                     "remove"));
+		cl.set("contains", ctjs::value::function(
+		                       [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+			                       return ctjs::value{!a.empty() && n->has_class(a[0].to_string())};
+		                       },
+		                       "contains"));
+		cl.set("toggle", ctjs::value::function(
+		                     [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+			                     if (!a.empty()) { n->toggle_class(a[0].to_string()); }
+			                     return ctjs::value{!a.empty() && n->has_class(a[0].to_string())};
+		                     },
+		                     "toggle"));
+		o.set("classList", ctjs::value::object(std::move(cl)));
+	}
+	// querySelector(All): a CSS-subset search rooted at this element
+	o.set("querySelector", ctjs::value::function(
+	                           [n, images, ev](ctjs::context &, const std::vector<ctjs::value> & a) -> ctjs::value {
+		                           if (a.empty()) { return ctjs::value{}; }
+		                           node * hit = n->query_selector(a[0].to_string());
+		                           return hit ? element_handle(hit, images, ev) : ctjs::value{};
+	                           },
+	                           "querySelector"));
+	// append(...nodes|strings): strings join the element's text (enough for
+	// the classic loading-dots idiom); nodes append as children
+	o.set("append", ctjs::value::function(
+	                    [n, ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
+		                    ev->cx = &cx;
+		                    for (const auto & v : a) {
+			                    if (v.is_object() && ev->node_of(v) != nullptr && ev->doc != nullptr) {
+				                    ev->doc->append_child(n, ev->node_of(v));
+			                    } else {
+				                    n->text += v.to_string();
+			                    }
+		                    }
+		                    return ctjs::value{};
+	                    },
+	                    "append"));
 	o.set("style", ctjs::value::function(
 	                   [n](ctjs::context &, const std::vector<ctjs::value> & a) {
 		                   if (a.size() >= 2) {
@@ -884,6 +935,18 @@ inline ctjs::value make_document(document & doc, image_store & images, dom_event
 		                              : ctjs::value{};
 	          },
 	          "getElementById"));
+	// querySelector: CSS-subset lookups over the whole tree
+	d.set("querySelector",
+	      ctjs::value::function(
+	          [&doc, &images, &ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+		          ev.cx = &cx;
+		          if (a.empty() || !doc.root) { return ctjs::value{}; }
+		          node * n = doc.root->query_selector(a[0].to_string());
+		          return n != nullptr ? detail::element_handle(n, &images, &ev) : ctjs::value{};
+	          },
+	          "querySelector"));
+	// documentElement handle (the <html> root)
+	if (doc.root) { d.set("documentElement", element_handle(doc.root.get(), &images, &ev)); }
 	d.set("addEventListener",
 	      ctjs::value::function(
 	          [&ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
@@ -957,6 +1020,57 @@ inline std::vector<ctjs::binding> dom_bindings(document & doc, std::string & tit
 		                    },
 		                    "now"));
 		w->set("performance", ctjs::value::object(std::move(perf)));
+		// localStorage: an in-memory Storage (a JS object backs it, so it
+		// survives location.reload); getItem returns null when absent
+		{
+			static ctjs::rc<ctjs::object_t> store = ctjs::rc<ctjs::object_t>::make();
+			ctjs::object_t ls;
+			ls.set("getItem", ctjs::value::function(
+			                      [](ctjs::context &, const std::vector<ctjs::value> & a) -> ctjs::value {
+				                      if (a.empty()) { return ctjs::value{}; }
+				                      const ctjs::value * p = store->find(a[0].to_string());
+				                      return p != nullptr ? *p : ctjs::value{};
+			                      },
+			                      "getItem"));
+			ls.set("setItem", ctjs::value::function(
+			                      [](ctjs::context &, const std::vector<ctjs::value> & a) {
+				                      if (a.size() >= 2) { store->set(a[0].to_string(), ctjs::value{a[1].to_string()}); }
+				                      return ctjs::value{};
+			                      },
+			                      "setItem"));
+			ls.set("removeItem", ctjs::value::function(
+			                         [](ctjs::context &, const std::vector<ctjs::value> & a) {
+				                         if (!a.empty()) { store->set(a[0].to_string(), ctjs::value{}); }
+				                         return ctjs::value{};
+			                         },
+			                         "removeItem"));
+			ls.set("clear", ctjs::value::function(
+			                    [](ctjs::context &, const std::vector<ctjs::value> &) {
+				                    store = ctjs::rc<ctjs::object_t>::make();
+				                    return ctjs::value{};
+			                    },
+			                    "clear"));
+			ctjs::value lsv = ctjs::value::object(std::move(ls));
+			w->set("localStorage", lsv);
+			out.push_back({"localStorage", lsv});
+		}
+		// navigator (desktop UA -> libraries' mobile checks read false)
+		{
+			ctjs::object_t nav;
+			nav.set("userAgent", ctjs::value{std::string{"Mozilla/5.0 (ctbrowser; software) Gecko"}});
+			nav.set("platform", ctjs::value{std::string{"ctbrowser"}});
+			nav.set("maxTouchPoints", ctjs::value{0});
+			ctjs::value navv = ctjs::value::object(std::move(nav));
+			w->set("navigator", navv);
+			out.push_back({"navigator", navv});
+		}
+		// scrollTo / scroll: no-op (there is no scrollable viewport)
+		w->set("scrollTo", ctjs::value::function(
+		                       [](ctjs::context &, const std::vector<ctjs::value> &) { return ctjs::value{}; },
+		                       "scrollTo"));
+		w->set("scroll", *w->find("scrollTo"));
+		// onresize: a settable slot; dispatched from engine resize handling
+		w->set("onresize", ctjs::value{});
 		ev.window_obj = w;
 		out.push_back({"window", ctjs::value{w}});
 	}

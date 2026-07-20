@@ -40,7 +40,9 @@ BOOST_ROOTS := /home/linuxbrew/.linuxbrew/include /opt/homebrew/include /usr/loc
 BOOST_INC_DIR := $(firstword $(foreach d,$(BOOST_ROOTS),$(if $(wildcard $(d)/boost/qvm),$(d))))
 BOOST_INCLUDE := $(if $(BOOST_INC_DIR),-I$(BOOST_INC_DIR),)
 
-CXXFLAGS := -std=c++23 -I../include $(SUBMODULE_INCLUDES) $(BOOST_INCLUDE) $(SDL_CFLAGS) $(CONSTEXPR_FLAGS) -O2 -pedantic -Wall -Wextra -Werror -Wconversion
+# ctbrowser is value-only: skip the bricks' lark grammars entirely
+GRAMMAR_FREE := -DCTHTML_NO_GRAMMAR -DCTCSS_NO_GRAMMAR -DCTJS_NO_GRAMMAR
+CXXFLAGS := -std=c++23 -I../include $(SUBMODULE_INCLUDES) $(BOOST_INCLUDE) $(SDL_CFLAGS) $(CONSTEXPR_FLAGS) $(GRAMMAR_FREE) -O2 -pedantic -Wall -Wextra -Werror -Wconversion
 
 SOURCES := $(wildcard *.cpp)
 TARGETS := $(SOURCES:%.cpp=%)

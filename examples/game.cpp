@@ -68,7 +68,7 @@ using app = ctbrowser::page<R"(<!DOCTYPE html>
 	}
 </script>)">;
 
-static_assert(app::script_valid);
+static_assert(ctjs::vp::is_valid(app::script_text()));
 
 int main(int, char **) {
 	return ctbrowser::run_app<app>();

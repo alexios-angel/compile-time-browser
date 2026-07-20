@@ -40,6 +40,10 @@ public:
 	double mouse_x = 0;
 	double mouse_y = 0;
 	bool mouse_down = false;
+	// the page stylesheet, parsed BY VALUE from the page's <style> text at
+	// construction (linear ctcss::parse_value, not the Earley TYPE path);
+	// `resolve` closes over it. Declared before resolve so it is live first.
+	ctcss::value_sheet css_sheet;
 	style_fn resolve;
 	text_measure_fn measure; // shell-installed when a real font loads
 	dom_events ev;           // MUST precede script: bindings capture it
@@ -62,8 +66,9 @@ public:
 	      title(Page::title()),
 	      assets(detail::merge_assets(std::move(embedded), auto_assets<Page>())),
 	      images{{}, std::move(image_decoder), &assets},
-	      resolve([](const ctcss::element_ref * chain, size_t n, std::string_view prop) {
-		      return ctcss::query(typename Page::sheet_type{}, chain, n, prop);
+	      css_sheet(ctcss::parse_value(Page::style_text())),
+	      resolve([this](const ctcss::element_ref * chain, size_t n, std::string_view prop) {
+		      return ctcss::query(css_sheet, chain, n, prop);
 	      }),
 	      extra_(extra),
 	      script(ctjs::run_value(Page::script_text(), all_bindings(std::move(extra)))) { }

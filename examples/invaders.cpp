@@ -98,7 +98,7 @@ using app = ctbrowser::page<R"(<!DOCTYPE html>
 	}
 </script>)">;
 
-static_assert(app::script_valid);
+static_assert(ctjs::vp::is_valid(app::script_text()));
 
 // OPPORTUNISTIC compile-time assets: the ENGINE reads the script's
 // loadImage/playSound literals at compile time and, on a

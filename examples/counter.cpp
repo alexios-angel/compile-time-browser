@@ -40,8 +40,8 @@ using app = ctbrowser::page<R"(<!DOCTYPE html>
 // initial style, proven during compilation
 constexpr ctcss::element_ref initial[] = {{"html"}, {"body"}, {"div", "panel", ""},
                                           {"p", "count", ""}};
-static_assert(ctcss::query(app::sheet_type{}, initial, "color") == "gray");
-static_assert(app::script_valid);
+static_assert(ctcss::query(ctcss::parse_value(app::style_text()), initial, "color") == "gray");
+static_assert(ctjs::vp::is_valid(app::script_text()));
 
 int main(int, char **) {
 	return ctbrowser::run_app<app>();

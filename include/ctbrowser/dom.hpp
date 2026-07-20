@@ -142,6 +142,63 @@ struct node {
 		return nullptr;
 	}
 
+	// --- querySelector: a practical subset of CSS selectors. A compound
+	// like "div#id.cls" tests tag ('*'/empty = any) then every #id/.class
+	// token; whitespace is the descendant combinator ("#panel .value").
+	// No combinators beyond descendant, no pseudo/attribute selectors -
+	// enough for real scripts' getElementById-style lookups.
+	constexpr bool matches_compound(std::string_view sel) const {
+		size_t t = 0;
+		while (t < sel.size() && sel[t] != '#' && sel[t] != '.') { ++t; }
+		if (t > 0) {
+			const std::string_view type = sel.substr(0, t);
+			if (type != "*" && type != tag) { return false; }
+		}
+		size_t i = t;
+		while (i < sel.size()) {
+			const char kind = sel[i++];
+			size_t j = i;
+			while (j < sel.size() && sel[j] != '#' && sel[j] != '.') { ++j; }
+			const std::string_view name = sel.substr(i, j - i);
+			if (kind == '#') {
+				if (id != name) { return false; }
+			} else if (kind == '.') {
+				if (!has_class(name)) { return false; }
+			}
+			i = j;
+		}
+		return true;
+	}
+	// this matches parts[k], and (if more parts) some descendant chain matches the rest
+	constexpr node * qs_from(const std::vector<std::string_view> & parts, size_t k) {
+		if (!matches_compound(parts[k])) { return nullptr; }
+		if (k + 1 == parts.size()) { return this; }
+		for (const auto & c : children) {
+			if (node * r = c->qs_find(parts, k + 1)) { return r; }
+		}
+		return nullptr;
+	}
+	// first node in this subtree (self first) that begins a match of parts[k..]
+	constexpr node * qs_find(const std::vector<std::string_view> & parts, size_t k) {
+		if (node * r = qs_from(parts, k)) { return r; }
+		for (const auto & c : children) {
+			if (node * r = c->qs_find(parts, k)) { return r; }
+		}
+		return nullptr;
+	}
+	constexpr node * query_selector(std::string_view sel) {
+		std::vector<std::string_view> parts;
+		size_t i = 0;
+		while (i < sel.size()) {
+			while (i < sel.size() && (sel[i] == ' ' || sel[i] == '\t' || sel[i] == '>')) { ++i; }
+			size_t j = i;
+			while (j < sel.size() && sel[j] != ' ' && sel[j] != '\t' && sel[j] != '>') { ++j; }
+			if (j > i) { parts.push_back(sel.substr(i, j - i)); }
+			i = j;
+		}
+		return parts.empty() ? nullptr : qs_find(parts, 0);
+	}
+
 	// deepest node whose layout rect contains (px, py); prefers children
 	constexpr node * hit_test(int px, int py) {
 		for (auto it = children.rbegin(); it != children.rend(); ++it) {

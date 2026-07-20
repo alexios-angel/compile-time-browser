@@ -63,7 +63,7 @@ using app = ctbrowser::page<R"(<!DOCTYPE html>
   });
 </script>)">;
 
-static_assert(app::script_valid, "Babylon example script must parse");
+static_assert(ctjs::vp::is_valid(app::script_text()), "Babylon example script must parse");
 
 int main(int, char **) {
 	ctbrowser::app_options opts;

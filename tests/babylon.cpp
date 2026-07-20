@@ -97,7 +97,7 @@ using app = ctbrowser::page<R"(<!DOCTYPE html>
   window.addEventListener("resize", function () { engine.resize(); });
 </script>)">;
 
-static_assert(app::script_valid, "the Babylon script must parse");
+static_assert(ctjs::vp::is_valid(app::script_text()), "the Babylon script must parse");
 
 int main() {
 	ctbrowser::engine<app> e;

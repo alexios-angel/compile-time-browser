@@ -62,7 +62,7 @@ createScene().then(function (scene) {
 });
 </script>)">;
 
-static_assert(app::script_valid, "the glTF model script must parse");
+static_assert(ctjs::vp::is_valid(app::script_text()), "the glTF model script must parse");
 
 int main(int, char **) {
 	ctbrowser::app_options opts;

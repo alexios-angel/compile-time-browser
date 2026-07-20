@@ -1,9 +1,9 @@
 // The runtime DOM is CONSTEXPR. The tree is std::string/std::vector/
 // std::unique_ptr, so a page can be parsed (cthtml's value parser),
-// instantiated into the ctbrowser node tree, mutated and queried
-// entirely at COMPILE TIME - proven by the static_assert below. At
-// RUNTIME the same instantiate_html() path builds the exact tree the
-// compile-time TYPE path (instantiate<Page::typed_dom<>>) builds.
+// instantiated into the ctbrowser node tree, mutated and queried entirely at
+// COMPILE TIME - proven by the static_assert below - and the SAME value path
+// (instantiate_html / ctcss::parse_value) runs at runtime. ctbrowser is
+// grammar-free (CT{HTML,CSS,JS}_NO_GRAMMAR): the lark type path is never used.
 #include <ctbrowser.hpp>
 #include <cstdio>
 #include <string_view>
@@ -79,10 +79,11 @@ using Page = ctbrowser::page<PAGE_HTML>;
 // whole layout pass runs during constant evaluation.
 
 constexpr bool layout_compile_time() {
-	ctbrowser::document d = ctbrowser::instantiate<Page::typed_dom<>>();
+	ctbrowser::document d = ctbrowser::instantiate_html(kHtml);
+	const ctcss::value_sheet sheet = ctcss::parse_value(Page::style_text());
 	ctbrowser::style_fn resolve =
-	    [](const ctcss::element_ref * c, size_t n, std::string_view p) {
-		    return ctcss::query(Page::sheet_type{}, c, n, p);
+	    [&sheet](const ctcss::element_ref * c, size_t n, std::string_view p) {
+		    return ctcss::query(sheet, c, n, p);
 	    };
 	std::vector<ctbrowser::paint_cmd> cmds = ctbrowser::layout(d, 800, resolve);
 	bool saw_hello = false, saw_canvas = false;
@@ -94,32 +95,12 @@ constexpr bool layout_compile_time() {
 }
 static_assert(layout_compile_time(), "ctbrowser layout must fold at compile time");
 
-static bool same_tree(const ctbrowser::node * a, const ctbrowser::node * b) {
-	if ((a == nullptr) != (b == nullptr)) { return false; }
-	if (a == nullptr) { return true; }
-	if (a->tag != b->tag || a->id != b->id || a->classes != b->classes ||
-	    a->text != b->text || a->attributes != b->attributes ||
-	    a->canvas_w != b->canvas_w || a->canvas_h != b->canvas_h ||
-	    a->children.size() != b->children.size()) {
-		return false;
-	}
-	for (size_t i = 0; i < a->children.size(); ++i) {
-		if (!same_tree(a->children[i].get(), b->children[i].get())) { return false; }
-	}
-	return true;
-}
-
 int main() {
 	// the constexpr paths also run fine at runtime
 	CHECK(dom_compile_time());
 	CHECK(layout_compile_time());
 
-	// value path (runtime string) reproduces the compile-time TYPE path
-	ctbrowser::document typed = ctbrowser::instantiate<Page::typed_dom<>>();
-	ctbrowser::document value = ctbrowser::instantiate_html(kHtml);
-	CHECK(same_tree(typed.root.get(), value.root.get()));
-
-	// and it works on a genuinely runtime-built string
+	// the value parser also works on a genuinely runtime-built string
 	std::string dynamic = "<ul id=";
 	dynamic += "menu><li>x<li>y</ul>";
 	ctbrowser::document d = ctbrowser::instantiate_html(dynamic);

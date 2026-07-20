@@ -24,6 +24,11 @@ endif
 # like examples/assets/sprites.bmp)
 CONSTEXPR_FLAGS := -fconstexpr-steps=500000000 -fconstexpr-depth=1024 -fbracket-depth=16384 --embed-dir=$(CURDIR)
 
+# ctbrowser parses HTML+CSS+JS entirely BY VALUE at runtime, so it never uses
+# the bricks' lark/Earley grammars: define *_NO_GRAMMAR everywhere to skip the
+# grammar table builds (the bulk of the old PCH bake).
+GRAMMAR_FREE := -DCTHTML_NO_GRAMMAR -DCTCSS_NO_GRAMMAR -DCTJS_NO_GRAMMAR
+
 # The three bricks come in as git submodules (run `git submodule update
 # --init --recursive` once after cloning); every brick pins the SAME
 # compile-time-lark, and the browser resolves ctlark/ctll through
@@ -43,7 +48,7 @@ BOOST_ROOTS := /home/linuxbrew/.linuxbrew/include /opt/homebrew/include /usr/loc
 BOOST_INC_DIR := $(firstword $(foreach d,$(BOOST_ROOTS),$(if $(wildcard $(d)/boost/qvm),$(d))))
 BOOST_INCLUDE := $(if $(BOOST_INC_DIR),-I$(BOOST_INC_DIR),)
 
-override CXXFLAGS := $(CXXFLAGS) -std=c++23 -Iinclude $(SUBMODULE_INCLUDES) $(BOOST_INCLUDE) $(CONSTEXPR_FLAGS) -O2 -pedantic -Wall -Wextra -Werror -Wconversion
+override CXXFLAGS := $(CXXFLAGS) -std=c++23 -Iinclude $(SUBMODULE_INCLUDES) $(BOOST_INCLUDE) $(CONSTEXPR_FLAGS) $(GRAMMAR_FREE) -O2 -pedantic -Wall -Wextra -Werror -Wconversion
 
 # precompiled header: parsing the HTML + JavaScript + CSS grammars and
 # compiling their Earley tables happens ONCE here - the JS grammar is

@@ -80,6 +80,9 @@ target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_23)
 if(CTBROWSER_CONSTEXPR_LIMITS)
   target_compile_options(${PROJECT_NAME} INTERFACE ${CTBROWSER_CONSTEXPR_OPTIONS})
 endif()
+# ctbrowser parses HTML+CSS+JS BY VALUE at runtime and never uses the bricks'
+# lark grammars: skip the grammar table builds entirely (the old PCH-bake bulk).
+target_compile_definitions(${PROJECT_NAME} INTERFACE CTHTML_NO_GRAMMAR CTCSS_NO_GRAMMAR CTJS_NO_GRAMMAR)
 set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_SCAN_FOR_MODULES 0)
 
 install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}-targets)
