@@ -99,6 +99,40 @@ using app = ctbrowser::page<R"(<!DOCTYPE html>
 
 static_assert(ctjs::vp::is_valid(app::script_text()), "the Babylon script must parse");
 
+// second page: exercises the previously-stubbed surface that is now REAL -
+// GlowLayer (additive bloom), scene.registerBeforeRender/registerAfterRender,
+// and an ActionManager OnEveryFrameTrigger - all pumped by scene.render().
+using app2 = ctbrowser::page<R"(<!DOCTYPE html>
+<title>babylon-hooks</title>
+<canvas id=c width=64 height=64></canvas>
+<script>
+  const engine = new BABYLON.Engine(document.getElementById("c"), true);
+  const scene  = new BABYLON.Scene(engine);
+  scene.clearColor = new BABYLON.Color4(0, 0, 0, 1);
+  const cam = new BABYLON.ArcRotateCamera("cam", Math.PI / 2, Math.PI / 3, 6,
+                       BABYLON.Vector3.Zero(), scene);
+  new BABYLON.HemisphericLight("l", new BABYLON.Vector3(0, 1, 0), scene);
+  const mat = new BABYLON.StandardMaterial("m", scene);
+  mat.diffuseColor = new BABYLON.Color3(1, 1, 1);          // bright -> glows
+  const box = BABYLON.MeshBuilder.CreateBox("b", { size: 3 }, scene);
+  box.material = mat;
+  const glow = new BABYLON.GlowLayer("glow", scene, { intensity: 1.5 });
+
+  var beforeCount = 0, afterCount = 0, frameCount = 0;
+  scene.registerBeforeRender(function () { beforeCount = beforeCount + 1; });
+  scene.registerAfterRender(function () { afterCount = afterCount + 1; });
+
+  const am = new BABYLON.ActionManager(scene);
+  scene.actionManager = am;
+  var trigVal = BABYLON.ActionManager.OnEveryFrameTrigger;
+  am.registerAction(new BABYLON.ExecuteCodeAction(
+      trigVal, function () { frameCount = frameCount + 1; }));
+  var actLen = am.__actions ? am.__actions.length : -1;
+
+  engine.runRenderLoop(function () { scene.render(); });
+</script>)">;
+static_assert(ctjs::vp::is_valid(app2::script_text()), "the hooks script must parse");
+
 int main() {
 	ctbrowser::engine<app> e;
 	if (!e.script.ok()) {
@@ -212,6 +246,58 @@ int main() {
 		}
 		std::printf("fast-trig max abs error vs std over +/-2 turns: %.3e\n", maxerr);
 		CHECK(maxerr < 3e-4);
+	}
+
+	// --- GlowLayer bloom, as a direct unit test: one bright pixel on black
+	// must bleed a halo into its neighbours (and NOT reach far corners).
+	{
+		namespace bab = ctbrowser::babylon::detail;
+		const int GW = 32, GH = 32;
+		std::vector<uint32_t> buf(static_cast<size_t>(GW) * GH, 0xFF000000u); // opaque black
+		const size_t ctr = static_cast<size_t>(GH / 2) * GW + GW / 2;
+		buf[ctr] = 0xFFFFFFFFu;                        // one white pixel
+		bab::apply_glow(buf.data(), GW, GH, 1.5);
+		const uint32_t center_r = (buf[ctr] >> 16) & 0xFF;
+		const uint32_t near_r = (buf[ctr - 2] >> 16) & 0xFF;  // 2px left, was black
+		const uint32_t far_r = (buf[0] >> 16) & 0xFF;         // top-left corner, ~22px away
+		std::printf("glow: center=%u near=%u far=%u\n", center_r, near_r, far_r);
+		CHECK(center_r > 0);   // center stays lit
+		CHECK(near_r > 0);     // bloom spread to a neighbour that was black
+		CHECK(far_r == 0);     // and did NOT reach the far corner
+	}
+
+	// --- the newly-real Babylon surface (app2): registerBeforeRender /
+	// registerAfterRender fire once per rendered frame, an ActionManager
+	// OnEveryFrameTrigger fires once per frame, and a GlowLayer'd bright box
+	// renders. All driven purely by scene.render() inside the render loop.
+	{
+		ctbrowser::engine<app2> e2;
+		CHECK(e2.script.ok());
+		if (!e2.script.ok()) {
+			std::printf("FAIL app2 threw: %s\n", e2.script.exception_message().c_str());
+		}
+		ctbrowser::node * c2 = e2.doc.by_id("c");
+		CHECK(c2 != nullptr && c2->is_canvas());
+		e2.frame(64);
+		const int N = 5;
+		for (int i = 0; i < N; ++i) { e2.tick(1.0 / 60.0); }
+		const int before = static_cast<int>(e2.script["beforeCount"].to_number());
+		const int after = static_cast<int>(e2.script["afterCount"].to_number());
+		const int frames = static_cast<int>(e2.script["frameCount"].to_number());
+		const int trigVal = static_cast<int>(e2.script["trigVal"].to_number());
+		const int actLen = static_cast<int>(e2.script["actLen"].to_number());
+		std::printf("hooks: before=%d after=%d frame=%d (ticks=%d) trigVal=%d actLen=%d\n",
+		            before, after, frames, N, trigVal, actLen);
+		CHECK(trigVal == 11);  // BABYLON.ActionManager.OnEveryFrameTrigger static resolves
+		CHECK(actLen == 1);    // registerAction stored the action (this-binding across `new` arg)
+		CHECK(before == N);    // scene.registerBeforeRender fired each frame
+		CHECK(after == N);     // scene.registerAfterRender fired each frame
+		CHECK(frames == N);    // ActionManager OnEveryFrameTrigger fired each frame
+		size_t lit = 0;
+		if (c2 != nullptr) {
+			for (uint32_t p : c2->pixels) { if ((p & 0x00FFFFFFu) != 0) { ++lit; } }
+		}
+		CHECK(lit > 200);     // the glowing white box rasterized
 	}
 
 	if (failures == 0) { std::printf("babylon suite: all checks passed\n"); }

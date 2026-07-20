@@ -846,6 +846,9 @@ struct scene_rec {
 	r3d::vec3 bmin{}, bmax{}; // model bounds (for createDefaultCamera)
 	bool has_bounds = false;
 	std::vector<observer> before_render;  // scene.onBeforeRenderObservable
+	std::vector<observer> after_render;   // scene.registerAfterRender / onAfterRenderObservable
+	std::vector<objptr> glow_layers;      // GlowLayer instances (additive bloom post-FX)
+	std::vector<objptr> action_managers;  // scene ActionManagers (OnEveryFrameTrigger)
 	double delta_ms = 16.6;
 };
 struct world {
@@ -938,6 +941,36 @@ inline void fire_before_render(const worldptr & W, int scene_id, ctjs::context &
 		if (W->meshes[static_cast<size_t>(mi)].disposed) { continue; }
 		const std::vector<observer> mesh_cbs = W->meshes[static_cast<size_t>(mi)].before_render;
 		for (const observer & ob : mesh_cbs) { ctjs::call_value(cx, ob.cb, {}); }
+	}
+}
+
+// fire scene.registerAfterRender / onAfterRenderObservable callbacks (post-draw)
+inline void fire_after_render(const worldptr & W, int scene_id, ctjs::context & cx) {
+	if (scene_id < 0 || scene_id >= static_cast<int>(W->scenes.size())) { return; }
+	const std::vector<observer> cbs = W->scenes[static_cast<size_t>(scene_id)].after_render;
+	for (const observer & ob : cbs) { ctjs::call_value(cx, ob.cb, {}); }
+}
+
+// BABYLON.ActionManager trigger ids we actually fire (Babylon's enum values)
+inline constexpr int TRIGGER_ON_EVERY_FRAME = 11;
+
+// run each scene ActionManager's OnEveryFrameTrigger actions, once per frame
+inline void fire_action_managers(const worldptr & W, int scene_id, ctjs::context & cx) {
+	if (scene_id < 0 || scene_id >= static_cast<int>(W->scenes.size())) { return; }
+	const std::vector<objptr> ams = W->scenes[static_cast<size_t>(scene_id)].action_managers;
+	for (const objptr & am : ams) {
+		if (!am) { continue; }
+		const value * av = am->find("__actions");
+		if (av == nullptr || !av->is_array()) { continue; }
+		const std::vector<value> actions = *av->as_array(); // copy: an action may mutate the list
+		for (const value & a : actions) {
+			if (!a.is_object()) { continue; }
+			const objptr act = a.as_object();
+			if (index_of(act, "__trigger") != TRIGGER_ON_EVERY_FRAME) { continue; }
+			if (const value * f = act->find("__func"); f != nullptr && f->is_function()) {
+				ctjs::call_value(cx, *f, {});
+			}
+		}
 	}
 }
 using worldptr = std::shared_ptr<world>;
@@ -1125,6 +1158,74 @@ inline void render_sprites(const worldptr & W, uint32_t * px, int w, int h, cons
 
 // --- the core render: read the scene's meshes/lights/camera back from
 //     their live JS handles and rasterize into the target canvas pixels
+// GlowLayer post-process: additive bloom. Extract pixels brighter than a
+// luminance threshold, blur them into a soft halo (separable box blur, two
+// passes ~= gaussian), and add the halo back scaled by `intensity`. Emissive
+// geometry (bright lasers, HUD text, the neon UI) gains a glow, which is what
+// BABYLON.GlowLayer does on real WebGL - here on the software framebuffer.
+inline void apply_glow(uint32_t * px, int w, int h, double intensity) {
+	if (intensity <= 0 || w <= 0 || h <= 0) { return; }
+	const int n = w * h;
+	const auto at = [w](int x, int y, int c) { return static_cast<size_t>((y * w + x) * 3 + c); };
+	std::vector<float> br(static_cast<size_t>(n) * 3, 0.0f);
+	const float thr = 0.55f;
+	for (int i = 0; i < n; ++i) {
+		const uint32_t p = px[static_cast<size_t>(i)];
+		const float r = static_cast<float>((p >> 16) & 0xff) / 255.0f;
+		const float g = static_cast<float>((p >> 8) & 0xff) / 255.0f;
+		const float b = static_cast<float>(p & 0xff) / 255.0f;
+		const float lum = 0.299f * r + 0.587f * g + 0.114f * b;
+		if (lum > thr) {
+			const float k = (lum - thr) / (1.0f - thr);
+			br[static_cast<size_t>(i) * 3 + 0] = r * k;
+			br[static_cast<size_t>(i) * 3 + 1] = g * k;
+			br[static_cast<size_t>(i) * 3 + 2] = b * k;
+		}
+	}
+	const int rad = 3;
+	std::vector<float> tmp(br.size(), 0.0f);
+	for (int pass = 0; pass < 2; ++pass) {
+		for (int y = 0; y < h; ++y) { // horizontal
+			for (int x = 0; x < w; ++x) {
+				for (int c = 0; c < 3; ++c) {
+					float s = 0; int cnt = 0;
+					for (int dx = -rad; dx <= rad; ++dx) {
+						const int xx = x + dx;
+						if (xx < 0 || xx >= w) { continue; }
+						s += br[at(xx, y, c)]; ++cnt;
+					}
+					tmp[at(x, y, c)] = s / static_cast<float>(cnt);
+				}
+			}
+		}
+		for (int x = 0; x < w; ++x) { // vertical
+			for (int y = 0; y < h; ++y) {
+				for (int c = 0; c < 3; ++c) {
+					float s = 0; int cnt = 0;
+					for (int dy = -rad; dy <= rad; ++dy) {
+						const int yy = y + dy;
+						if (yy < 0 || yy >= h) { continue; }
+						s += tmp[at(x, yy, c)]; ++cnt;
+					}
+					br[at(x, y, c)] = s / static_cast<float>(cnt);
+				}
+			}
+		}
+	}
+	const float gain = static_cast<float>(intensity);
+	const auto clamp01 = [](float v) { return v < 0 ? 0.0f : v > 1 ? 1.0f : v; };
+	for (int i = 0; i < n; ++i) {
+		const uint32_t p = px[static_cast<size_t>(i)];
+		const float r = clamp01(static_cast<float>((p >> 16) & 0xff) / 255.0f + br[static_cast<size_t>(i) * 3 + 0] * gain);
+		const float g = clamp01(static_cast<float>((p >> 8) & 0xff) / 255.0f + br[static_cast<size_t>(i) * 3 + 1] * gain);
+		const float b = clamp01(static_cast<float>(p & 0xff) / 255.0f + br[static_cast<size_t>(i) * 3 + 2] * gain);
+		px[static_cast<size_t>(i)] = (p & 0xff000000u) |
+		    (static_cast<uint32_t>(r * 255.0f) << 16) |
+		    (static_cast<uint32_t>(g * 255.0f) << 8) |
+		    static_cast<uint32_t>(b * 255.0f);
+	}
+}
+
 inline void do_render(const worldptr & W, int scene_id) {
 	if (!W || W->target == nullptr || scene_id < 0 ||
 	    scene_id >= static_cast<int>(W->scenes.size())) { return; }
@@ -1196,6 +1297,11 @@ inline void do_render(const worldptr & W, int scene_id) {
 	W->rdr.render(n->pixels.data(), w, h, vw, items, lights);
 	render_sprites(W, n->pixels.data(), w, h, vw);
 	render_guis(W, n->pixels.data(), w, h);
+	// GlowLayer bloom post-process (skips disposed layers; live intensity)
+	for (const objptr & gl : sc.glow_layers) {
+		if (!gl || index_of(gl, "__disposed") == 1) { continue; }
+		apply_glow(n->pixels.data(), w, h, num_prop(gl, "intensity", 1.0));
+	}
 }
 
 // --- register a mesh/light with its scene (by the scene handle arg)
@@ -1618,7 +1724,9 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 			sc.handle->set("deltaTime", value{W->last_dt_ms});
 		}
 		fire_before_render(W, id, cx);
+		fire_action_managers(W, id, cx);
 		do_render(W, id);
+		fire_after_render(W, id, cx);
 		return value{};
 	}, "render"));
 	// scene.onBeforeRenderObservable is REAL - it drives per-frame game logic
@@ -1635,8 +1743,37 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 	h->set("fogDensity", value{0.1});
 	h->set("deltaTime", value{16.6});
 	h->set("actionManager", value{});
+	// registerBeforeRender/registerAfterRender are REAL - the legacy (pre-Observable)
+	// per-frame hooks; they push into the same sinks scene.render() fires.
+	h->set("registerBeforeRender", value::function([W, id](ctjs::context &, const std::vector<value> & a) -> value {
+		if (!a.empty() && a[0].is_function() && id >= 0 && id < static_cast<int>(W->scenes.size())) {
+			W->scenes[static_cast<size_t>(id)].before_render.push_back({W->next_obs++, a[0]});
+		}
+		return value{};
+	}, "registerBeforeRender"));
+	h->set("registerAfterRender", value::function([W, id](ctjs::context &, const std::vector<value> & a) -> value {
+		if (!a.empty() && a[0].is_function() && id >= 0 && id < static_cast<int>(W->scenes.size())) {
+			W->scenes[static_cast<size_t>(id)].after_render.push_back({W->next_obs++, a[0]});
+		}
+		return value{};
+	}, "registerAfterRender"));
+	// onAfterRenderObservable mirrors registerAfterRender (both feed after_render)
+	{
+		auto obs = objptr::make();
+		obs->set("add", value::function([W, id](ctjs::context &, const std::vector<value> & a) -> value {
+			if (a.empty() || !a[0].is_function() || id < 0 || id >= static_cast<int>(W->scenes.size())) { return value{}; }
+			const int oid = W->next_obs++;
+			W->scenes[static_cast<size_t>(id)].after_render.push_back({oid, a[0]});
+			auto ob = objptr::make();
+			ob->set("__obs_id", value{static_cast<double>(oid)});
+			return value{ob};
+		}, "add"));
+		obs->set("remove", value::function([](ctjs::context &, const std::vector<value> &) { return value{true}; }, "remove"));
+		obs->set("clear", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "clear"));
+		h->set("onAfterRenderObservable", value{obs});
+	}
 	// commonly-probed no-ops so real scripts don't throw
-	for (const char * nm : {"registerBeforeRender", "registerAfterRender", "beforeRender", "dispose",
+	for (const char * nm : {"beforeRender", "dispose",
 	                        "attachControl", "detachControl", "freezeActiveMeshes",
 	                        "clearCachedVertexData", "getUniqueId"}) {
 		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
@@ -2034,26 +2171,88 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		W->sprites.push_back(o); // drawn as a 2D overlay by render_sprites
 		return value{o};
 	}, "Sprite"));
-	// --- GlowLayer: no-op (intensity + customEmissiveColorSelector settable)
-	B->set("GlowLayer", value::function([](ctjs::context &, const std::vector<value> &) -> value {
+	// --- GlowLayer: REAL additive-bloom post-process. `new GlowLayer(name, scene,
+	// {mainTextureFixedSize,...})`; do_render blurs bright pixels into a halo scaled
+	// by .intensity (live). Per-mesh include/exclude masking stays a no-op (the
+	// whole framebuffer glows); customEmissiveColorSelector is accepted, unused.
+	B->set("GlowLayer", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
 		auto o = objptr::make();
-		o->set("intensity", value{1.0});
+		double inten = 1.0;
+		if (a.size() > 2 && a[2].is_object()) { inten = num_prop(a[2].as_object(), "intensity", 1.0); }
+		o->set("intensity", value{inten});
+		o->set("blurKernelSize", value{16.0});
 		o->set("customEmissiveColorSelector", value{});
-		for (const char * nm : {"addIncludedOnlyMesh", "addExcludedMesh", "dispose"}) {
+		o->set("__disposed", value{0.0});
+		o->set("dispose", value::function([](ctjs::context & cx, const std::vector<value> &) -> value {
+			if (const objptr self = self_of(cx)) { self->set("__disposed", value{1.0}); }
+			return value{};
+		}, "dispose"));
+		for (const char * nm : {"addIncludedOnlyMesh", "addExcludedMesh", "removeIncludedOnlyMesh",
+		                        "removeExcludedMesh", "referenceMeshToUseItsOwnMaterial"}) {
 			o->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
+		}
+		if (a.size() > 1 && a[1].is_object()) {
+			const int si = index_of(a[1].as_object(), "__scene");
+			if (si >= 0 && si < static_cast<int>(W->scenes.size())) {
+				W->scenes[static_cast<size_t>(si)].glow_layers.push_back(o);
+			}
 		}
 		return value{o};
 	}, "GlowLayer"));
-	// --- ActionManager / ExecuteCodeAction: constructed, not used for input
-	B->set("ActionManager", value::function([](ctjs::context &, const std::vector<value> &) -> value {
+	// --- ActionManager / ExecuteCodeAction: REAL for OnEveryFrameTrigger (fired
+	// each frame by scene.render). Other triggers (pick/pointer/key) are stored on
+	// the manager but not yet dispatched - ctbrowser routes input through the DOM,
+	// which is what the games actually use.
+	value ActionManager = value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
 		auto o = objptr::make();
-		for (const char * nm : {"registerAction", "dispose"}) {
-			o->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
+		o->set("__actions", value::array({}));
+		o->set("registerAction", value::function([](ctjs::context & cx, const std::vector<value> & args) -> value {
+			const objptr self = self_of(cx);
+			if (self && !args.empty()) {
+				if (const value * acts = self->find("__actions"); acts != nullptr && acts->is_array()) {
+					acts->as_array()->push_back(args[0]);
+				}
+			}
+			return args.empty() ? value{} : args[0]; // Babylon returns the action
+		}, "registerAction"));
+		o->set("dispose", value::function([](ctjs::context & cx, const std::vector<value> &) -> value {
+			if (const objptr self = self_of(cx)) { self->set("__actions", value::array({})); }
+			return value{};
+		}, "dispose"));
+		o->set("hasSpecificTrigger", value::function([](ctjs::context &, const std::vector<value> &) { return value{false}; }, "hasSpecificTrigger"));
+		// register with the scene (arg 0) so OnEveryFrameTrigger actions fire per frame
+		if (!a.empty() && a[0].is_object()) {
+			const int si = index_of(a[0].as_object(), "__scene");
+			if (si >= 0 && si < static_cast<int>(W->scenes.size())) {
+				W->scenes[static_cast<size_t>(si)].action_managers.push_back(o);
+			}
 		}
 		return value{o};
-	}, "ActionManager"));
-	B->set("ExecuteCodeAction", value::function([](ctjs::context &, const std::vector<value> &) -> value {
-		return value{objptr::make()};
+	}, "ActionManager");
+	// trigger-id statics (Babylon's enum) so `ActionManager.OnEveryFrameTrigger` resolves
+	for (const auto & [nm, id] : std::initializer_list<std::pair<const char *, double>>{
+	         {"NothingTrigger", 0}, {"OnPickTrigger", 1}, {"OnLeftPickTrigger", 2},
+	         {"OnRightPickTrigger", 3}, {"OnCenterPickTrigger", 4}, {"OnPickDownTrigger", 5},
+	         {"OnDoublePickTrigger", 6}, {"OnPickUpTrigger", 7}, {"OnLongPressTrigger", 8},
+	         {"OnPointerOverTrigger", 9}, {"OnPointerOutTrigger", 10}, {"OnEveryFrameTrigger", 11},
+	         {"OnIntersectionEnterTrigger", 12}, {"OnIntersectionExitTrigger", 13},
+	         {"OnKeyDownTrigger", 14}, {"OnKeyUpTrigger", 15}, {"OnPickOutTrigger", 16}}) {
+		set_static(ActionManager, nm, value{id});
+	}
+	B->set("ActionManager", ActionManager);
+	B->set("ExecuteCodeAction", value::function([](ctjs::context &, const std::vector<value> & a) -> value {
+		// ExecuteCodeAction(triggerOptions, func[, condition]): triggerOptions is a
+		// trigger id (number) or { trigger, parameter }
+		auto o = objptr::make();
+		double trig = 0;
+		if (!a.empty()) {
+			if (a[0].is_object()) { trig = num_prop(a[0].as_object(), "trigger", 0); }
+			else { trig = a[0].to_number(); }
+		}
+		o->set("__trigger", value{trig});
+		o->set("trigger", value{trig});
+		if (a.size() > 1 && a[1].is_function()) { o->set("__func", a[1]); }
+		return value{o};
 	}, "ExecuteCodeAction"));
 
 	// --- BABYLON.GUI (the bundler maps @babylonjs/gui -> BABYLON.GUI)
