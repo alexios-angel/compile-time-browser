@@ -183,28 +183,43 @@ struct layout_pass {
 		const ctcss::color fg = text_color(n); // CSS color inherits from ancestors
 		const std::string_view align = text_align(n);
 		if (!trimmed(text).empty()) {
-			std::string_view rest = trimmed(text);
-			while (!rest.empty()) {
-				size_t take = rest.size();
-				while (take > 1 && text_width(rest.substr(0, take), font_px) > content_w) {
-					--take;
+			// hard-break on '\n' (from <br>) into lines, then greedily wrap each
+			// line to the content width
+			std::string_view remain = text;
+			bool more = true;
+			while (more) {
+				const size_t nl = remain.find('\n');
+				const std::string_view line =
+				    trimmed(nl == std::string_view::npos ? remain : remain.substr(0, nl));
+				if (line.empty()) {
+					cursor += font_px + font_px / 4; // blank row (e.g. consecutive <br>)
+				} else {
+					std::string_view rest = line;
+					while (!rest.empty()) {
+						size_t take = rest.size();
+						while (take > 1 && text_width(rest.substr(0, take), font_px) > content_w) {
+							--take;
+						}
+						const int tw = text_width(rest.substr(0, take), font_px);
+						int tx = n.x + padding;
+						if (align == std::string_view{"center"}) { tx += (content_w - tw) / 2; }
+						else if (align == std::string_view{"right"}) { tx += content_w - tw; }
+						paint_cmd cmd;
+						cmd.what = paint_cmd::kind::text;
+						cmd.x = tx;
+						cmd.y = cursor;
+						cmd.w = tw;
+						cmd.h = font_px;
+						cmd.argb = pack_argb(fg);
+						cmd.text = std::string{rest.substr(0, take)};
+						cmd.font_px = font_px;
+						out->push_back(cmd);
+						cursor += font_px + font_px / 4;
+						rest.remove_prefix(take);
+					}
 				}
-				const int tw = text_width(rest.substr(0, take), font_px);
-				int tx = n.x + padding;
-				if (align == std::string_view{"center"}) { tx += (content_w - tw) / 2; }
-				else if (align == std::string_view{"right"}) { tx += content_w - tw; }
-				paint_cmd cmd;
-				cmd.what = paint_cmd::kind::text;
-				cmd.x = tx;
-				cmd.y = cursor;
-				cmd.w = tw;
-				cmd.h = font_px;
-				cmd.argb = pack_argb(fg);
-				cmd.text = std::string{rest.substr(0, take)};
-				cmd.font_px = font_px;
-				out->push_back(cmd);
-				cursor += font_px + font_px / 4;
-				rest.remove_prefix(take);
+				if (nl == std::string_view::npos) { more = false; }
+				else { remain.remove_prefix(nl + 1); }
 			}
 		}
 

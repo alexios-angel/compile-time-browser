@@ -256,14 +256,25 @@ constexpr void instantiate_into(node & out, cthtml::node vn, node * parent) {
 	}
 	out.id = std::string{out.attribute("id")};
 	out.classes = std::string{out.attribute("class")};
-	out.text = vn.text();
-	init_canvas(out);
+	// Build the direct text in document order, turning <br> into a hard newline
+	// (layout breaks lines on it) and collapsing source newlines to spaces (HTML
+	// whitespace). Non-<br> element children recurse as before.
+	std::string txt;
 	for (cthtml::node child : vn) {
-		if (child.is_element()) {
-			out.children.push_back(std::make_unique<node>());
-			instantiate_into(*out.children.back(), child, &out);
+		if (child.is_text()) {
+			const std::string t = child.text();
+			for (const char ch : t) { txt.push_back(ch == '\n' ? ' ' : ch); }
+		} else if (child.is_element()) {
+			if (child.name() == std::string_view{"br"}) {
+				txt.push_back('\n');
+			} else {
+				out.children.push_back(std::make_unique<node>());
+				instantiate_into(*out.children.back(), child, &out);
+			}
 		}
 	}
+	out.text = std::move(txt);
+	init_canvas(out);
 }
 
 } // namespace detail
