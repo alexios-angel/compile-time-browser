@@ -835,6 +835,10 @@ struct mesh_rec {
 	bool enabled = true;
 	std::vector<observer> before_render;   // mesh.onBeforeRenderObservable
 	int scene_id = -1;                     // owning scene (for clone/createInstance)
+	bool frozen_world = false;             // freezeWorldMatrix: use frozen_matrix, ignore live transforms
+	r3d::mat4 frozen_matrix{};             // the world matrix captured at freeze time
+	bool has_pivot = false;                // setPivotPoint: rotate/scale about `pivot`
+	r3d::vec3 pivot{};
 };
 struct light_rec { objptr handle; int type; };
 struct camera_rec { objptr handle; int type; bool attached = false; };
@@ -849,6 +853,7 @@ struct scene_rec {
 	std::vector<observer> after_render;   // scene.registerAfterRender / onAfterRenderObservable
 	std::vector<objptr> glow_layers;      // GlowLayer instances (additive bloom post-FX)
 	std::vector<objptr> action_managers;  // scene ActionManagers (OnEveryFrameTrigger)
+	bool active_meshes_frozen = false;    // freezeActiveMeshes (API-fidelity flag; no cull cache here)
 	double delta_ms = 16.6;
 };
 struct world {
@@ -1163,13 +1168,18 @@ inline void render_sprites(const worldptr & W, uint32_t * px, int w, int h, cons
 // passes ~= gaussian), and add the halo back scaled by `intensity`. Emissive
 // geometry (bright lasers, HUD text, the neon UI) gains a glow, which is what
 // BABYLON.GlowLayer does on real WebGL - here on the software framebuffer.
-inline void apply_glow(uint32_t * px, int w, int h, double intensity) {
+// `mask` (optional, w*h) restricts which pixels may SEED the bloom - used by the
+// GlowLayer include/exclude lists: only pixels covered by a glowing mesh glow.
+// nullptr = the whole frame seeds (bloom every bright pixel).
+inline void apply_glow(uint32_t * px, int w, int h, double intensity,
+                       const std::vector<uint8_t> * mask = nullptr) {
 	if (intensity <= 0 || w <= 0 || h <= 0) { return; }
 	const int n = w * h;
 	const auto at = [w](int x, int y, int c) { return static_cast<size_t>((y * w + x) * 3 + c); };
 	std::vector<float> br(static_cast<size_t>(n) * 3, 0.0f);
 	const float thr = 0.55f;
 	for (int i = 0; i < n; ++i) {
+		if (mask != nullptr && (*mask)[static_cast<size_t>(i)] == 0) { continue; }
 		const uint32_t p = px[static_cast<size_t>(i)];
 		const float r = static_cast<float>((p >> 16) & 0xff) / 255.0f;
 		const float g = static_cast<float>((p >> 8) & 0xff) / 255.0f;
@@ -1226,6 +1236,65 @@ inline void apply_glow(uint32_t * px, int w, int h, double intensity) {
 	}
 }
 
+// the mesh's world matrix from its live transforms (position * pivot * rotation *
+// scaling * pivot^-1), or the captured matrix if freezeWorldMatrix() was called.
+inline r3d::mat4 mesh_world_matrix(const worldptr & W, int mi, bool ignore_freeze = false) {
+	mesh_rec & M = W->meshes[static_cast<size_t>(mi)];
+	if (M.frozen_world && !ignore_freeze) { return M.frozen_matrix; }
+	const r3d::vec3 p = read_vec3(child_obj(M.handle, "position"), r3d::V3(0, 0, 0));
+	const r3d::vec3 rot = read_vec3(child_obj(M.handle, "rotation"), r3d::V3(0, 0, 0));
+	const r3d::vec3 s = read_vec3(child_obj(M.handle, "scaling"), r3d::V3(1, 1, 1));
+	r3d::mat4 rs = r3d::matmul(r3d::rotationYPR(rot.a[0], rot.a[1], rot.a[2]),
+	                          r3d::scaling(s.a[0], s.a[1], s.a[2]));
+	if (M.has_pivot) { // rotate/scale about the pivot: T(pivot) * R*S * T(-pivot)
+		rs = r3d::matmul(r3d::translation(M.pivot.a[0], M.pivot.a[1], M.pivot.a[2]),
+		     r3d::matmul(rs, r3d::translation(-M.pivot.a[0], -M.pivot.a[1], -M.pivot.a[2])));
+	}
+	return r3d::matmul(r3d::translation(p.a[0], p.a[1], p.a[2]), rs);
+}
+
+// build the renderer draw-item for a scene mesh (world matrix + material colour)
+inline r3d::draw_item build_draw_item(const worldptr & W, int mi) {
+	mesh_rec & M = W->meshes[static_cast<size_t>(mi)];
+	r3d::draw_item it;
+	it.g = &M.geom;
+	it.world = mesh_world_matrix(W, mi);
+	const objptr mat = child_obj(M.handle, "material");
+	r3d::rgba mc{0.85, 0.85, 0.85, 1};
+	if (mat) {
+		if (child_obj(mat, "baseColor")) { mc = read_color(child_obj(mat, "baseColor"), mc); }
+		else if (child_obj(mat, "albedoColor")) { mc = read_color(child_obj(mat, "albedoColor"), mc); }
+		else { mc = read_color(child_obj(mat, "diffuseColor"), mc); }
+	}
+	it.diffuse = mc;
+	it.cull = M.cull;
+	return it;
+}
+
+// a BABYLON.Matrix wrapper: `.m` is the 16-element column-major store of the
+// row-vector matrix (so m[12..14] is the translation, per Babylon), plus
+// getTranslation(). Our r3d::mat4 is a[row][col] for column-vector M*p, hence the
+// transpose on flatten.
+inline value make_matrix(const r3d::mat4 & m) {
+	auto o = objptr::make();
+	std::vector<value> arr;
+	for (int c = 0; c < 4; ++c) {
+		for (int r = 0; r < 4; ++r) { arr.push_back(value{m.a[r][c]}); }
+	}
+	o->set("m", value::array(std::move(arr)));
+	o->set("getTranslation", value::function([m](ctjs::context &, const std::vector<value> &) -> value {
+		return make_vector3(m.a[0][3], m.a[1][3], m.a[2][3]);
+	}, "getTranslation"));
+	return value{o};
+}
+
+// read an array of mesh __mesh ids stored on a JS object (glow include/exclude)
+inline void read_id_list(const objptr & o, const char * key, std::vector<int> & out) {
+	const value * v = o->find(key);
+	if (v == nullptr || !v->is_array()) { return; }
+	for (const value & e : *v->as_array()) { out.push_back(static_cast<int>(e.to_number())); }
+}
+
 inline void do_render(const worldptr & W, int scene_id) {
 	if (!W || W->target == nullptr || scene_id < 0 ||
 	    scene_id >= static_cast<int>(W->scenes.size())) { return; }
@@ -1273,34 +1342,40 @@ inline void do_render(const worldptr & W, int scene_id) {
 	for (int mi : sc.mesh_ids) {
 		mesh_rec & M = W->meshes[static_cast<size_t>(mi)];
 		if (M.disposed || !M.enabled) { continue; }
-		const r3d::vec3 p = read_vec3(child_obj(M.handle, "position"), r3d::V3(0, 0, 0));
-		const r3d::vec3 rot = read_vec3(child_obj(M.handle, "rotation"), r3d::V3(0, 0, 0));
-		const r3d::vec3 s = read_vec3(child_obj(M.handle, "scaling"), r3d::V3(1, 1, 1));
-		r3d::draw_item it;
-		it.g = &M.geom;
-		it.world = r3d::matmul(r3d::translation(p.a[0], p.a[1], p.a[2]),
-		                       r3d::matmul(r3d::rotationYPR(rot.a[0], rot.a[1], rot.a[2]),
-		                                   r3d::scaling(s.a[0], s.a[1], s.a[2])));
-		const objptr mat = child_obj(M.handle, "material");
-		// StandardMaterial uses diffuseColor; glTF/OpenPBR/PBR use
-		// baseColor/albedoColor - honor whichever the material carries
-		r3d::rgba mc{0.85, 0.85, 0.85, 1};
-		if (mat) {
-			if (child_obj(mat, "baseColor")) { mc = read_color(child_obj(mat, "baseColor"), mc); }
-			else if (child_obj(mat, "albedoColor")) { mc = read_color(child_obj(mat, "albedoColor"), mc); }
-			else { mc = read_color(child_obj(mat, "diffuseColor"), mc); }
-		}
-		it.diffuse = mc;
-		it.cull = M.cull;
-		items.push_back(it);
+		items.push_back(build_draw_item(W, mi));
 	}
 	W->rdr.render(n->pixels.data(), w, h, vw, items, lights);
 	render_sprites(W, n->pixels.data(), w, h, vw);
 	render_guis(W, n->pixels.data(), w, h);
-	// GlowLayer bloom post-process (skips disposed layers; live intensity)
+	// GlowLayer bloom post-process (skips disposed layers; live intensity). With
+	// an include/exclude list, a coverage mask of the glowing meshes restricts
+	// which pixels seed the bloom.
 	for (const objptr & gl : sc.glow_layers) {
 		if (!gl || index_of(gl, "__disposed") == 1) { continue; }
-		apply_glow(n->pixels.data(), w, h, num_prop(gl, "intensity", 1.0));
+		const double gi = num_prop(gl, "intensity", 1.0);
+		std::vector<int> inc, exc;
+		read_id_list(gl, "includedOnlyMeshes", inc);
+		read_id_list(gl, "excludedMeshes", exc);
+		if (inc.empty() && exc.empty()) {
+			apply_glow(n->pixels.data(), w, h, gi);           // whole frame glows
+			continue;
+		}
+		// render only the glowing meshes into a scratch buffer -> coverage mask
+		std::vector<r3d::draw_item> gitems;
+		for (int mi : sc.mesh_ids) {
+			mesh_rec & M = W->meshes[static_cast<size_t>(mi)];
+			if (M.disposed || !M.enabled) { continue; }
+			if (!inc.empty() && std::find(inc.begin(), inc.end(), mi) == inc.end()) { continue; }
+			if (std::find(exc.begin(), exc.end(), mi) != exc.end()) { continue; }
+			gitems.push_back(build_draw_item(W, mi));
+		}
+		std::vector<uint32_t> scratch(static_cast<size_t>(w) * static_cast<size_t>(h), 0);
+		r3d::view gv = vw;
+		gv.clear = r3d::rgba{0, 0, 0, 0};                     // transparent: alpha marks coverage
+		W->rdr.render(scratch.data(), w, h, gv, gitems, lights);
+		std::vector<uint8_t> mask(static_cast<size_t>(w) * static_cast<size_t>(h), 0);
+		for (size_t i = 0; i < mask.size(); ++i) { mask[i] = (scratch[i] >> 24) != 0 ? 1 : 0; }
+		apply_glow(n->pixels.data(), w, h, gi, &mask);
 	}
 }
 
@@ -1530,11 +1605,110 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 		}
 		return value{};
 	}, "rotate"));
-	for (const char * nm : {"refreshBoundingInfo", "computeWorldMatrix", "freezeWorldMatrix",
-	                        "registerAfterRender", "setPivotPoint", "receiveShadows",
-	                        "bakeCurrentTransformIntoVertices"}) {
-		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
-	}
+	// receiveShadows is a plain flag (no shadow system, so it has no visual
+	// effect, but reads/writes behave); mesh.registerAfterRender is unmodeled.
+	h->set("receiveShadows", value{false});
+	h->set("registerAfterRender", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "registerAfterRender"));
+
+	// getBoundingInfo(): local + world axis-aligned bounds, refreshed on demand.
+	h->set("getBoundingInfo", value::function([W, ix](ctjs::context &, const std::vector<value> &) -> value {
+		if (ix >= W->meshes.size()) { return value{}; }
+		r3d::vec3 lmin = r3d::V3(0, 0, 0), lmax = r3d::V3(0, 0, 0);
+		bool first = true;
+		for (const r3d::vec3 & v : W->meshes[ix].geom.verts) {
+			for (int k = 0; k < 3; ++k) {
+				if (first) { lmin.a[k] = lmax.a[k] = v.a[k]; }
+				else { lmin.a[k] = std::min(lmin.a[k], v.a[k]); lmax.a[k] = std::max(lmax.a[k], v.a[k]); }
+			}
+			first = false;
+		}
+		r3d::vec3 wmin, wmax;
+		mesh_aabb(W, static_cast<int>(ix), wmin, wmax);
+		auto box = objptr::make();
+		box->set("minimum", make_vector3(lmin.a[0], lmin.a[1], lmin.a[2]));
+		box->set("maximum", make_vector3(lmax.a[0], lmax.a[1], lmax.a[2]));
+		box->set("minimumWorld", make_vector3(wmin.a[0], wmin.a[1], wmin.a[2]));
+		box->set("maximumWorld", make_vector3(wmax.a[0], wmax.a[1], wmax.a[2]));
+		box->set("centerWorld", make_vector3((wmin.a[0] + wmax.a[0]) * 0.5,
+		                                     (wmin.a[1] + wmax.a[1]) * 0.5, (wmin.a[2] + wmax.a[2]) * 0.5));
+		box->set("extendSize", make_vector3((lmax.a[0] - lmin.a[0]) * 0.5,
+		                                    (lmax.a[1] - lmin.a[1]) * 0.5, (lmax.a[2] - lmin.a[2]) * 0.5));
+		double rad = 0;
+		for (int k = 0; k < 3; ++k) { rad = std::max(rad, (wmax.a[k] - wmin.a[k]) * 0.5); }
+		auto sph = objptr::make();
+		sph->set("radiusWorld", value{rad});
+		sph->set("center", make_vector3((lmin.a[0] + lmax.a[0]) * 0.5,
+		                                (lmin.a[1] + lmax.a[1]) * 0.5, (lmin.a[2] + lmax.a[2]) * 0.5));
+		auto bi = objptr::make();
+		bi->set("boundingBox", value{box});
+		bi->set("boundingSphere", value{sph});
+		bi->set("minimum", make_vector3(lmin.a[0], lmin.a[1], lmin.a[2]));
+		bi->set("maximum", make_vector3(lmax.a[0], lmax.a[1], lmax.a[2]));
+		return value{bi};
+	}, "getBoundingInfo"));
+	// refreshBoundingInfo(): bounds are computed on demand, so this just validates
+	// the mesh and returns it (Babylon returns the mesh for chaining).
+	h->set("refreshBoundingInfo", value::function([W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
+		return (ix < W->meshes.size()) ? value{W->meshes[ix].handle} : cx.current_this;
+	}, "refreshBoundingInfo"));
+
+	// computeWorldMatrix(force): return the current world matrix; if forced while
+	// frozen, recapture the frozen matrix from the live transforms first.
+	h->set("computeWorldMatrix", value::function([W, ix](ctjs::context &, const std::vector<value> & a) -> value {
+		if (ix >= W->meshes.size()) { return value{}; }
+		const bool force = !a.empty() && a[0].truthy();
+		if (force && W->meshes[ix].frozen_world) {
+			W->meshes[ix].frozen_matrix = mesh_world_matrix(W, static_cast<int>(ix), true);
+		}
+		return make_matrix(mesh_world_matrix(W, static_cast<int>(ix)));
+	}, "computeWorldMatrix"));
+	h->set("getWorldMatrix", value::function([W, ix](ctjs::context &, const std::vector<value> &) -> value {
+		return (ix < W->meshes.size()) ? make_matrix(mesh_world_matrix(W, static_cast<int>(ix))) : value{};
+	}, "getWorldMatrix"));
+	// freezeWorldMatrix(): capture the world matrix now; the renderer then ignores
+	// later position/rotation/scaling edits until unfreezeWorldMatrix().
+	h->set("freezeWorldMatrix", value::function([W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
+		if (ix < W->meshes.size()) {
+			W->meshes[ix].frozen_matrix = mesh_world_matrix(W, static_cast<int>(ix), true);
+			W->meshes[ix].frozen_world = true;
+		}
+		return (ix < W->meshes.size()) ? value{W->meshes[ix].handle} : cx.current_this;
+	}, "freezeWorldMatrix"));
+	h->set("unfreezeWorldMatrix", value::function([W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
+		if (ix < W->meshes.size()) { W->meshes[ix].frozen_world = false; }
+		return (ix < W->meshes.size()) ? value{W->meshes[ix].handle} : cx.current_this;
+	}, "unfreezeWorldMatrix"));
+
+	// setPivotPoint(vec3): rotation/scaling then pivot about this local point.
+	h->set("setPivotPoint", value::function([W, ix](ctjs::context &, const std::vector<value> & a) -> value {
+		if (ix < W->meshes.size()) {
+			W->meshes[ix].pivot = read_vec3(arg_obj(a, 0), r3d::V3(0, 0, 0));
+			W->meshes[ix].has_pivot = true;
+		}
+		return value{};
+	}, "setPivotPoint"));
+	h->set("getPivotPoint", value::function([W, ix](ctjs::context &, const std::vector<value> &) -> value {
+		const r3d::vec3 p = ix < W->meshes.size() ? W->meshes[ix].pivot : r3d::V3(0, 0, 0);
+		return make_vector3(p.a[0], p.a[1], p.a[2]);
+	}, "getPivotPoint"));
+
+	// bakeCurrentTransformIntoVertices(): fold the current world transform into the
+	// geometry and reset position/rotation/scaling/pivot to identity.
+	h->set("bakeCurrentTransformIntoVertices", value::function([W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
+		if (ix >= W->meshes.size()) { return cx.current_this; }
+		mesh_rec & M = W->meshes[ix];
+		const r3d::mat4 wm = mesh_world_matrix(W, static_cast<int>(ix), true);
+		for (r3d::vec3 & v : M.geom.verts) {
+			const r3d::vec4 t = r3d::xform(wm, v);
+			v = r3d::V3(t.a[0], t.a[1], t.a[2]);
+		}
+		if (const objptr p = child_obj(M.handle, "position")) { p->set("x", value{0.0}); p->set("y", value{0.0}); p->set("z", value{0.0}); }
+		if (const objptr r = child_obj(M.handle, "rotation")) { r->set("x", value{0.0}); r->set("y", value{0.0}); r->set("z", value{0.0}); }
+		if (const objptr s = child_obj(M.handle, "scaling")) { s->set("x", value{1.0}); s->set("y", value{1.0}); s->set("z", value{1.0}); }
+		M.has_pivot = false;
+		M.frozen_world = false;
+		return value{M.handle};
+	}, "bakeCurrentTransformIntoVertices"));
 }
 
 // add a parsed glTF model's meshes + materials into a scene
@@ -1772,10 +1946,23 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 		obs->set("clear", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "clear"));
 		h->set("onAfterRenderObservable", value{obs});
 	}
+	// freezeActiveMeshes/unfreezeActiveMeshes: a Babylon optimization that caches
+	// the active-mesh list. We rebuild the draw list each frame regardless, so this
+	// only records the flag (scene.__activeMeshesFrozen) for API fidelity.
+	h->set("freezeActiveMeshes", value::function([W, id](ctjs::context &, const std::vector<value> &) -> value {
+		if (id >= 0 && id < static_cast<int>(W->scenes.size())) { W->scenes[static_cast<size_t>(id)].active_meshes_frozen = true; }
+		return value{};
+	}, "freezeActiveMeshes"));
+	h->set("unfreezeActiveMeshes", value::function([W, id](ctjs::context &, const std::vector<value> &) -> value {
+		if (id >= 0 && id < static_cast<int>(W->scenes.size())) { W->scenes[static_cast<size_t>(id)].active_meshes_frozen = false; }
+		return value{};
+	}, "unfreezeActiveMeshes"));
+	// clearCachedVertexData: on real Babylon this frees CPU geometry after GPU
+	// upload. The software rasterizer needs the vertices every frame, so there is
+	// nothing to free - a genuine no-op, kept so scripts calling it don't throw.
+	h->set("clearCachedVertexData", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "clearCachedVertexData"));
 	// commonly-probed no-ops so real scripts don't throw
-	for (const char * nm : {"beforeRender", "dispose",
-	                        "attachControl", "detachControl", "freezeActiveMeshes",
-	                        "clearCachedVertexData", "getUniqueId"}) {
+	for (const char * nm : {"beforeRender", "dispose", "attachControl", "detachControl", "getUniqueId"}) {
 		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 	}
 	h->set("getEngine", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "getEngine"));
@@ -1887,7 +2074,25 @@ inline value make_engine(const worldptr & W, dom_events & ev, const std::vector<
 	}, "getRenderHeight"));
 	h->set("onResizeObservable", make_dead_observable());
 	h->set("dispose", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "dispose"));
-	h->set("displayLoadingUI", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "displayLoadingUI"));
+	h->set("loadingUIText", value{std::string{"Loading..."}});
+	// displayLoadingUI(): paint a dark backdrop + the loading text into the canvas
+	// (the next scene.render() overwrites it, which is exactly hideLoadingUI's job).
+	h->set("displayLoadingUI", value::function([W](ctjs::context & cx, const std::vector<value> &) -> value {
+		ctbrowser::node * n = W->target;
+		if (n == nullptr || n->pixels.empty()) { return value{}; }
+		const int cw = n->canvas_w, ch = n->canvas_h;
+		std::string text = "Loading...";
+		if (const objptr self = self_of(cx)) {
+			if (const value * t = self->find("loadingUIText"); t != nullptr && !t->is_undefined()) { text = t->to_string(); }
+		}
+		for (uint32_t & px : n->pixels) { px = 0xFF060606u; }
+		const int scale = cw >= 200 ? 2 : 1;
+		const int tw = static_cast<int>(text.size()) * 8 * scale;
+		overlay_text(n->pixels.data(), cw, ch, (cw - tw) / 2, ch / 2 - 4 * scale, text, scale, 0xFFCCCCCCu);
+		return value{};
+	}, "displayLoadingUI"));
+	// hideLoadingUI(): the loading frame lives in the canvas until the next render
+	// paints over it, so nothing to tear down here.
 	h->set("hideLoadingUI", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "hideLoadingUI"));
 	{
 		object_t hi;
@@ -2183,14 +2388,39 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		o->set("blurKernelSize", value{16.0});
 		o->set("customEmissiveColorSelector", value{});
 		o->set("__disposed", value{0.0});
+		o->set("includedOnlyMeshes", value::array({}));
+		o->set("excludedMeshes", value::array({}));
 		o->set("dispose", value::function([](ctjs::context & cx, const std::vector<value> &) -> value {
 			if (const objptr self = self_of(cx)) { self->set("__disposed", value{1.0}); }
 			return value{};
 		}, "dispose"));
-		for (const char * nm : {"addIncludedOnlyMesh", "addExcludedMesh", "removeIncludedOnlyMesh",
-		                        "removeExcludedMesh", "referenceMeshToUseItsOwnMaterial"}) {
-			o->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
-		}
+		// include/exclude lists are REAL: they hold mesh __mesh ids and gate which
+		// meshes seed the bloom (do_render builds a coverage mask from them).
+		const auto edit_list = [](const char * key, bool add) {
+			return value::function([key, add](ctjs::context & cx, const std::vector<value> & a) -> value {
+				const objptr self = self_of(cx);
+				if (!self || a.empty() || !a[0].is_object()) { return value{}; }
+				const double mid = num_prop(a[0].as_object(), "__mesh", -1);
+				if (mid < 0) { return value{}; }
+				value * lst = self->find(key);
+				if (lst == nullptr || !lst->is_array()) { return value{}; }
+				auto & arr = *lst->as_array(); // std::vector<value>&
+				if (add) {
+					for (const value & e : arr) { if (e.to_number() == mid) { return value{}; } }
+					arr.push_back(value{mid});
+				} else {
+					for (size_t k = 0; k < arr.size(); ++k) {
+						if (arr[k].to_number() == mid) { arr.erase(arr.begin() + static_cast<std::ptrdiff_t>(k)); break; }
+					}
+				}
+				return value{};
+			}, key);
+		};
+		o->set("addIncludedOnlyMesh", edit_list("includedOnlyMeshes", true));
+		o->set("removeIncludedOnlyMesh", edit_list("includedOnlyMeshes", false));
+		o->set("addExcludedMesh", edit_list("excludedMeshes", true));
+		o->set("removeExcludedMesh", edit_list("excludedMeshes", false));
+		o->set("referenceMeshToUseItsOwnMaterial", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "referenceMeshToUseItsOwnMaterial"));
 		if (a.size() > 1 && a[1].is_object()) {
 			const int si = index_of(a[1].as_object(), "__scene");
 			if (si >= 0 && si < static_cast<int>(W->scenes.size())) {

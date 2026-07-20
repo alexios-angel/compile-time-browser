@@ -133,6 +133,44 @@ using app2 = ctbrowser::page<R"(<!DOCTYPE html>
 </script>)">;
 static_assert(ctjs::vp::is_valid(app2::script_text()), "the hooks script must parse");
 
+// third page: the mesh transform surface that was stubbed - getBoundingInfo,
+// computeWorldMatrix, setPivotPoint/getPivotPoint, freeze/unfreezeWorldMatrix,
+// bakeCurrentTransformIntoVertices - exercised without a render loop, results
+// stashed in globals for the harness to read back.
+using app3 = ctbrowser::page<R"(<!DOCTYPE html>
+<title>babylon-mesh</title>
+<canvas id=c width=64 height=64></canvas>
+<script>
+  const engine = new BABYLON.Engine(document.getElementById("c"), true);
+  const scene  = new BABYLON.Scene(engine);
+  const box = BABYLON.MeshBuilder.CreateBox("b", { size: 2 }, scene);
+
+  const bi = box.getBoundingInfo();      // a size-2 box: local bounds [-1, 1]
+  var bmaxx = bi.boundingBox.maximum.x;
+  var bminx = bi.boundingBox.minimum.x;
+
+  box.position.x = 5;                     // translation lands in world matrix m[12]
+  var wtx = box.computeWorldMatrix(true).m[12];
+
+  box.setPivotPoint(new BABYLON.Vector3(1, 2, 3));
+  var pv = box.getPivotPoint();
+  var pvsum = pv.x + pv.y + pv.z;
+
+  box.position.x = 5;                     // freeze captures x=5...
+  box.freezeWorldMatrix();
+  box.position.x = 9;                     // ...and later edits are ignored
+  var frozenTx = box.getWorldMatrix().m[12];
+  box.unfreezeWorldMatrix();
+  var liveTx = box.getWorldMatrix().m[12];
+
+  const box2 = BABYLON.MeshBuilder.CreateBox("b2", { size: 2 }, scene);
+  box2.position.x = 10;
+  box2.bakeCurrentTransformIntoVertices();
+  var bakedPosX = box2.position.x;        // reset to 0
+  var bakedMaxX = box2.getBoundingInfo().boundingBox.maximumWorld.x; // ~11
+</script>)">;
+static_assert(ctjs::vp::is_valid(app3::script_text()), "the mesh script must parse");
+
 int main() {
 	ctbrowser::engine<app> e;
 	if (!e.script.ok()) {
@@ -298,6 +336,47 @@ int main() {
 			for (uint32_t p : c2->pixels) { if ((p & 0x00FFFFFFu) != 0) { ++lit; } }
 		}
 		CHECK(lit > 200);     // the glowing white box rasterized
+	}
+
+	// --- glow include/exclude masking, unit-tested: two bright pixels, only the
+	// masked one may seed the bloom, so only it grows a halo.
+	{
+		namespace bab = ctbrowser::babylon::detail;
+		const int MW = 32, MH = 32;
+		std::vector<uint32_t> buf(static_cast<size_t>(MW) * MH, 0xFF000000u);
+		const size_t left = static_cast<size_t>(8) * MW + 8;
+		const size_t right = static_cast<size_t>(8) * MW + 24;
+		buf[left] = 0xFFFFFFFFu;
+		buf[right] = 0xFFFFFFFFu;
+		std::vector<uint8_t> mask(static_cast<size_t>(MW) * MH, 0);
+		mask[left] = 1;                                // only the left pixel glows
+		bab::apply_glow(buf.data(), MW, MH, 1.5, &mask);
+		const uint32_t lhalo = (buf[left - 2] >> 16) & 0xFF;
+		const uint32_t rhalo = (buf[right - 2] >> 16) & 0xFF;
+		std::printf("masked glow: lhalo=%u rhalo=%u\n", lhalo, rhalo);
+		CHECK(lhalo > 0);    // the included pixel bloomed
+		CHECK(rhalo == 0);   // the excluded pixel did not
+	}
+
+	// --- mesh transform surface (app3): bounds, world matrix, pivot, freeze, bake
+	{
+		ctbrowser::engine<app3> e3;
+		CHECK(e3.script.ok());
+		if (!e3.script.ok()) {
+			std::printf("FAIL app3 threw: %s\n", e3.script.exception_message().c_str());
+		}
+		const auto num = [&](const char * k) { return e3.script[k].to_number(); };
+		std::printf("mesh: bmaxx=%g bminx=%g wtx=%g pvsum=%g frozenTx=%g liveTx=%g bakedPosX=%g bakedMaxX=%g\n",
+		            num("bmaxx"), num("bminx"), num("wtx"), num("pvsum"),
+		            num("frozenTx"), num("liveTx"), num("bakedPosX"), num("bakedMaxX"));
+		CHECK(num("bmaxx") == 1.0);              // getBoundingInfo local bounds
+		CHECK(num("bminx") == -1.0);
+		CHECK(num("wtx") == 5.0);                // computeWorldMatrix translation
+		CHECK(num("pvsum") == 6.0);              // setPivotPoint/getPivotPoint round-trip
+		CHECK(num("frozenTx") == 5.0);           // freezeWorldMatrix ignores later edits
+		CHECK(num("liveTx") == 9.0);             // ...until unfreezeWorldMatrix
+		CHECK(num("bakedPosX") == 0.0);          // bake resets position
+		CHECK(std::fabs(num("bakedMaxX") - 11.0) < 1e-6); // ...folding it into the verts
 	}
 
 	if (failures == 0) { std::printf("babylon suite: all checks passed\n"); }
