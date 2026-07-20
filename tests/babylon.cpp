@@ -20,7 +20,15 @@ static_assert(ftrig::fsin(1.5707963267948966) > 0.999);          // sin(pi/2) ~ 
 static_assert(ftrig::fcos(1.5707963267948966) < 1e-3 &&
               ftrig::fcos(1.5707963267948966) > -1e-3);           // cos(pi/2) ~ 0
 // ...and a whole rotation matrix folds at compile time from it:
-static_assert(ftrig::rotationY(3.141592653589793).a[0][0] < -0.999);
+static_assert(ftrig::rotationY(3.141592653589793)[0][0] < -0.999);
+
+// the vector/matrix math is GLM-backed but still folds at compile time (GLM's
+// dot/cross/matmul/mat*vec are constexpr; norm3 takes its `if consteval` branch):
+static_assert(ftrig::dot3(ftrig::V3(1, 2, 3), ftrig::V3(4, 5, 6)) == 32.0);
+static_assert(ftrig::cross3(ftrig::V3(1, 0, 0), ftrig::V3(0, 1, 0))[2] == 1.0);
+static_assert(ftrig::matmul(ftrig::translation(2, 3, 4), ftrig::identity())[3][0] == 2.0);
+static_assert(ftrig::norm3(ftrig::V3(3, 4, 0))[0] > 0.599 &&
+              ftrig::norm3(ftrig::V3(3, 4, 0))[0] < 0.601); // 3/5 = 0.6
 
 // the ENTIRE software renderer is constexpr: geometry + matrices + a
 // z-buffered, lit, perspective rasterization all fold at COMPILE TIME
@@ -390,6 +398,16 @@ int main() {
 		CHECK(num("uidDiff") == 1.0);            // meshes have distinct uniqueId
 		CHECK(num("uidInc") == 1.0);             // scene.getUniqueId() increments
 		CHECK(num("camsum") == 12.0);            // camera.setPosition moved the eye
+	}
+
+	// GLM runtime path: norm3's `else` (runtime) branch matches its constexpr
+	// branch. A volatile input forces the runtime branch (glm::normalize).
+	{
+		volatile double x = 3.0;
+		const ftrig::vec3 n = ftrig::norm3(ftrig::V3(x, 4.0, 0.0));
+		std::printf("runtime norm3(3,4,0) = (%.4f, %.4f)\n", n[0], n[1]);
+		CHECK(std::fabs(n[0] - 0.6) < 1e-6); // GLM agrees with the 3/4/5 triangle
+		CHECK(std::fabs(n[1] - 0.8) < 1e-6);
 	}
 
 	if (failures == 0) { std::printf("babylon suite: all checks passed\n"); }

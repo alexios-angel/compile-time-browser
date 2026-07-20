@@ -41,54 +41,50 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#include <boost/qvm/vec.hpp>
-#include <boost/qvm/vec_access.hpp>
-#include <boost/qvm/mat.hpp>
 #include <bit>
 #include <boost/math/ccmath/sqrt.hpp>
 #include <boost/math/ccmath/floor.hpp>
 #include <boost/math/ccmath/ceil.hpp>
 #include <boost/math/ccmath/fabs.hpp>
+#define GLM_FORCE_CTOR_INIT // default-construct vec/mat as zero
+#include <glm/glm.hpp>      // the vector/matrix types AND math (constexpr-capable)
 #endif
 
 namespace ctbrowser::babylon {
 
 // ============================================================monospace
-//  r3d — the software 3D renderer (Boost.QVM math + z-buffered raster)
+//  r3d — the software 3D renderer (GLM math + z-buffered raster)
 //  Pure C++: no ctjs, no DOM. Column-vector convention (clip = M * p),
 //  LEFT-HANDED (Babylon default): +X right, +Y up, +Z into the screen.
+//  Types are GLM's double vec/mat: vectors index as v[i], and matrices are
+//  COLUMN-MAJOR - element (row r, col c) is m[c][r].
 // ============================================================
 
 namespace r3d {
 
-using vec3 = boost::qvm::vec<double, 3>;
-using vec4 = boost::qvm::vec<double, 4>;
-using mat4 = boost::qvm::mat<double, 4, 4>;
+using vec3 = glm::dvec3;
+using vec4 = glm::dvec4;
+using mat4 = glm::dmat4;
 
 namespace bmc = boost::math::ccmath; // constexpr sqrt/floor/ceil/fabs
 
-constexpr vec3 V3(double x, double y, double z) noexcept {
-	vec3 v;
-	v.a[0] = x; v.a[1] = y; v.a[2] = z;
-	return v;
-}
+constexpr vec3 V3(double x, double y, double z) noexcept { return vec3(x, y, z); }
 
-// --- vector helpers (hand-rolled so they fold at compile time; the QVM
-// operator overloads aren't constexpr, so we don't use them)
-constexpr vec3 sub(const vec3 & a, const vec3 & b) noexcept {
-	return V3(a.a[0] - b.a[0], a.a[1] - b.a[1], a.a[2] - b.a[2]);
-}
-constexpr double dot3(const vec3 & a, const vec3 & b) noexcept {
-	return a.a[0] * b.a[0] + a.a[1] * b.a[1] + a.a[2] * b.a[2];
-}
-constexpr vec3 cross3(const vec3 & a, const vec3 & b) noexcept {
-	return V3(a.a[1] * b.a[2] - a.a[2] * b.a[1], a.a[2] * b.a[0] - a.a[0] * b.a[2],
-	          a.a[0] * b.a[1] - a.a[1] * b.a[0]);
-}
+// --- vector helpers via GLM. GLM's construction/+/-/dot/cross and matrix
+// products are constexpr on this toolchain, so they fold in the compile-time
+// renderer; normalize/length are NOT, so norm3 keeps an `if consteval` constexpr
+// path (best of both worlds - GLM at runtime, the ccmath path at compile time).
+constexpr vec3 sub(const vec3 & a, const vec3 & b) noexcept { return a - b; }
+constexpr double dot3(const vec3 & a, const vec3 & b) noexcept { return glm::dot(a, b); }
+constexpr vec3 cross3(const vec3 & a, const vec3 & b) noexcept { return glm::cross(a, b); }
 constexpr double mag3(const vec3 & a) noexcept { return bmc::sqrt(dot3(a, a)); }
 constexpr vec3 norm3(const vec3 & a) noexcept {
-	const double m = mag3(a);
-	return m > 1e-12 ? V3(a.a[0] / m, a.a[1] / m, a.a[2] / m) : V3(0, 0, 0);
+	if consteval { // glm::normalize is not constexpr; use the ccmath path
+		const double m = mag3(a);
+		return m > 1e-12 ? vec3(a[0] / m, a[1] / m, a[2] / m) : vec3(0, 0, 0);
+	} else { // runtime: GLM
+		return glm::length(a) > 1e-12 ? glm::normalize(a) : vec3(0, 0, 0);
+	}
 }
 
 // --- colors
@@ -150,60 +146,63 @@ constexpr void fsincos(double rad, double & s, double & c) noexcept {
 		default: c = sd; s = -cd; break;            // 270 + d
 	}
 }
-constexpr double fcos(double rad) noexcept { double s = 0, c = 0; fsincos(rad, s, c); return c; }
-constexpr double fsin(double rad) noexcept { double s = 0, c = 0; fsincos(rad, s, c); return s; }
+// At runtime use GLM's full-precision trig; at compile time (where std/glm trig
+// is not constexpr) fall back to the fast lookup-table above.
+constexpr double fcos(double rad) noexcept {
+	if consteval { double s = 0, c = 0; fsincos(rad, s, c); return c; }
+	else { return glm::cos(rad); }
+}
+constexpr double fsin(double rad) noexcept {
+	if consteval { double s = 0, c = 0; fsincos(rad, s, c); return s; }
+	else { return glm::sin(rad); }
+}
 constexpr double ftan(double rad) noexcept {
-	double s = 0, c = 0;
-	fsincos(rad, s, c);
-	return c != 0.0 ? s / c : 0.0;
+	if consteval {
+		double s = 0, c = 0;
+		fsincos(rad, s, c);
+		return c != 0.0 ? s / c : 0.0;
+	} else {
+		return glm::tan(rad);
+	}
 }
 
 // --- matrix builders (explicit element fills, column-vector M*p)
 constexpr mat4 identity() noexcept {
 	mat4 m;
 	for (int r = 0; r < 4; ++r)
-		for (int c = 0; c < 4; ++c) m.a[r][c] = (r == c) ? 1.0 : 0.0;
+		for (int c = 0; c < 4; ++c) m[c][r] = (r == c) ? 1.0 : 0.0;
 	return m;
 }
 constexpr mat4 translation(double x, double y, double z) noexcept {
 	mat4 m = identity();
-	m.a[0][3] = x; m.a[1][3] = y; m.a[2][3] = z;
+	m[3][0] = x; m[3][1] = y; m[3][2] = z;
 	return m;
 }
 constexpr mat4 scaling(double x, double y, double z) noexcept {
 	mat4 m = identity();
-	m.a[0][0] = x; m.a[1][1] = y; m.a[2][2] = z;
+	m[0][0] = x; m[1][1] = y; m[2][2] = z;
 	return m;
 }
 constexpr mat4 rotationX(double t) noexcept {
 	mat4 m = identity();
 	const double c = fcos(t), s = fsin(t);
-	m.a[1][1] = c; m.a[1][2] = -s; m.a[2][1] = s; m.a[2][2] = c;
+	m[1][1] = c; m[2][1] = -s; m[1][2] = s; m[2][2] = c;
 	return m;
 }
 constexpr mat4 rotationY(double t) noexcept {
 	mat4 m = identity();
 	const double c = fcos(t), s = fsin(t);
-	m.a[0][0] = c; m.a[0][2] = s; m.a[2][0] = -s; m.a[2][2] = c;
+	m[0][0] = c; m[2][0] = s; m[0][2] = -s; m[2][2] = c;
 	return m;
 }
 constexpr mat4 rotationZ(double t) noexcept {
 	mat4 m = identity();
 	const double c = fcos(t), s = fsin(t);
-	m.a[0][0] = c; m.a[0][1] = -s; m.a[1][0] = s; m.a[1][1] = c;
+	m[0][0] = c; m[1][0] = -s; m[0][1] = s; m[1][1] = c;
 	return m;
 }
 // 4x4 matrix multiply (hand-rolled; QVM's operator* is not constexpr)
-constexpr mat4 matmul(const mat4 & a, const mat4 & b) noexcept {
-	mat4 m;
-	for (int r = 0; r < 4; ++r)
-		for (int c = 0; c < 4; ++c) {
-			double sum = 0.0;
-			for (int k = 0; k < 4; ++k) { sum += a.a[r][k] * b.a[k][c]; }
-			m.a[r][c] = sum;
-		}
-	return m;
-}
+constexpr mat4 matmul(const mat4 & a, const mat4 & b) noexcept { return a * b; }
 // Babylon mesh.rotation Vector3 (rx,ry,rz) = yaw-pitch-roll, applied YXZ
 constexpr mat4 rotationYPR(double rx, double ry, double rz) noexcept {
 	return matmul(rotationY(ry), matmul(rotationX(rx), rotationZ(rz)));
@@ -214,13 +213,13 @@ constexpr mat4 mul(const mat4 & a, const mat4 & b) noexcept { return matmul(a, b
 constexpr mat4 perspectiveFovLH(double fov, double aspect, double zn, double zf) noexcept {
 	mat4 m;
 	for (int r = 0; r < 4; ++r)
-		for (int c = 0; c < 4; ++c) m.a[r][c] = 0.0;
+		for (int c = 0; c < 4; ++c) m[c][r] = 0.0;
 	const double f = 1.0 / ftan(fov * 0.5);
-	m.a[0][0] = f / aspect;
-	m.a[1][1] = f;
-	m.a[2][2] = zf / (zf - zn);
-	m.a[2][3] = -zn * zf / (zf - zn);
-	m.a[3][2] = 1.0; // w = z (LH)
+	m[0][0] = f / aspect;
+	m[1][1] = f;
+	m[2][2] = zf / (zf - zn);
+	m[3][2] = -zn * zf / (zf - zn);
+	m[2][3] = 1.0; // w = z (LH)
 	return m;
 }
 // left-handed lookAt (column-vector view matrix)
@@ -229,21 +228,15 @@ constexpr mat4 lookAtLH(const vec3 & eye, const vec3 & target, const vec3 & up) 
 	const vec3 x = norm3(cross3(up, z));          // right
 	const vec3 y = cross3(z, x);                   // true up
 	mat4 m = identity();
-	m.a[0][0] = x.a[0]; m.a[0][1] = x.a[1]; m.a[0][2] = x.a[2]; m.a[0][3] = -dot3(x, eye);
-	m.a[1][0] = y.a[0]; m.a[1][1] = y.a[1]; m.a[1][2] = y.a[2]; m.a[1][3] = -dot3(y, eye);
-	m.a[2][0] = z.a[0]; m.a[2][1] = z.a[1]; m.a[2][2] = z.a[2]; m.a[2][3] = -dot3(z, eye);
-	m.a[3][0] = 0; m.a[3][1] = 0; m.a[3][2] = 0; m.a[3][3] = 1;
+	m[0][0] = x[0]; m[1][0] = x[1]; m[2][0] = x[2]; m[3][0] = -dot3(x, eye);
+	m[0][1] = y[0]; m[1][1] = y[1]; m[2][1] = y[2]; m[3][1] = -dot3(y, eye);
+	m[0][2] = z[0]; m[1][2] = z[1]; m[2][2] = z[2]; m[3][2] = -dot3(z, eye);
+	m[0][3] = 0; m[1][3] = 0; m[2][3] = 0; m[3][3] = 1;
 	return m;
 }
 
 // transform a point (w=1); returns the full vec4 (keep w for the divide)
-constexpr vec4 xform(const mat4 & m, const vec3 & p) noexcept {
-	vec4 v;
-	const double px = p.a[0], py = p.a[1], pz = p.a[2];
-	for (int r = 0; r < 4; ++r)
-		v.a[r] = m.a[r][0]*px + m.a[r][1]*py + m.a[r][2]*pz + m.a[r][3];
-	return v;
-}
+constexpr vec4 xform(const mat4 & m, const vec3 & p) noexcept { return m * vec4(p, 1.0); }
 
 // --- geometry
 struct geo {
@@ -372,7 +365,7 @@ private:
 		for (const light & L : lights) {
 			const vec3 d = norm3(L.direction);
 			if (L.type == 1) { // directional: light travels along direction
-				lit += L.intensity * std::max(0.0, dot3(N, V3(-d.a[0], -d.a[1], -d.a[2])));
+				lit += L.intensity * std::max(0.0, dot3(N, V3(-d[0], -d[1], -d[2])));
 			} else {           // hemispheric: soft sky/ground term about `direction`
 				lit += L.intensity * (dot3(N, d) * 0.5 + 0.5);
 			}
@@ -390,15 +383,15 @@ private:
 		const vec4 w0 = xform(it.world, p0), w1 = xform(it.world, p1), w2 = xform(it.world, p2);
 		const vec4 c0 = mvp_point(mvp, p0), c1 = mvp_point(mvp, p1), c2 = mvp_point(mvp, p2);
 		const double eps = 1e-6;
-		if (c0.a[3] <= eps || c1.a[3] <= eps || c2.a[3] <= eps) { return; } // near-plane guard
+		if (c0[3] <= eps || c1[3] <= eps || c2[3] <= eps) { return; } // near-plane guard
 
 		// screen coords + depth
 		const double W = w, H = h;
 		auto scr = [&](const vec4 & c, double & sx, double & sy, double & sz) {
-			const double iw = 1.0 / c.a[3];
-			sx = (c.a[0] * iw * 0.5 + 0.5) * W;
-			sy = (1.0 - (c.a[1] * iw * 0.5 + 0.5)) * H;
-			sz = c.a[2] * iw;
+			const double iw = 1.0 / c[3];
+			sx = (c[0] * iw * 0.5 + 0.5) * W;
+			sy = (1.0 - (c[1] * iw * 0.5 + 0.5)) * H;
+			sz = c[2] * iw;
 		};
 		double x0, y0, z0, x1, y1, z1, x2, y2, z2;
 		scr(c0, x0, y0, z0); scr(c1, x1, y1, z1); scr(c2, x2, y2, z2);
@@ -407,11 +400,11 @@ private:
 		if (bmc::fabs(area) < 1e-9) { return; }             // degenerate
 		if (it.cull && area <= 0) { return; }                // backface (CW in screen space)
 
-		const vec3 N = norm3(cross3(sub(V3(w1.a[0], w1.a[1], w1.a[2]), V3(w0.a[0], w0.a[1], w0.a[2])),
-		                            sub(V3(w2.a[0], w2.a[1], w2.a[2]), V3(w0.a[0], w0.a[1], w0.a[2]))));
+		const vec3 N = norm3(cross3(sub(V3(w1[0], w1[1], w1[2]), V3(w0[0], w0[1], w0[2])),
+		                            sub(V3(w2[0], w2[1], w2[2]), V3(w0[0], w0[1], w0[2]))));
 		// front faces have the normal facing roughly toward the camera for
 		// our winding; flip so lighting uses the visible side
-		const double lit = shade(area > 0 ? N : V3(-N.a[0], -N.a[1], -N.a[2]), lights);
+		const double lit = shade(area > 0 ? N : V3(-N[0], -N[1], -N[2]), lights);
 		const uint32_t color = pack(it.diffuse, lit);
 
 		int minx = static_cast<int>(bmc::floor(std::min({x0, x1, x2})));
@@ -644,7 +637,7 @@ constexpr r3d::mat4 node_matrix(const jval & node) {
 		if (m->size() == 16) {
 			r3d::mat4 M = r3d::identity();
 			for (int c = 0; c < 4; ++c)
-				for (int r = 0; r < 4; ++r) M.a[r][c] = (*m)[static_cast<size_t>(c * 4 + r)].as_num();
+				for (int r = 0; r < 4; ++r) M[c][r] = (*m)[static_cast<size_t>(c * 4 + r)].as_num();
 			return M;
 		}
 	}
@@ -656,9 +649,9 @@ constexpr r3d::mat4 node_matrix(const jval & node) {
 	if (const jval * q = node.get("rotation"); q != nullptr && q->size() >= 4) {
 		// quaternion (x,y,z,w) -> rotation matrix
 		const double x = (*q)[0].as_num(), y = (*q)[1].as_num(), z = (*q)[2].as_num(), w = (*q)[3].as_num(1);
-		R.a[0][0] = 1 - 2 * (y * y + z * z); R.a[0][1] = 2 * (x * y - z * w); R.a[0][2] = 2 * (x * z + y * w);
-		R.a[1][0] = 2 * (x * y + z * w); R.a[1][1] = 1 - 2 * (x * x + z * z); R.a[1][2] = 2 * (y * z - x * w);
-		R.a[2][0] = 2 * (x * z - y * w); R.a[2][1] = 2 * (y * z + x * w); R.a[2][2] = 1 - 2 * (x * x + y * y);
+		R[0][0] = 1 - 2 * (y * y + z * z); R[1][0] = 2 * (x * y - z * w); R[2][0] = 2 * (x * z + y * w);
+		R[0][1] = 2 * (x * y + z * w); R[1][1] = 1 - 2 * (x * x + z * z); R[2][1] = 2 * (y * z - x * w);
+		R[0][2] = 2 * (x * z - y * w); R[1][2] = 2 * (y * z + x * w); R[2][2] = 1 - 2 * (x * x + y * y);
 	}
 	return r3d::matmul(T, r3d::matmul(R, S));
 }
@@ -742,12 +735,12 @@ constexpr model parse_glb(const unsigned char * data, size_t len) {
 				const r3d::vec4 w = r3d::xform(xf, r3d::V3(read_f32le(vp + i * vstride),
 				                                          read_f32le(vp + i * vstride + 4),
 				                                          read_f32le(vp + i * vstride + 8)));
-				const r3d::vec3 v = r3d::V3(w.a[0], w.a[1], w.a[2]);
+				const r3d::vec3 v = r3d::V3(w[0], w[1], w[2]);
 				out_p.verts.push_back(v);
 				if (first) { out.bmin = out.bmax = v; first = false; }
 				for (int c = 0; c < 3; ++c) {
-					out.bmin.a[c] = std::min(out.bmin.a[c], v.a[c]);
-					out.bmax.a[c] = std::max(out.bmax.a[c], v.a[c]);
+					out.bmin[c] = std::min(out.bmin[c], v[c]);
+					out.bmax[c] = std::max(out.bmax[c], v[c]);
 				}
 			}
 			// indices (ubyte/ushort/uint) -> triangles
@@ -801,8 +794,8 @@ inline objptr child_obj(const objptr & o, const char * k) {
 }
 inline r3d::vec3 read_vec3(const objptr & o, r3d::vec3 dflt) {
 	if (!o) { return dflt; }
-	return r3d::V3(num_prop(o, "x", dflt.a[0]), num_prop(o, "y", dflt.a[1]),
-	               num_prop(o, "z", dflt.a[2]));
+	return r3d::V3(num_prop(o, "x", dflt[0]), num_prop(o, "y", dflt[1]),
+	               num_prop(o, "z", dflt[2]));
 }
 inline r3d::rgba read_color(const objptr & o, r3d::rgba dflt) {
 	if (!o) { return dflt; }
@@ -1004,31 +997,31 @@ inline value make_vector3(double x, double y, double z) {
 	}, "set"));
 	o->set("clone", value::function([](ctjs::context & cx, const std::vector<value> &) -> value {
 		const r3d::vec3 v = read_vec3(self_of(cx), r3d::V3(0, 0, 0));
-		return make_vector3(v.a[0], v.a[1], v.a[2]);
+		return make_vector3(v[0], v[1], v[2]);
 	}, "clone"));
 	o->set("add", value::function([](ctjs::context & cx, const std::vector<value> & a) -> value {
 		const r3d::vec3 s = read_vec3(self_of(cx), r3d::V3(0, 0, 0));
 		const r3d::vec3 t = read_vec3(arg_obj(a, 0), r3d::V3(0, 0, 0));
-		return make_vector3(s.a[0] + t.a[0], s.a[1] + t.a[1], s.a[2] + t.a[2]);
+		return make_vector3(s[0] + t[0], s[1] + t[1], s[2] + t[2]);
 	}, "add"));
 	o->set("subtract", value::function([](ctjs::context & cx, const std::vector<value> & a) -> value {
 		const r3d::vec3 s = read_vec3(self_of(cx), r3d::V3(0, 0, 0));
 		const r3d::vec3 t = read_vec3(arg_obj(a, 0), r3d::V3(0, 0, 0));
-		return make_vector3(s.a[0] - t.a[0], s.a[1] - t.a[1], s.a[2] - t.a[2]);
+		return make_vector3(s[0] - t[0], s[1] - t[1], s[2] - t[2]);
 	}, "subtract"));
 	o->set("scale", value::function([](ctjs::context & cx, const std::vector<value> & a) -> value {
 		const r3d::vec3 s = read_vec3(self_of(cx), r3d::V3(0, 0, 0));
 		const double k = arg_num(a, 0, 1);
-		return make_vector3(s.a[0] * k, s.a[1] * k, s.a[2] * k);
+		return make_vector3(s[0] * k, s[1] * k, s[2] * k);
 	}, "scale"));
 	o->set("length", value::function([](ctjs::context & cx, const std::vector<value> &) -> value {
 		const r3d::vec3 s = read_vec3(self_of(cx), r3d::V3(0, 0, 0));
-		return value{std::sqrt(s.a[0]*s.a[0] + s.a[1]*s.a[1] + s.a[2]*s.a[2])};
+		return value{std::sqrt(s[0]*s[0] + s[1]*s[1] + s[2]*s[2])};
 	}, "length"));
 	o->set("normalize", value::function([](ctjs::context & cx, const std::vector<value> &) -> value {
 		const r3d::vec3 n = r3d::norm3(read_vec3(self_of(cx), r3d::V3(0, 0, 0)));
 		objptr s = self_of(cx);
-		if (s) { s->set("x", value{n.a[0]}); s->set("y", value{n.a[1]}); s->set("z", value{n.a[2]}); }
+		if (s) { s->set("x", value{n[0]}); s->set("y", value{n[1]}); s->set("z", value{n[2]}); }
 		return cx.current_this;
 	}, "normalize"));
 	return value{o};
@@ -1145,10 +1138,10 @@ inline void render_sprites(const worldptr & W, uint32_t * px, int w, int h, cons
 		if (const value * vis = sp->find("isVisible"); vis != nullptr && !vis->truthy()) { continue; }
 		const r3d::vec3 pos = read_vec3(child_obj(sp, "position"), r3d::V3(0, 0, 0));
 		const r3d::vec4 clip = r3d::xform(vp, pos);
-		if (clip.a[3] <= 1e-6) { continue; } // behind the camera
-		const double iw = 1.0 / clip.a[3];
-		const int sx = static_cast<int>((clip.a[0] * iw * 0.5 + 0.5) * Wd);
-		const int sy = static_cast<int>((1.0 - (clip.a[1] * iw * 0.5 + 0.5)) * Hd);
+		if (clip[3] <= 1e-6) { continue; } // behind the camera
+		const double iw = 1.0 / clip[3];
+		const int sx = static_cast<int>((clip[0] * iw * 0.5 + 0.5) * Wd);
+		const int sy = static_cast<int>((1.0 - (clip[1] * iw * 0.5 + 0.5)) * Hd);
 		if (sx < 0 || sx >= w || sy < 0 || sy >= h) { continue; }
 		const r3d::rgba c = read_color(child_obj(sp, "color"), r3d::rgba{1, 1, 1, 1});
 		// perspective-scaled half-extent (fov 0.8 -> 2*tan(0.4) ~ 0.8455)
@@ -1271,13 +1264,13 @@ inline r3d::mat4 mesh_world_matrix(const worldptr & W, int mi, bool ignore_freez
 	const r3d::vec3 p = read_vec3(child_obj(M.handle, "position"), r3d::V3(0, 0, 0));
 	const r3d::vec3 rot = read_vec3(child_obj(M.handle, "rotation"), r3d::V3(0, 0, 0));
 	const r3d::vec3 s = read_vec3(child_obj(M.handle, "scaling"), r3d::V3(1, 1, 1));
-	r3d::mat4 rs = r3d::matmul(r3d::rotationYPR(rot.a[0], rot.a[1], rot.a[2]),
-	                          r3d::scaling(s.a[0], s.a[1], s.a[2]));
+	r3d::mat4 rs = r3d::matmul(r3d::rotationYPR(rot[0], rot[1], rot[2]),
+	                          r3d::scaling(s[0], s[1], s[2]));
 	if (M.has_pivot) { // rotate/scale about the pivot: T(pivot) * R*S * T(-pivot)
-		rs = r3d::matmul(r3d::translation(M.pivot.a[0], M.pivot.a[1], M.pivot.a[2]),
-		     r3d::matmul(rs, r3d::translation(-M.pivot.a[0], -M.pivot.a[1], -M.pivot.a[2])));
+		rs = r3d::matmul(r3d::translation(M.pivot[0], M.pivot[1], M.pivot[2]),
+		     r3d::matmul(rs, r3d::translation(-M.pivot[0], -M.pivot[1], -M.pivot[2])));
 	}
-	return r3d::matmul(r3d::translation(p.a[0], p.a[1], p.a[2]), rs);
+	return r3d::matmul(r3d::translation(p[0], p[1], p[2]), rs);
 }
 
 // build the renderer draw-item for a scene mesh (world matrix + material colour)
@@ -1306,11 +1299,11 @@ inline value make_matrix(const r3d::mat4 & m) {
 	auto o = objptr::make();
 	std::vector<value> arr;
 	for (int c = 0; c < 4; ++c) {
-		for (int r = 0; r < 4; ++r) { arr.push_back(value{m.a[r][c]}); }
+		for (int r = 0; r < 4; ++r) { arr.push_back(value{m[c][r]}); }
 	}
 	o->set("m", value::array(std::move(arr)));
 	o->set("getTranslation", value::function([m](ctjs::context &, const std::vector<value> &) -> value {
-		return make_vector3(m.a[0][3], m.a[1][3], m.a[2][3]);
+		return make_vector3(m[3][0], m[3][1], m[3][2]);
 	}, "getTranslation"));
 	return value{o};
 }
@@ -1342,9 +1335,9 @@ inline void do_render(const worldptr & W, int scene_id) {
 			const double beta = num_prop(cam.handle, "beta", 1);
 			const double radius = num_prop(cam.handle, "radius", 10);
 			target = read_vec3(child_obj(cam.handle, "target"), r3d::V3(0, 0, 0));
-			eye = r3d::V3(target.a[0] + radius * r3d::fcos(alpha) * r3d::fsin(beta),
-			              target.a[1] + radius * r3d::fcos(beta),
-			              target.a[2] + radius * r3d::fsin(alpha) * r3d::fsin(beta));
+			eye = r3d::V3(target[0] + radius * r3d::fcos(alpha) * r3d::fsin(beta),
+			              target[1] + radius * r3d::fcos(beta),
+			              target[2] + radius * r3d::fsin(alpha) * r3d::fsin(beta));
 		} else { // Free: explicit position, look toward its target/forward
 			eye = read_vec3(child_obj(cam.handle, "position"), r3d::V3(0, 0, -10));
 			target = read_vec3(child_obj(cam.handle, "target"), r3d::V3(0, 0, 0));
@@ -1427,14 +1420,14 @@ inline void mesh_aabb(const worldptr & W, int id, r3d::vec3 & lo, r3d::vec3 & hi
 	r3d::vec3 gmin = r3d::V3(0, 0, 0), gmax = r3d::V3(0, 0, 0);
 	for (const r3d::vec3 & v : m.geom.verts) {
 		for (int k = 0; k < 3; ++k) {
-			if (first) { gmin.a[k] = gmax.a[k] = v.a[k]; }
-			else { gmin.a[k] = std::min(gmin.a[k], v.a[k]); gmax.a[k] = std::max(gmax.a[k], v.a[k]); }
+			if (first) { gmin[k] = gmax[k] = v[k]; }
+			else { gmin[k] = std::min(gmin[k], v[k]); gmax[k] = std::max(gmax[k], v[k]); }
 		}
 		first = false;
 	}
 	for (int k = 0; k < 3; ++k) {
-		lo.a[k] = p.a[k] + gmin.a[k] * s.a[k];
-		hi.a[k] = p.a[k] + gmax.a[k] * s.a[k];
+		lo[k] = p[k] + gmin[k] * s[k];
+		hi[k] = p[k] + gmax[k] * s[k];
 	}
 }
 
@@ -1553,9 +1546,9 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 		nh->set("name", value{nm});
 		nh->set("id", value{nm});
 		nh->set("__mesh", value{static_cast<double>(nid)});
-		nh->set("position", make_vector3(p.a[0], p.a[1], p.a[2]));
-		nh->set("rotation", make_vector3(r.a[0], r.a[1], r.a[2]));
-		nh->set("scaling", make_vector3(s.a[0], s.a[1], s.a[2]));
+		nh->set("position", make_vector3(p[0], p[1], p[2]));
+		nh->set("rotation", make_vector3(r[0], r[1], r[2]));
+		nh->set("scaling", make_vector3(s[0], s[1], s[2]));
 		nh->set("material", matv);
 		mesh_rec rec;
 		rec.geom = std::move(geo);
@@ -1580,9 +1573,9 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 		const objptr pos = child_obj(self, "position");
 		const r3d::vec3 v = read_vec3(arg_obj(a, 0), r3d::V3(0, 0, 0));
 		if (pos) {
-			pos->set("x", value{num_prop(pos, "x", 0) + v.a[0]});
-			pos->set("y", value{num_prop(pos, "y", 0) + v.a[1]});
-			pos->set("z", value{num_prop(pos, "z", 0) + v.a[2]});
+			pos->set("x", value{num_prop(pos, "x", 0) + v[0]});
+			pos->set("y", value{num_prop(pos, "y", 0) + v[1]});
+			pos->set("z", value{num_prop(pos, "z", 0) + v[2]});
 		}
 		r3d::vec3 lo, hi;
 		mesh_aabb(W, static_cast<int>(ix), lo, hi);
@@ -1596,8 +1589,8 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 			if ((mask & grp) == 0) { continue; }
 			r3d::vec3 olo, ohi;
 			mesh_aabb(W, static_cast<int>(mj), olo, ohi);
-			const bool overlap = lo.a[0] <= ohi.a[0] && hi.a[0] >= olo.a[0] && lo.a[1] <= ohi.a[1] &&
-			                     hi.a[1] >= olo.a[1] && lo.a[2] <= ohi.a[2] && hi.a[2] >= olo.a[2];
+			const bool overlap = lo[0] <= ohi[0] && hi[0] >= olo[0] && lo[1] <= ohi[1] &&
+			                     hi[1] >= olo[1] && lo[2] <= ohi[2] && hi[2] >= olo[2];
 			if (overlap) { hit = o.handle; break; }
 		}
 		if (const objptr col = child_obj(self, "collider")) {
@@ -1615,9 +1608,9 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 		const r3d::vec3 ax = read_vec3(arg_obj(a, 0), r3d::V3(0, 0, 0));
 		const double d = arg_num(a, 1, 1);
 		if (pos) {
-			pos->set("x", value{num_prop(pos, "x", 0) + ax.a[0] * d});
-			pos->set("y", value{num_prop(pos, "y", 0) + ax.a[1] * d});
-			pos->set("z", value{num_prop(pos, "z", 0) + ax.a[2] * d});
+			pos->set("x", value{num_prop(pos, "x", 0) + ax[0] * d});
+			pos->set("y", value{num_prop(pos, "y", 0) + ax[1] * d});
+			pos->set("z", value{num_prop(pos, "z", 0) + ax[2] * d});
 		}
 		return value{};
 	}, "translate"));
@@ -1627,9 +1620,9 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 		const r3d::vec3 ax = read_vec3(arg_obj(a, 0), r3d::V3(0, 1, 0));
 		const double amt = arg_num(a, 1, 0);
 		if (rot) {
-			rot->set("x", value{num_prop(rot, "x", 0) + ax.a[0] * amt});
-			rot->set("y", value{num_prop(rot, "y", 0) + ax.a[1] * amt});
-			rot->set("z", value{num_prop(rot, "z", 0) + ax.a[2] * amt});
+			rot->set("x", value{num_prop(rot, "x", 0) + ax[0] * amt});
+			rot->set("y", value{num_prop(rot, "y", 0) + ax[1] * amt});
+			rot->set("z", value{num_prop(rot, "z", 0) + ax[2] * amt});
 		}
 		return value{};
 	}, "rotate"));
@@ -1645,33 +1638,33 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 		bool first = true;
 		for (const r3d::vec3 & v : W->meshes[ix].geom.verts) {
 			for (int k = 0; k < 3; ++k) {
-				if (first) { lmin.a[k] = lmax.a[k] = v.a[k]; }
-				else { lmin.a[k] = std::min(lmin.a[k], v.a[k]); lmax.a[k] = std::max(lmax.a[k], v.a[k]); }
+				if (first) { lmin[k] = lmax[k] = v[k]; }
+				else { lmin[k] = std::min(lmin[k], v[k]); lmax[k] = std::max(lmax[k], v[k]); }
 			}
 			first = false;
 		}
 		r3d::vec3 wmin, wmax;
 		mesh_aabb(W, static_cast<int>(ix), wmin, wmax);
 		auto box = objptr::make();
-		box->set("minimum", make_vector3(lmin.a[0], lmin.a[1], lmin.a[2]));
-		box->set("maximum", make_vector3(lmax.a[0], lmax.a[1], lmax.a[2]));
-		box->set("minimumWorld", make_vector3(wmin.a[0], wmin.a[1], wmin.a[2]));
-		box->set("maximumWorld", make_vector3(wmax.a[0], wmax.a[1], wmax.a[2]));
-		box->set("centerWorld", make_vector3((wmin.a[0] + wmax.a[0]) * 0.5,
-		                                     (wmin.a[1] + wmax.a[1]) * 0.5, (wmin.a[2] + wmax.a[2]) * 0.5));
-		box->set("extendSize", make_vector3((lmax.a[0] - lmin.a[0]) * 0.5,
-		                                    (lmax.a[1] - lmin.a[1]) * 0.5, (lmax.a[2] - lmin.a[2]) * 0.5));
+		box->set("minimum", make_vector3(lmin[0], lmin[1], lmin[2]));
+		box->set("maximum", make_vector3(lmax[0], lmax[1], lmax[2]));
+		box->set("minimumWorld", make_vector3(wmin[0], wmin[1], wmin[2]));
+		box->set("maximumWorld", make_vector3(wmax[0], wmax[1], wmax[2]));
+		box->set("centerWorld", make_vector3((wmin[0] + wmax[0]) * 0.5,
+		                                     (wmin[1] + wmax[1]) * 0.5, (wmin[2] + wmax[2]) * 0.5));
+		box->set("extendSize", make_vector3((lmax[0] - lmin[0]) * 0.5,
+		                                    (lmax[1] - lmin[1]) * 0.5, (lmax[2] - lmin[2]) * 0.5));
 		double rad = 0;
-		for (int k = 0; k < 3; ++k) { rad = std::max(rad, (wmax.a[k] - wmin.a[k]) * 0.5); }
+		for (int k = 0; k < 3; ++k) { rad = std::max(rad, (wmax[k] - wmin[k]) * 0.5); }
 		auto sph = objptr::make();
 		sph->set("radiusWorld", value{rad});
-		sph->set("center", make_vector3((lmin.a[0] + lmax.a[0]) * 0.5,
-		                                (lmin.a[1] + lmax.a[1]) * 0.5, (lmin.a[2] + lmax.a[2]) * 0.5));
+		sph->set("center", make_vector3((lmin[0] + lmax[0]) * 0.5,
+		                                (lmin[1] + lmax[1]) * 0.5, (lmin[2] + lmax[2]) * 0.5));
 		auto bi = objptr::make();
 		bi->set("boundingBox", value{box});
 		bi->set("boundingSphere", value{sph});
-		bi->set("minimum", make_vector3(lmin.a[0], lmin.a[1], lmin.a[2]));
-		bi->set("maximum", make_vector3(lmax.a[0], lmax.a[1], lmax.a[2]));
+		bi->set("minimum", make_vector3(lmin[0], lmin[1], lmin[2]));
+		bi->set("maximum", make_vector3(lmax[0], lmax[1], lmax[2]));
 		return value{bi};
 	}, "getBoundingInfo"));
 	// refreshBoundingInfo(): bounds are computed on demand, so this just validates
@@ -1717,7 +1710,7 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 	}, "setPivotPoint"));
 	h->set("getPivotPoint", value::function([W, ix](ctjs::context &, const std::vector<value> &) -> value {
 		const r3d::vec3 p = ix < W->meshes.size() ? W->meshes[ix].pivot : r3d::V3(0, 0, 0);
-		return make_vector3(p.a[0], p.a[1], p.a[2]);
+		return make_vector3(p[0], p[1], p[2]);
 	}, "getPivotPoint"));
 
 	// bakeCurrentTransformIntoVertices(): fold the current world transform into the
@@ -1728,7 +1721,7 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 		const r3d::mat4 wm = mesh_world_matrix(W, static_cast<int>(ix), true);
 		for (r3d::vec3 & v : M.geom.verts) {
 			const r3d::vec4 t = r3d::xform(wm, v);
-			v = r3d::V3(t.a[0], t.a[1], t.a[2]);
+			v = r3d::V3(t[0], t[1], t[2]);
 		}
 		if (const objptr p = child_obj(M.handle, "position")) { p->set("x", value{0.0}); p->set("y", value{0.0}); p->set("z", value{0.0}); }
 		if (const objptr r = child_obj(M.handle, "rotation")) { r->set("x", value{0.0}); r->set("y", value{0.0}); r->set("z", value{0.0}); }
@@ -1784,7 +1777,7 @@ inline value make_light(const worldptr & W, int type, std::string name, r3d::vec
 	const int id = static_cast<int>(W->lights.size());
 	auto h = objptr::make();
 	h->set("name", value{std::move(name)});
-	h->set("direction", make_vector3(dir.a[0], dir.a[1], dir.a[2]));
+	h->set("direction", make_vector3(dir[0], dir[1], dir[2]));
 	h->set("intensity", value{1.0});
 	h->set("diffuse", make_color3(1, 1, 1));
 	h->set("specular", make_color3(1, 1, 1));
@@ -1896,7 +1889,7 @@ inline value make_camera_free(const worldptr & W, std::string name, const objptr
 		const objptr p = s ? child_obj(s, "position") : objptr{};
 		if (p && !a.empty() && a[0].is_object()) {
 			const r3d::vec3 v = read_vec3(a[0].as_object(), r3d::V3(0, 0, 0));
-			p->set("x", value{v.a[0]}); p->set("y", value{v.a[1]}); p->set("z", value{v.a[2]});
+			p->set("x", value{v[0]}); p->set("y", value{v[1]}); p->set("z", value{v[2]});
 		}
 		return value{};
 	}, "setPosition"));
@@ -2028,12 +2021,12 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 		r3d::vec3 c = r3d::V3(0, 0, 0);
 		double rad = 2.0;
 		if (sc.has_bounds) {
-			c = r3d::V3((sc.bmin.a[0] + sc.bmax.a[0]) * 0.5, (sc.bmin.a[1] + sc.bmax.a[1]) * 0.5,
-			            (sc.bmin.a[2] + sc.bmax.a[2]) * 0.5);
+			c = r3d::V3((sc.bmin[0] + sc.bmax[0]) * 0.5, (sc.bmin[1] + sc.bmax[1]) * 0.5,
+			            (sc.bmin[2] + sc.bmax[2]) * 0.5);
 			rad = 0.001;
-			for (int k = 0; k < 3; ++k) { rad = std::max(rad, sc.bmax.a[k] - sc.bmin.a[k]); }
+			for (int k = 0; k < 3; ++k) { rad = std::max(rad, sc.bmax[k] - sc.bmin[k]); }
 		}
-		const objptr target = make_vector3(c.a[0], c.a[1], c.a[2]).as_object();
+		const objptr target = make_vector3(c[0], c[1], c[2]).as_object();
 		return make_camera_arc(W, ev, "default_camera", -M_PI / 2, M_PI / 2.5, rad * 2.2, target, sc.handle);
 	}, "createDefaultCamera"));
 	h->set("createDefaultLight", value::function([W, id](ctjs::context &, const std::vector<value> &) -> value {
