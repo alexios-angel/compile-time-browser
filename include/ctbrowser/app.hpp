@@ -328,7 +328,30 @@ template <typename Page> int run_app(app_options opts = {}) {
 #ifdef CTBROWSER_WITH_TTF
 	detail::ttf_text ttf{renderer, {}, {}, {}};
 	if (TTF_Init()) {
-		ttf.path = opts.font_path.empty() ? detail::probe_font() : opts.font_path;
+		// font priority: an explicit app_options.font_path, else the page's
+		// first loadable @font-face src (url(...), quotes stripped; a public-
+		// root "/assets/..." path also tried repo-relative), else a system font
+		std::string face;
+		for (const auto & ff : e.font_faces()) {
+			std::string src{ff.get("src")};
+			const std::size_t up = src.find("url(");
+			if (up == std::string::npos) { continue; }
+			const std::size_t s = up + 4, en = src.find(')', s);
+			if (en == std::string::npos) { continue; }
+			std::string p = src.substr(s, en - s);
+			while (!p.empty() && (p.front() == ' ' || p.front() == '"' || p.front() == '\'')) { p.erase(p.begin()); }
+			while (!p.empty() && (p.back() == ' ' || p.back() == '"' || p.back() == '\'')) { p.pop_back(); }
+			const auto ex = [](const std::string & x) {
+				if (x.empty()) { return false; }
+				if (FILE * f = std::fopen(x.c_str(), "rb")) { std::fclose(f); return true; }
+				return false;
+			};
+			if (ex(p)) { face = p; break; }
+			if (p.size() > 1 && p[0] == '/' && ex(p.substr(1))) { face = p.substr(1); break; }
+		}
+		ttf.path = !opts.font_path.empty() ? opts.font_path
+		           : !face.empty()         ? face
+		                                   : detail::probe_font();
 		if (ttf.ok()) {
 			e.measure = [&ttf](std::string_view text, int px) {
 				return ttf.measure(text, px);

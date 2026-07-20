@@ -6,6 +6,7 @@
 #include "image.hpp"
 #include "assets.hpp"
 #include "layout.hpp"
+#include "anim.hpp"
 #include "script.hpp"
 #include "babylon.hpp"
 #ifndef CTBROWSER_IN_A_MODULE
@@ -79,10 +80,18 @@ public:
 	// one layout pass for a viewport width; updates node rects (and
 	// the offsetLeft/width properties on exposed element handles) too
 	std::vector<paint_cmd> frame(int viewport_w) {
+		// advance CSS @keyframes (writes interpolated inline styles) before layout
+		detail::apply_animations(doc, css_sheet, ev.now_ms);
 		std::vector<paint_cmd> cmds = ctbrowser::layout(doc, viewport_w, resolve, measure);
 		ev.viewport_w = viewport_w;
 		ev.refresh_tracked();
 		return cmds;
+	}
+
+	// the page's @font-face rules (family + src), for the shell to load custom
+	// fonts; empty when the stylesheet declares none
+	const std::vector<ctcss::value_sheet::font_face> & font_faces() const noexcept {
+		return css_sheet.font_faces;
 	}
 
 	// keep the viewport dimensions current; on a change, refresh
