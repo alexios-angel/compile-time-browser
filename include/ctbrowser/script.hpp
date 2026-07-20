@@ -120,6 +120,10 @@ struct dom_events {
 	// <select> onchange handlers, keyed by the select node (the engine fires them
 	// when the user picks an option); stale node pointers are cleared on reload
 	std::map<node *, ctjs::value> change_handlers;
+	// per-element "click" listeners (addEventListener('click', ...)); the engine
+	// fires the clicked element's and its ancestors' on a click. Node-keyed, so
+	// cleared on reload with the rest.
+	std::map<node *, std::vector<ctjs::value>> click_listeners;
 	// the window object + the viewport the engine last laid out
 	ctjs::rc<ctjs::object_t> window_obj;
 	int viewport_w = 0;
@@ -134,6 +138,7 @@ struct dom_events {
 		reload = false;
 		tracked.clear();
 		change_handlers.clear();
+		click_listeners.clear();
 	}
 
 	// fire everything due at now_ms. Handlers may add or clear timers
@@ -363,10 +368,18 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 	          "setAttribute"));
 	o.set("addEventListener",
 	      ctjs::value::function(
-	          [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
+	          [n, ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
 		          ev->cx = &cx;
 		          if (a.size() >= 2 && a[1].is_function()) {
-			          ev->listeners[a[0].to_string()].push_back(a[1]);
+			          const std::string type = a[0].to_string();
+			          // element "click" is targeted (fired by click_at on the hit
+			          // element + its ancestors); other types stay in the shared,
+			          // globally-dispatched registry (keydown/resize/pointer/...)
+			          if (type == "click") {
+				          ev->click_listeners[n].push_back(a[1]);
+			          } else {
+				          ev->listeners[type].push_back(a[1]);
+			          }
 		          }
 		          return ctjs::value{};
 	          },

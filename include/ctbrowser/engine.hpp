@@ -118,8 +118,20 @@ public:
 	void click_at(int x, int y) {
 		if (!doc.root) { return; }
 		node * hit = doc.root->hit_test(x, y);
-		while (hit != nullptr && hit->id.empty()) { hit = hit->parent; }
-		if (hit != nullptr) { deliver(script, "onClick", hit->id); }
+		// fire addEventListener('click', ...) on the hit target and its ancestors
+		// (bubbling), as the DOM would - copy each list, handlers may mutate it
+		for (node * n = hit; n != nullptr; n = n->parent) {
+			const auto it = ev.click_listeners.find(n);
+			if (it == ev.click_listeners.end()) { continue; }
+			const std::vector<ctjs::value> fns = it->second;
+			for (const ctjs::value & fn : fns) {
+				ev.invoke(fn, {detail::mouse_event(static_cast<double>(x), static_cast<double>(y))});
+			}
+		}
+		// legacy onClick(id): nearest ancestor with a non-empty id
+		node * idn = hit;
+		while (idn != nullptr && idn->id.empty()) { idn = idn->parent; }
+		if (idn != nullptr) { deliver(script, "onClick", idn->id); }
 	}
 	void key(std::string_view name, bool down) {
 		if (down) {

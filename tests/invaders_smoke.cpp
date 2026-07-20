@@ -31,6 +31,7 @@ int main() {
 	}
 	std::printf("script.ok() = true (game initialised)\n");
 
+	e.resize_viewport(900, 700); // real viewport so fixed/% menu layout is correct
 	// drive frames so the asset callbacks (Sound onLoaded + ImportMeshAsync
 	// promises) settle and gameAssets.isComplete flips
 	for (int i = 0; i < 40; ++i) {
@@ -38,9 +39,17 @@ int main() {
 		e.tick(1.0 / 60.0);
 	}
 
-	// start the game: the #start-game button's click handler sets STARTGAME
-	// (element listeners share the global registry, so a click dispatch fires it)
-	e.ev.dispatch("click", ctjs::value{});
+	// start the game by CLICKING the #start-game button at its on-screen position
+	// (its addEventListener('click', ...) fires through click_at, like the shell)
+	e.frame(900);
+	ctbrowser::node * start_btn = e.doc.by_id("start-game");
+	if (start_btn != nullptr && start_btn->w > 0) {
+		e.click_at(start_btn->x + start_btn->w / 2, start_btn->y + start_btn->h / 2);
+		std::printf("clicked START GAME at (%d, %d)\n", start_btn->x + start_btn->w / 2,
+		            start_btn->y + start_btn->h / 2);
+	} else {
+		std::printf("start button not laid out (w=%d)\n", start_btn ? start_btn->w : -1);
+	}
 	for (int i = 0; i < 240; ++i) {
 		e.frame(900);
 		e.tick(1.0 / 60.0);
