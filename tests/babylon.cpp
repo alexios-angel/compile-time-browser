@@ -168,6 +168,15 @@ using app3 = ctbrowser::page<R"(<!DOCTYPE html>
   box2.bakeCurrentTransformIntoVertices();
   var bakedPosX = box2.position.x;        // reset to 0
   var bakedMaxX = box2.getBoundingInfo().boundingBox.maximumWorld.x; // ~11
+
+  var sameEngine = (scene.getEngine() === engine) ? 1 : 0;   // getEngine() round-trips
+  var uidDiff = (box.uniqueId !== box2.uniqueId) ? 1 : 0;     // meshes get distinct ids
+  var uid1 = scene.getUniqueId();
+  var uidInc = (scene.getUniqueId() > uid1) ? 1 : 0;          // getUniqueId is monotonic
+
+  const cam = new BABYLON.FreeCamera("fc", new BABYLON.Vector3(0, 0, 0), scene);
+  cam.setPosition(new BABYLON.Vector3(3, 4, 5));
+  var camsum = cam.position.x + cam.position.y + cam.position.z; // 12
 </script>)">;
 static_assert(ctjs::vp::is_valid(app3::script_text()), "the mesh script must parse");
 
@@ -377,6 +386,10 @@ int main() {
 		CHECK(num("liveTx") == 9.0);             // ...until unfreezeWorldMatrix
 		CHECK(num("bakedPosX") == 0.0);          // bake resets position
 		CHECK(std::fabs(num("bakedMaxX") - 11.0) < 1e-6); // ...folding it into the verts
+		CHECK(num("sameEngine") == 1.0);         // scene.getEngine() returns the engine
+		CHECK(num("uidDiff") == 1.0);            // meshes have distinct uniqueId
+		CHECK(num("uidInc") == 1.0);             // scene.getUniqueId() increments
+		CHECK(num("camsum") == 12.0);            // camera.setPosition moved the eye
 	}
 
 	if (failures == 0) { std::printf("babylon suite: all checks passed\n"); }

@@ -865,9 +865,11 @@ struct world {
 	std::vector<scene_rec> scenes;
 	value render_cb;
 	value loop_wrapper;
+	objptr engine_handle; // the BABYLON.Engine JS handle (scene.getEngine())
 	bool loop_active = false;
 	double prev_ms = 0, last_dt_ms = 16.6;
 	int next_obs = 1;    // Observable observer-id counter
+	int next_uid = 1;    // uniqueId / getUniqueId counter
 	unsigned rng = 0x2545F4914F6CDD1Du & 0xffffffffu; // Scalar.RandomRange PRNG
 	std::vector<objptr> guis;    // AdvancedDynamicTextures - rendered as a 2D overlay
 	std::vector<objptr> sprites; // Sprites (starfield) - projected + drawn as quads
@@ -1451,6 +1453,7 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 	if (h->find("rotation") == nullptr) { h->set("rotation", make_vector3(0, 0, 0)); }
 	if (h->find("scaling") == nullptr) { h->set("scaling", make_vector3(1, 1, 1)); }
 	h->set("metadata", value{objptr::make()});
+	if (h->find("uniqueId") == nullptr) { h->set("uniqueId", value{static_cast<double>(W->next_uid++)}); }
 	h->set("isVisible", value{true});
 	h->set("visibility", value{1.0});
 	h->set("isPickable", value{true});
@@ -1862,7 +1865,17 @@ inline value make_camera_free(const worldptr & W, std::string name, const objptr
 		if (s && !a.empty() && a[0].is_object()) { s->set("target", a[0]); }
 		return value{};
 	}, "setTarget"));
-	for (const char * nm : {"attachControl", "detachControl", "setPosition"}) {
+	// setPosition(vec3): move the camera (FreeCamera-style eye position)
+	h->set("setPosition", value::function([](ctjs::context & cx, const std::vector<value> & a) -> value {
+		const objptr s = self_of(cx);
+		const objptr p = s ? child_obj(s, "position") : objptr{};
+		if (p && !a.empty() && a[0].is_object()) {
+			const r3d::vec3 v = read_vec3(a[0].as_object(), r3d::V3(0, 0, 0));
+			p->set("x", value{v.a[0]}); p->set("y", value{v.a[1]}); p->set("z", value{v.a[2]});
+		}
+		return value{};
+	}, "setPosition"));
+	for (const char * nm : {"attachControl", "detachControl"}) {
 		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 	}
 	W->cameras.push_back(camera_rec{h, 1, false});
@@ -1961,11 +1974,18 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 	// upload. The software rasterizer needs the vertices every frame, so there is
 	// nothing to free - a genuine no-op, kept so scripts calling it don't throw.
 	h->set("clearCachedVertexData", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "clearCachedVertexData"));
+	// getUniqueId(): a real monotonic id (scripts key maps on it)
+	h->set("getUniqueId", value::function([W](ctjs::context &, const std::vector<value> &) -> value {
+		return value{static_cast<double>(W->next_uid++)};
+	}, "getUniqueId"));
 	// commonly-probed no-ops so real scripts don't throw
-	for (const char * nm : {"beforeRender", "dispose", "attachControl", "detachControl", "getUniqueId"}) {
+	for (const char * nm : {"beforeRender", "dispose", "attachControl", "detachControl"}) {
 		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 	}
-	h->set("getEngine", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "getEngine"));
+	// getEngine() hands back the BABYLON.Engine handle (scene.getEngine().getDeltaTime())
+	h->set("getEngine", value::function([W](ctjs::context &, const std::vector<value> &) -> value {
+		return W->engine_handle ? value{W->engine_handle} : value{};
+	}, "getEngine"));
 
 	// --- model-viewer helpers (glTF loading path)
 	h->set("getMaterialById", value::function([W, id](ctjs::context &, const std::vector<value> & a) -> value {
@@ -2021,6 +2041,7 @@ inline value make_engine(const worldptr & W, dom_events & ev, const std::vector<
 		if (ctbrowser::node * n = ev.node_of(args[0])) { W->target = n; }
 	}
 	auto h = objptr::make();
+	W->engine_handle = h; // scene.getEngine() hands this back
 	h->set("runRenderLoop", value::function([W, &ev](ctjs::context & cx, const std::vector<value> & a) -> value {
 		ev.cx = &cx;
 		if (!a.empty() && a[0].is_function()) { W->render_cb = a[0]; }
@@ -2302,7 +2323,17 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 			if (ev.set_audio_volume && !sa.empty()) { ev.set_audio_volume(static_cast<float>(sa[0].to_number())); }
 			return value{};
 		}, "setVolume"));
-		for (const char * nm : {"pause", "dispose", "setPlaybackRate", "attachToMesh", "setPosition"}) {
+		// pause/dispose stop playback through the mixer (we have no true pause, so
+		// pause == stop). Spatial audio (setPlaybackRate/attachToMesh/setPosition)
+		// is unmodeled - the mixer is non-positional.
+		const auto stopper = [&ev, handle](ctjs::context &, const std::vector<value> &) -> value {
+			if (ev.stop_audio && *handle != 0) { ev.stop_audio(*handle); }
+			*handle = 0;
+			return value{};
+		};
+		o->set("pause", value::function(stopper, "pause"));
+		o->set("dispose", value::function(stopper, "dispose"));
+		for (const char * nm : {"setPlaybackRate", "attachToMesh", "setPosition"}) {
 			o->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 		}
 		if (a.size() > 3 && a[3].is_function()) {
