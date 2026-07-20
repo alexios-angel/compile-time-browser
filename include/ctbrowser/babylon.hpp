@@ -48,6 +48,7 @@
 #include <boost/math/ccmath/fabs.hpp>
 #define GLM_FORCE_CTOR_INIT // default-construct vec/mat as zero
 #include <glm/glm.hpp>      // the vector/matrix types AND math (constexpr-capable)
+#include <glm/gtc/matrix_transform.hpp> // glm::translate/scale
 #endif
 
 namespace ctbrowser::babylon {
@@ -167,42 +168,46 @@ constexpr double ftan(double rad) noexcept {
 }
 
 // --- matrix builders (explicit element fills, column-vector M*p)
-constexpr mat4 identity() noexcept {
-	mat4 m;
-	for (int r = 0; r < 4; ++r)
-		for (int c = 0; c < 4; ++c) m[c][r] = (r == c) ? 1.0 : 0.0;
-	return m;
-}
+constexpr mat4 identity() noexcept { return mat4(1.0); } // GLM identity
 constexpr mat4 translation(double x, double y, double z) noexcept {
-	mat4 m = identity();
-	m[3][0] = x; m[3][1] = y; m[3][2] = z;
-	return m;
+	return glm::translate(mat4(1.0), vec3(x, y, z)); // GLM (constexpr on this clang)
 }
 constexpr mat4 scaling(double x, double y, double z) noexcept {
-	mat4 m = identity();
-	m[0][0] = x; m[1][1] = y; m[2][2] = z;
-	return m;
+	return glm::scale(mat4(1.0), vec3(x, y, z)); // GLM (constexpr on this clang)
 }
+// rotations: glm::rotate at runtime (not constexpr), the fast-table fill at
+// compile time. Both conventions agree (verified in tests/babylon.cpp).
 constexpr mat4 rotationX(double t) noexcept {
-	mat4 m = identity();
-	const double c = fcos(t), s = fsin(t);
-	m[1][1] = c; m[2][1] = -s; m[1][2] = s; m[2][2] = c;
-	return m;
+	if consteval {
+		mat4 m = identity();
+		const double c = fcos(t), s = fsin(t);
+		m[1][1] = c; m[2][1] = -s; m[1][2] = s; m[2][2] = c;
+		return m;
+	} else {
+		return glm::rotate(mat4(1.0), t, vec3(1, 0, 0));
+	}
 }
 constexpr mat4 rotationY(double t) noexcept {
-	mat4 m = identity();
-	const double c = fcos(t), s = fsin(t);
-	m[0][0] = c; m[2][0] = s; m[0][2] = -s; m[2][2] = c;
-	return m;
+	if consteval {
+		mat4 m = identity();
+		const double c = fcos(t), s = fsin(t);
+		m[0][0] = c; m[2][0] = s; m[0][2] = -s; m[2][2] = c;
+		return m;
+	} else {
+		return glm::rotate(mat4(1.0), t, vec3(0, 1, 0));
+	}
 }
 constexpr mat4 rotationZ(double t) noexcept {
-	mat4 m = identity();
-	const double c = fcos(t), s = fsin(t);
-	m[0][0] = c; m[1][0] = -s; m[0][1] = s; m[1][1] = c;
-	return m;
+	if consteval {
+		mat4 m = identity();
+		const double c = fcos(t), s = fsin(t);
+		m[0][0] = c; m[1][0] = -s; m[0][1] = s; m[1][1] = c;
+		return m;
+	} else {
+		return glm::rotate(mat4(1.0), t, vec3(0, 0, 1));
+	}
 }
-// 4x4 matrix multiply (hand-rolled; QVM's operator* is not constexpr)
-constexpr mat4 matmul(const mat4 & a, const mat4 & b) noexcept { return a * b; }
+constexpr mat4 matmul(const mat4 & a, const mat4 & b) noexcept { return a * b; } // GLM product
 // Babylon mesh.rotation Vector3 (rx,ry,rz) = yaw-pitch-roll, applied YXZ
 constexpr mat4 rotationYPR(double rx, double ry, double rz) noexcept {
 	return matmul(rotationY(ry), matmul(rotationX(rx), rotationZ(rz)));

@@ -410,6 +410,26 @@ int main() {
 		CHECK(std::fabs(n[1] - 0.8) < 1e-6);
 	}
 
+	// glm::rotate (runtime) agrees with the constexpr table rotations (compile
+	// time) - same handedness/sign. A convention mismatch would be ~1, not ~5e-5.
+	{
+		constexpr ftrig::mat4 cx = ftrig::rotationX(0.6);
+		constexpr ftrig::mat4 cy = ftrig::rotationY(0.6);
+		constexpr ftrig::mat4 cz = ftrig::rotationZ(0.6);
+		volatile double a = 0.6; // runtime -> glm::rotate branch
+		const ftrig::mat4 rx = ftrig::rotationX(a), ry = ftrig::rotationY(a), rz = ftrig::rotationZ(a);
+		double maxd = 0;
+		for (int c = 0; c < 4; ++c) {
+			for (int r = 0; r < 4; ++r) {
+				maxd = std::max(maxd, std::fabs(cx[c][r] - rx[c][r]));
+				maxd = std::max(maxd, std::fabs(cy[c][r] - ry[c][r]));
+				maxd = std::max(maxd, std::fabs(cz[c][r] - rz[c][r]));
+			}
+		}
+		std::printf("rotation compile-vs-runtime max diff = %.2e\n", maxd);
+		CHECK(maxd < 1e-3);
+	}
+
 	if (failures == 0) { std::printf("babylon suite: all checks passed\n"); }
 	return failures ? 1 : 0;
 }
