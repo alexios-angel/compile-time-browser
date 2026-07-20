@@ -776,7 +776,10 @@ constexpr model parse_glb(const unsigned char * data, size_t len) {
 				const r3d::vec4 w = r3d::xform(xf, r3d::V3(read_f32le(vp + i * vstride),
 				                                          read_f32le(vp + i * vstride + 4),
 				                                          read_f32le(vp + i * vstride + 8)));
-				const r3d::vec3 v = r3d::V3(w[0], w[1], w[2]);
+				// glTF is right-handed (+Z toward the viewer); this renderer is
+				// left-handed (+Z into the screen). Negate Z (and flip the triangle
+				// winding below) to convert - otherwise models face backwards.
+				const r3d::vec3 v = r3d::V3(w[0], w[1], -w[2]);
 				out_p.verts.push_back(v);
 				if (first) { out.bmin = out.bmax = v; first = false; }
 				for (int c = 0; c < 3; ++c) {
@@ -797,7 +800,9 @@ constexpr model parse_glb(const unsigned char * data, size_t len) {
 				idx.push_back(static_cast<int>(v));
 			}
 			for (size_t i = 0; i + 2 < idx.size(); i += 3) {
-				out_p.tris.push_back({idx[i], idx[i + 1], idx[i + 2]});
+				// winding flipped (idx[i+2] before idx[i+1]) to match the Z negation
+				// above, so faces stay outward after the right->left handed flip
+				out_p.tris.push_back({idx[i], idx[i + 2], idx[i + 1]});
 			}
 			out.prims.push_back(std::move(out_p));
 		}
