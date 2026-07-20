@@ -118,14 +118,18 @@ public:
 	void click_at(int x, int y) {
 		if (!doc.root) { return; }
 		node * hit = doc.root->hit_test(x, y);
-		// fire addEventListener('click', ...) on the hit target and its ancestors
-		// (bubbling), as the DOM would - copy each list, handlers may mutate it
+		// fire addEventListener('click', ...) AND the .onclick property handler on
+		// the hit target and its ancestors (bubbling), as the DOM would - copy each
+		// list, handlers may mutate it
 		for (node * n = hit; n != nullptr; n = n->parent) {
-			const auto it = ev.click_listeners.find(n);
-			if (it == ev.click_listeners.end()) { continue; }
-			const std::vector<ctjs::value> fns = it->second;
-			for (const ctjs::value & fn : fns) {
-				ev.invoke(fn, {detail::mouse_event(static_cast<double>(x), static_cast<double>(y))});
+			if (const auto it = ev.click_listeners.find(n); it != ev.click_listeners.end()) {
+				const std::vector<ctjs::value> fns = it->second;
+				for (const ctjs::value & fn : fns) {
+					ev.invoke(fn, {detail::mouse_event(static_cast<double>(x), static_cast<double>(y))});
+				}
+			}
+			if (const auto it = ev.onclick_handlers.find(n); it != ev.onclick_handlers.end()) {
+				ev.invoke(it->second, {detail::mouse_event(static_cast<double>(x), static_cast<double>(y))});
 			}
 		}
 		// legacy onClick(id): nearest ancestor with a non-empty id

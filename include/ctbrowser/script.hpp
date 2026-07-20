@@ -124,6 +124,10 @@ struct dom_events {
 	// fires the clicked element's and its ancestors' on a click. Node-keyed, so
 	// cleared on reload with the rest.
 	std::map<node *, std::vector<ctjs::value>> click_listeners;
+	// per-element .onclick PROPERTY handlers (el.onclick = fn) - a single handler
+	// per node (assignment replaces), distinct from addEventListener. Node-keyed
+	// so a click resolves it even though element handles are transient.
+	std::map<node *, ctjs::value> onclick_handlers;
 	// the window object + the viewport the engine last laid out
 	ctjs::rc<ctjs::object_t> window_obj;
 	int viewport_w = 0;
@@ -139,6 +143,7 @@ struct dom_events {
 		tracked.clear();
 		change_handlers.clear();
 		click_listeners.clear();
+		onclick_handlers.clear();
 	}
 
 	// fire everything due at now_ms. Handlers may add or clear timers
@@ -515,6 +520,25 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 		                  return ctjs::value::object(std::move(r));
 	                  },
 	                  "rect"));
+	// .onclick PROPERTY (el.onclick = fn), like the DOM: stored on the node
+	// registry (handles are transient), fired by engine::click_at on this element
+	// and — via bubbling — its descendants' clicks. The game's "PLAY AGAIN" panel
+	// uses this idiom rather than addEventListener.
+	ctjs::attach_accessor(o, "onclick", 's', ctjs::value::function(
+	    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+		    node * en = ev->node_of(cx.current_this);
+		    if (en != nullptr && !a.empty()) {
+			    if (a[0].is_function()) { ev->onclick_handlers[en] = a[0]; }
+			    else { ev->onclick_handlers.erase(en); }
+		    }
+		    return ctjs::value{};
+	    }, "set onclick"));
+	ctjs::attach_accessor(o, "onclick", 'g', ctjs::value::function(
+	    [ev](ctjs::context & cx, const std::vector<ctjs::value> &) -> ctjs::value {
+		    node * en = ev->node_of(cx.current_this);
+		    const auto it = en != nullptr ? ev->onclick_handlers.find(en) : ev->onclick_handlers.end();
+		    return it != ev->onclick_handlers.end() ? it->second : ctjs::value{};
+	    }, "get onclick"));
 	// --- <select> / <option> form-control properties (native accessors) ---
 	if (n->is_select()) {
 		// .value: the selected <option>'s value attribute (live), or pick by value
