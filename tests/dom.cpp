@@ -3,7 +3,7 @@
 // instantiated into the ctbrowser node tree, mutated and queried
 // entirely at COMPILE TIME - proven by the static_assert below. At
 // RUNTIME the same instantiate_html() path builds the exact tree the
-// compile-time TYPE path (instantiate<Page::doc_type>) builds.
+// compile-time TYPE path (instantiate<Page::typed_dom<>>) builds.
 #include <ctbrowser.hpp>
 #include <cstdio>
 #include <string_view>
@@ -79,7 +79,7 @@ using Page = ctbrowser::page<PAGE_HTML>;
 // whole layout pass runs during constant evaluation.
 
 constexpr bool layout_compile_time() {
-	ctbrowser::document d = ctbrowser::instantiate<Page::doc_type>();
+	ctbrowser::document d = ctbrowser::instantiate<Page::typed_dom<>>();
 	ctbrowser::style_fn resolve =
 	    [](const ctcss::element_ref * c, size_t n, std::string_view p) {
 		    return ctcss::query(Page::sheet_type{}, c, n, p);
@@ -115,7 +115,7 @@ int main() {
 	CHECK(layout_compile_time());
 
 	// value path (runtime string) reproduces the compile-time TYPE path
-	ctbrowser::document typed = ctbrowser::instantiate<Page::doc_type>();
+	ctbrowser::document typed = ctbrowser::instantiate<Page::typed_dom<>>();
 	ctbrowser::document value = ctbrowser::instantiate_html(kHtml);
 	CHECK(same_tree(typed.root.get(), value.root.get()));
 

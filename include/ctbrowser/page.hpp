@@ -126,14 +126,127 @@ struct script_tag {
 	static constexpr std::string_view view() noexcept { return "script"; }
 };
 
+// --- the HTML source as runtime UTF-8 BYTES.
+//
+// The page NTTP is a ctll::fixed_string of char32_t code points (the raw .inc
+// bytes decoded as UTF-8). Re-encode it back to bytes so the DOM can be built
+// at RUNTIME with cthtml's linear VALUE parser (instantiate_html) instead of
+// the compile-time Earley parse - the Earley HTML parse is superlinear and is
+// the build-time wall for large pages.
+constexpr std::size_t utf8_len(char32_t c) noexcept {
+	return c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+}
+constexpr std::size_t put_utf8(char * out, char32_t c) noexcept {
+	if (c < 0x80) { out[0] = static_cast<char>(c); return 1; }
+	if (c < 0x800) {
+		out[0] = static_cast<char>(0xC0 | (c >> 6));
+		out[1] = static_cast<char>(0x80 | (c & 0x3F));
+		return 2;
+	}
+	if (c < 0x10000) {
+		out[0] = static_cast<char>(0xE0 | (c >> 12));
+		out[1] = static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+		out[2] = static_cast<char>(0x80 | (c & 0x3F));
+		return 3;
+	}
+	out[0] = static_cast<char>(0xF0 | (c >> 18));
+	out[1] = static_cast<char>(0x80 | ((c >> 12) & 0x3F));
+	out[2] = static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+	out[3] = static_cast<char>(0x80 | (c & 0x3F));
+	return 4;
+}
+
+template <ctll::fixed_string Src> struct html_bytes {
+	static constexpr std::size_t length = [] {
+		std::size_t n = 0;
+		for (std::size_t i = 0; i < Src.size(); ++i) { n += utf8_len(Src.content[i]); }
+		return n;
+	}();
+	static constexpr auto compute() noexcept {
+		std::array<char, length + 1> out{};
+		std::size_t k = 0;
+		for (std::size_t i = 0; i < Src.size(); ++i) { k += put_utf8(out.data() + k, Src.content[i]); }
+		return out;
+	}
+	static constexpr std::array<char, length + 1> storage = compute();
+	static constexpr std::string_view get() noexcept { return {storage.data(), length}; }
+};
+
+// --- linear <style>/<script> text extraction, WITHOUT the type DOM.
+//
+// A cheap left-to-right scan for a raw-text element's content, concatenated
+// (document order, '\n' after each) exactly like tag_text did off the type DOM
+// - so sheet_type / script_valid are unchanged, but nothing forces the Earley
+// HTML parse. (Inline elements only; <script src> is left to the type path.)
+constexpr bool tag_at(std::string_view h, std::size_t i, std::string_view tag) noexcept {
+	if (i + tag.size() > h.size()) { return false; }
+	for (std::size_t k = 0; k < tag.size(); ++k) {
+		char c = h[i + k];
+		if (c >= 'A' && c <= 'Z') { c = static_cast<char>(c - 'A' + 'a'); }
+		if (c != tag[k]) { return false; }
+	}
+	// the char after the name must end the tag name
+	char nx = (i + tag.size() < h.size()) ? h[i + tag.size()] : '>';
+	return nx == '>' || nx == ' ' || nx == '\t' || nx == '\n' || nx == '\r' || nx == '/';
+}
+
+// writes to `out` when non-null; returns the number of bytes produced
+constexpr std::size_t scan_raw_tag(std::string_view h, std::string_view tag, char * out) noexcept {
+	std::size_t written = 0, i = 0;
+	while (i < h.size()) {
+		if (h[i] == '<' && tag_at(h, i + 1, tag)) {
+			std::size_t j = i + 1 + tag.size();
+			while (j < h.size() && h[j] != '>') { ++j; }   // skip the open tag's attrs
+			if (j < h.size()) { ++j; }                       // past '>'
+			std::size_t start = j;
+			while (j < h.size() && !(h[j] == '<' && j + 1 < h.size() && h[j + 1] == '/' &&
+			                         tag_at(h, j + 2, tag))) { ++j; }
+			for (std::size_t k = start; k < j; ++k) { if (out) { out[written] = h[k]; } ++written; }
+			if (out) { out[written] = '\n'; } ++written;
+			i = j;
+		} else {
+			++i;
+		}
+	}
+	return written;
+}
+
+template <ctll::fixed_string Src, typename Tag> struct raw_tag_text {
+	static constexpr std::size_t length = scan_raw_tag(html_bytes<Src>::get(), Tag::view(), nullptr);
+	static constexpr auto compute() noexcept {
+		std::array<char, length + 1> out{};
+		(void)scan_raw_tag(html_bytes<Src>::get(), Tag::view(), out.data());
+		return out;
+	}
+	static constexpr std::array<char, length + 1> storage = compute();
+	static constexpr std::string_view get() noexcept { return {storage.data(), length}; }
+};
+
 } // namespace detail
 
-// the assembled application: DOM type + stylesheet type + script type
-template <CTJS_STRING_INPUT Src> struct page {
-	using doc_type = decltype(cthtml::parse<Src>());
+namespace detail {
+struct title_tag {
+	static constexpr std::string_view view() noexcept { return "title"; }
+};
+} // namespace detail
 
-	using style_source = detail::tag_text<doc_type, detail::style_tag>;
-	using script_source = detail::tag_text<doc_type, detail::script_tag>;
+// the assembled application. The DOM is built at RUNTIME from the value parser
+// (engine: instantiate_html(html_text())) - the Earley HTML parse is superlinear
+// and is the build-time wall for large pages, so nothing here forces it. The
+// stylesheet is still compile-time (ctcss is type-level) but its <style> text is
+// extracted by a LINEAR scan, not by walking the type DOM. The compile-time DOM
+// TYPE is available on demand as `typed_dom<>` (a lazy member alias template, so
+// naming the page never triggers the Earley parse) for the folds-at-compile-time
+// tests.
+template <CTJS_STRING_INPUT Src> struct page {
+	// the compile-time DOM type, on demand only (does NOT fold unless used)
+	template <int = 0> using typed_dom = decltype(cthtml::parse<Src>());
+
+	using style_source = detail::raw_tag_text<Src, detail::style_tag>;
+	using script_source = detail::raw_tag_text<Src, detail::script_tag>;
+
+	// the raw HTML as runtime bytes; the engine builds the DOM from this by value
+	static constexpr std::string_view html_text() noexcept { return detail::html_bytes<Src>::get(); }
 
 	// the page's CSS, parsed at compile time (a ctcss stylesheet type)
 	static constexpr auto sheet() noexcept {
@@ -141,23 +254,20 @@ template <CTJS_STRING_INPUT Src> struct page {
 	}
 	using sheet_type = decltype(sheet());
 
-	// the page's JS, parsed at compile time (a ctjs script). External
-	// <script src> files were embedded into the chain by tag_collect.
+	// the page's JS, parsed at compile time by the type/Earley path (only when
+	// script_valid/script_type is used - the engine runs the script BY VALUE).
 	using script_type = ctjs::script_t<detail::to_fixed<script_source>()>;
 
 	// the page's JS as a runtime string. The engine parses+runs this BY VALUE
-	// (ctjs::run_value) - no Earley parse, no per-script template instantiation,
-	// so the script costs the page's translation unit nothing at compile time.
+	// (ctjs::run_value) - no Earley parse, no per-script template instantiation.
 	static constexpr std::string_view script_text() noexcept { return script_source::get(); }
 
-	// the <title> text ("" when absent)
+	// the <title> text ("ctbrowser" when absent), extracted linearly
 	static constexpr std::string_view title() noexcept {
-		using head = decltype(doc_type::template get<"head">());
-		if constexpr (head::template contains<"title">()) {
-			return decltype(head::template get<"title">())::text();
-		} else {
-			return "ctbrowser";
-		}
+		std::string_view t = detail::raw_tag_text<Src, detail::title_tag>::get();
+		while (!t.empty() && (t.back() == '\n' || t.back() == ' ' || t.back() == '\t')) { t.remove_suffix(1); }
+		while (!t.empty() && (t.front() == ' ' || t.front() == '\t' || t.front() == '\n')) { t.remove_prefix(1); }
+		return t.empty() ? std::string_view{"ctbrowser"} : t;
 	}
 
 	static constexpr bool script_valid = script_type::valid;

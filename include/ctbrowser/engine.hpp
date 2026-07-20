@@ -58,7 +58,7 @@ public:
 	explicit engine(std::vector<ctjs::binding> extra = {},
 	                std::function<image(const std::string &)> image_decoder = {},
 	                std::vector<embedded_asset> embedded = {})
-	    : doc(instantiate<typename Page::doc_type>()),
+	    : doc(instantiate_html(Page::html_text())),
 	      title(Page::title()),
 	      assets(detail::merge_assets(std::move(embedded), auto_assets<Page>())),
 	      images{{}, std::move(image_decoder), &assets},
@@ -141,7 +141,7 @@ public:
 	// document.location.reload(): fresh DOM, fresh script run
 	void do_reload() {
 		ev.reset();
-		doc = instantiate<typename Page::doc_type>();
+		doc = instantiate_html(Page::html_text());
 		script = ctjs::run_value(Page::script_text(), all_bindings(extra_));
 	}
 
