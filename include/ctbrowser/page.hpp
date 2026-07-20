@@ -145,6 +145,11 @@ template <CTJS_STRING_INPUT Src> struct page {
 	// <script src> files were embedded into the chain by tag_collect.
 	using script_type = ctjs::script_t<detail::to_fixed<script_source>()>;
 
+	// the page's JS as a runtime string. The engine parses+runs this BY VALUE
+	// (ctjs::run_value) - no Earley parse, no per-script template instantiation,
+	// so the script costs the page's translation unit nothing at compile time.
+	static constexpr std::string_view script_text() noexcept { return script_source::get(); }
+
 	// the <title> text ("" when absent)
 	static constexpr std::string_view title() noexcept {
 		using head = decltype(doc_type::template get<"head">());

@@ -66,7 +66,7 @@ public:
 		      return ctcss::query(typename Page::sheet_type{}, chain, n, prop);
 	      }),
 	      extra_(extra),
-	      script(Page::script_type::run(all_bindings(std::move(extra)))) { }
+	      script(ctjs::run_value(Page::script_text(), all_bindings(std::move(extra)))) { }
 
 	engine(const engine &) = delete;
 	engine & operator=(const engine &) = delete;
@@ -142,7 +142,7 @@ public:
 	void do_reload() {
 		ev.reset();
 		doc = instantiate<typename Page::doc_type>();
-		script = Page::script_type::run(all_bindings(extra_));
+		script = ctjs::run_value(Page::script_text(), all_bindings(extra_));
 	}
 
 private:
