@@ -42,7 +42,9 @@ BOOST_INCLUDE := $(if $(BOOST_INC_DIR),-I$(BOOST_INC_DIR),)
 
 # ctbrowser is value-only: skip the bricks' lark grammars entirely
 GRAMMAR_FREE := -DCTHTML_NO_GRAMMAR -DCTCSS_NO_GRAMMAR -DCTJS_NO_GRAMMAR
-CXXFLAGS := -std=c++23 -I../include $(SUBMODULE_INCLUDES) $(BOOST_INCLUDE) $(SDL_CFLAGS) $(CONSTEXPR_FLAGS) $(GRAMMAR_FREE) -O2 -pedantic -Wall -Wextra -Werror -Wconversion
+# a whole bundled app (e.g. space-invaders) is one raw-string NTTP > 64 KB - the
+# std::embed clang handles it; silence the standard-minimum-length warning
+CXXFLAGS := -std=c++23 -I../include $(SUBMODULE_INCLUDES) $(BOOST_INCLUDE) $(SDL_CFLAGS) $(CONSTEXPR_FLAGS) $(GRAMMAR_FREE) -Wno-overlength-strings -O2 -pedantic -Wall -Wextra -Werror -Wconversion
 
 SOURCES := $(wildcard *.cpp)
 TARGETS := $(SOURCES:%.cpp=%)
@@ -58,11 +60,12 @@ $(PCH): ../include/ctbrowser.hpp
 	@ulimit -s unlimited 2>/dev/null; $(CXX) $(filter-out $(SDL_CFLAGS),$(CXXFLAGS)) -x c++-header $< -o $@
 
 # real .html pages become raw-string .inc literals (see tools/html-to-inc.py)
-pong.inc fetchboard.inc: %.inc: %.html ../tools/html-to-inc.py
+pong.inc fetchboard.inc space-invaders.inc: %.inc: %.html ../tools/html-to-inc.py
 	python3 ../tools/html-to-inc.py $< > $@
 
 pong: pong.inc
 fetchboard: fetchboard.inc
+space-invaders: space-invaders.inc
 
 # make FETCH=1: authorize the compile-time fetches in fetchboard.html,
 # so the build's constant evaluator performs the HTTP GETs and embeds

@@ -48,7 +48,7 @@ BOOST_ROOTS := /home/linuxbrew/.linuxbrew/include /opt/homebrew/include /usr/loc
 BOOST_INC_DIR := $(firstword $(foreach d,$(BOOST_ROOTS),$(if $(wildcard $(d)/boost/qvm),$(d))))
 BOOST_INCLUDE := $(if $(BOOST_INC_DIR),-I$(BOOST_INC_DIR),)
 
-override CXXFLAGS := $(CXXFLAGS) -std=c++23 -Iinclude $(SUBMODULE_INCLUDES) $(BOOST_INCLUDE) $(CONSTEXPR_FLAGS) $(GRAMMAR_FREE) -O2 -pedantic -Wall -Wextra -Werror -Wconversion
+override CXXFLAGS := $(CXXFLAGS) -std=c++23 -Iinclude $(SUBMODULE_INCLUDES) $(BOOST_INCLUDE) $(CONSTEXPR_FLAGS) $(GRAMMAR_FREE) -Wno-overlength-strings -O2 -pedantic -Wall -Wextra -Werror -Wconversion
 
 # precompiled header: parsing the HTML + JavaScript + CSS grammars and
 # compiling their Earley tables happens ONCE here - the JS grammar is

@@ -219,11 +219,26 @@ inline std::string dom_key_key(std::string_view code) {
 	return std::string{code};
 }
 
+// the no-op methods every DOM Event carries (preventDefault/stopPropagation)
+inline void add_event_methods(ctjs::object_t & ev) {
+	for (const char * nm : {"preventDefault", "stopPropagation", "stopImmediatePropagation"}) {
+		ev.set(nm, ctjs::value::function([](ctjs::context &, const std::vector<ctjs::value> &) { return ctjs::value{}; }, nm));
+	}
+	ev.set("defaultPrevented", ctjs::value{false});
+	ev.set("bubbles", ctjs::value{true});
+	ev.set("cancelable", ctjs::value{true});
+	ev.set("isTrusted", ctjs::value{true});
+}
+
 inline ctjs::value key_event(std::string_view sdl_name) {
 	ctjs::object_t ev;
 	const std::string code = dom_key_code(sdl_name);
 	ev.set("key", ctjs::value{dom_key_key(code)});
 	ev.set("code", ctjs::value{code});
+	ev.set("keyCode", ctjs::value{0.0});
+	ev.set("repeat", ctjs::value{false});
+	ev.set("type", ctjs::value{std::string{"keydown"}});
+	add_event_methods(ev);
 	return ctjs::value::object(std::move(ev));
 }
 
@@ -231,10 +246,21 @@ inline ctjs::value mouse_event(double x, double y) {
 	ctjs::object_t ev;
 	ev.set("clientX", ctjs::value{x});
 	ev.set("clientY", ctjs::value{y});
+	ev.set("pageX", ctjs::value{x});
+	ev.set("pageY", ctjs::value{y});
+	ev.set("button", ctjs::value{0.0});
+	ev.set("buttons", ctjs::value{0.0});
+	add_event_methods(ev);
 	return ctjs::value::object(std::move(ev));
 }
 
 inline ctjs::value canvas_context(node * n, image_store * images);
+
+// (defined below, after element_handle; used by getElementsByTagName/ClassName)
+inline void collect_by_tag(node * n, std::string_view tag, image_store * images, dom_events * ev,
+                           std::vector<ctjs::value> & out);
+inline void collect_by_class(node * n, std::string_view cls, image_store * images, dom_events * ev,
+                             std::vector<ctjs::value> & out);
 
 inline ctjs::value element_handle(node * n, image_store * images, dom_events * ev) {
 	ctjs::object_t o;
@@ -385,6 +411,26 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 		                           return hit ? element_handle(hit, images, ev) : ctjs::value{};
 	                           },
 	                           "querySelector"));
+	o.set("getElementsByTagName", ctjs::value::function(
+	          [n, images, ev](ctjs::context &, const std::vector<ctjs::value> & a) -> ctjs::value {
+		          std::vector<ctjs::value> out;
+		          if (!a.empty()) {
+			          const std::string tag = a[0].to_string();
+			          for (const auto & c : n->children) { collect_by_tag(c.get(), tag, images, ev, out); }
+		          }
+		          return ctjs::value::array(std::move(out));
+	          },
+	          "getElementsByTagName"));
+	o.set("getElementsByClassName", ctjs::value::function(
+	          [n, images, ev](ctjs::context &, const std::vector<ctjs::value> & a) -> ctjs::value {
+		          std::vector<ctjs::value> out;
+		          if (!a.empty()) {
+			          const std::string cls = a[0].to_string();
+			          for (const auto & c : n->children) { collect_by_class(c.get(), cls, images, ev, out); }
+		          }
+		          return ctjs::value::array(std::move(out));
+	          },
+	          "getElementsByClassName"));
 	// append(...nodes|strings): strings join the element's text (enough for
 	// the classic loading-dots idiom); nodes append as children
 	o.set("append", ctjs::value::function(
@@ -911,6 +957,18 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 // the document global: getElementById/addEventListener plus the
 // location.reload() escape hatch (the engine re-instantiates the DOM
 // and re-runs the script - navigation, compile-time style)
+// collect elements matching a tag ('*' = any) in n's subtree, self included
+inline void collect_by_tag(node * n, std::string_view tag, image_store * images, dom_events * ev,
+                           std::vector<ctjs::value> & out) {
+	if (tag == "*" || n->tag == tag) { out.push_back(element_handle(n, images, ev)); }
+	for (const auto & c : n->children) { collect_by_tag(c.get(), tag, images, ev, out); }
+}
+inline void collect_by_class(node * n, std::string_view cls, image_store * images, dom_events * ev,
+                             std::vector<ctjs::value> & out) {
+	if (n->has_class(cls)) { out.push_back(element_handle(n, images, ev)); }
+	for (const auto & c : n->children) { collect_by_class(c.get(), cls, images, ev, out); }
+}
+
 inline ctjs::value make_document(document & doc, image_store & images, dom_events & ev) {
 	ev.doc = &doc;
 	ctjs::object_t d;
@@ -947,6 +1005,22 @@ inline ctjs::value make_document(document & doc, image_store & images, dom_event
 	          "querySelector"));
 	// documentElement handle (the <html> root)
 	if (doc.root) { d.set("documentElement", element_handle(doc.root.get(), &images, &ev)); }
+	d.set("getElementsByTagName", ctjs::value::function(
+	          [&doc, &images, &ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+		          ev.cx = &cx;
+		          std::vector<ctjs::value> out;
+		          if (doc.root && !a.empty()) { collect_by_tag(doc.root.get(), a[0].to_string(), &images, &ev, out); }
+		          return ctjs::value::array(std::move(out));
+	          },
+	          "getElementsByTagName"));
+	d.set("getElementsByClassName", ctjs::value::function(
+	          [&doc, &images, &ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+		          ev.cx = &cx;
+		          std::vector<ctjs::value> out;
+		          if (doc.root && !a.empty()) { collect_by_class(doc.root.get(), a[0].to_string(), &images, &ev, out); }
+		          return ctjs::value::array(std::move(out));
+	          },
+	          "getElementsByClassName"));
 	d.set("addEventListener",
 	      ctjs::value::function(
 	          [&ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
