@@ -27,6 +27,10 @@ EXECUTABLES, SDL-free, headless. Examples need SDL3 (linuxbrew's here;
 `pkg-config sdl3` in examples/Makefile, `find_package(SDL3)` in CMake).
 CMake shares one PCH via the `ctbrowser-pch-anchor` target (REUSE_FROM).
 
+## Tooling (build-time preprocessors, not compile-time)
+- `tools/html-to-inc.py` — HTML → raw-string `.inc` for `#include` as a `page<>` NTTP (pong).
+- `tools/js-bundle.py` — **compile-time ES MODULE BUNDLER** (ctbrowser's Vite/rollup step). ctjs runs ONE script in ONE global scope with no module system, but real apps are ES modules pulling npm symbols. Given an entry HTML with `<script type=module src=…>`, it resolves the whole import graph, strips import/export, maps bare specifiers onto ctbrowser globals (`@babylonjs/core`→`BABYLON`, `@babylonjs/gui`→`BABYLON.GUI`, `@babylonjs/loaders`→dropped), canonicalises `export default` to the importers' name (no duplicate `const` in the shared scope), topo-orders modules (deps first, entry last), and emits ONE self-contained HTML (stylesheet `<link>`s incl. `.scss` via the `sass` CLI inline as `<style>`). NO syntax down-levelling — ctjs already parses class fields/statics, getters/setters, computed names, `??`/`?.`/`?.()`/optional-index, async/await. Verified on johnpitchers/Space-Invaders: 21 modules → one `node --check`-clean script. (Driving goal: run that BabylonJS game's Traditional-2D mode; remaining = the Babylon 2D API surface in babylon.hpp — Scalar/Axis/Space/Sound/Sprite+SpriteManager/UniversalCamera/GlowLayer/SceneLoader.ImportMeshAsync/AssetContainer/AssetsManager/ActionManager + the whole `BABYLON.GUI`.)
+
 ## Compile times (measured 2026-07, std::embed clang, 8-core server)
 - PCH bake: ~90 s (gcc took 31 min — clang's constexpr evaluator is ~20x
   faster here). Recipes run `ulimit -s unlimited`: the Earley folds at
