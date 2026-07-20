@@ -16,6 +16,20 @@
 #include <ctbrowser/app.hpp>
 #include <SDL3/SDL_main.h>
 
+// std::embed opt-in: the #depend gate the patched compiler requires before its
+// constant evaluator may read files - so assets.hpp can bake the @font-face
+// PressStart2P-Regular.ttf (and any other examples/assets file the page names)
+// straight into the binary. Other compilers skip the directive and fall back to
+// runtime file loading.
+#if defined(__has_builtin)
+#	if __has_builtin(__builtin_std_embed)
+#		pragma clang diagnostic push
+#		pragma clang diagnostic ignored "-Wc++2d-extensions"
+#depend "examples/assets/**"
+#		pragma clang diagnostic pop
+#	endif
+#endif
+
 using space_invaders = ctbrowser::page<
 #include "space-invaders.inc"
 >;

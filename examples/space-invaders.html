@@ -4,7 +4,11 @@
 <meta charset="UTF-8"/>
 <title>Space Invaders</title>
 <style>
-html,body{margin:0;padding:0;background:#000;color:#fff;font-family:monospace}
+/* Press Start 2P (SIL OFL 1.1) - the upstream game loads it from Google Fonts;
+   here it is vendored as a local .ttf. ctbrowser's SDL shell loads the first
+   loadable @font-face src and renders all page text with it. */
+@font-face{font-family:'Press Start 2P';src:url("examples/assets/fonts/PressStart2P-Regular.ttf")}
+html,body{margin:0;padding:0;background:#000;color:#fff;font-family:'Press Start 2P',monospace}
 canvas{display:block;margin:0 auto}
 
 /* The upstream game styles the menu from an external stylesheet that was not

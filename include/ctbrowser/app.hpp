@@ -107,12 +107,18 @@ struct ttf_text {
 	std::string path;
 	std::map<int, TTF_Font *> fonts;
 	std::map<std::pair<std::string, int>, SDL_Texture *> cache;
+	const void * mem = nullptr; // embedded font bytes (std::embed); opened via IO
+	size_t mem_size = 0;
 
-	bool ok() const { return !path.empty(); }
+	bool ok() const { return mem != nullptr || !path.empty(); }
 
 	TTF_Font * font(int px) {
 		if (const auto it = fonts.find(px); it != fonts.end()) { return it->second; }
-		TTF_Font * f = TTF_OpenFont(path.c_str(), static_cast<float>(px));
+		// a fresh IO per size; closeio=true has TTF read the font fully in and
+		// close it, so the embedded bytes need only outlive this call
+		TTF_Font * f = mem != nullptr
+		    ? TTF_OpenFontIO(SDL_IOFromConstMem(mem, mem_size), true, static_cast<float>(px))
+		    : TTF_OpenFont(path.c_str(), static_cast<float>(px));
 		fonts.emplace(px, f);
 		return f;
 	}
@@ -341,6 +347,7 @@ template <typename Page> int run_app(app_options opts = {}) {
 		// first loadable @font-face src (url(...), quotes stripped; a public-
 		// root "/assets/..." path also tried repo-relative), else a system font
 		std::string face;
+		const embedded_asset * emb = nullptr;
 		for (const auto & ff : e.font_faces()) {
 			std::string src{ff.get("src")};
 			const std::size_t up = src.find("url(");
@@ -350,17 +357,22 @@ template <typename Page> int run_app(app_options opts = {}) {
 			std::string p = src.substr(s, en - s);
 			while (!p.empty() && (p.front() == ' ' || p.front() == '"' || p.front() == '\'')) { p.erase(p.begin()); }
 			while (!p.empty() && (p.back() == ' ' || p.back() == '"' || p.back() == '\'')) { p.pop_back(); }
-			const auto ex = [](const std::string & x) {
-				if (x.empty()) { return false; }
-				if (FILE * f = std::fopen(x.c_str(), "rb")) { std::fclose(f); return true; }
-				return false;
-			};
-			if (ex(p)) { face = p; break; }
-			if (p.size() > 1 && p[0] == '/' && ex(p.substr(1))) { face = p.substr(1); break; }
+			// prefer the std::embed'd copy (self-contained binary); else resolve
+			// the file like any other asset (CWD, then binary dir + repo root);
+			// a leading '/' (public-root path) is also tried repo-relative
+			if ((emb = find_asset(&e.assets, p)) != nullptr) { break; }
+			std::string r = detail::resolve_asset(p);
+			if (r.empty() && p.size() > 1 && p[0] == '/') { r = detail::resolve_asset(p.substr(1)); }
+			if (!r.empty()) { face = r; break; }
 		}
-		ttf.path = !opts.font_path.empty() ? opts.font_path
-		           : !face.empty()         ? face
-		                                   : detail::probe_font();
+		if (!opts.font_path.empty()) {
+			ttf.path = opts.font_path;
+		} else if (emb != nullptr) {
+			ttf.mem = emb->data;
+			ttf.mem_size = emb->size;
+		} else {
+			ttf.path = !face.empty() ? face : detail::probe_font();
+		}
 		if (ttf.ok()) {
 			e.measure = [&ttf](std::string_view text, int px) {
 				return ttf.measure(text, px);

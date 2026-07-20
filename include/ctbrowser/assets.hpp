@@ -38,10 +38,11 @@ namespace detail {
 // / fetch("...")
 template <typename Src> struct script_asset_scan {
 	static constexpr std::string_view text = Src::get();
-	static constexpr std::array<std::string_view, 4> needles{"loadImage(\"",
+	static constexpr std::array<std::string_view, 5> needles{"loadImage(\"",
 	                                                         "playSound(\"",
 	                                                         "fetch(\"",
-	                                                         "AppendSceneAsync(\""};
+	                                                         "AppendSceneAsync(\"",
+	                                                         "url(\""}; // CSS @font-face src, e.g. url("...")
 
 	// {offset, length} of the path at position i, or length 0
 	static consteval std::pair<size_t, size_t> ref_at(size_t i) {
@@ -140,9 +141,15 @@ inline std::vector<embedded_asset> merge_assets(std::vector<embedded_asset> user
 // an empty vector on compilers without std::embed
 template <typename Page> inline std::vector<embedded_asset> auto_assets() {
 #ifdef CTBROWSER_HAS_STD_EMBED
-	using scan = detail::script_asset_scan<typename Page::script_source>;
-	return detail::collect_auto_assets<typename Page::script_source>(
-	    std::make_index_sequence<scan::N>{});
+	// scan BOTH the script (loadImage/playSound/fetch) and the stylesheet
+	// (@font-face src url("...")) - fonts referenced in CSS embed the same way
+	using sscan = detail::script_asset_scan<typename Page::script_source>;
+	using cscan = detail::script_asset_scan<typename Page::style_source>;
+	std::vector<embedded_asset> from_script = detail::collect_auto_assets<typename Page::script_source>(
+	    std::make_index_sequence<sscan::N>{});
+	std::vector<embedded_asset> from_style = detail::collect_auto_assets<typename Page::style_source>(
+	    std::make_index_sequence<cscan::N>{});
+	return detail::merge_assets(std::move(from_script), std::move(from_style));
 #else
 	return {};
 #endif
