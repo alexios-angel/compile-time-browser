@@ -78,18 +78,99 @@ constexpr bool skipped_tag(std::string_view tag) {
 	return tag == "head" || tag == "style" || tag == "script" || tag == "title";
 }
 
+// a containing block: the rect that position:absolute/fixed children and
+// percentage lengths resolve against
+struct box {
+	int x = 0, y = 0, w = 0, h = 0;
+};
+
 struct layout_pass {
 	const style_fn * resolve;
 	const text_measure_fn * measure;
 	std::vector<paint_cmd> * out;
-	int vw = 0;  // viewport width  (for position:fixed/absolute + text-align)
-	int vh = 0;  // viewport height (for top/bottom + vertical placement)
+	int vw = 0;  // viewport width  (for position:fixed/absolute + vw/text-align)
+	int vh = 0;  // viewport height (for top/bottom + vh + vertical placement)
 
 	static constexpr int UNSET = -1000000;
 
 	constexpr int text_width(std::string_view t, int font_px) const {
 		if (measure != nullptr && *measure) { return (*measure)(t, font_px); }
 		return static_cast<int>(t.size()) * font_px;
+	}
+
+	// resolve a CSS length to px: px/unitless absolute; % of `basis`; vw/vh of the
+	// viewport; em of `font_px`; rem of the 16px root. calc() is not handled.
+	constexpr int len_px(std::string_view s, int basis, int font_px, int fallback) const {
+		const ctcss::length l = ctcss::parse_length(s);
+		if (!l.ok) { return fallback; }
+		switch (l.u) {
+		case ctcss::unit::px:
+		case ctcss::unit::none: return static_cast<int>(l.value);
+		case ctcss::unit::pct: return static_cast<int>(l.value / 100.0 * basis);
+		case ctcss::unit::vw: return static_cast<int>(l.value / 100.0 * vw);
+		case ctcss::unit::vh: return static_cast<int>(l.value / 100.0 * vh);
+		case ctcss::unit::em: return static_cast<int>(l.value * font_px);
+		case ctcss::unit::rem: return static_cast<int>(l.value * 16.0);
+		}
+		return fallback;
+	}
+	constexpr int prop_px(const computed_style & cs, std::string_view prop, int basis,
+	                      int font_px, int fallback) const {
+		return len_px(cs.get(prop), basis, font_px, fallback);
+	}
+
+	// computed font-size (px): em/% relative to the parent's font, vw/vh to the
+	// viewport, rem to the root; inherits when unset (root default 16px)
+	constexpr int font_of(node * n) const {
+		if (n == nullptr) { return 16; }
+		computed_style cs{n, resolve, n->chain()};
+		const ctcss::length l = ctcss::parse_length(cs.get("font-size"));
+		if (!l.ok) { return font_of(n->parent); }
+		switch (l.u) {
+		case ctcss::unit::px:
+		case ctcss::unit::none: return static_cast<int>(l.value);
+		case ctcss::unit::em: return static_cast<int>(l.value * font_of(n->parent));
+		case ctcss::unit::pct: return static_cast<int>(l.value / 100.0 * font_of(n->parent));
+		case ctcss::unit::rem: return static_cast<int>(l.value * 16.0);
+		case ctcss::unit::vw: return static_cast<int>(l.value / 100.0 * vw);
+		case ctcss::unit::vh: return static_cast<int>(l.value / 100.0 * vh);
+		}
+		return font_of(n->parent);
+	}
+
+	// transform: translate/translateX/translateY offsets (px); % of the element's
+	// own (w,h). rotate/scale/translateZ and other functions are ignored.
+	constexpr void translate_of(const computed_style & cs, int w, int h, int font_px,
+	                            int & tx, int & ty) const {
+		const std::string_view t = cs.get("transform");
+		tx = 0;
+		ty = 0;
+		size_t i = 0;
+		while (i < t.size()) {
+			const size_t p = t.find("translate", i);
+			if (p == std::string_view::npos) { break; }
+			size_t j = p + 9; // past "translate"
+			int axis = 2;     // 0 = X, 1 = Y, 2 = both
+			if (j < t.size() && (t[j] == 'X' || t[j] == 'x')) { axis = 0; ++j; }
+			else if (j < t.size() && (t[j] == 'Y' || t[j] == 'y')) { axis = 1; ++j; }
+			else if (j < t.size() && (t[j] == 'Z' || t[j] == 'z')) { i = j + 1; continue; }
+			if (j >= t.size() || t[j] != '(') { i = j; continue; }
+			const size_t open = j + 1, close = t.find(')', open);
+			if (close == std::string_view::npos) { break; }
+			const std::string_view args = t.substr(open, close - open);
+			const size_t comma = args.find(',');
+			const std::string_view a0 = trimmed(comma == std::string_view::npos ? args : args.substr(0, comma));
+			const std::string_view a1 = comma == std::string_view::npos ? std::string_view{} : trimmed(args.substr(comma + 1));
+			if (axis == 0) {
+				tx += len_px(a0, w, font_px, 0);
+			} else if (axis == 1) {
+				ty += len_px(a0, h, font_px, 0);
+			} else {
+				tx += len_px(a0, w, font_px, 0);
+				if (!a1.empty()) { ty += len_px(a1, h, font_px, 0); }
+			}
+			i = close + 1;
+		}
 	}
 
 	// text-align inherits: walk up until a node sets it ("" = default/left)
@@ -124,11 +205,12 @@ struct layout_pass {
 		for (const auto & c : n.children) { translate_rects(*c, dx, dy); }
 	}
 
-	// lay out `n` with its content starting at (x, y), `width` available
-	// for the border box; returns the border-box height CONTRIBUTED TO FLOW
-	// (0 for position:fixed/absolute, which are lifted out and positioned
-	// against the viewport).
-	constexpr int place(node & n, int x, int y, int width) {
+	// lay out `n` with its content starting at (x, y), `width` available for the
+	// border box, `cb` the containing block (nearest positioned ancestor, or the
+	// viewport). Returns the border-box height CONTRIBUTED TO FLOW - 0 for
+	// position:fixed/absolute, which are lifted out and positioned against `cb`
+	// (fixed) / the viewport (fixed), then offset by any transform:translate.
+	constexpr int place(node & n, int x, int y, int width, const box & cb) {
 		if (skipped_tag(n.tag)) {
 			n.x = n.y = n.w = n.h = 0;
 			return 0;
@@ -138,35 +220,45 @@ struct layout_pass {
 			n.x = n.y = n.w = n.h = 0;
 			return 0;
 		}
+		const int font_px = font_of(&n);
 		const std::string_view pos = cs.get("position");
 		if (pos == std::string_view{"fixed"} || pos == std::string_view{"absolute"}) {
-			// containing block = the viewport (nearest-positioned-ancestor is
-			// not tracked; enough to overlay UI on a full-window canvas)
-			const int left = cs.px("left", UNSET), right = cs.px("right", UNSET);
-			const int top = cs.px("top", UNSET), bottom = cs.px("bottom", UNSET);
-			int pw = cs.px("width", -1);
-			if (pw < 0) {
-				pw = vw - (left != UNSET ? left : 0) - (right != UNSET ? right : 0);
-			}
-			if (pw < 0) { pw = vw; }
+			const box vp{0, 0, vw, vh};
+			const box & c = (pos == std::string_view{"fixed"}) ? vp : cb;
+			const int left = prop_px(cs, "left", c.w, font_px, UNSET);
+			const int right = prop_px(cs, "right", c.w, font_px, UNSET);
+			const int top = prop_px(cs, "top", c.h, font_px, UNSET);
+			const int bottom = prop_px(cs, "bottom", c.h, font_px, UNSET);
+			int pw = prop_px(cs, "width", c.w, font_px, -1);
+			if (pw < 0) { pw = c.w - (left != UNSET ? left : 0) - (right != UNSET ? right : 0); }
+			if (pw < 0) { pw = c.w; }
+			const int maxw = prop_px(cs, "max-width", c.w, font_px, -1);
+			if (maxw >= 0 && pw > maxw) { pw = maxw; }
+			const int ph = prop_px(cs, "height", c.h, font_px, -1); // definite? else content
 			const size_t start = out->size();
-			const int h = block_body(n, 0, 0, pw); // lay out at the origin...
-			const int fx = (left != UNSET) ? left : (right != UNSET ? vw - pw - right : 0);
-			const int fy = (top != UNSET) ? top : (bottom != UNSET ? vh - h - bottom : 0);
-			translate(start, n, fx, fy);         // ...then lift to (fx, fy)
-			return 0;                            // out of normal flow
+			// children resolve against THIS box, laid out at the origin then lifted
+			const box child_cb{0, 0, pw, ph >= 0 ? ph : c.h};
+			const int laid = block_body(n, 0, 0, pw, child_cb);
+			const int h = ph >= 0 ? ph : laid;
+			int fx = c.x + (left != UNSET ? left : (right != UNSET ? c.w - pw - right : 0));
+			int fy = c.y + (top != UNSET ? top : (bottom != UNSET ? c.h - h - bottom : 0));
+			int tx = 0, ty = 0;
+			translate_of(cs, pw, h, font_px, tx, ty);
+			translate(start, n, fx + tx, fy + ty);
+			return 0; // out of normal flow
 		}
-		return block_body(n, x, y, width);
+		return block_body(n, x, y, width, cb);
 	}
 
-	// the in-flow block layout: text, canvas payload, and stacked children
-	constexpr int block_body(node & n, int x, int y, int width) {
+	// the in-flow block layout: text, canvas payload, and stacked children. `cb`
+	// is passed through to descendants (a static box does not establish one).
+	constexpr int block_body(node & n, int x, int y, int width, const box & cb) {
 		computed_style cs{&n, resolve, n.chain()};
-		const int margin = cs.px("margin", 0);
-		const int padding = cs.px("padding", 0);
-		const int font_px = cs.px("font-size", inherited_font(n, cs));
+		const int font_px = font_of(&n);
+		const int margin = prop_px(cs, "margin", width, font_px, 0);
+		const int padding = prop_px(cs, "padding", width, font_px, 0);
 
-		int box_w = cs.px("width", -1);
+		int box_w = prop_px(cs, "width", width, font_px, -1);
 		if (box_w < 0) { box_w = width - 2 * margin; }
 		if (n.is_canvas()) { box_w = n.canvas_w; }
 		const int content_w = box_w - 2 * padding;
@@ -236,12 +328,13 @@ struct layout_pass {
 			cursor += n.canvas_h;
 		}
 
-		// children stack vertically
+		// children stack vertically; a static box passes its own containing block
+		// straight through (only positioned boxes establish a new one, in place())
 		for (const auto & c : n.children) {
-			cursor += place(*c, n.x + padding, cursor, content_w);
+			cursor += place(*c, n.x + padding, cursor, content_w, cb);
 		}
 
-		int box_h = cs.px("height", -1);
+		int box_h = prop_px(cs, "height", cb.h, font_px, -1);
 		if (box_h < 0) { box_h = (cursor - n.y) + padding; }
 		n.h = box_h;
 
@@ -254,15 +347,6 @@ struct layout_pass {
 		const size_t begin = v.find_first_not_of(ws);
 		if (begin == std::string_view::npos) { return {}; }
 		return v.substr(begin, v.find_last_not_of(ws) - begin + 1);
-	}
-
-	constexpr int inherited_font(node & n, const computed_style &) {
-		for (node * p = n.parent; p != nullptr; p = p->parent) {
-			computed_style pcs{p, resolve, p->chain()};
-			const int v = pcs.px("font-size", -1);
-			if (v > 0) { return v; }
-		}
-		return 16;
 	}
 };
 
@@ -300,7 +384,7 @@ constexpr std::vector<paint_cmd> layout(document & doc, int viewport_w,
                                      int viewport_h = 0) {
 	std::vector<paint_cmd> content;
 	detail::layout_pass pass{&resolve, &measure, &content, viewport_w, viewport_h};
-	if (doc.root) { (void)pass.place(*doc.root, 0, 0, viewport_w); }
+	if (doc.root) { (void)pass.place(*doc.root, 0, 0, viewport_w, detail::box{0, 0, viewport_w, viewport_h}); }
 	std::vector<paint_cmd> out;
 	if (doc.root) { detail::collect_backgrounds(*doc.root, resolve, out); }
 	out.insert(out.end(), content.begin(), content.end());
