@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -92,6 +93,12 @@ struct dom_events {
 	std::vector<std::string> alerts;
 	bool reload = false;
 	double now_ms = 0;
+	// audio backend the SDL shell installs (empty in headless/engine-only
+	// builds): play_audio(url, loop) -> handle, stop_audio(handle), volume.
+	// BABYLON's Sound routes here (babylon.hpp), the shell wires it to the mixer.
+	std::function<int(const std::string &, bool)> play_audio;
+	std::function<void(int)> stop_audio;
+	std::function<void(float)> set_audio_volume;
 	// every element handle carries "__node", an index here - how one
 	// handle's native (appendChild) resolves ANOTHER handle's node
 	std::vector<node *> handle_nodes;

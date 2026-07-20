@@ -47,13 +47,36 @@ public:
 		if (mixer_ != nullptr) { MIX_SetMixerGain(mixer_, volume_); }
 	}
 
-	bool play(const std::string & path) {
-		if (!ready()) { return false; }
+	bool play(const std::string & path) { return play(path, false) != 0; }
+
+	// play `path` (looping if `loop`); returns a handle for stop(), 0 on failure.
+	// SDL3_mixer's MIX_PlayTrack takes options as an SDL_PropertiesID - loops are
+	// the MIX_PROP_PLAY_LOOPS_NUMBER property (-1 = infinite).
+	int play(const std::string & path, bool loop) {
+		if (!ready()) { return 0; }
 		MIX_Audio * audio = load(path);
-		if (audio == nullptr) { return false; }
+		if (audio == nullptr) { return 0; }
 		MIX_Track * track = idle_track();
-		if (track == nullptr) { return false; }
-		return MIX_SetTrackAudio(track, audio) && MIX_PlayTrack(track, 0);
+		if (track == nullptr) { return 0; }
+		if (!MIX_SetTrackAudio(track, audio)) { return 0; }
+		SDL_PropertiesID options = 0;
+		if (loop) {
+			options = SDL_CreateProperties();
+			SDL_SetNumberProperty(options, MIX_PROP_PLAY_LOOPS_NUMBER, -1);
+		}
+		const bool ok = MIX_PlayTrack(track, options);
+		if (options != 0) { SDL_DestroyProperties(options); }
+		if (!ok) { return 0; }
+		for (std::size_t i = 0; i < tracks_.size(); ++i) {
+			if (tracks_[i] == track) { return static_cast<int>(i) + 1; }
+		}
+		return 0;
+	}
+	// stop a track started by play(); a stale handle (track reused) is a no-op-ish
+	void stop(int handle) {
+		if (handle > 0 && handle <= static_cast<int>(tracks_.size())) {
+			MIX_StopTrack(tracks_[static_cast<std::size_t>(handle - 1)], 0);
+		}
 	}
 
 private:
@@ -110,23 +133,38 @@ public:
 
 	void set_volume(float v) { volume_ = v < 0 ? 0.0f : v > 1 ? 1.0f : v; }
 
-	// load (cached) and play a WAV; false if the file will not load
-	bool play(const std::string & path) {
+	bool play(const std::string & path) { return play(path, false) != 0; }
+
+	// load (cached) and play a WAV. The raw-stream fallback plays ONCE (looping
+	// needs re-queueing; SDL3_mixer handles it) and its handle is a monotonic id
+	// used by stop(); 0 on failure.
+	int play(const std::string & path, bool /*loop*/) {
 		if (!SDL_WasInit(SDL_INIT_AUDIO)) {
-			if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) { return false; }
+			if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) { return 0; }
 		}
 		wav_data * wav = load(path);
-		if (wav == nullptr) { return false; }
+		if (wav == nullptr) { return 0; }
 		SDL_AudioStream * stream = SDL_OpenAudioDeviceStream(
 		    SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &wav->spec, nullptr, nullptr);
-		if (stream == nullptr) { return false; }
+		if (stream == nullptr) { return 0; }
 		SDL_SetAudioStreamGain(stream, volume_);
 		SDL_PutAudioStreamData(stream, wav->data, static_cast<int>(wav->len));
 		SDL_FlushAudioStream(stream);
 		SDL_ResumeAudioStreamDevice(stream);
+		const int id = ++next_id_;
+		live_.emplace(id, stream);
 		streams_.push_back(stream);
 		reap();
-		return true;
+		return id;
+	}
+	// stop a stream started by play() (best-effort: it may already have reaped)
+	void stop(int handle) {
+		const auto it = live_.find(handle);
+		if (it == live_.end()) { return; }
+		SDL_AudioStream * s = it->second;
+		live_.erase(it);
+		std::erase(streams_, s);
+		SDL_DestroyAudioStream(s);
 	}
 
 private:
@@ -155,8 +193,9 @@ private:
 
 	// drop streams that finished playing
 	void reap() {
-		std::erase_if(streams_, [](SDL_AudioStream * s) {
+		std::erase_if(streams_, [this](SDL_AudioStream * s) {
 			if (SDL_GetAudioStreamQueued(s) > 0) { return false; }
+			std::erase_if(live_, [s](const auto & kv) { return kv.second == s; });
 			SDL_DestroyAudioStream(s);
 			return true;
 		});
@@ -164,6 +203,8 @@ private:
 
 	std::map<std::string, wav_data> cache_;
 	std::vector<SDL_AudioStream *> streams_;
+	std::map<int, SDL_AudioStream *> live_; // handle -> stream, for stop()
+	int next_id_ = 0;
 	float volume_ = 1.0f;
 };
 

@@ -302,6 +302,15 @@ template <typename Page> int run_app(app_options opts = {}) {
 	}, image_decoder, opts.assets};
 	mixer.embedded = &e.assets;
 
+	// route BABYLON.Sound (babylon.hpp) through the mixer: it calls these hooks
+	// with the sound's url; the resolver maps it to an embedded asset or a file
+	e.ev.play_audio = [&mixer](const std::string & url, bool loop) -> int {
+		const std::string resolved = detail::resolve_asset(url);
+		return resolved.empty() ? 0 : mixer.play(resolved, loop);
+	};
+	e.ev.stop_audio = [&mixer](int handle) { mixer.stop(handle); };
+	e.ev.set_audio_volume = [&mixer](float v) { mixer.set_volume(v); };
+
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
 		SDL_Log("ctbrowser: SDL_Init failed: %s", SDL_GetError());
 		return 1;

@@ -1938,12 +1938,29 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 	// gate the game's start on it) - scheduled as a 0ms timer so it is async
 	B->set("Sound", value::function([&ev](ctjs::context &, const std::vector<value> & a) -> value {
 		auto o = objptr::make();
+		const std::string url = a.size() > 1 ? a[1].to_string() : std::string{};
+		const bool loop = a.size() > 4 && a[4].is_object() && num_prop(a[4].as_object(), "loop", 0) != 0;
 		o->set("name", value{a.empty() ? std::string{} : a[0].to_string()});
 		o->set("isPlaying", value{false});
 		o->set("isReady", value{true});
-		o->set("loop", value{a.size() > 4 && a[4].is_object() && num_prop(a[4].as_object(), "loop", 0) != 0});
-		for (const char * nm : {"play", "stop", "pause", "setVolume", "dispose", "setPlaybackRate",
-		                        "attachToMesh", "setPosition"}) {
+		o->set("loop", value{loop});
+		// route through the shell's audio hook (empty in headless builds). The
+		// live track handle is shared between play() and stop() (no rc cycle).
+		auto handle = std::make_shared<int>(0);
+		o->set("play", value::function([&ev, url, loop, handle](ctjs::context &, const std::vector<value> &) -> value {
+			if (ev.play_audio) { *handle = ev.play_audio(url, loop); }
+			return value{};
+		}, "play"));
+		o->set("stop", value::function([&ev, handle](ctjs::context &, const std::vector<value> &) -> value {
+			if (ev.stop_audio && *handle != 0) { ev.stop_audio(*handle); }
+			*handle = 0;
+			return value{};
+		}, "stop"));
+		o->set("setVolume", value::function([&ev](ctjs::context &, const std::vector<value> & sa) -> value {
+			if (ev.set_audio_volume && !sa.empty()) { ev.set_audio_volume(static_cast<float>(sa[0].to_number())); }
+			return value{};
+		}, "setVolume"));
+		for (const char * nm : {"pause", "dispose", "setPlaybackRate", "attachToMesh", "setPosition"}) {
 			o->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 		}
 		if (a.size() > 3 && a[3].is_function()) {
