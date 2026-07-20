@@ -46,9 +46,12 @@
 #include <boost/math/ccmath/floor.hpp>
 #include <boost/math/ccmath/ceil.hpp>
 #include <boost/math/ccmath/fabs.hpp>
-#define GLM_FORCE_CTOR_INIT // default-construct vec/mat as zero
+#define GLM_FORCE_CTOR_INIT     // default-construct vec/mat as zero
+#define GLM_ENABLE_EXPERIMENTAL // for gtx/euler_angles (glm::yawPitchRoll)
 #include <glm/glm.hpp>      // the vector/matrix types AND math (constexpr-capable)
-#include <glm/gtc/matrix_transform.hpp> // glm::translate/scale
+#include <glm/gtc/matrix_transform.hpp> // glm::translate/scale/rotate/lookAtLH
+#include <glm/ext/matrix_clip_space.hpp> // glm::perspectiveLH_ZO
+#include <glm/gtx/euler_angles.hpp>      // glm::yawPitchRoll
 #endif
 
 namespace ctbrowser::babylon {
@@ -210,34 +213,46 @@ constexpr mat4 rotationZ(double t) noexcept {
 constexpr mat4 matmul(const mat4 & a, const mat4 & b) noexcept { return a * b; } // GLM product
 // Babylon mesh.rotation Vector3 (rx,ry,rz) = yaw-pitch-roll, applied YXZ
 constexpr mat4 rotationYPR(double rx, double ry, double rz) noexcept {
-	return matmul(rotationY(ry), matmul(rotationX(rx), rotationZ(rz)));
+	if consteval {
+		return matmul(rotationY(ry), matmul(rotationX(rx), rotationZ(rz)));
+	} else { // yaw = Y(ry), pitch = X(rx), roll = Z(rz)
+		return glm::yawPitchRoll(ry, rx, rz);
+	}
 }
 constexpr mat4 mul(const mat4 & a, const mat4 & b) noexcept { return matmul(a, b); }
 
 // left-handed perspective (column-vector: clip = P * viewPos)
 constexpr mat4 perspectiveFovLH(double fov, double aspect, double zn, double zf) noexcept {
-	mat4 m;
-	for (int r = 0; r < 4; ++r)
-		for (int c = 0; c < 4; ++c) m[c][r] = 0.0;
-	const double f = 1.0 / ftan(fov * 0.5);
-	m[0][0] = f / aspect;
-	m[1][1] = f;
-	m[2][2] = zf / (zf - zn);
-	m[3][2] = -zn * zf / (zf - zn);
-	m[2][3] = 1.0; // w = z (LH)
-	return m;
+	if consteval {
+		mat4 m;
+		for (int r = 0; r < 4; ++r)
+			for (int c = 0; c < 4; ++c) m[c][r] = 0.0;
+		const double f = 1.0 / ftan(fov * 0.5);
+		m[0][0] = f / aspect;
+		m[1][1] = f;
+		m[2][2] = zf / (zf - zn);
+		m[3][2] = -zn * zf / (zf - zn);
+		m[2][3] = 1.0; // w = z (LH)
+		return m;
+	} else { // left-handed, [0,1] depth (matches the fill above)
+		return glm::perspectiveLH_ZO(fov, aspect, zn, zf);
+	}
 }
 // left-handed lookAt (column-vector view matrix)
 constexpr mat4 lookAtLH(const vec3 & eye, const vec3 & target, const vec3 & up) noexcept {
-	const vec3 z = norm3(sub(target, eye));       // forward, +Z into screen
-	const vec3 x = norm3(cross3(up, z));          // right
-	const vec3 y = cross3(z, x);                   // true up
-	mat4 m = identity();
-	m[0][0] = x[0]; m[1][0] = x[1]; m[2][0] = x[2]; m[3][0] = -dot3(x, eye);
-	m[0][1] = y[0]; m[1][1] = y[1]; m[2][1] = y[2]; m[3][1] = -dot3(y, eye);
-	m[0][2] = z[0]; m[1][2] = z[1]; m[2][2] = z[2]; m[3][2] = -dot3(z, eye);
-	m[0][3] = 0; m[1][3] = 0; m[2][3] = 0; m[3][3] = 1;
-	return m;
+	if consteval {
+		const vec3 z = norm3(sub(target, eye));       // forward, +Z into screen
+		const vec3 x = norm3(cross3(up, z));          // right
+		const vec3 y = cross3(z, x);                   // true up
+		mat4 m = identity();
+		m[0][0] = x[0]; m[1][0] = x[1]; m[2][0] = x[2]; m[3][0] = -dot3(x, eye);
+		m[0][1] = y[0]; m[1][1] = y[1]; m[2][1] = y[2]; m[3][1] = -dot3(y, eye);
+		m[0][2] = z[0]; m[1][2] = z[1]; m[2][2] = z[2]; m[3][2] = -dot3(z, eye);
+		m[0][3] = 0; m[1][3] = 0; m[2][3] = 0; m[3][3] = 1;
+		return m;
+	} else {
+		return glm::lookAtLH(eye, target, up);
+	}
 }
 
 // transform a point (w=1); returns the full vec4 (keep w for the divide)

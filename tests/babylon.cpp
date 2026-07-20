@@ -430,6 +430,33 @@ int main() {
 		CHECK(maxd < 1e-3);
 	}
 
+	// glm::yawPitchRoll / perspectiveLH_ZO / lookAtLH (runtime) match the constexpr
+	// builders (compile time). A wrong YPR order, depth range or handedness would
+	// show a diff ~1, not the ~1e-4 of the compile-time table trig.
+	{
+		const auto maxdiff = [](const ftrig::mat4 & a, const ftrig::mat4 & b) {
+			double d = 0;
+			for (int c = 0; c < 4; ++c) {
+				for (int r = 0; r < 4; ++r) { d = std::max(d, std::fabs(a[c][r] - b[c][r])); }
+			}
+			return d;
+		};
+		constexpr ftrig::mat4 cypr = ftrig::rotationYPR(0.3, 0.5, 0.2);
+		constexpr ftrig::mat4 cpersp = ftrig::perspectiveFovLH(0.8, 1.3333, 0.1, 100.0);
+		constexpr ftrig::mat4 clook =
+		    ftrig::lookAtLH(ftrig::V3(1.5, 1.8, -4), ftrig::V3(0, 0, 0), ftrig::V3(0, 1, 0));
+		volatile double one = 1.0; // force the runtime (GLM) branch
+		const ftrig::mat4 rypr = ftrig::rotationYPR(0.3 * one, 0.5 * one, 0.2 * one);
+		const ftrig::mat4 rpersp = ftrig::perspectiveFovLH(0.8 * one, 1.3333, 0.1, 100.0);
+		const ftrig::mat4 rlook =
+		    ftrig::lookAtLH(ftrig::V3(1.5 * one, 1.8, -4), ftrig::V3(0, 0, 0), ftrig::V3(0, 1, 0));
+		std::printf("ypr=%.2e persp=%.2e look=%.2e\n", maxdiff(cypr, rypr),
+		            maxdiff(cpersp, rpersp), maxdiff(clook, rlook));
+		CHECK(maxdiff(cypr, rypr) < 2e-3);   // glm::yawPitchRoll == Ry*Rx*Rz
+		CHECK(maxdiff(cpersp, rpersp) < 2e-3); // glm::perspectiveLH_ZO == the fill
+		CHECK(maxdiff(clook, rlook) < 2e-3);   // glm::lookAtLH == the fill
+	}
+
 	if (failures == 0) { std::printf("babylon suite: all checks passed\n"); }
 	return failures ? 1 : 0;
 }
