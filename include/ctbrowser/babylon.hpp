@@ -42,10 +42,6 @@
 #include <string_view>
 #include <vector>
 #include <bit>
-#include <boost/math/ccmath/sqrt.hpp>
-#include <boost/math/ccmath/floor.hpp>
-#include <boost/math/ccmath/ceil.hpp>
-#include <boost/math/ccmath/fabs.hpp>
 #define GLM_FORCE_CTOR_INIT     // default-construct vec/mat as zero
 #define GLM_ENABLE_EXPERIMENTAL // for gtx/euler_angles (glm::yawPitchRoll)
 #include <glm/glm.hpp>      // the vector/matrix types AND math (constexpr-capable)
@@ -70,7 +66,32 @@ using vec3 = glm::dvec3;
 using vec4 = glm::dvec4;
 using mat4 = glm::dmat4;
 
-namespace bmc = boost::math::ccmath; // constexpr sqrt/floor/ceil/fabs
+// scalar math: GLM at runtime, a constexpr implementation at compile time (GLM's
+// sqrt/floor/ceil are not constexpr on this toolchain, so they get an `if
+// consteval` fallback; glm::abs IS constexpr and is used directly).
+constexpr double ct_sqrt(double x) noexcept { // Newton-Raphson (compile-time only)
+	if (!(x > 0.0)) { return 0.0; }
+	double g = x, prev = 0.0;
+	for (int i = 0; i < 64 && g != prev; ++i) { prev = g; g = 0.5 * (g + x / g); }
+	return g;
+}
+constexpr double ct_floor(double x) noexcept {
+	const long long i = static_cast<long long>(x);
+	return static_cast<double>(x < static_cast<double>(i) ? i - 1 : i);
+}
+constexpr double ct_ceil(double x) noexcept {
+	const long long i = static_cast<long long>(x);
+	return static_cast<double>(x > static_cast<double>(i) ? i + 1 : i);
+}
+constexpr double fsqrt(double x) noexcept {
+	if consteval { return ct_sqrt(x); } else { return glm::sqrt(x); }
+}
+constexpr double ffloor(double x) noexcept {
+	if consteval { return ct_floor(x); } else { return glm::floor(x); }
+}
+constexpr double fceil(double x) noexcept {
+	if consteval { return ct_ceil(x); } else { return glm::ceil(x); }
+}
 
 constexpr vec3 V3(double x, double y, double z) noexcept { return vec3(x, y, z); }
 
@@ -81,7 +102,7 @@ constexpr vec3 V3(double x, double y, double z) noexcept { return vec3(x, y, z);
 constexpr vec3 sub(const vec3 & a, const vec3 & b) noexcept { return a - b; }
 constexpr double dot3(const vec3 & a, const vec3 & b) noexcept { return glm::dot(a, b); }
 constexpr vec3 cross3(const vec3 & a, const vec3 & b) noexcept { return glm::cross(a, b); }
-constexpr double mag3(const vec3 & a) noexcept { return bmc::sqrt(dot3(a, a)); }
+constexpr double mag3(const vec3 & a) noexcept { return fsqrt(dot3(a, a)); }
 constexpr vec3 norm3(const vec3 & a) noexcept {
 	if consteval { // glm::normalize is not constexpr; use the ccmath path
 		const double m = mag3(a);
@@ -417,7 +438,7 @@ private:
 		scr(c0, x0, y0, z0); scr(c1, x1, y1, z1); scr(c2, x2, y2, z2);
 
 		const double area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
-		if (bmc::fabs(area) < 1e-9) { return; }             // degenerate
+		if (glm::abs(area) < 1e-9) { return; }             // degenerate
 		if (it.cull && area <= 0) { return; }                // backface (CW in screen space)
 
 		const vec3 N = norm3(cross3(sub(V3(w1[0], w1[1], w1[2]), V3(w0[0], w0[1], w0[2])),
@@ -427,10 +448,10 @@ private:
 		const double lit = shade(area > 0 ? N : V3(-N[0], -N[1], -N[2]), lights);
 		const uint32_t color = pack(it.diffuse, lit);
 
-		int minx = static_cast<int>(bmc::floor(std::min({x0, x1, x2})));
-		int maxx = static_cast<int>(bmc::ceil(std::max({x0, x1, x2})));
-		int miny = static_cast<int>(bmc::floor(std::min({y0, y1, y2})));
-		int maxy = static_cast<int>(bmc::ceil(std::max({y0, y1, y2})));
+		int minx = static_cast<int>(ffloor(std::min({x0, x1, x2})));
+		int maxx = static_cast<int>(fceil(std::max({x0, x1, x2})));
+		int miny = static_cast<int>(ffloor(std::min({y0, y1, y2})));
+		int maxy = static_cast<int>(fceil(std::max({y0, y1, y2})));
 		minx = std::max(minx, 0); miny = std::max(miny, 0);
 		maxx = std::min(maxx, w - 1); maxy = std::min(maxy, h - 1);
 		const double inv = 1.0 / area;

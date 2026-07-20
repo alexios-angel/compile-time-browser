@@ -34,17 +34,17 @@ SDL_CFLAGS += -DCTBROWSER_WITH_TTF $(shell pkg-config --cflags sdl3-ttf)
 SDL_LIBS += $(shell pkg-config --libs sdl3-ttf)
 endif
 
-# Boost (header-only Boost.QVM powers the software 3D math in babylon.hpp):
-# find the first include root that actually carries boost/qvm.
-BOOST_ROOTS := /home/linuxbrew/.linuxbrew/include /opt/homebrew/include /usr/local/include /usr/include
-BOOST_INC_DIR := $(firstword $(foreach d,$(BOOST_ROOTS),$(if $(wildcard $(d)/boost/qvm),$(d))))
-BOOST_INCLUDE := $(if $(BOOST_INC_DIR),-I$(BOOST_INC_DIR),)
+# GLM (header-only) powers the software 3D math in babylon.hpp;
+# find the first include root that actually carries it.
+GLM_ROOTS := /home/linuxbrew/.linuxbrew/include /opt/homebrew/include /usr/local/include /usr/include
+GLM_INC_DIR := $(firstword $(foreach d,$(GLM_ROOTS),$(if $(wildcard $(d)/glm/glm.hpp),$(d))))
+GLM_INCLUDE := $(if $(GLM_INC_DIR),-I$(GLM_INC_DIR),)
 
 # ctbrowser is value-only: skip the bricks' lark grammars entirely
 GRAMMAR_FREE := -DCTHTML_NO_GRAMMAR -DCTCSS_NO_GRAMMAR -DCTJS_NO_GRAMMAR
 # a whole bundled app (e.g. space-invaders) is one raw-string NTTP > 64 KB - the
 # std::embed clang handles it; silence the standard-minimum-length warning
-CXXFLAGS := -std=c++23 -I../include $(SUBMODULE_INCLUDES) $(BOOST_INCLUDE) $(SDL_CFLAGS) $(CONSTEXPR_FLAGS) $(GRAMMAR_FREE) -Wno-overlength-strings -O2 -pedantic -Wall -Wextra -Werror -Wconversion
+CXXFLAGS := -std=c++23 -I../include $(SUBMODULE_INCLUDES) $(GLM_INCLUDE) $(SDL_CFLAGS) $(CONSTEXPR_FLAGS) $(GRAMMAR_FREE) -Wno-overlength-strings -O2 -pedantic -Wall -Wextra -Werror -Wconversion
 
 SOURCES := $(wildcard *.cpp)
 TARGETS := $(SOURCES:%.cpp=%)
