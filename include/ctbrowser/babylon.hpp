@@ -861,6 +861,8 @@ struct world {
 	double prev_ms = 0, last_dt_ms = 16.6;
 	int next_obs = 1;    // Observable observer-id counter
 	unsigned rng = 0x2545F4914F6CDD1Du & 0xffffffffu; // Scalar.RandomRange PRNG
+	std::vector<objptr> guis;    // AdvancedDynamicTextures - rendered as a 2D overlay
+	std::vector<objptr> sprites; // Sprites (starfield) - projected + drawn as quads
 	// ArcRotate mouse-orbit state (one active camera at a time)
 	bool cam_dragging = false;
 	double cam_lastx = 0, cam_lasty = 0;
@@ -1037,6 +1039,90 @@ inline void set_static(value & fn, const char * name, value v) {
 	fn.as_function()->props->set(name, std::move(v));
 }
 
+// --- the 2D overlay drawn OVER the 3D pass (these were no-op stubs).
+
+// a font8x8 string blitted into the pixel buffer (top-left origin)
+inline void overlay_text(uint32_t * px, int w, int h, int x0, int y0, std::string_view s,
+                         int scale, uint32_t argb) {
+	int pen = x0;
+	for (const char ch : s) {
+		for (int row = 0; row < 8; ++row) {
+			for (int col = 0; col < 8; ++col) {
+				if (!ctbrowser::detail::glyph_pixel(ch, row, col)) { continue; }
+				for (int sy = 0; sy < scale; ++sy) {
+					for (int sx = 0; sx < scale; ++sx) {
+						const int x = pen + col * scale + sx, y = y0 + row * scale + sy;
+						if (x >= 0 && x < w && y >= 0 && y < h) { px[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] = argb; }
+					}
+				}
+			}
+		}
+		pen += 8 * scale;
+	}
+}
+
+// BABYLON.GUI TextBlocks (the score/level/lives HUD): positioned by alignment +
+// left/top offsets, coloured from the CSS colour string, drawn in font8x8
+inline void render_guis(const worldptr & W, uint32_t * px, int w, int h) {
+	for (const objptr & gui : W->guis) {
+		const value * cs = gui->find("controls");
+		if (cs == nullptr || !cs->is_array()) { continue; }
+		for (const value & cv : *cs->as_array()) {
+			if (!cv.is_object()) { continue; }
+			const objptr c = cv.as_object();
+			const value * t = c->find("text");
+			if (t == nullptr) { continue; } // TextBlocks carry .text
+			if (const value * vis = c->find("isVisible"); vis != nullptr && !vis->truthy()) { continue; }
+			const std::string text = t->to_string();
+			if (text.empty()) { continue; }
+			const double fs = num_prop(c, "fontSize", 18);
+			const int scale = fs >= 8 ? static_cast<int>(fs / 8) : 1;
+			uint32_t col = 0xFFFFFFFFu;
+			if (const value * cc = c->find("color")) {
+				col = ctbrowser::detail::css_to_argb(cc->to_string(), 0xFFFFFFFFu);
+			}
+			const int halign = static_cast<int>(num_prop(c, "textHorizontalAlignment", 2));
+			const int valign = static_cast<int>(num_prop(c, "textVerticalAlignment", 2));
+			const int tw = static_cast<int>(text.size()) * 8 * scale, th = 8 * scale;
+			int x = (halign == 0) ? 0 : (halign == 1) ? (w - tw) : (w - tw) / 2;
+			int y = (valign == 0) ? 0 : (valign == 1) ? (h - th) : (h - th) / 2;
+			x += static_cast<int>(num_prop(c, "left", 0));
+			y += static_cast<int>(num_prop(c, "top", 0));
+			overlay_text(px, w, h, x, y, text, scale, col);
+		}
+	}
+}
+
+// Sprites (the starfield): project each 3D position through the camera and draw
+// a screen-space quad in the sprite's colour
+inline void render_sprites(const worldptr & W, uint32_t * px, int w, int h, const r3d::view & vw) {
+	if (W->sprites.empty()) { return; }
+	const r3d::mat4 vp = r3d::matmul(vw.vp_proj, vw.vp_view);
+	const double Wd = w, Hd = h;
+	for (const objptr & sp : W->sprites) {
+		if (const value * vis = sp->find("isVisible"); vis != nullptr && !vis->truthy()) { continue; }
+		const r3d::vec3 pos = read_vec3(child_obj(sp, "position"), r3d::V3(0, 0, 0));
+		const r3d::vec4 clip = r3d::xform(vp, pos);
+		if (clip.a[3] <= 1e-6) { continue; } // behind the camera
+		const double iw = 1.0 / clip.a[3];
+		const int sx = static_cast<int>((clip.a[0] * iw * 0.5 + 0.5) * Wd);
+		const int sy = static_cast<int>((1.0 - (clip.a[1] * iw * 0.5 + 0.5)) * Hd);
+		if (sx < 0 || sx >= w || sy < 0 || sy >= h) { continue; }
+		const r3d::rgba c = read_color(child_obj(sp, "color"), r3d::rgba{1, 1, 1, 1});
+		const auto ch8 = [](double v) { return static_cast<uint32_t>(std::clamp(v, 0.0, 1.0) * 255.0); };
+		const uint32_t argb = 0xFF000000u | (ch8(c.r) << 16) | (ch8(c.g) << 8) | ch8(c.b);
+		// perspective-scaled half-extent (fov 0.8 -> 2*tan(0.4) ~ 0.8455)
+		int half = static_cast<int>(num_prop(sp, "size", 1.0) * 0.5 * Hd * iw / 0.8455);
+		half = half < 0 ? 0 : half > 32 ? 32 : half;
+		for (int dy = -half; dy <= half; ++dy) {
+			for (int dx = -half; dx <= half; ++dx) {
+				const int x = sx + dx, y = sy + dy;
+				if (x >= 0 && x < w && y >= 0 && y < h) { px[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] = argb; }
+			}
+		}
+	}
+}
+
 // --- the core render: read the scene's meshes/lights/camera back from
 //     their live JS handles and rasterize into the target canvas pixels
 inline void do_render(const worldptr & W, int scene_id) {
@@ -1108,6 +1194,8 @@ inline void do_render(const worldptr & W, int scene_id) {
 		items.push_back(it);
 	}
 	W->rdr.render(n->pixels.data(), w, h, vw, items, lights);
+	render_sprites(W, n->pixels.data(), w, h, vw);
+	render_guis(W, n->pixels.data(), w, h);
 }
 
 // --- register a mesh/light with its scene (by the scene handle arg)
@@ -1908,7 +1996,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		}
 		return value{o};
 	}, "SpriteManager"));
-	B->set("Sprite", value::function([](ctjs::context &, const std::vector<value> & a) -> value {
+	B->set("Sprite", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
 		auto o = objptr::make();
 		o->set("name", value{a.empty() ? std::string{} : a[0].to_string()});
 		o->set("position", make_vector3(0, 0, 0));
@@ -1918,9 +2006,15 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		o->set("height", value{1.0});
 		o->set("angle", value{0.0});
 		o->set("isVisible", value{true});
-		for (const char * nm : {"dispose", "playAnimation", "stopAnimation"}) {
+		// dispose hides it from the overlay (render_sprites skips !isVisible)
+		o->set("dispose", value::function([](ctjs::context & cx, const std::vector<value> &) -> value {
+			if (const objptr s = self_of(cx)) { s->set("isVisible", value{false}); }
+			return value{};
+		}, "dispose"));
+		for (const char * nm : {"playAnimation", "stopAnimation"}) {
 			o->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 		}
+		W->sprites.push_back(o); // drawn as a 2D overlay by render_sprites
 		return value{o};
 	}, "Sprite"));
 	// --- GlowLayer: no-op (intensity + customEmissiveColorSelector settable)
@@ -1954,7 +2048,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 			value ADT = value::function([](ctjs::context &, const std::vector<value> &) -> value {
 				return value{objptr::make()};
 			}, "AdvancedDynamicTexture");
-			set_static(ADT, "CreateFullscreenUI", value::function([](ctjs::context &, const std::vector<value> &) -> value {
+			set_static(ADT, "CreateFullscreenUI", value::function([W](ctjs::context &, const std::vector<value> &) -> value {
 				auto o = objptr::make();
 				o->set("controls", value::array({}));
 				o->set("addControl", value::function([](ctjs::context & cx, const std::vector<value> & a) -> value {
@@ -1966,12 +2060,28 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 					return cx.current_this;
 				}, "addControl"));
 				object_t cv;
-				cv.set("width", value{1280.0});
-				cv.set("height", value{720.0});
+				const double cw = W->target != nullptr ? W->target->canvas_w : 1280;
+				const double chh = W->target != nullptr ? W->target->canvas_h : 720;
+				cv.set("width", value{cw});
+				cv.set("height", value{chh});
 				o->set("_canvas", value::object(std::move(cv)));
-				for (const char * nm : {"removeControl", "dispose"}) {
-					o->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
-				}
+				o->set("removeControl", value::function([](ctjs::context & cx, const std::vector<value> & a) -> value {
+					objptr self = self_of(cx);
+					if (self && !a.empty()) {
+						if (const value * c = self->find("controls"); c != nullptr && c->is_array()) {
+							auto & arr = *c->as_array();
+							for (std::size_t k = 0; k < arr.size(); ++k) {
+								if (arr[k].is_object() && a[0].is_object() && arr[k].as_object() == a[0].as_object()) {
+									arr.erase(arr.begin() + static_cast<std::ptrdiff_t>(k));
+									break;
+								}
+							}
+						}
+					}
+					return value{};
+				}, "removeControl"));
+				o->set("dispose", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "dispose"));
+				W->guis.push_back(o); // rendered as a 2D overlay by render_guis
 				return value{o};
 			}, "CreateFullscreenUI"));
 			GUI->set("AdvancedDynamicTexture", ADT);
