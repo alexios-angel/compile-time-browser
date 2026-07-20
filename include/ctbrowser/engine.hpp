@@ -41,6 +41,7 @@ public:
 	double mouse_x = 0;
 	double mouse_y = 0;
 	bool mouse_down = false;
+	node * open_select_ = nullptr; // the <select> whose popup is currently open
 	// the page stylesheet, parsed BY VALUE from the page's <style> text at
 	// construction (linear ctcss::parse_value, not the Earley TYPE path);
 	// `resolve` closes over it. Declared before resolve so it is live first.
@@ -142,7 +143,10 @@ public:
 		if (down) {
 			deliver(script, "onMouseDown", x, y);
 			ev.dispatch("mousedown", detail::mouse_event(x, y));
-			click_at(static_cast<int>(x), static_cast<int>(y));
+			// a <select> widget (open popup, or a collapsed control) eats the click
+			if (!handle_select_click(static_cast<int>(x), static_cast<int>(y))) {
+				click_at(static_cast<int>(x), static_cast<int>(y));
+			}
 		} else {
 			ev.dispatch("mouseup", detail::mouse_event(x, y));
 		}
@@ -162,11 +166,52 @@ public:
 	// document.location.reload(): fresh DOM, fresh script run
 	void do_reload() {
 		ev.reset();
+		open_select_ = nullptr; // node pointers are about to be invalidated
 		doc = instantiate_html(Page::html_text());
 		script = ctjs::run_value(Page::script_text(), all_bindings(extra_));
 	}
 
 private:
+	// Route a mouse press through a <select>: if a popup is open, a click on an
+	// option row selects it (and fires the element's onchange), a click elsewhere
+	// closes it; if none is open, a click on a collapsed control opens it. Returns
+	// true when the widget consumed the click (so it does not also become onClick).
+	bool handle_select_click(int x, int y) {
+		if (open_select_ != nullptr) {
+			node * sel = open_select_;
+			int idx = 0;
+			for (const auto & c : sel->children) {
+				if (c->tag != "option") { continue; }
+				node * opt = c.get();
+				if (opt->w > 0 && x >= opt->x && x < opt->x + opt->w && y >= opt->y && y < opt->y + opt->h) {
+					sel->select_index = idx;
+					sel->select_open = false;
+					open_select_ = nullptr;
+					fire_change(sel);
+					return true;
+				}
+				++idx;
+			}
+			sel->select_open = false; // clicked off the list
+			open_select_ = nullptr;
+			return true;
+		}
+		node * hit = doc.root ? doc.root->hit_test(x, y) : nullptr;
+		while (hit != nullptr && !hit->is_select()) { hit = hit->parent; }
+		if (hit != nullptr) {
+			hit->select_open = true;
+			open_select_ = hit;
+			return true;
+		}
+		return false;
+	}
+	void fire_change(node * sel) {
+		const auto it = ev.change_handlers.find(sel);
+		if (it != ev.change_handlers.end() && it->second.is_function()) {
+			ev.invoke(it->second, {});
+		}
+	}
+
 	std::vector<ctjs::binding> all_bindings(std::vector<ctjs::binding> extra) {
 		std::vector<ctjs::binding> out = dom_bindings(doc, title, images, ev);
 		out.push_back({"isKeyDown",

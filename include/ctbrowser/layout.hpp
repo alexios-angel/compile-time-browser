@@ -90,6 +90,7 @@ struct layout_pass {
 	std::vector<paint_cmd> * out;
 	int vw = 0;  // viewport width  (for position:fixed/absolute + vw/text-align)
 	int vh = 0;  // viewport height (for top/bottom + vh + vertical placement)
+	std::vector<paint_cmd> * overlays = nullptr; // painted last, on top (open <select>)
 
 	static constexpr int UNSET = -1000000;
 
@@ -269,6 +270,13 @@ struct layout_pass {
 
 		int cursor = n.y + padding;
 
+		// <select> renders as a native widget: the selected option collapsed with
+		// a down-arrow (plus a popup list on top when open), not stacked options
+		if (n.is_select()) {
+			emit_select(n, font_px, padding, cursor, content_w);
+			return n.h + 2 * margin;
+		}
+
 		// direct text first, wrapped to the content width (greedy, by
 		// measured width - square-glyph estimate without a font)
 		std::string_view text = n.text;
@@ -348,6 +356,107 @@ struct layout_pass {
 		if (begin == std::string_view::npos) { return {}; }
 		return v.substr(begin, v.find_last_not_of(ws) - begin + 1);
 	}
+
+	// render a <select>: the collapsed control (selected option + down-arrow) into
+	// `out`, and, when open, the popup option list into `overlays` (painted last,
+	// on top). Sets each <option>'s hit rect (its overlay row, or empty when
+	// closed) so the engine can route clicks. Sets n.h to the control height.
+	constexpr void emit_select(node & n, int font_px, int padding, int top, int content_w) {
+		const ctcss::color fg = text_color(n);
+		const int line_h = font_px + font_px / 4;
+		const int nopt = n.option_count();
+		const std::string_view align = text_align(n);
+		node * sel = n.nth_option(n.selected_option());
+		const std::string_view label = sel != nullptr ? trimmed(sel->text) : std::string_view{};
+		const int arrow = font_px * 2 / 3;
+		const int tw = text_width(label, font_px);
+		int tx = n.x + padding;
+		if (align == std::string_view{"center"}) { tx += (content_w - tw - arrow - font_px / 3) / 2; }
+		else if (align == std::string_view{"right"}) { tx += content_w - tw - arrow - font_px / 3; }
+		if (tx < n.x + padding) { tx = n.x + padding; }
+		{
+			paint_cmd c;
+			c.what = paint_cmd::kind::text;
+			c.x = tx;
+			c.y = top;
+			c.w = tw;
+			c.h = font_px;
+			c.argb = pack_argb(fg);
+			c.text = std::string{label};
+			c.font_px = font_px;
+			out->push_back(c);
+		}
+		// a down-pointing triangle just to the right of the label
+		const int ax = tx + tw + font_px / 3, ay = top + font_px / 4;
+		for (int r = 0; r * 2 < arrow; ++r) {
+			paint_cmd b;
+			b.what = paint_cmd::kind::box;
+			b.x = ax + r;
+			b.y = ay + r;
+			b.w = arrow - 2 * r;
+			b.h = 1;
+			b.argb = pack_argb(fg);
+			if (b.w > 0) { out->push_back(b); }
+		}
+		n.h = line_h + 2 * padding;
+
+		if (n.select_open && overlays != nullptr && nopt > 0) {
+			// content-width popup, centered under the control, painted on top
+			int ow = 0;
+			for (int i = 0; i < nopt; ++i) {
+				if (node * o = n.nth_option(i)) {
+					const int w2 = text_width(trimmed(o->text), font_px);
+					if (w2 > ow) { ow = w2; }
+				}
+			}
+			ow += 2 * padding + font_px;
+			int ox = n.x + padding + (content_w - ow) / 2;
+			if (ox < n.x) { ox = n.x; }
+			const int oy = n.y + n.h, row_h = line_h + 4;
+			paint_cmd bg;
+			bg.what = paint_cmd::kind::box;
+			bg.x = ox;
+			bg.y = oy;
+			bg.w = ow;
+			bg.h = row_h * nopt;
+			bg.argb = 0xFF000000u; // opaque list background (option { background:#000 })
+			overlays->push_back(bg);
+			for (int i = 0; i < nopt; ++i) {
+				node * opt = n.nth_option(i);
+				if (opt == nullptr) { continue; }
+				const int ry = oy + i * row_h;
+				if (i == n.selected_option()) { // highlight the current choice
+					paint_cmd hl;
+					hl.what = paint_cmd::kind::box;
+					hl.x = ox;
+					hl.y = ry;
+					hl.w = ow;
+					hl.h = row_h;
+					hl.argb = 0xFF2A4A8Au;
+					overlays->push_back(hl);
+				}
+				const std::string_view ot = trimmed(opt->text);
+				paint_cmd t;
+				t.what = paint_cmd::kind::text;
+				t.x = ox + padding + font_px / 4;
+				t.y = ry + 2;
+				t.w = text_width(ot, font_px);
+				t.h = font_px;
+				t.argb = 0xFFFFFFFFu;
+				t.text = std::string{ot};
+				t.font_px = font_px;
+				overlays->push_back(t);
+				opt->x = ox;
+				opt->y = ry;
+				opt->w = ow;
+				opt->h = row_h;
+			}
+		} else { // closed: options are not hit targets
+			for (int i = 0; i < nopt; ++i) {
+				if (node * o = n.nth_option(i)) { o->x = o->y = o->w = o->h = 0; }
+			}
+		}
+	}
 };
 
 // backgrounds, painted back-to-front before content
@@ -382,12 +491,13 @@ constexpr std::vector<paint_cmd> layout(document & doc, int viewport_w,
                                      const style_fn & resolve,
                                      const text_measure_fn & measure = {},
                                      int viewport_h = 0) {
-	std::vector<paint_cmd> content;
-	detail::layout_pass pass{&resolve, &measure, &content, viewport_w, viewport_h};
+	std::vector<paint_cmd> content, overlays;
+	detail::layout_pass pass{&resolve, &measure, &content, viewport_w, viewport_h, &overlays};
 	if (doc.root) { (void)pass.place(*doc.root, 0, 0, viewport_w, detail::box{0, 0, viewport_w, viewport_h}); }
 	std::vector<paint_cmd> out;
 	if (doc.root) { detail::collect_backgrounds(*doc.root, resolve, out); }
 	out.insert(out.end(), content.begin(), content.end());
+	out.insert(out.end(), overlays.begin(), overlays.end()); // popups paint on top
 	return out;
 }
 

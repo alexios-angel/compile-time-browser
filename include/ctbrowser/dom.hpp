@@ -77,7 +77,37 @@ struct node {
 	// layout output (viewport coordinates), refreshed every frame
 	int x = 0, y = 0, w = 0, h = 0;
 
+	// <select> widget state (runtime only): chosen <option> + dropdown open
+	int select_index = -1;    // -1 => not set yet, treated as the first option
+	bool select_open = false; // the popup list is expanded
+
 	constexpr bool is_canvas() const { return tag == "canvas"; }
+	constexpr bool is_select() const { return tag == "select"; }
+
+	// nth <option> child (only option children count); nullptr if out of range
+	constexpr node * nth_option(int idx) {
+		int k = 0;
+		for (const auto & c : children) {
+			if (c->tag == "option") {
+				if (k == idx) { return c.get(); }
+				++k;
+			}
+		}
+		return nullptr;
+	}
+	constexpr int option_count() const {
+		int k = 0;
+		for (const auto & c : children) {
+			if (c->tag == "option") { ++k; }
+		}
+		return k;
+	}
+	// effective selected index (clamped; -1/out-of-range => 0)
+	constexpr int selected_option() const {
+		const int n = option_count();
+		if (n == 0) { return 0; }
+		return (select_index >= 0 && select_index < n) ? select_index : 0;
+	}
 
 	constexpr std::string_view attribute(std::string_view name) const {
 		for (const auto & [k, v] : attributes) {

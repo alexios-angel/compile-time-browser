@@ -116,6 +116,9 @@ struct dom_events {
 	}
 	// element handles whose layout-derived properties refresh per frame
 	std::vector<std::pair<ctjs::rc<ctjs::object_t>, node *>> tracked;
+	// <select> onchange handlers, keyed by the select node (the engine fires them
+	// when the user picks an option); stale node pointers are cleared on reload
+	std::map<node *, ctjs::value> change_handlers;
 	// the window object + the viewport the engine last laid out
 	ctjs::rc<ctjs::object_t> window_obj;
 	int viewport_w = 0;
@@ -129,6 +132,7 @@ struct dom_events {
 		alerts.clear();
 		reload = false;
 		tracked.clear();
+		change_handlers.clear();
 	}
 
 	// fire everything due at now_ms. Handlers may add or clear timers
@@ -497,6 +501,82 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 		                  return ctjs::value::object(std::move(r));
 	                  },
 	                  "rect"));
+	// --- <select> / <option> form-control properties (native accessors) ---
+	if (n->is_select()) {
+		// .value: the selected <option>'s value attribute (live), or pick by value
+		ctjs::attach_accessor(o, "value", 'g', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> &) -> ctjs::value {
+			    node * sn = ev->node_of(cx.current_this);
+			    node * opt = sn != nullptr ? sn->nth_option(sn->selected_option()) : nullptr;
+			    return ctjs::value{opt != nullptr ? std::string{opt->attribute("value")} : std::string{}};
+		    }, "get value"));
+		ctjs::attach_accessor(o, "value", 's', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+			    node * sn = ev->node_of(cx.current_this);
+			    if (sn != nullptr && !a.empty()) {
+				    const std::string want = a[0].to_string();
+				    for (int i = 0; i < sn->option_count(); ++i) {
+					    node * opt = sn->nth_option(i);
+					    if (opt != nullptr && std::string{opt->attribute("value")} == want) { sn->select_index = i; break; }
+				    }
+			    }
+			    return ctjs::value{};
+		    }, "set value"));
+		ctjs::attach_accessor(o, "selectedIndex", 'g', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> &) -> ctjs::value {
+			    node * sn = ev->node_of(cx.current_this);
+			    return ctjs::value{static_cast<double>(sn != nullptr ? sn->selected_option() : 0)};
+		    }, "get selectedIndex"));
+		ctjs::attach_accessor(o, "selectedIndex", 's', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+			    node * sn = ev->node_of(cx.current_this);
+			    if (sn != nullptr && !a.empty()) { sn->select_index = static_cast<int>(a[0].to_number()); }
+			    return ctjs::value{};
+		    }, "set selectedIndex"));
+		// .onchange: captured on the node registry; the engine fires it on a pick
+		ctjs::attach_accessor(o, "onchange", 's', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+			    node * sn = ev->node_of(cx.current_this);
+			    if (sn != nullptr && !a.empty() && a[0].is_function()) { ev->change_handlers[sn] = a[0]; }
+			    return ctjs::value{};
+		    }, "set onchange"));
+	} else if (n->tag == "option") {
+		ctjs::attach_accessor(o, "value", 'g', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> &) -> ctjs::value {
+			    node * on = ev->node_of(cx.current_this);
+			    return ctjs::value{on != nullptr ? std::string{on->attribute("value")} : std::string{}};
+		    }, "get value"));
+		// .selected = true makes this option the parent <select>'s current choice
+		ctjs::attach_accessor(o, "selected", 's', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+			    node * on = ev->node_of(cx.current_this);
+			    if (on != nullptr && on->parent != nullptr && on->parent->is_select() && !a.empty() && a[0].truthy()) {
+				    node * sn = on->parent;
+				    int k = 0;
+				    for (const auto & c : sn->children) {
+					    if (c->tag == "option") {
+						    if (c.get() == on) { sn->select_index = k; break; }
+						    ++k;
+					    }
+				    }
+			    }
+			    return ctjs::value{};
+		    }, "set selected"));
+		ctjs::attach_accessor(o, "selected", 'g', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> &) -> ctjs::value {
+			    node * on = ev->node_of(cx.current_this);
+			    if (on == nullptr || on->parent == nullptr || !on->parent->is_select()) { return ctjs::value{false}; }
+			    node * sn = on->parent;
+			    int k = 0;
+			    for (const auto & c : sn->children) {
+				    if (c->tag == "option") {
+					    if (c.get() == on) { return ctjs::value{k == sn->selected_option()}; }
+					    ++k;
+				    }
+			    }
+			    return ctjs::value{false};
+		    }, "get selected"));
+	}
 	ctjs::value v = ctjs::value::object(std::move(o));
 	ev->tracked.emplace_back(v.as_object(), n);
 	return v;
