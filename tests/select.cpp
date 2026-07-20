@@ -48,9 +48,20 @@ int main() {
 	e.mouse_button(cx, cy, true);
 	e.mouse_button(cx, cy, false);
 	CHECK(sel->select_open);
-	e.frame(400); // lay out the popup so the <option> rows get hit rects
+	const std::vector<ctbrowser::paint_cmd> paints = e.frame(400); // popup laid out
 	ctbrowser::node * opt2 = sel->nth_option(2);
 	CHECK(opt2 != nullptr && opt2->w > 0 && opt2->h > 0);
+	// the popup's "Gamma" text paint must land on opt2's row (regression: the
+	// overlay paints were left at the origin when the <select> was inside a
+	// positioned ancestor, so they rendered at the top instead of below it)
+	bool gamma_aligned = false;
+	for (const ctbrowser::paint_cmd & p : paints) {
+		if (p.what == ctbrowser::paint_cmd::kind::text && p.text == "Gamma" &&
+		    p.y >= opt2->y && p.y < opt2->y + opt2->h) {
+			gamma_aligned = true;
+		}
+	}
+	CHECK(gamma_aligned);
 
 	// click the third option (Gamma) -> selects it, closes, fires onchange
 	const int ox = opt2->x + opt2->w / 2, oy = opt2->y + opt2->h / 2;

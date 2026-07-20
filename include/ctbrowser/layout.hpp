@@ -237,6 +237,7 @@ struct layout_pass {
 			if (maxw >= 0 && pw > maxw) { pw = maxw; }
 			const int ph = prop_px(cs, "height", c.h, font_px, -1); // definite? else content
 			const size_t start = out->size();
+			const size_t start_ov = overlays != nullptr ? overlays->size() : 0;
 			// children resolve against THIS box, laid out at the origin then lifted
 			const box child_cb{0, 0, pw, ph >= 0 ? ph : c.h};
 			const int laid = block_body(n, 0, 0, pw, child_cb);
@@ -246,6 +247,13 @@ struct layout_pass {
 			int tx = 0, ty = 0;
 			translate_of(cs, pw, h, font_px, tx, ty);
 			translate(start, n, fx + tx, fy + ty);
+			// overlays (open <select> popups) emitted by this subtree ride along
+			if (overlays != nullptr) {
+				for (size_t i = start_ov; i < overlays->size(); ++i) {
+					(*overlays)[i].x += fx + tx;
+					(*overlays)[i].y += fy + ty;
+				}
+			}
 			return 0; // out of normal flow
 		}
 		return block_body(n, x, y, width, cb);
