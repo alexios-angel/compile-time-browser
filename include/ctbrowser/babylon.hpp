@@ -1327,6 +1327,9 @@ inline r3d::draw_item build_draw_item(const worldptr & W, int mi) {
 		else if (child_obj(mat, "albedoColor")) { mc = read_color(child_obj(mat, "albedoColor"), mc); }
 		else { mc = read_color(child_obj(mat, "diffuseColor"), mc); }
 	}
+	// mesh.visibility (0..1) dims the color so a fading particle darkens out
+	const double vis = num_prop(M.handle, "visibility", 1.0);
+	if (vis < 1.0) { mc.r *= vis; mc.g *= vis; mc.b *= vis; }
 	it.diffuse = mc;
 	it.cull = M.cull;
 	return it;
@@ -1403,6 +1406,10 @@ inline void do_render(const worldptr & W, int scene_id) {
 	for (int mi : sc.mesh_ids) {
 		mesh_rec & M = W->meshes[static_cast<size_t>(mi)];
 		if (M.disposed || !M.enabled) { continue; }
+		// honor mesh.isVisible (bool) and mesh.visibility (0..1 opacity): the game
+		// fades explosion particles to visibility 0 to hide them (never disposed)
+		if (const value * iv = M.handle->find("isVisible"); iv != nullptr && !iv->truthy()) { continue; }
+		if (num_prop(M.handle, "visibility", 1.0) <= 0.02) { continue; }
 		items.push_back(build_draw_item(W, mi));
 	}
 	W->rdr.render(n->pixels.data(), w, h, vw, items, lights);
