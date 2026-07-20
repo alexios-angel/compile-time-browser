@@ -89,7 +89,7 @@ public:
 	std::vector<paint_cmd> frame(int viewport_w) {
 		// advance CSS @keyframes (writes interpolated inline styles) before layout
 		detail::apply_animations(doc, css_sheet, ev.now_ms);
-		std::vector<paint_cmd> cmds = ctbrowser::layout(doc, viewport_w, resolve, measure);
+		std::vector<paint_cmd> cmds = ctbrowser::layout(doc, viewport_w, resolve, measure, ev.viewport_h);
 		ev.viewport_w = viewport_w;
 		ev.refresh_tracked();
 		return cmds;

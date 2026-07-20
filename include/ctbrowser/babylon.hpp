@@ -1149,15 +1149,38 @@ inline void render_sprites(const worldptr & W, uint32_t * px, int w, int h, cons
 		const int sy = static_cast<int>((1.0 - (clip.a[1] * iw * 0.5 + 0.5)) * Hd);
 		if (sx < 0 || sx >= w || sy < 0 || sy >= h) { continue; }
 		const r3d::rgba c = read_color(child_obj(sp, "color"), r3d::rgba{1, 1, 1, 1});
-		const auto ch8 = [](double v) { return static_cast<uint32_t>(std::clamp(v, 0.0, 1.0) * 255.0); };
-		const uint32_t argb = 0xFF000000u | (ch8(c.r) << 16) | (ch8(c.g) << 8) | ch8(c.b);
 		// perspective-scaled half-extent (fov 0.8 -> 2*tan(0.4) ~ 0.8455)
 		int half = static_cast<int>(num_prop(sp, "size", 1.0) * 0.5 * Hd * iw / 0.8455);
 		half = half < 0 ? 0 : half > 32 ? 32 : half;
-		for (int dy = -half; dy <= half; ++dy) {
-			for (int dx = -half; dx <= half; ++dx) {
+		// draw a soft, additively-blended glowing dot (a bright solid core plus a
+		// quadratic-falloff halo) - this is what the game's star_glow.png sprite
+		// gives on real WebGL; here it makes the starfield actually glow.
+		const int rad = std::max(half + 3, 4);
+		const double core = static_cast<double>(half);
+		const double span = static_cast<double>(rad) - core;
+		const auto add = [](uint32_t base, double v) {
+			const uint32_t s = base + static_cast<uint32_t>(v < 0 ? 0 : v);
+			return s > 255 ? 255u : s;
+		};
+		for (int dy = -rad; dy <= rad; ++dy) {
+			for (int dx = -rad; dx <= rad; ++dx) {
 				const int x = sx + dx, y = sy + dy;
-				if (x >= 0 && x < w && y >= 0 && y < h) { px[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] = argb; }
+				if (x < 0 || x >= w || y < 0 || y >= h) { continue; }
+				const double dist = std::sqrt(static_cast<double>(dx * dx + dy * dy));
+				double f;
+				if (dist <= core) {
+					f = 1.0;
+				} else {
+					const double t = (dist - core) / span; // 0 at core edge, 1 at halo edge
+					if (t >= 1.0) { continue; }
+					f = (1.0 - t) * (1.0 - t);
+				}
+				const size_t idx = static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x);
+				const uint32_t p = px[idx];
+				const uint32_t nr = add((p >> 16) & 0xff, c.r * 255.0 * f);
+				const uint32_t ng = add((p >> 8) & 0xff, c.g * 255.0 * f);
+				const uint32_t nb = add(p & 0xff, c.b * 255.0 * f);
+				px[idx] = 0xFF000000u | (nr << 16) | (ng << 8) | nb;
 			}
 		}
 	}

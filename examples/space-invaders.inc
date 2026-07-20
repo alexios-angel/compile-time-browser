@@ -6,6 +6,25 @@ R"ctb(<!DOCTYPE html>
 <style>
 html,body{margin:0;padding:0;background:#000;color:#fff;font-family:monospace}
 canvas{display:block;margin:0 auto}
+
+/* The upstream game styles the menu from an external stylesheet that was not
+   vendored; these rules restore the title screen for ctbrowser's block+fixed
+   layout. Panels are shown/hidden via the .active class the game toggles. */
+#loading,#title-screen,#game-ui,#intro,#panel-game-over,#panel-new-highscore,#panel-play-again{display:none}
+#loading.active,#title-screen.active,#game-ui.active,#intro.active,#panel-game-over.active,#panel-new-highscore.active,#panel-play-again.active{display:block}
+
+/* The menu overlays the full-window canvas. The leaf boxes are position:fixed
+   (their #ui/#title-screen containers stay in normal flow) so each anchors to
+   the viewport without nested-positioned compounding. */
+#portrait-warning{display:none}
+.layer2,.layer3{display:none}
+#title{position:fixed;left:0;top:36px;width:900px;text-align:center;color:#ffd21e;font-size:56px}
+#credits{position:fixed;left:0;bottom:16px;width:900px;text-align:center;color:#c8c8c8;font-size:13px}
+#credits .small{color:#8a8a8a;font-size:11px}
+#intro{position:fixed;left:0;top:432px;width:900px;text-align:center;font-size:20px}
+#change-mode{color:#8ab4ff}
+#start-game{color:#39ff14;font-size:28px}
+#loading{position:fixed;left:0;top:300px;width:900px;text-align:center;font-size:40px;color:#fff}
 </style>
 </head>
 <body>
