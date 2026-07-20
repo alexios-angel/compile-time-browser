@@ -1218,12 +1218,20 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 		if (m.disposed) { return value{}; }
 		m.disposed = true;
 		m.before_render.clear();
-		if (m.scene_id >= 0 && m.scene_id < static_cast<int>(W->scenes.size())) {
-			auto & ids = W->scenes[static_cast<std::size_t>(m.scene_id)].mesh_ids;
+		// keep the handle alive: onDispose may spawn meshes (Explosion) and
+		// reallocate W->meshes, dangling `m`
+		const objptr self = m.handle;
+		const int sid = m.scene_id;
+		if (sid >= 0 && sid < static_cast<int>(W->scenes.size())) {
+			auto & ids = W->scenes[static_cast<std::size_t>(sid)].mesh_ids;
 			ids.erase(std::remove(ids.begin(), ids.end(), static_cast<int>(ix)), ids.end());
 		}
-		const value * od = m.handle->find("onDispose");
-		if (od != nullptr && od->is_function()) { ctjs::call_value(cx, *od, {}); }
+		// BabylonJS notifies onDispose WITH the mesh (its callbacks take it)
+		const value * od = self->find("onDispose");
+		if (od != nullptr && od->is_function()) {
+			cx.pending_this = value{self};
+			ctjs::call_value(cx, *od, {value{self}});
+		}
 		return value{};
 	}, "dispose"));
 
