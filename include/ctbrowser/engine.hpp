@@ -42,6 +42,7 @@ public:
 	double mouse_y = 0;
 	bool mouse_down = false;
 	node * open_select_ = nullptr; // the <select> whose popup is currently open
+	int gc_ticks_ = 0;             // frames since the last cycle collection (see tick)
 	// the page stylesheet, parsed BY VALUE from the page's <style> text at
 	// construction (linear ctcss::parse_value, not the Earley TYPE path);
 	// `resolve` closes over it. Declared before resolve so it is live first.
@@ -177,6 +178,13 @@ public:
 		due.swap(ev.raf);
 		for (const ctjs::value & fn : due) { ev.invoke(fn, {ctjs::value{ev.now_ms}}); }
 		if (ev.reload) { do_reload(); }
+		// reclaim reference cycles the page created this second (bullets/observers/
+		// closures the game disposed but that still point at each other - pure
+		// refcounting can't free them). Amortized: once a second, not every frame.
+		if (++gc_ticks_ >= 60) {
+			gc_ticks_ = 0;
+			ctjs::gc::collect();
+		}
 	}
 
 	// document.location.reload(): fresh DOM, fresh script run
@@ -185,6 +193,7 @@ public:
 		open_select_ = nullptr; // node pointers are about to be invalidated
 		doc = instantiate_html(Page::html_text());
 		script = ctjs::run_value(Page::script_text(), all_bindings(extra_));
+		ctjs::gc::collect(); // reap the old page's cycles now that its roots are gone
 	}
 
 private:

@@ -156,19 +156,30 @@ heavily-tested brick surgery — not a one-shot change.
 
 ---
 
-## Status
+## Status — IMPLEMENTED
 
 - **Diagnosis: complete** (measurements above).
-- **Phase 0: implemented** — `mesh.dispose()` now frees `geom` + `tex`. Re-measure
-  over the same 4000-frame game: heap 15.8 → 40.0 MB, i.e. **still +24 MB, only
-  ~1 MB better than before.** This is the expected result and it *confirms* the
-  diagnosis: per-bullet geometry is tiny (small boxes); the retained weight is the
-  JS **handle objects** (each carrying dozens of native closures + Vector3s),
-  pinned by both `world.meshes[ix].handle` and the JS closure cycle. Freeing
-  geometry cannot touch them. **Phase 0 is a correct, safe reduction for model
-  meshes but does not fix the game leak — the cycle collector is the real fix.**
-  Full headless suite stays green (11/11).
-- **Phases 1–3: designed, not yet implemented** — the ctjs cycle collector is the
-  substantial next step and is scoped above. It is correctness-critical brick
-  surgery (closure-capture lift changes `this`-binding; a collector bug is a
-  use-after-free), so it is staged and heavily tested, not a one-shot change.
+- **Phase 0 (babylon geom/tex free): done.** Safe, but ~1 MB — confirms the
+  retained weight is the JS handle objects, not geometry.
+- **Phases 1–2 (the cycle collector): done** in ctjs (`gc.hpp` + `rc.hpp` hooks;
+  `object_t`/`array_t`/`environment`/closure tracing). Instead of lifting the
+  closure env into an `rc<environment>` member (which reintroduces the
+  `value → function_t → environment → value` completion cycle), `make_fn` mirrors
+  the lambda's captured env + lexical `this` as **raw `gc::header*`** on
+  `function_t` — traceable, no completion cycle, no `this`-binding change.
+  - `cycle_probe`: object cycles **10 MB → 2 KB**, closure cycles **26 MB → 2 KB**.
+  - Full Space-Invaders runs **valgrind-clean (0 errors)** with collection active.
+    (A first cut freed parked garbage *inline* during the mark/scan walk — valgrind
+    caught the resulting corruption; the fix defers all freeing to one
+    pin/clear/destroy pass.)
+  - Whole headless suite green (12/12, incl. the constexpr `static_assert` proof —
+    the collector never runs at compile time).
+- **Phase 3 (integration): done.** `engine::tick` runs `gc::collect()` once a
+  second (and `do_reload` forces one). Game heap now oscillates in a **bounded
+  band** instead of climbing without limit.
+- **Remaining (separate from the GC):** the game's slow residual growth is the
+  babylon `world.meshes` C++ retention — `mesh.dispose()` keeps the handle in the
+  `world.meshes` vector (stable `__mesh` indices), a *legitimate C++ reference* the
+  collector must not touch. Dropping that handle on dispose (so the collector can
+  then reap the mesh's JS cycle) is the tracked follow-up; it needs an audit that
+  no path reads a disposed mesh's handle.
