@@ -1711,6 +1711,12 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 		if (m.disposed) { return value{}; }
 		m.disposed = true;
 		m.before_render.clear();
+		// free the heavy retained data now - a disposed mesh is never rendered
+		// again, so its geometry and texture are dead weight (models carry
+		// hundreds of verts + a texture). The slot itself stays (stable __mesh
+		// indices), and the JS handle stays live for the onDispose callback below.
+		m.geom = r3d::geo{};
+		m.tex.reset();
 		// keep the handle alive: onDispose may spawn meshes (Explosion) and
 		// reallocate W->meshes, dangling `m`
 		const objptr self = m.handle;

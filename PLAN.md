@@ -1,124 +1,174 @@
-# PLAN — run johnpitchers/Space-Invaders in ctbrowser
+# PLAN.md — Does the ctbrowser engine need a garbage collector?
 
-Goal: compile and run the full **Space-Invaders** game
-(<https://github.com/johnpitchers/Space-Invaders>, CC0) — a Vite + BabylonJS
-4.2 ES-module game — inside ctbrowser, rendering with the software 3D
-rasterizer in `babylon.hpp`. No changes to the game's source: it is bundled
-verbatim (`tools/js-bundle.py`) and parsed BY VALUE at runtime.
+## Answer: **Yes — for reference *cycles*.** (Measured, not assumed.)
 
-Target mode: **"Traditional 2D" (mode 0)** — a near-flat perspective 3D view.
-(Modes 1/2 add orthographic camera + glow + fog; cosmetic, done later.)
+ctjs manages every JS value (`object`, `array`, `function`, `environment`)
+with **reference counting** — `ctjs::rc<T>`, a constexpr `shared_ptr` analogue
+(`include/ctjs/rc.hpp`). Reference counting reclaims acyclic garbage promptly and
+deterministically, and needs **no** collector. It **cannot** reclaim reference
+*cycles*: `a.o = b; b.o = a` leaves both counts ≥ 1 forever. Real JS — and this
+engine's own bindings — create cycles constantly.
 
-## What the game actually is (from source recon)
+### Evidence (all measured on the std::embed build server)
 
-- **No sprite gameplay.** Aliens/player/ship/bullets/barriers are all **3D
-  meshes** (GLB models + `MeshBuilder.CreateBox`). "2D" = camera framing only.
-  Sprites are used ONLY for the cosmetic starfield.
-- **Frame driver:** `engine.runRenderLoop(cb)`; inside, a `switch(State.state)`
-  state machine; a busy-wait on `Date.now()` throttles FPS; then
-  `scene.render()`.
-- **All gameplay logic runs in `scene.onBeforeRenderObservable` callbacks**
-  (movement, spawning, firing) — fired inside `scene.render()`.
-- **Collision is load-bearing:** `mesh.moveWithCollisions(v)` must set
-  `mesh.collider.collidedMesh` (filtered by `collisionGroup`/`collisionMask`)
-  so bullet↔alien/barrier/player hits resolve via `.metadata`.
-- **Startup gate:** the loop only runs once `gameAssets.isComplete` — which
-  flips true after all 15 async asset callbacks fire (5 `SceneLoader` +
-  10 `Sound`) then a `setTimeout(1)`. So Sound/SceneLoader must RESOLVE.
-- Assets: 5 GLB models, 10 WAV sounds, 2 PNG starfield sprites (CC0).
+**1. Pure ctjs, cyclic vs acyclic (scratch `cycle_probe`):**
+```
+acyclic 40k objects  -> heap delta   +1 KB     (refcount frees them)
+cyclic  40k objects  -> heap delta +44,374 KB  (never freed)
+cyclic  40k (again)  -> heap delta +44,375 KB  (linear, unbounded)
+```
+Acyclic garbage is reclaimed to the byte; cyclic garbage leaks ~1.1 KB per pair,
+without bound. This is a property of refcounting, reproduced directly.
 
-## Feature checklist
+**2. The real Space-Invaders game, 4000 frames, firing/moving (`mem_probe`):**
+```
+frame   heapMB   handle_nodes  tracked  onclick  click_lst  timers  raf
+    0     9.2         171        171       0         1        133     1
+  500    16.2        172        172       0         1        131     1
+ 3000    41.0        188        188       1         1        131     1
+```
+Heap climbs **+25 MB over 2500 frames (~10 KB/frame, ~2.6 GB/hour at 60fps)**
+while every C++ registry stays flat (`handle_nodes` 171→188). The leak is in the
+**JS value graph and the babylon world**, not the DOM bindings.
 
-### A. General web platform (dom.hpp / script.hpp) — reusable, not shims — DONE
-- [x] `document.querySelector` / element `querySelector` — tag / `#id` /
-      `.class` / compound / descendant combinator (`dom.hpp query_selector`).
-      (validated: dom/webapi/pong regression green)
-- [x] element `.classList` object: `add` / `remove` / `contains` / `toggle`.
-- [x] element `.append(text)` (used by the loading dots script).
-- [x] `window.localStorage`: `getItem` / `setItem` / `removeItem` (JS-object backed).
-- [x] `navigator.userAgent` (desktop UA, drives mobile detection = false).
-- [x] `window.scrollTo` (no-op), `window.onresize` settable.
-- [x] `document.documentElement` handle.
-- [ ] `querySelectorAll` (returns array) — not yet; add if the game needs it.
+### The two concrete leak sources
 
-### A2. Compile-time architecture (bricks) — DONE, validated on the std::embed clang
-- [x] **ctcss BY VALUE**: `ctcss::parse_value(sv)` + `query` (ctcss/value.hpp);
-      lenient linear parser (skips @font-face/@keyframes, recurses @media).
-      Engine resolves styles via it (`page::style_text()` + `engine::css_sheet`).
-      Full suite green through the value-CSS path (incl. render golden).
-- [x] **CTJS_NO_GRAMMAR / CTHTML_NO_GRAMMAR / CTCSS_NO_GRAMMAR**: a `#define` that
-      skips the lark/Earley grammar table build entirely for value-only TUs. Wins:
-      ctjs tens-of-min → 4.2 s; cthtml 14.4 s → 0.8 s; ctcss 4.3 s → 0.8 s. (Value
-      paths made grammar-independent: shared helpers relocated to grammar-free
-      headers — types.hpp/classify.hpp; value.hpp/vparse/vinterp need no grammar.)
+- **(A) ctjs reference cycles.** Closures are the main culprit. `make_fn`
+  (`vinterp.hpp:521`) captures the closure `environment` **and** the lexical
+  `this` *inside* the type-erased lambda: `[self, fn_node, closure, is_arrow,
+  lexical_this]`. The game is full of the resulting object↔closure cycles:
+  `mesh.onDispose = (m) => this.playerHit(m)`,
+  `UI.onclick = () => this.playAgainPressed = true`, bullet observers,
+  `setInterval` callbacks — each captures an object it is then stored back onto.
+  **Refcounting can never free these.**
+- **(B) babylon retains disposed meshes.** `world.meshes` is append-only
+  (`babylon.hpp`: 3 × `push_back`, **zero** `erase`). `mesh.dispose()` sets a
+  `disposed` flag and clears `before_render`, but keeps the mesh's geometry, its
+  texture, and its JS handle forever (stable integer `__mesh` indices forbid
+  removal). Every bullet/explosion mesh ever created is retained.
 
-### B. BABYLON core surface (babylon.hpp) — extends the existing shim
-Existing: Engine/Scene/ArcRotate+Free+UniversalCamera/Hemispheric+Directional
-Light/StandardMaterial/MeshBuilder(Box/Sphere/Ground/Cylinder)/Vector3/Color3/
-Color4/glTF loader + `ImportMeshAsync`.
+(A) and (B) interlock: a disposed bullet's handle is pinned by **both** the C++
+`world.meshes[ix].handle` **and** the JS `bullet ↔ mesh ↔ onDispose` cycle.
+Freeing it needs the C++ root dropped **and** the JS cycle broken — i.e. both a
+babylon fix and a cycle collector.
 
-- [ ] **`onBeforeRenderObservable`** on Scene AND per-mesh: real `add(cb)→handle`
-      / `remove(handle)`, fired every frame at the top of `scene.render()`.
-      (Currently a no-op — THE critical gap: no gameplay without it.)
-- [ ] **Mesh surface**: `metadata` (free object), `onDispose`, `visibility`,
-      `isVisible`, `material`, collision flags (`checkCollisions`,
-      `collisionGroup`, `collisionMask`, `collisionResponse`,
-      `collisionRetryCount`), `instancedBuffers`, `registerInstancedBuffer`.
-- [ ] **Mesh methods**: `clone(name)`, `createInstance(name)`, `dispose()`
-      (fires `onDispose`), `moveWithCollisions(v)`, `calcMovePOV(x,y,z)`,
-      `translate(axis,dist,space)`, `rotate(axis,amount,space)`.
-- [ ] **Collision detection**: AABB per mesh (geometry bounds × scaling +
-      position); `moveWithCollisions` sets `collider.collidedMesh` to the first
-      overlapping mesh where `(mover.collisionMask & other.collisionGroup)!=0`.
-- [ ] **`Scalar`**: `Lerp(a,b,t)`, `RandomRange(min,max)` (+ Clamp).
-- [ ] **`Axis`** (X/Y/Z = Vector3), **`Space`** (WORLD/LOCAL consts).
-- [ ] **`Camera.ORTHOGRAPHIC_CAMERA`** const; **UniversalCamera** ortho props
-      (`mode`, `orthoTop/Bottom/Left/Right`, `width/height/ratio`), `rotation`,
-      `position.x` mutation, `setTarget`. (Perspective works today; ortho later.)
-- [ ] **Engine additions**: `audioEngine.unlock()` (static), `onResizeObservable`,
-      `getRenderWidth/getRenderHeight`.
-- [ ] **Scene additions**: `collisionsEnabled`, fog fields, `meshes` array,
-      `deltaTime`, `actionManager` slot, `FOGMODE_LINEAR` const.
-- [ ] **`SceneLoader.ImportMeshAsync`** → resolved promise `{meshes:[root,body]}`.
-      Milestone 1: return primitive **box** meshes (playable, no asset pipeline).
-      Milestone 3: return real GLB meshes.
-- [ ] **`AssetContainer`**: `.meshes` array, `removeAllFromScene()`.
+---
 
-### C. BABYLON GUI (babylon.hpp) — HUD overlay
-- [ ] `AdvancedDynamicTexture.CreateFullscreenUI` → `addControl` / `dispose`,
-      `_canvas.width/height`.
-- [ ] `TextBlock`: `text`/`color`/`fontFamily`/`fontSize`/`left`/`top`/
-      `textVerticalAlignment`/`textHorizontalAlignment`; rendered into the canvas
-      (font8x8) after the 3D pass — score/level/lives/high HUD.
-- [ ] `Control` alignment consts (`VERTICAL/HORIZONTAL_ALIGNMENT_*`).
+## Design
 
-### D. Cosmetic stubs (must construct + not throw; visuals later)
-- [ ] `Sound` — constructor CALLS its onLoaded callback (startup gate!);
-      `play`/`stop` no-op (milestone 3: wire the WAV mixer).
-- [ ] `Sprite` / `SpriteManager` — construct + props; starfield unrendered first.
-- [ ] `GlowLayer` — `intensity` + `customEmissiveColorSelector` no-op.
-- [ ] `ActionManager` — construct only.
+A **full tracing GC is the wrong tool**: ctjs runs at **compile time** (constexpr
+interpretation is the project's whole point), where a runtime tracing GC is both
+impossible and unnecessary (constant-evaluation frees its arena when it ends).
+The right tool for a refcounted runtime is a **cycle collector layered on top of
+refcounting** — the approach CPython, PHP and (historically) WebKit's DOM use.
+It runs **only at runtime** (`if !consteval`), leaving the constexpr path byte-
+for-byte unchanged.
 
-### E. Omit (imported-but-unused / dead code)
-`ExecuteCodeAction`, `AssetsManager`, GUI `Style`/`Rectangle`, `TestCode.js`.
+### Algorithm: synchronous Bacon–Rajan trial deletion
 
-## Scaffolding & build
-- [x] Bundle verified: `js-bundle.py index.html` → 21 modules, 66 KB, node-clean.
-- [x] `examples/space-invaders.html` (minimal head + game body + inlined bundle,
-      canvas sized 900×700; heavy CSS stripped) → `space-invaders.inc`.
-- [x] `examples/space-invaders.cpp` + Makefile `.inc` rule.
-- [ ] CMake `examples/CMakeLists.txt` entry (if per-example listing).
-- [ ] Credit upstream (CC0) in NOTICE/README.
+Bacon & Rajan, *"Concurrent Cycle Collection in Reference Counted Systems"*
+(2001), synchronous variant. It needs no explicit root set — it infers external
+references from the refcounts themselves:
 
-## Milestones (each builds + runs headless on the Azure server; babylon.hpp is
-in the PCH → ~90 s rebake per iteration, so batch changes)
-1. **Loads** — full surface stubbed; bundle runs with zero ReferenceErrors;
-   assets complete; reaches TITLESCREEN.
-2. **Renders + playable (box graphics)** — observables pumped, box aliens/player/
-   bullets move, collision resolves hits, HUD draws, keyboard controls the ship.
-3. **Assets** — real GLB models via `ImportMeshAsync`, WAV audio via the mixer,
-   starfield sprites; then modes 1/2 (ortho camera + glow + fog).
+1. **Candidate buffer.** When an `rc` decrement leaves `count > 0`, the object
+   *might* be in a cycle: color it **purple** and add it to a roots buffer (once).
+   When a decrement hits `0`, free normally and remove from the buffer.
+2. **collect()** (run periodically):
+   - **MarkRoots** — for each purple root, `MarkGray`: DFS coloring gray and
+     **decrementing each child's count** (trial deletion: remove internal edges).
+   - **ScanRoots** — for each root, `Scan`: if gray with `count > 0` it is
+     externally referenced → `ScanBlack` (restore: black, re-increment children);
+     if gray with `count == 0` → white, recurse.
+   - **CollectRoots** — free every white object (recursively), restoring edges.
 
-## Out of scope (BabylonJS parity)
-textures/PBR, shadows, particles, post-processing, physics, animations,
-WebGL/shader parity, `@babylonjs/loaders` beyond single-mesh GLB.
+White objects are exactly the members of unreachable cycles.
+
+### What has to change in ctjs (the hard parts)
+
+1. **Make every collectable type *traceable*** — a `gc_trace(const T&, visit)`
+   that enumerates a T's outgoing `rc` edges:
+   - `object_t` → each `props` value + `proto`  — already reachable
+   - `array_t`  → each element                   — already reachable
+   - `environment` → `parent` + each `vars` value — already reachable
+   - `function_t` → `props` + **its closure `env` + bound `this`** — **NOT
+     currently reachable**; sealed inside the `cfunction` lambda.
+2. **Lift the closure captures out of the lambda** (prerequisite for tracing
+   closures — the cycles that actually leak). Give `function_t` explicit fields
+   `env_ptr env; value bound_this;`; have `make_fn` store them there and capture
+   only PODs `[self, fn_node, is_arrow]`; pass the live `function_t` to the call
+   via `context` (e.g. `cx.current_callee`) so `call_user` reads `env`/`this`
+   from it. **This touches the hot call path and `this`-binding — the highest-
+   risk change; it must not regress arrows / methods / `new`.**
+3. **GC header on the rc block** — `{ color; buffered; registry links; trace
+   fn-ptr }` beside the existing `count`. All bookkeeping (registry insert/remove,
+   roots buffer, coloring) is **guarded `if !consteval`** so the compile-time
+   interpreter is untouched (it still allocates and frees per the existing
+   refcount; cycles at compile time die with the evaluation arena).
+4. **Driver** — `ctjs::gc::collect()` exposed on `run_result`; ctbrowser's
+   `engine::tick` calls it on a budget (every N frames, or when the roots buffer
+   crosses a threshold). `do_reload`/`reset` force a full collection.
+
+### Companion fix (babylon, independent of the GC)
+
+- **Free disposed meshes' heavy data.** In `mesh.dispose()`, after `onDispose`
+  fires, release `geom` and `tex` (disposed meshes are never rendered). *Safe and
+  unconditional* — **done in Phase 0 below.**
+- **Drop the C++ handle root.** Once the cycle collector exists, `dispose()` can
+  also null `world.meshes[ix].handle`, so a bullet whose JS cycle the collector
+  breaks is fully reclaimed. (Slot *reuse* is unsafe while stale JS handles may
+  survive in a cycle — index aliasing — so tombstone slots stay, just emptied.)
+
+---
+
+## Phases
+
+- **Phase 0 — babylon: free disposed mesh geometry/texture.** Safe, local, no GC.
+  Reduces retention immediately (model meshes: 605–1094 verts + 40 KB textures).
+  **Implemented; re-measured (see Status).**
+- **Phase 1 — traceability.** Add `gc_trace` for object/array/environment; lift
+  closure `env`/`this` onto `function_t`; rework the call path; keep the full
+  suite (pong/webapi/invaders/select/…) green. No collector yet — behavior-
+  preserving refactor.
+- **Phase 2 — the collector.** rc GC header + registry + roots buffer (all
+  `if !consteval`); Bacon–Rajan `collect()`. Verify with `cycle_probe`: cyclic
+  heap delta must drop to ~0 after `collect()`. Stress for use-after-free.
+- **Phase 3 — integration + policy.** `engine::tick` collection budget; `reset`
+  full-collect; drop babylon handle root on dispose. Re-run `mem_probe`: game
+  heap must plateau instead of climbing.
+
+## Verification
+
+- `cycle_probe`: cyclic allocations reclaimed after `collect()` (heap returns to
+  baseline); acyclic path unchanged.
+- Full headless suite stays green (no premature free / this-binding regressions)
+  — pong, webapi, invaders_smoke, select, onclick, scene_teardown.
+- `mem_probe` over ≥8000 frames: heap plateaus.
+- **Constexpr untouched**: `tests/dom.cpp` (whole DOM+layout in a `static_assert`)
+  and the babylon compile-time render still compile — proves the GC never runs at
+  compile time.
+
+## Risk
+
+The Phase-1 closure refactor is the crux: it changes `this`-binding and the call
+path, where a subtle bug is a silent wrong-answer, and a Phase-2 collector bug is
+a use-after-free (worse than the leak it fixes). This is deliberate, staged,
+heavily-tested brick surgery — not a one-shot change.
+
+---
+
+## Status
+
+- **Diagnosis: complete** (measurements above).
+- **Phase 0: implemented** — `mesh.dispose()` now frees `geom` + `tex`. Re-measure
+  over the same 4000-frame game: heap 15.8 → 40.0 MB, i.e. **still +24 MB, only
+  ~1 MB better than before.** This is the expected result and it *confirms* the
+  diagnosis: per-bullet geometry is tiny (small boxes); the retained weight is the
+  JS **handle objects** (each carrying dozens of native closures + Vector3s),
+  pinned by both `world.meshes[ix].handle` and the JS closure cycle. Freeing
+  geometry cannot touch them. **Phase 0 is a correct, safe reduction for model
+  meshes but does not fix the game leak — the cycle collector is the real fix.**
+  Full headless suite stays green (11/11).
+- **Phases 1–3: designed, not yet implemented** — the ctjs cycle collector is the
+  substantial next step and is scoped above. It is correctness-critical brick
+  surgery (closure-capture lift changes `this`-binding; a collector bug is a
+  use-after-free), so it is staged and heavily tested, not a one-shot change.
