@@ -2129,19 +2129,11 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 	h->set("activeCamera", value{});
 	h->set("render", value::function([W, id, &ev](ctjs::context & cx, const std::vector<value> &) -> value {
 		ev.cx = &cx;
-		// refresh scene.meshes (live handles) + scene.deltaTime, run the frame's
-		// onBeforeRender observers (the game's whole per-frame logic), then draw
+		// refresh scene.deltaTime (scene.meshes is a LIVE getter, see below), then
+		// run the frame's onBeforeRender observers (the game's whole per-frame
+		// logic) and draw
 		if (id >= 0 && id < static_cast<int>(W->scenes.size())) {
-			scene_rec & sc = W->scenes[static_cast<std::size_t>(id)];
-			std::vector<value> ms;
-			for (int mi : sc.mesh_ids) {
-				if (mi >= 0 && mi < static_cast<int>(W->meshes.size()) &&
-				    !W->meshes[static_cast<std::size_t>(mi)].disposed) {
-					ms.push_back(value{W->meshes[static_cast<std::size_t>(mi)].handle});
-				}
-			}
-			sc.handle->set("meshes", value::array(std::move(ms)));
-			sc.handle->set("deltaTime", value{W->last_dt_ms});
+			W->scenes[static_cast<std::size_t>(id)].handle->set("deltaTime", value{W->last_dt_ms});
 		}
 		fire_before_render(W, id, cx);
 		fire_action_managers(W, id, cx);
@@ -2151,8 +2143,27 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 	}, "render"));
 	// scene.onBeforeRenderObservable is REAL - it drives per-frame game logic
 	h->set("onBeforeRenderObservable", make_observable(W, id, false));
+	// scene.meshes is a LIVE getter (not a per-frame snapshot): it re-reads the
+	// scene's currently non-disposed mesh handles on EVERY access. This is load-
+	// bearing for teardown - the game runs, inside onBeforeRender,
+	//     while (scene.meshes.length) scene.meshes[0].dispose();
+	// and dispose() removes the id from sc.mesh_ids. A snapshot array would never
+	// shrink mid-loop, so the loop would spin forever (hanging the whole app).
+	ctjs::attach_accessor(*h, "meshes", 'g', value::function(
+	    [W, id](ctjs::context &, const std::vector<value> &) -> value {
+		    std::vector<value> ms;
+		    if (id >= 0 && id < static_cast<int>(W->scenes.size())) {
+			    scene_rec & sc = W->scenes[static_cast<std::size_t>(id)];
+			    for (int mi : sc.mesh_ids) {
+				    if (mi >= 0 && mi < static_cast<int>(W->meshes.size()) &&
+				        !W->meshes[static_cast<std::size_t>(mi)].disposed) {
+					    ms.push_back(value{W->meshes[static_cast<std::size_t>(mi)].handle});
+				    }
+			    }
+		    }
+		    return value::array(std::move(ms));
+	    }, "get meshes"));
 	// data props the game sets/reads
-	h->set("meshes", value::array({}));
 	h->set("collisionsEnabled", value{false});
 	h->set("gravity", make_vector3(0, -9.81, 0));
 	h->set("fogEnabled", value{false});
