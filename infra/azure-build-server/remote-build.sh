@@ -5,9 +5,13 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-ip=$(./server.sh ip)
+# Prefer the tailnet address (survives public-IP changes), else the public IP
+vm=$(terraform output -raw vm_name)
+if ! { command -v tailscale >/dev/null 2>&1 && ip=$(tailscale ip -4 "$vm" 2>/dev/null); }; then
+  ip=$(./server.sh ip)
+fi
 if [[ -z "$ip" ]]; then
-  echo "no public ip in terraform output — has this been applied?" >&2
+  echo "no tailnet or public ip for the server — has this been applied?" >&2
   exit 1
 fi
 

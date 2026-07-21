@@ -30,6 +30,10 @@ case "${1:-status}" in
     current_ip
     ;;
   ssh)
+    # Prefer the tailnet (survives public-IP changes; works from anywhere)
+    if command -v tailscale >/dev/null 2>&1 && ts_ip=$(tailscale ip -4 "$vm" 2>/dev/null); then
+      exec ssh "ubuntu@$ts_ip"
+    fi
     exec ssh "ubuntu@$(current_ip)"
     ;;
   *)

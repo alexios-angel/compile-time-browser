@@ -55,6 +55,18 @@ variable "ssh_cidr" {
   }
 }
 
+variable "tailscale_auth_key" {
+  description = "Tailscale auth key (tskey-auth-...) cloud-init uses to join the server to the tailnet with Tailscale SSH enabled. Generate at https://login.tailscale.com/admin/settings/keys. Empty skips Tailscale. Pass via TF_VAR_tailscale_auth_key or terraform.tfvars (both gitignored) — never commit it."
+  type        = string
+  default     = ""
+  sensitive   = true
+
+  validation {
+    condition     = var.tailscale_auth_key == "" || can(regex("^tskey-", var.tailscale_auth_key))
+    error_message = "tailscale_auth_key must start with tskey- (or be empty to skip Tailscale)."
+  }
+}
+
 variable "name" {
   description = "Name prefix for all resources"
   type        = string

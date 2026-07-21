@@ -7,12 +7,23 @@ minutes, 4-6 GB on the 7.5 GB WSL2 box) and the headless engine suite.
   (eastus), 100 GB Premium SSD. The PCH bake is one g++ process, so cores
   beyond the second sit idle; 16 GiB covers its ~6 GB peak comfortably. Override with `-var vm_size=...` /
   `-var use_spot=true` (Spot evictions deallocate; the disk survives).
-- Ubuntu 24.04, toolchain installed by cloud-init (`user_data.sh`): gcc/cmake/
-  ninja/pkg-config/ccache. **No SDL3** — same as CI: the render test and
-  examples skip; goldens remain a local check.
+- Ubuntu 24.04, provisioned by cloud-init (`user_data.sh`): apt only for
+  Homebrew's prerequisites (build-essential/curl/git), then **linuxbrew** for
+  the utilities (cmake/ninja/pkg-config/ccache/glm/…) and the std::embed clang
+  release into `~/ctbrowser/tools/clang-std-embed`. **No SDL3** — same as CI:
+  the render test and examples skip; goldens remain a local check.
 - SSH only, restricted to your current public IP at apply time (or pass
   `-var ssh_cidr=...`). Auth is your `~/.ssh/id_ed25519.pub`. The public IP
   is Standard/static, so it survives deallocate/start cycles.
+- **Tailscale** (optional but recommended): pass a `tailscale_auth_key` and
+  cloud-init joins the server to your tailnet as `ctbrowser-build` with
+  Tailscale SSH enabled — ssh works both directions (laptop→server and
+  server→laptop, once the laptop runs `tailscale up --ssh` too) regardless
+  of public-IP changes. `server.sh ssh` and `remote-build.sh` automatically
+  prefer the tailnet address when it resolves. Generate the key at
+  <https://login.tailscale.com/admin/settings/keys> and pass it via
+  `TF_VAR_tailscale_auth_key` or `terraform.tfvars` (gitignored) — never
+  commit it.
 
 ## Use
 

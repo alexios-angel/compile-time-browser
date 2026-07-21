@@ -23,7 +23,13 @@ terraform {
 # }
 
 provider "azurerm" {
-  features {}
+  features {
+    # Azure auto-injects a VM-Insights data collection rule (msvmi-*) into the
+    # RG; without this flag `terraform destroy` refuses to delete the RG.
+    resource_group {
+      prevent_deletion_if_contains_resources = false
+    }
+  }
   # Falls back to ARM_SUBSCRIPTION_ID when the variable is unset
   subscription_id = var.subscription_id
 }
@@ -152,7 +158,10 @@ resource "azurerm_linux_virtual_machine" "build" {
     version   = "latest"
   }
 
-  custom_data = base64encode(file("${path.module}/user_data.sh"))
+  custom_data = base64encode(templatefile("${path.module}/user_data.sh", {
+    tailscale_auth_key = var.tailscale_auth_key
+    tailscale_hostname = var.name
+  }))
 
   tags = local.tags
 }
