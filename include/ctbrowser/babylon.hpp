@@ -2659,18 +2659,49 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		sl.set("AppendAsync", *B->find("AppendSceneAsync"));
 		B->set("SceneLoader", value::object(std::move(sl)));
 	}
-	// --- AssetContainer: a .meshes array the game pushes to; removeAllFromScene
-	// is a no-op (the parked originals sit off-screen)
-	B->set("AssetContainer", value::function([](ctjs::context &, const std::vector<value> &) -> value {
-		auto o = objptr::make();
-		o->set("meshes", value::array({}));
-		o->set("materials", value::array({}));
-		o->set("textures", value::array({}));
-		for (const char * nm : {"removeAllFromScene", "addAllToScene", "dispose"}) {
-			o->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
-		}
-		return value{o};
-	}, "AssetContainer"));
+	// --- AssetContainer: a .meshes array the game pushes its model ORIGINALS to
+	// (parked off-screen, cloned each round). removeAllFromScene takes those
+	// meshes OUT of the scene's render/dispose list - LOAD-BEARING across games:
+	// clearLevel() disposes everything still in scene.meshes on game over, so if
+	// the originals stayed in the scene they'd be destroyed and the next game
+	// would clone empty meshes (invisible aliens/player). Detaching keeps them in
+	// world.meshes (still cloneable) but out of harm's way.
+	{
+		const auto move_container = [W](ctjs::context & cx, bool add) {
+			const objptr self = self_of(cx);
+			if (!self) { return; }
+			const value * mv = self->find("meshes");
+			if (mv == nullptr || !mv->is_array()) { return; }
+			for (const value & m : *mv->as_array()) {
+				const int mi = m.is_object() ? index_of(m.as_object(), "__mesh") : -1;
+				if (mi < 0 || mi >= static_cast<int>(W->meshes.size())) { continue; }
+				const int sid = W->meshes[static_cast<size_t>(mi)].scene_id;
+				if (sid < 0 || sid >= static_cast<int>(W->scenes.size())) { continue; }
+				auto & ids = W->scenes[static_cast<size_t>(sid)].mesh_ids;
+				if (add) {
+					if (std::find(ids.begin(), ids.end(), mi) == ids.end()) { ids.push_back(mi); }
+				} else {
+					ids.erase(std::remove(ids.begin(), ids.end(), mi), ids.end());
+				}
+			}
+		};
+		B->set("AssetContainer", value::function([move_container](ctjs::context &, const std::vector<value> &) -> value {
+			auto o = objptr::make();
+			o->set("meshes", value::array({}));
+			o->set("materials", value::array({}));
+			o->set("textures", value::array({}));
+			o->set("removeAllFromScene", value::function([move_container](ctjs::context & cx, const std::vector<value> &) -> value {
+				move_container(cx, false);
+				return value{};
+			}, "removeAllFromScene"));
+			o->set("addAllToScene", value::function([move_container](ctjs::context & cx, const std::vector<value> &) -> value {
+				move_container(cx, true);
+				return value{};
+			}, "addAllToScene"));
+			o->set("dispose", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "dispose"));
+			return value{o};
+		}, "AssetContainer"));
+	}
 	// --- Sprite / SpriteManager: cosmetic (starfield); constructed, not rendered
 	B->set("SpriteManager", value::function([](ctjs::context &, const std::vector<value> &) -> value {
 		auto o = objptr::make();
