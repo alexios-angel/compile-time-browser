@@ -26,6 +26,10 @@ build there directly. Server = 2 vCPU / 15 GB, its own std::embed clang at
 `stop` DEALLOCATES — bills stop). After a local reboot the SSH agent is gone:
 `ssh-agent -a ~/.ssh/build-agent.sock && SSH_AUTH_SOCK=~/.ssh/build-agent.sock
 ssh-add ~/.ssh/id_ed25519`, then `SSH_AUTH_SOCK=~/.ssh/build-agent.sock`.
+**Clean clones of all four repos are ready at `~/work/` on the server** (at
+`main`, submodules init'd, clang toolchain symlinked in) — work there. AVOID
+the server's `~/ctbrowser`: it's a stale rsync of a since-deleted worktree with
+a broken `.git`, kept only because the 120 MB clang install lives under it.
 
 **In-flight task: retire the Makefiles, make CMake the sole build** (ctbrowser +
 the 3 bricks). An attempt was made and **reverted** (too many local errors);
