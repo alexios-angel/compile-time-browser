@@ -13,6 +13,51 @@ fetch). std::embed is load-bearing (assets.hpp); Makefiles error and
 CMake FATAL_ERRORs without __builtin_std_embed. No gcc/MSVC/stock-clang
 paths. Work on `main`. Prefer `rg`.
 
+## ⚠️ Working environment & in-flight work (READ FIRST — 2026-07-21)
+
+**Build ON the Azure build server, not this laptop.** The local WSL2 box
+(7.5 GB RAM, repo on the `/mnt/c` Windows mount) OOMs on grammar bakes — the
+ctjs JS-grammar PCH bake CRASHED the whole machine — and `rsync` from `/mnt/c`
+into the server is flaky (symlink + DrvFs). So: ssh into the server and edit +
+build there directly. Server = 2 vCPU / 15 GB, its own std::embed clang at
+`~/ctbrowser/tools/clang-std-embed`, GLM (linuxbrew), cmake 3.28, **no SDL3**
+(so examples skip there). Lifecycle: `infra/azure-build-server/server.sh
+{start|stop|status|ip|ssh}` (`start` = `az vm start`, needs `az` logged in;
+`stop` DEALLOCATES — bills stop). After a local reboot the SSH agent is gone:
+`ssh-agent -a ~/.ssh/build-agent.sock && SSH_AUTH_SOCK=~/.ssh/build-agent.sock
+ssh-add ~/.ssh/id_ed25519`, then `SSH_AUTH_SOCK=~/.ssh/build-agent.sock`.
+
+**In-flight task: retire the Makefiles, make CMake the sole build** (ctbrowser +
+the 3 bricks). An attempt was made and **reverted** (too many local errors);
+redo it on the server. Findings so the next pass is fast:
+- **ctbrowser `CMakeLists.txt`** is missing what the Makefile has: (1) the **GLM
+  include path** — `babylon.hpp` rides the PCH via `<glm/glm.hpp>`; add a
+  `find_path` over linuxbrew/homebrew/system roots and put it on the interface
+  target with `$<BUILD_INTERFACE:>`. (2) the `check_cxx_source_compiles`
+  `__builtin_std_embed` probe must set `CMAKE_REQUIRED_FLAGS "-std=c++23"` —
+  the builtin only exists in C++23 mode, so the probe otherwise wrongly FATALs
+  on the correct toolchain. (3) the warning/opt flags `-O2 -pedantic -Wall
+  -Wextra -Werror -Wconversion -Wno-overlength-strings` (interface, via
+  `$<BUILD_INTERFACE:>` so the PCH anchor + every test share them but installers
+  don't). (4) examples: only `pong`/`fetchboard` `.inc` are generated — add
+  `space-invaders`; and `babylon-model` needs
+  `--fetch-allow=https://assets.babylonjs.com/**` under `CTBROWSER_EXAMPLES_FETCH`.
+  Verified locally: configure + PCH bake (~16 s — GRAMMAR_FREE, so NO `ulimit`
+  needed here) + babylon/dom/gc tests PASS.
+- **ctjs `CMakeLists.txt` BUG**: `-fbracket-depth=2048` is too small for the JS
+  grammar (needs ≥ ~7500; the Makefile uses **16384**) → the CMake build FAILS
+  outright. Fix: bracket-depth → 16384 AND raise the stack (16384 overflows
+  clang's 8 MB default — the Makefile ran `ulimit -s unlimited`). Under CMake use
+  a launcher: write an `sh` script `ulimit -s unlimited; exec "$@"` and
+  `set(CMAKE_CXX_COMPILER_LAUNCHER "/bin/sh" <script>)`. **This is the bake that
+  OOM'd the laptop — run it on the server.**
+- **cthtml/ctcss**: grammars bake fine at bracket-depth 2048 with the default
+  stack (no launcher). Warning-flag parity optional.
+- Then: convert `.github/workflows/tests.yml` in all 4 repos (drop the `make`
+  jobs, keep/adjust the `cmake` job; ctbrowser's needs an `apt-get install
+  libglm-dev` step), update the READMEs, and delete the 8 Makefiles (top-level
+  + `examples/` in each repo).
+
 ## Build & test
 ```bash
 git submodule update --init --recursive    # three bricks + their lark
