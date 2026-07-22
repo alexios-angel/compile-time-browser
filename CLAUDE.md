@@ -13,23 +13,28 @@ fetch). std::embed is load-bearing (assets.hpp); Makefiles error and
 CMake FATAL_ERRORs without __builtin_std_embed. No gcc/MSVC/stock-clang
 paths. Work on `main`. Prefer `rg`.
 
-## ⚠️ Working environment & in-flight work (READ FIRST — 2026-07-21)
+## ⚠️ Working environment & in-flight work (READ FIRST — 2026-07-22)
 
-**Build ON the Azure build server, not this laptop.** The local WSL2 box
+**Build ON the shared devbox, not this laptop.** The local WSL2 box
 (7.5 GB RAM, repo on the `/mnt/c` Windows mount) OOMs on grammar bakes — the
 ctjs JS-grammar PCH bake CRASHED the whole machine — and `rsync` from `/mnt/c`
-into the server is flaky (symlink + DrvFs). So: ssh into the server and edit +
-build there directly. Server = 2 vCPU / 15 GB, its own std::embed clang at
-`~/ctbrowser/tools/clang-std-embed`, GLM (linuxbrew), cmake 3.28, **no SDL3**
-(so examples skip there). Lifecycle: `infra/azure-build-server/server.sh
-{start|stop|status|ip|ssh}` (`start` = `az vm start`, needs `az` logged in;
-`stop` DEALLOCATES — bills stop). After a local reboot the SSH agent is gone:
-`ssh-agent -a ~/.ssh/build-agent.sock && SSH_AUTH_SOCK=~/.ssh/build-agent.sock
-ssh-add ~/.ssh/id_ed25519`, then `SSH_AUTH_SOCK=~/.ssh/build-agent.sock`.
-**Clean clones of all four repos are ready at `~/work/` on the server** (at
-`main`, submodules init'd, clang toolchain symlinked in) — work there. AVOID
-the server's `~/ctbrowser`: it's a stale rsync of a since-deleted worktree with
-a broken `.git`, kept only because the 120 MB clang install lives under it.
+into the server is flaky (symlink + DrvFs). The devbox
+(github.com/alexios-angel/infra, sibling checkout `../infra`) replaced the old
+per-project build server: 8 vCPU / 32 GB, Ubuntu 24.04, apt toolchain (GLM,
+cmake 3.28, LLVM 18 suite), **no SDL3** (so examples skip there). It
+**deallocates itself after 30 idle min** — `../infra/azure-build-server/
+server.sh start` wakes it (lifecycle: `server.sh
+{start|stop|status|ip|ssh|ssh-config|allow-ip}`; ssh timeout after a network
+change = your IP rotated → `server.sh allow-ip`). Reach it as `ssh devbox`
+(alias written by `server.sh ssh-config`, IdentityAgent included). After a
+local reboot the SSH agent is gone: `ssh-agent -a ~/.ssh/build-agent.sock &&
+SSH_AUTH_SOCK=~/.ssh/build-agent.sock ssh-add ~/.ssh/id_ed25519` — the
+`devbox` alias finds the sock by itself after that.
+**Clean clones live at `~/projects/` on the box** (`compile-time-browser`
+with submodules init'd + clang toolchain installed, and `embed`) — ssh in and
+work there directly, or sync this tree with `./tools/remote-build.sh
+[target]` (converges the pinned clang-std-embed toolchain + glm, then runs
+make in `~/projects/compile-time-browser`).
 
 **In-flight task: retire the Makefiles, make CMake the sole build** (ctbrowser +
 the 3 bricks). An attempt was made and **reverted** (too many local errors);

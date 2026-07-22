@@ -196,6 +196,8 @@ git submodule update --init --recursive   # the three bricks (+ their lark)
 make            # bakes the combined grammar PCH ONCE (the JS tables are
                 # tens of minutes - one time), then builds + RUNS the
                 # headless engine suite
+# or on the shared Azure devbox (github.com/alexios-angel/infra):
+./tools/remote-build.sh [target]          # sync + converge toolchain + make
 # windowed examples (need SDL3; via CMake or the examples Makefile):
 cmake -B build && cmake --build build -j && ctest --test-dir build
 ./build/examples/ctbrowser-example-counter

@@ -13,7 +13,7 @@ ifeq ($(origin CXX),default)
 CXX := tools/clang-std-embed/bin/clang++
 ifeq ($(wildcard $(CXX)),)
 $(error tools/clang-std-embed/bin/clang++ not found - install the std::embed \
-toolchain (embed repo: ./infra/azure-build-server/sync-to-ctbrowser.sh, or \
+toolchain (embed repo: ./scripts/sync-to-ctbrowser.sh, or \
 download the clang-std-embed release archive and unpack it there))
 endif
 endif
