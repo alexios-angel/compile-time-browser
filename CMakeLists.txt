@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.16...4.3)
 # be chosen BEFORE project() locks the toolchain). std::embed
 # (__builtin_std_embed) is load-bearing - assets.hpp - so a compiler
 # without it, including stock clang, is unsupported; verified below.
-if(NOT CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX}
+if(NOT CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX} AND NOT CMAKE_TOOLCHAIN_FILE
    AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/clang-std-embed/bin/clang++")
   set(CMAKE_CXX_COMPILER "${CMAKE_CURRENT_SOURCE_DIR}/tools/clang-std-embed/bin/clang++")
 endif()
@@ -87,7 +87,9 @@ find_path(CTBROWSER_GLM_INCLUDE_DIR glm/glm.hpp
 if(NOT CTBROWSER_GLM_INCLUDE_DIR)
   message(FATAL_ERROR
     "ctbrowser: GLM not found (glm/glm.hpp) - `brew install glm` or "
-    "`apt-get install libglm-dev`, or set CTBROWSER_GLM_INCLUDE_DIR")
+    "`apt-get install libglm-dev`, or set CTBROWSER_GLM_INCLUDE_DIR. "
+    "Cross builds want an ISOLATED dir (see cmake/toolchain-windows-*.cmake): "
+    "point GLM_INC at a directory holding only glm/.")
 endif()
 
 add_library(${PROJECT_NAME} INTERFACE)

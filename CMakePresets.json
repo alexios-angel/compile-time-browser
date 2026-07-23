@@ -17,6 +17,25 @@
       "cacheVariables": {
         "CTBROWSER_EXAMPLES_FETCH": "ON"
       }
+    },
+    {
+      "name": "windows",
+      "displayName": "Windows x86_64 cross (llvm-mingw std::embed)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-windows",
+      "toolchainFile": "${sourceDir}/cmake/toolchain-windows-x86_64.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CTBROWSER_BUILD_TESTS": "OFF"
+      }
+    },
+    {
+      "name": "windows-fetch",
+      "displayName": "Windows cross + compile-time fetches",
+      "inherits": "windows",
+      "cacheVariables": {
+        "CTBROWSER_EXAMPLES_FETCH": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -27,6 +46,14 @@
     {
       "name": "fetch",
       "configurePreset": "fetch"
+    },
+    {
+      "name": "windows",
+      "configurePreset": "windows"
+    },
+    {
+      "name": "windows-fetch",
+      "configurePreset": "windows-fetch"
     }
   ],
   "testPresets": [

@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # Sync the working tree (incl. submodules) to the shared devbox and run the
-# build there. Usage: ./remote-build.sh [ninja target ...]    (default:
-# configure + build + ctest through the CMake `default` preset - Ninja)
+# build there. Usage:
+#   ./remote-build.sh [ninja target ...]   default preset: configure + build
+#                                          + ctest (Ninja)
+#   ./remote-build.sh windows              windows-fetch preset: cross-compile
+#                                          the examples, collect exes+SDL3.dll
+#                                          via windows-dist, rsync them back
+#                                          into examples-windows/
 #
 # The box is github.com/alexios-angel/infra (sibling checkout ../infra),
 # reached via the `devbox` ssh alias that `../infra/azure-build-server/
@@ -64,7 +69,11 @@ if [ ! -x "$tool/bin/clang++" ]; then
 fi
 REMOTE
 
-if [ $# -gt 0 ]; then
+if [ "${1:-}" = windows ]; then
+  ssh "$host" "cd projects/compile-time-browser && cmake --preset windows-fetch && cmake --build --preset windows-fetch && cmake --build --preset windows-fetch --target windows-dist"
+  rsync -az "$host:projects/compile-time-browser/examples-windows/" "$repo_root/examples-windows/"
+  echo "examples-windows/ refreshed from the devbox"
+elif [ $# -gt 0 ]; then
   ssh "$host" "cd projects/compile-time-browser && cmake --preset default && cmake --build --preset default --target $*"
 else
   ssh "$host" "cd projects/compile-time-browser && cmake --preset default && cmake --build --preset default && ctest --preset default"

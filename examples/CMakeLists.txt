@@ -29,8 +29,32 @@ foreach(source ${example-sources})
   if(TARGET ctbrowser-pch-anchor)
     target_precompile_headers(ctbrowser-example-${example} REUSE_FROM ctbrowser-pch-anchor)
   endif()
-  add_test(NAME example-${example} COMMAND ctbrowser-example-${example}
-    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
-  set_tests_properties(example-${example} PROPERTIES
-    ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;CTBROWSER_TEST_FRAMES=30;CTBROWSER_SCREENSHOT=${CMAKE_BINARY_DIR}/shot-${example}.png")
+  if(NOT CMAKE_CROSSCOMPILING)
+    add_test(NAME example-${example} COMMAND ctbrowser-example-${example}
+      WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+    set_tests_properties(example-${example} PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;CTBROWSER_TEST_FRAMES=30;CTBROWSER_SCREENSHOT=${CMAKE_BINARY_DIR}/shot-${example}.png")
+  endif()
+  list(APPEND ctbrowser-example-targets ctbrowser-example-${example})
 endforeach()
+
+# cross builds for Windows: `windows-dist` collects the .exes plus
+# SDL3.dll (the ONE runtime dependency - everything else is static)
+# into examples-windows/, ready to run on the Windows host
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
+  find_file(CTBROWSER_SDL3_DLL SDL3.dll PATH_SUFFIXES bin)
+  set(dist-dir "${PROJECT_SOURCE_DIR}/examples-windows")
+  set(dist-commands COMMAND ${CMAKE_COMMAND} -E make_directory "${dist-dir}")
+  foreach(target IN LISTS ctbrowser-example-targets)
+    list(APPEND dist-commands
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:${target}>" "${dist-dir}")
+  endforeach()
+  if(CTBROWSER_SDL3_DLL)
+    list(APPEND dist-commands
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CTBROWSER_SDL3_DLL}" "${dist-dir}")
+  endif()
+  add_custom_target(windows-dist ${dist-commands}
+    DEPENDS ${ctbrowser-example-targets}
+    COMMENT "collecting Windows exes + SDL3.dll into examples-windows/"
+    VERBATIM)
+endif()

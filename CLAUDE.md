@@ -41,6 +41,15 @@ work there directly, or sync this tree with `./tools/remote-build.sh
 [target]` (converges the pinned clang-std-embed toolchain + glm, then
 runs the CMake `default` preset in `~/projects/compile-time-browser`).
 
+**Windows cross-builds are CMake presets**: `windows` / `windows-fetch`
++ `cmake/toolchain-windows-x86_64.cmake` (llvm-mingw std::embed clang,
+SDL3-devel mingw package, isolated GLM dir - env LLVM_MINGW /
+SDL3_MINGW / GLM_INC override the ~/projects/* defaults; -static rides
+CXX flags so PCH predefines match; SDL3 links via the import lib's
+full path so -static leaves it dynamic). `windows-dist` collects
+exes + SDL3.dll into examples-windows/. `./tools/remote-build.sh
+windows` runs the whole thing on the devbox and rsyncs the exes back.
+
 **Makefile retirement: DONE (2026-07-23).** CMake+Ninja is the sole
 build in all 4 repos. The old findings all landed: GLM find_path on the
 build interface, the __builtin_std_embed probe runs with

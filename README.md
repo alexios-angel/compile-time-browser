@@ -207,6 +207,22 @@ ctest --preset default                    # headless tests + 30-frame example ru
 ./build/examples/ctbrowser-example-game
 ```
 
+**Windows builds** cross-compile through the same CMake tree: the
+`windows` / `windows-fetch` presets use
+[`cmake/toolchain-windows-x86_64.cmake`](cmake/toolchain-windows-x86_64.cmake)
+(the std::embed [llvm-mingw](https://github.com/alexios-angel/llvm-mingw)
+toolchain + libsdl's official SDL3-devel mingw package; see the file
+header for the expected locations), and the `windows-dist` target
+collects the exes plus `SDL3.dll` — the one runtime dependency,
+everything else links static — into `examples-windows/`:
+
+```bash
+cmake --preset windows-fetch
+cmake --build --preset windows-fetch
+cmake --build --preset windows-fetch --target windows-dist
+# or end-to-end on the devbox: ./tools/remote-build.sh windows
+```
+
 SDL3 comes from your system (`find_package(SDL3)` /
 `pkg-config sdl3`); everything else is header-only C++23 (clang only). The
 **satellite libraries are optional and auto-detected** — install them
