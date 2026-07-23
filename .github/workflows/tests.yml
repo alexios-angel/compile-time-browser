@@ -2,27 +2,15 @@ name: Tests
 on: [push, pull_request]
 # ONLY the project's std::embed clang is supported (std::embed is
 # load-bearing - assets.hpp). CI fetches the toolchain from the embed
-# repo's GitHub release; the Makefile/CMake refuse anything else.
+# repo's GitHub release; CMake refuses anything else.
 env:
   CLANG_STD_EMBED_RELEASE: https://github.com/alexios-angel/embed/releases/download/clang-std-embed-23dd34f8f924/clang-std-embed-23dd34f8f924-linux-x86_64.tar.xz
 jobs:
-  make:
-    name: "make (std::embed clang, C++23)"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: "Install the std::embed clang toolchain"
-        run: |
-          mkdir -p tools/clang-std-embed
-          curl -fsSL "$CLANG_STD_EMBED_RELEASE" | tar -xJ --strip-components=1 -C tools/clang-std-embed
-          tools/clang-std-embed/bin/clang++ --version
-      - run: make
   cmake:
-    name: "CMake (configure, build, ctest)"
+    name: "CMake + Ninja (std::embed clang, C++23)"
     runs-on: ubuntu-latest
     steps:
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build libglm-dev
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -31,9 +19,9 @@ jobs:
           mkdir -p tools/clang-std-embed
           curl -fsSL "$CLANG_STD_EMBED_RELEASE" | tar -xJ --strip-components=1 -C tools/clang-std-embed
           tools/clang-std-embed/bin/clang++ --version
-      - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
-      - run: cmake --build build -j
-      - run: ctest --test-dir build --output-on-failure
+      - run: cmake --preset default
+      - run: cmake --build --preset default
+      - run: ctest --preset default
       - run: cmake --install build --prefix "$PWD/prefix"
       - name: "Upload rendered screenshots"
         if: always()

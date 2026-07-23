@@ -197,12 +197,12 @@ ordinary ctcss sheet.
 
 ```bash
 git submodule update --init --recursive   # the three bricks (+ their lark)
-make            # builds the shared PCH (seconds), then builds + RUNS
-                # the headless engine suite
+cmake --preset default                    # Ninja + Release, std::embed clang
+cmake --build --preset default            # builds the suite + examples (SDL3)
+ctest --preset default                    # headless tests + 30-frame example runs
+# preset `fetch` additionally authorizes the compile-time HTTP fetches
 # or on the shared Azure devbox (github.com/alexios-angel/infra):
-./tools/remote-build.sh [target]          # sync + converge toolchain + make
-# windowed examples (need SDL3; via CMake or the examples Makefile):
-cmake -B build && cmake --build build -j && ctest --test-dir build
+./tools/remote-build.sh                   # sync + converge toolchain + build
 ./build/examples/ctbrowser-example-counter
 ./build/examples/ctbrowser-example-game
 ```

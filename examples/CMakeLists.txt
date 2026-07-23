@@ -13,12 +13,18 @@ foreach(source ${example-sources})
   if(TARGET ctbrowser-${example}-inc)
     add_dependencies(ctbrowser-example-${example} ctbrowser-${example}-inc)
   endif()
-  if(example STREQUAL "fetchboard" AND CTBROWSER_EXAMPLES_FETCH)
-    target_compile_options(ctbrowser-example-${example} PRIVATE
-      "--fetch-allow=https://example.com/"
-      "--fetch-allow=https://raw.githubusercontent.com/**")
+  if(CTBROWSER_EXAMPLES_FETCH)
+    if(example STREQUAL "fetchboard")
+      target_compile_options(ctbrowser-example-${example} PRIVATE
+        "--fetch-allow=https://example.com/"
+        "--fetch-allow=https://raw.githubusercontent.com/**")
+    elseif(example STREQUAL "babylon-model")
+      target_compile_options(ctbrowser-example-${example} PRIVATE
+        "--fetch-allow=https://assets.babylonjs.com/**")
+    endif()
   endif()
   target_link_libraries(ctbrowser-example-${example} PRIVATE ctbrowser::ctbrowser SDL3::SDL3 ${CTBROWSER_SAT_LIBS})
+  target_compile_options(ctbrowser-example-${example} PRIVATE ${CTBROWSER_WARNING_OPTIONS})
   target_compile_definitions(ctbrowser-example-${example} PRIVATE ${CTBROWSER_SAT_DEFS})
   if(TARGET ctbrowser-pch-anchor)
     target_precompile_headers(ctbrowser-example-${example} REUSE_FROM ctbrowser-pch-anchor)

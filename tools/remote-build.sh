@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Sync the working tree (incl. submodules) to the shared devbox and run the
-# build there. Usage: ./remote-build.sh [make target ...]    (default: the
-# top-level `make`, which bakes the combined PCH if stale, then builds + runs
-# the headless suite)
+# build there. Usage: ./remote-build.sh [ninja target ...]    (default:
+# configure + build + ctest through the CMake `default` preset - Ninja)
 #
 # The box is github.com/alexios-angel/infra (sibling checkout ../infra),
 # reached via the `devbox` ssh alias that `../infra/azure-build-server/
@@ -65,4 +64,8 @@ if [ ! -x "$tool/bin/clang++" ]; then
 fi
 REMOTE
 
-ssh "$host" "cd projects/compile-time-browser && make ${*:-}"
+if [ $# -gt 0 ]; then
+  ssh "$host" "cd projects/compile-time-browser && cmake --preset default && cmake --build --preset default --target $*"
+else
+  ssh "$host" "cd projects/compile-time-browser && cmake --preset default && cmake --build --preset default && ctest --preset default"
+fi

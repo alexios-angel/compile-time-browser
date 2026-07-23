@@ -1,0 +1,48 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Ninja Release (std::embed clang)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "fetch",
+      "displayName": "Ninja Release + compile-time fetches",
+      "inherits": "default",
+      "cacheVariables": {
+        "CTBROWSER_EXAMPLES_FETCH": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default"
+    },
+    {
+      "name": "fetch",
+      "configurePreset": "fetch"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "fetch",
+      "configurePreset": "fetch",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

@@ -22,6 +22,7 @@ include(CTest)
 
 # verify the chosen compiler really is the std::embed clang
 include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_FLAGS "-std=c++23")   # the builtin only exists in C++23 mode
 check_cxx_source_compiles([[
 #if !defined(__has_builtin) || !__has_builtin(__builtin_std_embed)
 #error no std::embed builtin
@@ -35,6 +36,7 @@ if(NOT CTBROWSER_HAS_STD_EMBED_BUILTIN)
     "embed repo). Found: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} "
     "without __builtin_std_embed.")
 endif()
+unset(CMAKE_REQUIRED_FLAGS)
 
 cmake_dependent_option(CTBROWSER_BUILD_TESTS "Build ctbrowser tests" ON
   "BUILD_TESTING;CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR" OFF)
@@ -46,6 +48,12 @@ cmake_dependent_option(CTBROWSER_BUILD_EXAMPLES "Build ctbrowser examples (need 
 # not have to know the flags
 option(CTBROWSER_CONSTEXPR_LIMITS "Raise constexpr evaluation limits on the interface" ON)
 option(CTBROWSER_PCH "Precompile ctbrowser.hpp for tests and examples" ON)
+
+# the strict flags every test and example builds with (kept off the
+# exported interface); -Wno-overlength-strings: a bundled app is one
+# raw-string NTTP far past the 64 KB standard minimum
+set(CTBROWSER_WARNING_OPTIONS
+  -O2 -pedantic -Wall -Wextra -Werror -Wconversion -Wno-overlength-strings)
 
 set(CTBROWSER_CONSTEXPR_OPTIONS
   -fconstexpr-steps=500000000 -fconstexpr-depth=1024
@@ -70,18 +78,30 @@ if(NOT EXISTS "${CTBROWSER_LARK}/include/ctlark.hpp")
     "ctbrowser: submodules are missing - run `git submodule update --init --recursive`")
 endif()
 
+# GLM (header-only) powers the software 3D math in babylon.hpp - it
+# rides the PCH via <glm/glm.hpp>. brew glm >= 1.0 preferred (constexpr
+# dot/normalize); system roots serve as fallbacks.
+find_path(CTBROWSER_GLM_INCLUDE_DIR glm/glm.hpp
+  PATHS /home/linuxbrew/.linuxbrew/include /opt/homebrew/include
+        /usr/local/include /usr/include)
+if(NOT CTBROWSER_GLM_INCLUDE_DIR)
+  message(FATAL_ERROR
+    "ctbrowser: GLM not found (glm/glm.hpp) - `brew install glm` or "
+    "`apt-get install libglm-dev`, or set CTBROWSER_GLM_INCLUDE_DIR")
+endif()
+
 add_library(${PROJECT_NAME} INTERFACE)
 
 target_include_directories(${PROJECT_NAME} INTERFACE
   $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
   "$<BUILD_INTERFACE:${CTBROWSER_SUBMODULE_INCLUDE_DIRS}>"
+  "$<BUILD_INTERFACE:${CTBROWSER_GLM_INCLUDE_DIR}>"
   $<INSTALL_INTERFACE:include>)
 
 target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_23)
 if(CTBROWSER_CONSTEXPR_LIMITS)
   target_compile_options(${PROJECT_NAME} INTERFACE ${CTBROWSER_CONSTEXPR_OPTIONS})
 endif()
-# ctbrowser parses HTML+CSS+JS BY VALUE at runtime and never uses the bricks'
 set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_SCAN_FOR_MODULES 0)
 
 install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}-targets)
@@ -133,6 +153,8 @@ if(CTBROWSER_PCH AND (CTBROWSER_BUILD_TESTS OR CTBROWSER_BUILD_EXAMPLES))
     "int ctbrowser_pch_anchor_symbol = 0;\n")
   add_library(ctbrowser-pch-anchor OBJECT "${CMAKE_BINARY_DIR}/ctbrowser-pch-anchor.cpp")
   target_link_libraries(ctbrowser-pch-anchor PRIVATE ctbrowser::ctbrowser)
+  # the anchor MUST compile with the same flags as every REUSE_FROM consumer
+  target_compile_options(ctbrowser-pch-anchor PRIVATE ${CTBROWSER_WARNING_OPTIONS})
   target_precompile_headers(ctbrowser-pch-anchor PRIVATE
     "${PROJECT_SOURCE_DIR}/include/ctbrowser.hpp")
 endif()
@@ -164,10 +186,10 @@ endif()
 
 # *.html -> examples/*.inc: the REAL .html file becomes a raw-string
 # literal that #include's into the page<...> template argument
-# (consumed by tests/pong.cpp and examples/{pong,fetchboard}.cpp)
+# (consumed by tests/pong.cpp and examples/{pong,fetchboard,space-invaders}.cpp)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
-  foreach(html-page pong fetchboard)
+  foreach(html-page pong fetchboard space-invaders)
     add_custom_command(
       OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/examples/${html-page}.inc"
       COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tools/html-to-inc.py"

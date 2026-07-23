@@ -13,3 +13,4 @@ examples/pong.inc
 *.log
 *.ppm
 examples-windows/
+build-clang/
