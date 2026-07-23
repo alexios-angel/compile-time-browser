@@ -178,6 +178,36 @@ at known coordinates and byte-compares a golden image
 (`REGOLDEN=1 ./tests/render` regenerates); CI uploads every example's
 screenshot as an artifact so a human can look at what was drawn.
 
+## The interaction model (browser defaults)
+
+Elements behave like they do in Firefox, out of the box:
+
+* **hover/active/focus/checked/disabled styling**: the engine tracks
+  the pointer and feeds real state into the cascade, so
+  `button:hover { ... }`, `#panel:hover .child { ... }`,
+  `input:checked { ... }` just work — restyled every frame. Unknown
+  pseudos (`:visited`, `::before`) parse and never match, like a real
+  browser.
+* **clicks fire on release** (press+release pairing, nearest common
+  ancestor), listeners bubble with a REAL `preventDefault()` /
+  `stopPropagation()`, and then the element's **default action** runs:
+  checkboxes toggle, radios check their group exclusively, `<summary>`
+  toggles its `<details>`, `<label>` forwards to its control, and
+  **`<a href>` opens the system web browser at that URL** (SDL's
+  `SDL_OpenURL`; fragment `#hash` links update
+  `document.location.hash` instead). Disabled controls dispatch
+  nothing.
+* **a Firefox-derived UA stylesheet** ([`ua.hpp`](include/ctbrowser/ua.hpp),
+  values from Gecko's `html.css` and the modern form theme) styles
+  every element before the page says anything — heading scale, list
+  and quote indents, link blue, button/input chrome with the `#8f8f9d`
+  frames and `#0060df` checked accent, `<hr>` rules, hidden
+  `<head>`/`<template>`. Page styles always win (author beats UA);
+  inline styles beat both.
+* script surface to match: `.checked`, `.disabled`, `.open`, `.href`,
+  `.type`, `getAttribute`/`hasAttribute`, `addEventListener("change")`,
+  `document.location.href`/`.hash`.
+
 ## v0.1 boundaries
 
 Everything the three bricks document applies (their subsets ARE this
@@ -185,8 +215,11 @@ project's subsets). Browser-side:
 
 - block layout only (no inline flow, floats or flex)
 - px lengths
-- scripts mutate elements but do not create/remove them
-- no `<img>`, links or scrolling yet
+- no text editing (inputs render their `value`, no caret), no Tab
+  focus traversal, no form submission
+- no bold/italic/underline/monospace (single bitmap font face) and no
+  table layout — the UA sheet documents each gap vs Firefox
+- no `<img>` or scrolling yet
 
 The bricks' own APIs remain fully available alongside —
 `decltype(app)::doc_type` is an ordinary cthtml document, the sheet an

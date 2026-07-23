@@ -46,11 +46,22 @@ public:
 	double mouse_y = 0;
 	bool mouse_down = false;
 	node * open_select_ = nullptr; // the <select> whose popup is currently open
+	node * hovered_ = nullptr;     // the pointer's current hit target
+	node * pressed_ = nullptr;     // mouse-down target (:active chain, click pairing)
+	node * focused_ = nullptr;     // the focused control (:focus)
+	bool click_suppressed_ = false; // set when the select popup ate the mousedown
+	// the anchor default action: how <a href> opens the OS web browser.
+	// Headless (tests) leave it empty = no-op; the SDL shell installs
+	// SDL_OpenURL. Fragment hrefs (#...) never call it.
+	ctc::cfunction<void(std::string_view)> open_url;
 	std::int32_t gc_ticks_ = 0;             // frames since the last cycle collection (see tick)
 	// the page stylesheet, parsed from the page's <style> text at
 	// construction (ctcss::parse_value); `resolve` closes over it.
 	// Declared before resolve so it is live first.
 	ctcss::value_sheet css_sheet;
+	// the Firefox-derived user-agent defaults (ua.hpp); consulted when
+	// the page's sheet has no declaration for a property
+	ctcss::value_sheet ua_sheet;
 	style_fn resolve;
 	text_measure_fn measure; // shell-installed when a real font loads
 	dom_events ev;           // MUST precede script: bindings capture it
@@ -74,8 +85,13 @@ public:
 	      assets(detail::merge_assets(std::move(embedded), auto_assets<Page>())),
 	      images{{}, std::move(image_decoder), &assets},
 	      css_sheet(ctcss::parse_value(Page::style_text())),
+	      ua_sheet(ctcss::parse_value(detail::ua_css)),
 	      resolve([this](const ctcss::element_ref * chain, std::size_t n, std::string_view prop) {
-		      return ctcss::query(css_sheet, chain, n, prop);
+		      // author styles first, UA defaults as the fallback - the CSS
+		      // cascade-origin rule (author beats user agent)
+		      const std::string_view v = ctcss::query(css_sheet, chain, n, prop);
+		      if (!v.empty()) { return v; }
+		      return ctcss::query(ua_sheet, chain, n, prop);
 	      }),
 	      extra_(extra),
 	      script(ctjs::run_value(Page::script_text(), all_bindings(std::move(extra)))) {
@@ -122,25 +138,39 @@ public:
 
 	void click_at(std::int32_t x, std::int32_t y) {
 		if (!doc.root) { return; }
-		node * hit = doc.root->hit_test(x, y);
-		// fire addEventListener('click', ...) AND the .onclick property handler on
-		// the hit target and its ancestors (bubbling), as the DOM would - copy each
-		// list, handlers may mutate it
+		if (node * hit = doc.root->hit_test(x, y)) { click_on(hit, x, y); }
+	}
+
+	// The full click pipeline on a resolved target: listeners bubble first
+	// (one SHARED event object - preventDefault/stopPropagation are real),
+	// then the legacy onClick(id) delivery, then the element's DEFAULT
+	// ACTION unless a listener prevented it. Browsers gate dispatch on
+	// disabled controls, so we do too.
+	void click_on(node * hit, std::int32_t x, std::int32_t y) {
+		for (node * n = hit; n != nullptr; n = n->parent) {
+			if (n->is_disabled()) { return; }
+			if (n->is_form_control()) { break; } // only the control itself gates
+		}
+		ctjs::value evt = detail::mouse_event(static_cast<double>(x), static_cast<double>(y), "click");
 		for (node * n = hit; n != nullptr; n = n->parent) {
 			if (const auto it = ev.click_listeners.find(n); it != ev.click_listeners.end()) {
-				const std::vector<ctjs::value> fns = it->second;
+				const std::vector<ctjs::value> fns = it->second; // copy: handlers may mutate
 				for (const ctjs::value & fn : fns) {
-					ev.invoke(fn, {detail::mouse_event(static_cast<double>(x), static_cast<double>(y))});
+					ev.invoke(fn, {evt});
+					if (detail::event_flag(evt, "__stopped_now")) { break; }
 				}
 			}
+			if (detail::event_flag(evt, "__stopped_now")) { break; }
 			if (const auto it = ev.onclick_handlers.find(n); it != ev.onclick_handlers.end()) {
-				ev.invoke(it->second, {detail::mouse_event(static_cast<double>(x), static_cast<double>(y))});
+				ev.invoke(it->second, {evt});
 			}
+			if (detail::event_flag(evt, "__stopped")) { break; }
 		}
 		// legacy onClick(id): nearest ancestor with a non-empty id
 		node * idn = hit;
 		while (idn != nullptr && idn->id.empty()) { idn = idn->parent; }
 		if (idn != nullptr) { deliver(script, "onClick", idn->id); }
+		if (!detail::event_flag(evt, "defaultPrevented")) { default_action(hit); }
 	}
 	void key(std::string_view name, bool down) {
 		if (down) {
@@ -154,22 +184,60 @@ public:
 	void mouse_move(double x, double y) {
 		mouse_x = x;
 		mouse_y = y;
+		update_hover(x, y);
 		deliver(script, "onMouseMove", x, y);
 		ev.dispatch("mousemove", detail::mouse_event(x, y));
+	}
+	// hover tracking: re-flag the ancestor chain when the hit target
+	// changes; the per-frame style re-query restyles :hover for free.
+	// Button events sync it too - the pointer is wherever it clicked.
+	void update_hover(double x, double y) {
+		node * hit = doc.root ? doc.root->hit_test(static_cast<std::int32_t>(x),
+		                                           static_cast<std::int32_t>(y))
+		                      : nullptr;
+		if (hit != hovered_) {
+			set_chain_flag(hovered_, &node::hovered, false);
+			set_chain_flag(hit, &node::hovered, true);
+			if (hovered_ != nullptr) { ev.dispatch("mouseout", detail::mouse_event(x, y, "mouseout")); }
+			if (hit != nullptr) { ev.dispatch("mouseover", detail::mouse_event(x, y, "mouseover")); }
+			hovered_ = hit;
+		}
 	}
 	void mouse_button(double x, double y, bool down) {
 		mouse_x = x;
 		mouse_y = y;
 		mouse_down = down;
+		update_hover(x, y);
 		if (down) {
 			deliver(script, "onMouseDown", x, y);
-			ev.dispatch("mousedown", detail::mouse_event(x, y));
-			// a <select> widget (open popup, or a collapsed control) eats the click
-			if (!handle_select_click(static_cast<std::int32_t>(x), static_cast<std::int32_t>(y))) {
-				click_at(static_cast<std::int32_t>(x), static_cast<std::int32_t>(y));
-			}
+			ev.dispatch("mousedown", detail::mouse_event(x, y, "mousedown"));
+			pressed_ = doc.root ? doc.root->hit_test(static_cast<std::int32_t>(x),
+			                                          static_cast<std::int32_t>(y))
+			                    : nullptr;
+			set_chain_flag(pressed_, &node::pressed, true); // :active while held
+			// browsers move focus on mousedown
+			node * f = pressed_;
+			while (f != nullptr && !f->is_focusable()) { f = f->parent; }
+			set_focus(f);
+			// a <select> widget (open popup, or a collapsed control) eats the
+			// press - and the synthetic click that would pair with the release
+			click_suppressed_ =
+			    handle_select_click(static_cast<std::int32_t>(x), static_cast<std::int32_t>(y));
 		} else {
-			ev.dispatch("mouseup", detail::mouse_event(x, y));
+			ev.dispatch("mouseup", detail::mouse_event(x, y, "mouseup"));
+			set_chain_flag(pressed_, &node::pressed, false);
+			// the click fires on RELEASE (browser semantics): its target is
+			// the nearest common ancestor of the press and release targets
+			node * up_hit = doc.root ? doc.root->hit_test(static_cast<std::int32_t>(x),
+			                                               static_cast<std::int32_t>(y))
+			                         : nullptr;
+			if (!click_suppressed_ && pressed_ != nullptr && up_hit != nullptr) {
+				if (node * target = common_ancestor(pressed_, up_hit)) {
+					click_on(target, static_cast<std::int32_t>(x), static_cast<std::int32_t>(y));
+				}
+			}
+			pressed_ = nullptr;
+			click_suppressed_ = false;
 		}
 	}
 	void tick(double dt) {
@@ -195,6 +263,10 @@ public:
 	void do_reload() {
 		ev.reset();
 		open_select_ = nullptr; // node pointers are about to be invalidated
+		hovered_ = nullptr;
+		pressed_ = nullptr;
+		focused_ = nullptr;
+		click_suppressed_ = false;
 		doc = instantiate_html(Page::html_text());
 		script = ctjs::run_value(Page::script_text(), all_bindings(extra_));
 		ctjs::gc::collect(); // reap the old page's cycles now that its roots are gone
@@ -239,6 +311,98 @@ private:
 		if (it != ev.change_handlers.end() && it->second.is_function()) {
 			ev.invoke(it->second, {});
 		}
+		if (const auto lit = ev.change_listeners.find(sel); lit != ev.change_listeners.end()) {
+			const std::vector<ctjs::value> fns = lit->second;
+			ctjs::value evt = detail::simple_event("change");
+			for (const ctjs::value & fn : fns) { ev.invoke(fn, {evt}); }
+		}
+	}
+
+	// --- interaction helpers -------------------------------------------
+
+	// hover/active apply to the whole ancestor chain of the target
+	static void set_chain_flag(node * n, bool node::* flag, bool v) {
+		for (; n != nullptr; n = n->parent) { n->*flag = v; }
+	}
+	void set_focus(node * n) {
+		if (n == focused_) { return; }
+		if (focused_ != nullptr) { focused_->focused = false; }
+		if (n != nullptr) { n->focused = true; }
+		focused_ = n;
+	}
+	static node * common_ancestor(node * a, node * b) {
+		for (node * x = a; x != nullptr; x = x->parent) {
+			for (node * y = b; y != nullptr; y = y->parent) {
+				if (x == y) { return x; }
+			}
+		}
+		return nullptr;
+	}
+
+	// The per-element DEFAULT ACTIONS - what a browser does after the
+	// click listeners ran without preventDefault(). Walks target->root
+	// and performs the first applicable activation (the select popup is
+	// handled earlier, on mousedown).
+	void default_action(node * hit) {
+		for (node * n = hit; n != nullptr; n = n->parent) {
+			if (n->is_checkbox()) {
+				n->checked = !n->checked;
+				fire_change(n);
+				return;
+			}
+			if (n->is_radio()) {
+				if (!n->checked) {
+					check_radio(n);
+					fire_change(n);
+				}
+				return;
+			}
+			if (n->is_summary() && n->parent != nullptr && n->parent->is_details()) {
+				n->parent->open = !n->parent->open;
+				return;
+			}
+			if (n->tag == "label") {
+				if (node * target = label_target(n); target != nullptr && !target->is_disabled()) {
+					if (target->is_checkbox()) {
+						target->checked = !target->checked;
+						fire_change(target);
+					} else if (target->is_radio()) {
+						if (!target->checked) {
+							check_radio(target);
+							fire_change(target);
+						}
+					}
+					if (target->is_focusable()) { set_focus(target); }
+				}
+				return;
+			}
+			if (n->is_link()) {
+				const std::string href{n->attribute("href")};
+				if (!href.empty() && href[0] == '#') {
+					ev.location_hash = href; // fragment: no browser launch
+				} else if (!href.empty()) {
+					ev.location_href = href;
+					if (open_url) { open_url(href); } // the OS web browser
+				}
+				return;
+			}
+			if (n->is_select()) { return; } // activated on mousedown
+		}
+	}
+	void check_radio(node * r) { detail::check_radio(doc.root.get(), *r); }
+	// <label for=id> targets that control; a wrapping label targets its
+	// first checkbox/radio descendant
+	node * label_target(node * lab) {
+		const std::string_view forid = lab->attribute("for");
+		if (!forid.empty()) { return doc.root ? doc.root->find_by_id(forid) : nullptr; }
+		return first_toggle(lab);
+	}
+	static node * first_toggle(node * n) {
+		for (const auto & c : n->children) {
+			if (c->is_checkbox() || c->is_radio()) { return c.get(); }
+			if (node * hit = first_toggle(c.get())) { return hit; }
+		}
+		return nullptr;
 	}
 
 	std::vector<ctjs::binding> all_bindings(std::vector<ctjs::binding> extra) {

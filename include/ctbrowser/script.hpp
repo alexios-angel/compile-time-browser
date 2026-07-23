@@ -132,6 +132,12 @@ struct dom_events {
 	// per node (assignment replaces), distinct from addEventListener. Node-keyed
 	// so a click resolves it even though element handles are transient.
 	std::map<node *, ctjs::value> onclick_handlers;
+	// per-element "change" listeners (addEventListener('change', ...)) - fired
+	// with the accessor-style change_handlers by engine::fire_change
+	std::map<node *, std::vector<ctjs::value>> change_listeners;
+	// what the last anchor activation recorded (document.location.href/hash)
+	std::string location_href;
+	std::string location_hash;
 	// the window object + the viewport the engine last laid out
 	ctjs::rc<ctjs::object_t> window_obj;
 	std::int32_t viewport_w = 0;
@@ -148,6 +154,9 @@ struct dom_events {
 		change_handlers.clear();
 		click_listeners.clear();
 		onclick_handlers.clear();
+		change_listeners.clear();
+		location_href.clear();
+		location_hash.clear();
 	}
 
 	// fire everything due at now_ms. Handlers may add or clear timers
@@ -263,37 +272,82 @@ inline std::string dom_key_key(std::string_view code) {
 	return std::string{code};
 }
 
-// the no-op methods every DOM Event carries (preventDefault/stopPropagation)
+// the methods every DOM Event carries. preventDefault/stopPropagation
+// are REAL: they flag the event object itself (read via cx.current_this
+// - the receiver of the method call - so no capture cycles), and the
+// engine consults the flags after the listeners ran.
 inline void add_event_methods(ctjs::object_t & ev) {
-	for (const char * nm : {"preventDefault", "stopPropagation", "stopImmediatePropagation"}) {
-		ev.set(nm, ctjs::value::function([](ctjs::context &, const std::vector<ctjs::value> &) { return ctjs::value{}; }, nm));
-	}
+	ev.set("preventDefault",
+	       ctjs::value::function(
+	           [](ctjs::context & cx, const std::vector<ctjs::value> &) {
+		           if (cx.current_this.is_object()) {
+			           const ctjs::value * c = cx.current_this.as_object()->find("cancelable");
+			           if (c == nullptr || c->truthy()) {
+				           cx.current_this.as_object()->set("defaultPrevented", ctjs::value{true});
+			           }
+		           }
+		           return ctjs::value{};
+	           },
+	           "preventDefault"));
+	ev.set("stopPropagation",
+	       ctjs::value::function(
+	           [](ctjs::context & cx, const std::vector<ctjs::value> &) {
+		           if (cx.current_this.is_object()) { cx.current_this.as_object()->set("__stopped", ctjs::value{true}); }
+		           return ctjs::value{};
+	           },
+	           "stopPropagation"));
+	ev.set("stopImmediatePropagation",
+	       ctjs::value::function(
+	           [](ctjs::context & cx, const std::vector<ctjs::value> &) {
+		           if (cx.current_this.is_object()) {
+			           cx.current_this.as_object()->set("__stopped", ctjs::value{true});
+			           cx.current_this.as_object()->set("__stopped_now", ctjs::value{true});
+		           }
+		           return ctjs::value{};
+	           },
+	           "stopImmediatePropagation"));
 	ev.set("defaultPrevented", ctjs::value{false});
 	ev.set("bubbles", ctjs::value{true});
 	ev.set("cancelable", ctjs::value{true});
 	ev.set("isTrusted", ctjs::value{true});
 }
 
-inline ctjs::value key_event(std::string_view sdl_name) {
+// read a boolean flag a listener may have set on the shared event object
+inline bool event_flag(const ctjs::value & evt, std::string_view name) {
+	if (!evt.is_object()) { return false; }
+	const ctjs::value * f = evt.as_object()->find(name);
+	return f != nullptr && f->truthy();
+}
+
+inline ctjs::value key_event(std::string_view sdl_name, std::string_view type = "keydown") {
 	ctjs::object_t ev;
 	const std::string code = dom_key_code(sdl_name);
 	ev.set("key", ctjs::value{dom_key_key(code)});
 	ev.set("code", ctjs::value{code});
 	ev.set("keyCode", ctjs::value{0.0});
 	ev.set("repeat", ctjs::value{false});
-	ev.set("type", ctjs::value{std::string{"keydown"}});
+	ev.set("type", ctjs::value{std::string{type}});
 	add_event_methods(ev);
 	return ctjs::value::object(std::move(ev));
 }
 
-inline ctjs::value mouse_event(double x, double y) {
+inline ctjs::value mouse_event(double x, double y, std::string_view type = "mousemove") {
 	ctjs::object_t ev;
+	ev.set("type", ctjs::value{std::string{type}});
 	ev.set("clientX", ctjs::value{x});
 	ev.set("clientY", ctjs::value{y});
 	ev.set("pageX", ctjs::value{x});
 	ev.set("pageY", ctjs::value{y});
 	ev.set("button", ctjs::value{0.0});
 	ev.set("buttons", ctjs::value{0.0});
+	add_event_methods(ev);
+	return ctjs::value::object(std::move(ev));
+}
+
+// a bare event (change, ...): just a type + the standard methods
+inline ctjs::value simple_event(std::string_view type) {
+	ctjs::object_t ev;
+	ev.set("type", ctjs::value{std::string{type}});
 	add_event_methods(ev);
 	return ctjs::value::object(std::move(ev));
 }
@@ -381,11 +435,14 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 		          ev->cx = &cx;
 		          if (a.size() >= 2 && a[1].is_function()) {
 			          const std::string type = a[0].to_string();
-			          // element "click" is targeted (fired by click_at on the hit
-			          // element + its ancestors); other types stay in the shared,
-			          // globally-dispatched registry (keydown/resize/pointer/...)
+			          // element "click"/"change" are targeted (fired on the hit
+			          // element + its ancestors / the changed control); other
+			          // types stay in the shared, globally-dispatched registry
+			          // (keydown/resize/mouseover/...)
 			          if (type == "click") {
 				          ev->click_listeners[n].push_back(a[1]);
+			          } else if (type == "change") {
+				          ev->change_listeners[n].push_back(a[1]);
 			          } else {
 				          ev->listeners[type].push_back(a[1]);
 			          }
@@ -543,6 +600,112 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 		    const auto it = en != nullptr ? ev->onclick_handlers.find(en) : ev->onclick_handlers.end();
 		    return it != ev->onclick_handlers.end() ? it->second : ctjs::value{};
 	    }, "get onclick"));
+	// --- the standard attribute API (all elements) ---
+	o.set("getAttribute", ctjs::value::function(
+	                          [n](ctjs::context &, const std::vector<ctjs::value> & a) -> ctjs::value {
+		                          if (a.empty()) { return ctjs::value::null(); }
+		                          const std::string name = a[0].to_string();
+		                          if (!n->has_attribute(name)) { return ctjs::value::null(); }
+		                          return ctjs::value{std::string{n->attribute(name)}};
+	                          },
+	                          "getAttribute"));
+	o.set("hasAttribute", ctjs::value::function(
+	                          [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+		                          return ctjs::value{!a.empty() && n->has_attribute(a[0].to_string())};
+	                          },
+	                          "hasAttribute"));
+	// .onchange works on any element (checkbox/radio/select fire it)
+	ctjs::attach_accessor(o, "onchange", 's', ctjs::value::function(
+	    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+		    node * en = ev->node_of(cx.current_this);
+		    if (en != nullptr && !a.empty() && a[0].is_function()) { ev->change_handlers[en] = a[0]; }
+		    return ctjs::value{};
+	    }, "set onchange"));
+	// --- checkbox / radio ---
+	if (n->is_checkbox() || n->is_radio()) {
+		ctjs::attach_accessor(o, "checked", 'g', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> &) -> ctjs::value {
+			    node * en = ev->node_of(cx.current_this);
+			    return ctjs::value{en != nullptr && en->checked};
+		    }, "get checked"));
+		ctjs::attach_accessor(o, "checked", 's', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+			    node * en = ev->node_of(cx.current_this);
+			    if (en != nullptr && !a.empty()) {
+				    // programmatic set fires no change event (browser-correct);
+				    // checking a radio keeps the group invariant
+				    if (a[0].truthy() && en->is_radio()) {
+					    detail::check_radio(ev->doc != nullptr ? ev->doc->root.get() : nullptr, *en);
+				    } else {
+					    en->checked = a[0].truthy();
+				    }
+			    }
+			    return ctjs::value{};
+		    }, "set checked"));
+	}
+	if (n->is_input()) {
+		ctjs::attach_accessor(o, "type", 'g', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> &) -> ctjs::value {
+			    node * en = ev->node_of(cx.current_this);
+			    return ctjs::value{en != nullptr ? std::string{en->input_type()} : std::string{}};
+		    }, "get type"));
+	}
+	// --- disabled (any form control) ---
+	if (n->is_form_control()) {
+		ctjs::attach_accessor(o, "disabled", 'g', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> &) -> ctjs::value {
+			    node * en = ev->node_of(cx.current_this);
+			    return ctjs::value{en != nullptr && en->is_disabled()};
+		    }, "get disabled"));
+		ctjs::attach_accessor(o, "disabled", 's', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+			    node * en = ev->node_of(cx.current_this);
+			    if (en != nullptr && !a.empty()) {
+				    // attribute-backed so :disabled styling sees it
+				    const bool want = a[0].truthy();
+				    if (want && !en->has_attribute("disabled")) {
+					    en->attributes.emplace_back("disabled", "");
+				    } else if (!want) {
+					    std::erase_if(en->attributes, [](const auto & kv) { return kv.first == "disabled"; });
+				    }
+			    }
+			    return ctjs::value{};
+		    }, "set disabled"));
+	}
+	// --- <details> disclosure ---
+	if (n->is_details()) {
+		ctjs::attach_accessor(o, "open", 'g', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> &) -> ctjs::value {
+			    node * en = ev->node_of(cx.current_this);
+			    return ctjs::value{en != nullptr && en->open};
+		    }, "get open"));
+		ctjs::attach_accessor(o, "open", 's', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+			    node * en = ev->node_of(cx.current_this);
+			    if (en != nullptr && !a.empty()) { en->open = a[0].truthy(); }
+			    return ctjs::value{};
+		    }, "set open"));
+	}
+	// --- anchors ---
+	if (n->tag == "a") {
+		ctjs::attach_accessor(o, "href", 'g', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> &) -> ctjs::value {
+			    node * en = ev->node_of(cx.current_this);
+			    return ctjs::value{en != nullptr ? std::string{en->attribute("href")} : std::string{}};
+		    }, "get href"));
+		ctjs::attach_accessor(o, "href", 's', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+			    node * en = ev->node_of(cx.current_this);
+			    if (en != nullptr && !a.empty()) {
+				    const std::string v = a[0].to_string();
+				    for (auto & [k, val] : en->attributes) {
+					    if (k == "href") { val = v; return ctjs::value{}; }
+				    }
+				    en->attributes.emplace_back("href", v);
+			    }
+			    return ctjs::value{};
+		    }, "set href"));
+	}
 	// --- <select> / <option> form-control properties (native accessors) ---
 	if (n->is_select()) {
 		// .value: the selected <option>'s value attribute (live), or pick by value
@@ -575,13 +738,6 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 			    if (sn != nullptr && !a.empty()) { sn->select_index = static_cast<std::int32_t>(a[0].to_number()); }
 			    return ctjs::value{};
 		    }, "set selectedIndex"));
-		// .onchange: captured on the node registry; the engine fires it on a pick
-		ctjs::attach_accessor(o, "onchange", 's', ctjs::value::function(
-		    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
-			    node * sn = ev->node_of(cx.current_this);
-			    if (sn != nullptr && !a.empty() && a[0].is_function()) { ev->change_handlers[sn] = a[0]; }
-			    return ctjs::value{};
-		    }, "set onchange"));
 	} else if (n->tag == "option") {
 		ctjs::attach_accessor(o, "value", 'g', ctjs::value::function(
 		    [ev](ctjs::context & cx, const std::vector<ctjs::value> &) -> ctjs::value {
@@ -1186,6 +1342,15 @@ inline ctjs::value make_document(document & doc, image_store & images, dom_event
 		                      return ctjs::value{};
 	                      },
 	                      "reload"));
+	// what the last anchor activation recorded (fragments land in hash)
+	ctjs::attach_accessor(loc, "href", 'g', ctjs::value::function(
+	    [&ev](ctjs::context &, const std::vector<ctjs::value> &) {
+		    return ctjs::value{ev.location_href};
+	    }, "get href"));
+	ctjs::attach_accessor(loc, "hash", 'g', ctjs::value::function(
+	    [&ev](ctjs::context &, const std::vector<ctjs::value> &) {
+		    return ctjs::value{ev.location_hash};
+	    }, "get hash"));
 	d.set("location", ctjs::value::object(std::move(loc)));
 	return ctjs::value::object(std::move(d));
 }

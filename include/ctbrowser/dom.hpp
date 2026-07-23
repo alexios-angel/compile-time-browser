@@ -84,8 +84,47 @@ struct node {
 	std::int32_t select_index = -1;    // -1 => not set yet, treated as the first option
 	bool select_open = false; // the popup list is expanded
 
+	// interaction state (runtime only, engine-maintained). hovered/pressed
+	// apply to the WHOLE ancestor chain of the pointer target (that is what
+	// makes `div:hover p` work); focused is the single focus target.
+	bool hovered = false;
+	bool pressed = false;
+	bool focused = false;
+	bool checked = false; // checkbox/radio (init from the `checked` attribute)
+	bool open = false;    // <details> disclosure (init from the `open` attribute)
+
 	constexpr bool is_canvas() const { return tag == "canvas"; }
 	constexpr bool is_select() const { return tag == "select"; }
+
+	// --- the interactive-element taxonomy (cthtml has none - the browser
+	// owns this list). Tags arrive lowercase from cthtml; attribute VALUES
+	// are case-preserved, so type= compares case-insensitively.
+	constexpr bool is_input() const { return tag == "input"; }
+	constexpr std::string_view input_type() const { return attribute("type"); }
+	constexpr bool is_checkbox() const {
+		return is_input() && ctcss::detail::ascii_iequals(input_type(), "checkbox");
+	}
+	constexpr bool is_radio() const {
+		return is_input() && ctcss::detail::ascii_iequals(input_type(), "radio");
+	}
+	constexpr bool is_details() const { return tag == "details"; }
+	constexpr bool is_summary() const { return tag == "summary"; }
+	constexpr bool is_link() const { return tag == "a" && has_attribute("href"); }
+	// the set :disabled can apply to
+	constexpr bool is_form_control() const {
+		return tag == "input" || tag == "button" || tag == "select" ||
+		       tag == "textarea" || tag == "option" || tag == "optgroup" ||
+		       tag == "fieldset";
+	}
+	constexpr bool is_disabled() const {
+		return is_form_control() && has_attribute("disabled");
+	}
+	constexpr bool is_focusable() const {
+		if (is_link()) { return true; }
+		return (tag == "input" || tag == "button" || tag == "select" ||
+		        tag == "textarea") &&
+		       !is_disabled();
+	}
 
 	// nth <option> child (only option children count); nullptr if out of range
 	constexpr node * nth_option(std::int32_t idx) {
@@ -117,6 +156,14 @@ struct node {
 			if (k == name) { return v; }
 		}
 		return {};
+	}
+	// presence test: a boolean attribute (checked, disabled, open) is
+	// present WITH an empty value, which attribute() cannot distinguish
+	constexpr bool has_attribute(std::string_view name) const {
+		for (const auto & [k, v] : attributes) {
+			if (k == name) { return true; }
+		}
+		return false;
 	}
 
 	constexpr bool has_class(std::string_view c) const {
@@ -150,11 +197,28 @@ struct node {
 		}
 	}
 
-	// the ctcss chain for this node, root-first
+	// the ctcss chain for this node, root-first; each link carries the
+	// live pseudo-state bits so :hover/:active/:focus/:checked/:disabled
+	// resolve through the ordinary cascade
 	constexpr std::vector<ctcss::element_ref> chain() const {
 		std::vector<ctcss::element_ref> out;
 		for (const node * n = this; n != nullptr; n = n->parent) {
-			out.insert(out.begin(), ctcss::element_ref{n->tag, n->id, n->classes});
+			unsigned st = 0;
+			if (n->hovered) { st |= ctcss::ps_hover; }
+			if (n->pressed) { st |= ctcss::ps_active; }
+			if (n->focused) { st |= ctcss::ps_focus; }
+			if (n->checked) { st |= ctcss::ps_checked; }
+			if (n->is_disabled()) { st |= ctcss::ps_disabled; }
+			// the chosen <option> reads as :checked (popup highlight styling)
+			if (n->tag == "option" && n->parent != nullptr && n->parent->is_select()) {
+				std::int32_t k = 0;
+				for (const auto & c : n->parent->children) {
+					if (c->tag != "option") { continue; }
+					if (c.get() == n && k == n->parent->selected_option()) { st |= ctcss::ps_checked; }
+					++k;
+				}
+			}
+			out.insert(out.begin(), ctcss::element_ref{n->tag, n->id, n->classes, st});
 		}
 		return out;
 	}
@@ -286,7 +350,21 @@ constexpr void instantiate_into(node & out, cthtml::node vn, node * parent) {
 		}
 	}
 	out.text = std::move(txt);
+	if (out.is_checkbox() || out.is_radio()) { out.checked = out.has_attribute("checked"); }
+	if (out.is_details()) { out.open = out.has_attribute("open"); }
 	init_canvas(out);
+}
+
+// a radio checks itself and unchecks every other same-name radio in the
+// tree (no form scoping modeled - the group is document-wide)
+constexpr void uncheck_radio_group(node & n, std::string_view group, const node * except) {
+	if (&n != except && n.is_radio() && n.attribute("name") == group) { n.checked = false; }
+	for (const auto & c : n.children) { uncheck_radio_group(*c, group, except); }
+}
+constexpr void check_radio(node * root, node & r) {
+	const std::string_view group = r.attribute("name");
+	if (root != nullptr && !group.empty()) { uncheck_radio_group(*root, group, &r); }
+	r.checked = true;
 }
 
 } // namespace detail

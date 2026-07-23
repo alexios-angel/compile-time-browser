@@ -96,6 +96,8 @@ CMake shares one PCH via the `ctbrowser-pch-anchor` target (REUSE_FROM).
 
 ## Decisions
 - Scripts may MUTATE and (since the web-platform sweep) CREATE/detach nodes — document owns every node (tree or detached) so raw node* in bindings never dangle; `engine` is noncopyable, doc outlives script result.
+- **Interaction model (2026-07-23)**: engine tracks hovered_/pressed_/focused_ (node flags on the whole ancestor chain for hover/active; chain() feeds ctcss ps_* bits, restyled per frame). CLICK FIRES ON RELEASE (down+up paired via nearest common ancestor; select popup consumes on down via click_suppressed_). One SHARED event object per click — preventDefault/stopPropagation are real (flags on the event, read via cx.current_this). Default actions after listeners: checkbox toggle, radio group (document-wide by name), summary→details.open, label→for=/descendant control, a[href]→engine.open_url hook (SDL_OpenURL in the shell; #fragment→location_hash only). Disabled controls dispatch nothing.
+- **UA stylesheet** (ua.hpp): Firefox values (Gecko html.css + modern widget theme); resolve = author sheet first, UA fallback when empty; widget chrome (frames #8f8f9d, checked accent #0060df) drawn by layout's emit_toggle/emit_input/emit_frame; closed <details> and display:none subtrees get zero_rects (stale layout rects were hit-testable — fixed).
 - Click delivery: deepest hit-test node, walk up to first non-empty id, call onClick(id).
 - Layout: px only; canvas box = its pixel size; backgrounds paint in a pre-pass (back-to-front), then text/canvas in traversal order.
 - The bricks' own semantics/limits apply verbatim (see their CLAUDE.md).

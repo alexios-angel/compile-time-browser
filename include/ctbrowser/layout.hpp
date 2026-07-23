@@ -6,6 +6,7 @@
 #include <cstddef>
 
 #include "dom.hpp"
+#include "ua.hpp"
 #include "utf.hpp"
 #include <ctc/cfunction.hpp>
 #ifndef CTBROWSER_IN_A_MODULE
@@ -210,6 +211,13 @@ struct layout_pass {
 		n.y += dy;
 		for (const auto & c : n.children) { translate_rects(*c, dx, dy); }
 	}
+	// a hidden subtree must lose its WHOLE rect tree: layout rects persist
+	// between frames, and hit_test walks children first - a stale child
+	// rect would keep a display:none/closed-details subtree clickable
+	static constexpr void zero_rects(node & n) {
+		n.x = n.y = n.w = n.h = 0;
+		for (const auto & c : n.children) { zero_rects(*c); }
+	}
 
 	// lay out `n` with its content starting at (x, y), `width` available for the
 	// border box, `cb` the containing block (nearest positioned ancestor, or the
@@ -218,12 +226,12 @@ struct layout_pass {
 	// (fixed) / the viewport (fixed), then offset by any transform:translate.
 	constexpr std::int32_t place(node & n, std::int32_t x, std::int32_t y, std::int32_t width, const box & cb) {
 		if (skipped_tag(n.tag)) {
-			n.x = n.y = n.w = n.h = 0;
+			zero_rects(n);
 			return 0;
 		}
 		computed_style cs{&n, resolve, n.chain()};
 		if (cs.get("display") == std::string_view{"none"}) {
-			n.x = n.y = n.w = n.h = 0;
+			zero_rects(n);
 			return 0;
 		}
 		const std::int32_t font_px = font_of(&n);
@@ -287,6 +295,20 @@ struct layout_pass {
 		// a down-arrow (plus a popup list on top when open), not stacked options
 		if (n.is_select()) {
 			emit_select(n, font_px, padding, cursor, content_w);
+			emit_frame(n, detail_frame_argb(n));
+			return n.h + 2 * margin;
+		}
+		// form widgets render native chrome (Firefox-style):
+		if (n.is_checkbox() || n.is_radio()) {
+			emit_toggle(n, font_px, padding, n.is_radio());
+			return n.h + 2 * margin;
+		}
+		if (n.is_input()) {
+			if (ctcss::detail::ascii_iequals(n.input_type(), "hidden")) {
+				zero_rects(n);
+				return 0;
+			}
+			emit_input(n, font_px, padding, cursor);
 			return n.h + 2 * margin;
 		}
 
@@ -349,14 +371,23 @@ struct layout_pass {
 		}
 
 		// children stack vertically; a static box passes its own containing block
-		// straight through (only positioned boxes establish a new one, in place())
+		// straight through (only positioned boxes establish a new one, in place()).
+		// A closed <details> shows only its <summary>.
 		for (const auto & c : n.children) {
+			if (n.is_details() && !n.open && !c->is_summary()) {
+				zero_rects(*c);
+				continue;
+			}
 			cursor += place(*c, n.x + padding, cursor, content_w, cb);
 		}
 
 		std::int32_t box_h = prop_px(cs, "height", cb.h, font_px, -1);
 		if (box_h < 0) { box_h = (cursor - n.y) + padding; }
 		n.h = box_h;
+
+		// buttons carry Firefox's 1px widget border (layout has no border
+		// property - widget frames belong to the widgets)
+		if (n.tag == "button") { emit_frame(n, detail_frame_argb(n)); }
 
 		// backgrounds are emitted in a pre-pass by collect_backgrounds below
 		return n.h + 2 * margin;
@@ -387,6 +418,114 @@ struct layout_pass {
 	// `out`, and, when open, the popup option list into `overlays` (painted last,
 	// on top). Sets each <option>'s hit rect (its overlay row, or empty when
 	// closed) so the engine can route clicks. Sets n.h to the control height.
+	// --- Firefox-style widget chrome -----------------------------------
+	// a 1px frame around the node's border box (layout has no `border`
+	// property; the widgets draw their own, like Firefox's form theme)
+	static constexpr std::uint32_t detail_frame_argb(const node & n) {
+		return n.is_disabled() ? 0xFFC8C8CEu : detail::ua_widget_frame;
+	}
+	constexpr void emit_frame(const node & n, std::uint32_t argb) {
+		if (n.w <= 1 || n.h <= 1) { return; }
+		const auto edge = [&](std::int32_t x, std::int32_t y, std::int32_t w, std::int32_t h) {
+			paint_cmd b;
+			b.what = paint_cmd::kind::box;
+			b.x = x;
+			b.y = y;
+			b.w = w;
+			b.h = h;
+			b.argb = argb;
+			out->push_back(b);
+		};
+		edge(n.x, n.y, n.w, 1);
+		edge(n.x, n.y + n.h - 1, n.w, 1);
+		edge(n.x, n.y, 1, n.h);
+		edge(n.x + n.w - 1, n.y, 1, n.h);
+	}
+	// checkbox / radio: a ~14px (at 16px font) box or disc; Firefox's
+	// modern theme - #8f8f9d frame, #0060df fill when checked, white mark
+	constexpr void emit_toggle(node & n, std::int32_t font_px, std::int32_t padding, bool radio) {
+		const std::int32_t side = font_px > 9 ? font_px * 7 / 8 : 8;
+		n.w = side + 2 * padding;
+		n.h = side + 2 * padding;
+		const std::int32_t bx = n.x + padding, by = n.y + padding;
+		const auto box_cmd = [&](std::int32_t x, std::int32_t y, std::int32_t w, std::int32_t h, std::uint32_t argb) {
+			paint_cmd b;
+			b.what = paint_cmd::kind::box;
+			b.x = x;
+			b.y = y;
+			b.w = w;
+			b.h = h;
+			b.argb = argb;
+			out->push_back(b);
+		};
+		if (!radio) {
+			// field, frame, and - when checked - accent fill + white check mark
+			box_cmd(bx, by, side, side, n.checked ? detail::ua_widget_accent : 0xFFFFFFFFu);
+			box_cmd(bx, by, side, 1, detail_frame_argb(n));
+			box_cmd(bx, by + side - 1, side, 1, detail_frame_argb(n));
+			box_cmd(bx, by, 1, side, detail_frame_argb(n));
+			box_cmd(bx + side - 1, by, 1, side, detail_frame_argb(n));
+			if (n.checked) {
+				// a stepped check: short down-stroke + longer up-stroke
+				const std::int32_t u = side > 11 ? 2 : 1; // stroke thickness
+				const std::int32_t cx0 = bx + side / 5, cy0 = by + side / 2;
+				for (std::int32_t i = 0; i < side / 4; ++i) {
+					box_cmd(cx0 + i, cy0 + i, u, u + 1, detail::ua_widget_mark);
+				}
+				const std::int32_t mx = bx + side / 5 + side / 4, my = by + side / 2 + side / 4;
+				for (std::int32_t i = 0; i < side / 2; ++i) {
+					box_cmd(mx + i, my - i, u, u + 1, detail::ua_widget_mark);
+				}
+			}
+		} else {
+			// disc drawn as rows (the emit_select triangle technique): width
+			// steps out then back in - an octagon-ish circle at glyph sizes
+			for (std::int32_t r = 0; r < side; ++r) {
+				const std::int32_t d = r < side / 2 ? side / 2 - 1 - r : r - side / 2;
+				std::int32_t inset = d > side / 4 ? d - side / 4 : 0;
+				box_cmd(bx + inset, by + r, side - 2 * inset, 1,
+				        r == 0 || r == side - 1 ? detail_frame_argb(n) : 0xFFFFFFFFu);
+				if (inset > 0) {
+					box_cmd(bx + inset, by + r, 1, 1, detail_frame_argb(n));
+					box_cmd(bx + side - inset - 1, by + r, 1, 1, detail_frame_argb(n));
+				} else {
+					box_cmd(bx, by + r, 1, 1, detail_frame_argb(n));
+					box_cmd(bx + side - 1, by + r, 1, 1, detail_frame_argb(n));
+				}
+			}
+			if (n.checked) {
+				// the accent dot, inset a third
+				const std::int32_t inset = side / 3;
+				box_cmd(bx + inset, by + inset, side - 2 * inset, side - 2 * inset,
+				        detail::ua_widget_accent);
+			}
+		}
+	}
+	// a text-ish <input>: white field (background via the UA sheet's
+	// pre-pass), 1px frame, and the value attribute's text (password
+	// masks). No editing - the field is presentational.
+	constexpr void emit_input(node & n, std::int32_t font_px, std::int32_t padding, std::int32_t top) {
+		n.h = font_px + 2 * padding;
+		emit_frame(n, detail_frame_argb(n));
+		std::u32string shown = utf8_to_utf32(std::string{n.attribute("value")});
+		if (ctcss::detail::ascii_iequals(n.input_type(), "password")) {
+			shown.assign(shown.size(), U'*');
+		}
+		if (!shown.empty()) {
+			const ctcss::color fg = text_color(n);
+			paint_cmd c;
+			c.what = paint_cmd::kind::text;
+			c.x = n.x + padding;
+			c.y = top;
+			c.w = text_width(shown, font_px);
+			c.h = font_px;
+			c.argb = pack_argb(fg);
+			c.text = shown;
+			c.font_px = font_px;
+			out->push_back(c);
+		}
+	}
+
 	constexpr void emit_select(node & n, std::int32_t font_px, std::int32_t padding, std::int32_t top, std::int32_t content_w) {
 		const ctcss::color fg = text_color(n);
 		const std::int32_t line_h = font_px + font_px / 4;

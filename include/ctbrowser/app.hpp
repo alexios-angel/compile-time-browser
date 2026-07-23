@@ -314,6 +314,10 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 	}, image_decoder, opts.assets};
 	mixer.embedded = &e.assets;
 
+	// the anchor default action: clicking <a href> opens the system's web
+	// browser at that URL (fragment links never reach this hook)
+	e.open_url = [](std::string_view url) { SDL_OpenURL(std::string{url}.c_str()); };
+
 	// route BABYLON.Sound (babylon.hpp) through the mixer: it calls these hooks
 	// with the sound's url; the resolver maps it to an embedded asset or a file
 	e.ev.play_audio = [&mixer](const std::string & url, bool loop) -> std::int32_t {
