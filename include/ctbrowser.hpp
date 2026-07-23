@@ -30,12 +30,12 @@
 //
 //   int main() { return ctbrowser::run_app<app>(); }  // needs app.hpp + SDL3
 //
-// ONE HTML source is the whole application. At COMPILE time: cthtml
-// parses the page into a DOM type; the <style> text is collected from
-// that type and parsed by ctcss (the stylesheet is a type; initial
-// styles can be static_asserted); the <script> text is parsed by ctjs
-// (a JS syntax error in your page fails the build). At RUNTIME: the
-// DOM type instantiates a mutable tree, the script runs against real
+// ONE HTML source is the whole application. At COMPILE time the
+// page's <style>/<script>/<title> text is extracted and the bricks'
+// constexpr value parsers can prove the page well-formed (a JS
+// structural break in your page can fail the build via
+// ctjs::is_valid). At RUNTIME: cthtml::parse instantiates the mutable
+// DOM tree, the script runs against real
 // DOM bindings (getElementById, classes, inline styles, <canvas>
 // pixels), ctcss's query() restyles after every mutation, a block
 // layout pass produces a paint list, and - with ctbrowser/app.hpp -

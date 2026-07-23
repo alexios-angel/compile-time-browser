@@ -8,7 +8,7 @@ endif
 endif
 
 # --embed-dir: asset paths in scripts are repo-root-relative
-CONSTEXPR_FLAGS := -fconstexpr-steps=500000000 -fconstexpr-depth=1024 -fbracket-depth=16384 --embed-dir=$(CURDIR)/..
+CONSTEXPR_FLAGS := -fconstexpr-steps=500000000 -fconstexpr-depth=1024 --embed-dir=$(CURDIR)/..
 
 LARK := ../external/compile-time-html/external/compile-time-lark
 SUBMODULE_INCLUDES := \
@@ -40,11 +40,9 @@ GLM_ROOTS := /home/linuxbrew/.linuxbrew/include /opt/homebrew/include /usr/local
 GLM_INC_DIR := $(firstword $(foreach d,$(GLM_ROOTS),$(if $(wildcard $(d)/glm/glm.hpp),$(d))))
 GLM_INCLUDE := $(if $(GLM_INC_DIR),-I$(GLM_INC_DIR),)
 
-# ctbrowser is value-only: skip the bricks' lark grammars entirely
-GRAMMAR_FREE := -DCTHTML_NO_GRAMMAR -DCTCSS_NO_GRAMMAR -DCTJS_NO_GRAMMAR
 # a whole bundled app (e.g. space-invaders) is one raw-string NTTP > 64 KB - the
 # std::embed clang handles it; silence the standard-minimum-length warning
-CXXFLAGS := -std=c++23 -I../include $(SUBMODULE_INCLUDES) $(GLM_INCLUDE) $(SDL_CFLAGS) $(CONSTEXPR_FLAGS) $(GRAMMAR_FREE) -Wno-overlength-strings -O2 -pedantic -Wall -Wextra -Werror -Wconversion
+CXXFLAGS := -std=c++23 -I../include $(SUBMODULE_INCLUDES) $(GLM_INCLUDE) $(SDL_CFLAGS) $(CONSTEXPR_FLAGS) -Wno-overlength-strings -O2 -pedantic -Wall -Wextra -Werror -Wconversion
 
 SOURCES := $(wildcard *.cpp)
 TARGETS := $(SOURCES:%.cpp=%)
@@ -57,7 +55,7 @@ PCH_USE = -include-pch $(PCH)
 all: $(TARGETS)
 
 $(PCH): ../include/ctbrowser.hpp
-	@ulimit -s unlimited 2>/dev/null; $(CXX) $(filter-out $(SDL_CFLAGS),$(CXXFLAGS)) -x c++-header $< -o $@
+	@$(CXX) $(filter-out $(SDL_CFLAGS),$(CXXFLAGS)) -x c++-header $< -o $@
 
 # real .html pages become raw-string .inc literals (see tools/html-to-inc.py)
 pong.inc fetchboard.inc space-invaders.inc: %.inc: %.html ../tools/html-to-inc.py
@@ -78,7 +76,7 @@ CXXFLAGS += --fetch-allow=https://example.com/ \
 endif
 
 %: %.cpp $(PCH)
-	@ulimit -s unlimited 2>/dev/null; $(CXX) $(CXXFLAGS) $(PCH_USE) $< -o $@ $(SDL_LIBS)
+	@$(CXX) $(CXXFLAGS) $(PCH_USE) $< -o $@ $(SDL_LIBS)
 
 run: all
 	@for t in $(TARGETS); do printf '== %s ==\n' "$$t"; ./$$t; echo; done

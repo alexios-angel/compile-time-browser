@@ -41,21 +41,22 @@ cmake_dependent_option(CTBROWSER_BUILD_TESTS "Build ctbrowser tests" ON
 cmake_dependent_option(CTBROWSER_BUILD_EXAMPLES "Build ctbrowser examples (need SDL3)" ON
   "CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR" OFF)
 
-# the ctlark grammar layers run Earley parses in the constant
+# the bricks' value parsers fold whole pages in the constant
 # evaluator; the interface carries the raised limits so consumers do
 # not have to know the flags
 option(CTBROWSER_CONSTEXPR_LIMITS "Raise constexpr evaluation limits on the interface" ON)
 option(CTBROWSER_PCH "Precompile ctbrowser.hpp for tests and examples" ON)
 
 set(CTBROWSER_CONSTEXPR_OPTIONS
-  -fconstexpr-steps=500000000 -fconstexpr-depth=1024 -fbracket-depth=16384
+  -fconstexpr-steps=500000000 -fconstexpr-depth=1024
   --embed-dir=${PROJECT_SOURCE_DIR})
 
 # The three bricks are git submodules (git submodule update --init
-# --recursive); each pins the same compile-time-lark, and the browser
-# resolves ctlark/ctll through compile-time-html's copy so exactly one
-# is in play. The extra .../ctlark and .../ctll entries let the
-# headers' relative quoted includes resolve.
+# --recursive); each pins the same compile-time-lark (only
+# ctll::fixed_string + utilities are consumed now), and the browser
+# resolves ctll through compile-time-html's copy so exactly one is in
+# play. The extra .../ctlark and .../ctll entries let the headers'
+# relative quoted includes resolve.
 set(CTBROWSER_LARK "${PROJECT_SOURCE_DIR}/external/compile-time-html/external/compile-time-lark")
 set(CTBROWSER_SUBMODULE_INCLUDE_DIRS
   "${PROJECT_SOURCE_DIR}/external/compile-time-html/include"
@@ -81,8 +82,6 @@ if(CTBROWSER_CONSTEXPR_LIMITS)
   target_compile_options(${PROJECT_NAME} INTERFACE ${CTBROWSER_CONSTEXPR_OPTIONS})
 endif()
 # ctbrowser parses HTML+CSS+JS BY VALUE at runtime and never uses the bricks'
-# lark grammars: skip the grammar table builds entirely (the old PCH-bake bulk).
-target_compile_definitions(${PROJECT_NAME} INTERFACE CTHTML_NO_GRAMMAR CTCSS_NO_GRAMMAR CTJS_NO_GRAMMAR)
 set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_SCAN_FOR_MODULES 0)
 
 install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}-targets)
@@ -127,9 +126,8 @@ install(
     "${PROJECT_BINARY_DIR}/${PROJECT_NAME}-config.cmake"
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME})
 
-# One shared PCH: baking the three grammars' Earley tables (the JS one
-# is tens of minutes) must happen ONCE - the anchor owns the PCH and
-# every test/example REUSE_FROMs it.
+# One shared PCH: the three bricks' umbrellas compile once (seconds) -
+# the anchor owns the PCH and every test/example REUSE_FROMs it.
 if(CTBROWSER_PCH AND (CTBROWSER_BUILD_TESTS OR CTBROWSER_BUILD_EXAMPLES))
   file(WRITE "${CMAKE_BINARY_DIR}/ctbrowser-pch-anchor.cpp"
     "int ctbrowser_pch_anchor_symbol = 0;\n")

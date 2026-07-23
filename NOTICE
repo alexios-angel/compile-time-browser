@@ -27,9 +27,9 @@ by Erez Shinan and the lark-parser project, the WHATWG entity data,
 the ECMA-262 and W3C CSS semantics). This repository began as a clone
 of compile-time-css - the chain runs compile-time-xml ->
 compile-time-html -> compile-time-css -> here - and keeps that git
-history. The page-assembly glue (type -> text -> type re-entry), the
-runtime DOM, the layout engine, the script bindings and the SDL3
-shell are original to this repository.
+history. The page-assembly glue, the runtime DOM, the layout engine,
+the script bindings and the SDL3 shell are original to this
+repository.
 
 Attribution for the parser architecture and the CTLL engine belongs to
 Hana Dusikova; this file preserves it as required by Section 4(c) of

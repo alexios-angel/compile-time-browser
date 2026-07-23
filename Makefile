@@ -18,21 +18,17 @@ download the clang-std-embed release archive and unpack it there))
 endif
 endif
 
-# Earley at compile time needs more constexpr budget than the defaults;
-# --embed-dir: #embed/std::embed resource lookups resolve from the repo
-# root (the auto-embedded assets of assets.hpp use script-literal paths
-# like examples/assets/sprites.bmp)
-CONSTEXPR_FLAGS := -fconstexpr-steps=500000000 -fconstexpr-depth=1024 -fbracket-depth=16384 --embed-dir=$(CURDIR)
-
-# ctbrowser parses HTML+CSS+JS entirely BY VALUE at runtime, so it never uses
-# the bricks' lark/Earley grammars: define *_NO_GRAMMAR everywhere to skip the
-# grammar table builds (the bulk of the old PCH bake).
-GRAMMAR_FREE := -DCTHTML_NO_GRAMMAR -DCTCSS_NO_GRAMMAR -DCTJS_NO_GRAMMAR
+# folding whole pages in the constant evaluator needs more budget than
+# the defaults; --embed-dir: #embed/std::embed resource lookups resolve
+# from the repo root (the auto-embedded assets of assets.hpp use
+# script-literal paths like examples/assets/sprites.bmp)
+CONSTEXPR_FLAGS := -fconstexpr-steps=500000000 -fconstexpr-depth=1024 --embed-dir=$(CURDIR)
 
 # The three bricks come in as git submodules (run `git submodule update
 # --init --recursive` once after cloning); every brick pins the SAME
-# compile-time-lark, and the browser resolves ctlark/ctll through
-# compile-time-html's copy so exactly one is in play.
+# compile-time-lark (only ctll::fixed_string + utilities are consumed
+# now), and the browser resolves ctll through compile-time-html's copy
+# so exactly one is in play.
 LARK := external/compile-time-html/external/compile-time-lark
 SUBMODULE_INCLUDES := \
 	-Iexternal/compile-time-html/include \
@@ -48,12 +44,11 @@ GLM_ROOTS := /home/linuxbrew/.linuxbrew/include /opt/homebrew/include /usr/local
 GLM_INC_DIR := $(firstword $(foreach d,$(GLM_ROOTS),$(if $(wildcard $(d)/glm/glm.hpp),$(d))))
 GLM_INCLUDE := $(if $(GLM_INC_DIR),-I$(GLM_INC_DIR),)
 
-override CXXFLAGS := $(CXXFLAGS) -std=c++23 -Iinclude $(SUBMODULE_INCLUDES) $(GLM_INCLUDE) $(CONSTEXPR_FLAGS) $(GRAMMAR_FREE) -Wno-overlength-strings -O2 -pedantic -Wall -Wextra -Werror -Wconversion
+override CXXFLAGS := $(CXXFLAGS) -std=c++23 -Iinclude $(SUBMODULE_INCLUDES) $(GLM_INCLUDE) $(CONSTEXPR_FLAGS) -Wno-overlength-strings -O2 -pedantic -Wall -Wextra -Werror -Wconversion
 
-# precompiled header: parsing the HTML + JavaScript + CSS grammars and
-# compiling their Earley tables happens ONCE here - the JS grammar is
-# the long pole (tens of minutes) - and every translation unit after
-# starts from the baked result
+# precompiled header: the three bricks' umbrellas compile ONCE here
+# (seconds - the grammar bakes died with the bricks' type paths) and
+# every translation unit after starts from the result
 PCH := ctbrowser.pch
 PCH_USE = -include-pch $(PCH)
 
@@ -87,13 +82,11 @@ DEPENDENCY_FILES := $(TESTS:%.cpp=%.d)
 
 all: run-tests
 
-# ulimit: the Earley fold expressions at -fbracket-depth=16384 out-grow
-# clang's default 8 MB stack during instantiation
 tests/render: tests/render.cpp $(PCH)
-	@ulimit -s unlimited 2>/dev/null; $(CXX) $(CXXFLAGS) $(SDL_CFLAGS) $(PCH_USE) -MMD $< -o $@ $(SDL_LIBS)
+	@$(CXX) $(CXXFLAGS) $(SDL_CFLAGS) $(PCH_USE) -MMD $< -o $@ $(SDL_LIBS)
 
 $(filter-out tests/render,$(BINARIES)): %: %.cpp $(PCH)
-	@ulimit -s unlimited 2>/dev/null; $(CXX) $(CXXFLAGS) $(PCH_USE) -MMD $< -o $@
+	@$(CXX) $(CXXFLAGS) $(PCH_USE) -MMD $< -o $@
 
 # real .html pages enter the type system as generated raw-string
 # literals, #include'd as the page<...> template argument
@@ -111,7 +104,7 @@ pch: $(PCH)
 # (app/audio/screenshot/stb, SDL-dependent) are deliberately excluded
 # so editing them never re-bakes the grammars
 $(PCH): include/ctbrowser.hpp $(filter-out include/ctbrowser/app.hpp include/ctbrowser/audio.hpp include/ctbrowser/screenshot.hpp include/ctbrowser/stb_image_write.h,$(wildcard include/ctbrowser/*.hpp)) $(wildcard external/*/include/*.hpp) $(wildcard external/*/include/*/*.hpp)
-	@ulimit -s unlimited 2>/dev/null; $(CXX) $(CXXFLAGS) -x c++-header $< -o $@
+	@$(CXX) $(CXXFLAGS) -x c++-header $< -o $@
 
 -include $(DEPENDENCY_FILES)
 

@@ -47,9 +47,9 @@ public:
 	bool mouse_down = false;
 	node * open_select_ = nullptr; // the <select> whose popup is currently open
 	std::int32_t gc_ticks_ = 0;             // frames since the last cycle collection (see tick)
-	// the page stylesheet, parsed BY VALUE from the page's <style> text at
-	// construction (linear ctcss::parse_value, not the Earley TYPE path);
-	// `resolve` closes over it. Declared before resolve so it is live first.
+	// the page stylesheet, parsed from the page's <style> text at
+	// construction (ctcss::parse_value); `resolve` closes over it.
+	// Declared before resolve so it is live first.
 	ctcss::value_sheet css_sheet;
 	style_fn resolve;
 	text_measure_fn measure; // shell-installed when a real font loads

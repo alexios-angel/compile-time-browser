@@ -11,28 +11,26 @@
 
 # ctbrowser — the compile-time browser
 
-**One HTML string is the whole application.** The markup, the
-`<style>` and the `<script>` are parsed *while your code compiles* —
-by [cthtml](https://github.com/alexios-angel/compile-time-html),
+**One HTML string is the whole application.** The page rides as a
+template argument, and the three bricks' *constexpr value parsers* —
+[cthtml](https://github.com/alexios-angel/compile-time-html),
 [ctcss](https://github.com/alexios-angel/compile-time-css) and
-[ctjs](https://github.com/alexios-angel/compile-time-javascript)
-respectively, chained type→text→type — so a missing quote in the HTML,
-a bad selector in the CSS or a missing semicolon in the JS **fails the
-build** with a caret diagnostic. At runtime there is no parsing at
-all: the DOM instantiates from its type, the script (compiled by the
-C++ optimizer into code specialized for that script) drives real DOM
-and `<canvas>` APIs, styles re-resolve through the CSS cascade after
-every mutation, and **SDL3** draws the result in a window on Windows,
-macOS, Linux and the BSDs — which is exactly the substrate multimedia
-software wants: games and emulators are a `<canvas>`, an `onFrame(dt)`
-and an `onKey` away.
+[ctjs](https://github.com/alexios-angel/compile-time-javascript) — can
+prove it well-formed and even resolve its initial styles *while your
+code compiles* (`static_assert` over the real cascade). At startup the
+same parsers build the DOM, the stylesheet and the script from the
+page text; the script drives real DOM and `<canvas>` APIs, styles
+re-resolve through the CSS cascade after every mutation, and **SDL3**
+draws the result in a window on Windows, macOS, Linux and the BSDs —
+which is exactly the substrate multimedia software wants: games and
+emulators are a `<canvas>`, an `onFrame(dt)` and an `onKey` away.
 
 ```c++
 #include <ctbrowser.hpp>
 #include <ctbrowser/app.hpp>
 #include <SDL3/SDL_main.h>
 
-constexpr auto & app = ctbrowser::source<R"(<!DOCTYPE html>
+using app = ctbrowser::page<R"(<!DOCTYPE html>
 <title>counter</title>
 <style>
     h1      { font-size: 32px; color: #222222; }
@@ -51,11 +49,13 @@ constexpr auto & app = ctbrowser::source<R"(<!DOCTYPE html>
     }
 </script>)">;
 
-// the initial style is a compile-time fact:
+// the page's script is provably parseable, and the initial style is a
+// compile-time fact - the value parsers run in constant evaluation:
+static_assert(ctjs::vp::is_valid(app::script_text()));
 constexpr ctcss::element_ref chain[] = {{"html"}, {"body"}, {"p", "count", ""}};
-static_assert(ctcss::query(decltype(app)::sheet_type{}, chain, "color") == "gray");
+static_assert(ctcss::query(ctcss::parse_value(app::style_text()), chain, "color") == "gray");
 
-int main(int, char **) { return ctbrowser::run_app<decltype(app)>(); }
+int main(int, char **) { return ctbrowser::run_app<app>(); }
 ```
 
 And the games proof — `examples/game.cpp` is pong written in page
@@ -77,21 +77,25 @@ JavaScript on a `<canvas>`:
 
 ## What happens when
 
-**At compile time** ([`page.hpp`](include/ctbrowser/page.hpp)):
-cthtml parses the page into a DOM *type*; the text of every `<style>`
-element is collected *from that type* and re-entered into
-`ctcss::parse` as a template argument (`to_fixed`, the type→text→type
-pivot), and every `<script>` likewise into ctjs. You get
-`page::doc_type`, `page::sheet_type`, `page::script_type`,
-`page::title()` — and `static_assert`s over any of them, including
-full cascade resolution against element chains.
+**At compile time** ([`page.hpp`](include/ctbrowser/page.hpp)): the
+page NTTP is re-materialized as bytes (`html_bytes`) and the text of
+every `<style>`/`<script>`/`<title>` element is extracted with a
+linear scan. You get `page::html_text()`, `page::style_text()`,
+`page::script_text()`, `page::title()` — all `constexpr`
+`string_view`s — and because the bricks' parsers are value functions,
+`static_assert`s over any of them work: `ctjs::vp::is_valid(...)`,
+full cascade resolution via
+`ctcss::query(ctcss::parse_value(...), chain, prop)`, DOM facts via
+`cthtml::parse(...)`.
 
 **At runtime**:
 
-* [`dom.hpp`](include/ctbrowser/dom.hpp) — the DOM type instantiates a
-  mutable tree (tag/id/classes/attributes/text/children, `<canvas>`
-  pixel buffers, inline styles); nodes are stable so script bindings
-  hold plain pointers
+* [`dom.hpp`](include/ctbrowser/dom.hpp) — `instantiate_html` builds
+  the mutable tree (tag/id/classes/attributes/text/children,
+  `<canvas>` pixel buffers, inline styles) from the page text via
+  cthtml's parser; nodes are stable so script bindings hold plain
+  pointers. The whole DOM is constexpr: parse + instantiate + mutate +
+  query fold in constant evaluation (tests/dom.cpp is the proof)
 
 * [`script.hpp`](include/ctbrowser/script.hpp) — the DOM API as ctjs
   host bindings: `getElementById(id)` returns an element handle
@@ -193,9 +197,8 @@ ordinary ctcss sheet.
 
 ```bash
 git submodule update --init --recursive   # the three bricks (+ their lark)
-make            # bakes the combined grammar PCH ONCE (the JS tables are
-                # tens of minutes - one time), then builds + RUNS the
-                # headless engine suite
+make            # builds the shared PCH (seconds), then builds + RUNS
+                # the headless engine suite
 # or on the shared Azure devbox (github.com/alexios-angel/infra):
 ./tools/remote-build.sh [target]          # sync + converge toolchain + make
 # windowed examples (need SDL3; via CMake or the examples Makefile):
@@ -220,9 +223,9 @@ ships `ctbrowser.pc`.
 
 | layer | repo | at compile time | at runtime |
 |-------|------|-----------------|------------|
-| markup | [compile-time-html](https://github.com/alexios-angel/compile-time-html) | page → DOM type | DOM instantiates, scripts mutate |
-| style | [compile-time-css](https://github.com/alexios-angel/compile-time-css) | `<style>` → sheet type, initial styles provable | same `query()` restyles after mutations |
-| behavior | [compile-time-javascript](https://github.com/alexios-angel/compile-time-javascript) | `<script>` → AST type, specialized by the optimizer | closures, DOM/canvas APIs, events |
+| markup | [compile-time-html](https://github.com/alexios-angel/compile-time-html) | page provable via `cthtml::parse` in a `static_assert` | same parser instantiates the DOM, scripts mutate |
+| style | [compile-time-css](https://github.com/alexios-angel/compile-time-css) | initial styles provable via `parse_value` + `query` | same `query()` restyles after mutations |
+| behavior | [compile-time-javascript](https://github.com/alexios-angel/compile-time-javascript) | script provable via `ctjs::vp::is_valid` | closures, DOM/canvas APIs, events |
 | output | [SDL3](https://libsdl.org) | — | window, input, textures, cross-platform |
 
 ## License

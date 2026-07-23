@@ -15,9 +15,10 @@
 #include <vector>
 #endif
 
-// The RUNTIME document. The compile-time DOM type instantiates into
-// this mutable tree at startup; scripts mutate it (text, classes,
-// inline styles, canvas pixels) and the style/layout passes read it.
+// The RUNTIME document. The page's HTML instantiates into this mutable
+// tree at startup (instantiate_html - cthtml's value parser); scripts
+// mutate it (text, classes, inline styles, canvas pixels) and the
+// style/layout passes read it.
 // Nodes are stable for the document's lifetime - v0.1 scripts mutate
 // but do not create or remove elements - so raw node pointers may be
 // captured by script bindings.
@@ -258,28 +259,7 @@ constexpr void init_canvas(node & out) {
 	}
 }
 
-// instantiate the runtime tree from the compile-time DOM TYPE
-template <typename Elem> constexpr void instantiate_into(node & out, node * parent) {
-	out.parent = parent;
-	out.tag = Elem::name();
-	cthtml::for_each_attribute(Elem{}, [&](auto name, auto value) {
-		out.attributes.emplace_back(std::string{name.view()}, std::string{value.view()});
-	});
-	out.id = out.attribute("id");
-	out.classes = out.attribute("class");
-	out.text = Elem::text();
-	init_canvas(out);
-	cthtml::for_each_child(Elem{}, [&](auto child) {
-		using child_t = decltype(child);
-		if constexpr (child_t::type == cthtml::kind::element) {
-			out.children.push_back(std::make_unique<node>());
-			instantiate_into<child_t>(*out.children.back(), &out);
-		}
-	});
-}
-
-// instantiate the runtime tree from a VALUE document (cthtml::parse of a
-// runtime string) - the exact same node tree the type path builds
+// instantiate the runtime tree from a cthtml VALUE document
 constexpr void instantiate_into(node & out, cthtml::node vn, node * parent) {
 	out.parent = parent;
 	out.tag = std::string{vn.name()};
@@ -382,17 +362,7 @@ struct document {
 	}
 };
 
-// build the runtime document from a compile-time DOM TYPE
-template <typename Doc> constexpr document instantiate() {
-	document d;
-	d.root = std::make_unique<node>();
-	detail::instantiate_into<Doc>(*d.root, nullptr);
-	return d;
-}
-
-// build the runtime document from a VALUE document (runtime HTML). The
-// value parser (cthtml::parse) reproduces parse<Src>() exactly, so this
-// yields the same tree the type path would - now from a runtime string.
+// build the runtime document from a cthtml VALUE document.
 constexpr document instantiate(const cthtml::document & vdoc) {
 	document d;
 	d.root = std::make_unique<node>();

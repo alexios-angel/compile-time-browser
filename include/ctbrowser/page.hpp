@@ -5,6 +5,7 @@
 #include <cthtml.hpp>
 #include <ctcss.hpp>
 #include <ctjs.hpp>
+#include <ctll/fixed_string.hpp>
 #ifndef CTBROWSER_IN_A_MODULE
 #include <array>
 #include <cstddef>
@@ -13,19 +14,18 @@
 #endif
 
 // The compile-time assembly. ONE HTML source is the whole application, and
-// ctbrowser parses ALL of it BY VALUE at RUNTIME - the lark/Earley grammars are
-// not used at all (the whole build defines CTJS_NO_GRAMMAR / CTHTML_NO_GRAMMAR /
-// CTCSS_NO_GRAMMAR):
-//   * the DOM     - cthtml::parse(html_text())      (engine: instantiate_html)
+// ctbrowser parses ALL of it with the bricks' constexpr VALUE parsers (the
+// only parsers they have, since the type-level grammar paths were removed):
+//   * the DOM        - cthtml::parse(html_text())        (engine: instantiate_html)
 //   * the stylesheet - ctcss::parse_value(style_text())  (engine: css_sheet)
-//   * the script  - ctjs::run_value(script_text())  (engine: run_value)
+//   * the script     - ctjs::run_value(script_text())    (engine: run_value)
 //
 // page<> only has to hand the engine three runtime strings. The page NTTP is a
 // ctll::fixed_string of char32_t code points; the <style>/<script>/<title> text
 // is pulled out with a cheap LINEAR left-to-right scan (raw_tag_text) and the
-// whole document is re-encoded to UTF-8 bytes (html_bytes) - no grammar, no
-// per-node template instantiation, so a large app costs the translation unit
-// almost nothing.
+// whole document is re-encoded to UTF-8 bytes (html_bytes) - no per-node
+// template instantiation, so a large app costs the translation unit almost
+// nothing.
 
 namespace ctbrowser {
 
@@ -76,7 +76,7 @@ template <ctll::fixed_string Src> struct html_bytes {
 
 // --- linear <style>/<script>/<title> text extraction (a raw-text element's
 // content, concatenated in document order with '\n' after each). Inline
-// elements only; a <script src> would need the type path we no longer use.
+// elements only (a <script src> is bundled ahead of time by tools/js-bundle.py).
 constexpr bool tag_at(std::string_view h, std::size_t i, std::string_view tag) noexcept {
 	if (i + tag.size() > h.size()) { return false; }
 	for (std::size_t k = 0; k < tag.size(); ++k) {
@@ -133,9 +133,9 @@ struct title_tag {
 
 } // namespace detail
 
-// the assembled application, as three runtime strings. Everything is parsed BY
-// VALUE at runtime by the engine (instantiate_html / ctcss::parse_value /
-// ctjs::run_value); the lark grammars are never instantiated.
+// the assembled application, as three runtime strings, parsed by the engine
+// with the bricks' value parsers (instantiate_html / ctcss::parse_value /
+// ctjs::run_value).
 template <ctll::fixed_string Src> struct page {
 	using style_source = detail::raw_tag_text<Src, detail::style_tag>;
 	using script_source = detail::raw_tag_text<Src, detail::script_tag>;
@@ -144,11 +144,11 @@ template <ctll::fixed_string Src> struct page {
 	static constexpr std::string_view html_text() noexcept { return detail::html_bytes<Src>::get(); }
 
 	// the page's CSS as a runtime string; the engine parses+queries it by value
-	// (ctcss::parse_value) - linear, no Earley parse
+	// (ctcss::parse_value)
 	static constexpr std::string_view style_text() noexcept { return style_source::get(); }
 
 	// the page's JS as a runtime string; the engine parses+runs it by value
-	// (ctjs::run_value) - no Earley parse, no per-script template instantiation
+	// (ctjs::run_value)
 	static constexpr std::string_view script_text() noexcept { return script_source::get(); }
 
 	// the <title> text ("ctbrowser" when absent), extracted linearly

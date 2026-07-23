@@ -1,11 +1,15 @@
 # CLAUDE.md — compile-time-browser (ctbrowser)
 
 The assembly of the compile-time web stack: ONE HTML source (markup +
-<style> + <script>) parses ENTIRELY at compile time — cthtml → DOM
-type, ctcss → sheet type, ctjs → script type, chained via the
-type→text→type pivot in page.hpp — and runs at runtime against a
+<style> + <script>). page.hpp hands the engine three constexpr
+strings (html/style/script text, linear extraction from the NTTP);
+the bricks' constexpr VALUE parsers prove them at compile time
+(static_assert over cthtml::parse / ctcss::parse_value+query /
+ctjs::vp::is_valid) and build them at startup, running against a
 mutable DOM, the ctcss cascade, a block layout pass and an SDL3
-window. Namespace `ctbrowser`. **ONLY the project's std::embed clang
+window. (The type-level grammar paths were removed from all three
+bricks 2026-07 — value parsers are the only path; builds are
+grammar-bake-free and take seconds.) Namespace `ctbrowser`. **ONLY the project's std::embed clang
 is supported, C++23 and up** — tools/clang-std-embed (fork:
 alexios-angel/llvm-project branch std-embed; distributed via the embed
 repo's clang-std-embed GitHub release, which CI and the build server
@@ -15,10 +19,10 @@ paths. Work on `main`. Prefer `rg`.
 
 ## ⚠️ Working environment & in-flight work (READ FIRST — 2026-07-22)
 
-**Build ON the shared devbox, not this laptop.** The local WSL2 box
-(7.5 GB RAM, repo on the `/mnt/c` Windows mount) OOMs on grammar bakes — the
-ctjs JS-grammar PCH bake CRASHED the whole machine — and `rsync` from `/mnt/c`
-into the server is flaky (symlink + DrvFs). The devbox
+**Heavy builds go on the shared devbox; grammar-free ctbrowser now
+builds fine locally** (the old OOM risk died with the bricks' grammar
+bakes). `rsync` from `/mnt/c` into the server is flaky (symlink +
+DrvFs). The devbox
 (github.com/alexios-angel/infra, sibling checkout `../infra`) replaced the old
 per-project build server: 8 vCPU / 32 GB, Ubuntu 24.04, apt toolchain (GLM,
 cmake 3.28, LLVM 18 suite), **no SDL3** (so examples skip there). It
@@ -53,15 +57,8 @@ redo it on the server. Findings so the next pass is fast:
   `--fetch-allow=https://assets.babylonjs.com/**` under `CTBROWSER_EXAMPLES_FETCH`.
   Verified locally: configure + PCH bake (~16 s — GRAMMAR_FREE, so NO `ulimit`
   needed here) + babylon/dom/gc tests PASS.
-- **ctjs `CMakeLists.txt` BUG**: `-fbracket-depth=2048` is too small for the JS
-  grammar (needs ≥ ~7500; the Makefile uses **16384**) → the CMake build FAILS
-  outright. Fix: bracket-depth → 16384 AND raise the stack (16384 overflows
-  clang's 8 MB default — the Makefile ran `ulimit -s unlimited`). Under CMake use
-  a launcher: write an `sh` script `ulimit -s unlimited; exec "$@"` and
-  `set(CMAKE_CXX_COMPILER_LAUNCHER "/bin/sh" <script>)`. **This is the bake that
-  OOM'd the laptop — run it on the server.**
-- **cthtml/ctcss**: grammars bake fine at bracket-depth 2048 with the default
-  stack (no launcher). Warning-flag parity optional.
+- (The old ctjs bracket-depth/ulimit findings are OBSOLETE — the
+  grammar bakes no longer exist anywhere in the stack.)
 - Then: convert `.github/workflows/tests.yml` in all 4 repos (drop the `make`
   jobs, keep/adjust the `cmake` job; ctbrowser's needs an `apt-get install
   libglm-dev` step), update the READMEs, and delete the 8 Makefiles (top-level
@@ -70,10 +67,8 @@ redo it on the server. Findings so the next pass is fast:
 ## Build & test
 ```bash
 git submodule update --init --recursive    # three bricks + their lark
-make            # bakes the COMBINED PCH once (JS tables = tens of
-                # minutes, ~4-6 GB - NEVER build in parallel with other
-                # grammar bakes on this 7.5 GB WSL2 box), then builds
-                # and RUNS the headless engine suite
+make            # builds the shared PCH (seconds), then builds and
+                # RUNS the headless engine suite
 cmake -B build && cmake --build build -j && ctest --test-dir build   # + examples if SDL3 found
 ```
 Flags: `-O2 -pedantic -Wall -Wextra -Werror -Wconversion`. Tests are
@@ -85,23 +80,15 @@ CMake shares one PCH via the `ctbrowser-pch-anchor` target (REUSE_FROM).
 - `tools/html-to-inc.py` — HTML → raw-string `.inc` for `#include` as a `page<>` NTTP (pong).
 - `tools/js-bundle.py` — **compile-time ES MODULE BUNDLER** (ctbrowser's Vite/rollup step). ctjs runs ONE script in ONE global scope with no module system, but real apps are ES modules pulling npm symbols. Given an entry HTML with `<script type=module src=…>`, it resolves the whole import graph, strips import/export, maps bare specifiers onto ctbrowser globals (`@babylonjs/core`→`BABYLON`, `@babylonjs/gui`→`BABYLON.GUI`, `@babylonjs/loaders`→dropped), canonicalises `export default` to the importers' name (no duplicate `const` in the shared scope), topo-orders modules (deps first, entry last), and emits ONE self-contained HTML (stylesheet `<link>`s incl. `.scss` via the `sass` CLI inline as `<style>`). NO syntax down-levelling — ctjs already parses class fields/statics, getters/setters, computed names, `??`/`?.`/`?.()`/optional-index, async/await. Verified on johnpitchers/Space-Invaders: 21 modules → one `node --check`-clean script. (Driving goal: run that BabylonJS game's Traditional-2D mode; remaining = the Babylon 2D API surface in babylon.hpp — Scalar/Axis/Space/Sound/Sprite+SpriteManager/UniversalCamera/GlowLayer/SceneLoader.ImportMeshAsync/AssetContainer/AssetsManager/ActionManager + the whole `BABYLON.GUI`.)
 
-## Compile times (measured 2026-07, std::embed clang, 8-core server)
-- PCH bake: ~90 s (gcc took 31 min — clang's constexpr evaluator is ~20x
-  faster here). Recipes run `ulimit -s unlimited`: the Earley folds at
-  `-fbracket-depth=16384` out-grow clang's 8 MB default stack (SEGFAULT).
-- Page TU: ~70 s, of which ~95% is FRONTEND constexpr evaluation
-  (EvaluateAsInitializer 67 s; backend only 3.5 s) → `-O0`/FAST modes
-  are pointless; use `make -j` for multiple TUs.
-- `-fexperimental-new-constant-interpreter`: DO NOT — >5 min, killed.
-- Chained per-page PCH (base pch → page pch with
-  `template class ctbrowser::engine<the_page>;` forced instantiation):
-  TU drops 71 s → 40 s. Opt-in recipe only (per-page pch complexity);
-  the real remaining lever is ctjs interpreter instantiation cost.
+## Compile times (grammar-free stack, 2026-07)
+- PCH: seconds. Test/example TUs: seconds-to-tens-of-seconds; the old
+  70 s/TU Earley+type-interp costs died with the type paths.
+- `-fexperimental-new-constant-interpreter`: still DO NOT.
 
 ## Layout
 - `include/ctbrowser.hpp` — umbrella, ENGINE only (no SDL): page + dom + layout + script + engine.
-- `include/ctbrowser/page.hpp` — the compile-time assembly. `to_fixed<Provider>()` re-enters a constexpr string_view as a ctll::fixed_string NTTP; `tag_text<Doc, Tag>` collects the concatenated text of every <style>/<script> element FROM THE DOM TYPE. `page<Src>`: doc_type/sheet_type/script_type/title().
-- `include/ctbrowser/dom.hpp` — runtime `node` tree (tag/id/classes/attrs/text/children/parent, `inline_style` as a constexpr vector-backed `style_map` — std::map is NOT constexpr, canvas_w/h + pixels 0xAARRGGBB, layout rect x/y/w/h), `instantiate<DocType>()` from the compile-time TYPE **and** `instantiate(const cthtml::document&)` / `instantiate_html(std::string_view)` from cthtml's VALUE parser (same tree, now from a runtime string), find_by_id/find_first/hit_test, class helpers, ctcss chain(). **The whole DOM is constexpr** (std::string/std::vector/std::unique_ptr): parse+instantiate+mutate+query fold at compile time — tests/dom.cpp is the static_assert proof.
+- `include/ctbrowser/page.hpp` — the compile-time assembly. `html_bytes<Src>` re-materializes the NTTP as UTF-8 bytes; `raw_tag_text<Src, Tag>` linearly extracts concatenated <style>/<script>/<title> text. `page<Src>`: html_text()/style_text()/script_text()/title(), all constexpr string_views; `ctbrowser::source<Src>` is the page instance.
+- `include/ctbrowser/dom.hpp` — runtime `node` tree (tag/id/classes/attrs/text/children/parent, `inline_style` as a constexpr vector-backed `style_map` — std::map is NOT constexpr, canvas_w/h + pixels 0xAARRGGBB, layout rect x/y/w/h), `instantiate(const cthtml::document&)` / `instantiate_html(std::string_view)` from cthtml's value parser, find_by_id/find_first/hit_test, class helpers, ctcss chain(). **The whole DOM is constexpr** (std::string/std::vector/std::unique_ptr): parse+instantiate+mutate+query fold at compile time — tests/dom.cpp is the static_assert proof.
 - `include/ctbrowser/layout.hpp` — `style_fn`/`text_measure_fn` are `ctjs::cfunction` (constexpr type-erased callable, NOT std::function — so the engine still isn't templated on the sheet AND layout folds at compile time; ctcss::query is constexpr), `computed_style` (inline styles beat the sheet), block layout → `paint_cmd` list (box/text/canvas) + node rects, all constexpr. Skips head/style/script/title; display:none prunes; text wraps in square font_px glyphs. tests/dom.cpp runs a whole layout pass in a static_assert.
 - `include/ctbrowser/script.hpp` — ctjs bindings: getElementById → element handle object (setText/addClass/... + live width/height/offsetLeft + getContext("2d")/addEventListener), getContext → canvas ctx (fillStyle property read back by fillRect/putPixel/clear natives — the real canvas idiom; 2D path API beginPath/rect/arc/fill, partial arcs degrade to discs; fillText is DOM-style: y = BASELINE, size from ctx.font px → font8x8 integer scale), setTitle; `deliver()` calls script fns if defined (onClick(id)/onKey(name,down)/onFrame(dt)). WEB PLATFORM globals: `document` (getElementById/addEventListener/location.reload), requestAnimationFrame, setTimeout/setInterval/clearTimeout/clearInterval (armed against the tick clock, fired by engine tick — same now_ms performance.now reads), alert, **`fetch(url)` → settled Promise of a Response** ({ok,status,url,text(),json(),bytes()}, each method again a settled promise) served from the embedded-asset registry — `const r = await fetch(url)` works because ctjs (since the async bump) has async/await + the SETTLED-promise subset (then/catch/finally, Promise.resolve/reject/all, JSON.parse); URLs never baked in reject TypeError like a network failure; `dom_events` holds the registered callbacks + the ctjs context to call them (detail::dom_key_code maps SDL names → DOM codes, "Right"→"ArrowRight"). tests/pong.cpp runs the UNMODIFIED MDN breakout (examples/pong.html → generated raw-string examples/pong.inc via tools/html-to-inc.py, #include'd as the page<> NTTP).
 - WEB PLATFORM (script.hpp/dom.hpp): document.createElement/appendChild/removeChild/setAttribute + document.body (scripts MAY create nodes now - the old never-create rule is relaxed; detached nodes stay owned by document.detached so handles never dangle; handles carry "__node" registry indexes so natives resolve each other's nodes). Canvas 2D: CTM transform stack (save/restore/translate/rotate/scale/resetTransform; points transform at verb time per spec), real subpaths (moveTo/lineTo/closePath), even-odd scanline fill(), lineWidth-thick stroke(), angle-honoring arc(), measureText, globalAlpha. `window` (innerWidth/innerHeight from layout viewport, devicePixelRatio, performance.now, addEventListener sharing the doc registry). tests/webapi.cpp = the library-boot proof (drives the platform exactly as p5 does). NO library-specific shims, ever.
@@ -130,6 +117,6 @@ CMake shares one PCH via the `ctbrowser-pch-anchor` target (REUSE_FROM).
 - **SDL3 satellites are OPTIONAL, detected by the build** (pkg-config `sdl3-image/-mixer/-ttf`; CMake find_package) → defines `CTBROWSER_WITH_IMAGE/MIXER/TTF` + links. image → `image_store.decoder` hook (IMG_Load→ARGB8888, engine registry stays plain pixels, BMP path still first); mixer → `audio_mixer` MIX_* implementation (MIX_CreateMixerDevice/LoadAudio/pooled tracks, master gain), stream-WAV fallback preserved in the #else; ttf → `detail::ttf_text` in app.hpp (fonts per px size, glyphs rendered WHITE + color-modded, texture cache capped 256, `probe_font()` scans DejaVu/Liberation/Helvetica/Arial when `app_options.font_path` empty) + `engine.measure` hook feeding layout's greedy wrap. Canvas fillText stays font8x8 (goldens deterministic); TTF affects PAGE text only. CI runners lack SDL3 → render test + examples skip there; goldens are a local check.
 
 ## GOTCHAS
-- **Any grammar change in a brick re-bakes the combined PCH** (~30 min).
-- **Submodule bumps**: update the brick's gitlink AND check lark stays consistent across bricks (headers must be identical; only compile-time-html's copy is on the include path).
-- **Attribution**: preserve NOTICE (CTLL/CTRE via notre, lark-parser, font8x8 public domain, SDL zlib, not bundled).
+- **Submodule bumps**: update the brick's gitlink AND check lark stays consistent across bricks (headers must be identical; only compile-time-html's copy is on the include path — and only ctll::fixed_string + utilities are consumed).
+- **Constexpr lifetime idioms** (from the bricks): owned constexpr documents/sheets cannot escape constant evaluation — extract scalars inside the asserting expression; bind documents to named locals.
+- **Attribution**: preserve NOTICE (CTLL/CTRE via notre, font8x8 public domain, SDL zlib, not bundled).
