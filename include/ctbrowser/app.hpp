@@ -405,6 +405,14 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 	// the anchor default action: clicking <a href> opens the system's web
 	// browser at that URL (fragment links never reach this hook)
 	e.open_url = [](std::string_view url) { SDL_OpenURL(std::string{url}.c_str()); };
+	// the system clipboard behind Ctrl+C/X/V and the context menu
+	e.clipboard_set = [](std::string_view text) { SDL_SetClipboardText(std::string{text}.c_str()); };
+	e.clipboard_get = []() -> std::string {
+		char * t = SDL_GetClipboardText();
+		std::string out = t != nullptr ? t : "";
+		SDL_free(t);
+		return out;
+	};
 
 	// route BABYLON.Sound (babylon.hpp) through the mixer: it calls these hooks
 	// with the sound's url; the resolver maps it to an embedded asset or a file
@@ -426,6 +434,13 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 	if (window != nullptr) {
 		SDL_StartTextInput(window); // editable controls receive SDL_EVENT_TEXT_INPUT
 	}
+	// the hover cursors (arrow / hand over links / I-beam over text),
+	// switched per frame from the engine's CSS-resolved cursor kind
+	SDL_Cursor * cur_arrow = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
+	SDL_Cursor * cur_pointer = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER);
+	SDL_Cursor * cur_text = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_TEXT);
+	auto shown_cursor = decltype(e.cursor()){};
+	if (cur_arrow != nullptr) { SDL_SetCursor(cur_arrow); }
 	if (renderer == nullptr) {
 		SDL_Log("ctbrowser: window/renderer failed: %s", SDL_GetError());
 		SDL_Quit();
@@ -547,6 +562,14 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 			shown_title = e.title;
 			SDL_SetWindowTitle(window, shown_title.c_str());
 		}
+		if (const auto want = e.cursor(); want != shown_cursor) {
+			shown_cursor = want;
+			using ck = std::remove_const_t<decltype(want)>;
+			SDL_Cursor * c = want == ck::pointer ? cur_pointer
+			                 : want == ck::text  ? cur_text
+			                                     : cur_arrow;
+			if (c != nullptr) { SDL_SetCursor(c); }
+		}
 
 		std::int32_t view_w = opts.width;
 		std::int32_t view_h = opts.height;
@@ -636,7 +659,10 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 				case SDL_EVENT_MOUSE_BUTTON_UP:
 					SDL_ConvertEventToRenderCoordinates(renderer, &ev);
 					e.mouse_button(ev.button.x, ev.button.y,
-					               ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+					               ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN,
+					               ev.button.button == SDL_BUTTON_RIGHT    ? 2
+					               : ev.button.button == SDL_BUTTON_MIDDLE ? 1
+					                                                       : 0);
 					break;
 				case SDL_EVENT_KEY_DOWN:
 				case SDL_EVENT_KEY_UP:
@@ -691,6 +717,9 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 #ifdef CTBROWSER_WITH_TTF
 	TTF_Quit();
 #endif
+	SDL_DestroyCursor(cur_arrow);
+	SDL_DestroyCursor(cur_pointer);
+	SDL_DestroyCursor(cur_text);
 	SDL_DestroyRenderer(renderer);
 	SDL_DestroyWindow(window);
 	SDL_Quit();

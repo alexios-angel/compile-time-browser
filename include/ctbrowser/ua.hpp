@@ -52,8 +52,9 @@ inline constexpr std::string_view ua_css = R"(
 	ul, ol { padding-left: 40px }
 	dd { margin-left: 40px }
 
-	a { color: #0000ee; text-decoration: underline }
+	a { color: #0000ee; text-decoration: underline; cursor: pointer }
 	a:active { color: #ee0000 }
+	input, textarea { cursor: text }
 
 	button, select { background-color: #e9e9ed; color: #000000; padding: 1px 8px }
 	button:hover, select:hover { background-color: #d0d0d7 }

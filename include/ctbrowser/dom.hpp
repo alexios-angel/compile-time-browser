@@ -101,6 +101,21 @@ struct node {
 	std::int32_t scroll_top = 0;  // textarea inner scroll (px; clamped by layout)
 	bool caret_follow = false;    // an edit moved the caret: layout scrolls it into view
 	bool viewport_fixed = false;  // position:fixed - exempt from page scrolling
+	std::int32_t sel_anchor = -1; // editable selection anchor (byte; -1 = none)
+	bool selected = false;        // page text selection membership
+	// layout cache for the engine's caret-from-click math (set by the
+	// widget emitters, like the x/y/w/h rects)
+	std::int32_t ui_font_px = 16;
+	std::int32_t ui_text_x = 0;
+	std::int32_t ui_text_y = 0;
+	std::int32_t ui_line_h = 0;
+	std::string ui_family;
+	bool ui_bold = false;
+	bool ui_italic = false;
+
+	constexpr std::int32_t sel_begin() const { return sel_anchor < caret ? sel_anchor : caret; }
+	constexpr std::int32_t sel_end() const { return sel_anchor < caret ? caret : sel_anchor; }
+	constexpr bool has_selection() const { return sel_anchor >= 0 && sel_anchor != caret; }
 
 	constexpr bool is_canvas() const { return tag == "canvas"; }
 	constexpr bool is_select() const { return tag == "select"; }

@@ -545,6 +545,16 @@ struct layout_pass {
 						std::int32_t tx = n.x + p.left;
 						if (align == std::string_view{"center"}) { tx += (content_w - tw) / 2; }
 						else if (align == std::string_view{"right"}) { tx += content_w - tw; }
+						if (n.selected) { // the page text selection highlight
+							paint_cmd hl;
+							hl.what = paint_cmd::kind::box;
+							hl.x = tx;
+							hl.y = cursor;
+							hl.w = tw;
+							hl.h = font_px;
+							hl.argb = 0xFFB4D5FEu;
+							out->push_back(hl);
+						}
 						paint_cmd cmd;
 						cmd.what = paint_cmd::kind::text;
 						cmd.x = tx;
@@ -739,6 +749,35 @@ struct layout_pass {
 		std::size_t take = view.size(); // clip the tail to the field
 		while (take > 0 && text_width(view.substr(0, take), font_px, fs) > content_w) { --take; }
 		const ctcss::color fg = text_color(n);
+		// geometry cache for the engine's caret-from-click math
+		n.ui_font_px = font_px;
+		n.ui_text_x = n.x + padding;
+		n.ui_text_y = top;
+		n.ui_line_h = font_px + font_px / 4;
+		n.ui_family = fs.family;
+		n.ui_bold = fs.bold;
+		n.ui_italic = fs.italic;
+		// the selection highlight (light blue, black text stays readable)
+		if (n.has_selection()) {
+			const std::size_t vb = static_cast<std::size_t>(n.sel_begin());
+			const std::size_t ve = static_cast<std::size_t>(n.sel_end());
+			std::size_t cb2 = utf8_length(std::string_view{n.value}.substr(0, vb));
+			std::size_t ce2 = utf8_length(std::string_view{n.value}.substr(0, ve));
+			cb2 = cb2 > start ? cb2 - start : 0;
+			ce2 = ce2 > start ? ce2 - start : 0;
+			if (cb2 > take) { cb2 = take; }
+			if (ce2 > take) { ce2 = take; }
+			if (ce2 > cb2) {
+				paint_cmd hl;
+				hl.what = paint_cmd::kind::box;
+				hl.x = n.x + padding + text_width(view.substr(0, cb2), font_px, fs);
+				hl.y = top;
+				hl.w = text_width(view.substr(cb2, ce2 - cb2), font_px, fs);
+				hl.h = font_px;
+				hl.argb = 0xFFB4D5FEu;
+				out->push_back(hl);
+			}
+		}
 		if (take > 0) {
 			paint_cmd c;
 			c.what = paint_cmd::kind::text;
@@ -783,6 +822,14 @@ struct layout_pass {
 		emit_frame(n, detail_frame_argb(n));
 		const std::int32_t content_w = n.w - 2 * padding;
 		const ctcss::color fg = text_color(n);
+		// geometry cache for the engine's caret-from-click math
+		n.ui_font_px = font_px;
+		n.ui_text_x = n.x + padding;
+		n.ui_text_y = top;
+		n.ui_line_h = line_h;
+		n.ui_family = fs.family;
+		n.ui_bold = fs.bold;
+		n.ui_italic = fs.italic;
 		// caret line/column (byte offsets -> per-line code points)
 		const std::string & v = n.value;
 		const std::size_t cb = static_cast<std::size_t>(n.caret < 0 ? 0 : n.caret) > v.size()
@@ -838,6 +885,29 @@ struct layout_pass {
 			std::size_t take = line.size();
 			while (take > 0 && text_width(std::u32string_view{line}.substr(0, take), font_px, fs) > content_w) {
 				--take;
+			}
+			if (n.has_selection()) { // the selected span on THIS line
+				const std::size_t vb = static_cast<std::size_t>(n.sel_begin());
+				const std::size_t ve = static_cast<std::size_t>(n.sel_end());
+				const std::size_t lb = vb > pos ? vb - pos : 0;
+				const std::size_t le2 = ve > pos ? ve - pos : 0;
+				if (le2 > 0 && lb < nl - pos) {
+					std::size_t scb = utf8_length(std::string_view{v}.substr(pos, lb < nl - pos ? lb : nl - pos));
+					std::size_t sce = utf8_length(std::string_view{v}.substr(pos, le2 < nl - pos ? le2 : nl - pos));
+					if (scb > take) { scb = take; }
+					if (sce > take) { sce = take; }
+					if (sce > scb) {
+						paint_cmd hl;
+						hl.what = paint_cmd::kind::box;
+						hl.x = n.x + padding +
+						       text_width(std::u32string_view{line}.substr(0, scb), font_px, fs);
+						hl.y = y;
+						hl.w = text_width(std::u32string_view{line}.substr(scb, sce - scb), font_px, fs);
+						hl.h = font_px;
+						hl.argb = 0xFFB4D5FEu;
+						out->push_back(hl);
+					}
+				}
 			}
 			if (take > 0) {
 				paint_cmd c;

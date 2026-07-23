@@ -223,11 +223,28 @@ Elements behave like they do in Firefox, out of the box:
   values, `onsubmit`/`addEventListener("submit")` are cancelable, and
   `form.submit()`/`form.reset()` work from script.
 * **scrolling**: pages taller than the window scroll — mouse wheel,
-  PageUp/PageDown, Home/End — with `position: fixed` elements staying
-  viewport-anchored and hit-testing following the scroll. Overflowing
-  `<textarea>`s scroll under the wheel Firefox-style (no scrollbar
-  drawn), and editing keeps the caret in view. Resizing the window
-  re-lays-out at the new size: words keep their size and rewrap.
+  PageUp/PageDown, Home/End, or grab the Firefox-style overlay
+  **scrollbar** on the right (drag the thumb, click the track to page;
+  hide it with `scrollbar-width: none`, thin it with `thin`).
+  `position: fixed` elements stay viewport-anchored and hit-testing
+  follows the scroll. Overflowing `<textarea>`s scroll under the wheel
+  with no scrollbar drawn, and editing keeps the caret in view.
+  Resizing the window re-lays-out at the new size: words keep their
+  size and rewrap.
+* **cursors**: the pointer becomes Firefox's hand over links and an
+  I-beam over text and fields — driven by the CSS `cursor` property
+  (UA defaults `a { cursor: pointer }`, `input, textarea { cursor:
+  text }`), so pages override it like anywhere else.
+* **selection + clipboard**: drag to select — character-precise inside
+  inputs and textareas (Shift+arrows extend, click places the caret at
+  the nearest glyph boundary), per-text-block on the page. Ctrl+C/X/V
+  and Ctrl+A do what they say through the system clipboard, `copy`/
+  `cut`/`paste` events are cancelable, and `user-select: none` keeps
+  text out of page selection.
+* **the right-click menu**: Chrome-style Copy / Cut / Paste / Select
+  All at the pointer, enabled per context; a page listener calling
+  `preventDefault()` on `contextmenu` takes the menu over entirely,
+  exactly like a real browser.
 * **tables**: rows through `thead`/`tbody`/`tfoot`, equal-width
   columns, 2px border-spacing, `<caption>` above, centered-bold
   `<th>`, and the classic 1px grid when the `border` attribute is set
@@ -245,10 +262,10 @@ project's subsets). Browser-side:
   render as their own rows)
 - px lengths; margins/paddings honor per-side values and 1-4-value
   shorthands
-- editing: no selection ranges, no clipboard, no Tab traversal, no IME
-  composition, click focuses with the caret at the end
+- editing: no Tab traversal, no IME composition, page selection is
+  per-text-block (not per-character across elements)
 - tables: no colspan/rowspan/auto column sizing
-- no `<img>` yet; no horizontal page scrolling or scrollbar chrome
+- no `<img>` yet; no horizontal page scrolling
 
 The bricks' own APIs remain fully available alongside —
 `decltype(app)::doc_type` is an ordinary cthtml document, the sheet an
