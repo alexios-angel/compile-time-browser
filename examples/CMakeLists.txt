@@ -43,6 +43,7 @@ endforeach()
 # into examples-windows/, ready to run on the Windows host
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
   find_file(CTBROWSER_SDL3_DLL SDL3.dll PATH_SUFFIXES bin)
+  find_file(CTBROWSER_SDL3_TTF_DLL SDL3_ttf.dll PATH_SUFFIXES bin)
   set(dist-dir "${PROJECT_SOURCE_DIR}/examples-windows")
   set(dist-commands COMMAND ${CMAKE_COMMAND} -E make_directory "${dist-dir}")
   foreach(target IN LISTS ctbrowser-example-targets)
@@ -52,10 +53,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
     list(APPEND dist-commands
       COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:${target}>" "${dist-dir}/${exe-name}.exe")
   endforeach()
-  if(CTBROWSER_SDL3_DLL)
-    list(APPEND dist-commands
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CTBROWSER_SDL3_DLL}" "${dist-dir}")
-  endif()
+  foreach(dll IN LISTS CTBROWSER_SDL3_DLL CTBROWSER_SDL3_TTF_DLL)
+    if(dll)
+      list(APPEND dist-commands
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${dll}" "${dist-dir}")
+    endif()
+  endforeach()
   add_custom_target(windows-dist ${dist-commands}
     DEPENDS ${ctbrowser-example-targets}
     COMMENT "collecting Windows exes + SDL3.dll into examples-windows/"
