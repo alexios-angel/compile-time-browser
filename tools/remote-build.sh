@@ -47,7 +47,16 @@ rsync -az --delete \
 # into the box image — the guard just heals a box that predates it.
 ssh "$host" CLANG_STD_EMBED_RELEASE="$CLANG_STD_EMBED_RELEASE" 'bash -s' <<'REMOTE'
 set -euo pipefail
-dpkg -s libglm-dev >/dev/null 2>&1 || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libglm-dev
+BREW=/home/linuxbrew/.linuxbrew/bin/brew
+if [ -x "$BREW" ]; then
+  export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1
+  "$BREW" bundle check --file="$HOME/projects/compile-time-browser/tools/Brewfile" >/dev/null 2>&1 \
+    || "$BREW" bundle install --file="$HOME/projects/compile-time-browser/tools/Brewfile"
+else
+  # no linuxbrew on this box: apt glm builds everything except the
+  # constexpr-math tests (needs glm >= 1.0)
+  dpkg -s libglm-dev >/dev/null 2>&1 || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libglm-dev
+fi
 tool="$HOME/projects/compile-time-browser/tools/clang-std-embed"
 if [ ! -x "$tool/bin/clang++" ]; then
   mkdir -p "$tool"
