@@ -43,8 +43,9 @@ rsync -az --delete \
   --filter 'protect tools/clang-std-embed/' --filter 'protect *.d' \
   "$repo_root"/ "$host:projects/compile-time-browser/"
 
-# Converge project-owned deps on the box. glm is apt's libglm-dev and baked
-# into the box image — the guard just heals a box that predates it.
+# Converge project-owned deps on the box: brew-only deps ride in
+# tools/Brewfile (glm >= 1.0 for constexpr math); apt glm is the
+# brew-less fallback (everything but the constexpr-math tests).
 ssh "$host" CLANG_STD_EMBED_RELEASE="$CLANG_STD_EMBED_RELEASE" 'bash -s' <<'REMOTE'
 set -euo pipefail
 BREW=/home/linuxbrew/.linuxbrew/bin/brew
