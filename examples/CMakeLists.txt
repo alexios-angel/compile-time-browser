@@ -46,8 +46,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
   set(dist-dir "${PROJECT_SOURCE_DIR}/examples-windows")
   set(dist-commands COMMAND ${CMAKE_COMMAND} -E make_directory "${dist-dir}")
   foreach(target IN LISTS ctbrowser-example-targets)
+    # short artifact names (counter.exe, pong.exe ...) - the established
+    # convention of the shipped folder
+    string(REPLACE "ctbrowser-example-" "" exe-name "${target}")
     list(APPEND dist-commands
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:${target}>" "${dist-dir}")
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:${target}>" "${dist-dir}/${exe-name}.exe")
   endforeach()
   if(CTBROWSER_SDL3_DLL)
     list(APPEND dist-commands
