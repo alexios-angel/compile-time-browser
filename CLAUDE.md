@@ -62,7 +62,7 @@ ninja-build + libglm-dev. remote-build.sh drives the presets.
 
 ## Build & test
 ```bash
-git submodule update --init --recursive    # three bricks + their lark
+git submodule update --init --recursive    # three bricks + nested ctc
 cmake --preset default && cmake --build --preset default && ctest --preset default
 # preset `fetch` = same + CTBROWSER_EXAMPLES_FETCH=ON (compile-time HTTP)
 # examples build when SDL3 is found; tests are always headless
@@ -92,7 +92,7 @@ CMake shares one PCH via the `ctbrowser-pch-anchor` target (REUSE_FROM).
 - `include/ctbrowser/engine.hpp` — `engine<Page>`: doc + title + resolver + script run with bindings; frame(viewport_w) (also refreshes handle offsetLeft/width), click_at, key/mouse_* (deliver conventions AND dispatch DOM listeners), tick (onFrame + rAF pump + location.reload re-instantiation); all_bindings installs the DOM/web globals AND the BABYLON namespace. SDL-free; what the tests drive.
 - `include/ctbrowser/app.hpp` — SDL3 shell: run_app<Page>(app_options). Boxes = filled rects, text = font8x8 scaled, canvas = streaming SDL_Texture. `SDL_VIDEODRIVER=dummy` + `CTBROWSER_TEST_FRAMES=N` (env, read by run_app) = headless run.
 - `include/ctbrowser/font8x8.hpp` — GENERATED from public-domain font8x8 (dhepper); glyph_pixel(c,row,col).
-- `external/compile-time-{html,javascript,css}` — SUBMODULES (recursive: each carries lark). ctlark/ctll resolve through compile-time-html's copy — exactly ONE lark on the include path.
+- `external/compile-time-{html,javascript,css}` — SUBMODULES (ctjs carries ctc nested). ctc resolves through compile-time-javascript's copy — exactly ONE ctc on the include path (ctc::string = the page NTTP, ctc::cfunction = the layout hooks). cthtml/ctcss are submodule-free.
 
 ## Decisions
 - Scripts may MUTATE and (since the web-platform sweep) CREATE/detach nodes — document owns every node (tree or detached) so raw node* in bindings never dangle; `engine` is noncopyable, doc outlives script result.
@@ -113,6 +113,6 @@ CMake shares one PCH via the `ctbrowser-pch-anchor` target (REUSE_FROM).
 - **SDL3 satellites are OPTIONAL, detected by the build** (pkg-config `sdl3-image/-mixer/-ttf`; CMake find_package) → defines `CTBROWSER_WITH_IMAGE/MIXER/TTF` + links. image → `image_store.decoder` hook (IMG_Load→ARGB8888, engine registry stays plain pixels, BMP path still first); mixer → `audio_mixer` MIX_* implementation (MIX_CreateMixerDevice/LoadAudio/pooled tracks, master gain), stream-WAV fallback preserved in the #else; ttf → `detail::ttf_text` in app.hpp (fonts per px size, glyphs rendered WHITE + color-modded, texture cache capped 256, `probe_font()` scans DejaVu/Liberation/Helvetica/Arial when `app_options.font_path` empty) + `engine.measure` hook feeding layout's greedy wrap. Canvas fillText stays font8x8 (goldens deterministic); TTF affects PAGE text only. CI runners lack SDL3 → render test + examples skip there; goldens are a local check.
 
 ## GOTCHAS
-- **Submodule bumps**: update the brick's gitlink AND check lark stays consistent across bricks (headers must be identical; only compile-time-html's copy is on the include path — and only ctll::fixed_string + utilities are consumed).
+- **Submodule bumps**: update the brick's gitlink; ctc rides inside ctjs (only compile-time-javascript's copy is on the include path).
 - **Constexpr lifetime idioms** (from the bricks): owned constexpr documents/sheets cannot escape constant evaluation — extract scalars inside the asserting expression; bind documents to named locals.
-- **Attribution**: preserve NOTICE (CTLL/CTRE via notre, font8x8 public domain, SDL zlib, not bundled).
+- **Attribution**: preserve NOTICE (ctc MIT; historical CTLL/CTRE lineage; font8x8 public domain, SDL zlib, not bundled).

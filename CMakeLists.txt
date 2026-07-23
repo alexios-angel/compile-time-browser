@@ -60,20 +60,16 @@ set(CTBROWSER_CONSTEXPR_OPTIONS
   --embed-dir=${PROJECT_SOURCE_DIR})
 
 # The three bricks are git submodules (git submodule update --init
-# --recursive); each pins the same compile-time-lark (only
-# ctll::fixed_string + utilities are consumed now), and the browser
-# resolves ctll through compile-time-html's copy so exactly one is in
-# play. The extra .../ctlark and .../ctll entries let the headers'
-# relative quoted includes resolve.
-set(CTBROWSER_LARK "${PROJECT_SOURCE_DIR}/external/compile-time-html/external/compile-time-lark")
+# --recursive); ctc (compile-time-containers - ctc::string carries the
+# page NTTP, ctc::cfunction the layout hooks) resolves through
+# compile-time-javascript's nested copy so exactly one is in play.
+set(CTBROWSER_CTC "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/external/compile-time-containers")
 set(CTBROWSER_SUBMODULE_INCLUDE_DIRS
   "${PROJECT_SOURCE_DIR}/external/compile-time-html/include"
   "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"
   "${PROJECT_SOURCE_DIR}/external/compile-time-css/include"
-  "${CTBROWSER_LARK}/include"
-  "${CTBROWSER_LARK}/include/ctlark"
-  "${CTBROWSER_LARK}/include/ctll")
-if(NOT EXISTS "${CTBROWSER_LARK}/include/ctlark.hpp")
+  "${CTBROWSER_CTC}/include")
+if(NOT EXISTS "${CTBROWSER_CTC}/include/ctc.hpp")
   message(FATAL_ERROR
     "ctbrowser: submodules are missing - run `git submodule update --init --recursive`")
 endif()
@@ -109,14 +105,14 @@ set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_SCAN_FOR_MODULES 0)
 install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}-targets)
 install(DIRECTORY include/ DESTINATION include FILES_MATCHING PATTERN *.hpp)
 # the installed tree stays flat - include/{ctbrowser,cthtml,ctjs,ctcss,
-# ctlark,ctll} side by side - so relative includes keep working
+# ctc} side by side - so relative includes keep working
 install(DIRECTORY external/compile-time-html/include/ DESTINATION include
     FILES_MATCHING PATTERN *.hpp)
 install(DIRECTORY external/compile-time-javascript/include/ DESTINATION include
     FILES_MATCHING PATTERN *.hpp)
 install(DIRECTORY external/compile-time-css/include/ DESTINATION include
     FILES_MATCHING PATTERN *.hpp)
-install(DIRECTORY "${CTBROWSER_LARK}/include/" DESTINATION include
+install(DIRECTORY "${CTBROWSER_CTC}/include/" DESTINATION include
     FILES_MATCHING PATTERN *.hpp)
 
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})

@@ -49,11 +49,9 @@ namespace ctbrowser {
 
 // the page type for a source string; `ctbrowser::source<Src>` is a
 // convenient value-form handle to it
-template <ctll::fixed_string Src> using page_t = page<Src>;
+template <ctc::string Src> using page_t = page<Src>;
 
-#if CTLL_CNTTP_COMPILER_CHECK
-template <ctll::fixed_string Src> inline constexpr page<Src> source{};
-#endif
+template <ctc::string Src> inline constexpr page<Src> source{};
 
 } // namespace ctbrowser
 

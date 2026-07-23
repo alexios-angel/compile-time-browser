@@ -2,9 +2,8 @@
 > [compile-time-html](https://github.com/alexios-angel/compile-time-html),
 > [compile-time-javascript](https://github.com/alexios-angel/compile-time-javascript)
 > and [compile-time-css](https://github.com/alexios-angel/compile-time-css)
-> (all on the CTLL parser from
-> [CTRE](https://github.com/hanickadot/compile-time-regular-expressions)
-> by Hana Dusíková, via [notre](https://github.com/alexios-angel/notre)),
+> (with [compile-time-containers](https://github.com/alexios-angel/compile-time-containers)
+> carrying the page as a structural NTTP string),
 > rendered with [SDL3](https://libsdl.org). Text renders with the
 > public-domain [font8x8](https://github.com/dhepper/font8x8).
 > Apache License 2.0 with LLVM Exceptions; see [NOTICE](NOTICE).
@@ -196,7 +195,7 @@ ordinary ctcss sheet.
 ## Building
 
 ```bash
-git submodule update --init --recursive   # the three bricks (+ their lark)
+git submodule update --init --recursive   # the three bricks (+ nested ctc)
 cmake --preset default                    # Ninja + Release, std::embed clang
 cmake --build --preset default            # builds the suite + examples (SDL3)
 ctest --preset default                    # headless tests + 30-frame example runs
@@ -232,7 +231,7 @@ platform SDL does) and the build defines
 `CTBROWSER_WITH_IMAGE/MIXER/TTF` and links them; without them the
 built-in fallbacks (BMP sprites, WAV streams, 8×8 font) keep every
 feature working. The CMake install flattens
-`include/{ctbrowser,cthtml,ctjs,ctcss,ctlark,ctll}` side by side and
+`include/{ctbrowser,cthtml,ctjs,ctcss,ctc}` side by side and
 ships `ctbrowser.pc`.
 
 ## The stack
@@ -247,6 +246,6 @@ ships `ctbrowser.pc`.
 ## License
 
 Apache License 2.0 with LLVM Exceptions (see [LICENSE](LICENSE)).
-CTLL is Hana Dusíková's work via notre; font8x8 is public domain
+ctc (compile-time-containers) is MIT; font8x8 is public domain
 (Daniel Hepper / Marcel Sondaar); SDL3 is zlib-licensed and not
 bundled; see [NOTICE](NOTICE).

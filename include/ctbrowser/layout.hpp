@@ -7,7 +7,7 @@
 
 #include "dom.hpp"
 #include "utf.hpp"
-#include <ctjs/cfunction.hpp>
+#include <ctc/cfunction.hpp>
 #ifndef CTBROWSER_IN_A_MODULE
 #include <functional>
 #include <string>
@@ -16,7 +16,7 @@
 #endif
 
 // Style resolution and block layout. The style resolver is a
-// constexpr type-erased callable (ctjs::cfunction, not std::function)
+// constexpr type-erased callable (ctc::cfunction, not std::function)
 // so the engine is not templated on the sheet type - the app glue
 // captures `ctcss::query(Page::sheet_type{}, ...)` once - AND the whole
 // layout pass folds at compile time (ctcss::query is constexpr; see the
@@ -35,12 +35,12 @@ namespace ctbrowser {
 
 // resolve one property for one node chain ("" = unset)
 using style_fn =
-    ctjs::cfunction<std::string_view(const ctcss::element_ref *, std::size_t, std::string_view)>;
+    ctc::cfunction<std::string_view(const ctcss::element_ref *, std::size_t, std::string_view)>;
 
 // measure a UTF-32 text run's width in pixels at a font size; when absent the
 // layout assumes the embedded font's square glyphs (width == font_px per code
 // point). The SDL shell installs a TTF-backed measure when a real font loads.
-using text_measure_fn = ctjs::cfunction<std::int32_t(std::u32string_view, std::int32_t)>;
+using text_measure_fn = ctc::cfunction<std::int32_t(std::u32string_view, std::int32_t)>;
 
 struct computed_style {
 	const node * n;
