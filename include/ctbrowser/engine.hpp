@@ -50,6 +50,8 @@ public:
 	node * pressed_ = nullptr;     // mouse-down target (:active chain, click pairing)
 	node * focused_ = nullptr;     // the focused control (:focus)
 	bool click_suppressed_ = false; // set when the select popup ate the mousedown
+	std::int32_t scroll_y_ = 0;     // page scroll offset (px; clamped each frame)
+	std::int32_t page_h_ = 0;       // last laid-out document height
 	// the anchor default action: how <a href> opens the OS web browser.
 	// Headless (tests) leave it empty = no-op; the SDL shell installs
 	// SDL_OpenURL. Fragment hrefs (#...) never call it.
@@ -115,9 +117,44 @@ public:
 		detail::apply_animations(doc, css_sheet, ev.now_ms);
 		std::vector<paint_cmd> cmds = ctbrowser::layout(doc, viewport_w, resolve, measure, ev.viewport_h);
 		ev.viewport_w = viewport_w;
+		// page scrolling: clamp to the freshly laid-out document height,
+		// then shift the world into view - rects AND paints together, so
+		// hit testing, script rect readbacks and rendering all agree.
+		// position:fixed subtrees stay viewport-anchored.
+		page_h_ = doc.root != nullptr ? doc.root->y + doc.root->h : 0;
+		const std::int32_t max_scroll = page_h_ > ev.viewport_h ? page_h_ - ev.viewport_h : 0;
+		if (scroll_y_ > max_scroll) { scroll_y_ = max_scroll; }
+		if (scroll_y_ < 0) { scroll_y_ = 0; }
+		if (scroll_y_ != 0) {
+			for (paint_cmd & c : cmds) {
+				if (!c.fixed) { c.y -= scroll_y_; }
+			}
+			if (doc.root) { detail::offset_rects(*doc.root, -scroll_y_); }
+		}
 		ev.refresh_tracked();
 		return cmds;
 	}
+
+	// mouse-wheel scrolling: a textarea under the pointer scrolls itself
+	// (Firefox-style, no scrollbar); otherwise the page scrolls. SDL
+	// wheel y > 0 means "scroll up".
+	void wheel(double x, double y, double dy) {
+		mouse_x = x;
+		mouse_y = y;
+		update_hover(x, y);
+		ev.dispatch("wheel", detail::wheel_event(x, y, -dy * 100.0));
+		node * hit = doc.root ? doc.root->hit_test(static_cast<std::int32_t>(x),
+		                                           static_cast<std::int32_t>(y))
+		                      : nullptr;
+		for (node * n = hit; n != nullptr; n = n->parent) {
+			if (n->is_textarea()) {
+				n->scroll_top -= static_cast<std::int32_t>(dy * 48.0); // clamped by layout
+				return;
+			}
+		}
+		scroll_y_ -= static_cast<std::int32_t>(dy * 48.0); // clamped in frame()
+	}
+	std::int32_t scroll_y() const { return scroll_y_; }
 
 	// the page's @font-face rules (family + src), for the shell to load custom
 	// fonts; empty when the stylesheet declares none
@@ -185,7 +222,16 @@ public:
 		ev.dispatch(down ? "keydown" : "keyup", evt);
 		// the editing default action: keystrokes into the focused editable
 		// (a listener's preventDefault() suppresses it, like a browser)
-		if (down && !detail::event_flag(evt, "defaultPrevented")) { edit_key(name); }
+		if (down && !detail::event_flag(evt, "defaultPrevented")) {
+			if (focused_ != nullptr && focused_->is_editable() && !focused_->is_disabled()) {
+				edit_key(name);
+			} else { // page scrolling (clamped in frame())
+				if (name == "PageDown") { scroll_y_ += ev.viewport_h > 48 ? ev.viewport_h - 48 : 48; }
+				else if (name == "PageUp") { scroll_y_ -= ev.viewport_h > 48 ? ev.viewport_h - 48 : 48; }
+				else if (name == "Home") { scroll_y_ = 0; }
+				else if (name == "End") { scroll_y_ = page_h_; }
+			}
+		}
 	}
 
 	// printable text lands here (the shell forwards SDL_EVENT_TEXT_INPUT;
@@ -196,6 +242,7 @@ public:
 		f->value.insert(static_cast<std::size_t>(f->caret), utf8);
 		f->caret += static_cast<std::int32_t>(utf8.size());
 		f->value_dirty = true;
+		f->caret_follow = true;
 		fire_input(f);
 	}
 	void mouse_move(double x, double y) {
@@ -445,6 +492,7 @@ private:
 	void edit_key(std::string_view name) {
 		node * f = focused_;
 		if (f == nullptr || !f->is_editable() || f->is_disabled()) { return; }
+		f->caret_follow = true; // layout scrolls the caret into view
 		std::string & v = f->value;
 		std::int32_t & c = f->caret;
 		if (c > static_cast<std::int32_t>(v.size())) { c = static_cast<std::int32_t>(v.size()); }

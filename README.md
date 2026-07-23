@@ -222,6 +222,12 @@ Elements behave like they do in Firefox, out of the box:
   field does the implicit submission), `type=reset` restores initial
   values, `onsubmit`/`addEventListener("submit")` are cancelable, and
   `form.submit()`/`form.reset()` work from script.
+* **scrolling**: pages taller than the window scroll — mouse wheel,
+  PageUp/PageDown, Home/End — with `position: fixed` elements staying
+  viewport-anchored and hit-testing following the scroll. Overflowing
+  `<textarea>`s scroll under the wheel Firefox-style (no scrollbar
+  drawn), and editing keeps the caret in view. Resizing the window
+  re-lays-out at the new size: words keep their size and rewrap.
 * **tables**: rows through `thead`/`tbody`/`tfoot`, equal-width
   columns, 2px border-spacing, `<caption>` above, centered-bold
   `<th>`, and the classic 1px grid when the `border` attribute is set
@@ -242,7 +248,7 @@ project's subsets). Browser-side:
 - editing: no selection ranges, no clipboard, no Tab traversal, no IME
   composition, click focuses with the caret at the end
 - tables: no colspan/rowspan/auto column sizing
-- no `<img>` or scrolling yet
+- no `<img>` yet; no horizontal page scrolling or scrollbar chrome
 
 The bricks' own APIs remain fully available alongside —
 `decltype(app)::doc_type` is an ordinary cthtml document, the sheet an

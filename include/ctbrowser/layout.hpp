@@ -68,6 +68,7 @@ struct paint_cmd {
 	enum class kind { box, text, canvas };
 	enum class strike : std::uint8_t { none, underline, line_through };
 	kind what = kind::box;
+	bool fixed = false; // position:fixed - exempt from page scrolling
 	std::int32_t x = 0, y = 0, w = 0, h = 0;
 	uint32_t argb = 0;      // box fill / text color
 	std::u32string text;    // kind::text (UTF-32 code points)
@@ -359,6 +360,7 @@ struct layout_pass {
 			zero_rects(n);
 			return 0;
 		}
+		n.viewport_fixed = false; // re-derived below for position:fixed
 		const std::int32_t font_px = font_of(&n);
 		const std::string_view pos = cs.get("position");
 		if (pos == std::string_view{"fixed"} || pos == std::string_view{"absolute"}) {
@@ -385,6 +387,12 @@ struct layout_pass {
 			std::int32_t tx = 0, ty = 0;
 			translate_of(cs, pw, h, font_px, tx, ty);
 			translate(start, n, fx + tx, fy + ty);
+			// position:fixed is viewport-anchored: exempt the subtree (rects
+			// via the node flag, paints via the cmd flag) from page scrolling
+			n.viewport_fixed = pos == std::string_view{"fixed"};
+			if (n.viewport_fixed) {
+				for (std::size_t i = start; i < out->size(); ++i) { (*out)[i].fixed = true; }
+			}
 			// overlays (open <select> popups) emitted by this subtree ride along
 			if (overlays != nullptr) {
 				for (std::size_t i = start_ov; i < overlays->size(); ++i) {
@@ -784,10 +792,36 @@ struct layout_pass {
 				ls = i + 1;
 			}
 		}
+		// inner scrolling (no scrollbar, like Firefox's overlay style):
+		// clamp scroll_top to the content, and when an edit moved the
+		// caret, bring it into view first
+		std::int32_t total_lines = 1;
+		for (const char ch : v) {
+			if (ch == '\n') { ++total_lines; }
+		}
+		const std::int32_t view_h = n.h - 2 * padding;
+		const std::int32_t max_scroll =
+		    total_lines * line_h > view_h ? total_lines * line_h - view_h : 0;
+		if (n.caret_follow) {
+			n.caret_follow = false;
+			const std::int32_t caret_top = caret_line * line_h;
+			if (caret_top < n.scroll_top) { n.scroll_top = caret_top; }
+			if (caret_top + line_h > n.scroll_top + view_h) { n.scroll_top = caret_top + line_h - view_h; }
+		}
+		if (n.scroll_top > max_scroll) { n.scroll_top = max_scroll; }
+		if (n.scroll_top < 0) { n.scroll_top = 0; }
+		const std::int32_t skip_lines = n.scroll_top / line_h;
+
 		// render each hard line, clipped to the box
 		std::int32_t y = top;
 		std::size_t pos = 0;
 		std::int32_t li2 = 0;
+		while (li2 < skip_lines && pos <= v.size()) { // scrolled-off lines
+			const std::size_t nl = v.find('\n', pos);
+			if (nl == std::string::npos) { break; }
+			pos = nl + 1;
+			++li2;
+		}
 		while (pos <= v.size() && y + font_px <= n.y + n.h - padding) {
 			std::size_t nl = v.find('\n', pos);
 			if (nl == std::string::npos) { nl = v.size(); }

@@ -98,6 +98,9 @@ struct node {
 	std::string value;
 	std::int32_t caret = 0;
 	bool value_dirty = false;
+	std::int32_t scroll_top = 0;  // textarea inner scroll (px; clamped by layout)
+	bool caret_follow = false;    // an edit moved the caret: layout scrolls it into view
+	bool viewport_fixed = false;  // position:fixed - exempt from page scrolling
 
 	constexpr bool is_canvas() const { return tag == "canvas"; }
 	constexpr bool is_select() const { return tag == "select"; }
@@ -406,6 +409,14 @@ constexpr void instantiate_into(node & out, cthtml::node vn, node * parent) {
 	if (out.is_textarea()) { out.value = out.text; }
 	out.caret = static_cast<std::int32_t>(out.value.size());
 	init_canvas(out);
+}
+
+// shift the layout rects of a subtree by dy - the page-scroll offset.
+// position:fixed subtrees stay put (they are viewport-anchored).
+constexpr void offset_rects(node & n, std::int32_t dy) {
+	if (n.viewport_fixed) { return; }
+	n.y += dy;
+	for (const auto & c : n.children) { offset_rects(*c, dy); }
 }
 
 // restore a form subtree to its initial state (the reset-button default)

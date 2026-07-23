@@ -13,7 +13,6 @@
 using app = ctbrowser::page<R"(<!DOCTYPE html>
 <title>widget gallery</title>
 <style>
-	body { width: 560px }
 	h1 { font-size: 24px }
 	.row { margin: 6px 0 }
 	label { font-family: sans-serif; font-size: 14px }

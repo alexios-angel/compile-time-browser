@@ -648,6 +648,10 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 				case SDL_EVENT_TEXT_INPUT:
 					e.text_input(ev.text.text);
 					break;
+				case SDL_EVENT_MOUSE_WHEEL:
+					SDL_ConvertEventToRenderCoordinates(renderer, &ev);
+					e.wheel(ev.wheel.mouse_x, ev.wheel.mouse_y, ev.wheel.y);
+					break;
 				default:
 					break;
 			}

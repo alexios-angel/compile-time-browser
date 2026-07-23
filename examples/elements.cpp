@@ -25,7 +25,6 @@ using app = ctbrowser::page<R"(<!DOCTYPE html>
 <title>element gallery</title>
 <style>
 	@font-face { font-family: 'Press Start 2P'; src: url("examples/assets/fonts/PressStart2P-Regular.ttf"); }
-	body { width: 760px }
 	#arcade { font-family: 'Press Start 2P', monospace; font-size: 16px; color: #7722cc }
 	.sans { font-family: sans-serif }
 	.mono { font-family: monospace }
@@ -35,8 +34,23 @@ using app = ctbrowser::page<R"(<!DOCTYPE html>
 <h3>Heading three</h3>
 <h4>Heading four</h4>
 
-<p>A paragraph in the default serif (Tinos). Each inline style renders
-as its own row (block layout - no inline flow yet):</p>
+<p>A paragraph in the default serif (Tinos). Resize the window: the
+words keep their size and REWRAP to the new width; scroll with the
+wheel, PageUp/PageDown, Home and End.</p>
+
+<h3>Text wrapping, demonstrated by the Bard</h3>
+<p>To be, or not to be, that is the question: Whether 'tis nobler in
+the mind to suffer The slings and arrows of outrageous fortune, Or to
+take arms against a sea of troubles And by opposing end them. To die,
+to sleep - No more - and by a sleep to say we end The heart-ache and
+the thousand natural shocks That flesh is heir to: 'tis a consummation
+Devoutly to be wish'd. To die, to sleep; To sleep, perchance to dream
+- ay, there's the rub: For in that sleep of death what dreams may
+come, When we have shuffled off this mortal coil, Must give us pause -
+there's the respect That makes calamity of so long life.</p>
+
+<p>Each inline style renders as its own row (block layout - no inline
+flow yet):</p>
 <div><b>bold text</b></div>
 <div><i>italic text</i></div>
 <div><u>underlined text</u></div>
@@ -88,8 +102,5 @@ system browser.</p>
 <script></script>)">;
 
 int main(int, char **) {
-	ctbrowser::app_options opts;
-	opts.width = 800;
-	opts.height = 1280; // the gallery is tall and the engine does not scroll
-	return ctbrowser::run_app<app>(opts);
+	return ctbrowser::run_app<app>(); // the page is tall - scroll it
 }

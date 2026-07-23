@@ -356,6 +356,15 @@ inline ctjs::value mouse_event(double x, double y, std::string_view type = "mous
 	return ctjs::value::object(std::move(ev));
 }
 
+// a wheel event: mouse fields + the DOM deltas (deltaY > 0 = down)
+inline ctjs::value wheel_event(double x, double y, double delta_y) {
+	ctjs::value ev = mouse_event(x, y, "wheel");
+	ev.as_object()->set("deltaX", ctjs::value{0.0});
+	ev.as_object()->set("deltaY", ctjs::value{delta_y});
+	ev.as_object()->set("deltaMode", ctjs::value{0.0}); // pixels
+	return ev;
+}
+
 // a bare event (change, ...): just a type + the standard methods
 inline ctjs::value simple_event(std::string_view type) {
 	ctjs::object_t ev;
