@@ -535,6 +535,12 @@ struct layout_pass {
 						while (take > 1 && text_width(rest.substr(0, take), font_px, fs) > content_w) {
 							--take;
 						}
+						// break at a WORD boundary when splitting (a single
+						// overlong word still breaks mid-word, like a browser)
+						if (take < rest.size() && !preserve) {
+							const std::size_t brk = rest.substr(0, take + 1).rfind(U' ');
+							if (brk != std::u32string_view::npos && brk > 0) { take = brk; }
+						}
 						const std::int32_t tw = text_width(rest.substr(0, take), font_px, fs);
 						std::int32_t tx = n.x + p.left;
 						if (align == std::string_view{"center"}) { tx += (content_w - tw) / 2; }
@@ -551,6 +557,9 @@ struct layout_pass {
 						push_text(std::move(cmd), fs);
 						cursor += font_px + font_px / 4;
 						rest.remove_prefix(take);
+						while (!preserve && !rest.empty() && rest.front() == U' ') {
+							rest.remove_prefix(1); // eat the break space(s)
+						}
 					}
 				}
 				if (nl == std::u32string_view::npos) { more = false; }
