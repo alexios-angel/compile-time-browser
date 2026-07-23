@@ -1,6 +1,10 @@
 #ifndef CTBROWSER__SCREENSHOT__HPP
 #define CTBROWSER__SCREENSHOT__HPP
 
+#include <cstdint>
+
+#include <cstddef>
+
 #include <SDL3/SDL.h>
 // vendored third-party code compiles outside our -Werror regime
 #pragma GCC diagnostic push
@@ -30,13 +34,13 @@ namespace detail {
 
 // binary PPM (P6): trivially parseable raw pixels - what the render
 // tests byte-compare as goldens
-inline bool write_ppm(const char * path, int w, int h, const unsigned char * rgba,
-                      int pitch) {
+inline bool write_ppm(const char * path, std::int32_t w, std::int32_t h, const unsigned char * rgba,
+                      std::int32_t pitch) {
 	std::ofstream out{path, std::ios::binary};
 	out << "P6\n" << w << ' ' << h << "\n255\n";
-	for (int y = 0; y < h; ++y) {
-		const unsigned char * row = rgba + static_cast<size_t>(y) * static_cast<size_t>(pitch);
-		for (int x = 0; x < w; ++x) {
+	for (std::int32_t y = 0; y < h; ++y) {
+		const unsigned char * row = rgba + static_cast<std::size_t>(y) * static_cast<std::size_t>(pitch);
+		for (std::int32_t x = 0; x < w; ++x) {
 			out.write(reinterpret_cast<const char *>(row + x * 4), 3); // RGB of RGBA
 		}
 	}

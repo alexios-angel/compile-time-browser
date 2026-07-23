@@ -1,6 +1,8 @@
 #ifndef CTBROWSER__BABYLON__HPP
 #define CTBROWSER__BABYLON__HPP
 
+#include <cstddef>
+
 // BabylonJS core API, on a software 3D rasterizer.
 //
 // This is a deliberate PER-LIBRARY SHIM (an explicit exception to the
@@ -93,15 +95,15 @@ using mat4 = glm::dmat4;
 constexpr double ct_sqrt(double x) noexcept { // Newton-Raphson (compile-time only)
 	if (!(x > 0.0)) { return 0.0; }
 	double g = x, prev = 0.0;
-	for (int i = 0; i < 64 && g != prev; ++i) { prev = g; g = 0.5 * (g + x / g); }
+	for (std::int32_t i = 0; i < 64 && g != prev; ++i) { prev = g; g = 0.5 * (g + x / g); }
 	return g;
 }
 constexpr double ct_floor(double x) noexcept {
-	const long long i = static_cast<long long>(x);
+	const std::int64_t i = static_cast<long long>(x);
 	return static_cast<double>(x < static_cast<double>(i) ? i - 1 : i);
 }
 constexpr double ct_ceil(double x) noexcept {
-	const long long i = static_cast<long long>(x);
+	const std::int64_t i = static_cast<long long>(x);
 	return static_cast<double>(x > static_cast<double>(i) ? i + 1 : i);
 }
 constexpr double fsqrt(double x) noexcept {
@@ -153,7 +155,7 @@ constexpr uint32_t pack(const rgba & c, double lit) noexcept {
 // sin - since sin x = cos(90-x) - with quadrant symmetry and linear
 // interpolation. Accurate to ~1e-4, and unlike std::sin/std::cos/std::tan
 // (not constexpr until C++26) it evaluates at COMPILE TIME. Angles: radians.
-inline constexpr int kCosTable[91] = {
+inline constexpr std::int32_t kCosTable[91] = {
     64000, 63990, 63961, 63912, 63844, 63756, 63649, 63523, 63377, 63212,
     63028, 62824, 62601, 62360, 62099, 61819, 61521, 61204, 60868, 60513,
     60140, 59749, 59340, 58912, 58467, 58004, 57523, 57024, 56509, 55976,
@@ -169,7 +171,7 @@ inline constexpr int kCosTable[91] = {
 constexpr double cos_deg01(double x) noexcept {
 	if (x <= 0.0) { return 1.0; }
 	if (x >= 90.0) { return 0.0; }
-	const int i = static_cast<int>(x);
+	const std::int32_t i = static_cast<std::int32_t>(x);
 	const double frac = x - static_cast<double>(i);
 	const double a = static_cast<double>(kCosTable[i]);
 	const double b = static_cast<double>(kCosTable[i + 1]);
@@ -179,10 +181,10 @@ constexpr double cos_deg01(double x) noexcept {
 // sin AND cos of a radian angle, together (the whole point of the table)
 constexpr void fsincos(double rad, double & s, double & c) noexcept {
 	double deg = rad * 57.295779513082320876; // 180/pi
-	const long k = static_cast<long>(deg * (1.0 / 360.0));
+	const std::int64_t k = static_cast<std::int64_t>(deg * (1.0 / 360.0));
 	deg -= 360.0 * static_cast<double>(k);
 	if (deg < 0.0) { deg += 360.0; }               // now in [0, 360)
-	const int quad = static_cast<int>(deg * (1.0 / 90.0)) & 3;
+	const std::int32_t quad = static_cast<std::int32_t>(deg * (1.0 / 90.0)) & 3;
 	const double d = deg - 90.0 * static_cast<double>(quad); // [0, 90)
 	const double cd = cos_deg01(d);                // cos(d)
 	const double sd = cos_deg01(90.0 - d);         // sin(d) = cos(90-d)
@@ -268,8 +270,8 @@ constexpr mat4 mul(const mat4 & a, const mat4 & b) noexcept { return matmul(a, b
 constexpr mat4 perspectiveFovLH(double fov, double aspect, double zn, double zf) noexcept {
 	if consteval {
 		mat4 m;
-		for (int r = 0; r < 4; ++r)
-			for (int c = 0; c < 4; ++c) m[c][r] = 0.0;
+		for (std::int32_t r = 0; r < 4; ++r)
+			for (std::int32_t c = 0; c < 4; ++c) m[c][r] = 0.0;
 		const double f = 1.0 / ftan(fov * 0.5);
 		m[0][0] = f / aspect;
 		m[1][1] = f;
@@ -304,7 +306,7 @@ constexpr vec4 xform(const mat4 & m, const vec3 & p) noexcept { return m * vec4(
 // --- geometry
 struct geo {
 	std::vector<vec3> verts;
-	std::vector<std::array<int, 3>> tris;
+	std::vector<std::array<std::int32_t, 3>> tris;
 	std::vector<vec2> uvs; // parallel to verts; empty => untextured (flat colour)
 };
 
@@ -312,27 +314,27 @@ struct geo {
 // row-major, origin top-left. Built at runtime from PNG/JPEG bytes; the
 // rasterizer samples it via perspective-correct per-vertex UVs.
 struct texture {
-	int w = 0, h = 0;
+	std::int32_t w = 0, h = 0;
 	std::vector<uint32_t> texel;
 	constexpr bool valid() const noexcept { return w > 0 && h > 0 && !texel.empty(); }
 	// nearest-neighbour sample, UVs wrapped into [0,1) (v runs downward, glTF-style)
 	constexpr uint32_t sample(double u, double v) const noexcept {
 		if (!valid()) { return 0xFFFFFFFFu; }
 		const double uu = u - ffloor(u), vv = v - ffloor(v);
-		int tx = static_cast<int>(uu * w), ty = static_cast<int>(vv * h);
+		std::int32_t tx = static_cast<std::int32_t>(uu * w), ty = static_cast<std::int32_t>(vv * h);
 		tx = tx < 0 ? 0 : (tx >= w ? w - 1 : tx);
 		ty = ty < 0 ? 0 : (ty >= h ? h - 1 : ty);
-		return texel[static_cast<size_t>(ty) * static_cast<size_t>(w) + static_cast<size_t>(tx)];
+		return texel[static_cast<std::size_t>(ty) * static_cast<std::size_t>(w) + static_cast<std::size_t>(tx)];
 	}
 };
 
 #ifndef CTBROWSER_IN_A_MODULE
 // decode encoded image bytes (PNG/JPEG) into a shared texture; null on failure.
 // RUNTIME ONLY (calls stb_image) - never reached during constexpr evaluation.
-inline std::shared_ptr<texture> decode_texture(const unsigned char * data, size_t len) {
+inline std::shared_ptr<texture> decode_texture(const unsigned char * data, std::size_t len) {
 	if (data == nullptr || len == 0) { return nullptr; }
-	int tw = 0, th = 0, comp = 0;
-	unsigned char * p = stbi_load_from_memory(data, static_cast<int>(len), &tw, &th, &comp, 4);
+	std::int32_t tw = 0, th = 0, comp = 0;
+	unsigned char * p = stbi_load_from_memory(data, static_cast<std::int32_t>(len), &tw, &th, &comp, 4);
 	if (p == nullptr || tw <= 0 || th <= 0) {
 		if (p != nullptr) { stbi_image_free(p); }
 		return nullptr;
@@ -340,9 +342,9 @@ inline std::shared_ptr<texture> decode_texture(const unsigned char * data, size_
 	auto t = std::make_shared<texture>();
 	t->w = tw;
 	t->h = th;
-	const size_t n = static_cast<size_t>(tw) * static_cast<size_t>(th);
+	const std::size_t n = static_cast<std::size_t>(tw) * static_cast<std::size_t>(th);
 	t->texel.resize(n);
-	for (size_t i = 0; i < n; ++i) {
+	for (std::size_t i = 0; i < n; ++i) {
 		const uint32_t r = p[i * 4 + 0], g = p[i * 4 + 1], b = p[i * 4 + 2], a = p[i * 4 + 3];
 		t->texel[i] = (a << 24) | (r << 16) | (g << 8) | b;
 	}
@@ -356,7 +358,7 @@ constexpr geo make_box(double size) {
 	geo g;
 	g.verts = { V3(-h,-h,-h), V3(h,-h,-h), V3(h,h,-h), V3(-h,h,-h),
 	            V3(-h,-h, h), V3(h,-h, h), V3(h,h, h), V3(-h,h, h) };
-	const int f[6][4] = { {0,1,2,3}, {5,4,7,6}, {4,0,3,7}, {1,5,6,2}, {3,2,6,7}, {4,5,1,0} };
+	const std::int32_t f[6][4] = { {0,1,2,3}, {5,4,7,6}, {4,0,3,7}, {1,5,6,2}, {3,2,6,7}, {4,5,1,0} };
 	// wound so each face normal points OUTWARD (else backface culling
 	// keeps the interior faces and the cube renders inside-out)
 	for (auto & q : f) {
@@ -366,24 +368,24 @@ constexpr geo make_box(double size) {
 	return g;
 }
 
-constexpr geo make_sphere(double diameter, int segments) {
+constexpr geo make_sphere(double diameter, std::int32_t segments) {
 	const double rad = diameter * 0.5;
-	const int seg = segments < 3 ? 3 : (segments > 24 ? 24 : segments);
-	const int rings = seg, sectors = seg * 2;
+	const std::int32_t seg = segments < 3 ? 3 : (segments > 24 ? 24 : segments);
+	const std::int32_t rings = seg, sectors = seg * 2;
 	geo g;
-	for (int i = 0; i <= rings; ++i) {
+	for (std::int32_t i = 0; i <= rings; ++i) {
 		const double phi = std::numbers::pi * (double(i) / rings);       // 0..pi
-		for (int j = 0; j <= sectors; ++j) {
+		for (std::int32_t j = 0; j <= sectors; ++j) {
 			const double theta = 2.0 * std::numbers::pi * (double(j) / sectors);
 			g.verts.push_back(V3(rad * fsin(phi) * fcos(theta),
 			                     rad * fcos(phi),
 			                     rad * fsin(phi) * fsin(theta)));
 		}
 	}
-	const int stride = sectors + 1;
-	for (int i = 0; i < rings; ++i) {
-		for (int j = 0; j < sectors; ++j) {
-			const int a = i * stride + j, b = a + stride;
+	const std::int32_t stride = sectors + 1;
+	for (std::int32_t i = 0; i < rings; ++i) {
+		for (std::int32_t j = 0; j < sectors; ++j) {
+			const std::int32_t a = i * stride + j, b = a + stride;
 			g.tris.push_back({a, b, a + 1});
 			g.tris.push_back({a + 1, b, b + 1});
 		}
@@ -399,23 +401,23 @@ constexpr geo make_ground(double width, double height) {
 	return g;
 }
 
-constexpr geo make_cylinder(double height, double diameter, int tess) {
+constexpr geo make_cylinder(double height, double diameter, std::int32_t tess) {
 	const double r = diameter * 0.5, hh = height * 0.5;
-	const int n = tess < 3 ? 3 : (tess > 48 ? 48 : tess);
+	const std::int32_t n = tess < 3 ? 3 : (tess > 48 ? 48 : tess);
 	geo g;
-	const int top0 = 0, bot0 = n; // ring vertices
-	for (int i = 0; i < n; ++i) {
+	const std::int32_t top0 = 0, bot0 = n; // ring vertices
+	for (std::int32_t i = 0; i < n; ++i) {
 		const double a = 2.0 * std::numbers::pi * (double(i) / n);
 		g.verts.push_back(V3(r * fcos(a), hh, r * fsin(a)));
 	}
-	for (int i = 0; i < n; ++i) {
+	for (std::int32_t i = 0; i < n; ++i) {
 		const double a = 2.0 * std::numbers::pi * (double(i) / n);
 		g.verts.push_back(V3(r * fcos(a), -hh, r * fsin(a)));
 	}
-	const int topC = static_cast<int>(g.verts.size()); g.verts.push_back(V3(0, hh, 0));
-	const int botC = static_cast<int>(g.verts.size()); g.verts.push_back(V3(0, -hh, 0));
-	for (int i = 0; i < n; ++i) {
-		const int j = (i + 1) % n;
+	const std::int32_t topC = static_cast<std::int32_t>(g.verts.size()); g.verts.push_back(V3(0, hh, 0));
+	const std::int32_t botC = static_cast<std::int32_t>(g.verts.size()); g.verts.push_back(V3(0, -hh, 0));
+	for (std::int32_t i = 0; i < n; ++i) {
+		const std::int32_t j = (i + 1) % n;
 		g.tris.push_back({top0 + i, bot0 + i, top0 + j});   // side
 		g.tris.push_back({top0 + j, bot0 + i, bot0 + j});
 		g.tris.push_back({topC, top0 + j, top0 + i});        // top cap
@@ -433,7 +435,7 @@ struct draw_item {
 	const texture * tex = nullptr; // null => flat `diffuse`; else sampled per pixel
 };
 struct light {
-	int type = 0;              // 0 = hemispheric, 1 = directional
+	std::int32_t type = 0;              // 0 = hemispheric, 1 = directional
 	vec3 direction{};
 	double intensity = 1.0;
 	rgba diffuse{1, 1, 1, 1};
@@ -447,13 +449,13 @@ struct view {
 class renderer {
 public:
 	// rasterize into a raw ARGB8888 span (row-major, stride = w)
-	constexpr void render(uint32_t * px, int w, int h, const view & vw,
+	constexpr void render(uint32_t * px, std::int32_t w, std::int32_t h, const view & vw,
 	            const std::vector<draw_item> & items,
 	            const std::vector<light> & lights) {
 		if (px == nullptr || w <= 0 || h <= 0) { return; }
-		const size_t n = static_cast<size_t>(w) * static_cast<size_t>(h);
+		const std::size_t n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
 		const uint32_t clear = pack(vw.clear, 1.0);
-		for (size_t i = 0; i < n; ++i) { px[i] = clear; }
+		for (std::size_t i = 0; i < n; ++i) { px[i] = clear; }
 		zbuf_.assign(n, std::numeric_limits<double>::infinity());
 
 		for (const draw_item & it : items) {
@@ -481,11 +483,11 @@ private:
 		return lit < 0 ? 0 : (lit > 1 ? 1 : lit);
 	}
 
-	constexpr void raster_tri(uint32_t * px, int w, int h, const draw_item & it, const mat4 & mvp,
-	                const std::array<int, 3> & tri, const std::vector<light> & lights) {
-		const vec3 & p0 = it.g->verts[static_cast<size_t>(tri[0])];
-		const vec3 & p1 = it.g->verts[static_cast<size_t>(tri[1])];
-		const vec3 & p2 = it.g->verts[static_cast<size_t>(tri[2])];
+	constexpr void raster_tri(uint32_t * px, std::int32_t w, std::int32_t h, const draw_item & it, const mat4 & mvp,
+	                const std::array<std::int32_t, 3> & tri, const std::vector<light> & lights) {
+		const vec3 & p0 = it.g->verts[static_cast<std::size_t>(tri[0])];
+		const vec3 & p1 = it.g->verts[static_cast<std::size_t>(tri[1])];
+		const vec3 & p2 = it.g->verts[static_cast<std::size_t>(tri[2])];
 
 		// world-space positions (for the face normal) and clip positions
 		const vec4 w0 = xform(it.world, p0), w1 = xform(it.world, p1), w2 = xform(it.world, p2);
@@ -499,9 +501,9 @@ private:
 		const double iw0 = 1.0 / c0[3], iw1 = 1.0 / c1[3], iw2 = 1.0 / c2[3];
 		vec2 uv0{}, uv1{}, uv2{};
 		if (textured) {
-			uv0 = it.g->uvs[static_cast<size_t>(tri[0])];
-			uv1 = it.g->uvs[static_cast<size_t>(tri[1])];
-			uv2 = it.g->uvs[static_cast<size_t>(tri[2])];
+			uv0 = it.g->uvs[static_cast<std::size_t>(tri[0])];
+			uv1 = it.g->uvs[static_cast<std::size_t>(tri[1])];
+			uv2 = it.g->uvs[static_cast<std::size_t>(tri[2])];
 		}
 
 		// screen coords + depth
@@ -526,16 +528,16 @@ private:
 		const double lit = shade(area > 0 ? N : V3(-N[0], -N[1], -N[2]), lights);
 		const uint32_t color = pack(it.diffuse, lit);
 
-		int minx = static_cast<int>(ffloor(std::min({x0, x1, x2})));
-		int maxx = static_cast<int>(fceil(std::max({x0, x1, x2})));
-		int miny = static_cast<int>(ffloor(std::min({y0, y1, y2})));
-		int maxy = static_cast<int>(fceil(std::max({y0, y1, y2})));
+		std::int32_t minx = static_cast<std::int32_t>(ffloor(std::min({x0, x1, x2})));
+		std::int32_t maxx = static_cast<std::int32_t>(fceil(std::max({x0, x1, x2})));
+		std::int32_t miny = static_cast<std::int32_t>(ffloor(std::min({y0, y1, y2})));
+		std::int32_t maxy = static_cast<std::int32_t>(fceil(std::max({y0, y1, y2})));
 		minx = std::max(minx, 0); miny = std::max(miny, 0);
 		maxx = std::min(maxx, w - 1); maxy = std::min(maxy, h - 1);
 		const double inv = 1.0 / area;
 
-		for (int py = miny; py <= maxy; ++py) {
-			for (int pxi = minx; pxi <= maxx; ++pxi) {
+		for (std::int32_t py = miny; py <= maxy; ++py) {
+			for (std::int32_t pxi = minx; pxi <= maxx; ++pxi) {
 				const double fx = pxi + 0.5, fy = py + 0.5;
 				double b0 = ((x1 - fx) * (y2 - fy) - (x2 - fx) * (y1 - fy)) * inv;
 				double b1 = ((x2 - fx) * (y0 - fy) - (x0 - fx) * (y2 - fy)) * inv;
@@ -543,7 +545,7 @@ private:
 				if (b0 < 0 || b1 < 0 || b2 < 0) { continue; }
 				const double depth = b0 * z0 + b1 * z1 + b2 * z2;
 				if (depth < 0 || depth > 1) { continue; }
-				const size_t idx = static_cast<size_t>(py) * static_cast<size_t>(w) + static_cast<size_t>(pxi);
+				const std::size_t idx = static_cast<std::size_t>(py) * static_cast<std::size_t>(w) + static_cast<std::size_t>(pxi);
 				if (depth >= zbuf_[idx]) { continue; }
 				uint32_t out = color;
 				if (textured) {
@@ -607,12 +609,12 @@ struct jval {
 		return nullptr;
 	}
 	// unchecked: callers index only valid array positions (sizes guarded)
-	constexpr const jval & operator[](size_t i) const { return (*arr)[i]; }
-	constexpr size_t size() const {
+	constexpr const jval & operator[](std::size_t i) const { return (*arr)[i]; }
+	constexpr std::size_t size() const {
 		return k == array && arr ? arr->size() : (k == object && obj ? obj->size() : 0);
 	}
 	constexpr double as_num(double d = 0) const { return k == number ? num : d; }
-	constexpr int as_int(int d = 0) const { return k == number ? static_cast<int>(num) : d; }
+	constexpr std::int32_t as_int(std::int32_t d = 0) const { return k == number ? static_cast<std::int32_t>(num) : d; }
 	constexpr std::string as_str() const { return k == string ? str : std::string{}; }
 };
 // jarr (vector<jval>) and jobj are complete here -> the unique_ptr member
@@ -632,12 +634,12 @@ constexpr double parse_double(const char * s, const char * e) noexcept {
 	}
 	if (s < e && (*s == 'e' || *s == 'E')) {
 		++s;
-		int esign = 1;
+		std::int32_t esign = 1;
 		if (s < e && *s == '-') { esign = -1; ++s; } else if (s < e && *s == '+') { ++s; }
-		int ex = 0;
+		std::int32_t ex = 0;
 		while (s < e && *s >= '0' && *s <= '9') { ex = ex * 10 + (*s - '0'); ++s; }
 		double pw = 1.0;
-		for (int i = 0; i < ex; ++i) { pw *= 10.0; }
+		for (std::int32_t i = 0; i < ex; ++i) { pw *= 10.0; }
 		val = esign > 0 ? val * pw : val / pw;
 	}
 	return sign * val;
@@ -647,11 +649,11 @@ constexpr uint32_t read_u32le(const unsigned char * p) noexcept {
 	       (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
 }
 constexpr float read_f32le(const unsigned char * p) noexcept { return std::bit_cast<float>(read_u32le(p)); }
-constexpr std::string cstr_int(size_t v) {
+constexpr std::string cstr_int(std::size_t v) {
 	if (v == 0) { return "0"; }
 	std::string r;
 	while (v != 0) { r += static_cast<char>('0' + v % 10); v /= 10; }
-	for (size_t i = 0, j = r.size() - 1; i < j; ++i, --j) { const char t = r[i]; r[i] = r[j]; r[j] = t; }
+	for (std::size_t i = 0, j = r.size() - 1; i < j; ++i, --j) { const char t = r[i]; r[i] = r[j]; r[j] = t; }
 	return r;
 }
 
@@ -685,10 +687,10 @@ struct jparser {
 					case 'b': s += '\b'; break;
 					case 'f': s += '\f'; break;
 					case 'u': {
-						unsigned cp = 0;
-						for (int i = 0; i < 4 && p < e; ++i) {
+						std::uint32_t cp = 0;
+						for (std::int32_t i = 0; i < 4 && p < e; ++i) {
 							const char h = *p++;
-							cp = cp * 16 + static_cast<unsigned>(h <= '9' ? h - '0' : (h | 0x20) - 'a' + 10);
+							cp = cp * 16 + static_cast<std::uint32_t>(h <= '9' ? h - '0' : (h | 0x20) - 'a' + 10);
 						}
 						if (cp < 0x80) { s += static_cast<char>(cp); }
 						else if (cp < 0x800) { s += static_cast<char>(0xC0 | (cp >> 6)); s += static_cast<char>(0x80 | (cp & 0x3F)); }
@@ -751,12 +753,12 @@ constexpr jval json_parse(std::string_view s) {
 // --- the parsed model
 // base defaults to WHITE (the glTF baseColorFactor default) so a baseColor
 // TEXTURE is sampled untinted; base_tex indexes model.textures (-1 = none).
-struct material { std::string name; r3d::rgba base{1, 1, 1, 1}; int base_tex = -1; };
+struct material { std::string name; r3d::rgba base{1, 1, 1, 1}; std::int32_t base_tex = -1; };
 struct primitive {
 	std::vector<r3d::vec3> verts;
-	std::vector<std::array<int, 3>> tris;
+	std::vector<std::array<std::int32_t, 3>> tris;
 	std::vector<r3d::vec2> uvs; // TEXCOORD_0, parallel to verts (empty = none)
-	int material = -1;
+	std::int32_t material = -1;
 	std::string node_name;
 };
 struct model {
@@ -774,8 +776,8 @@ constexpr r3d::mat4 node_matrix(const jval & node) {
 	if (const jval * m = node.get("matrix")) {
 		if (m->size() == 16) {
 			r3d::mat4 M = r3d::identity();
-			for (int c = 0; c < 4; ++c)
-				for (int r = 0; r < 4; ++r) M[c][r] = (*m)[static_cast<size_t>(c * 4 + r)].as_num();
+			for (std::int32_t c = 0; c < 4; ++c)
+				for (std::int32_t r = 0; r < 4; ++r) M[c][r] = (*m)[static_cast<std::size_t>(c * 4 + r)].as_num();
 			return M;
 		}
 	}
@@ -794,13 +796,13 @@ constexpr r3d::mat4 node_matrix(const jval & node) {
 	return r3d::matmul(T, r3d::matmul(R, S));
 }
 
-constexpr model parse_glb(const unsigned char * data, size_t len) {
+constexpr model parse_glb(const unsigned char * data, std::size_t len) {
 	model out;
 	if (len < 20 || !(data[0] == 'g' && data[1] == 'l' && data[2] == 'T' && data[3] == 'F')) { return out; }
-	auto rd32 = [&](size_t o) { return read_u32le(data + o); };
+	auto rd32 = [&](std::size_t o) { return read_u32le(data + o); };
 	const uint32_t jlen = rd32(12);
 	const std::string json_str(data + 20, data + 20 + jlen); // char copy (no reinterpret_cast)
-	const size_t off = 20 + jlen;
+	const std::size_t off = 20 + jlen;
 	const unsigned char * bin = nullptr;
 	if (off + 8 <= len) { bin = data + off + 8; }
 	if (bin == nullptr) { return out; }
@@ -814,7 +816,7 @@ constexpr model parse_glb(const unsigned char * data, size_t len) {
 	if (accessors == nullptr || bufferViews == nullptr || meshes == nullptr || nodes == nullptr) { return out; }
 
 	if (mats != nullptr) {
-		for (size_t i = 0; i < mats->size(); ++i) {
+		for (std::size_t i = 0; i < mats->size(); ++i) {
 			const jval & m = (*mats)[i];
 			material mm;
 			mm.name = m.get("name") ? m.get("name")->as_str() : ("mat" + cstr_int(i));
@@ -838,18 +840,18 @@ constexpr model parse_glb(const unsigned char * data, size_t len) {
 	// decoding happens later at runtime (parse_glb stays constexpr).
 	if (const jval * textures = doc.get("textures")) {
 		const jval * images = doc.get("images");
-		for (size_t i = 0; i < textures->size(); ++i) {
+		for (std::size_t i = 0; i < textures->size(); ++i) {
 			std::vector<unsigned char> bytes;
 			const jval * src = (*textures)[i].get("source");
 			if (images != nullptr && src != nullptr) {
-				const int im = src->as_int();
-				if (im >= 0 && im < static_cast<int>(images->size())) {
-					if (const jval * bvj = (*images)[static_cast<size_t>(im)].get("bufferView")) {
-						const int bvi = bvj->as_int();
-						if (bvi >= 0 && bvi < static_cast<int>(bufferViews->size())) {
-							const jval & bv = (*bufferViews)[static_cast<size_t>(bvi)];
-							const size_t bo = bv.get("byteOffset") ? static_cast<size_t>(bv.get("byteOffset")->as_num()) : 0;
-							const size_t bl = bv.get("byteLength") ? static_cast<size_t>(bv.get("byteLength")->as_num()) : 0;
+				const std::int32_t im = src->as_int();
+				if (im >= 0 && im < static_cast<std::int32_t>(images->size())) {
+					if (const jval * bvj = (*images)[static_cast<std::size_t>(im)].get("bufferView")) {
+						const std::int32_t bvi = bvj->as_int();
+						if (bvi >= 0 && bvi < static_cast<std::int32_t>(bufferViews->size())) {
+							const jval & bv = (*bufferViews)[static_cast<std::size_t>(bvi)];
+							const std::size_t bo = bv.get("byteOffset") ? static_cast<std::size_t>(bv.get("byteOffset")->as_num()) : 0;
+							const std::size_t bl = bv.get("byteLength") ? static_cast<std::size_t>(bv.get("byteLength")->as_num()) : 0;
 							bytes.assign(bin + bo, bin + bo + bl);
 						}
 					}
@@ -859,32 +861,32 @@ constexpr model parse_glb(const unsigned char * data, size_t len) {
 		}
 	}
 
-	auto acc_view = [&](int acc, size_t & count, size_t & stride, int & ctype) -> const unsigned char * {
+	auto acc_view = [&](std::int32_t acc, std::size_t & count, std::size_t & stride, std::int32_t & ctype) -> const unsigned char * {
 		count = 0; stride = 0; ctype = 5126;
-		if (acc < 0 || acc >= static_cast<int>(accessors->size())) { return nullptr; }
-		const jval & a = (*accessors)[static_cast<size_t>(acc)];
-		count = static_cast<size_t>(a.get("count") ? a.get("count")->as_num() : 0);
+		if (acc < 0 || acc >= static_cast<std::int32_t>(accessors->size())) { return nullptr; }
+		const jval & a = (*accessors)[static_cast<std::size_t>(acc)];
+		count = static_cast<std::size_t>(a.get("count") ? a.get("count")->as_num() : 0);
 		ctype = a.get("componentType") ? a.get("componentType")->as_int() : 5126;
-		const int bvi = a.get("bufferView") ? a.get("bufferView")->as_int() : 0;
-		if (bvi < 0 || bvi >= static_cast<int>(bufferViews->size())) { return nullptr; }
-		const size_t aoff = a.get("byteOffset") ? static_cast<size_t>(a.get("byteOffset")->as_num()) : 0;
-		const jval & bv = (*bufferViews)[static_cast<size_t>(bvi)];
-		const size_t boff = bv.get("byteOffset") ? static_cast<size_t>(bv.get("byteOffset")->as_num()) : 0;
-		stride = bv.get("byteStride") ? static_cast<size_t>(bv.get("byteStride")->as_num()) : 0;
+		const std::int32_t bvi = a.get("bufferView") ? a.get("bufferView")->as_int() : 0;
+		if (bvi < 0 || bvi >= static_cast<std::int32_t>(bufferViews->size())) { return nullptr; }
+		const std::size_t aoff = a.get("byteOffset") ? static_cast<std::size_t>(a.get("byteOffset")->as_num()) : 0;
+		const jval & bv = (*bufferViews)[static_cast<std::size_t>(bvi)];
+		const std::size_t boff = bv.get("byteOffset") ? static_cast<std::size_t>(bv.get("byteOffset")->as_num()) : 0;
+		stride = bv.get("byteStride") ? static_cast<std::size_t>(bv.get("byteStride")->as_num()) : 0;
 		return bin + boff + aoff;
 	};
 
 	bool first = true;
-	for (size_t ni = 0; ni < nodes->size(); ++ni) {
+	for (std::size_t ni = 0; ni < nodes->size(); ++ni) {
 		const jval & node = (*nodes)[ni];
 		if (node.get("mesh") == nullptr) { continue; }
 		const r3d::mat4 xf = node_matrix(node);
-		const int mi = node.get("mesh")->as_int();
-		if (mi < 0 || mi >= static_cast<int>(meshes->size())) { continue; }
-		const jval & mesh = (*meshes)[static_cast<size_t>(mi)];
+		const std::int32_t mi = node.get("mesh")->as_int();
+		if (mi < 0 || mi >= static_cast<std::int32_t>(meshes->size())) { continue; }
+		const jval & mesh = (*meshes)[static_cast<std::size_t>(mi)];
 		const jval * prims = mesh.get("primitives");
 		if (prims == nullptr) { continue; }
-		for (size_t pi = 0; pi < prims->size(); ++pi) {
+		for (std::size_t pi = 0; pi < prims->size(); ++pi) {
 			const jval & pr = (*prims)[pi];
 			const jval * attr = pr.get("attributes");
 			if (attr == nullptr || attr->get("POSITION") == nullptr || pr.get("indices") == nullptr) { continue; }
@@ -893,12 +895,12 @@ constexpr model parse_glb(const unsigned char * data, size_t len) {
 			out_p.material = pr.get("material") ? pr.get("material")->as_int() : -1;
 
 			// POSITION (VEC3 float), transformed by the node matrix
-			size_t vcount, vstride; int vtype;
+			std::size_t vcount, vstride; std::int32_t vtype;
 			const unsigned char * vp = acc_view(attr->get("POSITION")->as_int(), vcount, vstride, vtype);
 			if (vp == nullptr) { continue; }
 			if (vstride == 0) { vstride = 12; }
 			out_p.verts.reserve(vcount);
-			for (size_t i = 0; i < vcount; ++i) {
+			for (std::size_t i = 0; i < vcount; ++i) {
 				const r3d::vec4 w = r3d::xform(xf, r3d::V3(read_f32le(vp + i * vstride),
 				                                          read_f32le(vp + i * vstride + 4),
 				                                          read_f32le(vp + i * vstride + 8)));
@@ -908,7 +910,7 @@ constexpr model parse_glb(const unsigned char * data, size_t len) {
 				const r3d::vec3 v = r3d::V3(w[0], w[1], -w[2]);
 				out_p.verts.push_back(v);
 				if (first) { out.bmin = out.bmax = v; first = false; }
-				for (int c = 0; c < 3; ++c) {
+				for (std::int32_t c = 0; c < 3; ++c) {
 					out.bmin[c] = std::min(out.bmin[c], v[c]);
 					out.bmax[c] = std::max(out.bmax[c], v[c]);
 				}
@@ -916,13 +918,13 @@ constexpr model parse_glb(const unsigned char * data, size_t len) {
 			// TEXCOORD_0 (VEC2) -> per-vertex UVs, parallel to verts. Float, or
 			// normalized ubyte/ushort per the glTF accessor's componentType.
 			if (const jval * tc = attr->get("TEXCOORD_0")) {
-				size_t tcount, tstride; int ttype;
+				std::size_t tcount, tstride; std::int32_t ttype;
 				const unsigned char * tp = acc_view(tc->as_int(), tcount, tstride, ttype);
 				if (tp != nullptr) {
-					const size_t st = tstride != 0 ? tstride
+					const std::size_t st = tstride != 0 ? tstride
 					                  : (ttype == 5126 ? 8u : (ttype == 5123 ? 4u : 2u));
 					out_p.uvs.reserve(tcount);
-					for (size_t i = 0; i < tcount; ++i) {
+					for (std::size_t i = 0; i < tcount; ++i) {
 						const unsigned char * e = tp + i * st;
 						double u = 0, v = 0;
 						if (ttype == 5126) { u = read_f32le(e); v = read_f32le(e + 4); }
@@ -936,18 +938,18 @@ constexpr model parse_glb(const unsigned char * data, size_t len) {
 			}
 
 			// indices (ubyte/ushort/uint) -> triangles
-			size_t icount, istride; int itype;
+			std::size_t icount, istride; std::int32_t itype;
 			const unsigned char * ip = acc_view(pr.get("indices")->as_int(), icount, istride, itype);
 			if (ip == nullptr) { continue; }
-			const size_t comp = itype == 5121 ? 1 : (itype == 5123 ? 2 : 4);
-			std::vector<int> idx;
+			const std::size_t comp = itype == 5121 ? 1 : (itype == 5123 ? 2 : 4);
+			std::vector<std::int32_t> idx;
 			idx.reserve(icount);
-			for (size_t i = 0; i < icount; ++i) {
+			for (std::size_t i = 0; i < icount; ++i) {
 				uint32_t v = 0;
-				for (size_t b = 0; b < comp; ++b) { v |= static_cast<uint32_t>(ip[i * comp + b]) << (8 * b); }
-				idx.push_back(static_cast<int>(v));
+				for (std::size_t b = 0; b < comp; ++b) { v |= static_cast<uint32_t>(ip[i * comp + b]) << (8 * b); }
+				idx.push_back(static_cast<std::int32_t>(v));
 			}
-			for (size_t i = 0; i + 2 < idx.size(); i += 3) {
+			for (std::size_t i = 0; i + 2 < idx.size(); i += 3) {
 				// winding flipped (idx[i+2] before idx[i+1]) to match the Z negation
 				// above, so faces stay outward after the right->left handed flip
 				out_p.tris.push_back({idx[i], idx[i + 2], idx[i + 1]});
@@ -996,12 +998,12 @@ inline r3d::rgba read_color(const objptr & o, r3d::rgba dflt) {
 	return {num_prop(o, "r", dflt.r), num_prop(o, "g", dflt.g), num_prop(o, "b", dflt.b),
 	        num_prop(o, "a", dflt.a)};
 }
-inline double arg_num(const std::vector<value> & a, size_t i, double dflt) {
+inline double arg_num(const std::vector<value> & a, std::size_t i, double dflt) {
 	if (i >= a.size()) { return dflt; }
 	const double d = a[i].to_number();
 	return std::isnan(d) ? dflt : d;
 }
-inline objptr arg_obj(const std::vector<value> & a, size_t i) {
+inline objptr arg_obj(const std::vector<value> & a, std::size_t i) {
 	return (i < a.size() && a[i].is_object()) ? a[i].as_object() : objptr{};
 }
 inline objptr self_of(ctjs::context & cx) {
@@ -1010,7 +1012,7 @@ inline objptr self_of(ctjs::context & cx) {
 
 // one registered Observable callback (id lets .remove(observer) find it)
 struct observer {
-	int id;
+	std::int32_t id;
 	value cb;
 };
 
@@ -1022,19 +1024,19 @@ struct mesh_rec {
 	bool disposed = false;
 	bool enabled = true;
 	std::vector<observer> before_render;   // mesh.onBeforeRenderObservable
-	int scene_id = -1;                     // owning scene (for clone/createInstance)
+	std::int32_t scene_id = -1;                     // owning scene (for clone/createInstance)
 	bool frozen_world = false;             // freezeWorldMatrix: use frozen_matrix, ignore live transforms
 	r3d::mat4 frozen_matrix{};             // the world matrix captured at freeze time
 	bool has_pivot = false;                // setPivotPoint: rotate/scale about `pivot`
 	r3d::vec3 pivot{};
 	std::shared_ptr<r3d::texture> tex{};   // glTF baseColor texture (shared across clones)
 };
-struct light_rec { objptr handle; int type; };
-struct camera_rec { objptr handle; int type; bool attached = false; };
+struct light_rec { objptr handle; std::int32_t type; };
+struct camera_rec { objptr handle; std::int32_t type; bool attached = false; };
 struct scene_rec {
 	objptr handle;
-	std::vector<int> mesh_ids, light_ids;
-	int active_camera = -1;
+	std::vector<std::int32_t> mesh_ids, light_ids;
+	std::int32_t active_camera = -1;
 	std::vector<std::pair<std::string, objptr>> materials; // for getMaterialById
 	r3d::vec3 bmin{}, bmax{}; // model bounds (for createDefaultCamera)
 	bool has_bounds = false;
@@ -1057,9 +1059,9 @@ struct world {
 	objptr engine_handle; // the BABYLON.Engine JS handle (scene.getEngine())
 	bool loop_active = false;
 	double prev_ms = 0, last_dt_ms = 16.6;
-	int next_obs = 1;    // Observable observer-id counter
-	int next_uid = 1;    // uniqueId / getUniqueId counter
-	unsigned rng = 0x2545F4914F6CDD1Du & 0xffffffffu; // Scalar.RandomRange PRNG
+	std::int32_t next_obs = 1;    // Observable observer-id counter
+	std::int32_t next_uid = 1;    // uniqueId / getUniqueId counter
+	std::uint32_t rng = 0x2545F4914F6CDD1Du & 0xffffffffu; // Scalar.RandomRange PRNG
 	std::vector<objptr> guis;    // AdvancedDynamicTextures - rendered as a 2D overlay
 	std::vector<objptr> sprites; // Sprites (starfield) - projected + drawn as quads
 	// ArcRotate mouse-orbit state (one active camera at a time)
@@ -1067,22 +1069,22 @@ struct world {
 	double cam_lastx = 0, cam_lasty = 0;
 };
 using worldptr = std::shared_ptr<world>;
-inline int index_of(const objptr & handle, const char * key); // defined below
+inline std::int32_t index_of(const objptr & handle, const char * key); // defined below
 
 // a JS Observable bound to a rec's callback list: add(cb)->observer,
 // remove(observer), clear(). is_mesh selects mesh vs scene sink by index.
-inline value make_observable(const worldptr & W, int id, bool is_mesh) {
+inline value make_observable(const worldptr & W, std::int32_t id, bool is_mesh) {
 	auto o = objptr::make();
 	const auto sink = [W, id, is_mesh]() -> std::vector<observer> * {
 		if (is_mesh) {
-			return (id >= 0 && id < static_cast<int>(W->meshes.size())) ? &W->meshes[static_cast<size_t>(id)].before_render : nullptr;
+			return (id >= 0 && id < static_cast<std::int32_t>(W->meshes.size())) ? &W->meshes[static_cast<std::size_t>(id)].before_render : nullptr;
 		}
-		return (id >= 0 && id < static_cast<int>(W->scenes.size())) ? &W->scenes[static_cast<size_t>(id)].before_render : nullptr;
+		return (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) ? &W->scenes[static_cast<std::size_t>(id)].before_render : nullptr;
 	};
 	o->set("add", value::function([W, sink](ctjs::context &, const std::vector<value> & a) -> value {
 		std::vector<observer> * v = sink();
 		if (v == nullptr || a.empty() || !a[0].is_function()) { return value{}; }
-		const int oid = W->next_obs++;
+		const std::int32_t oid = W->next_obs++;
 		v->push_back({oid, a[0]});
 		auto obs = objptr::make();
 		obs->set("__obs_id", value{static_cast<double>(oid)});
@@ -1090,9 +1092,9 @@ inline value make_observable(const worldptr & W, int id, bool is_mesh) {
 	}, "add"));
 	o->set("remove", value::function([sink](ctjs::context &, const std::vector<value> & a) -> value {
 		std::vector<observer> * v = sink();
-		const int oid = (!a.empty() && a[0].is_object()) ? index_of(a[0].as_object(), "__obs_id") : -1;
+		const std::int32_t oid = (!a.empty() && a[0].is_object()) ? index_of(a[0].as_object(), "__obs_id") : -1;
 		if (v != nullptr && oid >= 0) {
-			for (size_t k = 0; k < v->size(); ++k) {
+			for (std::size_t k = 0; k < v->size(); ++k) {
 				if ((*v)[k].id == oid) { v->erase(v->begin() + static_cast<std::ptrdiff_t>(k)); break; }
 			}
 		}
@@ -1127,33 +1129,33 @@ inline value make_dead_observable() {
 // fire scene.onBeforeRenderObservable then every live mesh's, once per frame.
 // Copies the lists first: callbacks may add/remove observers or spawn/dispose
 // meshes mid-iteration.
-inline void fire_before_render(const worldptr & W, int scene_id, ctjs::context & cx) {
-	if (scene_id < 0 || scene_id >= static_cast<int>(W->scenes.size())) { return; }
-	const std::vector<observer> scene_cbs = W->scenes[static_cast<size_t>(scene_id)].before_render;
+inline void fire_before_render(const worldptr & W, std::int32_t scene_id, ctjs::context & cx) {
+	if (scene_id < 0 || scene_id >= static_cast<std::int32_t>(W->scenes.size())) { return; }
+	const std::vector<observer> scene_cbs = W->scenes[static_cast<std::size_t>(scene_id)].before_render;
 	for (const observer & ob : scene_cbs) { ctjs::call_value(cx, ob.cb, {}); }
-	const std::vector<int> ids = W->scenes[static_cast<size_t>(scene_id)].mesh_ids;
-	for (int mi : ids) {
-		if (mi < 0 || mi >= static_cast<int>(W->meshes.size())) { continue; }
-		if (W->meshes[static_cast<size_t>(mi)].disposed) { continue; }
-		const std::vector<observer> mesh_cbs = W->meshes[static_cast<size_t>(mi)].before_render;
+	const std::vector<std::int32_t> ids = W->scenes[static_cast<std::size_t>(scene_id)].mesh_ids;
+	for (std::int32_t mi : ids) {
+		if (mi < 0 || mi >= static_cast<std::int32_t>(W->meshes.size())) { continue; }
+		if (W->meshes[static_cast<std::size_t>(mi)].disposed) { continue; }
+		const std::vector<observer> mesh_cbs = W->meshes[static_cast<std::size_t>(mi)].before_render;
 		for (const observer & ob : mesh_cbs) { ctjs::call_value(cx, ob.cb, {}); }
 	}
 }
 
 // fire scene.registerAfterRender / onAfterRenderObservable callbacks (post-draw)
-inline void fire_after_render(const worldptr & W, int scene_id, ctjs::context & cx) {
-	if (scene_id < 0 || scene_id >= static_cast<int>(W->scenes.size())) { return; }
-	const std::vector<observer> cbs = W->scenes[static_cast<size_t>(scene_id)].after_render;
+inline void fire_after_render(const worldptr & W, std::int32_t scene_id, ctjs::context & cx) {
+	if (scene_id < 0 || scene_id >= static_cast<std::int32_t>(W->scenes.size())) { return; }
+	const std::vector<observer> cbs = W->scenes[static_cast<std::size_t>(scene_id)].after_render;
 	for (const observer & ob : cbs) { ctjs::call_value(cx, ob.cb, {}); }
 }
 
 // BABYLON.ActionManager trigger ids we actually fire (Babylon's enum values)
-inline constexpr int TRIGGER_ON_EVERY_FRAME = 11;
+inline constexpr std::int32_t TRIGGER_ON_EVERY_FRAME = 11;
 
 // run each scene ActionManager's OnEveryFrameTrigger actions, once per frame
-inline void fire_action_managers(const worldptr & W, int scene_id, ctjs::context & cx) {
-	if (scene_id < 0 || scene_id >= static_cast<int>(W->scenes.size())) { return; }
-	const std::vector<objptr> ams = W->scenes[static_cast<size_t>(scene_id)].action_managers;
+inline void fire_action_managers(const worldptr & W, std::int32_t scene_id, ctjs::context & cx) {
+	if (scene_id < 0 || scene_id >= static_cast<std::int32_t>(W->scenes.size())) { return; }
+	const std::vector<objptr> ams = W->scenes[static_cast<std::size_t>(scene_id)].action_managers;
 	for (const objptr & am : ams) {
 		if (!am) { continue; }
 		const value * av = am->find("__actions");
@@ -1171,9 +1173,9 @@ inline void fire_action_managers(const worldptr & W, int scene_id, ctjs::context
 }
 using worldptr = std::shared_ptr<world>;
 
-inline int index_of(const objptr & handle, const char * key) {
+inline std::int32_t index_of(const objptr & handle, const char * key) {
 	const double d = num_prop(handle, key, -1);
-	return d < 0 ? -1 : static_cast<int>(d);
+	return d < 0 ? -1 : static_cast<std::int32_t>(d);
 }
 
 // --- Vector3 (data props x/y/z; methods read `this` via current_this)
@@ -1271,18 +1273,18 @@ inline void set_static(value & fn, const char * name, value v) {
 // --- the 2D overlay drawn OVER the 3D pass (these were no-op stubs).
 
 // a font8x8 string blitted into the pixel buffer (top-left origin)
-inline void overlay_text(uint32_t * px, int w, int h, int x0, int y0, std::string_view s,
-                         int scale, uint32_t argb) {
-	int pen = x0;
+inline void overlay_text(uint32_t * px, std::int32_t w, std::int32_t h, std::int32_t x0, std::int32_t y0, std::string_view s,
+                         std::int32_t scale, uint32_t argb) {
+	std::int32_t pen = x0;
 	for (std::size_t i = 0; i < s.size();) { // decode UTF-8 -> code points
 		const char32_t ch = ctbrowser::utf8_next(s, i);
-		for (int row = 0; row < 8; ++row) {
-			for (int col = 0; col < 8; ++col) {
+		for (std::int32_t row = 0; row < 8; ++row) {
+			for (std::int32_t col = 0; col < 8; ++col) {
 				if (!ctbrowser::detail::glyph_pixel(ch, row, col)) { continue; }
-				for (int sy = 0; sy < scale; ++sy) {
-					for (int sx = 0; sx < scale; ++sx) {
-						const int x = pen + col * scale + sx, y = y0 + row * scale + sy;
-						if (x >= 0 && x < w && y >= 0 && y < h) { px[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] = argb; }
+				for (std::int32_t sy = 0; sy < scale; ++sy) {
+					for (std::int32_t sx = 0; sx < scale; ++sx) {
+						const std::int32_t x = pen + col * scale + sx, y = y0 + row * scale + sy;
+						if (x >= 0 && x < w && y >= 0 && y < h) { px[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)] = argb; }
 					}
 				}
 			}
@@ -1293,7 +1295,7 @@ inline void overlay_text(uint32_t * px, int w, int h, int x0, int y0, std::strin
 
 // BABYLON.GUI TextBlocks (the score/level/lives HUD): positioned by alignment +
 // left/top offsets, coloured from the CSS colour string, drawn in font8x8
-inline void render_guis(const worldptr & W, uint32_t * px, int w, int h) {
+inline void render_guis(const worldptr & W, uint32_t * px, std::int32_t w, std::int32_t h) {
 	for (const objptr & gui : W->guis) {
 		const value * cs = gui->find("controls");
 		if (cs == nullptr || !cs->is_array()) { continue; }
@@ -1306,18 +1308,18 @@ inline void render_guis(const worldptr & W, uint32_t * px, int w, int h) {
 			const std::string text = t->to_string();
 			if (text.empty()) { continue; }
 			const double fs = num_prop(c, "fontSize", 18);
-			const int scale = fs >= 8 ? static_cast<int>(fs / 8) : 1;
+			const std::int32_t scale = fs >= 8 ? static_cast<std::int32_t>(fs / 8) : 1;
 			uint32_t col = 0xFFFFFFFFu;
 			if (const value * cc = c->find("color")) {
 				col = ctbrowser::detail::css_to_argb(cc->to_string(), 0xFFFFFFFFu);
 			}
-			const int halign = static_cast<int>(num_prop(c, "textHorizontalAlignment", 2));
-			const int valign = static_cast<int>(num_prop(c, "textVerticalAlignment", 2));
-			const int tw = static_cast<int>(text.size()) * 8 * scale, th = 8 * scale;
-			int x = (halign == 0) ? 0 : (halign == 1) ? (w - tw) : (w - tw) / 2;
-			int y = (valign == 0) ? 0 : (valign == 1) ? (h - th) : (h - th) / 2;
-			x += static_cast<int>(num_prop(c, "left", 0));
-			y += static_cast<int>(num_prop(c, "top", 0));
+			const std::int32_t halign = static_cast<std::int32_t>(num_prop(c, "textHorizontalAlignment", 2));
+			const std::int32_t valign = static_cast<std::int32_t>(num_prop(c, "textVerticalAlignment", 2));
+			const std::int32_t tw = static_cast<std::int32_t>(text.size()) * 8 * scale, th = 8 * scale;
+			std::int32_t x = (halign == 0) ? 0 : (halign == 1) ? (w - tw) : (w - tw) / 2;
+			std::int32_t y = (valign == 0) ? 0 : (valign == 1) ? (h - th) : (h - th) / 2;
+			x += static_cast<std::int32_t>(num_prop(c, "left", 0));
+			y += static_cast<std::int32_t>(num_prop(c, "top", 0));
 			overlay_text(px, w, h, x, y, text, scale, col);
 		}
 	}
@@ -1325,7 +1327,7 @@ inline void render_guis(const worldptr & W, uint32_t * px, int w, int h) {
 
 // Sprites (the starfield): project each 3D position through the camera and draw
 // a screen-space quad in the sprite's colour
-inline void render_sprites(const worldptr & W, uint32_t * px, int w, int h, const r3d::view & vw) {
+inline void render_sprites(const worldptr & W, uint32_t * px, std::int32_t w, std::int32_t h, const r3d::view & vw) {
 	if (W->sprites.empty()) { return; }
 	const r3d::mat4 vp = r3d::matmul(vw.vp_proj, vw.vp_view);
 	const double Wd = w, Hd = h;
@@ -1335,26 +1337,26 @@ inline void render_sprites(const worldptr & W, uint32_t * px, int w, int h, cons
 		const r3d::vec4 clip = r3d::xform(vp, pos);
 		if (clip[3] <= 1e-6) { continue; } // behind the camera
 		const double iw = 1.0 / clip[3];
-		const int sx = static_cast<int>((clip[0] * iw * 0.5 + 0.5) * Wd);
-		const int sy = static_cast<int>((1.0 - (clip[1] * iw * 0.5 + 0.5)) * Hd);
+		const std::int32_t sx = static_cast<std::int32_t>((clip[0] * iw * 0.5 + 0.5) * Wd);
+		const std::int32_t sy = static_cast<std::int32_t>((1.0 - (clip[1] * iw * 0.5 + 0.5)) * Hd);
 		if (sx < 0 || sx >= w || sy < 0 || sy >= h) { continue; }
 		const r3d::rgba c = read_color(child_obj(sp, "color"), r3d::rgba{1, 1, 1, 1});
 		// perspective-scaled half-extent (fov 0.8 -> 2*tan(0.4) ~ 0.8455)
-		int half = static_cast<int>(num_prop(sp, "size", 1.0) * 0.5 * Hd * iw / 0.8455);
+		std::int32_t half = static_cast<std::int32_t>(num_prop(sp, "size", 1.0) * 0.5 * Hd * iw / 0.8455);
 		half = half < 0 ? 0 : half > 32 ? 32 : half;
 		// draw a soft, additively-blended glowing dot (a bright solid core plus a
 		// quadratic-falloff halo) - this is what the game's star_glow.png sprite
 		// gives on real WebGL; here it makes the starfield actually glow.
-		const int rad = std::max(half + 3, 4);
+		const std::int32_t rad = std::max(half + 3, 4);
 		const double core = static_cast<double>(half);
 		const double span = static_cast<double>(rad) - core;
 		const auto add = [](uint32_t base, double v) {
 			const uint32_t s = base + static_cast<uint32_t>(v < 0 ? 0 : v);
 			return s > 255 ? 255u : s;
 		};
-		for (int dy = -rad; dy <= rad; ++dy) {
-			for (int dx = -rad; dx <= rad; ++dx) {
-				const int x = sx + dx, y = sy + dy;
+		for (std::int32_t dy = -rad; dy <= rad; ++dy) {
+			for (std::int32_t dx = -rad; dx <= rad; ++dx) {
+				const std::int32_t x = sx + dx, y = sy + dy;
 				if (x < 0 || x >= w || y < 0 || y >= h) { continue; }
 				const double dist = std::sqrt(static_cast<double>(dx * dx + dy * dy));
 				double f;
@@ -1365,7 +1367,7 @@ inline void render_sprites(const worldptr & W, uint32_t * px, int w, int h, cons
 					if (t >= 1.0) { continue; }
 					f = (1.0 - t) * (1.0 - t);
 				}
-				const size_t idx = static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x);
+				const std::size_t idx = static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x);
 				const uint32_t p = px[idx];
 				const uint32_t nr = add((p >> 16) & 0xff, c.r * 255.0 * f);
 				const uint32_t ng = add((p >> 8) & 0xff, c.g * 255.0 * f);
@@ -1386,36 +1388,36 @@ inline void render_sprites(const worldptr & W, uint32_t * px, int w, int h, cons
 // `mask` (optional, w*h) restricts which pixels may SEED the bloom - used by the
 // GlowLayer include/exclude lists: only pixels covered by a glowing mesh glow.
 // nullptr = the whole frame seeds (bloom every bright pixel).
-inline void apply_glow(uint32_t * px, int w, int h, double intensity,
+inline void apply_glow(uint32_t * px, std::int32_t w, std::int32_t h, double intensity,
                        const std::vector<uint8_t> * mask = nullptr) {
 	if (intensity <= 0 || w <= 0 || h <= 0) { return; }
-	const int n = w * h;
-	const auto at = [w](int x, int y, int c) { return static_cast<size_t>((y * w + x) * 3 + c); };
-	std::vector<float> br(static_cast<size_t>(n) * 3, 0.0f);
+	const std::int32_t n = w * h;
+	const auto at = [w](std::int32_t x, std::int32_t y, std::int32_t c) { return static_cast<std::size_t>((y * w + x) * 3 + c); };
+	std::vector<float> br(static_cast<std::size_t>(n) * 3, 0.0f);
 	const float thr = 0.55f;
-	for (int i = 0; i < n; ++i) {
-		if (mask != nullptr && (*mask)[static_cast<size_t>(i)] == 0) { continue; }
-		const uint32_t p = px[static_cast<size_t>(i)];
+	for (std::int32_t i = 0; i < n; ++i) {
+		if (mask != nullptr && (*mask)[static_cast<std::size_t>(i)] == 0) { continue; }
+		const uint32_t p = px[static_cast<std::size_t>(i)];
 		const float r = static_cast<float>((p >> 16) & 0xff) / 255.0f;
 		const float g = static_cast<float>((p >> 8) & 0xff) / 255.0f;
 		const float b = static_cast<float>(p & 0xff) / 255.0f;
 		const float lum = 0.299f * r + 0.587f * g + 0.114f * b;
 		if (lum > thr) {
 			const float k = (lum - thr) / (1.0f - thr);
-			br[static_cast<size_t>(i) * 3 + 0] = r * k;
-			br[static_cast<size_t>(i) * 3 + 1] = g * k;
-			br[static_cast<size_t>(i) * 3 + 2] = b * k;
+			br[static_cast<std::size_t>(i) * 3 + 0] = r * k;
+			br[static_cast<std::size_t>(i) * 3 + 1] = g * k;
+			br[static_cast<std::size_t>(i) * 3 + 2] = b * k;
 		}
 	}
-	const int rad = 3;
+	const std::int32_t rad = 3;
 	std::vector<float> tmp(br.size(), 0.0f);
-	for (int pass = 0; pass < 2; ++pass) {
-		for (int y = 0; y < h; ++y) { // horizontal
-			for (int x = 0; x < w; ++x) {
-				for (int c = 0; c < 3; ++c) {
-					float s = 0; int cnt = 0;
-					for (int dx = -rad; dx <= rad; ++dx) {
-						const int xx = x + dx;
+	for (std::int32_t pass = 0; pass < 2; ++pass) {
+		for (std::int32_t y = 0; y < h; ++y) { // horizontal
+			for (std::int32_t x = 0; x < w; ++x) {
+				for (std::int32_t c = 0; c < 3; ++c) {
+					float s = 0; std::int32_t cnt = 0;
+					for (std::int32_t dx = -rad; dx <= rad; ++dx) {
+						const std::int32_t xx = x + dx;
 						if (xx < 0 || xx >= w) { continue; }
 						s += br[at(xx, y, c)]; ++cnt;
 					}
@@ -1423,12 +1425,12 @@ inline void apply_glow(uint32_t * px, int w, int h, double intensity,
 				}
 			}
 		}
-		for (int x = 0; x < w; ++x) { // vertical
-			for (int y = 0; y < h; ++y) {
-				for (int c = 0; c < 3; ++c) {
-					float s = 0; int cnt = 0;
-					for (int dy = -rad; dy <= rad; ++dy) {
-						const int yy = y + dy;
+		for (std::int32_t x = 0; x < w; ++x) { // vertical
+			for (std::int32_t y = 0; y < h; ++y) {
+				for (std::int32_t c = 0; c < 3; ++c) {
+					float s = 0; std::int32_t cnt = 0;
+					for (std::int32_t dy = -rad; dy <= rad; ++dy) {
+						const std::int32_t yy = y + dy;
 						if (yy < 0 || yy >= h) { continue; }
 						s += tmp[at(x, yy, c)]; ++cnt;
 					}
@@ -1439,12 +1441,12 @@ inline void apply_glow(uint32_t * px, int w, int h, double intensity,
 	}
 	const float gain = static_cast<float>(intensity);
 	const auto clamp01 = [](float v) { return v < 0 ? 0.0f : v > 1 ? 1.0f : v; };
-	for (int i = 0; i < n; ++i) {
-		const uint32_t p = px[static_cast<size_t>(i)];
-		const float r = clamp01(static_cast<float>((p >> 16) & 0xff) / 255.0f + br[static_cast<size_t>(i) * 3 + 0] * gain);
-		const float g = clamp01(static_cast<float>((p >> 8) & 0xff) / 255.0f + br[static_cast<size_t>(i) * 3 + 1] * gain);
-		const float b = clamp01(static_cast<float>(p & 0xff) / 255.0f + br[static_cast<size_t>(i) * 3 + 2] * gain);
-		px[static_cast<size_t>(i)] = (p & 0xff000000u) |
+	for (std::int32_t i = 0; i < n; ++i) {
+		const uint32_t p = px[static_cast<std::size_t>(i)];
+		const float r = clamp01(static_cast<float>((p >> 16) & 0xff) / 255.0f + br[static_cast<std::size_t>(i) * 3 + 0] * gain);
+		const float g = clamp01(static_cast<float>((p >> 8) & 0xff) / 255.0f + br[static_cast<std::size_t>(i) * 3 + 1] * gain);
+		const float b = clamp01(static_cast<float>(p & 0xff) / 255.0f + br[static_cast<std::size_t>(i) * 3 + 2] * gain);
+		px[static_cast<std::size_t>(i)] = (p & 0xff000000u) |
 		    (static_cast<uint32_t>(r * 255.0f) << 16) |
 		    (static_cast<uint32_t>(g * 255.0f) << 8) |
 		    static_cast<uint32_t>(b * 255.0f);
@@ -1453,8 +1455,8 @@ inline void apply_glow(uint32_t * px, int w, int h, double intensity,
 
 // the mesh's world matrix from its live transforms (position * pivot * rotation *
 // scaling * pivot^-1), or the captured matrix if freezeWorldMatrix() was called.
-inline r3d::mat4 mesh_world_matrix(const worldptr & W, int mi, bool ignore_freeze = false) {
-	mesh_rec & M = W->meshes[static_cast<size_t>(mi)];
+inline r3d::mat4 mesh_world_matrix(const worldptr & W, std::int32_t mi, bool ignore_freeze = false) {
+	mesh_rec & M = W->meshes[static_cast<std::size_t>(mi)];
 	if (M.frozen_world && !ignore_freeze) { return M.frozen_matrix; }
 	const r3d::vec3 p = read_vec3(child_obj(M.handle, "position"), r3d::V3(0, 0, 0));
 	const r3d::vec3 rot = read_vec3(child_obj(M.handle, "rotation"), r3d::V3(0, 0, 0));
@@ -1469,8 +1471,8 @@ inline r3d::mat4 mesh_world_matrix(const worldptr & W, int mi, bool ignore_freez
 }
 
 // build the renderer draw-item for a scene mesh (world matrix + material colour)
-inline r3d::draw_item build_draw_item(const worldptr & W, int mi) {
-	mesh_rec & M = W->meshes[static_cast<size_t>(mi)];
+inline r3d::draw_item build_draw_item(const worldptr & W, std::int32_t mi) {
+	mesh_rec & M = W->meshes[static_cast<std::size_t>(mi)];
 	r3d::draw_item it;
 	it.g = &M.geom;
 	it.world = mesh_world_matrix(W, mi);
@@ -1498,8 +1500,8 @@ inline r3d::draw_item build_draw_item(const worldptr & W, int mi) {
 inline value make_matrix(const r3d::mat4 & m) {
 	auto o = objptr::make();
 	std::vector<value> arr;
-	for (int c = 0; c < 4; ++c) {
-		for (int r = 0; r < 4; ++r) { arr.push_back(value{m[c][r]}); }
+	for (std::int32_t c = 0; c < 4; ++c) {
+		for (std::int32_t r = 0; r < 4; ++r) { arr.push_back(value{m[c][r]}); }
 	}
 	o->set("m", value::array(std::move(arr)));
 	o->set("getTranslation", value::function([m](ctjs::context &, const std::vector<value> &) -> value {
@@ -1509,27 +1511,27 @@ inline value make_matrix(const r3d::mat4 & m) {
 }
 
 // read an array of mesh __mesh ids stored on a JS object (glow include/exclude)
-inline void read_id_list(const objptr & o, const char * key, std::vector<int> & out) {
+inline void read_id_list(const objptr & o, const char * key, std::vector<std::int32_t> & out) {
 	const value * v = o->find(key);
 	if (v == nullptr || !v->is_array()) { return; }
-	for (const value & e : *v->as_array()) { out.push_back(static_cast<int>(e.to_number())); }
+	for (const value & e : *v->as_array()) { out.push_back(static_cast<std::int32_t>(e.to_number())); }
 }
 
-inline void do_render(const worldptr & W, int scene_id) {
+inline void do_render(const worldptr & W, std::int32_t scene_id) {
 	if (!W || W->target == nullptr || scene_id < 0 ||
-	    scene_id >= static_cast<int>(W->scenes.size())) { return; }
+	    scene_id >= static_cast<std::int32_t>(W->scenes.size())) { return; }
 	ctbrowser::node * n = W->target;
-	const int w = n->canvas_w, h = n->canvas_h;
+	const std::int32_t w = n->canvas_w, h = n->canvas_h;
 	if (w <= 0 || h <= 0 || n->pixels.empty()) { return; }
-	scene_rec & sc = W->scenes[static_cast<size_t>(scene_id)];
+	scene_rec & sc = W->scenes[static_cast<std::size_t>(scene_id)];
 
 	r3d::view vw;
 	vw.clear = read_color(child_obj(sc.handle, "clearColor"), r3d::rgba{0.2, 0.2, 0.3, 1.0});
 
 	r3d::vec3 eye = r3d::V3(0, 0, -10), target = r3d::V3(0, 0, 0);
 	const r3d::vec3 up = r3d::V3(0, 1, 0);
-	if (sc.active_camera >= 0 && sc.active_camera < static_cast<int>(W->cameras.size())) {
-		camera_rec & cam = W->cameras[static_cast<size_t>(sc.active_camera)];
+	if (sc.active_camera >= 0 && sc.active_camera < static_cast<std::int32_t>(W->cameras.size())) {
+		camera_rec & cam = W->cameras[static_cast<std::size_t>(sc.active_camera)];
 		if (cam.type == 0) { // ArcRotate: eye from spherical coords about target
 			const double alpha = num_prop(cam.handle, "alpha", 0);
 			const double beta = num_prop(cam.handle, "beta", 1);
@@ -1547,8 +1549,8 @@ inline void do_render(const worldptr & W, int scene_id) {
 	vw.vp_proj = r3d::perspectiveFovLH(0.8, static_cast<double>(w) / h, 0.1, 1000.0);
 
 	std::vector<r3d::light> lights;
-	for (int li : sc.light_ids) {
-		light_rec & L = W->lights[static_cast<size_t>(li)];
+	for (std::int32_t li : sc.light_ids) {
+		light_rec & L = W->lights[static_cast<std::size_t>(li)];
 		r3d::light rl;
 		rl.type = L.type;
 		rl.direction = read_vec3(child_obj(L.handle, "direction"), r3d::V3(0, 1, 0));
@@ -1559,8 +1561,8 @@ inline void do_render(const worldptr & W, int scene_id) {
 	if (lights.empty()) { lights.push_back(r3d::light{0, r3d::V3(0, 1, 0), 1.0, {1, 1, 1, 1}}); }
 
 	std::vector<r3d::draw_item> items;
-	for (int mi : sc.mesh_ids) {
-		mesh_rec & M = W->meshes[static_cast<size_t>(mi)];
+	for (std::int32_t mi : sc.mesh_ids) {
+		mesh_rec & M = W->meshes[static_cast<std::size_t>(mi)];
 		if (M.disposed || !M.enabled) { continue; }
 		// honor mesh.isVisible (bool) and mesh.visibility (0..1 opacity): the game
 		// fades explosion particles to visibility 0 to hide them (never disposed)
@@ -1577,7 +1579,7 @@ inline void do_render(const worldptr & W, int scene_id) {
 	for (const objptr & gl : sc.glow_layers) {
 		if (!gl || index_of(gl, "__disposed") == 1) { continue; }
 		const double gi = num_prop(gl, "intensity", 1.0);
-		std::vector<int> inc, exc;
+		std::vector<std::int32_t> inc, exc;
 		read_id_list(gl, "includedOnlyMeshes", inc);
 		read_id_list(gl, "excludedMeshes", exc);
 		if (inc.empty() && exc.empty()) {
@@ -1586,60 +1588,60 @@ inline void do_render(const worldptr & W, int scene_id) {
 		}
 		// render only the glowing meshes into a scratch buffer -> coverage mask
 		std::vector<r3d::draw_item> gitems;
-		for (int mi : sc.mesh_ids) {
-			mesh_rec & M = W->meshes[static_cast<size_t>(mi)];
+		for (std::int32_t mi : sc.mesh_ids) {
+			mesh_rec & M = W->meshes[static_cast<std::size_t>(mi)];
 			if (M.disposed || !M.enabled) { continue; }
 			if (!inc.empty() && std::find(inc.begin(), inc.end(), mi) == inc.end()) { continue; }
 			if (std::find(exc.begin(), exc.end(), mi) != exc.end()) { continue; }
 			gitems.push_back(build_draw_item(W, mi));
 		}
-		std::vector<uint32_t> scratch(static_cast<size_t>(w) * static_cast<size_t>(h), 0);
+		std::vector<uint32_t> scratch(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
 		r3d::view gv = vw;
 		gv.clear = r3d::rgba{0, 0, 0, 0};                     // transparent: alpha marks coverage
 		W->rdr.render(scratch.data(), w, h, gv, gitems, lights);
-		std::vector<uint8_t> mask(static_cast<size_t>(w) * static_cast<size_t>(h), 0);
-		for (size_t i = 0; i < mask.size(); ++i) { mask[i] = (scratch[i] >> 24) != 0 ? 1 : 0; }
+		std::vector<uint8_t> mask(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
+		for (std::size_t i = 0; i < mask.size(); ++i) { mask[i] = (scratch[i] >> 24) != 0 ? 1 : 0; }
 		apply_glow(n->pixels.data(), w, h, gi, &mask);
 	}
 }
 
 // --- register a mesh/light with its scene (by the scene handle arg)
-inline void register_with_scene(const worldptr & W, const objptr & scene, int id, bool is_mesh) {
-	const int si = index_of(scene, "__scene");
-	if (si < 0 || si >= static_cast<int>(W->scenes.size())) { return; }
-	(is_mesh ? W->scenes[static_cast<size_t>(si)].mesh_ids
-	         : W->scenes[static_cast<size_t>(si)].light_ids).push_back(id);
-	if (is_mesh && id >= 0 && id < static_cast<int>(W->meshes.size())) {
-		W->meshes[static_cast<size_t>(id)].scene_id = si;
+inline void register_with_scene(const worldptr & W, const objptr & scene, std::int32_t id, bool is_mesh) {
+	const std::int32_t si = index_of(scene, "__scene");
+	if (si < 0 || si >= static_cast<std::int32_t>(W->scenes.size())) { return; }
+	(is_mesh ? W->scenes[static_cast<std::size_t>(si)].mesh_ids
+	         : W->scenes[static_cast<std::size_t>(si)].light_ids).push_back(id);
+	if (is_mesh && id >= 0 && id < static_cast<std::int32_t>(W->meshes.size())) {
+		W->meshes[static_cast<std::size_t>(id)].scene_id = si;
 	}
 }
 
 // world-space axis-aligned bounds of a mesh (geometry bounds x scaling +
 // position), for moveWithCollisions
-inline void mesh_aabb(const worldptr & W, int id, r3d::vec3 & lo, r3d::vec3 & hi) {
-	const mesh_rec & m = W->meshes[static_cast<size_t>(id)];
+inline void mesh_aabb(const worldptr & W, std::int32_t id, r3d::vec3 & lo, r3d::vec3 & hi) {
+	const mesh_rec & m = W->meshes[static_cast<std::size_t>(id)];
 	const r3d::vec3 p = read_vec3(child_obj(m.handle, "position"), r3d::V3(0, 0, 0));
 	const r3d::vec3 s = read_vec3(child_obj(m.handle, "scaling"), r3d::V3(1, 1, 1));
 	bool first = true;
 	r3d::vec3 gmin = r3d::V3(0, 0, 0), gmax = r3d::V3(0, 0, 0);
 	for (const r3d::vec3 & v : m.geom.verts) {
-		for (int k = 0; k < 3; ++k) {
+		for (std::int32_t k = 0; k < 3; ++k) {
 			if (first) { gmin[k] = gmax[k] = v[k]; }
 			else { gmin[k] = std::min(gmin[k], v[k]); gmax[k] = std::max(gmax[k], v[k]); }
 		}
 		first = false;
 	}
-	for (int k = 0; k < 3; ++k) {
+	for (std::int32_t k = 0; k < 3; ++k) {
 		lo[k] = p[k] + gmin[k] * s[k];
 		hi[k] = p[k] + gmax[k] * s[k];
 	}
 }
 
-inline void decorate_mesh(const worldptr & W, const objptr & h, int id);
+inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id);
 
 inline value make_mesh(const worldptr & W, r3d::geo g, std::string name, bool cull,
                        const objptr & scene) {
-	const int id = static_cast<int>(W->meshes.size());
+	const std::int32_t id = static_cast<std::int32_t>(W->meshes.size());
 	auto h = objptr::make();
 	h->set("name", value{std::move(name)});
 	h->set("__mesh", value{static_cast<double>(id)});
@@ -1669,7 +1671,7 @@ inline value make_material(std::string name) {
 // collision, clone/createInstance, moveWithCollisions, translate/rotate, the
 // per-mesh onBeforeRenderObservable, dispose/onDispose. Called from every mesh
 // factory (MeshBuilder, glTF, clone) after the rec + handle exist.
-inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
+inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id) {
 	const std::size_t ix = static_cast<std::size_t>(id);
 	if (h->find("position") == nullptr) { h->set("position", make_vector3(0, 0, 0)); }
 	if (h->find("rotation") == nullptr) { h->set("rotation", make_vector3(0, 0, 0)); }
@@ -1696,8 +1698,8 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 	    [](ctjs::context &, const std::vector<value> &) { return value{}; }, "registerInstancedBuffer"));
 
 	h->set("getScene", value::function([W, ix](ctjs::context &, const std::vector<value> &) -> value {
-		const int si = ix < W->meshes.size() ? W->meshes[ix].scene_id : -1;
-		return (si >= 0 && si < static_cast<int>(W->scenes.size())) ? value{W->scenes[static_cast<std::size_t>(si)].handle} : value{};
+		const std::int32_t si = ix < W->meshes.size() ? W->meshes[ix].scene_id : -1;
+		return (si >= 0 && si < static_cast<std::int32_t>(W->scenes.size())) ? value{W->scenes[static_cast<std::size_t>(si)].handle} : value{};
 	}, "getScene"));
 	h->set("setEnabled", value::function([W, ix](ctjs::context &, const std::vector<value> & a) -> value {
 		if (ix < W->meshes.size()) { W->meshes[ix].enabled = a.empty() || a[0].truthy(); }
@@ -1721,10 +1723,10 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 		// keep the handle alive: onDispose may spawn meshes (Explosion) and
 		// reallocate W->meshes, dangling `m`
 		const objptr self = m.handle;
-		const int sid = m.scene_id;
-		if (sid >= 0 && sid < static_cast<int>(W->scenes.size())) {
+		const std::int32_t sid = m.scene_id;
+		if (sid >= 0 && sid < static_cast<std::int32_t>(W->scenes.size())) {
 			auto & ids = W->scenes[static_cast<std::size_t>(sid)].mesh_ids;
-			ids.erase(std::remove(ids.begin(), ids.end(), static_cast<int>(ix)), ids.end());
+			ids.erase(std::remove(ids.begin(), ids.end(), static_cast<std::int32_t>(ix)), ids.end());
 		}
 		// BabylonJS notifies onDispose WITH the mesh (its callbacks take it)
 		const value * od = self->find("onDispose");
@@ -1743,7 +1745,7 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 		mesh_rec & src = W->meshes[ix];
 		r3d::geo geo = src.geom;
 		const bool cull = src.cull;
-		const int ssid = src.scene_id;
+		const std::int32_t ssid = src.scene_id;
 		std::shared_ptr<r3d::texture> stex = src.tex; // clones share the texture
 		const r3d::vec3 p = read_vec3(child_obj(src.handle, "position"), r3d::V3(0, 0, 0));
 		const r3d::vec3 r = read_vec3(child_obj(src.handle, "rotation"), r3d::V3(0, 0, 0));
@@ -1751,7 +1753,7 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 		const value * mat = src.handle->find("material");
 		const value matv = mat != nullptr ? *mat : value{};
 
-		const int nid = static_cast<int>(W->meshes.size());
+		const std::int32_t nid = static_cast<std::int32_t>(W->meshes.size());
 		auto nh = objptr::make();
 		const std::string nm = a.empty() ? std::string{} : a[0].to_string();
 		nh->set("name", value{nm});
@@ -1768,7 +1770,7 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 		rec.scene_id = ssid;
 		rec.tex = std::move(stex);
 		W->meshes.push_back(std::move(rec));
-		if (ssid >= 0 && ssid < static_cast<int>(W->scenes.size())) {
+		if (ssid >= 0 && ssid < static_cast<std::int32_t>(W->scenes.size())) {
 			W->scenes[static_cast<std::size_t>(ssid)].mesh_ids.push_back(nid);
 		}
 		decorate_mesh(W, nh, nid);
@@ -1790,17 +1792,17 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 			pos->set("z", value{num_prop(pos, "z", 0) + v[2]});
 		}
 		r3d::vec3 lo, hi;
-		mesh_aabb(W, static_cast<int>(ix), lo, hi);
-		const int mask = static_cast<int>(num_prop(self, "collisionMask", -1));
+		mesh_aabb(W, static_cast<std::int32_t>(ix), lo, hi);
+		const std::int32_t mask = static_cast<std::int32_t>(num_prop(self, "collisionMask", -1));
 		objptr hit;
 		for (std::size_t mj = 0; mj < W->meshes.size(); ++mj) {
 			if (mj == ix) { continue; }
 			mesh_rec & o = W->meshes[mj];
 			if (o.disposed || !o.enabled) { continue; }
-			const int grp = static_cast<int>(num_prop(o.handle, "collisionGroup", -1));
+			const std::int32_t grp = static_cast<std::int32_t>(num_prop(o.handle, "collisionGroup", -1));
 			if ((mask & grp) == 0) { continue; }
 			r3d::vec3 olo, ohi;
-			mesh_aabb(W, static_cast<int>(mj), olo, ohi);
+			mesh_aabb(W, static_cast<std::int32_t>(mj), olo, ohi);
 			const bool overlap = lo[0] <= ohi[0] && hi[0] >= olo[0] && lo[1] <= ohi[1] &&
 			                     hi[1] >= olo[1] && lo[2] <= ohi[2] && hi[2] >= olo[2];
 			if (overlap) { hit = o.handle; break; }
@@ -1849,14 +1851,14 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 		r3d::vec3 lmin = r3d::V3(0, 0, 0), lmax = r3d::V3(0, 0, 0);
 		bool first = true;
 		for (const r3d::vec3 & v : W->meshes[ix].geom.verts) {
-			for (int k = 0; k < 3; ++k) {
+			for (std::int32_t k = 0; k < 3; ++k) {
 				if (first) { lmin[k] = lmax[k] = v[k]; }
 				else { lmin[k] = std::min(lmin[k], v[k]); lmax[k] = std::max(lmax[k], v[k]); }
 			}
 			first = false;
 		}
 		r3d::vec3 wmin, wmax;
-		mesh_aabb(W, static_cast<int>(ix), wmin, wmax);
+		mesh_aabb(W, static_cast<std::int32_t>(ix), wmin, wmax);
 		auto box = objptr::make();
 		box->set("minimum", make_vector3(lmin[0], lmin[1], lmin[2]));
 		box->set("maximum", make_vector3(lmax[0], lmax[1], lmax[2]));
@@ -1867,7 +1869,7 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 		box->set("extendSize", make_vector3((lmax[0] - lmin[0]) * 0.5,
 		                                    (lmax[1] - lmin[1]) * 0.5, (lmax[2] - lmin[2]) * 0.5));
 		double rad = 0;
-		for (int k = 0; k < 3; ++k) { rad = std::max(rad, (wmax[k] - wmin[k]) * 0.5); }
+		for (std::int32_t k = 0; k < 3; ++k) { rad = std::max(rad, (wmax[k] - wmin[k]) * 0.5); }
 		auto sph = objptr::make();
 		sph->set("radiusWorld", value{rad});
 		sph->set("center", make_vector3((lmin[0] + lmax[0]) * 0.5,
@@ -1891,18 +1893,18 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 		if (ix >= W->meshes.size()) { return value{}; }
 		const bool force = !a.empty() && a[0].truthy();
 		if (force && W->meshes[ix].frozen_world) {
-			W->meshes[ix].frozen_matrix = mesh_world_matrix(W, static_cast<int>(ix), true);
+			W->meshes[ix].frozen_matrix = mesh_world_matrix(W, static_cast<std::int32_t>(ix), true);
 		}
-		return make_matrix(mesh_world_matrix(W, static_cast<int>(ix)));
+		return make_matrix(mesh_world_matrix(W, static_cast<std::int32_t>(ix)));
 	}, "computeWorldMatrix"));
 	h->set("getWorldMatrix", value::function([W, ix](ctjs::context &, const std::vector<value> &) -> value {
-		return (ix < W->meshes.size()) ? make_matrix(mesh_world_matrix(W, static_cast<int>(ix))) : value{};
+		return (ix < W->meshes.size()) ? make_matrix(mesh_world_matrix(W, static_cast<std::int32_t>(ix))) : value{};
 	}, "getWorldMatrix"));
 	// freezeWorldMatrix(): capture the world matrix now; the renderer then ignores
 	// later position/rotation/scaling edits until unfreezeWorldMatrix().
 	h->set("freezeWorldMatrix", value::function([W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
 		if (ix < W->meshes.size()) {
-			W->meshes[ix].frozen_matrix = mesh_world_matrix(W, static_cast<int>(ix), true);
+			W->meshes[ix].frozen_matrix = mesh_world_matrix(W, static_cast<std::int32_t>(ix), true);
 			W->meshes[ix].frozen_world = true;
 		}
 		return (ix < W->meshes.size()) ? value{W->meshes[ix].handle} : cx.current_this;
@@ -1930,7 +1932,7 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 	h->set("bakeCurrentTransformIntoVertices", value::function([W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
 		if (ix >= W->meshes.size()) { return cx.current_this; }
 		mesh_rec & M = W->meshes[ix];
-		const r3d::mat4 wm = mesh_world_matrix(W, static_cast<int>(ix), true);
+		const r3d::mat4 wm = mesh_world_matrix(W, static_cast<std::int32_t>(ix), true);
 		for (r3d::vec3 & v : M.geom.verts) {
 			const r3d::vec4 t = r3d::xform(wm, v);
 			v = r3d::V3(t[0], t[1], t[2]);
@@ -1946,9 +1948,9 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, int id) {
 
 // add a parsed glTF model's meshes + materials into a scene
 inline void load_model(const worldptr & W, const objptr & scene, const gltf::model & mdl) {
-	const int si = index_of(scene, "__scene");
-	if (si < 0 || si >= static_cast<int>(W->scenes.size())) { return; }
-	scene_rec & sc = W->scenes[static_cast<size_t>(si)];
+	const std::int32_t si = index_of(scene, "__scene");
+	if (si < 0 || si >= static_cast<std::int32_t>(W->scenes.size())) { return; }
+	scene_rec & sc = W->scenes[static_cast<std::size_t>(si)];
 
 	std::vector<objptr> mat_handles;
 	for (const gltf::material & gm : mdl.materials) {
@@ -1962,11 +1964,11 @@ inline void load_model(const worldptr & W, const objptr & scene, const gltf::mod
 	}
 	// decode each glTF texture once (runtime); primitives share by index
 	std::vector<std::shared_ptr<r3d::texture>> tex_decoded(mdl.textures.size());
-	for (size_t i = 0; i < mdl.textures.size(); ++i) {
+	for (std::size_t i = 0; i < mdl.textures.size(); ++i) {
 		tex_decoded[i] = r3d::decode_texture(mdl.textures[i].data(), mdl.textures[i].size());
 	}
 	for (const gltf::primitive & p : mdl.prims) {
-		const int id = static_cast<int>(W->meshes.size());
+		const std::int32_t id = static_cast<std::int32_t>(W->meshes.size());
 		objptr h = objptr::make();
 		h->set("name", value{p.node_name});
 		h->set("id", value{p.node_name});
@@ -1975,10 +1977,10 @@ inline void load_model(const worldptr & W, const objptr & scene, const gltf::mod
 		h->set("rotation", make_vector3(0, 0, 0));
 		h->set("scaling", make_vector3(1, 1, 1));
 		std::shared_ptr<r3d::texture> ptex;
-		if (p.material >= 0 && p.material < static_cast<int>(mat_handles.size())) {
-			h->set("material", value{mat_handles[static_cast<size_t>(p.material)]});
-			const int bt = mdl.materials[static_cast<size_t>(p.material)].base_tex;
-			if (bt >= 0 && bt < static_cast<int>(tex_decoded.size())) { ptex = tex_decoded[static_cast<size_t>(bt)]; }
+		if (p.material >= 0 && p.material < static_cast<std::int32_t>(mat_handles.size())) {
+			h->set("material", value{mat_handles[static_cast<std::size_t>(p.material)]});
+			const std::int32_t bt = mdl.materials[static_cast<std::size_t>(p.material)].base_tex;
+			if (bt >= 0 && bt < static_cast<std::int32_t>(tex_decoded.size())) { ptex = tex_decoded[static_cast<std::size_t>(bt)]; }
 		} else {
 			h->set("material", value{});
 		}
@@ -1994,9 +1996,9 @@ inline void load_model(const worldptr & W, const objptr & scene, const gltf::mod
 	sc.has_bounds = mdl.ok;
 }
 
-inline value make_light(const worldptr & W, int type, std::string name, r3d::vec3 dir,
+inline value make_light(const worldptr & W, std::int32_t type, std::string name, r3d::vec3 dir,
                         const objptr & scene) {
-	const int id = static_cast<int>(W->lights.size());
+	const std::int32_t id = static_cast<std::int32_t>(W->lights.size());
 	auto h = objptr::make();
 	h->set("name", value{std::move(name)});
 	h->set("direction", make_vector3(dir[0], dir[1], dir[2]));
@@ -2013,10 +2015,10 @@ inline value make_light(const worldptr & W, int type, std::string name, r3d::vec
 // register the drag-to-orbit mouse listeners for camera `id`; they act
 // only after attachControl flips camera_rec.attached (avoids nested
 // lambda captures — clang's -Wunused-lambda-capture dislikes those)
-inline void register_orbit(const worldptr & W, dom_events & ev, int id) {
-	const auto in_range = [W](int i) { return i >= 0 && i < static_cast<int>(W->cameras.size()); };
+inline void register_orbit(const worldptr & W, dom_events & ev, std::int32_t id) {
+	const auto in_range = [W](std::int32_t i) { return i >= 0 && i < static_cast<std::int32_t>(W->cameras.size()); };
 	ev.listeners["mousedown"].push_back(value::function([W, id, in_range](ctjs::context &, const std::vector<value> & a) -> value {
-		if (in_range(id) && W->cameras[static_cast<size_t>(id)].attached) {
+		if (in_range(id) && W->cameras[static_cast<std::size_t>(id)].attached) {
 			const objptr e = arg_obj(a, 0);
 			W->cam_dragging = true;
 			W->cam_lastx = num_prop(e, "clientX", 0);
@@ -2029,14 +2031,14 @@ inline void register_orbit(const worldptr & W, dom_events & ev, int id) {
 		return value{};
 	}, "_bjsUp"));
 	ev.listeners["mousemove"].push_back(value::function([W, id, in_range](ctjs::context &, const std::vector<value> & a) -> value {
-		if (!W->cam_dragging || !in_range(id) || !W->cameras[static_cast<size_t>(id)].attached) { return value{}; }
+		if (!W->cam_dragging || !in_range(id) || !W->cameras[static_cast<std::size_t>(id)].attached) { return value{}; }
 		const objptr e = arg_obj(a, 0);
 		const double x = num_prop(e, "clientX", W->cam_lastx);
 		const double y = num_prop(e, "clientY", W->cam_lasty);
 		const double dx = x - W->cam_lastx, dy = y - W->cam_lasty;
 		W->cam_lastx = x;
 		W->cam_lasty = y;
-		const objptr ch = W->cameras[static_cast<size_t>(id)].handle;
+		const objptr ch = W->cameras[static_cast<std::size_t>(id)].handle;
 		double beta = num_prop(ch, "beta", 1) - dy * 0.01;
 		beta = beta < 0.05 ? 0.05 : (beta > std::numbers::pi - 0.05 ? std::numbers::pi - 0.05 : beta);
 		ch->set("alpha", value{num_prop(ch, "alpha", 0) - dx * 0.01});
@@ -2047,7 +2049,7 @@ inline void register_orbit(const worldptr & W, dom_events & ev, int id) {
 
 inline value make_camera_arc(const worldptr & W, dom_events & ev, std::string name, double alpha,
                              double beta, double radius, const objptr & tgt, const objptr & scene) {
-	const int id = static_cast<int>(W->cameras.size());
+	const std::int32_t id = static_cast<std::int32_t>(W->cameras.size());
 	auto h = objptr::make();
 	h->set("name", value{std::move(name)});
 	h->set("alpha", value{alpha});
@@ -2065,23 +2067,23 @@ inline value make_camera_arc(const worldptr & W, dom_events & ev, std::string na
 	}, "setTarget"));
 	// drag to orbit: attachControl arms the listeners registered below
 	h->set("attachControl", value::function([W, id](ctjs::context &, const std::vector<value> &) -> value {
-		if (id >= 0 && id < static_cast<int>(W->cameras.size())) {
-			W->cameras[static_cast<size_t>(id)].attached = true;
+		if (id >= 0 && id < static_cast<std::int32_t>(W->cameras.size())) {
+			W->cameras[static_cast<std::size_t>(id)].attached = true;
 		}
 		return value{};
 	}, "attachControl"));
 	h->set("detachControl", value::function([W, id](ctjs::context &, const std::vector<value> &) -> value {
-		if (id >= 0 && id < static_cast<int>(W->cameras.size())) {
-			W->cameras[static_cast<size_t>(id)].attached = false;
+		if (id >= 0 && id < static_cast<std::int32_t>(W->cameras.size())) {
+			W->cameras[static_cast<std::size_t>(id)].attached = false;
 		}
 		W->cam_dragging = false;
 		return value{};
 	}, "detachControl"));
 	W->cameras.push_back(camera_rec{h, 0, false});
 	register_orbit(W, ev, id);
-	const int si = index_of(scene, "__scene");
-	if (si >= 0 && si < static_cast<int>(W->scenes.size())) {
-		W->scenes[static_cast<size_t>(si)].active_camera = id;
+	const std::int32_t si = index_of(scene, "__scene");
+	if (si >= 0 && si < static_cast<std::int32_t>(W->scenes.size())) {
+		W->scenes[static_cast<std::size_t>(si)].active_camera = id;
 		if (scene) { scene->set("activeCamera", value{h}); }
 	}
 	return value{h};
@@ -2089,7 +2091,7 @@ inline value make_camera_arc(const worldptr & W, dom_events & ev, std::string na
 
 inline value make_camera_free(const worldptr & W, std::string name, const objptr & pos,
                               const objptr & scene) {
-	const int id = static_cast<int>(W->cameras.size());
+	const std::int32_t id = static_cast<std::int32_t>(W->cameras.size());
 	auto h = objptr::make();
 	h->set("name", value{std::move(name)});
 	h->set("position", pos ? value{pos} : make_vector3(0, 5, -10));
@@ -2119,16 +2121,16 @@ inline value make_camera_free(const worldptr & W, std::string name, const objptr
 		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 	}
 	W->cameras.push_back(camera_rec{h, 1, false});
-	const int si = index_of(scene, "__scene");
-	if (si >= 0 && si < static_cast<int>(W->scenes.size())) {
-		W->scenes[static_cast<size_t>(si)].active_camera = id;
+	const std::int32_t si = index_of(scene, "__scene");
+	if (si >= 0 && si < static_cast<std::int32_t>(W->scenes.size())) {
+		W->scenes[static_cast<std::size_t>(si)].active_camera = id;
 		if (scene) { scene->set("activeCamera", value{h}); }
 	}
 	return value{h};
 }
 
 inline value make_scene(const worldptr & W, dom_events & ev) {
-	const int id = static_cast<int>(W->scenes.size());
+	const std::int32_t id = static_cast<std::int32_t>(W->scenes.size());
 	auto h = objptr::make();
 	h->set("__scene", value{static_cast<double>(id)});
 	h->set("clearColor", make_color4(0.2, 0.2, 0.3, 1.0));
@@ -2139,7 +2141,7 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 		// refresh scene.deltaTime (scene.meshes is a LIVE getter, see below), then
 		// run the frame's onBeforeRender observers (the game's whole per-frame
 		// logic) and draw
-		if (id >= 0 && id < static_cast<int>(W->scenes.size())) {
+		if (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) {
 			W->scenes[static_cast<std::size_t>(id)].handle->set("deltaTime", value{W->last_dt_ms});
 		}
 		fire_before_render(W, id, cx);
@@ -2159,10 +2161,10 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 	ctjs::attach_accessor(*h, "meshes", 'g', value::function(
 	    [W, id](ctjs::context &, const std::vector<value> &) -> value {
 		    std::vector<value> ms;
-		    if (id >= 0 && id < static_cast<int>(W->scenes.size())) {
+		    if (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) {
 			    scene_rec & sc = W->scenes[static_cast<std::size_t>(id)];
-			    for (int mi : sc.mesh_ids) {
-				    if (mi >= 0 && mi < static_cast<int>(W->meshes.size()) &&
+			    for (std::int32_t mi : sc.mesh_ids) {
+				    if (mi >= 0 && mi < static_cast<std::int32_t>(W->meshes.size()) &&
 				        !W->meshes[static_cast<std::size_t>(mi)].disposed) {
 					    ms.push_back(value{W->meshes[static_cast<std::size_t>(mi)].handle});
 				    }
@@ -2184,14 +2186,14 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 	// registerBeforeRender/registerAfterRender are REAL - the legacy (pre-Observable)
 	// per-frame hooks; they push into the same sinks scene.render() fires.
 	h->set("registerBeforeRender", value::function([W, id](ctjs::context &, const std::vector<value> & a) -> value {
-		if (!a.empty() && a[0].is_function() && id >= 0 && id < static_cast<int>(W->scenes.size())) {
-			W->scenes[static_cast<size_t>(id)].before_render.push_back({W->next_obs++, a[0]});
+		if (!a.empty() && a[0].is_function() && id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) {
+			W->scenes[static_cast<std::size_t>(id)].before_render.push_back({W->next_obs++, a[0]});
 		}
 		return value{};
 	}, "registerBeforeRender"));
 	h->set("registerAfterRender", value::function([W, id](ctjs::context &, const std::vector<value> & a) -> value {
-		if (!a.empty() && a[0].is_function() && id >= 0 && id < static_cast<int>(W->scenes.size())) {
-			W->scenes[static_cast<size_t>(id)].after_render.push_back({W->next_obs++, a[0]});
+		if (!a.empty() && a[0].is_function() && id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) {
+			W->scenes[static_cast<std::size_t>(id)].after_render.push_back({W->next_obs++, a[0]});
 		}
 		return value{};
 	}, "registerAfterRender"));
@@ -2199,9 +2201,9 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 	{
 		auto obs = objptr::make();
 		obs->set("add", value::function([W, id](ctjs::context &, const std::vector<value> & a) -> value {
-			if (a.empty() || !a[0].is_function() || id < 0 || id >= static_cast<int>(W->scenes.size())) { return value{}; }
-			const int oid = W->next_obs++;
-			W->scenes[static_cast<size_t>(id)].after_render.push_back({oid, a[0]});
+			if (a.empty() || !a[0].is_function() || id < 0 || id >= static_cast<std::int32_t>(W->scenes.size())) { return value{}; }
+			const std::int32_t oid = W->next_obs++;
+			W->scenes[static_cast<std::size_t>(id)].after_render.push_back({oid, a[0]});
 			auto ob = objptr::make();
 			ob->set("__obs_id", value{static_cast<double>(oid)});
 			return value{ob};
@@ -2214,11 +2216,11 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 	// the active-mesh list. We rebuild the draw list each frame regardless, so this
 	// only records the flag (scene.__activeMeshesFrozen) for API fidelity.
 	h->set("freezeActiveMeshes", value::function([W, id](ctjs::context &, const std::vector<value> &) -> value {
-		if (id >= 0 && id < static_cast<int>(W->scenes.size())) { W->scenes[static_cast<size_t>(id)].active_meshes_frozen = true; }
+		if (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) { W->scenes[static_cast<std::size_t>(id)].active_meshes_frozen = true; }
 		return value{};
 	}, "freezeActiveMeshes"));
 	h->set("unfreezeActiveMeshes", value::function([W, id](ctjs::context &, const std::vector<value> &) -> value {
-		if (id >= 0 && id < static_cast<int>(W->scenes.size())) { W->scenes[static_cast<size_t>(id)].active_meshes_frozen = false; }
+		if (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) { W->scenes[static_cast<std::size_t>(id)].active_meshes_frozen = false; }
 		return value{};
 	}, "unfreezeActiveMeshes"));
 	// clearCachedVertexData: on real Babylon this frees CPU geometry after GPU
@@ -2240,31 +2242,31 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 
 	// --- model-viewer helpers (glTF loading path)
 	h->set("getMaterialById", value::function([W, id](ctjs::context &, const std::vector<value> & a) -> value {
-		if (id < 0 || id >= static_cast<int>(W->scenes.size()) || a.empty()) { return value{}; }
+		if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size()) || a.empty()) { return value{}; }
 		const std::string name = a[0].to_string();
-		for (const auto & mm : W->scenes[static_cast<size_t>(id)].materials) {
+		for (const auto & mm : W->scenes[static_cast<std::size_t>(id)].materials) {
 			if (mm.first == name) { return value{mm.second}; }
 		}
 		return value{};
 	}, "getMaterialById"));
 	h->set("getMaterialByName", h->find("getMaterialById") ? *h->find("getMaterialById") : value{});
 	h->set("createDefaultCamera", value::function([W, id, &ev](ctjs::context &, const std::vector<value> &) -> value {
-		if (id < 0 || id >= static_cast<int>(W->scenes.size())) { return value{}; }
-		scene_rec & sc = W->scenes[static_cast<size_t>(id)];
+		if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size())) { return value{}; }
+		scene_rec & sc = W->scenes[static_cast<std::size_t>(id)];
 		r3d::vec3 c = r3d::V3(0, 0, 0);
 		double rad = 2.0;
 		if (sc.has_bounds) {
 			c = r3d::V3((sc.bmin[0] + sc.bmax[0]) * 0.5, (sc.bmin[1] + sc.bmax[1]) * 0.5,
 			            (sc.bmin[2] + sc.bmax[2]) * 0.5);
 			rad = 0.001;
-			for (int k = 0; k < 3; ++k) { rad = std::max(rad, sc.bmax[k] - sc.bmin[k]); }
+			for (std::int32_t k = 0; k < 3; ++k) { rad = std::max(rad, sc.bmax[k] - sc.bmin[k]); }
 		}
 		const objptr target = make_vector3(c[0], c[1], c[2]).as_object();
 		return make_camera_arc(W, ev, "default_camera", -std::numbers::pi / 2, std::numbers::pi / 2.5, rad * 2.2, target, sc.handle);
 	}, "createDefaultCamera"));
 	h->set("createDefaultLight", value::function([W, id](ctjs::context &, const std::vector<value> &) -> value {
-		if (id < 0 || id >= static_cast<int>(W->scenes.size())) { return value{}; }
-		return make_light(W, 0, "default_light", r3d::V3(0, 1, 0), W->scenes[static_cast<size_t>(id)].handle);
+		if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size())) { return value{}; }
+		return make_light(W, 0, "default_light", r3d::V3(0, 1, 0), W->scenes[static_cast<std::size_t>(id)].handle);
 	}, "createDefaultLight"));
 	for (const char * nm : {"createDefaultSkybox", "createDefaultEnvironment"}) {
 		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
@@ -2333,7 +2335,7 @@ inline value make_engine(const worldptr & W, dom_events & ev, const std::vector<
 			ctbrowser::node * n = W->target;
 			n->canvas_w = ev.viewport_w;
 			n->canvas_h = ev.viewport_h;
-			n->pixels.assign(static_cast<size_t>(n->canvas_w) * static_cast<size_t>(n->canvas_h), 0xFF000000u);
+			n->pixels.assign(static_cast<std::size_t>(n->canvas_w) * static_cast<std::size_t>(n->canvas_h), 0xFF000000u);
 		}
 		return value{};
 	}, "resize"));
@@ -2352,14 +2354,14 @@ inline value make_engine(const worldptr & W, dom_events & ev, const std::vector<
 	h->set("displayLoadingUI", value::function([W](ctjs::context & cx, const std::vector<value> &) -> value {
 		ctbrowser::node * n = W->target;
 		if (n == nullptr || n->pixels.empty()) { return value{}; }
-		const int cw = n->canvas_w, ch = n->canvas_h;
+		const std::int32_t cw = n->canvas_w, ch = n->canvas_h;
 		std::string text = "Loading...";
 		if (const objptr self = self_of(cx)) {
 			if (const value * t = self->find("loadingUIText"); t != nullptr && !t->is_undefined()) { text = t->to_string(); }
 		}
 		for (uint32_t & px : n->pixels) { px = 0xFF060606u; }
-		const int scale = cw >= 200 ? 2 : 1;
-		const int tw = static_cast<int>(text.size()) * 8 * scale;
+		const std::int32_t scale = cw >= 200 ? 2 : 1;
+		const std::int32_t tw = static_cast<std::int32_t>(text.size()) * 8 * scale;
 		overlay_text(n->pixels.data(), cw, ch, (cw - tw) / 2, ch / 2 - 4 * scale, text, scale, 0xFFCCCCCCu);
 		return value{};
 	}, "displayLoadingUI"));
@@ -2477,7 +2479,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 	}, "CreateBox"));
 	mb.set("CreateSphere", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
 		const objptr o = arg_obj(a, 1);
-		return make_mesh(W, r3d::make_sphere(opt(o, "diameter", 1.0), static_cast<int>(opt(o, "segments", 16))),
+		return make_mesh(W, r3d::make_sphere(opt(o, "diameter", 1.0), static_cast<std::int32_t>(opt(o, "segments", 16))),
 		                 a.empty() ? "" : a[0].to_string(), true, arg_obj(a, 2));
 	}, "CreateSphere"));
 	mb.set("CreateGround", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
@@ -2487,7 +2489,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 	}, "CreateGround"));
 	mb.set("CreateCylinder", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
 		const objptr o = arg_obj(a, 1);
-		return make_mesh(W, r3d::make_cylinder(opt(o, "height", 2.0), opt(o, "diameter", 1.0), static_cast<int>(opt(o, "tessellation", 24))),
+		return make_mesh(W, r3d::make_cylinder(opt(o, "height", 2.0), opt(o, "diameter", 1.0), static_cast<std::int32_t>(opt(o, "tessellation", 24))),
 		                 a.empty() ? "" : a[0].to_string(), true, arg_obj(a, 2));
 	}, "CreateCylinder"));
 	B->set("MeshBuilder", value::object(std::move(mb)));
@@ -2498,7 +2500,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		return make_mesh(W, r3d::make_box(arg_num(a, 1, 1)), a.empty() ? "" : a[0].to_string(), true, arg_obj(a, 2));
 	}, "CreateBox"));
 	mesh.set("CreateSphere", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_mesh(W, r3d::make_sphere(arg_num(a, 2, 1), static_cast<int>(arg_num(a, 1, 16))),
+		return make_mesh(W, r3d::make_sphere(arg_num(a, 2, 1), static_cast<std::int32_t>(arg_num(a, 1, 16))),
 		                 a.empty() ? "" : a[0].to_string(), true, arg_obj(a, 3));
 	}, "CreateSphere"));
 	mesh.set("CreateGround", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
@@ -2560,7 +2562,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		o->set("loop", value{loop});
 		// route through the shell's audio hook (empty in headless builds). The
 		// live track handle is shared between play() and stop() (no rc cycle).
-		auto handle = std::make_shared<int>(0);
+		auto handle = std::make_shared<std::int32_t>(0);
 		o->set("play", value::function([&ev, url, loop, handle](ctjs::context &, const std::vector<value> &) -> value {
 			if (ev.play_audio) { *handle = ev.play_audio(url, loop); }
 			return value{};
@@ -2616,31 +2618,31 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 				r3d::rgba col{1, 1, 1, 1};
 				std::shared_ptr<r3d::texture> mtex; // first baseColor texture found
 				for (const gltf::primitive & p : mdl.prims) {
-					const int off = static_cast<int>(merged.verts.size());
+					const std::int32_t off = static_cast<std::int32_t>(merged.verts.size());
 					for (const r3d::vec3 & v : p.verts) { merged.verts.push_back(v); }
-					for (const std::array<int, 3> & t : p.tris) {
+					for (const std::array<std::int32_t, 3> & t : p.tris) {
 						merged.tris.push_back({t[0] + off, t[1] + off, t[2] + off});
 					}
 					// keep UVs parallel to verts (pad missing prims with zeros)
 					if (p.uvs.size() == p.verts.size()) {
 						for (const r3d::vec2 & uv : p.uvs) { merged.uvs.push_back(uv); }
 					} else {
-						for (size_t k = 0; k < p.verts.size(); ++k) { merged.uvs.push_back(r3d::V2(0, 0)); }
+						for (std::size_t k = 0; k < p.verts.size(); ++k) { merged.uvs.push_back(r3d::V2(0, 0)); }
 					}
-					if (p.material >= 0 && p.material < static_cast<int>(mdl.materials.size())) {
-						col = mdl.materials[static_cast<size_t>(p.material)].base;
-						const int bt = mdl.materials[static_cast<size_t>(p.material)].base_tex;
-						if (!mtex && bt >= 0 && bt < static_cast<int>(mdl.textures.size())) {
-							mtex = r3d::decode_texture(mdl.textures[static_cast<size_t>(bt)].data(),
-							                           mdl.textures[static_cast<size_t>(bt)].size());
+					if (p.material >= 0 && p.material < static_cast<std::int32_t>(mdl.materials.size())) {
+						col = mdl.materials[static_cast<std::size_t>(p.material)].base;
+						const std::int32_t bt = mdl.materials[static_cast<std::size_t>(p.material)].base_tex;
+						if (!mtex && bt >= 0 && bt < static_cast<std::int32_t>(mdl.textures.size())) {
+							mtex = r3d::decode_texture(mdl.textures[static_cast<std::size_t>(bt)].data(),
+							                           mdl.textures[static_cast<std::size_t>(bt)].size());
 						}
 					}
 				}
 				if (!mtex) { merged.uvs.clear(); } // no texture => flat-colour path
-				const int bid = static_cast<int>(W->meshes.size()); // id make_mesh will assign
+				const std::int32_t bid = static_cast<std::int32_t>(W->meshes.size()); // id make_mesh will assign
 				body = make_mesh(W, std::move(merged), base, true, scene);
-				if (mtex && bid < static_cast<int>(W->meshes.size())) {
-					W->meshes[static_cast<size_t>(bid)].tex = mtex;
+				if (mtex && bid < static_cast<std::int32_t>(W->meshes.size())) {
+					W->meshes[static_cast<std::size_t>(bid)].tex = mtex;
 				}
 				auto mh = objptr::make(); // a material so it isn't the default gray
 				mh->set("diffuseColor", make_color3(col.r, col.g, col.b));
@@ -2674,11 +2676,11 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 			const value * mv = self->find("meshes");
 			if (mv == nullptr || !mv->is_array()) { return; }
 			for (const value & m : *mv->as_array()) {
-				const int mi = m.is_object() ? index_of(m.as_object(), "__mesh") : -1;
-				if (mi < 0 || mi >= static_cast<int>(W->meshes.size())) { continue; }
-				const int sid = W->meshes[static_cast<size_t>(mi)].scene_id;
-				if (sid < 0 || sid >= static_cast<int>(W->scenes.size())) { continue; }
-				auto & ids = W->scenes[static_cast<size_t>(sid)].mesh_ids;
+				const std::int32_t mi = m.is_object() ? index_of(m.as_object(), "__mesh") : -1;
+				if (mi < 0 || mi >= static_cast<std::int32_t>(W->meshes.size())) { continue; }
+				const std::int32_t sid = W->meshes[static_cast<std::size_t>(mi)].scene_id;
+				if (sid < 0 || sid >= static_cast<std::int32_t>(W->scenes.size())) { continue; }
+				auto & ids = W->scenes[static_cast<std::size_t>(sid)].mesh_ids;
 				if (add) {
 					if (std::find(ids.begin(), ids.end(), mi) == ids.end()) { ids.push_back(mi); }
 				} else {
@@ -2766,7 +2768,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 					for (const value & e : arr) { if (e.to_number() == mid) { return value{}; } }
 					arr.push_back(value{mid});
 				} else {
-					for (size_t k = 0; k < arr.size(); ++k) {
+					for (std::size_t k = 0; k < arr.size(); ++k) {
 						if (arr[k].to_number() == mid) { arr.erase(arr.begin() + static_cast<std::ptrdiff_t>(k)); break; }
 					}
 				}
@@ -2779,9 +2781,9 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		o->set("removeExcludedMesh", edit_list("excludedMeshes", false));
 		o->set("referenceMeshToUseItsOwnMaterial", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "referenceMeshToUseItsOwnMaterial"));
 		if (a.size() > 1 && a[1].is_object()) {
-			const int si = index_of(a[1].as_object(), "__scene");
-			if (si >= 0 && si < static_cast<int>(W->scenes.size())) {
-				W->scenes[static_cast<size_t>(si)].glow_layers.push_back(o);
+			const std::int32_t si = index_of(a[1].as_object(), "__scene");
+			if (si >= 0 && si < static_cast<std::int32_t>(W->scenes.size())) {
+				W->scenes[static_cast<std::size_t>(si)].glow_layers.push_back(o);
 			}
 		}
 		return value{o};
@@ -2809,9 +2811,9 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		o->set("hasSpecificTrigger", value::function([](ctjs::context &, const std::vector<value> &) { return value{false}; }, "hasSpecificTrigger"));
 		// register with the scene (arg 0) so OnEveryFrameTrigger actions fire per frame
 		if (!a.empty() && a[0].is_object()) {
-			const int si = index_of(a[0].as_object(), "__scene");
-			if (si >= 0 && si < static_cast<int>(W->scenes.size())) {
-				W->scenes[static_cast<size_t>(si)].action_managers.push_back(o);
+			const std::int32_t si = index_of(a[0].as_object(), "__scene");
+			if (si >= 0 && si < static_cast<std::int32_t>(W->scenes.size())) {
+				W->scenes[static_cast<std::size_t>(si)].action_managers.push_back(o);
 			}
 		}
 		return value{o};

@@ -1,6 +1,10 @@
 #ifndef CTBROWSER__AUDIO__HPP
 #define CTBROWSER__AUDIO__HPP
 
+#include <cstdint>
+
+#include <cstddef>
+
 #include "image.hpp" // embedded_asset / find_asset
 #include <SDL3/SDL.h>
 #ifdef CTBROWSER_WITH_MIXER
@@ -52,7 +56,7 @@ public:
 	// play `path` (looping if `loop`); returns a handle for stop(), 0 on failure.
 	// SDL3_mixer's MIX_PlayTrack takes options as an SDL_PropertiesID - loops are
 	// the MIX_PROP_PLAY_LOOPS_NUMBER property (-1 = infinite).
-	int play(const std::string & path, bool loop) {
+	std::int32_t play(const std::string & path, bool loop) {
 		if (!ready()) { return 0; }
 		MIX_Audio * audio = load(path);
 		if (audio == nullptr) { return 0; }
@@ -68,13 +72,13 @@ public:
 		if (options != 0) { SDL_DestroyProperties(options); }
 		if (!ok) { return 0; }
 		for (std::size_t i = 0; i < tracks_.size(); ++i) {
-			if (tracks_[i] == track) { return static_cast<int>(i) + 1; }
+			if (tracks_[i] == track) { return static_cast<std::int32_t>(i) + 1; }
 		}
 		return 0;
 	}
 	// stop a track started by play(); a stale handle (track reused) is a no-op-ish
-	void stop(int handle) {
-		if (handle > 0 && handle <= static_cast<int>(tracks_.size())) {
+	void stop(std::int32_t handle) {
+		if (handle > 0 && handle <= static_cast<std::int32_t>(tracks_.size())) {
 			MIX_StopTrack(tracks_[static_cast<std::size_t>(handle - 1)], 0);
 		}
 	}
@@ -138,7 +142,7 @@ public:
 	// load (cached) and play a WAV. The raw-stream fallback plays ONCE (looping
 	// needs re-queueing; SDL3_mixer handles it) and its handle is a monotonic id
 	// used by stop(); 0 on failure.
-	int play(const std::string & path, bool /*loop*/) {
+	std::int32_t play(const std::string & path, bool /*loop*/) {
 		if (!SDL_WasInit(SDL_INIT_AUDIO)) {
 			if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) { return 0; }
 		}
@@ -148,17 +152,17 @@ public:
 		    SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &wav->spec, nullptr, nullptr);
 		if (stream == nullptr) { return 0; }
 		SDL_SetAudioStreamGain(stream, volume_);
-		SDL_PutAudioStreamData(stream, wav->data, static_cast<int>(wav->len));
+		SDL_PutAudioStreamData(stream, wav->data, static_cast<std::int32_t>(wav->len));
 		SDL_FlushAudioStream(stream);
 		SDL_ResumeAudioStreamDevice(stream);
-		const int id = ++next_id_;
+		const std::int32_t id = ++next_id_;
 		live_.emplace(id, stream);
 		streams_.push_back(stream);
 		reap();
 		return id;
 	}
 	// stop a stream started by play() (best-effort: it may already have reaped)
-	void stop(int handle) {
+	void stop(std::int32_t handle) {
 		const auto it = live_.find(handle);
 		if (it == live_.end()) { return; }
 		SDL_AudioStream * s = it->second;
@@ -203,8 +207,8 @@ private:
 
 	std::map<std::string, wav_data> cache_;
 	std::vector<SDL_AudioStream *> streams_;
-	std::map<int, SDL_AudioStream *> live_; // handle -> stream, for stop()
-	int next_id_ = 0;
+	std::map<std::int32_t, SDL_AudioStream *> live_; // handle -> stream, for stop()
+	std::int32_t next_id_ = 0;
 	float volume_ = 1.0f;
 };
 

@@ -1,6 +1,8 @@
 #ifndef CTBROWSER__EMBED__HPP
 #define CTBROWSER__EMBED__HPP
 
+#include <cstdint>
+
 #ifndef CTBROWSER_IN_A_MODULE
 #include <cstddef>
 #include <span>
@@ -56,14 +58,14 @@ void embed_failed_file_found_but_not_depend_ed(std::string_view path);
 // arguments; statuses 0 = not found, 1 = found, 2 = found but not
 // #depend-ed, 3 = found and empty
 template <typename T>
-consteval std::span<const T> embed_impl(std::string_view path, size_t offset,
+consteval std::span<const T> embed_impl(std::string_view path, std::size_t offset,
                                         bool opportunistic) {
 	static_assert(std::is_same_v<T, unsigned char> || std::is_same_v<T, char> ||
 	                  std::is_same_v<T, std::byte>,
 	              "ctbrowser::embed: T must be unsigned char, char or std::byte");
-	constexpr unsigned int embed_dirs_only = 0u;
-	int status = -1;
-	size_t len = 0;
+	constexpr std::uint32_t embed_dirs_only = 0u;
+	std::int32_t status = -1;
+	std::size_t len = 0;
 	const T * res = nullptr;
 	res = __builtin_std_embed(embed_dirs_only, status, len, res, path.size(), path.data(),
 	                          offset);
@@ -80,14 +82,14 @@ consteval std::span<const T> embed_impl(std::string_view path, size_t offset,
 
 // the file's bytes, or a compile error that names the file and reason
 template <typename T = std::byte>
-consteval std::span<const T> embed(std::string_view path, size_t offset = 0) {
+consteval std::span<const T> embed(std::string_view path, std::size_t offset = 0) {
 	return detail::embed_impl<T>(path, offset, false);
 }
 
 // the file's bytes, or an empty span (missing file, missing #depend) -
 // callers keep a runtime fallback
 template <typename T = std::byte>
-consteval std::span<const T> try_embed(std::string_view path, size_t offset = 0) noexcept {
+consteval std::span<const T> try_embed(std::string_view path, std::size_t offset = 0) noexcept {
 	return detail::embed_impl<T>(path, offset, true);
 }
 

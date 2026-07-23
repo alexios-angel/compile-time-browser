@@ -1,6 +1,10 @@
 #ifndef CTBROWSER__ENGINE__HPP
 #define CTBROWSER__ENGINE__HPP
 
+#include <cstdint>
+
+#include <cstddef>
+
 #include "page.hpp"
 #include "dom.hpp"
 #include "image.hpp"
@@ -42,7 +46,7 @@ public:
 	double mouse_y = 0;
 	bool mouse_down = false;
 	node * open_select_ = nullptr; // the <select> whose popup is currently open
-	int gc_ticks_ = 0;             // frames since the last cycle collection (see tick)
+	std::int32_t gc_ticks_ = 0;             // frames since the last cycle collection (see tick)
 	// the page stylesheet, parsed BY VALUE from the page's <style> text at
 	// construction (linear ctcss::parse_value, not the Earley TYPE path);
 	// `resolve` closes over it. Declared before resolve so it is live first.
@@ -70,7 +74,7 @@ public:
 	      assets(detail::merge_assets(std::move(embedded), auto_assets<Page>())),
 	      images{{}, std::move(image_decoder), &assets},
 	      css_sheet(ctcss::parse_value(Page::style_text())),
-	      resolve([this](const ctcss::element_ref * chain, size_t n, std::string_view prop) {
+	      resolve([this](const ctcss::element_ref * chain, std::size_t n, std::string_view prop) {
 		      return ctcss::query(css_sheet, chain, n, prop);
 	      }),
 	      extra_(extra),
@@ -88,7 +92,7 @@ public:
 
 	// one layout pass for a viewport width; updates node rects (and
 	// the offsetLeft/width properties on exposed element handles) too
-	std::vector<paint_cmd> frame(int viewport_w) {
+	std::vector<paint_cmd> frame(std::int32_t viewport_w) {
 		// advance CSS @keyframes (writes interpolated inline styles) before layout
 		detail::apply_animations(doc, css_sheet, ev.now_ms);
 		std::vector<paint_cmd> cmds = ctbrowser::layout(doc, viewport_w, resolve, measure, ev.viewport_h);
@@ -106,7 +110,7 @@ public:
 	// keep the viewport dimensions current; on a change, refresh
 	// window.innerWidth/innerHeight and dispatch a DOM "resize" event so
 	// scripts (e.g. BabylonJS's engine.resize()) can react
-	void resize_viewport(int w, int h) {
+	void resize_viewport(std::int32_t w, std::int32_t h) {
 		if (ev.viewport_w == w && ev.viewport_h == h) { return; }
 		ev.viewport_w = w;
 		ev.viewport_h = h;
@@ -116,7 +120,7 @@ public:
 
 	// --- event delivery (missing handlers are quietly skipped)
 
-	void click_at(int x, int y) {
+	void click_at(std::int32_t x, std::int32_t y) {
 		if (!doc.root) { return; }
 		node * hit = doc.root->hit_test(x, y);
 		// fire addEventListener('click', ...) AND the .onclick property handler on
@@ -161,8 +165,8 @@ public:
 			deliver(script, "onMouseDown", x, y);
 			ev.dispatch("mousedown", detail::mouse_event(x, y));
 			// a <select> widget (open popup, or a collapsed control) eats the click
-			if (!handle_select_click(static_cast<int>(x), static_cast<int>(y))) {
-				click_at(static_cast<int>(x), static_cast<int>(y));
+			if (!handle_select_click(static_cast<std::int32_t>(x), static_cast<std::int32_t>(y))) {
+				click_at(static_cast<std::int32_t>(x), static_cast<std::int32_t>(y));
 			}
 		} else {
 			ev.dispatch("mouseup", detail::mouse_event(x, y));
@@ -201,10 +205,10 @@ private:
 	// option row selects it (and fires the element's onchange), a click elsewhere
 	// closes it; if none is open, a click on a collapsed control opens it. Returns
 	// true when the widget consumed the click (so it does not also become onClick).
-	bool handle_select_click(int x, int y) {
+	bool handle_select_click(std::int32_t x, std::int32_t y) {
 		if (open_select_ != nullptr) {
 			node * sel = open_select_;
-			int idx = 0;
+			std::int32_t idx = 0;
 			for (const auto & c : sel->children) {
 				if (c->tag != "option") { continue; }
 				node * opt = c.get();

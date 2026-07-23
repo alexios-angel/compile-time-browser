@@ -1,6 +1,10 @@
 #ifndef CTBROWSER__ANIM__HPP
 #define CTBROWSER__ANIM__HPP
 
+#include <cstdint>
+
+#include <cstddef>
+
 #include "dom.hpp"
 #include <ctcss.hpp>
 #ifndef CTBROWSER_IN_A_MODULE
@@ -66,8 +70,8 @@ inline std::string interp_value(std::string_view a, std::string_view b, double t
 	const ctcss::color ca = ctcss::parse_color(a);
 	const ctcss::color cb = ctcss::parse_color(b);
 	if (ca.ok && cb.ok) {
-		const auto L = [t](int x, int y) {
-			int v = static_cast<int>(std::lround(x + (y - x) * t));
+		const auto L = [t](std::int32_t x, std::int32_t y) {
+			std::int32_t v = static_cast<std::int32_t>(std::lround(x + (y - x) * t));
 			return v < 0 ? 0 : v > 255 ? 255 : v;
 		};
 		char buf[8];

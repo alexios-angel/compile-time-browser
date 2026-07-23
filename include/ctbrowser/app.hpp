@@ -1,6 +1,10 @@
 #ifndef CTBROWSER__APP__HPP
 #define CTBROWSER__APP__HPP
 
+#include <cstdint>
+
+#include <cstddef>
+
 #include "engine.hpp"
 #include "font8x8.hpp"
 #include "audio.hpp"
@@ -36,19 +40,19 @@
 namespace ctbrowser {
 
 struct app_options {
-	int width = 800;
-	int height = 600;
-	int max_frames = 0;          // 0 = run until quit; >0 = auto-exit (tests/CI)
+	std::int32_t width = 800;
+	std::int32_t height = 600;
+	std::int32_t max_frames = 0;          // 0 = run until quit; >0 = auto-exit (tests/CI)
 	double fixed_dt = 0;         // 0 = real time; >0 = deterministic timestep
-	int max_fps = 60;            // interactive frame cap (0 = uncapped); browsers
+	std::int32_t max_fps = 60;            // interactive frame cap (0 = uncapped); browsers
 	                             // throttle requestAnimationFrame the same way -
 	                             // fixed-step pages (examples/pong.html) depend on it
-	int logical_w = 0;           // >0: fixed-resolution presentation,
-	int logical_h = 0;           //     letterboxed and scaled to the window
+	std::int32_t logical_w = 0;           // >0: fixed-resolution presentation,
+	std::int32_t logical_h = 0;           //     letterboxed and scaled to the window
 	bool fullscreen = false;
 	bool clear_white = true;     // page background
 	std::string screenshot_path; // capture to PNG...
-	int screenshot_frame = -1;   // ...at this frame (-1 = the last one)
+	std::int32_t screenshot_frame = -1;   // ...at this frame (-1 = the last one)
 	// a TrueType font for page text (SDL3_ttf builds); "" probes common
 	// system locations and falls back to the embedded 8x8 font
 	std::string font_path;
@@ -86,8 +90,8 @@ inline void draw_text(SDL_Renderer * r, const paint_cmd & cmd) {
 	float pen_x = static_cast<float>(cmd.x);
 	const float pen_y = static_cast<float>(cmd.y);
 	for (const char32_t c : cmd.text) { // UTF-32 code points
-		for (int row = 0; row < 8; ++row) {
-			for (int col = 0; col < 8; ++col) {
+		for (std::int32_t row = 0; row < 8; ++row) {
+			for (std::int32_t col = 0; col < 8; ++col) {
 				if (!glyph_pixel(c, row, col)) { continue; }
 				const SDL_FRect px{pen_x + static_cast<float>(col) * scale,
 				                   pen_y + static_cast<float>(row) * scale, scale, scale};
@@ -105,14 +109,14 @@ inline void draw_text(SDL_Renderer * r, const paint_cmd & cmd) {
 struct ttf_text {
 	SDL_Renderer * renderer = nullptr;
 	std::string path;
-	std::map<int, TTF_Font *> fonts;
-	std::map<std::pair<std::string, int>, SDL_Texture *> cache;
+	std::map<std::int32_t, TTF_Font *> fonts;
+	std::map<std::pair<std::string, std::int32_t>, SDL_Texture *> cache;
 	const void * mem = nullptr; // embedded font bytes (std::embed); opened via IO
-	size_t mem_size = 0;
+	std::size_t mem_size = 0;
 
 	bool ok() const { return mem != nullptr || !path.empty(); }
 
-	TTF_Font * font(int px) {
+	TTF_Font * font(std::int32_t px) {
 		if (const auto it = fonts.find(px); it != fonts.end()) { return it->second; }
 		// a fresh IO per size; closeio=true has TTF read the font fully in and
 		// close it, so the embedded bytes need only outlive this call
@@ -122,11 +126,11 @@ struct ttf_text {
 		fonts.emplace(px, f);
 		return f;
 	}
-	int measure(std::u32string_view text, int px) {
+	std::int32_t measure(std::u32string_view text, std::int32_t px) {
 		TTF_Font * f = font(px);
 		const std::string utf8 = utf32_to_utf8(text); // SDL_ttf takes UTF-8
-		if (f == nullptr) { return static_cast<int>(text.size()) * px; }
-		int w = 0, h = 0;
+		if (f == nullptr) { return static_cast<std::int32_t>(text.size()) * px; }
+		std::int32_t w = 0, h = 0;
 		TTF_GetStringSize(f, utf8.data(), utf8.size(), &w, &h);
 		return w;
 	}
@@ -135,7 +139,7 @@ struct ttf_text {
 		if (f == nullptr) { return; }
 		SDL_Texture * t = nullptr;
 		const std::string utf8 = utf32_to_utf8(cmd.text); // SDL_ttf takes UTF-8
-		const std::pair<std::string, int> key{utf8, cmd.font_px};
+		const std::pair<std::string, std::int32_t> key{utf8, cmd.font_px};
 		if (const auto it = cache.find(key); it != cache.end()) {
 			t = it->second;
 		} else {
@@ -188,7 +192,7 @@ inline std::string probe_font() {
 
 struct canvas_textures {
 	SDL_Renderer * renderer = nullptr;
-	struct entry { SDL_Texture * tex; int w, h; };
+	struct entry { SDL_Texture * tex; std::int32_t w, h; };
 	std::map<const node *, entry> cache;
 
 	SDL_Texture * of(node * n) {
@@ -214,7 +218,7 @@ struct canvas_textures {
 } // namespace detail
 
 // run a page as a windowed application; returns the process exit code
-template <typename Page> int run_app(app_options opts = {}) {
+template <typename Page> std::int32_t run_app(app_options opts = {}) {
 	if (opts.max_frames == 0) {
 		if (const char * env = SDL_getenv("CTBROWSER_TEST_FRAMES")) {
 			opts.max_frames = SDL_atoi(env);
@@ -258,14 +262,14 @@ template <typename Page> int run_app(app_options opts = {}) {
 		image out;
 		out.w = argb->w;
 		out.h = argb->h;
-		out.pixels.resize(static_cast<size_t>(argb->w) * static_cast<size_t>(argb->h));
-		for (int y = 0; y < argb->h; ++y) {
+		out.pixels.resize(static_cast<std::size_t>(argb->w) * static_cast<std::size_t>(argb->h));
+		for (std::int32_t y = 0; y < argb->h; ++y) {
 			const uint32_t * row = reinterpret_cast<const uint32_t *>(
 			    static_cast<const unsigned char *>(argb->pixels) +
-			    static_cast<size_t>(y) * static_cast<size_t>(argb->pitch));
-			for (int x = 0; x < argb->w; ++x) {
-				out.pixels[static_cast<size_t>(y) * static_cast<size_t>(argb->w) +
-				           static_cast<size_t>(x)] = row[x];
+			    static_cast<std::size_t>(y) * static_cast<std::size_t>(argb->pitch));
+			for (std::int32_t x = 0; x < argb->w; ++x) {
+				out.pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(argb->w) +
+				           static_cast<std::size_t>(x)] = row[x];
 			}
 		}
 		SDL_DestroySurface(argb);
@@ -312,11 +316,11 @@ template <typename Page> int run_app(app_options opts = {}) {
 
 	// route BABYLON.Sound (babylon.hpp) through the mixer: it calls these hooks
 	// with the sound's url; the resolver maps it to an embedded asset or a file
-	e.ev.play_audio = [&mixer](const std::string & url, bool loop) -> int {
+	e.ev.play_audio = [&mixer](const std::string & url, bool loop) -> std::int32_t {
 		const std::string resolved = detail::resolve_asset(url);
 		return resolved.empty() ? 0 : mixer.play(resolved, loop);
 	};
-	e.ev.stop_audio = [&mixer](int handle) { mixer.stop(handle); };
+	e.ev.stop_audio = [&mixer](std::int32_t handle) { mixer.stop(handle); };
 	e.ev.set_audio_volume = [&mixer](float v) { mixer.set_volume(v); };
 
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -376,7 +380,7 @@ template <typename Page> int run_app(app_options opts = {}) {
 			ttf.path = !face.empty() ? face : detail::probe_font();
 		}
 		if (ttf.ok()) {
-			e.measure = [&ttf](std::u32string_view text, int px) {
+			e.measure = [&ttf](std::u32string_view text, std::int32_t px) {
 				return ttf.measure(text, px);
 			};
 		}
@@ -387,7 +391,7 @@ template <typename Page> int run_app(app_options opts = {}) {
 	std::string shown_title = e.title;
 	Uint64 last = SDL_GetTicks();
 	Uint64 frame_start_ns = SDL_GetTicksNS();
-	int frame = 0;
+	std::int32_t frame = 0;
 	bool running = true;
 
 	bool in_render = false;
@@ -406,7 +410,7 @@ template <typename Page> int run_app(app_options opts = {}) {
 		// a size change fires a DOM "resize" event so scripts can react
 		// (BabylonJS: window.addEventListener('resize', ()=>engine.resize()))
 		{
-			int vw = opts.width, vh = opts.height;
+			std::int32_t vw = opts.width, vh = opts.height;
 			if (opts.logical_w > 0) { vw = opts.logical_w; vh = opts.logical_h; }
 			else { SDL_GetWindowSize(window, &vw, &vh); }
 			e.resize_viewport(vw, vh);
@@ -423,8 +427,8 @@ template <typename Page> int run_app(app_options opts = {}) {
 			SDL_SetWindowTitle(window, shown_title.c_str());
 		}
 
-		int view_w = opts.width;
-		int view_h = opts.height;
+		std::int32_t view_w = opts.width;
+		std::int32_t view_h = opts.height;
 		if (opts.logical_w > 0) {
 			view_w = opts.logical_w;
 			view_h = opts.logical_h;

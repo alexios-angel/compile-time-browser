@@ -1,6 +1,8 @@
 #ifndef CTBROWSER__FETCH__HPP
 #define CTBROWSER__FETCH__HPP
 
+#include <cstdint>
+
 #ifndef CTBROWSER_IN_A_MODULE
 #include <cstddef>
 #include <span>
@@ -62,9 +64,9 @@ consteval std::span<const T> fetch_impl(std::string_view url, std::string_view s
 	static_assert(std::is_same_v<T, unsigned char> || std::is_same_v<T, char> ||
 	                  std::is_same_v<T, std::byte>,
 	              "ctbrowser::fetch: T must be unsigned char, char or std::byte");
-	constexpr unsigned int absolute_locus = 0u; // a URL has no quoted-search anchor
-	int status = -1;
-	size_t len = 0;
+	constexpr std::uint32_t absolute_locus = 0u; // a URL has no quoted-search anchor
+	std::int32_t status = -1;
+	std::size_t len = 0;
 	const T * res = nullptr;
 	if (sha256_hex.empty()) {
 		res = __builtin_std_fetch(absolute_locus, status, len, res, url.size(), url.data());

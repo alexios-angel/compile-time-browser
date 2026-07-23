@@ -1,6 +1,10 @@
 #ifndef CTBROWSER__SCRIPT__HPP
 #define CTBROWSER__SCRIPT__HPP
 
+#include <cstdint>
+
+#include <cstddef>
+
 #include "dom.hpp"
 #include "image.hpp"
 #include "font8x8.hpp"
@@ -97,8 +101,8 @@ struct dom_events {
 	// audio backend the SDL shell installs (empty in headless/engine-only
 	// builds): play_audio(url, loop) -> handle, stop_audio(handle), volume.
 	// BABYLON's Sound routes here (babylon.hpp), the shell wires it to the mixer.
-	std::function<int(const std::string &, bool)> play_audio;
-	std::function<void(int)> stop_audio;
+	std::function<std::int32_t(const std::string &, bool)> play_audio;
+	std::function<void(std::int32_t)> stop_audio;
 	std::function<void(float)> set_audio_volume;
 	// every element handle carries "__node", an index here - how one
 	// handle's native (appendChild) resolves ANOTHER handle's node
@@ -112,7 +116,7 @@ struct dom_events {
 		if (!handle.is_object()) { return nullptr; }
 		const ctjs::value * id = handle.as_object()->find("__node");
 		if (id == nullptr || !id->is_number()) { return nullptr; }
-		const size_t i = static_cast<size_t>(id->as_number());
+		const std::size_t i = static_cast<std::size_t>(id->as_number());
 		return i < handle_nodes.size() ? handle_nodes[i] : nullptr;
 	}
 	// element handles whose layout-derived properties refresh per frame
@@ -130,8 +134,8 @@ struct dom_events {
 	std::map<node *, ctjs::value> onclick_handlers;
 	// the window object + the viewport the engine last laid out
 	ctjs::rc<ctjs::object_t> window_obj;
-	int viewport_w = 0;
-	int viewport_h = 0;
+	std::int32_t viewport_w = 0;
+	std::int32_t viewport_h = 0;
 
 	void reset() {
 		cx = nullptr;
@@ -151,9 +155,9 @@ struct dom_events {
 	// fired entry out first; the round cap keeps a 0ms-retimer chain
 	// from wedging the frame
 	void run_timers() {
-		for (int rounds = 0; rounds < 64; ++rounds) {
+		for (std::int32_t rounds = 0; rounds < 64; ++rounds) {
 			bool fired = false;
-			for (size_t i = 0; i < timers.size(); ++i) {
+			for (std::size_t i = 0; i < timers.size(); ++i) {
 				if (timers[i].due_ms > now_ms) { continue; }
 				timer_entry t = timers[i];
 				if (t.repeat) {
@@ -170,7 +174,7 @@ struct dom_events {
 	}
 
 	void clear_timer(double id) {
-		for (size_t i = 0; i < timers.size(); ++i) {
+		for (std::size_t i = 0; i < timers.size(); ++i) {
 			if (timers[i].id == id) {
 				timers.erase(timers.begin() + static_cast<ptrdiff_t>(i));
 				return;
@@ -360,11 +364,11 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 			          if (key == "id") { n->id = val; }
 			          if (key == "class") { n->classes = val; }
 			          if (n->is_canvas() && (key == "width" || key == "height")) {
-				          const int d = parse_int_attr(val, 0);
+				          const std::int32_t d = parse_int_attr(val, 0);
 				          if (key == "width") { n->canvas_w = d; }
 				          else { n->canvas_h = d; }
-				          n->pixels.assign(static_cast<size_t>(n->canvas_w) *
-				                               static_cast<size_t>(n->canvas_h),
+				          n->pixels.assign(static_cast<std::size_t>(n->canvas_w) *
+				                               static_cast<std::size_t>(n->canvas_h),
 				                           0x00000000u);
 			          }
 		          }
@@ -553,7 +557,7 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 			    node * sn = ev->node_of(cx.current_this);
 			    if (sn != nullptr && !a.empty()) {
 				    const std::string want = a[0].to_string();
-				    for (int i = 0; i < sn->option_count(); ++i) {
+				    for (std::int32_t i = 0; i < sn->option_count(); ++i) {
 					    node * opt = sn->nth_option(i);
 					    if (opt != nullptr && std::string{opt->attribute("value")} == want) { sn->select_index = i; break; }
 				    }
@@ -568,7 +572,7 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 		ctjs::attach_accessor(o, "selectedIndex", 's', ctjs::value::function(
 		    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
 			    node * sn = ev->node_of(cx.current_this);
-			    if (sn != nullptr && !a.empty()) { sn->select_index = static_cast<int>(a[0].to_number()); }
+			    if (sn != nullptr && !a.empty()) { sn->select_index = static_cast<std::int32_t>(a[0].to_number()); }
 			    return ctjs::value{};
 		    }, "set selectedIndex"));
 		// .onchange: captured on the node registry; the engine fires it on a pick
@@ -590,7 +594,7 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 			    node * on = ev->node_of(cx.current_this);
 			    if (on != nullptr && on->parent != nullptr && on->parent->is_select() && !a.empty() && a[0].truthy()) {
 				    node * sn = on->parent;
-				    int k = 0;
+				    std::int32_t k = 0;
 				    for (const auto & c : sn->children) {
 					    if (c->tag == "option") {
 						    if (c.get() == on) { sn->select_index = k; break; }
@@ -605,7 +609,7 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 			    node * on = ev->node_of(cx.current_this);
 			    if (on == nullptr || on->parent == nullptr || !on->parent->is_select()) { return ctjs::value{false}; }
 			    node * sn = on->parent;
-			    int k = 0;
+			    std::int32_t k = 0;
 			    for (const auto & c : sn->children) {
 				    if (c->tag == "option") {
 					    if (c.get() == on) { return ctjs::value{k == sn->selected_option()}; }
@@ -639,39 +643,39 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 		}
 		return 0xFF000000u;
 	};
-	const auto put = [n](int x, int y, uint32_t argb) {
+	const auto put = [n](std::int32_t x, std::int32_t y, uint32_t argb) {
 		if (x >= 0 && y >= 0 && x < n->canvas_w && y < n->canvas_h) {
-			n->pixels[static_cast<size_t>(y) * static_cast<size_t>(n->canvas_w) +
-			          static_cast<size_t>(x)] = argb;
+			n->pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(n->canvas_w) +
+			          static_cast<std::size_t>(x)] = argb;
 		}
 	};
-	const auto fill = [n](int x, int y, int w, int h, uint32_t argb) {
+	const auto fill = [n](std::int32_t x, std::int32_t y, std::int32_t w, std::int32_t h, uint32_t argb) {
 		if (n->pixels.empty()) { return; }
-		const int x0 = x < 0 ? 0 : x;
-		const int y0 = y < 0 ? 0 : y;
-		const int x1 = x + w > n->canvas_w ? n->canvas_w : x + w;
-		const int y1 = y + h > n->canvas_h ? n->canvas_h : y + h;
-		for (int py = y0; py < y1; ++py) {
-			for (int px = x0; px < x1; ++px) {
-				n->pixels[static_cast<size_t>(py) * static_cast<size_t>(n->canvas_w) +
-				          static_cast<size_t>(px)] = argb;
+		const std::int32_t x0 = x < 0 ? 0 : x;
+		const std::int32_t y0 = y < 0 ? 0 : y;
+		const std::int32_t x1 = x + w > n->canvas_w ? n->canvas_w : x + w;
+		const std::int32_t y1 = y + h > n->canvas_h ? n->canvas_h : y + h;
+		for (std::int32_t py = y0; py < y1; ++py) {
+			for (std::int32_t px = x0; px < x1; ++px) {
+				n->pixels[static_cast<std::size_t>(py) * static_cast<std::size_t>(n->canvas_w) +
+				          static_cast<std::size_t>(px)] = argb;
 			}
 		}
 	};
 	// nearest-neighbour blit with alpha test (a == 0 skips the pixel)
-	const auto blit = [n, images, put](int handle, int sx, int sy, int sw, int sh, int dx,
-	                                   int dy, int dw, int dh) {
+	const auto blit = [n, images, put](std::int32_t handle, std::int32_t sx, std::int32_t sy, std::int32_t sw, std::int32_t sh, std::int32_t dx,
+	                                   std::int32_t dy, std::int32_t dw, std::int32_t dh) {
 		const image * im = images->get(handle);
 		if (im == nullptr || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) { return; }
-		for (int py = 0; py < dh; ++py) {
-			const int src_y = sy + py * sh / dh;
+		for (std::int32_t py = 0; py < dh; ++py) {
+			const std::int32_t src_y = sy + py * sh / dh;
 			if (src_y < 0 || src_y >= im->h) { continue; }
-			for (int px = 0; px < dw; ++px) {
-				const int src_x = sx + px * sw / dw;
+			for (std::int32_t px = 0; px < dw; ++px) {
+				const std::int32_t src_x = sx + px * sw / dw;
 				if (src_x < 0 || src_x >= im->w) { continue; }
-				const uint32_t argb = im->pixels[static_cast<size_t>(src_y) *
-				                                     static_cast<size_t>(im->w) +
-				                                 static_cast<size_t>(src_x)];
+				const uint32_t argb = im->pixels[static_cast<std::size_t>(src_y) *
+				                                     static_cast<std::size_t>(im->w) +
+				                                 static_cast<std::size_t>(src_x)];
 				if ((argb >> 24) == 0) { continue; }
 				put(dx + px, dy + py, argb);
 			}
@@ -681,10 +685,10 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	ctx->set("fillRect", ctjs::value::function(
 	                         [style_of, fill](ctjs::context &, const std::vector<ctjs::value> & a) {
 		                         if (a.size() >= 4) {
-			                         fill(static_cast<int>(a[0].to_number()),
-			                              static_cast<int>(a[1].to_number()),
-			                              static_cast<int>(a[2].to_number()),
-			                              static_cast<int>(a[3].to_number()), style_of());
+			                         fill(static_cast<std::int32_t>(a[0].to_number()),
+			                              static_cast<std::int32_t>(a[1].to_number()),
+			                              static_cast<std::int32_t>(a[2].to_number()),
+			                              static_cast<std::int32_t>(a[3].to_number()), style_of());
 		                         }
 		                         return ctjs::value{};
 	                         },
@@ -698,8 +702,8 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	ctx->set("putPixel", ctjs::value::function(
 	                         [put, style_of](ctjs::context &, const std::vector<ctjs::value> & a) {
 		                         if (a.size() >= 2) {
-			                         put(static_cast<int>(a[0].to_number()),
-			                             static_cast<int>(a[1].to_number()), style_of());
+			                         put(static_cast<std::int32_t>(a[0].to_number()),
+			                             static_cast<std::int32_t>(a[1].to_number()), style_of());
 		                         }
 		                         return ctjs::value{};
 	                         },
@@ -708,10 +712,10 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	ctx->set("clearRect", ctjs::value::function(
 	                          [fill](ctjs::context &, const std::vector<ctjs::value> & a) {
 		                          if (a.size() >= 4) {
-			                          fill(static_cast<int>(a[0].to_number()),
-			                               static_cast<int>(a[1].to_number()),
-			                               static_cast<int>(a[2].to_number()),
-			                               static_cast<int>(a[3].to_number()), 0x00000000u);
+			                          fill(static_cast<std::int32_t>(a[0].to_number()),
+			                               static_cast<std::int32_t>(a[1].to_number()),
+			                               static_cast<std::int32_t>(a[2].to_number()),
+			                               static_cast<std::int32_t>(a[3].to_number()), 0x00000000u);
 		                          }
 		                          return ctjs::value{};
 	                          },
@@ -720,10 +724,10 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	         ctjs::value::function(
 	             [fill, stroke_of](ctjs::context &, const std::vector<ctjs::value> & a) {
 		             if (a.size() >= 4) {
-			             const int x = static_cast<int>(a[0].to_number());
-			             const int y = static_cast<int>(a[1].to_number());
-			             const int w = static_cast<int>(a[2].to_number());
-			             const int h = static_cast<int>(a[3].to_number());
+			             const std::int32_t x = static_cast<std::int32_t>(a[0].to_number());
+			             const std::int32_t y = static_cast<std::int32_t>(a[1].to_number());
+			             const std::int32_t w = static_cast<std::int32_t>(a[2].to_number());
+			             const std::int32_t h = static_cast<std::int32_t>(a[3].to_number());
 			             const uint32_t c = stroke_of();
 			             fill(x, y, w, 1, c);
 			             fill(x, y + h - 1, w, 1, c);
@@ -776,14 +780,14 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 			}
 		}
 		if (miny > maxy) { return; }
-		for (int y = static_cast<int>(std::floor(miny)); y <= static_cast<int>(std::ceil(maxy));
+		for (std::int32_t y = static_cast<std::int32_t>(std::floor(miny)); y <= static_cast<std::int32_t>(std::ceil(maxy));
 		     ++y) {
 			const double sy = y + 0.5;
 			std::vector<double> xs;
 			for (const auto & s : st->subs) {
-				const size_t n = s.pts.size();
+				const std::size_t n = s.pts.size();
 				if (n < 2) { continue; }
-				for (size_t i = 0; i < n; ++i) {
+				for (std::size_t i = 0; i < n; ++i) {
 					const auto [x1, y1] = s.pts[i];
 					const auto [x2, y2] = s.pts[(i + 1) % n];
 					if ((y1 <= sy) == (y2 <= sy)) { continue; }
@@ -791,9 +795,9 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 				}
 			}
 			std::sort(xs.begin(), xs.end());
-			for (size_t i = 0; i + 1 < xs.size(); i += 2) {
-				for (int x = static_cast<int>(std::ceil(xs[i] - 0.5));
-				     x < static_cast<int>(std::ceil(xs[i + 1] - 0.5)) + 1; ++x) {
+			for (std::size_t i = 0; i + 1 < xs.size(); i += 2) {
+				for (std::int32_t x = static_cast<std::int32_t>(std::ceil(xs[i] - 0.5));
+				     x < static_cast<std::int32_t>(std::ceil(xs[i + 1] - 0.5)) + 1; ++x) {
 					put(x, y, col);
 				}
 			}
@@ -808,12 +812,12 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 		if (len == 0) { return; }
 		const double nx = -dy / len * (w / 2);
 		const double ny = dx / len * (w / 2);
-		const int minx = static_cast<int>(std::floor(std::min({x1 - std::fabs(nx), x2 - std::fabs(nx)})));
-		const int maxx = static_cast<int>(std::ceil(std::max({x1 + std::fabs(nx), x2 + std::fabs(nx)})));
-		const int miny = static_cast<int>(std::floor(std::min({y1 - std::fabs(ny) - w, y2 - std::fabs(ny) - w})));
-		const int maxy = static_cast<int>(std::ceil(std::max({y1 + std::fabs(ny) + w, y2 + std::fabs(ny) + w})));
-		for (int y = miny; y <= maxy; ++y) {
-			for (int x = minx; x <= maxx; ++x) {
+		const std::int32_t minx = static_cast<std::int32_t>(std::floor(std::min({x1 - std::fabs(nx), x2 - std::fabs(nx)})));
+		const std::int32_t maxx = static_cast<std::int32_t>(std::ceil(std::max({x1 + std::fabs(nx), x2 + std::fabs(nx)})));
+		const std::int32_t miny = static_cast<std::int32_t>(std::floor(std::min({y1 - std::fabs(ny) - w, y2 - std::fabs(ny) - w})));
+		const std::int32_t maxy = static_cast<std::int32_t>(std::ceil(std::max({y1 + std::fabs(ny) + w, y2 + std::fabs(ny) + w})));
+		for (std::int32_t y = miny; y <= maxy; ++y) {
+			for (std::int32_t x = minx; x <= maxx; ++x) {
 				// distance from pixel center to the segment
 				const double px = x + 0.5 - x1;
 				const double py = y + 0.5 - y1;
@@ -938,10 +942,10 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 			                    const bool ccw = a.size() >= 6 && a[5].truthy();
 			                    if (!ccw && t1 < t0) { t1 += 6.283185307179586; }
 			                    if (ccw && t0 < t1) { t0 += 6.283185307179586; }
-			                    const int steps =
-			                        std::max(8, static_cast<int>(std::fabs(t1 - t0) * r / 2));
+			                    const std::int32_t steps =
+			                        std::max(8, static_cast<std::int32_t>(std::fabs(t1 - t0) * r / 2));
 			                    auto & s = st->cur();
-			                    for (int i = 0; i <= steps; ++i) {
+			                    for (std::int32_t i = 0; i <= steps; ++i) {
 				                    const double t = t0 + (t1 - t0) * i / steps;
 				                    s.pts.push_back(st->tx(cx + r * std::cos(t),
 				                                           cy + r * std::sin(t)));
@@ -964,8 +968,8 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 		             const uint32_t col = stroke_of();
 		             const double w = num_prop("lineWidth", 1.0);
 		             for (const auto & s : st->subs) {
-			             const size_t n = s.pts.size();
-			             for (size_t i = 0; i + 1 < n; ++i) {
+			             const std::size_t n = s.pts.size();
+			             for (std::size_t i = 0; i + 1 < n; ++i) {
 				             thick_seg(s.pts[i].first, s.pts[i].second,
 				                       s.pts[i + 1].first, s.pts[i + 1].second, w, col);
 			             }
@@ -981,17 +985,17 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	         ctjs::value::function(
 	             [ctx](ctjs::context &, const std::vector<ctjs::value> & a) {
 		             const std::string text = a.empty() ? "" : a[0].to_string();
-		             int px = 10;
+		             std::int32_t px = 10;
 		             if (const ctjs::value * fv = ctx->find("font")) {
 			             const std::string spec = fv->to_string();
-			             int v = 0;
-			             for (size_t i = 0; i < spec.size() && spec[i] >= '0' && spec[i] <= '9';
+			             std::int32_t v = 0;
+			             for (std::size_t i = 0; i < spec.size() && spec[i] >= '0' && spec[i] <= '9';
 			                  ++i) {
 				             v = v * 10 + (spec[i] - '0');
 			             }
 			             if (v > 0) { px = v; }
 		             }
-		             const int scale = px >= 8 ? px / 8 : 1;
+		             const std::int32_t scale = px >= 8 ? px / 8 : 1;
 		             ctjs::object_t m;
 		             m.set("width", ctjs::value{static_cast<double>(text.size()) * 8.0 *
 		                                        static_cast<double>(scale)});
@@ -1004,12 +1008,12 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	         ctjs::value::function(
 	             [put, style_of](ctjs::context &, const std::vector<ctjs::value> & a) {
 		             if (a.size() >= 3) {
-			             const int cx = static_cast<int>(a[0].to_number());
-			             const int cy = static_cast<int>(a[1].to_number());
-			             const int r = static_cast<int>(a[2].to_number());
+			             const std::int32_t cx = static_cast<std::int32_t>(a[0].to_number());
+			             const std::int32_t cy = static_cast<std::int32_t>(a[1].to_number());
+			             const std::int32_t r = static_cast<std::int32_t>(a[2].to_number());
 			             const uint32_t c = style_of();
-			             for (int y = -r; y <= r; ++y) {
-				             for (int x = -r; x <= r; ++x) {
+			             for (std::int32_t y = -r; y <= r; ++y) {
+				             for (std::int32_t x = -r; x <= r; ++x) {
 					             if (x * x + y * y <= r * r) { put(cx + x, cy + y, c); }
 				             }
 			             }
@@ -1025,27 +1029,27 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	             [ctx, put, style_of](ctjs::context &, const std::vector<ctjs::value> & a) {
 		             if (a.size() >= 3) {
 			             const std::string text = a[0].to_string();
-			             int px = 0;
+			             std::int32_t px = 0;
 			             if (const ctjs::value * f = ctx->find("font")) {
 				             const std::string spec = f->to_string();
-				             for (size_t i = 0;
+				             for (std::size_t i = 0;
 				                  i < spec.size() && spec[i] >= '0' && spec[i] <= '9';
 				                  ++i) {
 					             px = px * 10 + (spec[i] - '0');
 				             }
 			             }
-			             const int scale = px >= 8 ? px / 8 : 1;
-			             const int x = static_cast<int>(a[1].to_number());
-			             const int y = static_cast<int>(a[2].to_number()) - 8 * scale;
+			             const std::int32_t scale = px >= 8 ? px / 8 : 1;
+			             const std::int32_t x = static_cast<std::int32_t>(a[1].to_number());
+			             const std::int32_t y = static_cast<std::int32_t>(a[2].to_number()) - 8 * scale;
 			             const uint32_t c = style_of();
-			             int pen = x;
-			             for (size_t ci = 0; ci < text.size();) { // decode UTF-8
+			             std::int32_t pen = x;
+			             for (std::size_t ci = 0; ci < text.size();) { // decode UTF-8
 				             const char32_t ch = ctbrowser::utf8_next(text, ci);
-				             for (int row = 0; row < 8; ++row) {
-					             for (int col = 0; col < 8; ++col) {
+				             for (std::int32_t row = 0; row < 8; ++row) {
+					             for (std::int32_t col = 0; col < 8; ++col) {
 						             if (!glyph_pixel(ch, row, col)) { continue; }
-						             for (int sy = 0; sy < scale; ++sy) {
-							             for (int sx = 0; sx < scale; ++sx) {
+						             for (std::int32_t sy = 0; sy < scale; ++sy) {
+							             for (std::int32_t sx = 0; sx < scale; ++sx) {
 								             put(pen + col * scale + sx,
 								                 y + row * scale + sy, c);
 							             }
@@ -1062,16 +1066,16 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	         ctjs::value::function(
 	             [images, blit](ctjs::context &, const std::vector<ctjs::value> & a) {
 		             if (a.size() >= 3) {
-			             const int handle = static_cast<int>(a[0].to_number());
+			             const std::int32_t handle = static_cast<std::int32_t>(a[0].to_number());
 			             const image * im = images->get(handle);
 			             if (im != nullptr) {
-				             const int dw = a.size() >= 5 ? static_cast<int>(a[3].to_number())
+				             const std::int32_t dw = a.size() >= 5 ? static_cast<std::int32_t>(a[3].to_number())
 				                                          : im->w;
-				             const int dh = a.size() >= 5 ? static_cast<int>(a[4].to_number())
+				             const std::int32_t dh = a.size() >= 5 ? static_cast<std::int32_t>(a[4].to_number())
 				                                          : im->h;
 				             blit(handle, 0, 0, im->w, im->h,
-				                  static_cast<int>(a[1].to_number()),
-				                  static_cast<int>(a[2].to_number()), dw, dh);
+				                  static_cast<std::int32_t>(a[1].to_number()),
+				                  static_cast<std::int32_t>(a[2].to_number()), dw, dh);
 			             }
 		             }
 		             return ctjs::value{};
@@ -1082,15 +1086,15 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	         ctjs::value::function(
 	             [blit](ctjs::context &, const std::vector<ctjs::value> & a) {
 		             if (a.size() >= 9) {
-			             blit(static_cast<int>(a[0].to_number()),
-			                  static_cast<int>(a[1].to_number()),
-			                  static_cast<int>(a[2].to_number()),
-			                  static_cast<int>(a[3].to_number()),
-			                  static_cast<int>(a[4].to_number()),
-			                  static_cast<int>(a[5].to_number()),
-			                  static_cast<int>(a[6].to_number()),
-			                  static_cast<int>(a[7].to_number()),
-			                  static_cast<int>(a[8].to_number()));
+			             blit(static_cast<std::int32_t>(a[0].to_number()),
+			                  static_cast<std::int32_t>(a[1].to_number()),
+			                  static_cast<std::int32_t>(a[2].to_number()),
+			                  static_cast<std::int32_t>(a[3].to_number()),
+			                  static_cast<std::int32_t>(a[4].to_number()),
+			                  static_cast<std::int32_t>(a[5].to_number()),
+			                  static_cast<std::int32_t>(a[6].to_number()),
+			                  static_cast<std::int32_t>(a[7].to_number()),
+			                  static_cast<std::int32_t>(a[8].to_number()));
 		             }
 		             return ctjs::value{};
 	             },
@@ -1370,7 +1374,7 @@ inline std::vector<ctjs::binding> dom_bindings(document & doc, std::string & tit
 		                   [body](ctjs::context &, const std::vector<ctjs::value> &)
 		                       -> ctjs::value {
 			                   try {
-				                   size_t i = 0;
+				                   std::size_t i = 0;
 				                   ctjs::value parsed = ctjs::detail::json_value(body, i, 0);
 				                   ctjs::detail::json_ws(body, i);
 				                   if (i != body.size()) { ctjs::detail::json_fail(i); }

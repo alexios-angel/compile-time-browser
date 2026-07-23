@@ -1,6 +1,8 @@
 #ifndef CTBROWSER__DOM__HPP
 #define CTBROWSER__DOM__HPP
 
+#include <cstddef>
+
 #include <cthtml.hpp>
 #include <ctcss.hpp>
 #ifndef CTBROWSER_IN_A_MODULE
@@ -70,23 +72,23 @@ struct node {
 	style_map inline_style;
 
 	// <canvas> payload: 0xAARRGGBB pixels, drawn by scripts
-	int canvas_w = 0;
-	int canvas_h = 0;
+	std::int32_t canvas_w = 0;
+	std::int32_t canvas_h = 0;
 	std::vector<uint32_t> pixels;
 
 	// layout output (viewport coordinates), refreshed every frame
-	int x = 0, y = 0, w = 0, h = 0;
+	std::int32_t x = 0, y = 0, w = 0, h = 0;
 
 	// <select> widget state (runtime only): chosen <option> + dropdown open
-	int select_index = -1;    // -1 => not set yet, treated as the first option
+	std::int32_t select_index = -1;    // -1 => not set yet, treated as the first option
 	bool select_open = false; // the popup list is expanded
 
 	constexpr bool is_canvas() const { return tag == "canvas"; }
 	constexpr bool is_select() const { return tag == "select"; }
 
 	// nth <option> child (only option children count); nullptr if out of range
-	constexpr node * nth_option(int idx) {
-		int k = 0;
+	constexpr node * nth_option(std::int32_t idx) {
+		std::int32_t k = 0;
 		for (const auto & c : children) {
 			if (c->tag == "option") {
 				if (k == idx) { return c.get(); }
@@ -95,16 +97,16 @@ struct node {
 		}
 		return nullptr;
 	}
-	constexpr int option_count() const {
-		int k = 0;
+	constexpr std::int32_t option_count() const {
+		std::int32_t k = 0;
 		for (const auto & c : children) {
 			if (c->tag == "option") { ++k; }
 		}
 		return k;
 	}
 	// effective selected index (clamped; -1/out-of-range => 0)
-	constexpr int selected_option() const {
-		const int n = option_count();
+	constexpr std::int32_t selected_option() const {
+		const std::int32_t n = option_count();
 		if (n == 0) { return 0; }
 		return (select_index >= 0 && select_index < n) ? select_index : 0;
 	}
@@ -126,10 +128,10 @@ struct node {
 	}
 	constexpr void remove_class(std::string_view c) {
 		std::string out;
-		size_t i = 0;
+		std::size_t i = 0;
 		while (i < classes.size()) {
 			while (i < classes.size() && classes[i] == ' ') { ++i; }
-			size_t j = i;
+			std::size_t j = i;
 			while (j < classes.size() && classes[j] != ' ') { ++j; }
 			if (j > i && classes.substr(i, j - i) != c) {
 				if (!out.empty()) { out += ' '; }
@@ -178,16 +180,16 @@ struct node {
 	// No combinators beyond descendant, no pseudo/attribute selectors -
 	// enough for real scripts' getElementById-style lookups.
 	constexpr bool matches_compound(std::string_view sel) const {
-		size_t t = 0;
+		std::size_t t = 0;
 		while (t < sel.size() && sel[t] != '#' && sel[t] != '.') { ++t; }
 		if (t > 0) {
 			const std::string_view type = sel.substr(0, t);
 			if (type != "*" && type != tag) { return false; }
 		}
-		size_t i = t;
+		std::size_t i = t;
 		while (i < sel.size()) {
 			const char kind = sel[i++];
-			size_t j = i;
+			std::size_t j = i;
 			while (j < sel.size() && sel[j] != '#' && sel[j] != '.') { ++j; }
 			const std::string_view name = sel.substr(i, j - i);
 			if (kind == '#') {
@@ -200,7 +202,7 @@ struct node {
 		return true;
 	}
 	// this matches parts[k], and (if more parts) some descendant chain matches the rest
-	constexpr node * qs_from(const std::vector<std::string_view> & parts, size_t k) {
+	constexpr node * qs_from(const std::vector<std::string_view> & parts, std::size_t k) {
 		if (!matches_compound(parts[k])) { return nullptr; }
 		if (k + 1 == parts.size()) { return this; }
 		for (const auto & c : children) {
@@ -209,7 +211,7 @@ struct node {
 		return nullptr;
 	}
 	// first node in this subtree (self first) that begins a match of parts[k..]
-	constexpr node * qs_find(const std::vector<std::string_view> & parts, size_t k) {
+	constexpr node * qs_find(const std::vector<std::string_view> & parts, std::size_t k) {
 		if (node * r = qs_from(parts, k)) { return r; }
 		for (const auto & c : children) {
 			if (node * r = c->qs_find(parts, k)) { return r; }
@@ -218,10 +220,10 @@ struct node {
 	}
 	constexpr node * query_selector(std::string_view sel) {
 		std::vector<std::string_view> parts;
-		size_t i = 0;
+		std::size_t i = 0;
 		while (i < sel.size()) {
 			while (i < sel.size() && (sel[i] == ' ' || sel[i] == '\t' || sel[i] == '>')) { ++i; }
-			size_t j = i;
+			std::size_t j = i;
 			while (j < sel.size() && sel[j] != ' ' && sel[j] != '\t' && sel[j] != '>') { ++j; }
 			if (j > i) { parts.push_back(sel.substr(i, j - i)); }
 			i = j;
@@ -230,7 +232,7 @@ struct node {
 	}
 
 	// deepest node whose layout rect contains (px, py); prefers children
-	constexpr node * hit_test(int px, int py) {
+	constexpr node * hit_test(std::int32_t px, std::int32_t py) {
 		for (auto it = children.rbegin(); it != children.rend(); ++it) {
 			if (node * hit = (*it)->hit_test(px, py)) { return hit; }
 		}
@@ -241,8 +243,8 @@ struct node {
 
 namespace detail {
 
-constexpr int parse_int_attr(std::string_view v, int fallback) {
-	int out = 0;
+constexpr std::int32_t parse_int_attr(std::string_view v, std::int32_t fallback) {
+	std::int32_t out = 0;
 	const auto r = std::from_chars(v.data(), v.data() + v.size(), out);
 	return r.ec == std::errc{} ? out : fallback;
 }
@@ -251,7 +253,7 @@ constexpr void init_canvas(node & out) {
 	if (out.is_canvas()) {
 		out.canvas_w = parse_int_attr(out.attribute("width"), 300);
 		out.canvas_h = parse_int_attr(out.attribute("height"), 150);
-		out.pixels.assign(static_cast<size_t>(out.canvas_w) * static_cast<size_t>(out.canvas_h),
+		out.pixels.assign(static_cast<std::size_t>(out.canvas_w) * static_cast<std::size_t>(out.canvas_h),
 		                  0xFF000000u);
 	}
 }

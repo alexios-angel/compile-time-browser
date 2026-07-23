@@ -45,12 +45,12 @@ template <typename Src> struct script_asset_scan {
 	                                                         "url(\""}; // CSS @font-face src, e.g. url("...")
 
 	// {offset, length} of the path at position i, or length 0
-	static consteval std::pair<size_t, size_t> ref_at(size_t i) {
+	static consteval std::pair<std::size_t, std::size_t> ref_at(std::size_t i) {
 		for (const std::string_view needle : needles) {
 			if (text.size() - i < needle.size()) { continue; }
 			if (text.substr(i, needle.size()) != needle) { continue; }
-			const size_t start = i + needle.size();
-			const size_t close = text.find('"', start);
+			const std::size_t start = i + needle.size();
+			const std::size_t close = text.find('"', start);
 			if (close != std::string_view::npos && close > start) {
 				return {start, close - start};
 			}
@@ -58,26 +58,26 @@ template <typename Src> struct script_asset_scan {
 		return {0, 0};
 	}
 
-	static consteval size_t count() {
-		size_t n = 0;
-		for (size_t i = 0; i < text.size(); ++i) {
+	static consteval std::size_t count() {
+		std::size_t n = 0;
+		for (std::size_t i = 0; i < text.size(); ++i) {
 			if (ref_at(i).second > 0) { ++n; }
 		}
 		return n;
 	}
-	static constexpr size_t N = count();
+	static constexpr std::size_t N = count();
 
-	static consteval std::array<std::pair<size_t, size_t>, N> compute() {
-		std::array<std::pair<size_t, size_t>, N> out{};
-		size_t n = 0;
-		for (size_t i = 0; i < text.size(); ++i) {
+	static consteval std::array<std::pair<std::size_t, std::size_t>, N> compute() {
+		std::array<std::pair<std::size_t, std::size_t>, N> out{};
+		std::size_t n = 0;
+		for (std::size_t i = 0; i < text.size(); ++i) {
 			if (const auto r = ref_at(i); r.second > 0) { out[n++] = r; }
 		}
 		return out;
 	}
-	static constexpr std::array<std::pair<size_t, size_t>, N> refs = compute();
+	static constexpr std::array<std::pair<std::size_t, std::size_t>, N> refs = compute();
 
-	static constexpr std::string_view path(size_t i) {
+	static constexpr std::string_view path(std::size_t i) {
 		return text.substr(refs[i].first, refs[i].second);
 	}
 };
@@ -88,7 +88,7 @@ constexpr bool is_fetch_url(std::string_view path) {
 	return path.starts_with("http://") || path.starts_with("https://");
 }
 
-template <typename Src, size_t I> struct auto_embedded {
+template <typename Src, std::size_t I> struct auto_embedded {
 	static constexpr std::string_view path = script_asset_scan<Src>::path(I);
 	// URLs fetch over the network AT COMPILE TIME (allow-list gated),
 	// everything else embeds from the filesystem; either way the bytes
@@ -107,7 +107,7 @@ template <typename Src, size_t I> struct auto_embedded {
 	static constexpr std::span<const unsigned char> blob = load();
 };
 
-template <typename Src, size_t... I>
+template <typename Src, std::size_t... I>
 inline std::vector<embedded_asset> collect_auto_assets(std::index_sequence<I...>) {
 	std::vector<embedded_asset> out;
 	(
