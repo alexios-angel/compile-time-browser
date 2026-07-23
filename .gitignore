@@ -11,4 +11,4 @@ tests/*
 tools/clang-std-embed/
 examples/pong.inc
 *.log
-*.ppm
+*.ppmexamples-windows/
