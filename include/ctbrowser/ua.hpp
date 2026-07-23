@@ -16,11 +16,11 @@
 // the CSS cascade-origin rule); inline styles beat both.
 //
 // Engine-capability gaps vs Firefox, documented rather than faked:
-//   - no bold/italic/underline (single bitmap font face) - h1-h6 and
-//     b/strong/i/em/u render regular; a has the link color, no underline
-//   - no monospace - pre/code keep their margins but share the one font
-//     (Firefox draws them unshaded too; the font is the only difference)
-//   - no table layout - table-family elements stack as blocks
+//   - bold/italic/underline/monospace render REAL faces when the
+//     vendored fonts/ are embedded (fonts.hpp; Tinos/Fira Sans/Cousine)
+//     and synthetic approximations under the 8x8 bitmap fallback
+//   - table layout: equal-width columns, border attribute honored
+//     (no colspan/rowspan/auto-sizing)
 //   - no attribute selectors - dialog (Firefox: display:none unless
 //     [open]) renders open; hidden inputs are skipped by the widget
 //     emitter instead
@@ -31,21 +31,28 @@
 namespace ctbrowser::detail {
 
 inline constexpr std::string_view ua_css = R"(
-	body { margin: 8px }
+	body { margin: 8px; font-family: serif }
 
-	h1 { font-size: 32px; margin: 11px 0 }
-	h2 { font-size: 24px; margin: 20px 0 }
-	h3 { font-size: 19px; margin: 16px 0 }
-	h4 { font-size: 16px; margin: 21px 0 }
-	h5 { font-size: 13px; margin: 27px 0 }
-	h6 { font-size: 11px; margin: 37px 0 }
+	h1 { font-size: 32px; margin: 11px 0; font-weight: bold }
+	h2 { font-size: 24px; margin: 20px 0; font-weight: bold }
+	h3 { font-size: 19px; margin: 16px 0; font-weight: bold }
+	h4 { font-size: 16px; margin: 21px 0; font-weight: bold }
+	h5 { font-size: 13px; margin: 27px 0; font-weight: bold }
+	h6 { font-size: 11px; margin: 37px 0; font-weight: bold }
+
+	b, strong, th { font-weight: bold }
+	i, em, cite, var, dfn { font-style: italic }
+	u, ins { text-decoration: underline }
+	s, del, strike { text-decoration: line-through }
+	pre, code, kbd, samp, tt, textarea { font-family: monospace }
+	button, select, input { font-family: sans-serif }
 
 	p, blockquote, figure, ul, ol, dl, pre { margin: 16px 0 }
 	blockquote, figure { margin-left: 40px; margin-right: 40px }
 	ul, ol { padding-left: 40px }
 	dd { margin-left: 40px }
 
-	a { color: #0000ee }
+	a { color: #0000ee; text-decoration: underline }
 	a:active { color: #ee0000 }
 
 	button, select { background-color: #e9e9ed; color: #000000; padding: 1px 8px }
@@ -53,6 +60,10 @@ inline constexpr std::string_view ua_css = R"(
 	button:active { background-color: #b1b1b9 }
 	button:disabled, select:disabled, input:disabled { color: #8f8f9d }
 	input { background-color: #ffffff; padding: 1px 4px; width: 160px }
+	textarea { background-color: #ffffff; padding: 2px }
+	th, td { padding: 1px }
+	th { text-align: center }
+	table { margin: 0 }
 
 	hr { height: 2px; background-color: #808080; margin: 8px 0 }
 	mark { background-color: #ffff00 }

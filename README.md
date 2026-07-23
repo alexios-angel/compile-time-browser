@@ -199,11 +199,33 @@ Elements behave like they do in Firefox, out of the box:
   nothing.
 * **a Firefox-derived UA stylesheet** ([`ua.hpp`](include/ctbrowser/ua.hpp),
   values from Gecko's `html.css` and the modern form theme) styles
-  every element before the page says anything — heading scale, list
-  and quote indents, link blue, button/input chrome with the `#8f8f9d`
-  frames and `#0060df` checked accent, `<hr>` rules, hidden
+  every element before the page says anything — heading scale (bold
+  serif), list markers and quote indents, underlined link blue,
+  button/input chrome with the `#8f8f9d` frames and `#0060df` checked
+  accent, `<hr>` rules, `<pre>` layout preservation, hidden
   `<head>`/`<template>`. Page styles always win (author beats UA);
   inline styles beat both.
+* **real typefaces, multiple per document**: the vendored
+  [`fonts/`](fonts/) directory (Tinos serif · Fira Sans · Cousine
+  mono, SIL OFL, four styles each) is `std::embed`-ded by
+  [`fonts.hpp`](include/ctbrowser/fonts.hpp); every element resolves
+  its own `font-family`/`-weight`/`-style` through the cascade and the
+  renderer keeps ALL the faces live at once — page `@font-face`
+  families included. `text-decoration` draws real underlines and
+  strike-throughs. A checkout without `fonts/` falls back to a system
+  font or the built-in bitmap face.
+* **text editing**: click a text `<input>` or `<textarea>` and type —
+  a real caret (code-point-aware Backspace/Delete/arrows/Home/End,
+  line motion in textareas), `input` events on every edit, `change` on
+  blur, `.value` from script.
+* **forms**: `<button>`/`<input type=submit>` submit (Enter in a text
+  field does the implicit submission), `type=reset` restores initial
+  values, `onsubmit`/`addEventListener("submit")` are cancelable, and
+  `form.submit()`/`form.reset()` work from script.
+* **tables**: rows through `thead`/`tbody`/`tfoot`, equal-width
+  columns, 2px border-spacing, `<caption>` above, centered-bold
+  `<th>`, and the classic 1px grid when the `border` attribute is set
+  — Firefox's borderless default otherwise.
 * script surface to match: `.checked`, `.disabled`, `.open`, `.href`,
   `.type`, `getAttribute`/`hasAttribute`, `addEventListener("change")`,
   `document.location.href`/`.hash`.
@@ -213,12 +235,13 @@ Elements behave like they do in Firefox, out of the box:
 Everything the three bricks document applies (their subsets ARE this
 project's subsets). Browser-side:
 
-- block layout only (no inline flow, floats or flex)
-- px lengths
-- no text editing (inputs render their `value`, no caret), no Tab
-  focus traversal, no form submission
-- no bold/italic/underline/monospace (single bitmap font face) and no
-  table layout — the UA sheet documents each gap vs Firefox
+- block layout only (no inline flow, floats or flex — inline elements
+  render as their own rows)
+- px lengths; margins/paddings honor per-side values and 1-4-value
+  shorthands
+- editing: no selection ranges, no clipboard, no Tab traversal, no IME
+  composition, click focuses with the caret at the end
+- tables: no colspan/rowspan/auto column sizing
 - no `<img>` or scrolling yet
 
 The bricks' own APIs remain fully available alongside —

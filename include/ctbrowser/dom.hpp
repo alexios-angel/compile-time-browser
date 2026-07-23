@@ -92,6 +92,12 @@ struct node {
 	bool focused = false;
 	bool checked = false; // checkbox/radio (init from the `checked` attribute)
 	bool open = false;    // <details> disclosure (init from the `open` attribute)
+	// the EDITABLE value of a text input / textarea (the "dirty value" -
+	// the value attribute keeps the initial). caret is a byte offset into
+	// it; value_dirty arms the change-on-blur event.
+	std::string value;
+	std::int32_t caret = 0;
+	bool value_dirty = false;
 
 	constexpr bool is_canvas() const { return tag == "canvas"; }
 	constexpr bool is_select() const { return tag == "select"; }
@@ -106,6 +112,38 @@ struct node {
 	}
 	constexpr bool is_radio() const {
 		return is_input() && ctcss::detail::ascii_iequals(input_type(), "radio");
+	}
+	// text-editable controls: any input that is not a button/toggle/hidden
+	constexpr bool is_text_input() const {
+		if (!is_input()) { return false; }
+		const std::string_view ty = input_type();
+		return !(ctcss::detail::ascii_iequals(ty, "checkbox") ||
+		         ctcss::detail::ascii_iequals(ty, "radio") ||
+		         ctcss::detail::ascii_iequals(ty, "hidden") ||
+		         ctcss::detail::ascii_iequals(ty, "submit") ||
+		         ctcss::detail::ascii_iequals(ty, "reset") ||
+		         ctcss::detail::ascii_iequals(ty, "button"));
+	}
+	constexpr bool is_textarea() const { return tag == "textarea"; }
+	constexpr bool is_editable() const { return is_text_input() || is_textarea(); }
+	constexpr bool is_submit_button() const {
+		if (tag == "button") {
+			const std::string_view ty = attribute("type");
+			// a <button> with no type submits (the HTML default)
+			return ty.empty() || ctcss::detail::ascii_iequals(ty, "submit");
+		}
+		return is_input() && ctcss::detail::ascii_iequals(input_type(), "submit");
+	}
+	constexpr bool is_reset_button() const {
+		return (tag == "button" && ctcss::detail::ascii_iequals(attribute("type"), "reset")) ||
+		       (is_input() && ctcss::detail::ascii_iequals(input_type(), "reset"));
+	}
+	// the nearest enclosing <form>, or nullptr
+	constexpr node * form_ancestor() {
+		for (node * p = parent; p != nullptr; p = p->parent) {
+			if (p->tag == "form") { return p; }
+		}
+		return nullptr;
 	}
 	constexpr bool is_details() const { return tag == "details"; }
 	constexpr bool is_summary() const { return tag == "summary"; }
@@ -336,10 +374,12 @@ constexpr void instantiate_into(node & out, cthtml::node vn, node * parent) {
 	// (layout breaks lines on it) and collapsing source newlines to spaces (HTML
 	// whitespace). Non-<br> element children recurse as before.
 	std::string txt;
+	// textarea content IS the value; <pre> preserves its layout
+	const bool keep_newlines = out.is_textarea() || out.tag == "pre";
 	for (cthtml::node child : vn) {
 		if (child.is_text()) {
 			const std::string t = child.text();
-			for (const char ch : t) { txt.push_back(ch == '\n' ? ' ' : ch); }
+			for (const char ch : t) { txt.push_back(!keep_newlines && ch == '\n' ? ' ' : ch); }
 		} else if (child.is_element()) {
 			if (child.name() == std::string_view{"br"}) {
 				txt.push_back('\n');
@@ -350,9 +390,43 @@ constexpr void instantiate_into(node & out, cthtml::node vn, node * parent) {
 		}
 	}
 	out.text = std::move(txt);
+	if (out.is_select()) { // the selected attribute picks the initial option
+		std::int32_t k = 0;
+		for (const auto & c : out.children) {
+			if (c->tag != "option") { continue; }
+			if (c->has_attribute("selected")) { out.select_index = k; }
+			++k;
+		}
+	}
 	if (out.is_checkbox() || out.is_radio()) { out.checked = out.has_attribute("checked"); }
 	if (out.is_details()) { out.open = out.has_attribute("open"); }
+	// editable controls: the initial value (input: value attribute;
+	// textarea: its text content, which cthtml treats as RCDATA)
+	if (out.is_text_input()) { out.value = std::string{out.attribute("value")}; }
+	if (out.is_textarea()) { out.value = out.text; }
+	out.caret = static_cast<std::int32_t>(out.value.size());
 	init_canvas(out);
+}
+
+// restore a form subtree to its initial state (the reset-button default)
+constexpr void reset_controls(node & n) {
+	if (n.is_text_input()) { n.value = std::string{n.attribute("value")}; }
+	if (n.is_textarea()) { n.value = n.text; }
+	if (n.is_editable()) {
+		n.caret = static_cast<std::int32_t>(n.value.size());
+		n.value_dirty = false;
+	}
+	if (n.is_checkbox() || n.is_radio()) { n.checked = n.has_attribute("checked"); }
+	if (n.is_select()) {
+		n.select_index = -1; // back to the selected attribute (or the first)
+		std::int32_t k = 0;
+		for (const auto & c : n.children) {
+			if (c->tag != "option") { continue; }
+			if (c->has_attribute("selected")) { n.select_index = k; }
+			++k;
+		}
+	}
+	for (const auto & c : n.children) { reset_controls(*c); }
 }
 
 // a radio checks itself and unchecks every other same-name radio in the

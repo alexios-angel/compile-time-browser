@@ -95,6 +95,8 @@ public:
 	      }),
 	      extra_(extra),
 	      script(ctjs::run_value(Page::script_text(), all_bindings(std::move(extra)))) {
+		ev.request_submit = [this](node * f) { submit_form(f); };
+		ev.request_reset = [this](node * f) { reset_form(f); };
 		// CTBROWSER_DEBUG: surface a page script that threw during its top-level
 		// run (construction/init), with the captured call-stack trace
 		if (detail::debug_on() && !script.ok()) {
@@ -179,7 +181,22 @@ public:
 			keys_down.erase(it);
 		}
 		deliver(script, "onKey", name, down);
-		ev.dispatch(down ? "keydown" : "keyup", detail::key_event(name));
+		ctjs::value evt = detail::key_event(name, down ? "keydown" : "keyup");
+		ev.dispatch(down ? "keydown" : "keyup", evt);
+		// the editing default action: keystrokes into the focused editable
+		// (a listener's preventDefault() suppresses it, like a browser)
+		if (down && !detail::event_flag(evt, "defaultPrevented")) { edit_key(name); }
+	}
+
+	// printable text lands here (the shell forwards SDL_EVENT_TEXT_INPUT;
+	// tests call it directly): inserted at the caret of the focused editable
+	void text_input(std::string_view utf8) {
+		node * f = focused_;
+		if (f == nullptr || !f->is_editable() || f->is_disabled()) { return; }
+		f->value.insert(static_cast<std::size_t>(f->caret), utf8);
+		f->caret += static_cast<std::int32_t>(utf8.size());
+		f->value_dirty = true;
+		fire_input(f);
 	}
 	void mouse_move(double x, double y) {
 		mouse_x = x;
@@ -326,7 +343,14 @@ private:
 	}
 	void set_focus(node * n) {
 		if (n == focused_) { return; }
-		if (focused_ != nullptr) { focused_->focused = false; }
+		if (focused_ != nullptr) {
+			focused_->focused = false;
+			// leaving an edited control commits it: change fires on blur
+			if (focused_->is_editable() && focused_->value_dirty) {
+				focused_->value_dirty = false;
+				fire_change(focused_);
+			}
+		}
 		if (n != nullptr) { n->focused = true; }
 		focused_ = n;
 	}
@@ -376,6 +400,14 @@ private:
 				}
 				return;
 			}
+			if (n->is_submit_button()) {
+				if (node * form = n->form_ancestor()) { submit_form(form); }
+				return;
+			}
+			if (n->is_reset_button()) {
+				if (node * form = n->form_ancestor()) { reset_form(form); }
+				return;
+			}
 			if (n->is_link()) {
 				const std::string href{n->attribute("href")};
 				if (!href.empty() && href[0] == '#') {
@@ -390,6 +422,115 @@ private:
 		}
 	}
 	void check_radio(node * r) { detail::check_radio(doc.root.get(), *r); }
+
+	// --- text editing (the keydown default action) ---------------------
+	static bool is_utf8_cont(char c) { return (static_cast<unsigned char>(c) & 0xC0) == 0x80; }
+	static std::int32_t cp_len_before(std::string_view s, std::int32_t pos) {
+		std::int32_t n = 0;
+		while (pos - n > 0) {
+			++n;
+			if (!is_utf8_cont(s[static_cast<std::size_t>(pos - n)])) { break; }
+		}
+		return n;
+	}
+	static std::int32_t cp_len_at(std::string_view s, std::int32_t pos) {
+		if (pos >= static_cast<std::int32_t>(s.size())) { return 0; }
+		std::int32_t n = 1;
+		while (pos + n < static_cast<std::int32_t>(s.size()) &&
+		       is_utf8_cont(s[static_cast<std::size_t>(pos + n)])) {
+			++n;
+		}
+		return n;
+	}
+	void edit_key(std::string_view name) {
+		node * f = focused_;
+		if (f == nullptr || !f->is_editable() || f->is_disabled()) { return; }
+		std::string & v = f->value;
+		std::int32_t & c = f->caret;
+		if (c > static_cast<std::int32_t>(v.size())) { c = static_cast<std::int32_t>(v.size()); }
+		const auto line_start = [&v](std::int32_t from) {
+			std::int32_t i = from;
+			while (i > 0 && v[static_cast<std::size_t>(i - 1)] != '\n') { --i; }
+			return i;
+		};
+		const auto line_end = [&v](std::int32_t from) {
+			std::int32_t i = from;
+			while (i < static_cast<std::int32_t>(v.size()) && v[static_cast<std::size_t>(i)] != '\n') { ++i; }
+			return i;
+		};
+		if (name == "Backspace") {
+			const std::int32_t n = cp_len_before(v, c);
+			if (n > 0) {
+				v.erase(static_cast<std::size_t>(c - n), static_cast<std::size_t>(n));
+				c -= n;
+				f->value_dirty = true;
+				fire_input(f);
+			}
+		} else if (name == "Delete") {
+			const std::int32_t n = cp_len_at(v, c);
+			if (n > 0) {
+				v.erase(static_cast<std::size_t>(c), static_cast<std::size_t>(n));
+				f->value_dirty = true;
+				fire_input(f);
+			}
+		} else if (name == "Left") {
+			c -= cp_len_before(v, c);
+		} else if (name == "Right") {
+			c += cp_len_at(v, c);
+		} else if (name == "Home") {
+			c = f->is_textarea() ? line_start(c) : 0;
+		} else if (name == "End") {
+			c = f->is_textarea() ? line_end(c) : static_cast<std::int32_t>(v.size());
+		} else if (name == "Up" && f->is_textarea()) {
+			const std::int32_t ls = line_start(c), col = c - ls;
+			if (ls > 0) {
+				const std::int32_t pls = line_start(ls - 1);
+				c = pls + (col < ls - 1 - pls ? col : ls - 1 - pls);
+			}
+		} else if (name == "Down" && f->is_textarea()) {
+			const std::int32_t le = line_end(c), col = c - line_start(c);
+			if (le < static_cast<std::int32_t>(v.size())) {
+				const std::int32_t nls = le + 1, nle = line_end(nls);
+				c = nls + (col < nle - nls ? col : nle - nls);
+			}
+		} else if (name == "Return") {
+			if (f->is_textarea()) {
+				v.insert(static_cast<std::size_t>(c), 1, '\n');
+				++c;
+				f->value_dirty = true;
+				fire_input(f);
+			} else if (node * form = f->form_ancestor()) {
+				// implicit form submission (Enter in a text input)
+				submit_form(form);
+			}
+		}
+	}
+	void fire_input(node * n) {
+		if (const auto it = ev.input_listeners.find(n); it != ev.input_listeners.end()) {
+			const std::vector<ctjs::value> fns = it->second;
+			ctjs::value evt = detail::simple_event("input");
+			for (const ctjs::value & fn : fns) { ev.invoke(fn, {evt}); }
+		}
+	}
+
+	// --- form submission / reset ---------------------------------------
+	void submit_form(node * form) {
+		if (form == nullptr) { return; }
+		ctjs::value evt = detail::simple_event("submit");
+		if (const auto it = ev.submit_listeners.find(form); it != ev.submit_listeners.end()) {
+			const std::vector<ctjs::value> fns = it->second;
+			for (const ctjs::value & fn : fns) { ev.invoke(fn, {evt}); }
+		}
+		if (const auto it = ev.onsubmit_handlers.find(form); it != ev.onsubmit_handlers.end()) {
+			ev.invoke(it->second, {evt});
+		}
+		if (!form->id.empty()) { deliver(script, "onSubmit", form->id); }
+		// no default beyond the events - a single-page engine does not
+		// navigate on submit
+	}
+	void reset_form(node * form) {
+		if (form != nullptr) { detail::reset_controls(*form); }
+	}
 	// <label for=id> targets that control; a wrapping label targets its
 	// first checkbox/radio descendant
 	node * label_target(node * lab) {

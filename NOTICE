@@ -32,6 +32,12 @@ history. The page-assembly glue, the runtime DOM, the layout engine,
 the script bindings and the SDL3 shell are original to this
 repository.
 
+The vendored fonts/ directory carries Tinos, Fira Sans and Cousine
+from the Google Fonts collection (github.com/google/fonts), each
+licensed under the SIL Open Font License 1.1 - see fonts/README.md
+and the OFL texts there. They are embedded (std::embed) as the
+default serif/sans-serif/monospace faces.
+
 Attribution for the historical CTLL engine belongs to Hana Dusikova;
 this file preserves it as required by Section 4(c) of the Apache
 License 2.0 for the versions that shipped it.

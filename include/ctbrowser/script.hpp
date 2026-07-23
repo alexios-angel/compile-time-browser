@@ -135,6 +135,15 @@ struct dom_events {
 	// per-element "change" listeners (addEventListener('change', ...)) - fired
 	// with the accessor-style change_handlers by engine::fire_change
 	std::map<node *, std::vector<ctjs::value>> change_listeners;
+	// per-element "input" listeners (fires on every edit of an editable)
+	std::map<node *, std::vector<ctjs::value>> input_listeners;
+	// per-form "submit" listeners + .onsubmit property handlers
+	std::map<node *, std::vector<ctjs::value>> submit_listeners;
+	std::map<node *, ctjs::value> onsubmit_handlers;
+	// the engine's submit/reset entry points, reachable from form handles
+	// (the ev.play_audio hook precedent - script.hpp cannot see the engine)
+	ctc::cfunction<void(node *)> request_submit;
+	ctc::cfunction<void(node *)> request_reset;
 	// what the last anchor activation recorded (document.location.href/hash)
 	std::string location_href;
 	std::string location_hash;
@@ -155,6 +164,9 @@ struct dom_events {
 		click_listeners.clear();
 		onclick_handlers.clear();
 		change_listeners.clear();
+		input_listeners.clear();
+		submit_listeners.clear();
+		onsubmit_handlers.clear();
 		location_href.clear();
 		location_hash.clear();
 	}
@@ -443,6 +455,10 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 				          ev->click_listeners[n].push_back(a[1]);
 			          } else if (type == "change") {
 				          ev->change_listeners[n].push_back(a[1]);
+			          } else if (type == "input") {
+				          ev->input_listeners[n].push_back(a[1]);
+			          } else if (type == "submit") {
+				          ev->submit_listeners[n].push_back(a[1]);
 			          } else {
 				          ev->listeners[type].push_back(a[1]);
 			          }
@@ -621,6 +637,53 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 		    if (en != nullptr && !a.empty() && a[0].is_function()) { ev->change_handlers[en] = a[0]; }
 		    return ctjs::value{};
 	    }, "set onchange"));
+	// --- editable controls: the live value + caret-preserving setter ---
+	if (n->is_editable()) {
+		ctjs::attach_accessor(o, "value", 'g', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> &) -> ctjs::value {
+			    node * en = ev->node_of(cx.current_this);
+			    return ctjs::value{en != nullptr ? en->value : std::string{}};
+		    }, "get value"));
+		ctjs::attach_accessor(o, "value", 's', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+			    node * en = ev->node_of(cx.current_this);
+			    if (en != nullptr && !a.empty()) {
+				    // programmatic set: no input/change events (browser-correct)
+				    en->value = a[0].to_string();
+				    en->caret = static_cast<std::int32_t>(en->value.size());
+			    }
+			    return ctjs::value{};
+		    }, "set value"));
+		ctjs::attach_accessor(o, "oninput", 's', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+			    node * en = ev->node_of(cx.current_this);
+			    if (en != nullptr && !a.empty() && a[0].is_function()) { ev->input_listeners[en].push_back(a[0]); }
+			    return ctjs::value{};
+		    }, "set oninput"));
+	}
+	// --- forms: submit()/reset() + .onsubmit -----------------------------
+	if (n->tag == "form") {
+		o.set("submit", ctjs::value::function(
+		                    [ev](ctjs::context & cx, const std::vector<ctjs::value> &) {
+			                    node * en = ev->node_of(cx.current_this);
+			                    if (en != nullptr && ev->request_submit) { ev->request_submit(en); }
+			                    return ctjs::value{};
+		                    },
+		                    "submit"));
+		o.set("reset", ctjs::value::function(
+		                   [ev](ctjs::context & cx, const std::vector<ctjs::value> &) {
+			                   node * en = ev->node_of(cx.current_this);
+			                   if (en != nullptr && ev->request_reset) { ev->request_reset(en); }
+			                   return ctjs::value{};
+		                   },
+		                   "reset"));
+		ctjs::attach_accessor(o, "onsubmit", 's', ctjs::value::function(
+		    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+			    node * en = ev->node_of(cx.current_this);
+			    if (en != nullptr && !a.empty() && a[0].is_function()) { ev->onsubmit_handlers[en] = a[0]; }
+			    return ctjs::value{};
+		    }, "set onsubmit"));
+	}
 	// --- checkbox / radio ---
 	if (n->is_checkbox() || n->is_radio()) {
 		ctjs::attach_accessor(o, "checked", 'g', ctjs::value::function(

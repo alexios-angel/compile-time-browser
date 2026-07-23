@@ -7,6 +7,7 @@
 
 #include "engine.hpp"
 #include "font8x8.hpp"
+#include "fonts.hpp"
 #include "audio.hpp"
 #include "screenshot.hpp"
 #include <SDL3/SDL.h>
@@ -91,11 +92,17 @@ inline void draw_text(SDL_Renderer * r, const paint_cmd & cmd) {
 	const float pen_y = static_cast<float>(cmd.y);
 	for (const char32_t c : cmd.text) { // UTF-32 code points
 		for (std::int32_t row = 0; row < 8; ++row) {
+			// italic: shear the glyph - upper rows shift right
+			const float shear = cmd.italic ? static_cast<float>(7 - row) * scale / 3.0f : 0.0f;
 			for (std::int32_t col = 0; col < 8; ++col) {
 				if (!glyph_pixel(c, row, col)) { continue; }
-				const SDL_FRect px{pen_x + static_cast<float>(col) * scale,
+				const SDL_FRect px{pen_x + shear + static_cast<float>(col) * scale,
 				                   pen_y + static_cast<float>(row) * scale, scale, scale};
 				SDL_RenderFillRect(r, &px);
+				if (cmd.bold) { // double-strike one pixel right
+					const SDL_FRect px2{px.x + scale, px.y, px.w, px.h};
+					SDL_RenderFillRect(r, &px2);
+				}
 			}
 		}
 		pen_x += static_cast<float>(cmd.font_px);
@@ -108,26 +115,103 @@ inline void draw_text(SDL_Renderer * r, const paint_cmd & cmd) {
 // and tinted with a color mod, textures cached per (text, size)
 struct ttf_text {
 	SDL_Renderer * renderer = nullptr;
-	std::string path;
-	std::map<std::int32_t, TTF_Font *> fonts;
-	std::map<std::pair<std::string, std::int32_t>, SDL_Texture *> cache;
-	const void * mem = nullptr; // embedded font bytes (std::embed); opened via IO
-	std::size_t mem_size = 0;
+	// the FACE REGISTRY: (family-lowercase, bold, italic) -> bytes or a
+	// file path. A page's @font-face entries and the embedded defaults
+	// (ctbrowser:font/*) all register here - multiple faces coexist in
+	// one document, resolved per text cmd.
+	struct face_src {
+		const void * mem = nullptr;
+		std::size_t mem_size = 0;
+		std::string path;
+		bool usable() const { return mem != nullptr || !path.empty(); }
+	};
+	std::map<std::tuple<std::string, bool, bool>, face_src> faces;
+	std::string fallback_path; // opts.font_path or the probed system font
+	// opened fonts per (face-key, px, synth-style-bits)
+	std::map<std::tuple<std::string, bool, bool, std::int32_t>, TTF_Font *> fonts;
+	std::map<std::tuple<std::string, std::int32_t, std::uint8_t>, SDL_Texture *> cache;
 
-	bool ok() const { return mem != nullptr || !path.empty(); }
+	bool ok() const { return !faces.empty() || !fallback_path.empty(); }
 
-	TTF_Font * font(std::int32_t px) {
-		if (const auto it = fonts.find(px); it != fonts.end()) { return it->second; }
-		// a fresh IO per size; closeio=true has TTF read the font fully in and
-		// close it, so the embedded bytes need only outlive this call
-		TTF_Font * f = mem != nullptr
-		    ? TTF_OpenFontIO(SDL_IOFromConstMem(mem, mem_size), true, static_cast<float>(px))
-		    : TTF_OpenFont(path.c_str(), static_cast<float>(px));
-		fonts.emplace(px, f);
+	static std::string fold(std::string_view s) {
+		std::string out;
+		for (const char c : s) { out.push_back(c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c); }
+		return out;
+	}
+	void register_face(std::string_view family, bool bold, bool italic, face_src src) {
+		faces.emplace(std::tuple{fold(family), bold, italic}, std::move(src));
+	}
+
+	// walk the cmd's font-family fallback list; first registered family
+	// wins. Generic keywords (and a few well-known aliases) map to the
+	// embedded defaults registered under serif/sans-serif/monospace.
+	static std::string generic_of(std::string_view name) {
+		const auto has = [name](std::string_view needle) {
+			return fold(name).find(needle) != std::string::npos;
+		};
+		if (has("mono") || has("courier") || has("consol")) { return "monospace"; }
+		if (has("sans") || has("arial") || has("helvetica") || has("system-ui") || has("ui-sans")) { return "sans-serif"; }
+		if (has("serif") || has("times") || has("georgia")) { return "serif"; }
+		return {};
+	}
+	// resolve (family-list, bold, italic) -> the face key to open + which
+	// synthetic styles TTF must add because the exact variant is missing
+	std::tuple<std::string, bool, bool, std::uint8_t> resolve(std::string_view family_list, bool bold,
+	                                                          bool italic) {
+		const auto try_family = [this, bold, italic](std::string name)
+		    -> std::optional<std::tuple<std::string, bool, bool, std::uint8_t>> {
+			// exact variant, then regular + synthetic styling
+			if (faces.contains({name, bold, italic})) { return std::tuple{name, bold, italic, std::uint8_t{0}}; }
+			std::uint8_t synth = 0;
+			if (bold) { synth |= TTF_STYLE_BOLD; }
+			if (italic) { synth |= TTF_STYLE_ITALIC; }
+			if (faces.contains({name, false, false})) { return std::tuple{name, false, false, synth}; }
+			return std::nullopt;
+		};
+		std::string_view rest = family_list;
+		while (!rest.empty()) {
+			const std::size_t comma = rest.find(',');
+			std::string_view tok = comma == std::string_view::npos ? rest : rest.substr(0, comma);
+			rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
+			while (!tok.empty() && (tok.front() == ' ' || tok.front() == '"' || tok.front() == '\'')) { tok.remove_prefix(1); }
+			while (!tok.empty() && (tok.back() == ' ' || tok.back() == '"' || tok.back() == '\'')) { tok.remove_suffix(1); }
+			if (tok.empty()) { continue; }
+			if (auto hit = try_family(fold(tok))) { return *hit; }
+			const std::string gen = generic_of(tok);
+			if (!gen.empty()) {
+				if (auto hit = try_family(gen)) { return *hit; }
+			}
+		}
+		// no family matched: serif is the document default (Firefox)
+		if (auto hit = try_family("serif")) { return *hit; }
+		std::uint8_t synth = 0;
+		if (bold) { synth |= TTF_STYLE_BOLD; }
+		if (italic) { synth |= TTF_STYLE_ITALIC; }
+		return {std::string{}, false, false, synth}; // the fallback face
+	}
+
+	TTF_Font * font(std::string_view family_list, bool bold, bool italic, std::int32_t px) {
+		auto [name, fb, fi, synth] = resolve(family_list, bold, italic);
+		const std::tuple key{name + (fb ? "/b" : "") + (fi ? "/i" : ""), bold, italic, px};
+		if (const auto it = fonts.find(key); it != fonts.end()) { return it->second; }
+		TTF_Font * f = nullptr;
+		if (!name.empty()) {
+			const face_src & src = faces.at({name, fb, fi});
+			// a fresh IO per size; closeio=true has TTF read the font fully
+			// in and close it, so the bytes need only outlive this call
+			f = src.mem != nullptr
+			        ? TTF_OpenFontIO(SDL_IOFromConstMem(src.mem, src.mem_size), true, static_cast<float>(px))
+			        : TTF_OpenFont(src.path.c_str(), static_cast<float>(px));
+		} else if (!fallback_path.empty()) {
+			f = TTF_OpenFont(fallback_path.c_str(), static_cast<float>(px));
+		}
+		if (f != nullptr && synth != 0) { TTF_SetFontStyle(f, synth); }
+		fonts.emplace(key, f);
 		return f;
 	}
-	std::int32_t measure(std::u32string_view text, std::int32_t px) {
-		TTF_Font * f = font(px);
+	std::int32_t measure(std::u32string_view text, std::int32_t px, std::string_view family, bool bold,
+	                     bool italic) {
+		TTF_Font * f = font(family, bold, italic, px);
 		const std::string utf8 = utf32_to_utf8(text); // SDL_ttf takes UTF-8
 		if (f == nullptr) { return static_cast<std::int32_t>(text.size()) * px; }
 		std::int32_t w = 0, h = 0;
@@ -135,11 +219,14 @@ struct ttf_text {
 		return w;
 	}
 	void draw(const paint_cmd & cmd) {
-		TTF_Font * f = font(cmd.font_px);
+		TTF_Font * f = font(cmd.font_family, cmd.bold, cmd.italic, cmd.font_px);
 		if (f == nullptr) { return; }
 		SDL_Texture * t = nullptr;
 		const std::string utf8 = utf32_to_utf8(cmd.text); // SDL_ttf takes UTF-8
-		const std::pair<std::string, std::int32_t> key{utf8, cmd.font_px};
+		const std::uint8_t stylebits =
+		    static_cast<std::uint8_t>((cmd.bold ? 1u : 0u) | (cmd.italic ? 2u : 0u));
+		const std::tuple<std::string, std::int32_t, std::uint8_t> key{
+		    utf8 + "\x1f" + fold(cmd.font_family), cmd.font_px, stylebits};
 		if (const auto it = cache.find(key); it != cache.end()) {
 			t = it->second;
 		} else {
@@ -166,9 +253,7 @@ struct ttf_text {
 	}
 	~ttf_text() {
 		for (auto & [k, t] : cache) { SDL_DestroyTexture(t); }
-		for (auto & [px, f] : fonts) {
-			if (f != nullptr) { TTF_CloseFont(f); }
-		}
+		for (auto & [k, f] : fonts) { if (f != nullptr) { TTF_CloseFont(f); } }
 	}
 };
 
@@ -219,6 +304,9 @@ struct canvas_textures {
 
 // run a page as a windowed application; returns the process exit code
 template <typename Page> std::int32_t run_app(app_options opts = {}) {
+	// the embedded default typefaces (fonts.hpp) join the asset registry
+	// AFTER any caller-provided assets - user entries win on key clashes
+	for (embedded_asset & fa : detail::default_font_assets()) { opts.assets.push_back(std::move(fa)); }
 	if (opts.max_frames == 0) {
 		if (const char * env = SDL_getenv("CTBROWSER_TEST_FRAMES")) {
 			opts.max_frames = SDL_atoi(env);
@@ -335,6 +423,9 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 	    e.title.c_str(), opts.width, opts.height,
 	    SDL_WINDOW_RESIZABLE | (want_fullscreen ? SDL_WINDOW_FULLSCREEN : 0));
 	SDL_Renderer * renderer = window ? SDL_CreateRenderer(window, nullptr) : nullptr;
+	if (window != nullptr) {
+		SDL_StartTextInput(window); // editable controls receive SDL_EVENT_TEXT_INPUT
+	}
 	if (renderer == nullptr) {
 		SDL_Log("ctbrowser: window/renderer failed: %s", SDL_GetError());
 		SDL_Quit();
@@ -351,41 +442,67 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 
 	{ // scope: GPU/font resources release before the SDL teardown below
 #ifdef CTBROWSER_WITH_TTF
-	detail::ttf_text ttf{renderer, {}, {}, {}};
+	detail::ttf_text ttf;
+	ttf.renderer = renderer;
 	if (TTF_Init()) {
-		// font priority: an explicit app_options.font_path, else the page's
-		// first loadable @font-face src (url(...), quotes stripped; a public-
-		// root "/assets/..." path also tried repo-relative), else a system font
-		std::string face;
-		const embedded_asset * emb = nullptr;
+		// 1) the embedded default faces (fonts.hpp): serif/sans/mono in
+		// four styles each, registered under the generic family names
+		{
+			const auto reg = [&](const char * key, const char * fam, bool b, bool i) {
+				if (const embedded_asset * a = find_asset(&e.assets, key)) {
+					ttf.register_face(fam, b, i, {a->data, a->size, {}});
+				}
+			};
+			reg("ctbrowser:font/serif-regular", "serif", false, false);
+			reg("ctbrowser:font/serif-bold", "serif", true, false);
+			reg("ctbrowser:font/serif-italic", "serif", false, true);
+			reg("ctbrowser:font/serif-bolditalic", "serif", true, true);
+			reg("ctbrowser:font/sans-regular", "sans-serif", false, false);
+			reg("ctbrowser:font/sans-bold", "sans-serif", true, false);
+			reg("ctbrowser:font/sans-italic", "sans-serif", false, true);
+			reg("ctbrowser:font/sans-bolditalic", "sans-serif", true, true);
+			reg("ctbrowser:font/mono-regular", "monospace", false, false);
+			reg("ctbrowser:font/mono-bold", "monospace", true, false);
+			reg("ctbrowser:font/mono-italic", "monospace", false, true);
+			reg("ctbrowser:font/mono-bolditalic", "monospace", true, true);
+		}
+		// 2) every page @font-face: family + src (embedded copy preferred,
+		// else resolved like any asset; a public-root "/x" also tried
+		// repo-relative) + optional font-weight/font-style descriptors -
+		// a page can declare MANY families and variants, all live at once
 		for (const auto & ff : e.font_faces()) {
+			const std::string fam{ff.get("font-family")};
+			if (fam.empty()) { continue; }
+			std::string fam_clean = fam;
+			while (!fam_clean.empty() && (fam_clean.front() == '"' || fam_clean.front() == '\'')) { fam_clean.erase(fam_clean.begin()); }
+			while (!fam_clean.empty() && (fam_clean.back() == '"' || fam_clean.back() == '\'')) { fam_clean.pop_back(); }
 			std::string src{ff.get("src")};
 			const std::size_t up = src.find("url(");
 			if (up == std::string::npos) { continue; }
 			const std::size_t s = up + 4, en = src.find(')', s);
 			if (en == std::string::npos) { continue; }
-			std::string p = src.substr(s, en - s);
-			while (!p.empty() && (p.front() == ' ' || p.front() == '"' || p.front() == '\'')) { p.erase(p.begin()); }
-			while (!p.empty() && (p.back() == ' ' || p.back() == '"' || p.back() == '\'')) { p.pop_back(); }
-			// prefer the std::embed'd copy (self-contained binary); else resolve
-			// the file like any other asset (CWD, then binary dir + repo root);
-			// a leading '/' (public-root path) is also tried repo-relative
-			if ((emb = find_asset(&e.assets, p)) != nullptr) { break; }
-			std::string r = detail::resolve_asset(p);
-			if (r.empty() && p.size() > 1 && p[0] == '/') { r = detail::resolve_asset(p.substr(1)); }
-			if (!r.empty()) { face = r; break; }
+			std::string path = src.substr(s, en - s);
+			while (!path.empty() && (path.front() == ' ' || path.front() == '"' || path.front() == '\'')) { path.erase(path.begin()); }
+			while (!path.empty() && (path.back() == ' ' || path.back() == '"' || path.back() == '\'')) { path.pop_back(); }
+			const std::string w{ff.get("font-weight")};
+			const std::string st{ff.get("font-style")};
+			const bool fb = w.find("bold") != std::string::npos || w.find("700") != std::string::npos ||
+			                w.find("800") != std::string::npos || w.find("900") != std::string::npos;
+			const bool fi = st.find("italic") != std::string::npos || st.find("oblique") != std::string::npos;
+			if (const embedded_asset * emb = find_asset(&e.assets, path)) {
+				ttf.register_face(fam_clean, fb, fi, {emb->data, emb->size, {}});
+				continue;
+			}
+			std::string r = detail::resolve_asset(path);
+			if (r.empty() && path.size() > 1 && path[0] == '/') { r = detail::resolve_asset(path.substr(1)); }
+			if (!r.empty()) { ttf.register_face(fam_clean, fb, fi, {nullptr, 0, r}); }
 		}
-		if (!opts.font_path.empty()) {
-			ttf.path = opts.font_path;
-		} else if (emb != nullptr) {
-			ttf.mem = emb->data;
-			ttf.mem_size = emb->size;
-		} else {
-			ttf.path = !face.empty() ? face : detail::probe_font();
-		}
+		// 3) the last resort: an explicit font path, else a system font
+		ttf.fallback_path = !opts.font_path.empty() ? opts.font_path : detail::probe_font();
 		if (ttf.ok()) {
-			e.measure = [&ttf](std::u32string_view text, std::int32_t px) {
-				return ttf.measure(text, px);
+			e.measure = [&ttf](std::u32string_view text, std::int32_t px, std::string_view family,
+			                   bool bold, bool italic) {
+				return ttf.measure(text, px, family, bold, italic);
 			};
 		}
 	}
@@ -523,9 +640,13 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 					break;
 				case SDL_EVENT_KEY_DOWN:
 				case SDL_EVENT_KEY_UP:
-					if (!ev.key.repeat) {
+					if (!ev.key.repeat || ev.type == SDL_EVENT_KEY_DOWN) {
+						// repeats replay the editing default (held Backspace)
 						e.key(SDL_GetKeyName(ev.key.key), ev.type == SDL_EVENT_KEY_DOWN);
 					}
+					break;
+				case SDL_EVENT_TEXT_INPUT:
+					e.text_input(ev.text.text);
 					break;
 				default:
 					break;

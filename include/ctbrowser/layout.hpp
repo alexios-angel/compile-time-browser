@@ -41,7 +41,8 @@ using style_fn =
 // measure a UTF-32 text run's width in pixels at a font size; when absent the
 // layout assumes the embedded font's square glyphs (width == font_px per code
 // point). The SDL shell installs a TTF-backed measure when a real font loads.
-using text_measure_fn = ctc::cfunction<std::int32_t(std::u32string_view, std::int32_t)>;
+using text_measure_fn =
+    ctc::cfunction<std::int32_t(std::u32string_view, std::int32_t, std::string_view, bool, bool)>;
 
 struct computed_style {
 	const node * n;
@@ -65,15 +66,28 @@ struct computed_style {
 
 struct paint_cmd {
 	enum class kind { box, text, canvas };
+	enum class strike : std::uint8_t { none, underline, line_through };
 	kind what = kind::box;
 	std::int32_t x = 0, y = 0, w = 0, h = 0;
 	uint32_t argb = 0;      // box fill / text color
 	std::u32string text;    // kind::text (UTF-32 code points)
 	std::int32_t font_px = 16;       // kind::text
+	std::string font_family;         // kind::text (resolved font-family list)
+	bool bold = false;               // kind::text (font-weight >= bold)
+	bool italic = false;             // kind::text (font-style italic/oblique)
+	strike deco = strike::none;      // kind::text (text-decoration)
 	node * canvas_node = nullptr; // kind::canvas
 };
 
 namespace detail {
+
+// the resolved text style of one element (family/weight/style/deco)
+struct font_spec {
+	std::string family;
+	bool bold = false;
+	bool italic = false;
+	paint_cmd::strike deco = paint_cmd::strike::none;
+};
 
 constexpr uint32_t pack_argb(ctcss::color c) {
 	return (static_cast<uint32_t>(c.a) << 24) | (static_cast<uint32_t>(c.r) << 16) |
@@ -100,9 +114,84 @@ struct layout_pass {
 
 	static constexpr std::int32_t UNSET = -1000000;
 
-	constexpr std::int32_t text_width(std::u32string_view t, std::int32_t font_px) const {
-		if (measure != nullptr && *measure) { return (*measure)(t, font_px); }
+	constexpr std::int32_t text_width(std::u32string_view t, std::int32_t font_px,
+	                                  const font_spec & fs = {}) const {
+		if (measure != nullptr && *measure) { return (*measure)(t, font_px, fs.family, fs.bold, fs.italic); }
 		return static_cast<std::int32_t>(t.size()) * font_px; // one square glyph per code point
+	}
+
+	// inherited text-style resolvers (the font_of/text_color pattern):
+	// multiple fonts coexist in one document - every element resolves its
+	// own family/weight/style, every text cmd carries them
+	constexpr std::string font_family_of(node * n) const {
+		for (node * p = n; p != nullptr; p = p->parent) {
+			computed_style pcs{p, resolve, p->chain()};
+			const std::string_view v = pcs.get("font-family");
+			if (!v.empty()) { return std::string{v}; }
+		}
+		return {};
+	}
+	constexpr bool font_bold_of(node * n) const {
+		for (node * p = n; p != nullptr; p = p->parent) {
+			computed_style pcs{p, resolve, p->chain()};
+			const std::string_view v = pcs.get("font-weight");
+			if (v.empty()) { continue; }
+			if (ctcss::detail::ascii_iequals(v, "bold") || ctcss::detail::ascii_iequals(v, "bolder")) { return true; }
+			if (ctcss::detail::ascii_iequals(v, "normal") || ctcss::detail::ascii_iequals(v, "lighter")) { return false; }
+			const ctcss::length l = ctcss::parse_length(v); // numeric weights
+			return l.ok && l.value >= 600;
+		}
+		return false;
+	}
+	constexpr bool font_italic_of(node * n) const {
+		for (node * p = n; p != nullptr; p = p->parent) {
+			computed_style pcs{p, resolve, p->chain()};
+			const std::string_view v = pcs.get("font-style");
+			if (v.empty()) { continue; }
+			return ctcss::detail::ascii_iequals(v, "italic") || ctcss::detail::ascii_iequals(v, "oblique");
+		}
+		return false;
+	}
+	constexpr paint_cmd::strike text_deco_of(node * n) const {
+		// text-decoration is not truly inherited in CSS, but in a block
+		// engine treating it as inherited matches how it propagates to
+		// the descendants that render the text
+		for (node * p = n; p != nullptr; p = p->parent) {
+			computed_style pcs{p, resolve, p->chain()};
+			const std::string_view v = pcs.get("text-decoration");
+			if (v.empty()) { continue; }
+			if (v.find("underline") != std::string_view::npos) { return paint_cmd::strike::underline; }
+			if (v.find("line-through") != std::string_view::npos) { return paint_cmd::strike::line_through; }
+			return paint_cmd::strike::none; // explicit none stops the walk
+		}
+		return paint_cmd::strike::none;
+	}
+	constexpr font_spec font_spec_of(node * n) const {
+		return font_spec{font_family_of(n), font_bold_of(n), font_italic_of(n), text_deco_of(n)};
+	}
+
+	// stamp a text cmd with the spec and emit its decoration band
+	constexpr void push_text(paint_cmd cmd, const font_spec & fs) {
+		cmd.font_family = fs.family;
+		cmd.bold = fs.bold;
+		cmd.italic = fs.italic;
+		cmd.deco = fs.deco;
+		const std::int32_t dy = fs.deco == paint_cmd::strike::underline ? cmd.h + 1
+		                        : fs.deco == paint_cmd::strike::line_through ? cmd.h / 2
+		                                                                     : -1;
+		const std::int32_t dx = cmd.x, dw = cmd.w, dcy = cmd.y + dy;
+		const std::uint32_t argb = cmd.argb;
+		out->push_back(std::move(cmd));
+		if (dy >= 0 && dw > 0) {
+			paint_cmd band;
+			band.what = paint_cmd::kind::box;
+			band.x = dx;
+			band.y = dcy;
+			band.w = dw;
+			band.h = 1;
+			band.argb = argb;
+			out->push_back(band);
+		}
 	}
 
 	// resolve a CSS length to px: px/unitless absolute; % of `basis`; vw/vh of the
@@ -124,6 +213,42 @@ struct layout_pass {
 	constexpr std::int32_t prop_px(const computed_style & cs, std::string_view prop, std::int32_t basis,
 	                      std::int32_t font_px, std::int32_t fallback) const {
 		return len_px(cs.get(prop), basis, font_px, fallback);
+	}
+
+	// the CSS box sides: the 1/2/3/4-value shorthand ("margin: 16px 0")
+	// expanded per spec, then margin-left-style per-side overrides
+	struct sides {
+		std::int32_t top = 0, right = 0, bottom = 0, left = 0;
+	};
+	constexpr sides sides_of(const computed_style & cs, std::string_view base, std::int32_t basis,
+	                         std::int32_t font_px) const {
+		sides s;
+		const std::string_view sh = cs.get(base);
+		if (!sh.empty()) {
+			std::int32_t v[4] = {0, 0, 0, 0};
+			std::int32_t k = 0;
+			std::size_t i = 0;
+			while (i < sh.size() && k < 4) {
+				while (i < sh.size() && ctcss::detail::is_css_blank(sh[i])) { ++i; }
+				const std::size_t st = i;
+				while (i < sh.size() && !ctcss::detail::is_css_blank(sh[i])) { ++i; }
+				if (i > st) { v[k++] = len_px(sh.substr(st, i - st), basis, font_px, 0); }
+			}
+			if (k == 1) { s = {v[0], v[0], v[0], v[0]}; }
+			else if (k == 2) { s = {v[0], v[1], v[0], v[1]}; }
+			else if (k == 3) { s = {v[0], v[1], v[2], v[1]}; }
+			else if (k == 4) { s = {v[0], v[1], v[2], v[3]}; }
+		}
+		const auto side = [&](std::string_view suffix, std::int32_t & slot) {
+			const std::string prop = std::string{base} + std::string{suffix};
+			const std::string_view v = cs.get(prop);
+			if (!v.empty()) { slot = len_px(v, basis, font_px, slot); }
+		};
+		side("-top", s.top);
+		side("-right", s.right);
+		side("-bottom", s.bottom);
+		side("-left", s.left);
+		return s;
 	}
 
 	// computed font-size (px): em/% relative to the parent's font, vw/vh to the
@@ -277,31 +402,52 @@ struct layout_pass {
 	constexpr std::int32_t block_body(node & n, std::int32_t x, std::int32_t y, std::int32_t width, const box & cb) {
 		computed_style cs{&n, resolve, n.chain()};
 		const std::int32_t font_px = font_of(&n);
-		const std::int32_t margin = prop_px(cs, "margin", width, font_px, 0);
-		const std::int32_t padding = prop_px(cs, "padding", width, font_px, 0);
+		const sides m = sides_of(cs, "margin", width, font_px);
+		const sides p = sides_of(cs, "padding", width, font_px);
+		const std::int32_t padding = p.left; // widget emitters use the inline inset
 
 		std::int32_t box_w = prop_px(cs, "width", width, font_px, -1);
-		if (box_w < 0) { box_w = width - 2 * margin; }
+		if (box_w < 0) { box_w = width - m.left - m.right; }
 		if (n.is_canvas()) { box_w = n.canvas_w; }
-		const std::int32_t content_w = box_w - 2 * padding;
+		// buttons and selects shrink to their content (Firefox renders
+		// them inline-block) unless the page sets an explicit width
+		if (prop_px(cs, "width", width, font_px, -1) < 0) {
+			if (n.tag == "button") {
+				const font_spec bfs = font_spec_of(&n);
+				const std::int32_t tw = text_width(utf8_to_utf32(trimmed(n.text)), font_px, bfs);
+				box_w = tw + p.left + p.right + 2;
+			} else if (n.is_select()) {
+				const font_spec bfs = font_spec_of(&n);
+				node * sel = n.nth_option(n.selected_option());
+				std::int32_t widest = 0;
+				for (const auto & c : n.children) { // size to the widest option
+					if (c->tag != "option") { continue; }
+					const std::int32_t w2 = text_width(utf8_to_utf32(trimmed(c->text)), font_px, bfs);
+					if (w2 > widest) { widest = w2; }
+				}
+				(void)sel;
+				box_w = widest + font_px + p.left + p.right + 4; // + the arrow
+			}
+		}
+		const std::int32_t content_w = box_w - p.left - p.right;
 
-		n.x = x + margin;
-		n.y = y + margin;
+		n.x = x + m.left;
+		n.y = y + m.top;
 		n.w = box_w;
 
-		std::int32_t cursor = n.y + padding;
+		std::int32_t cursor = n.y + p.top;
 
 		// <select> renders as a native widget: the selected option collapsed with
 		// a down-arrow (plus a popup list on top when open), not stacked options
 		if (n.is_select()) {
 			emit_select(n, font_px, padding, cursor, content_w);
 			emit_frame(n, detail_frame_argb(n));
-			return n.h + 2 * margin;
+			return n.h + m.top + m.bottom;
 		}
 		// form widgets render native chrome (Firefox-style):
 		if (n.is_checkbox() || n.is_radio()) {
 			emit_toggle(n, font_px, padding, n.is_radio());
-			return n.h + 2 * margin;
+			return n.h + m.top + m.bottom;
 		}
 		if (n.is_input()) {
 			if (ctcss::detail::ascii_iequals(n.input_type(), "hidden")) {
@@ -309,7 +455,51 @@ struct layout_pass {
 				return 0;
 			}
 			emit_input(n, font_px, padding, cursor);
-			return n.h + 2 * margin;
+			return n.h + m.top + m.bottom;
+		}
+		if (n.is_textarea()) {
+			emit_textarea(n, font_px, padding, cursor);
+			return n.h + m.top + m.bottom;
+		}
+		if (n.tag == "table") {
+			emit_table(n, padding, cursor, content_w, cb);
+			return n.h + m.top + m.bottom;
+		}
+		// list markers: the UA ul/ol padding-left leaves a 40px gutter
+		if (n.tag == "li" && n.parent != nullptr) {
+			const ctcss::color fg = text_color(n);
+			if (n.parent->tag == "ul") {
+				const std::int32_t d = font_px / 3 > 2 ? font_px / 3 : 3; // the disc
+				paint_cmd b;
+				b.what = paint_cmd::kind::box;
+				b.x = n.x - d * 3;
+				b.y = cursor + font_px / 2 - d / 2;
+				b.w = d;
+				b.h = d;
+				b.argb = pack_argb(fg);
+				out->push_back(b);
+			} else if (n.parent->tag == "ol") {
+				std::int32_t idx = 1;
+				for (const auto & sib : n.parent->children) {
+					if (sib.get() == &n) { break; }
+					if (sib->tag == "li") { ++idx; }
+				}
+				std::u32string num;
+				for (const char ch : std::to_string(idx)) { num.push_back(static_cast<char32_t>(ch)); }
+				num.push_back(U'.');
+				const font_spec fs2 = font_spec_of(&n);
+				const std::int32_t nw = text_width(num, font_px, fs2);
+				paint_cmd c;
+				c.what = paint_cmd::kind::text;
+				c.x = n.x - nw - font_px / 2;
+				c.y = cursor;
+				c.w = nw;
+				c.h = font_px;
+				c.argb = pack_argb(fg);
+				c.text = std::move(num);
+				c.font_px = font_px;
+				push_text(std::move(c), fs2);
+			}
 		}
 
 		// direct text, decoded to UTF-32 code points once, then wrapped to the
@@ -317,25 +507,28 @@ struct layout_pass {
 		const std::u32string text = utf8_to_utf32(n.text);
 		const ctcss::color fg = text_color(n); // CSS color inherits from ancestors
 		const std::string_view align = text_align(n);
+		const font_spec fs = font_spec_of(&n); // family/weight/style/decoration
 		if (!trimmed(std::u32string_view{text}).empty()) {
 			// hard-break on U+000A (from <br>) into lines, then greedily wrap each
 			std::u32string_view remain = text;
 			bool more = true;
+			const bool preserve = n.tag == "pre"; // pre keeps leading spaces
 			while (more) {
 				const std::size_t nl = remain.find(U'\n');
-				const std::u32string_view line =
-				    trimmed(nl == std::u32string_view::npos ? remain : remain.substr(0, nl));
+				const std::u32string_view raw_line =
+				    nl == std::u32string_view::npos ? remain : remain.substr(0, nl);
+				const std::u32string_view line = preserve ? raw_line : trimmed(raw_line);
 				if (line.empty()) {
 					cursor += font_px + font_px / 4; // blank row (e.g. consecutive <br>)
 				} else {
 					std::u32string_view rest = line;
 					while (!rest.empty()) {
 						std::size_t take = rest.size();
-						while (take > 1 && text_width(rest.substr(0, take), font_px) > content_w) {
+						while (take > 1 && text_width(rest.substr(0, take), font_px, fs) > content_w) {
 							--take;
 						}
-						const std::int32_t tw = text_width(rest.substr(0, take), font_px);
-						std::int32_t tx = n.x + padding;
+						const std::int32_t tw = text_width(rest.substr(0, take), font_px, fs);
+						std::int32_t tx = n.x + p.left;
 						if (align == std::string_view{"center"}) { tx += (content_w - tw) / 2; }
 						else if (align == std::string_view{"right"}) { tx += content_w - tw; }
 						paint_cmd cmd;
@@ -347,7 +540,7 @@ struct layout_pass {
 						cmd.argb = pack_argb(fg);
 						cmd.text = u32str(rest.substr(0, take));
 						cmd.font_px = font_px;
-						out->push_back(cmd);
+						push_text(std::move(cmd), fs);
 						cursor += font_px + font_px / 4;
 						rest.remove_prefix(take);
 					}
@@ -361,7 +554,7 @@ struct layout_pass {
 		if (n.is_canvas()) {
 			paint_cmd cmd;
 			cmd.what = paint_cmd::kind::canvas;
-			cmd.x = n.x + padding;
+			cmd.x = n.x + p.left;
 			cmd.y = cursor;
 			cmd.w = n.canvas_w;
 			cmd.h = n.canvas_h;
@@ -378,11 +571,11 @@ struct layout_pass {
 				zero_rects(*c);
 				continue;
 			}
-			cursor += place(*c, n.x + padding, cursor, content_w, cb);
+			cursor += place(*c, n.x + p.left, cursor, content_w, cb);
 		}
 
 		std::int32_t box_h = prop_px(cs, "height", cb.h, font_px, -1);
-		if (box_h < 0) { box_h = (cursor - n.y) + padding; }
+		if (box_h < 0) { box_h = (cursor - n.y) + p.bottom; }
 		n.h = box_h;
 
 		// buttons carry Firefox's 1px widget border (layout has no border
@@ -390,7 +583,7 @@ struct layout_pass {
 		if (n.tag == "button") { emit_frame(n, detail_frame_argb(n)); }
 
 		// backgrounds are emitted in a pre-pass by collect_backgrounds below
-		return n.h + 2 * margin;
+		return n.h + m.top + m.bottom;
 	}
 
 	static constexpr std::string_view trimmed(std::string_view v) {
@@ -507,23 +700,194 @@ struct layout_pass {
 	constexpr void emit_input(node & n, std::int32_t font_px, std::int32_t padding, std::int32_t top) {
 		n.h = font_px + 2 * padding;
 		emit_frame(n, detail_frame_argb(n));
-		std::u32string shown = utf8_to_utf32(std::string{n.attribute("value")});
+		const font_spec fs = font_spec_of(&n);
+		const std::int32_t content_w = n.w - 2 * padding;
+		std::u32string shown = utf8_to_utf32(n.value); // the LIVE editable value
 		if (ctcss::detail::ascii_iequals(n.input_type(), "password")) {
 			shown.assign(shown.size(), U'*');
 		}
-		if (!shown.empty()) {
-			const ctcss::color fg = text_color(n);
+		// caret position in code points (caret is a byte offset)
+		std::size_t caret_cp = utf8_length(std::string_view{n.value}.substr(
+		    0, static_cast<std::size_t>(n.caret < 0 ? 0 : n.caret)));
+		if (caret_cp > shown.size()) { caret_cp = shown.size(); }
+		// suffix-scroll: drop leading code points until the caret fits
+		std::size_t start = 0;
+		while (caret_cp > start &&
+		       text_width(std::u32string_view{shown}.substr(start, caret_cp - start), font_px, fs) >
+		           content_w) {
+			++start;
+		}
+		std::u32string_view view{shown};
+		view = view.substr(start);
+		std::size_t take = view.size(); // clip the tail to the field
+		while (take > 0 && text_width(view.substr(0, take), font_px, fs) > content_w) { --take; }
+		const ctcss::color fg = text_color(n);
+		if (take > 0) {
 			paint_cmd c;
 			c.what = paint_cmd::kind::text;
 			c.x = n.x + padding;
 			c.y = top;
-			c.w = text_width(shown, font_px);
+			c.w = text_width(view.substr(0, take), font_px, fs);
 			c.h = font_px;
 			c.argb = pack_argb(fg);
-			c.text = shown;
+			c.text = std::u32string{view.substr(0, take)};
 			c.font_px = font_px;
-			out->push_back(c);
+			push_text(std::move(c), fs);
 		}
+		if (n.focused) { // the caret: a 1px bar at the caret's measured x
+			paint_cmd bar;
+			bar.what = paint_cmd::kind::box;
+			bar.x = n.x + padding +
+			        text_width(std::u32string_view{shown}.substr(start, caret_cp - start), font_px, fs);
+			bar.y = top;
+			bar.w = 1;
+			bar.h = font_px;
+			bar.argb = pack_argb(fg);
+			out->push_back(bar);
+		}
+	}
+
+	// <textarea>: a multi-line editable field. Hard newlines only (no
+	// soft wrap - long lines clip; documented); rows/cols size the box
+	// when the page sets no width/height.
+	constexpr void emit_textarea(node & n, std::int32_t font_px, std::int32_t padding, std::int32_t top) {
+		const font_spec fs = font_spec_of(&n);
+		const std::int32_t line_h = font_px + font_px / 4;
+		const std::int32_t rows = detail::parse_int_attr(n.attribute("rows"), 2);
+		const std::int32_t cols = detail::parse_int_attr(n.attribute("cols"), 20);
+		computed_style cs{&n, resolve, n.chain()};
+		const std::int32_t cw0 = text_width(U"0", font_px, fs);
+		if (cs.get("width").empty()) { n.w = cols * cw0 + 2 * padding; }
+		if (cs.get("height").empty()) { n.h = rows * line_h + 2 * padding; }
+		else {
+			const ctcss::length hl = ctcss::parse_length(cs.get("height"));
+			if (hl.ok) { n.h = static_cast<std::int32_t>(hl.value); }
+		}
+		emit_frame(n, detail_frame_argb(n));
+		const std::int32_t content_w = n.w - 2 * padding;
+		const ctcss::color fg = text_color(n);
+		// caret line/column (byte offsets -> per-line code points)
+		const std::string & v = n.value;
+		const std::size_t cb = static_cast<std::size_t>(n.caret < 0 ? 0 : n.caret) > v.size()
+		                           ? v.size()
+		                           : static_cast<std::size_t>(n.caret < 0 ? 0 : n.caret);
+		std::int32_t line_i = 0, caret_line = 0;
+		std::size_t ls = 0, caret_ls = 0;
+		for (std::size_t i = 0; i <= v.size(); ++i) {
+			if (i == cb) {
+				caret_line = line_i;
+				caret_ls = ls;
+			}
+			if (i == v.size()) { break; }
+			if (v[i] == '\n') {
+				++line_i;
+				ls = i + 1;
+			}
+		}
+		// render each hard line, clipped to the box
+		std::int32_t y = top;
+		std::size_t pos = 0;
+		std::int32_t li2 = 0;
+		while (pos <= v.size() && y + font_px <= n.y + n.h - padding) {
+			std::size_t nl = v.find('\n', pos);
+			if (nl == std::string::npos) { nl = v.size(); }
+			std::u32string line = utf8_to_utf32(std::string_view{v}.substr(pos, nl - pos));
+			std::size_t take = line.size();
+			while (take > 0 && text_width(std::u32string_view{line}.substr(0, take), font_px, fs) > content_w) {
+				--take;
+			}
+			if (take > 0) {
+				paint_cmd c;
+				c.what = paint_cmd::kind::text;
+				c.x = n.x + padding;
+				c.y = y;
+				c.w = text_width(std::u32string_view{line}.substr(0, take), font_px, fs);
+				c.h = font_px;
+				c.argb = pack_argb(fg);
+				c.text = std::u32string{std::u32string_view{line}.substr(0, take)};
+				c.font_px = font_px;
+				push_text(std::move(c), fs);
+			}
+			if (n.focused && li2 == caret_line) {
+				const std::u32string upto = utf8_to_utf32(std::string_view{v}.substr(caret_ls, cb - caret_ls));
+				paint_cmd bar;
+				bar.what = paint_cmd::kind::box;
+				bar.x = n.x + padding + text_width(upto, font_px, fs);
+				bar.y = y;
+				bar.w = 1;
+				bar.h = font_px;
+				bar.argb = pack_argb(fg);
+				out->push_back(bar);
+			}
+			y += line_h;
+			++li2;
+			if (nl == v.size()) { break; }
+			pos = nl + 1;
+		}
+	}
+
+	// <table>: rows through thead/tbody/tfoot, td/th cells laid out as
+	// ordinary blocks in EQUAL-WIDTH columns (no colspan/rowspan/auto
+	// sizing - documented); border-spacing fixed at 2px; the `border`
+	// attribute >= 1 draws Firefox's classic 1px frames.
+	constexpr void collect_rows(node & n, std::vector<node *> & rows) {
+		for (const auto & c : n.children) {
+			if (c->tag == "tr") { rows.push_back(c.get()); }
+			else if (c->tag == "thead" || c->tag == "tbody" || c->tag == "tfoot") { collect_rows(*c, rows); }
+		}
+	}
+	constexpr void emit_table(node & n, std::int32_t padding, std::int32_t top, std::int32_t content_w,
+	                          const box & cb) {
+		const std::int32_t spacing = 2;
+		const bool bordered = detail::parse_int_attr(n.attribute("border"), 0) > 0;
+		std::int32_t cursor = top;
+		// caption first, as a plain block above the grid
+		for (const auto & c : n.children) {
+			if (c->tag == "caption") { cursor += place(*c, n.x + padding, cursor, content_w, cb); }
+		}
+		std::vector<node *> rows;
+		collect_rows(n, rows);
+		std::size_t ncols = 0;
+		for (node * r : rows) {
+			std::size_t k = 0;
+			for (const auto & c : r->children) {
+				if (c->tag == "td" || c->tag == "th") { ++k; }
+			}
+			if (k > ncols) { ncols = k; }
+		}
+		if (ncols == 0) {
+			n.h = (cursor - n.y) + padding;
+			return;
+		}
+		const std::int32_t colw =
+		    (content_w - spacing * static_cast<std::int32_t>(ncols + 1)) / static_cast<std::int32_t>(ncols);
+		std::int32_t table_right = n.x + padding;
+		for (node * r : rows) {
+			cursor += spacing;
+			std::int32_t cx = n.x + padding + spacing;
+			std::int32_t row_h = 0;
+			for (const auto & c : r->children) {
+				if (c->tag != "td" && c->tag != "th") { continue; }
+				const std::int32_t h = place(*c, cx, cursor, colw, cb);
+				if (h > row_h) { row_h = h; }
+				cx += colw + spacing;
+			}
+			if (cx > table_right) { table_right = cx; }
+			// row rect for hit tests
+			r->x = n.x + padding;
+			r->y = cursor;
+			r->w = cx - r->x;
+			r->h = row_h;
+			if (bordered) {
+				for (const auto & c : r->children) {
+					if (c->tag == "td" || c->tag == "th") { emit_frame(*c, 0xFF808080u); }
+				}
+			}
+			cursor += row_h;
+		}
+		cursor += spacing;
+		n.h = (cursor - n.y) + padding;
+		if (bordered) { emit_frame(n, 0xFF808080u); }
 	}
 
 	constexpr void emit_select(node & n, std::int32_t font_px, std::int32_t padding, std::int32_t top, std::int32_t content_w) {
