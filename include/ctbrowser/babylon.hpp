@@ -40,6 +40,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <numbers>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -371,9 +372,9 @@ constexpr geo make_sphere(double diameter, int segments) {
 	const int rings = seg, sectors = seg * 2;
 	geo g;
 	for (int i = 0; i <= rings; ++i) {
-		const double phi = M_PI * (double(i) / rings);       // 0..pi
+		const double phi = std::numbers::pi * (double(i) / rings);       // 0..pi
 		for (int j = 0; j <= sectors; ++j) {
-			const double theta = 2.0 * M_PI * (double(j) / sectors);
+			const double theta = 2.0 * std::numbers::pi * (double(j) / sectors);
 			g.verts.push_back(V3(rad * fsin(phi) * fcos(theta),
 			                     rad * fcos(phi),
 			                     rad * fsin(phi) * fsin(theta)));
@@ -404,11 +405,11 @@ constexpr geo make_cylinder(double height, double diameter, int tess) {
 	geo g;
 	const int top0 = 0, bot0 = n; // ring vertices
 	for (int i = 0; i < n; ++i) {
-		const double a = 2.0 * M_PI * (double(i) / n);
+		const double a = 2.0 * std::numbers::pi * (double(i) / n);
 		g.verts.push_back(V3(r * fcos(a), hh, r * fsin(a)));
 	}
 	for (int i = 0; i < n; ++i) {
-		const double a = 2.0 * M_PI * (double(i) / n);
+		const double a = 2.0 * std::numbers::pi * (double(i) / n);
 		g.verts.push_back(V3(r * fcos(a), -hh, r * fsin(a)));
 	}
 	const int topC = static_cast<int>(g.verts.size()); g.verts.push_back(V3(0, hh, 0));
@@ -2037,7 +2038,7 @@ inline void register_orbit(const worldptr & W, dom_events & ev, int id) {
 		W->cam_lasty = y;
 		const objptr ch = W->cameras[static_cast<size_t>(id)].handle;
 		double beta = num_prop(ch, "beta", 1) - dy * 0.01;
-		beta = beta < 0.05 ? 0.05 : (beta > M_PI - 0.05 ? M_PI - 0.05 : beta);
+		beta = beta < 0.05 ? 0.05 : (beta > std::numbers::pi - 0.05 ? std::numbers::pi - 0.05 : beta);
 		ch->set("alpha", value{num_prop(ch, "alpha", 0) - dx * 0.01});
 		ch->set("beta", value{beta});
 		return value{};
@@ -2259,7 +2260,7 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 			for (int k = 0; k < 3; ++k) { rad = std::max(rad, sc.bmax[k] - sc.bmin[k]); }
 		}
 		const objptr target = make_vector3(c[0], c[1], c[2]).as_object();
-		return make_camera_arc(W, ev, "default_camera", -M_PI / 2, M_PI / 2.5, rad * 2.2, target, sc.handle);
+		return make_camera_arc(W, ev, "default_camera", -std::numbers::pi / 2, std::numbers::pi / 2.5, rad * 2.2, target, sc.handle);
 	}, "createDefaultCamera"));
 	h->set("createDefaultLight", value::function([W, id](ctjs::context &, const std::vector<value> &) -> value {
 		if (id < 0 || id >= static_cast<int>(W->scenes.size())) { return value{}; }
