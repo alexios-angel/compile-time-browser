@@ -202,7 +202,8 @@ Elements behave like they do in Firefox, out of the box:
   every element before the page says anything — heading scale (bold
   serif), list markers and quote indents, underlined link blue,
   button/input chrome with the `#8f8f9d` frames and `#0060df` checked
-  accent, `<hr>` rules, `<pre>` layout preservation, hidden
+  accent, the `<summary>` disclosure triangle (▶ closed, ▼ open),
+  `<hr>` rules, `<pre>` layout preservation, hidden
   `<head>`/`<template>`. Page styles always win (author beats UA);
   inline styles beat both.
 * **real typefaces, multiple per document**: the vendored
@@ -215,9 +216,13 @@ Elements behave like they do in Firefox, out of the box:
   strike-throughs. A checkout without `fonts/` falls back to a system
   font or the built-in bitmap face.
 * **text editing**: click a text `<input>` or `<textarea>` and type —
-  a real caret (code-point-aware Backspace/Delete/arrows/Home/End,
-  line motion in textareas), `input` events on every edit, `change` on
-  blur, `.value` from script.
+  a real **blinking** caret (Chrome's 500 ms cadence, solid while you
+  type; code-point-aware Backspace/Delete/arrows/Home/End), `input`
+  events on every edit, `change` on blur, `.value` from script.
+  Textareas **soft-wrap** at word boundaries like Firefox, and
+  Up/Down/Home/End walk the *visual* lines. Inputs whose text outgrows
+  the box scroll horizontally and hold the view still until the caret
+  actually leaves it — clicks land on the character you see.
 * **forms**: `<button>`/`<input type=submit>` submit (Enter in a text
   field does the implicit submission), `type=reset` restores initial
   values, `onsubmit`/`addEventListener("submit")` are cancelable, and
@@ -260,8 +265,12 @@ Elements behave like they do in Firefox, out of the box:
 Everything the three bricks document applies (their subsets ARE this
 project's subsets). Browser-side:
 
-- block layout only (no inline flow, floats or flex — inline elements
-  render as their own rows)
+- block layout plus a practical **inline subset**: consecutive
+  inline-level children (`<b>`/`<a>`/`<span>`/`<code>`/inputs/buttons/
+  labels…) share rows, wrap as a unit, center vertically per line, and
+  shrink-wrap their boxes; `<label>` composes its control and text on
+  one line. No floats or flex, and a block's own text does not
+  interleave with element children mid-line (it flows above them)
 - px lengths; margins/paddings honor per-side values and 1-4-value
   shorthands
 - editing: no Tab traversal, no IME composition, no double-click

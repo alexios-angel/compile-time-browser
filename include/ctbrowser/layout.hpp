@@ -82,6 +82,23 @@ struct paint_cmd {
 
 namespace detail {
 
+// inline-level elements share rows (Firefox's inline flow); the CSS
+// display property overrides the tag default either way
+constexpr bool inline_level_tag(std::string_view tag) {
+	for (const std::string_view s :
+	     {"a", "span", "b", "i", "u", "s", "em", "strong", "code", "small", "big", "mark",
+	      "label", "input", "button", "select", "textarea", "sub", "sup", "tt", "kbd", "samp",
+	      "cite", "var", "dfn", "abbr", "ins", "del", "strike", "img", "q", "time", "output"}) {
+		if (tag == s) { return true; }
+	}
+	return false;
+}
+// inline containers with no explicit width shrink to their content
+constexpr bool shrink_wrap_tag(std::string_view tag) {
+	return inline_level_tag(tag) && tag != "input" && tag != "button" && tag != "select" &&
+	       tag != "textarea" && tag != "img";
+}
+
 // the resolved text style of one element (family/weight/style/deco)
 struct font_spec {
 	std::string family;
@@ -473,6 +490,30 @@ struct layout_pass {
 			emit_table(n, padding, cursor, content_w, cb);
 			return n.h + m.top + m.bottom;
 		}
+		// the details/summary disclosure marker: a right-pointing triangle
+		// when closed, down-pointing when open (the summary's UA
+		// padding-left leaves the gutter)
+		if (n.is_summary() && n.parent != nullptr && n.parent->is_details()) {
+			const ctcss::color fg = text_color(n);
+			const std::int32_t s = font_px / 2 + 2;
+			const std::int32_t mx = n.x + 4;
+			const std::int32_t my = cursor + font_px / 2 - s / 2;
+			const auto row = [&](std::int32_t bx, std::int32_t by, std::int32_t bw, std::int32_t bh) {
+				paint_cmd b;
+				b.what = paint_cmd::kind::box;
+				b.x = bx;
+				b.y = by;
+				b.w = bw;
+				b.h = bh;
+				b.argb = pack_argb(fg);
+				out->push_back(b);
+			};
+			if (n.parent->open) { // down-pointing: rows narrow toward the tip
+				for (std::int32_t r = 0; r * 2 < s; ++r) { row(mx + r, my + r + s / 4, s - 2 * r, 1); }
+			} else { // right-pointing: columns shorten toward the tip
+				for (std::int32_t c2 = 0; c2 * 2 < s; ++c2) { row(mx + c2 + s / 4, my + c2, 1, s - 2 * c2); }
+			}
+		}
 		// list markers: the UA ul/ol padding-left leaves a 40px gutter
 		if (n.tag == "li" && n.parent != nullptr) {
 			const ctcss::color fg = text_color(n);
@@ -516,12 +557,18 @@ struct layout_pass {
 		const ctcss::color fg = text_color(n); // CSS color inherits from ancestors
 		const std::string_view align = text_align(n);
 		const font_spec fs = font_spec_of(&n); // family/weight/style/decoration
+		// a <label> wrapping a control renders the control FIRST, its text
+		// after it on the same line ("[x] option one") - the common form
+		// idiom; ordering between text and element children is otherwise
+		// not preserved by the DOM's concatenated-text model
+		const bool children_first = n.tag == "label" && !n.children.empty();
+		std::int32_t content_max_x = n.x + p.left; // shrink-wrap extent tracker
 		n.ui_lines.clear(); // rebuilt below; the engine's selection geometry
 		n.ui_font_px = font_px;
 		n.ui_family = fs.family;
 		n.ui_bold = fs.bold;
 		n.ui_italic = fs.italic;
-		if (!trimmed(std::u32string_view{text}).empty()) {
+		if (!children_first && !trimmed(std::u32string_view{text}).empty()) {
 			// hard-break on U+000A (from <br>) into lines, then greedily wrap each
 			std::u32string_view remain = text;
 			bool more = true;
@@ -555,7 +602,8 @@ struct layout_pass {
 						const std::int32_t ls2 =
 						    static_cast<std::int32_t>(rest.data() - text.data());
 						const std::int32_t le2 = ls2 + static_cast<std::int32_t>(take);
-						n.ui_lines.push_back({ls2, le2, tx, cursor, tw});
+						n.ui_lines.push_back({ls2, le2, tx, cursor, tw, true});
+						if (tx + tw > content_max_x) { content_max_x = tx + tw; }
 						if (n.sel_from >= 0 && n.sel_to > n.sel_from) {
 							// the CHARACTER-precise selection highlight: the
 							// overlap of [sel_from, sel_to) with this line
@@ -611,20 +659,93 @@ struct layout_pass {
 			cursor += n.canvas_h;
 		}
 
-		// children stack vertically; a static box passes its own containing block
-		// straight through (only positioned boxes establish a new one, in place()).
-		// A closed <details> shows only its <summary>.
-		for (const auto & c : n.children) {
-			if (n.is_details() && !n.open && !c->is_summary()) {
-				zero_rects(*c);
-				continue;
+		// children: consecutive INLINE-LEVEL children share rows (wrapping
+		// like Firefox's inline flow, items vertically centered on their
+		// line); block children stack, passing the containing block
+		// straight through. A closed <details> shows only its <summary>.
+		{
+			const std::int32_t line_start_x = n.x + p.left;
+			const std::int32_t right_edge = n.x + p.left + content_w;
+			const std::int32_t gap = font_px / 3;
+			std::int32_t line_x = line_start_x;
+			std::int32_t line_top = cursor;
+			std::int32_t line_h = 0;
+			std::vector<std::pair<std::size_t, node *>> line_items;
+			const auto flush_line = [&]() {
+				for (auto & [ci, cn] : line_items) { // center each item on the line
+					const std::int32_t dy = (line_h - cn->h) / 2;
+					if (dy > 0) { translate(ci, *cn, 0, dy); }
+				}
+				line_items.clear();
+				if (line_h > 0) { cursor = line_top + line_h; }
+				line_top = cursor;
+				line_x = line_start_x;
+				line_h = 0;
+			};
+			for (const auto & c : n.children) {
+				if (n.is_details() && !n.open && !c->is_summary()) {
+					zero_rects(*c);
+					continue;
+				}
+				computed_style ccs{c.get(), resolve, c->chain()};
+				const std::string_view disp = ccs.get("display");
+				const bool inl = disp == std::string_view{"inline"} ||
+				                 disp == std::string_view{"inline-block"} ||
+				                 (disp.empty() && detail::inline_level_tag(c->tag));
+				if (!inl) {
+					flush_line();
+					cursor += place(*c, n.x + p.left, cursor, content_w, cb);
+					line_top = cursor;
+					continue;
+				}
+				const std::size_t ci = out->size();
+				const std::int32_t old_x = line_x, old_top = line_top;
+				std::int32_t avail = right_edge - line_x;
+				if (avail < font_px) { avail = content_w; }
+				const std::int32_t h = place(*c, line_x, line_top, avail, cb);
+				if (line_x > line_start_x && c->x + c->w > right_edge) {
+					// does not fit beside its predecessors: wrap to a new line
+					flush_line();
+					translate(ci, *c, line_start_x - old_x, line_top - old_top);
+				}
+				line_items.push_back({ci, c.get()});
+				if (h > line_h) { line_h = h; }
+				line_x = c->x + c->w + gap;
+				if (c->x + c->w > content_max_x) { content_max_x = c->x + c->w; }
 			}
-			cursor += place(*c, n.x + p.left, cursor, content_w, cb);
+			// a wrapping label's text continues the control's line
+			if (children_first && !trimmed(std::u32string_view{text}).empty()) {
+				const std::u32string_view lt = trimmed(std::u32string_view{text});
+				const std::int32_t tw = text_width(lt, font_px, fs);
+				const std::int32_t ty =
+				    line_top + (line_h > font_px ? (line_h - font_px) / 2 : 0);
+				paint_cmd cmd;
+				cmd.what = paint_cmd::kind::text;
+				cmd.x = line_x;
+				cmd.y = ty;
+				cmd.w = tw;
+				cmd.h = font_px;
+				cmd.argb = pack_argb(fg);
+				cmd.text = u32str(lt);
+				cmd.font_px = font_px;
+				const std::int32_t ls3 = static_cast<std::int32_t>(lt.data() - text.data());
+				n.ui_lines.push_back({ls3, ls3 + static_cast<std::int32_t>(lt.size()), line_x, ty, tw, true});
+				push_text(std::move(cmd), fs);
+				if (line_x + tw > content_max_x) { content_max_x = line_x + tw; }
+				if (font_px + font_px / 4 > line_h) { line_h = font_px + font_px / 4; }
+				line_x += tw;
+			}
+			flush_line();
 		}
 
 		std::int32_t box_h = prop_px(cs, "height", cb.h, font_px, -1);
 		if (box_h < 0) { box_h = (cursor - n.y) + p.bottom; }
 		n.h = box_h;
+		// inline containers with no explicit width shrink to their content
+		if (detail::shrink_wrap_tag(n.tag) && prop_px(cs, "width", width, font_px, -1) < 0) {
+			const std::int32_t want = (content_max_x - n.x) + p.right;
+			if (want > 0 && want < n.w) { n.w = want; }
+		}
 
 		// buttons carry Firefox's 1px widget border (layout has no border
 		// property - widget frames belong to the widgets)
@@ -758,13 +879,18 @@ struct layout_pass {
 		std::size_t caret_cp = utf8_length(std::string_view{n.value}.substr(
 		    0, static_cast<std::size_t>(n.caret < 0 ? 0 : n.caret)));
 		if (caret_cp > shown.size()) { caret_cp = shown.size(); }
-		// suffix-scroll: drop leading code points until the caret fits
-		std::size_t start = 0;
+		// the PERSISTED horizontal scroll: the view holds still and only
+		// moves when the caret would leave it (minimal adjustment, like a
+		// real text field)
+		std::size_t start = n.scroll_cp < 0 ? 0 : static_cast<std::size_t>(n.scroll_cp);
+		if (start > shown.size()) { start = shown.size(); }
+		if (caret_cp < start) { start = caret_cp; } // scrolled left of the view
 		while (caret_cp > start &&
 		       text_width(std::u32string_view{shown}.substr(start, caret_cp - start), font_px, fs) >
 		           content_w) {
-			++start;
+			++start; // advance just enough to bring the caret back in
 		}
+		n.scroll_cp = static_cast<std::int32_t>(start);
 		std::u32string_view view{shown};
 		view = view.substr(start);
 		std::size_t take = view.size(); // clip the tail to the field
@@ -811,7 +937,7 @@ struct layout_pass {
 			c.font_px = font_px;
 			push_text(std::move(c), fs);
 		}
-		if (n.focused) { // the caret: a 1px bar at the caret's measured x
+		if (n.focused && n.ui_caret_on) { // the caret, blinking on the engine's clock
 			paint_cmd bar;
 			bar.what = paint_cmd::kind::box;
 			bar.x = n.x + padding +
@@ -824,9 +950,11 @@ struct layout_pass {
 		}
 	}
 
-	// <textarea>: a multi-line editable field. Hard newlines only (no
-	// soft wrap - long lines clip; documented); rows/cols size the box
-	// when the page sets no width/height.
+	// <textarea>: a multi-line editable field with SOFT WRAPPING (long
+	// lines wrap at word boundaries like Firefox's wrap=soft default;
+	// hard newlines still break). The visual lines publish through
+	// ui_lines so the engine's caret navigation and click mapping speak
+	// wrapped lines; scrolling is internal, scrollbar-less.
 	constexpr void emit_textarea(node & n, std::int32_t font_px, std::int32_t padding, std::int32_t top) {
 		const font_spec fs = font_spec_of(&n);
 		const std::int32_t line_h = font_px + font_px / 4;
@@ -843,7 +971,7 @@ struct layout_pass {
 		emit_frame(n, detail_frame_argb(n));
 		const std::int32_t content_w = n.w - 2 * padding;
 		const ctcss::color fg = text_color(n);
-		// geometry cache for the engine's caret-from-click math
+		// geometry cache for the engine
 		n.ui_font_px = font_px;
 		n.ui_text_x = n.x + padding;
 		n.ui_text_y = top;
@@ -851,31 +979,58 @@ struct layout_pass {
 		n.ui_family = fs.family;
 		n.ui_bold = fs.bold;
 		n.ui_italic = fs.italic;
-		// caret line/column (byte offsets -> per-line code points)
-		const std::string & v = n.value;
-		const std::size_t cb = static_cast<std::size_t>(n.caret < 0 ? 0 : n.caret) > v.size()
-		                           ? v.size()
-		                           : static_cast<std::size_t>(n.caret < 0 ? 0 : n.caret);
-		std::int32_t line_i = 0, caret_line = 0;
-		std::size_t ls = 0, caret_ls = 0;
-		for (std::size_t i = 0; i <= v.size(); ++i) {
-			if (i == cb) {
-				caret_line = line_i;
-				caret_ls = ls;
+
+		// 1) the VISUAL lines: hard-split on newlines, soft-wrap each
+		// segment at the content width (word boundaries preferred)
+		const std::u32string all = utf8_to_utf32(n.value);
+		n.ui_lines.clear();
+		{
+			std::size_t seg = 0;
+			while (seg <= all.size()) {
+				std::size_t nl = std::u32string_view{all}.substr(seg).find(U'\n');
+				const std::size_t seg_end = nl == std::u32string_view::npos ? all.size() : seg + nl;
+				std::size_t pos = seg;
+				do {
+					std::u32string_view rest{all.data() + pos, seg_end - pos};
+					std::size_t take = rest.size();
+					while (take > 1 && text_width(rest.substr(0, take), font_px, fs) > content_w) {
+						--take;
+					}
+					if (take < rest.size()) { // soft break: prefer a word boundary
+						const std::size_t brk = rest.substr(0, take + 1).rfind(U' ');
+						if (brk != std::u32string_view::npos && brk > 0) { take = brk + 1; }
+					}
+					node::text_line l;
+					l.cp_start = static_cast<std::int32_t>(pos);
+					l.cp_end = static_cast<std::int32_t>(pos + take);
+					l.hard = pos + take >= seg_end;
+					l.x = n.x + padding;
+					l.w = text_width(rest.substr(0, take), font_px, fs);
+					n.ui_lines.push_back(l);
+					pos += take;
+				} while (pos < seg_end);
+				if (seg_end == all.size()) { break; }
+				seg = seg_end + 1; // past the newline
 			}
-			if (i == v.size()) { break; }
-			if (v[i] == '\n') {
-				++line_i;
-				ls = i + 1;
+			if (n.ui_lines.empty()) { n.ui_lines.push_back({0, 0, n.x + padding, 0, 0, true}); }
+		}
+
+		// 2) caret position in cp space -> its visual line
+		std::size_t caret_cp = utf8_length(std::string_view{n.value}.substr(
+		    0, static_cast<std::size_t>(n.caret < 0 ? 0 : n.caret)));
+		if (caret_cp > all.size()) { caret_cp = all.size(); }
+		std::int32_t caret_line = static_cast<std::int32_t>(n.ui_lines.size()) - 1;
+		for (std::size_t i = 0; i < n.ui_lines.size(); ++i) {
+			const node::text_line & l = n.ui_lines[i];
+			const auto cc = static_cast<std::int32_t>(caret_cp);
+			if (cc < l.cp_end || (cc == l.cp_end && l.hard)) {
+				caret_line = static_cast<std::int32_t>(i);
+				break;
 			}
 		}
-		// inner scrolling (no scrollbar, like Firefox's overlay style):
-		// clamp scroll_top to the content, and when an edit moved the
-		// caret, bring it into view first
-		std::int32_t total_lines = 1;
-		for (const char ch : v) {
-			if (ch == '\n') { ++total_lines; }
-		}
+
+		// 3) inner scrolling: clamp, and pull an edited caret into view
+		const std::int32_t total_lines = static_cast<std::int32_t>(n.ui_lines.size());
 		const std::int32_t view_h = n.h - 2 * padding;
 		const std::int32_t max_scroll =
 		    total_lines * line_h > view_h ? total_lines * line_h - view_h : 0;
@@ -887,83 +1042,64 @@ struct layout_pass {
 		}
 		if (n.scroll_top > max_scroll) { n.scroll_top = max_scroll; }
 		if (n.scroll_top < 0) { n.scroll_top = 0; }
-		const std::int32_t skip_lines = n.scroll_top / line_h;
 
-		// render each hard line, clipped to the box
-		std::int32_t y = top;
-		std::size_t pos = 0;
-		std::int32_t li2 = 0;
-		while (li2 < skip_lines && pos <= v.size()) { // scrolled-off lines
-			const std::size_t nl = v.find('\n', pos);
-			if (nl == std::string::npos) { break; }
-			pos = nl + 1;
-			++li2;
-		}
-		while (pos <= v.size() && y + font_px <= n.y + n.h - padding) {
-			std::size_t nl = v.find('\n', pos);
-			if (nl == std::string::npos) { nl = v.size(); }
-			std::u32string line = utf8_to_utf32(std::string_view{v}.substr(pos, nl - pos));
-			std::size_t take = line.size();
-			while (take > 0 && text_width(std::u32string_view{line}.substr(0, take), font_px, fs) > content_w) {
-				--take;
-			}
-			if (n.has_selection()) { // the selected span on THIS line
-				const std::size_t vb = static_cast<std::size_t>(n.sel_begin());
-				const std::size_t ve = static_cast<std::size_t>(n.sel_end());
-				const std::size_t lb = vb > pos ? vb - pos : 0;
-				const std::size_t le2 = ve > pos ? ve - pos : 0;
-				if (le2 > 0 && lb < nl - pos) {
-					std::size_t scb = utf8_length(std::string_view{v}.substr(pos, lb < nl - pos ? lb : nl - pos));
-					std::size_t sce = utf8_length(std::string_view{v}.substr(pos, le2 < nl - pos ? le2 : nl - pos));
-					if (scb > take) { scb = take; }
-					if (sce > take) { sce = take; }
-					if (sce > scb) {
-						paint_cmd hl;
-						hl.what = paint_cmd::kind::box;
-						hl.x = n.x + padding +
-						       text_width(std::u32string_view{line}.substr(0, scb), font_px, fs);
-						hl.y = y;
-						hl.w = text_width(std::u32string_view{line}.substr(scb, sce - scb), font_px, fs);
-						hl.h = font_px;
-						hl.argb = 0xFFB4D5FEu;
-						out->push_back(hl);
-					}
+		// 4) stamp on-screen y per line, render the visible ones
+		const std::size_t sel_b_cp =
+		    n.has_selection() ? utf8_length(std::string_view{n.value}.substr(0, static_cast<std::size_t>(n.sel_begin()))) : 0;
+		const std::size_t sel_e_cp =
+		    n.has_selection() ? utf8_length(std::string_view{n.value}.substr(0, static_cast<std::size_t>(n.sel_end()))) : 0;
+		for (std::size_t i = 0; i < n.ui_lines.size(); ++i) {
+			node::text_line & l = n.ui_lines[i];
+			l.y = top + static_cast<std::int32_t>(i) * line_h - n.scroll_top;
+			if (l.y + font_px > n.y + n.h - padding || l.y < n.y) { continue; } // clipped
+			const std::u32string_view line{all.data() + l.cp_start,
+			                               static_cast<std::size_t>(l.cp_end - l.cp_start)};
+			if (n.has_selection() && sel_e_cp > sel_b_cp) { // the selected sub-span
+				const std::size_t hb = sel_b_cp > static_cast<std::size_t>(l.cp_start)
+				                           ? sel_b_cp - static_cast<std::size_t>(l.cp_start)
+				                           : 0;
+				std::size_t he = sel_e_cp > static_cast<std::size_t>(l.cp_start)
+				                     ? sel_e_cp - static_cast<std::size_t>(l.cp_start)
+				                     : 0;
+				if (he > line.size()) { he = line.size(); }
+				if (he > hb) {
+					paint_cmd hl;
+					hl.what = paint_cmd::kind::box;
+					hl.x = l.x + text_width(line.substr(0, hb), font_px, fs);
+					hl.y = l.y;
+					hl.w = text_width(line.substr(hb, he - hb), font_px, fs);
+					hl.h = font_px;
+					hl.argb = 0xFFB4D5FEu;
+					out->push_back(hl);
 				}
 			}
-			if (take > 0) {
+			if (!line.empty()) {
 				paint_cmd c;
 				c.what = paint_cmd::kind::text;
-				c.x = n.x + padding;
-				c.y = y;
-				c.w = text_width(std::u32string_view{line}.substr(0, take), font_px, fs);
+				c.x = l.x;
+				c.y = l.y;
+				c.w = l.w;
 				c.h = font_px;
 				c.argb = pack_argb(fg);
-				c.text = std::u32string{std::u32string_view{line}.substr(0, take)};
+				c.text = std::u32string{line};
 				c.font_px = font_px;
 				push_text(std::move(c), fs);
 			}
-			if (n.focused && li2 == caret_line) {
-				const std::u32string upto = utf8_to_utf32(std::string_view{v}.substr(caret_ls, cb - caret_ls));
+			if (n.focused && n.ui_caret_on && static_cast<std::int32_t>(i) == caret_line) {
+				const std::size_t col = caret_cp - static_cast<std::size_t>(l.cp_start);
 				paint_cmd bar;
 				bar.what = paint_cmd::kind::box;
-				bar.x = n.x + padding + text_width(upto, font_px, fs);
-				bar.y = y;
+				bar.x = l.x + text_width(line.substr(0, col <= line.size() ? col : line.size()),
+				                         font_px, fs);
+				bar.y = l.y;
 				bar.w = 1;
 				bar.h = font_px;
 				bar.argb = pack_argb(fg);
 				out->push_back(bar);
 			}
-			y += line_h;
-			++li2;
-			if (nl == v.size()) { break; }
-			pos = nl + 1;
 		}
 	}
 
-	// <table>: rows through thead/tbody/tfoot, td/th cells laid out as
-	// ordinary blocks in EQUAL-WIDTH columns (no colspan/rowspan/auto
-	// sizing - documented); border-spacing fixed at 2px; the `border`
-	// attribute >= 1 draws Firefox's classic 1px frames.
 	constexpr void collect_rows(node & n, std::vector<node *> & rows) {
 		for (const auto & c : n.children) {
 			if (c->tag == "tr") { rows.push_back(c.get()); }

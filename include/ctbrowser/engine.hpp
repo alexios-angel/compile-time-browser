@@ -55,6 +55,7 @@ public:
 	std::int32_t page_h_ = 0;       // last laid-out document height
 	bool sb_dragging_ = false;      // the scrollbar thumb is being dragged
 	std::int32_t sb_grab_ = 0;      // pointer offset inside the thumb at grab
+	double caret_base_ms_ = 0;      // the blink phase restarts on caret activity
 	// the system clipboard, as hooks (the engine is SDL-free; the shell
 	// installs SDL_Get/SetClipboardText, tests install their own)
 	ctc::cfunction<std::string()> clipboard_get;
@@ -138,6 +139,12 @@ public:
 		// then shift the world into view - rects AND paints together, so
 		// hit testing, script rect readbacks and rendering all agree.
 		// position:fixed subtrees stay viewport-anchored.
+		// the caret blinks on Chrome's cadence: 500 ms on, 500 ms off,
+		// restarted by any caret activity (typing keeps it solid)
+		if (focused_ != nullptr && focused_->is_editable()) {
+			const double phase = ev.now_ms - caret_base_ms_;
+			focused_->ui_caret_on = phase < 0 || (static_cast<std::int64_t>(phase) % 1000) < 500;
+		}
 		page_h_ = doc.root != nullptr ? doc.root->y + doc.root->h : 0;
 		const std::int32_t max_scroll = page_h_ > ev.viewport_h ? page_h_ - ev.viewport_h : 0;
 		if (scroll_y_ > max_scroll) { scroll_y_ = max_scroll; }
@@ -388,6 +395,7 @@ public:
 		f->caret += static_cast<std::int32_t>(utf8.size());
 		f->value_dirty = true;
 		f->caret_follow = true;
+		caret_base_ms_ = ev.now_ms; // typing keeps the caret solid
 		fire_input(f);
 	}
 	void mouse_move(double x, double y) {
@@ -481,6 +489,7 @@ public:
 				pressed_->caret = caret_from_click(pressed_, x, y);
 				pressed_->sel_anchor = pressed_->caret;
 				pressed_->caret_follow = true;
+				caret_base_ms_ = ev.now_ms;
 			} else if (!page_select_none(pressed_)) {
 				// anchor the drag at the CHARACTER under the pointer
 				std::int32_t cp = 0;
@@ -712,22 +721,34 @@ private:
 	// geometry the widget emitters cached on the node
 	std::int32_t caret_from_click(node * f, double mx, double my) {
 		const std::string & v = f->value;
-		std::size_t ls = 0, le = v.size();
-		if (f->is_textarea()) { // pick the clicked line first
+		if (f->is_textarea() && !f->ui_lines.empty()) {
+			// the clicked VISUAL line (soft wrap; lines carry screen y)
 			const std::int32_t line_h = f->ui_line_h > 0 ? f->ui_line_h : f->ui_font_px + f->ui_font_px / 4;
-			std::int32_t want = (static_cast<std::int32_t>(my) - f->ui_text_y + f->scroll_top) / (line_h > 0 ? line_h : 1);
+			std::int32_t want = (static_cast<std::int32_t>(my) - f->ui_text_y + f->scroll_top) /
+			                    (line_h > 0 ? line_h : 1);
 			if (want < 0) { want = 0; }
-			std::int32_t li = 0;
-			ls = 0;
-			while (li < want) {
-				const std::size_t nl = v.find('\n', ls);
-				if (nl == std::string::npos) { break; }
-				ls = nl + 1;
-				++li;
+			if (want >= static_cast<std::int32_t>(f->ui_lines.size())) {
+				want = static_cast<std::int32_t>(f->ui_lines.size()) - 1;
 			}
-			const std::size_t nl = v.find('\n', ls);
-			le = nl == std::string::npos ? v.size() : nl;
+			const node::text_line & l = f->ui_lines[static_cast<std::size_t>(want)];
+			const std::u32string all = utf8_to_utf32(v);
+			const std::u32string_view line{all.data() + l.cp_start,
+			                               static_cast<std::size_t>(l.cp_end - l.cp_start)};
+			const std::int32_t rel = static_cast<std::int32_t>(mx) - f->ui_text_x;
+			std::int32_t cp = l.cp_start;
+			std::int32_t prev_w = 0;
+			for (std::size_t i = 1; i <= line.size(); ++i) {
+				const std::int32_t w =
+				    measure_text(line.substr(0, i), f->ui_font_px, f->ui_family, f->ui_bold, f->ui_italic);
+				if (rel < (prev_w + w) / 2) { break; }
+				prev_w = w;
+				cp = l.cp_start + static_cast<std::int32_t>(i);
+			}
+			return byte_of_cp(v, cp);
 		}
+		// text input: the view starts at the persisted scroll_cp - clicks
+		// map into the VISIBLE window
+		std::size_t ls = static_cast<std::size_t>(byte_of_cp(v, f->scroll_cp)), le = v.size();
 		// walk the line's code points; the caret snaps to the NEAREST glyph
 		// boundary (click in a glyph's left half lands before it)
 		const std::int32_t rel = static_cast<std::int32_t>(mx) - f->ui_text_x;
@@ -1053,10 +1074,49 @@ private:
 	bool shift_down() const {
 		return keys_down.contains("Left Shift") || keys_down.contains("Right Shift");
 	}
+	static std::int32_t byte_of_cp(std::string_view v, std::int32_t cp) {
+		std::size_t i = 0;
+		for (std::int32_t k = 0; k < cp && i < v.size(); ++k) { (void)utf8_next(v, i); }
+		return static_cast<std::int32_t>(i);
+	}
+	static std::int32_t cp_of_byte(std::string_view v, std::int32_t b) {
+		return static_cast<std::int32_t>(
+		    utf8_length(v.substr(0, static_cast<std::size_t>(b < 0 ? 0 : b))));
+	}
+	// the textarea's visual lines: layout's soft-wrapped ui_lines when
+	// they are FRESH (they describe the current value), else hard-line
+	// spans computed here - edits between frames stay navigable
+	static std::vector<node::text_line> visual_lines(const node & f) {
+		const std::int32_t total = static_cast<std::int32_t>(utf8_length(f.value));
+		if (!f.ui_lines.empty() && f.ui_lines.back().cp_end == total) { return f.ui_lines; }
+		std::vector<node::text_line> out;
+		const std::u32string all = utf8_to_utf32(f.value);
+		std::size_t seg = 0;
+		while (seg <= all.size()) {
+			std::size_t nl = std::u32string_view{all}.substr(seg).find(U'\n');
+			const std::size_t seg_end = nl == std::u32string_view::npos ? all.size() : seg + nl;
+			out.push_back({static_cast<std::int32_t>(seg), static_cast<std::int32_t>(seg_end), 0, 0, 0, true});
+			if (seg_end == all.size()) { break; }
+			seg = seg_end + 1;
+		}
+		if (out.empty()) { out.push_back({0, 0, 0, 0, 0, true}); }
+		return out;
+	}
+	static std::int32_t caret_visual_line(const std::vector<node::text_line> & lines,
+	                                      std::int32_t caret_cp) {
+		for (std::size_t i = 0; i < lines.size(); ++i) {
+			const node::text_line & l = lines[i];
+			if (caret_cp < l.cp_end || (caret_cp == l.cp_end && l.hard)) {
+				return static_cast<std::int32_t>(i);
+			}
+		}
+		return static_cast<std::int32_t>(lines.size()) - 1;
+	}
 	void edit_key(std::string_view name) {
 		node * f = focused_;
 		if (f == nullptr || !f->is_editable() || f->is_disabled()) { return; }
 		f->caret_follow = true; // layout scrolls the caret into view
+		caret_base_ms_ = ev.now_ms; // caret activity restarts the blink
 		// caret motion: Shift extends the selection, plain motion drops it;
 		// an edit replaces the selection first
 		const bool motion = name == "Left" || name == "Right" || name == "Home" ||
@@ -1076,16 +1136,6 @@ private:
 		std::string & v = f->value;
 		std::int32_t & c = f->caret;
 		if (c > static_cast<std::int32_t>(v.size())) { c = static_cast<std::int32_t>(v.size()); }
-		const auto line_start = [&v](std::int32_t from) {
-			std::int32_t i = from;
-			while (i > 0 && v[static_cast<std::size_t>(i - 1)] != '\n') { --i; }
-			return i;
-		};
-		const auto line_end = [&v](std::int32_t from) {
-			std::int32_t i = from;
-			while (i < static_cast<std::int32_t>(v.size()) && v[static_cast<std::size_t>(i)] != '\n') { ++i; }
-			return i;
-		};
 		if (name == "Backspace") {
 			const std::int32_t n = cp_len_before(v, c);
 			if (n > 0) {
@@ -1106,20 +1156,33 @@ private:
 		} else if (name == "Right") {
 			c += cp_len_at(v, c);
 		} else if (name == "Home") {
-			c = f->is_textarea() ? line_start(c) : 0;
-		} else if (name == "End") {
-			c = f->is_textarea() ? line_end(c) : static_cast<std::int32_t>(v.size());
-		} else if (name == "Up" && f->is_textarea()) {
-			const std::int32_t ls = line_start(c), col = c - ls;
-			if (ls > 0) {
-				const std::int32_t pls = line_start(ls - 1);
-				c = pls + (col < ls - 1 - pls ? col : ls - 1 - pls);
+			if (f->is_textarea()) {
+				const auto lines = visual_lines(*f);
+				const std::int32_t li = caret_visual_line(lines, cp_of_byte(v, c));
+				c = byte_of_cp(v, lines[static_cast<std::size_t>(li)].cp_start);
+			} else {
+				c = 0;
 			}
-		} else if (name == "Down" && f->is_textarea()) {
-			const std::int32_t le = line_end(c), col = c - line_start(c);
-			if (le < static_cast<std::int32_t>(v.size())) {
-				const std::int32_t nls = le + 1, nle = line_end(nls);
-				c = nls + (col < nle - nls ? col : nle - nls);
+		} else if (name == "End") {
+			if (f->is_textarea()) {
+				const auto lines = visual_lines(*f);
+				const std::int32_t li = caret_visual_line(lines, cp_of_byte(v, c));
+				c = byte_of_cp(v, lines[static_cast<std::size_t>(li)].cp_end);
+			} else {
+				c = static_cast<std::int32_t>(v.size());
+			}
+		} else if ((name == "Up" || name == "Down") && f->is_textarea()) {
+			// move between VISUAL lines, preserving the column
+			const auto lines = visual_lines(*f);
+			const std::int32_t cc = cp_of_byte(v, c);
+			const std::int32_t li = caret_visual_line(lines, cc);
+			const std::int32_t ti = name == "Up" ? li - 1 : li + 1;
+			if (ti >= 0 && ti < static_cast<std::int32_t>(lines.size())) {
+				const node::text_line & cur = lines[static_cast<std::size_t>(li)];
+				const node::text_line & tgt = lines[static_cast<std::size_t>(ti)];
+				const std::int32_t col = cc - cur.cp_start;
+				const std::int32_t tlen = tgt.cp_end - tgt.cp_start;
+				c = byte_of_cp(v, tgt.cp_start + (col < tlen ? col : tlen));
 			}
 		} else if (name == "Return") {
 			if (f->is_textarea()) {

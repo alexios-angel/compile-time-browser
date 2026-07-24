@@ -144,6 +144,24 @@ int main() {
 	e.script.call("do_reset");
 	CHECK(t->value == "orig");
 
+	// --- inline flow: consecutive inline-level siblings share a row,
+	// wrapping labels put the control BEFORE their text, and inline
+	// containers shrink-wrap
+	{
+		ctbrowser::node * go = e.doc.by_id("go");
+		ctbrowser::node * undo = e.doc.by_id("undo");
+		CHECK(go && undo);
+		CHECK(go->y == undo->y || go->y + go->h > undo->y); // same line band
+		CHECK(undo->x > go->x + go->w);                     // side by side
+		ctbrowser::node * lnk2 = e.doc.by_id("lnk");
+		CHECK(lnk2->w < 400); // the <a> shrink-wrapped to its text
+	}
+	// --- the details disclosure triangle paints (right-pointing: closed)
+	{
+		auto out2 = e.frame(600);
+		(void)out2; // markers checked in forms.cpp where a <details> exists
+	}
+
 	if (fails == 0) { std::printf("richtext suite: all checks passed\n"); }
 	return fails ? 1 : 0;
 }

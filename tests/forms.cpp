@@ -137,6 +137,31 @@ int main() {
 	CHECK(content->w > 0);
 	CHECK(e.script.call("read_open").to<bool>());
 
+	// --- the summary disclosure marker: present, and its direction
+	// tracks the open state (a right/down triangle in the gutter)
+	{
+		ctbrowser::node * sum2 = e.doc.by_id("sum");
+		std::size_t closed_marks = 0, open_marks = 0;
+		CHECK(d->open); // opened by the click above
+		for (const auto & cmd : e.frame(500)) {
+			if (cmd.what == ctbrowser::paint_cmd::kind::box && cmd.h == 1 && cmd.w > 2 &&
+			    sum2 != nullptr && cmd.y >= sum2->y && cmd.y < sum2->y + sum2->h && cmd.x < sum2->x + 18) {
+				++open_marks; // down-triangle rows are wide-and-1px-tall
+			}
+		}
+		CHECK(open_marks > 2);
+		click(e.doc.by_id("sum")); // close it again
+		for (const auto & cmd : e.frame(500)) {
+			if (cmd.what == ctbrowser::paint_cmd::kind::box && cmd.w == 1 && cmd.h > 2 &&
+			    sum2 != nullptr && cmd.y >= sum2->y && cmd.y < sum2->y + sum2->h && cmd.x < sum2->x + 18) {
+				++closed_marks; // right-triangle columns are 1px-wide-and-tall
+			}
+		}
+		CHECK(closed_marks > 2);
+		click(e.doc.by_id("sum")); // restore open for later checks
+		e.frame(500);
+	}
+
 	// --- anchor default: the OS-browser hook gets the href
 	click(e.doc.by_id("link"));
 	CHECK(opened == "https://example.com/docs");

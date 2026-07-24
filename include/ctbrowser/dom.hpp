@@ -99,6 +99,10 @@ struct node {
 	std::int32_t caret = 0;
 	bool value_dirty = false;
 	std::int32_t scroll_top = 0;  // textarea inner scroll (px; clamped by layout)
+	std::int32_t scroll_cp = 0;   // input horizontal scroll (display-start code point;
+	                              // PERSISTED - the view only moves when the caret
+	                              // would leave it, like a real text field)
+	bool ui_caret_on = true;      // blink phase (engine-driven; layout obeys)
 	bool caret_follow = false;    // an edit moved the caret: layout scrolls it into view
 	bool viewport_fixed = false;  // position:fixed - exempt from page scrolling
 	std::int32_t sel_anchor = -1; // editable selection anchor (byte; -1 = none)
@@ -115,6 +119,7 @@ struct node {
 		std::int32_t x = 0;
 		std::int32_t y = 0;
 		std::int32_t w = 0;
+		bool hard = true; // ends at a newline/end (false = a soft wrap point)
 	};
 	std::vector<text_line> ui_lines;
 	// layout cache for the engine's caret-from-click math (set by the

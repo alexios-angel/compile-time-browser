@@ -49,16 +49,10 @@ Devoutly to be wish'd. To die, to sleep; To sleep, perchance to dream
 come, When we have shuffled off this mortal coil, Must give us pause -
 there's the respect That makes calamity of so long life.</p>
 
-<p>Each inline style renders as its own row (block layout - no inline
-flow yet):</p>
-<div><b>bold text</b></div>
-<div><i>italic text</i></div>
-<div><u>underlined text</u></div>
-<div><s>struck text</s></div>
-<div><mark>marked text</mark></div>
-<div><code>code_text()</code></div>
-<div><small>small text</small></div>
-<div><big>big text</big></div>
+<p>Inline elements flow on a shared line, wrapping when the window
+narrows - all of these share rows:</p>
+<div><b>bold text</b><i>italic text</i><u>underlined text</u><s>struck text</s></div>
+<div><mark>marked text</mark><code>code_text()</code><small>small text</small><big>big text</big></div>
 
 <p class=sans>The same page can switch families per element - this
 paragraph is Fira Sans:</p>

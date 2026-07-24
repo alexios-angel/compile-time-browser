@@ -130,6 +130,76 @@ int main() {
 	e.key("Return", false);
 	CHECK(e.script["submits"].to<int>() == 1);
 
+	// --- textarea SOFT WRAP: a long line spans multiple visual lines,
+	// Up/Down navigate them, nothing is lost
+	{
+		ta->value = "the quick brown fox jumps over the lazy dog again and again";
+		ta->caret = static_cast<std::int32_t>(ta->value.size());
+		ta->sel_anchor = -1;
+		e.frame(400);
+		CHECK(ta->ui_lines.size() > 1); // wrapped (cols=10 box)
+		CHECK(!ta->ui_lines.empty() &&
+		      ta->ui_lines.back().cp_end == static_cast<std::int32_t>(ta->value.size()));
+		const auto click_ta = [&] {
+			const double x = ta->x + 5.0, y = ta->y + 5.0;
+			e.mouse_button(x, y, true);
+			e.mouse_button(x, y, false);
+		};
+		click_ta();
+		e.key("End", true);
+		e.key("End", false); // END of the FIRST visual line, not the value
+		CHECK(ta->caret < static_cast<std::int32_t>(ta->value.size()));
+		const std::int32_t first_end = ta->caret;
+		e.key("Down", true);
+		e.key("Down", false); // down a VISUAL line
+		CHECK(ta->caret > first_end);
+	}
+
+	// --- input horizontal scroll: the view holds still while the caret
+	// moves inside it, and scrolls minimally at the edges
+	{
+		click(t);
+		e.script.call("set_t", std::string{"abcdefghijklmnopqrstuvwxyz0123456789"});
+		t->caret = static_cast<std::int32_t>(t->value.size());
+		e.frame(400); // the view scrolls to show the caret at the end
+		const std::int32_t scrolled = t->scroll_cp;
+		CHECK(scrolled > 0);
+		e.key("Left", true);
+		e.key("Left", false); // moving WITHIN the view: the view stays put
+		e.frame(400);
+		CHECK(t->scroll_cp == scrolled);
+		e.key("Home", true);
+		e.key("Home", false); // caret left of the view: minimal scroll to it
+		e.frame(400);
+		CHECK(t->scroll_cp == 0);
+		// clicking in the visible window maps through the scroll offset
+		e.key("End", true);
+		e.key("End", false);
+		e.frame(400);
+		const std::int32_t back = t->scroll_cp;
+		CHECK(back > 0);
+		e.mouse_button(t->ui_text_x + 2.0, t->y + t->h / 2.0, true);
+		e.mouse_button(t->ui_text_x + 2.0, t->y + t->h / 2.0, false);
+		CHECK(t->caret >= back); // the first VISIBLE char, not char 0
+	}
+
+	// --- the caret blinks on Chrome's cadence (500 ms halves)
+	{
+		click(t);
+		e.frame(400);
+		CHECK(t->ui_caret_on); // fresh activity: solid
+		e.tick(0.7);           // 700 ms with no caret activity: off phase
+		e.frame(400);
+		CHECK(!t->ui_caret_on);
+		e.tick(0.4); // 1.1 s: back on
+		e.frame(400);
+		CHECK(t->ui_caret_on);
+		e.text_input("!"); // typing restarts the phase: solid again
+		e.frame(400);
+		CHECK(t->ui_caret_on);
+		e.script.call("set_t", std::string{"reset"}); // restore for the block below
+	}
+
 	// --- preventDefault on keydown suppresses the editing default
 	e.script.call("block_keys");
 	e.text_input("Z"); // text_input is not a key event - still lands
