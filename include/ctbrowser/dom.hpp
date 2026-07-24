@@ -102,7 +102,21 @@ struct node {
 	bool caret_follow = false;    // an edit moved the caret: layout scrolls it into view
 	bool viewport_fixed = false;  // position:fixed - exempt from page scrolling
 	std::int32_t sel_anchor = -1; // editable selection anchor (byte; -1 = none)
-	bool selected = false;        // page text selection membership
+	bool selected = false;        // page selection: any part of this node
+	// the page selection's CHARACTER range in this node's text (code
+	// point indices; -1/-1 = none). Set by the engine, drawn by layout.
+	std::int32_t sel_from = -1;
+	std::int32_t sel_to = -1;
+	// one wrapped line of this node's rendered text: the code-point span
+	// and its on-screen box (layout cache, like x/y/w/h)
+	struct text_line {
+		std::int32_t cp_start = 0;
+		std::int32_t cp_end = 0;
+		std::int32_t x = 0;
+		std::int32_t y = 0;
+		std::int32_t w = 0;
+	};
+	std::vector<text_line> ui_lines;
 	// layout cache for the engine's caret-from-click math (set by the
 	// widget emitters, like the x/y/w/h rects)
 	std::int32_t ui_font_px = 16;
@@ -431,6 +445,8 @@ constexpr void instantiate_into(node & out, cthtml::node vn, node * parent) {
 constexpr void offset_rects(node & n, std::int32_t dy) {
 	if (n.viewport_fixed) { return; }
 	n.y += dy;
+	n.ui_text_y += dy; // the editable/text geometry caches scroll too
+	for (node::text_line & l : n.ui_lines) { l.y += dy; }
 	for (const auto & c : n.children) { offset_rects(*c, dy); }
 }
 

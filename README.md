@@ -235,12 +235,14 @@ Elements behave like they do in Firefox, out of the box:
   I-beam over text and fields — driven by the CSS `cursor` property
   (UA defaults `a { cursor: pointer }`, `input, textarea { cursor:
   text }`), so pages override it like anywhere else.
-* **selection + clipboard**: drag to select — character-precise inside
-  inputs and textareas (Shift+arrows extend, click places the caret at
-  the nearest glyph boundary), per-text-block on the page. Ctrl+C/X/V
-  and Ctrl+A do what they say through the system clipboard, `copy`/
-  `cut`/`paste` events are cancelable, and `user-select: none` keeps
-  text out of page selection.
+* **selection + clipboard**: drag to select, **character-precise
+  everywhere** — inside inputs and textareas (Shift+arrows extend,
+  clicks snap the caret to the nearest glyph boundary) and across page
+  text (layout publishes per-line glyph geometry; a drag can start and
+  end mid-word, spanning elements in document order). Ctrl+C/X/V and
+  Ctrl+A work through the system clipboard, `copy`/`cut`/`paste`
+  events are cancelable, and `user-select: none` keeps text out of
+  page selection.
 * **the right-click menu**: Chrome-style Copy / Cut / Paste / Select
   All at the pointer, enabled per context; a page listener calling
   `preventDefault()` on `contextmenu` takes the menu over entirely,
@@ -262,8 +264,8 @@ project's subsets). Browser-side:
   render as their own rows)
 - px lengths; margins/paddings honor per-side values and 1-4-value
   shorthands
-- editing: no Tab traversal, no IME composition, page selection is
-  per-text-block (not per-character across elements)
+- editing: no Tab traversal, no IME composition, no double-click
+  word-select
 - tables: no colspan/rowspan/auto column sizing
 - no `<img>` yet; no horizontal page scrolling
 

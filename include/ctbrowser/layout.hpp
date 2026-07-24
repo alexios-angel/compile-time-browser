@@ -516,6 +516,11 @@ struct layout_pass {
 		const ctcss::color fg = text_color(n); // CSS color inherits from ancestors
 		const std::string_view align = text_align(n);
 		const font_spec fs = font_spec_of(&n); // family/weight/style/decoration
+		n.ui_lines.clear(); // rebuilt below; the engine's selection geometry
+		n.ui_font_px = font_px;
+		n.ui_family = fs.family;
+		n.ui_bold = fs.bold;
+		n.ui_italic = fs.italic;
 		if (!trimmed(std::u32string_view{text}).empty()) {
 			// hard-break on U+000A (from <br>) into lines, then greedily wrap each
 			std::u32string_view remain = text;
@@ -545,15 +550,31 @@ struct layout_pass {
 						std::int32_t tx = n.x + p.left;
 						if (align == std::string_view{"center"}) { tx += (content_w - tw) / 2; }
 						else if (align == std::string_view{"right"}) { tx += content_w - tw; }
-						if (n.selected) { // the page text selection highlight
-							paint_cmd hl;
-							hl.what = paint_cmd::kind::box;
-							hl.x = tx;
-							hl.y = cursor;
-							hl.w = tw;
-							hl.h = font_px;
-							hl.argb = 0xFFB4D5FEu;
-							out->push_back(hl);
+						// this line's code-point span within n.text (the views
+						// point into `text`, so data() arithmetic is the index)
+						const std::int32_t ls2 =
+						    static_cast<std::int32_t>(rest.data() - text.data());
+						const std::int32_t le2 = ls2 + static_cast<std::int32_t>(take);
+						n.ui_lines.push_back({ls2, le2, tx, cursor, tw});
+						if (n.sel_from >= 0 && n.sel_to > n.sel_from) {
+							// the CHARACTER-precise selection highlight: the
+							// overlap of [sel_from, sel_to) with this line
+							std::int32_t hb = n.sel_from > ls2 ? n.sel_from : ls2;
+							std::int32_t he = n.sel_to < le2 ? n.sel_to : le2;
+							if (he > hb) {
+								paint_cmd hl;
+								hl.what = paint_cmd::kind::box;
+								hl.x = tx + text_width(rest.substr(0, static_cast<std::size_t>(hb - ls2)),
+								                       font_px, fs);
+								hl.y = cursor;
+								hl.w = text_width(
+								    rest.substr(static_cast<std::size_t>(hb - ls2),
+								                static_cast<std::size_t>(he - hb)),
+								    font_px, fs);
+								hl.h = font_px;
+								hl.argb = 0xFFB4D5FEu;
+								out->push_back(hl);
+							}
 						}
 						paint_cmd cmd;
 						cmd.what = paint_cmd::kind::text;

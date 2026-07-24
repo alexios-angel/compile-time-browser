@@ -65,9 +65,10 @@ public:
 	std::int32_t menu_y_ = 0;
 	std::int32_t menu_hover_ = -1;
 	node * menu_target_ = nullptr;
-	// page text selection (drag band over non-editable text)
+	// page text selection: a character-precise anchor the drag extends
 	bool selecting_ = false;
-	std::int32_t sel_band_y0_ = 0;
+	node * psel_node_ = nullptr;    // the anchor position (node + cp index)
+	std::int32_t psel_cp_ = 0;
 	// the anchor default action: how <a href> opens the OS web browser.
 	// Headless (tests) leave it empty = no-op; the SDL shell installs
 	// SDL_OpenURL. Fragment hrefs (#...) never call it.
@@ -396,8 +397,12 @@ public:
 		    pressed_ == focused_) { // drag-select inside the control
 			focused_->caret = caret_from_click(focused_, x, y);
 			focused_->caret_follow = true;
-		} else if (mouse_down && selecting_) { // the page selection band
-			apply_selection_band(sel_band_y0_, static_cast<std::int32_t>(y));
+		} else if (mouse_down && selecting_ && psel_node_ != nullptr) {
+			// extend the page selection to the character under the pointer
+			std::int32_t cp = 0;
+			if (node * tn = position_from_point(x, y, cp)) {
+				apply_page_range(psel_node_, psel_cp_, tn, cp);
+			}
 		}
 		if (menu_open_) { // the menu tracks its own hover row
 			menu_hover_ = (x >= menu_x_ && x < menu_x_ + menu_w)
@@ -471,13 +476,19 @@ public:
 			// elsewhere it starts the drag band
 			clear_page_selection();
 			selecting_ = false;
+			psel_node_ = nullptr;
 			if (pressed_ != nullptr && pressed_->is_editable() && pressed_ == focused_) {
 				pressed_->caret = caret_from_click(pressed_, x, y);
 				pressed_->sel_anchor = pressed_->caret;
 				pressed_->caret_follow = true;
 			} else if (!page_select_none(pressed_)) {
-				selecting_ = true;
-				sel_band_y0_ = static_cast<std::int32_t>(y);
+				// anchor the drag at the CHARACTER under the pointer
+				std::int32_t cp = 0;
+				if (node * tn = position_from_point(x, y, cp)) {
+					selecting_ = true;
+					psel_node_ = tn;
+					psel_cp_ = cp;
+				}
 			}
 			// a <select> widget (open popup, or a collapsed control) eats the
 			// press - and the synthetic click that would pair with the release
@@ -757,16 +768,126 @@ private:
 	}
 	static void clear_selected(node & n) {
 		n.selected = false;
+		n.sel_from = -1;
+		n.sel_to = -1;
 		for (const auto & c : n.children) { clear_selected(*c); }
 	}
-	void apply_selection_band(std::int32_t y0, std::int32_t y1) {
-		if (y1 < y0) { std::swap(y0, y1); }
-		if (doc.root) { select_band(*doc.root, y0, y1); }
+	// can this node's text join the page selection?
+	bool selectable_text(node * n) const {
+		return n != nullptr && !n->ui_lines.empty() && !n->is_editable() && !page_select_none(n);
 	}
-	void select_band(node & n, std::int32_t y0, std::int32_t y1) {
-		n.selected = !n.text.empty() && n.w > 0 && n.y < y1 && n.y + n.h > y0 &&
-		             !n.is_editable() && !page_select_none(&n);
-		for (const auto & c : n.children) { select_band(*c, y0, y1); }
+	// the CHARACTER under (or nearest to) a point: the closest rendered
+	// line vertically, then the nearest glyph boundary along it
+	node * position_from_point(double mx, double my, std::int32_t & cp_out) {
+		node * best = nullptr;
+		const node::text_line * best_line = nullptr;
+		std::int64_t best_d = std::numeric_limits<std::int64_t>::max();
+		const std::int32_t ix = static_cast<std::int32_t>(mx);
+		const std::int32_t iy = static_cast<std::int32_t>(my);
+		if (doc.root) { nearest_line(*doc.root, ix, iy, best, best_line, best_d); }
+		if (best == nullptr || best_line == nullptr) { return nullptr; }
+		// a pointer ABOVE the line selects from its start, BELOW it to its
+		// end (that is what makes a downward drag take the whole line);
+		// within the band, walk to the nearest glyph boundary
+		if (iy < best_line->y) {
+			cp_out = best_line->cp_start;
+			return best;
+		}
+		if (iy >= best_line->y + best->ui_font_px) {
+			cp_out = best_line->cp_end;
+			return best;
+		}
+		const std::u32string all = utf8_to_utf32(best->text);
+		const std::u32string_view line{all.data() + best_line->cp_start,
+		                               static_cast<std::size_t>(best_line->cp_end - best_line->cp_start)};
+		const std::int32_t rel = ix - best_line->x;
+		std::int32_t cp = best_line->cp_start;
+		std::int32_t prev_w = 0;
+		for (std::size_t i = 1; i <= line.size(); ++i) {
+			const std::int32_t w = measure_text(line.substr(0, i), best->ui_font_px, best->ui_family,
+			                                    best->ui_bold, best->ui_italic);
+			if (rel < (prev_w + w) / 2) { break; }
+			prev_w = w;
+			cp = best_line->cp_start + static_cast<std::int32_t>(i);
+		}
+		cp_out = cp;
+		return best;
+	}
+	void nearest_line(node & n, std::int32_t ix, std::int32_t iy, node *& best,
+	                  const node::text_line *& best_line, std::int64_t & best_d) {
+		if (selectable_text(&n)) {
+			for (const node::text_line & l : n.ui_lines) {
+				// vertical distance to the line band, then horizontal to its span
+				const std::int32_t vd = iy < l.y            ? l.y - iy
+				                        : iy >= l.y + n.ui_font_px ? iy - (l.y + n.ui_font_px) + 1
+				                                                   : 0;
+				const std::int32_t hd = ix < l.x         ? l.x - ix
+				                        : ix > l.x + l.w ? ix - (l.x + l.w)
+				                                         : 0;
+				const std::int64_t d = static_cast<std::int64_t>(vd) * 100000 + hd;
+				if (d < best_d) {
+					best_d = d;
+					best = &n;
+					best_line = &l;
+				}
+			}
+		}
+		for (const auto & c : n.children) { nearest_line(*c, ix, iy, best, best_line, best_d); }
+	}
+	// mark the character range between two positions (document order)
+	void apply_page_range(node * a, std::int32_t a_cp, node * b, std::int32_t b_cp) {
+		clear_page_selection();
+		if (a == nullptr || b == nullptr) { return; }
+		if (a == b) {
+			a->sel_from = a_cp < b_cp ? a_cp : b_cp;
+			a->sel_to = a_cp < b_cp ? b_cp : a_cp;
+			a->selected = a->sel_to > a->sel_from;
+			return;
+		}
+		// document order decides which endpoint comes first
+		bool in_range = false, a_first = false;
+		order_probe(*doc.root, a, b, in_range, a_first);
+		node * first = a_first ? a : b;
+		node * last = a_first ? b : a;
+		const std::int32_t first_cp = a_first ? a_cp : b_cp;
+		const std::int32_t last_cp = a_first ? b_cp : a_cp;
+		bool marking = false;
+		mark_range(*doc.root, first, last, first_cp, last_cp, marking);
+	}
+	// pre-order walk: which of a/b appears first?
+	static bool order_probe(node & n, node * a, node * b, bool & done, bool & a_first) {
+		if (done) { return true; }
+		if (&n == a) {
+			a_first = true;
+			done = true;
+			return true;
+		}
+		if (&n == b) {
+			a_first = false;
+			done = true;
+			return true;
+		}
+		for (const auto & c : n.children) {
+			if (order_probe(*c, a, b, done, a_first)) { return true; }
+		}
+		return false;
+	}
+	void mark_range(node & n, node * first, node * last, std::int32_t first_cp,
+	                std::int32_t last_cp, bool & marking) {
+		const bool is_first = &n == first, is_last = &n == last;
+		if (is_first) { marking = true; }
+		if (marking && selectable_text(&n)) {
+			const std::int32_t len = n.ui_lines.empty() ? 0 : n.ui_lines.back().cp_end;
+			n.sel_from = is_first ? first_cp : 0;
+			n.sel_to = is_last ? last_cp : len;
+			n.selected = n.sel_to > n.sel_from;
+		}
+		if (is_last) {
+			marking = false;
+			return;
+		}
+		for (const auto & c : n.children) { mark_range(*c, first, last, first_cp, last_cp, marking); }
+		if (is_last) { marking = false; }
 	}
 	std::string page_selection_text() const {
 		std::string out;
@@ -775,9 +896,16 @@ private:
 		return out;
 	}
 	static void collect_selected(const node & n, std::string & out) {
-		if (n.selected && !n.text.empty()) {
-			out += n.text;
-			out += '\n';
+		if (n.selected && n.sel_to > n.sel_from) {
+			const std::u32string all = utf8_to_utf32(n.text);
+			const std::size_t b = static_cast<std::size_t>(n.sel_from);
+			const std::size_t e2 = static_cast<std::size_t>(n.sel_to) < all.size()
+			                           ? static_cast<std::size_t>(n.sel_to)
+			                           : all.size();
+			if (e2 > b) {
+				out += utf32_to_utf8(std::u32string_view{all}.substr(b, e2 - b));
+				out += '\n';
+			}
 		}
 		for (const auto & c : n.children) { collect_selected(*c, out); }
 	}
@@ -836,10 +964,15 @@ private:
 			focused_->caret_follow = true;
 			return;
 		}
-		if (doc.root) {
-			apply_selection_band(std::numeric_limits<std::int32_t>::min() / 2,
-			                     std::numeric_limits<std::int32_t>::max() / 2);
+		if (doc.root) { select_all_text(*doc.root); }
+	}
+	void select_all_text(node & n) {
+		if (selectable_text(&n)) {
+			n.sel_from = 0;
+			n.sel_to = n.ui_lines.back().cp_end;
+			n.selected = n.sel_to > 0;
 		}
+		for (const auto & c : n.children) { select_all_text(*c); }
 	}
 
 	// --- the right-click context menu (Chrome-style; the cancelable

@@ -140,32 +140,40 @@ int main() {
 		CHECK(clip == "Yhello");
 	}
 
-	// --- page selection: drag a band over the paragraph, copy it;
+	// --- page selection: drag CHARACTER-precisely over the paragraph;
 	//     user-select:none text never joins
 	{
-		e.mouse_button(1.0, 1.0, true); // click empty-ish space clears focus
-		e.mouse_button(1.0, 1.0, false);
-		const double y0 = para->y + 2.0, y1 = nosel->y + nosel->h - 2.0;
-		e.mouse_button(30.0, y0, true);
-		e.mouse_move(30.0, y1);
-		e.mouse_button(30.0, y1, false);
+		const double ly = para->y + 4.0;
+		// from before the first glyph, down past the paragraph: all of it
+		e.mouse_button(para->x + 1.0, ly, true);
+		e.mouse_move(200.0, nosel->y + nosel->h - 2.0);
+		e.mouse_button(200.0, nosel->y + nosel->h - 2.0, false);
 		CHECK(para->selected);
+		CHECK(para->sel_from == 0);
 		CHECK(!nosel->selected); // user-select: none held
 		e.key("Left Ctrl", true);
 		e.key("C", true);
 		e.key("C", false);
 		e.key("Left Ctrl", false);
-		CHECK(clip.find("selectable paragraph text") != std::string::npos);
-		CHECK(clip.find("never selected") == std::string::npos);
+		CHECK(clip == "selectable paragraph text");
+		// mid-word anchor: the copy starts mid-word (BY THE CHARACTER)
+		e.mouse_button(para->x + 16.0 * 3.0 + 2.0, ly, true); // inside "sel|ectable"
+		e.mouse_move(para->x + 16.0 * 10.0 + 2.0, ly);
+		e.mouse_button(para->x + 16.0 * 10.0 + 2.0, ly, false);
+		e.key("Left Ctrl", true);
+		e.key("C", true);
+		e.key("C", false);
+		e.key("Left Ctrl", false);
+		CHECK(clip == "ectable"); // characters 3..10, not whole elements
 	}
 
 	// --- the context menu: right-click opens, item acts, Esc closes,
 	//     and a preventDefault listener suppresses it entirely
 	{
 		// select the paragraph so Copy is enabled
-		e.mouse_button(30.0, para->y + 2.0, true);
-		e.mouse_move(30.0, para->y + para->h - 2.0);
-		e.mouse_button(30.0, para->y + para->h - 2.0, false);
+		e.mouse_button(para->x + 1.0, para->y + 4.0, true);
+		e.mouse_move(400.0, para->y + 4.0);
+		e.mouse_button(400.0, para->y + 4.0, false);
 		clip.clear();
 		e.mouse_button(50.0, 50.0, true, 2); // right-click
 		bool menu_painted = false;
