@@ -187,21 +187,12 @@ public:
 		{
 			std::int32_t sx = 0, sy = 0, sw = 0, sh = 0;
 			if (scrollbar_thumb(sx, sy, sw, sh)) {
-				paint_cmd track;
-				track.what = paint_cmd::kind::box;
-				track.fixed = true;
-				track.x = sx;
-				track.y = 0;
-				track.w = sw;
-				track.h = ev.viewport_h;
-				track.argb = detail::ua_scrollbar_track;
-				cmds.push_back(track);
-				paint_cmd thumb = track;
-				thumb.y = sy;
-				thumb.h = sh;
-				thumb.argb =
-				    sb_dragging_ ? detail::ua_scrollbar_thumb_active : detail::ua_scrollbar_thumb;
-				cmds.push_back(thumb);
+				cmds.push_back(detail::box_cmd(sx, 0, sw, ev.viewport_h, detail::ua_scrollbar_track,
+				                               /*fixed=*/true));
+				cmds.push_back(detail::box_cmd(sx, sy, sw, sh,
+				                               sb_dragging_ ? detail::ua_scrollbar_thumb_active
+				                                            : detail::ua_scrollbar_thumb,
+				                               /*fixed=*/true));
 			}
 		}
 		// the context menu, on top of everything (viewport-fixed)
@@ -210,15 +201,7 @@ public:
 			const std::int32_t mh = menu_item_h * static_cast<std::int32_t>(items.size());
 			const auto boxc = [&cmds](std::int32_t bx, std::int32_t by, std::int32_t bw,
 			                          std::int32_t bh, std::uint32_t argb) {
-				paint_cmd b;
-				b.what = paint_cmd::kind::box;
-				b.fixed = true;
-				b.x = bx;
-				b.y = by;
-				b.w = bw;
-				b.h = bh;
-				b.argb = argb;
-				cmds.push_back(b);
+				cmds.push_back(detail::box_cmd(bx, by, bw, bh, argb, /*fixed=*/true));
 			};
 			boxc(menu_x_, menu_y_, menu_w, mh, detail::ua_menu_bg);
 			if (menu_hover_ >= 0 && menu_hover_ < static_cast<std::int32_t>(items.size()) &&
@@ -232,18 +215,16 @@ public:
 			boxc(menu_x_ + menu_w - 1, menu_y_, 1, mh, detail::ua_menu_border);
 			std::int32_t iy = menu_y_;
 			for (const auto & it : items) {
-				paint_cmd txt;
-				txt.what = paint_cmd::kind::text;
+				std::u32string label = utf8_to_utf32(std::string{it.label});
+				const std::int32_t lw =
+				    measure_text(label, menu_font_px, menu_font_family, false, false);
+				paint_cmd txt = detail::text_cmd(
+				    menu_x_ + menu_pad_x, iy + menu_pad_y, lw, menu_font_px,
+				    it.enabled ? detail::ua_menu_text : detail::ua_menu_text_disabled,
+				    std::move(label), menu_font_px);
 				txt.fixed = true;
-				txt.x = menu_x_ + 10;
-				txt.y = iy + 5;
-				txt.h = 13;
-				txt.font_px = 13;
-				txt.font_family = "sans-serif";
-				txt.argb = it.enabled ? detail::ua_menu_text : detail::ua_menu_text_disabled;
-				txt.text = utf8_to_utf32(std::string{it.label});
-				txt.w = measure_text(txt.text, 13, "sans-serif", false, false);
-				cmds.push_back(txt);
+				txt.font_family = menu_font_family;
+				cmds.push_back(std::move(txt));
 				iy += menu_item_h;
 			}
 		}
@@ -1054,6 +1035,10 @@ private:
 	}
 	static constexpr std::int32_t menu_w = 160;
 	static constexpr std::int32_t menu_item_h = 24;
+	static constexpr std::int32_t menu_pad_x = 10;   // label inset from the left edge
+	static constexpr std::int32_t menu_pad_y = 5;    // label inset within its row
+	static constexpr std::int32_t menu_font_px = 13; // menu chrome is its own size
+	static constexpr std::string_view menu_font_family = "sans-serif";
 	void context_click(double x, double y) {
 		ctjs::value evt = detail::mouse_event(x, y, "contextmenu");
 		ev.dispatch("contextmenu", evt);

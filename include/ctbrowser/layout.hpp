@@ -82,6 +82,41 @@ struct paint_cmd {
 
 namespace detail {
 
+// --- paint_cmd factories. A filled rect is by far the most common paint
+// (frames, carets, highlights, widget chrome, backgrounds); building one
+// field-by-field at every site was the single most repeated shape in the
+// engine. `fixed` marks the viewport-anchored ones - the scrollbar, the
+// context menu, position:fixed subtrees - which page scrolling skips.
+[[nodiscard]] constexpr paint_cmd box_cmd(std::int32_t x, std::int32_t y, std::int32_t w,
+                                          std::int32_t h, std::uint32_t argb, bool fixed = false) {
+	paint_cmd c;
+	c.what = paint_cmd::kind::box;
+	c.fixed = fixed;
+	c.x = x;
+	c.y = y;
+	c.w = w;
+	c.h = h;
+	c.argb = argb;
+	return c;
+}
+
+// a text run. The caller stamps family/weight/style afterwards - via
+// layout_pass::push_text, which also emits the decoration band.
+[[nodiscard]] constexpr paint_cmd text_cmd(std::int32_t x, std::int32_t y, std::int32_t w,
+                                           std::int32_t h, std::uint32_t argb, std::u32string text,
+                                           std::int32_t font_px) {
+	paint_cmd c;
+	c.what = paint_cmd::kind::text;
+	c.x = x;
+	c.y = y;
+	c.w = w;
+	c.h = h;
+	c.argb = argb;
+	c.text = std::move(text);
+	c.font_px = font_px;
+	return c;
+}
+
 // inline-level elements share rows (Firefox's inline flow); the CSS
 // display property overrides the tag default either way
 constexpr bool inline_level_tag(std::string_view tag) {
@@ -194,6 +229,12 @@ struct layout_pass {
 		return font_spec{font_family_of(n), font_bold_of(n), font_italic_of(n), text_deco_of(n)};
 	}
 
+	// emit one filled rect
+	constexpr void push_box(std::int32_t x, std::int32_t y, std::int32_t w, std::int32_t h,
+	                        std::uint32_t argb) {
+		out->push_back(box_cmd(x, y, w, h, argb));
+	}
+
 	// stamp a text cmd with the spec and emit its decoration band
 	constexpr void push_text(paint_cmd cmd, const font_spec & fs) {
 		cmd.font_family = fs.family;
@@ -206,16 +247,7 @@ struct layout_pass {
 		const std::int32_t dx = cmd.x, dw = cmd.w, dcy = cmd.y + dy;
 		const std::uint32_t argb = cmd.argb;
 		out->push_back(std::move(cmd));
-		if (dy >= 0 && dw > 0) {
-			paint_cmd band;
-			band.what = paint_cmd::kind::box;
-			band.x = dx;
-			band.y = dcy;
-			band.w = dw;
-			band.h = 1;
-			band.argb = argb;
-			out->push_back(band);
-		}
+		if (dy >= 0 && dw > 0) { push_box(dx, dcy, dw, 1, argb); }
 	}
 
 	// resolve a CSS length to px: px/unitless absolute; % of `basis`; vw/vh of the
@@ -503,14 +535,7 @@ struct layout_pass {
 			const std::int32_t mx = n.x + 4;
 			const std::int32_t my = cursor + font_px / 2 - s / 2;
 			const auto row = [&](std::int32_t bx, std::int32_t by, std::int32_t bw, std::int32_t bh) {
-				paint_cmd b;
-				b.what = paint_cmd::kind::box;
-				b.x = bx;
-				b.y = by;
-				b.w = bw;
-				b.h = bh;
-				b.argb = pack_argb(fg);
-				out->push_back(b);
+				push_box(bx, by, bw, bh, pack_argb(fg));
 			};
 			if (n.parent->open) { // down-pointing: rows narrow toward the tip
 				for (std::int32_t r = 0; r * 2 < s; ++r) { row(mx + r, my + r + s / 4, s - 2 * r, 1); }
@@ -523,14 +548,7 @@ struct layout_pass {
 			const ctcss::color fg = text_color(n);
 			if (n.parent->tag == "ul") {
 				const std::int32_t d = font_px / 3 > 2 ? font_px / 3 : 3; // the disc
-				paint_cmd b;
-				b.what = paint_cmd::kind::box;
-				b.x = n.x - d * 3;
-				b.y = cursor + font_px / 2 - d / 2;
-				b.w = d;
-				b.h = d;
-				b.argb = pack_argb(fg);
-				out->push_back(b);
+				push_box(n.x - d * 3, cursor + font_px / 2 - d / 2, d, d, pack_argb(fg));
 			} else if (n.parent->tag == "ol") {
 				std::int32_t idx = 1;
 				for (const auto & sib : n.parent->children) {
@@ -542,16 +560,9 @@ struct layout_pass {
 				num.push_back(U'.');
 				const font_spec fs2 = font_spec_of(&n);
 				const std::int32_t nw = text_width(num, font_px, fs2);
-				paint_cmd c;
-				c.what = paint_cmd::kind::text;
-				c.x = n.x - nw - font_px / 2;
-				c.y = cursor;
-				c.w = nw;
-				c.h = font_px;
-				c.argb = pack_argb(fg);
-				c.text = std::move(num);
-				c.font_px = font_px;
-				push_text(std::move(c), fs2);
+				push_text(text_cmd(n.x - nw - font_px / 2, cursor, nw, font_px, pack_argb(fg),
+				                   std::move(num), font_px),
+				          fs2);
 			}
 		}
 
@@ -614,30 +625,18 @@ struct layout_pass {
 							std::int32_t hb = n.sel_from > ls2 ? n.sel_from : ls2;
 							std::int32_t he = n.sel_to < le2 ? n.sel_to : le2;
 							if (he > hb) {
-								paint_cmd hl;
-								hl.what = paint_cmd::kind::box;
-								hl.x = tx + text_width(rest.substr(0, static_cast<std::size_t>(hb - ls2)),
-								                       font_px, fs);
-								hl.y = cursor;
-								hl.w = text_width(
-								    rest.substr(static_cast<std::size_t>(hb - ls2),
-								                static_cast<std::size_t>(he - hb)),
-								    font_px, fs);
-								hl.h = font_px;
-								hl.argb = detail::ua_selection_highlight;
-								out->push_back(hl);
+								push_box(tx + text_width(rest.substr(0, static_cast<std::size_t>(hb - ls2)),
+								                         font_px, fs),
+								         cursor,
+								         text_width(rest.substr(static_cast<std::size_t>(hb - ls2),
+								                                static_cast<std::size_t>(he - hb)),
+								                    font_px, fs),
+								         font_px, detail::ua_selection_highlight);
 							}
 						}
-						paint_cmd cmd;
-						cmd.what = paint_cmd::kind::text;
-						cmd.x = tx;
-						cmd.y = cursor;
-						cmd.w = tw;
-						cmd.h = font_px;
-						cmd.argb = pack_argb(fg);
-						cmd.text = u32str(rest.substr(0, take));
-						cmd.font_px = font_px;
-						push_text(std::move(cmd), fs);
+						push_text(text_cmd(tx, cursor, tw, font_px, pack_argb(fg),
+						                   u32str(rest.substr(0, take)), font_px),
+						          fs);
 						cursor += line_height(font_px);
 						rest.remove_prefix(take);
 						while (!preserve && !rest.empty() && rest.front() == U' ') {
@@ -723,18 +722,9 @@ struct layout_pass {
 				const std::int32_t tw = text_width(lt, font_px, fs);
 				const std::int32_t ty =
 				    line_top + (line_h > font_px ? (line_h - font_px) / 2 : 0);
-				paint_cmd cmd;
-				cmd.what = paint_cmd::kind::text;
-				cmd.x = line_x;
-				cmd.y = ty;
-				cmd.w = tw;
-				cmd.h = font_px;
-				cmd.argb = pack_argb(fg);
-				cmd.text = u32str(lt);
-				cmd.font_px = font_px;
 				const std::int32_t ls3 = static_cast<std::int32_t>(lt.data() - text.data());
 				n.ui_lines.push_back({ls3, ls3 + static_cast<std::int32_t>(lt.size()), line_x, ty, tw, true});
-				push_text(std::move(cmd), fs);
+				push_text(text_cmd(line_x, ty, tw, font_px, pack_argb(fg), u32str(lt), font_px), fs);
 				if (line_x + tw > content_max_x) { content_max_x = line_x + tw; }
 				if (line_height(font_px) > line_h) { line_h = line_height(font_px); }
 				line_x += tw;
@@ -792,20 +782,10 @@ struct layout_pass {
 	}
 	constexpr void emit_frame(const node & n, std::uint32_t argb) {
 		if (n.w <= 1 || n.h <= 1) { return; }
-		const auto edge = [&](std::int32_t x, std::int32_t y, std::int32_t w, std::int32_t h) {
-			paint_cmd b;
-			b.what = paint_cmd::kind::box;
-			b.x = x;
-			b.y = y;
-			b.w = w;
-			b.h = h;
-			b.argb = argb;
-			out->push_back(b);
-		};
-		edge(n.x, n.y, n.w, 1);
-		edge(n.x, n.y + n.h - 1, n.w, 1);
-		edge(n.x, n.y, 1, n.h);
-		edge(n.x + n.w - 1, n.y, 1, n.h);
+		push_box(n.x, n.y, n.w, 1, argb);                 // top
+		push_box(n.x, n.y + n.h - 1, n.w, 1, argb);       // bottom
+		push_box(n.x, n.y, 1, n.h, argb);                 // left
+		push_box(n.x + n.w - 1, n.y, 1, n.h, argb);       // right
 	}
 	// checkbox / radio: a ~14px (at 16px font) box or disc; Firefox's
 	// modern theme - #8f8f9d frame, #0060df fill when checked, white mark
@@ -814,33 +794,23 @@ struct layout_pass {
 		n.w = side + 2 * padding;
 		n.h = side + 2 * padding;
 		const std::int32_t bx = n.x + padding, by = n.y + padding;
-		const auto box_cmd = [&](std::int32_t x, std::int32_t y, std::int32_t w, std::int32_t h, std::uint32_t argb) {
-			paint_cmd b;
-			b.what = paint_cmd::kind::box;
-			b.x = x;
-			b.y = y;
-			b.w = w;
-			b.h = h;
-			b.argb = argb;
-			out->push_back(b);
-		};
 		if (!radio) {
 			// field, frame, and - when checked - accent fill + white check mark
-			box_cmd(bx, by, side, side, n.checked ? detail::ua_widget_accent : detail::ua_widget_field);
-			box_cmd(bx, by, side, 1, detail_frame_argb(n));
-			box_cmd(bx, by + side - 1, side, 1, detail_frame_argb(n));
-			box_cmd(bx, by, 1, side, detail_frame_argb(n));
-			box_cmd(bx + side - 1, by, 1, side, detail_frame_argb(n));
+			push_box(bx, by, side, side, n.checked ? detail::ua_widget_accent : detail::ua_widget_field);
+			push_box(bx, by, side, 1, detail_frame_argb(n));
+			push_box(bx, by + side - 1, side, 1, detail_frame_argb(n));
+			push_box(bx, by, 1, side, detail_frame_argb(n));
+			push_box(bx + side - 1, by, 1, side, detail_frame_argb(n));
 			if (n.checked) {
 				// a stepped check: short down-stroke + longer up-stroke
 				const std::int32_t u = side > 11 ? 2 : 1; // stroke thickness
 				const std::int32_t cx0 = bx + side / 5, cy0 = by + side / 2;
 				for (std::int32_t i = 0; i < side / 4; ++i) {
-					box_cmd(cx0 + i, cy0 + i, u, u + 1, detail::ua_widget_mark);
+					push_box(cx0 + i, cy0 + i, u, u + 1, detail::ua_widget_mark);
 				}
 				const std::int32_t mx = bx + side / 5 + side / 4, my = by + side / 2 + side / 4;
 				for (std::int32_t i = 0; i < side / 2; ++i) {
-					box_cmd(mx + i, my - i, u, u + 1, detail::ua_widget_mark);
+					push_box(mx + i, my - i, u, u + 1, detail::ua_widget_mark);
 				}
 			}
 		} else {
@@ -849,21 +819,21 @@ struct layout_pass {
 			for (std::int32_t r = 0; r < side; ++r) {
 				const std::int32_t d = r < side / 2 ? side / 2 - 1 - r : r - side / 2;
 				std::int32_t inset = d > side / 4 ? d - side / 4 : 0;
-				box_cmd(bx + inset, by + r, side - 2 * inset, 1,
-				        r == 0 || r == side - 1 ? detail_frame_argb(n) : detail::ua_widget_field);
+				push_box(bx + inset, by + r, side - 2 * inset, 1,
+				         r == 0 || r == side - 1 ? detail_frame_argb(n) : detail::ua_widget_field);
 				if (inset > 0) {
-					box_cmd(bx + inset, by + r, 1, 1, detail_frame_argb(n));
-					box_cmd(bx + side - inset - 1, by + r, 1, 1, detail_frame_argb(n));
+					push_box(bx + inset, by + r, 1, 1, detail_frame_argb(n));
+					push_box(bx + side - inset - 1, by + r, 1, 1, detail_frame_argb(n));
 				} else {
-					box_cmd(bx, by + r, 1, 1, detail_frame_argb(n));
-					box_cmd(bx + side - 1, by + r, 1, 1, detail_frame_argb(n));
+					push_box(bx, by + r, 1, 1, detail_frame_argb(n));
+					push_box(bx + side - 1, by + r, 1, 1, detail_frame_argb(n));
 				}
 			}
 			if (n.checked) {
 				// the accent dot, inset a third
 				const std::int32_t inset = side / 3;
-				box_cmd(bx + inset, by + inset, side - 2 * inset, side - 2 * inset,
-				        detail::ua_widget_accent);
+				push_box(bx + inset, by + inset, side - 2 * inset, side - 2 * inset,
+				         detail::ua_widget_accent);
 			}
 		}
 	}
@@ -919,38 +889,20 @@ struct layout_pass {
 			if (cb2 > take) { cb2 = take; }
 			if (ce2 > take) { ce2 = take; }
 			if (ce2 > cb2) {
-				paint_cmd hl;
-				hl.what = paint_cmd::kind::box;
-				hl.x = n.x + padding + text_width(view.substr(0, cb2), font_px, fs);
-				hl.y = top;
-				hl.w = text_width(view.substr(cb2, ce2 - cb2), font_px, fs);
-				hl.h = font_px;
-				hl.argb = detail::ua_selection_highlight;
-				out->push_back(hl);
+				push_box(n.x + padding + text_width(view.substr(0, cb2), font_px, fs), top,
+				         text_width(view.substr(cb2, ce2 - cb2), font_px, fs), font_px,
+				         detail::ua_selection_highlight);
 			}
 		}
 		if (take > 0) {
-			paint_cmd c;
-			c.what = paint_cmd::kind::text;
-			c.x = n.x + padding;
-			c.y = top;
-			c.w = text_width(view.substr(0, take), font_px, fs);
-			c.h = font_px;
-			c.argb = pack_argb(fg);
-			c.text = std::u32string{view.substr(0, take)};
-			c.font_px = font_px;
-			push_text(std::move(c), fs);
+			push_text(text_cmd(n.x + padding, top, text_width(view.substr(0, take), font_px, fs),
+			                   font_px, pack_argb(fg), std::u32string{view.substr(0, take)}, font_px),
+			          fs);
 		}
 		if (n.focused && n.ui_caret_on) { // the caret, blinking on the engine's clock
-			paint_cmd bar;
-			bar.what = paint_cmd::kind::box;
-			bar.x = n.x + padding +
-			        text_width(std::u32string_view{shown}.substr(start, caret_cp - start), font_px, fs);
-			bar.y = top;
-			bar.w = 1;
-			bar.h = font_px;
-			bar.argb = pack_argb(fg);
-			out->push_back(bar);
+			push_box(n.x + padding + text_width(std::u32string_view{shown}.substr(start, caret_cp - start),
+			                                    font_px, fs),
+			         top, 1, font_px, pack_argb(fg));
 		}
 	}
 
@@ -1067,42 +1019,23 @@ struct layout_pass {
 				                     : 0;
 				if (he > line.size()) { he = line.size(); }
 				if (he > hb) {
-					paint_cmd hl;
-					hl.what = paint_cmd::kind::box;
-					hl.x = l.x + text_width(line.substr(0, hb), font_px, fs);
-					hl.y = l.y;
-					hl.w = text_width(line.substr(hb, he - hb), font_px, fs);
-					hl.h = font_px;
-					hl.argb = detail::ua_selection_highlight;
-					out->push_back(hl);
+					push_box(l.x + text_width(line.substr(0, hb), font_px, fs), l.y,
+					         text_width(line.substr(hb, he - hb), font_px, fs), font_px,
+					         detail::ua_selection_highlight);
 				}
 			}
 			if (!line.empty()) {
-				paint_cmd c;
-				c.what = paint_cmd::kind::text;
-				c.x = l.x;
-				c.y = l.y;
-				c.w = l.w;
-				c.h = font_px;
-				c.argb = pack_argb(fg);
-				c.text = std::u32string{line};
-				c.font_px = font_px;
-				push_text(std::move(c), fs);
+				push_text(text_cmd(l.x, l.y, l.w, font_px, pack_argb(fg), std::u32string{line}, font_px),
+				          fs);
 			}
 			if (n.focused && n.ui_caret_on && static_cast<std::int32_t>(i) == caret_line) {
 				const std::size_t col = caret_cp - static_cast<std::size_t>(l.cp_start);
-				paint_cmd bar;
-				bar.what = paint_cmd::kind::box;
-				bar.x = l.x + text_width(line.substr(0, col <= line.size() ? col : line.size()),
-				                         font_px, fs);
+				std::int32_t bar_x =
+				    l.x + text_width(line.substr(0, col <= line.size() ? col : line.size()), font_px, fs);
 				// wrap spaces may exceed the content width by a glyph; the
 				// caret still pins inside the box (Firefox behavior)
-				if (bar.x > n.x + n.w - padding - 1) { bar.x = n.x + n.w - padding - 1; }
-				bar.y = l.y;
-				bar.w = 1;
-				bar.h = font_px;
-				bar.argb = pack_argb(fg);
-				out->push_back(bar);
+				if (bar_x > n.x + n.w - padding - 1) { bar_x = n.x + n.w - padding - 1; }
+				push_box(bar_x, l.y, 1, font_px, pack_argb(fg));
 			}
 		}
 	}
@@ -1244,29 +1177,11 @@ struct layout_pass {
 		if (align == std::string_view{"center"}) { tx += (content_w - tw - arrow - font_px / 3) / 2; }
 		else if (align == std::string_view{"right"}) { tx += content_w - tw - arrow - font_px / 3; }
 		if (tx < n.x + padding) { tx = n.x + padding; }
-		{
-			paint_cmd c;
-			c.what = paint_cmd::kind::text;
-			c.x = tx;
-			c.y = top;
-			c.w = tw;
-			c.h = font_px;
-			c.argb = pack_argb(fg);
-			c.text = label;
-			c.font_px = font_px;
-			out->push_back(c);
-		}
+		out->push_back(text_cmd(tx, top, tw, font_px, pack_argb(fg), label, font_px));
 		// a down-pointing triangle just to the right of the label
 		const std::int32_t ax = tx + tw + font_px / 3, ay = top + font_px / 4;
 		for (std::int32_t r = 0; r * 2 < arrow; ++r) {
-			paint_cmd b;
-			b.what = paint_cmd::kind::box;
-			b.x = ax + r;
-			b.y = ay + r;
-			b.w = arrow - 2 * r;
-			b.h = 1;
-			b.argb = pack_argb(fg);
-			if (b.w > 0) { out->push_back(b); }
+			if (arrow - 2 * r > 0) { push_box(ax + r, ay + r, arrow - 2 * r, 1, pack_argb(fg)); }
 		}
 		n.h = line_h + 2 * padding;
 
@@ -1283,39 +1198,18 @@ struct layout_pass {
 			std::int32_t ox = n.x + padding + (content_w - ow) / 2;
 			if (ox < n.x) { ox = n.x; }
 			const std::int32_t oy = n.y + n.h, row_h = line_h + 4;
-			paint_cmd bg;
-			bg.what = paint_cmd::kind::box;
-			bg.x = ox;
-			bg.y = oy;
-			bg.w = ow;
-			bg.h = row_h * nopt;
-			bg.argb = detail::ua_option_list_bg; // opaque list (option { background:#000 })
-			overlays->push_back(bg);
+			// opaque list background (the UA sheet's option { background:#000 })
+			overlays->push_back(box_cmd(ox, oy, ow, row_h * nopt, detail::ua_option_list_bg));
 			for (std::int32_t i = 0; i < nopt; ++i) {
 				node * opt = n.nth_option(i);
 				if (opt == nullptr) { continue; }
 				const std::int32_t ry = oy + i * row_h;
 				if (i == n.selected_option()) { // highlight the current choice
-					paint_cmd hl;
-					hl.what = paint_cmd::kind::box;
-					hl.x = ox;
-					hl.y = ry;
-					hl.w = ow;
-					hl.h = row_h;
-					hl.argb = detail::ua_option_selected;
-					overlays->push_back(hl);
+					overlays->push_back(box_cmd(ox, ry, ow, row_h, detail::ua_option_selected));
 				}
 				const std::u32string ot = utf8_to_utf32(trimmed(opt->text));
-				paint_cmd t;
-				t.what = paint_cmd::kind::text;
-				t.x = ox + padding + font_px / 4;
-				t.y = ry + 2;
-				t.w = text_width(ot, font_px);
-				t.h = font_px;
-				t.argb = detail::ua_option_text;
-				t.text = ot;
-				t.font_px = font_px;
-				overlays->push_back(t);
+				overlays->push_back(text_cmd(ox + padding + font_px / 4, ry + 2, text_width(ot, font_px),
+				                             font_px, detail::ua_option_text, ot, font_px));
 				opt->x = ox;
 				opt->y = ry;
 				opt->w = ow;
@@ -1340,16 +1234,7 @@ constexpr void collect_backgrounds(node & n, const style_fn & resolve,
 	std::string_view bg = cs.get("background-color");
 	if (bg.empty()) { bg = cs.get("background"); }
 	const ctcss::color c = ctcss::parse_color(bg);
-	if (c.ok && c.a != 0) {
-		paint_cmd cmd;
-		cmd.what = paint_cmd::kind::box;
-		cmd.x = n.x;
-		cmd.y = n.y;
-		cmd.w = n.w;
-		cmd.h = n.h;
-		cmd.argb = pack_argb(c);
-		out.push_back(cmd);
-	}
+	if (c.ok && c.a != 0) { out.push_back(box_cmd(n.x, n.y, n.w, n.h, pack_argb(c))); }
 	for (const auto & kid : n.children) { collect_backgrounds(*kid, resolve, out); }
 }
 
