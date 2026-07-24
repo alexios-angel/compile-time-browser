@@ -10,7 +10,8 @@
 #include "utf.hpp"
 #include <ctc/cfunction.hpp>
 #ifndef CTBROWSER_IN_A_MODULE
-#include <functional>
+#include <algorithm>
+#include <array>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -119,14 +120,21 @@ namespace detail {
 
 // inline-level elements share rows (Firefox's inline flow); the CSS
 // display property overrides the tag default either way
+inline constexpr std::array inline_level_tags{
+    std::string_view{"a"},      std::string_view{"span"},   std::string_view{"b"},
+    std::string_view{"i"},      std::string_view{"u"},      std::string_view{"s"},
+    std::string_view{"em"},     std::string_view{"strong"}, std::string_view{"code"},
+    std::string_view{"small"},  std::string_view{"big"},    std::string_view{"mark"},
+    std::string_view{"label"},  std::string_view{"input"},  std::string_view{"button"},
+    std::string_view{"select"}, std::string_view{"textarea"}, std::string_view{"sub"},
+    std::string_view{"sup"},    std::string_view{"tt"},     std::string_view{"kbd"},
+    std::string_view{"samp"},   std::string_view{"cite"},   std::string_view{"var"},
+    std::string_view{"dfn"},    std::string_view{"abbr"},   std::string_view{"ins"},
+    std::string_view{"del"},    std::string_view{"strike"}, std::string_view{"img"},
+    std::string_view{"q"},      std::string_view{"time"},   std::string_view{"output"}};
+
 constexpr bool inline_level_tag(std::string_view tag) {
-	for (const std::string_view s :
-	     {"a", "span", "b", "i", "u", "s", "em", "strong", "code", "small", "big", "mark",
-	      "label", "input", "button", "select", "textarea", "sub", "sup", "tt", "kbd", "samp",
-	      "cite", "var", "dfn", "abbr", "ins", "del", "strike", "img", "q", "time", "output"}) {
-		if (tag == s) { return true; }
-	}
-	return false;
+	return std::ranges::contains(inline_level_tags, tag);
 }
 // inline containers with no explicit width shrink to their content
 constexpr bool shrink_wrap_tag(std::string_view tag) {
@@ -179,51 +187,44 @@ struct layout_pass {
 		return static_cast<std::int32_t>(t.size()) * font_px; // one square glyph per code point
 	}
 
-	// inherited text-style resolvers (the font_of/text_color pattern):
-	// multiple fonts coexist in one document - every element resolves its
-	// own family/weight/style, every text cmd carries them
-	constexpr std::string font_family_of(node * n) const {
+	// CSS inheritance, as one walk: the value of `prop` declared by the
+	// nearest ancestor (self first), or "" when nobody declares it. Every
+	// inherited text-style resolver below is a parse on top of this.
+	constexpr std::string_view inherited(node * n, std::string_view prop) const {
 		for (node * p = n; p != nullptr; p = p->parent) {
 			computed_style pcs{p, resolve, p->chain()};
-			const std::string_view v = pcs.get("font-family");
-			if (!v.empty()) { return std::string{v}; }
+			const std::string_view v = pcs.get(prop);
+			if (!v.empty()) { return v; }
 		}
 		return {};
 	}
+
+	// inherited text-style resolvers: multiple fonts coexist in one
+	// document - every element resolves its own family/weight/style, and
+	// every text cmd carries them
+	constexpr std::string font_family_of(node * n) const {
+		return std::string{inherited(n, "font-family")};
+	}
 	constexpr bool font_bold_of(node * n) const {
-		for (node * p = n; p != nullptr; p = p->parent) {
-			computed_style pcs{p, resolve, p->chain()};
-			const std::string_view v = pcs.get("font-weight");
-			if (v.empty()) { continue; }
-			if (ctcss::detail::ascii_iequals(v, "bold") || ctcss::detail::ascii_iequals(v, "bolder")) { return true; }
-			if (ctcss::detail::ascii_iequals(v, "normal") || ctcss::detail::ascii_iequals(v, "lighter")) { return false; }
-			const ctcss::length l = ctcss::parse_length(v); // numeric weights
-			return l.ok && l.value >= 600;
-		}
-		return false;
+		const std::string_view v = inherited(n, "font-weight");
+		if (v.empty()) { return false; }
+		if (ctcss::detail::ascii_iequals(v, "bold") || ctcss::detail::ascii_iequals(v, "bolder")) { return true; }
+		if (ctcss::detail::ascii_iequals(v, "normal") || ctcss::detail::ascii_iequals(v, "lighter")) { return false; }
+		const ctcss::length l = ctcss::parse_length(v); // numeric weights
+		return l.ok && l.value >= 600;
 	}
 	constexpr bool font_italic_of(node * n) const {
-		for (node * p = n; p != nullptr; p = p->parent) {
-			computed_style pcs{p, resolve, p->chain()};
-			const std::string_view v = pcs.get("font-style");
-			if (v.empty()) { continue; }
-			return ctcss::detail::ascii_iequals(v, "italic") || ctcss::detail::ascii_iequals(v, "oblique");
-		}
-		return false;
+		const std::string_view v = inherited(n, "font-style");
+		return ctcss::detail::ascii_iequals(v, "italic") || ctcss::detail::ascii_iequals(v, "oblique");
 	}
 	constexpr paint_cmd::strike text_deco_of(node * n) const {
 		// text-decoration is not truly inherited in CSS, but in a block
 		// engine treating it as inherited matches how it propagates to
 		// the descendants that render the text
-		for (node * p = n; p != nullptr; p = p->parent) {
-			computed_style pcs{p, resolve, p->chain()};
-			const std::string_view v = pcs.get("text-decoration");
-			if (v.empty()) { continue; }
-			if (v.find("underline") != std::string_view::npos) { return paint_cmd::strike::underline; }
-			if (v.find("line-through") != std::string_view::npos) { return paint_cmd::strike::line_through; }
-			return paint_cmd::strike::none; // explicit none stops the walk
-		}
-		return paint_cmd::strike::none;
+		const std::string_view v = inherited(n, "text-decoration");
+		if (v.find("underline") != std::string_view::npos) { return paint_cmd::strike::underline; }
+		if (v.find("line-through") != std::string_view::npos) { return paint_cmd::strike::line_through; }
+		return paint_cmd::strike::none; // an explicit `none` stopped the walk
 	}
 	constexpr font_spec font_spec_of(node * n) const {
 		return font_spec{font_family_of(n), font_bold_of(n), font_italic_of(n), text_deco_of(n)};
@@ -326,21 +327,28 @@ struct layout_pass {
 		return font_of(n->parent);
 	}
 
+	// a 2D pixel displacement (transform: translate)
+	struct offset {
+		std::int32_t x = 0;
+		std::int32_t y = 0;
+	};
+
 	// transform: translate/translateX/translateY offsets (px); % of the element's
 	// own (w,h). rotate/scale/translateZ and other functions are ignored.
-	constexpr void translate_of(const computed_style & cs, std::int32_t w, std::int32_t h, std::int32_t font_px,
-	                            std::int32_t & tx, std::int32_t & ty) const {
+	constexpr offset translate_of(const computed_style & cs, std::int32_t w, std::int32_t h,
+	                              std::int32_t font_px) const {
 		const std::string_view t = cs.get("transform");
-		tx = 0;
-		ty = 0;
+		std::int32_t tx = 0;
+		std::int32_t ty = 0;
 		std::size_t i = 0;
 		while (i < t.size()) {
 			const std::size_t p = t.find("translate", i);
 			if (p == std::string_view::npos) { break; }
 			std::size_t j = p + 9; // past "translate"
-			std::int32_t axis = 2;     // 0 = X, 1 = Y, 2 = both
-			if (j < t.size() && (t[j] == 'X' || t[j] == 'x')) { axis = 0; ++j; }
-			else if (j < t.size() && (t[j] == 'Y' || t[j] == 'y')) { axis = 1; ++j; }
+			enum class axis_of { both, x_only, y_only };
+			axis_of axis = axis_of::both;
+			if (j < t.size() && (t[j] == 'X' || t[j] == 'x')) { axis = axis_of::x_only; ++j; }
+			else if (j < t.size() && (t[j] == 'Y' || t[j] == 'y')) { axis = axis_of::y_only; ++j; }
 			else if (j < t.size() && (t[j] == 'Z' || t[j] == 'z')) { i = j + 1; continue; }
 			if (j >= t.size() || t[j] != '(') { i = j; continue; }
 			const std::size_t open = j + 1, close = t.find(')', open);
@@ -349,9 +357,9 @@ struct layout_pass {
 			const std::size_t comma = args.find(',');
 			const std::string_view a0 = trimmed(comma == std::string_view::npos ? args : args.substr(0, comma));
 			const std::string_view a1 = comma == std::string_view::npos ? std::string_view{} : trimmed(args.substr(comma + 1));
-			if (axis == 0) {
+			if (axis == axis_of::x_only) {
 				tx += len_px(a0, w, font_px, 0);
-			} else if (axis == 1) {
+			} else if (axis == axis_of::y_only) {
 				ty += len_px(a0, h, font_px, 0);
 			} else {
 				tx += len_px(a0, w, font_px, 0);
@@ -359,19 +367,16 @@ struct layout_pass {
 			}
 			i = close + 1;
 		}
+		return {tx, ty};
 	}
 
-	// text-align inherits: walk up until a node sets it ("" = default/left)
-	constexpr std::string_view text_align(node & n) const {
-		for (node * p = &n; p != nullptr; p = p->parent) {
-			computed_style pcs{p, resolve, p->chain()};
-			const std::string_view v = pcs.get("text-align");
-			if (!v.empty()) { return v; }
-		}
-		return {};
-	}
+	// text-align inherits ("" = default/left)
+	constexpr std::string_view text_align(node & n) const { return inherited(&n, "text-align"); }
 
-	// color inherits (CSS): walk up until a node sets `color`; default black
+	// color inherits too, but this one canNOT go through inherited(): it
+	// walks until a value PARSES, not until one is merely declared, so an
+	// unreadable `color: mauve` keeps searching upward instead of ending
+	// the walk. Default black.
 	constexpr ctcss::color text_color(node & n) const {
 		for (node * p = &n; p != nullptr; p = p->parent) {
 			computed_style pcs{p, resolve, p->chain()};
@@ -439,9 +444,8 @@ struct layout_pass {
 			const std::int32_t h = ph >= 0 ? ph : laid;
 			std::int32_t fx = c.x + (left != UNSET ? left : (right != UNSET ? c.w - pw - right : 0));
 			std::int32_t fy = c.y + (top != UNSET ? top : (bottom != UNSET ? c.h - h - bottom : 0));
-			std::int32_t tx = 0, ty = 0;
-			translate_of(cs, pw, h, font_px, tx, ty);
-			translate(start, n, fx + tx, fy + ty);
+			const offset t = translate_of(cs, pw, h, font_px);
+			translate(start, n, fx + t.x, fy + t.y);
 			// position:fixed is viewport-anchored: exempt the subtree (rects
 			// via the node flag, paints via the cmd flag) from page scrolling
 			n.viewport_fixed = pos == std::string_view{"fixed"};
@@ -451,8 +455,8 @@ struct layout_pass {
 			// overlays (open <select> popups) emitted by this subtree ride along
 			if (overlays != nullptr) {
 				for (std::size_t i = start_ov; i < overlays->size(); ++i) {
-					(*overlays)[i].x += fx + tx;
-					(*overlays)[i].y += fy + ty;
+					(*overlays)[i].x += fx + t.x;
+					(*overlays)[i].y += fy + t.y;
 				}
 			}
 			return 0; // out of normal flow
