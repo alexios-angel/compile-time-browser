@@ -80,6 +80,35 @@ inline constexpr std::string_view ua_css = R"(
 inline constexpr std::uint32_t ua_widget_frame = 0xFF8F8F9Du;  // borders
 inline constexpr std::uint32_t ua_widget_accent = 0xFF0060DFu; // checked fill
 inline constexpr std::uint32_t ua_widget_mark = 0xFFFFFFFFu;   // the check/dot
+inline constexpr std::uint32_t ua_widget_frame_disabled = 0xFFC8C8CEu; // greyed border
+inline constexpr std::uint32_t ua_widget_field = 0xFFFFFFFFu;  // unchecked box / radio face
+
+// selected text sits on Firefox's light blue; the glyphs stay black
+inline constexpr std::uint32_t ua_selection_highlight = 0xFFB4D5FEu;
+
+// the open <select> popup (an opaque list painted over the page)
+inline constexpr std::uint32_t ua_option_list_bg = 0xFF000000u;
+inline constexpr std::uint32_t ua_option_selected = 0xFF2A4A8Au;
+inline constexpr std::uint32_t ua_option_text = 0xFFFFFFFFu;
+
+// the grid drawn for <table border>
+inline constexpr std::uint32_t ua_table_border = 0xFF808080u;
+
+// the overlay page scrollbar (right edge, drawn above everything)
+inline constexpr std::uint32_t ua_scrollbar_track = 0x30808080u; // faint + translucent
+inline constexpr std::uint32_t ua_scrollbar_thumb = 0xFFB0B0B0u;
+inline constexpr std::uint32_t ua_scrollbar_thumb_active = 0xFF909090u; // while dragging
+// widths the CSS `scrollbar-width` keyword selects (none => 0)
+inline constexpr std::int32_t ua_scrollbar_width = 12;
+inline constexpr std::int32_t ua_scrollbar_width_thin = 6;
+inline constexpr std::int32_t ua_scrollbar_min_thumb_h = 24;
+
+// the right-click context menu (Chrome-style)
+inline constexpr std::uint32_t ua_menu_bg = 0xFFFFFFFFu;
+inline constexpr std::uint32_t ua_menu_hover = 0xFFE0E6EFu;
+inline constexpr std::uint32_t ua_menu_border = 0xFF8F8F9Du;
+inline constexpr std::uint32_t ua_menu_text = 0xFF000000u;
+inline constexpr std::uint32_t ua_menu_text_disabled = 0xFF8F8F9Du;
 
 } // namespace ctbrowser::detail
 

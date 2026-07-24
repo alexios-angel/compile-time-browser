@@ -436,8 +436,15 @@ struct draw_item {
 	bool cull = true;
 	const texture * tex = nullptr; // null => flat `diffuse`; else sampled per pixel
 };
+// The light kinds `light::type` carries. Deliberately plain ints rather
+// than a scoped enum: `light` is an aggregate the render-only tests
+// brace-initialize positionally (r3d::light{0, dir, 1.0, {...}}), and a
+// scoped enum would reject the literal.
+inline constexpr std::int32_t light_hemispheric = 0;
+inline constexpr std::int32_t light_directional = 1;
+
 struct light {
-	std::int32_t type = 0;              // 0 = hemispheric, 1 = directional
+	std::int32_t type = light_hemispheric; // light_hemispheric | light_directional
 	vec3 direction{};
 	double intensity = 1.0;
 	rgba diffuse{1, 1, 1, 1};
@@ -476,7 +483,7 @@ private:
 		double lit = 0.0;
 		for (const light & L : lights) {
 			const vec3 d = norm3(L.direction);
-			if (L.type == 1) { // directional: light travels along direction
+			if (L.type == light_directional) { // travels along `direction`
 				lit += L.intensity * std::max(0.0, dot3(N, V3(-d[0], -d[1], -d[2])));
 			} else {           // hemispheric: soft sky/ground term about `direction`
 				lit += L.intensity * (dot3(N, d) * 0.5 + 0.5);
@@ -1033,8 +1040,11 @@ struct mesh_rec {
 	r3d::vec3 pivot{};
 	std::shared_ptr<r3d::texture> tex{};   // glTF baseColor texture (shared across clones)
 };
-struct light_rec { objptr handle; std::int32_t type; };
-struct camera_rec { objptr handle; std::int32_t type; bool attached = false; };
+struct light_rec { objptr handle; std::int32_t type; }; // r3d::light_hemispheric | _directional
+// which camera model a camera_rec drives (internal: no aggregate-init
+// contract with the tests, so this one gets to be a real enum)
+enum class camera_kind : std::int32_t { arc_rotate, free_look };
+struct camera_rec { objptr handle; camera_kind kind; bool attached = false; };
 struct scene_rec {
 	objptr handle;
 	std::vector<std::int32_t> mesh_ids, light_ids;
@@ -1534,7 +1544,7 @@ inline void do_render(const worldptr & W, std::int32_t scene_id) {
 	const r3d::vec3 up = r3d::V3(0, 1, 0);
 	if (sc.active_camera >= 0 && sc.active_camera < static_cast<std::int32_t>(W->cameras.size())) {
 		camera_rec & cam = W->cameras[static_cast<std::size_t>(sc.active_camera)];
-		if (cam.type == 0) { // ArcRotate: eye from spherical coords about target
+		if (cam.kind == camera_kind::arc_rotate) { // eye from spherical coords about target
 			const double alpha = num_prop(cam.handle, "alpha", 0);
 			const double beta = num_prop(cam.handle, "beta", 1);
 			const double radius = num_prop(cam.handle, "radius", 10);
@@ -2081,7 +2091,7 @@ inline value make_camera_arc(const worldptr & W, dom_events & ev, std::string na
 		W->cam_dragging = false;
 		return value{};
 	}, "detachControl"));
-	W->cameras.push_back(camera_rec{h, 0, false});
+	W->cameras.push_back(camera_rec{h, camera_kind::arc_rotate, false});
 	register_orbit(W, ev, id);
 	const std::int32_t si = index_of(scene, "__scene");
 	if (si >= 0 && si < static_cast<std::int32_t>(W->scenes.size())) {
@@ -2122,7 +2132,7 @@ inline value make_camera_free(const worldptr & W, std::string name, const objptr
 	for (const char * nm : {"attachControl", "detachControl"}) {
 		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 	}
-	W->cameras.push_back(camera_rec{h, 1, false});
+	W->cameras.push_back(camera_rec{h, camera_kind::free_look, false});
 	const std::int32_t si = index_of(scene, "__scene");
 	if (si >= 0 && si < static_cast<std::int32_t>(W->scenes.size())) {
 		W->scenes[static_cast<std::size_t>(si)].active_camera = id;
@@ -2268,7 +2278,7 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 	}, "createDefaultCamera"));
 	h->set("createDefaultLight", value::function([W, id](ctjs::context &, const std::vector<value> &) -> value {
 		if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size())) { return value{}; }
-		return make_light(W, 0, "default_light", r3d::V3(0, 1, 0), W->scenes[static_cast<std::size_t>(id)].handle);
+		return make_light(W, r3d::light_hemispheric, "default_light", r3d::V3(0, 1, 0), W->scenes[static_cast<std::size_t>(id)].handle);
 	}, "createDefaultLight"));
 	for (const char * nm : {"createDefaultSkybox", "createDefaultEnvironment"}) {
 		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
@@ -2460,13 +2470,13 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		return make_camera_free(W, a.empty() ? "" : a[0].to_string(), arg_obj(a, 1), arg_obj(a, 2));
 	}, "UniversalCamera"));
 	B->set("HemisphericLight", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_light(W, 0, a.empty() ? "" : a[0].to_string(), read_vec3(arg_obj(a, 1), r3d::V3(0, 1, 0)), arg_obj(a, 2));
+		return make_light(W, r3d::light_hemispheric, a.empty() ? "" : a[0].to_string(), read_vec3(arg_obj(a, 1), r3d::V3(0, 1, 0)), arg_obj(a, 2));
 	}, "HemisphericLight"));
 	B->set("DirectionalLight", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_light(W, 1, a.empty() ? "" : a[0].to_string(), read_vec3(arg_obj(a, 1), r3d::V3(0, -1, 0)), arg_obj(a, 2));
+		return make_light(W, r3d::light_directional, a.empty() ? "" : a[0].to_string(), read_vec3(arg_obj(a, 1), r3d::V3(0, -1, 0)), arg_obj(a, 2));
 	}, "DirectionalLight"));
 	B->set("PointLight", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_light(W, 1, a.empty() ? "" : a[0].to_string(), read_vec3(arg_obj(a, 1), r3d::V3(0, -1, 0)), arg_obj(a, 2));
+		return make_light(W, r3d::light_directional, a.empty() ? "" : a[0].to_string(), read_vec3(arg_obj(a, 1), r3d::V3(0, -1, 0)), arg_obj(a, 2));
 	}, "PointLight"));
 	B->set("StandardMaterial", value::function([](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_material(a.empty() ? "" : a[0].to_string());

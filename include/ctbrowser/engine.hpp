@@ -31,6 +31,20 @@
 
 namespace ctbrowser {
 
+namespace detail {
+
+// --- engine timing and input metrics (the browsers' cadences) --------
+inline constexpr std::int64_t caret_blink_period_ms = 1000; // solid for the first half
+inline constexpr std::int64_t caret_blink_half_ms = 500;    // Chrome's 500/500 blink
+inline constexpr double wheel_step_px = 48.0;               // one notch of the wheel
+inline constexpr std::int32_t page_scroll_overlap_px = 48;  // PageUp/Down keep this much
+inline constexpr std::int32_t gc_interval_frames = 60;      // cycle collection, ~1 Hz
+// position_from_point ranks candidate lines vertical-distance-first; the
+// weight only has to outrank any plausible horizontal distance in px
+inline constexpr std::int64_t line_rank_vertical_weight = 100000;
+
+} // namespace detail
+
 template <typename Page> class engine {
 public:
 	document doc;
@@ -138,7 +152,9 @@ public:
 		// computed BEFORE layout so this frame's paints carry the phase
 		if (focused_ != nullptr && focused_->is_editable()) {
 			const double phase = ev.now_ms - caret_base_ms_;
-			focused_->ui_caret_on = phase < 0 || (static_cast<std::int64_t>(phase) % 1000) < 500;
+			focused_->ui_caret_on =
+			    phase < 0 || (static_cast<std::int64_t>(phase) % detail::caret_blink_period_ms) <
+			                     detail::caret_blink_half_ms;
 		}
 		std::vector<paint_cmd> cmds = ctbrowser::layout(doc, viewport_w, resolve, measure, ev.viewport_h);
 		ev.viewport_w = viewport_w;
@@ -178,12 +194,13 @@ public:
 				track.y = 0;
 				track.w = sw;
 				track.h = ev.viewport_h;
-				track.argb = 0x30808080u; // faint translucent track
+				track.argb = detail::ua_scrollbar_track;
 				cmds.push_back(track);
 				paint_cmd thumb = track;
 				thumb.y = sy;
 				thumb.h = sh;
-				thumb.argb = sb_dragging_ ? 0xFF909090u : 0xFFB0B0B0u;
+				thumb.argb =
+				    sb_dragging_ ? detail::ua_scrollbar_thumb_active : detail::ua_scrollbar_thumb;
 				cmds.push_back(thumb);
 			}
 		}
@@ -203,15 +220,16 @@ public:
 				b.argb = argb;
 				cmds.push_back(b);
 			};
-			boxc(menu_x_, menu_y_, menu_w, mh, 0xFFFFFFFFu);
+			boxc(menu_x_, menu_y_, menu_w, mh, detail::ua_menu_bg);
 			if (menu_hover_ >= 0 && menu_hover_ < static_cast<std::int32_t>(items.size()) &&
 			    items[static_cast<std::size_t>(menu_hover_)].enabled) {
-				boxc(menu_x_, menu_y_ + menu_hover_ * menu_item_h, menu_w, menu_item_h, 0xFFE0E6EFu);
+				boxc(menu_x_, menu_y_ + menu_hover_ * menu_item_h, menu_w, menu_item_h,
+				     detail::ua_menu_hover);
 			}
-			boxc(menu_x_, menu_y_, menu_w, 1, 0xFF8F8F9Du);
-			boxc(menu_x_, menu_y_ + mh - 1, menu_w, 1, 0xFF8F8F9Du);
-			boxc(menu_x_, menu_y_, 1, mh, 0xFF8F8F9Du);
-			boxc(menu_x_ + menu_w - 1, menu_y_, 1, mh, 0xFF8F8F9Du);
+			boxc(menu_x_, menu_y_, menu_w, 1, detail::ua_menu_border);
+			boxc(menu_x_, menu_y_ + mh - 1, menu_w, 1, detail::ua_menu_border);
+			boxc(menu_x_, menu_y_, 1, mh, detail::ua_menu_border);
+			boxc(menu_x_ + menu_w - 1, menu_y_, 1, mh, detail::ua_menu_border);
 			std::int32_t iy = menu_y_;
 			for (const auto & it : items) {
 				paint_cmd txt;
@@ -222,7 +240,7 @@ public:
 				txt.h = 13;
 				txt.font_px = 13;
 				txt.font_family = "sans-serif";
-				txt.argb = it.enabled ? 0xFF000000u : 0xFF8F8F9Du;
+				txt.argb = it.enabled ? detail::ua_menu_text : detail::ua_menu_text_disabled;
 				txt.text = utf8_to_utf32(std::string{it.label});
 				txt.w = measure_text(txt.text, 13, "sans-serif", false, false);
 				cmds.push_back(txt);
@@ -246,11 +264,11 @@ public:
 		                      : nullptr;
 		for (node * n = hit; n != nullptr; n = n->parent) {
 			if (n->is_textarea()) {
-				n->scroll_top -= static_cast<std::int32_t>(dy * 48.0); // clamped by layout
+				n->scroll_top -= static_cast<std::int32_t>(dy * detail::wheel_step_px); // layout clamps
 				return;
 			}
 		}
-		scroll_y_ -= static_cast<std::int32_t>(dy * 48.0); // clamped in frame()
+		scroll_y_ -= static_cast<std::int32_t>(dy * detail::wheel_step_px); // clamped in frame()
 	}
 	std::int32_t scroll_y() const { return scroll_y_; }
 
@@ -286,11 +304,11 @@ public:
 	// --- the page scrollbar (Firefox-style overlay on the right edge).
 	// Hidden via the CSS `scrollbar-width: none` (thin = 6px) on html/body.
 	std::int32_t scrollbar_width() const {
-		if (doc.root == nullptr) { return 12; }
+		if (doc.root == nullptr) { return detail::ua_scrollbar_width; }
 		const std::string_view v = styled(doc.root.get(), "scrollbar-width");
 		if (v == "none") { return 0; }
-		if (v == "thin") { return 6; }
-		return 12;
+		if (v == "thin") { return detail::ua_scrollbar_width_thin; }
+		return detail::ua_scrollbar_width;
 	}
 	// thumb geometry in viewport coordinates; false when not scrollable
 	bool scrollbar_thumb(std::int32_t & x, std::int32_t & y, std::int32_t & w, std::int32_t & h) const {
@@ -299,7 +317,7 @@ public:
 		x = ev.viewport_w - sw;
 		w = sw;
 		h = ev.viewport_h * ev.viewport_h / page_h_;
-		if (h < 24) { h = 24; }
+		if (h < detail::ua_scrollbar_min_thumb_h) { h = detail::ua_scrollbar_min_thumb_h; }
 		if (h > ev.viewport_h) { h = ev.viewport_h; }
 		const std::int32_t travel = ev.viewport_h - h;
 		const std::int32_t max_scroll = page_h_ - ev.viewport_h;
@@ -389,8 +407,8 @@ public:
 			if (focused_ != nullptr && focused_->is_editable() && !focused_->is_disabled()) {
 				edit_key(name);
 			} else { // page scrolling (clamped in frame())
-				if (name == "PageDown") { scroll_y_ += ev.viewport_h > 48 ? ev.viewport_h - 48 : 48; }
-				else if (name == "PageUp") { scroll_y_ -= ev.viewport_h > 48 ? ev.viewport_h - 48 : 48; }
+				if (name == "PageDown") { scroll_y_ += page_scroll_step(); }
+				else if (name == "PageUp") { scroll_y_ -= page_scroll_step(); }
 				else if (name == "Home") { scroll_y_ = 0; }
 				else if (name == "End") { scroll_y_ = page_h_; }
 			}
@@ -549,7 +567,7 @@ public:
 		// reclaim reference cycles the page created this second (bullets/observers/
 		// closures the game disposed but that still point at each other - pure
 		// refcounting can't free them). Amortized: once a second, not every frame.
-		if (++gc_ticks_ >= 60) {
+		if (++gc_ticks_ >= detail::gc_interval_frames) {
 			gc_ticks_ = 0;
 			ctjs::gc::collect();
 		}
@@ -628,11 +646,19 @@ private:
 			sb_dragging_ = true;
 			sb_grab_ = iy - sy;
 		} else if (iy < sy) {
-			scroll_y_ -= ev.viewport_h > 48 ? ev.viewport_h - 48 : 48; // page toward the click
+			scroll_y_ -= page_scroll_step(); // page toward the click
 		} else {
-			scroll_y_ += ev.viewport_h > 48 ? ev.viewport_h - 48 : 48;
+			scroll_y_ += page_scroll_step();
 		}
 		return true;
+	}
+
+	// one PageUp/PageDown (or scrollbar track-click) step: a viewport
+	// height less an overlap band, so a line of context carries over
+	std::int32_t page_scroll_step() const {
+		return ev.viewport_h > detail::page_scroll_overlap_px
+		           ? ev.viewport_h - detail::page_scroll_overlap_px
+		           : detail::page_scroll_overlap_px;
 	}
 
 	// --- interaction helpers -------------------------------------------
@@ -736,7 +762,8 @@ private:
 		const std::string & v = f->value;
 		if (f->is_textarea() && !f->ui_lines.empty()) {
 			// the clicked VISUAL line (soft wrap; lines carry screen y)
-			const std::int32_t line_h = f->ui_line_h > 0 ? f->ui_line_h : f->ui_font_px + f->ui_font_px / 4;
+			const std::int32_t line_h =
+			    f->ui_line_h > 0 ? f->ui_line_h : detail::line_height(f->ui_font_px);
 			std::int32_t want = (static_cast<std::int32_t>(my) - f->ui_text_y + f->scroll_top) /
 			                    (line_h > 0 ? line_h : 1);
 			if (want < 0) { want = 0; }
@@ -858,7 +885,8 @@ private:
 				const std::int32_t hd = ix < l.x         ? l.x - ix
 				                        : ix > l.x + l.w ? ix - (l.x + l.w)
 				                                         : 0;
-				const std::int64_t d = static_cast<std::int64_t>(vd) * 100000 + hd;
+				const std::int64_t d =
+				    static_cast<std::int64_t>(vd) * detail::line_rank_vertical_weight + hd;
 				if (d < best_d) {
 					best_d = d;
 					best = &n;

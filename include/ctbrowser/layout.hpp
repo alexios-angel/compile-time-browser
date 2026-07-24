@@ -107,6 +107,12 @@ struct font_spec {
 	paint_cmd::strike deco = paint_cmd::strike::none;
 };
 
+// the UA line box: one glyph row plus quarter-em leading. Flow text, the
+// widget emitters and the engine's caret math all step by this.
+constexpr std::int32_t line_height(std::int32_t font_px) noexcept {
+	return font_px + font_px / 4;
+}
+
 constexpr uint32_t pack_argb(ctcss::color c) {
 	return (static_cast<uint32_t>(c.a) << 24) | (static_cast<uint32_t>(c.r) << 16) |
 	       (static_cast<uint32_t>(c.g) << 8) | static_cast<uint32_t>(c.b);
@@ -577,7 +583,7 @@ struct layout_pass {
 				    nl == std::u32string_view::npos ? remain : remain.substr(0, nl);
 				const std::u32string_view line = preserve ? raw_line : trimmed(raw_line);
 				if (line.empty()) {
-					cursor += font_px + font_px / 4; // blank row (e.g. consecutive <br>)
+					cursor += line_height(font_px); // blank row (e.g. consecutive <br>)
 				} else {
 					std::u32string_view rest = line;
 					while (!rest.empty()) {
@@ -618,7 +624,7 @@ struct layout_pass {
 								                static_cast<std::size_t>(he - hb)),
 								    font_px, fs);
 								hl.h = font_px;
-								hl.argb = 0xFFB4D5FEu;
+								hl.argb = detail::ua_selection_highlight;
 								out->push_back(hl);
 							}
 						}
@@ -632,7 +638,7 @@ struct layout_pass {
 						cmd.text = u32str(rest.substr(0, take));
 						cmd.font_px = font_px;
 						push_text(std::move(cmd), fs);
-						cursor += font_px + font_px / 4;
+						cursor += line_height(font_px);
 						rest.remove_prefix(take);
 						while (!preserve && !rest.empty() && rest.front() == U' ') {
 							rest.remove_prefix(1); // eat the break space(s)
@@ -730,7 +736,7 @@ struct layout_pass {
 				n.ui_lines.push_back({ls3, ls3 + static_cast<std::int32_t>(lt.size()), line_x, ty, tw, true});
 				push_text(std::move(cmd), fs);
 				if (line_x + tw > content_max_x) { content_max_x = line_x + tw; }
-				if (font_px + font_px / 4 > line_h) { line_h = font_px + font_px / 4; }
+				if (line_height(font_px) > line_h) { line_h = line_height(font_px); }
 				line_x += tw;
 			}
 			flush_line();
@@ -782,7 +788,7 @@ struct layout_pass {
 	// a 1px frame around the node's border box (layout has no `border`
 	// property; the widgets draw their own, like Firefox's form theme)
 	static constexpr std::uint32_t detail_frame_argb(const node & n) {
-		return n.is_disabled() ? 0xFFC8C8CEu : detail::ua_widget_frame;
+		return n.is_disabled() ? detail::ua_widget_frame_disabled : detail::ua_widget_frame;
 	}
 	constexpr void emit_frame(const node & n, std::uint32_t argb) {
 		if (n.w <= 1 || n.h <= 1) { return; }
@@ -820,7 +826,7 @@ struct layout_pass {
 		};
 		if (!radio) {
 			// field, frame, and - when checked - accent fill + white check mark
-			box_cmd(bx, by, side, side, n.checked ? detail::ua_widget_accent : 0xFFFFFFFFu);
+			box_cmd(bx, by, side, side, n.checked ? detail::ua_widget_accent : detail::ua_widget_field);
 			box_cmd(bx, by, side, 1, detail_frame_argb(n));
 			box_cmd(bx, by + side - 1, side, 1, detail_frame_argb(n));
 			box_cmd(bx, by, 1, side, detail_frame_argb(n));
@@ -844,7 +850,7 @@ struct layout_pass {
 				const std::int32_t d = r < side / 2 ? side / 2 - 1 - r : r - side / 2;
 				std::int32_t inset = d > side / 4 ? d - side / 4 : 0;
 				box_cmd(bx + inset, by + r, side - 2 * inset, 1,
-				        r == 0 || r == side - 1 ? detail_frame_argb(n) : 0xFFFFFFFFu);
+				        r == 0 || r == side - 1 ? detail_frame_argb(n) : detail::ua_widget_field);
 				if (inset > 0) {
 					box_cmd(bx + inset, by + r, 1, 1, detail_frame_argb(n));
 					box_cmd(bx + side - inset - 1, by + r, 1, 1, detail_frame_argb(n));
@@ -898,7 +904,7 @@ struct layout_pass {
 		n.ui_font_px = font_px;
 		n.ui_text_x = n.x + padding;
 		n.ui_text_y = top;
-		n.ui_line_h = font_px + font_px / 4;
+		n.ui_line_h = line_height(font_px);
 		n.ui_family = fs.family;
 		n.ui_bold = fs.bold;
 		n.ui_italic = fs.italic;
@@ -919,7 +925,7 @@ struct layout_pass {
 				hl.y = top;
 				hl.w = text_width(view.substr(cb2, ce2 - cb2), font_px, fs);
 				hl.h = font_px;
-				hl.argb = 0xFFB4D5FEu;
+				hl.argb = detail::ua_selection_highlight;
 				out->push_back(hl);
 			}
 		}
@@ -955,7 +961,7 @@ struct layout_pass {
 	// wrapped lines; scrolling is internal, scrollbar-less.
 	constexpr void emit_textarea(node & n, std::int32_t font_px, std::int32_t padding, std::int32_t top) {
 		const font_spec fs = font_spec_of(&n);
-		const std::int32_t line_h = font_px + font_px / 4;
+		const std::int32_t line_h = line_height(font_px);
 		const std::int32_t rows = detail::parse_int_attr(n.attribute("rows"), 2);
 		const std::int32_t cols = detail::parse_int_attr(n.attribute("cols"), 20);
 		computed_style cs{&n, resolve, n.chain()};
@@ -1067,7 +1073,7 @@ struct layout_pass {
 					hl.y = l.y;
 					hl.w = text_width(line.substr(hb, he - hb), font_px, fs);
 					hl.h = font_px;
-					hl.argb = 0xFFB4D5FEu;
+					hl.argb = detail::ua_selection_highlight;
 					out->push_back(hl);
 				}
 			}
@@ -1208,7 +1214,7 @@ struct layout_pass {
 			for (const auto & c : r->children) {
 				if (c->tag != "td" && c->tag != "th") { continue; }
 				c->h = row_h;
-				if (bordered) { emit_frame(*c, 0xFF808080u); }
+				if (bordered) { emit_frame(*c, detail::ua_table_border); }
 			}
 			cursor += row_h;
 		}
@@ -1221,13 +1227,13 @@ struct layout_pass {
 			grid.y = grid_top;
 			grid.w = table_w;
 			grid.h = cursor - grid_top;
-			emit_frame(grid, 0xFF808080u);
+			emit_frame(grid, detail::ua_table_border);
 		}
 	}
 
 	constexpr void emit_select(node & n, std::int32_t font_px, std::int32_t padding, std::int32_t top, std::int32_t content_w) {
 		const ctcss::color fg = text_color(n);
-		const std::int32_t line_h = font_px + font_px / 4;
+		const std::int32_t line_h = line_height(font_px);
 		const std::int32_t nopt = n.option_count();
 		const std::string_view align = text_align(n);
 		node * sel = n.nth_option(n.selected_option());
@@ -1283,7 +1289,7 @@ struct layout_pass {
 			bg.y = oy;
 			bg.w = ow;
 			bg.h = row_h * nopt;
-			bg.argb = 0xFF000000u; // opaque list background (option { background:#000 })
+			bg.argb = detail::ua_option_list_bg; // opaque list (option { background:#000 })
 			overlays->push_back(bg);
 			for (std::int32_t i = 0; i < nopt; ++i) {
 				node * opt = n.nth_option(i);
@@ -1296,7 +1302,7 @@ struct layout_pass {
 					hl.y = ry;
 					hl.w = ow;
 					hl.h = row_h;
-					hl.argb = 0xFF2A4A8Au;
+					hl.argb = detail::ua_option_selected;
 					overlays->push_back(hl);
 				}
 				const std::u32string ot = utf8_to_utf32(trimmed(opt->text));
@@ -1306,7 +1312,7 @@ struct layout_pass {
 				t.y = ry + 2;
 				t.w = text_width(ot, font_px);
 				t.h = font_px;
-				t.argb = 0xFFFFFFFFu;
+				t.argb = detail::ua_option_text;
 				t.text = ot;
 				t.font_px = font_px;
 				overlays->push_back(t);
