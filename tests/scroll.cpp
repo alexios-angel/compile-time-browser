@@ -57,6 +57,10 @@ int main() {
 	ctbrowser::node * b1 = e.doc.by_id("b1");
 	ctbrowser::node * pin = e.doc.by_id("pin");
 	CHECK(b1 && pin);
+
+	// --- a visible scrollbar RESERVES layout space: content lays out
+	// at viewport - bar width, nothing renders under the bar
+	CHECK(e.doc.by_id("rule")->w == 400 - 12);
 	const std::int32_t b1_y0 = b1->y;
 	const std::int32_t pin_y0 = pin->y;
 

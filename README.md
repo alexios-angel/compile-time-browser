@@ -228,9 +228,11 @@ Elements behave like they do in Firefox, out of the box:
   values, `onsubmit`/`addEventListener("submit")` are cancelable, and
   `form.submit()`/`form.reset()` work from script.
 * **scrolling**: pages taller than the window scroll — mouse wheel,
-  PageUp/PageDown, Home/End, or grab the Firefox-style overlay
-  **scrollbar** on the right (drag the thumb, click the track to page;
-  hide it with `scrollbar-width: none`, thin it with `thin`).
+  PageUp/PageDown, Home/End, or grab the Firefox-style **scrollbar**
+  on the right (drag the thumb, click the track to page; hide it with
+  `scrollbar-width: none`, thin it with `thin`). A visible bar
+  RESERVES layout space like classic browser scrollbars, so content
+  never renders underneath it.
   `position: fixed` elements stay viewport-anchored and hit-testing
   follows the scroll. Overflowing `<textarea>`s scroll under the wheel
   with no scrollbar drawn, and editing keeps the caret in view.
@@ -252,10 +254,14 @@ Elements behave like they do in Firefox, out of the box:
   All at the pointer, enabled per context; a page listener calling
   `preventDefault()` on `contextmenu` takes the menu over entirely,
   exactly like a real browser.
-* **tables**: rows through `thead`/`tbody`/`tfoot`, equal-width
-  columns, 2px border-spacing, `<caption>` above, centered-bold
-  `<th>`, and the classic 1px grid when the `border` attribute is set
-  — Firefox's borderless default otherwise.
+* **tables**: AUTO table layout like Firefox/Chrome — columns size to
+  their widest cell and the table shrinks to fit its content (it only
+  fills the container on an explicit CSS width, scaling columns down
+  proportionally on overflow). Rows through `thead`/`tbody`/`tfoot`,
+  2px border-spacing, a centered `<caption>` above the grid,
+  centered-bold `<th>`, and the classic 1px grid (around the grid
+  only, caption outside) when the `border` attribute is set —
+  Firefox's borderless default otherwise.
 * script surface to match: `.checked`, `.disabled`, `.open`, `.href`,
   `.type`, `getAttribute`/`hasAttribute`, `addEventListener("change")`,
   `document.location.href`/`.hash`.
@@ -275,7 +281,8 @@ project's subsets). Browser-side:
   shorthands
 - editing: no Tab traversal, no IME composition, no double-click
   word-select
-- tables: no colspan/rowspan/auto column sizing
+- tables: no colspan/rowspan (auto column sizing measures text
+  content only)
 - no `<img>` yet; no horizontal page scrolling
 
 The bricks' own APIs remain fully available alongside —

@@ -54,22 +54,25 @@ notes live here</textarea></div>
 
 <p id=status>ready.</p>
 <script>
-	let status = getElementById("status");
-	let f = getElementById("f");
-	getElementById("name").oninput = function () {
-		status.setText("name: " + getElementById("name").value);
-	};
-	getElementById("opt").onchange = function () {
-		status.setText("option one: " + getElementById("opt").checked);
-	};
-	getElementById("s2").onchange = function () { status.setText("size: large"); };
-	getElementById("color").onchange = function () {
-		status.setText("color: " + getElementById("color").value);
-	};
-	f.onsubmit = function (e) {
-		status.setText("submitted: " + getElementById("name").value +
-		               " / " + getElementById("color").value);
-	};
+	const status = document.getElementById("status");
+	const name = document.getElementById("name");
+	const color = document.getElementById("color");
+	name.addEventListener("input", function () {
+		status.setText("name: " + name.value);
+	});
+	document.getElementById("opt").addEventListener("change", function () {
+		status.setText("option one: " + document.getElementById("opt").checked);
+	});
+	document.getElementById("s2").addEventListener("change", function () {
+		status.setText("size: large");
+	});
+	color.addEventListener("change", function () {
+		status.setText("color: " + color.value);
+	});
+	document.getElementById("f").addEventListener("submit", function (e) {
+		e.preventDefault();
+		status.setText("submitted: " + name.value + " / " + color.value);
+	});
 </script>)">;
 
 int main(int, char **) {

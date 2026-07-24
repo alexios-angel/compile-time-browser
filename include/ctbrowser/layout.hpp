@@ -1091,6 +1091,9 @@ struct layout_pass {
 				bar.what = paint_cmd::kind::box;
 				bar.x = l.x + text_width(line.substr(0, col <= line.size() ? col : line.size()),
 				                         font_px, fs);
+				// wrap spaces may exceed the content width by a glyph; the
+				// caret still pins inside the box (Firefox behavior)
+				if (bar.x > n.x + n.w - padding - 1) { bar.x = n.x + n.w - padding - 1; }
 				bar.y = l.y;
 				bar.w = 1;
 				bar.h = font_px;
@@ -1106,15 +1109,36 @@ struct layout_pass {
 			else if (c->tag == "thead" || c->tag == "tbody" || c->tag == "tfoot") { collect_rows(*c, rows); }
 		}
 	}
+	// the widest unwrapped text run in a subtree, at each node's own
+	// resolved font - the "natural" width auto table layout sizes by
+	constexpr std::int32_t natural_text_w(node & n) {
+		std::int32_t w = 0;
+		if (!n.text.empty()) {
+			const std::u32string t = utf8_to_utf32(n.text);
+			const font_spec fs = font_spec_of(&n);
+			const std::int32_t px = font_of(&n);
+			std::size_t pos = 0;
+			while (pos <= t.size()) {
+				const std::size_t nl = std::u32string_view{t}.substr(pos).find(U'\n');
+				const std::size_t end = nl == std::u32string_view::npos ? t.size() : pos + nl;
+				const std::int32_t lw =
+				    text_width(std::u32string_view{t.data() + pos, end - pos}, px, fs);
+				if (lw > w) { w = lw; }
+				if (end == t.size()) { break; }
+				pos = end + 1;
+			}
+		}
+		for (const auto & c : n.children) {
+			const std::int32_t cw = natural_text_w(*c);
+			if (cw > w) { w = cw; }
+		}
+		return w;
+	}
 	constexpr void emit_table(node & n, std::int32_t padding, std::int32_t top, std::int32_t content_w,
 	                          const box & cb) {
 		const std::int32_t spacing = 2;
 		const bool bordered = detail::parse_int_attr(n.attribute("border"), 0) > 0;
 		std::int32_t cursor = top;
-		// caption first, as a plain block above the grid
-		for (const auto & c : n.children) {
-			if (c->tag == "caption") { cursor += place(*c, n.x + padding, cursor, content_w, cb); }
-		}
 		std::vector<node *> rows;
 		collect_rows(n, rows);
 		std::size_t ncols = 0;
@@ -1126,38 +1150,81 @@ struct layout_pass {
 			if (k > ncols) { ncols = k; }
 		}
 		if (ncols == 0) {
+			for (const auto & c : n.children) {
+				if (c->tag == "caption") { cursor += place(*c, n.x + padding, cursor, content_w, cb); }
+			}
 			n.h = (cursor - n.y) + padding;
 			return;
 		}
-		const std::int32_t colw =
-		    (content_w - spacing * static_cast<std::int32_t>(ncols + 1)) / static_cast<std::int32_t>(ncols);
-		std::int32_t table_right = n.x + padding;
+		// AUTO table layout (Firefox/Chrome): each column takes its widest
+		// cell's unwrapped content, the table SHRINKS to the sum - it only
+		// fills the container on an explicit CSS width, and scales the
+		// columns down proportionally when the naturals would overflow
+		std::vector<std::int32_t> colws(ncols, 0);
+		for (node * r : rows) {
+			std::size_t k = 0;
+			for (const auto & c : r->children) {
+				if (c->tag != "td" && c->tag != "th") { continue; }
+				computed_style ccs{c.get(), resolve, c->chain()};
+				const sides cp = sides_of(ccs, "padding", content_w, font_of(c.get()));
+				const std::int32_t nat = natural_text_w(*c) + cp.left + cp.right + 2;
+				if (nat > colws[k]) { colws[k] = nat; }
+				++k;
+			}
+		}
+		const std::int32_t gaps = spacing * static_cast<std::int32_t>(ncols + 1);
+		std::int32_t natsum = 0;
+		for (const std::int32_t cw : colws) { natsum += cw; }
+		computed_style cs{&n, resolve, n.chain()};
+		if (!cs.get("width").empty() || natsum + gaps > content_w) {
+			const std::int32_t inner = content_w - gaps > 0 ? content_w - gaps : 1;
+			const std::int32_t base = natsum > 0 ? natsum : 1;
+			for (std::int32_t & cw : colws) { cw = cw * inner / base; }
+			natsum = inner;
+		}
+		const std::int32_t table_w = natsum + gaps;
+		// caption: centered over the TABLE, not the container - and it
+		// sits OUTSIDE the table border (the frame wraps the grid only)
+		for (const auto & c : n.children) {
+			if (c->tag == "caption") { cursor += place(*c, n.x + padding, cursor, table_w, cb); }
+		}
+		const std::int32_t grid_top = cursor;
 		for (node * r : rows) {
 			cursor += spacing;
 			std::int32_t cx = n.x + padding + spacing;
 			std::int32_t row_h = 0;
+			std::size_t k = 0;
 			for (const auto & c : r->children) {
 				if (c->tag != "td" && c->tag != "th") { continue; }
-				const std::int32_t h = place(*c, cx, cursor, colw, cb);
+				const std::int32_t h = place(*c, cx, cursor, colws[k], cb);
 				if (h > row_h) { row_h = h; }
-				cx += colw + spacing;
+				cx += colws[k] + spacing;
+				++k;
 			}
-			if (cx > table_right) { table_right = cx; }
-			// row rect for hit tests
+			// row rect for hit tests; cells stretch to the row height so
+			// the bordered grid is uniform
 			r->x = n.x + padding;
 			r->y = cursor;
 			r->w = cx - r->x;
 			r->h = row_h;
-			if (bordered) {
-				for (const auto & c : r->children) {
-					if (c->tag == "td" || c->tag == "th") { emit_frame(*c, 0xFF808080u); }
-				}
+			for (const auto & c : r->children) {
+				if (c->tag != "td" && c->tag != "th") { continue; }
+				c->h = row_h;
+				if (bordered) { emit_frame(*c, 0xFF808080u); }
 			}
 			cursor += row_h;
 		}
 		cursor += spacing;
+		n.w = table_w + 2 * padding;
 		n.h = (cursor - n.y) + padding;
-		if (bordered) { emit_frame(n, 0xFF808080u); }
+		if (bordered) {
+			node grid;
+			grid.x = n.x + padding;
+			grid.y = grid_top;
+			grid.w = table_w;
+			grid.h = cursor - grid_top;
+			emit_frame(grid, 0xFF808080u);
+		}
 	}
 
 	constexpr void emit_select(node & n, std::int32_t font_px, std::int32_t padding, std::int32_t top, std::int32_t content_w) {

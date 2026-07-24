@@ -19,7 +19,7 @@
 //   - bold/italic/underline/monospace render REAL faces when the
 //     vendored fonts/ are embedded (fonts.hpp; Tinos/Fira Sans/Cousine)
 //     and synthetic approximations under the 8x8 bitmap fallback
-//   - table layout: equal-width columns, border attribute honored
+//   - table layout: AUTO column sizing (shrink-to-fit), border attribute honored
 //     (no colspan/rowspan/auto-sizing)
 //   - no attribute selectors - dialog (Firefox: display:none unless
 //     [open]) renders open; hidden inputs are skipped by the widget
@@ -63,6 +63,7 @@ inline constexpr std::string_view ua_css = R"(
 	input { background-color: #ffffff; padding: 1px 4px; width: 160px }
 	textarea { background-color: #ffffff; padding: 2px }
 	th, td { padding: 1px }
+	caption { text-align: center }
 	th { text-align: center }
 	table { margin: 0 }
 

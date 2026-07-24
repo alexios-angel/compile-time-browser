@@ -130,6 +130,21 @@ int main() {
 	e.key("Return", false);
 	CHECK(e.script["submits"].to<int>() == 1);
 
+	// --- blur drops the selection: select in the input, click the
+	// textarea - the input's highlight is gone (Chrome/Firefox)
+	{
+		click(t);
+		e.key("Home", true);
+		e.key("Home", false);
+		e.key("Left Shift", true);
+		e.key("End", true);
+		e.key("End", false);
+		e.key("Left Shift", false);
+		CHECK(t->has_selection());
+		click(ta);
+		CHECK(!t->has_selection()); // focus moved: selection cleared
+	}
+
 	// --- textarea SOFT WRAP: a long line spans multiple visual lines,
 	// Up/Down navigate them, nothing is lost
 	{

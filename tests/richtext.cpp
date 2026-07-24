@@ -111,7 +111,9 @@ int main() {
 		ctbrowser::node * c12 = e.doc.by_id("c12");
 		CHECK(cap && h1c && c11 && c12);
 		CHECK(cap->y < h1c->y);           // caption above the grid
-		CHECK(c11->w == c12->w);          // equal columns
+		ctbrowser::node * tb = e.doc.by_id("tb");
+		CHECK(tb->w < 200);               // AUTO layout: shrink-to-fit, not full-width
+		CHECK(c11->w == c12->w);          // equal naturals -> equal columns
 		CHECK(c12->x > c11->x + c11->w);  // side by side with spacing
 		CHECK(c11->y == c12->y);          // same row
 		const ctbrowser::paint_cmd * th = nullptr;

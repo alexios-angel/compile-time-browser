@@ -133,19 +133,31 @@ public:
 	std::vector<paint_cmd> frame(std::int32_t viewport_w) {
 		// advance CSS @keyframes (writes interpolated inline styles) before layout
 		detail::apply_animations(doc, css_sheet, ev.now_ms);
+		// the caret blinks on Chrome's cadence: 500 ms on, 500 ms off,
+		// restarted by any caret activity (typing keeps it solid) -
+		// computed BEFORE layout so this frame's paints carry the phase
+		if (focused_ != nullptr && focused_->is_editable()) {
+			const double phase = ev.now_ms - caret_base_ms_;
+			focused_->ui_caret_on = phase < 0 || (static_cast<std::int64_t>(phase) % 1000) < 500;
+		}
 		std::vector<paint_cmd> cmds = ctbrowser::layout(doc, viewport_w, resolve, measure, ev.viewport_h);
 		ev.viewport_w = viewport_w;
 		// page scrolling: clamp to the freshly laid-out document height,
 		// then shift the world into view - rects AND paints together, so
 		// hit testing, script rect readbacks and rendering all agree.
 		// position:fixed subtrees stay viewport-anchored.
-		// the caret blinks on Chrome's cadence: 500 ms on, 500 ms off,
-		// restarted by any caret activity (typing keeps it solid)
-		if (focused_ != nullptr && focused_->is_editable()) {
-			const double phase = ev.now_ms - caret_base_ms_;
-			focused_->ui_caret_on = phase < 0 || (static_cast<std::int64_t>(phase) % 1000) < 500;
-		}
 		page_h_ = doc.root != nullptr ? doc.root->y + doc.root->h : 0;
+		// a visible scrollbar RESERVES layout space (classic Firefox/Chrome
+		// bars): once the page overflows, re-lay-out at the narrowed width
+		// so content never slides under the bar (narrowing only makes the
+		// page taller, so the overflow decision is stable)
+		{
+			const std::int32_t sbw = scrollbar_width();
+			if (sbw > 0 && page_h_ > ev.viewport_h && viewport_w > sbw) {
+				cmds = ctbrowser::layout(doc, viewport_w - sbw, resolve, measure, ev.viewport_h);
+				page_h_ = doc.root != nullptr ? doc.root->y + doc.root->h : 0;
+			}
+		}
 		const std::int32_t max_scroll = page_h_ > ev.viewport_h ? page_h_ - ev.viewport_h : 0;
 		if (scroll_y_ > max_scroll) { scroll_y_ = max_scroll; }
 		if (scroll_y_ < 0) { scroll_y_ = 0; }
@@ -633,6 +645,7 @@ private:
 		if (n == focused_) { return; }
 		if (focused_ != nullptr) {
 			focused_->focused = false;
+			focused_->sel_anchor = -1; // blur drops the field's selection
 			// leaving an edited control commits it: change fires on blur
 			if (focused_->is_editable() && focused_->value_dirty) {
 				focused_->value_dirty = false;
