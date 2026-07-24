@@ -998,6 +998,7 @@ using ctbrowser::detail::arg_str;
 using ctbrowser::detail::child_obj;
 using ctbrowser::detail::num_prop;
 using ctbrowser::detail::self_of;
+using ctbrowser::detail::set_method;
 
 // the babylon-shaped readers stay here - they speak r3d types
 inline r3d::vec3 read_vec3(const objptr & o, r3d::vec3 dflt) {
@@ -1084,7 +1085,7 @@ inline value make_observable(const worldptr & W, std::int32_t id, bool is_mesh) 
 		}
 		return (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) ? &W->scenes[static_cast<std::size_t>(id)].before_render : nullptr;
 	};
-	o->set("add", value::function([W, sink](ctjs::context &, const std::vector<value> & a) -> value {
+	set_method(o, "add", [W, sink](ctjs::context &, const std::vector<value> & a) -> value {
 		std::vector<observer> * v = sink();
 		if (v == nullptr || a.empty() || !a[0].is_function()) { return value{}; }
 		const std::int32_t oid = W->next_obs++;
@@ -1092,8 +1093,8 @@ inline value make_observable(const worldptr & W, std::int32_t id, bool is_mesh) 
 		auto obs = objptr::make();
 		obs->set("__obs_id", value{static_cast<double>(oid)});
 		return value{obs};
-	}, "add"));
-	o->set("remove", value::function([sink](ctjs::context &, const std::vector<value> & a) -> value {
+	});
+	set_method(o, "remove", [sink](ctjs::context &, const std::vector<value> & a) -> value {
 		std::vector<observer> * v = sink();
 		const std::int32_t oid = (!a.empty() && a[0].is_object()) ? index_of(a[0].as_object(), "__obs_id") : -1;
 		if (v != nullptr && oid >= 0) {
@@ -1102,15 +1103,15 @@ inline value make_observable(const worldptr & W, std::int32_t id, bool is_mesh) 
 			}
 		}
 		return value{true};
-	}, "remove"));
-	o->set("clear", value::function([sink](ctjs::context &, const std::vector<value> &) -> value {
+	});
+	set_method(o, "clear", [sink](ctjs::context &, const std::vector<value> &) -> value {
 		if (std::vector<observer> * v = sink()) { v->clear(); }
 		return value{};
-	}, "clear"));
-	o->set("hasObservers", value::function([sink](ctjs::context &, const std::vector<value> &) -> value {
+	});
+	set_method(o, "hasObservers", [sink](ctjs::context &, const std::vector<value> &) -> value {
 		std::vector<observer> * v = sink();
 		return value{v != nullptr && !v->empty()};
-	}, "hasObservers"));
+	});
 	return value{o};
 }
 
@@ -1118,14 +1119,14 @@ inline value make_observable(const worldptr & W, std::int32_t id, bool is_mesh) 
 // model, e.g. engine.onResizeObservable) - keeps scripts from throwing
 inline value make_dead_observable() {
 	auto o = objptr::make();
-	o->set("add", value::function([](ctjs::context &, const std::vector<value> &) -> value {
+	set_method(o, "add", [](ctjs::context &, const std::vector<value> &) -> value {
 		auto obs = objptr::make();
 		obs->set("__obs_id", value{0.0});
 		return value{obs};
-	}, "add"));
-	o->set("remove", value::function([](ctjs::context &, const std::vector<value> &) { return value{true}; }, "remove"));
-	o->set("clear", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "clear"));
-	o->set("hasObservers", value::function([](ctjs::context &, const std::vector<value> &) { return value{false}; }, "hasObservers"));
+	});
+	set_method(o, "remove", [](ctjs::context &, const std::vector<value> &) { return value{true}; });
+	set_method(o, "clear", [](ctjs::context &, const std::vector<value> &) { return value{}; });
+	set_method(o, "hasObservers", [](ctjs::context &, const std::vector<value> &) { return value{false}; });
 	return value{o};
 }
 
@@ -1189,41 +1190,41 @@ inline value make_vector3(double x, double y, double z) {
 	o->set("x", value{x});
 	o->set("y", value{y});
 	o->set("z", value{z});
-	o->set("set", value::function([](ctjs::context & cx, const std::vector<value> & a) -> value {
+	set_method(o, "set", [](ctjs::context & cx, const std::vector<value> & a) -> value {
 		objptr s = self_of(cx);
 		if (s) { s->set("x", value{arg_num(a, 0, 0)}); s->set("y", value{arg_num(a, 1, 0)});
-		         s->set("z", value{arg_num(a, 2, 0)}); }
+		s->set("z", value{arg_num(a, 2, 0)}); }
 		return cx.current_this;
-	}, "set"));
-	o->set("clone", value::function([](ctjs::context & cx, const std::vector<value> &) -> value {
+	});
+	set_method(o, "clone", [](ctjs::context & cx, const std::vector<value> &) -> value {
 		const r3d::vec3 v = read_vec3(self_of(cx), r3d::V3(0, 0, 0));
 		return make_vector3(v[0], v[1], v[2]);
-	}, "clone"));
-	o->set("add", value::function([](ctjs::context & cx, const std::vector<value> & a) -> value {
+	});
+	set_method(o, "add", [](ctjs::context & cx, const std::vector<value> & a) -> value {
 		const r3d::vec3 s = read_vec3(self_of(cx), r3d::V3(0, 0, 0));
 		const r3d::vec3 t = read_vec3(arg_obj(a, 0), r3d::V3(0, 0, 0));
 		return make_vector3(s[0] + t[0], s[1] + t[1], s[2] + t[2]);
-	}, "add"));
-	o->set("subtract", value::function([](ctjs::context & cx, const std::vector<value> & a) -> value {
+	});
+	set_method(o, "subtract", [](ctjs::context & cx, const std::vector<value> & a) -> value {
 		const r3d::vec3 s = read_vec3(self_of(cx), r3d::V3(0, 0, 0));
 		const r3d::vec3 t = read_vec3(arg_obj(a, 0), r3d::V3(0, 0, 0));
 		return make_vector3(s[0] - t[0], s[1] - t[1], s[2] - t[2]);
-	}, "subtract"));
-	o->set("scale", value::function([](ctjs::context & cx, const std::vector<value> & a) -> value {
+	});
+	set_method(o, "scale", [](ctjs::context & cx, const std::vector<value> & a) -> value {
 		const r3d::vec3 s = read_vec3(self_of(cx), r3d::V3(0, 0, 0));
 		const double k = arg_num(a, 0, 1);
 		return make_vector3(s[0] * k, s[1] * k, s[2] * k);
-	}, "scale"));
-	o->set("length", value::function([](ctjs::context & cx, const std::vector<value> &) -> value {
+	});
+	set_method(o, "length", [](ctjs::context & cx, const std::vector<value> &) -> value {
 		const r3d::vec3 s = read_vec3(self_of(cx), r3d::V3(0, 0, 0));
 		return value{std::sqrt(s[0]*s[0] + s[1]*s[1] + s[2]*s[2])};
-	}, "length"));
-	o->set("normalize", value::function([](ctjs::context & cx, const std::vector<value> &) -> value {
+	});
+	set_method(o, "normalize", [](ctjs::context & cx, const std::vector<value> &) -> value {
 		const r3d::vec3 n = r3d::norm3(read_vec3(self_of(cx), r3d::V3(0, 0, 0)));
 		objptr s = self_of(cx);
 		if (s) { s->set("x", value{n[0]}); s->set("y", value{n[1]}); s->set("z", value{n[2]}); }
 		return cx.current_this;
-	}, "normalize"));
+	});
 	return value{o};
 }
 
@@ -1234,19 +1235,19 @@ inline value make_color3(double r, double g, double b) {
 	o->set("r", value{r});
 	o->set("g", value{g});
 	o->set("b", value{b});
-	o->set("toColor4", value::function([](ctjs::context & cx, const std::vector<value> & a) -> value {
+	set_method(o, "toColor4", [](ctjs::context & cx, const std::vector<value> & a) -> value {
 		const objptr s = self_of(cx);
 		return make_color4(num_prop(s, "r", 0), num_prop(s, "g", 0), num_prop(s, "b", 0), arg_num(a, 0, 1));
-	}, "toColor4"));
-	o->set("clone", value::function([](ctjs::context & cx, const std::vector<value> &) -> value {
+	});
+	set_method(o, "clone", [](ctjs::context & cx, const std::vector<value> &) -> value {
 		const objptr s = self_of(cx);
 		return make_color3(num_prop(s, "r", 0), num_prop(s, "g", 0), num_prop(s, "b", 0));
-	}, "clone"));
-	o->set("scale", value::function([](ctjs::context & cx, const std::vector<value> & a) -> value {
+	});
+	set_method(o, "scale", [](ctjs::context & cx, const std::vector<value> & a) -> value {
 		const objptr s = self_of(cx);
 		const double k = arg_num(a, 0, 1);
 		return make_color3(num_prop(s, "r", 0) * k, num_prop(s, "g", 0) * k, num_prop(s, "b", 0) * k);
-	}, "scale"));
+	});
 	return value{o};
 }
 inline value make_color4(double r, double g, double b, double a) {
@@ -1255,14 +1256,14 @@ inline value make_color4(double r, double g, double b, double a) {
 	o->set("g", value{g});
 	o->set("b", value{b});
 	o->set("a", value{a});
-	o->set("clone", value::function([](ctjs::context & cx, const std::vector<value> &) -> value {
+	set_method(o, "clone", [](ctjs::context & cx, const std::vector<value> &) -> value {
 		const objptr s = self_of(cx);
 		return make_color4(num_prop(s, "r", 0), num_prop(s, "g", 0), num_prop(s, "b", 0), num_prop(s, "a", 1));
-	}, "clone"));
-	o->set("toColor3", value::function([](ctjs::context & cx, const std::vector<value> &) -> value {
+	});
+	set_method(o, "toColor3", [](ctjs::context & cx, const std::vector<value> &) -> value {
 		const objptr s = self_of(cx);
 		return make_color3(num_prop(s, "r", 0), num_prop(s, "g", 0), num_prop(s, "b", 0));
-	}, "toColor3"));
+	});
 	return value{o};
 }
 
@@ -1507,9 +1508,9 @@ inline value make_matrix(const r3d::mat4 & m) {
 		for (std::int32_t r = 0; r < 4; ++r) { arr.push_back(value{m[c][r]}); }
 	}
 	o->set("m", value::array(std::move(arr)));
-	o->set("getTranslation", value::function([m](ctjs::context &, const std::vector<value> &) -> value {
+	set_method(o, "getTranslation", [m](ctjs::context &, const std::vector<value> &) -> value {
 		return make_vector3(m[3][0], m[3][1], m[3][2]);
-	}, "getTranslation"));
+	});
 	return value{o};
 }
 
@@ -1697,21 +1698,20 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id)
 		h->set("collider", value{col});
 	}
 	h->set("onBeforeRenderObservable", make_observable(W, id, true));
-	h->set("registerInstancedBuffer", value::function(
-	    [](ctjs::context &, const std::vector<value> &) { return value{}; }, "registerInstancedBuffer"));
+	set_method(h, "registerInstancedBuffer", [](ctjs::context &, const std::vector<value> &) { return value{}; });
 
-	h->set("getScene", value::function([W, ix](ctjs::context &, const std::vector<value> &) -> value {
+	set_method(h, "getScene", [W, ix](ctjs::context &, const std::vector<value> &) -> value {
 		const std::int32_t si = ix < W->meshes.size() ? W->meshes[ix].scene_id : -1;
 		return (si >= 0 && si < static_cast<std::int32_t>(W->scenes.size())) ? value{W->scenes[static_cast<std::size_t>(si)].handle} : value{};
-	}, "getScene"));
-	h->set("setEnabled", value::function([W, ix](ctjs::context &, const std::vector<value> & a) -> value {
+	});
+	set_method(h, "setEnabled", [W, ix](ctjs::context &, const std::vector<value> & a) -> value {
 		if (ix < W->meshes.size()) { W->meshes[ix].enabled = a.empty() || a[0].truthy(); }
 		return value{};
-	}, "setEnabled"));
-	h->set("isEnabled", value::function([W, ix](ctjs::context &, const std::vector<value> &) -> value {
+	});
+	set_method(h, "isEnabled", [W, ix](ctjs::context &, const std::vector<value> &) -> value {
 		return value{ix < W->meshes.size() && W->meshes[ix].enabled && !W->meshes[ix].disposed};
-	}, "isEnabled"));
-	h->set("dispose", value::function([W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
+	});
+	set_method(h, "dispose", [W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
 		if (ix >= W->meshes.size()) { return value{}; }
 		mesh_rec & m = W->meshes[ix];
 		if (m.disposed) { return value{}; }
@@ -1738,7 +1738,7 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id)
 			ctjs::call_value(cx, *od, {value{self}});
 		}
 		return value{};
-	}, "dispose"));
+	});
 
 	// clone(name)/createInstance(name): new mesh, same geometry + a COPY of the
 	// current transform, in the same scene
@@ -1779,12 +1779,12 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id)
 		decorate_mesh(W, nh, nid);
 		return value{nh};
 	};
-	h->set("clone", value::function(cloner, "clone"));
-	h->set("createInstance", value::function(cloner, "createInstance"));
+	set_method(h, "clone", cloner);
+	set_method(h, "createInstance", cloner);
 
 	// moveWithCollisions(v): move by v, then set collider.collidedMesh to the
 	// first overlapping mesh whose group this mesh's mask selects
-	h->set("moveWithCollisions", value::function([W, ix](ctjs::context &, const std::vector<value> & a) -> value {
+	set_method(h, "moveWithCollisions", [W, ix](ctjs::context &, const std::vector<value> & a) -> value {
 		if (ix >= W->meshes.size()) { return value{}; }
 		const objptr self = W->meshes[ix].handle;
 		const objptr pos = child_obj(self, "position");
@@ -1807,19 +1807,19 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id)
 			r3d::vec3 olo, ohi;
 			mesh_aabb(W, static_cast<std::int32_t>(mj), olo, ohi);
 			const bool overlap = lo[0] <= ohi[0] && hi[0] >= olo[0] && lo[1] <= ohi[1] &&
-			                     hi[1] >= olo[1] && lo[2] <= ohi[2] && hi[2] >= olo[2];
+			hi[1] >= olo[1] && lo[2] <= ohi[2] && hi[2] >= olo[2];
 			if (overlap) { hit = o.handle; break; }
 		}
 		if (const objptr col = child_obj(self, "collider")) {
 			col->set("collidedMesh", hit ? value{hit} : value{});
 		}
 		return value{};
-	}, "moveWithCollisions"));
+	});
 
-	h->set("calcMovePOV", value::function([](ctjs::context &, const std::vector<value> & a) -> value {
+	set_method(h, "calcMovePOV", [](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_vector3(arg_num(a, 0, 0), arg_num(a, 1, 0), arg_num(a, 2, 0));
-	}, "calcMovePOV"));
-	h->set("translate", value::function([W, ix](ctjs::context &, const std::vector<value> & a) -> value {
+	});
+	set_method(h, "translate", [W, ix](ctjs::context &, const std::vector<value> & a) -> value {
 		if (ix >= W->meshes.size()) { return value{}; }
 		const objptr pos = child_obj(W->meshes[ix].handle, "position");
 		const r3d::vec3 ax = read_vec3(arg_obj(a, 0), r3d::V3(0, 0, 0));
@@ -1830,8 +1830,8 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id)
 			pos->set("z", value{num_prop(pos, "z", 0) + ax[2] * d});
 		}
 		return value{};
-	}, "translate"));
-	h->set("rotate", value::function([W, ix](ctjs::context &, const std::vector<value> & a) -> value {
+	});
+	set_method(h, "rotate", [W, ix](ctjs::context &, const std::vector<value> & a) -> value {
 		if (ix >= W->meshes.size()) { return value{}; }
 		const objptr rot = child_obj(W->meshes[ix].handle, "rotation");
 		const r3d::vec3 ax = read_vec3(arg_obj(a, 0), r3d::V3(0, 1, 0));
@@ -1842,14 +1842,14 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id)
 			rot->set("z", value{num_prop(rot, "z", 0) + ax[2] * amt});
 		}
 		return value{};
-	}, "rotate"));
+	});
 	// receiveShadows is a plain flag (no shadow system, so it has no visual
 	// effect, but reads/writes behave); mesh.registerAfterRender is unmodeled.
 	h->set("receiveShadows", value{false});
-	h->set("registerAfterRender", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "registerAfterRender"));
+	set_method(h, "registerAfterRender", [](ctjs::context &, const std::vector<value> &) { return value{}; });
 
 	// getBoundingInfo(): local + world axis-aligned bounds, refreshed on demand.
-	h->set("getBoundingInfo", value::function([W, ix](ctjs::context &, const std::vector<value> &) -> value {
+	set_method(h, "getBoundingInfo", [W, ix](ctjs::context &, const std::vector<value> &) -> value {
 		if (ix >= W->meshes.size()) { return value{}; }
 		r3d::vec3 lmin = r3d::V3(0, 0, 0), lmax = r3d::V3(0, 0, 0);
 		bool first = true;
@@ -1868,71 +1868,71 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id)
 		box->set("minimumWorld", make_vector3(wmin[0], wmin[1], wmin[2]));
 		box->set("maximumWorld", make_vector3(wmax[0], wmax[1], wmax[2]));
 		box->set("centerWorld", make_vector3((wmin[0] + wmax[0]) * 0.5,
-		                                     (wmin[1] + wmax[1]) * 0.5, (wmin[2] + wmax[2]) * 0.5));
+		(wmin[1] + wmax[1]) * 0.5, (wmin[2] + wmax[2]) * 0.5));
 		box->set("extendSize", make_vector3((lmax[0] - lmin[0]) * 0.5,
-		                                    (lmax[1] - lmin[1]) * 0.5, (lmax[2] - lmin[2]) * 0.5));
+		(lmax[1] - lmin[1]) * 0.5, (lmax[2] - lmin[2]) * 0.5));
 		double rad = 0;
 		for (std::int32_t k = 0; k < 3; ++k) { rad = std::max(rad, (wmax[k] - wmin[k]) * 0.5); }
 		auto sph = objptr::make();
 		sph->set("radiusWorld", value{rad});
 		sph->set("center", make_vector3((lmin[0] + lmax[0]) * 0.5,
-		                                (lmin[1] + lmax[1]) * 0.5, (lmin[2] + lmax[2]) * 0.5));
+		(lmin[1] + lmax[1]) * 0.5, (lmin[2] + lmax[2]) * 0.5));
 		auto bi = objptr::make();
 		bi->set("boundingBox", value{box});
 		bi->set("boundingSphere", value{sph});
 		bi->set("minimum", make_vector3(lmin[0], lmin[1], lmin[2]));
 		bi->set("maximum", make_vector3(lmax[0], lmax[1], lmax[2]));
 		return value{bi};
-	}, "getBoundingInfo"));
+	});
 	// refreshBoundingInfo(): bounds are computed on demand, so this just validates
 	// the mesh and returns it (Babylon returns the mesh for chaining).
-	h->set("refreshBoundingInfo", value::function([W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
+	set_method(h, "refreshBoundingInfo", [W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
 		return (ix < W->meshes.size()) ? value{W->meshes[ix].handle} : cx.current_this;
-	}, "refreshBoundingInfo"));
+	});
 
 	// computeWorldMatrix(force): return the current world matrix; if forced while
 	// frozen, recapture the frozen matrix from the live transforms first.
-	h->set("computeWorldMatrix", value::function([W, ix](ctjs::context &, const std::vector<value> & a) -> value {
+	set_method(h, "computeWorldMatrix", [W, ix](ctjs::context &, const std::vector<value> & a) -> value {
 		if (ix >= W->meshes.size()) { return value{}; }
 		const bool force = arg_bool(a, 0);
 		if (force && W->meshes[ix].frozen_world) {
 			W->meshes[ix].frozen_matrix = mesh_world_matrix(W, static_cast<std::int32_t>(ix), true);
 		}
 		return make_matrix(mesh_world_matrix(W, static_cast<std::int32_t>(ix)));
-	}, "computeWorldMatrix"));
-	h->set("getWorldMatrix", value::function([W, ix](ctjs::context &, const std::vector<value> &) -> value {
+	});
+	set_method(h, "getWorldMatrix", [W, ix](ctjs::context &, const std::vector<value> &) -> value {
 		return (ix < W->meshes.size()) ? make_matrix(mesh_world_matrix(W, static_cast<std::int32_t>(ix))) : value{};
-	}, "getWorldMatrix"));
+	});
 	// freezeWorldMatrix(): capture the world matrix now; the renderer then ignores
 	// later position/rotation/scaling edits until unfreezeWorldMatrix().
-	h->set("freezeWorldMatrix", value::function([W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
+	set_method(h, "freezeWorldMatrix", [W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
 		if (ix < W->meshes.size()) {
 			W->meshes[ix].frozen_matrix = mesh_world_matrix(W, static_cast<std::int32_t>(ix), true);
 			W->meshes[ix].frozen_world = true;
 		}
 		return (ix < W->meshes.size()) ? value{W->meshes[ix].handle} : cx.current_this;
-	}, "freezeWorldMatrix"));
-	h->set("unfreezeWorldMatrix", value::function([W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
+	});
+	set_method(h, "unfreezeWorldMatrix", [W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
 		if (ix < W->meshes.size()) { W->meshes[ix].frozen_world = false; }
 		return (ix < W->meshes.size()) ? value{W->meshes[ix].handle} : cx.current_this;
-	}, "unfreezeWorldMatrix"));
+	});
 
 	// setPivotPoint(vec3): rotation/scaling then pivot about this local point.
-	h->set("setPivotPoint", value::function([W, ix](ctjs::context &, const std::vector<value> & a) -> value {
+	set_method(h, "setPivotPoint", [W, ix](ctjs::context &, const std::vector<value> & a) -> value {
 		if (ix < W->meshes.size()) {
 			W->meshes[ix].pivot = read_vec3(arg_obj(a, 0), r3d::V3(0, 0, 0));
 			W->meshes[ix].has_pivot = true;
 		}
 		return value{};
-	}, "setPivotPoint"));
-	h->set("getPivotPoint", value::function([W, ix](ctjs::context &, const std::vector<value> &) -> value {
+	});
+	set_method(h, "getPivotPoint", [W, ix](ctjs::context &, const std::vector<value> &) -> value {
 		const r3d::vec3 p = ix < W->meshes.size() ? W->meshes[ix].pivot : r3d::V3(0, 0, 0);
 		return make_vector3(p[0], p[1], p[2]);
-	}, "getPivotPoint"));
+	});
 
 	// bakeCurrentTransformIntoVertices(): fold the current world transform into the
 	// geometry and reset position/rotation/scaling/pivot to identity.
-	h->set("bakeCurrentTransformIntoVertices", value::function([W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
+	set_method(h, "bakeCurrentTransformIntoVertices", [W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
 		if (ix >= W->meshes.size()) { return cx.current_this; }
 		mesh_rec & M = W->meshes[ix];
 		const r3d::mat4 wm = mesh_world_matrix(W, static_cast<std::int32_t>(ix), true);
@@ -1946,7 +1946,7 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id)
 		M.has_pivot = false;
 		M.frozen_world = false;
 		return value{M.handle};
-	}, "bakeCurrentTransformIntoVertices"));
+	});
 }
 
 // add a parsed glTF model's meshes + materials into a scene
@@ -2063,25 +2063,25 @@ inline value make_camera_arc(const worldptr & W, dom_events & ev, std::string na
 	h->set("wheelPrecision", value{50.0});
 	h->set("target", tgt ? value{tgt} : make_vector3(0, 0, 0));
 	h->set("__camera", value{static_cast<double>(id)});
-	h->set("setTarget", value::function([](ctjs::context & cx, const std::vector<value> & a) -> value {
+	set_method(h, "setTarget", [](ctjs::context & cx, const std::vector<value> & a) -> value {
 		objptr s = self_of(cx);
 		if (s && !a.empty() && a[0].is_object()) { s->set("target", a[0]); }
 		return value{};
-	}, "setTarget"));
+	});
 	// drag to orbit: attachControl arms the listeners registered below
-	h->set("attachControl", value::function([W, id](ctjs::context &, const std::vector<value> &) -> value {
+	set_method(h, "attachControl", [W, id](ctjs::context &, const std::vector<value> &) -> value {
 		if (id >= 0 && id < static_cast<std::int32_t>(W->cameras.size())) {
 			W->cameras[static_cast<std::size_t>(id)].attached = true;
 		}
 		return value{};
-	}, "attachControl"));
-	h->set("detachControl", value::function([W, id](ctjs::context &, const std::vector<value> &) -> value {
+	});
+	set_method(h, "detachControl", [W, id](ctjs::context &, const std::vector<value> &) -> value {
 		if (id >= 0 && id < static_cast<std::int32_t>(W->cameras.size())) {
 			W->cameras[static_cast<std::size_t>(id)].attached = false;
 		}
 		W->cam_dragging = false;
 		return value{};
-	}, "detachControl"));
+	});
 	W->cameras.push_back(camera_rec{h, camera_kind::arc_rotate, false});
 	register_orbit(W, ev, id);
 	const std::int32_t si = index_of(scene, "__scene");
@@ -2105,13 +2105,13 @@ inline value make_camera_free(const worldptr & W, std::string name, const objptr
 	h->set("minZ", value{0.1});
 	h->set("maxZ", value{1000.0});
 	h->set("__camera", value{static_cast<double>(id)});
-	h->set("setTarget", value::function([](ctjs::context & cx, const std::vector<value> & a) -> value {
+	set_method(h, "setTarget", [](ctjs::context & cx, const std::vector<value> & a) -> value {
 		objptr s = self_of(cx);
 		if (s && !a.empty() && a[0].is_object()) { s->set("target", a[0]); }
 		return value{};
-	}, "setTarget"));
+	});
 	// setPosition(vec3): move the camera (FreeCamera-style eye position)
-	h->set("setPosition", value::function([](ctjs::context & cx, const std::vector<value> & a) -> value {
+	set_method(h, "setPosition", [](ctjs::context & cx, const std::vector<value> & a) -> value {
 		const objptr s = self_of(cx);
 		const objptr p = s ? child_obj(s, "position") : objptr{};
 		if (p && !a.empty() && a[0].is_object()) {
@@ -2119,7 +2119,7 @@ inline value make_camera_free(const worldptr & W, std::string name, const objptr
 			p->set("x", value{v[0]}); p->set("y", value{v[1]}); p->set("z", value{v[2]});
 		}
 		return value{};
-	}, "setPosition"));
+	});
 	for (const char * nm : {"attachControl", "detachControl"}) {
 		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 	}
@@ -2139,7 +2139,7 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 	h->set("clearColor", make_color4(0.2, 0.2, 0.3, 1.0));
 	h->set("ambientColor", make_color3(0, 0, 0));
 	h->set("activeCamera", value{});
-	h->set("render", value::function([W, id, &ev](ctjs::context & cx, const std::vector<value> &) -> value {
+	set_method(h, "render", [W, id, &ev](ctjs::context & cx, const std::vector<value> &) -> value {
 		ev.cx = &cx;
 		// refresh scene.deltaTime (scene.meshes is a LIVE getter, see below), then
 		// run the frame's onBeforeRender observers (the game's whole per-frame
@@ -2152,7 +2152,7 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 		do_render(W, id);
 		fire_after_render(W, id, cx);
 		return value{};
-	}, "render"));
+	});
 	// scene.onBeforeRenderObservable is REAL - it drives per-frame game logic
 	h->set("onBeforeRenderObservable", make_observable(W, id, false));
 	// scene.meshes is a LIVE getter (not a per-frame snapshot): it re-reads the
@@ -2188,101 +2188,101 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 	h->set("actionManager", value{});
 	// registerBeforeRender/registerAfterRender are REAL - the legacy (pre-Observable)
 	// per-frame hooks; they push into the same sinks scene.render() fires.
-	h->set("registerBeforeRender", value::function([W, id](ctjs::context &, const std::vector<value> & a) -> value {
+	set_method(h, "registerBeforeRender", [W, id](ctjs::context &, const std::vector<value> & a) -> value {
 		if (!a.empty() && a[0].is_function() && id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) {
 			W->scenes[static_cast<std::size_t>(id)].before_render.push_back({W->next_obs++, a[0]});
 		}
 		return value{};
-	}, "registerBeforeRender"));
-	h->set("registerAfterRender", value::function([W, id](ctjs::context &, const std::vector<value> & a) -> value {
+	});
+	set_method(h, "registerAfterRender", [W, id](ctjs::context &, const std::vector<value> & a) -> value {
 		if (!a.empty() && a[0].is_function() && id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) {
 			W->scenes[static_cast<std::size_t>(id)].after_render.push_back({W->next_obs++, a[0]});
 		}
 		return value{};
-	}, "registerAfterRender"));
+	});
 	// onAfterRenderObservable mirrors registerAfterRender (both feed after_render)
 	{
 		auto obs = objptr::make();
-		obs->set("add", value::function([W, id](ctjs::context &, const std::vector<value> & a) -> value {
+		set_method(obs, "add", [W, id](ctjs::context &, const std::vector<value> & a) -> value {
 			if (a.empty() || !a[0].is_function() || id < 0 || id >= static_cast<std::int32_t>(W->scenes.size())) { return value{}; }
 			const std::int32_t oid = W->next_obs++;
 			W->scenes[static_cast<std::size_t>(id)].after_render.push_back({oid, a[0]});
 			auto ob = objptr::make();
 			ob->set("__obs_id", value{static_cast<double>(oid)});
 			return value{ob};
-		}, "add"));
-		obs->set("remove", value::function([](ctjs::context &, const std::vector<value> &) { return value{true}; }, "remove"));
-		obs->set("clear", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "clear"));
+		});
+		set_method(obs, "remove", [](ctjs::context &, const std::vector<value> &) { return value{true}; });
+		set_method(obs, "clear", [](ctjs::context &, const std::vector<value> &) { return value{}; });
 		h->set("onAfterRenderObservable", value{obs});
 	}
 	// freezeActiveMeshes/unfreezeActiveMeshes: a Babylon optimization that caches
 	// the active-mesh list. We rebuild the draw list each frame regardless, so this
 	// only records the flag (scene.__activeMeshesFrozen) for API fidelity.
-	h->set("freezeActiveMeshes", value::function([W, id](ctjs::context &, const std::vector<value> &) -> value {
+	set_method(h, "freezeActiveMeshes", [W, id](ctjs::context &, const std::vector<value> &) -> value {
 		if (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) { W->scenes[static_cast<std::size_t>(id)].active_meshes_frozen = true; }
 		return value{};
-	}, "freezeActiveMeshes"));
-	h->set("unfreezeActiveMeshes", value::function([W, id](ctjs::context &, const std::vector<value> &) -> value {
+	});
+	set_method(h, "unfreezeActiveMeshes", [W, id](ctjs::context &, const std::vector<value> &) -> value {
 		if (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) { W->scenes[static_cast<std::size_t>(id)].active_meshes_frozen = false; }
 		return value{};
-	}, "unfreezeActiveMeshes"));
+	});
 	// clearCachedVertexData: on real Babylon this frees CPU geometry after GPU
 	// upload. The software rasterizer needs the vertices every frame, so there is
 	// nothing to free - a genuine no-op, kept so scripts calling it don't throw.
-	h->set("clearCachedVertexData", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "clearCachedVertexData"));
+	set_method(h, "clearCachedVertexData", [](ctjs::context &, const std::vector<value> &) { return value{}; });
 	// getUniqueId(): a real monotonic id (scripts key maps on it)
-	h->set("getUniqueId", value::function([W](ctjs::context &, const std::vector<value> &) -> value {
+	set_method(h, "getUniqueId", [W](ctjs::context &, const std::vector<value> &) -> value {
 		return value{static_cast<double>(W->next_uid++)};
-	}, "getUniqueId"));
+	});
 	// commonly-probed no-ops so real scripts don't throw
 	for (const char * nm : {"beforeRender", "dispose", "attachControl", "detachControl"}) {
 		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 	}
 	// getEngine() hands back the BABYLON.Engine handle (scene.getEngine().getDeltaTime())
-	h->set("getEngine", value::function([W](ctjs::context &, const std::vector<value> &) -> value {
+	set_method(h, "getEngine", [W](ctjs::context &, const std::vector<value> &) -> value {
 		return W->engine_handle ? value{W->engine_handle} : value{};
-	}, "getEngine"));
+	});
 
 	// --- model-viewer helpers (glTF loading path)
-	h->set("getMaterialById", value::function([W, id](ctjs::context &, const std::vector<value> & a) -> value {
+	set_method(h, "getMaterialById", [W, id](ctjs::context &, const std::vector<value> & a) -> value {
 		if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size()) || a.empty()) { return value{}; }
 		const std::string name = a[0].to_string();
 		for (const auto & mm : W->scenes[static_cast<std::size_t>(id)].materials) {
 			if (mm.first == name) { return value{mm.second}; }
 		}
 		return value{};
-	}, "getMaterialById"));
+	});
 	h->set("getMaterialByName", h->find("getMaterialById") ? *h->find("getMaterialById") : value{});
-	h->set("createDefaultCamera", value::function([W, id, &ev](ctjs::context &, const std::vector<value> &) -> value {
+	set_method(h, "createDefaultCamera", [W, id, &ev](ctjs::context &, const std::vector<value> &) -> value {
 		if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size())) { return value{}; }
 		scene_rec & sc = W->scenes[static_cast<std::size_t>(id)];
 		r3d::vec3 c = r3d::V3(0, 0, 0);
 		double rad = 2.0;
 		if (sc.has_bounds) {
 			c = r3d::V3((sc.bmin[0] + sc.bmax[0]) * 0.5, (sc.bmin[1] + sc.bmax[1]) * 0.5,
-			            (sc.bmin[2] + sc.bmax[2]) * 0.5);
+			(sc.bmin[2] + sc.bmax[2]) * 0.5);
 			rad = 0.001;
 			for (std::int32_t k = 0; k < 3; ++k) { rad = std::max(rad, sc.bmax[k] - sc.bmin[k]); }
 		}
 		const objptr target = make_vector3(c[0], c[1], c[2]).as_object();
 		return make_camera_arc(W, ev, "default_camera", -std::numbers::pi / 2, std::numbers::pi / 2.5, rad * 2.2, target, sc.handle);
-	}, "createDefaultCamera"));
-	h->set("createDefaultLight", value::function([W, id](ctjs::context &, const std::vector<value> &) -> value {
+	});
+	set_method(h, "createDefaultLight", [W, id](ctjs::context &, const std::vector<value> &) -> value {
 		if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size())) { return value{}; }
 		return make_light(W, r3d::light_hemispheric, "default_light", r3d::V3(0, 1, 0), W->scenes[static_cast<std::size_t>(id)].handle);
-	}, "createDefaultLight"));
+	});
 	for (const char * nm : {"createDefaultSkybox", "createDefaultEnvironment"}) {
 		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 	}
 	// debug inspector: no-ops satisfying `await scene.debugLayer.show(...).select(...)`
 	{
 		object_t dbg;
-		dbg.set("show", value::function([](ctjs::context &, const std::vector<value> &) -> value {
+		set_method(dbg, "show", [](ctjs::context &, const std::vector<value> &) -> value {
 			object_t d;
 			d.set("select", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "select"));
 			return ctjs::make_promise(value::object(std::move(d)), false);
-		}, "show"));
-		dbg.set("hide", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "hide"));
+		});
+		set_method(dbg, "hide", [](ctjs::context &, const std::vector<value> &) { return value{}; });
 		h->set("debugLayer", value::object(std::move(dbg)));
 	}
 
@@ -2298,63 +2298,63 @@ inline value make_engine(const worldptr & W, dom_events & ev, const std::vector<
 	}
 	auto h = objptr::make();
 	W->engine_handle = h; // scene.getEngine() hands this back
-	h->set("runRenderLoop", value::function([W, &ev](ctjs::context & cx, const std::vector<value> & a) -> value {
+	set_method(h, "runRenderLoop", [W, &ev](ctjs::context & cx, const std::vector<value> & a) -> value {
 		ev.cx = &cx;
 		if (!a.empty() && a[0].is_function()) { W->render_cb = a[0]; }
 		if (!W->loop_active) {
 			W->loop_active = true;
 			std::weak_ptr<world> wk = W;
 			W->loop_wrapper = value::function(
-			    [wk, &ev](ctjs::context & cx2, const std::vector<value> & b) -> value {
-				    auto w = wk.lock();
-				    if (!w) { return value{}; } // world gone -> stop the loop
-				    ev.cx = &cx2;
-				    const double now = b.empty() ? ev.now_ms : b[0].to_number();
-				    w->last_dt_ms = (w->prev_ms == 0) ? 16.6 : (now - w->prev_ms);
-				    w->prev_ms = now;
-				    if (w->render_cb.is_function()) { ctjs::call_value(cx2, w->render_cb, {}); }
-				    ev.raf.push_back(w->loop_wrapper); // re-register for next frame
-				    return value{};
-			    }, "babylonRenderLoop");
+			[wk, &ev](ctjs::context & cx2, const std::vector<value> & b) -> value {
+				auto w = wk.lock();
+				if (!w) { return value{}; } // world gone -> stop the loop
+				ev.cx = &cx2;
+				const double now = b.empty() ? ev.now_ms : b[0].to_number();
+				w->last_dt_ms = (w->prev_ms == 0) ? 16.6 : (now - w->prev_ms);
+				w->prev_ms = now;
+				if (w->render_cb.is_function()) { ctjs::call_value(cx2, w->render_cb, {}); }
+				ev.raf.push_back(w->loop_wrapper); // re-register for next frame
+				return value{};
+			}, "babylonRenderLoop");
 			ev.raf.push_back(W->loop_wrapper);
 		}
 		return value{};
-	}, "runRenderLoop"));
-	h->set("stopRenderLoop", value::function([W](ctjs::context &, const std::vector<value> &) -> value {
+	});
+	set_method(h, "stopRenderLoop", [W](ctjs::context &, const std::vector<value> &) -> value {
 		W->render_cb = value{};
 		return value{};
-	}, "stopRenderLoop"));
-	h->set("getDeltaTime", value::function([W](ctjs::context &, const std::vector<value> &) {
+	});
+	set_method(h, "getDeltaTime", [W](ctjs::context &, const std::vector<value> &) {
 		return value{W->last_dt_ms};
-	}, "getDeltaTime"));
-	h->set("getFps", value::function([W](ctjs::context &, const std::vector<value> &) {
+	});
+	set_method(h, "getFps", [W](ctjs::context &, const std::vector<value> &) {
 		return value{W->last_dt_ms > 0 ? 1000.0 / W->last_dt_ms : 60.0};
-	}, "getFps"));
+	});
 	// engine.resize(): match the canvas drawing buffer to the current
 	// viewport (window inner size) so the 3D view fills the resized window
-	h->set("resize", value::function([W, &ev](ctjs::context &, const std::vector<value> &) -> value {
+	set_method(h, "resize", [W, &ev](ctjs::context &, const std::vector<value> &) -> value {
 		if (W->target != nullptr && ev.viewport_w > 0 && ev.viewport_h > 0 &&
-		    (W->target->canvas_w != ev.viewport_w || W->target->canvas_h != ev.viewport_h)) {
+		(W->target->canvas_w != ev.viewport_w || W->target->canvas_h != ev.viewport_h)) {
 			ctbrowser::node * n = W->target;
 			n->canvas_w = ev.viewport_w;
 			n->canvas_h = ev.viewport_h;
 			n->pixels.assign(static_cast<std::size_t>(n->canvas_w) * static_cast<std::size_t>(n->canvas_h), 0xFF000000u);
 		}
 		return value{};
-	}, "resize"));
+	});
 	// the render buffer size (Environment reads these for the ortho camera)
-	h->set("getRenderWidth", value::function([W, &ev](ctjs::context &, const std::vector<value> &) {
+	set_method(h, "getRenderWidth", [W, &ev](ctjs::context &, const std::vector<value> &) {
 		return value{static_cast<double>(W->target != nullptr ? W->target->canvas_w : ev.viewport_w)};
-	}, "getRenderWidth"));
-	h->set("getRenderHeight", value::function([W, &ev](ctjs::context &, const std::vector<value> &) {
+	});
+	set_method(h, "getRenderHeight", [W, &ev](ctjs::context &, const std::vector<value> &) {
 		return value{static_cast<double>(W->target != nullptr ? W->target->canvas_h : ev.viewport_h)};
-	}, "getRenderHeight"));
+	});
 	h->set("onResizeObservable", make_dead_observable());
-	h->set("dispose", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "dispose"));
+	set_method(h, "dispose", [](ctjs::context &, const std::vector<value> &) { return value{}; });
 	h->set("loadingUIText", value{std::string{"Loading..."}});
 	// displayLoadingUI(): paint a dark backdrop + the loading text into the canvas
 	// (the next scene.render() overwrites it, which is exactly hideLoadingUI's job).
-	h->set("displayLoadingUI", value::function([W](ctjs::context & cx, const std::vector<value> &) -> value {
+	set_method(h, "displayLoadingUI", [W](ctjs::context & cx, const std::vector<value> &) -> value {
 		ctbrowser::node * n = W->target;
 		if (n == nullptr || n->pixels.empty()) { return value{}; }
 		const std::int32_t cw = n->canvas_w, ch = n->canvas_h;
@@ -2367,10 +2367,10 @@ inline value make_engine(const worldptr & W, dom_events & ev, const std::vector<
 		const std::int32_t tw = static_cast<std::int32_t>(text.size()) * 8 * scale;
 		overlay_text(n->pixels.data(), cw, ch, (cw - tw) / 2, ch / 2 - 4 * scale, text, scale, 0xFFCCCCCCu);
 		return value{};
-	}, "displayLoadingUI"));
+	});
 	// hideLoadingUI(): the loading frame lives in the canvas until the next render
 	// paints over it, so nothing to tear down here.
-	h->set("hideLoadingUI", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "hideLoadingUI"));
+	set_method(h, "hideLoadingUI", [](ctjs::context &, const std::vector<value> &) { return value{}; });
 	{
 		object_t hi;
 		hi.set("isMobile", value{false});
@@ -2405,9 +2405,9 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 	// CubeTexture / environment: stubbed (no IBL) so scripts don't throw
 	{
 		object_t ct;
-		ct.set("CreateFromPrefilteredData", value::function([](ctjs::context &, const std::vector<value> &) -> value {
+		set_method(ct, "CreateFromPrefilteredData", [](ctjs::context &, const std::vector<value> &) -> value {
 			object_t o; o.set("__cubeTexture", value{true}); return value::object(std::move(o));
-		}, "CreateFromPrefilteredData"));
+		});
 		value CubeTexture = value::function([](ctjs::context &, const std::vector<value> &) -> value {
 			object_t o; o.set("__cubeTexture", value{true}); return value::object(std::move(o));
 		}, "CubeTexture");
@@ -2444,91 +2444,91 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 	}, "Color4");
 	B->set("Color4", Color4);
 
-	B->set("Engine", value::function([W, &ev](ctjs::context &, const std::vector<value> & a) -> value {
+	set_method(B, "Engine", [W, &ev](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_engine(W, ev, a);
-	}, "Engine"));
-	B->set("Scene", value::function([W, &ev](ctjs::context &, const std::vector<value> &) -> value {
+	});
+	set_method(B, "Scene", [W, &ev](ctjs::context &, const std::vector<value> &) -> value {
 		return make_scene(W, ev);
-	}, "Scene"));
-	B->set("ArcRotateCamera", value::function([W, &ev](ctjs::context &, const std::vector<value> & a) -> value {
+	});
+	set_method(B, "ArcRotateCamera", [W, &ev](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_camera_arc(W, ev, arg_str(a, 0), arg_num(a, 1, 0), arg_num(a, 2, 1),
-		                       arg_num(a, 3, 10), arg_obj(a, 4), arg_obj(a, 5));
-	}, "ArcRotateCamera"));
-	B->set("FreeCamera", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
+		arg_num(a, 3, 10), arg_obj(a, 4), arg_obj(a, 5));
+	});
+	set_method(B, "FreeCamera", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_camera_free(W, arg_str(a, 0), arg_obj(a, 1), arg_obj(a, 2));
-	}, "FreeCamera"));
-	B->set("UniversalCamera", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
+	});
+	set_method(B, "UniversalCamera", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_camera_free(W, arg_str(a, 0), arg_obj(a, 1), arg_obj(a, 2));
-	}, "UniversalCamera"));
-	B->set("HemisphericLight", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
+	});
+	set_method(B, "HemisphericLight", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_light(W, r3d::light_hemispheric, arg_str(a, 0), read_vec3(arg_obj(a, 1), r3d::V3(0, 1, 0)), arg_obj(a, 2));
-	}, "HemisphericLight"));
-	B->set("DirectionalLight", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
+	});
+	set_method(B, "DirectionalLight", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_light(W, r3d::light_directional, arg_str(a, 0), read_vec3(arg_obj(a, 1), r3d::V3(0, -1, 0)), arg_obj(a, 2));
-	}, "DirectionalLight"));
-	B->set("PointLight", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
+	});
+	set_method(B, "PointLight", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_light(W, r3d::light_directional, arg_str(a, 0), read_vec3(arg_obj(a, 1), r3d::V3(0, -1, 0)), arg_obj(a, 2));
-	}, "PointLight"));
-	B->set("StandardMaterial", value::function([](ctjs::context &, const std::vector<value> & a) -> value {
+	});
+	set_method(B, "StandardMaterial", [](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_material(arg_str(a, 0));
-	}, "StandardMaterial"));
+	});
 
 	// MeshBuilder (object of factory statics)
 	object_t mb;
-	mb.set("CreateBox", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
+	set_method(mb, "CreateBox", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		const objptr o = arg_obj(a, 1);
 		const double sz = opt(o, "size", 1.0);
 		return make_mesh(W, r3d::make_box(sz), arg_str(a, 0), true, arg_obj(a, 2));
-	}, "CreateBox"));
-	mb.set("CreateSphere", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
+	});
+	set_method(mb, "CreateSphere", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		const objptr o = arg_obj(a, 1);
 		return make_mesh(W, r3d::make_sphere(opt(o, "diameter", 1.0), static_cast<std::int32_t>(opt(o, "segments", 16))),
-		                 arg_str(a, 0), true, arg_obj(a, 2));
-	}, "CreateSphere"));
-	mb.set("CreateGround", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
+		arg_str(a, 0), true, arg_obj(a, 2));
+	});
+	set_method(mb, "CreateGround", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		const objptr o = arg_obj(a, 1);
 		return make_mesh(W, r3d::make_ground(opt(o, "width", 1.0), opt(o, "height", 1.0)),
-		                 arg_str(a, 0), false, arg_obj(a, 2));
-	}, "CreateGround"));
-	mb.set("CreateCylinder", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
+		arg_str(a, 0), false, arg_obj(a, 2));
+	});
+	set_method(mb, "CreateCylinder", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		const objptr o = arg_obj(a, 1);
 		return make_mesh(W, r3d::make_cylinder(opt(o, "height", 2.0), opt(o, "diameter", 1.0), static_cast<std::int32_t>(opt(o, "tessellation", 24))),
-		                 arg_str(a, 0), true, arg_obj(a, 2));
-	}, "CreateCylinder"));
+		arg_str(a, 0), true, arg_obj(a, 2));
+	});
 	B->set("MeshBuilder", value::object(std::move(mb)));
 
 	// legacy Mesh.Create* (positional args)
 	object_t mesh;
-	mesh.set("CreateBox", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
+	set_method(mesh, "CreateBox", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_mesh(W, r3d::make_box(arg_num(a, 1, 1)), arg_str(a, 0), true, arg_obj(a, 2));
-	}, "CreateBox"));
-	mesh.set("CreateSphere", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
+	});
+	set_method(mesh, "CreateSphere", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_mesh(W, r3d::make_sphere(arg_num(a, 2, 1), static_cast<std::int32_t>(arg_num(a, 1, 16))),
-		                 arg_str(a, 0), true, arg_obj(a, 3));
-	}, "CreateSphere"));
-	mesh.set("CreateGround", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
+		arg_str(a, 0), true, arg_obj(a, 3));
+	});
+	set_method(mesh, "CreateGround", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_mesh(W, r3d::make_ground(arg_num(a, 1, 1), arg_num(a, 2, 1)),
-		                 arg_str(a, 0), false, arg_obj(a, 4));
-	}, "CreateGround"));
+		arg_str(a, 0), false, arg_obj(a, 4));
+	});
 	B->set("Mesh", value::object(std::move(mesh)));
 
 	// --- Scalar: gameplay math (Lerp/Clamp/RandomRange, deterministic PRNG)
 	{
 		object_t sc;
-		sc.set("Lerp", value::function([](ctjs::context &, const std::vector<value> & a) {
+		set_method(sc, "Lerp", [](ctjs::context &, const std::vector<value> & a) {
 			const double x = arg_num(a, 0, 0), y = arg_num(a, 1, 0), t = arg_num(a, 2, 0);
 			return value{x + (y - x) * t};
-		}, "Lerp"));
-		sc.set("Clamp", value::function([](ctjs::context &, const std::vector<value> & a) {
+		});
+		set_method(sc, "Clamp", [](ctjs::context &, const std::vector<value> & a) {
 			const double v = arg_num(a, 0, 0), lo = arg_num(a, 1, 0), hi = arg_num(a, 2, 1);
 			return value{v < lo ? lo : v > hi ? hi : v};
-		}, "Clamp"));
-		sc.set("RandomRange", value::function([W](ctjs::context &, const std::vector<value> & a) {
+		});
+		set_method(sc, "RandomRange", [W](ctjs::context &, const std::vector<value> & a) {
 			const double lo = arg_num(a, 0, 0), hi = arg_num(a, 1, 1);
 			W->rng = W->rng * 1664525u + 1013904223u;
 			const double r = static_cast<double>(W->rng >> 8) / 16777216.0;
 			return value{lo + (hi - lo) * r};
-		}, "RandomRange"));
+		});
 		B->set("Scalar", value::object(std::move(sc)));
 	}
 	// --- Axis / Space
@@ -2555,7 +2555,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 	}
 	// --- Sound: no-op audio, but its onLoaded callback FIRES (asset counters
 	// gate the game's start on it) - scheduled as a 0ms timer so it is async
-	B->set("Sound", value::function([&ev](ctjs::context &, const std::vector<value> & a) -> value {
+	set_method(B, "Sound", [&ev](ctjs::context &, const std::vector<value> & a) -> value {
 		auto o = objptr::make();
 		const std::string url = a.size() > 1 ? a[1].to_string() : std::string{};
 		const bool loop = a.size() > 4 && a[4].is_object() && num_prop(a[4].as_object(), "loop", 0) != 0;
@@ -2596,14 +2596,14 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 			ev.timers.push_back({++ev.timer_seq, ev.now_ms, 0, false, a[3]});
 		}
 		return value{o};
-	}, "Sound"));
+	});
 	// --- SceneLoader.ImportMeshAsync(meshNames, rootUrl, filename, scene):
 	// resolves {meshes:[__root__, model]}. The real GLB (rootUrl+filename) is
 	// loaded from the embedded registry when present - its primitives merged into
 	// ONE mesh (the game clones meshes[1] per alien) - else a box placeholder.
 	{
 		object_t sl;
-		sl.set("ImportMeshAsync", value::function([W, &images](ctjs::context &, const std::vector<value> & a) -> value {
+		set_method(sl, "ImportMeshAsync", [W, &images](ctjs::context &, const std::vector<value> & a) -> value {
 			const std::string root_url = a.size() > 1 ? a[1].to_string() : std::string{};
 			const std::string fname = a.size() > 2 ? a[2].to_string() : std::string{};
 			const std::string url = root_url + fname; // e.g. "/assets/models/Alien_1.glb"
@@ -2637,7 +2637,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 						const std::int32_t bt = mdl.materials[static_cast<std::size_t>(p.material)].base_tex;
 						if (!mtex && bt >= 0 && bt < static_cast<std::int32_t>(mdl.textures.size())) {
 							mtex = r3d::decode_texture(mdl.textures[static_cast<std::size_t>(bt)].data(),
-							                           mdl.textures[static_cast<std::size_t>(bt)].size());
+							mdl.textures[static_cast<std::size_t>(bt)].size());
 						}
 					}
 				}
@@ -2661,7 +2661,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 			res->set("animationGroups", value::array({}));
 			res->set("transformNodes", value::array({}));
 			return ctjs::make_promise(value{res}, false);
-		}, "ImportMeshAsync"));
+		});
 		sl.set("AppendAsync", *B->find("AppendSceneAsync"));
 		B->set("SceneLoader", value::object(std::move(sl)));
 	}
@@ -2691,7 +2691,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 				}
 			}
 		};
-		B->set("AssetContainer", value::function([move_container](ctjs::context &, const std::vector<value> &) -> value {
+		set_method(B, "AssetContainer", [move_container](ctjs::context &, const std::vector<value> &) -> value {
 			auto o = objptr::make();
 			o->set("meshes", value::array({}));
 			o->set("materials", value::array({}));
@@ -2706,18 +2706,18 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 			}, "addAllToScene"));
 			o->set("dispose", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "dispose"));
 			return value{o};
-		}, "AssetContainer"));
+		});
 	}
 	// --- Sprite / SpriteManager: cosmetic (starfield); constructed, not rendered
-	B->set("SpriteManager", value::function([](ctjs::context &, const std::vector<value> &) -> value {
+	set_method(B, "SpriteManager", [](ctjs::context &, const std::vector<value> &) -> value {
 		auto o = objptr::make();
 		o->set("sprites", value::array({}));
 		for (const char * nm : {"dispose", "render"}) {
 			o->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 		}
 		return value{o};
-	}, "SpriteManager"));
-	B->set("Sprite", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
+	});
+	set_method(B, "Sprite", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		auto o = objptr::make();
 		o->set("name", value{arg_str(a, 0)});
 		o->set("position", make_vector3(0, 0, 0));
@@ -2737,12 +2737,12 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		}
 		W->sprites.push_back(o); // drawn as a 2D overlay by render_sprites
 		return value{o};
-	}, "Sprite"));
+	});
 	// --- GlowLayer: REAL additive-bloom post-process. `new GlowLayer(name, scene,
 	// {mainTextureFixedSize,...})`; do_render blurs bright pixels into a halo scaled
 	// by .intensity (live). Per-mesh include/exclude masking stays a no-op (the
 	// whole framebuffer glows); customEmissiveColorSelector is accepted, unused.
-	B->set("GlowLayer", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
+	set_method(B, "GlowLayer", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		auto o = objptr::make();
 		double inten = 1.0;
 		if (a.size() > 2 && a[2].is_object()) { inten = num_prop(a[2].as_object(), "intensity", 1.0); }
@@ -2790,7 +2790,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 			}
 		}
 		return value{o};
-	}, "GlowLayer"));
+	});
 	// --- ActionManager / ExecuteCodeAction: REAL for OnEveryFrameTrigger (fired
 	// each frame by scene.render). Other triggers (pick/pointer/key) are stored on
 	// the manager but not yet dispatched - ctbrowser routes input through the DOM,
@@ -2798,7 +2798,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 	value ActionManager = value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
 		auto o = objptr::make();
 		o->set("__actions", value::array({}));
-		o->set("registerAction", value::function([](ctjs::context & cx, const std::vector<value> & args) -> value {
+		set_method(o, "registerAction", [](ctjs::context & cx, const std::vector<value> & args) -> value {
 			const objptr self = self_of(cx);
 			if (self && !args.empty()) {
 				if (const value * acts = self->find("__actions"); acts != nullptr && acts->is_array()) {
@@ -2806,12 +2806,12 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 				}
 			}
 			return args.empty() ? value{} : args[0]; // Babylon returns the action
-		}, "registerAction"));
-		o->set("dispose", value::function([](ctjs::context & cx, const std::vector<value> &) -> value {
+		});
+		set_method(o, "dispose", [](ctjs::context & cx, const std::vector<value> &) -> value {
 			if (const objptr self = self_of(cx)) { self->set("__actions", value::array({})); }
 			return value{};
-		}, "dispose"));
-		o->set("hasSpecificTrigger", value::function([](ctjs::context &, const std::vector<value> &) { return value{false}; }, "hasSpecificTrigger"));
+		});
+		set_method(o, "hasSpecificTrigger", [](ctjs::context &, const std::vector<value> &) { return value{false}; });
 		// register with the scene (arg 0) so OnEveryFrameTrigger actions fire per frame
 		if (!a.empty() && a[0].is_object()) {
 			const std::int32_t si = index_of(a[0].as_object(), "__scene");
@@ -2832,7 +2832,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		set_static(ActionManager, nm, value{id});
 	}
 	B->set("ActionManager", ActionManager);
-	B->set("ExecuteCodeAction", value::function([](ctjs::context &, const std::vector<value> & a) -> value {
+	set_method(B, "ExecuteCodeAction", [](ctjs::context &, const std::vector<value> & a) -> value {
 		// ExecuteCodeAction(triggerOptions, func[, condition]): triggerOptions is a
 		// trigger id (number) or { trigger, parameter }
 		auto o = objptr::make();
@@ -2845,7 +2845,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		o->set("trigger", value{trig});
 		if (a.size() > 1 && a[1].is_function()) { o->set("__func", a[1]); }
 		return value{o};
-	}, "ExecuteCodeAction"));
+	});
 
 	// --- BABYLON.GUI (the bundler maps @babylonjs/gui -> BABYLON.GUI)
 	{
@@ -2859,21 +2859,21 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 			set_static(ADT, "CreateFullscreenUI", value::function([W](ctjs::context &, const std::vector<value> &) -> value {
 				auto o = objptr::make();
 				o->set("controls", value::array({}));
-				o->set("addControl", value::function([](ctjs::context & cx, const std::vector<value> & a) -> value {
+				set_method(o, "addControl", [](ctjs::context & cx, const std::vector<value> & a) -> value {
 					objptr self = self_of(cx);
 					if (self && !a.empty()) {
 						const value * c = self->find("controls");
 						if (c != nullptr && c->is_array()) { c->as_array()->push_back(a[0]); }
 					}
 					return cx.current_this;
-				}, "addControl"));
+				});
 				object_t cv;
 				const double cw = W->target != nullptr ? W->target->canvas_w : 1280;
 				const double chh = W->target != nullptr ? W->target->canvas_h : 720;
 				cv.set("width", value{cw});
 				cv.set("height", value{chh});
 				o->set("_canvas", value::object(std::move(cv)));
-				o->set("removeControl", value::function([](ctjs::context & cx, const std::vector<value> & a) -> value {
+				set_method(o, "removeControl", [](ctjs::context & cx, const std::vector<value> & a) -> value {
 					objptr self = self_of(cx);
 					if (self && !a.empty()) {
 						if (const value * c = self->find("controls"); c != nullptr && c->is_array()) {
@@ -2887,15 +2887,15 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 						}
 					}
 					return value{};
-				}, "removeControl"));
-				o->set("dispose", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "dispose"));
+				});
+				set_method(o, "dispose", [](ctjs::context &, const std::vector<value> &) { return value{}; });
 				W->guis.push_back(o); // rendered as a 2D overlay by render_guis
 				return value{o};
 			}, "CreateFullscreenUI"));
 			GUI->set("AdvancedDynamicTexture", ADT);
 		}
 		// TextBlock: data props the game sets (text/color/font/alignment/pos)
-		GUI->set("TextBlock", value::function([](ctjs::context &, const std::vector<value> &) -> value {
+		set_method(GUI, "TextBlock", [](ctjs::context &, const std::vector<value> &) -> value {
 			auto o = objptr::make();
 			o->set("text", value{std::string{}});
 			o->set("color", value{std::string{"white"}});
@@ -2910,7 +2910,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 				o->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 			}
 			return value{o};
-		}, "TextBlock"));
+		});
 		// Control: alignment constants (BabylonJS values)
 		{
 			value Control = value::function([](ctjs::context &, const std::vector<value> &) -> value {
@@ -2928,7 +2928,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		for (const char * nm : {"Rectangle", "Ellipse", "Line", "Style", "Image", "Button", "StackPanel"}) {
 			GUI->set(nm, value::function([](ctjs::context &, const std::vector<value> &) -> value {
 				auto o = objptr::make();
-				o->set("addControl", value::function([](ctjs::context & cx, const std::vector<value> &) { return cx.current_this; }, "addControl"));
+				set_method(o, "addControl", [](ctjs::context & cx, const std::vector<value> &) { return cx.current_this; });
 				return value{o};
 			}, nm));
 		}
@@ -2938,7 +2938,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 	// --- statics on Engine / Scene
 	if (value * eng = B->find("Engine")) {
 		object_t ae;
-		ae.set("unlock", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "unlock"));
+		set_method(ae, "unlock", [](ctjs::context &, const std::vector<value> &) { return value{}; });
 		ae.set("audioContext", value{});
 		ae.set("canUseWebAudio", value{false});
 		set_static(*eng, "audioEngine", value::object(std::move(ae)));

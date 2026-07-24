@@ -120,6 +120,19 @@ inline ctjs::rc<ctjs::object_t> child_obj(const ctjs::rc<ctjs::object_t> & o, co
 inline ctjs::rc<ctjs::object_t> self_of(ctjs::context & cx) {
 	return cx.current_this.is_object() ? cx.current_this.as_object() : ctjs::rc<ctjs::object_t>{};
 }
+
+// --- installing a native method --------------------------------------
+// ctjs::value::function takes the method's name for stack traces, and the
+// object wants it as a key, so every binding site used to spell the same
+// string twice. Spelling it once means the trace can never drift from the
+// property a script actually called.
+template <typename F> void set_method(ctjs::object_t & o, const char * name, F && fn) {
+	o.set(name, ctjs::value::function(std::forward<F>(fn), name));
+}
+template <typename F>
+void set_method(const ctjs::rc<ctjs::object_t> & o, const char * name, F && fn) {
+	o->set(name, ctjs::value::function(std::forward<F>(fn), name));
+}
 } // namespace detail
 
 // script-registered callbacks (addEventListener / requestAnimationFrame)
@@ -336,35 +349,26 @@ inline std::string dom_key_key(std::string_view code) {
 // - the receiver of the method call - so no capture cycles), and the
 // engine consults the flags after the listeners ran.
 inline void add_event_methods(ctjs::object_t & ev) {
-	ev.set("preventDefault",
-	       ctjs::value::function(
-	           [](ctjs::context & cx, const std::vector<ctjs::value> &) {
-		           if (cx.current_this.is_object()) {
-			           const ctjs::value * c = cx.current_this.as_object()->find("cancelable");
-			           if (c == nullptr || c->truthy()) {
-				           cx.current_this.as_object()->set("defaultPrevented", ctjs::value{true});
-			           }
-		           }
-		           return ctjs::value{};
-	           },
-	           "preventDefault"));
-	ev.set("stopPropagation",
-	       ctjs::value::function(
-	           [](ctjs::context & cx, const std::vector<ctjs::value> &) {
-		           if (cx.current_this.is_object()) { cx.current_this.as_object()->set("__stopped", ctjs::value{true}); }
-		           return ctjs::value{};
-	           },
-	           "stopPropagation"));
-	ev.set("stopImmediatePropagation",
-	       ctjs::value::function(
-	           [](ctjs::context & cx, const std::vector<ctjs::value> &) {
-		           if (cx.current_this.is_object()) {
-			           cx.current_this.as_object()->set("__stopped", ctjs::value{true});
-			           cx.current_this.as_object()->set("__stopped_now", ctjs::value{true});
-		           }
-		           return ctjs::value{};
-	           },
-	           "stopImmediatePropagation"));
+	set_method(ev, "preventDefault", [](ctjs::context & cx, const std::vector<ctjs::value> &) {
+		if (cx.current_this.is_object()) {
+			const ctjs::value * c = cx.current_this.as_object()->find("cancelable");
+			if (c == nullptr || c->truthy()) {
+				cx.current_this.as_object()->set("defaultPrevented", ctjs::value{true});
+			}
+		}
+		return ctjs::value{};
+	});
+	set_method(ev, "stopPropagation", [](ctjs::context & cx, const std::vector<ctjs::value> &) {
+		if (cx.current_this.is_object()) { cx.current_this.as_object()->set("__stopped", ctjs::value{true}); }
+		return ctjs::value{};
+	});
+	set_method(ev, "stopImmediatePropagation", [](ctjs::context & cx, const std::vector<ctjs::value> &) {
+		if (cx.current_this.is_object()) {
+			cx.current_this.as_object()->set("__stopped", ctjs::value{true});
+			cx.current_this.as_object()->set("__stopped_now", ctjs::value{true});
+		}
+		return ctjs::value{};
+	});
 	ev.set("defaultPrevented", ctjs::value{false});
 	ev.set("bubbles", ctjs::value{true});
 	ev.set("cancelable", ctjs::value{true});
@@ -438,221 +442,173 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 	o.set("offsetLeft", ctjs::value{static_cast<double>(n->x)});
 	o.set("offsetTop", ctjs::value{static_cast<double>(n->y)});
 	o.set("__node", ctjs::value{ev->track_node(n)});
-	o.set("getContext", ctjs::value::function(
-	                        [n, images, ev](ctjs::context & cx, const std::vector<ctjs::value> &) {
-		                        ev->cx = &cx;
-		                        return n->is_canvas() ? canvas_context(n, images)
-		                                              : ctjs::value{};
-	                        },
-	                        "getContext"));
-	o.set("appendChild",
-	      ctjs::value::function(
-	          [n, ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
-		          ev->cx = &cx;
-		          if (!a.empty() && ev->doc != nullptr) {
-			          if (node * child = ev->node_of(a[0])) {
-				          ev->doc->append_child(n, child);
-			          }
-		          }
-		          return a.empty() ? ctjs::value{} : a[0]; // returns the child
-	          },
-	          "appendChild"));
-	o.set("removeChild",
-	      ctjs::value::function(
-	          [n, ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
-		          ev->cx = &cx;
-		          if (!a.empty() && ev->doc != nullptr) {
-			          if (node * child = ev->node_of(a[0])) {
-				          ev->doc->remove_child(n, child);
-			          }
-		          }
-		          return a.empty() ? ctjs::value{} : a[0];
-	          },
-	          "removeChild"));
-	o.set("setAttribute",
-	      ctjs::value::function(
-	          [n](ctjs::context &, const std::vector<ctjs::value> & a) {
-		          if (a.size() >= 2) {
-			          const std::string key = a[0].to_string();
-			          const std::string val = a[1].to_string();
-			          bool found = false;
-			          for (auto & [k, v] : n->attributes) {
-				          if (k == key) {
-					          v = val;
-					          found = true;
-				          }
-			          }
-			          if (!found) { n->attributes.emplace_back(key, val); }
-			          if (key == "id") { n->id = val; }
-			          if (key == "class") { n->classes = val; }
-			          if (n->is_canvas() && (key == "width" || key == "height")) {
-				          const std::int32_t d = parse_int_attr(val, 0);
-				          if (key == "width") { n->canvas_w = d; }
-				          else { n->canvas_h = d; }
-				          n->pixels.assign(static_cast<std::size_t>(n->canvas_w) *
-				                               static_cast<std::size_t>(n->canvas_h),
-				                           0x00000000u);
-			          }
-		          }
-		          return ctjs::value{};
-	          },
-	          "setAttribute"));
-	o.set("addEventListener",
-	      ctjs::value::function(
-	          [n, ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
-		          ev->cx = &cx;
-		          if (a.size() >= 2 && a[1].is_function()) {
-			          const std::string type = a[0].to_string();
-			          // element "click"/"change" are targeted (fired on the hit
-			          // element + its ancestors / the changed control); other
-			          // types stay in the shared, globally-dispatched registry
-			          // (keydown/resize/mouseover/...)
-			          if (type == "click") {
-				          ev->click_listeners[n].push_back(a[1]);
-			          } else if (type == "change") {
-				          ev->change_listeners[n].push_back(a[1]);
-			          } else if (type == "input") {
-				          ev->input_listeners[n].push_back(a[1]);
-			          } else if (type == "submit") {
-				          ev->submit_listeners[n].push_back(a[1]);
-			          } else {
-				          ev->listeners[type].push_back(a[1]);
-			          }
-		          }
-		          return ctjs::value{};
-	          },
-	          "addEventListener"));
-	o.set("text", ctjs::value::function(
-	                  [n](ctjs::context &, const std::vector<ctjs::value> &) {
-		                  return ctjs::value{n->text};
-	                  },
-	                  "text"));
-	o.set("setText", ctjs::value::function(
-	                     [n](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                     n->text = arg_str(a, 0);
-		                     return ctjs::value{};
-	                     },
-	                     "setText"));
-	o.set("addClass", ctjs::value::function(
-	                      [n](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                      if (!a.empty()) { n->add_class(a[0].to_string()); }
-		                      return ctjs::value{};
-	                      },
-	                      "addClass"));
-	o.set("removeClass", ctjs::value::function(
-	                         [n](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                         if (!a.empty()) { n->remove_class(a[0].to_string()); }
-		                         return ctjs::value{};
-	                         },
-	                         "removeClass"));
-	o.set("toggleClass", ctjs::value::function(
-	                         [n](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                         if (!a.empty()) { n->toggle_class(a[0].to_string()); }
-		                         return ctjs::value{};
-	                         },
-	                         "toggleClass"));
-	o.set("hasClass", ctjs::value::function(
-	                      [n](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                      return ctjs::value{!a.empty() && n->has_class(a[0].to_string())};
-	                      },
-	                      "hasClass"));
+	set_method(o, "getContext", [n, images, ev](ctjs::context & cx, const std::vector<ctjs::value> &) {
+		ev->cx = &cx;
+		return n->is_canvas() ? canvas_context(n, images)
+		: ctjs::value{};
+	});
+	set_method(o, "appendChild", [n, ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
+		ev->cx = &cx;
+		if (!a.empty() && ev->doc != nullptr) {
+			if (node * child = ev->node_of(a[0])) {
+				ev->doc->append_child(n, child);
+			}
+		}
+		return a.empty() ? ctjs::value{} : a[0]; // returns the child
+	});
+	set_method(o, "removeChild", [n, ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
+		ev->cx = &cx;
+		if (!a.empty() && ev->doc != nullptr) {
+			if (node * child = ev->node_of(a[0])) {
+				ev->doc->remove_child(n, child);
+			}
+		}
+		return a.empty() ? ctjs::value{} : a[0];
+	});
+	set_method(o, "setAttribute", [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (a.size() >= 2) {
+			const std::string key = a[0].to_string();
+			const std::string val = a[1].to_string();
+			bool found = false;
+			for (auto & [k, v] : n->attributes) {
+				if (k == key) {
+					v = val;
+					found = true;
+				}
+			}
+			if (!found) { n->attributes.emplace_back(key, val); }
+			if (key == "id") { n->id = val; }
+			if (key == "class") { n->classes = val; }
+			if (n->is_canvas() && (key == "width" || key == "height")) {
+				const std::int32_t d = parse_int_attr(val, 0);
+				if (key == "width") { n->canvas_w = d; }
+				else { n->canvas_h = d; }
+				n->pixels.assign(static_cast<std::size_t>(n->canvas_w) *
+				static_cast<std::size_t>(n->canvas_h),
+				0x00000000u);
+			}
+		}
+		return ctjs::value{};
+	});
+	set_method(o, "addEventListener", [n, ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
+		ev->cx = &cx;
+		if (a.size() >= 2 && a[1].is_function()) {
+			const std::string type = a[0].to_string();
+			// element "click"/"change" are targeted (fired on the hit
+			// element + its ancestors / the changed control); other
+			// types stay in the shared, globally-dispatched registry
+			// (keydown/resize/mouseover/...)
+			if (type == "click") {
+				ev->click_listeners[n].push_back(a[1]);
+			} else if (type == "change") {
+				ev->change_listeners[n].push_back(a[1]);
+			} else if (type == "input") {
+				ev->input_listeners[n].push_back(a[1]);
+			} else if (type == "submit") {
+				ev->submit_listeners[n].push_back(a[1]);
+			} else {
+				ev->listeners[type].push_back(a[1]);
+			}
+		}
+		return ctjs::value{};
+	});
+	set_method(o, "text", [n](ctjs::context &, const std::vector<ctjs::value> &) {
+		return ctjs::value{n->text};
+	});
+	set_method(o, "setText", [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+		n->text = arg_str(a, 0);
+		return ctjs::value{};
+	});
+	set_method(o, "addClass", [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (!a.empty()) { n->add_class(a[0].to_string()); }
+		return ctjs::value{};
+	});
+	set_method(o, "removeClass", [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (!a.empty()) { n->remove_class(a[0].to_string()); }
+		return ctjs::value{};
+	});
+	set_method(o, "toggleClass", [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (!a.empty()) { n->toggle_class(a[0].to_string()); }
+		return ctjs::value{};
+	});
+	set_method(o, "hasClass", [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+		return ctjs::value{!a.empty() && n->has_class(a[0].to_string())};
+	});
 	// the DOM classList API (add/remove/contains/toggle over node classes)
 	{
 		ctjs::object_t cl;
-		cl.set("add", ctjs::value::function(
-		                  [n](ctjs::context &, const std::vector<ctjs::value> & a) {
-			                  for (const auto & v : a) { n->add_class(v.to_string()); }
-			                  return ctjs::value{};
-		                  },
-		                  "add"));
-		cl.set("remove", ctjs::value::function(
-		                     [n](ctjs::context &, const std::vector<ctjs::value> & a) {
-			                     for (const auto & v : a) { n->remove_class(v.to_string()); }
-			                     return ctjs::value{};
-		                     },
-		                     "remove"));
-		cl.set("contains", ctjs::value::function(
-		                       [n](ctjs::context &, const std::vector<ctjs::value> & a) {
-			                       return ctjs::value{!a.empty() && n->has_class(a[0].to_string())};
-		                       },
-		                       "contains"));
-		cl.set("toggle", ctjs::value::function(
-		                     [n](ctjs::context &, const std::vector<ctjs::value> & a) {
-			                     if (!a.empty()) { n->toggle_class(a[0].to_string()); }
-			                     return ctjs::value{!a.empty() && n->has_class(a[0].to_string())};
-		                     },
-		                     "toggle"));
+		set_method(cl, "add", [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+			for (const auto & v : a) { n->add_class(v.to_string()); }
+			return ctjs::value{};
+		});
+		set_method(cl, "remove", [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+			for (const auto & v : a) { n->remove_class(v.to_string()); }
+			return ctjs::value{};
+		});
+		set_method(cl, "contains", [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+			return ctjs::value{!a.empty() && n->has_class(a[0].to_string())};
+		});
+		set_method(cl, "toggle", [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+			if (!a.empty()) { n->toggle_class(a[0].to_string()); }
+			return ctjs::value{!a.empty() && n->has_class(a[0].to_string())};
+		});
 		o.set("classList", ctjs::value::object(std::move(cl)));
 	}
 	// querySelector(All): a CSS-subset search rooted at this element
-	o.set("querySelector", ctjs::value::function(
-	                           [n, images, ev](ctjs::context &, const std::vector<ctjs::value> & a) -> ctjs::value {
-		                           if (a.empty()) { return ctjs::value{}; }
-		                           node * hit = n->query_selector(a[0].to_string());
-		                           return hit ? element_handle(hit, images, ev) : ctjs::value{};
-	                           },
-	                           "querySelector"));
-	o.set("getElementsByTagName", ctjs::value::function(
-	          [n, images, ev](ctjs::context &, const std::vector<ctjs::value> & a) -> ctjs::value {
-		          std::vector<ctjs::value> out;
-		          if (!a.empty()) {
-			          const std::string tag = a[0].to_string();
-			          for (const auto & c : n->children) { collect_by_tag(c.get(), tag, images, ev, out); }
-		          }
-		          return ctjs::value::array(std::move(out));
-	          },
-	          "getElementsByTagName"));
-	o.set("getElementsByClassName", ctjs::value::function(
-	          [n, images, ev](ctjs::context &, const std::vector<ctjs::value> & a) -> ctjs::value {
-		          std::vector<ctjs::value> out;
-		          if (!a.empty()) {
-			          const std::string cls = a[0].to_string();
-			          for (const auto & c : n->children) { collect_by_class(c.get(), cls, images, ev, out); }
-		          }
-		          return ctjs::value::array(std::move(out));
-	          },
-	          "getElementsByClassName"));
+	set_method(o, "querySelector", [n, images, ev](ctjs::context &, const std::vector<ctjs::value> & a) -> ctjs::value {
+		if (a.empty()) { return ctjs::value{}; }
+		node * hit = n->query_selector(a[0].to_string());
+		return hit ? element_handle(hit, images, ev) : ctjs::value{};
+	});
+	set_method(o, "getElementsByTagName", [n, images, ev](ctjs::context &, const std::vector<ctjs::value> & a) -> ctjs::value {
+		std::vector<ctjs::value> out;
+		if (!a.empty()) {
+			const std::string tag = a[0].to_string();
+			for (const auto & c : n->children) { collect_by_tag(c.get(), tag, images, ev, out); }
+		}
+		return ctjs::value::array(std::move(out));
+	});
+	set_method(o, "getElementsByClassName", [n, images, ev](ctjs::context &, const std::vector<ctjs::value> & a) -> ctjs::value {
+		std::vector<ctjs::value> out;
+		if (!a.empty()) {
+			const std::string cls = a[0].to_string();
+			for (const auto & c : n->children) { collect_by_class(c.get(), cls, images, ev, out); }
+		}
+		return ctjs::value::array(std::move(out));
+	});
 	// append(...nodes|strings): strings join the element's text (enough for
 	// the classic loading-dots idiom); nodes append as children
-	o.set("append", ctjs::value::function(
-	                    [n, ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
-		                    ev->cx = &cx;
-		                    for (const auto & v : a) {
-			                    if (v.is_object() && ev->node_of(v) != nullptr && ev->doc != nullptr) {
-				                    ev->doc->append_child(n, ev->node_of(v));
-			                    } else {
-				                    n->text += v.to_string();
-			                    }
-		                    }
-		                    return ctjs::value{};
-	                    },
-	                    "append"));
-	o.set("style", ctjs::value::function(
-	                   [n](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                   if (a.size() >= 2) {
-			                   n->inline_style.set(a[0].to_string(), a[1].to_string());
-		                   }
-		                   return ctjs::value{};
-	                   },
-	                   "style"));
-	o.set("attr", ctjs::value::function(
-	                  [n](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                  if (a.empty()) { return ctjs::value{}; }
-		                  return ctjs::value{std::string{n->attribute(a[0].to_string())}};
-	                  },
-	                  "attr"));
+	set_method(o, "append", [n, ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
+		ev->cx = &cx;
+		for (const auto & v : a) {
+			if (v.is_object() && ev->node_of(v) != nullptr && ev->doc != nullptr) {
+				ev->doc->append_child(n, ev->node_of(v));
+			} else {
+				n->text += v.to_string();
+			}
+		}
+		return ctjs::value{};
+	});
+	set_method(o, "style", [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (a.size() >= 2) {
+			n->inline_style.set(a[0].to_string(), a[1].to_string());
+		}
+		return ctjs::value{};
+	});
+	set_method(o, "attr", [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (a.empty()) { return ctjs::value{}; }
+		return ctjs::value{std::string{n->attribute(a[0].to_string())}};
+	});
 	// the element's live layout rect (viewport coordinates) - lets a
 	// script convert mouse positions into canvas-local ones
-	o.set("rect", ctjs::value::function(
-	                  [n](ctjs::context &, const std::vector<ctjs::value> &) {
-		                  ctjs::object_t r;
-		                  r.set("x", ctjs::value{static_cast<double>(n->x)});
-		                  r.set("y", ctjs::value{static_cast<double>(n->y)});
-		                  r.set("w", ctjs::value{static_cast<double>(n->w)});
-		                  r.set("h", ctjs::value{static_cast<double>(n->h)});
-		                  return ctjs::value::object(std::move(r));
-	                  },
-	                  "rect"));
+	set_method(o, "rect", [n](ctjs::context &, const std::vector<ctjs::value> &) {
+		ctjs::object_t r;
+		r.set("x", ctjs::value{static_cast<double>(n->x)});
+		r.set("y", ctjs::value{static_cast<double>(n->y)});
+		r.set("w", ctjs::value{static_cast<double>(n->w)});
+		r.set("h", ctjs::value{static_cast<double>(n->h)});
+		return ctjs::value::object(std::move(r));
+	});
 	// .onclick PROPERTY (el.onclick = fn), like the DOM: stored on the node
 	// registry (handles are transient), fired by engine::click_at on this element
 	// and — via bubbling — its descendants' clicks. The game's "PLAY AGAIN" panel
@@ -673,19 +629,15 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 		    return it != ev->onclick_handlers.end() ? it->second : ctjs::value{};
 	    }, "get onclick"));
 	// --- the standard attribute API (all elements) ---
-	o.set("getAttribute", ctjs::value::function(
-	                          [n](ctjs::context &, const std::vector<ctjs::value> & a) -> ctjs::value {
-		                          if (a.empty()) { return ctjs::value::null(); }
-		                          const std::string name = a[0].to_string();
-		                          if (!n->has_attribute(name)) { return ctjs::value::null(); }
-		                          return ctjs::value{std::string{n->attribute(name)}};
-	                          },
-	                          "getAttribute"));
-	o.set("hasAttribute", ctjs::value::function(
-	                          [n](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                          return ctjs::value{!a.empty() && n->has_attribute(a[0].to_string())};
-	                          },
-	                          "hasAttribute"));
+	set_method(o, "getAttribute", [n](ctjs::context &, const std::vector<ctjs::value> & a) -> ctjs::value {
+		if (a.empty()) { return ctjs::value::null(); }
+		const std::string name = a[0].to_string();
+		if (!n->has_attribute(name)) { return ctjs::value::null(); }
+		return ctjs::value{std::string{n->attribute(name)}};
+	});
+	set_method(o, "hasAttribute", [n](ctjs::context &, const std::vector<ctjs::value> & a) {
+		return ctjs::value{!a.empty() && n->has_attribute(a[0].to_string())};
+	});
 	// .onchange works on any element (checkbox/radio/select fire it)
 	ctjs::attach_accessor(o, "onchange", 's', ctjs::value::function(
 	    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
@@ -719,20 +671,16 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 	}
 	// --- forms: submit()/reset() + .onsubmit -----------------------------
 	if (n->tag == "form") {
-		o.set("submit", ctjs::value::function(
-		                    [ev](ctjs::context & cx, const std::vector<ctjs::value> &) {
-			                    node * en = ev->node_of(cx.current_this);
-			                    if (en != nullptr && ev->request_submit) { ev->request_submit(en); }
-			                    return ctjs::value{};
-		                    },
-		                    "submit"));
-		o.set("reset", ctjs::value::function(
-		                   [ev](ctjs::context & cx, const std::vector<ctjs::value> &) {
-			                   node * en = ev->node_of(cx.current_this);
-			                   if (en != nullptr && ev->request_reset) { ev->request_reset(en); }
-			                   return ctjs::value{};
-		                   },
-		                   "reset"));
+		set_method(o, "submit", [ev](ctjs::context & cx, const std::vector<ctjs::value> &) {
+			node * en = ev->node_of(cx.current_this);
+			if (en != nullptr && ev->request_submit) { ev->request_submit(en); }
+			return ctjs::value{};
+		});
+		set_method(o, "reset", [ev](ctjs::context & cx, const std::vector<ctjs::value> &) {
+			node * en = ev->node_of(cx.current_this);
+			if (en != nullptr && ev->request_reset) { ev->request_reset(en); }
+			return ctjs::value{};
+		});
 		ctjs::attach_accessor(o, "onsubmit", 's', ctjs::value::function(
 		    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
 			    node * en = ev->node_of(cx.current_this);
@@ -956,61 +904,50 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 			}
 		}
 	};
-	ctx->set("fillRect", ctjs::value::function(
-	                         [style_of, fill](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                         if (a.size() >= 4) {
-			                         fill(arg_i32(a, 0),
-			                              arg_i32(a, 1),
-			                              arg_i32(a, 2),
-			                              arg_i32(a, 3), style_of());
-		                         }
-		                         return ctjs::value{};
-	                         },
-	                         "fillRect"));
-	ctx->set("clear", ctjs::value::function(
-	                      [n, style_of](ctjs::context &, const std::vector<ctjs::value> &) {
-		                      for (uint32_t & p : n->pixels) { p = style_of(); }
-		                      return ctjs::value{};
-	                      },
-	                      "clear"));
-	ctx->set("putPixel", ctjs::value::function(
-	                         [put, style_of](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                         if (a.size() >= 2) {
-			                         put(arg_i32(a, 0),
-			                             arg_i32(a, 1), style_of());
-		                         }
-		                         return ctjs::value{};
-	                         },
-	                         "putPixel"));
+	set_method(ctx, "fillRect", [style_of, fill](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (a.size() >= 4) {
+			fill(arg_i32(a, 0),
+			arg_i32(a, 1),
+			arg_i32(a, 2),
+			arg_i32(a, 3), style_of());
+		}
+		return ctjs::value{};
+	});
+	set_method(ctx, "clear", [n, style_of](ctjs::context &, const std::vector<ctjs::value> &) {
+		for (uint32_t & p : n->pixels) { p = style_of(); }
+		return ctjs::value{};
+	});
+	set_method(ctx, "putPixel", [put, style_of](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (a.size() >= 2) {
+			put(arg_i32(a, 0),
+			arg_i32(a, 1), style_of());
+		}
+		return ctjs::value{};
+	});
 	// clearRect clears to TRANSPARENT (the page shows through), per spec
-	ctx->set("clearRect", ctjs::value::function(
-	                          [fill](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                          if (a.size() >= 4) {
-			                          fill(arg_i32(a, 0),
-			                               arg_i32(a, 1),
-			                               arg_i32(a, 2),
-			                               arg_i32(a, 3), 0x00000000u);
-		                          }
-		                          return ctjs::value{};
-	                          },
-	                          "clearRect"));
-	ctx->set("strokeRect",
-	         ctjs::value::function(
-	             [fill, stroke_of](ctjs::context &, const std::vector<ctjs::value> & a) {
-		             if (a.size() >= 4) {
-			             const std::int32_t x = arg_i32(a, 0);
-			             const std::int32_t y = arg_i32(a, 1);
-			             const std::int32_t w = arg_i32(a, 2);
-			             const std::int32_t h = arg_i32(a, 3);
-			             const uint32_t c = stroke_of();
-			             fill(x, y, w, 1, c);
-			             fill(x, y + h - 1, w, 1, c);
-			             fill(x, y, 1, h, c);
-			             fill(x + w - 1, y, 1, h, c);
-		             }
-		             return ctjs::value{};
-	             },
-	             "strokeRect"));
+	set_method(ctx, "clearRect", [fill](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (a.size() >= 4) {
+			fill(arg_i32(a, 0),
+			arg_i32(a, 1),
+			arg_i32(a, 2),
+			arg_i32(a, 3), 0x00000000u);
+		}
+		return ctjs::value{};
+	});
+	set_method(ctx, "strokeRect", [fill, stroke_of](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (a.size() >= 4) {
+			const std::int32_t x = arg_i32(a, 0);
+			const std::int32_t y = arg_i32(a, 1);
+			const std::int32_t w = arg_i32(a, 2);
+			const std::int32_t h = arg_i32(a, 3);
+			const uint32_t c = stroke_of();
+			fill(x, y, w, 1, c);
+			fill(x, y + h - 1, w, 1, c);
+			fill(x, y, 1, h, c);
+			fill(x + w - 1, y, 1, h, c);
+		}
+		return ctjs::value{};
+	});
 	// --- the 2D path API with a REAL transform stack. Per spec, path
 	// verbs transform their points by the CURRENT matrix as they are
 	// appended (so rasterization is matrix-free): subpaths are device-
@@ -1108,271 +1045,227 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 		const ctjs::value * v = ctx->find(name);
 		return v != nullptr && v->is_number() ? v->as_number() : fallback;
 	};
-	ctx->set("save", ctjs::value::function(
-	                     [st](ctjs::context &, const std::vector<ctjs::value> &) {
-		                     st->stack.push_back({st->a, st->b, st->c, st->d, st->e, st->f});
-		                     return ctjs::value{};
-	                     },
-	                     "save"));
-	ctx->set("restore", ctjs::value::function(
-	                        [st](ctjs::context &, const std::vector<ctjs::value> &) {
-		                        if (!st->stack.empty()) {
-			                        const auto m = st->stack.back();
-			                        st->stack.pop_back();
-			                        st->a = m[0]; st->b = m[1]; st->c = m[2];
-			                        st->d = m[3]; st->e = m[4]; st->f = m[5];
-		                        }
-		                        return ctjs::value{};
-	                        },
-	                        "restore"));
-	ctx->set("translate", ctjs::value::function(
-	                          [st](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                          if (a.size() >= 2) {
-			                          st->mul(1, 0, 0, 1, a[0].to_number(), a[1].to_number());
-		                          }
-		                          return ctjs::value{};
-	                          },
-	                          "translate"));
-	ctx->set("rotate", ctjs::value::function(
-	                       [st](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                       if (!a.empty()) {
-			                       const double t = a[0].to_number();
-			                       st->mul(std::cos(t), std::sin(t), -std::sin(t),
-			                               std::cos(t), 0, 0);
-		                       }
-		                       return ctjs::value{};
-	                       },
-	                       "rotate"));
-	ctx->set("scale", ctjs::value::function(
-	                      [st](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                      if (a.size() >= 2) {
-			                      st->mul(a[0].to_number(), 0, 0, a[1].to_number(), 0, 0);
-		                      }
-		                      return ctjs::value{};
-	                      },
-	                      "scale"));
-	ctx->set("resetTransform", ctjs::value::function(
-	                               [st](ctjs::context &, const std::vector<ctjs::value> &) {
-		                               st->a = st->d = 1;
-		                               st->b = st->c = st->e = st->f = 0;
-		                               return ctjs::value{};
-	                               },
-	                               "resetTransform"));
-	ctx->set("beginPath", ctjs::value::function(
-	                          [st](ctjs::context &, const std::vector<ctjs::value> &) {
-		                          st->subs.clear();
-		                          return ctjs::value{};
-	                          },
-	                          "beginPath"));
-	ctx->set("closePath", ctjs::value::function(
-	                          [st](ctjs::context &, const std::vector<ctjs::value> &) {
-		                          if (!st->subs.empty()) { st->subs.back().closed = true; }
-		                          return ctjs::value{};
-	                          },
-	                          "closePath"));
-	ctx->set("moveTo", ctjs::value::function(
-	                       [st](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                       if (a.size() >= 2) {
-			                       st->subs.emplace_back();
-			                       st->subs.back().pts.push_back(
-			                           st->tx(a[0].to_number(), a[1].to_number()));
-		                       }
-		                       return ctjs::value{};
-	                       },
-	                       "moveTo"));
-	ctx->set("lineTo", ctjs::value::function(
-	                       [st](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                       if (a.size() >= 2) {
-			                       st->cur().pts.push_back(
-			                           st->tx(a[0].to_number(), a[1].to_number()));
-		                       }
-		                       return ctjs::value{};
-	                       },
-	                       "lineTo"));
-	ctx->set("rect", ctjs::value::function(
-	                     [st](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                     if (a.size() >= 4) {
-			                     const double x = a[0].to_number();
-			                     const double y = a[1].to_number();
-			                     const double w = a[2].to_number();
-			                     const double h = a[3].to_number();
-			                     ctx2d::sub s;
-			                     s.pts = {st->tx(x, y), st->tx(x + w, y),
-			                              st->tx(x + w, y + h), st->tx(x, y + h)};
-			                     s.closed = true;
-			                     st->subs.push_back(std::move(s));
-		                     }
-		                     return ctjs::value{};
-	                     },
-	                     "rect"));
-	ctx->set("arc", ctjs::value::function(
-	                    [st](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                    if (a.size() >= 5) {
-			                    const double cx = a[0].to_number();
-			                    const double cy = a[1].to_number();
-			                    const double r = a[2].to_number();
-			                    double t0 = a[3].to_number();
-			                    double t1 = a[4].to_number();
-			                    const bool ccw = a.size() >= 6 && a[5].truthy();
-			                    if (!ccw && t1 < t0) { t1 += 6.283185307179586; }
-			                    if (ccw && t0 < t1) { t0 += 6.283185307179586; }
-			                    const std::int32_t steps =
-			                        std::max(8, static_cast<std::int32_t>(std::fabs(t1 - t0) * r / 2));
-			                    auto & s = st->cur();
-			                    for (std::int32_t i = 0; i <= steps; ++i) {
-				                    const double t = t0 + (t1 - t0) * i / steps;
-				                    s.pts.push_back(st->tx(cx + r * std::cos(t),
-				                                           cy + r * std::sin(t)));
-			                    }
-		                    }
-		                    return ctjs::value{};
-	                    },
-	                    "arc"));
-	ctx->set("fill", ctjs::value::function(
-	                     [st, fill_subs, style_of](ctjs::context &,
-	                                               const std::vector<ctjs::value> &) {
-		                     fill_subs(style_of());
-		                     return ctjs::value{};
-	                     },
-	                     "fill"));
-	ctx->set("stroke",
-	         ctjs::value::function(
-	             [st, thick_seg, stroke_of, num_prop](ctjs::context &,
-	                                                  const std::vector<ctjs::value> &) {
-		             const uint32_t col = stroke_of();
-		             const double w = num_prop("lineWidth", 1.0);
-		             for (const auto & s : st->subs) {
-			             const std::size_t n = s.pts.size();
-			             for (std::size_t i = 0; i + 1 < n; ++i) {
-				             thick_seg(s.pts[i].first, s.pts[i].second,
-				                       s.pts[i + 1].first, s.pts[i + 1].second, w, col);
-			             }
-			             if (s.closed && n > 2) {
-				             thick_seg(s.pts[n - 1].first, s.pts[n - 1].second,
-				                       s.pts[0].first, s.pts[0].second, w, col);
-			             }
-		             }
-		             return ctjs::value{};
-	             },
-	             "stroke"));
-	ctx->set("measureText",
-	         ctjs::value::function(
-	             [ctx](ctjs::context &, const std::vector<ctjs::value> & a) {
-		             const std::string text = arg_str(a, 0);
-		             std::int32_t px = 10;
-		             if (const ctjs::value * fv = ctx->find("font")) {
-			             const std::string spec = fv->to_string();
-			             std::int32_t v = 0;
-			             for (std::size_t i = 0; i < spec.size() && spec[i] >= '0' && spec[i] <= '9';
-			                  ++i) {
-				             v = v * 10 + (spec[i] - '0');
-			             }
-			             if (v > 0) { px = v; }
-		             }
-		             const std::int32_t scale = px >= 8 ? px / 8 : 1;
-		             ctjs::object_t m;
-		             m.set("width", ctjs::value{static_cast<double>(text.size()) * 8.0 *
-		                                        static_cast<double>(scale)});
-		             return ctjs::value::object(std::move(m));
-	             },
-	             "measureText"));
+	set_method(ctx, "save", [st](ctjs::context &, const std::vector<ctjs::value> &) {
+		st->stack.push_back({st->a, st->b, st->c, st->d, st->e, st->f});
+		return ctjs::value{};
+	});
+	set_method(ctx, "restore", [st](ctjs::context &, const std::vector<ctjs::value> &) {
+		if (!st->stack.empty()) {
+			const auto m = st->stack.back();
+			st->stack.pop_back();
+			st->a = m[0]; st->b = m[1]; st->c = m[2];
+			st->d = m[3]; st->e = m[4]; st->f = m[5];
+		}
+		return ctjs::value{};
+	});
+	set_method(ctx, "translate", [st](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (a.size() >= 2) {
+			st->mul(1, 0, 0, 1, a[0].to_number(), a[1].to_number());
+		}
+		return ctjs::value{};
+	});
+	set_method(ctx, "rotate", [st](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (!a.empty()) {
+			const double t = a[0].to_number();
+			st->mul(std::cos(t), std::sin(t), -std::sin(t),
+			std::cos(t), 0, 0);
+		}
+		return ctjs::value{};
+	});
+	set_method(ctx, "scale", [st](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (a.size() >= 2) {
+			st->mul(a[0].to_number(), 0, 0, a[1].to_number(), 0, 0);
+		}
+		return ctjs::value{};
+	});
+	set_method(ctx, "resetTransform", [st](ctjs::context &, const std::vector<ctjs::value> &) {
+		st->a = st->d = 1;
+		st->b = st->c = st->e = st->f = 0;
+		return ctjs::value{};
+	});
+	set_method(ctx, "beginPath", [st](ctjs::context &, const std::vector<ctjs::value> &) {
+		st->subs.clear();
+		return ctjs::value{};
+	});
+	set_method(ctx, "closePath", [st](ctjs::context &, const std::vector<ctjs::value> &) {
+		if (!st->subs.empty()) { st->subs.back().closed = true; }
+		return ctjs::value{};
+	});
+	set_method(ctx, "moveTo", [st](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (a.size() >= 2) {
+			st->subs.emplace_back();
+			st->subs.back().pts.push_back(
+			st->tx(a[0].to_number(), a[1].to_number()));
+		}
+		return ctjs::value{};
+	});
+	set_method(ctx, "lineTo", [st](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (a.size() >= 2) {
+			st->cur().pts.push_back(
+			st->tx(a[0].to_number(), a[1].to_number()));
+		}
+		return ctjs::value{};
+	});
+	set_method(ctx, "rect", [st](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (a.size() >= 4) {
+			const double x = a[0].to_number();
+			const double y = a[1].to_number();
+			const double w = a[2].to_number();
+			const double h = a[3].to_number();
+			ctx2d::sub s;
+			s.pts = {st->tx(x, y), st->tx(x + w, y),
+			st->tx(x + w, y + h), st->tx(x, y + h)};
+			s.closed = true;
+			st->subs.push_back(std::move(s));
+		}
+		return ctjs::value{};
+	});
+	set_method(ctx, "arc", [st](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (a.size() >= 5) {
+			const double cx = a[0].to_number();
+			const double cy = a[1].to_number();
+			const double r = a[2].to_number();
+			double t0 = a[3].to_number();
+			double t1 = a[4].to_number();
+			const bool ccw = a.size() >= 6 && a[5].truthy();
+			if (!ccw && t1 < t0) { t1 += 6.283185307179586; }
+			if (ccw && t0 < t1) { t0 += 6.283185307179586; }
+			const std::int32_t steps =
+			std::max(8, static_cast<std::int32_t>(std::fabs(t1 - t0) * r / 2));
+			auto & s = st->cur();
+			for (std::int32_t i = 0; i <= steps; ++i) {
+				const double t = t0 + (t1 - t0) * i / steps;
+				s.pts.push_back(st->tx(cx + r * std::cos(t),
+				cy + r * std::sin(t)));
+			}
+		}
+		return ctjs::value{};
+	});
+	set_method(ctx, "fill", [st, fill_subs, style_of](ctjs::context &,
+	const std::vector<ctjs::value> &) {
+		fill_subs(style_of());
+		return ctjs::value{};
+	});
+	set_method(ctx, "stroke", [st, thick_seg, stroke_of, num_prop](ctjs::context &,
+	const std::vector<ctjs::value> &) {
+		const uint32_t col = stroke_of();
+		const double w = num_prop("lineWidth", 1.0);
+		for (const auto & s : st->subs) {
+			const std::size_t n = s.pts.size();
+			for (std::size_t i = 0; i + 1 < n; ++i) {
+				thick_seg(s.pts[i].first, s.pts[i].second,
+				s.pts[i + 1].first, s.pts[i + 1].second, w, col);
+			}
+			if (s.closed && n > 2) {
+				thick_seg(s.pts[n - 1].first, s.pts[n - 1].second,
+				s.pts[0].first, s.pts[0].second, w, col);
+			}
+		}
+		return ctjs::value{};
+	});
+	set_method(ctx, "measureText", [ctx](ctjs::context &, const std::vector<ctjs::value> & a) {
+		const std::string text = arg_str(a, 0);
+		std::int32_t px = 10;
+		if (const ctjs::value * fv = ctx->find("font")) {
+			const std::string spec = fv->to_string();
+			std::int32_t v = 0;
+			for (std::size_t i = 0; i < spec.size() && spec[i] >= '0' && spec[i] <= '9';
+			++i) {
+				v = v * 10 + (spec[i] - '0');
+			}
+			if (v > 0) { px = v; }
+		}
+		const std::int32_t scale = px >= 8 ? px / 8 : 1;
+		ctjs::object_t m;
+		m.set("width", ctjs::value{static_cast<double>(text.size()) * 8.0 *
+		static_cast<double>(scale)});
+		return ctjs::value::object(std::move(m));
+	});
 	// a filled circle - not in the 2D spec, but games want one (documented
 	// extension, like drawImageRegion below)
-	ctx->set("fillCircle",
-	         ctjs::value::function(
-	             [put, style_of](ctjs::context &, const std::vector<ctjs::value> & a) {
-		             if (a.size() >= 3) {
-			             const std::int32_t cx = arg_i32(a, 0);
-			             const std::int32_t cy = arg_i32(a, 1);
-			             const std::int32_t r = arg_i32(a, 2);
-			             const uint32_t c = style_of();
-			             for (std::int32_t y = -r; y <= r; ++y) {
-				             for (std::int32_t x = -r; x <= r; ++x) {
-					             if (x * x + y * y <= r * r) { put(cx + x, cy + y, c); }
-				             }
-			             }
-		             }
-		             return ctjs::value{};
-	             },
-	             "fillCircle"));
+	set_method(ctx, "fillCircle", [put, style_of](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (a.size() >= 3) {
+			const std::int32_t cx = arg_i32(a, 0);
+			const std::int32_t cy = arg_i32(a, 1);
+			const std::int32_t r = arg_i32(a, 2);
+			const uint32_t c = style_of();
+			for (std::int32_t y = -r; y <= r; ++y) {
+				for (std::int32_t x = -r; x <= r; ++x) {
+					if (x * x + y * y <= r * r) { put(cx + x, cy + y, c); }
+				}
+			}
+		}
+		return ctjs::value{};
+	});
 	// DOM fillText: y is the BASELINE, size comes from ctx.font
 	// ("16px Arial" -> 16, default 10px), glyphs are the embedded 8x8
 	// font scaled by the integer factor px/8 (min 1)
-	ctx->set("fillText",
-	         ctjs::value::function(
-	             [ctx, put, style_of](ctjs::context &, const std::vector<ctjs::value> & a) {
-		             if (a.size() >= 3) {
-			             const std::string text = a[0].to_string();
-			             std::int32_t px = 0;
-			             if (const ctjs::value * f = ctx->find("font")) {
-				             const std::string spec = f->to_string();
-				             for (std::size_t i = 0;
-				                  i < spec.size() && spec[i] >= '0' && spec[i] <= '9';
-				                  ++i) {
-					             px = px * 10 + (spec[i] - '0');
-				             }
-			             }
-			             const std::int32_t scale = px >= 8 ? px / 8 : 1;
-			             const std::int32_t x = arg_i32(a, 1);
-			             const std::int32_t y = arg_i32(a, 2) - 8 * scale;
-			             const uint32_t c = style_of();
-			             std::int32_t pen = x;
-			             for (std::size_t ci = 0; ci < text.size();) { // decode UTF-8
-				             const char32_t ch = ctbrowser::utf8_next(text, ci);
-				             for (std::int32_t row = 0; row < 8; ++row) {
-					             for (std::int32_t col = 0; col < 8; ++col) {
-						             if (!glyph_pixel(ch, row, col)) { continue; }
-						             for (std::int32_t sy = 0; sy < scale; ++sy) {
-							             for (std::int32_t sx = 0; sx < scale; ++sx) {
-								             put(pen + col * scale + sx,
-								                 y + row * scale + sy, c);
-							             }
-						             }
-					             }
-				             }
-				             pen += 8 * scale;
-			             }
-		             }
-		             return ctjs::value{};
-	             },
-	             "fillText"));
-	ctx->set("drawImage",
-	         ctjs::value::function(
-	             [images, blit](ctjs::context &, const std::vector<ctjs::value> & a) {
-		             if (a.size() >= 3) {
-			             const std::int32_t handle = arg_i32(a, 0);
-			             const image * im = images->get(handle);
-			             if (im != nullptr) {
-				             const std::int32_t dw = a.size() >= 5 ? arg_i32(a, 3)
-				                                          : im->w;
-				             const std::int32_t dh = a.size() >= 5 ? arg_i32(a, 4)
-				                                          : im->h;
-				             blit(handle, 0, 0, im->w, im->h,
-				                  arg_i32(a, 1),
-				                  arg_i32(a, 2), dw, dh);
-			             }
-		             }
-		             return ctjs::value{};
-	             },
-	             "drawImage"));
+	set_method(ctx, "fillText", [ctx, put, style_of](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (a.size() >= 3) {
+			const std::string text = a[0].to_string();
+			std::int32_t px = 0;
+			if (const ctjs::value * f = ctx->find("font")) {
+				const std::string spec = f->to_string();
+				for (std::size_t i = 0;
+				i < spec.size() && spec[i] >= '0' && spec[i] <= '9';
+				++i) {
+					px = px * 10 + (spec[i] - '0');
+				}
+			}
+			const std::int32_t scale = px >= 8 ? px / 8 : 1;
+			const std::int32_t x = arg_i32(a, 1);
+			const std::int32_t y = arg_i32(a, 2) - 8 * scale;
+			const uint32_t c = style_of();
+			std::int32_t pen = x;
+			for (std::size_t ci = 0; ci < text.size();) { // decode UTF-8
+				const char32_t ch = ctbrowser::utf8_next(text, ci);
+				for (std::int32_t row = 0; row < 8; ++row) {
+					for (std::int32_t col = 0; col < 8; ++col) {
+						if (!glyph_pixel(ch, row, col)) { continue; }
+						for (std::int32_t sy = 0; sy < scale; ++sy) {
+							for (std::int32_t sx = 0; sx < scale; ++sx) {
+								put(pen + col * scale + sx,
+								y + row * scale + sy, c);
+							}
+						}
+					}
+				}
+				pen += 8 * scale;
+			}
+		}
+		return ctjs::value{};
+	});
+	set_method(ctx, "drawImage", [images, blit](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (a.size() >= 3) {
+			const std::int32_t handle = arg_i32(a, 0);
+			const image * im = images->get(handle);
+			if (im != nullptr) {
+				const std::int32_t dw = a.size() >= 5 ? arg_i32(a, 3)
+				: im->w;
+				const std::int32_t dh = a.size() >= 5 ? arg_i32(a, 4)
+				: im->h;
+				blit(handle, 0, 0, im->w, im->h,
+				arg_i32(a, 1),
+				arg_i32(a, 2), dw, dh);
+			}
+		}
+		return ctjs::value{};
+	});
 	// sprite sheets: source region -> destination region
-	ctx->set("drawImageRegion",
-	         ctjs::value::function(
-	             [blit](ctjs::context &, const std::vector<ctjs::value> & a) {
-		             if (a.size() >= 9) {
-			             blit(arg_i32(a, 0),
-			                  arg_i32(a, 1),
-			                  arg_i32(a, 2),
-			                  arg_i32(a, 3),
-			                  arg_i32(a, 4),
-			                  arg_i32(a, 5),
-			                  arg_i32(a, 6),
-			                  arg_i32(a, 7),
-			                  arg_i32(a, 8));
-		             }
-		             return ctjs::value{};
-	             },
-	             "drawImageRegion"));
+	set_method(ctx, "drawImageRegion", [blit](ctjs::context &, const std::vector<ctjs::value> & a) {
+		if (a.size() >= 9) {
+			blit(arg_i32(a, 0),
+			arg_i32(a, 1),
+			arg_i32(a, 2),
+			arg_i32(a, 3),
+			arg_i32(a, 4),
+			arg_i32(a, 5),
+			arg_i32(a, 6),
+			arg_i32(a, 7),
+			arg_i32(a, 8));
+		}
+		return ctjs::value{};
+	});
 	return ctjs::value{ctx};
 }
 
@@ -1394,72 +1287,54 @@ inline void collect_by_class(node * n, std::string_view cls, image_store * image
 inline ctjs::value make_document(document & doc, image_store & images, dom_events & ev) {
 	ev.doc = &doc;
 	ctjs::object_t d;
-	d.set("createElement",
-	      ctjs::value::function(
-	          [&doc, &images, &ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
-		          ev.cx = &cx;
-		          if (a.empty()) { return ctjs::value{}; }
-		          node * n = doc.create_element(a[0].to_string());
-		          return element_handle(n, &images, &ev);
-	          },
-	          "createElement"));
+	set_method(d, "createElement", [&doc, &images, &ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
+		ev.cx = &cx;
+		if (a.empty()) { return ctjs::value{}; }
+		node * n = doc.create_element(a[0].to_string());
+		return element_handle(n, &images, &ev);
+	});
 	d.set("body", ctjs::value{}); // filled below once the tree exists
 	if (node * b = doc.body()) { d.set("body", element_handle(b, &images, &ev)); }
-	d.set("getElementById",
-	      ctjs::value::function(
-	          [&doc, &images, &ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
-		          ev.cx = &cx;
-		          if (a.empty()) { return ctjs::value{}; }
-		          node * n = doc.by_id(a[0].to_string());
-		          return n != nullptr ? detail::element_handle(n, &images, &ev)
-		                              : ctjs::value{};
-	          },
-	          "getElementById"));
+	set_method(d, "getElementById", [&doc, &images, &ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
+		ev.cx = &cx;
+		if (a.empty()) { return ctjs::value{}; }
+		node * n = doc.by_id(a[0].to_string());
+		return n != nullptr ? detail::element_handle(n, &images, &ev)
+		: ctjs::value{};
+	});
 	// querySelector: CSS-subset lookups over the whole tree
-	d.set("querySelector",
-	      ctjs::value::function(
-	          [&doc, &images, &ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
-		          ev.cx = &cx;
-		          if (a.empty() || !doc.root) { return ctjs::value{}; }
-		          node * n = doc.root->query_selector(a[0].to_string());
-		          return n != nullptr ? detail::element_handle(n, &images, &ev) : ctjs::value{};
-	          },
-	          "querySelector"));
+	set_method(d, "querySelector", [&doc, &images, &ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+		ev.cx = &cx;
+		if (a.empty() || !doc.root) { return ctjs::value{}; }
+		node * n = doc.root->query_selector(a[0].to_string());
+		return n != nullptr ? detail::element_handle(n, &images, &ev) : ctjs::value{};
+	});
 	// documentElement handle (the <html> root)
 	if (doc.root) { d.set("documentElement", element_handle(doc.root.get(), &images, &ev)); }
-	d.set("getElementsByTagName", ctjs::value::function(
-	          [&doc, &images, &ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
-		          ev.cx = &cx;
-		          std::vector<ctjs::value> out;
-		          if (doc.root && !a.empty()) { collect_by_tag(doc.root.get(), a[0].to_string(), &images, &ev, out); }
-		          return ctjs::value::array(std::move(out));
-	          },
-	          "getElementsByTagName"));
-	d.set("getElementsByClassName", ctjs::value::function(
-	          [&doc, &images, &ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
-		          ev.cx = &cx;
-		          std::vector<ctjs::value> out;
-		          if (doc.root && !a.empty()) { collect_by_class(doc.root.get(), a[0].to_string(), &images, &ev, out); }
-		          return ctjs::value::array(std::move(out));
-	          },
-	          "getElementsByClassName"));
-	d.set("addEventListener",
-	      ctjs::value::function(
-	          [&ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
-		          ev.cx = &cx;
-		          if (a.size() >= 2 && a[1].is_function()) {
-			          ev.listeners[a[0].to_string()].push_back(a[1]);
-		          }
-		          return ctjs::value{};
-	          },
-	          "addEventListener"));
+	set_method(d, "getElementsByTagName", [&doc, &images, &ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+		ev.cx = &cx;
+		std::vector<ctjs::value> out;
+		if (doc.root && !a.empty()) { collect_by_tag(doc.root.get(), a[0].to_string(), &images, &ev, out); }
+		return ctjs::value::array(std::move(out));
+	});
+	set_method(d, "getElementsByClassName", [&doc, &images, &ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
+		ev.cx = &cx;
+		std::vector<ctjs::value> out;
+		if (doc.root && !a.empty()) { collect_by_class(doc.root.get(), a[0].to_string(), &images, &ev, out); }
+		return ctjs::value::array(std::move(out));
+	});
+	set_method(d, "addEventListener", [&ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
+		ev.cx = &cx;
+		if (a.size() >= 2 && a[1].is_function()) {
+			ev.listeners[a[0].to_string()].push_back(a[1]);
+		}
+		return ctjs::value{};
+	});
 	ctjs::object_t loc;
-	loc.set("reload", ctjs::value::function(
-	                      [&ev](ctjs::context &, const std::vector<ctjs::value> &) {
-		                      ev.reload = true;
-		                      return ctjs::value{};
-	                      },
-	                      "reload"));
+	set_method(loc, "reload", [&ev](ctjs::context &, const std::vector<ctjs::value> &) {
+		ev.reload = true;
+		return ctjs::value{};
+	});
 	// what the last anchor activation recorded (fragments land in hash)
 	ctjs::attach_accessor(loc, "href", 'g', ctjs::value::function(
 	    [&ev](ctjs::context &, const std::vector<ctjs::value> &) {
@@ -1508,53 +1383,40 @@ inline std::vector<ctjs::binding> dom_bindings(document & doc, std::string & tit
 		w->set("innerWidth", ctjs::value{0});
 		w->set("innerHeight", ctjs::value{0});
 		w->set("devicePixelRatio", ctjs::value{1.0});
-		w->set("addEventListener",
-		       ctjs::value::function(
-		           [&ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
-			           ev.cx = &cx;
-			           if (a.size() >= 2 && a[1].is_function()) {
-				           ev.listeners[a[0].to_string()].push_back(a[1]);
-			           }
-			           return ctjs::value{};
-		           },
-		           "addEventListener"));
+		detail::set_method(w, "addEventListener", [&ev](ctjs::context & cx, const std::vector<ctjs::value> & a) {
+			ev.cx = &cx;
+			if (a.size() >= 2 && a[1].is_function()) {
+				ev.listeners[a[0].to_string()].push_back(a[1]);
+			}
+			return ctjs::value{};
+		});
 		ctjs::object_t perf;
-		perf.set("now", ctjs::value::function(
-		                    [&ev](ctjs::context &, const std::vector<ctjs::value> &) {
-			                    return ctjs::value{ev.now_ms};
-		                    },
-		                    "now"));
+		detail::set_method(perf, "now", [&ev](ctjs::context &, const std::vector<ctjs::value> &) {
+			return ctjs::value{ev.now_ms};
+		});
 		w->set("performance", ctjs::value::object(std::move(perf)));
 		// localStorage: an in-memory Storage (a JS object backs it, so it
 		// survives location.reload); getItem returns null when absent
 		{
 			static ctjs::rc<ctjs::object_t> store = ctjs::rc<ctjs::object_t>::make();
 			ctjs::object_t ls;
-			ls.set("getItem", ctjs::value::function(
-			                      [](ctjs::context &, const std::vector<ctjs::value> & a) -> ctjs::value {
-				                      if (a.empty()) { return ctjs::value{}; }
-				                      const ctjs::value * p = store->find(a[0].to_string());
-				                      return p != nullptr ? *p : ctjs::value{};
-			                      },
-			                      "getItem"));
-			ls.set("setItem", ctjs::value::function(
-			                      [](ctjs::context &, const std::vector<ctjs::value> & a) {
-				                      if (a.size() >= 2) { store->set(a[0].to_string(), ctjs::value{a[1].to_string()}); }
-				                      return ctjs::value{};
-			                      },
-			                      "setItem"));
-			ls.set("removeItem", ctjs::value::function(
-			                         [](ctjs::context &, const std::vector<ctjs::value> & a) {
-				                         if (!a.empty()) { store->set(a[0].to_string(), ctjs::value{}); }
-				                         return ctjs::value{};
-			                         },
-			                         "removeItem"));
-			ls.set("clear", ctjs::value::function(
-			                    [](ctjs::context &, const std::vector<ctjs::value> &) {
-				                    store = ctjs::rc<ctjs::object_t>::make();
-				                    return ctjs::value{};
-			                    },
-			                    "clear"));
+			detail::set_method(ls, "getItem", [](ctjs::context &, const std::vector<ctjs::value> & a) -> ctjs::value {
+				if (a.empty()) { return ctjs::value{}; }
+				const ctjs::value * p = store->find(a[0].to_string());
+				return p != nullptr ? *p : ctjs::value{};
+			});
+			detail::set_method(ls, "setItem", [](ctjs::context &, const std::vector<ctjs::value> & a) {
+				if (a.size() >= 2) { store->set(a[0].to_string(), ctjs::value{a[1].to_string()}); }
+				return ctjs::value{};
+			});
+			detail::set_method(ls, "removeItem", [](ctjs::context &, const std::vector<ctjs::value> & a) {
+				if (!a.empty()) { store->set(a[0].to_string(), ctjs::value{}); }
+				return ctjs::value{};
+			});
+			detail::set_method(ls, "clear", [](ctjs::context &, const std::vector<ctjs::value> &) {
+				store = ctjs::rc<ctjs::object_t>::make();
+				return ctjs::value{};
+			});
 			ctjs::value lsv = ctjs::value::object(std::move(ls));
 			w->set("localStorage", lsv);
 			out.push_back({"localStorage", lsv});
@@ -1570,9 +1432,7 @@ inline std::vector<ctjs::binding> dom_bindings(document & doc, std::string & tit
 			out.push_back({"navigator", navv});
 		}
 		// scrollTo / scroll: no-op (there is no scrollable viewport)
-		w->set("scrollTo", ctjs::value::function(
-		                       [](ctjs::context &, const std::vector<ctjs::value> &) { return ctjs::value{}; },
-		                       "scrollTo"));
+		detail::set_method(w, "scrollTo", [](ctjs::context &, const std::vector<ctjs::value> &) { return ctjs::value{}; });
 		w->set("scroll", *w->find("scrollTo"));
 		// onresize: a settable slot; dispatched from engine resize handling
 		w->set("onresize", ctjs::value{});
@@ -1647,38 +1507,31 @@ inline std::vector<ctjs::binding> dom_bindings(document & doc, std::string & tit
 		         r.set("ok", ctjs::value{true});
 		         r.set("status", ctjs::value{200});
 		         r.set("url", ctjs::value{url});
-		         r.set("text", ctjs::value::function(
-		                           [body](ctjs::context &, const std::vector<ctjs::value> &) {
-			                           return ctjs::make_promise(ctjs::value{body}, false);
-		                           },
-		                           "text"));
-		         r.set("json",
-		               ctjs::value::function(
-		                   [body](ctjs::context &, const std::vector<ctjs::value> &)
-		                       -> ctjs::value {
-			                   try {
-				                   std::size_t i = 0;
-				                   ctjs::value parsed = ctjs::detail::json_value(body, i, 0);
-				                   ctjs::detail::json_ws(body, i);
-				                   if (i != body.size()) { ctjs::detail::json_fail(i); }
-				                   return ctjs::make_promise(std::move(parsed), false);
-			                   } catch (const ctjs::js_throw & ex) {
-				                   return ctjs::make_promise(ex.thrown, true);
-			                   }
-		                   },
-		                   "json"));
-		         r.set("bytes", ctjs::value::function(
-		                            [body](ctjs::context &, const std::vector<ctjs::value> &) {
-			                            ctjs::array_t bytes;
-			                            bytes.reserve(body.size());
-			                            for (const char c : body) {
-				                            bytes.push_back(ctjs::value{static_cast<double>(
-				                                static_cast<unsigned char>(c))});
-			                            }
-			                            return ctjs::make_promise(
-			                                ctjs::value::array(std::move(bytes)), false);
-		                            },
-		                            "bytes"));
+		         detail::set_method(r, "text", [body](ctjs::context &, const std::vector<ctjs::value> &) {
+			return ctjs::make_promise(ctjs::value{body}, false);
+		});
+		         detail::set_method(r, "json", [body](ctjs::context &, const std::vector<ctjs::value> &)
+		-> ctjs::value {
+			try {
+				std::size_t i = 0;
+				ctjs::value parsed = ctjs::detail::json_value(body, i, 0);
+				ctjs::detail::json_ws(body, i);
+				if (i != body.size()) { ctjs::detail::json_fail(i); }
+				return ctjs::make_promise(std::move(parsed), false);
+			} catch (const ctjs::js_throw & ex) {
+				return ctjs::make_promise(ex.thrown, true);
+			}
+		});
+		         detail::set_method(r, "bytes", [body](ctjs::context &, const std::vector<ctjs::value> &) {
+			ctjs::array_t bytes;
+			bytes.reserve(body.size());
+			for (const char c : body) {
+				bytes.push_back(ctjs::value{static_cast<double>(
+				static_cast<unsigned char>(c))});
+			}
+			return ctjs::make_promise(
+			ctjs::value::array(std::move(bytes)), false);
+		});
 		         return ctjs::make_promise(ctjs::value::object(std::move(r)), false);
 	         },
 	         "fetch")});
