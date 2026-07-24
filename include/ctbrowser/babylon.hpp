@@ -986,17 +986,20 @@ using ctjs::object_t;
 using ctjs::value;
 using objptr = ctjs::rc<object_t>;
 
-// --- small readers over JS handles
-inline double num_prop(const objptr & o, const char * k, double dflt) {
-	if (!o) { return dflt; }
-	const value * v = o->find(k);
-	return (v != nullptr && v->is_number()) ? v->as_number() : dflt;
-}
-inline objptr child_obj(const objptr & o, const char * k) {
-	if (!o) { return {}; }
-	const value * v = o->find(k);
-	return (v != nullptr && v->is_object()) ? v->as_object() : objptr{};
-}
+// --- small readers over JS handles. The generic ones (argument access,
+// property reads, `this`) are shared with the DOM bindings; babylon grew
+// its own copies first, and they live in ctbrowser::detail now.
+using ctbrowser::detail::arg_bool;
+using ctbrowser::detail::arg_fn;
+using ctbrowser::detail::arg_i32;
+using ctbrowser::detail::arg_num;
+using ctbrowser::detail::arg_obj;
+using ctbrowser::detail::arg_str;
+using ctbrowser::detail::child_obj;
+using ctbrowser::detail::num_prop;
+using ctbrowser::detail::self_of;
+
+// the babylon-shaped readers stay here - they speak r3d types
 inline r3d::vec3 read_vec3(const objptr & o, r3d::vec3 dflt) {
 	if (!o) { return dflt; }
 	return r3d::V3(num_prop(o, "x", dflt[0]), num_prop(o, "y", dflt[1]),
@@ -1007,18 +1010,6 @@ inline r3d::rgba read_color(const objptr & o, r3d::rgba dflt) {
 	return {num_prop(o, "r", dflt.r), num_prop(o, "g", dflt.g), num_prop(o, "b", dflt.b),
 	        num_prop(o, "a", dflt.a)};
 }
-inline double arg_num(const std::vector<value> & a, std::size_t i, double dflt) {
-	if (i >= a.size()) { return dflt; }
-	const double d = a[i].to_number();
-	return std::isnan(d) ? dflt : d;
-}
-inline objptr arg_obj(const std::vector<value> & a, std::size_t i) {
-	return (i < a.size() && a[i].is_object()) ? a[i].as_object() : objptr{};
-}
-inline objptr self_of(ctjs::context & cx) {
-	return cx.current_this.is_object() ? cx.current_this.as_object() : objptr{};
-}
-
 // one registered Observable callback (id lets .remove(observer) find it)
 struct observer {
 	std::int32_t id;
@@ -1767,7 +1758,7 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id)
 
 		const std::int32_t nid = static_cast<std::int32_t>(W->meshes.size());
 		auto nh = objptr::make();
-		const std::string nm = a.empty() ? std::string{} : a[0].to_string();
+		const std::string nm = arg_str(a, 0);
 		nh->set("name", value{nm});
 		nh->set("id", value{nm});
 		nh->set("__mesh", value{static_cast<double>(nid)});
@@ -1903,7 +1894,7 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id)
 	// frozen, recapture the frozen matrix from the live transforms first.
 	h->set("computeWorldMatrix", value::function([W, ix](ctjs::context &, const std::vector<value> & a) -> value {
 		if (ix >= W->meshes.size()) { return value{}; }
-		const bool force = !a.empty() && a[0].truthy();
+		const bool force = arg_bool(a, 0);
 		if (force && W->meshes[ix].frozen_world) {
 			W->meshes[ix].frozen_matrix = mesh_world_matrix(W, static_cast<std::int32_t>(ix), true);
 		}
@@ -2398,7 +2389,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 	// embedded-asset registry (same path as fetch), parse it, add its
 	// meshes/materials to the scene; returns a settled (resolved) promise.
 	auto append_scene = value::function([W, &images](ctjs::context &, const std::vector<value> & a) -> value {
-		const std::string url = a.empty() ? "" : a[0].to_string();
+		const std::string url = arg_str(a, 0);
 		const objptr scene = arg_obj(a, 1);
 		const ctbrowser::embedded_asset * hit = ctbrowser::find_asset(images.embedded, url);
 		if (hit == nullptr) {
@@ -2460,26 +2451,26 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		return make_scene(W, ev);
 	}, "Scene"));
 	B->set("ArcRotateCamera", value::function([W, &ev](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_camera_arc(W, ev, a.empty() ? "" : a[0].to_string(), arg_num(a, 1, 0), arg_num(a, 2, 1),
+		return make_camera_arc(W, ev, arg_str(a, 0), arg_num(a, 1, 0), arg_num(a, 2, 1),
 		                       arg_num(a, 3, 10), arg_obj(a, 4), arg_obj(a, 5));
 	}, "ArcRotateCamera"));
 	B->set("FreeCamera", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_camera_free(W, a.empty() ? "" : a[0].to_string(), arg_obj(a, 1), arg_obj(a, 2));
+		return make_camera_free(W, arg_str(a, 0), arg_obj(a, 1), arg_obj(a, 2));
 	}, "FreeCamera"));
 	B->set("UniversalCamera", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_camera_free(W, a.empty() ? "" : a[0].to_string(), arg_obj(a, 1), arg_obj(a, 2));
+		return make_camera_free(W, arg_str(a, 0), arg_obj(a, 1), arg_obj(a, 2));
 	}, "UniversalCamera"));
 	B->set("HemisphericLight", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_light(W, r3d::light_hemispheric, a.empty() ? "" : a[0].to_string(), read_vec3(arg_obj(a, 1), r3d::V3(0, 1, 0)), arg_obj(a, 2));
+		return make_light(W, r3d::light_hemispheric, arg_str(a, 0), read_vec3(arg_obj(a, 1), r3d::V3(0, 1, 0)), arg_obj(a, 2));
 	}, "HemisphericLight"));
 	B->set("DirectionalLight", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_light(W, r3d::light_directional, a.empty() ? "" : a[0].to_string(), read_vec3(arg_obj(a, 1), r3d::V3(0, -1, 0)), arg_obj(a, 2));
+		return make_light(W, r3d::light_directional, arg_str(a, 0), read_vec3(arg_obj(a, 1), r3d::V3(0, -1, 0)), arg_obj(a, 2));
 	}, "DirectionalLight"));
 	B->set("PointLight", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_light(W, r3d::light_directional, a.empty() ? "" : a[0].to_string(), read_vec3(arg_obj(a, 1), r3d::V3(0, -1, 0)), arg_obj(a, 2));
+		return make_light(W, r3d::light_directional, arg_str(a, 0), read_vec3(arg_obj(a, 1), r3d::V3(0, -1, 0)), arg_obj(a, 2));
 	}, "PointLight"));
 	B->set("StandardMaterial", value::function([](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_material(a.empty() ? "" : a[0].to_string());
+		return make_material(arg_str(a, 0));
 	}, "StandardMaterial"));
 
 	// MeshBuilder (object of factory statics)
@@ -2487,37 +2478,37 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 	mb.set("CreateBox", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
 		const objptr o = arg_obj(a, 1);
 		const double sz = opt(o, "size", 1.0);
-		return make_mesh(W, r3d::make_box(sz), a.empty() ? "" : a[0].to_string(), true, arg_obj(a, 2));
+		return make_mesh(W, r3d::make_box(sz), arg_str(a, 0), true, arg_obj(a, 2));
 	}, "CreateBox"));
 	mb.set("CreateSphere", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
 		const objptr o = arg_obj(a, 1);
 		return make_mesh(W, r3d::make_sphere(opt(o, "diameter", 1.0), static_cast<std::int32_t>(opt(o, "segments", 16))),
-		                 a.empty() ? "" : a[0].to_string(), true, arg_obj(a, 2));
+		                 arg_str(a, 0), true, arg_obj(a, 2));
 	}, "CreateSphere"));
 	mb.set("CreateGround", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
 		const objptr o = arg_obj(a, 1);
 		return make_mesh(W, r3d::make_ground(opt(o, "width", 1.0), opt(o, "height", 1.0)),
-		                 a.empty() ? "" : a[0].to_string(), false, arg_obj(a, 2));
+		                 arg_str(a, 0), false, arg_obj(a, 2));
 	}, "CreateGround"));
 	mb.set("CreateCylinder", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
 		const objptr o = arg_obj(a, 1);
 		return make_mesh(W, r3d::make_cylinder(opt(o, "height", 2.0), opt(o, "diameter", 1.0), static_cast<std::int32_t>(opt(o, "tessellation", 24))),
-		                 a.empty() ? "" : a[0].to_string(), true, arg_obj(a, 2));
+		                 arg_str(a, 0), true, arg_obj(a, 2));
 	}, "CreateCylinder"));
 	B->set("MeshBuilder", value::object(std::move(mb)));
 
 	// legacy Mesh.Create* (positional args)
 	object_t mesh;
 	mesh.set("CreateBox", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_mesh(W, r3d::make_box(arg_num(a, 1, 1)), a.empty() ? "" : a[0].to_string(), true, arg_obj(a, 2));
+		return make_mesh(W, r3d::make_box(arg_num(a, 1, 1)), arg_str(a, 0), true, arg_obj(a, 2));
 	}, "CreateBox"));
 	mesh.set("CreateSphere", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_mesh(W, r3d::make_sphere(arg_num(a, 2, 1), static_cast<std::int32_t>(arg_num(a, 1, 16))),
-		                 a.empty() ? "" : a[0].to_string(), true, arg_obj(a, 3));
+		                 arg_str(a, 0), true, arg_obj(a, 3));
 	}, "CreateSphere"));
 	mesh.set("CreateGround", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_mesh(W, r3d::make_ground(arg_num(a, 1, 1), arg_num(a, 2, 1)),
-		                 a.empty() ? "" : a[0].to_string(), false, arg_obj(a, 4));
+		                 arg_str(a, 0), false, arg_obj(a, 4));
 	}, "CreateGround"));
 	B->set("Mesh", value::object(std::move(mesh)));
 
@@ -2568,7 +2559,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		auto o = objptr::make();
 		const std::string url = a.size() > 1 ? a[1].to_string() : std::string{};
 		const bool loop = a.size() > 4 && a[4].is_object() && num_prop(a[4].as_object(), "loop", 0) != 0;
-		o->set("name", value{a.empty() ? std::string{} : a[0].to_string()});
+		o->set("name", value{arg_str(a, 0)});
 		o->set("isPlaying", value{false});
 		o->set("isReady", value{true});
 		o->set("loop", value{loop});
@@ -2728,7 +2719,7 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 	}, "SpriteManager"));
 	B->set("Sprite", value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
 		auto o = objptr::make();
-		o->set("name", value{a.empty() ? std::string{} : a[0].to_string()});
+		o->set("name", value{arg_str(a, 0)});
 		o->set("position", make_vector3(0, 0, 0));
 		o->set("color", make_color4(1, 1, 1, 1));
 		o->set("size", value{1.0});

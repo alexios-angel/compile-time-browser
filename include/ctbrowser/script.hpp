@@ -72,6 +72,54 @@ inline std::string error_trace(const ctjs::value & v) {
 	}
 	return ctjs::error_to_string(v);
 }
+
+// --- JS argument readers ---------------------------------------------
+// Every host native takes `const std::vector<value> &` and has to cope
+// with arguments that are missing or of the wrong type. That policy used
+// to be open-coded at ~150 sites (and independently, with a NaN guard, in
+// babylon); this is the one place it lives now.
+//
+// arg_num's NaN guard is the important one: a script passing a
+// non-numeric value makes to_number() return NaN, and casting NaN to an
+// integer is undefined behavior. Defaulting instead keeps the natives
+// total over every input a script can hand them.
+inline std::string arg_str(const std::vector<ctjs::value> & a, std::size_t i) {
+	return i < a.size() ? a[i].to_string() : std::string{};
+}
+inline double arg_num(const std::vector<ctjs::value> & a, std::size_t i, double dflt = 0.0) {
+	if (i >= a.size()) { return dflt; }
+	const double d = a[i].to_number();
+	return std::isnan(d) ? dflt : d;
+}
+inline std::int32_t arg_i32(const std::vector<ctjs::value> & a, std::size_t i,
+                            std::int32_t dflt = 0) {
+	return static_cast<std::int32_t>(arg_num(a, i, static_cast<double>(dflt)));
+}
+inline bool arg_bool(const std::vector<ctjs::value> & a, std::size_t i) {
+	return i < a.size() && a[i].truthy();
+}
+inline ctjs::rc<ctjs::object_t> arg_obj(const std::vector<ctjs::value> & a, std::size_t i) {
+	return (i < a.size() && a[i].is_object()) ? a[i].as_object() : ctjs::rc<ctjs::object_t>{};
+}
+inline bool arg_fn(const std::vector<ctjs::value> & a, std::size_t i) {
+	return i < a.size() && a[i].is_function();
+}
+
+// a named property read off a JS object, with a default
+inline double num_prop(const ctjs::rc<ctjs::object_t> & o, const char * k, double dflt) {
+	if (!o) { return dflt; }
+	const ctjs::value * v = o->find(k);
+	return (v != nullptr && v->is_number()) ? v->as_number() : dflt;
+}
+inline ctjs::rc<ctjs::object_t> child_obj(const ctjs::rc<ctjs::object_t> & o, const char * k) {
+	if (!o) { return {}; }
+	const ctjs::value * v = o->find(k);
+	return (v != nullptr && v->is_object()) ? v->as_object() : ctjs::rc<ctjs::object_t>{};
+}
+// `this` inside a native, when it is an object
+inline ctjs::rc<ctjs::object_t> self_of(ctjs::context & cx) {
+	return cx.current_this.is_object() ? cx.current_this.as_object() : ctjs::rc<ctjs::object_t>{};
+}
 } // namespace detail
 
 // script-registered callbacks (addEventListener / requestAnimationFrame)
@@ -481,7 +529,7 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 	                  "text"));
 	o.set("setText", ctjs::value::function(
 	                     [n](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                     n->text = a.empty() ? std::string{} : a[0].to_string();
+		                     n->text = arg_str(a, 0);
 		                     return ctjs::value{};
 	                     },
 	                     "setText"));
@@ -806,7 +854,7 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 		ctjs::attach_accessor(o, "selectedIndex", 's', ctjs::value::function(
 		    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
 			    node * sn = ev->node_of(cx.current_this);
-			    if (sn != nullptr && !a.empty()) { sn->select_index = static_cast<std::int32_t>(a[0].to_number()); }
+			    if (sn != nullptr && !a.empty()) { sn->select_index = arg_i32(a, 0); }
 			    return ctjs::value{};
 		    }, "set selectedIndex"));
 	} else if (n->tag == "option") {
@@ -819,7 +867,7 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 		ctjs::attach_accessor(o, "selected", 's', ctjs::value::function(
 		    [ev](ctjs::context & cx, const std::vector<ctjs::value> & a) -> ctjs::value {
 			    node * on = ev->node_of(cx.current_this);
-			    if (on != nullptr && on->parent != nullptr && on->parent->is_select() && !a.empty() && a[0].truthy()) {
+			    if (on != nullptr && on->parent != nullptr && on->parent->is_select() && arg_bool(a, 0)) {
 				    node * sn = on->parent;
 				    std::int32_t k = 0;
 				    for (const auto & c : sn->children) {
@@ -911,10 +959,10 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	ctx->set("fillRect", ctjs::value::function(
 	                         [style_of, fill](ctjs::context &, const std::vector<ctjs::value> & a) {
 		                         if (a.size() >= 4) {
-			                         fill(static_cast<std::int32_t>(a[0].to_number()),
-			                              static_cast<std::int32_t>(a[1].to_number()),
-			                              static_cast<std::int32_t>(a[2].to_number()),
-			                              static_cast<std::int32_t>(a[3].to_number()), style_of());
+			                         fill(arg_i32(a, 0),
+			                              arg_i32(a, 1),
+			                              arg_i32(a, 2),
+			                              arg_i32(a, 3), style_of());
 		                         }
 		                         return ctjs::value{};
 	                         },
@@ -928,8 +976,8 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	ctx->set("putPixel", ctjs::value::function(
 	                         [put, style_of](ctjs::context &, const std::vector<ctjs::value> & a) {
 		                         if (a.size() >= 2) {
-			                         put(static_cast<std::int32_t>(a[0].to_number()),
-			                             static_cast<std::int32_t>(a[1].to_number()), style_of());
+			                         put(arg_i32(a, 0),
+			                             arg_i32(a, 1), style_of());
 		                         }
 		                         return ctjs::value{};
 	                         },
@@ -938,10 +986,10 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	ctx->set("clearRect", ctjs::value::function(
 	                          [fill](ctjs::context &, const std::vector<ctjs::value> & a) {
 		                          if (a.size() >= 4) {
-			                          fill(static_cast<std::int32_t>(a[0].to_number()),
-			                               static_cast<std::int32_t>(a[1].to_number()),
-			                               static_cast<std::int32_t>(a[2].to_number()),
-			                               static_cast<std::int32_t>(a[3].to_number()), 0x00000000u);
+			                          fill(arg_i32(a, 0),
+			                               arg_i32(a, 1),
+			                               arg_i32(a, 2),
+			                               arg_i32(a, 3), 0x00000000u);
 		                          }
 		                          return ctjs::value{};
 	                          },
@@ -950,10 +998,10 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	         ctjs::value::function(
 	             [fill, stroke_of](ctjs::context &, const std::vector<ctjs::value> & a) {
 		             if (a.size() >= 4) {
-			             const std::int32_t x = static_cast<std::int32_t>(a[0].to_number());
-			             const std::int32_t y = static_cast<std::int32_t>(a[1].to_number());
-			             const std::int32_t w = static_cast<std::int32_t>(a[2].to_number());
-			             const std::int32_t h = static_cast<std::int32_t>(a[3].to_number());
+			             const std::int32_t x = arg_i32(a, 0);
+			             const std::int32_t y = arg_i32(a, 1);
+			             const std::int32_t w = arg_i32(a, 2);
+			             const std::int32_t h = arg_i32(a, 3);
 			             const uint32_t c = stroke_of();
 			             fill(x, y, w, 1, c);
 			             fill(x, y + h - 1, w, 1, c);
@@ -1210,7 +1258,7 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	ctx->set("measureText",
 	         ctjs::value::function(
 	             [ctx](ctjs::context &, const std::vector<ctjs::value> & a) {
-		             const std::string text = a.empty() ? "" : a[0].to_string();
+		             const std::string text = arg_str(a, 0);
 		             std::int32_t px = 10;
 		             if (const ctjs::value * fv = ctx->find("font")) {
 			             const std::string spec = fv->to_string();
@@ -1234,9 +1282,9 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	         ctjs::value::function(
 	             [put, style_of](ctjs::context &, const std::vector<ctjs::value> & a) {
 		             if (a.size() >= 3) {
-			             const std::int32_t cx = static_cast<std::int32_t>(a[0].to_number());
-			             const std::int32_t cy = static_cast<std::int32_t>(a[1].to_number());
-			             const std::int32_t r = static_cast<std::int32_t>(a[2].to_number());
+			             const std::int32_t cx = arg_i32(a, 0);
+			             const std::int32_t cy = arg_i32(a, 1);
+			             const std::int32_t r = arg_i32(a, 2);
 			             const uint32_t c = style_of();
 			             for (std::int32_t y = -r; y <= r; ++y) {
 				             for (std::int32_t x = -r; x <= r; ++x) {
@@ -1265,8 +1313,8 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 				             }
 			             }
 			             const std::int32_t scale = px >= 8 ? px / 8 : 1;
-			             const std::int32_t x = static_cast<std::int32_t>(a[1].to_number());
-			             const std::int32_t y = static_cast<std::int32_t>(a[2].to_number()) - 8 * scale;
+			             const std::int32_t x = arg_i32(a, 1);
+			             const std::int32_t y = arg_i32(a, 2) - 8 * scale;
 			             const uint32_t c = style_of();
 			             std::int32_t pen = x;
 			             for (std::size_t ci = 0; ci < text.size();) { // decode UTF-8
@@ -1292,16 +1340,16 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	         ctjs::value::function(
 	             [images, blit](ctjs::context &, const std::vector<ctjs::value> & a) {
 		             if (a.size() >= 3) {
-			             const std::int32_t handle = static_cast<std::int32_t>(a[0].to_number());
+			             const std::int32_t handle = arg_i32(a, 0);
 			             const image * im = images->get(handle);
 			             if (im != nullptr) {
-				             const std::int32_t dw = a.size() >= 5 ? static_cast<std::int32_t>(a[3].to_number())
+				             const std::int32_t dw = a.size() >= 5 ? arg_i32(a, 3)
 				                                          : im->w;
-				             const std::int32_t dh = a.size() >= 5 ? static_cast<std::int32_t>(a[4].to_number())
+				             const std::int32_t dh = a.size() >= 5 ? arg_i32(a, 4)
 				                                          : im->h;
 				             blit(handle, 0, 0, im->w, im->h,
-				                  static_cast<std::int32_t>(a[1].to_number()),
-				                  static_cast<std::int32_t>(a[2].to_number()), dw, dh);
+				                  arg_i32(a, 1),
+				                  arg_i32(a, 2), dw, dh);
 			             }
 		             }
 		             return ctjs::value{};
@@ -1312,15 +1360,15 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	         ctjs::value::function(
 	             [blit](ctjs::context &, const std::vector<ctjs::value> & a) {
 		             if (a.size() >= 9) {
-			             blit(static_cast<std::int32_t>(a[0].to_number()),
-			                  static_cast<std::int32_t>(a[1].to_number()),
-			                  static_cast<std::int32_t>(a[2].to_number()),
-			                  static_cast<std::int32_t>(a[3].to_number()),
-			                  static_cast<std::int32_t>(a[4].to_number()),
-			                  static_cast<std::int32_t>(a[5].to_number()),
-			                  static_cast<std::int32_t>(a[6].to_number()),
-			                  static_cast<std::int32_t>(a[7].to_number()),
-			                  static_cast<std::int32_t>(a[8].to_number()));
+			             blit(arg_i32(a, 0),
+			                  arg_i32(a, 1),
+			                  arg_i32(a, 2),
+			                  arg_i32(a, 3),
+			                  arg_i32(a, 4),
+			                  arg_i32(a, 5),
+			                  arg_i32(a, 6),
+			                  arg_i32(a, 7),
+			                  arg_i32(a, 8));
 		             }
 		             return ctjs::value{};
 	             },
@@ -1571,7 +1619,7 @@ inline std::vector<ctjs::binding> dom_bindings(document & doc, std::string & tit
 	out.push_back({"alert",
 	               ctjs::value::function(
 	                   [&ev](ctjs::context &, const std::vector<ctjs::value> & a) {
-		                   const std::string msg = a.empty() ? "" : a[0].to_string();
+		                   const std::string msg = detail::arg_str(a, 0);
 		                   ev.alerts.push_back(msg);
 		                   std::fprintf(stderr, "ctbrowser: alert: %s\n", msg.c_str());
 		                   return ctjs::value{};
@@ -1588,7 +1636,7 @@ inline std::vector<ctjs::binding> dom_bindings(document & doc, std::string & tit
 		         // this returns is already settled - which is exactly the
 		         // subset ctjs promises implement. A URL that was not (or
 		         // could not be) baked in rejects like a network failure.
-		         const std::string url = a.empty() ? "" : a[0].to_string();
+		         const std::string url = detail::arg_str(a, 0);
 		         const embedded_asset * hit = find_asset(images.embedded, url);
 		         if (hit == nullptr) {
 			         return ctjs::make_promise(
