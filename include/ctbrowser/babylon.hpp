@@ -18,12 +18,14 @@
 // flat/textured, z-buffered, perspective 3D and basic ArcRotate mouse
 // orbit. glTF/GLB models load (SceneLoader.ImportMeshAsync) with their
 // baseColor TEXTURES (PNG/JPEG, decoded at runtime and sampled with
-// perspective-correct UVs). INTENTIONALLY OUT OF SCOPE: PBR lighting,
-// physics, particles, post-processing, shadows, animations, GUI,
-// Observables, WebGL/shader parity. Unknown APIs are simply undefined;
-// a few commonly-probed ones are harmless no-ops.
+// perspective-correct UVs). Also modeled: Observables (scene/mesh
+// onBefore/AfterRenderObservable), BABYLON.GUI TextBlocks over an
+// AdvancedDynamicTexture, and sprites - all drawn as a 2D overlay on the
+// 3D pass. INTENTIONALLY OUT OF SCOPE: PBR lighting, physics, particles,
+// post-processing, shadows, animations, WebGL/shader parity. Unknown APIs
+// are simply undefined; a few commonly-probed ones are harmless no-ops.
 //
-// Math uses Boost.QVM (header-only). The renderer (namespace r3d) is
+// Math uses GLM (header-only; NO Boost). The renderer (namespace r3d) is
 // pure C++ with no ctjs/DOM dependency and operates on a raw pixel span,
 // so it is unit-testable in isolation; define CTBROWSER_BABYLON_RENDER_ONLY
 // before including to get just the renderer (no bindings).

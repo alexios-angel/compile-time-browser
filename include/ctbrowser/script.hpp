@@ -19,7 +19,6 @@
 #include <functional>
 #include <map>
 #include <memory>
-#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -891,8 +890,8 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 		}
 	};
 	// nearest-neighbour blit with alpha test (a == 0 skips the pixel)
-	const auto blit = [n, images, put](std::int32_t handle, std::int32_t sx, std::int32_t sy, std::int32_t sw, std::int32_t sh, std::int32_t dx,
-	                                   std::int32_t dy, std::int32_t dw, std::int32_t dh) {
+	const auto blit = [images, put](std::int32_t handle, std::int32_t sx, std::int32_t sy, std::int32_t sw, std::int32_t sh, std::int32_t dx,
+	                                std::int32_t dy, std::int32_t dw, std::int32_t dh) {
 		const image * im = images->get(handle);
 		if (im == nullptr || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) { return; }
 		for (std::int32_t py = 0; py < dh; ++py) {
@@ -908,7 +907,6 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 				put(dx + px, dy + py, argb);
 			}
 		}
-		(void)n;
 	};
 	ctx->set("fillRect", ctjs::value::function(
 	                         [style_of, fill](ctjs::context &, const std::vector<ctjs::value> & a) {

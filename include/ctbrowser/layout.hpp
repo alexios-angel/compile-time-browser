@@ -443,14 +443,12 @@ struct layout_pass {
 				box_w = tw + p.left + p.right + 2;
 			} else if (n.is_select()) {
 				const font_spec bfs = font_spec_of(&n);
-				node * sel = n.nth_option(n.selected_option());
 				std::int32_t widest = 0;
 				for (const auto & c : n.children) { // size to the widest option
 					if (c->tag != "option") { continue; }
 					const std::int32_t w2 = text_width(utf8_to_utf32(trimmed(c->text)), font_px, bfs);
 					if (w2 > widest) { widest = w2; }
 				}
-				(void)sel;
 				box_w = widest + font_px + p.left + p.right + 4; // + the arrow
 			}
 		}
