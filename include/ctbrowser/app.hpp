@@ -107,6 +107,15 @@ struct ttf_session {
 };
 #endif
 
+// strip CSS quoting and surrounding spaces off a font-family name or a
+// url(...) payload - both arrive quoted, unquoted or padded
+inline std::string unquote(std::string_view v) {
+	constexpr std::string_view trim = " \t\"'";
+	const std::size_t b = v.find_first_not_of(trim);
+	if (b == std::string_view::npos) { return {}; }
+	return std::string{v.substr(b, v.find_last_not_of(trim) - b + 1)};
+}
+
 // Resolve an asset path independently of the CURRENT DIRECTORY: try it
 // as-is (cwd), then relative to the executable's directory, then to
 // its parent. A game must find its sprites no matter where it was
@@ -124,12 +133,20 @@ inline std::string resolve_asset(const std::string & path) {
 	return {};
 }
 
+// paint_cmd carries 0xAARRGGBB; SDL wants the channels apart. This
+// unpacking appeared at every place a paint reached the renderer.
+constexpr SDL_Color sdl_color_of(std::uint32_t argb) noexcept {
+	return SDL_Color{static_cast<Uint8>((argb >> 16) & 0xFF), static_cast<Uint8>((argb >> 8) & 0xFF),
+	                 static_cast<Uint8>(argb & 0xFF), static_cast<Uint8>((argb >> 24) & 0xFF)};
+}
+inline void set_draw_color(SDL_Renderer * r, std::uint32_t argb) {
+	const SDL_Color c = sdl_color_of(argb);
+	SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
+}
+
 inline void draw_text(SDL_Renderer * r, const paint_cmd & cmd) {
 	const float scale = static_cast<float>(cmd.font_px) / 8.0f;
-	SDL_SetRenderDrawColor(r, static_cast<Uint8>((cmd.argb >> 16) & 0xFF),
-	                       static_cast<Uint8>((cmd.argb >> 8) & 0xFF),
-	                       static_cast<Uint8>(cmd.argb & 0xFF),
-	                       static_cast<Uint8>((cmd.argb >> 24) & 0xFF));
+	set_draw_color(r, cmd.argb);
 	float pen_x = static_cast<float>(cmd.x);
 	const float pen_y = static_cast<float>(cmd.y);
 	for (const char32_t c : cmd.text) { // UTF-32 code points
@@ -154,6 +171,31 @@ inline void draw_text(SDL_Renderer * r, const paint_cmd & cmd) {
 #ifdef CTBROWSER_WITH_TTF
 
 using font_ptr = std::unique_ptr<TTF_Font, sdl_deleter<TTF_CloseFont>>;
+
+// The typefaces fonts.hpp embeds: three generic families in four styles
+// each, keyed by their asset name. This was twelve near-identical call
+// lines; as a table the pattern (and any gap in it) is visible at a
+// glance. `key` is NUL-terminated - find_asset takes a C string.
+struct default_face {
+	std::string_view key;
+	std::string_view family;
+	bool bold;
+	bool italic;
+};
+inline constexpr std::array<default_face, 12> default_faces{{
+    {"ctbrowser:font/serif-regular", "serif", false, false},
+    {"ctbrowser:font/serif-bold", "serif", true, false},
+    {"ctbrowser:font/serif-italic", "serif", false, true},
+    {"ctbrowser:font/serif-bolditalic", "serif", true, true},
+    {"ctbrowser:font/sans-regular", "sans-serif", false, false},
+    {"ctbrowser:font/sans-bold", "sans-serif", true, false},
+    {"ctbrowser:font/sans-italic", "sans-serif", false, true},
+    {"ctbrowser:font/sans-bolditalic", "sans-serif", true, true},
+    {"ctbrowser:font/mono-regular", "monospace", false, false},
+    {"ctbrowser:font/mono-bold", "monospace", true, false},
+    {"ctbrowser:font/mono-italic", "monospace", false, true},
+    {"ctbrowser:font/mono-bolditalic", "monospace", true, true},
+}};
 
 // TrueType page text: fonts opened per size, glyphs rendered white
 // and tinted with a color mod, textures cached per (text, size)
@@ -288,10 +330,9 @@ struct ttf_text {
 			t = owned.get();
 			cache.emplace(key, std::move(owned));
 		}
-		SDL_SetTextureColorMod(t, static_cast<Uint8>((cmd.argb >> 16) & 0xFF),
-		                       static_cast<Uint8>((cmd.argb >> 8) & 0xFF),
-		                       static_cast<Uint8>(cmd.argb & 0xFF));
-		SDL_SetTextureAlphaMod(t, static_cast<Uint8>((cmd.argb >> 24) & 0xFF));
+		const SDL_Color tint = sdl_color_of(cmd.argb);
+		SDL_SetTextureColorMod(t, tint.r, tint.g, tint.b);
+		SDL_SetTextureAlphaMod(t, tint.a);
 		float tw = 0, th = 0;
 		SDL_GetTextureSize(t, &tw, &th);
 		const SDL_FRect dst{static_cast<float>(cmd.x), static_cast<float>(cmd.y), tw, th};
@@ -303,7 +344,7 @@ struct ttf_text {
 
 // find a usable font when none was configured
 inline std::string probe_font() {
-	static const char * candidates[] = {
+	static constexpr std::array<std::string_view, 5> candidates{
 	    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 	    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
 	    "/usr/share/fonts/TTF/DejaVuSans.ttf",
@@ -311,10 +352,10 @@ inline std::string probe_font() {
 	    "C:\\Windows\\Fonts\\arial.ttf",
 	};
 	std::error_code ignored;
-	for (const char * c : candidates) {
-		if (std::filesystem::exists(c, ignored)) { return c; }
-	}
-	return {};
+	const auto hit = std::ranges::find_if(candidates, [&](std::string_view c) {
+		return std::filesystem::exists(c, ignored);
+	});
+	return hit != candidates.end() ? std::string{*hit} : std::string{};
 }
 
 #endif // CTBROWSER_WITH_TTF
@@ -525,43 +566,24 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 	if (ttf_lib.ok) {
 		// 1) the embedded default faces (fonts.hpp): serif/sans/mono in
 		// four styles each, registered under the generic family names
-		{
-			const auto reg = [&](const char * key, const char * fam, bool b, bool i) {
-				if (const embedded_asset * a = find_asset(&e.assets, key)) {
-					ttf.register_face(fam, b, i, {a->data, a->size, {}});
-				}
-			};
-			reg("ctbrowser:font/serif-regular", "serif", false, false);
-			reg("ctbrowser:font/serif-bold", "serif", true, false);
-			reg("ctbrowser:font/serif-italic", "serif", false, true);
-			reg("ctbrowser:font/serif-bolditalic", "serif", true, true);
-			reg("ctbrowser:font/sans-regular", "sans-serif", false, false);
-			reg("ctbrowser:font/sans-bold", "sans-serif", true, false);
-			reg("ctbrowser:font/sans-italic", "sans-serif", false, true);
-			reg("ctbrowser:font/sans-bolditalic", "sans-serif", true, true);
-			reg("ctbrowser:font/mono-regular", "monospace", false, false);
-			reg("ctbrowser:font/mono-bold", "monospace", true, false);
-			reg("ctbrowser:font/mono-italic", "monospace", false, true);
-			reg("ctbrowser:font/mono-bolditalic", "monospace", true, true);
+		for (const detail::default_face & f : detail::default_faces) {
+			if (const embedded_asset * a = find_asset(&e.assets, f.key.data())) {
+				ttf.register_face(f.family, f.bold, f.italic, {a->data, a->size, {}});
+			}
 		}
 		// 2) every page @font-face: family + src (embedded copy preferred,
 		// else resolved like any asset; a public-root "/x" also tried
 		// repo-relative) + optional font-weight/font-style descriptors -
 		// a page can declare MANY families and variants, all live at once
 		for (const auto & ff : e.font_faces()) {
-			const std::string fam{ff.get("font-family")};
-			if (fam.empty()) { continue; }
-			std::string fam_clean = fam;
-			while (!fam_clean.empty() && (fam_clean.front() == '"' || fam_clean.front() == '\'')) { fam_clean.erase(fam_clean.begin()); }
-			while (!fam_clean.empty() && (fam_clean.back() == '"' || fam_clean.back() == '\'')) { fam_clean.pop_back(); }
-			std::string src{ff.get("src")};
+			const std::string fam_clean = detail::unquote(ff.get("font-family"));
+			if (fam_clean.empty()) { continue; }
+			const std::string src{ff.get("src")};
 			const std::size_t up = src.find("url(");
 			if (up == std::string::npos) { continue; }
 			const std::size_t s = up + 4, en = src.find(')', s);
 			if (en == std::string::npos) { continue; }
-			std::string path = src.substr(s, en - s);
-			while (!path.empty() && (path.front() == ' ' || path.front() == '"' || path.front() == '\'')) { path.erase(path.begin()); }
-			while (!path.empty() && (path.back() == ' ' || path.back() == '"' || path.back() == '\'')) { path.pop_back(); }
+			const std::string path = detail::unquote(src.substr(s, en - s));
 			const std::string w{ff.get("font-weight")};
 			const std::string st{ff.get("font-style")};
 			const bool fb = w.find("bold") != std::string::npos || w.find("700") != std::string::npos ||
@@ -594,6 +616,16 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 	bool running = true;
 
 	bool in_render = false;
+	// The presentation size: a fixed logical resolution when one is
+	// configured (letterboxed), else whatever the window currently is.
+	// render_one needs this twice - once to keep the engine viewport in
+	// sync, once to lay out - and the two must not drift apart.
+	const auto view_size = [&opts, window] {
+		std::pair<std::int32_t, std::int32_t> wh{opts.width, opts.height};
+		if (opts.logical_w > 0) { wh = {opts.logical_w, opts.logical_h}; }
+		else { SDL_GetWindowSize(window, &wh.first, &wh.second); }
+		return wh;
+	};
 	// one full frame: fullscreen, viewport (+ resize event), tick, layout,
 	// paint. Factored out so the live-resize event watch below can drive it
 	// while the OS modal resize loop has our while() blocked.
@@ -609,9 +641,7 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 		// a size change fires a DOM "resize" event so scripts can react
 		// (BabylonJS: window.addEventListener('resize', ()=>engine.resize()))
 		{
-			std::int32_t vw = opts.width, vh = opts.height;
-			if (opts.logical_w > 0) { vw = opts.logical_w; vh = opts.logical_h; }
-			else { SDL_GetWindowSize(window, &vw, &vh); }
+			const auto [vw, vh] = view_size();
 			e.resize_viewport(vw, vh);
 		}
 
@@ -634,31 +664,16 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 			if (c != nullptr) { SDL_SetCursor(c); }
 		}
 
-		std::int32_t view_w = opts.width;
-		std::int32_t view_h = opts.height;
-		if (opts.logical_w > 0) {
-			view_w = opts.logical_w;
-			view_h = opts.logical_h;
-		} else {
-			SDL_GetWindowSize(window, &view_w, &view_h);
-		}
+		const auto [view_w, view_h] = view_size();
 		const std::vector<paint_cmd> paints = e.frame(view_w);
 
-		if (opts.clear_white) {
-			SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-		} else {
-			SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-		}
+		detail::set_draw_color(renderer, opts.clear_white ? 0xFFFFFFFFu : 0xFF000000u);
 		SDL_RenderClear(renderer);
 
 		for (const paint_cmd & cmd : paints) {
 			switch (cmd.what) {
 				case paint_cmd::kind::box: {
-					SDL_SetRenderDrawColor(renderer,
-					                       static_cast<Uint8>((cmd.argb >> 16) & 0xFF),
-					                       static_cast<Uint8>((cmd.argb >> 8) & 0xFF),
-					                       static_cast<Uint8>(cmd.argb & 0xFF),
-					                       static_cast<Uint8>((cmd.argb >> 24) & 0xFF));
+					detail::set_draw_color(renderer, cmd.argb);
 					const SDL_FRect r{static_cast<float>(cmd.x), static_cast<float>(cmd.y),
 					                  static_cast<float>(cmd.w), static_cast<float>(cmd.h)};
 					SDL_RenderFillRect(renderer, &r);
