@@ -904,6 +904,39 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 	return v;
 }
 
+// --- the 2D path API with a REAL transform stack. Per spec, path
+// verbs transform their points by the CURRENT matrix as they are
+// appended (so rasterization is matrix-free): subpaths are device-
+// space polylines, fill() scanline-fills them (even-odd), stroke()
+// draws lineWidth-thick segments. arc() honors its angles by
+// sampling; rect() appends a closed 4-point subpath.
+struct ctx2d {
+	double a = 1, b = 0, c = 0, d = 1, e = 0, f = 0; // CTM [a c e; b d f]
+	std::vector<std::array<double, 6>> stack;
+	struct sub {
+		std::vector<std::pair<double, double>> pts;
+		bool closed = false;
+	};
+	std::vector<sub> subs;
+
+	std::pair<double, double> tx(double x, double y) const {
+		return {a * x + c * y + e, b * x + d * y + f};
+	}
+	void mul(double a2, double b2, double c2, double d2, double e2, double f2) {
+		const double na = a * a2 + c * b2;
+		const double nb = b * a2 + d * b2;
+		const double nc = a * c2 + c * d2;
+		const double nd = b * c2 + d * d2;
+		const double ne = a * e2 + c * f2 + e;
+		const double nf = b * e2 + d * f2 + f;
+		a = na; b = nb; c = nc; d = nd; e = ne; f = nf;
+	}
+	sub & cur() {
+		if (subs.empty()) { subs.emplace_back(); }
+		return subs.back();
+	}
+};
+
 // The raw pixel operations every canvas method draws through: read the
 // live fillStyle/strokeStyle back off the JS object (the real canvas
 // idiom - a script assigns the property and the natives observe it),
@@ -964,14 +997,8 @@ struct canvas_ops {
 	}
 };
 
-inline ctjs::value canvas_context(node * n, image_store * images) {
-	auto ctx = ctjs::rc<ctjs::object_t>::make();
-	ctx->set("fillStyle", ctjs::value{"#000000"});
-	ctx->set("strokeStyle", ctjs::value{"#000000"});
-	ctx->set("font", ctjs::value{"10px sans-serif"});
-	ctx->set("width", ctjs::value{n->canvas_w});
-	ctx->set("height", ctjs::value{n->canvas_h});
-	const canvas_ops ops{n, images, ctx};
+// the immediate rect ops (no path state involved)
+inline void install_canvas_rects(const ctjs::rc<ctjs::object_t> & ctx, const canvas_ops & ops, node * n) {
 	set_method(ctx, "fillRect", [ops](ctjs::context &, const std::vector<ctjs::value> & a) {
 		if (a.size() >= 4) {
 			ops.fill(arg_i32(a, 0),
@@ -1016,103 +1043,10 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 		}
 		return ctjs::value{};
 	});
-	// --- the 2D path API with a REAL transform stack. Per spec, path
-	// verbs transform their points by the CURRENT matrix as they are
-	// appended (so rasterization is matrix-free): subpaths are device-
-	// space polylines, ops.fill() scanline-fills them (even-odd), stroke()
-	// draws lineWidth-thick segments. arc() honors its angles by
-	// sampling; rect() appends a closed 4-point subpath.
-	struct ctx2d {
-		double a = 1, b = 0, c = 0, d = 1, e = 0, f = 0; // CTM [a c e; b d f]
-		std::vector<std::array<double, 6>> stack;
-		struct sub {
-			std::vector<std::pair<double, double>> pts;
-			bool closed = false;
-		};
-		std::vector<sub> subs;
+}
 
-		std::pair<double, double> tx(double x, double y) const {
-			return {a * x + c * y + e, b * x + d * y + f};
-		}
-		void mul(double a2, double b2, double c2, double d2, double e2, double f2) {
-			const double na = a * a2 + c * b2;
-			const double nb = b * a2 + d * b2;
-			const double nc = a * c2 + c * d2;
-			const double nd = b * c2 + d * d2;
-			const double ne = a * e2 + c * f2 + e;
-			const double nf = b * e2 + d * f2 + f;
-			a = na; b = nb; c = nc; d = nd; e = ne; f = nf;
-		}
-		sub & cur() {
-			if (subs.empty()) { subs.emplace_back(); }
-			return subs.back();
-		}
-	};
-	auto st = std::make_shared<ctx2d>();
-	// even-odd scanline fill of every subpath (closing them implicitly)
-	const auto fill_subs = [st, ops](uint32_t col) {
-		double miny = 1e300, maxy = -1e300;
-		for (const auto & s : st->subs) {
-			for (const auto & [px, py] : s.pts) {
-				miny = std::min(miny, py);
-				maxy = std::max(maxy, py);
-			}
-		}
-		if (miny > maxy) { return; }
-		for (std::int32_t y = static_cast<std::int32_t>(std::floor(miny)); y <= static_cast<std::int32_t>(std::ceil(maxy));
-		     ++y) {
-			const double sy = y + 0.5;
-			std::vector<double> xs;
-			for (const auto & s : st->subs) {
-				const std::size_t n = s.pts.size();
-				if (n < 2) { continue; }
-				for (std::size_t i = 0; i < n; ++i) {
-					const auto [x1, y1] = s.pts[i];
-					const auto [x2, y2] = s.pts[(i + 1) % n];
-					if ((y1 <= sy) == (y2 <= sy)) { continue; }
-					xs.push_back(x1 + (sy - y1) / (y2 - y1) * (x2 - x1));
-				}
-			}
-			std::sort(xs.begin(), xs.end());
-			for (std::size_t i = 0; i + 1 < xs.size(); i += 2) {
-				for (std::int32_t x = static_cast<std::int32_t>(std::ceil(xs[i] - 0.5));
-				     x < static_cast<std::int32_t>(std::ceil(xs[i + 1] - 0.5)) + 1; ++x) {
-					ops.put(x, y, col);
-				}
-			}
-		}
-	};
-	// a lineWidth-thick segment as a filled quad
-	const auto thick_seg = [ops](double x1, double y1, double x2, double y2, double w,
-	                             uint32_t col) {
-		const double dx = x2 - x1;
-		const double dy = y2 - y1;
-		const double len = std::hypot(dx, dy);
-		if (len == 0) { return; }
-		const double nx = -dy / len * (w / 2);
-		const double ny = dx / len * (w / 2);
-		const std::int32_t minx = static_cast<std::int32_t>(std::floor(std::min({x1 - std::fabs(nx), x2 - std::fabs(nx)})));
-		const std::int32_t maxx = static_cast<std::int32_t>(std::ceil(std::max({x1 + std::fabs(nx), x2 + std::fabs(nx)})));
-		const std::int32_t miny = static_cast<std::int32_t>(std::floor(std::min({y1 - std::fabs(ny) - w, y2 - std::fabs(ny) - w})));
-		const std::int32_t maxy = static_cast<std::int32_t>(std::ceil(std::max({y1 + std::fabs(ny) + w, y2 + std::fabs(ny) + w})));
-		for (std::int32_t y = miny; y <= maxy; ++y) {
-			for (std::int32_t x = minx; x <= maxx; ++x) {
-				// distance from pixel center to the segment
-				const double px = x + 0.5 - x1;
-				const double py = y + 0.5 - y1;
-				const double t = std::clamp((px * dx + py * dy) / (len * len), 0.0, 1.0);
-				const double ddx = px - t * dx;
-				const double ddy = py - t * dy;
-				if (ddx * ddx + ddy * ddy <= (w / 2) * (w / 2)) { ops.put(x, y, col); }
-			}
-		}
-	};
-	ctx->set("lineWidth", ctjs::value{1.0});
-	ctx->set("globalAlpha", ctjs::value{1.0});
-	const auto num_prop = [ctx](const char * name, double fallback) {
-		const ctjs::value * v = ctx->find(name);
-		return v != nullptr && v->is_number() ? v->as_number() : fallback;
-	};
+// the CTM stack: save/restore and the transform verbs
+inline void install_canvas_transform(const ctjs::rc<ctjs::object_t> & ctx, const std::shared_ptr<ctx2d> & st) {
 	set_method(ctx, "save", [st](ctjs::context &, const std::vector<ctjs::value> &) {
 		st->stack.push_back({st->a, st->b, st->c, st->d, st->e, st->f});
 		return ctjs::value{};
@@ -1151,6 +1085,11 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 		st->b = st->c = st->e = st->f = 0;
 		return ctjs::value{};
 	});
+}
+
+// the path verbs, and the fill/stroke that consume them
+template <typename FillSubs, typename ThickSeg, typename NumProp>
+void install_canvas_path(const ctjs::rc<ctjs::object_t> & ctx, const canvas_ops & ops, node * n, const std::shared_ptr<ctx2d> & st, const FillSubs & fill_subs, const ThickSeg & thick_seg, const NumProp & num_prop) {
 	set_method(ctx, "beginPath", [st](ctjs::context &, const std::vector<ctjs::value> &) {
 		st->subs.clear();
 		return ctjs::value{};
@@ -1231,6 +1170,10 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 		}
 		return ctjs::value{};
 	});
+}
+
+// measureText, fillText and the fillCircle extension
+inline void install_canvas_text(const ctjs::rc<ctjs::object_t> & ctx, const canvas_ops & ops) {
 	set_method(ctx, "measureText", [ctx](ctjs::context &, const std::vector<ctjs::value> & a) {
 		const std::string text = arg_str(a, 0);
 		std::int32_t px = 10;
@@ -1303,6 +1246,10 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 		}
 		return ctjs::value{};
 	});
+}
+
+// drawImage / drawImageRegion (sprite-sheet blits)
+inline void install_canvas_images(const ctjs::rc<ctjs::object_t> & ctx, const canvas_ops & ops, image_store * images) {
 	set_method(ctx, "drawImage", [images, ops](ctjs::context &, const std::vector<ctjs::value> & a) {
 		if (a.size() >= 3) {
 			const std::int32_t handle = arg_i32(a, 0);
@@ -1334,6 +1281,86 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 		}
 		return ctjs::value{};
 	});
+}
+
+inline ctjs::value canvas_context(node * n, image_store * images) {
+	auto ctx = ctjs::rc<ctjs::object_t>::make();
+	ctx->set("fillStyle", ctjs::value{"#000000"});
+	ctx->set("strokeStyle", ctjs::value{"#000000"});
+	ctx->set("font", ctjs::value{"10px sans-serif"});
+	ctx->set("width", ctjs::value{n->canvas_w});
+	ctx->set("height", ctjs::value{n->canvas_h});
+	const canvas_ops ops{n, images, ctx};
+	install_canvas_rects(ctx, ops, n);
+	auto st = std::make_shared<ctx2d>();
+	// even-odd scanline fill of every subpath (closing them implicitly)
+	const auto fill_subs = [st, ops](uint32_t col) {
+		double miny = 1e300, maxy = -1e300;
+		for (const auto & s : st->subs) {
+			for (const auto & [px, py] : s.pts) {
+				miny = std::min(miny, py);
+				maxy = std::max(maxy, py);
+			}
+		}
+		if (miny > maxy) { return; }
+		for (std::int32_t y = static_cast<std::int32_t>(std::floor(miny)); y <= static_cast<std::int32_t>(std::ceil(maxy));
+		     ++y) {
+			const double sy = y + 0.5;
+			std::vector<double> xs;
+			for (const auto & s : st->subs) {
+				const std::size_t n = s.pts.size();
+				if (n < 2) { continue; }
+				for (std::size_t i = 0; i < n; ++i) {
+					const auto [x1, y1] = s.pts[i];
+					const auto [x2, y2] = s.pts[(i + 1) % n];
+					if ((y1 <= sy) == (y2 <= sy)) { continue; }
+					xs.push_back(x1 + (sy - y1) / (y2 - y1) * (x2 - x1));
+				}
+			}
+			std::sort(xs.begin(), xs.end());
+			for (std::size_t i = 0; i + 1 < xs.size(); i += 2) {
+				for (std::int32_t x = static_cast<std::int32_t>(std::ceil(xs[i] - 0.5));
+				     x < static_cast<std::int32_t>(std::ceil(xs[i + 1] - 0.5)) + 1; ++x) {
+					ops.put(x, y, col);
+				}
+			}
+		}
+	};
+	// a lineWidth-thick segment as a filled quad
+	const auto thick_seg = [ops](double x1, double y1, double x2, double y2, double w,
+	                             uint32_t col) {
+		const double dx = x2 - x1;
+		const double dy = y2 - y1;
+		const double len = std::hypot(dx, dy);
+		if (len == 0) { return; }
+		const double nx = -dy / len * (w / 2);
+		const double ny = dx / len * (w / 2);
+		const std::int32_t minx = static_cast<std::int32_t>(std::floor(std::min({x1 - std::fabs(nx), x2 - std::fabs(nx)})));
+		const std::int32_t maxx = static_cast<std::int32_t>(std::ceil(std::max({x1 + std::fabs(nx), x2 + std::fabs(nx)})));
+		const std::int32_t miny = static_cast<std::int32_t>(std::floor(std::min({y1 - std::fabs(ny) - w, y2 - std::fabs(ny) - w})));
+		const std::int32_t maxy = static_cast<std::int32_t>(std::ceil(std::max({y1 + std::fabs(ny) + w, y2 + std::fabs(ny) + w})));
+		for (std::int32_t y = miny; y <= maxy; ++y) {
+			for (std::int32_t x = minx; x <= maxx; ++x) {
+				// distance from pixel center to the segment
+				const double px = x + 0.5 - x1;
+				const double py = y + 0.5 - y1;
+				const double t = std::clamp((px * dx + py * dy) / (len * len), 0.0, 1.0);
+				const double ddx = px - t * dx;
+				const double ddy = py - t * dy;
+				if (ddx * ddx + ddy * ddy <= (w / 2) * (w / 2)) { ops.put(x, y, col); }
+			}
+		}
+	};
+	ctx->set("lineWidth", ctjs::value{1.0});
+	ctx->set("globalAlpha", ctjs::value{1.0});
+	const auto num_prop = [ctx](const char * name, double fallback) {
+		const ctjs::value * v = ctx->find(name);
+		return v != nullptr && v->is_number() ? v->as_number() : fallback;
+	};
+	install_canvas_transform(ctx, st);
+	install_canvas_path(ctx, ops, n, st, fill_subs, thick_seg, num_prop);
+	install_canvas_text(ctx, ops);
+	install_canvas_images(ctx, ops, images);
 	return ctjs::value{ctx};
 }
 
