@@ -2652,7 +2652,7 @@ inline void install_gameplay_math(const objptr & B, const worldptr & W, dom_even
 			o->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 		}
 		if (a.size() > 3 && a[3].is_function()) {
-			ev.timers.push_back({++ev.timer_seq, ev.now_ms, 0, false, a[3]});
+			ev.timers.arm(ev.now_ms, 0, a[3], false);
 		}
 		return value{o};
 	});

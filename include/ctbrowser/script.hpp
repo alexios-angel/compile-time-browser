@@ -138,23 +138,72 @@ void set_method(const ctjs::rc<ctjs::object_t> & o, const char * name, F && fn) 
 // script-registered callbacks (addEventListener / requestAnimationFrame)
 // plus the interpreter context needed to call them back; the context is
 // captured at registration time and lives in the engine's run_result
-struct dom_events {
-	ctjs::context * cx = nullptr;
-	document * doc = nullptr; // set by make_document; createElement et al
-	std::map<std::string, std::vector<ctjs::value>, std::less<>> listeners;
-	std::vector<ctjs::value> raf;
-	double raf_id = 0;
-	// setTimeout/setInterval: fired by the engine's tick() against the
-	// same now_ms clock performance.now exposes
-	struct timer_entry {
+// setTimeout / setInterval, fired by the engine's tick() against the
+// same now_ms clock performance.now exposes.
+//
+// This is its own type because the firing rules are subtle enough to
+// deserve one place: a handler is free to arm or clear timers WHILE the
+// queue is running, so each round re-scans from the beginning and fires
+// exactly one entry, and a round cap stops a 0 ms self-retimer from
+// wedging the frame.
+struct timer_queue {
+	struct entry {
 		double id;
 		double due_ms;
 		double interval_ms;
 		bool repeat;
 		ctjs::value fn;
 	};
-	std::vector<timer_entry> timers;
-	double timer_seq = 0;
+	std::vector<entry> pending;
+	double seq = 0;
+
+	// a self-retiming 0 ms chain would otherwise never let the frame end
+	static constexpr std::int32_t max_rounds_per_frame = 64;
+
+	// returns the handle setTimeout/setInterval gives back to the script
+	double arm(double now_ms, double delay_ms, ctjs::value fn, bool repeat) {
+		const double delay = delay_ms > 0 ? delay_ms : 0;
+		pending.push_back({++seq, now_ms + delay, delay, repeat, std::move(fn)});
+		return seq;
+	}
+	void clear(double id) {
+		std::erase_if(pending, [id](const entry & t) { return t.id == id; });
+	}
+	void clear_all() { pending.clear(); }
+
+	// "is anything still armed?" - tests/webapi.cpp checks this after a
+	// run to prove the queue drained
+	[[nodiscard]] bool empty() const noexcept { return pending.empty(); }
+	[[nodiscard]] std::size_t size() const noexcept { return pending.size(); }
+
+	// fire everything due at now_ms; `invoke` runs one callback
+	template <typename Invoke> void run_due(double now_ms, Invoke && invoke) {
+		for (std::int32_t round = 0; round < max_rounds_per_frame; ++round) {
+			bool fired = false;
+			for (std::size_t i = 0; i < pending.size(); ++i) {
+				if (pending[i].due_ms > now_ms) { continue; }
+				const entry t = pending[i]; // copied out: the handler may resize `pending`
+				if (t.repeat) {
+					pending[i].due_ms = t.due_ms + (t.interval_ms > 1.0 ? t.interval_ms : 1.0);
+				} else {
+					pending.erase(pending.begin() + static_cast<std::ptrdiff_t>(i));
+				}
+				invoke(t.fn);
+				fired = true;
+				break;
+			}
+			if (!fired) { return; }
+		}
+	}
+};
+
+struct dom_events {
+	ctjs::context * cx = nullptr;
+	document * doc = nullptr; // set by make_document; createElement et al
+	std::map<std::string, std::vector<ctjs::value>, std::less<>> listeners;
+	std::vector<ctjs::value> raf;
+	double raf_id = 0;
+	timer_queue timers;
 	std::vector<std::string> alerts;
 	bool reload = false;
 	double now_ms = 0;
@@ -216,7 +265,7 @@ struct dom_events {
 		cx = nullptr;
 		listeners.clear();
 		raf.clear();
-		timers.clear();
+		timers.clear_all();
 		alerts.clear();
 		reload = false;
 		tracked.clear();
@@ -231,37 +280,11 @@ struct dom_events {
 		location_hash.clear();
 	}
 
-	// fire everything due at now_ms. Handlers may add or clear timers
-	// mid-flight, so each round re-scans from the start and moves the
-	// fired entry out first; the round cap keeps a 0ms-retimer chain
-	// from wedging the frame
+	// the timers due by the current clock (the queue owns the ordering)
 	void run_timers() {
-		for (std::int32_t rounds = 0; rounds < 64; ++rounds) {
-			bool fired = false;
-			for (std::size_t i = 0; i < timers.size(); ++i) {
-				if (timers[i].due_ms > now_ms) { continue; }
-				timer_entry t = timers[i];
-				if (t.repeat) {
-					timers[i].due_ms = t.due_ms + (t.interval_ms > 1.0 ? t.interval_ms : 1.0);
-				} else {
-					timers.erase(timers.begin() + static_cast<ptrdiff_t>(i));
-				}
-				invoke(t.fn, {});
-				fired = true;
-				break;
-			}
-			if (!fired) { return; }
-		}
+		timers.run_due(now_ms, [this](const ctjs::value & fn) { invoke(fn, {}); });
 	}
-
-	void clear_timer(double id) {
-		for (std::size_t i = 0; i < timers.size(); ++i) {
-			if (timers[i].id == id) {
-				timers.erase(timers.begin() + static_cast<ptrdiff_t>(i));
-				return;
-			}
-		}
-	}
+	void clear_timer(double id) { timers.clear(id); }
 
 	void invoke(const ctjs::value & fn, std::vector<ctjs::value> args) {
 		if (cx == nullptr || !fn.is_function()) { return; }
@@ -1559,9 +1582,7 @@ inline void install_timers(std::vector<ctjs::binding> & out, dom_events & ev) {
 				    ev.cx = &cx;
 				    if (a.empty() || !a[0].is_function()) { return ctjs::value{0.0}; }
 				    const double ms = a.size() > 1 ? a[1].to_number() : 0.0;
-				    ev.timers.push_back({++ev.timer_seq, ev.now_ms + (ms > 0 ? ms : 0),
-				                         ms > 0 ? ms : 0, repeat, a[0]});
-				    return ctjs::value{ev.timer_seq};
+				    return ctjs::value{ev.timers.arm(ev.now_ms, ms, a[0], repeat)};
 			    },
 			    name);
 		};
