@@ -380,11 +380,7 @@ void test_keyboard_reaches_script() {
 }
 
 void test_preventDefault_stops_the_browser_acting() {
-	// Enough paragraphs to overflow a short viewport. NOT a styled height: the
-	// `style` ATTRIBUTE is not implemented (only <style> elements are), and a
-	// test about keyboard defaults should not quietly depend on that.
-	const char * tall = "<body><p>one</p><p>two</p><p>three</p><p>four</p><p>five</p>"
-	                    "<p>six</p><p>seven</p><p>eight</p>";
+	const char * tall = "<body><div style='height:2000px'>tall</div>";
 
 	browser page{browser_options{200, 100}};
 	page.load_html(std::string{tall} + R"(<script>

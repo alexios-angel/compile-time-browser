@@ -204,6 +204,99 @@ void test_unmatched_element_gets_empty_style() {
 	CHECK(static_cast<bool>(f.style_of(em))); // resolved, just to nothing
 }
 
+
+// --- the style attribute --------------------------------------------------
+//
+// Not a separate origin: author-level with a specificity above every selector.
+// Chrome and Firefox both order it
+//
+//   normal selector < normal inline < important selector < important inline
+//
+// and every one of those four steps is a separate test below, because getting
+// the middle two the wrong way round is the easy mistake and it is invisible
+// until a page uses !important to override a widget's inline style.
+
+void test_inline_style_applies() {
+	fixture f;
+	f.load("<p style='color: red'>hi</p>", "");
+	expect_value(f, f.find("p"), "color", "red", "a style attribute is read at all");
+
+	// Several declarations, and the whitespace and trailing semicolon real
+	// pages write.
+	fixture g;
+	g.load("<p style=' color : blue ; height:20px; '>hi</p>", "");
+	expect_value(g, g.find("p"), "color", "blue", "the first of several");
+	expect_value(g, g.find("p"), "height", "20px", "and the last, past a trailing ;");
+}
+
+void test_inline_beats_any_selector() {
+	fixture f;
+	// #x is the most specific selector there is short of !important, and a
+	// plain style attribute still wins.
+	f.load("<p id=x class=c style='color: green'>hi</p>", "p { color: red } .c { color: blue } "
+	                                                      "#x { color: purple }");
+	expect_value(f, f.find("p"), "color", "green", "inline beats even an id selector");
+}
+
+void test_important_selector_beats_inline() {
+	fixture f;
+	// THIS is the step that is easy to get wrong: appending the style
+	// attribute after everything would make it win here, and it must not.
+	f.load("<p style='color: green'>hi</p>", "p { color: red !important }");
+	expect_value(f, f.find("p"), "color", "red",
+	             "!important in a stylesheet beats a normal style attribute");
+}
+
+void test_important_inline_beats_everything() {
+	fixture f;
+	f.load("<p style='color: green !important'>hi</p>", "p { color: red !important }");
+	expect_value(f, f.find("p"), "color", "green", "!important inline wins outright");
+
+	// And an important inline declaration does not disturb the normal ones
+	// beside it.
+	fixture g;
+	g.load("<p style='color: green !important; height: 5px'>hi</p>",
+	       "p { color: red !important; height: 9px !important }");
+	expect_value(g, g.find("p"), "color", "green", "the important one wins");
+	expect_value(g, g.find("p"), "height", "9px", "the normal one still loses to !important");
+}
+
+void test_inline_style_oddities() {
+	fixture f;
+	// A malformed declaration is dropped, and the ones around it survive -
+	// which is what a browser does rather than discarding the whole attribute.
+	f.load("<p style='color: red; nonsense; height: 3px'>hi</p>", "");
+	expect_value(f, f.find("p"), "color", "red", "before the rubbish");
+	expect_value(f, f.find("p"), "height", "3px", "after it");
+
+	// An empty attribute is not a style, and must not resolve to one.
+	fixture g;
+	g.load("<p style=''>hi</p>", "p { color: red }");
+	expect_value(g, g.find("p"), "color", "red", "an empty attribute changes nothing");
+
+	// Later wins within the attribute itself, like any declaration block.
+	fixture h;
+	h.load("<p style='color: red; color: blue'>hi</p>", "");
+	expect_value(h, h.find("p"), "color", "blue", "the last declaration wins");
+
+	// The property name is case-insensitive, the way CSS is.
+	fixture i;
+	i.load("<p style='COLOR: red'>hi</p>", "");
+	expect_value(i, i.find("p"), "color", "red", "property names fold case");
+}
+
+void test_inline_style_is_per_element() {
+	fixture f;
+	f.load("<div><p id=a style='color: red'>one</p><p id=b style='color: blue'>two</p>"
+	       "<p id=c>three</p></div>",
+	       "p { color: black }");
+	// The parse is cached by attribute TEXT, so this is also the check that the
+	// cache is not handing every element the first one it saw.
+	expect_value(f, f.find_id("a"), "color", "red", "the first element");
+	expect_value(f, f.find_id("b"), "color", "blue", "the second");
+	expect_value(f, f.find_id("c"), "color", "black", "and one with no attribute");
+}
+
 } // namespace
 
 int main() {
@@ -215,5 +308,11 @@ int main() {
 	test_identical_styles_are_shared();
 	test_deep_nesting_still_matches();
 	test_unmatched_element_gets_empty_style();
+	test_inline_style_applies();
+	test_inline_beats_any_selector();
+	test_important_selector_beats_inline();
+	test_important_inline_beats_everything();
+	test_inline_style_oddities();
+	test_inline_style_is_per_element();
 	REPORT("style_basics");
 }

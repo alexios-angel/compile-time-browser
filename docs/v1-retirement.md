@@ -91,10 +91,6 @@ catches changes, not disagreements with a second implementation.
 are gone: script drives the page, HTML parsing is v2's own, and forms and canvas
 work. What remains is smaller and more specific:
 
-- **the `style` ATTRIBUTE.** v2 reads `<style>` ELEMENTS only, so
-  `<div style="height:2000px">` does nothing at all. v1 had `inline_style` on
-  the node and resolved it ahead of the sheet. Found 2026-07-25 while testing
-  keyboard input; small, and nothing else in this list is as commonly used.
 - **real fonts** - v2 renders text with font8x8 only
 - the **BabylonJS shim** with its software 3D rasterizer
 - **`<select>` popups**, page-level text selection, and the clipboard

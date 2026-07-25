@@ -150,18 +150,42 @@ public:
 		});
 
 		declaration_list out;
-		for (const rule & r : matches_) {
-			const declaration & d = declarations_[r.declaration];
-			bool replaced = false;
+		// Applying a declaration means REPLACING the property if it is already
+		// there - the later write wins, which is what "the cascade" reduces to
+		// once the sort has put everything in priority order.
+		const auto put = [&out](const declaration & d) {
 			for (declaration & existing : out) {
 				if (existing.property == d.property) {
 					existing.value = d.value;
-					replaced = true;
-					break;
+					return;
 				}
 			}
-			if (!replaced) { out.push_back(d); }
+			out.push_back(d);
+		};
+
+		// The style ATTRIBUTE. Not a separate origin: it is author-level with a
+		// specificity above every selector, so it lands between the normal
+		// declarations and the important ones. Chrome and Firefox both give
+		//
+		//   normal selector  <  normal inline  <  important selector  <
+		//   important inline
+		//
+		// which is why this is spliced into the fold at the importance
+		// boundary rather than simply appended at the end - `!important` in a
+		// stylesheet has to be able to beat a style attribute.
+		const inline_block & own = inline_style_of(txn, node);
+		bool spliced = false;
+		for (const rule & r : matches_) {
+			if (r.important && !spliced) {
+				for (const declaration & d : own.normal) { put(d); }
+				spliced = true;
+			}
+			put(declarations_[r.declaration]);
 		}
+		if (!spliced) {
+			for (const declaration & d : own.normal) { put(d); }
+		}
+		for (const declaration & d : own.important) { put(d); }
 		return table_.intern(std::move(out));
 	}
 
@@ -198,6 +222,39 @@ public:
 	[[nodiscard]] static constexpr std::uint64_t key_of(node_id id) noexcept { return id.key(); }
 
 private:
+	// One element's `style` attribute, split by importance.
+	struct inline_block {
+		declaration_list normal;
+		declaration_list important;
+	};
+
+	// Parsed at most once per DISTINCT attribute text. Keyed by the text rather
+	// than by the element, because a page that styles forty rows inline usually
+	// writes the same declaration twice - and because a re-resolve after a
+	// hover must not re-parse anything.
+	[[nodiscard]] const inline_block & inline_style_of(const read_txn & txn, node_id id) {
+		static const inline_block none;
+		const std::string_view text = txn.attribute_value(id, style_name());
+		if (text.empty()) { return none; }
+		const auto cached = inline_cache_.find(std::string{text});
+		if (cached != inline_cache_.end()) { return cached->second; }
+
+		// Through the SHEET parser, wrapped in a dummy rule, rather than
+		// ctcss's declaration splitter: the latter peels `!important` off and
+		// throws the flag away, and that flag is the entire question of what a
+		// style attribute beats.
+		inline_block parsed;
+		const ctcss::value_sheet sheet = ctcss::parse_value("*{" + std::string{text} + "}");
+		for (const ctcss::value_sheet::entry & e : sheet.entries) {
+			declaration d{atoms_->intern_lower(e.property), e.value};
+			(e.important ? parsed.important : parsed.normal).push_back(std::move(d));
+		}
+		return inline_cache_.emplace(std::string{text}, std::move(parsed)).first->second;
+	}
+	[[nodiscard]] atom style_name() const { return atoms_->intern("style"); }
+
+	flat_map<std::string, inline_block> inline_cache_;
+
 	[[nodiscard]] atom id_name() const { return atoms_->intern("id"); }
 	[[nodiscard]] atom class_name() const { return atoms_->intern("class"); }
 

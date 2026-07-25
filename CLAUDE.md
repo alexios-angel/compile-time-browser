@@ -136,6 +136,25 @@ not — so an animation re-rasters without re-recording or re-laying-out.
 the BabylonJS shim, `<select>` popups and page-level text selection. See
 `docs/v1-retirement.md`.
 
+## v2 STYLE: the `style` attribute, with Chrome/Firefox precedence (2026-07-25)
+
+Read at last — v2 saw `<style>` ELEMENTS only, so `<div style="height:2000px">`
+laid out as one line. It is NOT a separate origin: author-level with a
+specificity above every selector, which puts it in the cascade at
+
+    normal selector  <  normal inline  <  important selector  <  important inline
+
+so `engine::resolve` SPLICES the attribute's normal declarations in at the
+importance boundary rather than appending them at the end. Appending is the
+easy mistake and it is invisible until a page uses `!important` to override a
+widget's inline style; `tests-v2/style_basics` has a test per step, verified by
+planting the mistake and watching exactly those two fail.
+
+Parsed through the SHEET parser wrapped in `*{...}`, not ctcss's declaration
+splitter — the latter peels `!important` off and discards the flag, which is
+the entire question. Cached by attribute TEXT, so a table styling forty rows
+identically parses once and a re-resolve after a hover parses nothing.
+
 ## v2 INPUT: the page gets the events (2026-07-25)
 
 **Keys and the pointer reach SCRIPT, and the browser's own behaviour is the
