@@ -45,6 +45,27 @@ target_link_libraries(ctbrowser-core PUBLIC Threads::Threads)
 
 add_library(ctbrowser::core ALIAS ctbrowser-core)
 
+# --- ctbrowser.dom -------------------------------------------------------
+# Still consumes cthtml's value parser (stage 1 wraps it rather than replacing
+# it - see src/dom/html.cppm), so it needs that include path. That dependency
+# is expected to disappear when the conformant parser lands.
+add_library(ctbrowser-dom)
+target_sources(ctbrowser-dom
+  PUBLIC
+    FILE_SET CXX_MODULES FILES
+      dom/dom.cppm
+      dom/node.cppm
+      dom/document.cppm
+      dom/html.cppm)
+target_compile_features(ctbrowser-dom PUBLIC cxx_std_23)
+target_compile_options(ctbrowser-dom PRIVATE ${CTBROWSER_V2_WARNINGS})
+target_include_directories(ctbrowser-dom PRIVATE
+  "${PROJECT_SOURCE_DIR}/external/compile-time-html/include")
+target_link_libraries(ctbrowser-dom PUBLIC ctbrowser-core)
+set_target_properties(ctbrowser-dom PROPERTIES CXX_SCAN_FOR_MODULES ON)
+
+add_library(ctbrowser::dom ALIAS ctbrowser-dom)
+
 if(CTBROWSER_BUILD_TESTS)
   add_subdirectory(../tests-v2 "${CMAKE_CURRENT_BINARY_DIR}/tests-v2")
 endif()

@@ -166,6 +166,20 @@ public:
 		return retired_.size();
 	}
 
+	// Destroying the domain destroys whatever is still retired. Without this
+	// every object retired since the last reclaim() simply leaks, which is
+	// easy to miss because the common path does call reclaim() eventually -
+	// ASan caught it only once the stress test started reclaiming mid-run.
+	// No reader can exist here: the domain is going away, so anything holding
+	// a guard into it would already be a lifetime bug.
+	~epoch_domain() {
+		for (const entry & e : retired_) { e.destroy(e.object); }
+	}
+
+	epoch_domain() = default;
+	epoch_domain(const epoch_domain &) = delete;
+	epoch_domain & operator=(const epoch_domain &) = delete;
+
 private:
 	struct entry {
 		std::uint64_t retired_at;

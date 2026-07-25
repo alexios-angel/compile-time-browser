@@ -55,11 +55,19 @@ public:
 	slab & operator=(const slab &) = delete;
 
 	~slab() {
+		// Live slots (odd generation) still hold a constructed T.
 		for (std::uint32_t s = 0; s < capacity_.load(std::memory_order_relaxed); ++s) {
 			entry * e = locate(s);
 			if (e != nullptr && is_live(e->generation.load(std::memory_order_relaxed))) {
 				std::destroy_at(value_of(e));
 			}
+		}
+		// So do slots that were ERASED but never collected: erase() only marks
+		// them dead, and destruction is deferred to collect(). They read as
+		// even-generation and are therefore invisible to the loop above, so
+		// without this they leak whatever T owned.
+		for (const deferred & d : pending_) {
+			if (entry * e = locate(d.slot)) { std::destroy_at(value_of(e)); }
 		}
 		for (std::atomic<entry *> & c : directory_) {
 			delete[] c.load(std::memory_order_relaxed);
