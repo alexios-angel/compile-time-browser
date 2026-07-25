@@ -20,6 +20,7 @@ function(ctbrowser_v2_test name)
            WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 endfunction()
 
+ctbrowser_v2_test(api_surface)
 ctbrowser_v2_test(core_basics)
 ctbrowser_v2_test(stress_slab)
 ctbrowser_v2_test(dom_basics)

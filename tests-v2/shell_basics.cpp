@@ -26,6 +26,7 @@ import ctbrowser.shell;
 #include <cstdio>
 #include <string>
 #include <algorithm>
+#include <type_traits>
 #include <string_view>
 #include <vector>
 
@@ -260,6 +261,47 @@ void test_hover_restyles() {
 	check(count_fill(color::rgba(0, 255, 0)) == 1, ":hover unapplied when the pointer leaves");
 }
 
+void test_resize_keeps_the_renderer() {
+	browser page{browser_options{400, 300}};
+	page.load_html(demo_page);
+	check(page.frame().has_value(), "the page renders");
+
+	// Stand in for "the app chose the GPU": adopt a *named* renderer and check
+	// the name survives. resize() used to build a fresh software backend, so an
+	// app that picked hardware dropped to software on its first window resize
+	// and never came back.
+	page.use_renderer(raster::renderer::software(400, 300));
+	const std::string before{page.rendering_with().name()};
+	page.resize(700, 500);
+	check(page.frame().has_value(), "the resized frame renders");
+	check(page.rendering_with().name() == before, "resize keeps the renderer it was given");
+	check(page.width() == 700 && page.height() == 500, "and the viewport followed");
+
+	const auto image = page.read_pixels();
+	check(image.has_value() && image->width() == 700 && image->height() == 500,
+	      "and the target really is the new size");
+}
+
+void test_background_is_honoured() {
+	browser_options options{80, 60};
+	options.background = color::rgba(0, 0, 255);
+	browser page{options};
+	// A page with no body background shows the canvas colour. browser_options
+	// carried this field and nothing read it.
+	page.load_html("<html><body></body></html>");
+	check(page.frame().has_value(), "the page renders");
+	const auto image = page.read_pixels();
+	check(image.has_value(), "the frame reads back");
+	if (!image) { return; }
+	check(image->row(30)[40] == 0xFF0000FFu, "browser_options::background is the page canvas");
+}
+
+// A browser holds three `this`-capturing lambdas; moving one would leave them
+// pointing at the old address. The implicit move was available until it was
+// deleted, so this is worth stating as a compile-time fact.
+static_assert(!std::is_move_constructible_v<browser>, "browser must not be movable");
+static_assert(!std::is_copy_constructible_v<browser>, "browser must not be copyable");
+
 // --- determinism ----------------------------------------------------------
 
 void test_rendering_is_reproducible() {
@@ -291,6 +333,8 @@ int main() {
 	test_scroll_clamps_to_the_document();
 	test_a_resize_relayouts();
 	test_a_new_document_starts_clean();
+	test_resize_keeps_the_renderer();
+	test_background_is_honoured();
 
 	test_hit_testing_follows_the_scroll();
 	test_wheel_and_keys_scroll();

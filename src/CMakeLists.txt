@@ -7,6 +7,7 @@
 # Modules need a newer CMake than the top level asks for, and they need the
 # scanner on, so the requirement is raised here rather than repo-wide.
 cmake_minimum_required(VERSION 3.28)
+include(GNUInstallDirs)
 
 if(CMAKE_VERSION VERSION_LESS 3.28)
   message(FATAL_ERROR "ctbrowser v2 needs CMake >= 3.28 for C++ module support")
@@ -208,18 +209,40 @@ add_library(ctbrowser::shell ALIAS ctbrowser-shell)
 
 # --- ctbrowser.app -------------------------------------------------------
 # The window and the event loop, and the only module that knows SDL exists.
+# ALWAYS built. SDL3 is a compile definition, not a gate: without it the module
+# still provides run_app() over the headless backend, which is what makes "SDL3
+# is optional" true of the BUILD and not just of the engine.
+add_library(ctbrowser-app)
+target_sources(ctbrowser-app
+  PUBLIC
+    FILE_SET CXX_MODULES FILES shell/app.cppm)
+target_compile_features(ctbrowser-app PUBLIC cxx_std_23)
+target_compile_options(ctbrowser-app PRIVATE ${CTBROWSER_V2_WARNINGS})
+target_link_libraries(ctbrowser-app PUBLIC ctbrowser-core ctbrowser-paint ctbrowser-raster
+                                           ctbrowser-shell)
 if(SDL3_FOUND)
-  add_library(ctbrowser-app)
-  target_sources(ctbrowser-app
-    PUBLIC
-      FILE_SET CXX_MODULES FILES shell/app.cppm)
-  target_compile_features(ctbrowser-app PUBLIC cxx_std_23)
-  target_compile_options(ctbrowser-app PRIVATE ${CTBROWSER_V2_WARNINGS})
-  target_link_libraries(ctbrowser-app PUBLIC ctbrowser-core ctbrowser-raster ctbrowser-shell
-                                             SDL3::SDL3)
-  set_target_properties(ctbrowser-app PROPERTIES CXX_SCAN_FOR_MODULES ON)
-  add_library(ctbrowser::app ALIAS ctbrowser-app)
+  target_compile_definitions(ctbrowser-app PRIVATE CTBROWSER_WITH_SDL3=1)
+  target_link_libraries(ctbrowser-app PUBLIC SDL3::SDL3)
+else()
+  target_compile_definitions(ctbrowser-app PRIVATE CTBROWSER_WITH_SDL3=0)
+  message(STATUS "ctbrowser: SDL3 not found - v2 builds headless (run_app still works)")
 endif()
+set_target_properties(ctbrowser-app PROPERTIES CXX_SCAN_FOR_MODULES ON)
+add_library(ctbrowser::app ALIAS ctbrowser-app)
+
+# --- ctbrowser (umbrella) ------------------------------------------------
+# What an application imports and links. One of each.
+add_library(ctbrowser-v2)
+target_sources(ctbrowser-v2
+  PUBLIC
+    FILE_SET CXX_MODULES FILES ctbrowser.cppm)
+target_compile_features(ctbrowser-v2 PUBLIC cxx_std_23)
+target_compile_options(ctbrowser-v2 PRIVATE ${CTBROWSER_V2_WARNINGS})
+target_link_libraries(ctbrowser-v2 PUBLIC
+  ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style ctbrowser-layout
+  ctbrowser-paint ctbrowser-raster ctbrowser-shell ctbrowser-app)
+set_target_properties(ctbrowser-v2 PROPERTIES CXX_SCAN_FOR_MODULES ON)
+add_library(ctbrowser::v2 ALIAS ctbrowser-v2)
 
 # --- ctbrowser.gpu -------------------------------------------------------
 # OPTIONAL by construction. Without SDL3 the engine still builds and still
@@ -242,6 +265,47 @@ if(SDL3_FOUND)
   set_target_properties(ctbrowser-gpu PROPERTIES CXX_SCAN_FOR_MODULES ON)
   add_library(ctbrowser::gpu ALIAS ctbrowser-gpu)
 endif()
+
+# --- installing v2 -------------------------------------------------------
+# C++ modules install as a FILE_SET, and consuming them from an installed tree
+# needs CXX_MODULES_DIRECTORY on the export. Without this the only way to use
+# v2 was add_subdirectory() of this repo - every install() in the project was
+# v1's, so `find_package(ctbrowser)` handed back a header-only interface target
+# and none of the engine.
+set(CTBROWSER_V2_TARGETS
+  ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style ctbrowser-layout
+  ctbrowser-paint ctbrowser-raster ctbrowser-shell ctbrowser-app ctbrowser-v2)
+if(TARGET ctbrowser-gpu)
+  list(APPEND CTBROWSER_V2_TARGETS ctbrowser-gpu)
+endif()
+
+install(TARGETS ${CTBROWSER_V2_TARGETS}
+  EXPORT ctbrowser-v2-targets
+  FILE_SET CXX_MODULES DESTINATION "${CMAKE_INSTALL_LIBDIR}/ctbrowser/modules"
+  ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+  LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+
+install(EXPORT ctbrowser-v2-targets
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ctbrowser-v2"
+  NAMESPACE ctbrowser::
+  CXX_MODULES_DIRECTORY .)
+
+# The alias an application links. `ctbrowser::v2` is the build-tree name;
+# this is what survives an install.
+# Whatever the exported targets name in their link interface, the consumer has
+# to be able to resolve. SDL3 is conditional because the app module links it
+# only when it was found - a headless install must not demand it back.
+set(CTBROWSER_V2_CONFIG_DEPS "find_dependency(Boost 1.80 CONFIG)\nfind_dependency(Threads)")
+if(SDL3_FOUND)
+  string(APPEND CTBROWSER_V2_CONFIG_DEPS "\nfind_dependency(SDL3 CONFIG)")
+endif()
+file(WRITE "${PROJECT_BINARY_DIR}/ctbrowser-v2-config.cmake"
+"include(CMakeFindDependencyMacro)
+${CTBROWSER_V2_CONFIG_DEPS}
+include(\"\${CMAKE_CURRENT_LIST_DIR}/ctbrowser-v2-targets.cmake\")
+")
+install(FILES "${PROJECT_BINARY_DIR}/ctbrowser-v2-config.cmake"
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ctbrowser-v2")
 
 add_subdirectory(../examples-v2 "${CMAKE_CURRENT_BINARY_DIR}/examples-v2")
 

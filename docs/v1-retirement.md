@@ -20,6 +20,24 @@ The deletion is **not** done, and this is the list of why.
 | form controls on `node` | `ctbrowser.shell:forms` | replaced; state keyed by node_id |
 | canvas pixels on `node` | `ctbrowser.shell:canvas` | replaced; 2D context, same idiom |
 
+## Corrections to this document (2026-07-25)
+
+Three things it got wrong, found by auditing the code against it:
+
+- **It omits the JavaScript standard library entirely**, which is the largest
+  gap in the tree. v2's VM has *no* `Math`, `JSON`, `Object`, `Array` or
+  `String` methods — the whole property surface is `.length`, numeric indexing
+  and named lookup on plain objects. v1 got 2153 lines of builtins from ctjs.
+  On top of that the v2 compiler covers 29 of the parser's 52 AST kinds:
+  no `break`, `continue`, `try`/`catch`, `for...of`, `switch`, `class`, `new`,
+  template literals, optional chaining — and no `+=`, and `this` is always
+  `undefined`.
+- **`<select>` is worse than described.** v2 draws an empty rectangle: the
+  painter passes an empty label and never reads `<option>` at all.
+- **`<img>` is not a regression.** v1 never rendered one either — `img` appears
+  in its layout only as an inline-level tag and nothing ever reads `src`. It is
+  a new feature for both.
+
 ## What v2 does not have yet
 
 Deleting v1 today removes working, tested functionality with no replacement:
@@ -78,6 +96,12 @@ work. What remains is smaller and more specific:
 None of those blocks the architecture. Deleting v1 now would still lose them, so
 the question is whether they are wanted back - which is a product decision, not
 a technical one.
+
+**Packaging (2026-07-25):** v2 is now installable. `find_package(ctbrowser-v2)`
+yields `ctbrowser::ctbrowser-v2`, and an application writes `import ctbrowser;`
+and links that one target — verified by `tools/check-package.sh`, which installs
+into a temp prefix and builds `tests-v2/package/` against it. GLM and the git
+submodules are no longer configure-time requirements for a v2-only build.
 
 Note also that v2 no longer depends on `external/compile-time-html` at all.
 `external/compile-time-css` is still used by the style engine, and

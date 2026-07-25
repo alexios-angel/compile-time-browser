@@ -107,9 +107,16 @@ set(CTBROWSER_SUBMODULE_INCLUDE_DIRS
   "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"
   "${PROJECT_SOURCE_DIR}/external/compile-time-css/include"
   "${CTBROWSER_CTC}/include")
+# v1 needs all four bricks. v2 needs ctcss (its style engine) and ctjs (its
+# script parser) but not cthtml - it has its own HTML parser since stage 8 - so
+# the hard failure belongs to v1 and a v2-only build is told, not stopped.
 if(NOT EXISTS "${CTBROWSER_CTC}/include/ctc.hpp")
-  message(FATAL_ERROR
-    "ctbrowser: submodules are missing - run `git submodule update --init --recursive`")
+  if(CTBROWSER_BUILD_V1)
+    message(FATAL_ERROR
+      "ctbrowser: submodules are missing - run `git submodule update --init --recursive`")
+  else()
+    message(STATUS "ctbrowser: submodules missing - v2 needs ctcss and ctjs, so this may fail")
+  endif()
 endif()
 
 # GLM (header-only) powers the software 3D math in babylon.hpp - it
@@ -118,12 +125,15 @@ endif()
 find_path(CTBROWSER_GLM_INCLUDE_DIR glm/glm.hpp
   PATHS /home/linuxbrew/.linuxbrew/include /opt/homebrew/include
         /usr/local/include /usr/include)
-if(NOT CTBROWSER_GLM_INCLUDE_DIR)
+# GLM serves ONLY v1's babylon.hpp. A v2-only configure used to hard-fail
+# without it, which is a requirement v1 was imposing on everybody.
+if(NOT CTBROWSER_GLM_INCLUDE_DIR AND CTBROWSER_BUILD_V1)
   message(FATAL_ERROR
     "ctbrowser: GLM not found (glm/glm.hpp) - `brew install glm` or "
     "`apt-get install libglm-dev`, or set CTBROWSER_GLM_INCLUDE_DIR. "
     "Cross builds want an ISOLATED dir (see cmake/toolchain-windows-*.cmake): "
-    "point GLM_INC at a directory holding only glm/.")
+    "point GLM_INC at a directory holding only glm/. "
+    "Only v1 needs it: -DCTBROWSER_BUILD_V1=OFF builds v2 without it.")
 endif()
 
 add_library(${PROJECT_NAME} INTERFACE)

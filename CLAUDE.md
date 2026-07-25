@@ -18,6 +18,34 @@ without __builtin_std_embed. No gcc/MSVC/stock-clang paths. **CMake +
 Ninja is THE build** (Makefiles retired 2026-07-23). Work on `main`.
 Prefer `rg`.
 
+## v2 APPLICATION API (2026-07-25)
+
+**`import ctbrowser;` + `ctbrowser::run_app(html, options)` is the whole
+API.** One module, one link target (`ctbrowser::v2` in-tree,
+`ctbrowser::ctbrowser-v2` installed), NO SDL header in the application. See
+`examples-v2/counter.cpp` — 40 lines, most of it the page.
+
+`run_app` owns the window, the event loop, the clock (it calls `tick()`, so
+timers and rAF actually fire), vsync, fps pacing, screenshots and teardown.
+`app_options` mirrors v1's: size, `logical_width/height` letterboxing,
+`max_frames`, `max_fps`, `fixed_dt`, `screenshot_path`, `assets`,
+`on_native_window` (the escape hatch — hands you the `SDL_Window*` as `void*`)
+and `on_ready`. Env: `CTBROWSER_TEST_FRAMES`, `CTBROWSER_SCREENSHOT`,
+`CTBROWSER_RENDERER` — which is how an example becomes a ctest with no test
+code in it.
+
+**SDL3 is OPTIONAL AT BUILD TIME.** `ctbrowser-app` always builds;
+`CTBROWSER_WITH_SDL3` selects an SDL host or a headless one at runtime. Without
+SDL3 the engine still renders and `run_app` still works.
+
+**Installing:** `tools/check-package.sh` is the proof — installs v2 to a temp
+prefix, builds `tests-v2/package/` against it via `find_package`. GLM and the
+submodules are v1-only configure requirements now.
+
+`tests-v2/api_surface` lints the claim: application sources must contain exactly
+one `import ctbrowser;` and no SDL symbol, and the engine modules must stay
+SDL-free.
+
 ## v2 IS THE ENGINE (stage 7, 2026-07-25)
 
 `ctbrowse` (examples-v2/) is the browser: `ctbrowse page.html`, or

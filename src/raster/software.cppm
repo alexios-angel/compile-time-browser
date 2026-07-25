@@ -102,6 +102,15 @@ public:
 	// tiles were drawn from no longer exists.
 	void discard() { layers_.clear(); }
 
+	// A new viewport size, KEEPING the backend. The alternative - building a
+	// fresh renderer - silently throws away a GPU device and drops the app to
+	// software on its first window resize, permanently.
+	void resize(int width, int height) {
+		if (width == target_.width() && height == target_.height()) { return; }
+		target_ = surface{width, height};
+		discard(); // the tiles were rastered for a different content width
+	}
+
 	// Rasterize one tile. SAFE TO CALL CONCURRENTLY FOR DISTINCT TILE IDS:
 	// every write lands in that tile's own storage, which reserve_tiles already
 	// allocated, and the display list is const.

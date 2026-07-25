@@ -102,6 +102,16 @@ public:
 	// Every tile is stale. What a relayout calls.
 	void discard() { ops_->discard(self_); }
 
+	// A new viewport size. Goes through the seam rather than being done by
+	// replacing the renderer, because replacing it loses whichever backend was
+	// chosen at startup.
+	void resize(int width, int height) { ops_->resize(self_, width, height); }
+
+	// The page canvas colour, behind every layer. Both backends already had a
+	// `clear_color` member; this is the seam that lets browser_options::background
+	// actually reach one - it was a public field nothing read.
+	void set_clear_color(color c) { ops_->set_clear_color(self_, c); }
+
 	// The composited image, when the backend can produce one. The software
 	// backend always can; a GPU backend can only when it is offscreen, which is
 	// what makes the two comparable in tests.
@@ -125,6 +135,8 @@ private:
 		std::expected<void, gpu_error> (*composite)(void *, std::span<const layer>);
 		std::expected<void, gpu_error> (*end_frame)(void *);
 		void (*discard)(void *);
+		void (*resize)(void *, int, int);
+		void (*set_clear_color)(void *, color);
 		std::expected<surface, gpu_error> (*read_target)(void *);
 		void (*destroy)(void *);
 	};
@@ -152,6 +164,8 @@ private:
 	    [](void * s, std::span<const layer> l) { return static_cast<B *>(s)->composite(l); },
 	    [](void * s) { return static_cast<B *>(s)->end_frame(); },
 	    [](void * s) { static_cast<B *>(s)->discard(); },
+	    [](void * s, int w, int h) { static_cast<B *>(s)->resize(w, h); },
+	    [](void * s, color c) { static_cast<B *>(s)->clear_color = c; },
 	    [](void * s) { return read_target_of(*static_cast<B *>(s)); },
 	    [](void * s) { delete static_cast<B *>(s); },
 	};

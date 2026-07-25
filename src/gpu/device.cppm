@@ -312,6 +312,22 @@ public:
 		return out;
 	}
 
+	// See the software backend's resize for why this exists rather than the
+	// caller building a new renderer.
+	void resize(int width, int height) {
+		if (width == width_ && height == height_) { return; }
+		width_ = width;
+		height_ = height;
+		discard();
+		if (target_ != nullptr) {
+			SDL_ReleaseGPUTexture(device_, target_);
+			target_ = nullptr;
+		}
+		// A windowed backend renders to the swapchain, which SDL resizes for us;
+		// only the offscreen target is ours to rebuild.
+		if (window_ == nullptr) { (void)build_target(); }
+	}
+
 	void discard() {
 		for (auto & per_layer : layers_) {
 			for (auto & [key, s] : per_layer) {

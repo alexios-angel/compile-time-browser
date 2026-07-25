@@ -73,8 +73,8 @@ struct browser_options {
 	int width = 1024;
 	int height = 768;
 	int tile_extent = ctbrowser::raster::default_tile_extent;
-	// The page canvas. White, because that is what a document with no
-	// background shows.
+	// The page canvas, behind everything the document draws. White by default,
+	// because that is what a browser with no page background shows.
 	color background = color{ctbrowser::style::ua_canvas};
 	// A page taller than the window scrolls; this is how far one wheel notch
 	// moves it. v1 used the same figure.
@@ -88,6 +88,15 @@ public:
 	      renderer_(renderer::software(options.width, options.height, options.tile_extent)) {
 		reset_document();
 	}
+
+	// Neither copyable nor movable. run_scripts() hands dom_bindings two
+	// `this`-capturing callbacks and record() installs a third on the recorder,
+	// so a moved-from browser leaves three lambdas pointing at the old address.
+	// The implicit move was available and would have done exactly that.
+	browser(const browser &) = delete;
+	browser & operator=(const browser &) = delete;
+	browser(browser &&) = delete;
+	browser & operator=(browser &&) = delete;
 
 	// Render with something other than the software backend - the GPU one, or
 	// whatever gpu::create_renderer() decided this machine can run.
@@ -153,7 +162,10 @@ public:
 		if (width == options_.width && height == options_.height) { return; }
 		options_.width = std::max(1, width);
 		options_.height = std::max(1, height);
-		renderer_ = renderer::software(options_.width, options_.height, options_.tile_extent);
+		// RESIZE the renderer, do not replace it. Replacing it built a fresh
+		// software backend, so an app that chose the GPU silently dropped to
+		// software on its first window resize and never came back.
+		renderer_.resize(options_.width, options_.height);
 		mark(dirty::layout);
 	}
 	[[nodiscard]] int width() const noexcept { return options_.width; }
@@ -239,6 +251,7 @@ public:
 			canvas_revision_ = canvases_.total_revision();
 		}
 		if (dirty_ >= dirty::raster) { renderer_.discard(); }
+		renderer_.set_clear_color(options_.background);
 		if (dirty_ >= dirty::styles) { resolve_styles(); }
 		if (dirty_ >= dirty::layout) { run_layout(); }
 		if (dirty_ >= dirty::paint) { record(); }
