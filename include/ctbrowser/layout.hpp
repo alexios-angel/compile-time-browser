@@ -51,16 +51,16 @@ struct computed_style {
 	const style_fn * resolve;
 	std::vector<ctcss::element_ref> chain;
 
-	constexpr std::string_view get(std::string_view prop) const {
+	[[nodiscard]] constexpr std::string_view get(std::string_view prop) const {
 		if (n->inline_style.has(prop)) { return n->inline_style.get(prop); }
 		return (*resolve)(chain.data(), chain.size(), prop);
 	}
-	constexpr std::int32_t px(std::string_view prop, std::int32_t fallback) const {
+	[[nodiscard]] constexpr std::int32_t px(std::string_view prop, std::int32_t fallback) const {
 		const ctcss::length l = ctcss::parse_length(get(prop));
 		if (!l.ok || (l.u != ctcss::unit::px && l.u != ctcss::unit::none)) { return fallback; }
 		return static_cast<std::int32_t>(l.value);
 	}
-	constexpr ctcss::color color_of(std::string_view prop, ctcss::color fallback) const {
+	[[nodiscard]] constexpr ctcss::color color_of(std::string_view prop, ctcss::color fallback) const {
 		const ctcss::color c = ctcss::parse_color(get(prop));
 		return c.ok ? c : fallback;
 	}
@@ -146,11 +146,11 @@ inline constexpr std::array inline_level_tags{
     std::string_view{"del"},    std::string_view{"strike"}, std::string_view{"img"},
     std::string_view{"q"},      std::string_view{"time"},   std::string_view{"output"}};
 
-constexpr bool inline_level_tag(std::string_view tag) {
+[[nodiscard]] constexpr bool inline_level_tag(std::string_view tag) {
 	return std::ranges::contains(inline_level_tags, tag);
 }
 // inline containers with no explicit width shrink to their content
-constexpr bool shrink_wrap_tag(std::string_view tag) {
+[[nodiscard]] constexpr bool shrink_wrap_tag(std::string_view tag) {
 	return inline_level_tag(tag) && tag != "input" && tag != "button" && tag != "select" &&
 	       tag != "textarea" && tag != "img";
 }
@@ -175,16 +175,16 @@ struct block_text {
 
 // the UA line box: one glyph row plus quarter-em leading. Flow text, the
 // widget emitters and the engine's caret math all step by this.
-constexpr std::int32_t line_height(std::int32_t font_px) noexcept {
+[[nodiscard]] constexpr std::int32_t line_height(std::int32_t font_px) noexcept {
 	return font_px + font_px / 4;
 }
 
-constexpr uint32_t pack_argb(ctcss::color c) {
+[[nodiscard]] constexpr uint32_t pack_argb(ctcss::color c) {
 	return (static_cast<uint32_t>(c.a) << 24) | (static_cast<uint32_t>(c.r) << 16) |
 	       (static_cast<uint32_t>(c.g) << 8) | static_cast<uint32_t>(c.b);
 }
 
-constexpr bool skipped_tag(std::string_view tag) {
+[[nodiscard]] constexpr bool skipped_tag(std::string_view tag) {
 	return tag == "head" || tag == "style" || tag == "script" || tag == "title";
 }
 
@@ -208,7 +208,7 @@ struct widget_painter {
 
 	static constexpr std::int32_t UNSET = -1000000;
 
-	constexpr std::int32_t text_width(std::u32string_view t, std::int32_t font_px,
+	[[nodiscard]] constexpr std::int32_t text_width(std::u32string_view t, std::int32_t font_px,
 	                                  const font_spec & fs = {}) const {
 		if (measure != nullptr && *measure) { return (*measure)(t, font_px, fs.family, fs.bold, fs.italic); }
 		return static_cast<std::int32_t>(t.size()) * font_px; // one square glyph per code point
@@ -217,7 +217,7 @@ struct widget_painter {
 	// CSS inheritance, as one walk: the value of `prop` declared by the
 	// nearest ancestor (self first), or "" when nobody declares it. Every
 	// inherited text-style resolver below is a parse on top of this.
-	constexpr std::string_view inherited(node * n, std::string_view prop) const {
+	[[nodiscard]] constexpr std::string_view inherited(node * n, std::string_view prop) const {
 		for (node * p = n; p != nullptr; p = p->parent) {
 			computed_style pcs{p, resolve, p->chain()};
 			const std::string_view v = pcs.get(prop);
@@ -337,7 +337,7 @@ struct widget_painter {
 
 	// computed font-size (px): em/% relative to the parent's font, vw/vh to the
 	// viewport, rem to the root; inherits when unset (root default 16px)
-	constexpr std::int32_t font_of(node * n) const {
+	[[nodiscard]] constexpr std::int32_t font_of(node * n) const {
 		if (n == nullptr) { return 16; }
 		computed_style cs{n, resolve, n->chain()};
 		const ctcss::length l = ctcss::parse_length(cs.get("font-size"));
@@ -398,13 +398,13 @@ struct widget_painter {
 	}
 
 	// text-align inherits ("" = default/left)
-	constexpr std::string_view text_align(node & n) const { return inherited(&n, "text-align"); }
+	[[nodiscard]] constexpr std::string_view text_align(node & n) const { return inherited(&n, "text-align"); }
 
 	// color inherits too, but this one canNOT go through inherited(): it
 	// walks until a value PARSES, not until one is merely declared, so an
 	// unreadable `color: mauve` keeps searching upward instead of ending
 	// the walk. Default black.
-	constexpr ctcss::color text_color(node & n) const {
+	[[nodiscard]] constexpr ctcss::color text_color(node & n) const {
 		for (node * p = &n; p != nullptr; p = p->parent) {
 			computed_style pcs{p, resolve, p->chain()};
 			const ctcss::color c = ctcss::parse_color(pcs.get("color"));
@@ -417,7 +417,7 @@ struct widget_painter {
 	// least one code point, so an overlong glyph still makes progress.
 	// Shared by the flow text and the textarea's soft wrap; the two differ
 	// only in where they then put the word break, so that part is theirs.
-	constexpr std::size_t fitting_prefix(std::u32string_view rest, std::int32_t content_w,
+	[[nodiscard]] constexpr std::size_t fitting_prefix(std::u32string_view rest, std::int32_t content_w,
 	                                     std::int32_t font_px, const font_spec & fs) const {
 		std::size_t take = rest.size();
 		while (take > 1 && text_width(rest.substr(0, take), font_px, fs) > content_w) { --take; }
@@ -1065,7 +1065,7 @@ struct layout_pass : widget_painter {
 	// flow text breaks AT the space and then eats it, so the next line
 	// starts on a word (a single overlong word still breaks mid-word, like
 	// a browser). `pre` takes the hard cut.
-	constexpr std::size_t wrap_take(std::u32string_view rest, std::int32_t content_w,
+	[[nodiscard]] constexpr std::size_t wrap_take(std::u32string_view rest, std::int32_t content_w,
 	                                std::int32_t font_px, const font_spec & fs,
 	                                bool preserve = false) const {
 		std::size_t take = fitting_prefix(rest, content_w, font_px, fs);
@@ -1321,7 +1321,7 @@ constexpr void collect_backgrounds(node & n, const style_fn & resolve,
 
 // lay the document out for a viewport and produce the paint list.
 // viewport_h (when > 0) anchors position:fixed/absolute top/bottom.
-constexpr std::vector<paint_cmd> layout(document & doc, std::int32_t viewport_w,
+[[nodiscard]] constexpr std::vector<paint_cmd> layout(document & doc, std::int32_t viewport_w,
                                      const style_fn & resolve,
                                      const text_measure_fn & measure = {},
                                      std::int32_t viewport_h = 0) {

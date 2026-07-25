@@ -61,7 +61,7 @@ namespace ctbrowser {
 namespace detail {
 // CTBROWSER_DEBUG (any value): diagnostics print full JS error stacks and the
 // engine reports a failed page script. Cheap: getenv is read once.
-inline bool debug_on() {
+[[nodiscard]] inline bool debug_on() {
 	static const bool on = std::getenv("CTBROWSER_DEBUG") != nullptr;
 	return on;
 }
@@ -83,41 +83,41 @@ inline std::string error_trace(const ctjs::value & v) {
 // non-numeric value makes to_number() return NaN, and casting NaN to an
 // integer is undefined behavior. Defaulting instead keeps the natives
 // total over every input a script can hand them.
-inline std::string arg_str(const std::vector<ctjs::value> & a, std::size_t i) {
+[[nodiscard]] inline std::string arg_str(const std::vector<ctjs::value> & a, std::size_t i) {
 	return i < a.size() ? a[i].to_string() : std::string{};
 }
-inline double arg_num(const std::vector<ctjs::value> & a, std::size_t i, double dflt = 0.0) {
+[[nodiscard]] inline double arg_num(const std::vector<ctjs::value> & a, std::size_t i, double dflt = 0.0) {
 	if (i >= a.size()) { return dflt; }
 	const double d = a[i].to_number();
 	return std::isnan(d) ? dflt : d;
 }
-inline std::int32_t arg_i32(const std::vector<ctjs::value> & a, std::size_t i,
+[[nodiscard]] inline std::int32_t arg_i32(const std::vector<ctjs::value> & a, std::size_t i,
                             std::int32_t dflt = 0) {
 	return static_cast<std::int32_t>(arg_num(a, i, static_cast<double>(dflt)));
 }
-inline bool arg_bool(const std::vector<ctjs::value> & a, std::size_t i) {
+[[nodiscard]] inline bool arg_bool(const std::vector<ctjs::value> & a, std::size_t i) {
 	return i < a.size() && a[i].truthy();
 }
-inline ctjs::rc<ctjs::object_t> arg_obj(const std::vector<ctjs::value> & a, std::size_t i) {
+[[nodiscard]] inline ctjs::rc<ctjs::object_t> arg_obj(const std::vector<ctjs::value> & a, std::size_t i) {
 	return (i < a.size() && a[i].is_object()) ? a[i].as_object() : ctjs::rc<ctjs::object_t>{};
 }
-inline bool arg_fn(const std::vector<ctjs::value> & a, std::size_t i) {
+[[nodiscard]] inline bool arg_fn(const std::vector<ctjs::value> & a, std::size_t i) {
 	return i < a.size() && a[i].is_function();
 }
 
 // a named property read off a JS object, with a default
-inline double num_prop(const ctjs::rc<ctjs::object_t> & o, const char * k, double dflt) {
+[[nodiscard]] inline double num_prop(const ctjs::rc<ctjs::object_t> & o, const char * k, double dflt) {
 	if (!o) { return dflt; }
 	const ctjs::value * v = o->find(k);
 	return (v != nullptr && v->is_number()) ? v->as_number() : dflt;
 }
-inline ctjs::rc<ctjs::object_t> child_obj(const ctjs::rc<ctjs::object_t> & o, const char * k) {
+[[nodiscard]] inline ctjs::rc<ctjs::object_t> child_obj(const ctjs::rc<ctjs::object_t> & o, const char * k) {
 	if (!o) { return {}; }
 	const ctjs::value * v = o->find(k);
 	return (v != nullptr && v->is_object()) ? v->as_object() : ctjs::rc<ctjs::object_t>{};
 }
 // `this` inside a native, when it is an object
-inline ctjs::rc<ctjs::object_t> self_of(ctjs::context & cx) {
+[[nodiscard]] inline ctjs::rc<ctjs::object_t> self_of(ctjs::context & cx) {
 	return cx.current_this.is_object() ? cx.current_this.as_object() : ctjs::rc<ctjs::object_t>{};
 }
 
@@ -302,7 +302,7 @@ struct dom_events {
 
 namespace detail {
 
-inline uint32_t css_to_argb(std::string_view spec, uint32_t fallback) {
+[[nodiscard]] inline uint32_t css_to_argb(std::string_view spec, uint32_t fallback) {
 	const ctcss::color c = ctcss::parse_color(spec);
 	if (!c.ok) { return fallback; }
 	return (static_cast<uint32_t>(c.a) << 24) | (static_cast<uint32_t>(c.r) << 16) |
@@ -376,7 +376,7 @@ inline void add_event_methods(ctjs::object_t & ev) {
 }
 
 // read a boolean flag a listener may have set on the shared event object
-inline bool event_flag(const ctjs::value & evt, std::string_view name) {
+[[nodiscard]] inline bool event_flag(const ctjs::value & evt, std::string_view name) {
 	if (!evt.is_object()) { return false; }
 	const ctjs::value * f = evt.as_object()->find(name);
 	return f != nullptr && f->truthy();
@@ -916,9 +916,9 @@ struct canvas_ops {
 	image_store * images = nullptr;
 	ctjs::rc<ctjs::object_t> ctx;
 
-	std::uint32_t fill_style() const { return style_prop("fillStyle"); }
-	std::uint32_t stroke_style() const { return style_prop("strokeStyle"); }
-	std::uint32_t style_prop(const char * key) const {
+	[[nodiscard]] std::uint32_t fill_style() const { return style_prop("fillStyle"); }
+	[[nodiscard]] std::uint32_t stroke_style() const { return style_prop("strokeStyle"); }
+	[[nodiscard]] std::uint32_t style_prop(const char * key) const {
 		if (const ctjs::value * v = ctx->find(key)) { return css_to_argb(v->to_string(), 0xFF000000u); }
 		return 0xFF000000u;
 	}

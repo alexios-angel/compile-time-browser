@@ -50,11 +50,11 @@ inline constexpr std::int64_t line_rank_vertical_weight = 100000;
 // members of engine and never touched an engine: they are functions of a
 // string (or of one node), and being free makes them reusable and
 // separately testable.
-inline bool is_utf8_cont(char c) noexcept {
+[[nodiscard]] inline bool is_utf8_cont(char c) noexcept {
 	return (static_cast<unsigned char>(c) & 0xC0) == 0x80;
 }
 // bytes in the code point ENDING at `pos` (0 when pos is at the start)
-inline std::int32_t cp_len_before(std::string_view s, std::int32_t pos) {
+[[nodiscard]] inline std::int32_t cp_len_before(std::string_view s, std::int32_t pos) {
 	std::int32_t n = 0;
 	while (pos - n > 0) {
 		++n;
@@ -63,7 +63,7 @@ inline std::int32_t cp_len_before(std::string_view s, std::int32_t pos) {
 	return n;
 }
 // bytes in the code point STARTING at `pos` (0 at the end)
-inline std::int32_t cp_len_at(std::string_view s, std::int32_t pos) {
+[[nodiscard]] inline std::int32_t cp_len_at(std::string_view s, std::int32_t pos) {
 	if (pos >= static_cast<std::int32_t>(s.size())) { return 0; }
 	std::int32_t n = 1;
 	while (pos + n < static_cast<std::int32_t>(s.size()) &&
@@ -72,12 +72,12 @@ inline std::int32_t cp_len_at(std::string_view s, std::int32_t pos) {
 	}
 	return n;
 }
-inline std::int32_t byte_of_cp(std::string_view v, std::int32_t cp) {
+[[nodiscard]] inline std::int32_t byte_of_cp(std::string_view v, std::int32_t cp) {
 	std::size_t i = 0;
 	for (std::int32_t k = 0; k < cp && i < v.size(); ++k) { (void)utf8_next(v, i); }
 	return static_cast<std::int32_t>(i);
 }
-inline std::int32_t cp_of_byte(std::string_view v, std::int32_t b) {
+[[nodiscard]] inline std::int32_t cp_of_byte(std::string_view v, std::int32_t b) {
 	return static_cast<std::int32_t>(
 	    utf8_length(v.substr(0, static_cast<std::size_t>(b < 0 ? 0 : b))));
 }
@@ -85,7 +85,7 @@ inline std::int32_t cp_of_byte(std::string_view v, std::int32_t b) {
 // The textarea's visual lines: layout's soft-wrapped ui_lines when they
 // are FRESH (i.e. they still describe the current value), else hard-line
 // spans computed here, so edits between frames stay navigable.
-inline std::vector<node::text_line> visual_lines(const node & f) {
+[[nodiscard]] inline std::vector<node::text_line> visual_lines(const node & f) {
 	const std::int32_t total = static_cast<std::int32_t>(utf8_length(f.value));
 	if (!f.ui_lines.empty() && f.ui_lines.back().cp_end == total) { return f.ui_lines; }
 	std::vector<node::text_line> out;
@@ -101,7 +101,7 @@ inline std::vector<node::text_line> visual_lines(const node & f) {
 	if (out.empty()) { out.push_back({0, 0, 0, 0, 0, true}); }
 	return out;
 }
-inline std::int32_t caret_visual_line(const std::vector<node::text_line> & lines,
+[[nodiscard]] inline std::int32_t caret_visual_line(const std::vector<node::text_line> & lines,
                                       std::int32_t caret_cp) {
 	for (std::size_t i = 0; i < lines.size(); ++i) {
 		const node::text_line & l = lines[i];
@@ -127,14 +127,14 @@ struct scrollbar_model {
 		std::int32_t x = 0, y = 0, w = 0, h = 0;
 	};
 
-	constexpr bool scrollable() const noexcept {
+	[[nodiscard]] constexpr bool scrollable() const noexcept {
 		return width > 0 && page_h > viewport_h && viewport_h > 0;
 	}
-	constexpr std::int32_t max_scroll() const noexcept {
+	[[nodiscard]] constexpr std::int32_t max_scroll() const noexcept {
 		return page_h > viewport_h ? page_h - viewport_h : 0;
 	}
 	// the thumb in viewport coordinates; nullopt when the page fits
-	constexpr std::optional<rect> thumb() const noexcept {
+	[[nodiscard]] constexpr std::optional<rect> thumb() const noexcept {
 		if (!scrollable()) { return std::nullopt; }
 		std::int32_t h = viewport_h * viewport_h / page_h; // proportional to what is shown
 		if (h < ua_scrollbar_min_thumb_h) { h = ua_scrollbar_min_thumb_h; }
@@ -147,7 +147,7 @@ struct scrollbar_model {
 		return rect{viewport_w - width, y, width, h};
 	}
 	// dragging the thumb so its top lands at `ty` means this offset
-	constexpr std::int32_t scroll_for_thumb_top(std::int32_t ty,
+	[[nodiscard]] constexpr std::int32_t scroll_for_thumb_top(std::int32_t ty,
 	                                            std::int32_t thumb_h) const noexcept {
 		const std::int32_t travel = viewport_h - thumb_h;
 		return travel > 0 ? static_cast<std::int32_t>(static_cast<std::int64_t>(ty) * max_scroll() /
@@ -293,7 +293,7 @@ public:
 		}
 		scroll_y_ -= static_cast<std::int32_t>(dy * detail::wheel_step_px); // clamped in frame()
 	}
-	std::int32_t scroll_y() const { return scroll_y_; }
+	[[nodiscard]] std::int32_t scroll_y() const { return scroll_y_; }
 
 	// what the pointer should look like right now - the shell maps this
 	// to a system cursor. CSS `cursor` (resolved through the ordinary
@@ -302,12 +302,12 @@ public:
 	enum class cursor_kind : std::uint8_t { arrow, pointer, text };
 	// one element's resolved property, inline style first (the same
 	// precedence layout's computed_style uses)
-	std::string_view styled(const node * n, std::string_view prop) const {
+	[[nodiscard]] std::string_view styled(const node * n, std::string_view prop) const {
 		if (n->inline_style.has(prop)) { return n->inline_style.get(prop); }
 		const auto chain = n->chain();
 		return resolve(chain.data(), chain.size(), prop);
 	}
-	cursor_kind cursor() const {
+	[[nodiscard]] cursor_kind cursor() const {
 		for (node * n = hovered_; n != nullptr; n = n->parent) {
 			const std::string_view c = styled(n, "cursor");
 			if (c.empty()) { continue; }
@@ -326,7 +326,7 @@ public:
 
 	// --- the page scrollbar (Firefox-style overlay on the right edge).
 	// Hidden via the CSS `scrollbar-width: none` (thin = 6px) on html/body.
-	std::int32_t scrollbar_width() const {
+	[[nodiscard]] std::int32_t scrollbar_width() const {
 		if (doc.root == nullptr) { return detail::ua_scrollbar_width; }
 		const std::string_view v = styled(doc.root.get(), "scrollbar-width");
 		if (v == "none") { return 0; }
@@ -336,6 +336,9 @@ public:
 	// thumb geometry in viewport coordinates; false when not scrollable.
 	// The out-params are the long-standing shape callers (and tests) use;
 	// the arithmetic lives in detail::scrollbar_model.
+	// NOT [[nodiscard]]: the geometry comes back through the out-params, and
+	// a caller that already knows the bar is visible legitimately calls this
+	// just to refresh them (tests/browserui.cpp does, after a thumb drag).
 	bool scrollbar_thumb(std::int32_t & x, std::int32_t & y, std::int32_t & w, std::int32_t & h) const {
 		const auto t = scrollbar().thumb();
 		if (!t) { return false; }
@@ -348,7 +351,7 @@ public:
 
 	// the page's @font-face rules (family + src), for the shell to load custom
 	// fonts; empty when the stylesheet declares none
-	const std::vector<ctcss::value_sheet::font_face> & font_faces() const noexcept {
+	[[nodiscard]] const std::vector<ctcss::value_sheet::font_face> & font_faces() const noexcept {
 		return css_sheet.font_faces;
 	}
 
@@ -620,7 +623,7 @@ private:
 		                     detail::caret_blink_half_ms;
 	}
 
-	std::int32_t document_height() const {
+	[[nodiscard]] std::int32_t document_height() const {
 		return doc.root != nullptr ? doc.root->y + doc.root->h : 0;
 	}
 
@@ -701,12 +704,12 @@ private:
 	}
 
 	// the scrollbar's geometry for the current frame
-	detail::scrollbar_model scrollbar() const {
+	[[nodiscard]] detail::scrollbar_model scrollbar() const {
 		return {scrollbar_width(), page_h_, ev.viewport_w, ev.viewport_h, scroll_y_};
 	}
 
 	// the deepest node under a point, in viewport coordinates
-	node * hit_test_at(double x, double y) {
+	[[nodiscard]] node * hit_test_at(double x, double y) {
 		return doc.root ? doc.root->hit_test(static_cast<std::int32_t>(x),
 		                                     static_cast<std::int32_t>(y))
 		                : nullptr;
@@ -781,7 +784,7 @@ private:
 
 	// one PageUp/PageDown (or scrollbar track-click) step: a viewport
 	// height less an overlap band, so a line of context carries over
-	std::int32_t page_scroll_step() const {
+	[[nodiscard]] std::int32_t page_scroll_step() const {
 		return ev.viewport_h > detail::page_scroll_overlap_px
 		           ? ev.viewport_h - detail::page_scroll_overlap_px
 		           : detail::page_scroll_overlap_px;
@@ -807,7 +810,7 @@ private:
 		if (n != nullptr) { n->focused = true; }
 		focused_ = n;
 	}
-	static node * common_ancestor(node * a, node * b) {
+	[[nodiscard]] static node * common_ancestor(node * a, node * b) {
 		for (node * x = a; x != nullptr; x = x->parent) {
 			for (node * y = b; y != nullptr; y = y->parent) {
 				if (x == y) { return x; }
@@ -942,7 +945,7 @@ private:
 		f->sel_anchor = -1;
 		f->value_dirty = true;
 	}
-	bool page_select_none(node * n) const { // CSS user-select: none (overridable seam)
+	[[nodiscard]] bool page_select_none(node * n) const { // CSS user-select: none (overridable seam)
 		for (node * p = n; p != nullptr; p = p->parent) {
 			const std::string_view v = styled(p, "user-select");
 			if (v == "none") { return true; }
@@ -960,7 +963,7 @@ private:
 		for (const auto & c : n.children) { clear_selected(*c); }
 	}
 	// can this node's text join the page selection?
-	bool selectable_text(node * n) const {
+	[[nodiscard]] bool selectable_text(node * n) const {
 		return n != nullptr && !n->ui_lines.empty() && !n->is_editable() && !page_select_none(n);
 	}
 	// the CHARACTER under (or nearest to) a point: the closest rendered
@@ -1077,7 +1080,7 @@ private:
 		for (const auto & c : n.children) { mark_range(*c, first, last, first_cp, last_cp, marking); }
 		if (is_last) { marking = false; }
 	}
-	std::string page_selection_text() const {
+	[[nodiscard]] std::string page_selection_text() const {
 		std::string out;
 		if (doc.root) { collect_selected(*doc.root, out); }
 		while (!out.empty() && out.back() == '\n') { out.pop_back(); }
@@ -1100,7 +1103,7 @@ private:
 
 	// the clipboard command defaults (Ctrl+C/X/V/A and the context menu);
 	// each dispatches its cancelable DOM event first - overridable
-	bool can_copy() const {
+	[[nodiscard]] bool can_copy() const {
 		return (focused_ != nullptr && focused_->has_selection()) || !page_selection_text().empty();
 	}
 	void do_copy() {
@@ -1173,7 +1176,7 @@ private:
 		bool enabled;
 		void (engine::*action)();
 	};
-	std::vector<menu_item> menu_items() const {
+	[[nodiscard]] std::vector<menu_item> menu_items() const {
 		const bool editable = focused_ != nullptr && focused_->is_editable() && !focused_->is_disabled();
 		return {
 		    {"Copy", can_copy(), &engine::do_copy},
@@ -1329,12 +1332,12 @@ private:
 	}
 	// <label for=id> targets that control; a wrapping label targets its
 	// first checkbox/radio descendant
-	node * label_target(node * lab) {
+	[[nodiscard]] node * label_target(node * lab) {
 		const std::string_view forid = lab->attribute("for");
 		if (!forid.empty()) { return doc.root ? doc.root->find_by_id(forid) : nullptr; }
 		return first_toggle(lab);
 	}
-	static node * first_toggle(node * n) {
+	[[nodiscard]] static node * first_toggle(node * n) {
 		for (const auto & c : n->children) {
 			if (c->is_checkbox() || c->is_radio()) { return c.get(); }
 			if (node * hit = first_toggle(c.get())) { return hit; }

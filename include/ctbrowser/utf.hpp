@@ -69,7 +69,7 @@ constexpr char32_t utf8_next(std::string_view s, std::size_t & i) noexcept {
 }
 
 // number of code points a UTF-8 string decodes to
-constexpr std::size_t utf8_length(std::string_view s) noexcept {
+[[nodiscard]] constexpr std::size_t utf8_length(std::string_view s) noexcept {
 	std::size_t count = 0, i = 0;
 	while (i < s.size()) {
 		(void)utf8_next(s, i);
@@ -79,7 +79,7 @@ constexpr std::size_t utf8_length(std::string_view s) noexcept {
 }
 
 // UTF-8 -> UTF-32
-constexpr std::u32string utf8_to_utf32(std::string_view s) {
+[[nodiscard]] constexpr std::u32string utf8_to_utf32(std::string_view s) {
 	std::u32string out;
 	std::size_t i = 0;
 	while (i < s.size()) { out.push_back(utf8_next(s, i)); }
@@ -107,14 +107,14 @@ constexpr void utf8_append(std::string & out, char32_t cp) {
 }
 
 // UTF-32 -> UTF-8
-constexpr std::string utf32_to_utf8(std::u32string_view s) {
+[[nodiscard]] constexpr std::string utf32_to_utf8(std::u32string_view s) {
 	std::string out;
 	for (const char32_t cp : s) { utf8_append(out, cp); }
 	return out;
 }
 
 // UTF-16 -> UTF-32 (decodes surrogate pairs; lone surrogates -> U+FFFD)
-constexpr std::u32string utf16_to_utf32(std::u16string_view s) {
+[[nodiscard]] constexpr std::u32string utf16_to_utf32(std::u16string_view s) {
 	std::u32string out;
 	std::size_t i = 0;
 	while (i < s.size()) {
@@ -136,7 +136,7 @@ constexpr std::u32string utf16_to_utf32(std::u16string_view s) {
 }
 
 // UTF-32 -> UTF-16 (emits surrogate pairs; invalid scalars -> U+FFFD)
-constexpr std::u16string utf32_to_utf16(std::u32string_view s) {
+[[nodiscard]] constexpr std::u16string utf32_to_utf16(std::u32string_view s) {
 	std::u16string out;
 	for (char32_t cp : s) {
 		if (cp > MAX_CODEPOINT || (cp >= 0xD800 && cp <= 0xDFFF)) { cp = REPLACEMENT_CHAR; }

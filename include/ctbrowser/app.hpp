@@ -109,7 +109,7 @@ struct ttf_session {
 
 // strip CSS quoting and surrounding spaces off a font-family name or a
 // url(...) payload - both arrive quoted, unquoted or padded
-inline std::string unquote(std::string_view v) {
+[[nodiscard]] inline std::string unquote(std::string_view v) {
 	constexpr std::string_view trim = " \t\"'";
 	const std::size_t b = v.find_first_not_of(trim);
 	if (b == std::string_view::npos) { return {}; }
@@ -120,7 +120,7 @@ inline std::string unquote(std::string_view v) {
 // as-is (cwd), then relative to the executable's directory, then to
 // its parent. A game must find its sprites no matter where it was
 // launched from - "" when nothing exists (callers log loudly).
-inline std::string resolve_asset(const std::string & path) {
+[[nodiscard]] inline std::string resolve_asset(const std::string & path) {
 	namespace fs = std::filesystem;
 	std::error_code ignored;
 	if (fs::exists(path, ignored)) { return path; }
@@ -135,7 +135,7 @@ inline std::string resolve_asset(const std::string & path) {
 
 // paint_cmd carries 0xAARRGGBB; SDL wants the channels apart. This
 // unpacking appeared at every place a paint reached the renderer.
-constexpr SDL_Color sdl_color_of(std::uint32_t argb) noexcept {
+[[nodiscard]] constexpr SDL_Color sdl_color_of(std::uint32_t argb) noexcept {
 	return SDL_Color{static_cast<Uint8>((argb >> 16) & 0xFF), static_cast<Uint8>((argb >> 8) & 0xFF),
 	                 static_cast<Uint8>(argb & 0xFF), static_cast<Uint8>((argb >> 24) & 0xFF)};
 }
@@ -209,7 +209,7 @@ struct ttf_text {
 		const void * mem = nullptr;
 		std::size_t mem_size = 0;
 		std::string path;
-		bool usable() const { return mem != nullptr || !path.empty(); }
+		[[nodiscard]] bool usable() const { return mem != nullptr || !path.empty(); }
 	};
 	std::map<std::tuple<std::string, bool, bool>, face_src> faces;
 	std::string fallback_path; // opts.font_path or the probed system font
@@ -217,7 +217,7 @@ struct ttf_text {
 	std::map<std::tuple<std::string, bool, bool, std::int32_t>, font_ptr> fonts;
 	std::map<std::tuple<std::string, std::int32_t, std::uint8_t>, texture_ptr> cache;
 
-	bool ok() const { return !faces.empty() || !fallback_path.empty(); }
+	[[nodiscard]] bool ok() const { return !faces.empty() || !fallback_path.empty(); }
 
 	static std::string fold(std::string_view s) {
 		std::string out;
@@ -343,7 +343,7 @@ struct ttf_text {
 };
 
 // find a usable font when none was configured
-inline std::string probe_font() {
+[[nodiscard]] inline std::string probe_font() {
 	static constexpr std::array<std::string_view, 5> candidates{
 	    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 	    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",

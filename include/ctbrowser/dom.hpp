@@ -36,13 +36,13 @@ namespace ctbrowser {
 struct style_map {
 	std::vector<std::pair<std::string, std::string>> items;
 
-	constexpr bool has(std::string_view key) const noexcept {
+	[[nodiscard]] constexpr bool has(std::string_view key) const noexcept {
 		for (const auto & [k, v] : items) {
 			if (k == key) { return true; }
 		}
 		return false;
 	}
-	constexpr std::string_view get(std::string_view key) const noexcept {
+	[[nodiscard]] constexpr std::string_view get(std::string_view key) const noexcept {
 		for (const auto & [k, v] : items) {
 			if (k == key) { return v; }
 		}
@@ -57,7 +57,7 @@ struct style_map {
 		}
 		items.emplace_back(std::string{key}, std::string{value});
 	}
-	constexpr bool empty() const noexcept { return items.empty(); }
+	[[nodiscard]] constexpr bool empty() const noexcept { return items.empty(); }
 };
 
 struct node {
@@ -132,26 +132,26 @@ struct node {
 	bool ui_bold = false;
 	bool ui_italic = false;
 
-	constexpr std::int32_t sel_begin() const { return sel_anchor < caret ? sel_anchor : caret; }
-	constexpr std::int32_t sel_end() const { return sel_anchor < caret ? caret : sel_anchor; }
-	constexpr bool has_selection() const { return sel_anchor >= 0 && sel_anchor != caret; }
+	[[nodiscard]] constexpr std::int32_t sel_begin() const { return sel_anchor < caret ? sel_anchor : caret; }
+	[[nodiscard]] constexpr std::int32_t sel_end() const { return sel_anchor < caret ? caret : sel_anchor; }
+	[[nodiscard]] constexpr bool has_selection() const { return sel_anchor >= 0 && sel_anchor != caret; }
 
-	constexpr bool is_canvas() const { return tag == "canvas"; }
-	constexpr bool is_select() const { return tag == "select"; }
+	[[nodiscard]] constexpr bool is_canvas() const { return tag == "canvas"; }
+	[[nodiscard]] constexpr bool is_select() const { return tag == "select"; }
 
 	// --- the interactive-element taxonomy (cthtml has none - the browser
 	// owns this list). Tags arrive lowercase from cthtml; attribute VALUES
 	// are case-preserved, so type= compares case-insensitively.
-	constexpr bool is_input() const { return tag == "input"; }
-	constexpr std::string_view input_type() const { return attribute("type"); }
-	constexpr bool is_checkbox() const {
+	[[nodiscard]] constexpr bool is_input() const { return tag == "input"; }
+	[[nodiscard]] constexpr std::string_view input_type() const { return attribute("type"); }
+	[[nodiscard]] constexpr bool is_checkbox() const {
 		return is_input() && ctcss::detail::ascii_iequals(input_type(), "checkbox");
 	}
-	constexpr bool is_radio() const {
+	[[nodiscard]] constexpr bool is_radio() const {
 		return is_input() && ctcss::detail::ascii_iequals(input_type(), "radio");
 	}
 	// text-editable controls: any input that is not a button/toggle/hidden
-	constexpr bool is_text_input() const {
+	[[nodiscard]] constexpr bool is_text_input() const {
 		if (!is_input()) { return false; }
 		const std::string_view ty = input_type();
 		return !(ctcss::detail::ascii_iequals(ty, "checkbox") ||
@@ -161,9 +161,9 @@ struct node {
 		         ctcss::detail::ascii_iequals(ty, "reset") ||
 		         ctcss::detail::ascii_iequals(ty, "button"));
 	}
-	constexpr bool is_textarea() const { return tag == "textarea"; }
-	constexpr bool is_editable() const { return is_text_input() || is_textarea(); }
-	constexpr bool is_submit_button() const {
+	[[nodiscard]] constexpr bool is_textarea() const { return tag == "textarea"; }
+	[[nodiscard]] constexpr bool is_editable() const { return is_text_input() || is_textarea(); }
+	[[nodiscard]] constexpr bool is_submit_button() const {
 		if (tag == "button") {
 			const std::string_view ty = attribute("type");
 			// a <button> with no type submits (the HTML default)
@@ -171,30 +171,30 @@ struct node {
 		}
 		return is_input() && ctcss::detail::ascii_iequals(input_type(), "submit");
 	}
-	constexpr bool is_reset_button() const {
+	[[nodiscard]] constexpr bool is_reset_button() const {
 		return (tag == "button" && ctcss::detail::ascii_iequals(attribute("type"), "reset")) ||
 		       (is_input() && ctcss::detail::ascii_iequals(input_type(), "reset"));
 	}
 	// the nearest enclosing <form>, or nullptr
-	constexpr node * form_ancestor() {
+	[[nodiscard]] constexpr node * form_ancestor() {
 		for (node * p = parent; p != nullptr; p = p->parent) {
 			if (p->tag == "form") { return p; }
 		}
 		return nullptr;
 	}
-	constexpr bool is_details() const { return tag == "details"; }
-	constexpr bool is_summary() const { return tag == "summary"; }
-	constexpr bool is_link() const { return tag == "a" && has_attribute("href"); }
+	[[nodiscard]] constexpr bool is_details() const { return tag == "details"; }
+	[[nodiscard]] constexpr bool is_summary() const { return tag == "summary"; }
+	[[nodiscard]] constexpr bool is_link() const { return tag == "a" && has_attribute("href"); }
 	// the set :disabled can apply to
-	constexpr bool is_form_control() const {
+	[[nodiscard]] constexpr bool is_form_control() const {
 		return tag == "input" || tag == "button" || tag == "select" ||
 		       tag == "textarea" || tag == "option" || tag == "optgroup" ||
 		       tag == "fieldset";
 	}
-	constexpr bool is_disabled() const {
+	[[nodiscard]] constexpr bool is_disabled() const {
 		return is_form_control() && has_attribute("disabled");
 	}
-	constexpr bool is_focusable() const {
+	[[nodiscard]] constexpr bool is_focusable() const {
 		if (is_link()) { return true; }
 		return (tag == "input" || tag == "button" || tag == "select" ||
 		        tag == "textarea") &&
@@ -202,7 +202,7 @@ struct node {
 	}
 
 	// nth <option> child (only option children count); nullptr if out of range
-	constexpr node * nth_option(std::int32_t idx) {
+	[[nodiscard]] constexpr node * nth_option(std::int32_t idx) {
 		std::int32_t k = 0;
 		for (const auto & c : children) {
 			if (c->tag == "option") {
@@ -212,7 +212,7 @@ struct node {
 		}
 		return nullptr;
 	}
-	constexpr std::int32_t option_count() const {
+	[[nodiscard]] constexpr std::int32_t option_count() const {
 		std::int32_t k = 0;
 		for (const auto & c : children) {
 			if (c->tag == "option") { ++k; }
@@ -220,13 +220,13 @@ struct node {
 		return k;
 	}
 	// effective selected index (clamped; -1/out-of-range => 0)
-	constexpr std::int32_t selected_option() const {
+	[[nodiscard]] constexpr std::int32_t selected_option() const {
 		const std::int32_t n = option_count();
 		if (n == 0) { return 0; }
 		return (select_index >= 0 && select_index < n) ? select_index : 0;
 	}
 
-	constexpr std::string_view attribute(std::string_view name) const {
+	[[nodiscard]] constexpr std::string_view attribute(std::string_view name) const {
 		for (const auto & [k, v] : attributes) {
 			if (k == name) { return v; }
 		}
@@ -234,14 +234,14 @@ struct node {
 	}
 	// presence test: a boolean attribute (checked, disabled, open) is
 	// present WITH an empty value, which attribute() cannot distinguish
-	constexpr bool has_attribute(std::string_view name) const {
+	[[nodiscard]] constexpr bool has_attribute(std::string_view name) const {
 		for (const auto & [k, v] : attributes) {
 			if (k == name) { return true; }
 		}
 		return false;
 	}
 
-	constexpr bool has_class(std::string_view c) const {
+	[[nodiscard]] constexpr bool has_class(std::string_view c) const {
 		return ctcss::detail::has_class(classes, c);
 	}
 	constexpr void add_class(std::string_view c) {
@@ -275,7 +275,7 @@ struct node {
 	// the ctcss chain for this node, root-first; each link carries the
 	// live pseudo-state bits so :hover/:active/:focus/:checked/:disabled
 	// resolve through the ordinary cascade
-	constexpr std::vector<ctcss::element_ref> chain() const {
+	[[nodiscard]] constexpr std::vector<ctcss::element_ref> chain() const {
 		std::vector<ctcss::element_ref> out;
 		for (const node * n = this; n != nullptr; n = n->parent) {
 			unsigned st = 0;
@@ -298,7 +298,7 @@ struct node {
 		return out;
 	}
 
-	constexpr node * find_by_id(std::string_view want) {
+	[[nodiscard]] constexpr node * find_by_id(std::string_view want) {
 		if (id == want) { return this; }
 		for (const auto & c : children) {
 			if (node * hit = c->find_by_id(want)) { return hit; }
@@ -306,7 +306,7 @@ struct node {
 		return nullptr;
 	}
 
-	constexpr node * find_first(std::string_view want_tag) {
+	[[nodiscard]] constexpr node * find_first(std::string_view want_tag) {
 		if (tag == want_tag) { return this; }
 		for (const auto & c : children) {
 			if (node * hit = c->find_first(want_tag)) { return hit; }
@@ -319,7 +319,7 @@ struct node {
 	// token; whitespace is the descendant combinator ("#panel .value").
 	// No combinators beyond descendant, no pseudo/attribute selectors -
 	// enough for real scripts' getElementById-style lookups.
-	constexpr bool matches_compound(std::string_view sel) const {
+	[[nodiscard]] constexpr bool matches_compound(std::string_view sel) const {
 		std::size_t t = 0;
 		while (t < sel.size() && sel[t] != '#' && sel[t] != '.') { ++t; }
 		if (t > 0) {
@@ -358,7 +358,7 @@ struct node {
 		}
 		return nullptr;
 	}
-	constexpr node * query_selector(std::string_view sel) {
+	[[nodiscard]] constexpr node * query_selector(std::string_view sel) {
 		std::vector<std::string_view> parts;
 		std::size_t i = 0;
 		while (i < sel.size()) {
@@ -372,7 +372,7 @@ struct node {
 	}
 
 	// deepest node whose layout rect contains (px, py); prefers children
-	constexpr node * hit_test(std::int32_t px, std::int32_t py) {
+	[[nodiscard]] constexpr node * hit_test(std::int32_t px, std::int32_t py) {
 		for (auto it = children.rbegin(); it != children.rend(); ++it) {
 			if (node * hit = (*it)->hit_test(px, py)) { return hit; }
 		}
@@ -383,7 +383,7 @@ struct node {
 
 namespace detail {
 
-constexpr std::int32_t parse_int_attr(std::string_view v, std::int32_t fallback) {
+[[nodiscard]] constexpr std::int32_t parse_int_attr(std::string_view v, std::int32_t fallback) {
 	std::int32_t out = 0;
 	const auto r = std::from_chars(v.data(), v.data() + v.size(), out);
 	return r.ec == std::errc{} ? out : fallback;
@@ -497,8 +497,8 @@ struct document {
 	// they live here so their node* stays valid either way
 	std::vector<std::unique_ptr<node>> detached;
 
-	constexpr node * body() { return root ? root->find_first("body") : nullptr; }
-	constexpr node * by_id(std::string_view id) { return root ? root->find_by_id(id) : nullptr; }
+	[[nodiscard]] constexpr node * body() { return root ? root->find_first("body") : nullptr; }
+	[[nodiscard]] constexpr node * by_id(std::string_view id) { return root ? root->find_by_id(id) : nullptr; }
 
 	// the web's node factory: scripts MAY create elements (this
 	// deliberately relaxes the original never-create rule - p5 and
@@ -562,7 +562,7 @@ struct document {
 };
 
 // build the runtime document from a cthtml VALUE document.
-constexpr document instantiate(const cthtml::document & vdoc) {
+[[nodiscard]] constexpr document instantiate(const cthtml::document & vdoc) {
 	document d;
 	d.root = std::make_unique<node>();
 	detail::instantiate_into(*d.root, vdoc.root(), nullptr);
@@ -570,7 +570,7 @@ constexpr document instantiate(const cthtml::document & vdoc) {
 }
 
 // parse a runtime HTML string and instantiate it in one step
-constexpr document instantiate_html(std::string_view html) {
+[[nodiscard]] constexpr document instantiate_html(std::string_view html) {
 	return instantiate(cthtml::parse(html));
 }
 
