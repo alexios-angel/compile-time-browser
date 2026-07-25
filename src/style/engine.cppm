@@ -1,0 +1,264 @@
+module;
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include <boost/container/small_vector.hpp>
+#include <boost/unordered/unordered_flat_map.hpp>
+
+#include <ctcss.hpp>
+
+export module ctbrowser.style:engine;
+
+import ctbrowser.core;
+import ctbrowser.dom;
+import :computed;
+import :selector;
+
+// Style resolution.
+//
+// The shape of the work is different from v1's, not just the speed. v1 asked
+// for ONE PROPERTY at a time and rescanned the sheet for each: layout would
+// ask for `display`, then `width`, then `margin`, then `color`, and every one
+// of those walked every rule. This resolves an element ONCE, producing its
+// whole computed style, and layout then reads properties out of a small
+// vector.
+//
+// Matching is a pure function of (document snapshot, element) - it writes
+// nothing shared except the intern table - which is what lets it run across
+// the scheduler with no synchronisation on the hot path.
+
+export namespace ctbrowser::style {
+
+using ctbrowser::node_id;
+
+// What matching needs to know about an element. Gathered once per element
+// rather than re-derived per candidate rule.
+struct element_facts {
+	atom tag;
+	atom id;
+	boost::container::small_vector<atom, 4> classes;
+	std::uint32_t states = 0;
+};
+
+using style_map = boost::unordered_flat_map<std::uint64_t, computed_style_ptr>;
+
+class engine {
+public:
+	explicit engine(atom_table & atoms) : atoms_(&atoms) {}
+
+	// origin 0 = user agent, 1 = author. Author wins ties, per the cascade.
+	void add_sheet(std::string_view css, std::uint8_t origin = 1) {
+		const ctcss::value_sheet sheet = ctcss::parse_value(css);
+		for (const ctcss::value_sheet::entry & e : sheet.entries) {
+			if (e.selector < 0 ||
+			    static_cast<std::size_t>(e.selector) >= sheet.selectors.size()) {
+				continue;
+			}
+			const ctcss::value_sheet::selector & src = sheet.selectors[static_cast<std::size_t>(e.selector)];
+			const std::uint32_t sel_index = compile_selector(src);
+			if (selectors_[sel_index].parts.empty()) { continue; }
+			if (selectors_[sel_index].parts.front().never_matches) { continue; }
+
+			declarations_.push_back(declaration{atoms_->intern_lower(e.property), e.value});
+			index_.add(selectors_[sel_index],
+			           rule{sel_index, static_cast<std::uint32_t>(declarations_.size() - 1),
+			                e.order, origin, e.important});
+		}
+	}
+
+	[[nodiscard]] std::size_t rule_count() const noexcept { return index_.rule_count(); }
+	[[nodiscard]] style_table & styles() noexcept { return table_; }
+
+	// --- element facts -----------------------------------------------------
+	[[nodiscard]] element_facts facts_of(const read_txn & txn, node_id id) const {
+		element_facts f;
+		f.tag = txn.tag(id).value_or(atom{});
+		const std::string_view id_attr = txn.attribute_value(id, id_name());
+		if (!id_attr.empty()) { f.id = atoms_->intern(id_attr); }
+		split_classes(txn.attribute_value(id, class_name()), f.classes);
+		return f;
+	}
+
+	// --- the single-element path -------------------------------------------
+	[[nodiscard]] computed_style_ptr resolve(const read_txn & txn, node_id node,
+	                                         const element_facts & self,
+	                                         const ancestor_filter & ancestors) {
+		// Gather only the rules whose RIGHTMOST compound could possibly match.
+		matches_.clear();
+		collect(index_.by_id, self.id, txn, node, self, ancestors);
+		for (const atom c : self.classes) {
+			collect(index_.by_class, c, txn, node, self, ancestors);
+		}
+		collect(index_.by_tag, self.tag, txn, node, self, ancestors);
+		for (const rule & r : index_.universal) {
+			if (matches(txn, node, self, ancestors, selectors_[r.selector])) { matches_.push_back(r); }
+		}
+
+		// The cascade: origin, then importance, then specificity, then source
+		// order. Sorting ascending and applying in order means the last write
+		// to a property wins, which is exactly the rule.
+		std::ranges::stable_sort(matches_, [this](const rule & a, const rule & b) {
+			if (a.important != b.important) { return !a.important; }
+			if (a.origin != b.origin) { return a.origin < b.origin; }
+			const std::int32_t sa = selectors_[a.selector].specificity;
+			const std::int32_t sb = selectors_[b.selector].specificity;
+			if (sa != sb) { return sa < sb; }
+			return a.order < b.order;
+		});
+
+		declaration_list out;
+		for (const rule & r : matches_) {
+			const declaration & d = declarations_[r.declaration];
+			bool replaced = false;
+			for (declaration & existing : out) {
+				if (existing.property == d.property) {
+					existing.value = d.value;
+					replaced = true;
+					break;
+				}
+			}
+			if (!replaced) { out.push_back(d); }
+		}
+		return table_.intern(std::move(out));
+	}
+
+	// --- whole-document resolution ------------------------------------------
+	// Sequential DFS, maintaining the ancestor filter as it descends. The
+	// filter is why this is fast: pushing on the way down and popping on the
+	// way back up costs a few counter updates per element and saves an
+	// ancestor walk per candidate rule.
+	void resolve_subtree(const read_txn & txn, node_id node, ancestor_filter & ancestors,
+	                     style_map & out) {
+		if (txn.kind(node).value_or(node_kind::text) != node_kind::element) {
+			for (const node_id child : txn.children(node)) {
+				resolve_subtree(txn, child, ancestors, out);
+			}
+			return;
+		}
+		const element_facts self = facts_of(txn, node);
+		out[key_of(node)] = resolve(txn, node, self, ancestors);
+
+		ancestors.push(self.tag, self.id, self.classes);
+		for (const node_id child : txn.children(node)) {
+			resolve_subtree(txn, child, ancestors, out);
+		}
+		ancestors.pop(self.tag, self.id, self.classes);
+	}
+
+	[[nodiscard]] style_map resolve_all(const read_txn & txn) {
+		style_map out;
+		ancestor_filter ancestors;
+		resolve_subtree(txn, txn.root(), ancestors, out);
+		return out;
+	}
+
+	[[nodiscard]] static constexpr std::uint64_t key_of(node_id id) noexcept { return id.key(); }
+
+private:
+	[[nodiscard]] atom id_name() const { return atoms_->intern("id"); }
+	[[nodiscard]] atom class_name() const { return atoms_->intern("class"); }
+
+	void split_classes(std::string_view list, boost::container::small_vector<atom, 4> & out) const {
+		std::size_t i = 0;
+		while (i < list.size()) {
+			while (i < list.size() && (list[i] == ' ' || list[i] == '\t' || list[i] == '\n')) { ++i; }
+			const std::size_t start = i;
+			while (i < list.size() && list[i] != ' ' && list[i] != '\t' && list[i] != '\n') { ++i; }
+			if (i > start) { out.push_back(atoms_->intern(list.substr(start, i - start))); }
+		}
+	}
+
+	template <typename Map>
+	void collect(const Map & bucket, atom key, const read_txn & txn, node_id node,
+	             const element_facts & self, const ancestor_filter & ancestors) {
+		if (!key) { return; }
+		const auto it = bucket.find(key.id);
+		if (it == bucket.end()) { return; }
+		for (const rule & r : it->second) {
+			if (matches(txn, node, self, ancestors, selectors_[r.selector])) { matches_.push_back(r); }
+		}
+	}
+
+	[[nodiscard]] bool compound_matches(const element_facts & f, const compound & c) const {
+		if (c.never_matches) { return false; }
+		if (c.tag && c.tag != f.tag) { return false; }
+		if (c.id && c.id != f.id) { return false; }
+		for (const atom want : c.classes) {
+			if (std::ranges::find(f.classes, want) == f.classes.end()) { return false; }
+		}
+		if ((c.states & f.states) != c.states) { return false; }
+		return true;
+	}
+
+	// Right to left, which is the whole reason bucketing works: the rightmost
+	// compound is checked first and fails immediately for most candidates.
+	[[nodiscard]] bool matches(const read_txn & txn, node_id node, const element_facts & self,
+	                           const ancestor_filter & ancestors,
+	                           const compiled_selector & sel) const {
+		if (!compound_matches(self, sel.parts.front())) { return false; }
+		node_id current = node;
+		for (std::size_t i = 1; i < sel.parts.size(); ++i) {
+			const compound & want = sel.parts[i];
+			const combinator link = sel.links[i - 1];
+
+			// The filter's whole job: reject a descendant selector before
+			// walking a single ancestor. No false negatives, so a `false`
+			// here is conclusive.
+			if (link == combinator::descendant && !ancestors.may_match(want)) { return false; }
+
+			if (link == combinator::child) {
+				current = txn.parent(current);
+				if (!current || !compound_matches(facts_of(txn, current), want)) { return false; }
+				continue;
+			}
+			bool found = false;
+			for (node_id at = txn.parent(current); at; at = txn.parent(at)) {
+				if (compound_matches(facts_of(txn, at), want)) {
+					current = at;
+					found = true;
+					break;
+				}
+			}
+			if (!found) { return false; }
+		}
+		return true;
+	}
+
+	[[nodiscard]] std::uint32_t compile_selector(const ctcss::value_sheet::selector & src) {
+		compiled_selector out;
+		out.specificity = src.spec;
+		// ctcss stores steps left to right; matching wants right to left.
+		for (std::size_t i = src.steps.size(); i-- > 0;) {
+			const ctcss::value_sheet::step & s = src.steps[i];
+			compound c;
+			if (!s.comp.tag.empty() && s.comp.tag != "*") { c.tag = atoms_->intern_lower(s.comp.tag); }
+			if (!s.comp.id.empty()) { c.id = atoms_->intern(s.comp.id); }
+			for (const std::string & cls : s.comp.classes) { c.classes.push_back(atoms_->intern(cls)); }
+			c.states = s.comp.states;
+			c.never_matches = s.comp.impossible;
+			out.parts.push_back(std::move(c));
+			// The relation belongs to the step on its LEFT, so reversing the
+			// list means each link is read from the step we just left.
+			if (i > 0) {
+				out.links.push_back(s.relation == ctcss::rel::child ? combinator::child
+				                                                    : combinator::descendant);
+			}
+		}
+		selectors_.push_back(std::move(out));
+		return static_cast<std::uint32_t>(selectors_.size() - 1);
+	}
+
+	atom_table * atoms_;
+	std::vector<compiled_selector> selectors_;
+	std::vector<declaration> declarations_;
+	rule_index index_;
+	style_table table_;
+	std::vector<rule> matches_; // reused across elements, so no per-element allocation
+};
+
+} // namespace ctbrowser::style

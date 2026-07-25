@@ -90,6 +90,29 @@ set_target_properties(ctbrowser-script PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
 add_library(ctbrowser::script ALIAS ctbrowser-script)
 
+# --- ctbrowser.style -----------------------------------------------------
+# Reuses ctcss's parser and replaces its matching: v1's query() rescanned the
+# whole sheet per property per element, this buckets rules by their rightmost
+# simple selector and rejects descendant selectors with an ancestor filter.
+# Depends on dom for read_txn - matching consumes a stable read view, never
+# the live tree, which is what makes it parallelisable.
+add_library(ctbrowser-style)
+target_sources(ctbrowser-style
+  PUBLIC
+    FILE_SET CXX_MODULES FILES
+      style/style.cppm
+      style/computed.cppm
+      style/selector.cppm
+      style/engine.cppm)
+target_compile_features(ctbrowser-style PUBLIC cxx_std_23)
+target_compile_options(ctbrowser-style PRIVATE ${CTBROWSER_V2_WARNINGS})
+target_include_directories(ctbrowser-style PRIVATE
+  "${PROJECT_SOURCE_DIR}/external/compile-time-css/include")
+target_link_libraries(ctbrowser-style PUBLIC ctbrowser-core ctbrowser-dom Boost::headers)
+set_target_properties(ctbrowser-style PROPERTIES CXX_SCAN_FOR_MODULES ON)
+
+add_library(ctbrowser::style ALIAS ctbrowser-style)
+
 if(CTBROWSER_BUILD_TESTS)
   add_subdirectory(../tests-v2 "${CMAKE_CURRENT_BINARY_DIR}/tests-v2")
 endif()
