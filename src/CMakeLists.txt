@@ -193,6 +193,8 @@ target_sources(ctbrowser-shell
     FILE_SET CXX_MODULES FILES
       shell/shell.cppm
       shell/input.cppm
+      shell/canvas.cppm
+      shell/forms.cppm
       shell/bindings.cppm
       shell/browser.cppm)
 target_compile_features(ctbrowser-shell PUBLIC cxx_std_23)

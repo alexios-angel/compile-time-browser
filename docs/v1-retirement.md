@@ -17,6 +17,8 @@ The deletion is **not** done, and this is the list of why.
 | `ua.hpp` stylesheet | `ctbrowser.style:ua` | replaced (subset) |
 | `script.hpp` DOM bindings | `ctbrowser.shell:bindings` | replaced; handles, not `node *` |
 | cthtml wrapper | `ctbrowser.dom:tokenizer` + `:treebuilder` | replaced; WHATWG algorithms |
+| form controls on `node` | `ctbrowser.shell:forms` | replaced; state keyed by node_id |
+| canvas pixels on `node` | `ctbrowser.shell:canvas` | replaced; 2D context, same idiom |
 
 ## What v2 does not have yet
 
@@ -26,11 +28,16 @@ Deleting v1 today removes working, tested functionality with no replacement:
   `document`, element methods, events, timers and `requestAnimationFrame`.
   Still missing from v1's surface: `fetch`, `alert`, `location`, and the
   canvas context.
-- **Form controls and editing.** Inputs, textareas, selects, checkboxes, radios,
-  the caret, selection, clipboard, focus, submit/reset. `tests/editing.cpp`,
-  `tests/forms.cpp`, `tests/select.cpp`, `tests/browserui.cpp`.
-- **Canvas 2D.** The whole `getContext("2d")` surface, and with it the pong,
-  invaders and p5-style examples.
+- ~~**Form controls and editing.**~~ **MOSTLY DONE.** Text fields, checkboxes,
+  radios, buttons, focus, the caret, typing, editing keys, submit and reset all
+  work. Still missing: `<select>` option lists (the box draws, the popup does
+  not), textarea soft-wrap and multi-line caret movement, clipboard, and
+  page-level text selection.
+- ~~**Canvas 2D.**~~ **MOSTLY DONE.** `getContext("2d")`, fills, strokes, paths,
+  arcs, transforms, state stack, `fillText`, `measureText`. Still missing:
+  `drawImage` from an `<img>` (the plumbing exists, image decoding does not),
+  gradients, and nonzero-winding fill (even-odd is used, which differs only on
+  self-intersecting paths).
 - **Tables.** `emit_table`'s auto layout.
 - **The `r3d` software 3D rasterizer and the BabylonJS shim**, plus glTF/GLB
   loading and texture decoding. ~4500 lines with three tests.
@@ -57,10 +64,20 @@ catches changes, not disagreements with a second implementation.
 
 ## Recommendation
 
-**Updated after the bindings port and stage 8.** Two of the three blockers are
-gone: script drives the page, and HTML parsing is v2's own. What remains before
-deleting v1 is **form controls and canvas 2D** - those are what the remaining v1
-tests and examples actually exercise.
+**Updated after form controls and canvas landed.** All three original blockers
+are gone: script drives the page, HTML parsing is v2's own, and forms and canvas
+work. What remains is smaller and more specific:
+
+- **image decoding** (`<img>`, and `drawImage` from one) - v1 has a BMP reader
+  and an optional SDL3_image path
+- **real fonts** - v2 renders text with font8x8 only
+- **audio**, and the **BabylonJS shim** with its software 3D rasterizer
+- **`<select>` popups**, page-level text selection, and the clipboard
+- **tables** as anything but ordinary boxes (no column sizing)
+
+None of those blocks the architecture. Deleting v1 now would still lose them, so
+the question is whether they are wanted back - which is a product decision, not
+a technical one.
 
 Note also that v2 no longer depends on `external/compile-time-html` at all.
 `external/compile-time-css` is still used by the style engine, and

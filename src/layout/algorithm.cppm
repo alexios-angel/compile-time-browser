@@ -101,9 +101,13 @@ struct inline_flow {
 		intrinsic_sizes out;
 		float line = 0;
 		for (const box_node & child : b.children) {
+			// A replaced child's width is its OWN, not something derived from
+			// content it does not have. Without this an <img> or a <canvas>
+			// measures as zero wide and never wraps - it just runs off the line.
 			const float w = child.kind == box_kind::text
 			                    ? measure_text(child.text, child.font_size)
-			                    : measure(child, c, measure_text).max_content;
+			                    : (child.is_replaced() ? child.intrinsic_width
+			                                           : measure(child, c, measure_text).max_content);
 			line += w;
 			out.min_content = std::max(out.min_content, longest_word(child, measure_text));
 		}
@@ -122,6 +126,11 @@ struct inline_flow {
 		float pen_x = 0;
 		float pen_y = 0;
 		float widest = 0;
+		// The tallest thing on the current line. A line containing a 110px
+		// canvas is 110px tall, not one text line - and using the font size
+		// makes everything after it overlap.
+		float line_extent = line_height;
+		float total_height = 0;
 		for (const box_node & child : b.children) {
 			if (child.kind == box_kind::text) {
 				place_text(child, c, measure_text, line_height, pen_x, pen_y, out);
@@ -129,10 +138,12 @@ struct inline_flow {
 			}
 			// an inline box: measured whole, wrapped to the next line if it
 			// does not fit beside what is already there
-			const float w = measure(child, c, measure_text).max_content;
+			const float w = child.is_replaced() ? child.intrinsic_width
+			                                    : measure(child, c, measure_text).max_content;
 			if (pen_x > 0 && pen_x + w > c.available_width) {
 				pen_x = 0;
-				pen_y += line_height;
+				pen_y += line_extent;
+				line_extent = line_height;
 			}
 			fragment f = layout_box(child, constraints{c.available_width, 0, child.font_size},
 			                        measure_text, ready);
@@ -141,6 +152,8 @@ struct inline_flow {
 			if (f.bounds.width <= 0) { f.bounds.width = w; }
 			if (f.bounds.height <= 0) { f.bounds.height = line_height; }
 			pen_x += f.bounds.width;
+			line_extent = std::max(line_extent, f.bounds.height);
+			total_height = std::max(total_height, f.bounds.y + f.bounds.height);
 			out.children.push_back(std::move(f));
 		}
 		for (const fragment & line : out.children) {
@@ -150,7 +163,8 @@ struct inline_flow {
 		// block container replaces this with its own block-rule width; an inline
 		// box keeps it, which is what shrink-to-fit means.
 		out.bounds.width = widest;
-		out.bounds.height = pen_y + (out.children.empty() ? 0 : line_height);
+		out.bounds.height =
+		    out.children.empty() ? 0 : std::max(pen_y + line_extent, total_height);
 		return out;
 	}
 
@@ -320,6 +334,21 @@ static_assert(LayoutAlgorithm<inline_flow>);
 	// Dispatch on what the box IS, not on what its children are. An inline box
 	// shrink-wraps to its content; a block box takes its width from the block
 	// rules and lays its children out inline or as blocks internally.
+	if (b.kind == box_kind::replaced) {
+		// Sized by the element, not by content. CSS width/height still win when
+		// given - that is how `canvas { width: 100% }` scales the bitmap.
+		const resolved_edges edges = resolve_edges(b, c);
+		fragment f;
+		f.box = &b;
+		f.source = b.source;
+		f.bounds.width = b.width.is_auto() ? b.intrinsic_width
+		                                   : b.width.resolve(c.available_width, b.font_size);
+		f.bounds.height = b.height.is_auto() ? b.intrinsic_height
+		                                     : b.height.resolve(c.available_height, b.font_size);
+		f.bounds.width += edges.horizontal_padding();
+		f.bounds.height += edges.vertical_padding();
+		return f;
+	}
 	if (b.kind == box_kind::inline_) { return inline_flow{}.arrange(b, c, measure, ready); }
 	return block_flow{}.arrange(b, c, measure, ready);
 }

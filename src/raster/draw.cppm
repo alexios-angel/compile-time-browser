@@ -48,6 +48,13 @@ using ctbrowser::paint::paint_op;
 	return n;
 }
 
+// The glyph bitmap itself, exported so the canvas can draw the SAME glyphs the
+// page does. A canvas whose text does not match the text around it looks like
+// two documents.
+[[nodiscard]] inline bool glyph_pixel(char32_t code, int row, int column) noexcept {
+	return font8x8_data::glyph_pixel(code, row, column);
+}
+
 [[nodiscard]] inline float font8x8_advance(std::string_view text, float font_size) noexcept {
 	return static_cast<float>(utf8_length(text) * 8u *
 	                          static_cast<std::size_t>(font8x8_scale(font_size)));
@@ -116,6 +123,33 @@ inline void draw_text(const rect & where, const paint_command & c, const pixel_r
 	}
 }
 
+// A bitmap into a tile. Nearest-neighbour: a canvas is laid out at its own
+// pixel size, so the common case is 1:1 and any filtering would only blur it.
+inline void draw_image(const rect & where, const paint_command & c, const pixel_rect & clip,
+                       surface & into) {
+	if (!c.pixels || c.pixels->empty() || where.width <= 0 || where.height <= 0) { return; }
+	pixel_rect p = to_pixels(where, into.width(), into.height());
+	p.left = std::max(p.left, clip.left);
+	p.top = std::max(p.top, clip.top);
+	p.right = std::min(p.right, clip.right);
+	p.bottom = std::min(p.bottom, clip.bottom);
+	if (p.empty()) { return; }
+
+	const float scale_x = static_cast<float>(c.pixels->width) / where.width;
+	const float scale_y = static_cast<float>(c.pixels->height) / where.height;
+	for (int y = p.top; y < p.bottom; ++y) {
+		const std::span<std::uint32_t> row = into.row(y);
+		const int source_y = static_cast<int>((static_cast<float>(y) + 0.5f - where.y) * scale_y);
+		for (int x = p.left; x < p.right; ++x) {
+			const int source_x = static_cast<int>((static_cast<float>(x) + 0.5f - where.x) * scale_x);
+			const std::uint32_t texel = c.pixels->at(source_x, source_y);
+			if ((texel >> 24) == 0) { continue; }
+			row[static_cast<std::size_t>(x)] =
+			    blend_over(row[static_cast<std::size_t>(x)], color{texel});
+		}
+	}
+}
+
 inline void draw_commands(const std::vector<paint_command> & commands, const rect & area,
                           surface & into) {
 	// Clip stack in tile-local pixels. push_clip intersects, pop restores.
@@ -139,6 +173,7 @@ inline void draw_commands(const std::vector<paint_command> & commands, const rec
 			break;
 		case paint_op::fill_rect: fill_rect(local, c.fill, clip, into); break;
 		case paint_op::text_run: draw_text(local, c, clip, into); break;
+		case paint_op::image: draw_image(local, c, clip, into); break;
 		}
 	}
 }

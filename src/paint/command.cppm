@@ -1,5 +1,6 @@
 module;
 #include <cstddef>
+#include <memory>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -34,8 +35,43 @@ using ctbrowser::rect;
 enum class paint_op : std::uint8_t {
 	fill_rect,  // a solid (possibly translucent) box
 	text_run,   // one visual line of text, already broken by layout
+	image,      // a bitmap - a <canvas>, and later an <img>
 	push_clip,  // intersect the clip with `bounds` until the matching pop
 	pop_clip,
+};
+
+// Pixels a paint command draws, in the same 0xAARRGGBB the raster uses.
+//
+// SHARED and MUTABLE, which is a deliberate exception to the display list being
+// immutable. A <canvas> is content a script draws into continuously; snapshotting
+// it into every recording would copy a megapixel per frame to preserve a
+// property nothing needs here. What the immutability buys elsewhere - a recording
+// the compositor can re-read while the next one is built - a canvas gets by being
+// re-rastered when it changes, which the browser marks.
+//
+// The honest cost: a canvas drawn into between recording and rastering shows its
+// NEW contents, not the ones that were recorded. That is what a browser does too.
+struct bitmap {
+	int width = 0;
+	int height = 0;
+	std::vector<std::uint32_t> pixels; // width * height
+
+	bitmap() = default;
+	bitmap(int w, int h)
+	    : width(w < 0 ? 0 : w), height(h < 0 ? 0 : h),
+	      pixels(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0) {}
+
+	[[nodiscard]] bool empty() const noexcept { return pixels.empty(); }
+	[[nodiscard]] std::uint32_t at(int x, int y) const noexcept {
+		if (x < 0 || y < 0 || x >= width || y >= height) { return 0; }
+		return pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+		              static_cast<std::size_t>(x)];
+	}
+	void put(int x, int y, std::uint32_t argb) noexcept {
+		if (x < 0 || y < 0 || x >= width || y >= height) { return; }
+		pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+		       static_cast<std::size_t>(x)] = argb;
+	}
 };
 
 struct paint_command {
@@ -44,6 +80,7 @@ struct paint_command {
 	color fill;              // fill: the colour. text: the text colour.
 	float font_size = 16;    // text only
 	std::string text;        // text only, UTF-8
+	std::shared_ptr<const bitmap> pixels; // image only
 	node_id source;          // provenance, for hit testing and for debugging goldens
 
 	[[nodiscard]] friend bool operator==(const paint_command &, const paint_command &) = default;
@@ -53,22 +90,31 @@ class display_list {
 public:
 	void fill(const rect & where, color c, node_id source = {}) {
 		if (where.empty() || c.transparent()) { return; } // nothing to draw, nothing to record
-		commands_.push_back(paint_command{paint_op::fill_rect, where, c, 0, {}, source});
+		commands_.push_back(paint_command{paint_op::fill_rect, where, c, 0, {}, nullptr, source});
 		bounds_ = bounds_.united(where);
 	}
 
 	void text(const rect & where, std::string run, float font_size, color c, node_id source = {}) {
 		if (run.empty() || c.transparent()) { return; }
-		commands_.push_back(
-		    paint_command{paint_op::text_run, where, c, font_size, std::move(run), source});
+		commands_.push_back(paint_command{paint_op::text_run, where, c, font_size, std::move(run),
+		                                  nullptr, source});
+		bounds_ = bounds_.united(where);
+	}
+
+	// A bitmap scaled into `where`. Nearest-neighbour at raster time, and 1:1
+	// in the case that matters - a canvas is laid out at its own pixel size.
+	void draw_image(const rect & where, std::shared_ptr<const bitmap> image, node_id source = {}) {
+		if (where.empty() || !image || image->empty()) { return; }
+		commands_.push_back(paint_command{paint_op::image, where, color{}, 0, {}, std::move(image),
+		                                  source});
 		bounds_ = bounds_.united(where);
 	}
 
 	void push_clip(const rect & where) {
-		commands_.push_back(paint_command{paint_op::push_clip, where, color{}, 0, {}, {}});
+		commands_.push_back(paint_command{paint_op::push_clip, where, color{}, 0, {}, nullptr, {}});
 	}
 	void pop_clip() {
-		commands_.push_back(paint_command{paint_op::pop_clip, rect{}, color{}, 0, {}, {}});
+		commands_.push_back(paint_command{paint_op::pop_clip, rect{}, color{}, 0, {}, nullptr, {}});
 	}
 
 	[[nodiscard]] std::span<const paint_command> commands() const noexcept { return commands_; }

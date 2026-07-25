@@ -1,5 +1,6 @@
 module;
 #include <charconv>
+#include <functional>
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -17,6 +18,16 @@ import ctbrowser.core;
 // needs it.
 
 export namespace ctbrowser::layout {
+
+// How text is measured. Injected rather than assumed, because the real answer
+// needs a font stack that belongs to the raster layer - and because a
+// deterministic stub is what makes layout testable without fonts at all.
+//
+// It lives HERE, in the partition that depends on nothing, because both the box
+// tree and the fragment tree need it. Putting it with the fragments made :box
+// import :fragment, which imports :box - a cycle the module system rejects
+// outright rather than letting it become a subtle build-order problem.
+using measure_text_fn = std::function<float(std::string_view, float)>;
 
 enum class unit : std::uint8_t { px, percent, em, rem, auto_, none };
 
@@ -104,6 +115,19 @@ struct side_lengths {
 	    "big",  "mark", "sub", "sup",  "tt",    "kbd",    "samp","cite",   "var",  "dfn",
 	    "abbr", "ins",  "del", "img",  "q",     "time",   "output", "label", "br"};
 	for (const std::string_view t : inline_tags) {
+		if (t == tag) { return true; }
+	}
+	return false;
+}
+
+// Elements sized by what they ARE rather than by what they contain. A <canvas>
+// is its pixel buffer; an <input> is a field wide enough to type in. Laying
+// either out from its children gives a box of zero height, which is what
+// happens to every parser that does not know about replaced elements.
+[[nodiscard]] inline bool is_replaced_tag(std::string_view tag) {
+	constexpr std::string_view names[] = {"canvas", "img",    "input",  "select", "textarea",
+	                                      "button", "video",  "iframe", "embed",  "object"};
+	for (const std::string_view t : names) {
 		if (t == tag) { return true; }
 	}
 	return false;

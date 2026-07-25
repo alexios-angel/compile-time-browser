@@ -21,6 +21,8 @@ import ctbrowser.paint;
 import ctbrowser.raster;
 import ctbrowser.script;
 import :input;
+import :canvas;
+import :forms;
 import :bindings;
 
 // The engine, assembled.
@@ -53,6 +55,10 @@ using ctbrowser::raster::renderer;
 // implies every earlier one is still valid.
 enum class dirty : std::uint8_t {
 	nothing,   // composite only - a scroll
+	raster,    // the tiles are stale but the display list is not - a <canvas>
+	           // drawn into. Its pixels are shared, so what has to happen is a
+	           // re-raster and NOT a re-record; an animation that re-records
+	           // (or worse, re-lays-out) every frame is why canvas pages jank.
 	paint,     // re-record the display list
 	layout,    // geometry changed - a resize
 	styles,    // the cascade changed
@@ -111,7 +117,21 @@ public:
 
 	// --- script ----------------------------------------------------------
 
-	[[nodiscard]] script::context & script_context() noexcept { return *script_; }
+	[[nodiscard]] canvas_store & canvases() noexcept { return canvases_; }
+	[[nodiscard]] form_store & forms() noexcept { return forms_; }
+	[[nodiscard]] node_id focused() const noexcept { return focused_; }
+
+	// Typed text, from the platform's text-input event rather than from key
+	// codes - that is the only way to get IME, dead keys and non-Latin layouts
+	// right, and it is what SDL_EVENT_TEXT_INPUT delivers.
+	bool text_input(std::string_view text) {
+		control_state * control = editable_focus();
+		if (control == nullptr || text.empty()) { return false; }
+		forms_.insert_text(*control, text);
+		bindings_->dispatch("input", focused_);
+		mark(dirty::paint);
+		return true;
+	}
 	[[nodiscard]] dom_bindings & bindings() noexcept { return *bindings_; }
 	[[nodiscard]] const std::string & script_error() const noexcept { return script_error_; }
 
@@ -173,17 +193,25 @@ public:
 			return set_state(pressed_, state_active, true);
 		case input_kind::mouse_up: {
 			bool changed = set_state(pressed_, state_active, false);
+			// Focus follows the press, and moves even when the click lands on
+			// nothing - which is how clicking the page background blurs a field.
+			changed = focus(control_ancestor(pressed_)) || changed;
 			// A click fires on RELEASE, at the element the press started on -
 			// which is what makes dragging off a button cancel it, the way every
 			// real browser behaves.
 			const node_id released_on = hit_test(event.x, event.y);
 			if (pressed_ && released_on == pressed_) {
-				changed = bindings_->dispatch("click", pressed_) || changed;
+				const bool prevented = bindings_->dispatch("click", pressed_);
+				changed = true;
+				// Default actions run AFTER the listeners and only if none of
+				// them cancelled - which is what preventDefault is for.
+				if (!prevented) { activate(pressed_); }
 			}
 			pressed_ = node_id{};
 			return changed;
 		}
 		case input_kind::key_down: return handle_key(event);
+		case input_kind::text_input: return text_input(event.key);
 		case input_kind::resize:
 			resize(static_cast<int>(event.x), static_cast<int>(event.y));
 			return true;
@@ -203,6 +231,14 @@ public:
 	// Run whatever this frame needs and composite. Cheap when nothing is dirty,
 	// which is the common case and the point.
 	std::expected<void, ctbrowser::raster::gpu_error> frame(scheduler * pool = nullptr) {
+		// Anything drawn into a canvas since the last frame makes its tiles
+		// stale. Asking here rather than being told keeps the bindings from
+		// having to know what a tile is.
+		if (canvases_.total_revision() != canvas_revision_) {
+			dirty_ = worse(dirty_, dirty::raster);
+			canvas_revision_ = canvases_.total_revision();
+		}
+		if (dirty_ >= dirty::raster) { renderer_.discard(); }
 		if (dirty_ >= dirty::styles) { resolve_styles(); }
 		if (dirty_ >= dirty::layout) { run_layout(); }
 		if (dirty_ >= dirty::paint) { record(); }
@@ -225,16 +261,16 @@ public:
 	}
 
 private:
-	static constexpr std::uint32_t state_hover = 1u << 0;
-	static constexpr std::uint32_t state_active = 1u << 1;
+	// The same bits ctcss compiles :hover/:active/:focus into, named here so
+	// the browser and the selector matcher cannot drift apart.
+	static constexpr std::uint32_t state_hover = ctbrowser::style::engine::state_hover;
+	static constexpr std::uint32_t state_active = ctbrowser::style::engine::state_active;
+	static constexpr std::uint32_t state_focus = ctbrowser::style::engine::state_focus;
 
-	void mark(dirty d) {
-		dirty_ = worse(dirty_, d);
-		// A relayout invalidates every tile: they hold pixels for geometry that
-		// no longer exists. Forgetting this shows the OLD page, which is worse
-		// than showing nothing.
-		if (d >= dirty::layout) { renderer_.discard(); }
-	}
+	// Tiles are discarded in frame(), not here: every level at or above
+	// `raster` invalidates them, and doing it in one place is what stops a new
+	// dirty level from silently forgetting to.
+	void mark(dirty d) { dirty_ = worse(dirty_, d); }
 
 	// <style> elements in the document. A real browser also fetches <link
 	// rel=stylesheet>; there is no network here yet, and pretending otherwise
@@ -286,7 +322,12 @@ private:
 		script_.reset();
 		script_program_.reset();
 		script_ = std::make_unique<script::context>();
-		bindings_ = std::make_unique<dom_bindings>(*doc_, atoms_, [this] { mark(dirty::everything); });
+		canvases_.clear();
+		forms_.clear();
+		focused_ = node_id{};
+		bindings_ = std::make_unique<dom_bindings>(
+		    *doc_, atoms_, canvases_, forms_, [this] { mark(dirty::paint); },
+		    [this](node_id id) { (void)focus(id); });
 		bindings_->observe_viewport(options_.width, options_.height);
 		bindings_->install(*script_);
 		script_error_.clear();
@@ -313,7 +354,7 @@ private:
 
 	void run_layout() {
 		const auto txn = doc_->read();
-		ctbrowser::layout::box_builder builder{atoms_, resolved_};
+		ctbrowser::layout::box_builder builder{atoms_, resolved_, ctbrowser::raster::font8x8_advance};
 		boxes_ = builder.build(txn, txn.root());
 		const ctbrowser::layout::engine eng{ctbrowser::raster::font8x8_advance};
 		fragments_ = eng.run(boxes_, static_cast<float>(options_.width));
@@ -328,8 +369,151 @@ private:
 	}
 
 	void record() {
+		recorder_.paint_replaced = [this](node_id id, const rect & box,
+		                                  const ctbrowser::style::computed_style_ptr & style,
+		                                  ctbrowser::paint::display_list & into) {
+			paint_replaced(id, box, style, into);
+		};
 		layers_ = recorder_.record_layers(fragments_);
 		layers_.scroll_to(0, scroll_y_);
+	}
+
+	// What a <canvas> or a form control draws. Everything here is chrome the
+	// UA supplies rather than anything the document asked for, which is why the
+	// palette comes from :ua and not from the cascade.
+	void paint_replaced(node_id id, const rect & box,
+	                    const ctbrowser::style::computed_style_ptr & style,
+	                    ctbrowser::paint::display_list & into) {
+		const auto txn = doc_->read();
+		const std::string_view tag = atoms_.text(txn.tag(id).value_or(atom{}));
+
+		if (tag == "canvas") {
+			if (auto pixels = canvases_.pixels_of(id)) { into.draw_image(box, std::move(pixels), id); }
+			return;
+		}
+		const std::string_view type = txn.attribute_value(id, atoms_.intern("type"));
+		const control_kind kind = control_kind_of(tag, type);
+		if (kind == control_kind::none) { return; }
+
+		control_state & control = forms_.state_of(txn, atoms_, id);
+		const bool focused = focused_ == id;
+		const color frame{ctbrowser::style::ua_widget_frame};
+		const color field{ctbrowser::style::ua_widget_field};
+		const color accent{ctbrowser::style::ua_widget_accent};
+
+		switch (kind) {
+		case control_kind::checkbox:
+		case control_kind::radio: {
+			into.fill(box, control.checked ? accent : field, id);
+			outline(box, frame, into, id);
+			if (control.checked) {
+				// The mark, inset. A checkbox drawn as a filled square and a
+				// radio drawn as a filled square are indistinguishable, so the
+				// radio gets a smaller centred dot.
+				const float inset = kind == control_kind::radio ? box.width * 0.3f : box.width * 0.25f;
+				into.fill(rect{box.x + inset, box.y + inset, box.width - 2 * inset,
+				               box.height - 2 * inset},
+				          color{ctbrowser::style::ua_widget_mark}, id);
+			}
+			break;
+		}
+		case control_kind::button:
+		case control_kind::select: {
+			outline(box, frame, into, id);
+			const std::string label =
+			    kind == control_kind::select ? std::string{} : button_label(txn, id, control, type);
+			if (!label.empty()) {
+				into.text(rect{box.x + 4, box.y + 3, box.width - 8, box.height - 6}, label,
+				          font_size_of(id), text_colour(style), id);
+			}
+			break;
+		}
+		case control_kind::text:
+		case control_kind::textarea: {
+			into.fill(box, field, id);
+			outline(box, focused ? accent : frame, into, id);
+			paint_field_text(box, id, control, style, focused, into);
+			break;
+		}
+		case control_kind::none: break;
+		}
+	}
+
+	void paint_field_text(const rect & box, node_id id, const control_state & control,
+	                      const ctbrowser::style::computed_style_ptr & style, bool focused,
+	                      ctbrowser::paint::display_list & into) {
+		const float size = font_size_of(id);
+		const float pad = 3;
+		const rect inner{box.x + pad, box.y + pad, box.width - 2 * pad, box.height - 2 * pad};
+		// The field clips its own contents: a value longer than the box must not
+		// paint over the page beside it.
+		into.push_clip(box);
+		if (control.selection != control.caret) {
+			const std::size_t from = std::min(control.caret, control.selection);
+			const std::size_t to = std::max(control.caret, control.selection);
+			const float x = inner.x + ctbrowser::raster::font8x8_advance(
+			                              std::string_view{control.value}.substr(0, from), size);
+			const float w = ctbrowser::raster::font8x8_advance(
+			    std::string_view{control.value}.substr(from, to - from), size);
+			into.fill(rect{x, inner.y, w, size * 1.25f},
+			          color{ctbrowser::style::ua_selection_highlight}, id);
+		}
+		if (!control.value.empty()) {
+			into.text(inner, control.value, size, text_colour(style), id);
+		}
+		if (focused) {
+			// The caret. Drawn only when focused, which is the difference
+			// between a text field and a picture of one.
+			const float x = inner.x + ctbrowser::raster::font8x8_advance(
+			                              std::string_view{control.value}.substr(0, control.caret),
+			                              size);
+			into.fill(rect{x, inner.y, 1, size * 1.25f}, text_colour(style), id);
+		}
+		into.pop_clip();
+	}
+
+	[[nodiscard]] std::string button_label(const read_txn & txn, node_id id,
+	                                       const control_state & control,
+	                                       std::string_view type) const {
+		if (!control.value.empty()) { return control.value; }
+		if (type == "submit") { return "Submit"; }
+		if (type == "reset") { return "Reset"; }
+		std::string text;
+		const auto walk = [&](auto && self, node_id at) -> void {
+			text += txn.text(at);
+			for (const node_id child : txn.children(at)) { self(self, child); }
+		};
+		walk(walk, id);
+		return text;
+	}
+
+	[[nodiscard]] color text_colour(const ctbrowser::style::computed_style_ptr & style) {
+		if (style) {
+			if (const auto c = ctbrowser::paint::parse_color(style->get(atoms_.intern("color")))) {
+				return *c;
+			}
+		}
+		return color::rgba(0, 0, 0);
+	}
+
+	[[nodiscard]] float font_size_of(node_id id) const {
+		const layout::box_node * found = find_box(boxes_, id);
+		return found == nullptr ? 16.0f : found->font_size;
+	}
+	[[nodiscard]] static const layout::box_node * find_box(const layout::box_node & at, node_id id) {
+		if (at.source == id) { return &at; }
+		for (const layout::box_node & child : at.children) {
+			if (const layout::box_node * hit = find_box(child, id)) { return hit; }
+		}
+		return nullptr;
+	}
+
+	static void outline(const rect & box, color c, ctbrowser::paint::display_list & into,
+	                    node_id id) {
+		into.fill(rect{box.x, box.y, box.width, 1}, c, id);
+		into.fill(rect{box.x, box.bottom() - 1, box.width, 1}, c, id);
+		into.fill(rect{box.x, box.y, 1, box.height}, c, id);
+		into.fill(rect{box.right() - 1, box.y, 1, box.height}, c, id);
 	}
 
 	[[nodiscard]] static node_id deepest_at(const fragment & f, float x, float y, float dx,
@@ -373,6 +557,11 @@ private:
 	}
 
 	bool handle_key(const input_event & event) {
+		// A focused editable takes the keys first: Home in a text field moves
+		// the caret, not the page.
+		if (control_state * control = editable_focus(); control != nullptr) {
+			if (edit_key(*control, event)) { return true; }
+		}
 		const float page = static_cast<float>(options_.height) * 0.9f;
 		if (event.key == "Down") { scroll_by(options_.wheel_step); return true; }
 		if (event.key == "Up") { scroll_by(-options_.wheel_step); return true; }
@@ -392,6 +581,132 @@ private:
 		resolved_.clear();
 	}
 
+	// The focused control's editable state, or null when focus is elsewhere.
+	[[nodiscard]] control_state * editable_focus() {
+		if (!focused_) { return nullptr; }
+		const auto txn = doc_->read();
+		if (!txn.contains(focused_)) { return nullptr; }
+		const control_kind kind = kind_of(txn, focused_);
+		if (kind != control_kind::text && kind != control_kind::textarea) { return nullptr; }
+		return &forms_.state_of(txn, atoms_, focused_);
+	}
+
+	[[nodiscard]] control_kind kind_of(const read_txn & txn, node_id id) {
+		return control_kind_of(atoms_.text(txn.tag(id).value_or(atom{})),
+		                       txn.attribute_value(id, atoms_.intern("type")));
+	}
+
+	// The control a click landed in. A click on the text inside a <button> has
+	// to focus the button, not the text node.
+	[[nodiscard]] node_id control_ancestor(node_id from) {
+		if (!from) { return node_id{}; }
+		const auto txn = doc_->read();
+		for (node_id at = from; at; at = txn.parent(at)) {
+			if (kind_of(txn, at) != control_kind::none) { return at; }
+		}
+		return node_id{};
+	}
+
+	bool focus(node_id id) {
+		if (id == focused_) { return false; }
+		if (focused_) {
+			// `change` fires on BLUR, not on every keystroke - that is the
+			// difference between it and `input`, and pages rely on it.
+			bindings_->dispatch("change", focused_);
+			(void)set_state(focused_, state_focus, false);
+		}
+		focused_ = id;
+		if (focused_) {
+			(void)set_state(focused_, state_focus, true);
+			bindings_->dispatch("focus", focused_);
+		}
+		mark(dirty::paint);
+		return true;
+	}
+
+	bool edit_key(control_state & control, const input_event & event) {
+		const std::string & key = event.key;
+		if (key == "Backspace") { return edited(forms_.backspace(control)); }
+		if (key == "Delete") { return edited(forms_.delete_forward(control)); }
+		if (key == "Left") { return moved(forms_.move_caret(control, -1, event.shift)); }
+		if (key == "Right") { return moved(forms_.move_caret(control, 1, event.shift)); }
+		if (key == "Home") { return moved(forms_.move_to_edge(control, false, event.shift)); }
+		if (key == "End") { return moved(forms_.move_to_edge(control, true, event.shift)); }
+		if (key == "SelectAll") {
+			forms_.select_all(control);
+			mark(dirty::paint);
+			return true;
+		}
+		if (key == "Return") {
+			// In a textarea this is a newline; in a single-line field it submits
+			// the form, which is the implicit-submission rule every login page
+			// depends on.
+			const auto txn = doc_->read();
+			if (kind_of(txn, focused_) == control_kind::textarea) {
+				forms_.insert_text(control, "\n");
+				return edited(true);
+			}
+			submit(form_store::owning_form(txn, atoms_, focused_));
+			return true;
+		}
+		return false;
+	}
+
+	bool edited(bool changed) {
+		if (!changed) { return false; }
+		bindings_->dispatch("input", focused_);
+		mark(dirty::paint);
+		return true;
+	}
+	bool moved(bool changed) {
+		if (changed) { mark(dirty::paint); }
+		return true; // the key was consumed either way - it must not scroll the page
+	}
+
+	// What clicking a control does once no listener has cancelled it.
+	void activate(node_id target) {
+		const node_id control = control_ancestor(target);
+		if (!control) { return; }
+		const auto txn = doc_->read();
+		const control_kind kind = kind_of(txn, control);
+		if (kind == control_kind::checkbox || kind == control_kind::radio) {
+			forms_.toggle(txn, atoms_, control, kind);
+			bindings_->dispatch("change", control);
+			mark(dirty::paint);
+			return;
+		}
+		if (kind != control_kind::button) { return; }
+		const std::string_view type = txn.attribute_value(control, atoms_.intern("type"));
+		const node_id form = form_store::owning_form(txn, atoms_, control);
+		if (type == "reset") {
+			forms_.reset_form(txn, form);
+			mark(dirty::paint);
+			return;
+		}
+		// A <button> with no type is a submit button, which is the default
+		// people forget and then wonder why their form reloads.
+		if (type.empty() || type == "submit") { submit(form); }
+	}
+
+	void submit(node_id form) {
+		if (!form) { return; }
+		if (bindings_->dispatch("submit", form)) { return; } // cancelled
+		const auto txn = doc_->read();
+		last_submission_ = forms_.form_data(txn, atoms_, form);
+	}
+
+public:
+	// What the last submission would have sent. There is no network, so
+	// producing the data and stopping is the honest half of submitting - and it
+	// is what a test can check.
+	[[nodiscard]] const std::vector<std::pair<std::string, std::string>> &
+	last_submission() const noexcept {
+		return last_submission_;
+	}
+
+private:
+	std::vector<std::pair<std::string, std::string>> last_submission_;
+
 	browser_options options_;
 	atom_table atoms_;
 	std::unique_ptr<document> doc_;
@@ -407,6 +722,11 @@ private:
 	// `const function_proto *` into the program, and a timer or a listener runs
 	// long after run_scripts() returned - so the program has to outlive both the
 	// call that compiled it and the context that executes it.
+	canvas_store canvases_;
+	form_store forms_;
+	node_id focused_;
+	std::uint64_t canvas_revision_ = 0;
+
 	std::unique_ptr<script::program> script_program_;
 	std::unique_ptr<script::context> script_;
 	std::unique_ptr<dom_bindings> bindings_;

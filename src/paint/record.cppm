@@ -1,4 +1,5 @@
 module;
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -45,6 +46,15 @@ public:
 	// The default text colour, when nothing in the cascade says otherwise.
 	color default_text_color = color::rgba(0, 0, 0);
 
+	// What a REPLACED element draws. The recorder cannot know: a <canvas>'s
+	// pixels live in the shell's canvas store, and a form control's appearance
+	// depends on its live value and focus. Rather than teach paint about either,
+	// it asks - which keeps this module ignorant of script and of widgets, and
+	// keeps the display list the only thing they have to agree on.
+	using replaced_painter =
+	    std::function<void(node_id, const rect &, const computed_style_ptr &, display_list &)>;
+	replaced_painter paint_replaced;
+
 	[[nodiscard]] std::shared_ptr<const display_list> record(const fragment & root) const {
 		auto list = std::make_shared<display_list>();
 		emit(root, 0, 0, default_text_color, *list);
@@ -83,6 +93,13 @@ private:
 
 		if (const auto bg = parse_color(prop(style, background_))) { into.fill(box, *bg, f.source); }
 		emit_border(box, style, f.source, into);
+
+		// Replaced elements paint themselves and have no laid-out children, so
+		// the recursion stops here.
+		if (f.box != nullptr && f.box->is_replaced()) {
+			if (paint_replaced) { paint_replaced(f.source, box, style, into); }
+			return;
+		}
 
 		// `overflow: hidden` is the one clip that exists so far. It is here
 		// rather than in a later pass because a clip has to bracket exactly the

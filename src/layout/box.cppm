@@ -38,6 +38,10 @@ enum class box_kind : std::uint8_t {
 	inline_,   // an inline-level box
 	text,      // a run of text
 	anonymous, // a generated block wrapping inline children; no source element
+	replaced,  // a box whose size comes from the ELEMENT, not its children:
+	           // <canvas>, <input>, <select>, <textarea>, <img>. CSS calls
+	           // these replaced elements, and the distinction is load bearing -
+	           // laying one out from its children gives a zero-size canvas.
 };
 
 struct box_node {
@@ -54,13 +58,20 @@ struct box_node {
 	side_lengths margin{}, padding{};
 	float font_size = 16;
 
+	// What a replaced element is sized as when the sheet says nothing. Zero
+	// means it has none and falls back to the block rules.
+	float intrinsic_width = 0;
+	float intrinsic_height = 0;
+
 	[[nodiscard]] bool is_block_level() const noexcept {
 		return kind == box_kind::block || kind == box_kind::anonymous;
 	}
+	[[nodiscard]] bool is_replaced() const noexcept { return kind == box_kind::replaced; }
 	[[nodiscard]] bool establishes_inline_context() const noexcept {
 		// A block whose children are all inline runs an inline formatting
 		// context; a block with block children runs a block one. Mixed content
 		// never reaches here - the builder wraps it.
+		if (kind == box_kind::replaced) { return false; } // its children are not laid out
 		if (children.empty()) { return false; }
 		for (const box_node & c : children) {
 			if (c.is_block_level()) { return false; }
@@ -77,8 +88,11 @@ struct box_node {
 // Builds the box tree from a document read view plus resolved styles.
 class box_builder {
 public:
-	box_builder(atom_table & atoms, const style::style_map & styles)
-	    : atoms_(&atoms), styles_(&styles),
+	// The text measure is the SAME one layout and raster use. Guessing a
+	// per-character width here instead is what made a <button> narrower than
+	// its own label - the box was sized with one metric and drawn with another.
+	box_builder(atom_table & atoms, const style::style_map & styles, measure_text_fn measure = {})
+	    : atoms_(&atoms), styles_(&styles), measure_(std::move(measure)),
 	      display_(atoms.intern("display")), width_(atoms.intern("width")),
 	      height_(atoms.intern("height")), margin_(atoms.intern("margin")),
 	      padding_(atoms.intern("padding")), font_size_(atoms.intern("font-size")) {}
@@ -127,7 +141,10 @@ private:
 			if (d == display_kind::none) { continue; } // pruned: no box at all
 
 			box_node b;
-			b.kind = d == display_kind::inline_level ? box_kind::inline_ : box_kind::block;
+			const std::string_view tag_text = atoms_->text(tag);
+			b.kind = is_replaced_tag(tag_text)
+			             ? box_kind::replaced
+			             : (d == display_kind::inline_level ? box_kind::inline_ : box_kind::block);
 			b.source = child;
 			b.style = style;
 			b.width = parse_length(prop(style, width_));
@@ -137,9 +154,76 @@ private:
 			const length fs = parse_length(prop(style, font_size_));
 			b.font_size = fs.is_auto() ? inherited_font : fs.resolve(inherited_font, inherited_font);
 
-			build_children(txn, child, b, b.font_size);
-			normalise(b);
+			if (b.kind == box_kind::replaced) {
+				intrinsic_size_of(txn, child, tag_text, b);
+			} else {
+				build_children(txn, child, b, b.font_size);
+				normalise(b);
+			}
 			into.children.push_back(std::move(b));
+		}
+	}
+
+	// Where a replaced element's own size comes from. A <canvas> takes its
+	// width/height ATTRIBUTES (not CSS - those scale the bitmap, per spec);
+	// form controls get the sizes Firefox uses, so an unstyled form looks like
+	// a form rather than like a row of zero-height boxes.
+	void intrinsic_size_of(const read_txn & txn, node_id id, std::string_view tag,
+	                       box_node & into) const {
+		const auto attribute_number = [&](std::string_view name, float fallback) {
+			const std::string_view text = txn.attribute_value(id, atoms_->intern(name));
+			if (text.empty()) { return fallback; }
+			const length parsed = parse_length(text);
+			return parsed.is_auto() ? fallback : parsed.resolve(0, into.font_size);
+		};
+		if (tag == "canvas") {
+			into.intrinsic_width = attribute_number("width", 300); // the HTML defaults
+			into.intrinsic_height = attribute_number("height", 150);
+			return;
+		}
+		if (tag == "img") {
+			into.intrinsic_width = attribute_number("width", 0);
+			into.intrinsic_height = attribute_number("height", 0);
+			return;
+		}
+		if (tag == "textarea") {
+			const float columns = attribute_number("cols", 20);
+			const float rows = attribute_number("rows", 2);
+			into.intrinsic_width = columns * text_width("0", into.font_size) + 8;
+			into.intrinsic_height = rows * into.font_size * 1.25f + 8;
+			return;
+		}
+		if (tag == "input") {
+			const std::string_view type = txn.attribute_value(id, atoms_->intern("type"));
+			if (type == "checkbox" || type == "radio") {
+				into.intrinsic_width = 13; // Firefox's widget size
+				into.intrinsic_height = 13;
+				return;
+			}
+			const float size = attribute_number("size", 20);
+			into.intrinsic_width = size * text_width("0", into.font_size) + 8;
+			into.intrinsic_height = into.font_size * 1.25f + 6;
+			return;
+		}
+		if (tag == "select") {
+			into.intrinsic_width = 12 * text_width("0", into.font_size) + 24;
+			into.intrinsic_height = into.font_size * 1.25f + 6;
+			return;
+		}
+		if (tag == "button") {
+			// A button is as wide as its LABEL. It is the one replaced element
+			// whose intrinsic size comes from its content, which is why it is
+			// measured here rather than being a constant - a button that fills
+			// the line is not a button.
+			std::string label;
+			const auto walk = [&](auto && self, node_id at) -> void {
+				label += txn.text(at);
+				for (const node_id child : txn.children(at)) { self(self, child); }
+			};
+			walk(walk, id);
+			into.intrinsic_width = text_width(label, into.font_size) + 16;
+			into.intrinsic_height = into.font_size * 1.25f + 6;
+			return;
 		}
 	}
 
@@ -206,8 +290,16 @@ private:
 		return v.substr(b, v.find_last_not_of(" \t\n\r") - b + 1);
 	}
 
+	// A character's width at a font size, through the injected measure when
+	// there is one and a monospace stand-in when there is not.
+	[[nodiscard]] float text_width(std::string_view text, float font_size) const {
+		if (measure_) { return measure_(text, font_size); }
+		return static_cast<float>(text.size()) * font_size * 0.6f;
+	}
+
 	atom_table * atoms_;
 	const style::style_map * styles_;
+	measure_text_fn measure_;
 	atom display_, width_, height_, margin_, padding_, font_size_;
 };
 

@@ -49,11 +49,15 @@ inline constexpr std::string_view ua_css = R"(
 	a:active { color: #ee0000 }
 	input, textarea { cursor: text }
 
-	button, select { background-color: #e9e9ed; color: #000000; padding: 1px 8px }
+	button, select { background-color: #e9e9ed; color: #000000 }
 	button:hover, select:hover { background-color: #d0d0d7 }
 	button:active { background-color: #b1b1b9 }
-	input { background-color: #ffffff; padding: 1px 4px; width: 160px }
-	textarea { background-color: #ffffff; padding: 2px }
+	input, textarea { background-color: #ffffff }
+
+	/* No width or padding on the controls: they are REPLACED elements, so
+	   their size comes from the element itself (layout's intrinsic_size_of),
+	   not from the cascade. A blanket `input { width: 160px }` here is what
+	   Gecko does, and it is wrong for checkboxes - it made them 160px wide. */
 	th, td { padding: 1px }
 	caption { text-align: center }
 	table { margin: 0 }

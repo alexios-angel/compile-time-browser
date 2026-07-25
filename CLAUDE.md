@@ -42,9 +42,20 @@ the WHATWG algorithms — implied `<html>/<head>/<body>`, unclosed `<p>`/`<li>`,
 table section inference, foster parenting, and the adoption agency. **v2 no
 longer uses `external/compile-time-html`** (ctcss and ctjs's parser remain).
 
-**v1 IS NOT DELETED.** Doing it now would still drop form controls, canvas 2D
-and the BabylonJS shim, which is what v1's remaining tests and examples
-exercise. See `docs/v1-retirement.md`.
+**Form controls and canvas 2D work.** `ctbrowser.shell:forms` holds control
+state (value, caret, selection, checked) keyed by node_id — NOT on the node,
+which is what left v1's `node` carrying thirty UI-only fields.
+`ctbrowser.shell:canvas` is the 2D context, with its pixels in a store the
+display list shares by `shared_ptr`. Replaced elements (`canvas`, `input`,
+`button`, `select`, `textarea`, `img`) are `box_kind::replaced` and are sized
+by `intrinsic_size_of`, not by their children.
+
+A canvas draw marks `dirty::raster` — tiles are stale, the display list is
+not — so an animation re-rasters without re-recording or re-laying-out.
+
+**v1 IS NOT DELETED.** What it still has that v2 does not: image decoding,
+real fonts, audio, the BabylonJS shim, `<select>` popups and page-level text
+selection. See `docs/v1-retirement.md`.
 
 ## ⚠️ v2 GPU: this machine has NO GPU (verified 2026-07-25)
 

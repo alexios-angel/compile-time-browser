@@ -22,6 +22,8 @@ enum class input_kind : std::uint8_t {
 	mouse_up,
 	wheel,
 	key_down,
+	text_input, // typed characters, not key codes - the only path that gets
+	            // IME, dead keys and non-Latin layouts right
 	resize,
 };
 
@@ -32,6 +34,7 @@ struct input_event {
 	float wheel_y = 0;   // notches, positive = away from the user
 	std::string key;     // key_down: a DOM-ish name ("ArrowDown", "Home", ...)
 	std::uint8_t button = 0;
+	bool shift = false; // extends a selection rather than moving the caret
 
 	[[nodiscard]] static input_event mouse_move_to(float x, float y) {
 		return input_event{input_kind::mouse_move, x, y, 0, {}, 0};
@@ -45,8 +48,11 @@ struct input_event {
 	[[nodiscard]] static input_event wheel_by(float notches) {
 		return input_event{input_kind::wheel, 0, 0, notches, {}, 0};
 	}
-	[[nodiscard]] static input_event key_press(std::string name) {
-		return input_event{input_kind::key_down, 0, 0, 0, std::move(name), 0};
+	[[nodiscard]] static input_event key_press(std::string name, bool shift = false) {
+		return input_event{input_kind::key_down, 0, 0, 0, std::move(name), 0, shift};
+	}
+	[[nodiscard]] static input_event typed(std::string text) {
+		return input_event{input_kind::text_input, 0, 0, 0, std::move(text), 0, false};
 	}
 	[[nodiscard]] static input_event resized(int width, int height) {
 		return input_event{input_kind::resize, static_cast<float>(width),

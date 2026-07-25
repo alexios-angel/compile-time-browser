@@ -33,6 +33,7 @@ ctbrowser_v2_test(raster_basics)
 ctbrowser_v2_test(pipeline_basics)
 ctbrowser_v2_test(shell_basics)
 ctbrowser_v2_test(bindings_basics)
+ctbrowser_v2_test(widgets_basics)
 
 # The GPU test needs SDL3 to BUILD; it does not need a GPU to PASS. Where there
 # is no device it skips the hardware half and still checks the fallback, which

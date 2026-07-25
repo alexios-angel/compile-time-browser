@@ -4,6 +4,8 @@ export module ctbrowser.shell;
 //
 //   input    events described without SDL, so the whole browser is drivable
 //            headlessly
+//   forms    form-control state, kept off the DOM node on purpose
+//   canvas   the 2D drawing context and where its pixels live
 //   bindings the web platform, bound to the VM - script holds HANDLES, and
 //            a mutation is a callback the browser interprets
 //   browser  the assembly - parse, style, layout, paint, raster, composite -
@@ -14,5 +16,7 @@ export module ctbrowser.shell;
 // and compare them byte for byte.
 
 export import :input;
+export import :canvas;
+export import :forms;
 export import :bindings;
 export import :browser;

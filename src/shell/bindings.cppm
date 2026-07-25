@@ -16,7 +16,10 @@ import ctbrowser.core;
 import ctbrowser.dom;
 import ctbrowser.script;
 import ctbrowser.layout;
+import ctbrowser.paint;
 import :input;
+import :canvas;
+import :forms;
 
 // The web platform, bound to the v2 VM.
 //
@@ -65,8 +68,10 @@ public:
 	// `on_mutation` is how the browser learns it has to re-run the pipeline.
 	// Taking it as a callback rather than a browser reference keeps this
 	// testable on its own and keeps the dependency pointing one way.
-	dom_bindings(document & doc, atom_table & atoms, std::function<void()> on_mutation)
-	    : doc_(&doc), atoms_(&atoms), on_mutation_(std::move(on_mutation)) {}
+	dom_bindings(document & doc, atom_table & atoms, canvas_store & canvases, form_store & forms,
+	             std::function<void()> on_mutation, std::function<void(node_id)> on_focus)
+	    : doc_(&doc), atoms_(&atoms), canvases_(&canvases), forms_(&forms),
+	      on_mutation_(std::move(on_mutation)), on_focus_(std::move(on_focus)) {}
 
 	// Layout results, so offsetWidth and friends can answer. Set by the
 	// browser after each layout; null until the first one, and the natives
@@ -294,9 +299,205 @@ private:
 			if (id) { listeners_.push_back(listener{id, arg_string(c, args, 0), arg(args, 1)}); }
 			return value::undefined();
 		});
+
+		// --- form controls -------------------------------------------------
+		method("getValue", [this](context & c, std::span<value>) {
+			const node_id id = receiver(c);
+			if (!id) { return c.string(std::string{}); }
+			const auto txn = doc_->read();
+			return c.string(forms_->state_of(txn, *atoms_, id).value);
+		});
+		method("setValue", [this](context & c, std::span<value> args) {
+			const node_id id = receiver(c);
+			if (!id) { return value::undefined(); }
+			const auto txn = doc_->read();
+			control_state & control = forms_->state_of(txn, *atoms_, id);
+			control.value = arg_string(c, args, 0);
+			control.caret = control.value.size();
+			control.selection = control.caret;
+			control.value_edited = true;
+			mutated();
+			return value::undefined();
+		});
+		method("isChecked", [this](context & c, std::span<value>) {
+			const node_id id = receiver(c);
+			if (!id) { return value::boolean(false); }
+			const auto txn = doc_->read();
+			return value::boolean(forms_->state_of(txn, *atoms_, id).checked);
+		});
+		method("setChecked", [this](context & c, std::span<value> args) {
+			const node_id id = receiver(c);
+			if (!id) { return value::undefined(); }
+			const auto txn = doc_->read();
+			forms_->state_of(txn, *atoms_, id).checked = context::truthy(arg(args, 0));
+			mutated();
+			return value::undefined();
+		});
+		method("focus", [this](context & c, std::span<value>) {
+			if (const node_id id = receiver(c); id && on_focus_) { on_focus_(id); }
+			return value::undefined();
+		});
+		method("blur", [this](context &, std::span<value>) {
+			if (on_focus_) { on_focus_(node_id{}); }
+			return value::undefined();
+		});
+
+		// --- canvas --------------------------------------------------------
+		method("getContext", [this](context & c, std::span<value> args) {
+			const node_id id = receiver(c);
+			// "2d" ONLY. Returning an object for "webgl" that cannot draw is
+			// worse than returning null: a page feature-detects with exactly
+			// this call and would take the WebGL path into a dead end.
+			if (!id || arg_string(c, args, 0) != "2d") { return value::null(); }
+			return canvas_context_object(c, id);
+		});
 	}
 
 	[[nodiscard]] node_id id_or_nothing(context & c) { return receiver(c); }
+
+	// The 2D context. Its methods close over the canvas node, so the object can
+	// be stored and reused - which is what every canvas page does.
+	[[nodiscard]] value canvas_context_object(context & cx, node_id id) {
+		const auto txn = doc_->read();
+		const auto attribute = [&](std::string_view name, int fallback) {
+			const std::string_view text = txn.attribute_value(id, atoms_->intern(name));
+			if (text.empty()) { return fallback; }
+			int value = 0;
+			for (const char c : text) {
+				if (c < '0' || c > '9') { break; }
+				value = value * 10 + (c - '0');
+			}
+			return value == 0 ? fallback : value;
+		};
+		canvas_context * canvas =
+		    canvases_->context_for(id, attribute("width", 300), attribute("height", 150));
+		if (canvas == nullptr) { return value::null(); }
+
+		auto * obj = static_cast<script::object_object *>(cx.make_object().as_heap());
+		const value self = value::object(obj);
+		obj->set("canvas", wrap(cx, id));
+		const auto method = [&](std::string name, script::native_fn fn) {
+			obj->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+		};
+		// fillStyle and strokeStyle are PROPERTIES that the drawing calls read
+		// back, which is the real canvas idiom - `ctx.fillStyle = 'red'` then
+		// `ctx.fillRect(...)`. Reading them at draw time rather than at
+		// assignment is what makes that work.
+		obj->set("fillStyle", cx.string("#000000"));
+		obj->set("strokeStyle", cx.string("#000000"));
+		obj->set("lineWidth", value::number(1));
+		obj->set("globalAlpha", value::number(1));
+		obj->set("font", cx.string("10px sans-serif"));
+
+		const auto sync = [canvas](context & c) {
+			const value self_value = c.current_this();
+			if (!self_value.is_object()) { return; }
+			auto * o = static_cast<script::object_object *>(self_value.as_heap());
+			if (const value * v = o->find("fillStyle")) {
+				if (const auto parsed = paint::parse_color(c.to_string(*v))) {
+					canvas->fill_style = *parsed;
+				}
+			}
+			if (const value * v = o->find("strokeStyle")) {
+				if (const auto parsed = paint::parse_color(c.to_string(*v))) {
+					canvas->stroke_style = *parsed;
+				}
+			}
+			if (const value * v = o->find("lineWidth")) {
+				canvas->line_width = static_cast<float>(context::to_number(*v));
+			}
+			if (const value * v = o->find("globalAlpha")) {
+				canvas->global_alpha = static_cast<float>(context::to_number(*v));
+			}
+			if (const value * v = o->find("font")) {
+				canvas->font_size = font_size_from(c.to_string(*v));
+			}
+		};
+
+		// A drawing call does NOT report a document mutation. The canvas's
+		// pixels are shared with the display list, so nothing needs re-recording
+		// - the browser notices the canvas's revision moved and re-rasters. An
+		// animation that marked the document dirty would re-run style and layout
+		// sixty times a second for a page that did not change.
+		const auto draws = [sync](auto body) {
+			return [sync, body](context & c, std::span<value> args) {
+				sync(c);
+				body(c, args);
+				return value::undefined();
+			};
+		};
+
+		method("fillRect", draws([canvas](context &, std::span<value> a) {
+			canvas->fill_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
+		}));
+		method("clearRect", draws([canvas](context &, std::span<value> a) {
+			canvas->clear_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
+		}));
+		method("strokeRect", draws([canvas](context &, std::span<value> a) {
+			canvas->stroke_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
+		}));
+		method("beginPath", draws([canvas](context &, std::span<value>) { canvas->begin_path(); }));
+		method("closePath", draws([canvas](context &, std::span<value>) { canvas->close_path(); }));
+		method("moveTo", draws([canvas](context &, std::span<value> a) {
+			canvas->move_to(number(a, 0), number(a, 1));
+		}));
+		method("lineTo", draws([canvas](context &, std::span<value> a) {
+			canvas->line_to(number(a, 0), number(a, 1));
+		}));
+		method("rect", draws([canvas](context &, std::span<value> a) {
+			canvas->rect_path(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
+		}));
+		method("arc", draws([canvas](context & c, std::span<value> a) {
+			canvas->arc(number(a, 0), number(a, 1), number(a, 2), number(a, 3), number(a, 4),
+			            a.size() > 5 && context::truthy(a[5]));
+			(void)c;
+		}));
+		method("fill", draws([canvas](context &, std::span<value>) { canvas->fill(); }));
+		method("stroke", draws([canvas](context &, std::span<value>) { canvas->stroke(); }));
+		method("save", draws([canvas](context &, std::span<value>) { canvas->save(); }));
+		method("restore", draws([canvas](context &, std::span<value>) { canvas->restore(); }));
+		method("translate", draws([canvas](context &, std::span<value> a) {
+			canvas->translate(number(a, 0), number(a, 1));
+		}));
+		method("scale", draws([canvas](context &, std::span<value> a) {
+			canvas->scale(number(a, 0), number(a, 1));
+		}));
+		method("rotate", draws([canvas](context &, std::span<value> a) {
+			canvas->rotate(number(a, 0));
+		}));
+		method("resetTransform",
+		       draws([canvas](context &, std::span<value>) { canvas->reset_transform(); }));
+		method("fillText", draws([canvas](context & c, std::span<value> a) {
+			canvas->fill_text(a.empty() ? std::string{} : c.to_string(a[0]), number(a, 1),
+			                  number(a, 2));
+		}));
+		method("measureText", [canvas](context & c, std::span<value> a) {
+			auto * metrics = static_cast<script::object_object *>(c.make_object().as_heap());
+			const std::string text = a.empty() ? std::string{} : c.to_string(a[0]);
+			metrics->set("width", value::number(static_cast<double>(
+			                          raster::font8x8_advance(text, canvas->font_size))));
+			return value::object(metrics);
+		});
+		return self;
+	}
+
+	[[nodiscard]] static float number(std::span<value> args, std::size_t i) {
+		return i < args.size() ? static_cast<float>(context::to_number(args[i])) : 0.0f;
+	}
+
+	// "bold 16px sans-serif" -> 16. Only the size is read, because only the
+	// size changes anything font8x8 can draw.
+	[[nodiscard]] static float font_size_from(std::string_view font) {
+		const std::size_t px = font.find("px");
+		if (px == std::string_view::npos) { return 10; }
+		std::size_t start = px;
+		while (start > 0 && font[start - 1] >= '0' && font[start - 1] <= '9') { --start; }
+		float size = 0;
+		for (std::size_t i = start; i < px; ++i) {
+			size = size * 10 + static_cast<float>(font[i] - '0');
+		}
+		return size > 0 ? size : 10;
+	}
 
 	[[nodiscard]] node_id handle_of(value v) {
 		if (!v.is_object()) { return node_id{}; }
@@ -537,7 +738,10 @@ private:
 
 	document * doc_;
 	atom_table * atoms_;
+	canvas_store * canvases_;
+	form_store * forms_;
 	std::function<void()> on_mutation_;
+	std::function<void(node_id)> on_focus_;
 	context * cx_ = nullptr;
 	const layout::fragment * fragments_ = nullptr;
 	int viewport_width_ = 0;

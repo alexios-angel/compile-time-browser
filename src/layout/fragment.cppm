@@ -9,6 +9,7 @@ export module ctbrowser.layout:fragment;
 
 import ctbrowser.core;
 import :box;
+import :values;
 
 // The OUTPUT of layout, and it is immutable.
 //
@@ -67,10 +68,5 @@ struct intrinsic_sizes {
 	float min_content = 0;
 	float max_content = 0;
 };
-
-// How text is measured. Injected rather than assumed, because the real answer
-// needs a font stack that belongs to the raster layer - and because a
-// deterministic stub is what makes layout testable without fonts at all.
-using measure_text_fn = std::function<float(std::string_view, float)>;
 
 } // namespace ctbrowser::layout
