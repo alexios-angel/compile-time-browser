@@ -194,7 +194,11 @@ struct box {
 	std::int32_t x = 0, y = 0, w = 0, h = 0;
 };
 
-struct layout_pass {
+// The styling resolvers, the paint emitters and the native widget
+// chrome: everything that decides how a box LOOKS. Nothing in here
+// calls back into flow layout - that dependency runs strictly one
+// way, which is why layout_pass extends this and not the reverse.
+struct widget_painter {
 	const style_fn * resolve;
 	const text_measure_fn * measure;
 	std::vector<paint_cmd> * out;
@@ -409,289 +413,6 @@ struct layout_pass {
 		return {true, 0, 0, 0, 255};
 	}
 
-	// shift every paint emitted since `start`, plus the node rects of the
-	// subtree, by (dx, dy) - used to place an out-of-flow (positioned) box
-	constexpr void translate(std::size_t start, node & n, std::int32_t dx, std::int32_t dy) {
-		for (std::size_t i = start; i < out->size(); ++i) { (*out)[i].x += dx; (*out)[i].y += dy; }
-		translate_rects(n, dx, dy);
-	}
-	constexpr void translate_rects(node & n, std::int32_t dx, std::int32_t dy) {
-		n.x += dx;
-		n.y += dy;
-		for (const auto & c : n.children) { translate_rects(*c, dx, dy); }
-	}
-	// a hidden subtree must lose its WHOLE rect tree: layout rects persist
-	// between frames, and hit_test walks children first - a stale child
-	// rect would keep a display:none/closed-details subtree clickable
-	static constexpr void zero_rects(node & n) {
-		n.x = n.y = n.w = n.h = 0;
-		for (const auto & c : n.children) { zero_rects(*c); }
-	}
-
-	// lay out `n` with its content starting at (x, y), `width` available for the
-	// border box, `cb` the containing block (nearest positioned ancestor, or the
-	// viewport). Returns the border-box height CONTRIBUTED TO FLOW - 0 for
-	// position:fixed/absolute, which are lifted out and positioned against `cb`
-	// (fixed) / the viewport (fixed), then offset by any transform:translate.
-	constexpr std::int32_t place(node & n, std::int32_t x, std::int32_t y, std::int32_t width, const box & cb) {
-		if (skipped_tag(n.tag)) {
-			zero_rects(n);
-			return 0;
-		}
-		computed_style cs{&n, resolve, n.chain()};
-		if (cs.get("display") == std::string_view{"none"}) {
-			zero_rects(n);
-			return 0;
-		}
-		n.viewport_fixed = false; // re-derived below for position:fixed
-		const std::int32_t font_px = font_of(&n);
-		const std::string_view pos = cs.get("position");
-		if (pos == std::string_view{"fixed"} || pos == std::string_view{"absolute"}) {
-			const box vp{0, 0, vw, vh};
-			const box & c = (pos == std::string_view{"fixed"}) ? vp : cb;
-			const std::int32_t left = prop_px(cs, "left", c.w, font_px, UNSET);
-			const std::int32_t right = prop_px(cs, "right", c.w, font_px, UNSET);
-			const std::int32_t top = prop_px(cs, "top", c.h, font_px, UNSET);
-			const std::int32_t bottom = prop_px(cs, "bottom", c.h, font_px, UNSET);
-			std::int32_t pw = prop_px(cs, "width", c.w, font_px, -1);
-			if (pw < 0) { pw = c.w - (left != UNSET ? left : 0) - (right != UNSET ? right : 0); }
-			if (pw < 0) { pw = c.w; }
-			const std::int32_t maxw = prop_px(cs, "max-width", c.w, font_px, -1);
-			if (maxw >= 0 && pw > maxw) { pw = maxw; }
-			const std::int32_t ph = prop_px(cs, "height", c.h, font_px, -1); // definite? else content
-			const std::size_t start = out->size();
-			const std::size_t start_ov = overlays != nullptr ? overlays->size() : 0;
-			// children resolve against THIS box, laid out at the origin then lifted
-			const box child_cb{0, 0, pw, ph >= 0 ? ph : c.h};
-			const std::int32_t laid = block_body(n, 0, 0, pw, child_cb);
-			const std::int32_t h = ph >= 0 ? ph : laid;
-			std::int32_t fx = c.x + (left != UNSET ? left : (right != UNSET ? c.w - pw - right : 0));
-			std::int32_t fy = c.y + (top != UNSET ? top : (bottom != UNSET ? c.h - h - bottom : 0));
-			const offset t = translate_of(cs, pw, h, font_px);
-			translate(start, n, fx + t.x, fy + t.y);
-			// position:fixed is viewport-anchored: exempt the subtree (rects
-			// via the node flag, paints via the cmd flag) from page scrolling
-			n.viewport_fixed = pos == std::string_view{"fixed"};
-			if (n.viewport_fixed) {
-				for (std::size_t i = start; i < out->size(); ++i) { (*out)[i].fixed = true; }
-			}
-			// overlays (open <select> popups) emitted by this subtree ride along
-			if (overlays != nullptr) {
-				for (std::size_t i = start_ov; i < overlays->size(); ++i) {
-					(*overlays)[i].x += fx + t.x;
-					(*overlays)[i].y += fy + t.y;
-				}
-			}
-			return 0; // out of normal flow
-		}
-		return block_body(n, x, y, width, cb);
-	}
-
-	// the in-flow block layout: text, canvas payload, and stacked children. `cb`
-	// is passed through to descendants (a static box does not establish one).
-	constexpr std::int32_t block_body(node & n, std::int32_t x, std::int32_t y, std::int32_t width, const box & cb) {
-		computed_style cs{&n, resolve, n.chain()};
-		const std::int32_t font_px = font_of(&n);
-		const sides m = sides_of(cs, "margin", width, font_px);
-		const sides p = sides_of(cs, "padding", width, font_px);
-		const std::int32_t padding = p.left; // widget emitters use the inline inset
-
-		const std::int32_t box_w = resolve_box_width(n, cs, width, font_px, m, p);
-		const std::int32_t content_w = box_w - p.left - p.right;
-
-		n.x = x + m.left;
-		n.y = y + m.top;
-		n.w = box_w;
-
-		std::int32_t cursor = n.y + p.top;
-
-		// the form controls draw native chrome instead of flowing content
-		if (const auto widget_h = emit_native_widget(n, font_px, padding, cursor, content_w, m, cb)) {
-			return *widget_h;
-		}
-
-		emit_disclosure_marker(n, font_px, cursor);
-		emit_list_marker(n, font_px, cursor);
-
-		const block_text bt{utf8_to_utf32(n.text), text_color(n), text_align(n), font_spec_of(&n),
-		                    font_px};
-		// a <label> wrapping a control renders the control FIRST, its text
-		// after it on the same line ("[x] option one") - the common form
-		// idiom; ordering between text and element children is otherwise
-		// not preserved by the DOM's concatenated-text model
-		const bool children_first = n.tag == "label" && !n.children.empty();
-		std::int32_t content_max_x = n.x + p.left; // shrink-wrap extent tracker
-		n.ui_lines.clear(); // rebuilt below; the engine's selection geometry
-		n.ui_font_px = font_px;
-		n.ui_family = bt.fs.family;
-		n.ui_bold = bt.fs.bold;
-		n.ui_italic = bt.fs.italic;
-
-		if (!children_first) { emit_text_flow(n, bt, n.x + p.left, content_w, cursor, content_max_x); }
-
-		if (n.is_canvas()) {
-			out->push_back(canvas_cmd(n.x + p.left, cursor, &n));
-			cursor += n.canvas_h;
-		}
-
-		layout_children(n, bt, p, content_w, cb, children_first, cursor, content_max_x);
-
-		std::int32_t box_h = prop_px(cs, "height", cb.h, font_px, -1);
-		if (box_h < 0) { box_h = (cursor - n.y) + p.bottom; }
-		n.h = box_h;
-		// inline containers with no explicit width shrink to their content
-		if (detail::shrink_wrap_tag(n.tag) && prop_px(cs, "width", width, font_px, -1) < 0) {
-			const std::int32_t want = (content_max_x - n.x) + p.right;
-			if (want > 0 && want < n.w) { n.w = want; }
-		}
-
-		// buttons carry Firefox's 1px widget border (layout has no border
-		// property - widget frames belong to the widgets)
-		if (n.tag == "button") { emit_frame(n, detail_frame_argb(n)); }
-
-		// backgrounds are emitted in a pre-pass by collect_backgrounds below
-		return n.h + m.top + m.bottom;
-	}
-
-	// the border-box width: a canvas is its pixel buffer (even against an
-	// explicit width), then any CSS width wins, then button/select shrink
-	// to their content the way Firefox renders them inline-block, and
-	// everything else fills the line.
-	constexpr std::int32_t resolve_box_width(node & n, const computed_style & cs, std::int32_t width,
-	                                         std::int32_t font_px, const sides & m,
-	                                         const sides & p) const {
-		if (n.is_canvas()) { return n.canvas_w; }
-		const std::int32_t explicit_w = prop_px(cs, "width", width, font_px, -1);
-		if (explicit_w >= 0) { return explicit_w; }
-		if (n.tag == "button") {
-			const std::int32_t tw = text_width(utf8_to_utf32(trimmed(n.text)), font_px, font_spec_of(&n));
-			return tw + p.left + p.right + 2;
-		}
-		if (n.is_select()) {
-			const font_spec bfs = font_spec_of(&n);
-			std::int32_t widest = 0;
-			for (const auto & c : n.children) { // size to the widest option
-				if (c->tag != "option") { continue; }
-				const std::int32_t w2 = text_width(utf8_to_utf32(trimmed(c->text)), font_px, bfs);
-				if (w2 > widest) { widest = w2; }
-			}
-			return widest + font_px + p.left + p.right + 4; // + the arrow
-		}
-		return width - m.left - m.right;
-	}
-
-	// The controls that render as native widgets rather than flowing their
-	// content: <select> collapses to the chosen option plus an arrow (and a
-	// popup when open), toggles draw a box or disc, text fields and tables
-	// lay themselves out. Returns the flow height when `n` is one of them,
-	// nullopt when it is an ordinary block.
-	constexpr std::optional<std::int32_t> emit_native_widget(node & n, std::int32_t font_px,
-	                                                         std::int32_t padding, std::int32_t top,
-	                                                         std::int32_t content_w, const sides & m,
-	                                                         const box & cb) {
-		const auto flow_h = [&] { return n.h + m.top + m.bottom; };
-		if (n.is_select()) {
-			emit_select(n, font_px, padding, top, content_w);
-			emit_frame(n, detail_frame_argb(n));
-			return flow_h();
-		}
-		if (n.is_checkbox() || n.is_radio()) {
-			emit_toggle(n, font_px, padding, n.is_radio());
-			return flow_h();
-		}
-		if (n.is_input()) {
-			if (ctcss::detail::ascii_iequals(n.input_type(), "hidden")) {
-				zero_rects(n);
-				return 0;
-			}
-			emit_input(n, font_px, padding, top);
-			return flow_h();
-		}
-		if (n.is_textarea()) {
-			emit_textarea(n, font_px, padding, top);
-			return flow_h();
-		}
-		if (n.tag == "table") {
-			emit_table(n, padding, top, content_w, cb);
-			return flow_h();
-		}
-		return std::nullopt;
-	}
-
-	// the details/summary disclosure triangle: right-pointing when closed,
-	// down-pointing when open (the summary's UA padding-left leaves the gutter)
-	constexpr void emit_disclosure_marker(node & n, std::int32_t font_px, std::int32_t top) {
-		if (!n.is_summary() || n.parent == nullptr || !n.parent->is_details()) { return; }
-		const std::uint32_t argb = pack_argb(text_color(n));
-		const std::int32_t s = font_px / 2 + 2;
-		const std::int32_t mx = n.x + 4;
-		const std::int32_t my = top + font_px / 2 - s / 2;
-		if (n.parent->open) { // down-pointing: rows narrow toward the tip
-			for (std::int32_t r = 0; r * 2 < s; ++r) { push_box(mx + r, my + r + s / 4, s - 2 * r, 1, argb); }
-		} else { // right-pointing: columns shorten toward the tip
-			for (std::int32_t c = 0; c * 2 < s; ++c) { push_box(mx + c + s / 4, my + c, 1, s - 2 * c, argb); }
-		}
-	}
-
-	// <li> markers, drawn into the 40px gutter the UA ul/ol padding-left leaves
-	constexpr void emit_list_marker(node & n, std::int32_t font_px, std::int32_t top) {
-		if (n.tag != "li" || n.parent == nullptr) { return; }
-		const std::uint32_t argb = pack_argb(text_color(n));
-		if (n.parent->tag == "ul") {
-			const std::int32_t d = font_px / 3 > 2 ? font_px / 3 : 3; // the disc
-			push_box(n.x - d * 3, top + font_px / 2 - d / 2, d, d, argb);
-			return;
-		}
-		if (n.parent->tag != "ol") { return; }
-		std::int32_t idx = 1; // this item's ordinal among its <li> siblings
-		for (const auto & sib : n.parent->children) {
-			if (sib.get() == &n) { break; }
-			if (sib->tag == "li") { ++idx; }
-		}
-		std::u32string num;
-		for (const char ch : std::to_string(idx)) { num.push_back(static_cast<char32_t>(ch)); }
-		num.push_back(U'.');
-		const font_spec fs = font_spec_of(&n);
-		const std::int32_t nw = text_width(num, font_px, fs);
-		push_text(text_cmd(n.x - nw - font_px / 2, top, nw, font_px, argb, std::move(num), font_px), fs);
-	}
-
-	// the block's own text: hard-break on U+000A (from <br>), then greedily
-	// wrap each line to the content width, preferring word boundaries. Each
-	// visual line publishes its code-point span through n.ui_lines, which is
-	// what the engine's selection and caret geometry read.
-	constexpr void emit_text_flow(node & n, const block_text & bt, std::int32_t left,
-	                              std::int32_t content_w, std::int32_t & cursor,
-	                              std::int32_t & content_max_x) {
-		if (trimmed(std::u32string_view{bt.text}).empty()) { return; }
-		const bool preserve = n.tag == "pre"; // pre keeps leading spaces
-		std::u32string_view remain = bt.text;
-		while (true) {
-			const std::size_t nl = remain.find(U'\n');
-			const std::u32string_view raw_line =
-			    nl == std::u32string_view::npos ? remain : remain.substr(0, nl);
-			const std::u32string_view line = preserve ? raw_line : trimmed(raw_line);
-			if (line.empty()) {
-				cursor += line_height(bt.font_px); // blank row (e.g. consecutive <br>)
-			} else {
-				std::u32string_view rest = line;
-				while (!rest.empty()) {
-					const std::size_t take = wrap_take(rest, content_w, bt.font_px, bt.fs, preserve);
-					emit_text_line(n, bt, rest.substr(0, take),
-					               static_cast<std::int32_t>(rest.data() - bt.text.data()), left,
-					               content_w, cursor, content_max_x);
-					cursor += line_height(bt.font_px);
-					rest.remove_prefix(take);
-					while (!preserve && !rest.empty() && rest.front() == U' ') {
-						rest.remove_prefix(1); // eat the break space(s)
-					}
-				}
-			}
-			if (nl == std::u32string_view::npos) { break; }
-			remain.remove_prefix(nl + 1);
-		}
-	}
-
 	// the longest prefix of `rest` that measures within content_w - at
 	// least one code point, so an overlong glyph still makes progress.
 	// Shared by the flow text and the textarea's soft wrap; the two differ
@@ -701,121 +422,6 @@ struct layout_pass {
 		std::size_t take = rest.size();
 		while (take > 1 && text_width(rest.substr(0, take), font_px, fs) > content_w) { --take; }
 		return take;
-	}
-
-	// flow text breaks AT the space and then eats it, so the next line
-	// starts on a word (a single overlong word still breaks mid-word, like
-	// a browser). `pre` takes the hard cut.
-	constexpr std::size_t wrap_take(std::u32string_view rest, std::int32_t content_w,
-	                                std::int32_t font_px, const font_spec & fs,
-	                                bool preserve = false) const {
-		std::size_t take = fitting_prefix(rest, content_w, font_px, fs);
-		if (take < rest.size() && !preserve) {
-			const std::size_t brk = rest.substr(0, take + 1).rfind(U' ');
-			if (brk != std::u32string_view::npos && brk > 0) { take = brk; }
-		}
-		return take;
-	}
-
-	// one wrapped line: its alignment, its ui_lines entry, its selection
-	// highlight and its glyphs
-	constexpr void emit_text_line(node & n, const block_text & bt, std::u32string_view line,
-	                              std::int32_t cp_start, std::int32_t left, std::int32_t content_w,
-	                              std::int32_t cursor, std::int32_t & content_max_x) {
-		const std::int32_t tw = text_width(line, bt.font_px, bt.fs);
-		std::int32_t tx = left;
-		if (bt.align == std::string_view{"center"}) { tx += (content_w - tw) / 2; }
-		else if (bt.align == std::string_view{"right"}) { tx += content_w - tw; }
-		const std::int32_t cp_end = cp_start + static_cast<std::int32_t>(line.size());
-		n.ui_lines.push_back({cp_start, cp_end, tx, cursor, tw, true});
-		if (tx + tw > content_max_x) { content_max_x = tx + tw; }
-		// the CHARACTER-precise selection highlight: the overlap of
-		// [sel_from, sel_to) with this line
-		if (n.sel_from >= 0 && n.sel_to > n.sel_from) {
-			const std::int32_t hb = n.sel_from > cp_start ? n.sel_from : cp_start;
-			const std::int32_t he = n.sel_to < cp_end ? n.sel_to : cp_end;
-			if (he > hb) {
-				const auto off = static_cast<std::size_t>(hb - cp_start);
-				const auto len = static_cast<std::size_t>(he - hb);
-				push_box(tx + text_width(line.substr(0, off), bt.font_px, bt.fs), cursor,
-				         text_width(line.substr(off, len), bt.font_px, bt.fs), bt.font_px,
-				         detail::ua_selection_highlight);
-			}
-		}
-		push_text(text_cmd(tx, cursor, tw, bt.font_px, pack_argb(bt.fg), u32str(line), bt.font_px),
-		          bt.fs);
-	}
-
-	// children: consecutive INLINE-LEVEL children share rows (wrapping like
-	// Firefox's inline flow, items vertically centered on their line); block
-	// children stack, passing the containing block straight through. A
-	// closed <details> shows only its <summary>.
-	constexpr void layout_children(node & n, const block_text & bt, const sides & p,
-	                               std::int32_t content_w, const box & cb, bool children_first,
-	                               std::int32_t & cursor, std::int32_t & content_max_x) {
-		const std::int32_t line_start_x = n.x + p.left;
-		const std::int32_t right_edge = line_start_x + content_w;
-		const std::int32_t gap = bt.font_px / 3;
-		std::int32_t line_x = line_start_x;
-		std::int32_t line_top = cursor;
-		std::int32_t line_h = 0;
-		std::vector<std::pair<std::size_t, node *>> line_items;
-		const auto flush_line = [&]() {
-			for (auto & [ci, cn] : line_items) { // center each item on the line
-				const std::int32_t dy = (line_h - cn->h) / 2;
-				if (dy > 0) { translate(ci, *cn, 0, dy); }
-			}
-			line_items.clear();
-			if (line_h > 0) { cursor = line_top + line_h; }
-			line_top = cursor;
-			line_x = line_start_x;
-			line_h = 0;
-		};
-		for (const auto & c : n.children) {
-			if (n.is_details() && !n.open && !c->is_summary()) {
-				zero_rects(*c);
-				continue;
-			}
-			computed_style ccs{c.get(), resolve, c->chain()};
-			const std::string_view disp = ccs.get("display");
-			const bool inl = disp == std::string_view{"inline"} ||
-			                 disp == std::string_view{"inline-block"} ||
-			                 (disp.empty() && detail::inline_level_tag(c->tag));
-			if (!inl) {
-				flush_line();
-				cursor += place(*c, line_start_x, cursor, content_w, cb);
-				line_top = cursor;
-				continue;
-			}
-			const std::size_t ci = out->size();
-			const std::int32_t old_x = line_x, old_top = line_top;
-			std::int32_t avail = right_edge - line_x;
-			if (avail < bt.font_px) { avail = content_w; }
-			const std::int32_t h = place(*c, line_x, line_top, avail, cb);
-			if (line_x > line_start_x && c->x + c->w > right_edge) {
-				// does not fit beside its predecessors: wrap to a new line
-				flush_line();
-				translate(ci, *c, line_start_x - old_x, line_top - old_top);
-			}
-			line_items.push_back({ci, c.get()});
-			if (h > line_h) { line_h = h; }
-			line_x = c->x + c->w + gap;
-			if (c->x + c->w > content_max_x) { content_max_x = c->x + c->w; }
-		}
-		// a wrapping label's text continues the control's line
-		if (children_first && !trimmed(std::u32string_view{bt.text}).empty()) {
-			const std::u32string_view lt = trimmed(std::u32string_view{bt.text});
-			const std::int32_t tw = text_width(lt, bt.font_px, bt.fs);
-			const std::int32_t ty = line_top + (line_h > bt.font_px ? (line_h - bt.font_px) / 2 : 0);
-			const std::int32_t ls = static_cast<std::int32_t>(lt.data() - bt.text.data());
-			n.ui_lines.push_back({ls, ls + static_cast<std::int32_t>(lt.size()), line_x, ty, tw, true});
-			push_text(text_cmd(line_x, ty, tw, bt.font_px, pack_argb(bt.fg), u32str(lt), bt.font_px),
-			          bt.fs);
-			if (line_x + tw > content_max_x) { content_max_x = line_x + tw; }
-			if (line_height(bt.font_px) > line_h) { line_h = line_height(bt.font_px); }
-			line_x += tw;
-		}
-		flush_line();
 	}
 
 	static constexpr std::string_view trimmed(std::string_view v) {
@@ -1109,6 +715,468 @@ struct layout_pass {
 		}
 	}
 
+	constexpr void emit_select(node & n, std::int32_t font_px, std::int32_t padding, std::int32_t top, std::int32_t content_w) {
+		const ctcss::color fg = text_color(n);
+		const std::int32_t line_h = line_height(font_px);
+		const std::int32_t nopt = n.option_count();
+		const std::string_view align = text_align(n);
+		node * sel = n.nth_option(n.selected_option());
+		const std::u32string label = sel != nullptr ? utf8_to_utf32(trimmed(sel->text)) : std::u32string{};
+		const std::int32_t arrow = font_px * 2 / 3;
+		const std::int32_t tw = text_width(label, font_px);
+		std::int32_t tx = n.x + padding;
+		if (align == std::string_view{"center"}) { tx += (content_w - tw - arrow - font_px / 3) / 2; }
+		else if (align == std::string_view{"right"}) { tx += content_w - tw - arrow - font_px / 3; }
+		if (tx < n.x + padding) { tx = n.x + padding; }
+		out->push_back(text_cmd(tx, top, tw, font_px, pack_argb(fg), label, font_px));
+		// a down-pointing triangle just to the right of the label
+		const std::int32_t ax = tx + tw + font_px / 3, ay = top + font_px / 4;
+		for (std::int32_t r = 0; r * 2 < arrow; ++r) {
+			if (arrow - 2 * r > 0) { push_box(ax + r, ay + r, arrow - 2 * r, 1, pack_argb(fg)); }
+		}
+		n.h = line_h + 2 * padding;
+
+		if (n.select_open && overlays != nullptr && nopt > 0) {
+			// content-width popup, centered under the control, painted on top
+			std::int32_t ow = 0;
+			for (std::int32_t i = 0; i < nopt; ++i) {
+				if (node * o = n.nth_option(i)) {
+					const std::int32_t w2 = text_width(utf8_to_utf32(trimmed(o->text)), font_px);
+					if (w2 > ow) { ow = w2; }
+				}
+			}
+			ow += 2 * padding + font_px;
+			std::int32_t ox = n.x + padding + (content_w - ow) / 2;
+			if (ox < n.x) { ox = n.x; }
+			const std::int32_t oy = n.y + n.h, row_h = line_h + 4;
+			// opaque list background (the UA sheet's option { background:#000 })
+			overlays->push_back(box_cmd(ox, oy, ow, row_h * nopt, detail::ua_option_list_bg));
+			for (std::int32_t i = 0; i < nopt; ++i) {
+				node * opt = n.nth_option(i);
+				if (opt == nullptr) { continue; }
+				const std::int32_t ry = oy + i * row_h;
+				if (i == n.selected_option()) { // highlight the current choice
+					overlays->push_back(box_cmd(ox, ry, ow, row_h, detail::ua_option_selected));
+				}
+				const std::u32string ot = utf8_to_utf32(trimmed(opt->text));
+				overlays->push_back(text_cmd(ox + padding + font_px / 4, ry + 2, text_width(ot, font_px),
+				                             font_px, detail::ua_option_text, ot, font_px));
+				opt->x = ox;
+				opt->y = ry;
+				opt->w = ow;
+				opt->h = row_h;
+			}
+		} else { // closed: options are not hit targets
+			for (std::int32_t i = 0; i < nopt; ++i) {
+				if (node * o = n.nth_option(i)) { o->x = o->y = o->w = o->h = 0; }
+			}
+		}
+	}
+};
+
+// Where the boxes GO: in-flow block and inline layout, out-of-flow
+// (positioned) placement, and the table grid - the one "widget" that
+// lays its cells out with place(), so it lives here with flow rather
+// than with the chrome.
+struct layout_pass : widget_painter {
+	// shift every paint emitted since `start`, plus the node rects of the
+	// subtree, by (dx, dy) - used to place an out-of-flow (positioned) box
+	constexpr void translate(std::size_t start, node & n, std::int32_t dx, std::int32_t dy) {
+		for (std::size_t i = start; i < out->size(); ++i) { (*out)[i].x += dx; (*out)[i].y += dy; }
+		translate_rects(n, dx, dy);
+	}
+	constexpr void translate_rects(node & n, std::int32_t dx, std::int32_t dy) {
+		n.x += dx;
+		n.y += dy;
+		for (const auto & c : n.children) { translate_rects(*c, dx, dy); }
+	}
+	// a hidden subtree must lose its WHOLE rect tree: layout rects persist
+	// between frames, and hit_test walks children first - a stale child
+	// rect would keep a display:none/closed-details subtree clickable
+	static constexpr void zero_rects(node & n) {
+		n.x = n.y = n.w = n.h = 0;
+		for (const auto & c : n.children) { zero_rects(*c); }
+	}
+
+	// lay out `n` with its content starting at (x, y), `width` available for the
+	// border box, `cb` the containing block (nearest positioned ancestor, or the
+	// viewport). Returns the border-box height CONTRIBUTED TO FLOW - 0 for
+	// position:fixed/absolute, which are lifted out and positioned against `cb`
+	// (fixed) / the viewport (fixed), then offset by any transform:translate.
+	constexpr std::int32_t place(node & n, std::int32_t x, std::int32_t y, std::int32_t width, const box & cb) {
+		if (skipped_tag(n.tag)) {
+			zero_rects(n);
+			return 0;
+		}
+		computed_style cs{&n, resolve, n.chain()};
+		if (cs.get("display") == std::string_view{"none"}) {
+			zero_rects(n);
+			return 0;
+		}
+		n.viewport_fixed = false; // re-derived below for position:fixed
+		const std::int32_t font_px = font_of(&n);
+		const std::string_view pos = cs.get("position");
+		if (pos == std::string_view{"fixed"} || pos == std::string_view{"absolute"}) {
+			const box vp{0, 0, vw, vh};
+			const box & c = (pos == std::string_view{"fixed"}) ? vp : cb;
+			const std::int32_t left = prop_px(cs, "left", c.w, font_px, UNSET);
+			const std::int32_t right = prop_px(cs, "right", c.w, font_px, UNSET);
+			const std::int32_t top = prop_px(cs, "top", c.h, font_px, UNSET);
+			const std::int32_t bottom = prop_px(cs, "bottom", c.h, font_px, UNSET);
+			std::int32_t pw = prop_px(cs, "width", c.w, font_px, -1);
+			if (pw < 0) { pw = c.w - (left != UNSET ? left : 0) - (right != UNSET ? right : 0); }
+			if (pw < 0) { pw = c.w; }
+			const std::int32_t maxw = prop_px(cs, "max-width", c.w, font_px, -1);
+			if (maxw >= 0 && pw > maxw) { pw = maxw; }
+			const std::int32_t ph = prop_px(cs, "height", c.h, font_px, -1); // definite? else content
+			const std::size_t start = out->size();
+			const std::size_t start_ov = overlays != nullptr ? overlays->size() : 0;
+			// children resolve against THIS box, laid out at the origin then lifted
+			const box child_cb{0, 0, pw, ph >= 0 ? ph : c.h};
+			const std::int32_t laid = block_body(n, 0, 0, pw, child_cb);
+			const std::int32_t h = ph >= 0 ? ph : laid;
+			std::int32_t fx = c.x + (left != UNSET ? left : (right != UNSET ? c.w - pw - right : 0));
+			std::int32_t fy = c.y + (top != UNSET ? top : (bottom != UNSET ? c.h - h - bottom : 0));
+			const offset t = translate_of(cs, pw, h, font_px);
+			translate(start, n, fx + t.x, fy + t.y);
+			// position:fixed is viewport-anchored: exempt the subtree (rects
+			// via the node flag, paints via the cmd flag) from page scrolling
+			n.viewport_fixed = pos == std::string_view{"fixed"};
+			if (n.viewport_fixed) {
+				for (std::size_t i = start; i < out->size(); ++i) { (*out)[i].fixed = true; }
+			}
+			// overlays (open <select> popups) emitted by this subtree ride along
+			if (overlays != nullptr) {
+				for (std::size_t i = start_ov; i < overlays->size(); ++i) {
+					(*overlays)[i].x += fx + t.x;
+					(*overlays)[i].y += fy + t.y;
+				}
+			}
+			return 0; // out of normal flow
+		}
+		return block_body(n, x, y, width, cb);
+	}
+
+	// the in-flow block layout: text, canvas payload, and stacked children. `cb`
+	// is passed through to descendants (a static box does not establish one).
+	constexpr std::int32_t block_body(node & n, std::int32_t x, std::int32_t y, std::int32_t width, const box & cb) {
+		computed_style cs{&n, resolve, n.chain()};
+		const std::int32_t font_px = font_of(&n);
+		const sides m = sides_of(cs, "margin", width, font_px);
+		const sides p = sides_of(cs, "padding", width, font_px);
+		const std::int32_t padding = p.left; // widget emitters use the inline inset
+
+		const std::int32_t box_w = resolve_box_width(n, cs, width, font_px, m, p);
+		const std::int32_t content_w = box_w - p.left - p.right;
+
+		n.x = x + m.left;
+		n.y = y + m.top;
+		n.w = box_w;
+
+		std::int32_t cursor = n.y + p.top;
+
+		// the form controls draw native chrome instead of flowing content
+		if (const auto widget_h = emit_native_widget(n, font_px, padding, cursor, content_w, m, cb)) {
+			return *widget_h;
+		}
+
+		emit_disclosure_marker(n, font_px, cursor);
+		emit_list_marker(n, font_px, cursor);
+
+		const block_text bt{utf8_to_utf32(n.text), text_color(n), text_align(n), font_spec_of(&n),
+		                    font_px};
+		// a <label> wrapping a control renders the control FIRST, its text
+		// after it on the same line ("[x] option one") - the common form
+		// idiom; ordering between text and element children is otherwise
+		// not preserved by the DOM's concatenated-text model
+		const bool children_first = n.tag == "label" && !n.children.empty();
+		std::int32_t content_max_x = n.x + p.left; // shrink-wrap extent tracker
+		n.ui_lines.clear(); // rebuilt below; the engine's selection geometry
+		n.ui_font_px = font_px;
+		n.ui_family = bt.fs.family;
+		n.ui_bold = bt.fs.bold;
+		n.ui_italic = bt.fs.italic;
+
+		if (!children_first) { emit_text_flow(n, bt, n.x + p.left, content_w, cursor, content_max_x); }
+
+		if (n.is_canvas()) {
+			out->push_back(canvas_cmd(n.x + p.left, cursor, &n));
+			cursor += n.canvas_h;
+		}
+
+		layout_children(n, bt, p, content_w, cb, children_first, cursor, content_max_x);
+
+		std::int32_t box_h = prop_px(cs, "height", cb.h, font_px, -1);
+		if (box_h < 0) { box_h = (cursor - n.y) + p.bottom; }
+		n.h = box_h;
+		// inline containers with no explicit width shrink to their content
+		if (detail::shrink_wrap_tag(n.tag) && prop_px(cs, "width", width, font_px, -1) < 0) {
+			const std::int32_t want = (content_max_x - n.x) + p.right;
+			if (want > 0 && want < n.w) { n.w = want; }
+		}
+
+		// buttons carry Firefox's 1px widget border (layout has no border
+		// property - widget frames belong to the widgets)
+		if (n.tag == "button") { emit_frame(n, detail_frame_argb(n)); }
+
+		// backgrounds are emitted in a pre-pass by collect_backgrounds below
+		return n.h + m.top + m.bottom;
+	}
+
+	// the border-box width: a canvas is its pixel buffer (even against an
+	// explicit width), then any CSS width wins, then button/select shrink
+	// to their content the way Firefox renders them inline-block, and
+	// everything else fills the line.
+	constexpr std::int32_t resolve_box_width(node & n, const computed_style & cs, std::int32_t width,
+	                                         std::int32_t font_px, const sides & m,
+	                                         const sides & p) const {
+		if (n.is_canvas()) { return n.canvas_w; }
+		const std::int32_t explicit_w = prop_px(cs, "width", width, font_px, -1);
+		if (explicit_w >= 0) { return explicit_w; }
+		if (n.tag == "button") {
+			const std::int32_t tw = text_width(utf8_to_utf32(trimmed(n.text)), font_px, font_spec_of(&n));
+			return tw + p.left + p.right + 2;
+		}
+		if (n.is_select()) {
+			const font_spec bfs = font_spec_of(&n);
+			std::int32_t widest = 0;
+			for (const auto & c : n.children) { // size to the widest option
+				if (c->tag != "option") { continue; }
+				const std::int32_t w2 = text_width(utf8_to_utf32(trimmed(c->text)), font_px, bfs);
+				if (w2 > widest) { widest = w2; }
+			}
+			return widest + font_px + p.left + p.right + 4; // + the arrow
+		}
+		return width - m.left - m.right;
+	}
+
+	// The controls that render as native widgets rather than flowing their
+	// content: <select> collapses to the chosen option plus an arrow (and a
+	// popup when open), toggles draw a box or disc, text fields and tables
+	// lay themselves out. Returns the flow height when `n` is one of them,
+	// nullopt when it is an ordinary block.
+	constexpr std::optional<std::int32_t> emit_native_widget(node & n, std::int32_t font_px,
+	                                                         std::int32_t padding, std::int32_t top,
+	                                                         std::int32_t content_w, const sides & m,
+	                                                         const box & cb) {
+		const auto flow_h = [&] { return n.h + m.top + m.bottom; };
+		if (n.is_select()) {
+			emit_select(n, font_px, padding, top, content_w);
+			emit_frame(n, detail_frame_argb(n));
+			return flow_h();
+		}
+		if (n.is_checkbox() || n.is_radio()) {
+			emit_toggle(n, font_px, padding, n.is_radio());
+			return flow_h();
+		}
+		if (n.is_input()) {
+			if (ctcss::detail::ascii_iequals(n.input_type(), "hidden")) {
+				zero_rects(n);
+				return 0;
+			}
+			emit_input(n, font_px, padding, top);
+			return flow_h();
+		}
+		if (n.is_textarea()) {
+			emit_textarea(n, font_px, padding, top);
+			return flow_h();
+		}
+		if (n.tag == "table") {
+			emit_table(n, padding, top, content_w, cb);
+			return flow_h();
+		}
+		return std::nullopt;
+	}
+
+	// the details/summary disclosure triangle: right-pointing when closed,
+	// down-pointing when open (the summary's UA padding-left leaves the gutter)
+	constexpr void emit_disclosure_marker(node & n, std::int32_t font_px, std::int32_t top) {
+		if (!n.is_summary() || n.parent == nullptr || !n.parent->is_details()) { return; }
+		const std::uint32_t argb = pack_argb(text_color(n));
+		const std::int32_t s = font_px / 2 + 2;
+		const std::int32_t mx = n.x + 4;
+		const std::int32_t my = top + font_px / 2 - s / 2;
+		if (n.parent->open) { // down-pointing: rows narrow toward the tip
+			for (std::int32_t r = 0; r * 2 < s; ++r) { push_box(mx + r, my + r + s / 4, s - 2 * r, 1, argb); }
+		} else { // right-pointing: columns shorten toward the tip
+			for (std::int32_t c = 0; c * 2 < s; ++c) { push_box(mx + c + s / 4, my + c, 1, s - 2 * c, argb); }
+		}
+	}
+
+	// <li> markers, drawn into the 40px gutter the UA ul/ol padding-left leaves
+	constexpr void emit_list_marker(node & n, std::int32_t font_px, std::int32_t top) {
+		if (n.tag != "li" || n.parent == nullptr) { return; }
+		const std::uint32_t argb = pack_argb(text_color(n));
+		if (n.parent->tag == "ul") {
+			const std::int32_t d = font_px / 3 > 2 ? font_px / 3 : 3; // the disc
+			push_box(n.x - d * 3, top + font_px / 2 - d / 2, d, d, argb);
+			return;
+		}
+		if (n.parent->tag != "ol") { return; }
+		std::int32_t idx = 1; // this item's ordinal among its <li> siblings
+		for (const auto & sib : n.parent->children) {
+			if (sib.get() == &n) { break; }
+			if (sib->tag == "li") { ++idx; }
+		}
+		std::u32string num;
+		for (const char ch : std::to_string(idx)) { num.push_back(static_cast<char32_t>(ch)); }
+		num.push_back(U'.');
+		const font_spec fs = font_spec_of(&n);
+		const std::int32_t nw = text_width(num, font_px, fs);
+		push_text(text_cmd(n.x - nw - font_px / 2, top, nw, font_px, argb, std::move(num), font_px), fs);
+	}
+
+	// the block's own text: hard-break on U+000A (from <br>), then greedily
+	// wrap each line to the content width, preferring word boundaries. Each
+	// visual line publishes its code-point span through n.ui_lines, which is
+	// what the engine's selection and caret geometry read.
+	constexpr void emit_text_flow(node & n, const block_text & bt, std::int32_t left,
+	                              std::int32_t content_w, std::int32_t & cursor,
+	                              std::int32_t & content_max_x) {
+		if (trimmed(std::u32string_view{bt.text}).empty()) { return; }
+		const bool preserve = n.tag == "pre"; // pre keeps leading spaces
+		std::u32string_view remain = bt.text;
+		while (true) {
+			const std::size_t nl = remain.find(U'\n');
+			const std::u32string_view raw_line =
+			    nl == std::u32string_view::npos ? remain : remain.substr(0, nl);
+			const std::u32string_view line = preserve ? raw_line : trimmed(raw_line);
+			if (line.empty()) {
+				cursor += line_height(bt.font_px); // blank row (e.g. consecutive <br>)
+			} else {
+				std::u32string_view rest = line;
+				while (!rest.empty()) {
+					const std::size_t take = wrap_take(rest, content_w, bt.font_px, bt.fs, preserve);
+					emit_text_line(n, bt, rest.substr(0, take),
+					               static_cast<std::int32_t>(rest.data() - bt.text.data()), left,
+					               content_w, cursor, content_max_x);
+					cursor += line_height(bt.font_px);
+					rest.remove_prefix(take);
+					while (!preserve && !rest.empty() && rest.front() == U' ') {
+						rest.remove_prefix(1); // eat the break space(s)
+					}
+				}
+			}
+			if (nl == std::u32string_view::npos) { break; }
+			remain.remove_prefix(nl + 1);
+		}
+	}
+
+	// flow text breaks AT the space and then eats it, so the next line
+	// starts on a word (a single overlong word still breaks mid-word, like
+	// a browser). `pre` takes the hard cut.
+	constexpr std::size_t wrap_take(std::u32string_view rest, std::int32_t content_w,
+	                                std::int32_t font_px, const font_spec & fs,
+	                                bool preserve = false) const {
+		std::size_t take = fitting_prefix(rest, content_w, font_px, fs);
+		if (take < rest.size() && !preserve) {
+			const std::size_t brk = rest.substr(0, take + 1).rfind(U' ');
+			if (brk != std::u32string_view::npos && brk > 0) { take = brk; }
+		}
+		return take;
+	}
+
+	// one wrapped line: its alignment, its ui_lines entry, its selection
+	// highlight and its glyphs
+	constexpr void emit_text_line(node & n, const block_text & bt, std::u32string_view line,
+	                              std::int32_t cp_start, std::int32_t left, std::int32_t content_w,
+	                              std::int32_t cursor, std::int32_t & content_max_x) {
+		const std::int32_t tw = text_width(line, bt.font_px, bt.fs);
+		std::int32_t tx = left;
+		if (bt.align == std::string_view{"center"}) { tx += (content_w - tw) / 2; }
+		else if (bt.align == std::string_view{"right"}) { tx += content_w - tw; }
+		const std::int32_t cp_end = cp_start + static_cast<std::int32_t>(line.size());
+		n.ui_lines.push_back({cp_start, cp_end, tx, cursor, tw, true});
+		if (tx + tw > content_max_x) { content_max_x = tx + tw; }
+		// the CHARACTER-precise selection highlight: the overlap of
+		// [sel_from, sel_to) with this line
+		if (n.sel_from >= 0 && n.sel_to > n.sel_from) {
+			const std::int32_t hb = n.sel_from > cp_start ? n.sel_from : cp_start;
+			const std::int32_t he = n.sel_to < cp_end ? n.sel_to : cp_end;
+			if (he > hb) {
+				const auto off = static_cast<std::size_t>(hb - cp_start);
+				const auto len = static_cast<std::size_t>(he - hb);
+				push_box(tx + text_width(line.substr(0, off), bt.font_px, bt.fs), cursor,
+				         text_width(line.substr(off, len), bt.font_px, bt.fs), bt.font_px,
+				         detail::ua_selection_highlight);
+			}
+		}
+		push_text(text_cmd(tx, cursor, tw, bt.font_px, pack_argb(bt.fg), u32str(line), bt.font_px),
+		          bt.fs);
+	}
+
+	// children: consecutive INLINE-LEVEL children share rows (wrapping like
+	// Firefox's inline flow, items vertically centered on their line); block
+	// children stack, passing the containing block straight through. A
+	// closed <details> shows only its <summary>.
+	constexpr void layout_children(node & n, const block_text & bt, const sides & p,
+	                               std::int32_t content_w, const box & cb, bool children_first,
+	                               std::int32_t & cursor, std::int32_t & content_max_x) {
+		const std::int32_t line_start_x = n.x + p.left;
+		const std::int32_t right_edge = line_start_x + content_w;
+		const std::int32_t gap = bt.font_px / 3;
+		std::int32_t line_x = line_start_x;
+		std::int32_t line_top = cursor;
+		std::int32_t line_h = 0;
+		std::vector<std::pair<std::size_t, node *>> line_items;
+		const auto flush_line = [&]() {
+			for (auto & [ci, cn] : line_items) { // center each item on the line
+				const std::int32_t dy = (line_h - cn->h) / 2;
+				if (dy > 0) { translate(ci, *cn, 0, dy); }
+			}
+			line_items.clear();
+			if (line_h > 0) { cursor = line_top + line_h; }
+			line_top = cursor;
+			line_x = line_start_x;
+			line_h = 0;
+		};
+		for (const auto & c : n.children) {
+			if (n.is_details() && !n.open && !c->is_summary()) {
+				zero_rects(*c);
+				continue;
+			}
+			computed_style ccs{c.get(), resolve, c->chain()};
+			const std::string_view disp = ccs.get("display");
+			const bool inl = disp == std::string_view{"inline"} ||
+			                 disp == std::string_view{"inline-block"} ||
+			                 (disp.empty() && detail::inline_level_tag(c->tag));
+			if (!inl) {
+				flush_line();
+				cursor += place(*c, line_start_x, cursor, content_w, cb);
+				line_top = cursor;
+				continue;
+			}
+			const std::size_t ci = out->size();
+			const std::int32_t old_x = line_x, old_top = line_top;
+			std::int32_t avail = right_edge - line_x;
+			if (avail < bt.font_px) { avail = content_w; }
+			const std::int32_t h = place(*c, line_x, line_top, avail, cb);
+			if (line_x > line_start_x && c->x + c->w > right_edge) {
+				// does not fit beside its predecessors: wrap to a new line
+				flush_line();
+				translate(ci, *c, line_start_x - old_x, line_top - old_top);
+			}
+			line_items.push_back({ci, c.get()});
+			if (h > line_h) { line_h = h; }
+			line_x = c->x + c->w + gap;
+			if (c->x + c->w > content_max_x) { content_max_x = c->x + c->w; }
+		}
+		// a wrapping label's text continues the control's line
+		if (children_first && !trimmed(std::u32string_view{bt.text}).empty()) {
+			const std::u32string_view lt = trimmed(std::u32string_view{bt.text});
+			const std::int32_t tw = text_width(lt, bt.font_px, bt.fs);
+			const std::int32_t ty = line_top + (line_h > bt.font_px ? (line_h - bt.font_px) / 2 : 0);
+			const std::int32_t ls = static_cast<std::int32_t>(lt.data() - bt.text.data());
+			n.ui_lines.push_back({ls, ls + static_cast<std::int32_t>(lt.size()), line_x, ty, tw, true});
+			push_text(text_cmd(line_x, ty, tw, bt.font_px, pack_argb(bt.fg), u32str(lt), bt.font_px),
+			          bt.fs);
+			if (line_x + tw > content_max_x) { content_max_x = line_x + tw; }
+			if (line_height(bt.font_px) > line_h) { line_h = line_height(bt.font_px); }
+			line_x += tw;
+		}
+		flush_line();
+	}
+
 	constexpr void collect_rows(node & n, std::vector<node *> & rows) {
 		for (const auto & c : n.children) {
 			if (c->tag == "tr") { rows.push_back(c.get()); }
@@ -1232,64 +1300,6 @@ struct layout_pass {
 			emit_frame(grid, detail::ua_table_border);
 		}
 	}
-
-	constexpr void emit_select(node & n, std::int32_t font_px, std::int32_t padding, std::int32_t top, std::int32_t content_w) {
-		const ctcss::color fg = text_color(n);
-		const std::int32_t line_h = line_height(font_px);
-		const std::int32_t nopt = n.option_count();
-		const std::string_view align = text_align(n);
-		node * sel = n.nth_option(n.selected_option());
-		const std::u32string label = sel != nullptr ? utf8_to_utf32(trimmed(sel->text)) : std::u32string{};
-		const std::int32_t arrow = font_px * 2 / 3;
-		const std::int32_t tw = text_width(label, font_px);
-		std::int32_t tx = n.x + padding;
-		if (align == std::string_view{"center"}) { tx += (content_w - tw - arrow - font_px / 3) / 2; }
-		else if (align == std::string_view{"right"}) { tx += content_w - tw - arrow - font_px / 3; }
-		if (tx < n.x + padding) { tx = n.x + padding; }
-		out->push_back(text_cmd(tx, top, tw, font_px, pack_argb(fg), label, font_px));
-		// a down-pointing triangle just to the right of the label
-		const std::int32_t ax = tx + tw + font_px / 3, ay = top + font_px / 4;
-		for (std::int32_t r = 0; r * 2 < arrow; ++r) {
-			if (arrow - 2 * r > 0) { push_box(ax + r, ay + r, arrow - 2 * r, 1, pack_argb(fg)); }
-		}
-		n.h = line_h + 2 * padding;
-
-		if (n.select_open && overlays != nullptr && nopt > 0) {
-			// content-width popup, centered under the control, painted on top
-			std::int32_t ow = 0;
-			for (std::int32_t i = 0; i < nopt; ++i) {
-				if (node * o = n.nth_option(i)) {
-					const std::int32_t w2 = text_width(utf8_to_utf32(trimmed(o->text)), font_px);
-					if (w2 > ow) { ow = w2; }
-				}
-			}
-			ow += 2 * padding + font_px;
-			std::int32_t ox = n.x + padding + (content_w - ow) / 2;
-			if (ox < n.x) { ox = n.x; }
-			const std::int32_t oy = n.y + n.h, row_h = line_h + 4;
-			// opaque list background (the UA sheet's option { background:#000 })
-			overlays->push_back(box_cmd(ox, oy, ow, row_h * nopt, detail::ua_option_list_bg));
-			for (std::int32_t i = 0; i < nopt; ++i) {
-				node * opt = n.nth_option(i);
-				if (opt == nullptr) { continue; }
-				const std::int32_t ry = oy + i * row_h;
-				if (i == n.selected_option()) { // highlight the current choice
-					overlays->push_back(box_cmd(ox, ry, ow, row_h, detail::ua_option_selected));
-				}
-				const std::u32string ot = utf8_to_utf32(trimmed(opt->text));
-				overlays->push_back(text_cmd(ox + padding + font_px / 4, ry + 2, text_width(ot, font_px),
-				                             font_px, detail::ua_option_text, ot, font_px));
-				opt->x = ox;
-				opt->y = ry;
-				opt->w = ow;
-				opt->h = row_h;
-			}
-		} else { // closed: options are not hit targets
-			for (std::int32_t i = 0; i < nopt; ++i) {
-				if (node * o = n.nth_option(i)) { o->x = o->y = o->w = o->h = 0; }
-			}
-		}
-	}
 };
 
 // backgrounds, painted back-to-front before content
@@ -1316,7 +1326,7 @@ constexpr std::vector<paint_cmd> layout(document & doc, std::int32_t viewport_w,
                                      const text_measure_fn & measure = {},
                                      std::int32_t viewport_h = 0) {
 	std::vector<paint_cmd> content, overlays;
-	detail::layout_pass pass{&resolve, &measure, &content, viewport_w, viewport_h, &overlays};
+	detail::layout_pass pass{{&resolve, &measure, &content, viewport_w, viewport_h, &overlays}};
 	if (doc.root) { (void)pass.place(*doc.root, 0, 0, viewport_w, detail::box{0, 0, viewport_w, viewport_h}); }
 	std::vector<paint_cmd> out;
 	if (doc.root) { detail::collect_backgrounds(*doc.root, resolve, out); }
