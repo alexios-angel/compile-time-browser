@@ -44,16 +44,16 @@ Deleting v1 today removes working, tested functionality with no replacement:
 
 - ~~**DOM script bindings.**~~ **DONE.** `ctbrowser.shell:bindings` binds
   `document`, element methods, events, timers and `requestAnimationFrame`.
-  Still missing from v1's surface: `fetch`, `alert`, `location`, and the
-  canvas context.
+  Still missing from v1's surface: `alert` and `location`. `fetch` and the
+  canvas context landed later.
 - ~~**Form controls and editing.**~~ **MOSTLY DONE.** Text fields, checkboxes,
   radios, buttons, focus, the caret, typing, editing keys, submit and reset all
   work. Still missing: `<select>` option lists (the box draws, the popup does
   not), textarea soft-wrap and multi-line caret movement, clipboard, and
   page-level text selection.
 - ~~**Canvas 2D.**~~ **MOSTLY DONE.** `getContext("2d")`, fills, strokes, paths,
-  arcs, transforms, state stack, `fillText`, `measureText`. Still missing:
-  `drawImage` from an `<img>` (the plumbing exists, image decoding does not),
+  arcs, transforms, state stack, `fillText`, `measureText`, and `drawImage` in
+  all three forms from either an `<img>` or a `loadImage` handle. Still missing:
   gradients, and nonzero-winding fill (even-odd is used, which differs only on
   self-intersecting paths).
 - **Tables.** `emit_table`'s auto layout.
@@ -63,7 +63,12 @@ Deleting v1 today removes working, tested functionality with no replacement:
   markers — v2 draws none of these; the UA palette is carried but unused.
 - **Real fonts.** v2 renders text with font8x8 only. v1 has the vendored TTF
   stack, `@font-face`, per-element family/weight/style resolution.
-- **Images and audio.** `image.hpp`, `audio.hpp`, the embedded asset registry.
+- ~~**Images and audio.**~~ **DONE (2026-07-25).** `ctbrowser.shell:assets` is
+  the registry, `:images` decodes BMP with an optional SDL3_image hook, and
+  `playSound` mixes WAVs through SDL3's own audio streams (no SDL3_mixer).
+  `ctbrowser.shell:net` goes further than v1: **fetch does real HTTP** over
+  header-only Boost.Asio, with TLS when OpenSSL is present, where v1 could only
+  fetch at COMPILE time.
 - **Compile-time everything.** `std::embed`, `std::fetch`, the `page<>` NTTP.
   Retiring this was the plan's explicit intent, so it is a deliberate loss —
   but `assets.hpp`'s automatic asset embedding has no v2 equivalent at all.
@@ -86,12 +91,13 @@ catches changes, not disagreements with a second implementation.
 are gone: script drives the page, HTML parsing is v2's own, and forms and canvas
 work. What remains is smaller and more specific:
 
-- **image decoding** (`<img>`, and `drawImage` from one) - v1 has a BMP reader
-  and an optional SDL3_image path
 - **real fonts** - v2 renders text with font8x8 only
-- **audio**, and the **BabylonJS shim** with its software 3D rasterizer
+- the **BabylonJS shim** with its software 3D rasterizer
 - **`<select>` popups**, page-level text selection, and the clipboard
 - **tables** as anything but ordinary boxes (no column sizing)
+
+Images and audio came off this list on 2026-07-25, and v2's `fetch` is now
+strictly more capable than v1's.
 
 None of those blocks the architecture. Deleting v1 now would still lose them, so
 the question is whether they are wanted back - which is a product decision, not

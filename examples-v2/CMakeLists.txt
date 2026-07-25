@@ -32,7 +32,10 @@ foreach(source ${v2-example-sources})
   if(NOT CMAKE_CROSSCOMPILING AND BUILD_TESTING AND NOT example STREQUAL "ctbrowse")
     add_test(NAME v2-example-${example} COMMAND ctbrowser-v2-example-${example}
              WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+    # CTBROWSER_NETWORK=0: a test that reaches the internet fails for reasons
+    # that have nothing to do with this code. fetchboard's network card takes
+    # its catch branch here, which is the offline path and worth covering.
     set_tests_properties(v2-example-${example} PROPERTIES ENVIRONMENT
-      "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;CTBROWSER_TEST_FRAMES=30;CTBROWSER_SCREENSHOT=${CMAKE_BINARY_DIR}/v2-shot-${example}.ppm")
+      "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;CTBROWSER_TEST_FRAMES=30;CTBROWSER_NETWORK=0;CTBROWSER_SCREENSHOT=${CMAKE_BINARY_DIR}/v2-shot-${example}.ppm")
   endif()
 endforeach()

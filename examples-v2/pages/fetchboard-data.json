@@ -1,0 +1,4 @@
+{
+	"what": "a resource shipped inside the binary",
+	"items": ["assets", "images", "fetch"]
+}

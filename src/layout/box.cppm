@@ -1,4 +1,5 @@
 module;
+#include <functional>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -91,6 +92,16 @@ public:
 	// The text measure is the SAME one layout and raster use. Guessing a
 	// per-character width here instead is what made a <button> narrower than
 	// its own label - the box was sized with one metric and drawn with another.
+	// An <img>'s size comes from its DECODED BITMAP, which layout cannot get to
+	// - decoding lives in the shell, above this. The browser fills this in;
+	// unset, an <img> with no width/height attribute is zero-sized, which is
+	// what it was before images existed.
+	struct intrinsic_size {
+		float width = 0;
+		float height = 0;
+	};
+	std::function<intrinsic_size(node_id)> intrinsic_image;
+
 	box_builder(atom_table & atoms, const style::style_map & styles, measure_text_fn measure = {})
 	    : atoms_(&atoms), styles_(&styles), measure_(std::move(measure)),
 	      display_(atoms.intern("display")), width_(atoms.intern("width")),
@@ -182,8 +193,26 @@ private:
 			return;
 		}
 		if (tag == "img") {
-			into.intrinsic_width = attribute_number("width", 0);
-			into.intrinsic_height = attribute_number("height", 0);
+			// The attributes WIN over the bitmap - that is how a page scales an
+			// image - and ONE of them scales the other through the aspect ratio,
+			// which is why this asks whether each was specified rather than
+			// defaulting each to the natural size independently.
+			const intrinsic_size natural = intrinsic_image ? intrinsic_image(id) : intrinsic_size{};
+			const bool has_width =
+			    !txn.attribute_value(id, atoms_->intern("width")).empty();
+			const bool has_height =
+			    !txn.attribute_value(id, atoms_->intern("height")).empty();
+			const float width = attribute_number("width", natural.width);
+			const float height = attribute_number("height", natural.height);
+			into.intrinsic_width = width;
+			into.intrinsic_height = height;
+			if (natural.width > 0 && natural.height > 0) {
+				if (has_width && !has_height) {
+					into.intrinsic_height = width * natural.height / natural.width;
+				} else if (has_height && !has_width) {
+					into.intrinsic_width = height * natural.width / natural.height;
+				}
+			}
 			return;
 		}
 		if (tag == "textarea") {

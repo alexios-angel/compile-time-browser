@@ -195,6 +195,9 @@ target_sources(ctbrowser-shell
     FILE_SET CXX_MODULES FILES
       shell/shell.cppm
       shell/input.cppm
+      shell/assets.cppm
+      shell/images.cppm
+      shell/net.cppm
       shell/canvas.cppm
       shell/forms.cppm
       shell/bindings.cppm
@@ -203,7 +206,34 @@ target_compile_features(ctbrowser-shell PUBLIC cxx_std_23)
 target_compile_options(ctbrowser-shell PRIVATE ${CTBROWSER_V2_WARNINGS})
 target_link_libraries(ctbrowser-shell PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style
                                              ctbrowser-layout ctbrowser-paint ctbrowser-raster
-                                             ctbrowser-script)
+                                             ctbrowser-script Boost::headers)
+
+# Asio comes from Boost by default - Boost::headers is already a dependency of
+# three v2 targets and is header-only. A build that would rather not have Boost
+# at all can point at STANDALONE Asio instead; the module supports both.
+find_path(CTBROWSER_STANDALONE_ASIO_INCLUDE asio.hpp)
+option(CTBROWSER_ASIO_STANDALONE "Use standalone Asio instead of Boost.Asio"
+       ${CTBROWSER_PREFER_STANDALONE_ASIO})
+if(CTBROWSER_ASIO_STANDALONE AND CTBROWSER_STANDALONE_ASIO_INCLUDE)
+  target_include_directories(ctbrowser-shell PUBLIC ${CTBROWSER_STANDALONE_ASIO_INCLUDE})
+  target_compile_definitions(ctbrowser-shell PUBLIC CTBROWSER_ASIO_STANDALONE=1 ASIO_STANDALONE=1)
+  message(STATUS "ctbrowser v2: networking on standalone Asio")
+else()
+  target_compile_definitions(ctbrowser-shell PUBLIC CTBROWSER_ASIO_STANDALONE=0)
+endif()
+
+# https:// needs TLS, and TLS needs OpenSSL - which is NOT Boost, so it does not
+# touch the header-only-Boost rule. It IS optional: without it the build still
+# does http:// and rejects https:// by name.
+find_package(OpenSSL QUIET COMPONENTS SSL Crypto)
+if(OpenSSL_FOUND)
+  target_link_libraries(ctbrowser-shell PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+  target_compile_definitions(ctbrowser-shell PUBLIC CTBROWSER_WITH_TLS=1)
+  message(STATUS "ctbrowser v2: https:// enabled (OpenSSL ${OPENSSL_VERSION})")
+else()
+  target_compile_definitions(ctbrowser-shell PUBLIC CTBROWSER_WITH_TLS=0)
+  message(STATUS "ctbrowser v2: no OpenSSL - fetch() does http:// only")
+endif()
 set_target_properties(ctbrowser-shell PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
 add_library(ctbrowser::shell ALIAS ctbrowser-shell)
@@ -224,8 +254,19 @@ target_link_libraries(ctbrowser-app PUBLIC ctbrowser-core ctbrowser-paint ctbrow
 if(SDL3_FOUND)
   target_compile_definitions(ctbrowser-app PRIVATE CTBROWSER_WITH_SDL3=1)
   target_link_libraries(ctbrowser-app PUBLIC SDL3::SDL3)
+  # PNG/JPEG/WebP, if the satellite library is there. BMP is decoded by the
+  # engine itself, so a build without this still shows images.
+  find_package(SDL3_image QUIET)
+  if(SDL3_image_FOUND)
+    target_compile_definitions(ctbrowser-app PRIVATE CTBROWSER_WITH_IMAGE=1)
+    target_link_libraries(ctbrowser-app PUBLIC SDL3_image::SDL3_image)
+    message(STATUS "ctbrowser v2: SDL3_image found - <img> reads PNG/JPEG too")
+  else()
+    target_compile_definitions(ctbrowser-app PRIVATE CTBROWSER_WITH_IMAGE=0)
+    message(STATUS "ctbrowser v2: no SDL3_image - <img> reads BMP only")
+  endif()
 else()
-  target_compile_definitions(ctbrowser-app PRIVATE CTBROWSER_WITH_SDL3=0)
+  target_compile_definitions(ctbrowser-app PRIVATE CTBROWSER_WITH_SDL3=0 CTBROWSER_WITH_IMAGE=0)
   message(STATUS "ctbrowser: SDL3 not found - v2 builds headless (run_app still works)")
 endif()
 set_target_properties(ctbrowser-app PROPERTIES CXX_SCAN_FOR_MODULES ON)

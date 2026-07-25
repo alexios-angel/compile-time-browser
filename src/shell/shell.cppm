@@ -4,6 +4,10 @@ export module ctbrowser.shell;
 //
 //   input    events described without SDL, so the whole browser is drivable
 //            headlessly
+//   assets   name -> bytes, consulted before the filesystem
+//   images   BMP decoding into the display list's bitmap, plus a hook the app
+//            layer fills in from SDL3_image
+//   net      HTTP over header-only Boost.Asio, which is what backs fetch()
 //   forms    form-control state, kept off the DOM node on purpose
 //   canvas   the 2D drawing context and where its pixels live
 //   bindings the web platform, bound to the VM - script holds HANDLES, and
@@ -16,6 +20,9 @@ export module ctbrowser.shell;
 // and compare them byte for byte.
 
 export import :input;
+export import :assets;
+export import :images;
+export import :net;
 export import :canvas;
 export import :forms;
 export import :bindings;

@@ -238,6 +238,30 @@ public:
 		touch();
 	}
 
+	// The nine-argument drawImage: a rectangle out of the source, into a
+	// rectangle on the canvas. Sprite sheets are the reason this form exists.
+	void draw_image_region(const bitmap & source, float sx, float sy, float sw, float sh, float dx,
+	                       float dy, float dw, float dh) {
+		if (!pixels_ || source.empty() || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) { return; }
+		const point at = transform_.apply(dx, dy);
+		const int left = static_cast<int>(at.x);
+		const int top = static_cast<int>(at.y);
+		for (int y = 0; y < static_cast<int>(dh); ++y) {
+			const int source_y =
+			    static_cast<int>(sy + static_cast<float>(y) / dh * sh);
+			for (int x = 0; x < static_cast<int>(dw); ++x) {
+				const int source_x = static_cast<int>(sx + static_cast<float>(x) / dw * sw);
+				const std::uint32_t texel = source.at(source_x, source_y);
+				// Alpha TEST, not a blend: sprite sheets are drawn with a fully
+				// transparent background, and blending each edge pixel would
+				// leave a halo.
+				if ((texel >> 24) == 0) { continue; }
+				blend(left + x, top + y, color{texel});
+			}
+		}
+		touch();
+	}
+
 	void draw_image(const bitmap & source, float x, float y, float w, float h) {
 		if (!pixels_ || source.empty() || w <= 0 || h <= 0) { return; }
 		const point at = transform_.apply(x, y);

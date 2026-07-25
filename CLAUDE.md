@@ -132,9 +132,51 @@ by `intrinsic_size_of`, not by their children.
 A canvas draw marks `dirty::raster` — tiles are stale, the display list is
 not — so an animation re-rasters without re-recording or re-laying-out.
 
-**v1 IS NOT DELETED.** What it still has that v2 does not: image decoding,
-real fonts, audio, the BabylonJS shim, `<select>` popups and page-level text
-selection. See `docs/v1-retirement.md`.
+**v1 IS NOT DELETED.** What it still has that v2 does not: real fonts, audio,
+the BabylonJS shim, `<select>` popups and page-level text selection. See
+`docs/v1-retirement.md`.
+
+## v2 RESOURCES: assets, images, fetch (2026-07-25)
+
+`ctbrowser.shell:assets` is the registry every load goes through — an
+application seeds it from `app_options::assets`, and a miss falls back to the
+filesystem (cwd → `asset_path` → two levels up, v1's probe order). Registry
+FIRST is the whole design: a binary that ships its resources works from any
+directory, and a test that seeds the registry is hermetic.
+
+`ctbrowser.shell:images` decodes BMP (24/32bpp, either row order) into
+`paint::bitmap` with no library at all; **SDL3_image is optional** and arrives
+as a decoder hook installed by `ctbrowser.app` — the only place SDL and images
+are allowed to meet, since the shell stays SDL-free. `<img>` sizes itself from
+the decoded bitmap unless width/height say otherwise (one attribute scales the
+other through the aspect ratio); a missing image is zero-sized, not a broken
+icon. `loadImage`/`imageWidth`/`imageHeight` and `ctx.drawImage` (3-, 5- and
+9-argument forms) take either a handle or an `<img>` element.
+
+`ctbrowser.shell:net` is **real HTTP over Boost.Asio** (header-only, so the
+compiled-Boost rule holds; a `CTBROWSER_ASIO_STANDALONE` switch selects
+standalone Asio instead). Redirects, chunked bodies and a deadline on every
+operation. **https:// needs OpenSSL** — optional, and without it the build says
+so by name rather than failing to connect. `fetch(url)` consults the registry
+first, then the network when `app_options::network` allows it
+(`CTBROWSER_NETWORK=0` turns it off, which is how an example's ctest stays
+hermetic). A network failure REJECTS; a 404 resolves with `ok` false.
+
+**Sound** is `playSound(name [, volume])`, installed by `run_app` through
+`browser::define_native` (the embedder hook — the shell has no SDL and the
+`<audio>` element does not exist). WAV only, mixed by SDL3's own audio streams;
+no SDL3_mixer, and a build without SDL3 makes it a no-op returning false.
+
+**Requests BLOCK the frame** — promises here are settled when they are made, so
+`await fetch(url)` must have the bytes by the time fetch returns. That is the
+honest cost of the settled-promise subset, and it is why the registry is
+consulted first. `tests-v2/net_basics` proves the client against a loopback
+server it stands up itself; no test in the suite touches the internet.
+
+Examples: `invaders` (sprite sheet through the 9-argument `drawImage`, keys via
+keydown/keyup, `requestAnimationFrame`, sound) and `fetchboard` (a baked-in
+resource AND a live HTTP GET) are ported. Both pages were rewritten off v1's
+`onFrame`/`isKeyDown`/`getContext(id)` shorthand onto the real web APIs.
 
 ## ⚠️ v2 GPU: this machine has NO GPU (verified 2026-07-25)
 

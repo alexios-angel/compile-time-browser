@@ -21,6 +21,8 @@ import ctbrowser.paint;
 import ctbrowser.raster;
 import ctbrowser.script;
 import :input;
+import :assets;
+import :images;
 import :canvas;
 import :forms;
 import :bindings;
@@ -120,11 +122,41 @@ public:
 		scroll_y_ = 0;
 		author_sheet_loaded_ = false;
 		load_inline_styles();
+		// Images are resolved BEFORE layout, because an <img> with no width
+		// attribute takes its size from the decoded bitmap and layout has no
+		// way to ask.
+		load_images();
 		mark(dirty::everything);
 		run_scripts();
 	}
 
 	// --- script ----------------------------------------------------------
+
+	// Where the page's resources come from. An application seeds this from
+	// app_options::assets; `ctbrowse` points its base path at the page's
+	// directory so `<img src="cat.bmp">` resolves next to the html.
+	// Natives the EMBEDDER supplies - `playSound` from the SDL layer is the
+	// reason this exists. Re-installed on every navigation, because each page
+	// gets a fresh script context and a hook registered once would silently
+	// stop existing after the first `location.reload()`.
+	void define_native(std::string name, script::native_fn fn) {
+		for (auto & [existing, handler] : embedder_natives_) {
+			if (existing == name) {
+				handler = std::move(fn);
+				return;
+			}
+		}
+		embedder_natives_.emplace_back(std::move(name), std::move(fn));
+		if (script_) { install_embedder_natives(); }
+	}
+
+	[[nodiscard]] asset_registry & assets() noexcept { return assets_; }
+	[[nodiscard]] image_store & images() noexcept { return images_; }
+	// Whether fetch() may open a socket when the registry misses.
+	void allow_network(bool allowed) {
+		network_allowed_ = allowed;
+		if (bindings_) { bindings_->allow_network(allowed); }
+	}
 
 	[[nodiscard]] canvas_store & canvases() noexcept { return canvases_; }
 	[[nodiscard]] form_store & forms() noexcept { return forms_; }
@@ -345,7 +377,10 @@ private:
 		    *doc_, atoms_, canvases_, forms_, [this] { mark(dirty::paint); },
 		    [this](node_id id) { (void)focus(id); });
 		bindings_->observe_viewport(options_.width, options_.height);
+		bindings_->observe_resources(assets_, images_);
+		bindings_->allow_network(network_allowed_);
 		bindings_->install(*script_);
+		install_embedder_natives();
 		script_error_.clear();
 
 		std::string source;
@@ -368,9 +403,51 @@ private:
 		if (!result.ok) { script_error_ = result.error; }
 	}
 
+	// Every <img src> in the document, decoded once. A missing or undecodable
+	// image is remembered as a null so the element lays out at zero size rather
+	// than being retried every frame.
+	void load_images() {
+		images_by_node_.clear();
+		const auto txn = doc_->read();
+		const atom img_tag = atoms_.intern_lower("img");
+		const atom src_attribute = atoms_.intern("src");
+		const auto walk = [&](auto && self, node_id at) -> void {
+			if (txn.tag(at).value_or(atom{}) == img_tag) {
+				const std::string_view src = txn.attribute_value(at, src_attribute);
+				if (!src.empty()) {
+					if (auto pixels = images_.load(assets_, src)) {
+						images_by_node_.emplace_back(at, std::move(pixels));
+					}
+				}
+			}
+			for (const node_id child : txn.children(at)) { self(self, child); }
+		};
+		walk(walk, txn.root());
+	}
+
+	[[nodiscard]] std::shared_ptr<const ctbrowser::paint::bitmap> image_of(node_id id) const {
+		for (const auto & [at, pixels] : images_by_node_) {
+			if (at == id) { return pixels; }
+		}
+		return nullptr;
+	}
+
+	void install_embedder_natives() {
+		for (const auto & [name, fn] : embedder_natives_) { script_->define_native(name, fn); }
+	}
+
 	void run_layout() {
 		const auto txn = doc_->read();
 		ctbrowser::layout::box_builder builder{atoms_, resolved_, ctbrowser::raster::font8x8_advance};
+		// An <img> with no width/height attribute is as big as its bitmap. Only
+		// the browser knows that - layout cannot decode images and should not
+		// learn how.
+		builder.intrinsic_image = [this](node_id id) {
+			const auto pixels = image_of(id);
+			return pixels ? ctbrowser::layout::box_builder::intrinsic_size{static_cast<float>(pixels->width),
+			                                                  static_cast<float>(pixels->height)}
+			              : ctbrowser::layout::box_builder::intrinsic_size{};
+		};
 		boxes_ = builder.build(txn, txn.root());
 		const ctbrowser::layout::engine eng{ctbrowser::raster::font8x8_advance};
 		fragments_ = eng.run(boxes_, static_cast<float>(options_.width));
@@ -405,6 +482,13 @@ private:
 
 		if (tag == "canvas") {
 			if (auto pixels = canvases_.pixels_of(id)) { into.draw_image(box, std::move(pixels), id); }
+			return;
+		}
+		if (tag == "img") {
+			// A missing image draws NOTHING - not a broken-image icon, which is
+			// chrome this browser does not have yet, and not a filled box,
+			// which would look like a rendering bug.
+			if (auto pixels = image_of(id)) { into.draw_image(box, std::move(pixels), id); }
 			return;
 		}
 		const std::string_view type = txn.attribute_value(id, atoms_.intern("type"));
@@ -738,6 +822,14 @@ private:
 	// `const function_proto *` into the program, and a timer or a listener runs
 	// long after run_scripts() returned - so the program has to outlive both the
 	// call that compiled it and the context that executes it.
+	std::vector<std::pair<std::string, script::native_fn>> embedder_natives_;
+	asset_registry assets_;
+	image_store images_;
+	// Decoded once per document, and held here rather than on the node: the DOM
+	// stays free of rendering state, which is the whole reason forms and canvas
+	// pixels live outside it too.
+	std::vector<std::pair<node_id, std::shared_ptr<const ctbrowser::paint::bitmap>>> images_by_node_;
+	bool network_allowed_ = true;
 	canvas_store canvases_;
 	form_store forms_;
 	node_id focused_;

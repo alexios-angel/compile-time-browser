@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>fetchboard — fetch, for real</title>
+<style>
+	body { background: #101418; color: #e8e8e8; }
+	h1 { color: #ffb454; font-size: 18px; margin: 12px; }
+	.card { background: #1b222b; margin: 12px; padding: 10px; font-size: 12px; }
+	#local { color: #7fd962; }
+	#remote { color: #73b8ff; }
+	#status { color: #f26d78; margin: 12px; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>fetch: the registry first, then the network</h1>
+<div class="card" id="local">reading the baked-in resource…</div>
+<div class="card" id="remote">fetching over the network…</div>
+<div id="status"></div>
+<script>
+	// v1's version of this page fetched at COMPILE time - std::fetch inside the
+	// compiler's constant evaluator - and `await fetch(url)` unwrapped bytes
+	// that were already in the binary. v2 does both: the asset registry is
+	// consulted first (so a shipped application never waits, and a test is
+	// reproducible), and anything it does not have goes over a real socket.
+	//
+	// Run with CTBROWSER_NETWORK=0 and the second card takes its catch branch,
+	// which is exactly what a page sees when it is offline.
+	async function boot() {
+		try {
+			const response = await fetch("fetchboard-data.json");
+			const data = await response.json();
+			document.getElementById("local").setText(
+				"registry: " + data.what + " — " + data.items.length + " items: " +
+				data.items.join(", "));
+		} catch (e) {
+			document.getElementById("local").setText("the baked-in resource is missing: " + e.message);
+		}
+
+		try {
+			const response = await fetch("http://example.com/");
+			const html = await response.text();
+			document.getElementById("remote").setText(
+				"example.com => HTTP " + response.status + ", " + html.length +
+				" bytes of HTML, over a socket this program opened");
+		} catch (e) {
+			document.getElementById("remote").setText("no network: " + e.message);
+		}
+	}
+	boot();
+
+	document.getElementById("status").setText(
+		"registry hits never touch the network; misses block the frame until they answer");
+</script>
+</body>
+</html>

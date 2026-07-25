@@ -18,8 +18,11 @@ import ctbrowser.script;
 import ctbrowser.layout;
 import ctbrowser.paint;
 import :input;
+import :assets;
 import :canvas;
 import :forms;
+import :images;
+import :net;
 
 // The web platform, bound to the v2 VM.
 //
@@ -73,6 +76,18 @@ public:
 	    : doc_(&doc), atoms_(&atoms), canvases_(&canvases), forms_(&forms),
 	      on_mutation_(std::move(on_mutation)), on_focus_(std::move(on_focus)) {}
 
+	// Where loadImage() and fetch() look. Both are owned by the browser, which
+	// hands them over before scripts run; without them the page still runs and
+	// every load simply fails.
+	void observe_resources(asset_registry & assets, image_store & images) {
+		assets_ = &assets;
+		images_ = &images;
+	}
+	// Whether fetch() may open a socket when the registry misses. Off makes a
+	// run hermetic, which is what a test wants and what CTBROWSER_NETWORK=0
+	// selects.
+	void allow_network(bool allowed) { network_allowed_ = allowed; }
+
 	// Layout results, so offsetWidth and friends can answer. Set by the
 	// browser after each layout; null until the first one, and the natives
 	// return 0 then rather than pretending.
@@ -91,6 +106,7 @@ public:
 		install_document(cx);
 		install_window(cx);
 		install_timers(cx);
+		install_resources(cx);
 	}
 
 	// --- dispatch, from the browser --------------------------------------
@@ -387,6 +403,21 @@ private:
 
 	// The 2D context. Its methods close over the canvas node, so the object can
 	// be stored and reused - which is what every canvas page does.
+	// What a page can pass to drawImage: a loadImage() handle (a number) or an
+	// <img> element wrapper. Anything else is nothing to draw.
+	[[nodiscard]] std::shared_ptr<const paint::bitmap> image_argument(value v) {
+		if (images_ == nullptr) { return nullptr; }
+		if (v.is_number()) { return images_->at(static_cast<int>(context::to_number(v))); }
+		if (!v.is_object()) { return nullptr; }
+		auto * wrapper = static_cast<script::object_object *>(v.as_heap());
+		const value * handle = wrapper->find(handle_property);
+		if (handle == nullptr || assets_ == nullptr) { return nullptr; }
+		const node_id id = unpack(static_cast<std::uint64_t>(context::to_number(*handle)));
+		const auto txn = doc_->read();
+		const std::string_view src = txn.attribute_value(id, atoms_->intern("src"));
+		return src.empty() ? nullptr : images_->load(*assets_, src);
+	}
+
 	[[nodiscard]] value canvas_context_object(context & cx, node_id id) {
 		const auto txn = doc_->read();
 		const auto attribute = [&](std::string_view name, int fallback) {
@@ -481,6 +512,25 @@ private:
 			canvas->arc(number(a, 0), number(a, 1), number(a, 2), number(a, 3), number(a, 4),
 			            a.size() > 5 && context::truthy(a[5]));
 			(void)c;
+		}));
+		// drawImage(image, dx, dy [, dw, dh]) and the source-rect form. `image`
+		// is either a loadImage() handle or an <img> element wrapper - the same
+		// two things a page can hold, and both have to work.
+		method("drawImage", draws([this, canvas](context &, std::span<value> a) {
+			const std::shared_ptr<const paint::bitmap> source = image_argument(arg(a, 0));
+			if (!source) { return; }
+			const auto natural_w = static_cast<float>(source->width);
+			const auto natural_h = static_cast<float>(source->height);
+			if (a.size() >= 9) {
+				// The nine-argument form takes a rectangle OUT of the source.
+				canvas->draw_image_region(*source, number(a, 1), number(a, 2), number(a, 3),
+				                          number(a, 4), number(a, 5), number(a, 6), number(a, 7),
+				                          number(a, 8));
+				return;
+			}
+			const float w = a.size() >= 4 ? number(a, 3) : natural_w;
+			const float h = a.size() >= 5 ? number(a, 4) : natural_h;
+			canvas->draw_image(*source, number(a, 1), number(a, 2), w, h);
 		}));
 		method("fill", draws([canvas](context &, std::span<value>) { canvas->fill(); }));
 		method("stroke", draws([canvas](context &, std::span<value>) { canvas->stroke(); }));
@@ -666,6 +716,123 @@ private:
 		cx.define_global("performance", value::object(performance));
 	}
 
+	// --- images and fetch --------------------------------------------------
+
+	void install_resources(context & cx) {
+		cx.define_native("loadImage", [this](context & c, std::span<value> args) {
+			if (assets_ == nullptr || images_ == nullptr) { return value::number(-1); }
+			return value::number(images_->handle_for(*assets_, arg_string(c, args, 0)));
+		});
+		cx.define_native("imageWidth", [this](context &, std::span<value> args) {
+			const auto image = images_ != nullptr
+			                       ? images_->at(static_cast<int>(arg_number(args, 0)))
+			                       : nullptr;
+			return value::number(image ? image->width : 0);
+		});
+		cx.define_native("imageHeight", [this](context &, std::span<value> args) {
+			const auto image = images_ != nullptr
+			                       ? images_->at(static_cast<int>(arg_number(args, 0)))
+			                       : nullptr;
+			return value::number(image ? image->height : 0);
+		});
+
+		// fetch(url) -> a settled Response. The registry is consulted FIRST, so
+		// a page that ships its resources never opens a socket and a test run
+		// is reproducible; a miss goes to the network when the application
+		// allows it.
+		cx.define_native("fetch", [this](context & c, std::span<value> args) {
+			const std::string url = arg_string(c, args, 0);
+			return fetch_now(c, url);
+		});
+	}
+
+	[[nodiscard]] value fetch_now(context & cx, const std::string & url) {
+		std::vector<std::byte> body;
+		int status = 200;
+		std::string type;
+		std::string failure;
+
+		if (assets_ != nullptr && assets_->contains(url)) {
+			const std::span<const std::byte> baked = assets_->find(url);
+			body.assign(baked.begin(), baked.end());
+		} else if (url.find("://") == std::string::npos && assets_ != nullptr) {
+			// A relative url is a file next to the page, which is what a
+			// page-local `fetch("data.json")` means.
+			body = assets_->load(url);
+			if (body.empty()) {
+				status = 404;
+				failure = "no such resource: " + url;
+			}
+		} else if (network_allowed_) {
+			const http_response response = http_get(url);
+			status = response.status;
+			type = response.content_type;
+			body = std::move(response.body);
+			if (!response.completed()) { failure = response.error; }
+		} else {
+			failure = "network access is off and " + url + " was not baked in";
+		}
+
+		if (!failure.empty()) {
+			// A network failure REJECTS, which is what a page's catch branch is
+			// written for. A 404 does not - it is a Response with ok false.
+			return make_rejection(cx, failure);
+		}
+		return make_response(cx, url, status, type, std::move(body));
+	}
+
+	[[nodiscard]] static value make_rejection(context & cx, const std::string & message) {
+		auto * error = static_cast<script::object_object *>(cx.make_object().as_heap());
+		error->set("message", cx.string(message));
+		error->set("name", cx.string("TypeError"));
+		return cx.make_promise(value::object(error), true);
+	}
+
+	// The Response object: settled promises all the way down, matching what the
+	// VM's await can unwrap.
+	[[nodiscard]] value make_response(context & cx, const std::string & url, int status,
+	                                  const std::string & content_type,
+	                                  std::vector<std::byte> body) {
+		auto * response = static_cast<script::object_object *>(cx.make_object().as_heap());
+		response->set("url", cx.string(url));
+		response->set("status", value::number(status));
+		response->set("ok", value::boolean(status >= 200 && status < 300));
+		response->set("headers", cx.string(content_type));
+
+		const std::string text{reinterpret_cast<const char *>(body.data()), body.size()};
+		const auto method = [&](std::string name, script::native_fn fn) {
+			response->set(name,
+			              value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+		};
+		method("text", [text](context & c, std::span<value>) {
+			return c.make_promise(c.string(text), false);
+		});
+		method("json", [text](context & c, std::span<value>) {
+			// Through the standard library's JSON.parse, so one parser decides
+			// what JSON means here.
+			const value parser = c.global("JSON");
+			if (parser.is_object()) {
+				if (value * parse = static_cast<script::object_object *>(parser.as_heap())
+				                        ->find("parse")) {
+					const value text_value = c.string(text);
+					const value args[1] = {text_value};
+					return c.make_promise(c.call(*parse, args), false);
+				}
+			}
+			return c.make_promise(value::undefined(), false);
+		});
+		method("bytes", [body = std::move(body)](context & c, std::span<value>) {
+			const value out = c.make_array();
+			auto * items = static_cast<script::array_object *>(out.as_heap());
+			items->items.reserve(body.size());
+			for (const std::byte b : body) {
+				items->items.push_back(value::number(static_cast<double>(std::to_integer<int>(b))));
+			}
+			return c.make_promise(out, false);
+		});
+		return cx.make_promise(value::object(response), false);
+	}
+
 	void install_timers(context & cx) {
 		cx.define_native("setTimeout", [this](context &, std::span<value> args) {
 			return value::number(add_timer(arg(args, 0), arg_number(args, 1), false));
@@ -772,6 +939,9 @@ private:
 	form_store * forms_;
 	std::function<void()> on_mutation_;
 	std::function<void(node_id)> on_focus_;
+	asset_registry * assets_ = nullptr;
+	image_store * images_ = nullptr;
+	bool network_allowed_ = true;
 	context * cx_ = nullptr;
 	const layout::fragment * fragments_ = nullptr;
 	int viewport_width_ = 0;
