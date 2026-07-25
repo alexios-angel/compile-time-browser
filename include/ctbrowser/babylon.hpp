@@ -2162,6 +2162,119 @@ inline value make_camera_free(const worldptr & W, std::string name, const objptr
 	return value{h};
 }
 
+// the per-frame hooks: registerBefore/AfterRender and their Observables
+inline void install_scene_observables(const objptr & h, const worldptr & W, std::int32_t id) {
+	set_method(h, "registerBeforeRender", [W, id](ctjs::context &, const std::vector<value> & a) -> value {
+		if (!a.empty() && a[0].is_function() && id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) {
+			W->scenes[static_cast<std::size_t>(id)].before_render.push_back({W->next_obs++, a[0]});
+		}
+		return value{};
+	});
+	set_method(h, "registerAfterRender", [W, id](ctjs::context &, const std::vector<value> & a) -> value {
+		if (!a.empty() && a[0].is_function() && id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) {
+			W->scenes[static_cast<std::size_t>(id)].after_render.push_back({W->next_obs++, a[0]});
+		}
+		return value{};
+	});
+	// onAfterRenderObservable mirrors registerAfterRender (both feed after_render)
+	{
+		auto obs = objptr::make();
+		set_method(obs, "add", [W, id](ctjs::context &, const std::vector<value> & a) -> value {
+			if (a.empty() || !a[0].is_function() || id < 0 || id >= static_cast<std::int32_t>(W->scenes.size())) { return value{}; }
+			const std::int32_t oid = W->next_obs++;
+			W->scenes[static_cast<std::size_t>(id)].after_render.push_back({oid, a[0]});
+			auto ob = objptr::make();
+			ob->set("__obs_id", value{static_cast<double>(oid)});
+			return value{ob};
+		});
+		set_method(obs, "remove", [](ctjs::context &, const std::vector<value> &) { return value{true}; });
+		set_method(obs, "clear", [](ctjs::context &, const std::vector<value> &) { return value{}; });
+		h->set("onAfterRenderObservable", value{obs});
+	}
+}
+
+// the Babylon optimizations this renderer has nothing to do for
+inline void install_scene_optimizations(const objptr & h, const worldptr & W, std::int32_t id) {
+	// freezeActiveMeshes/unfreezeActiveMeshes: a Babylon optimization that caches
+	// the active-mesh list. We rebuild the draw list each frame regardless, so this
+	// only records the flag (scene.__activeMeshesFrozen) for API fidelity.
+	set_method(h, "freezeActiveMeshes", [W, id](ctjs::context &, const std::vector<value> &) -> value {
+		if (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) { W->scenes[static_cast<std::size_t>(id)].active_meshes_frozen = true; }
+		return value{};
+	});
+	set_method(h, "unfreezeActiveMeshes", [W, id](ctjs::context &, const std::vector<value> &) -> value {
+		if (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) { W->scenes[static_cast<std::size_t>(id)].active_meshes_frozen = false; }
+		return value{};
+	});
+	// clearCachedVertexData: on real Babylon this frees CPU geometry after GPU
+	// upload. The software rasterizer needs the vertices every frame, so there is
+	// nothing to free - a genuine no-op, kept so scripts calling it don't throw.
+	set_method(h, "clearCachedVertexData", [](ctjs::context &, const std::vector<value> &) { return value{}; });
+	// getUniqueId(): a real monotonic id (scripts key maps on it)
+	set_method(h, "getUniqueId", [W](ctjs::context &, const std::vector<value> &) -> value {
+		return value{static_cast<double>(W->next_uid++)};
+	});
+	// commonly-probed no-ops so real scripts don't throw
+	for (const char * nm : {"beforeRender", "dispose", "attachControl", "detachControl"}) {
+		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
+	}
+	// getEngine() hands back the BABYLON.Engine handle (scene.getEngine().getDeltaTime())
+	set_method(h, "getEngine", [W](ctjs::context &, const std::vector<value> &) -> value {
+		return W->engine_handle ? value{W->engine_handle} : value{};
+	});
+
+}
+
+// the model-viewer helpers (glTF loading path) and the debug inspector
+inline void install_scene_model_helpers(const objptr & h, const worldptr & W, dom_events & ev, std::int32_t id) {
+	// --- model-viewer helpers (glTF loading path)
+	set_method(h, "getMaterialById", [W, id](ctjs::context &, const std::vector<value> & a) -> value {
+		if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size()) || a.empty()) { return value{}; }
+		const std::string name = a[0].to_string();
+		for (const auto & mm : W->scenes[static_cast<std::size_t>(id)].materials) {
+			if (mm.first == name) { return value{mm.second}; }
+		}
+		return value{};
+	});
+	h->set("getMaterialByName", h->find("getMaterialById") ? *h->find("getMaterialById") : value{});
+	set_method(h, "createDefaultCamera", [W, id, &ev](ctjs::context &, const std::vector<value> &) -> value {
+		if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size())) { return value{}; }
+		scene_rec & sc = W->scenes[static_cast<std::size_t>(id)];
+		r3d::vec3 c = r3d::V3(0, 0, 0);
+		double rad = 2.0;
+		if (sc.has_bounds) {
+			c = r3d::V3((sc.bmin[0] + sc.bmax[0]) * 0.5, (sc.bmin[1] + sc.bmax[1]) * 0.5,
+			(sc.bmin[2] + sc.bmax[2]) * 0.5);
+			rad = 0.001;
+			for (std::int32_t k = 0; k < 3; ++k) { rad = std::max(rad, sc.bmax[k] - sc.bmin[k]); }
+		}
+		const objptr target = make_vector3(c[0], c[1], c[2]).as_object();
+		return make_camera_arc(W, ev, "default_camera", -std::numbers::pi / 2, std::numbers::pi / 2.5, rad * 2.2, target, sc.handle);
+	});
+	set_method(h, "createDefaultLight", [W, id](ctjs::context &, const std::vector<value> &) -> value {
+		if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size())) { return value{}; }
+		return make_light(W, r3d::light_hemispheric, "default_light", r3d::V3(0, 1, 0), W->scenes[static_cast<std::size_t>(id)].handle);
+	});
+	for (const char * nm : {"createDefaultSkybox", "createDefaultEnvironment"}) {
+		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
+	}
+	// debug inspector: no-ops satisfying `await scene.debugLayer.show(...).select(...)`
+	{
+		object_t dbg;
+		set_method(dbg, "show", [](ctjs::context &, const std::vector<value> &) -> value {
+			object_t d;
+			d.set("select", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "select"));
+			return ctjs::make_promise(value::object(std::move(d)), false);
+		});
+		set_method(dbg, "hide", [](ctjs::context &, const std::vector<value> &) { return value{}; });
+		h->set("debugLayer", value::object(std::move(dbg)));
+	}
+
+	scene_rec srec;
+	srec.handle = h;
+	W->scenes.push_back(std::move(srec));
+}
+
 inline value make_scene(const worldptr & W, dom_events & ev) {
 	const std::int32_t id = static_cast<std::int32_t>(W->scenes.size());
 	auto h = objptr::make();
@@ -2218,107 +2331,9 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 	h->set("actionManager", value{});
 	// registerBeforeRender/registerAfterRender are REAL - the legacy (pre-Observable)
 	// per-frame hooks; they push into the same sinks scene.render() fires.
-	set_method(h, "registerBeforeRender", [W, id](ctjs::context &, const std::vector<value> & a) -> value {
-		if (!a.empty() && a[0].is_function() && id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) {
-			W->scenes[static_cast<std::size_t>(id)].before_render.push_back({W->next_obs++, a[0]});
-		}
-		return value{};
-	});
-	set_method(h, "registerAfterRender", [W, id](ctjs::context &, const std::vector<value> & a) -> value {
-		if (!a.empty() && a[0].is_function() && id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) {
-			W->scenes[static_cast<std::size_t>(id)].after_render.push_back({W->next_obs++, a[0]});
-		}
-		return value{};
-	});
-	// onAfterRenderObservable mirrors registerAfterRender (both feed after_render)
-	{
-		auto obs = objptr::make();
-		set_method(obs, "add", [W, id](ctjs::context &, const std::vector<value> & a) -> value {
-			if (a.empty() || !a[0].is_function() || id < 0 || id >= static_cast<std::int32_t>(W->scenes.size())) { return value{}; }
-			const std::int32_t oid = W->next_obs++;
-			W->scenes[static_cast<std::size_t>(id)].after_render.push_back({oid, a[0]});
-			auto ob = objptr::make();
-			ob->set("__obs_id", value{static_cast<double>(oid)});
-			return value{ob};
-		});
-		set_method(obs, "remove", [](ctjs::context &, const std::vector<value> &) { return value{true}; });
-		set_method(obs, "clear", [](ctjs::context &, const std::vector<value> &) { return value{}; });
-		h->set("onAfterRenderObservable", value{obs});
-	}
-	// freezeActiveMeshes/unfreezeActiveMeshes: a Babylon optimization that caches
-	// the active-mesh list. We rebuild the draw list each frame regardless, so this
-	// only records the flag (scene.__activeMeshesFrozen) for API fidelity.
-	set_method(h, "freezeActiveMeshes", [W, id](ctjs::context &, const std::vector<value> &) -> value {
-		if (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) { W->scenes[static_cast<std::size_t>(id)].active_meshes_frozen = true; }
-		return value{};
-	});
-	set_method(h, "unfreezeActiveMeshes", [W, id](ctjs::context &, const std::vector<value> &) -> value {
-		if (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) { W->scenes[static_cast<std::size_t>(id)].active_meshes_frozen = false; }
-		return value{};
-	});
-	// clearCachedVertexData: on real Babylon this frees CPU geometry after GPU
-	// upload. The software rasterizer needs the vertices every frame, so there is
-	// nothing to free - a genuine no-op, kept so scripts calling it don't throw.
-	set_method(h, "clearCachedVertexData", [](ctjs::context &, const std::vector<value> &) { return value{}; });
-	// getUniqueId(): a real monotonic id (scripts key maps on it)
-	set_method(h, "getUniqueId", [W](ctjs::context &, const std::vector<value> &) -> value {
-		return value{static_cast<double>(W->next_uid++)};
-	});
-	// commonly-probed no-ops so real scripts don't throw
-	for (const char * nm : {"beforeRender", "dispose", "attachControl", "detachControl"}) {
-		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
-	}
-	// getEngine() hands back the BABYLON.Engine handle (scene.getEngine().getDeltaTime())
-	set_method(h, "getEngine", [W](ctjs::context &, const std::vector<value> &) -> value {
-		return W->engine_handle ? value{W->engine_handle} : value{};
-	});
-
-	// --- model-viewer helpers (glTF loading path)
-	set_method(h, "getMaterialById", [W, id](ctjs::context &, const std::vector<value> & a) -> value {
-		if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size()) || a.empty()) { return value{}; }
-		const std::string name = a[0].to_string();
-		for (const auto & mm : W->scenes[static_cast<std::size_t>(id)].materials) {
-			if (mm.first == name) { return value{mm.second}; }
-		}
-		return value{};
-	});
-	h->set("getMaterialByName", h->find("getMaterialById") ? *h->find("getMaterialById") : value{});
-	set_method(h, "createDefaultCamera", [W, id, &ev](ctjs::context &, const std::vector<value> &) -> value {
-		if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size())) { return value{}; }
-		scene_rec & sc = W->scenes[static_cast<std::size_t>(id)];
-		r3d::vec3 c = r3d::V3(0, 0, 0);
-		double rad = 2.0;
-		if (sc.has_bounds) {
-			c = r3d::V3((sc.bmin[0] + sc.bmax[0]) * 0.5, (sc.bmin[1] + sc.bmax[1]) * 0.5,
-			(sc.bmin[2] + sc.bmax[2]) * 0.5);
-			rad = 0.001;
-			for (std::int32_t k = 0; k < 3; ++k) { rad = std::max(rad, sc.bmax[k] - sc.bmin[k]); }
-		}
-		const objptr target = make_vector3(c[0], c[1], c[2]).as_object();
-		return make_camera_arc(W, ev, "default_camera", -std::numbers::pi / 2, std::numbers::pi / 2.5, rad * 2.2, target, sc.handle);
-	});
-	set_method(h, "createDefaultLight", [W, id](ctjs::context &, const std::vector<value> &) -> value {
-		if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size())) { return value{}; }
-		return make_light(W, r3d::light_hemispheric, "default_light", r3d::V3(0, 1, 0), W->scenes[static_cast<std::size_t>(id)].handle);
-	});
-	for (const char * nm : {"createDefaultSkybox", "createDefaultEnvironment"}) {
-		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
-	}
-	// debug inspector: no-ops satisfying `await scene.debugLayer.show(...).select(...)`
-	{
-		object_t dbg;
-		set_method(dbg, "show", [](ctjs::context &, const std::vector<value> &) -> value {
-			object_t d;
-			d.set("select", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "select"));
-			return ctjs::make_promise(value::object(std::move(d)), false);
-		});
-		set_method(dbg, "hide", [](ctjs::context &, const std::vector<value> &) { return value{}; });
-		h->set("debugLayer", value::object(std::move(dbg)));
-	}
-
-	scene_rec srec;
-	srec.handle = h;
-	W->scenes.push_back(std::move(srec));
+	install_scene_observables(h, W, id);
+	install_scene_optimizations(h, W, id);
+	install_scene_model_helpers(h, W, ev, id);
 	return value{h};
 }
 

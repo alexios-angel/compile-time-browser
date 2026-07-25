@@ -1449,9 +1449,8 @@ inline ctjs::value make_document(document & doc, image_store & images, dom_event
 // document.setTitle updates (the shell mirrors it into the window),
 // `images` backs loadImage/drawImage, `ev` collects the script's
 // addEventListener/requestAnimationFrame registrations
-inline std::vector<ctjs::binding> dom_bindings(document & doc, std::string & title,
-                                               image_store & images, dom_events & ev) {
-	std::vector<ctjs::binding> out;
+// the legacy top-level lookups (getElementById/getContext) plus `document`
+inline void install_element_lookups(std::vector<ctjs::binding> & out, document & doc, image_store & images, dom_events & ev) {
 	out.push_back({"getElementById",
 	               ctjs::native([&doc, &images, &ev](const std::vector<ctjs::value> & a)
 	                                -> ctjs::value {
@@ -1470,6 +1469,10 @@ inline std::vector<ctjs::binding> dom_bindings(document & doc, std::string & tit
 	               },
 	               "getContext")});
 	out.push_back({"document", detail::make_document(doc, images, ev)});
+}
+
+// `window`: the environment surface libraries probe on boot
+inline void install_window_object(std::vector<ctjs::binding> & out, dom_events & ev) {
 	{
 		// the window object: the environment surface libraries probe.
 		// addEventListener shares the document's listener registry;
@@ -1534,6 +1537,10 @@ inline std::vector<ctjs::binding> dom_bindings(document & doc, std::string & tit
 		ev.window_obj = w;
 		out.push_back({"window", ctjs::value{w}});
 	}
+}
+
+// rAF and setTimeout/setInterval, all armed against the engine clock
+inline void install_timers(std::vector<ctjs::binding> & out, dom_events & ev) {
 	out.push_back(
 	    {"requestAnimationFrame",
 	     ctjs::value::function(
@@ -1571,6 +1578,10 @@ inline std::vector<ctjs::binding> dom_bindings(document & doc, std::string & tit
 		out.push_back({"clearTimeout", disarm("clearTimeout")});
 		out.push_back({"clearInterval", disarm("clearInterval")});
 	}
+}
+
+// alert, fetch (served from the compile-time asset registry), loadImage, setTitle
+inline void install_platform_misc(std::vector<ctjs::binding> & out, std::string & title, image_store & images, dom_events & ev) {
 	out.push_back({"alert",
 	               ctjs::value::function(
 	                   [&ev](ctjs::context &, const std::vector<ctjs::value> & a) {
@@ -1643,6 +1654,15 @@ inline std::vector<ctjs::binding> dom_bindings(document & doc, std::string & tit
 		               return {};
 	               },
 	               "setTitle")});
+}
+
+inline std::vector<ctjs::binding> dom_bindings(document & doc, std::string & title,
+                                               image_store & images, dom_events & ev) {
+	std::vector<ctjs::binding> out;
+	install_element_lookups(out, doc, images, ev);
+	install_window_object(out, ev);
+	install_timers(out, ev);
+	install_platform_misc(out, title, images, ev);
 	return out;
 }
 
