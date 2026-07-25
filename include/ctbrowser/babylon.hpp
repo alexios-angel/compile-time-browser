@@ -2382,9 +2382,8 @@ inline value make_engine(const worldptr & W, dom_events & ev, const std::vector<
 // --- geometry option readers for MeshBuilder
 inline double opt(const objptr & o, const char * k, double dflt) { return num_prop(o, k, dflt); }
 
-inline value build_babylon(const worldptr & W, dom_events & ev, image_store & images) {
-	auto B = objptr::make();
-
+// AppendSceneAsync / ImportMeshAsync, and the stubbed CubeTexture
+inline void install_loaders(const objptr & B, const worldptr & W, image_store & images) {
 	// AppendSceneAsync(url, scene, opts): resolve the .glb from the
 	// embedded-asset registry (same path as fetch), parse it, add its
 	// meshes/materials to the scene; returns a settled (resolved) promise.
@@ -2415,6 +2414,10 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		B->set("CubeTexture", CubeTexture);
 	}
 
+}
+
+// Vector3 / Color3 / Color4 (callable, with their statics)
+inline void install_math_types(const objptr & B) {
 	// Vector3 (callable + statics)
 	value Vector3 = value::function([](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_vector3(arg_num(a, 0, 0), arg_num(a, 1, 0), arg_num(a, 2, 0));
@@ -2443,6 +2446,10 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		return make_color4(arg_num(a, 0, 0), arg_num(a, 1, 0), arg_num(a, 2, 0), arg_num(a, 3, 1));
 	}, "Color4");
 	B->set("Color4", Color4);
+}
+
+// Engine, Scene, the cameras, the lights, StandardMaterial
+inline void install_scene_graph(const objptr & B, const worldptr & W, dom_events & ev) {
 
 	set_method(B, "Engine", [W, &ev](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_engine(W, ev, a);
@@ -2473,6 +2480,10 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		return make_material(arg_str(a, 0));
 	});
 
+}
+
+// MeshBuilder.Create* and the legacy positional Mesh.Create*
+inline void install_mesh_builders(const objptr & B, const worldptr & W) {
 	// MeshBuilder (object of factory statics)
 	object_t mb;
 	set_method(mb, "CreateBox", [W](ctjs::context &, const std::vector<value> & a) -> value {
@@ -2512,7 +2523,10 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 	});
 	B->set("Mesh", value::object(std::move(mesh)));
 
-	// --- Scalar: gameplay math (Lerp/Clamp/RandomRange, deterministic PRNG)
+}
+
+// Scalar / Axis / Space / Camera constants / Sound
+inline void install_gameplay_math(const objptr & B, const worldptr & W, dom_events & ev) {
 	{
 		object_t sc;
 		set_method(sc, "Lerp", [](ctjs::context &, const std::vector<value> & a) {
@@ -2597,7 +2611,10 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		}
 		return value{o};
 	});
-	// --- SceneLoader.ImportMeshAsync(meshNames, rootUrl, filename, scene):
+}
+
+// SceneLoader.ImportMeshAsync and AssetContainer
+inline void install_asset_loading(const objptr & B, const worldptr & W, image_store & images) {
 	// resolves {meshes:[__root__, model]}. The real GLB (rootUrl+filename) is
 	// loaded from the embedded registry when present - its primitives merged into
 	// ONE mesh (the game clones meshes[1] per alien) - else a box placeholder.
@@ -2708,7 +2725,10 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 			return value{o};
 		});
 	}
-	// --- Sprite / SpriteManager: cosmetic (starfield); constructed, not rendered
+}
+
+// Sprite + SpriteManager (cosmetic) and the GlowLayer bloom
+inline void install_effects(const objptr & B, const worldptr & W) {
 	set_method(B, "SpriteManager", [](ctjs::context &, const std::vector<value> &) -> value {
 		auto o = objptr::make();
 		o->set("sprites", value::array({}));
@@ -2791,7 +2811,10 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		}
 		return value{o};
 	});
-	// --- ActionManager / ExecuteCodeAction: REAL for OnEveryFrameTrigger (fired
+}
+
+// ActionManager / ExecuteCodeAction
+inline void install_actions(const objptr & B, const worldptr & W) {
 	// each frame by scene.render). Other triggers (pick/pointer/key) are stored on
 	// the manager but not yet dispatched - ctbrowser routes input through the DOM,
 	// which is what the games actually use.
@@ -2847,7 +2870,10 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		return value{o};
 	});
 
-	// --- BABYLON.GUI (the bundler maps @babylonjs/gui -> BABYLON.GUI)
+}
+
+// BABYLON.GUI (the bundler maps @babylonjs/gui here)
+inline void install_gui(const objptr & B, const worldptr & W) {
 	{
 		auto GUI = objptr::make();
 		// AdvancedDynamicTexture.CreateFullscreenUI -> a texture that collects
@@ -2935,7 +2961,10 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		B->set("GUI", value{GUI});
 	}
 
-	// --- statics on Engine / Scene
+}
+
+// the constants scripts read off Engine / Scene themselves
+inline void install_class_statics(const objptr & B) {
 	if (value * eng = B->find("Engine")) {
 		object_t ae;
 		set_method(ae, "unlock", [](ctjs::context &, const std::vector<value> &) { return value{}; });
@@ -2950,6 +2979,20 @@ inline value build_babylon(const worldptr & W, dom_events & ev, image_store & im
 		set_static(*scn, "FOGMODE_LINEAR", value{3.0});
 	}
 
+}
+
+inline value build_babylon(const worldptr & W, dom_events & ev, image_store & images) {
+	auto B = objptr::make();
+	install_loaders(B, W, images);
+	install_math_types(B);
+	install_scene_graph(B, W, ev);
+	install_mesh_builders(B, W);
+	install_gameplay_math(B, W, ev);
+	install_asset_loading(B, W, images);
+	install_effects(B, W);
+	install_actions(B, W);
+	install_gui(B, W);
+	install_class_statics(B);
 	return value{B};
 }
 
