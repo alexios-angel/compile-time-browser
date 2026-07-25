@@ -112,6 +112,48 @@ inline constexpr std::int64_t line_rank_vertical_weight = 100000;
 	return static_cast<std::int32_t>(lines.size()) - 1;
 }
 
+// The right-click menu's placement and geometry. WHICH rows it has, and
+// what choosing one does, stay with the engine - those depend on the
+// focus and the clipboard. This owns where the menu sits, which row the
+// pointer is over, and the arithmetic that answers both, so the paint
+// pass and the hit test cannot disagree about the layout.
+struct context_menu {
+	bool open = false;
+	std::int32_t x = 0;
+	std::int32_t y = 0;
+	std::int32_t hover = -1; // -1 = no row under the pointer
+	node * target = nullptr; // what was right-clicked
+
+	static constexpr std::int32_t width = 160;
+	static constexpr std::int32_t item_h = 24;
+	static constexpr std::int32_t pad_x = 10;   // label inset from the left edge
+	static constexpr std::int32_t pad_y = 5;    // label inset within its row
+	static constexpr std::int32_t font_px = 13; // menu chrome is its own size
+	static constexpr std::string_view font_family = "sans-serif";
+
+	[[nodiscard]] constexpr std::int32_t height(std::size_t rows) const noexcept {
+		return item_h * static_cast<std::int32_t>(rows);
+	}
+	[[nodiscard]] constexpr bool spans(std::int32_t px) const noexcept {
+		return px >= x && px < x + width;
+	}
+	// the row under a point; -1 when the pointer is outside the menu
+	[[nodiscard]] constexpr std::int32_t row_at(std::int32_t px, std::int32_t py) const noexcept {
+		return spans(px) ? (py - y) / item_h : -1;
+	}
+	[[nodiscard]] constexpr std::int32_t row_top(std::int32_t row) const noexcept {
+		return y + row * item_h;
+	}
+	void open_at(std::int32_t px, std::int32_t py, node * hit) noexcept {
+		open = true;
+		x = px;
+		y = py;
+		hover = -1;
+		target = hit;
+	}
+	void close() noexcept { open = false; }
+};
+
 // The page scrollbar as pure geometry: given the bar's width, the page
 // and viewport sizes and the current offset, where is the thumb, and what
 // does dragging it mean? It holds no engine state and calls nothing, so
@@ -210,12 +252,9 @@ private:
 	bool sb_dragging_ = false;      // the scrollbar thumb is being dragged
 	std::int32_t sb_grab_ = 0;      // pointer offset inside the thumb at grab
 	double caret_base_ms_ = 0;      // the blink phase restarts on caret activity
-	// context-menu state (right click; Chrome-style Copy/Cut/Paste menu)
-	bool menu_open_ = false;
-	std::int32_t menu_x_ = 0;
-	std::int32_t menu_y_ = 0;
-	std::int32_t menu_hover_ = -1;
-	node * menu_target_ = nullptr;
+	// the right-click menu (Chrome-style Copy/Cut/Paste); its placement
+	// and geometry live in detail::context_menu
+	detail::context_menu menu_;
 	// page text selection: a character-precise anchor the drag extends
 	bool selecting_ = false;
 	node * psel_node_ = nullptr; // the anchor position (node + cp index)
@@ -415,8 +454,8 @@ public:
 		ev.dispatch(down ? "keydown" : "keyup", evt);
 		// the editing default action: keystrokes into the focused editable
 		// (a listener's preventDefault() suppresses it, like a browser)
-		if (down && name == "Escape" && menu_open_) {
-			menu_open_ = false;
+		if (down && name == "Escape" && menu_.open) {
+			menu_.close();
 			return;
 		}
 		if (down && !detail::event_flag(evt, "defaultPrevented") && ctrl_down()) {
@@ -464,10 +503,8 @@ public:
 				apply_page_range(psel_node_, psel_cp_, tn, cp);
 			}
 		}
-		if (menu_open_) { // the menu tracks its own hover row
-			menu_hover_ = (x >= menu_x_ && x < menu_x_ + menu_w)
-			                  ? (static_cast<std::int32_t>(y) - menu_y_) / menu_item_h
-			                  : -1;
+		if (menu_.open) { // the menu tracks its own hover row
+			menu_.hover = menu_.row_at(static_cast<std::int32_t>(x), static_cast<std::int32_t>(y));
 			return;
 		}
 		if (sb_dragging_) { // dragging the scrollbar thumb
@@ -509,7 +546,7 @@ public:
 			if (down) { context_click(x, y); }
 			return;
 		}
-		if (down && menu_open_) { // a press with the menu up: item or dismiss
+		if (down && menu_.open) { // a press with the menu up: item or dismiss
 			menu_click(x, y);
 			return;
 		}
@@ -544,8 +581,8 @@ public:
 		pressed_ = nullptr;
 		focused_ = nullptr;
 		click_suppressed_ = false;
-		menu_open_ = false;
-		menu_target_ = nullptr;
+		menu_.close();
+		menu_.target = nullptr;
 		sb_dragging_ = false;
 		selecting_ = false;
 		doc = instantiate_html(Page::html_text());
@@ -671,35 +708,36 @@ private:
 	}
 
 	void paint_context_menu(std::vector<paint_cmd> & cmds) const {
-		if (!menu_open_) { return; }
+		if (!menu_.open) { return; }
 		const auto items = menu_items();
-		const std::int32_t mh = menu_item_h * static_cast<std::int32_t>(items.size());
+		const std::int32_t mh = menu_.height(items.size());
 		const auto boxc = [&cmds](std::int32_t bx, std::int32_t by, std::int32_t bw, std::int32_t bh,
 		                          std::uint32_t argb) {
 			cmds.push_back(detail::box_cmd(bx, by, bw, bh, argb, /*fixed=*/true));
 		};
-		boxc(menu_x_, menu_y_, menu_w, mh, detail::ua_menu_bg);
-		if (menu_hover_ >= 0 && menu_hover_ < static_cast<std::int32_t>(items.size()) &&
-		    items[static_cast<std::size_t>(menu_hover_)].enabled) {
-			boxc(menu_x_, menu_y_ + menu_hover_ * menu_item_h, menu_w, menu_item_h,
+		boxc(menu_.x, menu_.y, menu_.width, mh, detail::ua_menu_bg);
+		if (menu_.hover >= 0 && menu_.hover < static_cast<std::int32_t>(items.size()) &&
+		    items[static_cast<std::size_t>(menu_.hover)].enabled) {
+			boxc(menu_.x, menu_.row_top(menu_.hover), menu_.width, menu_.item_h,
 			     detail::ua_menu_hover);
 		}
-		boxc(menu_x_, menu_y_, menu_w, 1, detail::ua_menu_border);              // top
-		boxc(menu_x_, menu_y_ + mh - 1, menu_w, 1, detail::ua_menu_border);     // bottom
-		boxc(menu_x_, menu_y_, 1, mh, detail::ua_menu_border);                  // left
-		boxc(menu_x_ + menu_w - 1, menu_y_, 1, mh, detail::ua_menu_border);     // right
-		std::int32_t iy = menu_y_;
+		boxc(menu_.x, menu_.y, menu_.width, 1, detail::ua_menu_border);            // top
+		boxc(menu_.x, menu_.y + mh - 1, menu_.width, 1, detail::ua_menu_border);   // bottom
+		boxc(menu_.x, menu_.y, 1, mh, detail::ua_menu_border);                     // left
+		boxc(menu_.x + menu_.width - 1, menu_.y, 1, mh, detail::ua_menu_border);   // right
+		std::int32_t iy = menu_.y;
 		for (const auto & it : items) {
 			std::u32string label = utf8_to_utf32(std::string{it.label});
-			const std::int32_t lw = measure_text(label, menu_font_px, menu_font_family, false, false);
+			const std::int32_t lw =
+			    measure_text(label, menu_.font_px, menu_.font_family, false, false);
 			paint_cmd txt = detail::text_cmd(
-			    menu_x_ + menu_pad_x, iy + menu_pad_y, lw, menu_font_px,
+			    menu_.x + menu_.pad_x, iy + menu_.pad_y, lw, menu_.font_px,
 			    it.enabled ? detail::ua_menu_text : detail::ua_menu_text_disabled, std::move(label),
-			    menu_font_px);
+			    menu_.font_px);
 			txt.fixed = true;
-			txt.font_family = menu_font_family;
+			txt.font_family = menu_.font_family;
 			cmds.push_back(std::move(txt));
-			iy += menu_item_h;
+			iy += menu_.item_h;
 		}
 	}
 
@@ -1185,35 +1223,25 @@ private:
 		    {"Select All", true, &engine::do_select_all},
 		};
 	}
-	static constexpr std::int32_t menu_w = 160;
-	static constexpr std::int32_t menu_item_h = 24;
-	static constexpr std::int32_t menu_pad_x = 10;   // label inset from the left edge
-	static constexpr std::int32_t menu_pad_y = 5;    // label inset within its row
-	static constexpr std::int32_t menu_font_px = 13; // menu chrome is its own size
-	static constexpr std::string_view menu_font_family = "sans-serif";
 	void context_click(double x, double y) {
 		ctjs::value evt = detail::mouse_event(x, y, "contextmenu");
 		ev.dispatch("contextmenu", evt);
 		if (detail::event_flag(evt, "defaultPrevented")) { return; } // page took over
-		menu_target_ = hit_test_at(x, y);
+		node * hit = hit_test_at(x, y);
 		// right-clicking an editable focuses it (so Paste knows its target)
-		for (node * n = menu_target_; n != nullptr; n = n->parent) {
+		for (node * n = hit; n != nullptr; n = n->parent) {
 			if (n->is_editable() && !n->is_disabled()) {
 				set_focus(n);
 				break;
 			}
 		}
-		menu_open_ = true;
-		menu_x_ = static_cast<std::int32_t>(x);
-		menu_y_ = static_cast<std::int32_t>(y);
-		menu_hover_ = -1;
+		menu_.open_at(static_cast<std::int32_t>(x), static_cast<std::int32_t>(y), hit);
 	}
 	void menu_click(double x, double y) {
 		const std::int32_t ix = static_cast<std::int32_t>(x), iy = static_cast<std::int32_t>(y);
-		menu_open_ = false;
+		menu_.close();
 		const auto items = menu_items();
-		if (ix < menu_x_ || ix >= menu_x_ + menu_w) { return; } // dismissed
-		const std::int32_t idx = (iy - menu_y_) / menu_item_h;
+		const std::int32_t idx = menu_.row_at(ix, iy); // -1 = clicked away
 		if (idx < 0 || idx >= static_cast<std::int32_t>(items.size())) { return; }
 		const menu_item & item = items[static_cast<std::size_t>(idx)];
 		if (!item.enabled) { return; }
