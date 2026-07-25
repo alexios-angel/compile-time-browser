@@ -5,7 +5,11 @@ add_custom_target(ctbrowser-v2-test ALL)
 
 function(ctbrowser_v2_test name)
   add_executable(ctbrowser-v2-${name} ${name}.cpp)
-  target_link_libraries(ctbrowser-v2-${name} PRIVATE ctbrowser::core ctbrowser::dom)
+  target_link_libraries(ctbrowser-v2-${name} PRIVATE ctbrowser::core ctbrowser::dom ctbrowser::script)
+  # the VM tests compare against v1's interpreter (ctjs.hpp), which needs its headers
+  target_include_directories(ctbrowser-v2-${name} PRIVATE
+    "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"
+    "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/external/compile-time-containers/include")
   target_compile_options(ctbrowser-v2-${name} PRIVATE ${CTBROWSER_V2_WARNINGS})
   target_include_directories(ctbrowser-v2-${name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   add_dependencies(ctbrowser-v2-test ctbrowser-v2-${name})
@@ -16,6 +20,7 @@ ctbrowser_v2_test(core_basics)
 ctbrowser_v2_test(stress_slab)
 ctbrowser_v2_test(dom_basics)
 ctbrowser_v2_test(stress_dom)
+ctbrowser_v2_test(vm_basics)
 
 # The stress test is the one that must never be skipped: it is the evidence
 # that the lock-free read path is actually sound. Give it room under TSan.

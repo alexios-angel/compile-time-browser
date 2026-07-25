@@ -66,6 +66,30 @@ set_target_properties(ctbrowser-dom PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
 add_library(ctbrowser::dom ALIAS ctbrowser-dom)
 
+# --- ctbrowser.script ----------------------------------------------------
+# ctjs v2. Reuses ctjs's Pratt parser (vparse.hpp) and replaces everything
+# after it; the tree-walk interpreter and the refcounted variant value model
+# are gone. Depends on core only for the warning set - the VM shares no state
+# with the DOM by design (one agent per thread).
+add_library(ctbrowser-script)
+target_sources(ctbrowser-script
+  PUBLIC
+    FILE_SET CXX_MODULES FILES
+      script/script.cppm
+      script/value.cppm
+      script/bytecode.cppm
+      script/compile.cppm
+      script/vm.cppm)
+target_compile_features(ctbrowser-script PUBLIC cxx_std_23)
+target_compile_options(ctbrowser-script PRIVATE ${CTBROWSER_V2_WARNINGS})
+target_include_directories(ctbrowser-script PRIVATE
+  "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"
+  "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/external/compile-time-containers/include")
+target_link_libraries(ctbrowser-script PUBLIC Boost::headers)
+set_target_properties(ctbrowser-script PROPERTIES CXX_SCAN_FOR_MODULES ON)
+
+add_library(ctbrowser::script ALIAS ctbrowser-script)
+
 if(CTBROWSER_BUILD_TESTS)
   add_subdirectory(../tests-v2 "${CMAKE_CURRENT_BINARY_DIR}/tests-v2")
 endif()
