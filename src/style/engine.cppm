@@ -51,6 +51,45 @@ class engine {
 public:
 	explicit engine(atom_table & atoms) : atoms_(&atoms) {}
 
+	// Interactive state, matching ctcss's pseudo_state bits so a compiled
+	// selector's requirement and an element's actual state are the same
+	// vocabulary.
+	static constexpr std::uint32_t state_hover = 1u;
+	static constexpr std::uint32_t state_active = 2u;
+	static constexpr std::uint32_t state_focus = 4u;
+	static constexpr std::uint32_t state_checked = 8u;
+	static constexpr std::uint32_t state_disabled = 16u;
+
+	// Set or clear one element's interactive bits. Returns whether anything
+	// changed, so a caller can skip re-resolving when a mouse move lands on the
+	// same element it was already on - which is most mouse moves.
+	//
+	// State lives HERE rather than on the node. It is a style input, not
+	// document content, and putting it on the node is exactly what left v1's
+	// node struct carrying UI caches that layout and paint both had opinions
+	// about.
+	bool set_state(node_id id, std::uint32_t bits, bool on) {
+		if (!id || bits == 0) { return false; }
+		const std::uint64_t key = key_of(id);
+		const auto it = states_.find(key);
+		const std::uint32_t before = it == states_.end() ? 0u : it->second;
+		const std::uint32_t after = on ? (before | bits) : (before & ~bits);
+		if (after == before) { return false; }
+		if (after == 0) {
+			states_.erase(key);
+		} else {
+			states_[key] = after;
+		}
+		return true;
+	}
+
+	[[nodiscard]] std::uint32_t state_of(node_id id) const {
+		const auto it = states_.find(key_of(id));
+		return it == states_.end() ? 0u : it->second;
+	}
+
+	void clear_states() { states_.clear(); }
+
 	// origin 0 = user agent, 1 = author. Author wins ties, per the cascade.
 	void add_sheet(std::string_view css, std::uint8_t origin = 1) {
 		const ctcss::value_sheet sheet = ctcss::parse_value(css);
@@ -81,6 +120,7 @@ public:
 		const std::string_view id_attr = txn.attribute_value(id, id_name());
 		if (!id_attr.empty()) { f.id = atoms_->intern(id_attr); }
 		split_classes(txn.attribute_value(id, class_name()), f.classes);
+		f.states = state_of(id);
 		return f;
 	}
 
@@ -253,6 +293,9 @@ private:
 		return static_cast<std::uint32_t>(selectors_.size() - 1);
 	}
 
+	// Sparse on purpose: at most a handful of elements are hovered, pressed or
+	// focused at once, so a per-node field would be megabytes of zeroes.
+	boost::unordered_flat_map<std::uint64_t, std::uint32_t> states_;
 	atom_table * atoms_;
 	std::vector<compiled_selector> selectors_;
 	std::vector<declaration> declarations_;

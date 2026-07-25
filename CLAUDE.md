@@ -18,6 +18,28 @@ without __builtin_std_embed. No gcc/MSVC/stock-clang paths. **CMake +
 Ninja is THE build** (Makefiles retired 2026-07-23). Work on `main`.
 Prefer `rg`.
 
+## v2 IS THE ENGINE (stage 7, 2026-07-25)
+
+`ctbrowse` (examples-v2/) is the browser: `ctbrowse page.html`, or
+`ctbrowse page.html --headless out.ppm --size W H` with no display at all.
+`ctbrowser.shell::browser` is the assembly and is SDL-FREE — `ctbrowser.app`
+is the only module that knows SDL exists. A frame runs only what changed:
+a scroll re-composites, an idle frame does nothing, a resize re-lays-out.
+
+**`std::embed` is no longer required to configure.** `CTBROWSER_BUILD_V1` is
+now `AUTO`: v1 builds where the compiler has `__builtin_std_embed` and is
+skipped with a STATUS message where it does not. `cmake -S . -B build
+-DCMAKE_CXX_COMPILER=clang++` on stock clang builds and tests v2 alone.
+`-DCTBROWSER_BUILD_V1=ON` still hard-errors on the wrong toolchain, on
+purpose — silently building something other than what was asked for is how
+CI reports success for a target it never built.
+
+**v1 IS NOT DELETED.** The plan's stage 7 says to; doing it now would drop
+22 tests and 11 examples' worth of working functionality with no v2
+replacement — script DOM bindings, form controls, canvas 2D, tables, the
+BabylonJS shim, real fonts, images, audio, widget chrome. See
+`docs/v1-retirement.md` for the full list and the recommendation.
+
 ## ⚠️ v2 GPU: this machine has NO GPU (verified 2026-07-25)
 
 `src/gpu` (SDL3 `SDL_GPUDevice`) builds and RUNS here, but the only Vulkan

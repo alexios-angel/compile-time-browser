@@ -103,7 +103,8 @@ target_sources(ctbrowser-style
       style/style.cppm
       style/computed.cppm
       style/selector.cppm
-      style/engine.cppm)
+      style/engine.cppm
+      style/ua.cppm)
 target_compile_features(ctbrowser-style PUBLIC cxx_std_23)
 target_compile_options(ctbrowser-style PRIVATE ${CTBROWSER_V2_WARNINGS})
 target_include_directories(ctbrowser-style PRIVATE
@@ -180,6 +181,39 @@ set_target_properties(ctbrowser-raster PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
 add_library(ctbrowser::raster ALIAS ctbrowser-raster)
 
+# --- ctbrowser.shell -----------------------------------------------------
+# The engine assembled. SDL-free on purpose: a browser you can drive without a
+# display is a browser you can test.
+add_library(ctbrowser-shell)
+target_sources(ctbrowser-shell
+  PUBLIC
+    FILE_SET CXX_MODULES FILES
+      shell/shell.cppm
+      shell/input.cppm
+      shell/browser.cppm)
+target_compile_features(ctbrowser-shell PUBLIC cxx_std_23)
+target_compile_options(ctbrowser-shell PRIVATE ${CTBROWSER_V2_WARNINGS})
+target_link_libraries(ctbrowser-shell PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style
+                                             ctbrowser-layout ctbrowser-paint ctbrowser-raster)
+set_target_properties(ctbrowser-shell PROPERTIES CXX_SCAN_FOR_MODULES ON)
+
+add_library(ctbrowser::shell ALIAS ctbrowser-shell)
+
+# --- ctbrowser.app -------------------------------------------------------
+# The window and the event loop, and the only module that knows SDL exists.
+if(SDL3_FOUND)
+  add_library(ctbrowser-app)
+  target_sources(ctbrowser-app
+    PUBLIC
+      FILE_SET CXX_MODULES FILES shell/app.cppm)
+  target_compile_features(ctbrowser-app PUBLIC cxx_std_23)
+  target_compile_options(ctbrowser-app PRIVATE ${CTBROWSER_V2_WARNINGS})
+  target_link_libraries(ctbrowser-app PUBLIC ctbrowser-core ctbrowser-raster ctbrowser-shell
+                                             SDL3::SDL3)
+  set_target_properties(ctbrowser-app PROPERTIES CXX_SCAN_FOR_MODULES ON)
+  add_library(ctbrowser::app ALIAS ctbrowser-app)
+endif()
+
 # --- ctbrowser.gpu -------------------------------------------------------
 # OPTIONAL by construction. Without SDL3 the engine still builds and still
 # renders - through the software backend - because raster::renderer is a
@@ -201,6 +235,8 @@ if(SDL3_FOUND)
   set_target_properties(ctbrowser-gpu PROPERTIES CXX_SCAN_FOR_MODULES ON)
   add_library(ctbrowser::gpu ALIAS ctbrowser-gpu)
 endif()
+
+add_subdirectory(../examples-v2 "${CMAKE_CURRENT_BINARY_DIR}/examples-v2")
 
 if(CTBROWSER_BUILD_TESTS)
   add_subdirectory(../tests-v2 "${CMAKE_CURRENT_BINARY_DIR}/tests-v2")

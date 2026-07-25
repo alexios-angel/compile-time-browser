@@ -11,9 +11,19 @@ cmake_minimum_required(VERSION 3.16...4.3)
 # compiler-rt sanitizer runtimes (no libclang_rt.tsan.a), and TSan is the
 # primary evidence that v2's lock-free read path is sound. Configure with
 # -DCTBROWSER_BUILD_V1=OFF and a stock compiler to get v2 alone.
-option(CTBROWSER_BUILD_V1 "Build the v1 compile-time engine (needs the std::embed clang)" ON)
+# v1 is AUTO-DETECTED as of stage 7: it builds when the compiler can, and is
+# skipped with a message when it cannot. std::embed stopped being load bearing
+# for this project the moment v2 became the engine - v2 parses at runtime and
+# needs no builtin, no fork and no fetched toolchain, so requiring one to
+# configure AT ALL was a requirement v1 imposed on everybody.
+#
+# Set it explicitly to force the issue either way: ON to get a hard error when
+# the toolchain is wrong, OFF to skip v1 even where it would build.
+set(CTBROWSER_BUILD_V1 "AUTO" CACHE STRING
+    "Build the v1 compile-time engine: ON, OFF, or AUTO (build it if the compiler can)")
+set_property(CACHE CTBROWSER_BUILD_V1 PROPERTY STRINGS AUTO ON OFF)
 
-if(CTBROWSER_BUILD_V1 AND NOT CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX}
+if(NOT CTBROWSER_BUILD_V1 STREQUAL "OFF" AND NOT CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX}
    AND NOT CMAKE_TOOLCHAIN_FILE
    AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/clang-std-embed/bin/clang++")
   set(CMAKE_CXX_COMPILER "${CMAKE_CURRENT_SOURCE_DIR}/tools/clang-std-embed/bin/clang++")
@@ -30,8 +40,10 @@ include(CMakeDependentOption)
 include(GNUInstallDirs)
 include(CTest)
 
-# verify the chosen compiler really is the std::embed clang - v1 only
-if(CTBROWSER_BUILD_V1)
+# Does this compiler have the std::embed builtin v1 needs? Asked whenever v1 is
+# not explicitly off, because the answer decides between building it, skipping
+# it, and refusing to configure.
+if(NOT CTBROWSER_BUILD_V1 STREQUAL "OFF")
   include(CheckCXXSourceCompiles)
   set(CMAKE_REQUIRED_FLAGS "-std=c++23")   # the builtin only exists in C++23 mode
   check_cxx_source_compiles([[
@@ -40,14 +52,28 @@ if(CTBROWSER_BUILD_V1)
 #endif
 int main() { return 0; }
 ]] CTBROWSER_HAS_STD_EMBED_BUILTIN)
-  if(NOT CTBROWSER_HAS_STD_EMBED_BUILTIN)
-    message(FATAL_ERROR
-      "ctbrowser v1 supports ONLY the std::embed clang toolchain "
-      "(tools/clang-std-embed; fetch the clang-std-embed release from the "
-      "embed repo). Found: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} "
-      "without __builtin_std_embed. Set -DCTBROWSER_BUILD_V1=OFF to build v2 alone.")
-  endif()
   unset(CMAKE_REQUIRED_FLAGS)
+endif()
+
+if(CTBROWSER_BUILD_V1 STREQUAL "AUTO")
+  if(CTBROWSER_HAS_STD_EMBED_BUILTIN)
+    set(CTBROWSER_BUILD_V1 ON)
+  else()
+    set(CTBROWSER_BUILD_V1 OFF)
+    message(STATUS
+      "ctbrowser: no __builtin_std_embed in ${CMAKE_CXX_COMPILER_ID} "
+      "${CMAKE_CXX_COMPILER_VERSION} - building v2 only. This is a supported "
+      "configuration: the v2 engine parses at runtime and needs no fork.")
+  endif()
+elseif(CTBROWSER_BUILD_V1 AND NOT CTBROWSER_HAS_STD_EMBED_BUILTIN)
+  # Explicitly asked for, and impossible. That IS an error - silently building
+  # something other than what was requested is how a CI job reports success for
+  # a target it never built.
+  message(FATAL_ERROR
+    "CTBROWSER_BUILD_V1=ON was requested but ${CMAKE_CXX_COMPILER_ID} "
+    "${CMAKE_CXX_COMPILER_VERSION} has no __builtin_std_embed. v1 supports ONLY "
+    "the std::embed clang (tools/clang-std-embed; fetch the clang-std-embed "
+    "release from the embed repo). Use -DCTBROWSER_BUILD_V1=OFF or AUTO for v2 alone.")
 endif()
 
 cmake_dependent_option(CTBROWSER_BUILD_TESTS "Build ctbrowser tests" ON

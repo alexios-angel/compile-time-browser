@@ -17,3 +17,4 @@ export module ctbrowser.style;
 export import :computed;
 export import :selector;
 export import :engine;
+export import :ua;
