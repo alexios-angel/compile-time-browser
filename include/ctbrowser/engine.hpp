@@ -147,87 +147,11 @@ public:
 	std::vector<paint_cmd> frame(std::int32_t viewport_w) {
 		// advance CSS @keyframes (writes interpolated inline styles) before layout
 		detail::apply_animations(doc, css_sheet, ev.now_ms);
-		// the caret blinks on Chrome's cadence: 500 ms on, 500 ms off,
-		// restarted by any caret activity (typing keeps it solid) -
-		// computed BEFORE layout so this frame's paints carry the phase
-		if (focused_ != nullptr && focused_->is_editable()) {
-			const double phase = ev.now_ms - caret_base_ms_;
-			focused_->ui_caret_on =
-			    phase < 0 || (static_cast<std::int64_t>(phase) % detail::caret_blink_period_ms) <
-			                     detail::caret_blink_half_ms;
-		}
-		std::vector<paint_cmd> cmds = ctbrowser::layout(doc, viewport_w, resolve, measure, ev.viewport_h);
-		ev.viewport_w = viewport_w;
-		// page scrolling: clamp to the freshly laid-out document height,
-		// then shift the world into view - rects AND paints together, so
-		// hit testing, script rect readbacks and rendering all agree.
-		// position:fixed subtrees stay viewport-anchored.
-		page_h_ = doc.root != nullptr ? doc.root->y + doc.root->h : 0;
-		// a visible scrollbar RESERVES layout space (classic Firefox/Chrome
-		// bars): once the page overflows, re-lay-out at the narrowed width
-		// so content never slides under the bar (narrowing only makes the
-		// page taller, so the overflow decision is stable)
-		{
-			const std::int32_t sbw = scrollbar_width();
-			if (sbw > 0 && page_h_ > ev.viewport_h && viewport_w > sbw) {
-				cmds = ctbrowser::layout(doc, viewport_w - sbw, resolve, measure, ev.viewport_h);
-				page_h_ = doc.root != nullptr ? doc.root->y + doc.root->h : 0;
-			}
-		}
-		const std::int32_t max_scroll = page_h_ > ev.viewport_h ? page_h_ - ev.viewport_h : 0;
-		if (scroll_y_ > max_scroll) { scroll_y_ = max_scroll; }
-		if (scroll_y_ < 0) { scroll_y_ = 0; }
-		if (scroll_y_ != 0) {
-			for (paint_cmd & c : cmds) {
-				if (!c.fixed) { c.y -= scroll_y_; }
-			}
-			if (doc.root) { detail::offset_rects(*doc.root, -scroll_y_); }
-		}
-		// the overlay scrollbar (drawn last = on top; viewport-fixed)
-		{
-			std::int32_t sx = 0, sy = 0, sw = 0, sh = 0;
-			if (scrollbar_thumb(sx, sy, sw, sh)) {
-				cmds.push_back(detail::box_cmd(sx, 0, sw, ev.viewport_h, detail::ua_scrollbar_track,
-				                               /*fixed=*/true));
-				cmds.push_back(detail::box_cmd(sx, sy, sw, sh,
-				                               sb_dragging_ ? detail::ua_scrollbar_thumb_active
-				                                            : detail::ua_scrollbar_thumb,
-				                               /*fixed=*/true));
-			}
-		}
-		// the context menu, on top of everything (viewport-fixed)
-		if (menu_open_) {
-			const auto items = menu_items();
-			const std::int32_t mh = menu_item_h * static_cast<std::int32_t>(items.size());
-			const auto boxc = [&cmds](std::int32_t bx, std::int32_t by, std::int32_t bw,
-			                          std::int32_t bh, std::uint32_t argb) {
-				cmds.push_back(detail::box_cmd(bx, by, bw, bh, argb, /*fixed=*/true));
-			};
-			boxc(menu_x_, menu_y_, menu_w, mh, detail::ua_menu_bg);
-			if (menu_hover_ >= 0 && menu_hover_ < static_cast<std::int32_t>(items.size()) &&
-			    items[static_cast<std::size_t>(menu_hover_)].enabled) {
-				boxc(menu_x_, menu_y_ + menu_hover_ * menu_item_h, menu_w, menu_item_h,
-				     detail::ua_menu_hover);
-			}
-			boxc(menu_x_, menu_y_, menu_w, 1, detail::ua_menu_border);
-			boxc(menu_x_, menu_y_ + mh - 1, menu_w, 1, detail::ua_menu_border);
-			boxc(menu_x_, menu_y_, 1, mh, detail::ua_menu_border);
-			boxc(menu_x_ + menu_w - 1, menu_y_, 1, mh, detail::ua_menu_border);
-			std::int32_t iy = menu_y_;
-			for (const auto & it : items) {
-				std::u32string label = utf8_to_utf32(std::string{it.label});
-				const std::int32_t lw =
-				    measure_text(label, menu_font_px, menu_font_family, false, false);
-				paint_cmd txt = detail::text_cmd(
-				    menu_x_ + menu_pad_x, iy + menu_pad_y, lw, menu_font_px,
-				    it.enabled ? detail::ua_menu_text : detail::ua_menu_text_disabled,
-				    std::move(label), menu_font_px);
-				txt.fixed = true;
-				txt.font_family = menu_font_family;
-				cmds.push_back(std::move(txt));
-				iy += menu_item_h;
-			}
-		}
+		update_caret_blink(); // BEFORE layout: this frame's paints carry the phase
+		std::vector<paint_cmd> cmds = layout_reserving_scrollbar(viewport_w);
+		apply_scroll(cmds);
+		paint_scrollbar(cmds);   // the overlay bar, on top
+		paint_context_menu(cmds); // and the menu above even that
 		ev.refresh_tracked();
 		return cmds;
 	}
@@ -240,9 +164,7 @@ public:
 		mouse_y = y;
 		update_hover(x, y);
 		ev.dispatch("wheel", detail::wheel_event(x, y, -dy * 100.0));
-		node * hit = doc.root ? doc.root->hit_test(static_cast<std::int32_t>(x),
-		                                           static_cast<std::int32_t>(y))
-		                      : nullptr;
+		node * hit = hit_test_at(x, y);
 		for (node * n = hit; n != nullptr; n = n->parent) {
 			if (n->is_textarea()) {
 				n->scroll_top -= static_cast<std::int32_t>(dy * detail::wheel_step_px); // layout clamps
@@ -449,9 +371,7 @@ public:
 	// changes; the per-frame style re-query restyles :hover for free.
 	// Button events sync it too - the pointer is wherever it clicked.
 	void update_hover(double x, double y) {
-		node * hit = doc.root ? doc.root->hit_test(static_cast<std::int32_t>(x),
-		                                           static_cast<std::int32_t>(y))
-		                      : nullptr;
+		node * hit = hit_test_at(x, y);
 		if (hit != hovered_) {
 			set_chain_flag(hovered_, &node::hovered, false);
 			set_chain_flag(hit, &node::hovered, true);
@@ -479,61 +399,8 @@ public:
 			return;
 		}
 		if (down && scrollbar_hit(x, y)) { return; } // the bar ate the press
-		if (down) {
-			deliver(script, "onMouseDown", x, y);
-			ev.dispatch("mousedown", detail::mouse_event(x, y, "mousedown"));
-			pressed_ = doc.root ? doc.root->hit_test(static_cast<std::int32_t>(x),
-			                                          static_cast<std::int32_t>(y))
-			                    : nullptr;
-			set_chain_flag(pressed_, &node::pressed, true); // :active while held
-			// browsers move focus on mousedown
-			node * f = pressed_;
-			while (f != nullptr && !f->is_focusable()) { f = f->parent; }
-			set_focus(f);
-			// selection: a fresh press clears the page selection; inside an
-			// editable it places the caret (and anchors a drag selection),
-			// elsewhere it starts the drag band
-			clear_page_selection();
-			selecting_ = false;
-			psel_node_ = nullptr;
-			if (pressed_ != nullptr && pressed_->is_editable() && pressed_ == focused_) {
-				pressed_->caret = caret_from_click(pressed_, x, y);
-				pressed_->sel_anchor = pressed_->caret;
-				pressed_->caret_follow = true;
-				caret_base_ms_ = ev.now_ms;
-			} else if (!page_select_none(pressed_)) {
-				// anchor the drag at the CHARACTER under the pointer
-				std::int32_t cp = 0;
-				if (node * tn = position_from_point(x, y, cp)) {
-					selecting_ = true;
-					psel_node_ = tn;
-					psel_cp_ = cp;
-				}
-			}
-			// a <select> widget (open popup, or a collapsed control) eats the
-			// press - and the synthetic click that would pair with the release
-			click_suppressed_ =
-			    handle_select_click(static_cast<std::int32_t>(x), static_cast<std::int32_t>(y));
-		} else {
-			ev.dispatch("mouseup", detail::mouse_event(x, y, "mouseup"));
-			set_chain_flag(pressed_, &node::pressed, false);
-			selecting_ = false;
-			if (focused_ != nullptr && focused_->sel_anchor == focused_->caret) {
-				focused_->sel_anchor = -1; // a click without a drag: no selection
-			}
-			// the click fires on RELEASE (browser semantics): its target is
-			// the nearest common ancestor of the press and release targets
-			node * up_hit = doc.root ? doc.root->hit_test(static_cast<std::int32_t>(x),
-			                                               static_cast<std::int32_t>(y))
-			                         : nullptr;
-			if (!click_suppressed_ && pressed_ != nullptr && up_hit != nullptr) {
-				if (node * target = common_ancestor(pressed_, up_hit)) {
-					click_on(target, static_cast<std::int32_t>(x), static_cast<std::int32_t>(y));
-				}
-			}
-			pressed_ = nullptr;
-			click_suppressed_ = false;
-		}
+		if (down) { press(x, y); }
+		else { release(x, y); }
 	}
 	void tick(double dt) {
 		deliver(script, "onFrame", dt);
@@ -572,6 +439,162 @@ public:
 	}
 
 private:
+	// --- the press/release halves of a click ----------------------------
+
+	// mousedown: the :active chain, focus, and the selection anchor
+	void press(double x, double y) {
+		deliver(script, "onMouseDown", x, y);
+		ev.dispatch("mousedown", detail::mouse_event(x, y, "mousedown"));
+		pressed_ = hit_test_at(x, y);
+		set_chain_flag(pressed_, &node::pressed, true); // :active while held
+		// browsers move focus on mousedown
+		node * f = pressed_;
+		while (f != nullptr && !f->is_focusable()) { f = f->parent; }
+		set_focus(f);
+		// selection: a fresh press clears the page selection; inside an
+		// editable it places the caret (and anchors a drag selection),
+		// elsewhere it starts the drag band
+		clear_page_selection();
+		selecting_ = false;
+		psel_node_ = nullptr;
+		if (pressed_ != nullptr && pressed_->is_editable() && pressed_ == focused_) {
+			pressed_->caret = caret_from_click(pressed_, x, y);
+			pressed_->sel_anchor = pressed_->caret;
+			pressed_->caret_follow = true;
+			caret_base_ms_ = ev.now_ms;
+		} else if (!page_select_none(pressed_)) {
+			// anchor the drag at the CHARACTER under the pointer
+			std::int32_t cp = 0;
+			if (node * tn = position_from_point(x, y, cp)) {
+				selecting_ = true;
+				psel_node_ = tn;
+				psel_cp_ = cp;
+			}
+		}
+		// a <select> widget (open popup, or a collapsed control) eats the
+		// press - and the synthetic click that would pair with the release
+		click_suppressed_ =
+		    handle_select_click(static_cast<std::int32_t>(x), static_cast<std::int32_t>(y));
+	}
+
+	// mouseup: the click fires HERE (browser semantics), on the nearest
+	// common ancestor of the press and release targets
+	void release(double x, double y) {
+		ev.dispatch("mouseup", detail::mouse_event(x, y, "mouseup"));
+		set_chain_flag(pressed_, &node::pressed, false);
+		selecting_ = false;
+		if (focused_ != nullptr && focused_->sel_anchor == focused_->caret) {
+			focused_->sel_anchor = -1; // a click without a drag: no selection
+		}
+		node * up_hit = hit_test_at(x, y);
+		if (!click_suppressed_ && pressed_ != nullptr && up_hit != nullptr) {
+			if (node * target = common_ancestor(pressed_, up_hit)) {
+				click_on(target, static_cast<std::int32_t>(x), static_cast<std::int32_t>(y));
+			}
+		}
+		pressed_ = nullptr;
+		click_suppressed_ = false;
+	}
+
+	// --- the frame pipeline ---------------------------------------------
+
+	// the caret blinks on Chrome's cadence: 500 ms on, 500 ms off,
+	// restarted by any caret activity (so typing keeps it solid)
+	void update_caret_blink() {
+		if (focused_ == nullptr || !focused_->is_editable()) { return; }
+		const double phase = ev.now_ms - caret_base_ms_;
+		focused_->ui_caret_on =
+		    phase < 0 || (static_cast<std::int64_t>(phase) % detail::caret_blink_period_ms) <
+		                     detail::caret_blink_half_ms;
+	}
+
+	std::int32_t document_height() const {
+		return doc.root != nullptr ? doc.root->y + doc.root->h : 0;
+	}
+
+	// A visible scrollbar RESERVES layout space (classic Firefox/Chrome
+	// bars), so an overflowing page is laid out a second time at the
+	// narrowed width and content never slides under the bar. One retry is
+	// enough: narrowing only ever makes a page taller, so the overflow
+	// decision cannot flip back.
+	std::vector<paint_cmd> layout_reserving_scrollbar(std::int32_t viewport_w) {
+		std::vector<paint_cmd> cmds =
+		    ctbrowser::layout(doc, viewport_w, resolve, measure, ev.viewport_h);
+		ev.viewport_w = viewport_w;
+		page_h_ = document_height();
+		const std::int32_t sbw = scrollbar_width();
+		if (sbw > 0 && page_h_ > ev.viewport_h && viewport_w > sbw) {
+			cmds = ctbrowser::layout(doc, viewport_w - sbw, resolve, measure, ev.viewport_h);
+			page_h_ = document_height();
+		}
+		return cmds;
+	}
+
+	// clamp the scroll offset to the freshly laid-out page, then shift the
+	// world into view - rects AND paints together, so hit testing, script
+	// rect readbacks and rendering all agree. position:fixed stays put.
+	void apply_scroll(std::vector<paint_cmd> & cmds) {
+		const std::int32_t max_scroll = page_h_ > ev.viewport_h ? page_h_ - ev.viewport_h : 0;
+		if (scroll_y_ > max_scroll) { scroll_y_ = max_scroll; }
+		if (scroll_y_ < 0) { scroll_y_ = 0; }
+		if (scroll_y_ == 0) { return; }
+		for (paint_cmd & c : cmds) {
+			if (!c.fixed) { c.y -= scroll_y_; }
+		}
+		if (doc.root) { detail::offset_rects(*doc.root, -scroll_y_); }
+	}
+
+	void paint_scrollbar(std::vector<paint_cmd> & cmds) const {
+		std::int32_t sx = 0, sy = 0, sw = 0, sh = 0;
+		if (!scrollbar_thumb(sx, sy, sw, sh)) { return; }
+		cmds.push_back(
+		    detail::box_cmd(sx, 0, sw, ev.viewport_h, detail::ua_scrollbar_track, /*fixed=*/true));
+		cmds.push_back(detail::box_cmd(sx, sy, sw, sh,
+		                               sb_dragging_ ? detail::ua_scrollbar_thumb_active
+		                                            : detail::ua_scrollbar_thumb,
+		                               /*fixed=*/true));
+	}
+
+	void paint_context_menu(std::vector<paint_cmd> & cmds) const {
+		if (!menu_open_) { return; }
+		const auto items = menu_items();
+		const std::int32_t mh = menu_item_h * static_cast<std::int32_t>(items.size());
+		const auto boxc = [&cmds](std::int32_t bx, std::int32_t by, std::int32_t bw, std::int32_t bh,
+		                          std::uint32_t argb) {
+			cmds.push_back(detail::box_cmd(bx, by, bw, bh, argb, /*fixed=*/true));
+		};
+		boxc(menu_x_, menu_y_, menu_w, mh, detail::ua_menu_bg);
+		if (menu_hover_ >= 0 && menu_hover_ < static_cast<std::int32_t>(items.size()) &&
+		    items[static_cast<std::size_t>(menu_hover_)].enabled) {
+			boxc(menu_x_, menu_y_ + menu_hover_ * menu_item_h, menu_w, menu_item_h,
+			     detail::ua_menu_hover);
+		}
+		boxc(menu_x_, menu_y_, menu_w, 1, detail::ua_menu_border);              // top
+		boxc(menu_x_, menu_y_ + mh - 1, menu_w, 1, detail::ua_menu_border);     // bottom
+		boxc(menu_x_, menu_y_, 1, mh, detail::ua_menu_border);                  // left
+		boxc(menu_x_ + menu_w - 1, menu_y_, 1, mh, detail::ua_menu_border);     // right
+		std::int32_t iy = menu_y_;
+		for (const auto & it : items) {
+			std::u32string label = utf8_to_utf32(std::string{it.label});
+			const std::int32_t lw = measure_text(label, menu_font_px, menu_font_family, false, false);
+			paint_cmd txt = detail::text_cmd(
+			    menu_x_ + menu_pad_x, iy + menu_pad_y, lw, menu_font_px,
+			    it.enabled ? detail::ua_menu_text : detail::ua_menu_text_disabled, std::move(label),
+			    menu_font_px);
+			txt.fixed = true;
+			txt.font_family = menu_font_family;
+			cmds.push_back(std::move(txt));
+			iy += menu_item_h;
+		}
+	}
+
+	// the deepest node under a point, in viewport coordinates
+	node * hit_test_at(double x, double y) {
+		return doc.root ? doc.root->hit_test(static_cast<std::int32_t>(x),
+		                                     static_cast<std::int32_t>(y))
+		                : nullptr;
+	}
+
 	// Route a mouse press through a <select>: if a popup is open, a click on an
 	// option row selects it (and fires the element's onchange), a click elsewhere
 	// closes it; if none is open, a click on a collapsed control opens it. Returns
@@ -605,16 +628,21 @@ private:
 		}
 		return false;
 	}
+	// Fire a node-targeted listener list. The vector is COPIED first: a
+	// handler is free to add or remove listeners while we are iterating.
+	template <typename Map> void dispatch_to(Map & listeners, node * n, const ctjs::value & evt) {
+		const auto it = listeners.find(n);
+		if (it == listeners.end()) { return; }
+		const std::vector<ctjs::value> fns = it->second;
+		for (const ctjs::value & fn : fns) { ev.invoke(fn, {evt}); }
+	}
+
 	void fire_change(node * sel) {
 		const auto it = ev.change_handlers.find(sel);
 		if (it != ev.change_handlers.end() && it->second.is_function()) {
 			ev.invoke(it->second, {});
 		}
-		if (const auto lit = ev.change_listeners.find(sel); lit != ev.change_listeners.end()) {
-			const std::vector<ctjs::value> fns = lit->second;
-			ctjs::value evt = detail::simple_event("change");
-			for (const ctjs::value & fn : fns) { ev.invoke(fn, {evt}); }
-		}
+		dispatch_to(ev.change_listeners, sel, detail::simple_event("change"));
 	}
 
 	// a press on the scrollbar: grab the thumb, or page-jump on the track
@@ -1020,17 +1048,21 @@ private:
 
 	// --- the right-click context menu (Chrome-style; the cancelable
 	// "contextmenu" event suppresses it, like a real browser) -----------
+	// A row carries what choosing it DOES, so the paint order, the hit test
+	// and the action can never disagree - they used to be tied together by
+	// a switch on the row index.
 	struct menu_item {
 		std::string_view label;
 		bool enabled;
+		void (engine::*action)();
 	};
 	std::vector<menu_item> menu_items() const {
 		const bool editable = focused_ != nullptr && focused_->is_editable() && !focused_->is_disabled();
 		return {
-		    {"Copy", can_copy()},
-		    {"Cut", editable && focused_->has_selection()},
-		    {"Paste", editable},
-		    {"Select All", true},
+		    {"Copy", can_copy(), &engine::do_copy},
+		    {"Cut", editable && focused_->has_selection(), &engine::do_cut},
+		    {"Paste", editable, &engine::do_paste},
+		    {"Select All", true, &engine::do_select_all},
 		};
 	}
 	static constexpr std::int32_t menu_w = 160;
@@ -1043,9 +1075,7 @@ private:
 		ctjs::value evt = detail::mouse_event(x, y, "contextmenu");
 		ev.dispatch("contextmenu", evt);
 		if (detail::event_flag(evt, "defaultPrevented")) { return; } // page took over
-		menu_target_ = doc.root ? doc.root->hit_test(static_cast<std::int32_t>(x),
-		                                              static_cast<std::int32_t>(y))
-		                        : nullptr;
+		menu_target_ = hit_test_at(x, y);
 		// right-clicking an editable focuses it (so Paste knows its target)
 		for (node * n = menu_target_; n != nullptr; n = n->parent) {
 			if (n->is_editable() && !n->is_disabled()) {
@@ -1065,14 +1095,9 @@ private:
 		if (ix < menu_x_ || ix >= menu_x_ + menu_w) { return; } // dismissed
 		const std::int32_t idx = (iy - menu_y_) / menu_item_h;
 		if (idx < 0 || idx >= static_cast<std::int32_t>(items.size())) { return; }
-		if (!items[static_cast<std::size_t>(idx)].enabled) { return; }
-		switch (idx) {
-		case 0: do_copy(); break;
-		case 1: do_cut(); break;
-		case 2: do_paste(); break;
-		case 3: do_select_all(); break;
-		default: break;
-		}
+		const menu_item & item = items[static_cast<std::size_t>(idx)];
+		if (!item.enabled) { return; }
+		(this->*item.action)();
 	}
 
 	// --- text editing (the keydown default action) ---------------------
@@ -1223,21 +1248,14 @@ private:
 		}
 	}
 	void fire_input(node * n) {
-		if (const auto it = ev.input_listeners.find(n); it != ev.input_listeners.end()) {
-			const std::vector<ctjs::value> fns = it->second;
-			ctjs::value evt = detail::simple_event("input");
-			for (const ctjs::value & fn : fns) { ev.invoke(fn, {evt}); }
-		}
+		dispatch_to(ev.input_listeners, n, detail::simple_event("input"));
 	}
 
 	// --- form submission / reset ---------------------------------------
 	void submit_form(node * form) {
 		if (form == nullptr) { return; }
 		ctjs::value evt = detail::simple_event("submit");
-		if (const auto it = ev.submit_listeners.find(form); it != ev.submit_listeners.end()) {
-			const std::vector<ctjs::value> fns = it->second;
-			for (const ctjs::value & fn : fns) { ev.invoke(fn, {evt}); }
-		}
+		dispatch_to(ev.submit_listeners, form, evt);
 		if (const auto it = ev.onsubmit_handlers.find(form); it != ev.onsubmit_handlers.end()) {
 			ev.invoke(it->second, {evt});
 		}
