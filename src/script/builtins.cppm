@@ -941,6 +941,13 @@ inline void install_builtins(context & cx, std::uint64_t seed = 0x2545F4914F6CDD
 		}
 	});
 
+	// The value globals. Missing entirely before, so `NaN` was an undefined
+	// global that read as `undefined` - and `NaN === NaN` was therefore TRUE,
+	// because two undefineds are equal.
+	cx.define_global("NaN", value::number(std::nan("")));
+	cx.define_global("Infinity", value::number(std::numeric_limits<double>::infinity()));
+	cx.define_global("undefined", value::undefined());
+
 	// --- Promise ----------------------------------------------------------
 	cx.set_promise_factory([](context & c, value v, bool rejected) {
 		return detail::make_promise(c, v, rejected);

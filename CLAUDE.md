@@ -51,6 +51,16 @@ VM cannot build a promise by itself). Enough for `await fetch(url)` and
 `.then(r => r.json())`; NOT enough for code that depends on ordering between a
 `then` and the statements around it.
 
+**`===` compares STRINGS BY CONTENT** — it compared the NaN-boxed words, which
+is right for objects (identity) and singletons and wrong for strings, since two
+strings with the same characters are almost never the same allocation. So
+`e.code === "Space"` was false for every event, `switch` on a string never
+matched a case, and `indexOf`/`includes` could not find a string in an array.
+`==` always did compare content, which is why the one page in the suite that
+uses it (pong) worked and invaders did not. `NaN`, `Infinity` and `undefined`
+are defined globals now too — `NaN` was an undefined global, so `NaN === NaN`
+was TRUE.
+
 **Standard library** is `src/script/builtins.cppm` — `Math`, `Array.prototype`
 (incl. map/filter/reduce/sort, which call back into the VM via
 `context::call`), `String.prototype`, `Number.prototype`, `Object` statics,
@@ -173,6 +183,13 @@ Dispatched now: `keydown`, `keyup`, `mousemove`, `mousedown`, `mouseup` (plus
 The private one ("Left", "Return", and a "SelectAll" no keyboard produces) was
 invisible to pages, which compare against `e.code`. `dom_key_value` derives the
 DOM `key` from it (shift-aware: `KeyA` → "a" or "A").
+
+**A letterboxed page keeps its logical size.** SDL announces the window's pixel
+size on the first frame, and taking that as a page resize widened a 320x240
+game's viewport to 960x720 — leaving the canvas, which is 320x240 by its own
+attributes, drawn into a ninth of the page. `app_options::logical_width/height`
+now pins the viewport; without them a resize still reflows, which is what a
+document wants.
 
 Three things the SDL layer was missing and now has:
 - **`SDL_EVENT_KEY_UP`** — `input_kind::key_up`. Without a release every held

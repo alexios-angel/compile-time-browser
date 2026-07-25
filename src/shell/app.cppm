@@ -267,6 +267,9 @@ public:
 			SDL_SetRenderLogicalPresentation(renderer_, options.logical_width,
 			                                 options.logical_height,
 			                                 SDL_LOGICAL_PRESENTATION_LETTERBOX);
+			// The PAGE is authored at the logical size and stays there; the
+			// window only decides how big that gets drawn.
+			letterboxed_ = true;
 		}
 		// Without this, SDL_EVENT_TEXT_INPUT never arrives and no <input> can
 		// be typed into.
@@ -311,7 +314,7 @@ public:
 	[[nodiscard]] void * native_window() override { return window_.get(); }
 
 private:
-	[[nodiscard]] static bool translate(const SDL_Event & event, input_event & out) {
+	[[nodiscard]] bool translate(const SDL_Event & event, input_event & out) const {
 		switch (event.type) {
 		case SDL_EVENT_MOUSE_MOTION:
 			out = input_event::mouse_move_to(event.motion.x, event.motion.y);
@@ -344,6 +347,12 @@ private:
 			return true;
 		}
 		case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+			// A LETTERBOXED page must not be resized by its window. SDL sends
+			// this on the very first frame with the window's size, so a
+			// 320x240 game in a 960x720 window had its viewport widened to the
+			// window immediately - leaving the canvas, which is 320x240 by its
+			// own attributes, occupying a ninth of the page.
+			if (letterboxed_) { return false; }
 			out = input_event::resized(event.window.data1, event.window.data2);
 			return true;
 		default: return false;
@@ -355,6 +364,7 @@ private:
 	SDL_Texture * texture_ = nullptr;
 	int width_ = 0;
 	int height_ = 0;
+	bool letterboxed_ = false;
 };
 
 #endif // CTBROWSER_WITH_SDL3

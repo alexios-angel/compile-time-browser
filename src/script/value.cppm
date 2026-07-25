@@ -111,10 +111,9 @@ public:
 
 	// Strict equality (===) is a bit compare for everything except numbers,
 	// where NaN != NaN and +0 == -0 both have to hold.
-	[[nodiscard]] bool strict_equals(value o) const noexcept {
-		if (is_number() && o.is_number()) { return as_number() == o.as_number(); }
-		return bits_ == o.bits_;
-	}
+	// `===`. Defined out of line below, because STRINGS compare by CONTENT and
+	// string_object is not declared yet here.
+	[[nodiscard]] bool strict_equals(value o) const noexcept;
 	[[nodiscard]] friend constexpr bool operator==(value a, value b) noexcept {
 		return a.bits_ == b.bits_;
 	}
@@ -147,6 +146,27 @@ struct string_object final : heap_object {
 	std::string text;
 	explicit string_object(std::string s) : heap_object(heap_kind::string), text(std::move(s)) {}
 };
+
+// `===` in full.
+//
+// Comparing the raw bits is right for objects (identity), for the singletons
+// and for booleans - but WRONG for strings, which JavaScript compares by
+// content. Two strings with the same characters are almost never the same
+// allocation, so `e.code === "Space"` was false for every event, `switch` on a
+// string never matched a case, and indexOf/includes could not find a string in
+// an array. It looked like the event was not arriving.
+//
+// Numbers go through the double comparison so NaN !== NaN and -0 === 0, both of
+// which the bit comparison gets wrong in the other direction.
+[[nodiscard]] inline bool value::strict_equals(value o) const noexcept {
+	if (is_number() && o.is_number()) { return as_number() == o.as_number(); }
+	if (bits_ == o.bits_) { return true; }
+	if (is_string() && o.is_string()) {
+		return static_cast<const string_object *>(as_heap())->text ==
+		       static_cast<const string_object *>(o.as_heap())->text;
+	}
+	return false;
+}
 
 struct array_object final : heap_object {
 	std::vector<value> items;

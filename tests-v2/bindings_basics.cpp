@@ -24,6 +24,7 @@ import ctbrowser.shell;
 
 #include "check.hpp"
 #include <algorithm>
+#include <span>
 #include <fstream>
 #include <sstream>
 #include <cstdint>
@@ -496,6 +497,78 @@ void test_the_invaders_page_responds_to_input() {
 	check(ship_row("KeyQ") == still, "a key the page ignores does not");
 }
 
+// Space fires. It did not, and the reason was not input at all: the page tests
+// `e.code === "Space"`, and `===` compared string ALLOCATIONS, so it was false
+// for every event. Counting the bullet's own colour is what distinguishes
+// "the key arrived" from "the page acted on it".
+void test_the_invaders_page_shoots() {
+	browser page{browser_options{320, 240}};
+	// run_app installs playSound; a bare browser does not, and the page must
+	// not depend on that to fire.
+	page.define_native("playSound", [](script::context &, std::span<script::value>) {
+		return script::value::boolean(true);
+	});
+	std::ifstream in{"examples-v2/pages/invaders.html", std::ios::binary};
+	std::ostringstream buffer;
+	buffer << in.rdbuf();
+	page.load_html(buffer.str());
+
+	const auto bullet_pixels = [&] {
+		std::size_t found = 0;
+		if (const auto pixels = page.canvases().pixels_of(find_id(page, "game"))) {
+			for (int y = 0; y < pixels->height; ++y) {
+				for (int x = 0; x < pixels->width; ++x) {
+					if (pixels->at(x, y) == 0xFFFFFF00U) { ++found; } // the bullet's yellow
+				}
+			}
+		}
+		return found;
+	};
+	const auto run = [&](int frames) {
+		for (int i = 0; i < frames; ++i) {
+			(void)page.tick(1000.0 / 60.0);
+			(void)page.frame();
+		}
+	};
+
+	run(5);
+	check(bullet_pixels() == 0, "nothing is firing yet");
+	(void)page.handle(input_event::key_press("Space"));
+	run(5);
+	check(bullet_pixels() > 0, "Space fires a bullet");
+}
+
+// A letterboxed page is authored at its LOGICAL size and the window only
+// decides how big that gets drawn. SDL announces the window's pixel size on the
+// first frame, and taking that as a page resize left the canvas - 320x240 by
+// its own attributes - occupying a ninth of the viewport.
+void test_a_letterboxed_page_keeps_its_size() {
+	browser page{browser_options{320, 240}};
+	std::ifstream in{"examples-v2/pages/invaders.html", std::ios::binary};
+	std::ostringstream buffer;
+	buffer << in.rdbuf();
+	page.load_html(buffer.str());
+	check(page.frame().has_value(), "the page renders");
+
+	const auto canvas_box = [&] {
+		const node_id want = find_id(page, "game");
+		const auto walk = [&](auto && self, const layout::fragment & f, float dx,
+		                      float dy) -> rect {
+			const rect box{f.bounds.x + dx, f.bounds.y + dy, f.bounds.width, f.bounds.height};
+			if (f.source == want) { return box; }
+			for (const auto & child : f.children) {
+				if (const rect hit = self(self, child, box.x, box.y); !hit.empty()) { return hit; }
+			}
+			return rect{};
+		};
+		return walk(walk, page.fragments(), 0, 0);
+	};
+	// The canvas fills the logical viewport exactly, which is the whole point
+	// of authoring at 320x240 and letting SDL scale it.
+	check(canvas_box().width == 320.0f, "the canvas is as wide as the page");
+	check(canvas_box().height == 240.0f, "and as tall");
+}
+
 } // namespace
 
 int main() {
@@ -521,6 +594,8 @@ int main() {
 	test_mouse_reaches_script();
 	test_a_real_page_responds_to_input();
 	test_the_invaders_page_responds_to_input();
+	test_the_invaders_page_shoots();
+	test_a_letterboxed_page_keeps_its_size();
 
 	REPORT("bindings_basics");
 }

@@ -747,6 +747,40 @@ void test_object_literal_keys() {
 	              "for (const k in b) { keys += k; } return keys;", "yx");
 }
 
+
+void test_string_identity() {
+	// `===` on strings compares CONTENT. Comparing the values bit for bit is
+	// right for objects and for the singletons, and wrong for strings - two
+	// strings with the same characters are almost never the same allocation.
+	// Everything below returned the wrong answer when it was: `e.code ===
+	// "Space"` was false for every event, so the game never fired.
+	expect_result("return 'Space' === 'Space';", "true");
+	expect_result("var a = 'Spa'; var b = 'ce'; return (a + b) === 'Space';", "true");
+	expect_result("var a = 'Spa'; var b = 'ce'; return (a + b) !== 'Space';", "false");
+	expect_result("return 'a' === 'b';", "false");
+	expect_result("return '' === '';", "true");
+	// Still STRICT about types - no coercion.
+	expect_result("return '1' === 1;", "false");
+	expect_result("return 'true' === true;", "false");
+
+	// Objects keep IDENTITY semantics: same characters is not same object.
+	expect_result("var a = {}; var b = {}; return a === b;", "false");
+	expect_result("var a = {}; var b = a; return a === b;", "true");
+	expect_result("var a = [1]; var b = [1]; return a === b;", "false");
+
+	// Numbers keep their own rules, which the bit comparison got wrong in the
+	// other direction.
+	expect_result("return NaN === NaN;", "false");
+	expect_result("return 0 === -0;", "true");
+
+	// The three places this reached beyond the operator itself.
+	expect_result("var r = ''; switch ('b') { case 'a': r = 'A'; break; case 'b': r = 'B'; break; }"
+	              "return r;", "B");
+	expect_result("var k = 'b'; return ['a', 'b', 'c'].indexOf(k);", "1");
+	expect_result("var k = 'b'; return ['a', 'b'].includes(k);", "true");
+	expect_result("var o = {}; o['x' + 'y'] = 3; return o.xy;", "3");
+}
+
 } // namespace
 
 int main() {
@@ -795,6 +829,7 @@ int main() {
 	test_new_and_classes();
 	test_optional_chaining();
 	test_spread();
+	test_string_identity();
 	test_bitwise_and_friends();
 	test_delete_in_instanceof();
 	test_object_literal_keys();
