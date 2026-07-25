@@ -562,6 +562,191 @@ void test_computed_and_named_lookup_agree() {
 	expect_result("var a = [1,2]; var m = 'push'; a[m](3); return a.length;", "3");
 }
 
+
+// --- stage 4: the rest of the language ------------------------------------
+
+void test_for_of() {
+	expect_result("var t = 0; for (const x of [1,2,3]) { t += x; } return t;", "6");
+	expect_result("var s = ''; for (const c of 'abc') { s += c; } return s;", "abc");
+	expect_result("var t = 0; for (const x of [1,2,3]) { if (x == 2) { continue; } t += x; }"
+	              "return t;", "4");
+	expect_result("var t = 0; for (const x of [1,2,3]) { if (x == 2) { break; } t += x; }"
+	              "return t;", "1");
+	// The loop variable is per-iteration, so a closure made in the body sees
+	// THIS element and not the last one.
+	expect_result("var fns = []; for (const x of [1,2,3]) { fns.push(function () { return x; }); }"
+	              "return fns[0]() + fns[2]();", "4");
+}
+
+void test_for_in() {
+	expect_result("var keys = ''; for (const k in {a: 1, b: 2}) { keys += k; } return keys;", "ab");
+	expect_result("var t = 0; var o = {a: 1, b: 2}; for (const k in o) { t += o[k]; } return t;", "3");
+}
+
+void test_template_literals() {
+	expect_result("return `plain`;", "plain");
+	expect_result("var n = 3; return `n is ${n}`;", "n is 3");
+	expect_result("var a = 1; var b = 2; return `${a}+${b}=${a + b}`;", "1+2=3");
+	// The interpolation coerces, which is most of what a template is for.
+	expect_result("return `list: ${[1,2].join('-')}`;", "list: 1-2");
+	expect_result("var o = {n: 5}; return `${o.n * 2}`;", "10");
+	expect_result("return `a\\nb`.length;", "3"); // the escape is one character
+}
+
+void test_switch() {
+	expect_result("var r = 0; switch (2) { case 1: r = 10; break; case 2: r = 20; break; }"
+	              "return r;", "20");
+	expect_result("var r = 0; switch (9) { case 1: r = 10; break; default: r = 99; } return r;", "99");
+	// FALLTHROUGH is the behaviour code relies on, so it has to be preserved.
+	expect_result("var r = ''; switch (1) { case 1: r += 'a'; case 2: r += 'b'; break;"
+	              "  case 3: r += 'c'; } return r;", "ab");
+	// switch matches STRICTLY - `switch (1)` does not match `case '1'`.
+	expect_result("var r = 'no'; switch (1) { case '1': r = 'yes'; break; } return r;", "no");
+}
+
+void test_new_and_classes() {
+	expect_result("class P { constructor(n) { this.n = n; } }"
+	              "var p = new P(7); return p.n;", "7");
+	expect_result("class P { constructor(n) { this.n = n; } double() { return this.n * 2; } }"
+	              "return new P(4).double();", "8");
+	// A method lives on the prototype, so two instances share one function and
+	// both find it.
+	expect_result("class P { hi() { return 'hi'; } }"
+	              "var a = new P(); var b = new P(); return a.hi() + b.hi();", "hihi");
+	expect_result("class P { static make() { return 'static'; } } return P.make();", "static");
+	// `extends` chains the prototypes, so an inherited method is reachable.
+	expect_result("class A { who() { return 'A'; } }"
+	              "class B extends A { } return new B().who();", "A");
+	expect_result("class A { who() { return 'A'; } }"
+	              "class B extends A { who() { return 'B'; } } return new B().who();", "B");
+
+	// `super(...)` runs the parent constructor against the SAME object, so the
+	// fields it sets are on the instance.
+	expect_result("class A { constructor(n) { this.n = n; } }"
+	              "class B extends A { constructor() { super(3); this.m = 4; } }"
+	              "var b = new B(); return b.n + b.m;", "7");
+	// `super.m()` calls the parent's version, and `this` inside it is still the
+	// instance.
+	expect_result("class A { label() { return 'A' + this.n; } }"
+	              "class B extends A { constructor() { this.n = 1; }"
+	              "  label() { return super.label() + 'B'; } } return new B().label();", "A1B");
+	// Three deep. This is what resolving super against `this` gets wrong: C's
+	// method would find itself again and recurse until the stack gave out.
+	expect_result("class A { who() { return 'A'; } }"
+	              "class B extends A { who() { return super.who() + 'B'; } }"
+	              "class C extends B { who() { return super.who() + 'C'; } }"
+	              "return new C().who();", "ABC");
+	expect_result("class A { }; return typeof new A().constructor;", "function");
+}
+
+void test_optional_chaining() {
+	expect_result("var o = {a: {b: 5}}; return o?.a?.b;", "5");
+	expect_result("var o = null; return o?.a;", "undefined");
+	// THE point: it short-circuits. Without that, `.b` on undefined would be
+	// evaluated and the whole chain would fail rather than yield undefined.
+	expect_result("var o = {a: null}; return o?.a?.b?.c;", "undefined");
+	expect_result("var o = {}; return o.missing?.deep;", "undefined");
+	expect_result("var o = {f: function () { return 3; }}; return o.f?.();", "3");
+}
+
+void test_spread() {
+	expect_result("var a = [1,2]; var b = [0, ...a, 3]; return b.join('');", "0123");
+	expect_result("var a = [1,2]; var b = [...a]; b.push(3); return a.length;", "2"); // a copy
+	expect_result("return [...'abc'].length;", "3");
+}
+
+
+void test_async_and_promises() {
+	// Promises are SETTLED on creation - there is no job queue - so `await`
+	// reads the value straight out and `then` runs at once. That is the subset,
+	// and it is what `await fetch(url)` is written against.
+	expect_result("return await 3;", "3"); // awaiting a plain value is the value
+	expect_result("async function f() { return 5; } return await f();", "5");
+	// An async function hands back a PROMISE, not the bare value - otherwise
+	// `f().then(...)` has nothing to call.
+	expect_result("async function f() { return 5; } return typeof f().then;", "function");
+	expect_result("async function f() { return 5; } var r = 0; f().then(function (v) { r = v; });"
+	              "return r;", "5");
+	expect_result("async function f() { return 1; } async function g() { return await f() + 1; }"
+	              "return await g();", "2");
+	// await inside a loop, which is the fetchboard shape.
+	expect_result("async function one(n) { return n * 2; }"
+	              "async function run() { var t = 0; for (const n of [1,2,3]) { t += await one(n); }"
+	              "  return t; } return await run();", "12");
+
+	expect_result("return await Promise.resolve(7);", "7");
+	expect_result("var r = 0; Promise.resolve(2).then(function (v) { r = v * 3; }); return r;", "6");
+	// then() chains: each callback's return settles the next promise.
+	expect_result("var r = 0; Promise.resolve(2).then(function (v) { return v + 1; })"
+	              "  .then(function (v) { r = v; }); return r;", "3");
+	// A rejected promise skips then and reaches catch.
+	expect_result("var r = 'none'; Promise.reject('bad').then(function () { r = 'ran'; })"
+	              "  .catch(function (e) { r = e; }); return r;", "bad");
+	expect_result("var r = 0; Promise.reject(1).catch(function () { return 9; })"
+	              "  .then(function (v) { r = v; }); return r;", "9");
+	expect_result("var r = 0; Promise.resolve(1).finally(function () { r = 5; }); return r;", "5");
+	expect_result("var p = await Promise.all([Promise.resolve(1), 2]); return p.join(',');", "1,2");
+
+	// Awaiting a rejected promise THROWS, which is what makes try/catch around
+	// an await behave the way pages assume.
+	expect_result("var r = 0; try { await Promise.reject(9); } catch (e) { r = e; } return r;", "9");
+}
+
+
+
+void test_bitwise_and_friends() {
+	// JavaScript's bitwise operators work on ToInt32 of a double, so they are
+	// not the C operators on the stored number.
+	expect_result("return 6 & 3;", "2");
+	expect_result("return 6 | 3;", "7");
+	expect_result("return 6 ^ 3;", "5");
+	expect_result("return 1 << 4;", "16");
+	expect_result("return -16 >> 2;", "-4");
+	expect_result("return -1 >>> 0;", "4294967295"); // unsigned: NOT -1
+	expect_result("return ~5;", "-6");
+	expect_result("return 2.7 | 0;", "2");  // truncates toward zero
+	expect_result("return -2.7 | 0;", "-2");
+	expect_result("return (1 << 33);", "2"); // the shift count is taken mod 32
+
+	// `!=` is LOOSE. Compiled as `!==` it made `1 != '1'` true, which is the
+	// opposite of what the operator means.
+	expect_result("return 1 != '1';", "false");
+	expect_result("return 1 !== '1';", "true");
+	expect_result("return null == undefined;", "true");
+}
+
+void test_delete_in_instanceof() {
+	expect_result("var o = {a: 1, b: 2}; delete o.a; return typeof o.a;", "undefined");
+	// The remaining properties must still be findable - the name-to-position
+	// index has to be rebuilt, not just have one entry removed.
+	expect_result("var o = {a: 1, b: 2, c: 3}; delete o.b; return o.a + o.c;", "4");
+	expect_result("var o = {a: 1, b: 2}; delete o.a; var keys = '';"
+	              "for (const k in o) { keys += k; } return keys;", "b");
+	expect_result("var o = {a: 1}; delete o['a']; return typeof o.a;", "undefined");
+
+	expect_result("var o = {a: 1}; return 'a' in o;", "true");
+	expect_result("var o = {a: 1}; return 'b' in o;", "false");
+	expect_result("return 1 in [7, 8];", "true");
+
+	expect_result("class A { } return new A() instanceof A;", "true");
+	expect_result("class A { } class B { } return new A() instanceof B;", "false");
+	// instanceof walks the WHOLE chain, so a subclass instance is also an
+	// instance of its parent.
+	expect_result("class A { } class B extends A { } return new B() instanceof A;", "true");
+	expect_result("return 3 instanceof Object;", "false");
+}
+
+void test_object_literal_keys() {
+	expect_result("var k = 'x'; var o = {[k]: 5}; return o.x;", "5");
+	expect_result("var o = {'a b': 1}; return o['a b'];", "1");
+	expect_result("var o = {1: 'one'}; return o[1];", "one");
+	// Spread copies own properties in sequence, so a later key still wins.
+	expect_result("var a = {x: 1, y: 2}; var b = {...a, y: 3}; return b.x + b.y;", "4");
+	expect_result("var a = {x: 1}; var b = {...a}; b.x = 9; return a.x;", "1"); // a copy
+	expect_result("var a = {x: 1}; var b = {y: 2, ...a}; var keys = '';"
+	              "for (const k in b) { keys += k; } return keys;", "yx");
+}
+
 } // namespace
 
 int main() {
@@ -602,6 +787,18 @@ int main() {
 	test_json();
 	test_own_properties_beat_the_prototype();
 	test_computed_and_named_lookup_agree();
+
+	test_for_of();
+	test_for_in();
+	test_template_literals();
+	test_switch();
+	test_new_and_classes();
+	test_optional_chaining();
+	test_spread();
+	test_bitwise_and_friends();
+	test_delete_in_instanceof();
+	test_object_literal_keys();
+	test_async_and_promises();
 
 	REPORT("vm_basics");
 }

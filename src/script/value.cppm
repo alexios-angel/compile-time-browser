@@ -177,6 +177,17 @@ struct object_object final : heap_object {
 		index.emplace(std::string{name}, static_cast<std::uint32_t>(props.size()));
 		props.emplace_back(std::string{name}, v);
 	}
+	// `delete o.x`. The index maps names to POSITIONS in props, so removing one
+	// shifts every position after it - the index is rebuilt rather than patched,
+	// because delete is rare and a half-updated index is a silent wrong answer.
+	bool erase(std::string_view name) {
+		const auto it = index.find(std::string{name});
+		if (it == index.end()) { return false; }
+		props.erase(props.begin() + static_cast<std::ptrdiff_t>(it->second));
+		index.clear();
+		for (std::uint32_t i = 0; i < props.size(); ++i) { index.emplace(props[i].first, i); }
+		return true;
+	}
 };
 
 } // namespace ctbrowser::script

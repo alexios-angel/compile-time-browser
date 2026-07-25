@@ -55,6 +55,26 @@ struct cell_object final : heap_object {
 };
 
 struct closure_object final : heap_object {
+	// A function IS an object in JavaScript, and a class compiles to one: its
+	// statics and its `prototype` live here. Without a property table on a
+	// closure, `class C { static make() {} }` had nowhere to put `make` and
+	// `C.prototype` could not be read back, so `extends` found nothing.
+	std::vector<std::pair<std::string, value>> props;
+
+	[[nodiscard]] value * find(std::string_view name) {
+		for (auto & [key, item] : props) {
+			if (key == name) { return &item; }
+		}
+		return nullptr;
+	}
+	void set(std::string_view name, value v) {
+		if (value * existing = find(name)) {
+			*existing = v;
+			return;
+		}
+		props.emplace_back(std::string{name}, v);
+	}
+
 	const function_proto * proto = nullptr;
 	std::vector<value> upvalues; // each one is a cell_object
 	explicit closure_object(const function_proto * p) : heap_object(heap_kind::function), proto(p) {}
@@ -125,6 +145,18 @@ public:
 
 	// --- conversions (ECMA-262 shaped, and shared with the bindings) -------
 	[[nodiscard]] static bool truthy(value v);
+	// ECMA-262 ToInt32 / ToUint32: NaN and the infinities are 0, everything
+	// else truncates toward zero and wraps modulo 2^32.
+	[[nodiscard]] static std::int32_t to_int32(value v) {
+		return static_cast<std::int32_t>(to_uint32(v));
+	}
+	[[nodiscard]] static std::uint32_t to_uint32(value v) {
+		const double n = to_number(v);
+		if (!std::isfinite(n)) { return 0; }
+		const double truncated = std::trunc(n);
+		return static_cast<std::uint32_t>(
+		    static_cast<std::int64_t>(std::fmod(truncated, 4294967296.0)));
+	}
 	[[nodiscard]] static double to_number(value v);
 	[[nodiscard]] std::string to_string(value v);
 	[[nodiscard]] static std::string_view type_of(value v);
@@ -149,6 +181,18 @@ public:
 	}
 	[[nodiscard]] object_object * prototype(proto_kind kind) const {
 		return prototypes_[static_cast<std::size_t>(kind)];
+	}
+
+	// How an `async` function's return value becomes a promise. The VM cannot
+	// build one itself - a promise is an ordinary object carrying then/catch/
+	// finally natives, and those live in the standard library - so builtins
+	// installs this hook. Without it (a VM with no builtins) an async function
+	// returns its plain value, which `await` still handles.
+	void set_promise_factory(std::function<value(context &, value, bool)> make) {
+		promise_factory_ = std::move(make);
+	}
+	[[nodiscard]] value make_promise(value v, bool rejected) {
+		return promise_factory_ ? promise_factory_(*this, v, rejected) : v;
 	}
 
 	// One property lookup, shared by get_prop, get_index-with-a-string-key and
@@ -179,6 +223,10 @@ private:
 		// How many exception handlers this frame had on entry. Unwinding pops
 		// back to it, so a handler in a caller cannot be caught by a callee.
 		std::size_t handler_base = 0;
+		// `new C()` evaluates to the new object, NOT to whatever the
+		// constructor body happens to return - unless it returns an object,
+		// which is the one case the spec lets override it.
+		bool constructing = false;
 	};
 
 	// A live try block: where to jump, and where the state was when it started.
@@ -235,6 +283,7 @@ private:
 	// able to find a handler several frames up.
 	std::vector<handler> handlers_;
 	std::array<object_object *, static_cast<std::size_t>(proto_kind::count_)> prototypes_{};
+	std::function<value(context &, value, bool)> promise_factory_;
 	value thrown_ = value::undefined();
 
 	flat_map<std::string, value> globals_;
@@ -349,11 +398,16 @@ inline void context::mark_object(heap_object * o) {
 	case heap_kind::cell:
 		mark(static_cast<cell_object *>(o)->slot);
 		break;
-	case heap_kind::function:
+	case heap_kind::function: {
+		auto * closure = static_cast<closure_object *>(o);
 		// A closure OWNS its upvalue cells. Missing this frees a captured
 		// variable while the closure that captured it is still reachable.
-		for (const value & up : static_cast<closure_object *>(o)->upvalues) { mark(up); }
+		for (const value & up : closure->upvalues) { mark(up); }
+		// ...and its own properties, which is where a class keeps its statics
+		// and its prototype.
+		for (const auto & [name, v] : closure->props) { mark(v); }
 		break;
+	}
 	default: break; // strings and natives own no values
 	}
 }
@@ -383,8 +437,16 @@ inline value context::lookup_property(value target, const std::string & name) co
 	// Own properties first: a page that writes `arr.length = 0` or shadows a
 	// method on one object must not be overridden by the prototype.
 	if (target.is_object()) {
-		if (value * found = static_cast<object_object *>(target.as_heap())->find(name)) {
-			return *found;
+		// Own properties, then the object's OWN prototype chain (what a class
+		// instance uses to find its methods), then the shared table. A depth
+		// cap because a page can make the chain cyclic and a lookup must not
+		// hang because of it.
+		auto * obj = static_cast<object_object *>(target.as_heap());
+		for (int depth = 0; obj != nullptr && depth < 64; ++depth) {
+			if (value * found = obj->find(name)) { return *found; }
+			obj = obj->prototype.is_object()
+			          ? static_cast<object_object *>(obj->prototype.as_heap())
+			          : nullptr;
 		}
 		if (object_object * table = prototype(proto_kind::object)) {
 			if (value * found = table->find(name)) { return *found; }
@@ -410,6 +472,12 @@ inline value context::lookup_property(value target, const std::string & name) co
 	if (target.is_number()) {
 		if (object_object * table = prototype(proto_kind::number)) {
 			if (value * found = table->find(name)) { return *found; }
+		}
+		return value::undefined();
+	}
+	if (target.is_kind(heap_kind::function)) {
+		if (value * found = static_cast<closure_object *>(target.as_heap())->find(name)) {
+			return *found;
 		}
 	}
 	return value::undefined();
@@ -612,6 +680,108 @@ inline value context::run_loop(std::size_t stop_depth) {
 		case op::equal: reg(in.a) = value::boolean(reg(in.b).strict_equals(reg(in.c))); break;
 		case op::not_equal: reg(in.a) = value::boolean(!reg(in.b).strict_equals(reg(in.c))); break;
 		case op::loose_equal: reg(in.a) = value::boolean(loose_equals(reg(in.b), reg(in.c))); break;
+		case op::loose_not_equal:
+			reg(in.a) = value::boolean(!loose_equals(reg(in.b), reg(in.c)));
+			break;
+
+		// `x instanceof C` is true when C.prototype appears anywhere in x's
+		// prototype chain - the same chain lookup_property walks.
+		case op::instance_of: {
+			reg(in.a) = value::boolean(false);
+			value target = reg(in.b);
+			const value ctor = reg(in.c);
+			value wanted = value::undefined();
+			if (ctor.is_kind(heap_kind::function)) {
+				if (value * p = static_cast<closure_object *>(ctor.as_heap())->find("prototype")) {
+					wanted = *p;
+				}
+			} else if (ctor.is_object()) {
+				if (value * p = static_cast<object_object *>(ctor.as_heap())->find("prototype")) {
+					wanted = *p;
+				}
+			}
+			for (int depth = 0; depth < 64 && target.is_object(); ++depth) {
+				target = static_cast<object_object *>(target.as_heap())->prototype;
+				if (target.is_object() && wanted.is_object() &&
+				    target.as_heap() == wanted.as_heap()) {
+					reg(in.a) = value::boolean(true);
+					break;
+				}
+			}
+			break;
+		}
+		case op::has_property: {
+			const std::string key = to_string(reg(in.b));
+			const value target = reg(in.c);
+			bool present = false;
+			if (target.is_object()) {
+				present = static_cast<object_object *>(target.as_heap())->find(key) != nullptr;
+			} else if (target.is_array()) {
+				char * end = nullptr;
+				const double n = std::strtod(key.c_str(), &end);
+				present = end != key.c_str() && n >= 0 &&
+				          static_cast<std::size_t>(n) <
+				              static_cast<array_object *>(target.as_heap())->items.size();
+			}
+			reg(in.a) = value::boolean(present);
+			break;
+		}
+
+		// ToInt32 / ToUint32 first: `-1 >>> 0` is 4294967295, not -1, and
+		// `2.7 | 0` is 2. Doing this on the raw double gets both wrong.
+		case op::bit_and:
+			reg(in.a) = value::number(to_int32(reg(in.b)) & to_int32(reg(in.c)));
+			break;
+		case op::bit_or:
+			reg(in.a) = value::number(to_int32(reg(in.b)) | to_int32(reg(in.c)));
+			break;
+		case op::bit_xor:
+			reg(in.a) = value::number(to_int32(reg(in.b)) ^ to_int32(reg(in.c)));
+			break;
+		case op::shl:
+			reg(in.a) = value::number(
+			    static_cast<std::int32_t>(static_cast<std::uint32_t>(to_int32(reg(in.b)))
+			                              << (to_uint32(reg(in.c)) & 31U)));
+			break;
+		case op::shr:
+			reg(in.a) = value::number(to_int32(reg(in.b)) >> (to_uint32(reg(in.c)) & 31U));
+			break;
+		case op::ushr:
+			reg(in.a) = value::number(
+			    static_cast<double>(to_uint32(reg(in.b)) >> (to_uint32(reg(in.c)) & 31U)));
+			break;
+		case op::bit_not: reg(in.a) = value::number(~to_int32(reg(in.b))); break;
+
+		case op::copy_props: {
+			if (!reg(in.a).is_object()) { break; }
+			auto * target = static_cast<object_object *>(reg(in.a).as_heap());
+			if (reg(in.b).is_object()) {
+				// A copy of the source's entries first: `set` can reallocate
+				// the target's storage, and target and source may be the same
+				// object.
+				const std::vector<std::pair<std::string, value>> entries =
+				    static_cast<object_object *>(reg(in.b).as_heap())->props;
+				for (const auto & [name, item] : entries) { target->set(name, item); }
+			} else if (reg(in.b).is_array()) {
+				const std::vector<value> items =
+				    static_cast<array_object *>(reg(in.b).as_heap())->items;
+				for (std::size_t i = 0; i < items.size(); ++i) {
+					target->set(std::to_string(i), items[i]);
+				}
+			}
+			break;
+		}
+		case op::delete_prop:
+			if (reg(in.a).is_object()) {
+				(void)static_cast<object_object *>(reg(in.a).as_heap())->erase(fn.names[in.b]);
+			}
+			break;
+		case op::delete_index:
+			if (reg(in.a).is_object()) {
+				(void)static_cast<object_object *>(reg(in.a).as_heap())->erase(to_string(reg(in.b)));
+			}
+			break;
+
 		case op::less:
 			reg(in.a) = value::boolean(to_number(reg(in.b)) < to_number(reg(in.c)));
 			break;
@@ -650,6 +820,8 @@ inline value context::run_loop(std::size_t stop_depth) {
 		case op::set_prop:
 			if (reg(in.a).is_object()) {
 				static_cast<object_object *>(reg(in.a).as_heap())->set(fn.names[in.b], reg(in.c));
+			} else if (reg(in.a).is_kind(heap_kind::function)) {
+				static_cast<closure_object *>(reg(in.a).as_heap())->set(fn.names[in.b], reg(in.c));
 			}
 			break;
 		case op::get_index: reg(in.a) = lookup_index(reg(in.b), reg(in.c)); break;
@@ -694,10 +866,15 @@ inline value context::run_loop(std::size_t stop_depth) {
 
 		case op::call:
 		case op::call_method:
-		case op::call_computed: {
+		case op::call_computed:
+		case op::call_receiver: {
 			value callee = reg(in.a);
 			value receiver = value::undefined();
-			if (in.code == op::call_method) {
+			if (in.code == op::call_receiver) {
+				// The callee was resolved elsewhere (up the prototype chain, for
+				// `super`) and the receiver is passed explicitly.
+				receiver = reg(in.c);
+			} else if (in.code == op::call_method) {
 				receiver = reg(in.a);
 				// Through the SAME lookup as get_prop, so `s.split(...)` and
 				// `var f = s.split; f(...)` find the same function.
@@ -748,7 +925,8 @@ inline value context::run_loop(std::size_t stop_depth) {
 
 		case op::ret:
 		case op::ret_undef: {
-			const value returned = in.code == op::ret ? reg(in.a) : value::undefined();
+			value returned = in.code == op::ret ? reg(in.a) : value::undefined();
+			if (frame.constructing && !returned.is_object()) { returned = frame.receiver; }
 			const std::uint8_t slot = frame.result_reg;
 			// Handlers this frame installed die with it: a `return` out of a
 			// try block must not leave its catch reachable from the caller.
@@ -762,6 +940,128 @@ inline value context::run_loop(std::size_t stop_depth) {
 		case op::type_of: reg(in.a) = string(std::string{type_of(reg(in.b))}); break;
 
 		case op::load_this: reg(in.a) = frame.receiver; break;
+
+		case op::own_keys: {
+			// The own property names of an object, as an array. `for (k in o)`
+			// compiles to a for-of over this, which keeps one iteration
+			// mechanism instead of two.
+			value out = make_array();
+			auto * keys = static_cast<array_object *>(out.as_heap());
+			if (reg(in.b).is_object()) {
+				for (const auto & [name, item] : static_cast<object_object *>(reg(in.b).as_heap())->props) {
+					keys->items.push_back(string(name));
+				}
+			} else if (reg(in.b).is_array()) {
+				const std::size_t n = static_cast<array_object *>(reg(in.b).as_heap())->items.size();
+				for (std::size_t i = 0; i < n; ++i) { keys->items.push_back(string(std::to_string(i))); }
+			}
+			reg(in.a) = out;
+			break;
+		}
+
+		case op::wrap_promise:
+			// Already a promise (`return somePromise` inside an async function)
+			// stays as it is rather than nesting.
+			if (!(reg(in.a).is_object() &&
+			      static_cast<object_object *>(reg(in.a).as_heap())->find("__value") != nullptr)) {
+				reg(in.a) = make_promise(reg(in.a), false);
+			}
+			break;
+		case op::await_value: {
+			// A settled promise carries its value in `__value`; anything else
+			// awaits to itself. A REJECTED promise throws, which is what makes
+			// `try { await f() } catch` work.
+			const value awaited = reg(in.b);
+			reg(in.a) = awaited;
+			if (awaited.is_object()) {
+				auto * obj = static_cast<object_object *>(awaited.as_heap());
+				if (value * state = obj->find("__rejected"); state != nullptr && truthy(*state)) {
+					thrown_ = obj->find("__value") != nullptr ? *obj->find("__value")
+					                                         : value::undefined();
+					if (!unwind_to_handler()) { raise("uncaught rejection"); }
+					break;
+				}
+				if (value * settled = obj->find("__value")) { reg(in.a) = *settled; }
+			}
+			break;
+		}
+
+		case op::set_proto:
+			if (reg(in.a).is_object()) {
+				static_cast<object_object *>(reg(in.a).as_heap())->prototype = reg(in.b);
+			}
+			break;
+
+		case op::get_proto:
+			reg(in.a) = reg(in.b).is_object()
+			                ? static_cast<object_object *>(reg(in.b).as_heap())->prototype
+			                : value::undefined();
+			break;
+
+		// `super` has to start its lookup at the prototype ABOVE the class the
+		// running method was written in - not above `this`, which in a
+		// three-deep hierarchy is a different object and would call the method
+		// again forever. So each method carries its home object.
+		case op::load_home: {
+			closure_object * running = frames_.empty() ? nullptr : frames_.back().closure;
+			reg(in.a) = value::undefined();
+			if (running != nullptr) {
+				if (value * home = running->find("__home")) { reg(in.a) = *home; }
+			}
+			break;
+		}
+
+		case op::construct: {
+			const value callee = reg(in.a);
+			// The instance's prototype comes from the constructor's own
+			// `prototype` property, which is what makes a method defined on the
+			// class reachable from every instance.
+			auto * instance = allocate<object_object>();
+			if (callee.is_object()) {
+				if (value * proto = static_cast<object_object *>(callee.as_heap())->find("prototype")) {
+					instance->prototype = *proto;
+				}
+			} else if (callee.is_kind(heap_kind::function)) {
+				if (value * proto = static_cast<closure_object *>(callee.as_heap())->find("prototype")) {
+					instance->prototype = *proto;
+				}
+			}
+			const value self = value::object(instance);
+			const std::size_t arg_base = base + in.a + 1;
+
+			if (callee.is_kind(heap_kind::native)) {
+				auto * nat = static_cast<native_object *>(callee.as_heap());
+				std::vector<value> args{registers_.begin() + static_cast<std::ptrdiff_t>(arg_base),
+				                        registers_.begin() +
+				                            static_cast<std::ptrdiff_t>(arg_base + in.b)};
+				const value saved = current_this_;
+				current_this_ = self;
+				const value produced = nat->fn(*this, args);
+				current_this_ = saved;
+				reg(in.a) = produced.is_object() ? produced : self;
+				break;
+			}
+			if (!callee.is_kind(heap_kind::function)) {
+				raise("attempted to construct a non-function");
+				break;
+			}
+			auto * fnobj = static_cast<closure_object *>(callee.as_heap());
+			const function_proto & target = *fnobj->proto;
+			const std::size_t new_base = arg_base;
+			const std::size_t needed = new_base + target.frame_size + 8u;
+			if (registers_.size() < needed) { registers_.resize(needed, value::undefined()); }
+			for (std::size_t i = in.b; i < target.param_count; ++i) {
+				registers_[new_base + i] = value::undefined();
+			}
+			if (frames_.size() > 512) {
+				raise("call stack exhausted");
+				break;
+			}
+			call_frame fresh{&target, 0, new_base, in.a, fnobj, self, handlers_.size()};
+			fresh.constructing = true;
+			frames_.push_back(fresh);
+			break;
+		}
 
 		case op::push_handler:
 			handlers_.push_back(handler{frames_.size() - 1,

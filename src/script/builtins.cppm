@@ -80,6 +80,60 @@ inline void method(context & cx, object_object * table, std::string name, native
 	table->set(name, value::object(cx.allocate<native_object>(name, std::move(fn))));
 }
 
+// --- promises ---------------------------------------------------------------
+//
+// SETTLED-ONLY, like v1's. A promise here is an ordinary object carrying
+// `__value` and `__rejected`, created ALREADY settled: there is no job queue,
+// no microtask checkpoint, and nothing pending. `then` therefore runs its
+// callback IMMEDIATELY rather than after the current turn.
+//
+// That is enough for the shape real pages are written in - `await fetch(url)`,
+// `.then(r => r.json())`, `try { await f() } catch (e)` - because every source
+// of asynchrony ctbrowser has (assets, timers, rAF) either resolves at once or
+// goes through the event loop instead. It is NOT enough for code that depends
+// on ordering between a `then` and the surrounding statements, and code written
+// against a real event loop can observe the difference.
+[[nodiscard]] inline value make_promise(context & cx, value v, bool rejected);
+
+// `then`/`catch`/`finally` all reduce to: pick the callback matching how this
+// promise settled, run it, and settle the result the same way. One function, so
+// `then(f, g)` and `catch(g)` cannot disagree about what "rejected" means.
+inline value settle_with(context & cx, value on_ok, value on_err) {
+	const value self = cx.current_this();
+	if (!self.is_object()) { return self; }
+	auto * promise = static_cast<object_object *>(self.as_heap());
+	value * held = promise->find("__value");
+	value * state = promise->find("__rejected");
+	const value settled = held != nullptr ? *held : value::undefined();
+	const bool rejected = state != nullptr && context::truthy(*state);
+
+	const value handler = rejected ? on_err : on_ok;
+	// No handler for how this settled: the promise passes straight through, so
+	// `p.then(f)` on a rejected p stays rejected and a later `.catch` sees it.
+	if (!handler.is_callable()) { return self; }
+	const value args[1] = {settled};
+	return make_promise(cx, cx.call(handler, args), false);
+}
+
+[[nodiscard]] inline value make_promise(context & cx, value v, bool rejected) {
+	object_object * promise = new_table(cx);
+	promise->set("__value", v);
+	promise->set("__rejected", value::boolean(rejected));
+	method(cx, promise, "then", [](context & c, std::span<value> a) {
+		return settle_with(c, a.empty() ? value::undefined() : a[0],
+		                   a.size() > 1 ? a[1] : value::undefined());
+	});
+	method(cx, promise, "catch", [](context & c, std::span<value> a) {
+		return settle_with(c, value::undefined(), a.empty() ? value::undefined() : a[0]);
+	});
+	method(cx, promise, "finally", [](context & c, std::span<value> a) {
+		if (!a.empty() && a[0].is_callable()) { (void)c.call(a[0], std::span<const value>{}); }
+		return c.current_this();
+	});
+	return value::object(promise);
+}
+
+
 // --- JSON -----------------------------------------------------------------
 
 inline void write_json(context & cx, value v, std::string & out) {
@@ -886,6 +940,43 @@ inline void install_builtins(context & cx, std::uint64_t seed = 0x2545F4914F6CDD
 			return value::number(std::nan(""));
 		}
 	});
+
+	// --- Promise ----------------------------------------------------------
+	cx.set_promise_factory([](context & c, value v, bool rejected) {
+		return detail::make_promise(c, v, rejected);
+	});
+	object_object * promise_ctor = new_table(cx);
+	method(cx, promise_ctor, "resolve", [](context & c, std::span<value> a) {
+		return detail::make_promise(c, a.empty() ? value::undefined() : a[0], false);
+	});
+	method(cx, promise_ctor, "reject", [](context & c, std::span<value> a) {
+		return detail::make_promise(c, a.empty() ? value::undefined() : a[0], true);
+	});
+	// Settled promises make `all` a plain unwrap-each: the first rejection wins,
+	// otherwise the result is an array of the values in order.
+	method(cx, promise_ctor, "all", [](context & c, std::span<value> a) {
+		const value out = c.make_array();
+		auto * items = static_cast<array_object *>(out.as_heap());
+		if (!a.empty() && a[0].is_array()) {
+			for (const value & entry : static_cast<array_object *>(a[0].as_heap())->items) {
+				if (!entry.is_object()) {
+					items->items.push_back(entry);
+					continue;
+				}
+				auto * promise = static_cast<object_object *>(entry.as_heap());
+				value * state = promise->find("__rejected");
+				value * held = promise->find("__value");
+				if (state != nullptr && context::truthy(*state)) {
+					return detail::make_promise(c, held != nullptr ? *held : value::undefined(),
+					                            true);
+				}
+				items->items.push_back(held != nullptr ? *held : entry);
+			}
+		}
+		return detail::make_promise(c, out, false);
+	});
+	cx.define_global("Promise", value::object(promise_ctor));
+
 	cx.define_native("isNaN", [](context &, std::span<value> a) {
 		return value::boolean(std::isnan(num_at(a, 0)));
 	});
@@ -912,6 +1003,8 @@ inline void install_builtins(context & cx, std::uint64_t seed = 0x2545F4914F6CDD
 //     compiler still rejects a regex literal with a clear message rather than
 //     mis-compiling one.
 //   * `Map`, `Set`, `Symbol`, `Proxy`, typed arrays, generators.
+//   * PENDING promises, a job queue and `new Promise(executor)` - see the note
+//     above `make_promise`. Promises here are settled when they are made.
 //   * a real prototype CHAIN: one level, no `__proto__`, no `Object.create`.
 //     Everything a page does with builtins works; user-defined inheritance
 //     arrives with `class` in a later stage.

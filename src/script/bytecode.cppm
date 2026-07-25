@@ -68,7 +68,15 @@ enum class op : std::uint8_t {
 	equal,        // a = b === c
 	not_equal,    // a = b !== c
 	loose_equal,  // a = b == c
+	loose_not_equal, // a = b != c
 	less, less_equal, greater, greater_equal,
+	instance_of,  // a = b instanceof c   (walks b's prototype chain)
+	has_property, // a = b in c
+
+	// --- bitwise. JavaScript's operate on ToInt32/ToUint32 of a double, so
+	// they are not just the C operators on the stored number.
+	bit_and, bit_or, bit_xor, shl, shr, ushr,
+	bit_not,      // a = ~b
 
 	// --- control flow
 	jump,         // ip += sbx
@@ -89,11 +97,18 @@ enum class op : std::uint8_t {
 	call,         // a = call(a, args a+1 .. a+b)
 	call_method,  // a = call(a[k[c]], this=a, args a+1 .. a+b)
 	call_computed, // a = call(a[reg c], this=a, args a+1 .. a+b)
-	               // `obj[name](...)` where the property name is a VALUE. It
-	               // needs its own opcode because call_method takes the name
-	               // from the constant table, and a computed call compiled as a
-	               // plain `call` silently loses its receiver - so `this` inside
-	               // the method is undefined.
+	construct,    // a = new a(args a+1 .. a+b)
+	call_receiver, // a = call(a, this=c, args a+1 .. a+b) - `super.m(...)`
+	copy_props,   // a gets every own property of b   (`{...o}`, Object.assign)
+	delete_prop,  // a[k[b]] = gone
+	delete_index, // a[b] = gone
+	own_keys,     // a = the own property names of b, as an array (for..in)
+	set_proto,    // a.__proto__ = b, for `class X extends Y`
+	get_proto,    // a = b's prototype, for `super`
+	load_home,    // a = the home object of the running method (its class's
+	              // prototype); `super` starts its lookup at the home's proto
+	await_value,  // a = the settled value of b (a promise, or b itself)
+	wrap_promise, // a = a as a SETTLED promise (what an `async` function returns)
 	ret,          // return a
 	ret_undef,    // return undefined
 

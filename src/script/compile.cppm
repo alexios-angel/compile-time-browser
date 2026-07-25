@@ -1,6 +1,7 @@
 module;
 #include <charconv>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -77,16 +78,55 @@ private:
 		std::vector<std::size_t> scope_marks; // locals.size() at each scope entry
 		std::uint8_t next_reg = 0;
 		std::uint8_t high_water = 0;
+		bool is_async = false; // `return v` hands back a settled promise of v
 	};
 
-	compiler(const vp::ast & tree, program & out) : ast_(tree), out_(out) {}
+	compiler(const vp::ast & tree, program & out) : ast_(tree), current_ast_(&tree), out_(out) {}
 
 	// --- AST access -------------------------------------------------------
-	[[nodiscard]] const vp::node & at(std::int32_t i) const { return ast_.nodes[static_cast<std::size_t>(i)]; }
+	[[nodiscard]] const vp::node & at(std::int32_t i) const {
+		return current_ast_->nodes[static_cast<std::size_t>(i)];
+	}
+
+	// Compile an expression parsed from a DIFFERENT source than the program's.
+	//
+	// Template literals need it: the parser hands back `${...}` as raw text
+	// inside one token, so the interpolations have to be parsed separately.
+	// Node indices are per-AST, so the active one is swapped for the duration
+	// and every `at()` follows it.
+	void compile_foreign_expr(std::string_view source, std::uint8_t dst) {
+		auto tree = std::make_unique<vp::ast>(vp::parse(source));
+		if (!tree->ok || tree->root < 0) {
+			proto().emit(instruction{op::load_undef, dst});
+			return;
+		}
+		const vp::ast * saved = current_ast_;
+		current_ast_ = tree.get();
+		// The parse produces a program node; its single expression statement is
+		// what we want.
+		std::int32_t expression = tree->root;
+		if (at(expression).kind == vp::nk::program) {
+			const auto statements = kids(at(expression));
+			expression = statements.empty() ? -1 : statements.front();
+		}
+		if (expression >= 0 && at(expression).kind == vp::nk::expr_stmt) {
+			expression = at(expression).a;
+		}
+		if (expression >= 0) {
+			compile_expr(expression, dst);
+		} else {
+			proto().emit(instruction{op::load_undef, dst});
+		}
+		current_ast_ = saved;
+		owned_asts_.push_back(std::move(tree));
+	}
 	[[nodiscard]] std::vector<std::int32_t> kids(const vp::node & n) const {
 		std::vector<std::int32_t> out;
+		// The ACTIVE ast, not the outer one: a node reached inside a template
+		// literal's sub-AST indexes that AST's pool, and reading the program's
+		// would hand back unrelated nodes.
 		for (std::int32_t i = 0; i < n.list_len; ++i) {
-			out.push_back(ast_.pool[static_cast<std::size_t>(n.list + i)]);
+			out.push_back(current_ast_->pool[static_cast<std::size_t>(n.list + i)]);
 		}
 		return out;
 	}
@@ -154,11 +194,14 @@ private:
 			if (f.upvalue_names[i] == name) { return static_cast<int>(i); }
 		}
 		frame & parent = frames_[level - 1];
-		if (level - 1 >= 1) {
-			if (local * l = find_local_entry(parent, name)) {
-				l->boxed = true; // captured, so it must be a cell
-				return add_upvalue(level, name, upvalue_desc{true, l->reg});
-			}
+		// Frame 0 is the script, and its `var`s are globals rather than locals
+		// (see the note in the var_decl arm), so the only locals it ever holds
+		// are the ones a construct makes for itself: a for..of item, a catch
+		// parameter. Those must be capturable or `for (const x of xs)
+		// fns.push(() => x)` closes over nothing at the top level.
+		if (local * l = find_local_entry(parent, name)) {
+			l->boxed = true; // captured, so it must be a cell
+			return add_upvalue(level, name, upvalue_desc{true, l->reg});
 		}
 		const int inherited = resolve_upvalue(level - 1, name);
 		if (inherited < 0) { return -1; }
@@ -372,21 +415,33 @@ private:
 		case vp::nk::if_stmt: compile_if(n); break;
 		case vp::nk::while_stmt: compile_while(n); break;
 		case vp::nk::do_stmt: compile_do_while(n); break;
+		case vp::nk::forof_stmt: compile_for_of(n); break;
+		case vp::nk::class_decl: {
+			const std::uint8_t r = alloc_reg();
+			compile_class(n, r);
+			emit_write(std::string{n.text}, r);
+			break;
+		}
+		case vp::nk::switch_stmt: compile_switch(n); break;
 		case vp::nk::for_stmt: compile_for(n); break;
 		case vp::nk::break_stmt: compile_break(n); break;
 		case vp::nk::continue_stmt: compile_continue(n); break;
 		case vp::nk::labeled: compile_labeled(n); break;
 		case vp::nk::try_stmt: compile_try(n); break;
 		case vp::nk::throw_stmt: compile_throw(n); break;
-		case vp::nk::return_stmt:
+		case vp::nk::return_stmt: {
+			const std::uint8_t r = alloc_reg();
 			if (n.a >= 0) {
-				const std::uint8_t r = alloc_reg();
 				compile_expr(n.a, r);
-				proto().emit(instruction{op::ret, r});
 			} else {
-				proto().emit(instruction{op::ret_undef});
+				proto().emit(instruction{op::load_undef, r});
 			}
+			// `async function f() { return 5 }` hands back a PROMISE of 5, not
+			// 5 - so `f().then(...)` works and not only `await f()`.
+			if (fn().is_async) { proto().emit(instruction{op::wrap_promise, r}); }
+			proto().emit(instruction{op::ret, r});
 			break;
+		}
 		case vp::nk::func_decl: compile_function_decl(idx); return;
 		case vp::nk::empty: break;
 		default: {
@@ -552,6 +607,119 @@ private:
 		pop_scope();
 	}
 
+	// for..of and for..in.
+	//
+	// Compiled as an index loop over a length rather than through an iterator
+	// protocol: arrays and strings are what pages iterate, and a real iterator
+	// needs Symbol.iterator, which needs symbols. `for..in` goes through the
+	// same loop over an array of keys, so there is one iteration mechanism
+	// here and not two.
+	//
+	// The limitation is real and worth stating: an object that is neither an
+	// array nor a string has no `length`, so `for (x of somethingElse)` runs
+	// zero times instead of throwing.
+	void compile_for_of(const vp::node & n) {
+		push_scope();
+		const std::string label = take_label();
+		const std::uint8_t mark = reg_mark();
+
+		const std::uint8_t source = alloc_reg();
+		compile_expr(n.b, source);
+		if (n.text == "in") {
+			proto().emit(instruction{op::own_keys, source, source});
+		}
+
+		const std::uint8_t length = alloc_reg();
+		const std::uint16_t length_name = proto().add_name("length");
+		proto().emit(instruction{op::get_prop, length, source,
+		                         static_cast<std::uint8_t>(length_name)});
+		const std::uint8_t index = alloc_reg();
+		emit_const(index, value::number(0));
+		const std::uint8_t one = alloc_reg();
+		emit_const(one, value::number(1));
+
+		// The loop variable is a real local, so a closure made inside the body
+		// captures THIS iteration's value - which is the whole reason `let` in
+		// a loop behaves differently from `var`.
+		const std::uint8_t item = declare_local(std::string{at(n.a).text});
+
+		const std::size_t top = proto().code.size();
+		loops_.push_back(loop_context{label, {}, {}, handler_depth_});
+		const std::uint8_t test = alloc_reg();
+		proto().emit(instruction{op::less, test, index, length});
+		const std::size_t exit = proto().emit(instruction{op::jump_if_false, test});
+
+		proto().emit(instruction{op::get_index, item, source, index});
+		if (const local * l = find_local_entry(fn(), at(n.a).text); l != nullptr && l->boxed) {
+			// A captured loop variable lives in a cell, and a fresh cell per
+			// iteration is what makes the capture see this element rather than
+			// the last.
+			proto().emit(instruction{op::new_cell, item});
+		}
+		compile_stmt(n.c);
+
+		patch_continues(loops_.back(), proto().code.size());
+		proto().emit(instruction{op::add, index, index, one});
+		patch_jump(proto().emit(instruction{op::jump}), top);
+		patch_here(exit);
+		patch_breaks(loops_.back());
+		loops_.pop_back();
+		release_to(mark);
+		pop_scope();
+	}
+
+	// switch.
+	//
+	// Two passes: every case's test first, jumping to its body, then the bodies
+	// laid out in order so FALLTHROUGH works - a case without a break really
+	// does run the next one, and code relies on that.
+	void compile_switch(const vp::node & n) {
+		push_scope();
+		const std::uint8_t mark = reg_mark();
+		const std::uint8_t subject = alloc_reg();
+		compile_expr(n.a, subject);
+
+		const std::vector<std::int32_t> clauses = kids(n);
+		std::vector<std::size_t> entries(clauses.size(), 0);
+		std::size_t default_clause = clauses.size();
+
+		const std::uint8_t candidate = alloc_reg();
+		const std::uint8_t matched = alloc_reg();
+		for (std::size_t i = 0; i < clauses.size(); ++i) {
+			const vp::node & clause = at(clauses[i]);
+			// `default` is `d == 1`. Testing `d != 0` treated EVERY case as the
+			// default - node.d starts at -1, which is ctjs's documented gotcha -
+			// so no comparison was emitted at all and each clause ran
+			// unconditionally.
+			if (clause.d == 1 || clause.a < 0) {
+				default_clause = i;
+				continue;
+			}
+			compile_expr(clause.a, candidate);
+			// STRICT equality, per spec - `switch (1)` does not match `case "1"`.
+			proto().emit(instruction{op::equal, matched, subject, candidate});
+			entries[i] = proto().emit(instruction{op::jump_if_true, matched});
+		}
+		const std::size_t to_default = proto().emit(instruction{op::jump});
+		release_to(mark);
+
+		// `break` inside a switch leaves the switch, so it needs a loop context
+		// even though nothing here loops.
+		loops_.push_back(loop_context{take_label(), {}, {}, handler_depth_});
+		for (std::size_t i = 0; i < clauses.size(); ++i) {
+			if (i == default_clause) {
+				patch_here(to_default);
+			} else {
+				patch_here(entries[i]);
+			}
+			for (const std::int32_t statement : kids(at(clauses[i]))) { compile_stmt(statement); }
+		}
+		if (default_clause == clauses.size()) { patch_here(to_default); }
+		patch_breaks(loops_.back());
+		loops_.pop_back();
+		pop_scope();
+	}
+
 	// try / catch / finally.
 	//
 	// `finally` is compiled by DUPLICATING its body on both exits - the normal
@@ -611,6 +779,18 @@ private:
 		return out;
 	}
 
+	// Falling off the end of an async function still owes the caller a promise.
+	void emit_implicit_return() {
+		if (!fn().is_async) {
+			proto().emit(instruction{op::ret_undef});
+			return;
+		}
+		const std::uint8_t r = alloc_reg();
+		proto().emit(instruction{op::load_undef, r});
+		proto().emit(instruction{op::wrap_promise, r});
+		proto().emit(instruction{op::ret, r});
+	}
+
 	void compile_function_decl(std::int32_t idx) {
 		const vp::node & n = at(idx);
 		const std::uint32_t index = compile_function_body(idx, std::string{n.text});
@@ -649,6 +829,10 @@ private:
 		// it means to capture as a global instead, and reads undefined.
 		predeclare_locals(n.a);
 
+		// c bit0 = async, bit1 = generator - but `c` DEFAULTS TO -1, so an
+		// unmarked function looks async unless the sign is checked first.
+		fn().is_async = n.c > 0 && (n.c & 1) != 0;
+
 		const std::int32_t body = n.a;
 		if (body >= 0 && at(body).kind == vp::nk::block) {
 			for (const std::int32_t s : kids(at(body))) {
@@ -657,14 +841,15 @@ private:
 			for (const std::int32_t s : kids(at(body))) {
 				if (at(s).kind != vp::nk::func_decl) { compile_stmt(s); }
 			}
-			proto().emit(instruction{op::ret_undef});
+			emit_implicit_return();
 		} else if (body >= 0) {
 			// concise arrow body: `x => expr` returns expr
 			const std::uint8_t r = alloc_reg();
 			compile_expr(body, r);
+			if (fn().is_async) { proto().emit(instruction{op::wrap_promise, r}); }
 			proto().emit(instruction{op::ret, r});
 		} else {
-			proto().emit(instruction{op::ret_undef});
+			emit_implicit_return();
 		}
 		out_.functions[index].frame_size = fn().high_water;
 		pop_scope();
@@ -691,6 +876,13 @@ private:
 			proto().emit(instruction::with_bx(op::load_string, dst,
 			                                  proto().add_string(decode_string_literal(n.text))));
 			break;
+		case vp::nk::tmpl: compile_template(n, dst); break;
+		case vp::nk::new_expr: compile_new(n, dst); break;
+		case vp::nk::opt_member:
+		case vp::nk::opt_index:
+		case vp::nk::opt_call: compile_optional(n, dst); break;
+		case vp::nk::seq: compile_sequence(n, dst); break;
+		case vp::nk::class_decl: compile_class(n, dst); break;
 		case vp::nk::true_lit: proto().emit(instruction{op::load_true, dst}); break;
 		case vp::nk::false_lit: proto().emit(instruction{op::load_false, dst}); break;
 		case vp::nk::null_lit: proto().emit(instruction{op::load_null, dst}); break;
@@ -702,11 +894,22 @@ private:
 		case vp::nk::update: compile_update(n, dst); break;
 		case vp::nk::ternary: compile_ternary(n, dst); break;
 		case vp::nk::member: {
-			compile_expr(n.a, dst);
+			// `super.x` reads through the parent prototype rather than through
+			// an object expression - there is no value `super` evaluates to.
+			if (n.a >= 0 && at(n.a).kind == vp::nk::super_lit) {
+				emit_super_base(dst);
+			} else {
+				compile_expr(n.a, dst);
+			}
 			const std::uint16_t name = proto().add_name(std::string{n.text});
 			proto().emit(instruction{op::get_prop, dst, dst, static_cast<std::uint8_t>(name)});
 			break;
 		}
+		case vp::nk::super_lit:
+			// Bare `super` is not a value in JavaScript either - it is only ever
+			// `super(...)` or `super.x`, both handled where they appear.
+			fail("`super` is only valid as `super(...)` or `super.member`");
+			break;
 		case vp::nk::index: {
 			const std::uint8_t mark = reg_mark();
 			compile_expr(n.a, dst);
@@ -726,6 +929,24 @@ private:
 			break;
 		}
 		case vp::nk::this_lit: proto().emit(instruction{op::load_this, dst}); break;
+		// Regular expressions are DEFERRED, not overlooked: they need a regex
+		// engine, and the standard library says the same about String.match and
+		// the RegExp forms of replace/split. Rejecting one by name beats
+		// mis-compiling it into something that silently does nothing.
+		case vp::nk::regex:
+			fail("regular expression literals are not in this VM subset - "
+			     "there is no regex engine (" +
+			     std::string{n.text} + ")");
+			proto().emit(instruction{op::load_undef, dst});
+			break;
+		case vp::nk::yield_expr:
+			fail("`yield` is not in this VM subset - there are no generators");
+			proto().emit(instruction{op::load_undef, dst});
+			break;
+		case vp::nk::tagged:
+			fail("tagged template literals are not in this VM subset");
+			proto().emit(instruction{op::load_undef, dst});
+			break;
 		default:
 			fail("unsupported syntax in this VM subset (AST kind " +
 			     std::to_string(static_cast<int>(n.kind)) + ")");
@@ -790,6 +1011,32 @@ private:
 		proto().emit(instruction::with_bx(op::get_global, dst, name));
 	}
 
+	// `delete o.x` / `delete o[k]`. Anything else - `delete x` on a plain
+	// variable - is a no-op that yields false, which is what non-strict
+	// JavaScript does with an undeletable binding.
+	void compile_delete(const vp::node & n, std::uint8_t dst) {
+		const std::uint8_t mark = reg_mark();
+		const vp::node & target = at(n.a);
+		if (target.kind == vp::nk::member) {
+			const std::uint8_t object = alloc_reg();
+			compile_expr(target.a, object);
+			proto().emit(instruction{op::delete_prop, object,
+			                         static_cast<std::uint8_t>(
+			                             proto().add_name(std::string{target.text}))});
+			emit_const(dst, value::boolean(true));
+		} else if (target.kind == vp::nk::index) {
+			const std::uint8_t object = alloc_reg();
+			compile_expr(target.a, object);
+			const std::uint8_t key = alloc_reg();
+			compile_expr(target.b, key);
+			proto().emit(instruction{op::delete_index, object, key});
+			emit_const(dst, value::boolean(true));
+		} else {
+			emit_const(dst, value::boolean(false));
+		}
+		release_to(mark);
+	}
+
 	void compile_binary(const vp::node & n, std::uint8_t dst) {
 		const std::uint8_t mark = reg_mark();
 		const std::uint8_t lhs = alloc_reg();
@@ -806,8 +1053,18 @@ private:
 		else if (o == "**") { code = op::pow; }
 		else if (o == "===") { code = op::equal; }
 		else if (o == "!==") { code = op::not_equal; }
+		// `==` and `!=` are LOOSE. Compiling `!=` as `!==` made `1 != "1"` true,
+		// which is the opposite of what the operator means.
 		else if (o == "==") { code = op::loose_equal; }
-		else if (o == "!=") { code = op::not_equal; }
+		else if (o == "!=") { code = op::loose_not_equal; }
+		else if (o == "&") { code = op::bit_and; }
+		else if (o == "|") { code = op::bit_or; }
+		else if (o == "^") { code = op::bit_xor; }
+		else if (o == "<<") { code = op::shl; }
+		else if (o == ">>") { code = op::shr; }
+		else if (o == ">>>") { code = op::ushr; }
+		else if (o == "instanceof") { code = op::instance_of; }
+		else if (o == "in") { code = op::has_property; }
 		else if (o == "<") { code = op::less; }
 		else if (o == "<=") { code = op::less_equal; }
 		else if (o == ">") { code = op::greater; }
@@ -829,13 +1086,29 @@ private:
 	}
 
 	void compile_unary(const vp::node & n, std::uint8_t dst) {
+		// `delete o.x` must NOT evaluate `o.x` - it takes the object and the
+		// key, which is why it cannot go through the operand-first path below.
+		if (n.text == "delete") {
+			compile_delete(n, dst);
+			return;
+		}
 		const std::uint8_t mark = reg_mark();
 		const std::uint8_t operand = alloc_reg();
 		compile_expr(n.a, operand);
 		if (n.text == "-") { proto().emit(instruction{op::negate, dst, operand}); }
 		else if (n.text == "!") { proto().emit(instruction{op::logical_not, dst, operand}); }
 		else if (n.text == "typeof") { proto().emit(instruction{op::type_of, dst, operand}); }
+		else if (n.text == "await") {
+			// Promises here are SETTLED on creation - there is no event loop
+			// suspending a frame - so awaiting one is reading its value, and
+			// awaiting a plain value is the value. That is the same subset v1
+			// shipped, and it is what `await fetch(...)` needs.
+			proto().emit(instruction{op::await_value, dst, operand});
+		}
 		else if (n.text == "+") { proto().emit(instruction{op::move, dst, operand}); }
+		else if (n.text == "~") { proto().emit(instruction{op::bit_not, dst, operand}); }
+		// `void x` evaluates x for its effects and yields undefined.
+		else if (n.text == "void") { proto().emit(instruction{op::load_undef, dst}); }
 		else { fail("unsupported unary operator '" + std::string{n.text} + "'"); }
 		release_to(mark);
 	}
@@ -1019,11 +1292,101 @@ private:
 
 	// Calls need their arguments in CONSECUTIVE registers starting just above
 	// the callee, so the VM can hand the callee a contiguous frame.
+	// A template literal. The parser hands the WHOLE thing back as one token,
+	// backticks and all, so the splitting happens here: literal chunks are
+	// strings, `${...}` chunks are parsed and compiled, and the whole thing is
+	// a chain of concatenations.
+	void compile_template(const vp::node & n, std::uint8_t dst) {
+		std::string_view raw = n.text;
+		if (raw.size() >= 2 && raw.front() == '`' && raw.back() == '`') {
+			raw = raw.substr(1, raw.size() - 2);
+		}
+		const std::uint8_t mark = reg_mark();
+		const std::uint8_t piece = alloc_reg();
+		bool started = false;
+
+		const auto append = [&](std::uint8_t src) {
+			if (!started) {
+				proto().emit(instruction{op::move, dst, src});
+				started = true;
+			} else {
+				proto().emit(instruction{op::concat, dst, dst, src});
+			}
+		};
+		const auto append_literal = [&](std::string text) {
+			if (text.empty() && started) { return; }
+			emit_string(piece, std::move(text));
+			append(piece);
+		};
+
+		std::string literal;
+		for (std::size_t i = 0; i < raw.size();) {
+			if (raw[i] == '\\' && i + 1 < raw.size()) {
+				// One level of escape handling, so `\n` and `\`` behave.
+				const char c = raw[i + 1];
+				literal += c == 'n' ? '\n' : (c == 't' ? '\t' : (c == 'r' ? '\r' : c));
+				i += 2;
+				continue;
+			}
+			if (raw[i] == '$' && i + 1 < raw.size() && raw[i + 1] == '{') {
+				append_literal(std::move(literal));
+				literal.clear();
+				// Find the matching brace, counting nesting so an object
+				// literal or a nested template inside the hole survives.
+				std::size_t depth = 1;
+				std::size_t at_char = i + 2;
+				const std::size_t start = at_char;
+				while (at_char < raw.size() && depth > 0) {
+					if (raw[at_char] == '{') { ++depth; }
+					if (raw[at_char] == '}') { --depth; }
+					if (depth > 0) { ++at_char; }
+				}
+				compile_foreign_expr(raw.substr(start, at_char - start), piece);
+				// Concatenation is what stringifies the value, which is exactly
+				// the coercion a template literal performs.
+				append(piece);
+				i = at_char + 1;
+				continue;
+			}
+			literal += raw[i++];
+		}
+		append_literal(std::move(literal));
+		if (!started) { emit_string(dst, std::string{}); }
+		release_to(mark);
+	}
+
+	// `dst` = the object `super` looks properties up on: the prototype ABOVE the
+	// one the running method was written into.
+	void emit_super_base(std::uint8_t dst) {
+		proto().emit(instruction{op::load_home, dst});
+		proto().emit(instruction{op::get_proto, dst, dst});
+	}
+
 	void compile_call(const vp::node & n, std::uint8_t dst) {
 		const std::vector<std::int32_t> args = kids(n);
 		const vp::node & callee = at(n.a);
 		const std::uint8_t mark = reg_mark();
 		const std::uint8_t base = alloc_reg();
+
+		const bool super_method =
+		    callee.kind == vp::nk::member && callee.a >= 0 && at(callee.a).kind == vp::nk::super_lit;
+		if (callee.kind == vp::nk::super_lit || super_method) {
+			// `super(...)` is the parent CONSTRUCTOR run against this same
+			// object - it does not make a new one - so the receiver is `this`
+			// in both forms.
+			emit_super_base(base);
+			const std::string name = super_method ? std::string{callee.text} : "constructor";
+			proto().emit(instruction{op::get_prop, base, base,
+			                         static_cast<std::uint8_t>(proto().add_name(name))});
+			for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
+			const std::uint8_t self = alloc_reg();
+			proto().emit(instruction{op::load_this, self});
+			proto().emit(instruction{op::call_receiver, base,
+			                         static_cast<std::uint8_t>(args.size()), self});
+			proto().emit(instruction{op::move, dst, base});
+			release_to(mark);
+			return;
+		}
 
 		if (callee.kind == vp::nk::member) {
 			compile_expr(callee.a, base); // the receiver
@@ -1049,15 +1412,184 @@ private:
 		release_to(mark);
 	}
 
+	// `new C(...)`. The receiver is created by the VM, which also has to decide
+	// what the expression evaluates to - the new object, unless the constructor
+	// returned one of its own.
+	void compile_new(const vp::node & n, std::uint8_t dst) {
+		const std::vector<std::int32_t> args = kids(n);
+		const std::uint8_t mark = reg_mark();
+		const std::uint8_t base = alloc_reg();
+		compile_expr(n.a, base);
+		for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
+		proto().emit(instruction{op::construct, base, static_cast<std::uint8_t>(args.size())});
+		proto().emit(instruction{op::move, dst, base});
+		release_to(mark);
+	}
+
+	// Optional chaining. The whole point is the SHORT CIRCUIT: `a?.b.c` yields
+	// undefined without evaluating `.c` when a is null-ish, so writing it as an
+	// ordinary member access with a test afterwards would still crash.
+	void compile_optional(const vp::node & n, std::uint8_t dst) {
+		const std::uint8_t mark = reg_mark();
+		const std::uint8_t object = alloc_reg();
+		compile_expr(n.a, object);
+
+		// null and undefined both short-circuit; nothing else does.
+		const std::uint8_t nullish = alloc_reg();
+		proto().emit(instruction{op::load_null, nullish});
+		const std::uint8_t test = alloc_reg();
+		proto().emit(instruction{op::loose_equal, test, object, nullish});
+		const std::size_t skip = proto().emit(instruction{op::jump_if_true, test});
+
+		if (n.kind == vp::nk::opt_member) {
+			proto().emit(instruction{op::get_prop, dst, object,
+			                         static_cast<std::uint8_t>(proto().add_name(std::string{n.text}))});
+		} else if (n.kind == vp::nk::opt_index) {
+			const std::uint8_t key = alloc_reg();
+			compile_expr(n.b, key);
+			proto().emit(instruction{op::get_index, dst, object, key});
+		} else { // opt_call
+			const std::vector<std::int32_t> args = kids(n);
+			const std::uint8_t base = alloc_reg();
+			proto().emit(instruction{op::move, base, object});
+			for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
+			proto().emit(instruction{op::call, base, static_cast<std::uint8_t>(args.size())});
+			proto().emit(instruction{op::move, dst, base});
+		}
+		const std::size_t done = proto().emit(instruction{op::jump});
+		patch_here(skip);
+		proto().emit(instruction{op::load_undef, dst});
+		patch_here(done);
+		release_to(mark);
+	}
+
+	// The comma operator: evaluate everything, yield the last.
+	void compile_sequence(const vp::node & n, std::uint8_t dst) {
+		const std::vector<std::int32_t> parts = kids(n);
+		if (parts.empty()) {
+			proto().emit(instruction{op::load_undef, dst});
+			return;
+		}
+		for (const std::int32_t part : parts) { compile_expr(part, dst); }
+	}
+
+	// A class.
+	//
+	// Compiled to what it desugars to: a constructor function plus a prototype
+	// object holding the methods, with `new` wiring an instance to that
+	// prototype. `extends` chains the prototype objects, which is what makes an
+	// inherited method reachable.
+	//
+	// NOT here: `super(...)` and `super.m()`. A subclass's constructor does not
+	// call its parent's, so a class with `extends` inherits METHODS but not
+	// construction. That is a real gap, and calling it out beats a `super` that
+	// silently does nothing.
+	void compile_class(const vp::node & n, std::uint8_t dst) {
+		const std::vector<std::int32_t> members = kids(n);
+		const std::uint8_t mark = reg_mark();
+		const std::uint8_t prototype_reg = alloc_reg();
+		proto().emit(instruction{op::new_object, prototype_reg});
+
+		if (n.a >= 0) {
+			// `extends`: the parent's prototype becomes this one's, so a lookup
+			// that misses here walks up to it.
+			const std::uint8_t parent = alloc_reg();
+			compile_expr(n.a, parent);
+			const std::uint8_t parent_proto = alloc_reg();
+			proto().emit(instruction{op::get_prop, parent_proto, parent,
+			                         static_cast<std::uint8_t>(proto().add_name("prototype"))});
+			proto().emit(instruction{op::set_proto, prototype_reg, parent_proto});
+		}
+
+		std::int32_t constructor_body = -1;
+		for (const std::int32_t member : members) {
+			const vp::node & m = at(member);
+			if (m.c == 1 && m.text == "constructor") { constructor_body = m.b; }
+		}
+
+		if (constructor_body >= 0) {
+			compile_expr(constructor_body, dst);
+		} else {
+			// A class with no constructor still needs a callable, or `new` has
+			// nothing to invoke.
+			compile_foreign_expr("(function () {})", dst);
+		}
+		proto().emit(instruction{op::set_prop, dst,
+		                         static_cast<std::uint8_t>(proto().add_name("prototype")),
+		                         prototype_reg});
+		// `C.prototype.constructor === C`, which is both what pages expect and
+		// how `super(...)` finds the parent constructor to call.
+		proto().emit(instruction{op::set_prop, prototype_reg,
+		                         static_cast<std::uint8_t>(proto().add_name("constructor")), dst});
+		// The constructor's home is this class's prototype, so `super(...)`
+		// inside it starts one level up.
+		proto().emit(instruction{op::set_prop, dst,
+		                         static_cast<std::uint8_t>(proto().add_name("__home")),
+		                         prototype_reg});
+
+		const std::uint8_t slot = alloc_reg();
+		for (const std::int32_t member : members) {
+			const vp::node & m = at(member);
+			if (m.text == "constructor" && m.c == 1) { continue; }
+			if (m.b < 0) { continue; }
+			compile_expr(m.b, slot);
+			const std::uint16_t name = proto().add_name(std::string{m.text});
+			// A static member goes on the constructor; everything else on the
+			// prototype, where instances find it.
+			const std::uint8_t target = (m.d & 1) != 0 ? dst : prototype_reg;
+			proto().emit(instruction{op::set_prop, target, static_cast<std::uint8_t>(name), slot});
+			// Each method remembers where it was WRITTEN. `super.m()` resolves
+			// against that, not against `this` - in a three-deep hierarchy the
+			// two differ and resolving against `this` calls the same method
+			// forever.
+			if (m.c == 1) {
+				proto().emit(instruction{op::set_prop, slot,
+				                         static_cast<std::uint8_t>(proto().add_name("__home")),
+				                         target});
+			}
+		}
+		release_to(mark);
+	}
+
 	void compile_array(const vp::node & n, std::uint8_t dst) {
 		proto().emit(instruction{op::new_array, dst});
 		const std::uint8_t mark = reg_mark();
 		for (const std::int32_t element : kids(n)) {
 			const std::uint8_t v = alloc_reg();
-			compile_expr(element, v);
-			proto().emit(instruction{op::append, dst, v});
+			if (at(element).kind == vp::nk::spread) {
+				// `[...a]` appends a's ELEMENTS, not a itself. Compiled as an
+				// index loop rather than an opcode, because that is all it is.
+				compile_expr(at(element).a, v);
+				emit_append_all(dst, v);
+			} else {
+				compile_expr(element, v);
+				proto().emit(instruction{op::append, dst, v});
+			}
 			release_to(mark);
 		}
+	}
+
+	// Append every element of `source` to the array in `target`.
+	void emit_append_all(std::uint8_t target, std::uint8_t source) {
+		const std::uint8_t mark = reg_mark();
+		const std::uint8_t length = alloc_reg();
+		proto().emit(instruction{op::get_prop, length, source,
+		                         static_cast<std::uint8_t>(proto().add_name("length"))});
+		const std::uint8_t index = alloc_reg();
+		emit_const(index, value::number(0));
+		const std::uint8_t one = alloc_reg();
+		emit_const(one, value::number(1));
+		const std::uint8_t test = alloc_reg();
+		const std::uint8_t item = alloc_reg();
+		const std::size_t top = proto().code.size();
+		proto().emit(instruction{op::less, test, index, length});
+		const std::size_t exit = proto().emit(instruction{op::jump_if_false, test});
+		proto().emit(instruction{op::get_index, item, source, index});
+		proto().emit(instruction{op::append, target, item});
+		proto().emit(instruction{op::add, index, index, one});
+		patch_jump(proto().emit(instruction{op::jump}), top);
+		patch_here(exit);
+		release_to(mark);
 	}
 
 	void compile_object(const vp::node & n, std::uint8_t dst) {
@@ -1065,8 +1597,24 @@ private:
 		const std::uint8_t mark = reg_mark();
 		for (const std::int32_t p : kids(n)) {
 			const vp::node & prop = at(p);
-			if (prop.kind != vp::nk::prop || (prop.d & 1) != 0) {
-				fail("computed and spread object keys are not in this VM subset yet");
+			if (prop.kind == vp::nk::spread) {
+				// `{...o}` copies o's own properties in, and a later key still
+				// wins - which is why this is a copy at this point in the
+				// sequence rather than a merge at the end.
+				const std::uint8_t source = alloc_reg();
+				compile_expr(prop.a, source);
+				proto().emit(instruction{op::copy_props, dst, source});
+				release_to(mark);
+				continue;
+			}
+			if (prop.kind != vp::nk::prop) {
+				fail("unsupported object literal member");
+				return;
+			}
+			if (prop.c == 3) {
+				// get/set accessors need a property that runs code on read,
+				// which this VM's objects do not have.
+				fail("object literal get/set accessors are not in this VM subset");
 				return;
 			}
 			const std::uint8_t v = alloc_reg();
@@ -1075,13 +1623,25 @@ private:
 			} else {
 				compile_ident(prop, v); // shorthand { x }
 			}
-			const std::uint16_t name = proto().add_name(decode_string_literal(prop.text));
-			proto().emit(instruction{op::set_prop, dst, static_cast<std::uint8_t>(name), v});
+			// A computed key - `{[k]: v}`, and also `{"a": v}` and `{1: v}`,
+			// which the parser routes the same way so quotes and escapes get
+			// cooked by evaluating the literal.
+			if ((prop.d & 1) != 0) {
+				const std::uint8_t key = alloc_reg();
+				compile_expr(prop.a, key);
+				proto().emit(instruction{op::set_index, dst, key, v});
+			} else {
+				const std::uint16_t name = proto().add_name(decode_string_literal(prop.text));
+				proto().emit(instruction{op::set_prop, dst, static_cast<std::uint8_t>(name), v});
+			}
 			release_to(mark);
 		}
 	}
 
 	// --- helpers -------------------------------------------------------------
+	void emit_string(std::uint8_t dst, std::string text) {
+		proto().emit(instruction::with_bx(op::load_string, dst, proto().add_string(std::move(text))));
+	}
 	void emit_const(std::uint8_t dst, value v) {
 		proto().emit(instruction::with_bx(op::load_const, dst, proto().add_constant(v)));
 	}
@@ -1098,6 +1658,8 @@ private:
 	}
 
 	const vp::ast & ast_;
+	const vp::ast * current_ast_ = &ast_;
+	std::vector<std::unique_ptr<vp::ast>> owned_asts_;
 	program & out_;
 	std::vector<frame> frames_;
 	std::vector<loop_context> loops_;
