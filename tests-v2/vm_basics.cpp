@@ -74,6 +74,18 @@ void diff_vs_v1(std::string_view expression, std::string_view expected) {
 	}
 }
 
+// A whole program, run as written. The stage-2 tests are about STATEMENTS -
+// loops, labels, try blocks - so they are written as programs ending in an
+// explicit `return`, not as expressions to be wrapped.
+void expect_result(std::string_view source, std::string_view want) {
+	const std::string got = run_v2(std::string{source});
+	if (got != want) {
+		std::printf("FAIL     %.70s => %s (want %s)\n", std::string{source}.c_str(), got.c_str(),
+		            std::string{want}.c_str());
+		++ctbrowser_test_failures;
+	}
+}
+
 void expect(std::string_view source, std::string_view want) {
 	const std::string got = run_v2(source);
 	if (got != want) {
@@ -314,6 +326,114 @@ void test_errors_are_reported_not_crashes() {
 	CHECK(!bad.ok);
 }
 
+
+// --- stage 2: the things ordinary code needs ------------------------------
+
+void test_compound_assignment() {
+	// `x += 1` is in essentially every script ever written, and it did not
+	// compile at all - the compiler rejected the whole program.
+	expect_result("var x = 1; x += 4; return x;", "5");
+	expect_result("var x = 10; x -= 4; return x;", "6");
+	expect_result("var x = 3; x *= 4; return x;", "12");
+	expect_result("var x = 12; x /= 4; return x;", "3");
+	expect_result("var x = 13; x %= 5; return x;", "3");
+	expect_result("var s = 'a'; s += 'b'; return s;", "ab"); // += concatenates strings
+	expect_result("var o = {n: 1}; o.n += 5; return o.n;", "6");
+	expect_result("var a = [1,2]; a[0] += 9; return a[0];", "10");
+	expect_result("var x = 0; function f() { x += 2; } f(); f(); return x;", "4");
+}
+
+void test_compound_assignment_evaluates_its_target_once() {
+	// THE case the reference machinery exists for. If the target were compiled
+	// twice - once to read and once to write - this would increment i twice and
+	// store into the wrong slot.
+	expect_result("var a = [0,0,0]; var i = 0; a[i++] += 5; return i;", "1");
+	expect_result("var a = [0,0,0]; var i = 0; a[i++] += 5; return a[0];", "5");
+}
+
+void test_update_on_properties_and_indices() {
+	expect_result("var o = {n: 1}; o.n++; return o.n;", "2");
+	expect_result("var o = {n: 1}; var r = o.n++; return r;", "1"); // postfix: the old value
+	expect_result("var o = {n: 1}; var r = ++o.n; return r;", "2"); // prefix: the new one
+	expect_result("var a = [5]; a[0]--; return a[0];", "4");
+}
+
+void test_this() {
+	// `this` compiled to undefined unconditionally, so no method could see the
+	// object it was called on - which is most of what objects are for.
+	expect_result("var o = {n: 7, get: function () { return this.n; }}; return o.get();", "7");
+	// and it follows the CALL SITE, not the definition
+	expect_result("var a = {n: 1, get: function () { return this.n; }};"
+	              "var b = {n: 2, get: a.get}; return b.get();", "2");
+}
+
+void test_break_and_continue() {
+	// Without these no loop could exit early: every search loop, every guard,
+	// every early-out in a game loop.
+	expect_result("var t = 0; for (var i = 0; i < 10; i++) { if (i == 5) { break; } t += 1; }"
+	              "return t;", "5");
+	expect_result("var t = 0; for (var i = 0; i < 5; i++) { if (i == 2) { continue; } t += 1; }"
+	              "return t;", "4");
+	// The subtle one: `continue` in a for-loop must run the UPDATE. If it jumped
+	// back to the condition instead, this would never terminate.
+	expect_result("var n = 0; for (var i = 0; i < 4; i++) { if (i < 2) { continue; } n += 1; }"
+	              "return n;", "2");
+	expect_result("var t = 0; var i = 0; while (i < 10) { i += 1; if (i > 3) { break; } t += 1; }"
+	              "return t;", "3");
+	expect_result("var t = 0; var i = 0; do { i += 1; t += i; } while (i < 3); return t;", "6");
+}
+
+void test_labeled_break() {
+	// Without the label, `break` leaves only the inner loop - so this would be
+	// 3, one break per outer iteration, rather than 1.
+	expect_result("var n = 0;"
+	              "outer: for (var i = 0; i < 3; i++) {"
+	              "  for (var j = 0; j < 3; j++) { n += 1; if (j == 0) { break outer; } }"
+	              "} return n;", "1");
+	expect_result("var n = 0;"
+	              "outer: for (var i = 0; i < 3; i++) {"
+	              "  for (var j = 0; j < 3; j++) { if (j == 0) { continue outer; } n += 1; }"
+	              "} return n;", "0");
+}
+
+void test_try_catch() {
+	expect_result("var r = 0; try { throw 7; } catch (e) { r = e; } return r;", "7");
+	expect_result("var r = 0; try { r = 1; } catch (e) { r = 2; } return r;", "1");
+	expect_result("var r = ''; try { throw 'boom'; } catch (e) { r = e; } return r;", "boom");
+}
+
+void test_exceptions_unwind_call_frames() {
+	// The reason exceptions are a VM change and not a compiler one: a throw
+	// several frames deep has to reach a try in a caller, discarding the frames
+	// in between.
+	expect_result("function deep() { throw 42; }"
+	              "function middle() { deep(); return 1; }"
+	              "var r = 0; try { middle(); } catch (e) { r = e; } return r;", "42");
+	expect_result("function f() { try { throw 1; } catch (e) { return 5; } return 9; }"
+	              "return f();", "5");
+}
+
+void test_finally() {
+	expect_result("var r = 0; try { r = 1; } finally { r += 10; } return r;", "11");
+	expect_result("var r = 0; try { throw 1; } catch (e) { r = 2; } finally { r += 10; }"
+	              "return r;", "12");
+}
+
+void test_nested_try() {
+	expect_result("var r = 0;"
+	              "try { try { throw 1; } catch (e) { r = 1; throw 2; } } catch (e) { r += e; }"
+	              "return r;", "3");
+}
+
+void test_break_out_of_try() {
+	// Jumping out of a try block has to drop its handler. If it does not, the
+	// catch stays reachable after the loop and a later throw lands in dead
+	// code - a crash, not a wrong answer.
+	expect_result("var n = 0;"
+	              "for (var i = 0; i < 3; i++) { try { n += 1; break; } catch (e) { n = 99; } }"
+	              "var caught = 0; try { throw 5; } catch (e) { caught = e; } return caught;", "5");
+}
+
 } // namespace
 
 int main() {
@@ -331,5 +451,17 @@ int main() {
 	test_native_bindings();
 	test_gc_collects_unreachable();
 	test_errors_are_reported_not_crashes();
+	test_compound_assignment();
+	test_compound_assignment_evaluates_its_target_once();
+	test_update_on_properties_and_indices();
+	test_this();
+	test_break_and_continue();
+	test_labeled_break();
+	test_try_catch();
+	test_exceptions_unwind_call_frames();
+	test_finally();
+	test_nested_try();
+	test_break_out_of_try();
+
 	REPORT("vm_basics");
 }

@@ -5,7 +5,7 @@ add_custom_target(ctbrowser-v2-test ALL)
 
 function(ctbrowser_v2_test name)
   add_executable(ctbrowser-v2-${name} ${name}.cpp)
-  target_link_libraries(ctbrowser-v2-${name} PRIVATE ctbrowser::core ctbrowser::dom ctbrowser::script ctbrowser::style ctbrowser::layout ctbrowser::paint ctbrowser::raster ctbrowser::shell)
+  target_link_libraries(ctbrowser-v2-${name} PRIVATE ctbrowser::core ctbrowser::dom ctbrowser::script ctbrowser::style ctbrowser::layout ctbrowser::paint ctbrowser::raster ctbrowser::shell ctbrowser::v2)
   # the VM tests compare against v1's interpreter (ctjs.hpp), which needs its headers
   target_include_directories(ctbrowser-v2-${name} PRIVATE
     "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"
@@ -27,6 +27,7 @@ ctbrowser_v2_test(dom_basics)
 ctbrowser_v2_test(html_parse)
 ctbrowser_v2_test(stress_dom)
 ctbrowser_v2_test(vm_basics)
+ctbrowser_v2_test(page_scripts)
 ctbrowser_v2_test(style_basics)
 ctbrowser_v2_test(layout_basics)
 ctbrowser_v2_test(paint_basics)
@@ -65,7 +66,7 @@ set_tests_properties(v2-stress_slab PROPERTIES TIMEOUT 300)
 function(ctbrowser_v2_bench name)
   add_executable(ctbrowser-v2-${name} EXCLUDE_FROM_ALL ${name}.cpp ${ARGN})
   target_link_libraries(ctbrowser-v2-${name}
-    PRIVATE ctbrowser::core ctbrowser::dom ctbrowser::style ctbrowser::layout ctbrowser::paint ctbrowser::raster ctbrowser::shell)
+    PRIVATE ctbrowser::core ctbrowser::dom ctbrowser::style ctbrowser::layout ctbrowser::paint ctbrowser::raster ctbrowser::shell ctbrowser::v2)
   target_compile_options(ctbrowser-v2-${name} PRIVATE ${CTBROWSER_V2_WARNINGS})
   # the layout benchmark drives v1's layout() for comparison, which needs v1's
   # headers and the bricks underneath them

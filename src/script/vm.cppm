@@ -140,6 +140,21 @@ private:
 		std::size_t base = 0; // index into registers_ of this frame's r0
 		std::uint8_t result_reg = 0;
 		closure_object * closure = nullptr; // whose upvalues this body sees
+		// The receiver. A JS body reads it through `this`; before this existed
+		// `this` compiled to undefined unconditionally, so no method could see
+		// the object it was called on.
+		value receiver = value::undefined();
+		// How many exception handlers this frame had on entry. Unwinding pops
+		// back to it, so a handler in a caller cannot be caught by a callee.
+		std::size_t handler_base = 0;
+	};
+
+	// A live try block: where to jump, and where the state was when it started.
+	struct handler {
+		std::size_t frame = 0;    // index into frames_
+		std::size_t address = 0;  // the catch block
+		std::size_t reg_top = 0;  // registers_ size on entry
+		std::uint8_t slot = 0;    // where to put the thrown value
 	};
 
 	[[nodiscard]] value execute(const program & prog, const function_proto & entry);
@@ -149,6 +164,29 @@ private:
 			failed_ = true;
 			error_ = std::move(message);
 		}
+	}
+
+	// Find the innermost live handler and jump to it, discarding every call
+	// frame between here and the one that owns it. Returning false means
+	// nothing caught it, which is an uncaught exception.
+	//
+	// This is why exceptions are a VM change and not a compiler one: a `throw`
+	// several frames deep has to reach a `try` in a caller, and only the VM
+	// knows where those frames are.
+	[[nodiscard]] bool unwind_to_handler() {
+		while (!handlers_.empty()) {
+			const handler h = handlers_.back();
+			handlers_.pop_back();
+			if (h.frame >= frames_.size()) { continue; } // its frame already returned
+			frames_.resize(h.frame + 1);
+			call_frame & target = frames_.back();
+			target.ip = h.address;
+			if (registers_.size() < h.reg_top) { registers_.resize(h.reg_top, value::undefined()); }
+			registers_[target.base + h.slot] = thrown_;
+			thrown_ = value::undefined();
+			return true;
+		}
+		return false;
 	}
 
 	void mark(value v);
@@ -161,6 +199,10 @@ private:
 	// tables a nested frame needs.
 	const program * program_ = nullptr;
 	std::vector<flat_map<std::uint16_t, value>> string_cache_;
+	// Live try blocks, innermost last. Not per-frame, because a throw has to be
+	// able to find a handler several frames up.
+	std::vector<handler> handlers_;
+	value thrown_ = value::undefined();
 
 	flat_map<std::string, value> globals_;
 	std::vector<value> registers_;
@@ -300,7 +342,10 @@ inline std::size_t context::collect() {
 	// upvalues can be freed while its body is still running.
 	for (const call_frame & f : frames_) {
 		if (f.closure != nullptr) { mark_object(f.closure); }
+		mark(f.receiver);
 	}
+	// A thrown value in flight is reachable from nothing else.
+	mark(thrown_);
 
 	std::size_t freed = 0;
 	heap_object ** link = &heap_;
@@ -365,7 +410,7 @@ inline value context::call(value callable, std::span<const value> args, value th
 	const std::size_t depth = frames_.size();
 	const value saved = current_this_;
 	current_this_ = this_value;
-	frames_.push_back(call_frame{&target, 0, new_base, 0, fnobj});
+	frames_.push_back(call_frame{&target, 0, new_base, 0, fnobj, this_value, handlers_.size()});
 	const value out = run_loop(depth);
 	current_this_ = saved;
 	// Only shrink back if nothing below is still using the space - a nested
@@ -392,7 +437,7 @@ inline run_result context::run(const program & prog) {
 inline value context::execute(const program & prog, const function_proto & entry) {
 	registers_.assign(entry.frame_size + 8u, value::undefined());
 	frames_.clear();
-	frames_.push_back(call_frame{&entry, 0, 0, 0, nullptr});
+	frames_.push_back(call_frame{&entry, 0, 0, 0, nullptr, value::undefined(), 0});
 	program_ = &prog;
 	// Per-frame string interning: a literal in a loop should allocate once,
 	// not once per iteration.
@@ -593,8 +638,9 @@ inline value context::run_loop(std::size_t stop_depth) {
 		case op::call:
 		case op::call_method: {
 			value callee = reg(in.a);
+			value receiver = value::undefined();
 			if (in.code == op::call_method) {
-				const value receiver = reg(in.a);
+				receiver = reg(in.a);
 				callee = value::undefined();
 				if (receiver.is_object()) {
 					if (value * found =
@@ -615,7 +661,7 @@ inline value context::run_loop(std::size_t stop_depth) {
 				                        registers_.begin() +
 				                            static_cast<std::ptrdiff_t>(arg_base + in.b)};
 				const value saved_this = current_this_;
-				current_this_ = in.code == op::call_method ? reg(in.a) : value::undefined();
+				current_this_ = receiver;
 				const value produced = nat->fn(*this, args);
 				current_this_ = saved_this;
 				reg(in.a) = produced;
@@ -639,7 +685,7 @@ inline value context::run_loop(std::size_t stop_depth) {
 				raise("call stack exhausted");
 				break;
 			}
-			frames_.push_back(call_frame{&target, 0, new_base, in.a, fnobj});
+			frames_.push_back(call_frame{&target, 0, new_base, in.a, fnobj, receiver, handlers_.size()});
 			break;
 		}
 
@@ -647,6 +693,9 @@ inline value context::run_loop(std::size_t stop_depth) {
 		case op::ret_undef: {
 			const value returned = in.code == op::ret ? reg(in.a) : value::undefined();
 			const std::uint8_t slot = frame.result_reg;
+			// Handlers this frame installed die with it: a `return` out of a
+			// try block must not leave its catch reachable from the caller.
+			if (handlers_.size() > frame.handler_base) { handlers_.resize(frame.handler_base); }
 			frames_.pop_back();
 			if (frames_.size() <= stop_depth) { return returned; }
 			registers_[frames_.back().base + slot] = returned;
@@ -654,6 +703,25 @@ inline value context::run_loop(std::size_t stop_depth) {
 		}
 
 		case op::type_of: reg(in.a) = string(std::string{type_of(reg(in.b))}); break;
+
+		case op::load_this: reg(in.a) = frame.receiver; break;
+
+		case op::push_handler:
+			handlers_.push_back(handler{frames_.size() - 1,
+			                            static_cast<std::size_t>(frame.ip) +
+			                                static_cast<std::size_t>(in.sbx()),
+			                            registers_.size(), in.a});
+			break;
+		case op::pop_handler:
+			if (!handlers_.empty()) { handlers_.pop_back(); }
+			break;
+		case op::throw_value: {
+			thrown_ = reg(in.a);
+			if (!unwind_to_handler()) {
+				raise("uncaught exception: " + to_string(thrown_));
+			}
+			break;
+		}
 
 		case op::new_cell: reg(in.a) = value::object(allocate<cell_object>(reg(in.a))); break;
 		case op::cell_get:

@@ -93,6 +93,15 @@ enum class op : std::uint8_t {
 
 	// --- misc
 	type_of,      // a = typeof b
+	load_this,    // a = the receiver of the call that entered this frame
+
+	// --- exceptions. `try` pushes a handler with the address to jump to;
+	// `throw` unwinds call frames until it finds one. Unwinding is what makes
+	// this a VM change rather than a compiler one: a handler in a caller has to
+	// be reachable from a throw several frames deep.
+	push_handler, // remember (catch address = sbx, this frame); a = catch register
+	pop_handler,  // leave the try block normally
+	throw_value,  // raise a
 	halt,
 };
 

@@ -115,6 +115,15 @@ private:
 		fn().locals.push_back(local{std::move(name), r, boxed});
 		return r;
 	}
+	// Bind a name to a register that ALREADY exists. The catch parameter needs
+	// it: the handler writes the thrown value into a register chosen when the
+	// try block opened, and the name has to refer to that same slot rather than
+	// to a fresh one.
+	void declare_local_at(std::string name, std::uint8_t reg) {
+		const bool boxed = is_captured(name);
+		if (boxed) { proto().emit(instruction{op::new_cell, reg}); }
+		fn().locals.push_back(local{std::move(name), reg, boxed});
+	}
 	// -1 when not a local of the CURRENT frame
 	[[nodiscard]] int find_local(std::string_view name) const {
 		const frame & f = frames_.back();
@@ -362,7 +371,13 @@ private:
 			break;
 		case vp::nk::if_stmt: compile_if(n); break;
 		case vp::nk::while_stmt: compile_while(n); break;
+		case vp::nk::do_stmt: compile_do_while(n); break;
 		case vp::nk::for_stmt: compile_for(n); break;
+		case vp::nk::break_stmt: compile_break(n); break;
+		case vp::nk::continue_stmt: compile_continue(n); break;
+		case vp::nk::labeled: compile_labeled(n); break;
+		case vp::nk::try_stmt: compile_try(n); break;
+		case vp::nk::throw_stmt: compile_throw(n); break;
 		case vp::nk::return_stmt:
 			if (n.a >= 0) {
 				const std::uint8_t r = alloc_reg();
@@ -402,22 +417,113 @@ private:
 		}
 	}
 
+	// One live loop. `break` and `continue` are forward jumps whose targets are
+	// not known until the loop is finished being compiled, so each records its
+	// jump site here and the loop patches them on the way out.
+	//
+	// `label` is what makes `break outer;` reach past an inner loop - without
+	// it, a labeled break silently becomes an ordinary one and leaves the wrong
+	// loop.
+	struct loop_context {
+		std::string label;
+		std::vector<std::size_t> breaks;
+		std::vector<std::size_t> continues;
+		std::size_t handler_depth = 0; // try blocks open when the loop started
+	};
+
+	void patch_breaks(loop_context & loop) {
+		for (const std::size_t site : loop.breaks) { patch_here(site); }
+	}
+	void patch_continues(loop_context & loop, std::size_t target) {
+		for (const std::size_t site : loop.continues) { patch_jump(site, target); }
+	}
+
+	// The loop a break/continue belongs to: the named one, or the innermost.
+	[[nodiscard]] loop_context * loop_for(std::string_view label) {
+		if (loops_.empty()) { return nullptr; }
+		if (label.empty()) { return &loops_.back(); }
+		for (std::size_t i = loops_.size(); i-- > 0;) {
+			if (loops_[i].label == label) { return &loops_[i]; }
+		}
+		return nullptr;
+	}
+
+	void compile_break(const vp::node & n) {
+		loop_context * loop = loop_for(n.text);
+		if (loop == nullptr) {
+			fail(n.text.empty() ? "break outside a loop" : "break to unknown label");
+			return;
+		}
+		// Leaving a try block by jumping out of it has to drop its handler, or
+		// the catch stays reachable after the loop is gone.
+		for (std::size_t i = handler_depth_; i > loop->handler_depth; --i) {
+			proto().emit(instruction{op::pop_handler});
+		}
+		loop->breaks.push_back(proto().emit(instruction{op::jump}));
+	}
+
+	void compile_continue(const vp::node & n) {
+		loop_context * loop = loop_for(n.text);
+		if (loop == nullptr) {
+			fail(n.text.empty() ? "continue outside a loop" : "continue to unknown label");
+			return;
+		}
+		for (std::size_t i = handler_depth_; i > loop->handler_depth; --i) {
+			proto().emit(instruction{op::pop_handler});
+		}
+		loop->continues.push_back(proto().emit(instruction{op::jump}));
+	}
+
+	// A labeled statement. Only labels on loops mean anything here: a label on
+	// anything else is legal JS but nothing can target it except `break`, and
+	// `break` out of a plain block is vanishingly rare.
+	void compile_labeled(const vp::node & n) {
+		pending_label_ = std::string{n.text};
+		compile_stmt(n.a);
+		pending_label_.clear();
+	}
+
 	void compile_while(const vp::node & n) {
 		const std::size_t top = proto().code.size();
+		loops_.push_back(loop_context{take_label(), {}, {}, handler_depth_});
 		const std::uint8_t mark = reg_mark();
 		const std::uint8_t cond = alloc_reg();
 		compile_expr(n.a, cond);
 		const std::size_t exit = proto().emit(instruction{op::jump_if_false, cond});
 		release_to(mark);
 		compile_stmt(n.b);
+		patch_continues(loops_.back(), top); // continue re-tests the condition
 		patch_jump(proto().emit(instruction{op::jump}), top);
 		patch_here(exit);
+		patch_breaks(loops_.back());
+		loops_.pop_back();
+	}
+
+	// do..while: the body runs before the first test, which is the whole
+	// difference and the reason it cannot share compile_while.
+	void compile_do_while(const vp::node & n) {
+		const std::size_t top = proto().code.size();
+		loops_.push_back(loop_context{take_label(), {}, {}, handler_depth_});
+		compile_stmt(n.a);
+		const std::size_t test = proto().code.size();
+		patch_continues(loops_.back(), test);
+		const std::uint8_t mark = reg_mark();
+		const std::uint8_t cond = alloc_reg();
+		compile_expr(n.b, cond);
+		const std::size_t exit = proto().emit(instruction{op::jump_if_false, cond});
+		release_to(mark);
+		patch_jump(proto().emit(instruction{op::jump}), top);
+		patch_here(exit);
+		patch_breaks(loops_.back());
+		loops_.pop_back();
 	}
 
 	void compile_for(const vp::node & n) {
 		push_scope();
+		const std::string label = take_label();
 		if (n.a >= 0) { compile_stmt(n.a); }
 		const std::size_t top = proto().code.size();
+		loops_.push_back(loop_context{label, {}, {}, handler_depth_});
 		std::size_t exit = 0;
 		bool has_cond = false;
 		if (n.b >= 0) {
@@ -429,6 +535,10 @@ private:
 			release_to(mark);
 		}
 		compile_stmt(n.d);
+		// `continue` in a for-loop runs the UPDATE and then re-tests - it does
+		// not skip back to the condition. Getting this wrong turns every
+		// `for (...; i++) { ... continue; }` into an infinite loop.
+		patch_continues(loops_.back(), proto().code.size());
 		if (n.c >= 0) {
 			const std::uint8_t mark = reg_mark();
 			const std::uint8_t tmp = alloc_reg();
@@ -437,7 +547,68 @@ private:
 		}
 		patch_jump(proto().emit(instruction{op::jump}), top);
 		if (has_cond) { patch_here(exit); }
+		patch_breaks(loops_.back());
+		loops_.pop_back();
 		pop_scope();
+	}
+
+	// try / catch / finally.
+	//
+	// `finally` is compiled by DUPLICATING its body on both exits - the normal
+	// one and the caught one. The alternative is a subroutine-return opcode,
+	// and duplication is the honest trade at this size: two copies of a small
+	// block against a control-flow mechanism nothing else needs. A `return`
+	// inside a try does NOT run the finally block, which is a real gap and is
+	// noted rather than hidden.
+	void compile_try(const vp::node & n) {
+		const std::int32_t catch_clause = n.b;
+		const std::int32_t finally_block = n.c;
+
+		std::uint8_t caught_reg = 0;
+		std::string caught_name;
+		if (catch_clause >= 0) {
+			// The parameter name is the clause's TEXT and the body is its `a`.
+			// Reading them as `a` and `b` compiled an empty catch block, so a
+			// throw jumped correctly and then fell straight through it.
+			caught_name = std::string{at(catch_clause).text};
+		}
+
+		push_scope();
+		caught_reg = alloc_reg();
+		const std::size_t guard = proto().emit(instruction{op::push_handler, caught_reg});
+		++handler_depth_;
+		compile_stmt(n.a);
+		proto().emit(instruction{op::pop_handler});
+		--handler_depth_;
+		if (finally_block >= 0) { compile_stmt(finally_block); }
+		const std::size_t done = proto().emit(instruction{op::jump});
+
+		// The catch block. push_handler's operand is a RELATIVE address, so it
+		// is patched the same way a forward jump is.
+		patch_here(guard);
+		if (catch_clause >= 0) {
+			push_scope();
+			if (!caught_name.empty()) { declare_local_at(caught_name, caught_reg); }
+			compile_stmt(at(catch_clause).a);
+			pop_scope();
+		}
+		if (finally_block >= 0) { compile_stmt(finally_block); }
+		patch_here(done);
+		pop_scope();
+	}
+
+	void compile_throw(const vp::node & n) {
+		const std::uint8_t mark = reg_mark();
+		const std::uint8_t r = alloc_reg();
+		compile_expr(n.a, r);
+		proto().emit(instruction{op::throw_value, r});
+		release_to(mark);
+	}
+
+	[[nodiscard]] std::string take_label() {
+		std::string out = std::move(pending_label_);
+		pending_label_.clear();
+		return out;
 	}
 
 	void compile_function_decl(std::int32_t idx) {
@@ -554,7 +725,7 @@ private:
 			proto().emit(instruction::with_bx(op::closure, dst, static_cast<std::uint16_t>(index)));
 			break;
 		}
-		case vp::nk::this_lit: proto().emit(instruction{op::load_undef, dst}); break;
+		case vp::nk::this_lit: proto().emit(instruction{op::load_this, dst}); break;
 		default:
 			fail("unsupported syntax in this VM subset (AST kind " +
 			     std::to_string(static_cast<int>(n.kind)) + ")");
@@ -669,74 +840,167 @@ private:
 		release_to(mark);
 	}
 
-	void compile_assign(const vp::node & n, std::uint8_t dst) {
-		const vp::node & target = at(n.a);
-		if (n.text != "=") {
-			fail("compound assignment '" + std::string{n.text} + "' is not in this VM subset yet");
-			return;
-		}
+	// A place a value can be read from AND written to.
+	//
+	// Compound assignment and ++/-- both have to evaluate their target once and
+	// then read-modify-write it. Re-compiling the target expression for the
+	// write would evaluate its side effects twice, so `a[i++] += 1` would
+	// increment i twice and store into the wrong slot. This is the shape that
+	// makes both of them correct, and it is why they share a code path.
+	struct reference {
+		enum class kind : std::uint8_t { local, boxed_local, upvalue, global, member, index };
+		kind what = kind::local;
+		std::uint8_t reg = 0;   // local/boxed: its register. member/index: the object.
+		std::uint8_t key = 0;   // index: the key register
+		std::uint16_t name = 0; // global/member: the name index
+	};
+
+	[[nodiscard]] reference prepare_reference(const vp::node & target) {
+		reference out;
 		if (target.kind == vp::nk::ident) {
 			if (const local * l = find_local_entry(fn(), target.text)) {
-				if (l->boxed) {
-					compile_expr(n.b, dst);
-					proto().emit(instruction{op::cell_set, l->reg, dst});
-				} else {
-					compile_expr(n.b, l->reg);
-					proto().emit(instruction{op::move, dst, l->reg});
-				}
-				return;
+				out.what = l->boxed ? reference::kind::boxed_local : reference::kind::local;
+				out.reg = l->reg;
+				return out;
 			}
-			const int up = resolve_upvalue(frames_.size() - 1, target.text);
-			if (up >= 0) {
-				compile_expr(n.b, dst);
-				proto().emit(instruction{op::set_upvalue, static_cast<std::uint8_t>(up), dst});
-				return;
+			if (const int up = resolve_upvalue(frames_.size() - 1, target.text); up >= 0) {
+				out.what = reference::kind::upvalue;
+				out.reg = static_cast<std::uint8_t>(up);
+				return out;
 			}
-			compile_expr(n.b, dst);
-			const std::uint16_t name = proto().add_name(std::string{target.text});
-			proto().emit(instruction::with_bx(op::set_global, dst, name));
-			return;
+			out.what = reference::kind::global;
+			out.name = proto().add_name(std::string{target.text});
+			return out;
 		}
 		if (target.kind == vp::nk::member) {
-			const std::uint8_t mark = reg_mark();
-			const std::uint8_t obj = alloc_reg();
-			compile_expr(target.a, obj);
-			compile_expr(n.b, dst);
-			const std::uint16_t name = proto().add_name(std::string{target.text});
-			proto().emit(instruction{op::set_prop, obj, static_cast<std::uint8_t>(name), dst});
-			release_to(mark);
-			return;
+			out.what = reference::kind::member;
+			out.reg = alloc_reg();
+			compile_expr(target.a, out.reg);
+			out.name = proto().add_name(std::string{target.text});
+			return out;
 		}
 		if (target.kind == vp::nk::index) {
-			const std::uint8_t mark = reg_mark();
-			const std::uint8_t obj = alloc_reg();
-			const std::uint8_t key = alloc_reg();
-			compile_expr(target.a, obj);
-			compile_expr(target.b, key);
+			out.what = reference::kind::index;
+			out.reg = alloc_reg();
+			out.key = alloc_reg();
+			compile_expr(target.a, out.reg);
+			compile_expr(target.b, out.key);
+			return out;
+		}
+		fail("unsupported assignment target");
+		return out;
+	}
+
+	void emit_load(const reference & ref, std::uint8_t dst) {
+		switch (ref.what) {
+		case reference::kind::local: proto().emit(instruction{op::move, dst, ref.reg}); break;
+		case reference::kind::boxed_local:
+			proto().emit(instruction{op::cell_get, dst, ref.reg});
+			break;
+		case reference::kind::upvalue:
+			proto().emit(instruction{op::get_upvalue, dst, ref.reg});
+			break;
+		case reference::kind::global:
+			proto().emit(instruction::with_bx(op::get_global, dst, ref.name));
+			break;
+		case reference::kind::member:
+			proto().emit(instruction{op::get_prop, dst, ref.reg, static_cast<std::uint8_t>(ref.name)});
+			break;
+		case reference::kind::index:
+			proto().emit(instruction{op::get_index, dst, ref.reg, ref.key});
+			break;
+		}
+	}
+
+	void emit_store(const reference & ref, std::uint8_t src) {
+		switch (ref.what) {
+		case reference::kind::local: proto().emit(instruction{op::move, ref.reg, src}); break;
+		case reference::kind::boxed_local:
+			proto().emit(instruction{op::cell_set, ref.reg, src});
+			break;
+		case reference::kind::upvalue:
+			proto().emit(instruction{op::set_upvalue, ref.reg, src});
+			break;
+		case reference::kind::global:
+			proto().emit(instruction::with_bx(op::set_global, src, ref.name));
+			break;
+		case reference::kind::member:
+			proto().emit(instruction{op::set_prop, ref.reg, static_cast<std::uint8_t>(ref.name), src});
+			break;
+		case reference::kind::index:
+			proto().emit(instruction{op::set_index, ref.reg, ref.key, src});
+			break;
+		}
+	}
+
+	// `+=` and friends. The operator is the assignment's text minus its '='.
+	[[nodiscard]] static op compound_op(std::string_view text, bool & ok) {
+		ok = true;
+		if (text == "+=") { return op::add_generic; }
+		if (text == "-=") { return op::sub; }
+		if (text == "*=") { return op::mul; }
+		if (text == "/=") { return op::div; }
+		if (text == "%=") { return op::mod; }
+		if (text == "**=") { return op::pow; }
+		ok = false;
+		return op::add;
+	}
+
+	void compile_assign(const vp::node & n, std::uint8_t dst) {
+		const vp::node & target = at(n.a);
+		const std::uint8_t mark = reg_mark();
+		const reference ref = prepare_reference(target);
+
+		if (n.text == "=") {
 			compile_expr(n.b, dst);
-			proto().emit(instruction{op::set_index, obj, key, dst});
+			emit_store(ref, dst);
 			release_to(mark);
 			return;
 		}
-		fail("unsupported assignment target");
+
+		// Logical assignment short-circuits: `a ||= b` must not evaluate b when
+		// a is already truthy, which is the whole reason it exists.
+		if (n.text == "||=" || n.text == "&&=" || n.text == "?\?=") {
+			emit_load(ref, dst);
+			const op test = n.text == "&&=" ? op::jump_if_false : op::jump_if_true;
+			const std::size_t skip = proto().emit(instruction{test, dst});
+			compile_expr(n.b, dst);
+			emit_store(ref, dst);
+			patch_here(skip);
+			release_to(mark);
+			return;
+		}
+
+		bool known = false;
+		const op operation = compound_op(n.text, known);
+		if (!known) {
+			fail("unsupported assignment operator '" + std::string{n.text} + "'");
+			release_to(mark);
+			return;
+		}
+		const std::uint8_t rhs = alloc_reg();
+		emit_load(ref, dst);
+		compile_expr(n.b, rhs);
+		proto().emit(instruction{operation, dst, dst, rhs});
+		emit_store(ref, dst);
+		release_to(mark);
 	}
 
 	void compile_update(const vp::node & n, std::uint8_t dst) {
 		const vp::node & target = at(n.a);
-		if (target.kind != vp::nk::ident) {
-			fail("++/-- is only supported on plain variables in this VM subset");
-			return;
-		}
 		const std::uint8_t mark = reg_mark();
+		// Through the same reference machinery as compound assignment, so
+		// `obj.n++` and `a[i]++` work and evaluate their target exactly once.
+		const reference ref = prepare_reference(target);
 		const std::uint8_t cur = alloc_reg();
 		const std::uint8_t one = alloc_reg();
-		emit_read(target.text, cur);
+		emit_load(ref, cur);
 		emit_const(one, value::number(1));
 		// postfix yields the OLD value, prefix the new one
 		if (n.b == 0) { proto().emit(instruction{op::move, dst, cur}); }
 		proto().emit(instruction{n.text == "++" ? op::add : op::sub, cur, cur, one});
 		if (n.b != 0) { proto().emit(instruction{op::move, dst, cur}); }
-		emit_write(target.text, cur);
+		emit_store(ref, cur);
 		release_to(mark);
 	}
 
@@ -827,6 +1091,9 @@ private:
 	const vp::ast & ast_;
 	program & out_;
 	std::vector<frame> frames_;
+	std::vector<loop_context> loops_;
+	std::string pending_label_;
+	std::size_t handler_depth_ = 0;
 };
 
 } // namespace ctbrowser::script
