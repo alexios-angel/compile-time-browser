@@ -24,6 +24,8 @@ import ctbrowser.shell;
 
 #include "check.hpp"
 #include <algorithm>
+#include <fstream>
+#include <sstream>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -46,6 +48,18 @@ void check(bool ok, std::string_view what) {
 
 // Everything the page ends up drawing as text. The honest way to ask "did the
 // page change", since that is what a user sees.
+[[nodiscard]] node_id find_id(browser & page, std::string_view want) {
+	const auto txn = page.doc().read();
+	const atom key = page.atoms().intern("id");
+	node_id found{};
+	const auto walk = [&](auto && self, node_id at) -> void {
+		if (!found && txn.attribute_value(at, key) == want) { found = at; }
+		for (const node_id c : txn.children(at)) { self(self, c); }
+	};
+	walk(walk, txn.root());
+	return found;
+}
+
 [[nodiscard]] std::string rendered_text(browser & page) {
 	std::string out;
 	const auto walk = [&](auto && self, const layout::fragment & f) -> void {
@@ -327,6 +341,165 @@ void test_window_and_performance() {
 	}
 }
 
+
+// --- input reaches script -------------------------------------------------
+//
+// This is the gap that made every game unplayable: the browser handled keys
+// itself - scrolling, caret movement - and never told the page. A page could
+// register a keydown listener and receive nothing, forever, with no error.
+
+void test_keyboard_reaches_script() {
+	browser page{browser_options{400, 200}};
+	page.load_html(R"(<body><script>
+	  document.addEventListener('keydown', function (e) {
+	    console.log('down ' + e.code + ' key=' + e.key + ' shift=' + e.shiftKey);
+	  });
+	  document.addEventListener('keyup', function (e) { console.log('up ' + e.code); });
+	</script></body>)");
+	check(page.script_error().empty(), "the script ran");
+
+	(void)page.handle(input_event::key_press("ArrowRight"));
+	(void)page.handle(input_event::key_release("ArrowRight"));
+	(void)page.handle(input_event::key_press("KeyA"));
+	(void)page.handle(input_event::key_press("KeyA", true));
+	(void)page.handle(input_event::key_press("Space"));
+
+	const auto log = page.bindings().console_output();
+	check(log.size() == 5, "five key events reached the page");
+	if (log.size() == 5) {
+		check(log[0] == "down ArrowRight key=ArrowRight shift=false", "an arrow key");
+		// A RELEASE, which did not exist at all before: without it a game that
+		// tracks held keys never stops moving.
+		check(log[1] == "up ArrowRight", "the release");
+		// `code` is the physical key, `key` is what it means - and shift is
+		// what makes them differ.
+		check(log[2] == "down KeyA key=a shift=false", "a letter");
+		check(log[3] == "down KeyA key=A shift=true", "the same letter shifted");
+		check(log[4] == "down Space key=  shift=false", "space's key is a space");
+	}
+}
+
+void test_preventDefault_stops_the_browser_acting() {
+	// Enough paragraphs to overflow a short viewport. NOT a styled height: the
+	// `style` ATTRIBUTE is not implemented (only <style> elements are), and a
+	// test about keyboard defaults should not quietly depend on that.
+	const char * tall = "<body><p>one</p><p>two</p><p>three</p><p>four</p><p>five</p>"
+	                    "<p>six</p><p>seven</p><p>eight</p>";
+
+	browser page{browser_options{200, 100}};
+	page.load_html(std::string{tall} + R"(<script>
+	  document.addEventListener('keydown', function (e) { e.preventDefault(); });
+	</script></body>)");
+	check(page.frame().has_value(), "the page renders");
+	check(page.max_scroll() > 0, "the page is taller than the viewport");
+	(void)page.handle(input_event::key_press("Space"));
+	check(page.scroll_y() == 0, "a cancelled keydown does not scroll the page");
+
+	// ...and without the listener it does, which is what makes the test above
+	// about preventDefault rather than about Space doing nothing.
+	browser plain{browser_options{200, 100}};
+	plain.load_html(std::string{tall} + "</body>");
+	check(plain.frame().has_value(), "the plain page renders");
+	(void)plain.handle(input_event::key_press("Space"));
+	check(plain.scroll_y() > 0, "an uncancelled Space still scrolls");
+}
+
+void test_mouse_reaches_script() {
+	browser page{browser_options{400, 200}};
+	page.load_html(R"(<body><script>
+	  document.addEventListener('mousemove', function (e) {
+	    console.log('move ' + e.clientX + ',' + e.clientY);
+	  });
+	  document.addEventListener('mousedown', function (e) { console.log('down ' + e.button); });
+	  document.addEventListener('mouseup', function () { console.log('up'); });
+	</script></body>)");
+	check(page.script_error().empty(), "the script ran");
+
+	(void)page.handle(input_event::mouse_move_to(40, 12));
+	(void)page.handle(input_event::mouse_down_at(40, 12));
+	(void)page.handle(input_event::mouse_up_at(40, 12));
+
+	const auto log = page.bindings().console_output();
+	check(log.size() == 3, "three mouse events reached the page");
+	if (log.size() == 3) {
+		// MDN's breakout moves its paddle from clientX alone, so the
+		// coordinates are the whole content of the event.
+		check(log[0] == "move 40,12", "the pointer position");
+		check(log[1] == "down 0", "the left button is 0 in the DOM, not 1");
+		check(log[2] == "up", "and the release");
+	}
+}
+
+
+// The end-to-end version of the three tests above, against a page nobody wrote
+// for this engine: MDN's breakout reads e.code and e.clientX, and if input does
+// not reach it the paddle simply never moves. Comparing frames with and without
+// input is the assertion, because "the paddle moved" is JS state this test
+// cannot see - but it can see the pixels.
+void test_a_real_page_responds_to_input() {
+	const auto render = [](std::string_view held) {
+		browser page{browser_options{480, 320}};
+		std::ifstream in{"examples-v2/pages/pong.html", std::ios::binary};
+		std::ostringstream buffer;
+		buffer << in.rdbuf();
+		page.load_html(buffer.str());
+		if (!held.empty()) { (void)page.handle(input_event::key_press(std::string{held})); }
+		for (int frame = 0; frame < 20; ++frame) {
+			(void)page.tick(1000.0 / 60.0);
+			(void)page.frame();
+		}
+		const auto image = page.read_pixels();
+		std::vector<std::uint32_t> pixels;
+		if (image) {
+			for (int y = 0; y < image->height(); ++y) {
+				const auto row = image->row(y);
+				pixels.insert(pixels.end(), row.begin(), row.end());
+			}
+		}
+		return pixels;
+	};
+
+	const std::vector<std::uint32_t> idle = render("");
+	const std::vector<std::uint32_t> pressed = render("ArrowRight");
+	check(!idle.empty(), "the page rendered");
+	check(idle.size() == pressed.size(), "both runs are the same size");
+	check(idle != pressed, "holding a key changes what MDN's breakout draws");
+
+	// The control: a key the page does not read must change NOTHING. Without
+	// it, "the frames differ" could just mean the run is not reproducible, and
+	// the test above would pass whether or not input worked.
+	check(render("KeyQ") == idle, "a key the page ignores changes nothing");
+}
+
+// The same question asked of the ported example page, because it is the one
+// whose key names I had to change: e.key was "Left", which nothing produces.
+void test_the_invaders_page_responds_to_input() {
+	const auto ship_row = [](std::string_view held) {
+		browser page{browser_options{320, 240}};
+		std::ifstream in{"examples-v2/pages/invaders.html", std::ios::binary};
+		std::ostringstream buffer;
+		buffer << in.rdbuf();
+		page.load_html(buffer.str());
+		if (!held.empty()) { (void)page.handle(input_event::key_press(std::string{held})); }
+		for (int frame = 0; frame < 30; ++frame) {
+			(void)page.tick(1000.0 / 60.0);
+			(void)page.frame();
+		}
+		// The ship's row of the canvas: moving left or right changes it, and
+		// the drifting aliens above do not touch it.
+		std::vector<std::uint32_t> row;
+		if (const auto pixels = page.canvases().pixels_of(find_id(page, "game"))) {
+			for (int x = 0; x < pixels->width; ++x) { row.push_back(pixels->at(x, 224)); }
+		}
+		return row;
+	};
+
+	const std::vector<std::uint32_t> still = ship_row("");
+	check(!still.empty(), "the game drew a ship");
+	check(ship_row("ArrowLeft") != still, "holding left moves the ship");
+	check(ship_row("KeyQ") == still, "a key the page ignores does not");
+}
+
 } // namespace
 
 int main() {
@@ -347,6 +520,11 @@ int main() {
 
 	test_a_broken_script_still_renders();
 	test_window_and_performance();
+	test_keyboard_reaches_script();
+	test_preventDefault_stops_the_browser_acting();
+	test_mouse_reaches_script();
+	test_a_real_page_responds_to_input();
+	test_the_invaders_page_responds_to_input();
 
 	REPORT("bindings_basics");
 }

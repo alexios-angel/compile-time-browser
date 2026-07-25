@@ -32,16 +32,17 @@
 
 	// Held keys, from keydown/keyup. v1 had an isKeyDown() global for this;
 	// tracking it in the page is what every real game does and it needs no
-	// engine support at all.
+	// engine support at all. Keyed by e.code - the PHYSICAL key - which is
+	// also what pong reads.
 	const held = {};
 	document.addEventListener("keydown", function (e) {
-		held[e.key] = true;
-		if (e.key === "Space" && bullet === null) {
+		held[e.code] = true;
+		if (e.code === "Space" && bullet === null) {
 			bullet = {x: ship + 7, y: 210};
 			playSound("examples/assets/blip.wav");
 		}
 	});
-	document.addEventListener("keyup", function (e) { held[e.key] = false; });
+	document.addEventListener("keyup", function (e) { held[e.code] = false; });
 
 	let previous = 0;
 	function frame(now) {
@@ -51,8 +52,8 @@
 		clock += dt;
 		const animation = Math.floor(clock * 4) % 2;
 
-		if (held["Left"]) { ship -= 140 * dt; }
-		if (held["Right"]) { ship += 140 * dt; }
+		if (held["ArrowLeft"]) { ship -= 140 * dt; }
+		if (held["ArrowRight"]) { ship += 140 * dt; }
 		if (ship < 0) { ship = 0; }
 		if (ship > 304) { ship = 304; }
 

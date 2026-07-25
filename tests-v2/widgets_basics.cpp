@@ -190,7 +190,9 @@ void test_selection_and_replacement() {
 	page.load_html("<html><body><input id=t type=text value=hello></body></html>");
 	check(page.frame().has_value(), "the page renders");
 	click(page, box_of(page, "t"));
-	(void)page.handle(input_event::key_press("SelectAll"));
+	// Ctrl+A, as the platform actually delivers it: the physical key plus the
+	// modifier, not a made-up "SelectAll" name no keyboard produces.
+	(void)page.handle(input_event::key_press("KeyA", false, true));
 	check(page.text_input("bye"), "typing over a selection");
 	check(value_of(page, "t") == "bye", "replaces it");
 }

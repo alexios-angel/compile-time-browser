@@ -231,12 +231,20 @@ public:
 		case input_kind::wheel:
 			scroll_by(-event.wheel_y * options_.wheel_step);
 			return true;
-		case input_kind::mouse_move: return set_hover(hit_test(event.x, event.y));
+		case input_kind::mouse_move: {
+			const node_id under = hit_test(event.x, event.y);
+			// A page tracking the pointer - MDN's breakout moves its paddle
+			// this way - needs the event whether or not the hover state moved.
+			const bool dispatched = dispatch_mouse("mousemove", under, event);
+			return set_hover(under) || dispatched;
+		}
 		case input_kind::mouse_down:
 			pressed_ = hit_test(event.x, event.y);
+			(void)dispatch_mouse("mousedown", pressed_, event);
 			return set_state(pressed_, state_active, true);
 		case input_kind::mouse_up: {
 			bool changed = set_state(pressed_, state_active, false);
+			(void)dispatch_mouse("mouseup", hit_test(event.x, event.y), event);
 			// Focus follows the press, and moves even when the click lands on
 			// nothing - which is how clicking the page background blurs a field.
 			changed = focus(control_ancestor(pressed_)) || changed;
@@ -255,6 +263,7 @@ public:
 			return changed;
 		}
 		case input_kind::key_down: return handle_key(event);
+		case input_kind::key_up: return dispatch_key("keyup", event);
 		case input_kind::text_input: return text_input(event.key);
 		case input_kind::resize:
 			resize(static_cast<int>(event.x), static_cast<int>(event.y));
@@ -656,20 +665,51 @@ private:
 		return changed;
 	}
 
+	// A key event reaches SCRIPT FIRST, and the built-in behaviour - scrolling,
+	// caret movement - is the DEFAULT ACTION that runs only if no listener
+	// cancelled it. Handling the key first and never telling the page was why a
+	// game could not read the keyboard at all: Space scrolled the document
+	// instead of firing the gun.
 	bool handle_key(const input_event & event) {
-		// A focused editable takes the keys first: Home in a text field moves
-		// the caret, not the page.
+		if (dispatch_key("keydown", event)) { return true; }
+
 		if (control_state * control = editable_focus(); control != nullptr) {
 			if (edit_key(*control, event)) { return true; }
 		}
 		const float page = static_cast<float>(options_.height) * 0.9f;
-		if (event.key == "Down") { scroll_by(options_.wheel_step); return true; }
-		if (event.key == "Up") { scroll_by(-options_.wheel_step); return true; }
+		if (event.key == "ArrowDown") { scroll_by(options_.wheel_step); return true; }
+		if (event.key == "ArrowUp") { scroll_by(-options_.wheel_step); return true; }
 		if (event.key == "PageDown" || event.key == "Space") { scroll_by(page); return true; }
 		if (event.key == "PageUp") { scroll_by(-page); return true; }
 		if (event.key == "Home") { scroll_to(0); return true; }
 		if (event.key == "End") { scroll_to(max_scroll()); return true; }
 		return false;
+	}
+
+	// Returns whether a listener cancelled the default action - NOT whether
+	// anything was dispatched, because the caller's question is "may I still do
+	// my own thing with this key".
+	bool dispatch_key(std::string_view type, const input_event & event) {
+		if (!bindings_) { return false; }
+		// At the focused element, so a keystroke in a text field is that
+		// field's event; at the body otherwise, which is where a game listens.
+		const node_id target = focused_ ? focused_ : body_node();
+		return bindings_->dispatch_key(type, target, event);
+	}
+	bool dispatch_mouse(std::string_view type, node_id target, const input_event & event) {
+		if (!bindings_) { return false; }
+		return bindings_->dispatch_mouse(type, target ? target : body_node(), event);
+	}
+	[[nodiscard]] node_id body_node() {
+		const auto txn = doc_->read();
+		const atom body = atoms_.intern_lower("body");
+		node_id found{};
+		const auto walk = [&](auto && self, node_id at) -> void {
+			if (!found && txn.tag(at).value_or(atom{}) == body) { found = at; }
+			for (const node_id child : txn.children(at)) { self(self, child); }
+		};
+		walk(walk, txn.root());
+		return found ? found : txn.root();
 	}
 
 	// The DOM and the cascade are rebuilt on navigation, and neither type is
@@ -728,16 +768,16 @@ private:
 		const std::string & key = event.key;
 		if (key == "Backspace") { return edited(forms_.backspace(control)); }
 		if (key == "Delete") { return edited(forms_.delete_forward(control)); }
-		if (key == "Left") { return moved(forms_.move_caret(control, -1, event.shift)); }
-		if (key == "Right") { return moved(forms_.move_caret(control, 1, event.shift)); }
+		if (key == "ArrowLeft") { return moved(forms_.move_caret(control, -1, event.shift)); }
+		if (key == "ArrowRight") { return moved(forms_.move_caret(control, 1, event.shift)); }
 		if (key == "Home") { return moved(forms_.move_to_edge(control, false, event.shift)); }
 		if (key == "End") { return moved(forms_.move_to_edge(control, true, event.shift)); }
-		if (key == "SelectAll") {
+		if (event.ctrl && key == "KeyA") {
 			forms_.select_all(control);
 			mark(dirty::paint);
 			return true;
 		}
-		if (key == "Return") {
+		if (key == "Enter") {
 			// In a textarea this is a newline; in a single-line field it submits
 			// the form, which is the implicit-submission rule every login page
 			// depends on.

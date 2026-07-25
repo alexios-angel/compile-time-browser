@@ -188,31 +188,61 @@ struct window_deleter {
 	void operator()(SDL_Window * w) const noexcept { SDL_DestroyWindow(w); }
 };
 
-// SDL keys to the DOM-ish names the browser understands.
+// An SDL scancode as the DOM `code` of the physical key.
 //
-// The old table had seven entries and omitted every editing key, so typing into
-// an <input> was impossible through this layer even though the forms stack
-// supported it completely. The text itself arrives via SDL_EVENT_TEXT_INPUT,
-// not from key codes - that is the only path that gets IME, dead keys and
-// non-Latin layouts right.
-[[nodiscard]] inline std::string dom_key_name(SDL_Keycode key, SDL_Keymod mod) {
-	if ((mod & SDL_KMOD_CTRL) != 0 && key == SDLK_A) { return "SelectAll"; }
-	switch (key) {
-	case SDLK_LEFT: return "Left";
-	case SDLK_RIGHT: return "Right";
-	case SDLK_DOWN: return "Down";
-	case SDLK_UP: return "Up";
-	case SDLK_PAGEDOWN: return "PageDown";
-	case SDLK_PAGEUP: return "PageUp";
-	case SDLK_HOME: return "Home";
-	case SDLK_END: return "End";
-	case SDLK_SPACE: return "Space";
-	case SDLK_BACKSPACE: return "Backspace";
-	case SDLK_DELETE: return "Delete";
-	case SDLK_RETURN:
-	case SDLK_KP_ENTER: return "Return";
-	case SDLK_TAB: return "Tab";
-	case SDLK_ESCAPE: return "Escape";
+// SCANCODE, not keycode: `code` is defined as the key's position, so the key
+// left of Z is "KeyZ" on QWERTY and on AZERTY alike. The keycode would give
+// "KeyW" on AZERTY, which is what `key` is for and this is not.
+//
+// The table this replaces had FIFTEEN entries and no letters or digits at all,
+// so a page bound to WASD received nothing - translate() returned false and the
+// event was dropped before the browser ever saw it.
+[[nodiscard]] inline std::string dom_key_code(SDL_Scancode code) {
+	if (code >= SDL_SCANCODE_A && code <= SDL_SCANCODE_Z) {
+		return std::string{"Key"} + static_cast<char>('A' + (code - SDL_SCANCODE_A));
+	}
+	if (code >= SDL_SCANCODE_1 && code <= SDL_SCANCODE_9) {
+		return std::string{"Digit"} + static_cast<char>('1' + (code - SDL_SCANCODE_1));
+	}
+	if (code >= SDL_SCANCODE_F1 && code <= SDL_SCANCODE_F12) {
+		return std::string{"F"} + std::to_string(1 + (code - SDL_SCANCODE_F1));
+	}
+	switch (code) {
+	case SDL_SCANCODE_0: return "Digit0";
+	case SDL_SCANCODE_LEFT: return "ArrowLeft";
+	case SDL_SCANCODE_RIGHT: return "ArrowRight";
+	case SDL_SCANCODE_DOWN: return "ArrowDown";
+	case SDL_SCANCODE_UP: return "ArrowUp";
+	case SDL_SCANCODE_PAGEDOWN: return "PageDown";
+	case SDL_SCANCODE_PAGEUP: return "PageUp";
+	case SDL_SCANCODE_HOME: return "Home";
+	case SDL_SCANCODE_END: return "End";
+	case SDL_SCANCODE_SPACE: return "Space";
+	case SDL_SCANCODE_BACKSPACE: return "Backspace";
+	case SDL_SCANCODE_DELETE: return "Delete";
+	case SDL_SCANCODE_RETURN:
+	case SDL_SCANCODE_KP_ENTER: return "Enter";
+	case SDL_SCANCODE_TAB: return "Tab";
+	case SDL_SCANCODE_ESCAPE: return "Escape";
+	case SDL_SCANCODE_LSHIFT: return "ShiftLeft";
+	case SDL_SCANCODE_RSHIFT: return "ShiftRight";
+	case SDL_SCANCODE_LCTRL: return "ControlLeft";
+	case SDL_SCANCODE_RCTRL: return "ControlRight";
+	case SDL_SCANCODE_LALT: return "AltLeft";
+	case SDL_SCANCODE_RALT: return "AltRight";
+	case SDL_SCANCODE_MINUS: return "Minus";
+	case SDL_SCANCODE_EQUALS: return "Equal";
+	case SDL_SCANCODE_COMMA: return "Comma";
+	case SDL_SCANCODE_PERIOD: return "Period";
+	case SDL_SCANCODE_SLASH: return "Slash";
+	case SDL_SCANCODE_SEMICOLON: return "Semicolon";
+	case SDL_SCANCODE_APOSTROPHE: return "Quote";
+	case SDL_SCANCODE_LEFTBRACKET: return "BracketLeft";
+	case SDL_SCANCODE_RIGHTBRACKET: return "BracketRight";
+	case SDL_SCANCODE_BACKSLASH: return "Backslash";
+	case SDL_SCANCODE_GRAVE: return "Backquote";
+	case SDL_SCANCODE_CAPSLOCK: return "CapsLock";
+	case SDL_SCANCODE_INSERT: return "Insert";
 	default: return {};
 	}
 }
@@ -248,6 +278,11 @@ public:
 		SDL_Event event;
 		while (SDL_PollEvent(&event)) {
 			if (event.type == SDL_EVENT_QUIT) { return false; }
+			// Window coordinates are not page coordinates when the page is
+			// presented letterboxed: a 320x240 game in a 960x720 window gets
+			// every pointer event at three times the position it should be, and
+			// most of them outside the page entirely.
+			SDL_ConvertEventToRenderCoordinates(renderer_, &event);
 			input_event translated;
 			if (translate(event, translated) && page.handle(translated)) { changed = true; }
 		}
@@ -294,10 +329,18 @@ private:
 			// The typed text itself, which is not derivable from key codes.
 			out = input_event::typed(std::string{event.text.text});
 			return true;
-		case SDL_EVENT_KEY_DOWN: {
-			std::string name = dom_key_name(event.key.key, event.key.mod);
-			if (name.empty()) { return false; }
-			out = input_event::key_press(std::move(name), (event.key.mod & SDL_KMOD_SHIFT) != 0);
+		case SDL_EVENT_KEY_DOWN:
+		case SDL_EVENT_KEY_UP: {
+			std::string code = dom_key_code(event.key.scancode);
+			if (code.empty()) { return false; }
+			const bool shift = (event.key.mod & SDL_KMOD_SHIFT) != 0;
+			const bool ctrl = (event.key.mod & SDL_KMOD_CTRL) != 0;
+			// A key RELEASE is half the information a game needs. Without it
+			// every held key stays down forever, so a paddle that starts moving
+			// never stops.
+			out = event.type == SDL_EVENT_KEY_DOWN
+			          ? input_event::key_press(std::move(code), shift, ctrl)
+			          : input_event::key_release(std::move(code), shift, ctrl);
 			return true;
 		}
 		case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:

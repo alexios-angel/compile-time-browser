@@ -136,6 +136,40 @@ not — so an animation re-rasters without re-recording or re-laying-out.
 the BabylonJS shim, `<select>` popups and page-level text selection. See
 `docs/v1-retirement.md`.
 
+## v2 INPUT: the page gets the events (2026-07-25)
+
+**Keys and the pointer reach SCRIPT, and the browser's own behaviour is the
+DEFAULT ACTION.** `handle_key` dispatches `keydown` first and only scrolls or
+moves a caret if no listener called `preventDefault`. Before this the browser
+consumed keys itself and never told the page, so a game could register a
+`keydown` listener and receive nothing, forever, with no error — Space scrolled
+the document instead of firing.
+
+Dispatched now: `keydown`, `keyup`, `mousemove`, `mousedown`, `mouseup` (plus
+`click`, which already worked). Events carry what pages actually read —
+`code`/`key`/`shiftKey`/`ctrlKey`, and `clientX`/`clientY`/`button`.
+
+**`input_event::key` IS the DOM `code`** ("ArrowLeft", "Space", "KeyA",
+"Digit1", "Enter") — one vocabulary, not a private one translated at the edge.
+The private one ("Left", "Return", and a "SelectAll" no keyboard produces) was
+invisible to pages, which compare against `e.code`. `dom_key_value` derives the
+DOM `key` from it (shift-aware: `KeyA` → "a" or "A").
+
+Three things the SDL layer was missing and now has:
+- **`SDL_EVENT_KEY_UP`** — `input_kind::key_up`. Without a release every held
+  key sticks down forever, so a paddle that starts moving never stops.
+- **letters and digits** — the old table had FIFTEEN entries and no letters, so
+  a WASD page got nothing: `translate()` returned false and the event was
+  dropped before the browser saw it. Keyed by SCANCODE, since `code` is defined
+  as the key's position.
+- **`SDL_ConvertEventToRenderCoordinates`** — window coordinates are not page
+  coordinates under letterboxed presentation. invaders is 320x240 in a 960x720
+  window, so every pointer event arrived at three times its true position.
+
+`tests-v2/bindings_basics` drives all of it, and finishes by holding a key
+through MDN's breakout and asserting the frames differ — with a key the page
+ignores as the control, so "the frames differ" cannot pass by nondeterminism.
+
 ## v2 RESOURCES: assets, images, fetch (2026-07-25)
 
 `ctbrowser.shell:assets` is the registry every load goes through — an

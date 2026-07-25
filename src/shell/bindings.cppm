@@ -115,8 +115,47 @@ public:
 	// Returns whether a listener called preventDefault.
 	bool dispatch(std::string_view type, node_id target) {
 		if (cx_ == nullptr) { return false; }
-		const auto txn = doc_->read();
+		return dispatch_event(type, target, make_event(*cx_, type, target));
+	}
+
+	// A KeyboardEvent. `code` is the physical key and `key` is what it means -
+	// pages read both, and an event object carrying neither is why a page could
+	// register a keydown listener and never learn which key was pressed.
+	bool dispatch_key(std::string_view type, node_id target, const input_event & input) {
+		if (cx_ == nullptr) { return false; }
 		value event = make_event(*cx_, type, target);
+		auto * object = static_cast<script::object_object *>(event.as_heap());
+		object->set("code", cx_->string(input.key));
+		object->set("key", cx_->string(dom_key_value(input.key, input.shift)));
+		object->set("shiftKey", value::boolean(input.shift));
+		object->set("ctrlKey", value::boolean(input.ctrl));
+		object->set("altKey", value::boolean(false));
+		object->set("metaKey", value::boolean(false));
+		object->set("repeat", value::boolean(false));
+		return dispatch_event(type, target, event);
+	}
+
+	// A MouseEvent. clientX/clientY are viewport coordinates, which is what
+	// MDN's breakout reads to move its paddle.
+	bool dispatch_mouse(std::string_view type, node_id target, const input_event & input) {
+		if (cx_ == nullptr) { return false; }
+		value event = make_event(*cx_, type, target);
+		auto * object = static_cast<script::object_object *>(event.as_heap());
+		object->set("clientX", value::number(input.x));
+		object->set("clientY", value::number(input.y));
+		object->set("pageX", value::number(input.x));
+		object->set("pageY", value::number(input.y));
+		// SDL numbers buttons from 1; the DOM numbers them from 0, with 2 for
+		// the right button rather than 3.
+		const int dom_button = input.button == 3 ? 2 : (input.button > 0 ? input.button - 1 : 0);
+		object->set("button", value::number(dom_button));
+		object->set("shiftKey", value::boolean(input.shift));
+		object->set("ctrlKey", value::boolean(input.ctrl));
+		return dispatch_event(type, target, event);
+	}
+
+	bool dispatch_event(std::string_view type, node_id target, value event) {
+		const auto txn = doc_->read();
 		for (node_id at = target; at; at = txn.parent(at)) {
 			fire_at(at, type, event);
 		}

@@ -33,15 +33,16 @@ int main() {
 	var held = {};
 	var markers = [];
 
-	document.addEventListener("keydown", function (e) { held[e.key] = true; });
-	document.addEventListener("keyup", function (e) { held[e.key] = false; });
+	// e.code is the PHYSICAL key, so this reads the same on any layout.
+	document.addEventListener("keydown", function (e) { held[e.code] = true; });
+	document.addEventListener("keyup", function (e) { held[e.code] = false; });
 
 	function step() {
 		var speed = 4;
-		if (held["Left"])  { x -= speed; }
-		if (held["Right"]) { x += speed; }
-		if (held["Up"])    { y -= speed; }
-		if (held["Down"])  { y += speed; }
+		if (held["ArrowLeft"])  { x -= speed; }
+		if (held["ArrowRight"]) { x += speed; }
+		if (held["ArrowUp"])    { y -= speed; }
+		if (held["ArrowDown"])  { y += speed; }
 		x = Math.max(10, Math.min(board.width - 10, x));
 		y = Math.max(10, Math.min(board.height - 10, y));
 
