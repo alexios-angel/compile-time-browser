@@ -5,22 +5,26 @@
 // on somebody else's uptime is not a test - but the code path exercised is the
 // real one, sockets and all.
 
-import ctbrowser;
-
-#include "check.hpp"
-
-#include <atomic>
-#include <cstdio>
-#include <string>
-#include <chrono>
-#include <thread>
-#include <vector>
-
+// Asio BEFORE the module import, deliberately. On Windows its headers drag in
+// <windows.h>, and a non-modular header included AFTER an import that already
+// consumed it is seen twice - which clang reports as several hundred
+// "conflicting types" errors against identical declarations.
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/write.hpp>
+
+#include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <string>
+#include <thread>
+#include <vector>
+
+import ctbrowser;
+
+#include "check.hpp"
 
 namespace {
 

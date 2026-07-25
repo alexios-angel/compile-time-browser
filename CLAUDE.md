@@ -178,26 +178,54 @@ keydown/keyup, `requestAnimationFrame`, sound) and `fetchboard` (a baked-in
 resource AND a live HTTP GET) are ported. Both pages were rewritten off v1's
 `onFrame`/`isKeyDown`/`getContext(id)` shorthand onto the real web APIs.
 
-## ⚠️ v2 GPU: this machine has NO GPU (verified 2026-07-25)
+## v2 GPU: Linux binaries here see no adapter — WINDOWS ONES DO (2026-07-25)
 
-`src/gpu` (SDL3 `SDL_GPUDevice`) builds and RUNS here, but the only Vulkan
-ICD that survives loading is **lavapipe** (`lvp_icd.json`) — every hardware
-ICD is dropped with "not having any physical devices". `/dev/dxg` and
-`/usr/lib/wsl/lib/libd3d12.so` exist, but no `dzn`/`d3d12` Vulkan ICD is
-installed to bridge to them, so **Linux binaries under this WSL2 see no
-adapter**. `SDL_GetGPUDeviceDriver` says "vulkan" either way — the adapter
-name (`SDL_PROP_GPU_DEVICE_NAME_STRING`, exposed as
-`sdl_gpu_backend::adapter()`) is what tells you, and
-`adapter_is_software()` checks it.
+`src/gpu` (SDL3 `SDL_GPUDevice`) builds and RUNS under this WSL2, but the only
+Vulkan ICD that survives loading is **lavapipe** (`lvp_icd.json`) — every
+hardware ICD is dropped with "not having any physical devices". `/dev/dxg` and
+`/usr/lib/wsl/lib/libd3d12.so` exist, but no `dzn`/`d3d12` Vulkan ICD bridges to
+them. `SDL_GetGPUDeviceDriver` says "vulkan" either way — the adapter name
+(`SDL_PROP_GPU_DEVICE_NAME_STRING`, exposed as `sdl_gpu_backend::adapter()`) is
+what tells you, and `adapter_is_software()` checks it.
 
-Consequences: GPU **correctness** is verifiable here (tests-v2/gpu_basics
-compares the GPU image to the software one byte for byte, and passes), but
-GPU **performance** is not — `tests-v2/bench_gpu` prints a loud banner and
-its numbers are two CPU implementations racing. For a real number build the
-Windows .exe (`cmake --preset windows`, or `./tools/remote-build.sh
-windows`, both now with `CTBROWSER_BUILD_TESTS=ON`) and run it from
-Windows. Headless GPU runs need `SDL_VIDEODRIVER=offscreen`; `dummy` has no
-Vulkan surface support and fails device creation outright.
+**The cross-compiled .exe sees the real GPU.** Run under WSL interop,
+`build-windows/src/tests-v2/ctbrowser-v2-gpu_basics.exe` selects
+**`Intel(R) Arc(TM) Graphics`** and its render matches the software one exactly
+(0 of 120000 pixels differ). So GPU **correctness** is verifiable both ways, and
+GPU **performance** numbers must come from the Windows build — `bench_gpu`
+prints a loud banner on Linux here because its numbers would be two CPU
+implementations racing. Headless GPU runs need `SDL_VIDEODRIVER=offscreen`;
+`dummy` has no Vulkan surface support and fails device creation outright.
+
+## Windows cross-build (2026-07-25)
+
+`cmake --preset windows -DCTBROWSER_BUILD_V1=OFF && cmake --build --preset
+windows && cmake --build --preset windows --target windows-dist-v2` →
+**`examples-windows-v2/`** (its own directory: four example names collide with
+v1's `examples-windows/`). It carries the exes, SDL3.dll and the pages/assets
+the examples load, laid out repo-relatively so the exes work from its root.
+The exes import **only SDL3.dll + the system UCRT** — no libc++, no libunwind.
+
+Toolchain, all fetched rather than built: llvm-mingw std::embed release
+(`tools/llvm-mingw/`, 84 MB), SDL3-devel mingw (`~/projects/sdl3-mingw`), and
+**Boost as an isolated include dir** (`~/projects/boost-inc/boost` symlinked at
+the host's) — there is no BoostConfig for the cross target and none is needed,
+since v2 links `Boost::headers` and nothing else. The toolchain file finds it
+the same way it finds GLM's.
+
+Degrades as designed: no OpenSSL for mingw → `fetch` does http:// only and says
+so; no SDL3_image → `<img>` reads BMP only. Asio needs `ws2_32`/`mswsock`, which
+nothing links implicitly.
+
+**Verified**: all 19 v2 tests pass as Windows binaries, and the five renderable
+examples produce screenshots BYTE-IDENTICAL to the Linux ones.
+
+**Running a Windows exe from WSL needs `WSLENV`** or none of the
+`CTBROWSER_*`/`SDL_*` environment variables reach it — and the flag is
+`/w` (Win32 invoked from WSL), not `/u`:
+`WSLENV=CTBROWSER_TEST_FRAMES/w:CTBROWSER_SCREENSHOT/w:SDL_VIDEODRIVER/w`.
+Without it the app opens a real window and never exits, because it never sees
+the frame cap.
 
 ## ⚠️ Working environment & in-flight work (READ FIRST — 2026-07-22)
 

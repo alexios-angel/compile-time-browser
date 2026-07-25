@@ -13,6 +13,9 @@ examples/pong.inc
 *.log
 *.ppm
 examples-windows/
+examples-windows-v2/
+build-windows/
+tools/llvm-mingw/
 build-clang/
 build-tsan/
 build-asan/

@@ -17,7 +17,20 @@ endif()
 # shipped its own package config for years. Header-only usage only - see the
 # plan's dependency policy: compiled Boost would mean cross-compiling Boost
 # itself for the llvm-mingw Windows presets.
-find_package(Boost 1.80 REQUIRED CONFIG)
+#
+# CROSS BUILDS have no BoostConfig for the target and do not need one: what v2
+# links is Boost::headers, so an isolated include directory (the toolchain finds
+# it, the same way it finds GLM's) is the entire dependency.
+if(CTBROWSER_BOOST_INCLUDE_DIR)
+  if(NOT TARGET Boost::headers)
+    add_library(Boost::headers INTERFACE IMPORTED)
+    set_target_properties(Boost::headers PROPERTIES
+      INTERFACE_INCLUDE_DIRECTORIES "${CTBROWSER_BOOST_INCLUDE_DIR}")
+  endif()
+  message(STATUS "ctbrowser v2: header-only Boost from ${CTBROWSER_BOOST_INCLUDE_DIR}")
+else()
+  find_package(Boost 1.80 REQUIRED CONFIG)
+endif()
 
 # v2 is NOT header-only and does NOT depend on std::embed. Keeping the warning
 # set identical to v1's is deliberate - the rewrite should not quietly relax the
@@ -225,6 +238,11 @@ endif()
 # https:// needs TLS, and TLS needs OpenSSL - which is NOT Boost, so it does not
 # touch the header-only-Boost rule. It IS optional: without it the build still
 # does http:// and rejects https:// by name.
+# Asio's Windows backend is winsock; nothing links it implicitly.
+if(WIN32)
+  target_link_libraries(ctbrowser-shell PUBLIC ws2_32 mswsock)
+endif()
+
 find_package(OpenSSL QUIET COMPONENTS SSL Crypto)
 if(OpenSSL_FOUND)
   target_link_libraries(ctbrowser-shell PUBLIC OpenSSL::SSL OpenSSL::Crypto)

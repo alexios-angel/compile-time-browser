@@ -1,5 +1,6 @@
 module;
 #include <array>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -7,6 +8,7 @@ module;
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 export module ctbrowser.script:vm;
@@ -717,11 +719,14 @@ inline value context::run_loop(std::size_t stop_depth) {
 			if (target.is_object()) {
 				present = static_cast<object_object *>(target.as_heap())->find(key) != nullptr;
 			} else if (target.is_array()) {
-				char * end = nullptr;
-				const double n = std::strtod(key.c_str(), &end);
-				present = end != key.c_str() && n >= 0 &&
-				          static_cast<std::size_t>(n) <
-				              static_cast<array_object *>(target.as_heap())->items.size();
+				// `0 in [7, 8]` asks about an INDEX, so the key has to be a
+				// whole number and the whole key - "1x" is not index 1.
+				std::size_t index = 0;
+				const char * first = key.data();
+				const char * last = first + key.size();
+				const auto [stopped, failed] = std::from_chars(first, last, index);
+				present = failed == std::errc{} && stopped == last &&
+				          index < static_cast<array_object *>(target.as_heap())->items.size();
 			}
 			reg(in.a) = value::boolean(present);
 			break;

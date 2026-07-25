@@ -39,3 +39,47 @@ foreach(source ${v2-example-sources})
       "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;CTBROWSER_TEST_FRAMES=30;CTBROWSER_NETWORK=0;CTBROWSER_SCREENSHOT=${CMAKE_BINARY_DIR}/v2-shot-${example}.ppm")
   endif()
 endforeach()
+
+# --- Windows cross builds -------------------------------------------------
+#
+# `windows-dist-v2` collects the exes, SDL3.dll (the ONE runtime dependency -
+# everything else is static) and the DATA the examples load into
+# examples-windows-v2/, ready to copy to a Windows host and run.
+#
+# The pages and assets have to come too: a v2 example calls run_app_file with a
+# REPOSITORY-RELATIVE path, so the folder mirrors that layout and the exes work
+# when run from its root.
+#
+# Its own directory rather than v1's examples-windows/: several names collide
+# (counter, game, invaders, fetchboard) and overwriting v1's binaries with v2's
+# would be silent.
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
+  find_file(CTBROWSER_SDL3_DLL SDL3.dll PATH_SUFFIXES bin)
+  set(v2-dist-dir "${PROJECT_SOURCE_DIR}/examples-windows-v2")
+  set(v2-dist-commands COMMAND ${CMAKE_COMMAND} -E make_directory "${v2-dist-dir}")
+  foreach(source ${v2-example-sources})
+    get_filename_component(example "${source}" NAME_WE)
+    list(APPEND v2-dist-commands
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              "$<TARGET_FILE:ctbrowser-v2-example-${example}>" "${v2-dist-dir}/${example}.exe")
+    list(APPEND v2-dist-targets ctbrowser-v2-example-${example})
+  endforeach()
+  if(CTBROWSER_SDL3_DLL)
+    list(APPEND v2-dist-commands
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CTBROWSER_SDL3_DLL}" "${v2-dist-dir}")
+  endif()
+  # Named files, not the whole assets tree: that also holds v1's glTF models
+  # and p5.js, which is 20 MB no v2 example opens.
+  list(APPEND v2-dist-commands
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/pages" "${v2-dist-dir}/examples-v2/pages"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${v2-dist-dir}/examples/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${PROJECT_SOURCE_DIR}/examples/assets/sprites.bmp"
+            "${PROJECT_SOURCE_DIR}/examples/assets/blip.wav"
+            "${v2-dist-dir}/examples/assets")
+  add_custom_target(windows-dist-v2 ${v2-dist-commands}
+    DEPENDS ${v2-dist-targets}
+    COMMENT "collecting v2 Windows exes + SDL3.dll + pages into examples-windows-v2/"
+    VERBATIM)
+endif()

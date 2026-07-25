@@ -14,6 +14,10 @@
 #   GLM        $GLM_INC, ~/projects/glm-inc - an ISOLATED directory holding
 #              glm/ only. Never a general /usr/include: that would drag the
 #              host's glibc headers into the mingw compile.
+#   Boost      $BOOST_INC, ~/projects/boost-inc - the same idea, holding
+#              boost/ only. v2 uses Boost HEADER-ONLY (containers, unordered,
+#              asio), so headers are the whole dependency; a symlink to the
+#              host's boost/ inside an otherwise empty directory is enough.
 
 set(CMAKE_SYSTEM_NAME Windows)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
@@ -55,6 +59,18 @@ foreach(_root IN LISTS _ctb_glm_roots)
   if(_root AND EXISTS "${_root}/glm/glm.hpp")
     set(CTBROWSER_GLM_INCLUDE_DIR "${_root}" CACHE PATH
         "isolated GLM include dir for the mingw cross build")
+    break()
+  endif()
+endforeach()
+
+# --- Boost (header-only): the isolated include dir. There is no BoostConfig
+# for the cross target, and there does not need to be - v2 links Boost::headers
+# and nothing else, so src/CMakeLists.txt builds that target from this path.
+set(_ctb_boost_roots "$ENV{BOOST_INC}" "$ENV{HOME}/projects/boost-inc")
+foreach(_root IN LISTS _ctb_boost_roots)
+  if(_root AND EXISTS "${_root}/boost/version.hpp")
+    set(CTBROWSER_BOOST_INCLUDE_DIR "${_root}" CACHE PATH
+        "isolated Boost include dir for the mingw cross build")
     break()
   endif()
 endforeach()
