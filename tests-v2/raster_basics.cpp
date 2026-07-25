@@ -64,7 +64,7 @@ struct page {
 		// font8x8_advance, not the default measure: the rasterizer draws 8x8
 		// cells at an integer scale, so layout has to measure the same way or
 		// text lands where nothing expects it.
-		const layout::engine eng{font8x8_advance};
+		const layout::engine eng{raster::measure_with_font8x8()};
 		placed = eng.run(boxes, viewport);
 		const recorder rec{atoms};
 		layers = rec.record_layers(placed);

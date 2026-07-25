@@ -74,11 +74,32 @@ struct bitmap {
 	}
 };
 
+// WHICH face a run is drawn in. Carried on the command because the rasterizer
+// has no way back to the element: by the time a tile is drawn, the DOM and the
+// cascade are behind it. v1 carried exactly these four things for the same
+// reason.
+//
+// `family` is the resolved name, not the CSS list - "Fira Sans", not
+// "Fira Sans, Helvetica, sans-serif". Choosing among the alternatives is
+// layout's job, and doing it once there rather than per tile is the difference
+// between resolving a font list once and resolving it for every glyph.
+struct font_face {
+	std::string family; // "" = whatever the backend calls its default
+	bool bold = false;
+	bool italic = false;
+
+	[[nodiscard]] friend bool operator==(const font_face &, const font_face &) = default;
+};
+
+enum class text_decoration : std::uint8_t { none, underline, line_through };
+
 struct paint_command {
 	paint_op op = paint_op::fill_rect;
 	rect bounds;             // fill: the box. text: the run's box. clip: the region.
 	color fill;              // fill: the colour. text: the text colour.
 	float font_size = 16;    // text only
+	font_face face;          // text only
+	text_decoration decoration = text_decoration::none; // text only
 	std::string text;        // text only, UTF-8
 	std::shared_ptr<const bitmap> pixels; // image only
 	node_id source;          // provenance, for hit testing and for debugging goldens
@@ -90,14 +111,31 @@ class display_list {
 public:
 	void fill(const rect & where, color c, node_id source = {}) {
 		if (where.empty() || c.transparent()) { return; } // nothing to draw, nothing to record
-		commands_.push_back(paint_command{paint_op::fill_rect, where, c, 0, {}, nullptr, source});
+		paint_command cmd;
+		cmd.op = paint_op::fill_rect;
+		cmd.bounds = where;
+		cmd.fill = c;
+		cmd.source = source;
+		commands_.push_back(std::move(cmd));
 		bounds_ = bounds_.united(where);
 	}
 
-	void text(const rect & where, std::string run, float font_size, color c, node_id source = {}) {
+	void text(const rect & where, std::string run, float font_size, color c, node_id source = {},
+	          font_face face = {}, text_decoration decoration = text_decoration::none) {
 		if (run.empty() || c.transparent()) { return; }
-		commands_.push_back(paint_command{paint_op::text_run, where, c, font_size, std::move(run),
-		                                  nullptr, source});
+		// Field by field rather than positionally: the command grew a face and
+		// a decoration, and a positional initialiser silently shifts every
+		// field after the one that was inserted.
+		paint_command cmd;
+		cmd.op = paint_op::text_run;
+		cmd.bounds = where;
+		cmd.fill = c;
+		cmd.font_size = font_size;
+		cmd.face = std::move(face);
+		cmd.decoration = decoration;
+		cmd.text = std::move(run);
+		cmd.source = source;
+		commands_.push_back(std::move(cmd));
 		bounds_ = bounds_.united(where);
 	}
 
@@ -105,16 +143,25 @@ public:
 	// in the case that matters - a canvas is laid out at its own pixel size.
 	void draw_image(const rect & where, std::shared_ptr<const bitmap> image, node_id source = {}) {
 		if (where.empty() || !image || image->empty()) { return; }
-		commands_.push_back(paint_command{paint_op::image, where, color{}, 0, {}, std::move(image),
-		                                  source});
+		paint_command cmd;
+		cmd.op = paint_op::image;
+		cmd.bounds = where;
+		cmd.pixels = std::move(image);
+		cmd.source = source;
+		commands_.push_back(std::move(cmd));
 		bounds_ = bounds_.united(where);
 	}
 
 	void push_clip(const rect & where) {
-		commands_.push_back(paint_command{paint_op::push_clip, where, color{}, 0, {}, nullptr, {}});
+		paint_command cmd;
+		cmd.op = paint_op::push_clip;
+		cmd.bounds = where;
+		commands_.push_back(std::move(cmd));
 	}
 	void pop_clip() {
-		commands_.push_back(paint_command{paint_op::pop_clip, rect{}, color{}, 0, {}, nullptr, {}});
+		paint_command cmd;
+		cmd.op = paint_op::pop_clip;
+		commands_.push_back(std::move(cmd));
 	}
 
 	[[nodiscard]] std::span<const paint_command> commands() const noexcept { return commands_; }

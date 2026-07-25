@@ -86,8 +86,25 @@ private:
 
 		if (!f.text.empty()) {
 			// A text fragment IS one visual line - layout already broke it - so
-			// the run needs no further measurement here.
-			into.text(box, f.text, f.box != nullptr ? f.box->font_size : 16, text_color, f.source);
+			// the run needs no further measurement here. The FACE comes along
+			// because the rasterizer has no way back to the element: by the
+			// time a tile is drawn there is no cascade left to ask.
+			font_face face;
+			text_decoration decoration = text_decoration::none;
+			float size = 16;
+			if (f.box != nullptr) {
+				size = f.box->font_size;
+				face.family = f.box->face.family;
+				face.bold = f.box->face.bold;
+				face.italic = f.box->face.italic;
+				// Underline wins when a page asks for both, which is what a
+				// browser does and what `text-decoration: underline
+				// line-through` most often means in practice.
+				decoration = f.box->underline      ? text_decoration::underline
+				             : f.box->line_through ? text_decoration::line_through
+				                                   : text_decoration::none;
+			}
+			into.text(box, f.text, size, text_color, f.source, std::move(face), decoration);
 			return;
 		}
 

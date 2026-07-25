@@ -415,6 +415,14 @@ private:
 	// Every <img src> in the document, decoded once. A missing or undecodable
 	// image is remembered as a null so the element lays out at zero size rather
 	// than being retried every frame.
+	// The measure layout uses, and the fonts the rasterizer draws with, are the
+	// SAME object - text lands where layout thought it would only if one thing
+	// answers both questions.
+	[[nodiscard]] const ctbrowser::raster::font_backend & fonts() const {
+		return fonts_ != nullptr ? *fonts_ : ctbrowser::raster::font8x8_fonts();
+	}
+	[[nodiscard]] auto measure() const { return ctbrowser::raster::measure_with(fonts()); }
+
 	void load_images() {
 		images_by_node_.clear();
 		const auto txn = doc_->read();
@@ -447,7 +455,7 @@ private:
 
 	void run_layout() {
 		const auto txn = doc_->read();
-		ctbrowser::layout::box_builder builder{atoms_, resolved_, ctbrowser::raster::font8x8_advance};
+		ctbrowser::layout::box_builder builder{atoms_, resolved_, measure()};
 		// An <img> with no width/height attribute is as big as its bitmap. Only
 		// the browser knows that - layout cannot decode images and should not
 		// learn how.
@@ -458,7 +466,7 @@ private:
 			              : ctbrowser::layout::box_builder::intrinsic_size{};
 		};
 		boxes_ = builder.build(txn, txn.root());
-		const ctbrowser::layout::engine eng{ctbrowser::raster::font8x8_advance};
+		const ctbrowser::layout::engine eng{measure()};
 		fragments_ = eng.run(boxes_, static_cast<float>(options_.width));
 		content_height_ = fragments_.bounds.height;
 		scroll_y_ = std::clamp(scroll_y_, 0.0f, max_scroll());
@@ -862,6 +870,9 @@ private:
 	// `const function_proto *` into the program, and a timer or a listener runs
 	// long after run_scripts() returned - so the program has to outlive both the
 	// call that compiled it and the context that executes it.
+	// Null means font8x8, which is always available and always identical - so a
+	// build with no font files still renders and its goldens still compare.
+	const ctbrowser::raster::font_backend * fonts_ = nullptr;
 	std::vector<std::pair<std::string, script::native_fn>> embedder_natives_;
 	asset_registry assets_;
 	image_store images_;

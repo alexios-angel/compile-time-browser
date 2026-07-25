@@ -49,6 +49,9 @@ public:
 	// The page canvas colour. White because that is what a browser with no
 	// document background shows, not because anything here needs it.
 	color clear_color = color::rgba(255, 255, 255);
+	// Null means font8x8. Set through renderer::set_fonts by whoever owns the
+	// faces - the browser - because a glyph cache outlives any one frame.
+	const font_backend * fonts = nullptr;
 
 	[[nodiscard]] std::expected<frame_token, gpu_error> begin_frame() {
 		if (in_frame_) { return std::unexpected(gpu_error::no_frame); }
@@ -122,7 +125,7 @@ public:
 
 		slot & s = it->second;
 		raster_calls_.fetch_add(1, std::memory_order_relaxed);
-		draw_into(s.pixels, list, s.area); // shared with the GPU backend, see :draw
+		draw_into(s.pixels, list, s.area, fonts); // shared with the GPU backend, see :draw
 		s.valid = true;
 		return {};
 	}

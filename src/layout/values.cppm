@@ -1,4 +1,5 @@
 module;
+#include <string>
 #include <charconv>
 #include <functional>
 #include <cstdint>
@@ -27,7 +28,22 @@ export namespace ctbrowser::layout {
 // tree and the fragment tree need it. Putting it with the fragments made :box
 // import :fragment, which imports :box - a cycle the module system rejects
 // outright rather than letting it become a subtle build-order problem.
-using measure_text_fn = std::function<float(std::string_view, float)>;
+// The face a run is measured in. Identical in shape to paint::font_face and
+// deliberately NOT that type: :values depends on nothing, and layout importing
+// the paint module to name a struct would invert the dependency the whole
+// pipeline is built on. The recorder converts.
+struct text_face {
+	std::string family; // "" = the backend's default
+	bool bold = false;
+	bool italic = false;
+
+	[[nodiscard]] friend bool operator==(const text_face &, const text_face &) = default;
+};
+
+// The FACE is part of the question. It was not - the signature was
+// (text, size) - so a page could ask for bold 20px Fira Sans, get measured in
+// whatever the rasterizer felt like, and lay its text out at the wrong width.
+using measure_text_fn = std::function<float(std::string_view, float, const text_face &)>;
 
 enum class unit : std::uint8_t { px, percent, em, rem, auto_, none };
 

@@ -60,6 +60,38 @@ using ctbrowser::paint::paint_op;
 	                          static_cast<std::size_t>(font8x8_scale(font_size)));
 }
 
+// THE SEAM a real font plugs into.
+//
+// Everything above this line is font8x8: an 8x8 bitmap per code point scaled by
+// an INTEGER factor, which is why v2 quantises font sizes to multiples of 8 -
+// 16px and 20px text render identically, and that is a property of the font,
+// not a rounding bug. A backend with outlines removes it.
+//
+// Two operations, because they are the two that have to agree: layout measures
+// with `advance` and the rasterizer draws with `draw_run`, and text lands where
+// layout thought it would only if the same object answers both.
+class font_backend {
+public:
+	virtual ~font_backend() = default;
+	font_backend() = default;
+	font_backend(const font_backend &) = delete;
+	font_backend & operator=(const font_backend &) = delete;
+
+	// The face is passed APART rather than as a paint::font_face, because
+	// measuring is the hot path - a text wrap measures the same run repeatedly -
+	// and building a face would allocate its family string on every call.
+	[[nodiscard]] virtual float advance(std::string_view text, float font_size,
+	                                    std::string_view family, bool bold,
+	                                    bool italic) const = 0;
+	// `where` is TILE-LOCAL; `clip` is in the same space.
+	virtual void draw_run(const rect & where, const paint_command & c, const pixel_rect & clip,
+	                      surface & into) const = 0;
+	// The distance from the top of the line box to the baseline, which a
+	// decoration band and a canvas fillText both need.
+	[[nodiscard]] virtual float ascent(float font_size, std::string_view family, bool bold,
+	                                   bool italic) const = 0;
+};
+
 
 inline void fill_rect(const rect & where, color c, const pixel_rect & clip, surface & into) {
 	pixel_rect p = to_pixels(where, into.width(), into.height());
@@ -74,6 +106,12 @@ inline void fill_rect(const rect & where, color c, const pixel_rect & clip, surf
 			row[static_cast<std::size_t>(x)] = blend_over(row[static_cast<std::size_t>(x)], c);
 		}
 	}
+}
+
+// One horizontal band of `thickness` at `y`, for underline and line-through.
+inline void fill_band(float x, float y, float width, float thickness, color c,
+                      const pixel_rect & clip, surface & into) {
+	fill_rect(rect{x, y, width, thickness < 1 ? 1.0f : thickness}, c, clip, into);
 }
 
 // font8x8: an 8x8 bitmap per code point, scaled by an integer factor. The
@@ -123,6 +161,60 @@ inline void draw_text(const rect & where, const paint_command & c, const pixel_r
 	}
 }
 
+// font8x8 AS a backend. Always present, needs no files, and produces the same
+// pixels on every machine - which is what makes the goldens goldens.
+class font8x8_backend final : public font_backend {
+public:
+	[[nodiscard]] float advance(std::string_view text, float font_size, std::string_view, bool,
+	                            bool) const override {
+		// font8x8 has ONE face. Bold and italic are not synthesised: a fake
+		// that is wrong by a pixel is worse here than an honest sameness,
+		// because layout measured with this exact function.
+		return font8x8_advance(text, font_size);
+	}
+	void draw_run(const rect & where, const paint_command & c, const pixel_rect & clip,
+	              surface & into) const override {
+		draw_text(where, c, clip, into);
+	}
+	[[nodiscard]] float ascent(float font_size, std::string_view, bool, bool) const override {
+		// The cell is 8 tall and the glyphs sit on its last row.
+		return static_cast<float>(8 * font8x8_scale(font_size));
+	}
+};
+
+[[nodiscard]] inline const font_backend & font8x8_fonts() {
+	static const font8x8_backend backend;
+	return backend;
+}
+
+// A layout measure that asks a backend. GENERIC in the face type on purpose:
+// layout::text_face and paint::font_face are deliberately separate types -
+// :values depends on nothing, and layout importing paint would invert the
+// dependency the pipeline is built on - so this converts without naming
+// either, and layout stays unaware that raster exists.
+[[nodiscard]] inline auto measure_with(const font_backend & fonts) {
+	return [&fonts](std::string_view text, float font_size, const auto & face) {
+		return fonts.advance(text, font_size, face.family, face.bold, face.italic);
+	};
+}
+[[nodiscard]] inline auto measure_with_font8x8() { return measure_with(font8x8_fonts()); }
+
+// A run plus whatever line CSS asked to be drawn through or under it. The bands
+// are the rasterizer's job rather than layout's because their thickness and
+// position follow the FONT - a 1px rule under 40px text looks like a mistake.
+inline void draw_text_run(const rect & where, const paint_command & c, const pixel_rect & clip,
+                          surface & into, const font_backend & fonts) {
+	fonts.draw_run(where, c, clip, into);
+	if (c.decoration == ctbrowser::paint::text_decoration::none) { return; }
+	const float thickness = std::max(1.0f, c.font_size / 14.0f);
+	const float baseline =
+	    where.y + fonts.ascent(c.font_size, c.face.family, c.face.bold, c.face.italic);
+	const float y = c.decoration == ctbrowser::paint::text_decoration::underline
+	                    ? baseline + thickness
+	                    : where.y + (baseline - where.y) * 0.62f;
+	fill_band(where.x, y, where.width, thickness, c.fill, clip, into);
+}
+
 // A bitmap into a tile. Nearest-neighbour: a canvas is laid out at its own
 // pixel size, so the common case is 1:1 and any filtering would only blur it.
 inline void draw_image(const rect & where, const paint_command & c, const pixel_rect & clip,
@@ -151,7 +243,8 @@ inline void draw_image(const rect & where, const paint_command & c, const pixel_
 }
 
 inline void draw_commands(const std::vector<paint_command> & commands, const rect & area,
-                          surface & into) {
+                          surface & into, const font_backend * fonts = nullptr) {
+	const font_backend & faces = fonts != nullptr ? *fonts : font8x8_fonts();
 	// Clip stack in tile-local pixels. push_clip intersects, pop restores.
 	std::vector<pixel_rect> clips;
 	pixel_rect clip{0, 0, into.width(), into.height()};
@@ -172,7 +265,7 @@ inline void draw_commands(const std::vector<paint_command> & commands, const rec
 			}
 			break;
 		case paint_op::fill_rect: fill_rect(local, c.fill, clip, into); break;
-		case paint_op::text_run: draw_text(local, c, clip, into); break;
+		case paint_op::text_run: draw_text_run(local, c, clip, into, faces); break;
 		case paint_op::image: draw_image(local, c, clip, into); break;
 		}
 	}
@@ -182,9 +275,10 @@ inline void draw_commands(const std::vector<paint_command> & commands, const rec
 // area's tile. The tile starts transparent: the page background is composited
 // under it, not baked into it, so a tile stays valid when the background
 // changes and when it is reused under a different layer.
-inline void draw_into(surface & into, const display_list & list, const rect & area) {
+inline void draw_into(surface & into, const display_list & list, const rect & area,
+                      const font_backend * fonts = nullptr) {
 	into.fill(color{0});
-	draw_commands(list.intersecting(area), area, into);
+	draw_commands(list.intersecting(area), area, into, fonts);
 }
 
 } // namespace ctbrowser::raster

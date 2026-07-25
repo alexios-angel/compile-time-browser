@@ -1,4 +1,6 @@
 module;
+#include <charconv>
+#include <system_error>
 #include <functional>
 #include <cstddef>
 #include <cstdint>
@@ -58,6 +60,11 @@ struct box_node {
 	length width{}, height{};
 	side_lengths margin{}, padding{};
 	float font_size = 16;
+	// Resolved here for the same reason the lengths are: once per element,
+	// rather than per glyph in the rasterizer, which has no cascade to ask.
+	text_face face{};
+	bool underline = false;
+	bool line_through = false;
 
 	// What a replaced element is sized as when the sheet says nothing. Zero
 	// means it has none and falls back to the block rules.
@@ -106,7 +113,10 @@ public:
 	    : atoms_(&atoms), styles_(&styles), measure_(std::move(measure)),
 	      display_(atoms.intern("display")), width_(atoms.intern("width")),
 	      height_(atoms.intern("height")), margin_(atoms.intern("margin")),
-	      padding_(atoms.intern("padding")), font_size_(atoms.intern("font-size")) {}
+	      padding_(atoms.intern("padding")), font_size_(atoms.intern("font-size")),
+	      font_family_(atoms.intern("font-family")), font_weight_(atoms.intern("font-weight")),
+	      font_style_(atoms.intern("font-style")),
+	      text_decoration_(atoms.intern("text-decoration")) {}
 
 	[[nodiscard]] box_node build(const read_txn & txn, node_id root) {
 		box_node out;
@@ -128,7 +138,8 @@ private:
 	}
 
 	void build_children(const read_txn & txn, node_id parent, box_node & into,
-	                    float inherited_font) {
+	                    float inherited_font, const text_face & inherited_face = {},
+	                    bool inherited_underline = false, bool inherited_line_through = false) {
 		for (const node_id child : txn.children(parent)) {
 			const node_kind kind = txn.kind(child).value_or(node_kind::comment);
 			if (kind == node_kind::text) {
@@ -140,6 +151,11 @@ private:
 				t.style = into.style;
 				t.text = std::string{text};
 				t.font_size = inherited_font;
+				// A text box has no style of its own; it is drawn in whatever
+				// its parent element resolved to.
+				t.face = inherited_face;
+				t.underline = inherited_underline;
+				t.line_through = inherited_line_through;
 				into.children.push_back(std::move(t));
 				continue;
 			}
@@ -164,11 +180,21 @@ private:
 			b.padding = parse_sides(prop(style, padding_));
 			const length fs = parse_length(prop(style, font_size_));
 			b.font_size = fs.is_auto() ? inherited_font : fs.resolve(inherited_font, inherited_font);
+			b.face = face_of(style, inherited_face);
+			b.underline = inherited_underline;
+			b.line_through = inherited_line_through;
+			if (const std::string_view decoration = prop(style, text_decoration_);
+			    !decoration.empty()) {
+				// `none` CLEARS what was inherited, which is how a link inside
+				// underlined text turns its own underline off.
+				b.underline = decoration.find("underline") != std::string_view::npos;
+				b.line_through = decoration.find("line-through") != std::string_view::npos;
+			}
 
 			if (b.kind == box_kind::replaced) {
 				intrinsic_size_of(txn, child, tag_text, b);
 			} else {
-				build_children(txn, child, b, b.font_size);
+				build_children(txn, child, b, b.font_size, b.face, b.underline, b.line_through);
 				normalise(b);
 			}
 			into.children.push_back(std::move(b));
@@ -321,15 +347,66 @@ private:
 
 	// A character's width at a font size, through the injected measure when
 	// there is one and a monospace stand-in when there is not.
-	[[nodiscard]] float text_width(std::string_view text, float font_size) const {
-		if (measure_) { return measure_(text, font_size); }
+	[[nodiscard]] float text_width(std::string_view text, float font_size,
+	                               const text_face & face = {}) const {
+		if (measure_) { return measure_(text, font_size, face); }
 		return static_cast<float>(text.size()) * font_size * 0.6f;
+	}
+
+	// font-family is a LIST of alternatives, and choosing among them is layout's
+	// job - by the time a tile is rastered there is no cascade left to ask. The
+	// first name wins here; a real fallback chain needs to know which faces are
+	// loaded, which is the backend's business, so the backend gets the whole
+	// list only if the first name misses.
+	[[nodiscard]] static std::string first_family(std::string_view list) {
+		std::size_t start = 0;
+		while (start < list.size() && (list[start] == ' ' || list[start] == '\t')) { ++start; }
+		std::size_t end = list.find(',', start);
+		if (end == std::string_view::npos) { end = list.size(); }
+		std::string_view first = list.substr(start, end - start);
+		while (!first.empty() && (first.back() == ' ' || first.back() == '\t')) {
+			first.remove_suffix(1);
+		}
+		// Quoted names - `font-family: "Fira Sans"` - are the same name.
+		if (first.size() >= 2 && (first.front() == '"' || first.front() == '\'') &&
+		    first.back() == first.front()) {
+			first = first.substr(1, first.size() - 2);
+		}
+		return std::string{first};
+	}
+
+	// INHERITED, like the cascade says: an element with no font-family of its
+	// own is drawn in its parent's. The resolver takes what it inherited and
+	// overrides only what this element states, which is the same shape
+	// font-size already used.
+	[[nodiscard]] text_face face_of(const computed_style_ptr & style,
+	                                const text_face & inherited) const {
+		text_face out = inherited;
+		if (const std::string_view family = prop(style, font_family_); !family.empty()) {
+			out.family = first_family(family);
+		}
+		if (const std::string_view weight = prop(style, font_weight_); !weight.empty()) {
+			// 600 and up is bold, per the CSS mapping; `bolder`/`lighter` are
+			// relative and are treated as their common case.
+			int numeric = 0;
+			const auto parsed = std::from_chars(weight.data(), weight.data() + weight.size(), numeric);
+			if (parsed.ec == std::errc{}) {
+				out.bold = numeric >= 600;
+			} else {
+				out.bold = weight == "bold" || weight == "bolder";
+			}
+		}
+		if (const std::string_view style_text = prop(style, font_style_); !style_text.empty()) {
+			out.italic = style_text == "italic" || style_text == "oblique";
+		}
+		return out;
 	}
 
 	atom_table * atoms_;
 	const style::style_map * styles_;
 	measure_text_fn measure_;
 	atom display_, width_, height_, margin_, padding_, font_size_;
+	atom font_family_, font_weight_, font_style_, text_decoration_;
 };
 
 } // namespace ctbrowser::layout

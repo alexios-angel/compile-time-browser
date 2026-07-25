@@ -39,10 +39,18 @@ export namespace ctbrowser::layout {
 // without fonts, and goldens have to be reproducible, so the default measure
 // is an exact function of the string rather than anything platform-dependent.
 [[nodiscard]] inline measure_text_fn monospace_measure(float advance_ratio = 0.6f) {
-	return [advance_ratio](std::string_view text, float font_size) {
+	return [advance_ratio](std::string_view text, float font_size, const text_face &) {
 		return static_cast<float>(text.size()) * font_size * advance_ratio;
 	};
 }
+
+// A measure that asks a raster font backend. The two structs are deliberately
+// separate types - :values depends on nothing, and layout importing paint would
+// invert the dependency the pipeline is built on - so somebody has to convert,
+// and doing it here means every caller does not.
+//
+// Declared in the SHELL rather than here for the same reason: this partition
+// must not import raster either. See browser::measure_with_fonts.
 
 class engine {
 public:

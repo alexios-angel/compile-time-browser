@@ -77,7 +77,7 @@ struct page {
 		resolved = styles.resolve_all(txn);
 		layout::box_builder builder{atoms, resolved};
 		boxes = builder.build(txn, txn.root());
-		const layout::engine eng{raster::font8x8_advance};
+		const layout::engine eng{raster::measure_with_font8x8()};
 		placed = eng.run(boxes, viewport);
 		const recorder rec{atoms};
 		layers = rec.record_layers(placed);

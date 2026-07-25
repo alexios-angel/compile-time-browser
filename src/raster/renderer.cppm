@@ -107,6 +107,11 @@ public:
 	// chosen at startup.
 	void resize(int width, int height) { ops_->resize(self_, width, height); }
 
+	// The fonts every tile is drawn with. A pointer rather than a value: it
+	// owns a glyph cache, it is shared by every tile of every frame, and the
+	// browser outlives the renderer. Null means font8x8, which is always there.
+	void set_fonts(const font_backend * fonts) { ops_->set_fonts(self_, fonts); }
+
 	// The page canvas colour, behind every layer. Both backends already had a
 	// `clear_color` member; this is the seam that lets browser_options::background
 	// actually reach one - it was a public field nothing read.
@@ -137,6 +142,7 @@ private:
 		void (*discard)(void *);
 		void (*resize)(void *, int, int);
 		void (*set_clear_color)(void *, color);
+		void (*set_fonts)(void *, const font_backend *);
 		std::expected<surface, gpu_error> (*read_target)(void *);
 		void (*destroy)(void *);
 	};
@@ -166,6 +172,7 @@ private:
 	    [](void * s) { static_cast<B *>(s)->discard(); },
 	    [](void * s, int w, int h) { static_cast<B *>(s)->resize(w, h); },
 	    [](void * s, color c) { static_cast<B *>(s)->clear_color = c; },
+	    [](void * s, const font_backend * f) { static_cast<B *>(s)->fonts = f; },
 	    [](void * s) { return read_target_of(*static_cast<B *>(s)); },
 	    [](void * s) { delete static_cast<B *>(s); },
 	};

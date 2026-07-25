@@ -111,6 +111,9 @@ public:
 	~sdl_gpu_backend() { release(); }
 
 	color clear_color = color::rgba(255, 255, 255);
+	// Null means font8x8. Set through renderer::set_fonts by whoever owns the
+	// faces - the browser - because a glyph cache outlives any one frame.
+	const raster::font_backend * fonts = nullptr;
 
 	// The SDL backend name: "vulkan", "direct3d12", "metal".
 	[[nodiscard]] std::string driver() const {
@@ -184,7 +187,7 @@ public:
 		const auto it = layers_[id.layer].find(key_of(id));
 		if (it == layers_[id.layer].end()) { return std::unexpected(gpu_error::bad_tile); }
 		slot & s = it->second;
-		raster::draw_into(s.staging, list, s.area);
+		raster::draw_into(s.staging, list, s.area, fonts);
 		s.valid = true;
 		s.uploaded = false;
 		return {};
