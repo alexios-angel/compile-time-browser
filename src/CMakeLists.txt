@@ -135,6 +135,48 @@ set_target_properties(ctbrowser-layout PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
 add_library(ctbrowser::layout ALIAS ctbrowser-layout)
 
+# --- ctbrowser.paint -----------------------------------------------------
+# Records a display list from the fragment tree. Nothing downstream of layout
+# knows paint exists; paint knows nothing about how the list is drawn, which
+# is what allows a software and a GPU backend to consume the same recording.
+add_library(ctbrowser-paint)
+target_sources(ctbrowser-paint
+  PUBLIC
+    FILE_SET CXX_MODULES FILES
+      paint/paint.cppm
+      paint/values.cppm
+      paint/command.cppm
+      paint/layer.cppm
+      paint/record.cppm)
+target_compile_features(ctbrowser-paint PUBLIC cxx_std_23)
+target_compile_options(ctbrowser-paint PRIVATE ${CTBROWSER_V2_WARNINGS})
+target_link_libraries(ctbrowser-paint PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style ctbrowser-layout)
+set_target_properties(ctbrowser-paint PROPERTIES CXX_SCAN_FOR_MODULES ON)
+
+add_library(ctbrowser::paint ALIAS ctbrowser-paint)
+
+# --- ctbrowser.raster ----------------------------------------------------
+# Turns display lists into pixels. Knows nothing about the DOM, style or
+# layout - only about paint's recorded commands, which is what lets a second
+# backend (SDL3 GPU, stage 6) drop in beside the software one.
+add_library(ctbrowser-raster)
+target_sources(ctbrowser-raster
+  PUBLIC
+    FILE_SET CXX_MODULES FILES
+      raster/raster.cppm
+      raster/surface.cppm
+      raster/tile.cppm
+      raster/backend.cppm
+      raster/software.cppm
+      raster/compositor.cppm)
+target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
+target_compile_options(ctbrowser-raster PRIVATE ${CTBROWSER_V2_WARNINGS})
+target_include_directories(ctbrowser-raster PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/raster")
+target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)
+set_target_properties(ctbrowser-raster PROPERTIES CXX_SCAN_FOR_MODULES ON)
+
+add_library(ctbrowser::raster ALIAS ctbrowser-raster)
+
 if(CTBROWSER_BUILD_TESTS)
   add_subdirectory(../tests-v2 "${CMAKE_CURRENT_BINARY_DIR}/tests-v2")
 endif()

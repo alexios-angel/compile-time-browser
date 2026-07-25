@@ -74,3 +74,23 @@ The compile-time file API (include/ctbrowser/embed.hpp) follows the
 __builtin_std_embed call protocol of phd::embed from the "embed"
 project by Bjorkus "ThePhD" Dorkus (https://github.com/ThePhD/embed),
 dedicated to the public domain under CC0.
+
+--- v2 engine (src/) ---
+
+The v2 engine uses Boost, HEADER-ONLY LIBRARIES ONLY (Boost Software
+License 1.0, https://www.boost.org/LICENSE_1_0.txt), as an external
+dependency; nothing from Boost is bundled and nothing is linked.
+Currently used: Boost.Unordered (unordered_flat_map), Boost.Container
+(small_vector, flat_map, stable_vector), Boost.Intrusive, Boost.SmartPtr
+(intrusive_ptr) and Boost.Lockfree (spsc_queue).
+
+The header-only restriction is load bearing, not a preference. The
+`windows` / `windows-fetch` CMake presets cross-compile with llvm-mingw;
+a header-only Boost drops into that build with no new machinery, while a
+compiled Boost would have to be cross-compiled for every target. In
+particular Boost.Context (and therefore Boost.Coroutine2) is per-ABI
+assembly and MUST NOT be introduced.
+
+src/raster/font8x8.hpp is a copy of include/ctbrowser/font8x8.hpp, kept
+so the v2 tree does not include v1 headers; both are generated from the
+same public-domain font8x8 by Daniel Hepper credited above.

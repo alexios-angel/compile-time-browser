@@ -227,6 +227,47 @@ void test_a_word_longer_than_the_line_still_advances() {
 	check(p != nullptr && !p->children.empty(), "an over-long word still gets placed");
 }
 
+void test_a_block_with_only_text_still_honours_its_own_box() {
+	fixture f;
+	f.load("<html><body><div id=a>short</div></body></html>",
+	       "body { margin: 0; padding: 0 } "
+	       "#a { height: 500px; width: 120px; padding: 10px; font-size: 10px }");
+	engine eng{monospace_measure()};
+	const fragment out = eng.run(f.root, 400);
+	const fragment * a = out.find(f.find_id("a"));
+	check(a != nullptr, "the block produced a fragment");
+	if (a == nullptr) { return; }
+	// Found while rendering: a block whose children are all inline was being
+	// laid out as if it WERE an inline box, so it took its size from its text
+	// and ignored its own width, height, padding and margins. Since nearly
+	// every leaf element in a real document contains only text, that was nearly
+	// every leaf element - `<div style="height:2000px">x</div>` came out one
+	// line high.
+	expect_near(a->bounds.height, 500, "an explicit height is honoured over the text height");
+	expect_near(a->bounds.width, 120, "and so is an explicit width");
+	check(!a->children.empty(), "the text is still laid out inside it");
+	if (!a->children.empty()) {
+		expect_near(a->children[0].bounds.x, 10, "the line starts inside the left padding");
+		expect_near(a->children[0].bounds.y, 10, "and below the top padding");
+	}
+}
+
+void test_an_inline_box_shrink_wraps() {
+	fixture f;
+	f.load("<html><body><div id=a><span id=s>hi</span></div></body></html>",
+	       "body { margin: 0; padding: 0 } #a { font-size: 10px } #s { font-size: 10px }");
+	engine eng{monospace_measure()};
+	const fragment out = eng.run(f.root, 400);
+	const fragment * a = out.find(f.find_id("a"));
+	const fragment * s = out.find(f.find_id("s"));
+	check(a != nullptr && s != nullptr, "both fragments exist");
+	if (a == nullptr || s == nullptr) { return; }
+	// The block fills; the inline inside it does not. Getting this backwards is
+	// what the dispatch fix above was about.
+	expect_near(a->bounds.width, 400, "the block fills the viewport");
+	expect_near(s->bounds.width, 2 * 10 * 0.6f, "the inline shrinks to its two glyphs");
+}
+
 void test_fragments_carry_no_geometry_back_to_the_dom() {
 	fixture f;
 	f.load("<html><body><div id=a></div></body></html>", "#a { height: 40px }");
@@ -361,6 +402,8 @@ int main() {
 	test_percent_and_em_lengths();
 	test_text_wraps_at_the_content_width();
 	test_a_word_longer_than_the_line_still_advances();
+	test_a_block_with_only_text_still_honours_its_own_box();
+	test_an_inline_box_shrink_wraps();
 	test_fragments_carry_no_geometry_back_to_the_dom();
 
 	test_parallel_matches_sequential();

@@ -121,6 +121,7 @@ struct inline_flow {
 
 		float pen_x = 0;
 		float pen_y = 0;
+		float widest = 0;
 		for (const box_node & child : b.children) {
 			if (child.kind == box_kind::text) {
 				place_text(child, c, measure_text, line_height, pen_x, pen_y, out);
@@ -142,7 +143,13 @@ struct inline_flow {
 			pen_x += f.bounds.width;
 			out.children.push_back(std::move(f));
 		}
-		out.bounds.width = c.available_width;
+		for (const fragment & line : out.children) {
+			widest = std::max(widest, line.bounds.x + line.bounds.width);
+		}
+		// The extent the content actually REACHED, not what it was offered. A
+		// block container replaces this with its own block-rule width; an inline
+		// box keeps it, which is what shrink-to-fit means.
+		out.bounds.width = widest;
 		out.bounds.height = pen_y + (out.children.empty() ? 0 : line_height);
 		return out;
 	}
@@ -260,16 +267,32 @@ struct block_flow {
 		out.source = b.source;
 
 		float cursor = edges.pad_top;
-		for (std::size_t i = 0; i < b.children.size(); ++i) {
-			const box_node & child = b.children[i];
-			const constraints child_c{content_width, 0, child.font_size};
-			const resolved_edges child_edges = resolve_edges(child, child_c);
-			fragment f = use_ready ? std::move(ready->children[i])
-			                       : layout_box(child, child_c, measure_text, ready);
-			f.bounds.x = edges.pad_left + child_edges.margin_left;
-			f.bounds.y = cursor + child_edges.margin_top;
-			cursor = f.bounds.y + f.bounds.height + child_edges.margin_bottom;
-			out.children.push_back(std::move(f));
+		if (b.establishes_inline_context()) {
+			// The box is STILL BLOCK-LEVEL. Only its children share lines.
+			// Conflating the two is what made a block box containing text ignore
+			// its own width, height, padding and margins - and since nearly every
+			// leaf element in a real document contains only text, that was nearly
+			// every leaf element.
+			fragment lines =
+			    inline_flow{}.arrange(b, constraints{content_width, 0, b.font_size}, measure_text);
+			for (fragment & line : lines.children) {
+				line.bounds.x += edges.pad_left;
+				line.bounds.y += cursor;
+				out.children.push_back(std::move(line));
+			}
+			cursor += lines.bounds.height;
+		} else {
+			for (std::size_t i = 0; i < b.children.size(); ++i) {
+				const box_node & child = b.children[i];
+				const constraints child_c{content_width, 0, child.font_size};
+				const resolved_edges child_edges = resolve_edges(child, child_c);
+				fragment f = use_ready ? std::move(ready->children[i])
+				                       : layout_box(child, child_c, measure_text, ready);
+				f.bounds.x = edges.pad_left + child_edges.margin_left;
+				f.bounds.y = cursor + child_edges.margin_top;
+				cursor = f.bounds.y + f.bounds.height + child_edges.margin_bottom;
+				out.children.push_back(std::move(f));
+			}
 		}
 		cursor += edges.pad_bottom;
 
@@ -294,7 +317,10 @@ static_assert(LayoutAlgorithm<inline_flow>);
 		f.bounds = rect{0, 0, measure(b.text, b.font_size), b.font_size * inline_flow::line_height_factor};
 		return f;
 	}
-	if (b.establishes_inline_context()) { return inline_flow{}.arrange(b, c, measure, ready); }
+	// Dispatch on what the box IS, not on what its children are. An inline box
+	// shrink-wraps to its content; a block box takes its width from the block
+	// rules and lays its children out inline or as blocks internally.
+	if (b.kind == box_kind::inline_) { return inline_flow{}.arrange(b, c, measure, ready); }
 	return block_flow{}.arrange(b, c, measure, ready);
 }
 

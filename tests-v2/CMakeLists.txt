@@ -5,7 +5,7 @@ add_custom_target(ctbrowser-v2-test ALL)
 
 function(ctbrowser_v2_test name)
   add_executable(ctbrowser-v2-${name} ${name}.cpp)
-  target_link_libraries(ctbrowser-v2-${name} PRIVATE ctbrowser::core ctbrowser::dom ctbrowser::script ctbrowser::style ctbrowser::layout)
+  target_link_libraries(ctbrowser-v2-${name} PRIVATE ctbrowser::core ctbrowser::dom ctbrowser::script ctbrowser::style ctbrowser::layout ctbrowser::paint ctbrowser::raster)
   # the VM tests compare against v1's interpreter (ctjs.hpp), which needs its headers
   target_include_directories(ctbrowser-v2-${name} PRIVATE
     "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"
@@ -14,7 +14,10 @@ function(ctbrowser_v2_test name)
   target_compile_options(ctbrowser-v2-${name} PRIVATE ${CTBROWSER_V2_WARNINGS})
   target_include_directories(ctbrowser-v2-${name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   add_dependencies(ctbrowser-v2-test ctbrowser-v2-${name})
-  add_test(NAME v2-${name} COMMAND ctbrowser-v2-${name})
+  # the source root, so goldens and other repo-relative paths resolve the same
+  # way v1's tests do
+  add_test(NAME v2-${name} COMMAND ctbrowser-v2-${name}
+           WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 endfunction()
 
 ctbrowser_v2_test(core_basics)
@@ -24,6 +27,8 @@ ctbrowser_v2_test(stress_dom)
 ctbrowser_v2_test(vm_basics)
 ctbrowser_v2_test(style_basics)
 ctbrowser_v2_test(layout_basics)
+ctbrowser_v2_test(paint_basics)
+ctbrowser_v2_test(raster_basics)
 
 # The stress test is the one that must never be skipped: it is the evidence
 # that the lock-free read path is actually sound. Give it room under TSan.
@@ -34,7 +39,7 @@ set_tests_properties(v2-stress_slab PROPERTIES TIMEOUT 300)
 function(ctbrowser_v2_bench name)
   add_executable(ctbrowser-v2-${name} EXCLUDE_FROM_ALL ${name}.cpp ${ARGN})
   target_link_libraries(ctbrowser-v2-${name}
-    PRIVATE ctbrowser::core ctbrowser::dom ctbrowser::style ctbrowser::layout)
+    PRIVATE ctbrowser::core ctbrowser::dom ctbrowser::style ctbrowser::layout ctbrowser::paint ctbrowser::raster)
   target_compile_options(ctbrowser-v2-${name} PRIVATE ${CTBROWSER_V2_WARNINGS})
   # the layout benchmark drives v1's layout() for comparison, which needs v1's
   # headers and the bricks underneath them
@@ -49,3 +54,4 @@ endfunction()
 ctbrowser_v2_bench(bench_reads)
 ctbrowser_v2_bench(bench_style)
 ctbrowser_v2_bench(bench_layout bench_layout_v1.cpp)
+ctbrowser_v2_bench(bench_raster bench_layout_v1.cpp)
