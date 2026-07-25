@@ -276,19 +276,32 @@ v1's `examples-windows/`). It carries the exes, SDL3.dll and the pages/assets
 the examples load, laid out repo-relatively so the exes work from its root.
 The exes import **only SDL3.dll + the system UCRT** — no libc++, no libunwind.
 
+**The exes are SELF-CONTAINED — no SDL3.dll.** `../llvm-mingw/build-sdl3.sh`
+builds SDL3 and SDL3_ttf as STATIC libraries into the toolchain's own
+`<triple>/` sysroot (run on the devbox, artifacts rsynced into
+`tools/llvm-mingw/`), and the toolchain file puts that sysroot FIRST on
+`CMAKE_FIND_ROOT_PATH` — which it must also be ON, or `find_package` escapes to
+linuxbrew's ELF SDL3 and fails with "IMPORTED_IMPLIB not set". libsdl's official
+mingw devel package (`~/projects/sdl3-mingw`) is the fallback, and a build that
+lands there ships the DLL. `CTBROWSER_SDL3_STATIC=OFF` forces it.
+`ctbrowser_pick_sdl_target()` chooses `SDL3::SDL3-static` over
+`SDL3::SDL3-shared` and tells `windows-dist-v2` whether a DLL has to travel.
+Cost: 3.5 MB → 7.2 MB per exe.
+
 Toolchain, all fetched rather than built: llvm-mingw std::embed release
-(`tools/llvm-mingw/`, 84 MB), SDL3-devel mingw (`~/projects/sdl3-mingw`), and
-**Boost as an isolated include dir** (`~/projects/boost-inc/boost` symlinked at
-the host's) — there is no BoostConfig for the cross target and none is needed,
-since v2 links `Boost::headers` and nothing else. The toolchain file finds it
-the same way it finds GLM's.
+(`tools/llvm-mingw/`, 84 MB) and **Boost as an isolated include dir**
+(`~/projects/boost-inc/boost` symlinked at the host's) — there is no BoostConfig
+for the cross target and none is needed, since v2 links `Boost::headers` and
+nothing else. The toolchain file finds it the same way it finds GLM's.
 
 Degrades as designed: no OpenSSL for mingw → `fetch` does http:// only and says
 so; no SDL3_image → `<img>` reads BMP only. Asio needs `ws2_32`/`mswsock`, which
 nothing links implicitly.
 
-**Verified**: all 19 v2 tests pass as Windows binaries, and the five renderable
-examples produce screenshots BYTE-IDENTICAL to the Linux ones.
+**Verified**: all 19 v2 tests pass as Windows binaries WITH NO DLL BESIDE THEM
+(gpu_basics.exe failed that way before), the five renderable examples produce
+screenshots BYTE-IDENTICAL to the Linux ones, and counter.exe runs alone in an
+otherwise empty directory.
 
 **Running a Windows exe from WSL needs `WSLENV`** or none of the
 `CTBROWSER_*`/`SDL_*` environment variables reach it — and the flag is

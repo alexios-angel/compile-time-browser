@@ -209,25 +209,62 @@ endif()
 # light up richer paths (SDL3_image sprites, SDL3_mixer sound,
 # SDL3_ttf TrueType text); the built-in fallbacks serve without them
 find_package(SDL3 CONFIG QUIET)
+
+# STATIC or shared. SDL's package exports both `SDL3::SDL3-shared` and
+# `SDL3::SDL3-static` and names whichever exists `SDL3::SDL3`, so a build that
+# links the generic name gets whatever happens to be installed - and then
+# discovers at run time whether it needed a DLL beside the .exe. Deciding here
+# instead makes it a property of the build: with a static SDL3 in the sysroot
+# (llvm-mingw's build-sdl3.sh puts one there) an application is ONE FILE.
+option(CTBROWSER_SDL3_STATIC "Link SDL3 statically when a static build is available" ON)
+
+# name -> the target to link, and whether that target needs its DLL shipped.
+function(ctbrowser_pick_sdl_target out_var out_static name)
+  set(static_target "${name}-static")
+  set(shared_target "${name}-shared")
+  if(CTBROWSER_SDL3_STATIC AND TARGET ${static_target})
+    set(${out_var} ${static_target} PARENT_SCOPE)
+    set(${out_static} ON PARENT_SCOPE)
+  elseif(TARGET ${shared_target})
+    set(${out_var} ${shared_target} PARENT_SCOPE)
+    set(${out_static} OFF PARENT_SCOPE)
+  else()
+    # No split targets: an older package, or one that ships only one kind.
+    set(${out_var} ${name} PARENT_SCOPE)
+    set(${out_static} OFF PARENT_SCOPE)
+  endif()
+endfunction()
+
 set(CTBROWSER_SAT_DEFS "")
 set(CTBROWSER_SAT_LIBS "")
+set(CTBROWSER_SDL3_TARGET SDL3::SDL3)
+set(CTBROWSER_SDL3_IS_STATIC OFF)
+set(CTBROWSER_SDL3_TTF_TARGET SDL3_ttf::SDL3_ttf)
+set(CTBROWSER_SDL3_TTF_IS_STATIC OFF)
 if(SDL3_FOUND)
+  ctbrowser_pick_sdl_target(CTBROWSER_SDL3_TARGET CTBROWSER_SDL3_IS_STATIC SDL3::SDL3)
   find_package(SDL3_image CONFIG QUIET)
   if(SDL3_image_FOUND)
+    ctbrowser_pick_sdl_target(image_target image_static SDL3_image::SDL3_image)
     list(APPEND CTBROWSER_SAT_DEFS CTBROWSER_WITH_IMAGE)
-    list(APPEND CTBROWSER_SAT_LIBS SDL3_image::SDL3_image)
+    list(APPEND CTBROWSER_SAT_LIBS ${image_target})
+    set(CTBROWSER_SDL3_IMAGE_IS_STATIC ${image_static})
   endif()
   find_package(SDL3_mixer CONFIG QUIET)
   if(SDL3_mixer_FOUND)
+    ctbrowser_pick_sdl_target(mixer_target mixer_static SDL3_mixer::SDL3_mixer)
     list(APPEND CTBROWSER_SAT_DEFS CTBROWSER_WITH_MIXER)
-    list(APPEND CTBROWSER_SAT_LIBS SDL3_mixer::SDL3_mixer)
+    list(APPEND CTBROWSER_SAT_LIBS ${mixer_target})
+    set(CTBROWSER_SDL3_MIXER_IS_STATIC ${mixer_static})
   endif()
   find_package(SDL3_ttf CONFIG QUIET)
   if(SDL3_ttf_FOUND)
+    ctbrowser_pick_sdl_target(CTBROWSER_SDL3_TTF_TARGET CTBROWSER_SDL3_TTF_IS_STATIC
+                              SDL3_ttf::SDL3_ttf)
     list(APPEND CTBROWSER_SAT_DEFS CTBROWSER_WITH_TTF)
-    list(APPEND CTBROWSER_SAT_LIBS SDL3_ttf::SDL3_ttf)
+    list(APPEND CTBROWSER_SAT_LIBS ${CTBROWSER_SDL3_TTF_TARGET})
   endif()
-  message(STATUS "ctbrowser: SDL3 found; satellites: ${CTBROWSER_SAT_DEFS}")
+  message(STATUS "ctbrowser: SDL3 found (${CTBROWSER_SDL3_TARGET}); satellites: ${CTBROWSER_SAT_DEFS}")
 endif()
 
 # *.html -> examples/*.inc: the REAL .html file becomes a raw-string

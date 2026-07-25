@@ -54,7 +54,6 @@ endforeach()
 # (counter, game, invaders, fetchboard) and overwriting v1's binaries with v2's
 # would be silent.
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
-  find_file(CTBROWSER_SDL3_DLL SDL3.dll PATH_SUFFIXES bin)
   set(v2-dist-dir "${PROJECT_SOURCE_DIR}/examples-windows-v2")
   set(v2-dist-commands COMMAND ${CMAKE_COMMAND} -E make_directory "${v2-dist-dir}")
   foreach(source ${v2-example-sources})
@@ -64,9 +63,22 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
               "$<TARGET_FILE:ctbrowser-v2-example-${example}>" "${v2-dist-dir}/${example}.exe")
     list(APPEND v2-dist-targets ctbrowser-v2-example-${example})
   endforeach()
-  if(CTBROWSER_SDL3_DLL)
-    list(APPEND v2-dist-commands
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CTBROWSER_SDL3_DLL}" "${v2-dist-dir}")
+  # A statically linked SDL3 has no DLL to ship, which is the whole point:
+  # the folder is exes and data, and each exe runs on its own. With the shared
+  # SDL3 devel package instead, SDL3.dll (and SDL3_ttf.dll) come along.
+  if(NOT CTBROWSER_SDL3_IS_STATIC)
+    find_file(CTBROWSER_SDL3_DLL SDL3.dll PATH_SUFFIXES bin)
+    if(CTBROWSER_SDL3_DLL)
+      list(APPEND v2-dist-commands
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CTBROWSER_SDL3_DLL}" "${v2-dist-dir}")
+    endif()
+  endif()
+  if(CTBROWSER_WITH_TTF AND NOT CTBROWSER_SDL3_TTF_IS_STATIC)
+    find_file(CTBROWSER_SDL3_TTF_DLL SDL3_ttf.dll PATH_SUFFIXES bin)
+    if(CTBROWSER_SDL3_TTF_DLL)
+      list(APPEND v2-dist-commands
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CTBROWSER_SDL3_TTF_DLL}" "${v2-dist-dir}")
+    endif()
   endif()
   # Named files, not the whole assets tree: that also holds v1's glTF models
   # and p5.js, which is 20 MB no v2 example opens.
@@ -80,6 +92,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
             "${v2-dist-dir}/examples/assets")
   add_custom_target(windows-dist-v2 ${v2-dist-commands}
     DEPENDS ${v2-dist-targets}
-    COMMENT "collecting v2 Windows exes + SDL3.dll + pages into examples-windows-v2/"
+    COMMENT "collecting v2 Windows exes + pages into examples-windows-v2/"
     VERBATIM)
 endif()

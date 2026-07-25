@@ -42,16 +42,30 @@ if(NOT CMAKE_CXX_COMPILER)
     "as tools/llvm-mingw/.")
 endif()
 
-# --- SDL3: libsdl's official mingw devel package (brew SDL3 is ELF - useless
-# for PE). Its x86_64-w64-mingw32/ prefix carries headers, the import
-# library, the CMake config and bin/SDL3.dll.
-set(_ctb_sdl3_roots "$ENV{SDL3_MINGW}" "$ENV{HOME}/projects/sdl3-mingw")
-foreach(_root IN LISTS _ctb_sdl3_roots)
-  if(_root AND EXISTS "${_root}/x86_64-w64-mingw32/include/SDL3/SDL.h")
-    list(APPEND CMAKE_FIND_ROOT_PATH "${_root}/x86_64-w64-mingw32")
-    break()
-  endif()
-endforeach()
+# --- SDL3. The TOOLCHAIN'S OWN SYSROOT FIRST: llvm-mingw's build-sdl3.sh
+# installs a STATIC SDL3 (and SDL3_ttf) there, and a static one is what makes
+# an application a single .exe rather than a folder with DLLs in it. The
+# sysroot is already on the compiler's search path, so nothing more is needed
+# when it is present.
+#
+# libsdl's official mingw devel package is the FALLBACK (brew SDL3 is ELF -
+# useless for PE). It carries only an import library and SDL3.dll, so a build
+# that lands here ships that DLL beside every exe.
+get_filename_component(_ctb_toolchain_root "${CMAKE_CXX_COMPILER}" DIRECTORY)
+get_filename_component(_ctb_toolchain_root "${_ctb_toolchain_root}" DIRECTORY)
+# The sysroot has to be on CMAKE_FIND_ROOT_PATH explicitly, or find_package
+# escapes to the HOST's packages - which for SDL3 means linuxbrew's ELF build,
+# found and then unusable ("IMPORTED_IMPLIB not set").
+list(APPEND CMAKE_FIND_ROOT_PATH "${_ctb_toolchain_root}/x86_64-w64-mingw32")
+if(NOT EXISTS "${_ctb_toolchain_root}/x86_64-w64-mingw32/lib/cmake/SDL3")
+  set(_ctb_sdl3_roots "$ENV{SDL3_MINGW}" "$ENV{HOME}/projects/sdl3-mingw")
+  foreach(_root IN LISTS _ctb_sdl3_roots)
+    if(_root AND EXISTS "${_root}/x86_64-w64-mingw32/include/SDL3/SDL.h")
+      list(APPEND CMAKE_FIND_ROOT_PATH "${_root}/x86_64-w64-mingw32")
+      break()
+    endif()
+  endforeach()
+endif()
 
 # --- GLM (header-only): the isolated include dir
 set(_ctb_glm_roots "$ENV{GLM_INC}" "$ENV{HOME}/projects/glm-inc")
@@ -75,11 +89,13 @@ foreach(_root IN LISTS _ctb_boost_roots)
   endif()
 endforeach()
 
-# --- static everything except SDL3: the CMake config links the import
-# library by full path (immune to -static's -l search behavior), so the
-# produced exes depend only on SDL3.dll + system DLLs - no libc++.dll,
-# no libunwind.dll. -static also rides CXX flags so the PCH and every
-# TU agree on the __STATIC__ predefines (a mismatch is a hard PCH error).
+# --- static everything. With a static SDL3 in the sysroot the produced exes
+# depend on nothing but the system DLLs: no SDL3.dll, no libc++.dll, no
+# libunwind.dll. Falling back to the shared devel package still works - its
+# CMake config links the import library by full path, immune to -static's -l
+# search behaviour - and then SDL3.dll has to ship alongside.
+# -static also rides CXX flags so the PCH and every TU agree on the
+# __STATIC__ predefines (a mismatch is a hard PCH error).
 set(CMAKE_CXX_FLAGS_INIT "-static")
 set(CMAKE_EXE_LINKER_FLAGS_INIT "-static")
 
