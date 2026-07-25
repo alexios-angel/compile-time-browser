@@ -1,10 +1,20 @@
 cmake_minimum_required(VERSION 3.16...4.3)
 
-# THE compiler: the project's own std::embed clang, C++23 and up (must
-# be chosen BEFORE project() locks the toolchain). std::embed
-# (__builtin_std_embed) is load-bearing - assets.hpp - so a compiler
-# without it, including stock clang, is unsupported; verified below.
-if(NOT CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX} AND NOT CMAKE_TOOLCHAIN_FILE
+# V1's compiler: the project's own std::embed clang, C++23 and up (must be
+# chosen BEFORE project() locks the toolchain). std::embed
+# (__builtin_std_embed) is load-bearing for v1 - assets.hpp - so a compiler
+# without it, including stock clang, cannot build v1; verified below.
+#
+# V2 does NOT need it. Retiring the compile-time thesis retired the std::embed
+# requirement with it, so v2 builds on stock clang and gcc - which is what makes
+# the sanitizer presets possible at all: the clang-std-embed fork ships no
+# compiler-rt sanitizer runtimes (no libclang_rt.tsan.a), and TSan is the
+# primary evidence that v2's lock-free read path is sound. Configure with
+# -DCTBROWSER_BUILD_V1=OFF and a stock compiler to get v2 alone.
+option(CTBROWSER_BUILD_V1 "Build the v1 compile-time engine (needs the std::embed clang)" ON)
+
+if(CTBROWSER_BUILD_V1 AND NOT CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX}
+   AND NOT CMAKE_TOOLCHAIN_FILE
    AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/clang-std-embed/bin/clang++")
   set(CMAKE_CXX_COMPILER "${CMAKE_CURRENT_SOURCE_DIR}/tools/clang-std-embed/bin/clang++")
 endif()
@@ -20,23 +30,25 @@ include(CMakeDependentOption)
 include(GNUInstallDirs)
 include(CTest)
 
-# verify the chosen compiler really is the std::embed clang
-include(CheckCXXSourceCompiles)
-set(CMAKE_REQUIRED_FLAGS "-std=c++23")   # the builtin only exists in C++23 mode
-check_cxx_source_compiles([[
+# verify the chosen compiler really is the std::embed clang - v1 only
+if(CTBROWSER_BUILD_V1)
+  include(CheckCXXSourceCompiles)
+  set(CMAKE_REQUIRED_FLAGS "-std=c++23")   # the builtin only exists in C++23 mode
+  check_cxx_source_compiles([[
 #if !defined(__has_builtin) || !__has_builtin(__builtin_std_embed)
 #error no std::embed builtin
 #endif
 int main() { return 0; }
 ]] CTBROWSER_HAS_STD_EMBED_BUILTIN)
-if(NOT CTBROWSER_HAS_STD_EMBED_BUILTIN)
-  message(FATAL_ERROR
-    "ctbrowser supports ONLY the std::embed clang toolchain "
-    "(tools/clang-std-embed; fetch the clang-std-embed release from the "
-    "embed repo). Found: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} "
-    "without __builtin_std_embed.")
+  if(NOT CTBROWSER_HAS_STD_EMBED_BUILTIN)
+    message(FATAL_ERROR
+      "ctbrowser v1 supports ONLY the std::embed clang toolchain "
+      "(tools/clang-std-embed; fetch the clang-std-embed release from the "
+      "embed repo). Found: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} "
+      "without __builtin_std_embed. Set -DCTBROWSER_BUILD_V1=OFF to build v2 alone.")
+  endif()
+  unset(CMAKE_REQUIRED_FLAGS)
 endif()
-unset(CMAKE_REQUIRED_FLAGS)
 
 cmake_dependent_option(CTBROWSER_BUILD_TESTS "Build ctbrowser tests" ON
   "BUILD_TESTING;CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR" OFF)
@@ -146,7 +158,7 @@ install(
 
 # One shared PCH: the three bricks' umbrellas compile once (seconds) -
 # the anchor owns the PCH and every test/example REUSE_FROMs it.
-if(CTBROWSER_PCH AND (CTBROWSER_BUILD_TESTS OR CTBROWSER_BUILD_EXAMPLES))
+if(CTBROWSER_BUILD_V1 AND CTBROWSER_PCH AND (CTBROWSER_BUILD_TESTS OR CTBROWSER_BUILD_EXAMPLES))
   file(WRITE "${CMAKE_BINARY_DIR}/ctbrowser-pch-anchor.cpp"
     "int ctbrowser_pch_anchor_symbol = 0;\n")
   add_library(ctbrowser-pch-anchor OBJECT "${CMAKE_BINARY_DIR}/ctbrowser-pch-anchor.cpp")
@@ -207,11 +219,25 @@ endif()
 # catch branches explain what is missing.
 option(CTBROWSER_EXAMPLES_FETCH "compile-time-fetch the example pages' URLs" OFF)
 
-if(CTBROWSER_BUILD_TESTS)
+# v1's tests compile the whole compile-time stack, so they need the fork
+if(CTBROWSER_BUILD_V1 AND CTBROWSER_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
 
-if(CTBROWSER_BUILD_EXAMPLES)
+# ctbrowser 2.0 - the concurrent, GPU-composited rewrite. Builds alongside v1
+# until the staging plan retires v1, and is entirely self-contained: v1's
+# targets, PCH and tests are untouched by it. Needs CMake >= 3.28 for C++
+# modules, so it is opt-out on older toolchains rather than a hard failure.
+option(CTBROWSER_BUILD_V2 "Build the ctbrowser 2.0 engine (needs CMake >= 3.28)" ON)
+if(CTBROWSER_BUILD_V2)
+  if(CMAKE_VERSION VERSION_LESS 3.28)
+    message(STATUS "ctbrowser: CMake < 3.28 - skipping v2 (no C++ module support)")
+  else()
+    add_subdirectory(src)
+  endif()
+endif()
+
+if(CTBROWSER_BUILD_V1 AND CTBROWSER_BUILD_EXAMPLES)
   if(SDL3_FOUND)
     add_subdirectory(examples)
   else()

@@ -19,6 +19,34 @@
       }
     },
     {
+      "name": "tsan",
+      "displayName": "v2 + ThreadSanitizer (the thread-safe DOM's real test)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-tsan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CTBROWSER_BUILD_EXAMPLES": "OFF",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer -g",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
+        "CMAKE_CXX_COMPILER": "/home/linuxbrew/.linuxbrew/bin/clang++",
+        "CTBROWSER_BUILD_V1": "OFF"
+      }
+    },
+    {
+      "name": "asan",
+      "displayName": "v2 + Address/UB sanitizers",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-asan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CTBROWSER_BUILD_EXAMPLES": "OFF",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer -g",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_CXX_COMPILER": "/home/linuxbrew/.linuxbrew/bin/clang++",
+        "CTBROWSER_BUILD_V1": "OFF"
+      }
+    },
+    {
       "name": "windows",
       "displayName": "Windows x86_64 cross (llvm-mingw std::embed)",
       "generator": "Ninja",
@@ -54,6 +82,14 @@
     {
       "name": "windows-fetch",
       "configurePreset": "windows-fetch"
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan"
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan"
     }
   ],
   "testPresets": [
@@ -67,6 +103,20 @@
     {
       "name": "fetch",
       "configurePreset": "fetch",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan",
       "output": {
         "outputOnFailure": true
       }
