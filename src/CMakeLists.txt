@@ -113,6 +113,28 @@ set_target_properties(ctbrowser-style PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
 add_library(ctbrowser::style ALIAS ctbrowser-style)
 
+# --- ctbrowser.layout ----------------------------------------------------
+# Consumes a styled box tree and produces an immutable fragment tree. Depends
+# on core (scheduler, geometry), dom (read_txn) and style (computed styles) -
+# but NOT the other way round: nothing upstream knows layout exists, which is
+# what keeps the pipeline acyclic.
+add_library(ctbrowser-layout)
+target_sources(ctbrowser-layout
+  PUBLIC
+    FILE_SET CXX_MODULES FILES
+      layout/layout.cppm
+      layout/values.cppm
+      layout/box.cppm
+      layout/fragment.cppm
+      layout/algorithm.cppm
+      layout/engine.cppm)
+target_compile_features(ctbrowser-layout PUBLIC cxx_std_23)
+target_compile_options(ctbrowser-layout PRIVATE ${CTBROWSER_V2_WARNINGS})
+target_link_libraries(ctbrowser-layout PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style)
+set_target_properties(ctbrowser-layout PROPERTIES CXX_SCAN_FOR_MODULES ON)
+
+add_library(ctbrowser::layout ALIAS ctbrowser-layout)
+
 if(CTBROWSER_BUILD_TESTS)
   add_subdirectory(../tests-v2 "${CMAKE_CURRENT_BINARY_DIR}/tests-v2")
 endif()
