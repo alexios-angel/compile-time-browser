@@ -53,6 +53,12 @@ struct frame_token {
 //   needs_raster   a tile that is still valid from a previous frame must not be
 //                  redrawn. Without this the compositor cannot do incremental
 //                  raster at all, and a scroll pays for the whole page again.
+//   tile_ready     called ON THE COMPOSITOR THREAD as each tile finishes, so a
+//                  backend can start moving its pixels while the rest of the
+//                  page is still being drawn. The software backend has nothing
+//                  to do here; the GPU backend uploads the tile's texture, and
+//                  doing that as tiles land rather than in one burst at
+//                  composite time is the entire reason the handoff exists.
 //
 // A GPU backend needs both for the same reasons - tile textures have to be
 // allocated before a command buffer references them, and re-rastering a valid
@@ -66,6 +72,7 @@ concept RasterBackend =
 	    { b.reserve_tiles(ts) } -> std::same_as<std::expected<void, gpu_error>>;
 	    { b.needs_raster(t) } -> std::same_as<bool>;
 	    { b.raster(t, dl) } -> std::same_as<std::expected<void, gpu_error>>;
+	    { b.tile_ready(t) } -> std::same_as<void>;
 	    { b.composite(ls) } -> std::same_as<std::expected<void, gpu_error>>;
 	    { b.end_frame() } -> std::same_as<std::expected<void, gpu_error>>;
 	    { B::is_hardware } -> std::convertible_to<bool>;

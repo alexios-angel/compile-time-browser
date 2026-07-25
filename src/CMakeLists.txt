@@ -165,10 +165,13 @@ target_sources(ctbrowser-raster
     FILE_SET CXX_MODULES FILES
       raster/raster.cppm
       raster/surface.cppm
+      raster/draw.cppm
       raster/tile.cppm
       raster/backend.cppm
       raster/software.cppm
-      raster/compositor.cppm)
+      raster/renderer.cppm
+      raster/compositor.cppm
+      raster/pipeline.cppm)
 target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
 target_compile_options(ctbrowser-raster PRIVATE ${CTBROWSER_V2_WARNINGS})
 target_include_directories(ctbrowser-raster PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/raster")
@@ -176,6 +179,28 @@ target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)
 set_target_properties(ctbrowser-raster PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
 add_library(ctbrowser::raster ALIAS ctbrowser-raster)
+
+# --- ctbrowser.gpu -------------------------------------------------------
+# OPTIONAL by construction. Without SDL3 the engine still builds and still
+# renders - through the software backend - because raster::renderer is a
+# runtime seam rather than a compile-time one. That is the same reason a
+# machine with no GPU still gets a browser.
+if(SDL3_FOUND)
+  add_library(ctbrowser-gpu)
+  target_sources(ctbrowser-gpu
+    PUBLIC
+      FILE_SET CXX_MODULES FILES
+        gpu/gpu.cppm
+        gpu/device.cppm
+        gpu/select.cppm)
+  target_compile_features(ctbrowser-gpu PUBLIC cxx_std_23)
+  target_compile_options(ctbrowser-gpu PRIVATE ${CTBROWSER_V2_WARNINGS})
+  target_include_directories(ctbrowser-gpu PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/gpu")
+  target_link_libraries(ctbrowser-gpu PUBLIC ctbrowser-core ctbrowser-paint ctbrowser-raster
+                                             SDL3::SDL3)
+  set_target_properties(ctbrowser-gpu PROPERTIES CXX_SCAN_FOR_MODULES ON)
+  add_library(ctbrowser::gpu ALIAS ctbrowser-gpu)
+endif()
 
 if(CTBROWSER_BUILD_TESTS)
   add_subdirectory(../tests-v2 "${CMAKE_CURRENT_BINARY_DIR}/tests-v2")

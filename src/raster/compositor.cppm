@@ -28,6 +28,34 @@ export namespace ctbrowser::raster {
 
 using ctbrowser::paint::layer_tree;
 
+// The tiles a frame has to have, and which display list each comes from.
+//
+// Shared by the simple draw() below and by the compositor thread in :pipeline,
+// so the culling rule is written once. Two copies of "which tiles are visible"
+// is two chances to disagree, and disagreeing shows up as a hole in the page.
+inline void visible_tiles(const layer_tree & tree, const rect & viewport, int extent,
+                          std::vector<tile> & tiles,
+                          std::vector<const paint::display_list *> & lists) {
+	for (std::uint32_t i = 0; i < tree.layers.size(); ++i) {
+		const paint::layer & l = tree.layers[i];
+		if (!l.contents) { continue; }
+		// The visible region in this layer's CONTENT space - which is where its
+		// tiles live, and why a layer's offset is what turns a scroll into a
+		// different set of tiles rather than a different set of commands.
+		const float margin = static_cast<float>(extent);
+		const rect visible =
+		    viewport.empty()
+		        ? rect{}
+		        : rect{viewport.x - l.offset.x - margin, viewport.y - l.offset.y - margin,
+		               viewport.width + 2 * margin, viewport.height + 2 * margin};
+		for (const tile & t : tiles_for(l.contents->bounds(), i, extent)) {
+			if (!visible.empty() && !t.area.intersects(visible)) { continue; }
+			tiles.push_back(t);
+			lists.push_back(l.contents.get());
+		}
+	}
+}
+
 // Raster the tiles a frame needs - in parallel when a pool is given - then
 // composite.
 //
@@ -53,24 +81,7 @@ template <RasterBackend B>
 
 	std::vector<tile> tiles;
 	std::vector<const paint::display_list *> lists;
-	for (std::uint32_t i = 0; i < tree.layers.size(); ++i) {
-		const paint::layer & l = tree.layers[i];
-		if (!l.contents) { continue; }
-		// The visible region in this layer's CONTENT space - which is where its
-		// tiles live, and why a layer's offset is what turns a scroll into a
-		// different set of tiles rather than a different set of commands.
-		const float margin = static_cast<float>(extent);
-		const rect visible =
-		    viewport.empty()
-		        ? rect{}
-		        : rect{viewport.x - l.offset.x - margin, viewport.y - l.offset.y - margin,
-		               viewport.width + 2 * margin, viewport.height + 2 * margin};
-		for (const tile & t : tiles_for(l.contents->bounds(), i, extent)) {
-			if (!visible.empty() && !t.area.intersects(visible)) { continue; }
-			tiles.push_back(t);
-			lists.push_back(l.contents.get());
-		}
-	}
+	visible_tiles(tree, viewport, extent, tiles, lists);
 
 	if (const auto reserved = backend.reserve_tiles(tiles); !reserved) {
 		(void)backend.end_frame();

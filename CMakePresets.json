@@ -54,7 +54,8 @@
       "toolchainFile": "${sourceDir}/cmake/toolchain-windows-x86_64.cmake",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CTBROWSER_BUILD_TESTS": "OFF"
+        "CTBROWSER_BUILD_TESTS": "ON",
+        "CTBROWSER_BUILD_V2": "ON"
       }
     },
     {
@@ -62,7 +63,9 @@
       "displayName": "Windows cross + compile-time fetches",
       "inherits": "windows",
       "cacheVariables": {
-        "CTBROWSER_EXAMPLES_FETCH": "ON"
+        "CTBROWSER_EXAMPLES_FETCH": "ON",
+        "CTBROWSER_BUILD_TESTS": "ON",
+        "CTBROWSER_BUILD_V2": "ON"
       }
     }
   ],

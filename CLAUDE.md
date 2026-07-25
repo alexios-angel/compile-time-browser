@@ -18,6 +18,27 @@ without __builtin_std_embed. No gcc/MSVC/stock-clang paths. **CMake +
 Ninja is THE build** (Makefiles retired 2026-07-23). Work on `main`.
 Prefer `rg`.
 
+## ⚠️ v2 GPU: this machine has NO GPU (verified 2026-07-25)
+
+`src/gpu` (SDL3 `SDL_GPUDevice`) builds and RUNS here, but the only Vulkan
+ICD that survives loading is **lavapipe** (`lvp_icd.json`) — every hardware
+ICD is dropped with "not having any physical devices". `/dev/dxg` and
+`/usr/lib/wsl/lib/libd3d12.so` exist, but no `dzn`/`d3d12` Vulkan ICD is
+installed to bridge to them, so **Linux binaries under this WSL2 see no
+adapter**. `SDL_GetGPUDeviceDriver` says "vulkan" either way — the adapter
+name (`SDL_PROP_GPU_DEVICE_NAME_STRING`, exposed as
+`sdl_gpu_backend::adapter()`) is what tells you, and
+`adapter_is_software()` checks it.
+
+Consequences: GPU **correctness** is verifiable here (tests-v2/gpu_basics
+compares the GPU image to the software one byte for byte, and passes), but
+GPU **performance** is not — `tests-v2/bench_gpu` prints a loud banner and
+its numbers are two CPU implementations racing. For a real number build the
+Windows .exe (`cmake --preset windows`, or `./tools/remote-build.sh
+windows`, both now with `CTBROWSER_BUILD_TESTS=ON`) and run it from
+Windows. Headless GPU runs need `SDL_VIDEODRIVER=offscreen`; `dummy` has no
+Vulkan surface support and fails device creation outright.
+
 ## ⚠️ Working environment & in-flight work (READ FIRST — 2026-07-22)
 
 **Heavy builds go on the shared devbox; grammar-free ctbrowser now

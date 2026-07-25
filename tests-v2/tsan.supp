@@ -1,0 +1,20 @@
+# ThreadSanitizer suppressions, and ONLY for third-party code TSan cannot see
+# into. Nothing in ctbrowser is suppressed here, ever - a suppression that
+# silences your own code turns a green TSan run into a decoration.
+#
+# The Vulkan ICD (lavapipe, and any other driver) is not instrumented, so TSan
+# reports its internal mutex and allocator traffic as races. Every frame of
+# those reports is inside the driver; none is in ctbrowser. Suppressing by
+# LIBRARY rather than by pattern keeps that narrow: a race in our code is still
+# reported even when the driver is on the stack below it.
+#
+# Verified by planting a race in sdl_gpu_backend and confirming it is still
+# caught with these suppressions active.
+race:libvulkan_lvp.so
+race:libvulkan.so
+race:libLLVM
+mutex:libvulkan_lvp.so
+mutex:libvulkan.so
+deadlock:libvulkan_lvp.so
+called_from_lib:libvulkan_lvp.so
+called_from_lib:libvulkan.so

@@ -61,6 +61,20 @@ public:
 
 	[[nodiscard]] std::size_t worker_count() const noexcept { return queues_.size(); }
 
+	// A stable slot for the calling thread, in [0, worker_count()]. Pool workers
+	// get their own index; any other thread - including the one that called
+	// parallel_for and is helping out - gets worker_count().
+	//
+	// This exists so a consumer can hand each producer its OWN single-producer
+	// queue. "Single producer" then holds by construction rather than by
+	// convention, which is the difference between a lock-free handoff that is
+	// correct and one that merely has not raced yet.
+	[[nodiscard]] std::size_t worker_index() const noexcept {
+		return current_ == nullptr || current_->owner != this ? queues_.size() : current_->index;
+	}
+	// One more than worker_count(): every worker, plus whoever is helping.
+	[[nodiscard]] std::size_t producer_slots() const noexcept { return queues_.size() + 1; }
+
 	void submit(task t) {
 		const std::size_t i = next_.fetch_add(1, std::memory_order_relaxed) % queues_.size();
 		queue & q = queues_[i];
@@ -129,7 +143,17 @@ private:
 		return false;
 	}
 
+	struct identity {
+		const scheduler * owner = nullptr;
+		std::size_t index = 0;
+	};
+	// Thread-local rather than a map: worker_index() is called once per tile and
+	// must not become the synchronisation the queues exist to avoid.
+	static inline thread_local identity * current_ = nullptr;
+
 	void run(std::size_t i, const std::stop_token & stop) {
+		identity me{this, i};
+		current_ = &me;
 		while (!stop.stop_requested()) {
 			if (run_one(i)) { continue; }
 			queue & q = queues_[i];
@@ -137,6 +161,7 @@ private:
 			q.ready.wait_for(lock, std::chrono::milliseconds{1},
 			                 [&] { return !q.items.empty() || stop.stop_requested(); });
 		}
+		current_ = nullptr;
 	}
 
 	std::vector<queue> queues_;
