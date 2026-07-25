@@ -425,6 +425,9 @@ inline ctjs::value simple_event(std::string_view type) {
 }
 
 inline ctjs::value canvas_context(node * n, image_store * images);
+// the installers below build one element handle facet at a time, and the
+// query facet hands back handles of its own - so it needs this first
+inline ctjs::value element_handle(node * n, image_store * images, dom_events * ev);
 
 // (defined below, after element_handle; used by getElementsByTagName/ClassName)
 inline void collect_by_tag(node * n, std::string_view tag, image_store * images, dom_events * ev,
@@ -432,8 +435,8 @@ inline void collect_by_tag(node * n, std::string_view tag, image_store * images,
 inline void collect_by_class(node * n, std::string_view cls, image_store * images, dom_events * ev,
                              std::vector<ctjs::value> & out);
 
-inline ctjs::value element_handle(node * n, image_store * images, dom_events * ev) {
-	ctjs::object_t o;
+// the live web-facing properties (refreshed after every layout)
+inline void install_core_props(ctjs::object_t & o, node * n, dom_events * ev) {
 	o.set("id", ctjs::value{n->id});
 	o.set("tag", ctjs::value{n->tag});
 	// the live web-facing properties (refreshed after every layout)
@@ -442,6 +445,10 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 	o.set("offsetLeft", ctjs::value{static_cast<double>(n->x)});
 	o.set("offsetTop", ctjs::value{static_cast<double>(n->y)});
 	o.set("__node", ctjs::value{ev->track_node(n)});
+}
+
+// getContext, and the node-tree mutators scripts may call
+inline void install_tree_api(ctjs::object_t & o, node * n, image_store * images, dom_events * ev) {
 	set_method(o, "getContext", [n, images, ev](ctjs::context & cx, const std::vector<ctjs::value> &) {
 		ev->cx = &cx;
 		return n->is_canvas() ? canvas_context(n, images)
@@ -512,6 +519,10 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 		}
 		return ctjs::value{};
 	});
+}
+
+// text, the class helpers, and the DOM classList object
+inline void install_class_api(ctjs::object_t & o, node * n) {
 	set_method(o, "text", [n](ctjs::context &, const std::vector<ctjs::value> &) {
 		return ctjs::value{n->text};
 	});
@@ -554,6 +565,10 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 		});
 		o.set("classList", ctjs::value::object(std::move(cl)));
 	}
+}
+
+// querySelector(All) and the getElementsBy* collections
+inline void install_query_api(ctjs::object_t & o, node * n, image_store * images, dom_events * ev) {
 	// querySelector(All): a CSS-subset search rooted at this element
 	set_method(o, "querySelector", [n, images, ev](ctjs::context &, const std::vector<ctjs::value> & a) -> ctjs::value {
 		if (a.empty()) { return ctjs::value{}; }
@@ -589,6 +604,10 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 		}
 		return ctjs::value{};
 	});
+}
+
+// inline style, attributes by name, and the live layout rect
+inline void install_style_api(ctjs::object_t & o, node * n) {
 	set_method(o, "style", [n](ctjs::context &, const std::vector<ctjs::value> & a) {
 		if (a.size() >= 2) {
 			n->inline_style.set(a[0].to_string(), a[1].to_string());
@@ -609,6 +628,10 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 		r.set("h", ctjs::value{static_cast<double>(n->h)});
 		return ctjs::value::object(std::move(r));
 	});
+}
+
+// the .onclick PROPERTY (el.onclick = fn), stored on the node
+inline void install_event_props(ctjs::object_t & o, dom_events * ev) {
 	// .onclick PROPERTY (el.onclick = fn), like the DOM: stored on the node
 	// registry (handles are transient), fired by engine::click_at on this element
 	// and — via bubbling — its descendants' clicks. The game's "PLAY AGAIN" panel
@@ -628,7 +651,10 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 		    const auto it = en != nullptr ? ev->onclick_handlers.find(en) : ev->onclick_handlers.end();
 		    return it != ev->onclick_handlers.end() ? it->second : ctjs::value{};
 	    }, "get onclick"));
-	// --- the standard attribute API (all elements) ---
+}
+
+// the standard attribute API (all elements)
+inline void install_attribute_api(ctjs::object_t & o, node * n, dom_events * ev) {
 	set_method(o, "getAttribute", [n](ctjs::context &, const std::vector<ctjs::value> & a) -> ctjs::value {
 		if (a.empty()) { return ctjs::value::null(); }
 		const std::string name = a[0].to_string();
@@ -645,7 +671,10 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 		    if (en != nullptr && !a.empty() && a[0].is_function()) { ev->change_handlers[en] = a[0]; }
 		    return ctjs::value{};
 	    }, "set onchange"));
-	// --- editable controls: the live value + caret-preserving setter ---
+}
+
+// editable controls: the live value + caret-preserving setter
+inline void install_value_api(ctjs::object_t & o, node * n, dom_events * ev) {
 	if (n->is_editable()) {
 		ctjs::attach_accessor(o, "value", 'g', ctjs::value::function(
 		    [ev](ctjs::context & cx, const std::vector<ctjs::value> &) -> ctjs::value {
@@ -669,7 +698,10 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 			    return ctjs::value{};
 		    }, "set oninput"));
 	}
-	// --- forms: submit()/reset() + .onsubmit -----------------------------
+}
+
+// forms: submit()/reset() + .onsubmit
+inline void install_form_api(ctjs::object_t & o, node * n, dom_events * ev) {
 	if (n->tag == "form") {
 		set_method(o, "submit", [ev](ctjs::context & cx, const std::vector<ctjs::value> &) {
 			node * en = ev->node_of(cx.current_this);
@@ -688,7 +720,10 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 			    return ctjs::value{};
 		    }, "set onsubmit"));
 	}
-	// --- checkbox / radio ---
+}
+
+// checkbox / radio
+inline void install_toggle_api(ctjs::object_t & o, node * n, dom_events * ev) {
 	if (n->is_checkbox() || n->is_radio()) {
 		ctjs::attach_accessor(o, "checked", 'g', ctjs::value::function(
 		    [ev](ctjs::context & cx, const std::vector<ctjs::value> &) -> ctjs::value {
@@ -717,7 +752,10 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 			    return ctjs::value{en != nullptr ? std::string{en->input_type()} : std::string{}};
 		    }, "get type"));
 	}
-	// --- disabled (any form control) ---
+}
+
+// disabled, <details> disclosure, and anchors
+inline void install_state_api(ctjs::object_t & o, node * n, dom_events * ev) {
 	if (n->is_form_control()) {
 		ctjs::attach_accessor(o, "disabled", 'g', ctjs::value::function(
 		    [ev](ctjs::context & cx, const std::vector<ctjs::value> &) -> ctjs::value {
@@ -773,7 +811,10 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 			    return ctjs::value{};
 		    }, "set href"));
 	}
-	// --- <select> / <option> form-control properties (native accessors) ---
+}
+
+// <select> / <option> form-control properties
+inline void install_select_api(ctjs::object_t & o, node * n, dom_events * ev) {
 	if (n->is_select()) {
 		// .value: the selected <option>'s value attribute (live), or pick by value
 		ctjs::attach_accessor(o, "value", 'g', ctjs::value::function(
@@ -842,37 +883,54 @@ inline ctjs::value element_handle(node * n, image_store * images, dom_events * e
 			    return ctjs::value{false};
 		    }, "get selected"));
 	}
+}
+
+inline ctjs::value element_handle(node * n, image_store * images, dom_events * ev) {
+	ctjs::object_t o;
+	install_core_props(o, n, ev);
+	install_tree_api(o, n, images, ev);
+	install_class_api(o, n);
+	install_query_api(o, n, images, ev);
+	install_style_api(o, n);
+	install_event_props(o, ev);
+	install_attribute_api(o, n, ev);
+	install_value_api(o, n, ev);
+	install_form_api(o, n, ev);
+	install_toggle_api(o, n, ev);
+	install_state_api(o, n, ev);
+	install_select_api(o, n, ev);
 	ctjs::value v = ctjs::value::object(std::move(o));
 	ev->tracked.emplace_back(v.as_object(), n);
 	return v;
 }
 
-inline ctjs::value canvas_context(node * n, image_store * images) {
-	auto ctx = ctjs::rc<ctjs::object_t>::make();
-	ctx->set("fillStyle", ctjs::value{"#000000"});
-	ctx->set("strokeStyle", ctjs::value{"#000000"});
-	ctx->set("font", ctjs::value{"10px sans-serif"});
-	ctx->set("width", ctjs::value{n->canvas_w});
-	ctx->set("height", ctjs::value{n->canvas_h});
-	const auto style_of = [ctx]() -> uint32_t {
-		if (const ctjs::value * v = ctx->find("fillStyle")) {
-			return css_to_argb(v->to_string(), 0xFF000000u);
-		}
+// The raw pixel operations every canvas method draws through: read the
+// live fillStyle/strokeStyle back off the JS object (the real canvas
+// idiom - a script assigns the property and the natives observe it),
+// write one pixel, fill a rect, blit an image. These were five separate
+// closures each method had to capture individually; as one value the
+// method installers below take a single parameter, and the clipping rules
+// live in one place instead of being restated per call site.
+struct canvas_ops {
+	node * n = nullptr;
+	image_store * images = nullptr;
+	ctjs::rc<ctjs::object_t> ctx;
+
+	std::uint32_t fill_style() const { return style_prop("fillStyle"); }
+	std::uint32_t stroke_style() const { return style_prop("strokeStyle"); }
+	std::uint32_t style_prop(const char * key) const {
+		if (const ctjs::value * v = ctx->find(key)) { return css_to_argb(v->to_string(), 0xFF000000u); }
 		return 0xFF000000u;
-	};
-	const auto stroke_of = [ctx]() -> uint32_t {
-		if (const ctjs::value * v = ctx->find("strokeStyle")) {
-			return css_to_argb(v->to_string(), 0xFF000000u);
-		}
-		return 0xFF000000u;
-	};
-	const auto put = [n](std::int32_t x, std::int32_t y, uint32_t argb) {
+	}
+	// one pixel, silently clipped to the canvas
+	void put(std::int32_t x, std::int32_t y, std::uint32_t argb) const {
 		if (x >= 0 && y >= 0 && x < n->canvas_w && y < n->canvas_h) {
 			n->pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(n->canvas_w) +
 			          static_cast<std::size_t>(x)] = argb;
 		}
-	};
-	const auto fill = [n](std::int32_t x, std::int32_t y, std::int32_t w, std::int32_t h, uint32_t argb) {
+	}
+	void fill(std::int32_t x, std::int32_t y, std::int32_t w, std::int32_t h,
+	          std::uint32_t argb) const {
 		if (n->pixels.empty()) { return; }
 		const std::int32_t x0 = x < 0 ? 0 : x;
 		const std::int32_t y0 = y < 0 ? 0 : y;
@@ -884,10 +942,10 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 				          static_cast<std::size_t>(px)] = argb;
 			}
 		}
-	};
-	// nearest-neighbour blit with alpha test (a == 0 skips the pixel)
-	const auto blit = [images, put](std::int32_t handle, std::int32_t sx, std::int32_t sy, std::int32_t sw, std::int32_t sh, std::int32_t dx,
-	                                std::int32_t dy, std::int32_t dw, std::int32_t dh) {
+	}
+	// nearest-neighbour blit with an alpha test (a == 0 skips the pixel)
+	void blit(std::int32_t handle, std::int32_t sx, std::int32_t sy, std::int32_t sw, std::int32_t sh,
+	          std::int32_t dx, std::int32_t dy, std::int32_t dw, std::int32_t dh) const {
 		const image * im = images->get(handle);
 		if (im == nullptr || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) { return; }
 		for (std::int32_t py = 0; py < dh; ++py) {
@@ -903,55 +961,65 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 				put(dx + px, dy + py, argb);
 			}
 		}
-	};
-	set_method(ctx, "fillRect", [style_of, fill](ctjs::context &, const std::vector<ctjs::value> & a) {
+	}
+};
+
+inline ctjs::value canvas_context(node * n, image_store * images) {
+	auto ctx = ctjs::rc<ctjs::object_t>::make();
+	ctx->set("fillStyle", ctjs::value{"#000000"});
+	ctx->set("strokeStyle", ctjs::value{"#000000"});
+	ctx->set("font", ctjs::value{"10px sans-serif"});
+	ctx->set("width", ctjs::value{n->canvas_w});
+	ctx->set("height", ctjs::value{n->canvas_h});
+	const canvas_ops ops{n, images, ctx};
+	set_method(ctx, "fillRect", [ops](ctjs::context &, const std::vector<ctjs::value> & a) {
 		if (a.size() >= 4) {
-			fill(arg_i32(a, 0),
+			ops.fill(arg_i32(a, 0),
 			arg_i32(a, 1),
 			arg_i32(a, 2),
-			arg_i32(a, 3), style_of());
+			arg_i32(a, 3), ops.fill_style());
 		}
 		return ctjs::value{};
 	});
-	set_method(ctx, "clear", [n, style_of](ctjs::context &, const std::vector<ctjs::value> &) {
-		for (uint32_t & p : n->pixels) { p = style_of(); }
+	set_method(ctx, "clear", [n, ops](ctjs::context &, const std::vector<ctjs::value> &) {
+		for (uint32_t & p : n->pixels) { p = ops.fill_style(); }
 		return ctjs::value{};
 	});
-	set_method(ctx, "putPixel", [put, style_of](ctjs::context &, const std::vector<ctjs::value> & a) {
+	set_method(ctx, "putPixel", [ops](ctjs::context &, const std::vector<ctjs::value> & a) {
 		if (a.size() >= 2) {
-			put(arg_i32(a, 0),
-			arg_i32(a, 1), style_of());
+			ops.put(arg_i32(a, 0),
+			arg_i32(a, 1), ops.fill_style());
 		}
 		return ctjs::value{};
 	});
 	// clearRect clears to TRANSPARENT (the page shows through), per spec
-	set_method(ctx, "clearRect", [fill](ctjs::context &, const std::vector<ctjs::value> & a) {
+	set_method(ctx, "clearRect", [ops](ctjs::context &, const std::vector<ctjs::value> & a) {
 		if (a.size() >= 4) {
-			fill(arg_i32(a, 0),
+			ops.fill(arg_i32(a, 0),
 			arg_i32(a, 1),
 			arg_i32(a, 2),
 			arg_i32(a, 3), 0x00000000u);
 		}
 		return ctjs::value{};
 	});
-	set_method(ctx, "strokeRect", [fill, stroke_of](ctjs::context &, const std::vector<ctjs::value> & a) {
+	set_method(ctx, "strokeRect", [ops](ctjs::context &, const std::vector<ctjs::value> & a) {
 		if (a.size() >= 4) {
 			const std::int32_t x = arg_i32(a, 0);
 			const std::int32_t y = arg_i32(a, 1);
 			const std::int32_t w = arg_i32(a, 2);
 			const std::int32_t h = arg_i32(a, 3);
-			const uint32_t c = stroke_of();
-			fill(x, y, w, 1, c);
-			fill(x, y + h - 1, w, 1, c);
-			fill(x, y, 1, h, c);
-			fill(x + w - 1, y, 1, h, c);
+			const uint32_t c = ops.stroke_style();
+			ops.fill(x, y, w, 1, c);
+			ops.fill(x, y + h - 1, w, 1, c);
+			ops.fill(x, y, 1, h, c);
+			ops.fill(x + w - 1, y, 1, h, c);
 		}
 		return ctjs::value{};
 	});
 	// --- the 2D path API with a REAL transform stack. Per spec, path
 	// verbs transform their points by the CURRENT matrix as they are
 	// appended (so rasterization is matrix-free): subpaths are device-
-	// space polylines, fill() scanline-fills them (even-odd), stroke()
+	// space polylines, ops.fill() scanline-fills them (even-odd), stroke()
 	// draws lineWidth-thick segments. arc() honors its angles by
 	// sampling; rect() appends a closed 4-point subpath.
 	struct ctx2d {
@@ -982,7 +1050,7 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	};
 	auto st = std::make_shared<ctx2d>();
 	// even-odd scanline fill of every subpath (closing them implicitly)
-	const auto fill_subs = [st, put](uint32_t col) {
+	const auto fill_subs = [st, ops](uint32_t col) {
 		double miny = 1e300, maxy = -1e300;
 		for (const auto & s : st->subs) {
 			for (const auto & [px, py] : s.pts) {
@@ -1009,13 +1077,13 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 			for (std::size_t i = 0; i + 1 < xs.size(); i += 2) {
 				for (std::int32_t x = static_cast<std::int32_t>(std::ceil(xs[i] - 0.5));
 				     x < static_cast<std::int32_t>(std::ceil(xs[i + 1] - 0.5)) + 1; ++x) {
-					put(x, y, col);
+					ops.put(x, y, col);
 				}
 			}
 		}
 	};
 	// a lineWidth-thick segment as a filled quad
-	const auto thick_seg = [put](double x1, double y1, double x2, double y2, double w,
+	const auto thick_seg = [ops](double x1, double y1, double x2, double y2, double w,
 	                             uint32_t col) {
 		const double dx = x2 - x1;
 		const double dy = y2 - y1;
@@ -1035,7 +1103,7 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 				const double t = std::clamp((px * dx + py * dy) / (len * len), 0.0, 1.0);
 				const double ddx = px - t * dx;
 				const double ddy = py - t * dy;
-				if (ddx * ddx + ddy * ddy <= (w / 2) * (w / 2)) { put(x, y, col); }
+				if (ddx * ddx + ddy * ddy <= (w / 2) * (w / 2)) { ops.put(x, y, col); }
 			}
 		}
 	};
@@ -1141,14 +1209,14 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 		}
 		return ctjs::value{};
 	});
-	set_method(ctx, "fill", [st, fill_subs, style_of](ctjs::context &,
+	set_method(ctx, "fill", [st, fill_subs, ops](ctjs::context &,
 	const std::vector<ctjs::value> &) {
-		fill_subs(style_of());
+		fill_subs(ops.fill_style());
 		return ctjs::value{};
 	});
-	set_method(ctx, "stroke", [st, thick_seg, stroke_of, num_prop](ctjs::context &,
+	set_method(ctx, "stroke", [st, thick_seg, ops, num_prop](ctjs::context &,
 	const std::vector<ctjs::value> &) {
-		const uint32_t col = stroke_of();
+		const uint32_t col = ops.stroke_style();
 		const double w = num_prop("lineWidth", 1.0);
 		for (const auto & s : st->subs) {
 			const std::size_t n = s.pts.size();
@@ -1183,15 +1251,15 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	});
 	// a filled circle - not in the 2D spec, but games want one (documented
 	// extension, like drawImageRegion below)
-	set_method(ctx, "fillCircle", [put, style_of](ctjs::context &, const std::vector<ctjs::value> & a) {
+	set_method(ctx, "fillCircle", [ops](ctjs::context &, const std::vector<ctjs::value> & a) {
 		if (a.size() >= 3) {
 			const std::int32_t cx = arg_i32(a, 0);
 			const std::int32_t cy = arg_i32(a, 1);
 			const std::int32_t r = arg_i32(a, 2);
-			const uint32_t c = style_of();
+			const uint32_t c = ops.fill_style();
 			for (std::int32_t y = -r; y <= r; ++y) {
 				for (std::int32_t x = -r; x <= r; ++x) {
-					if (x * x + y * y <= r * r) { put(cx + x, cy + y, c); }
+					if (x * x + y * y <= r * r) { ops.put(cx + x, cy + y, c); }
 				}
 			}
 		}
@@ -1200,7 +1268,7 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 	// DOM fillText: y is the BASELINE, size comes from ctx.font
 	// ("16px Arial" -> 16, default 10px), glyphs are the embedded 8x8
 	// font scaled by the integer factor px/8 (min 1)
-	set_method(ctx, "fillText", [ctx, put, style_of](ctjs::context &, const std::vector<ctjs::value> & a) {
+	set_method(ctx, "fillText", [ctx, ops](ctjs::context &, const std::vector<ctjs::value> & a) {
 		if (a.size() >= 3) {
 			const std::string text = a[0].to_string();
 			std::int32_t px = 0;
@@ -1215,7 +1283,7 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 			const std::int32_t scale = px >= 8 ? px / 8 : 1;
 			const std::int32_t x = arg_i32(a, 1);
 			const std::int32_t y = arg_i32(a, 2) - 8 * scale;
-			const uint32_t c = style_of();
+			const uint32_t c = ops.fill_style();
 			std::int32_t pen = x;
 			for (std::size_t ci = 0; ci < text.size();) { // decode UTF-8
 				const char32_t ch = ctbrowser::utf8_next(text, ci);
@@ -1224,7 +1292,7 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 						if (!glyph_pixel(ch, row, col)) { continue; }
 						for (std::int32_t sy = 0; sy < scale; ++sy) {
 							for (std::int32_t sx = 0; sx < scale; ++sx) {
-								put(pen + col * scale + sx,
+								ops.put(pen + col * scale + sx,
 								y + row * scale + sy, c);
 							}
 						}
@@ -1235,7 +1303,7 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 		}
 		return ctjs::value{};
 	});
-	set_method(ctx, "drawImage", [images, blit](ctjs::context &, const std::vector<ctjs::value> & a) {
+	set_method(ctx, "drawImage", [images, ops](ctjs::context &, const std::vector<ctjs::value> & a) {
 		if (a.size() >= 3) {
 			const std::int32_t handle = arg_i32(a, 0);
 			const image * im = images->get(handle);
@@ -1244,7 +1312,7 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 				: im->w;
 				const std::int32_t dh = a.size() >= 5 ? arg_i32(a, 4)
 				: im->h;
-				blit(handle, 0, 0, im->w, im->h,
+				ops.blit(handle, 0, 0, im->w, im->h,
 				arg_i32(a, 1),
 				arg_i32(a, 2), dw, dh);
 			}
@@ -1252,9 +1320,9 @@ inline ctjs::value canvas_context(node * n, image_store * images) {
 		return ctjs::value{};
 	});
 	// sprite sheets: source region -> destination region
-	set_method(ctx, "drawImageRegion", [blit](ctjs::context &, const std::vector<ctjs::value> & a) {
+	set_method(ctx, "drawImageRegion", [ops](ctjs::context &, const std::vector<ctjs::value> & a) {
 		if (a.size() >= 9) {
-			blit(arg_i32(a, 0),
+			ops.blit(arg_i32(a, 0),
 			arg_i32(a, 1),
 			arg_i32(a, 2),
 			arg_i32(a, 3),
