@@ -1675,11 +1675,8 @@ inline value make_material(std::string name) {
 // collision, clone/createInstance, moveWithCollisions, translate/rotate, the
 // per-mesh onBeforeRenderObservable, dispose/onDispose. Called from every mesh
 // factory (MeshBuilder, glTF, clone) after the rec + handle exist.
-inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id) {
-	const std::size_t ix = static_cast<std::size_t>(id);
-	if (h->find("position") == nullptr) { h->set("position", make_vector3(0, 0, 0)); }
-	if (h->find("rotation") == nullptr) { h->set("rotation", make_vector3(0, 0, 0)); }
-	if (h->find("scaling") == nullptr) { h->set("scaling", make_vector3(1, 1, 1)); }
+// the plain data props a script reads and writes
+inline void install_mesh_state(const objptr & h, const worldptr & W, std::int32_t id) {
 	h->set("metadata", value{objptr::make()});
 	if (h->find("uniqueId") == nullptr) { h->set("uniqueId", value{static_cast<double>(W->next_uid++)}); }
 	h->set("isVisible", value{true});
@@ -1700,6 +1697,10 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id)
 	h->set("onBeforeRenderObservable", make_observable(W, id, true));
 	set_method(h, "registerInstancedBuffer", [](ctjs::context &, const std::vector<value> &) { return value{}; });
 
+}
+
+// getScene / setEnabled / isEnabled / dispose
+inline void install_mesh_lifecycle(const objptr & h, const worldptr & W, std::size_t ix) {
 	set_method(h, "getScene", [W, ix](ctjs::context &, const std::vector<value> &) -> value {
 		const std::int32_t si = ix < W->meshes.size() ? W->meshes[ix].scene_id : -1;
 		return (si >= 0 && si < static_cast<std::int32_t>(W->scenes.size())) ? value{W->scenes[static_cast<std::size_t>(si)].handle} : value{};
@@ -1740,6 +1741,10 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id)
 		return value{};
 	});
 
+}
+
+// clone and createInstance: same geometry, copied transform
+inline void install_mesh_cloning(const objptr & h, const worldptr & W, std::size_t ix) {
 	// clone(name)/createInstance(name): new mesh, same geometry + a COPY of the
 	// current transform, in the same scene
 	const auto cloner = [W, ix](ctjs::context &, const std::vector<value> & a) -> value {
@@ -1782,6 +1787,10 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id)
 	set_method(h, "clone", cloner);
 	set_method(h, "createInstance", cloner);
 
+}
+
+// movement: collisions, translate, rotate
+inline void install_mesh_movement(const objptr & h, const worldptr & W, std::size_t ix) {
 	// moveWithCollisions(v): move by v, then set collider.collidedMesh to the
 	// first overlapping mesh whose group this mesh's mask selects
 	set_method(h, "moveWithCollisions", [W, ix](ctjs::context &, const std::vector<value> & a) -> value {
@@ -1848,6 +1857,10 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id)
 	h->set("receiveShadows", value{false});
 	set_method(h, "registerAfterRender", [](ctjs::context &, const std::vector<value> &) { return value{}; });
 
+}
+
+// bounding info and the world matrix
+inline void install_mesh_bounds(const objptr & h, const worldptr & W, std::size_t ix) {
 	// getBoundingInfo(): local + world axis-aligned bounds, refreshed on demand.
 	set_method(h, "getBoundingInfo", [W, ix](ctjs::context &, const std::vector<value> &) -> value {
 		if (ix >= W->meshes.size()) { return value{}; }
@@ -1903,6 +1916,10 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id)
 	set_method(h, "getWorldMatrix", [W, ix](ctjs::context &, const std::vector<value> &) -> value {
 		return (ix < W->meshes.size()) ? make_matrix(mesh_world_matrix(W, static_cast<std::int32_t>(ix))) : value{};
 	});
+}
+
+// freezing the world matrix, pivots, and baking transforms
+inline void install_mesh_transform(const objptr & h, const worldptr & W, std::size_t ix) {
 	// freezeWorldMatrix(): capture the world matrix now; the renderer then ignores
 	// later position/rotation/scaling edits until unfreezeWorldMatrix().
 	set_method(h, "freezeWorldMatrix", [W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
@@ -1947,6 +1964,19 @@ inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id)
 		M.frozen_world = false;
 		return value{M.handle};
 	});
+}
+
+inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id) {
+	const std::size_t ix = static_cast<std::size_t>(id);
+	if (h->find("position") == nullptr) { h->set("position", make_vector3(0, 0, 0)); }
+	if (h->find("rotation") == nullptr) { h->set("rotation", make_vector3(0, 0, 0)); }
+	if (h->find("scaling") == nullptr) { h->set("scaling", make_vector3(1, 1, 1)); }
+	install_mesh_state(h, W, id);
+	install_mesh_lifecycle(h, W, ix);
+	install_mesh_cloning(h, W, ix);
+	install_mesh_movement(h, W, ix);
+	install_mesh_bounds(h, W, ix);
+	install_mesh_transform(h, W, ix);
 }
 
 // add a parsed glTF model's meshes + materials into a scene
