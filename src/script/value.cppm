@@ -6,9 +6,9 @@ module;
 #include <string_view>
 #include <vector>
 
-#include <boost/unordered/unordered_flat_map.hpp>
-
 export module ctbrowser.script:value;
+
+import ctbrowser.core;
 
 // The JS value, in one 64-bit word.
 //
@@ -160,7 +160,7 @@ struct array_object final : heap_object {
 // already the right shape for that, since it hands back a stable index.
 struct object_object final : heap_object {
 	std::vector<std::pair<std::string, value>> props;
-	boost::unordered_flat_map<std::string, std::uint32_t> index;
+	flat_map<std::string, std::uint32_t> index;
 	value prototype = value::null();
 
 	object_object() : heap_object(heap_kind::object) {}

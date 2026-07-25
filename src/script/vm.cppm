@@ -8,9 +8,9 @@ module;
 #include <string_view>
 #include <vector>
 
-#include <boost/unordered/unordered_flat_map.hpp>
-
 export module ctbrowser.script:vm;
+
+import ctbrowser.core;
 
 import :bytecode;
 import :value;
@@ -98,7 +98,29 @@ public:
 	}
 
 	// --- execution ---------------------------------------------------------
+	//
+	// THE PROGRAM MUST OUTLIVE THE CONTEXT. Closures hold `const function_proto *`
+	// into it, and anything that calls back in later - a timer, an event
+	// listener, requestAnimationFrame - dereferences them long after run()
+	// returned. Passing a temporary works exactly until the first callback.
 	run_result run(const program & prog);
+
+	// The receiver of the method call currently running, for natives. JS
+	// methods get `this` from the call site; a native has no frame to read it
+	// from, so the VM hands it over here. It is how one native object's methods
+	// tell which object they were called on - `el.setText(...)` and
+	// `other.setText(...)` are the same native.
+	[[nodiscard]] value current_this() const noexcept { return current_this_; }
+
+	// Call a JS function FROM C++. This is what an event listener, a timer and
+	// a requestAnimationFrame callback all need, and without it script can only
+	// ever be entered at the top.
+	//
+	// Re-entrant: it runs a nested interpreter loop on the existing register
+	// stack rather than resetting it, so a listener may itself call back into
+	// script.
+	value call(value callable, std::span<const value> args,
+	           value this_value = value::undefined());
 
 	// --- conversions (ECMA-262 shaped, and shared with the bindings) -------
 	[[nodiscard]] static bool truthy(value v);
@@ -121,6 +143,7 @@ private:
 	};
 
 	[[nodiscard]] value execute(const program & prog, const function_proto & entry);
+	[[nodiscard]] value run_loop(std::size_t stop_depth);
 	void raise(std::string message) {
 		if (!failed_) {
 			failed_ = true;
@@ -132,7 +155,14 @@ private:
 	void mark_object(heap_object * o);
 	void sweep_all();
 
-	boost::unordered_flat_map<std::string, value> globals_;
+	// Set while a native runs, so it can see its receiver.
+	value current_this_ = value::undefined();
+	// The program being executed, so a call from C++ can find the string
+	// tables a nested frame needs.
+	const program * program_ = nullptr;
+	std::vector<flat_map<std::uint16_t, value>> string_cache_;
+
+	flat_map<std::string, value> globals_;
 	std::vector<value> registers_;
 	std::vector<call_frame> frames_;
 	heap_object * heap_ = nullptr;
@@ -261,6 +291,16 @@ inline std::size_t context::collect() {
 	// Precise roots: everything reachable is reachable from exactly these.
 	for (const auto & [name, v] : globals_) { mark(v); }
 	for (const value & v : registers_) { mark(v); }
+	// The receiver of a native call in progress. It is held in a C++ local, not
+	// in a register, so nothing else would keep it alive - and collecting the
+	// object a method is running on is about as bad as it gets.
+	mark(current_this_);
+	// And the closure each live frame is executing. A function called from C++
+	// via call() is likewise only referenced from a C++ local; without this its
+	// upvalues can be freed while its body is still running.
+	for (const call_frame & f : frames_) {
+		if (f.closure != nullptr) { mark_object(f.closure); }
+	}
 
 	std::size_t freed = 0;
 	heap_object ** link = &heap_;
@@ -290,6 +330,50 @@ inline void context::sweep_all() {
 
 // ===================== the dispatch loop =================================
 
+// Call a JS function from C++.
+//
+// The two cases are genuinely different: a native is just a C++ call, while a
+// closure needs a frame on the interpreter's own stack. Giving the closure a
+// region ABOVE everything currently live is what lets this be re-entrant - the
+// caller's registers are untouched, so a listener that triggers another
+// listener works rather than corrupting the frame that dispatched it.
+inline value context::call(value callable, std::span<const value> args, value this_value) {
+	if (callable.is_kind(heap_kind::native)) {
+		auto * nat = static_cast<native_object *>(callable.as_heap());
+		std::vector<value> copy{args.begin(), args.end()};
+		const value saved = current_this_;
+		current_this_ = this_value;
+		const value out = nat->fn(*this, copy);
+		current_this_ = saved;
+		return out;
+	}
+	if (!callable.is_kind(heap_kind::function) || program_ == nullptr) {
+		return value::undefined();
+	}
+	auto * fnobj = static_cast<closure_object *>(callable.as_heap());
+	const function_proto & target = *fnobj->proto;
+
+	const std::size_t new_base = registers_.size();
+	registers_.resize(new_base + target.frame_size + 8u, value::undefined());
+	for (std::size_t i = 0; i < target.param_count; ++i) {
+		registers_[new_base + i] = i < args.size() ? args[i] : value::undefined();
+	}
+	if (frames_.size() > 512) {
+		raise("call stack exhausted");
+		return value::undefined();
+	}
+	const std::size_t depth = frames_.size();
+	const value saved = current_this_;
+	current_this_ = this_value;
+	frames_.push_back(call_frame{&target, 0, new_base, 0, fnobj});
+	const value out = run_loop(depth);
+	current_this_ = saved;
+	// Only shrink back if nothing below is still using the space - a nested
+	// call that grew the stack further has already returned by now.
+	if (registers_.size() >= new_base) { registers_.resize(new_base); }
+	return out;
+}
+
 inline run_result context::run(const program & prog) {
 	run_result result;
 	if (!prog.ok) {
@@ -309,13 +393,23 @@ inline value context::execute(const program & prog, const function_proto & entry
 	registers_.assign(entry.frame_size + 8u, value::undefined());
 	frames_.clear();
 	frames_.push_back(call_frame{&entry, 0, 0, 0, nullptr});
-
+	program_ = &prog;
 	// Per-frame string interning: a literal in a loop should allocate once,
 	// not once per iteration.
-	std::vector<boost::unordered_flat_map<std::uint16_t, value>> string_cache;
-	string_cache.resize(prog.functions.size());
+	string_cache_.clear();
+	string_cache_.resize(prog.functions.size());
+	return run_loop(0);
+}
 
-	while (!frames_.empty() && !failed_) {
+// The interpreter loop, entered at a frame depth and running until it unwinds
+// back to it. `stop_depth` is 0 for the top-level program and the caller's
+// depth for a call from C++ - which is what makes call() re-entrant instead of
+// a second interpreter.
+inline value context::run_loop(std::size_t stop_depth) {
+	const program & prog = *program_;
+	std::vector<flat_map<std::uint16_t, value>> & string_cache = string_cache_;
+
+	while (frames_.size() > stop_depth && !failed_) {
 		call_frame & frame = frames_.back();
 		const function_proto & fn = *frame.proto;
 		if (frame.ip >= fn.code.size()) { break; }
@@ -512,8 +606,19 @@ inline value context::execute(const program & prog, const function_proto & entry
 			const std::size_t arg_base = base + in.a + 1;
 			if (callee.is_kind(heap_kind::native)) {
 				auto * nat = static_cast<native_object *>(callee.as_heap());
-				std::span<value> args{registers_.data() + arg_base, in.b};
-				reg(in.a) = nat->fn(*this, args);
+				// COPIED, not spanned into the register stack. A native may call
+				// back into script - an event listener dispatching another
+				// event - and that grows registers_, which would leave a span
+				// into it dangling. One small vector per native call is the
+				// price of natives being allowed to re-enter the VM at all.
+				std::vector<value> args{registers_.begin() + static_cast<std::ptrdiff_t>(arg_base),
+				                        registers_.begin() +
+				                            static_cast<std::ptrdiff_t>(arg_base + in.b)};
+				const value saved_this = current_this_;
+				current_this_ = in.code == op::call_method ? reg(in.a) : value::undefined();
+				const value produced = nat->fn(*this, args);
+				current_this_ = saved_this;
+				reg(in.a) = produced;
 				break;
 			}
 			if (!callee.is_kind(heap_kind::function)) {
@@ -543,7 +648,7 @@ inline value context::execute(const program & prog, const function_proto & entry
 			const value returned = in.code == op::ret ? reg(in.a) : value::undefined();
 			const std::uint8_t slot = frame.result_reg;
 			frames_.pop_back();
-			if (frames_.empty()) { return returned; }
+			if (frames_.size() <= stop_depth) { return returned; }
 			registers_[frames_.back().base + slot] = returned;
 			break;
 		}

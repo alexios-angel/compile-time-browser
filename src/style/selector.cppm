@@ -1,4 +1,5 @@
 module;
+#include <boost/container/small_vector.hpp>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -6,9 +7,6 @@ module;
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include <boost/container/small_vector.hpp>
-#include <boost/unordered/unordered_flat_map.hpp>
 
 export module ctbrowser.style:selector;
 
@@ -142,9 +140,9 @@ private:
 
 // Rules filed by their rightmost simple selector.
 struct rule_index {
-	boost::unordered_flat_map<std::uint32_t, std::vector<rule>> by_id;
-	boost::unordered_flat_map<std::uint32_t, std::vector<rule>> by_class;
-	boost::unordered_flat_map<std::uint32_t, std::vector<rule>> by_tag;
+	flat_map<std::uint32_t, std::vector<rule>> by_id;
+	flat_map<std::uint32_t, std::vector<rule>> by_class;
+	flat_map<std::uint32_t, std::vector<rule>> by_tag;
 	std::vector<rule> universal;
 
 	void add(const compiled_selector & sel, rule r) {

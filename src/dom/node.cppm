@@ -1,11 +1,10 @@
 module;
+#include <boost/container/small_vector.hpp>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
-
-#include <boost/container/small_vector.hpp>
 
 export module ctbrowser.dom:node;
 

@@ -7,9 +7,9 @@ module;
 #include <string>
 #include <string_view>
 
-#include <boost/unordered/unordered_flat_map.hpp>
-
 export module ctbrowser.core:atom;
+
+import :containers;
 
 // Interned strings.
 //
@@ -82,7 +82,7 @@ public:
 private:
 	mutable std::shared_mutex mutex_;
 	std::deque<std::string> storage_; // stable addresses; string_views point here
-	boost::unordered_flat_map<std::string_view, std::uint32_t> index_;
+	flat_map<std::string_view, std::uint32_t> index_;
 };
 
 } // namespace ctbrowser

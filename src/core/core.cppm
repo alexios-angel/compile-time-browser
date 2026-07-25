@@ -3,6 +3,8 @@ export module ctbrowser.core;
 // The foundation every other subsystem sits on. Nothing here knows what a
 // document, a style or a pixel is.
 //
+//   containers the third-party containers, included in EXACTLY ONE PLACE - see
+//              the file for why that is a correctness requirement and not tidiness
 //   handle     generation-tagged references, so a stale reference FAILS a
 //              lookup instead of resolving to a recycled object
 //   slab       chunked storage with lock-free reads behind those handles
@@ -17,6 +19,7 @@ export module ctbrowser.core;
 // this toolchain - the .cppm files inherited from v1's bricks all use it and
 // none of them currently build. Revisit when libstdc++ catches up.
 
+export import :containers;
 export import :handle;
 export import :epoch;
 export import :slab;

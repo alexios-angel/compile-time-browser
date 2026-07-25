@@ -1,4 +1,6 @@
 module;
+#include <boost/container/small_vector.hpp>
+#include <boost/intrusive_ptr.hpp>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -6,10 +8,6 @@ module;
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include <boost/container/small_vector.hpp>
-#include <boost/intrusive_ptr.hpp>
-#include <boost/unordered/unordered_flat_map.hpp>
 
 export module ctbrowser.style:computed;
 
@@ -131,7 +129,7 @@ public:
 private:
 	mutable std::mutex mutex_;
 	// hash -> the styles that share it; collisions are compared for real
-	boost::unordered_flat_map<std::size_t, std::vector<computed_style_ptr>> by_hash_;
+	flat_map<std::size_t, std::vector<computed_style_ptr>> by_hash_;
 };
 
 } // namespace ctbrowser::style

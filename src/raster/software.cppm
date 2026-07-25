@@ -1,5 +1,4 @@
 module;
-#include <boost/unordered/unordered_flat_map.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -211,7 +210,7 @@ private:
 
 	surface target_;
 	int extent_ = default_tile_extent;
-	std::vector<boost::unordered_flat_map<std::uint64_t, slot>> layers_;
+	std::vector<flat_map<std::uint64_t, slot>> layers_;
 	std::atomic<std::size_t> raster_calls_{0};
 	std::uint64_t frame_ = 0;
 	bool in_frame_ = false;

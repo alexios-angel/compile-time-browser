@@ -4,6 +4,8 @@ export module ctbrowser.shell;
 //
 //   input    events described without SDL, so the whole browser is drivable
 //            headlessly
+//   bindings the web platform, bound to the VM - script holds HANDLES, and
+//            a mutation is a callback the browser interprets
 //   browser  the assembly - parse, style, layout, paint, raster, composite -
 //            and, more importantly, what each kind of change lets a frame SKIP
 //
@@ -12,4 +14,5 @@ export module ctbrowser.shell;
 // and compare them byte for byte.
 
 export import :input;
+export import :bindings;
 export import :browser;

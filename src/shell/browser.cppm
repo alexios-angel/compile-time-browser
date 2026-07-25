@@ -19,7 +19,9 @@ import ctbrowser.style;
 import ctbrowser.layout;
 import ctbrowser.paint;
 import ctbrowser.raster;
+import ctbrowser.script;
 import :input;
+import :bindings;
 
 // The engine, assembled.
 //
@@ -104,6 +106,21 @@ public:
 		author_sheet_loaded_ = false;
 		load_inline_styles();
 		mark(dirty::everything);
+		run_scripts();
+	}
+
+	// --- script ----------------------------------------------------------
+
+	[[nodiscard]] script::context & script_context() noexcept { return *script_; }
+	[[nodiscard]] dom_bindings & bindings() noexcept { return *bindings_; }
+	[[nodiscard]] const std::string & script_error() const noexcept { return script_error_; }
+
+	// Advance the page clock and run whatever became due - timers, then
+	// animation frames. An event loop calls this once per tick; the return is
+	// how many callbacks ran, so a caller can tell an idle page from a busy one.
+	std::size_t tick(double elapsed_ms) {
+		bindings_->advance_clock(elapsed_ms);
+		return bindings_->run_due_callbacks();
 	}
 
 	[[nodiscard]] std::string_view title() const noexcept { return title_; }
@@ -155,7 +172,14 @@ public:
 			pressed_ = hit_test(event.x, event.y);
 			return set_state(pressed_, state_active, true);
 		case input_kind::mouse_up: {
-			const bool changed = set_state(pressed_, state_active, false);
+			bool changed = set_state(pressed_, state_active, false);
+			// A click fires on RELEASE, at the element the press started on -
+			// which is what makes dragging off a button cancel it, the way every
+			// real browser behaves.
+			const node_id released_on = hit_test(event.x, event.y);
+			if (pressed_ && released_on == pressed_) {
+				changed = bindings_->dispatch("click", pressed_) || changed;
+			}
 			pressed_ = node_id{};
 			return changed;
 		}
@@ -252,6 +276,41 @@ private:
 		resolved_ = styles_->resolve_all(txn);
 	}
 
+	// Run every <script> in the document, in order. Errors are recorded rather
+	// than thrown: a page whose script fails still has to render, which is what
+	// every browser does and what makes a broken script a broken feature rather
+	// than a blank window.
+	void run_scripts() {
+		// Order matters on teardown too: the old context must go before the old
+		// program it was executing.
+		script_.reset();
+		script_program_.reset();
+		script_ = std::make_unique<script::context>();
+		bindings_ = std::make_unique<dom_bindings>(*doc_, atoms_, [this] { mark(dirty::everything); });
+		bindings_->observe_viewport(options_.width, options_.height);
+		bindings_->install(*script_);
+		script_error_.clear();
+
+		std::string source;
+		{
+			const auto txn = doc_->read();
+			const atom script_tag = atoms_.intern_lower("script");
+			const auto walk = [&](auto && self, node_id at) -> void {
+				if (txn.tag(at).value_or(atom{}) == script_tag) {
+					for (const node_id child : txn.children(at)) { source += txn.text(child); }
+					source += '\n';
+				}
+				for (const node_id child : txn.children(at)) { self(self, child); }
+			};
+			walk(walk, txn.root());
+		}
+		if (source.empty()) { return; }
+
+		script_program_ = std::make_unique<script::program>(script::compiler::compile(source));
+		const script::run_result result = script_->run(*script_program_);
+		if (!result.ok) { script_error_ = result.error; }
+	}
+
 	void run_layout() {
 		const auto txn = doc_->read();
 		ctbrowser::layout::box_builder builder{atoms_, resolved_};
@@ -260,6 +319,12 @@ private:
 		fragments_ = eng.run(boxes_, static_cast<float>(options_.width));
 		content_height_ = fragments_.bounds.height;
 		scroll_y_ = std::clamp(scroll_y_, 0.0f, max_scroll());
+		// offsetWidth and friends read the fragment tree, so they answer with
+		// THIS layout rather than the one before it.
+		if (bindings_) {
+			bindings_->observe_layout(&fragments_);
+			bindings_->observe_viewport(options_.width, options_.height);
+		}
 	}
 
 	void record() {
@@ -338,6 +403,14 @@ private:
 	layer_tree layers_;
 	renderer renderer_;
 
+	// Declared BEFORE the context, so it is destroyed AFTER it. Closures hold
+	// `const function_proto *` into the program, and a timer or a listener runs
+	// long after run_scripts() returned - so the program has to outlive both the
+	// call that compiled it and the context that executes it.
+	std::unique_ptr<script::program> script_program_;
+	std::unique_ptr<script::context> script_;
+	std::unique_ptr<dom_bindings> bindings_;
+	std::string script_error_;
 	std::string title_;
 	float scroll_y_ = 0;
 	float content_height_ = 0;

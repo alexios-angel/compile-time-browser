@@ -4,8 +4,6 @@ module;
 
 #include "shaders/tile_spv.hpp"
 
-#include <boost/unordered/unordered_flat_map.hpp>
-
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -520,7 +518,7 @@ private:
 	SDL_GPUGraphicsPipeline * pipeline_ = nullptr;
 	SDL_GPUSampler * sampler_ = nullptr;
 	SDL_GPUCommandBuffer * pending_ = nullptr;
-	std::vector<boost::unordered_flat_map<std::uint64_t, slot>> layers_;
+	std::vector<flat_map<std::uint64_t, slot>> layers_;
 	int width_ = 0;
 	int height_ = 0;
 	int extent_ = default_tile_extent;

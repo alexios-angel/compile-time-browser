@@ -29,6 +29,7 @@ target_sources(ctbrowser-core
   PUBLIC
     FILE_SET CXX_MODULES FILES
       core/core.cppm
+      core/containers.cppm
       core/handle.cppm
       core/epoch.cppm
       core/slab.cppm
@@ -85,7 +86,7 @@ target_compile_options(ctbrowser-script PRIVATE ${CTBROWSER_V2_WARNINGS})
 target_include_directories(ctbrowser-script PRIVATE
   "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"
   "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/external/compile-time-containers/include")
-target_link_libraries(ctbrowser-script PUBLIC Boost::headers)
+target_link_libraries(ctbrowser-script PUBLIC ctbrowser-core Boost::headers)
 set_target_properties(ctbrowser-script PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
 add_library(ctbrowser::script ALIAS ctbrowser-script)
@@ -190,11 +191,13 @@ target_sources(ctbrowser-shell
     FILE_SET CXX_MODULES FILES
       shell/shell.cppm
       shell/input.cppm
+      shell/bindings.cppm
       shell/browser.cppm)
 target_compile_features(ctbrowser-shell PUBLIC cxx_std_23)
 target_compile_options(ctbrowser-shell PRIVATE ${CTBROWSER_V2_WARNINGS})
 target_link_libraries(ctbrowser-shell PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style
-                                             ctbrowser-layout ctbrowser-paint ctbrowser-raster)
+                                             ctbrowser-layout ctbrowser-paint ctbrowser-raster
+                                             ctbrowser-script)
 set_target_properties(ctbrowser-shell PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
 add_library(ctbrowser::shell ALIAS ctbrowser-shell)

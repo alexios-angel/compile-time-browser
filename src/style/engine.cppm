@@ -1,4 +1,5 @@
 module;
+#include <boost/container/small_vector.hpp>
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -6,9 +7,6 @@ module;
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include <boost/container/small_vector.hpp>
-#include <boost/unordered/unordered_flat_map.hpp>
 
 #include <ctcss.hpp>
 
@@ -45,7 +43,7 @@ struct element_facts {
 	std::uint32_t states = 0;
 };
 
-using style_map = boost::unordered_flat_map<std::uint64_t, computed_style_ptr>;
+using style_map = flat_map<std::uint64_t, computed_style_ptr>;
 
 class engine {
 public:
@@ -295,7 +293,7 @@ private:
 
 	// Sparse on purpose: at most a handful of elements are hovered, pressed or
 	// focused at once, so a per-node field would be megabytes of zeroes.
-	boost::unordered_flat_map<std::uint64_t, std::uint32_t> states_;
+	flat_map<std::uint64_t, std::uint32_t> states_;
 	atom_table * atoms_;
 	std::vector<compiled_selector> selectors_;
 	std::vector<declaration> declarations_;

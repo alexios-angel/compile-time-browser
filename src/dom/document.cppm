@@ -1,4 +1,5 @@
 module;
+#include <boost/container/small_vector.hpp>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -10,8 +11,6 @@ module;
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include <boost/container/small_vector.hpp>
 
 export module ctbrowser.dom:document;
 
