@@ -386,38 +386,30 @@ struct canvas_textures {
 	}
 };
 
-} // namespace detail
-
-// run a page as a windowed application; returns the process exit code
-template <typename Page> std::int32_t run_app(app_options opts = {}) {
+// The environment gets a say in the options: CTBROWSER_TEST_FRAMES bounds
+// a run and CTBROWSER_SCREENSHOT captures one, both so CI and ctest can
+// drive a windowed app headlessly without the caller coding for it. An
+// explicitly-set option always wins. A bounded run also becomes a
+// DETERMINISTIC one - a fixed 1/60 s step, so frame N is always frame N.
+inline void apply_env_defaults(app_options & opts) {
 	// the embedded default typefaces (fonts.hpp) join the asset registry
 	// AFTER any caller-provided assets - user entries win on key clashes
-	for (embedded_asset & fa : detail::default_font_assets()) { opts.assets.push_back(std::move(fa)); }
+	for (embedded_asset & fa : default_font_assets()) { opts.assets.push_back(std::move(fa)); }
 	if (opts.max_frames == 0) {
-		if (const char * env = SDL_getenv("CTBROWSER_TEST_FRAMES")) {
-			opts.max_frames = SDL_atoi(env);
-		}
+		if (const char * env = SDL_getenv("CTBROWSER_TEST_FRAMES")) { opts.max_frames = SDL_atoi(env); }
 	}
 	if (opts.screenshot_path.empty()) {
-		if (const char * env = SDL_getenv("CTBROWSER_SCREENSHOT")) {
-			opts.screenshot_path = env;
-		}
+		if (const char * env = SDL_getenv("CTBROWSER_SCREENSHOT")) { opts.screenshot_path = env; }
 	}
-	if (opts.fixed_dt == 0 && opts.max_frames > 0) {
-		opts.fixed_dt = 1.0 / 60.0; // bounded runs are deterministic runs
-	}
+	if (opts.fixed_dt == 0 && opts.max_frames > 0) { opts.fixed_dt = 1.0 / 60.0; }
+}
 
-	// shell state the script bindings feed
-	audio_mixer mixer;
-	std::string pending_shot;
-	bool want_fullscreen = opts.fullscreen;
-	bool fullscreen_dirty = false;
-
-	// the engine's BMP reader runs against the literal path first; this
-	// shell decoder then retries with cwd-independent path resolution -
-	// and, with SDL3_image, decodes PNG/JPG/WebP too. Failures LOG: a
-	// missing sprite sheet must never be a silently invisible game.
-	auto image_decoder = [](const std::string & path) -> image {
+// the engine's BMP reader runs against the literal path first; this
+// shell decoder then retries with cwd-independent path resolution -
+// and, with SDL3_image, decodes PNG/JPG/WebP too. Failures LOG: a
+// missing sprite sheet must never be a silently invisible game.
+[[nodiscard]] inline std::function<image(const std::string &)> make_image_decoder() {
+	return [](const std::string & path) -> image {
 		const std::string resolved = detail::resolve_asset(path);
 		if (resolved.empty()) {
 			SDL_Log("ctbrowser: loadImage: no such file: %s", path.c_str());
@@ -455,37 +447,188 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 		return {};
 #endif
 	};
+}
 
-	engine<Page> e{{
-	    {"playSound", ctjs::native([&mixer](const std::vector<ctjs::value> & a) -> ctjs::value {
-		     if (a.empty()) { return ctjs::value{false}; }
-		     const std::string resolved = detail::resolve_asset(a[0].to_string());
-		     if (resolved.empty()) {
-			     SDL_Log("ctbrowser: playSound: no such file: %s",
-			             a[0].to_string().c_str());
-			     return ctjs::value{false};
-		     }
-		     return ctjs::value{mixer.play(resolved)};
-	     },
-	     "playSound")},
-	    {"setVolume", ctjs::native([&mixer](const std::vector<ctjs::value> & a) -> ctjs::value {
-		     if (!a.empty()) { mixer.set_volume(static_cast<float>(a[0].to_number())); }
-		     return {};
-	     },
-	     "setVolume")},
-	    {"screenshot", ctjs::native([&pending_shot](const std::vector<ctjs::value> & a) -> ctjs::value {
-		     if (!a.empty()) { pending_shot = a[0].to_string(); }
-		     return {};
-	     },
-	     "screenshot")},
-	    {"setFullscreen", ctjs::native([&want_fullscreen, &fullscreen_dirty](
-	                                       const std::vector<ctjs::value> & a) -> ctjs::value {
-		     want_fullscreen = !a.empty() && a[0].truthy();
-		     fullscreen_dirty = true;
-		     return {};
-	     },
-	     "setFullscreen")},
-	}, image_decoder, opts.assets};
+#ifdef CTBROWSER_WITH_TTF
+// Fill the face registry, in the order that decides which face wins:
+//   1. the embedded defaults (fonts.hpp) under the generic family names,
+//   2. every page @font-face - family + url(), embedded copy preferred,
+//      then resolved like any asset, with a public-root "/x" also tried
+//      repo-relative - so a page may declare MANY families and variants,
+//   3. a last-resort fallback: opts.font_path, else a probed system font.
+template <typename Engine>
+void register_faces(ttf_text & ttf, Engine & e, const app_options & opts) {
+	for (const default_face & f : default_faces) {
+		if (const embedded_asset * a = find_asset(&e.assets, f.key.data())) {
+			ttf.register_face(f.family, f.bold, f.italic, {a->data, a->size, {}});
+		}
+	}
+	for (const auto & ff : e.font_faces()) {
+		const std::string family = unquote(ff.get("font-family"));
+		if (family.empty()) { continue; }
+		const std::string src{ff.get("src")};
+		const std::size_t open = src.find("url(");
+		if (open == std::string::npos) { continue; }
+		const std::size_t s = open + 4, close = src.find(')', s);
+		if (close == std::string::npos) { continue; }
+		const std::string path = unquote(src.substr(s, close - s));
+		const std::string weight{ff.get("font-weight")};
+		const std::string style{ff.get("font-style")};
+		const bool bold = weight.find("bold") != std::string::npos ||
+		                  weight.find("700") != std::string::npos ||
+		                  weight.find("800") != std::string::npos ||
+		                  weight.find("900") != std::string::npos;
+		const bool italic = style.find("italic") != std::string::npos ||
+		                    style.find("oblique") != std::string::npos;
+		if (const embedded_asset * emb = find_asset(&e.assets, path)) {
+			ttf.register_face(family, bold, italic, {emb->data, emb->size, {}});
+			continue;
+		}
+		std::string file = resolve_asset(path);
+		if (file.empty() && path.size() > 1 && path[0] == '/') {
+			file = resolve_asset(path.substr(1)); // a public-root path, tried repo-relative
+		}
+		if (!file.empty()) { ttf.register_face(family, bold, italic, {nullptr, 0, file}); }
+	}
+	ttf.fallback_path = !opts.font_path.empty() ? opts.font_path : probe_font();
+}
+#endif
+
+// One frame's paint list onto the renderer. How TEXT is drawn depends on
+// whether a TrueType face loaded, which is the caller's business, so it
+// arrives as a callable and this stays free of the #ifdef.
+template <typename DrawText>
+void draw_paints(SDL_Renderer * r, const std::vector<paint_cmd> & paints,
+                 canvas_textures & textures, DrawText && draw_text_cmd) {
+	for (const paint_cmd & cmd : paints) {
+		switch (cmd.what) {
+		case paint_cmd::kind::box: {
+			set_draw_color(r, cmd.argb);
+			const SDL_FRect box{static_cast<float>(cmd.x), static_cast<float>(cmd.y),
+			                    static_cast<float>(cmd.w), static_cast<float>(cmd.h)};
+			SDL_RenderFillRect(r, &box);
+			break;
+		}
+		case paint_cmd::kind::text:
+			draw_text_cmd(cmd);
+			break;
+		case paint_cmd::kind::canvas: {
+			SDL_Texture * t = textures.of(cmd.canvas_node);
+			SDL_UpdateTexture(t, nullptr, cmd.canvas_node->pixels.data(),
+			                  cmd.canvas_node->canvas_w * 4);
+			const SDL_FRect dst{static_cast<float>(cmd.x), static_cast<float>(cmd.y),
+			                    static_cast<float>(cmd.w), static_cast<float>(cmd.h)};
+			SDL_RenderTexture(r, t, nullptr, &dst);
+			break;
+		}
+		}
+	}
+}
+
+// Drain SDL's queue into the engine. Returns false when the user quit.
+// Mouse coordinates go through SDL_ConvertEventToRenderCoordinates first
+// so a letterboxed presentation still reports page-space positions.
+template <typename Engine> [[nodiscard]] bool pump_events(Engine & e, SDL_Renderer * r) {
+	SDL_Event ev;
+	while (SDL_PollEvent(&ev)) {
+		switch (ev.type) {
+		case SDL_EVENT_QUIT:
+			return false;
+		case SDL_EVENT_MOUSE_MOTION:
+			SDL_ConvertEventToRenderCoordinates(r, &ev);
+			e.mouse_move(ev.motion.x, ev.motion.y);
+			break;
+		case SDL_EVENT_MOUSE_BUTTON_DOWN:
+		case SDL_EVENT_MOUSE_BUTTON_UP:
+			SDL_ConvertEventToRenderCoordinates(r, &ev);
+			e.mouse_button(ev.button.x, ev.button.y, ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN,
+			               ev.button.button == SDL_BUTTON_RIGHT    ? 2
+			               : ev.button.button == SDL_BUTTON_MIDDLE ? 1
+			                                                       : 0);
+			break;
+		case SDL_EVENT_KEY_DOWN:
+		case SDL_EVENT_KEY_UP:
+			// repeats replay the editing default (held Backspace)
+			if (!ev.key.repeat || ev.type == SDL_EVENT_KEY_DOWN) {
+				e.key(SDL_GetKeyName(ev.key.key), ev.type == SDL_EVENT_KEY_DOWN);
+			}
+			break;
+		case SDL_EVENT_TEXT_INPUT:
+			e.text_input(ev.text.text);
+			break;
+		case SDL_EVENT_MOUSE_WHEEL:
+			SDL_ConvertEventToRenderCoordinates(r, &ev);
+			e.wheel(ev.wheel.mouse_x, ev.wheel.mouse_y, ev.wheel.y);
+			break;
+		default:
+			break;
+		}
+	}
+	return true;
+}
+
+// The host bindings only the SHELL can supply: audio, screenshots and
+// fullscreen all need the window the engine deliberately knows nothing
+// about. They drive shell state, so they take it by reference rather
+// than owning it.
+[[nodiscard]] inline std::vector<ctjs::binding> make_shell_bindings(audio_mixer & mixer,
+                                                                    std::string & pending_shot,
+                                                                    bool & want_fullscreen,
+                                                                    bool & fullscreen_dirty) {
+	std::vector<ctjs::binding> out;
+	out.push_back({"playSound", ctjs::native(
+	                                [&mixer](const std::vector<ctjs::value> & a) -> ctjs::value {
+		                                if (a.empty()) { return ctjs::value{false}; }
+		                                const std::string resolved = resolve_asset(arg_str(a, 0));
+		                                if (resolved.empty()) {
+			                                SDL_Log("ctbrowser: playSound: no such file: %s",
+			                                        arg_str(a, 0).c_str());
+			                                return ctjs::value{false};
+		                                }
+		                                return ctjs::value{mixer.play(resolved)};
+	                                },
+	                                "playSound")});
+	out.push_back({"setVolume", ctjs::native(
+	                                [&mixer](const std::vector<ctjs::value> & a) -> ctjs::value {
+		                                if (!a.empty()) {
+			                                mixer.set_volume(static_cast<float>(arg_num(a, 0)));
+		                                }
+		                                return {};
+	                                },
+	                                "setVolume")});
+	out.push_back({"screenshot", ctjs::native(
+	                                 [&pending_shot](const std::vector<ctjs::value> & a) -> ctjs::value {
+		                                 if (!a.empty()) { pending_shot = arg_str(a, 0); }
+		                                 return {};
+	                                 },
+	                                 "screenshot")});
+	out.push_back({"setFullscreen",
+	               ctjs::native(
+	                   [&want_fullscreen, &fullscreen_dirty](
+	                       const std::vector<ctjs::value> & a) -> ctjs::value {
+		                   want_fullscreen = arg_bool(a, 0);
+		                   fullscreen_dirty = true;
+		                   return {};
+	                   },
+	                   "setFullscreen")});
+	return out;
+}
+
+} // namespace detail
+
+// run a page as a windowed application; returns the process exit code
+template <typename Page> std::int32_t run_app(app_options opts = {}) {
+	detail::apply_env_defaults(opts);
+
+	// shell state the script bindings feed
+	audio_mixer mixer;
+	std::string pending_shot;
+	bool want_fullscreen = opts.fullscreen;
+	bool fullscreen_dirty = false;
+
+	engine<Page> e{
+	    detail::make_shell_bindings(mixer, pending_shot, want_fullscreen, fullscreen_dirty),
+	    detail::make_image_decoder(), opts.assets};
 	mixer.embedded = &e.assets;
 
 	// the anchor default action: clicking <a href> opens the system's web
@@ -564,41 +707,7 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 	detail::ttf_text ttf;
 	ttf.renderer = renderer;
 	if (ttf_lib.ok) {
-		// 1) the embedded default faces (fonts.hpp): serif/sans/mono in
-		// four styles each, registered under the generic family names
-		for (const detail::default_face & f : detail::default_faces) {
-			if (const embedded_asset * a = find_asset(&e.assets, f.key.data())) {
-				ttf.register_face(f.family, f.bold, f.italic, {a->data, a->size, {}});
-			}
-		}
-		// 2) every page @font-face: family + src (embedded copy preferred,
-		// else resolved like any asset; a public-root "/x" also tried
-		// repo-relative) + optional font-weight/font-style descriptors -
-		// a page can declare MANY families and variants, all live at once
-		for (const auto & ff : e.font_faces()) {
-			const std::string fam_clean = detail::unquote(ff.get("font-family"));
-			if (fam_clean.empty()) { continue; }
-			const std::string src{ff.get("src")};
-			const std::size_t up = src.find("url(");
-			if (up == std::string::npos) { continue; }
-			const std::size_t s = up + 4, en = src.find(')', s);
-			if (en == std::string::npos) { continue; }
-			const std::string path = detail::unquote(src.substr(s, en - s));
-			const std::string w{ff.get("font-weight")};
-			const std::string st{ff.get("font-style")};
-			const bool fb = w.find("bold") != std::string::npos || w.find("700") != std::string::npos ||
-			                w.find("800") != std::string::npos || w.find("900") != std::string::npos;
-			const bool fi = st.find("italic") != std::string::npos || st.find("oblique") != std::string::npos;
-			if (const embedded_asset * emb = find_asset(&e.assets, path)) {
-				ttf.register_face(fam_clean, fb, fi, {emb->data, emb->size, {}});
-				continue;
-			}
-			std::string r = detail::resolve_asset(path);
-			if (r.empty() && path.size() > 1 && path[0] == '/') { r = detail::resolve_asset(path.substr(1)); }
-			if (!r.empty()) { ttf.register_face(fam_clean, fb, fi, {nullptr, 0, r}); }
-		}
-		// 3) the last resort: an explicit font path, else a system font
-		ttf.fallback_path = !opts.font_path.empty() ? opts.font_path : detail::probe_font();
+		detail::register_faces(ttf, e, opts);
 		if (ttf.ok()) {
 			e.measure = [&ttf](std::u32string_view text, std::int32_t px, std::string_view family,
 			                   bool bold, bool italic) {
@@ -669,36 +778,15 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 
 		detail::set_draw_color(renderer, opts.clear_white ? 0xFFFFFFFFu : 0xFF000000u);
 		SDL_RenderClear(renderer);
-
-		for (const paint_cmd & cmd : paints) {
-			switch (cmd.what) {
-				case paint_cmd::kind::box: {
-					detail::set_draw_color(renderer, cmd.argb);
-					const SDL_FRect r{static_cast<float>(cmd.x), static_cast<float>(cmd.y),
-					                  static_cast<float>(cmd.w), static_cast<float>(cmd.h)};
-					SDL_RenderFillRect(renderer, &r);
-					break;
-				}
-				case paint_cmd::kind::text:
+		detail::draw_paints(renderer, paints, textures, [&](const paint_cmd & cmd) {
 #ifdef CTBROWSER_WITH_TTF
-					if (ttf.ok()) {
-						ttf.draw(cmd);
-						break;
-					}
-#endif
-					detail::draw_text(renderer, cmd);
-					break;
-				case paint_cmd::kind::canvas: {
-					SDL_Texture * t = textures.of(cmd.canvas_node);
-					SDL_UpdateTexture(t, nullptr, cmd.canvas_node->pixels.data(),
-					                  cmd.canvas_node->canvas_w * 4);
-					const SDL_FRect dst{static_cast<float>(cmd.x), static_cast<float>(cmd.y),
-					                    static_cast<float>(cmd.w), static_cast<float>(cmd.h)};
-					SDL_RenderTexture(renderer, t, nullptr, &dst);
-					break;
-				}
+			if (ttf.ok()) {
+				ttf.draw(cmd);
+				return;
 			}
-		}
+#endif
+			detail::draw_text(renderer, cmd);
+		});
 		in_render = false;
 	};
 
@@ -723,43 +811,7 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 	SDL_AddEventWatch(watch_cb, &rw);
 
 	while (running) {
-		SDL_Event ev;
-		while (SDL_PollEvent(&ev)) {
-			switch (ev.type) {
-				case SDL_EVENT_QUIT:
-					running = false;
-					break;
-				case SDL_EVENT_MOUSE_MOTION:
-					SDL_ConvertEventToRenderCoordinates(renderer, &ev);
-					e.mouse_move(ev.motion.x, ev.motion.y);
-					break;
-				case SDL_EVENT_MOUSE_BUTTON_DOWN:
-				case SDL_EVENT_MOUSE_BUTTON_UP:
-					SDL_ConvertEventToRenderCoordinates(renderer, &ev);
-					e.mouse_button(ev.button.x, ev.button.y,
-					               ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN,
-					               ev.button.button == SDL_BUTTON_RIGHT    ? 2
-					               : ev.button.button == SDL_BUTTON_MIDDLE ? 1
-					                                                       : 0);
-					break;
-				case SDL_EVENT_KEY_DOWN:
-				case SDL_EVENT_KEY_UP:
-					if (!ev.key.repeat || ev.type == SDL_EVENT_KEY_DOWN) {
-						// repeats replay the editing default (held Backspace)
-						e.key(SDL_GetKeyName(ev.key.key), ev.type == SDL_EVENT_KEY_DOWN);
-					}
-					break;
-				case SDL_EVENT_TEXT_INPUT:
-					e.text_input(ev.text.text);
-					break;
-				case SDL_EVENT_MOUSE_WHEEL:
-					SDL_ConvertEventToRenderCoordinates(renderer, &ev);
-					e.wheel(ev.wheel.mouse_x, ev.wheel.mouse_y, ev.wheel.y);
-					break;
-				default:
-					break;
-			}
-		}
+		running = detail::pump_events(e, renderer);
 
 		render_one();
 
