@@ -57,11 +57,13 @@ target_sources(ctbrowser-dom
       dom/dom.cppm
       dom/node.cppm
       dom/document.cppm
+      dom/tokenizer.cppm
+      dom/treebuilder.cppm
       dom/html.cppm)
 target_compile_features(ctbrowser-dom PUBLIC cxx_std_23)
 target_compile_options(ctbrowser-dom PRIVATE ${CTBROWSER_V2_WARNINGS})
-target_include_directories(ctbrowser-dom PRIVATE
-  "${PROJECT_SOURCE_DIR}/external/compile-time-html/include")
+target_include_directories(ctbrowser-dom PRIVATE)
+target_include_directories(ctbrowser-dom PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/dom")
 target_link_libraries(ctbrowser-dom PUBLIC ctbrowser-core)
 set_target_properties(ctbrowser-dom PROPERTIES CXX_SCAN_FOR_MODULES ON)
 

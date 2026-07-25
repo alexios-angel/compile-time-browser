@@ -28,7 +28,7 @@ struct fixture {
 	style_map resolved;
 
 	void load(std::string_view html, std::string_view css, std::string_view ua = {}) {
-		parse_html(doc, html);
+		(void)parse_html(doc, html);
 		if (!ua.empty()) { styles.add_sheet(ua, 0); } // user agent origin
 		styles.add_sheet(css, 1);                     // author origin
 		const auto txn = doc.read();

@@ -100,7 +100,7 @@ public:
 		// engine would accumulate every page's <style> rules across navigations,
 		// which shows up as the previous page bleeding into the next one.
 		reset_document();
-		parse_html(*doc_, html);
+		(void)parse_html(*doc_, html);
 		title_ = extract_title();
 		scroll_y_ = 0;
 		author_sheet_loaded_ = false;

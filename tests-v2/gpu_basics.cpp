@@ -71,7 +71,7 @@ struct page {
 	layer_tree layers;
 
 	void load(std::string_view html, std::string_view css, float viewport) {
-		parse_html(doc, html);
+		(void)parse_html(doc, html);
 		styles.add_sheet(css, 1);
 		const auto txn = doc.read();
 		resolved = styles.resolve_all(txn);

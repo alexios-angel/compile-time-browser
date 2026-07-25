@@ -16,4 +16,6 @@ export module ctbrowser.dom;
 
 export import :node;
 export import :document;
+export import :tokenizer;
+export import :treebuilder;
 export import :html;

@@ -65,7 +65,7 @@ struct page {
 	paint::layer_tree layers;
 
 	void load(int rows, float viewport) {
-		parse_html(doc, build_html(rows));
+		(void)parse_html(doc, build_html(rows));
 		styles.add_sheet(sheet, 1);
 		const auto txn = doc.read();
 		resolved = styles.resolve_all(txn);

@@ -40,7 +40,7 @@ struct fixture {
 	box_node root;
 
 	void load(std::string_view html, std::string_view css) {
-		parse_html(doc, html);
+		(void)parse_html(doc, html);
 		styles.add_sheet(css, 1);
 		const auto txn = doc.read();
 		resolved = styles.resolve_all(txn);

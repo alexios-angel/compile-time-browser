@@ -151,6 +151,17 @@ public:
 		[[nodiscard]] node_id create_comment(std::string_view v) { return doc_->create_comment(v); }
 		void append(node_id parent, node_id child);
 		void set_attribute(node_id, atom name, std::string_view value);
+		// Move a node to a new parent, keeping its own subtree. The HTML tree
+		// builder needs it for the adoption agency algorithm - the one that
+		// turns `<b>1<p>2</b>3` into what a browser shows - and that algorithm
+		// genuinely MOVES already-inserted nodes. Cheap here for the same reason
+		// append is: nothing can be reading the document yet.
+		void reparent(node_id child, node_id new_parent);
+		// Insert BEFORE a sibling. Foster parenting needs it: content that turns
+		// up inside a <table> but outside a cell goes immediately before the
+		// table, not after it, and "after" puts it below the whole table on
+		// screen.
+		void insert_before(node_id parent, node_id child, node_id before);
 		void set_root(node_id id) noexcept { doc_->root_ = id; }
 
 	private:
@@ -416,6 +427,39 @@ inline void document::builder::append(node_id parent, node_id child) {
 		// O(n) through the published path.
 		const_cast<child_list *>(current)->items.push_back(child);
 	}
+	child_node->parent.store(parent, std::memory_order_relaxed);
+}
+
+inline void document::builder::reparent(node_id child, node_id new_parent) {
+	node * child_node = doc_->find(child);
+	if (child_node == nullptr) { return; }
+	const node_id old_parent = child_node->parent.load(std::memory_order_relaxed);
+	if (node * previous = doc_->find(old_parent); previous != nullptr) {
+		const child_list * current = previous->children.load(std::memory_order_relaxed);
+		if (current != &empty_children) {
+			auto & items = const_cast<child_list *>(current)->items;
+			items.erase(std::remove(items.begin(), items.end(), child), items.end());
+		}
+	}
+	append(new_parent, child);
+}
+
+inline void document::builder::insert_before(node_id parent, node_id child, node_id before) {
+	node * parent_node = doc_->find(parent);
+	node * child_node = doc_->find(child);
+	if (parent_node == nullptr || child_node == nullptr) { return; }
+	const child_list * current = parent_node->children.load(std::memory_order_relaxed);
+	if (current == &empty_children) {
+		append(parent, child);
+		return;
+	}
+	auto & items = const_cast<child_list *>(current)->items;
+	const auto at = std::find(items.begin(), items.end(), before);
+	if (at == items.end()) {
+		append(parent, child);
+		return;
+	}
+	items.insert(at, child);
 	child_node->parent.store(parent, std::memory_order_relaxed);
 }
 

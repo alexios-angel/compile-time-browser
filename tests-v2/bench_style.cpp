@@ -121,7 +121,7 @@ int main() {
 	document doc{atoms};
 	const std::string html = build_html(sections, rows);
 	const std::string css = build_css(filler);
-	parse_html(doc, html);
+	(void)parse_html(doc, html);
 
 	style::engine styles{atoms};
 	styles.add_sheet(css, 1);

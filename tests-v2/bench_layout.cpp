@@ -94,7 +94,7 @@ void run_case(int sections, int rows, std::int32_t viewport, ctbrowser::schedule
 
 	atom_table atoms;
 	::ctbrowser::document doc{atoms};
-	parse_html(doc, html);
+	(void)parse_html(doc, html);
 	style::engine styles{atoms};
 	styles.add_sheet(sheet, 1);
 	const auto txn = doc.read();

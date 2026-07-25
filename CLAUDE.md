@@ -34,11 +34,17 @@ skipped with a STATUS message where it does not. `cmake -S . -B build
 purpose — silently building something other than what was asked for is how
 CI reports success for a target it never built.
 
-**v1 IS NOT DELETED.** The plan's stage 7 says to; doing it now would drop
-22 tests and 11 examples' worth of working functionality with no v2
-replacement — script DOM bindings, form controls, canvas 2D, tables, the
-BabylonJS shim, real fonts, images, audio, widget chrome. See
-`docs/v1-retirement.md` for the full list and the recommendation.
+**Script and HTML parsing are v2's own now.** `ctbrowser.shell:bindings`
+gives pages `document`/element methods/events/timers/rAF (handles, not
+`node *`, so a stale reference fails a lookup instead of corrupting memory).
+`ctbrowser.dom:tokenizer` + `:treebuilder` replaced the cthtml wrapper with
+the WHATWG algorithms — implied `<html>/<head>/<body>`, unclosed `<p>`/`<li>`,
+table section inference, foster parenting, and the adoption agency. **v2 no
+longer uses `external/compile-time-html`** (ctcss and ctjs's parser remain).
+
+**v1 IS NOT DELETED.** Doing it now would still drop form controls, canvas 2D
+and the BabylonJS shim, which is what v1's remaining tests and examples
+exercise. See `docs/v1-retirement.md`.
 
 ## ⚠️ v2 GPU: this machine has NO GPU (verified 2026-07-25)
 

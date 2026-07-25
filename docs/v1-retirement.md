@@ -15,16 +15,17 @@ The deletion is **not** done, and this is the list of why.
 | SDL rects and textures | `ctbrowser.raster` tiles + backends | replaced, GPU-capable |
 | `engine.hpp` + `app.hpp` | `ctbrowser.shell` + `ctbrowser.app` | replaced |
 | `ua.hpp` stylesheet | `ctbrowser.style:ua` | replaced (subset) |
+| `script.hpp` DOM bindings | `ctbrowser.shell:bindings` | replaced; handles, not `node *` |
+| cthtml wrapper | `ctbrowser.dom:tokenizer` + `:treebuilder` | replaced; WHATWG algorithms |
 
 ## What v2 does not have yet
 
 Deleting v1 today removes working, tested functionality with no replacement:
 
-- **DOM script bindings.** v2 has the ctjs VM (`ctbrowser.script`) but nothing
-  binds `document`, `getElementById`, `addEventListener`, `setTimeout`,
-  `requestAnimationFrame` or `fetch` to it. Stage 2 built the VM first at the
-  user's direction; the binding port was never done. Every scripted page in
-  `examples/` depends on this.
+- ~~**DOM script bindings.**~~ **DONE.** `ctbrowser.shell:bindings` binds
+  `document`, element methods, events, timers and `requestAnimationFrame`.
+  Still missing from v1's surface: `fetch`, `alert`, `location`, and the
+  canvas context.
 - **Form controls and editing.** Inputs, textareas, selects, checkboxes, radios,
   the caret, selection, clipboard, focus, submit/reset. `tests/editing.cpp`,
   `tests/forms.cpp`, `tests/select.cpp`, `tests/browserui.cpp`.
@@ -56,10 +57,18 @@ catches changes, not disagreements with a second implementation.
 
 ## Recommendation
 
-Delete v1 **after** the script bindings and form controls land, so the deletion
-removes duplication rather than capability. Until then v1 costs nothing to keep:
-it is auto-detected, builds only where the toolchain supports it, and v2 builds
-and tests on stock clang without it.
+**Updated after the bindings port and stage 8.** Two of the three blockers are
+gone: script drives the page, and HTML parsing is v2's own. What remains before
+deleting v1 is **form controls and canvas 2D** - those are what the remaining v1
+tests and examples actually exercise.
+
+Note also that v2 no longer depends on `external/compile-time-html` at all.
+`external/compile-time-css` is still used by the style engine, and
+`compile-time-javascript` by the script compiler's parser.
+
+Until form controls land, v1 costs nothing to keep: it is auto-detected, builds
+only where the toolchain supports it, and v2 builds and tests on stock clang
+without it.
 
 If the deletion is wanted now regardless, it is one commit — `git rm -r
 include/ctbrowser tests examples external/compile-time-*` plus the CMake that
