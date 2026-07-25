@@ -15,6 +15,7 @@
 #include "babylon.hpp"
 #ifndef CTBROWSER_IN_A_MODULE
 #include <limits>
+#include <optional>
 #include <set>
 #endif
 
@@ -43,6 +44,50 @@ inline constexpr std::int32_t gc_interval_frames = 60;      // cycle collection,
 // weight only has to outrank any plausible horizontal distance in px
 inline constexpr std::int64_t line_rank_vertical_weight = 100000;
 
+// The page scrollbar as pure geometry: given the bar's width, the page
+// and viewport sizes and the current offset, where is the thumb, and what
+// does dragging it mean? It holds no engine state and calls nothing, so
+// the arithmetic can be read (and got wrong, and fixed) on its own.
+struct scrollbar_model {
+	std::int32_t width = 0; // 0 = hidden (CSS scrollbar-width: none)
+	std::int32_t page_h = 0;
+	std::int32_t viewport_w = 0;
+	std::int32_t viewport_h = 0;
+	std::int32_t scroll_y = 0;
+
+	struct rect {
+		std::int32_t x = 0, y = 0, w = 0, h = 0;
+	};
+
+	constexpr bool scrollable() const noexcept {
+		return width > 0 && page_h > viewport_h && viewport_h > 0;
+	}
+	constexpr std::int32_t max_scroll() const noexcept {
+		return page_h > viewport_h ? page_h - viewport_h : 0;
+	}
+	// the thumb in viewport coordinates; nullopt when the page fits
+	constexpr std::optional<rect> thumb() const noexcept {
+		if (!scrollable()) { return std::nullopt; }
+		std::int32_t h = viewport_h * viewport_h / page_h; // proportional to what is shown
+		if (h < ua_scrollbar_min_thumb_h) { h = ua_scrollbar_min_thumb_h; }
+		if (h > viewport_h) { h = viewport_h; }
+		const std::int32_t travel = viewport_h - h;
+		const std::int32_t limit = max_scroll();
+		const std::int32_t y =
+		    limit > 0 ? static_cast<std::int32_t>(static_cast<std::int64_t>(scroll_y) * travel / limit)
+		              : 0;
+		return rect{viewport_w - width, y, width, h};
+	}
+	// dragging the thumb so its top lands at `ty` means this offset
+	constexpr std::int32_t scroll_for_thumb_top(std::int32_t ty,
+	                                            std::int32_t thumb_h) const noexcept {
+		const std::int32_t travel = viewport_h - thumb_h;
+		return travel > 0 ? static_cast<std::int32_t>(static_cast<std::int64_t>(ty) * max_scroll() /
+		                                              travel)
+		                  : 0;
+	}
+};
+
 } // namespace detail
 
 template <typename Page> class engine {
@@ -60,35 +105,14 @@ public:
 	double mouse_x = 0;
 	double mouse_y = 0;
 	bool mouse_down = false;
-	node * open_select_ = nullptr; // the <select> whose popup is currently open
-	node * hovered_ = nullptr;     // the pointer's current hit target
-	node * pressed_ = nullptr;     // mouse-down target (:active chain, click pairing)
-	node * focused_ = nullptr;     // the focused control (:focus)
-	bool click_suppressed_ = false; // set when the select popup ate the mousedown
-	std::int32_t scroll_y_ = 0;     // page scroll offset (px; clamped each frame)
-	std::int32_t page_h_ = 0;       // last laid-out document height
-	bool sb_dragging_ = false;      // the scrollbar thumb is being dragged
-	std::int32_t sb_grab_ = 0;      // pointer offset inside the thumb at grab
-	double caret_base_ms_ = 0;      // the blink phase restarts on caret activity
 	// the system clipboard, as hooks (the engine is SDL-free; the shell
 	// installs SDL_Get/SetClipboardText, tests install their own)
 	ctc::cfunction<std::string()> clipboard_get;
 	ctc::cfunction<void(std::string_view)> clipboard_set;
-	// context-menu state (right click; Chrome-style Copy/Cut/Paste menu)
-	bool menu_open_ = false;
-	std::int32_t menu_x_ = 0;
-	std::int32_t menu_y_ = 0;
-	std::int32_t menu_hover_ = -1;
-	node * menu_target_ = nullptr;
-	// page text selection: a character-precise anchor the drag extends
-	bool selecting_ = false;
-	node * psel_node_ = nullptr;    // the anchor position (node + cp index)
-	std::int32_t psel_cp_ = 0;
 	// the anchor default action: how <a href> opens the OS web browser.
 	// Headless (tests) leave it empty = no-op; the SDL shell installs
 	// SDL_OpenURL. Fragment hrefs (#...) never call it.
 	ctc::cfunction<void(std::string_view)> open_url;
-	std::int32_t gc_ticks_ = 0;             // frames since the last cycle collection (see tick)
 	// the page stylesheet, parsed from the page's <style> text at
 	// construction (ctcss::parse_value); `resolve` closes over it.
 	// Declared before resolve so it is live first.
@@ -101,6 +125,34 @@ public:
 	dom_events ev;           // MUST precede script: bindings capture it
 
 private:
+	// --- interaction state. These are the engine's own bookkeeping: the
+	// pointer's targets, the scroll offset, the caret's blink phase, the
+	// open menu, the selection anchor. Nothing outside the engine reads or
+	// writes them, and their trailing underscores always said so - they
+	// were simply sitting in the public section. (None appears in the
+	// constructor's init list, so grouping them here cannot disturb
+	// initialization order, which follows declaration order.)
+	node * open_select_ = nullptr;  // the <select> whose popup is currently open
+	node * hovered_ = nullptr;      // the pointer's current hit target
+	node * pressed_ = nullptr;      // mouse-down target (:active chain, click pairing)
+	node * focused_ = nullptr;      // the focused control (:focus)
+	bool click_suppressed_ = false; // set when the select popup ate the mousedown
+	std::int32_t scroll_y_ = 0;     // page scroll offset (px; clamped each frame)
+	std::int32_t page_h_ = 0;       // last laid-out document height
+	bool sb_dragging_ = false;      // the scrollbar thumb is being dragged
+	std::int32_t sb_grab_ = 0;      // pointer offset inside the thumb at grab
+	double caret_base_ms_ = 0;      // the blink phase restarts on caret activity
+	// context-menu state (right click; Chrome-style Copy/Cut/Paste menu)
+	bool menu_open_ = false;
+	std::int32_t menu_x_ = 0;
+	std::int32_t menu_y_ = 0;
+	std::int32_t menu_hover_ = -1;
+	node * menu_target_ = nullptr;
+	// page text selection: a character-precise anchor the drag extends
+	bool selecting_ = false;
+	node * psel_node_ = nullptr; // the anchor position (node + cp index)
+	std::int32_t psel_cp_ = 0;
+	std::int32_t gc_ticks_ = 0; // frames since the last cycle collection (see tick)
 	// saved for do_reload; declared before script so it copies BEFORE
 	// the constructor moves `extra` into all_bindings
 	std::vector<ctjs::binding> extra_;
@@ -213,20 +265,16 @@ public:
 		if (v == "thin") { return detail::ua_scrollbar_width_thin; }
 		return detail::ua_scrollbar_width;
 	}
-	// thumb geometry in viewport coordinates; false when not scrollable
+	// thumb geometry in viewport coordinates; false when not scrollable.
+	// The out-params are the long-standing shape callers (and tests) use;
+	// the arithmetic lives in detail::scrollbar_model.
 	bool scrollbar_thumb(std::int32_t & x, std::int32_t & y, std::int32_t & w, std::int32_t & h) const {
-		const std::int32_t sw = scrollbar_width();
-		if (sw == 0 || page_h_ <= ev.viewport_h || ev.viewport_h <= 0) { return false; }
-		x = ev.viewport_w - sw;
-		w = sw;
-		h = ev.viewport_h * ev.viewport_h / page_h_;
-		if (h < detail::ua_scrollbar_min_thumb_h) { h = detail::ua_scrollbar_min_thumb_h; }
-		if (h > ev.viewport_h) { h = ev.viewport_h; }
-		const std::int32_t travel = ev.viewport_h - h;
-		const std::int32_t max_scroll = page_h_ - ev.viewport_h;
-		y = max_scroll > 0 ? static_cast<std::int32_t>(
-		                         static_cast<std::int64_t>(scroll_y_) * travel / max_scroll)
-		                   : 0;
+		const auto t = scrollbar().thumb();
+		if (!t) { return false; }
+		x = t->x;
+		y = t->y;
+		w = t->w;
+		h = t->h;
 		return true;
 	}
 
@@ -352,14 +400,10 @@ public:
 			return;
 		}
 		if (sb_dragging_) { // dragging the scrollbar thumb
-			std::int32_t sx = 0, sy = 0, sw = 0, sh = 0;
-			if (scrollbar_thumb(sx, sy, sw, sh)) {
-				const std::int32_t travel = ev.viewport_h - sh;
-				const std::int32_t max_scroll = page_h_ - ev.viewport_h;
-				const std::int32_t ty = static_cast<std::int32_t>(y) - sb_grab_;
-				scroll_y_ = travel > 0 ? static_cast<std::int32_t>(
-				                             static_cast<std::int64_t>(ty) * max_scroll / travel)
-				                       : 0; // clamped in frame()
+			const auto sb = scrollbar();
+			if (const auto t = sb.thumb()) {
+				// clamped in frame()
+				scroll_y_ = sb.scroll_for_thumb_top(static_cast<std::int32_t>(y) - sb_grab_, t->h);
 			}
 			return;
 		}
@@ -586,6 +630,11 @@ private:
 			cmds.push_back(std::move(txt));
 			iy += menu_item_h;
 		}
+	}
+
+	// the scrollbar's geometry for the current frame
+	detail::scrollbar_model scrollbar() const {
+		return {scrollbar_width(), page_h_, ev.viewport_w, ev.viewport_h, scroll_y_};
 	}
 
 	// the deepest node under a point, in viewport coordinates
