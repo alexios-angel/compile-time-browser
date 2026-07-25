@@ -182,7 +182,6 @@ void test_objects_and_arrays() {
 	expect("let o = { inner: { deep: 42 } }; return o.inner.deep;", "42");
 }
 
-// The limitation the compiler refuses on rather than getting wrong.
 // The most common shape in JavaScript: script-level state mutated by a
 // function declared beside it. Script scope is global scope here, so this must
 // simply work rather than hit the enclosing-local refusal.
@@ -195,13 +194,83 @@ void test_script_scope_is_shared_with_functions() {
 	       "10");
 }
 
-void test_closure_over_local_is_refused_not_wrong() {
+// Real closures, via boxed cells. Every case here is one that capture-by-value
+// would get WRONG rather than merely slow, which is why the compiler used to
+// refuse instead of guessing.
+void test_closures() {
+	// the counter: the canonical case. Capture-by-value returns 0 forever.
+	expect("function counter() { let n = 0; function inc() { n = n + 1; return n; } return inc; }"
+	       "let c = counter(); c(); c(); return c();",
+	       "3");
+
+	// two closures over the SAME cell must see each other's writes
+	expect("function pair() { let n = 0;"
+	       "  return { bump: function() { n = n + 1; }, read: function() { return n; } }; }"
+	       "let p = pair(); p.bump(); p.bump(); return p.read();",
+	       "2");
+
+	// separate invocations must NOT share a cell
+	expect("function counter() { let n = 0; return function() { n = n + 1; return n; }; }"
+	       "let a = counter(); let b = counter(); a(); a(); return a() + ',' + b();",
+	       "3,1");
+
+	// capture of a parameter, not just a local
+	expect("function adder(x) { return function(y) { return x + y; }; }"
+	       "let add5 = adder(5); return add5(37);",
+	       "42");
+
+	// TWO levels of nesting: the innermost function captures a variable from
+	// its grandparent, which only works if the middle function re-exports it
+	// as its own upvalue
+	expect("function outer() { let v = 'deep';"
+	       "  function middle() { function inner() { return v; } return inner(); }"
+	       "  return middle(); }"
+	       "return outer();",
+	       "deep");
+
+	// mutation from the innermost level, visible at the outermost
+	expect("function outer() { let n = 1;"
+	       "  function middle() { function inner() { n = n * 10; } inner(); }"
+	       "  middle(); middle(); return n; }"
+	       "return outer();",
+	       "100");
+
+	// a closure outliving the frame that created it - the cell must survive
+	expect("function make() { let msg = 'alive'; return function() { return msg; }; }"
+	       "let f = make(); return f();",
+	       "alive");
+
+	// closures in a loop capture the loop's binding
+	expect("function build() { let fns = []; let i = 0;"
+	       "  while (i < 3) { fns[i] = function() { return i; }; i = i + 1; }"
+	       "  return fns[0](); }"
+	       "return build();",
+	       "3"); // `let i` outside the loop body is ONE binding, so all three see 3
+}
+
+// A captured cell is reachable only through the closure holding it, so the
+// collector has to trace closure upvalues. If it does not, the cell is freed
+// while the closure is still live and the closure returns garbage.
+void test_gc_traces_captured_cells() {
+	context cx;
 	const program prog = compiler::compile(
-	    "function outer() { let n = 0; function inner() { return n; } return inner(); }");
-	CHECK(!prog.ok);
-	// and the message has to say what to do about it, not just "error"
-	CHECK(prog.error.find("upvalue") != std::string::npos);
-	CHECK(prog.error.find('n') != std::string::npos);
+	    "function make(v) { return function() { return v; }; }"
+	    "let keep = make(99);"
+	    "for (let i = 0; i < 100; i++) { let junk = make(i); }"
+	    "return 0;");
+	const run_result r = cx.run(prog);
+	CHECK(r.ok);
+	const std::size_t freed = cx.collect();
+	CHECK(freed > 0); // the 100 discarded closures and their cells
+
+	// and the surviving closure still works after the sweep
+	const program check = compiler::compile(
+	    "function make(v) { return function() { return v; }; }"
+	    "let keep = make(99); return keep();");
+	context cx2;
+	const run_result r2 = cx2.run(check);
+	CHECK(r2.ok);
+	CHECK_EQ(cx2.to_string(r2.returned), std::string{"99"});
 }
 
 void test_native_bindings() {
@@ -257,7 +326,8 @@ int main() {
 	test_functions();
 	test_objects_and_arrays();
 	test_script_scope_is_shared_with_functions();
-	test_closure_over_local_is_refused_not_wrong();
+	test_closures();
+	test_gc_traces_captured_cells();
 	test_native_bindings();
 	test_gc_collects_unreachable();
 	test_errors_are_reported_not_crashes();

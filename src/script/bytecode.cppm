@@ -41,8 +41,18 @@ enum class op : std::uint8_t {
 	// --- globals and locals
 	get_global,   // a = globals[k[bx]]
 	set_global,   // globals[k[bx]] = a
-	get_upvalue,  // a = upvalue[b]
-	close_over,   // capture b into the closure being built in a
+
+	// --- captured variables. A local that some nested function refers to is
+	// stored in a heap CELL rather than directly in its register, and every
+	// access goes through the cell. That is what makes mutation through a
+	// closure visible to the enclosing scope - the alternative, copying the
+	// value into the closure, silently gets the commonest closure idiom
+	// (a counter) wrong.
+	new_cell,     // a = cell(a)          (box the value already in a)
+	cell_get,     // a = *b
+	cell_set,     // *a = b
+	get_upvalue,  // a = *upvalues[b]     (upvalues are always cells)
+	set_upvalue,  // *upvalues[a] = b
 
 	// --- arithmetic. JS `+` is add_or_concat: it is the one operator whose
 	// meaning depends on its operand types, so it gets its own opcode rather
@@ -104,6 +114,16 @@ struct instruction {
 
 static_assert(sizeof(instruction) == 4, "instructions should stay one word");
 
+// Where one of a function's upvalues comes from, resolved at compile time.
+// A closure is built by walking this list: each entry either grabs a cell out
+// of the ENCLOSING FRAME's register, or re-shares a cell the enclosing
+// closure already holds. The second case is what makes capture work through
+// more than one level of nesting.
+struct upvalue_desc {
+	bool from_parent_local = true;
+	std::uint8_t index = 0;
+};
+
 // One compiled function. `constants` holds every literal and every property
 // name the body mentions, so the dispatch loop never touches a std::string
 // except through an index.
@@ -120,6 +140,7 @@ struct function_proto {
 	std::vector<value> constants;
 	std::vector<std::string> strings;
 	std::vector<std::string> names;    // for get_global/get_prop operands
+	std::vector<upvalue_desc> upvalues;
 	std::vector<std::uint32_t> nested; // indices into program::functions
 
 	[[nodiscard]] std::uint16_t add_constant(value v) {

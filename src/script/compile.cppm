@@ -27,14 +27,20 @@ import :value;
 // analysis, no spilling - the frame is simply as large as the deepest
 // expression needed.
 //
-// CLOSURES OVER LOCALS ARE A COMPILE ERROR HERE, deliberately and loudly. A
-// nested function that reads an enclosing function's local needs upvalue
-// cells to get the semantics right, and capturing by value instead would
-// silently compute the wrong answer for the single most common closure idiom
-// there is (a counter that mutates what it captured). Refusing with a clear
-// message is worth far more than being subtly wrong; cells are the next
-// piece of work. Free variables that are not enclosing locals resolve to
-// globals, which is most real code.
+// CLOSURES use boxed cells. A local that any nested function mentions is
+// allocated as a heap cell instead of living directly in its register, and
+// every read and write goes through the cell. Nested functions capture the
+// CELL, not the value, which is what makes mutation through a closure visible
+// to the enclosing scope - the whole point, and what capture-by-value gets
+// silently wrong.
+//
+// Which locals need boxing is decided by a pre-pass (mark_captured). It
+// deliberately OVER-APPROXIMATES: if a nested function mentions the name at
+// all, the outer local is boxed, without checking whether the nested function
+// shadows it with its own binding. The cost of being wrong that way is one
+// heap cell for a variable that did not need one; the cost of the precise
+// analysis is a scope-resolution pass that has to be right. Worth revisiting
+// when there is a benchmark that cares.
 
 export namespace ctbrowser::script {
 
@@ -58,12 +64,16 @@ public:
 private:
 	struct local {
 		std::string name;
-		std::uint8_t reg;
+		std::uint8_t reg = 0;
+		bool boxed = false; // lives in a heap cell; see mark_captured
 	};
 	struct frame {
 		std::uint32_t proto = 0;
 		std::vector<local> locals;
 		std::vector<std::string> declared;    // pre-scanned; see collect_declared_names
+		std::vector<std::string> captured;    // names some nested function mentions
+		std::vector<std::string> upvalue_names; // parallel to proto().upvalues
+		std::vector<std::string> predeclared;   // hoisted at body entry; see predeclare_locals
 		std::vector<std::size_t> scope_marks; // locals.size() at each scope entry
 		std::uint8_t next_reg = 0;
 		std::uint8_t high_water = 0;
@@ -101,7 +111,8 @@ private:
 	}
 	[[nodiscard]] std::uint8_t declare_local(std::string name) {
 		const std::uint8_t r = alloc_reg();
-		fn().locals.push_back(local{std::move(name), r});
+		const bool boxed = is_captured(name);
+		fn().locals.push_back(local{std::move(name), r, boxed});
 		return r;
 	}
 	// -1 when not a local of the CURRENT frame
@@ -112,17 +123,64 @@ private:
 		}
 		return -1;
 	}
-	// the diagnostic that makes the closure limitation loud instead of silent
-	[[nodiscard]] bool is_enclosing_local(std::string_view name) const {
-		// frame 0 is the script, whose declarations are globals - reachable
-		// from anywhere, so never an enclosing-local problem
-		for (std::size_t i = frames_.size() - 1; i-- > 1;) {
-			for (const local & l : frames_[i].locals) {
-				if (l.name == name) { return true; }
+	[[nodiscard]] local * find_local_entry(frame & f, std::string_view name) {
+		for (std::size_t i = f.locals.size(); i-- > 0;) {
+			if (f.locals[i].name == name) { return &f.locals[i]; }
+		}
+		return nullptr;
+	}
+
+	// Resolve `name` as an upvalue of frame `level`, adding the descriptor
+	// chain if it is not already there. Returns -1 when the name is not a
+	// local of any enclosing FUNCTION frame (frame 0 is the script, whose
+	// declarations are globals and reachable directly).
+	//
+	// The recursion is what makes two-level capture work: if the name belongs
+	// to a grandparent, the parent first acquires it as its own upvalue, and
+	// this frame then captures the parent's upvalue rather than a register.
+	[[nodiscard]] int resolve_upvalue(std::size_t level, std::string_view name) {
+		if (level == 0) { return -1; }
+		frame & f = frames_[level];
+		for (std::size_t i = 0; i < f.upvalue_names.size(); ++i) {
+			if (f.upvalue_names[i] == name) { return static_cast<int>(i); }
+		}
+		frame & parent = frames_[level - 1];
+		if (level - 1 >= 1) {
+			if (local * l = find_local_entry(parent, name)) {
+				l->boxed = true; // captured, so it must be a cell
+				return add_upvalue(level, name, upvalue_desc{true, l->reg});
 			}
-			for (const std::string & d : frames_[i].declared) {
-				if (d == name) { return true; }
-			}
+		}
+		const int inherited = resolve_upvalue(level - 1, name);
+		if (inherited < 0) { return -1; }
+		return add_upvalue(level, name, upvalue_desc{false, static_cast<std::uint8_t>(inherited)});
+	}
+
+	[[nodiscard]] int add_upvalue(std::size_t level, std::string_view name, upvalue_desc desc) {
+		frame & f = frames_[level];
+		function_proto & p = out_.functions[f.proto];
+		p.upvalues.push_back(desc);
+		f.upvalue_names.emplace_back(name);
+		return static_cast<int>(p.upvalues.size() - 1);
+	}
+
+	// Names that any nested function inside `body` mentions. Over-approximate
+	// on purpose - see the note at the top of this file.
+	void collect_captured_names(std::int32_t idx, bool inside_nested, std::vector<std::string> & out) {
+		if (idx < 0) { return; }
+		const vp::node & n = at(idx);
+		const bool nested = inside_nested || n.kind == vp::nk::func_decl ||
+		                    n.kind == vp::nk::func_expr || n.kind == vp::nk::arrow;
+		if (inside_nested && n.kind == vp::nk::ident) { out.emplace_back(n.text); }
+		for (const std::int32_t slot : {n.a, n.b, n.c, n.d}) {
+			collect_captured_names(slot, nested, out);
+		}
+		for (const std::int32_t k : kids(n)) { collect_captured_names(k, nested, out); }
+	}
+	[[nodiscard]] bool is_captured(std::string_view name) const {
+		const frame & f = frames_.back();
+		for (const std::string & c : f.captured) {
+			if (c == name) { return true; }
 		}
 		return false;
 	}
@@ -181,6 +239,30 @@ private:
 		}
 	}
 
+	// Hoist this body's own `let`/`const`/`var` names into registers before
+	// anything is compiled. Nested function declarations hoist too and are
+	// compiled first, so the locals they capture have to exist by then.
+	void predeclare_locals(std::int32_t body) {
+		if (body < 0 || at(body).kind != vp::nk::block) { return; }
+		for (const std::int32_t stmt : kids(at(body))) {
+			if (at(stmt).kind != vp::nk::var_decl) { continue; }
+			for (const std::int32_t d : kids(at(stmt))) {
+				std::string name{at(d).text};
+				if (find_local_entry(fn(), name) != nullptr) { continue; }
+				const std::uint8_t r = declare_local(name);
+				proto().emit(instruction{op::load_undef, r});
+				if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
+				fn().predeclared.push_back(std::move(name));
+			}
+		}
+	}
+	[[nodiscard]] bool was_predeclared(std::string_view name) const {
+		for (const std::string & p : frames_.back().predeclared) {
+			if (p == name) { return true; }
+		}
+		return false;
+	}
+
 	void fail(std::string message) {
 		if (out_.ok) {
 			out_.ok = false;
@@ -192,10 +274,12 @@ private:
 	void compile_program() {
 		out_.functions.emplace_back();
 		out_.functions[0].name = "<script>";
-		frames_.push_back(frame{0, {}, {}, {}, 0, 0});
+		frames_.emplace_back();
+		frames_.back().proto = 0;
 		push_scope();
 
 		const vp::node & root = at(ast_.root);
+		collect_captured_names(ast_.root, false, fn().captured);
 		collect_declared_names(ast_.root);
 		// Function declarations hoist: a script may call one before its text.
 		for (const std::int32_t s : kids(root)) {
@@ -246,12 +330,27 @@ private:
 			}
 			for (const std::int32_t d : kids(n)) {
 				const vp::node & decl = at(d);
+				if (was_predeclared(decl.text)) {
+					// hoisted above: this statement is only the initializer,
+					// and emit_write knows whether it goes through a cell
+					if (decl.a >= 0) {
+						const std::uint8_t mark = reg_mark();
+						const std::uint8_t tmp = alloc_reg();
+						compile_expr(decl.a, tmp);
+						emit_write(decl.text, tmp);
+						release_to(mark);
+					}
+					continue;
+				}
 				const std::uint8_t r = declare_local(std::string{decl.text});
 				if (decl.a >= 0) {
 					compile_expr(decl.a, r);
 				} else {
 					proto().emit(instruction{op::load_undef, r});
 				}
+				// A captured local is boxed AFTER its initializer runs, so the
+				// cell starts out holding the right value.
+				if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
 				// a declared local keeps its register beyond this statement
 				if (fn().next_reg <= r) { fn().next_reg = static_cast<std::uint8_t>(r + 1); }
 			}
@@ -357,12 +456,27 @@ private:
 		out_.functions.emplace_back();
 		out_.functions[index].name = std::move(name);
 
-		frames_.push_back(frame{index, {}, {}, {}, 0, 0});
+		frames_.emplace_back();
+		frames_.back().proto = index;
 		push_scope();
+		// Which of this body's names some nested function mentions has to be
+		// known BEFORE any local is declared - that is what decides whether a
+		// local gets a register or a cell.
+		collect_captured_names(n.a, false, fn().captured);
 		const std::vector<std::int32_t> params = kids(n);
 		for (const std::int32_t p : params) { (void)declare_local(std::string{at(p).text}); }
-		collect_declared_names(n.a);
 		out_.functions[index].param_count = static_cast<std::uint8_t>(params.size());
+		// A captured PARAMETER needs boxing too, and it arrives already
+		// holding its value - so box in place, after the arguments land.
+		for (const local & l : fn().locals) {
+			if (l.boxed) { proto().emit(instruction{op::new_cell, l.reg}); }
+		}
+		collect_declared_names(n.a);
+		// Declarations are hoisted to the top of the body BEFORE any nested
+		// function is compiled. Without this, a nested function DECLARATION
+		// (which hoists, so it compiles first) resolves the enclosing local
+		// it means to capture as a global instead, and reads undefined.
+		predeclare_locals(n.a);
 
 		const std::int32_t body = n.a;
 		if (body >= 0 && at(body).kind == vp::nk::block) {
@@ -449,17 +563,56 @@ private:
 		}
 	}
 
-	void compile_ident(const vp::node & n, std::uint8_t dst) {
-		const int local_reg = find_local(n.text);
-		if (local_reg >= 0) {
-			proto().emit(instruction{op::move, dst, static_cast<std::uint8_t>(local_reg)});
+	// Reading and writing a name are the only two places that need to know
+	// whether it lives in a register, a cell, an upvalue or the global table.
+	// ++/-- goes through them too, so it cannot drift out of agreement.
+	void emit_read(std::string_view name_text, std::uint8_t dst) {
+		if (const local * l = find_local_entry(fn(), name_text)) {
+			if (l->boxed) {
+				proto().emit(instruction{op::cell_get, dst, l->reg});
+			} else {
+				proto().emit(instruction{op::move, dst, l->reg});
+			}
 			return;
 		}
-		if (is_enclosing_local(n.text)) {
-			fail("closure over the enclosing local '" + std::string{n.text} +
-			     "' needs upvalue cells, which this VM does not have yet - "
-			     "refusing rather than capturing by value and computing the wrong answer");
-			proto().emit(instruction{op::load_undef, dst});
+		const int up = resolve_upvalue(frames_.size() - 1, name_text);
+		if (up >= 0) {
+			proto().emit(instruction{op::get_upvalue, dst, static_cast<std::uint8_t>(up)});
+			return;
+		}
+		proto().emit(
+		    instruction::with_bx(op::get_global, dst, proto().add_name(std::string{name_text})));
+	}
+	void emit_write(std::string_view name_text, std::uint8_t src) {
+		if (const local * l = find_local_entry(fn(), name_text)) {
+			if (l->boxed) {
+				proto().emit(instruction{op::cell_set, l->reg, src});
+			} else {
+				proto().emit(instruction{op::move, l->reg, src});
+			}
+			return;
+		}
+		const int up = resolve_upvalue(frames_.size() - 1, name_text);
+		if (up >= 0) {
+			proto().emit(instruction{op::set_upvalue, static_cast<std::uint8_t>(up), src});
+			return;
+		}
+		proto().emit(
+		    instruction::with_bx(op::set_global, src, proto().add_name(std::string{name_text})));
+	}
+
+	void compile_ident(const vp::node & n, std::uint8_t dst) {
+		if (const local * l = find_local_entry(fn(), n.text)) {
+			if (l->boxed) {
+				proto().emit(instruction{op::cell_get, dst, l->reg});
+			} else {
+				proto().emit(instruction{op::move, dst, l->reg});
+			}
+			return;
+		}
+		const int up = resolve_upvalue(frames_.size() - 1, n.text);
+		if (up >= 0) {
+			proto().emit(instruction{op::get_upvalue, dst, static_cast<std::uint8_t>(up)});
 			return;
 		}
 		const std::uint16_t name = proto().add_name(std::string{n.text});
@@ -523,10 +676,20 @@ private:
 			return;
 		}
 		if (target.kind == vp::nk::ident) {
-			const int local_reg = find_local(target.text);
-			if (local_reg >= 0) {
-				compile_expr(n.b, static_cast<std::uint8_t>(local_reg));
-				proto().emit(instruction{op::move, dst, static_cast<std::uint8_t>(local_reg)});
+			if (const local * l = find_local_entry(fn(), target.text)) {
+				if (l->boxed) {
+					compile_expr(n.b, dst);
+					proto().emit(instruction{op::cell_set, l->reg, dst});
+				} else {
+					compile_expr(n.b, l->reg);
+					proto().emit(instruction{op::move, dst, l->reg});
+				}
+				return;
+			}
+			const int up = resolve_upvalue(frames_.size() - 1, target.text);
+			if (up >= 0) {
+				compile_expr(n.b, dst);
+				proto().emit(instruction{op::set_upvalue, static_cast<std::uint8_t>(up), dst});
 				return;
 			}
 			compile_expr(n.b, dst);
@@ -564,28 +727,16 @@ private:
 			fail("++/-- is only supported on plain variables in this VM subset");
 			return;
 		}
-		const int local_reg = find_local(target.text);
 		const std::uint8_t mark = reg_mark();
 		const std::uint8_t cur = alloc_reg();
 		const std::uint8_t one = alloc_reg();
-		if (local_reg >= 0) {
-			proto().emit(instruction{op::move, cur, static_cast<std::uint8_t>(local_reg)});
-		} else {
-			const std::uint16_t name = proto().add_name(std::string{target.text});
-			proto().emit(instruction::with_bx(op::get_global, cur, name));
-		}
+		emit_read(target.text, cur);
 		emit_const(one, value::number(1));
 		// postfix yields the OLD value, prefix the new one
 		if (n.b == 0) { proto().emit(instruction{op::move, dst, cur}); }
-		const op code = n.text == "++" ? op::add : op::sub;
-		proto().emit(instruction{code, cur, cur, one});
+		proto().emit(instruction{n.text == "++" ? op::add : op::sub, cur, cur, one});
 		if (n.b != 0) { proto().emit(instruction{op::move, dst, cur}); }
-		if (local_reg >= 0) {
-			proto().emit(instruction{op::move, static_cast<std::uint8_t>(local_reg), cur});
-		} else {
-			const std::uint16_t name = proto().add_name(std::string{target.text});
-			proto().emit(instruction::with_bx(op::set_global, cur, name));
-		}
+		emit_write(target.text, cur);
 		release_to(mark);
 	}
 

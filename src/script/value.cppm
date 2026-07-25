@@ -48,7 +48,7 @@ inline constexpr std::uint64_t tag_null = qnan_mask | 1;
 inline constexpr std::uint64_t tag_false = qnan_mask | 2;
 inline constexpr std::uint64_t tag_true = qnan_mask | 3;
 
-enum class heap_kind : std::uint8_t { string, object, array, function, native };
+enum class heap_kind : std::uint8_t { string, object, array, function, native, cell };
 
 struct heap_object; // every heap value starts with one
 

@@ -46,8 +46,16 @@ struct native_object final : heap_object {
 	    : heap_object(heap_kind::native), name(std::move(n)), fn(std::move(f)) {}
 };
 
+// A captured variable's box. Sharing the CELL rather than the value is what
+// makes a mutation through a closure visible to everyone else holding it.
+struct cell_object final : heap_object {
+	value slot;
+	explicit cell_object(value v) : heap_object(heap_kind::cell), slot(v) {}
+};
+
 struct closure_object final : heap_object {
 	const function_proto * proto = nullptr;
+	std::vector<value> upvalues; // each one is a cell_object
 	explicit closure_object(const function_proto * p) : heap_object(heap_kind::function), proto(p) {}
 };
 
@@ -109,6 +117,7 @@ private:
 		std::size_t ip = 0;
 		std::size_t base = 0; // index into registers_ of this frame's r0
 		std::uint8_t result_reg = 0;
+		closure_object * closure = nullptr; // whose upvalues this body sees
 	};
 
 	[[nodiscard]] value execute(const program & prog, const function_proto & entry);
@@ -232,7 +241,15 @@ inline void context::mark_object(heap_object * o) {
 		mark(obj->prototype);
 		break;
 	}
-	default: break; // strings, closures and natives own no values
+	case heap_kind::cell:
+		mark(static_cast<cell_object *>(o)->slot);
+		break;
+	case heap_kind::function:
+		// A closure OWNS its upvalue cells. Missing this frees a captured
+		// variable while the closure that captured it is still reachable.
+		for (const value & up : static_cast<closure_object *>(o)->upvalues) { mark(up); }
+		break;
+	default: break; // strings and natives own no values
 	}
 }
 
@@ -291,7 +308,7 @@ inline run_result context::run(const program & prog) {
 inline value context::execute(const program & prog, const function_proto & entry) {
 	registers_.assign(entry.frame_size + 8u, value::undefined());
 	frames_.clear();
-	frames_.push_back(call_frame{&entry, 0, 0, 0});
+	frames_.push_back(call_frame{&entry, 0, 0, 0, nullptr});
 
 	// Per-frame string interning: a literal in a loop should allocate once,
 	// not once per iteration.
@@ -458,9 +475,26 @@ inline value context::execute(const program & prog, const function_proto & entry
 			break;
 		}
 
-		case op::closure:
-			reg(in.a) = value::object(allocate<closure_object>(&prog.functions[in.bx()]));
+		case op::closure: {
+			const function_proto & target = prog.functions[in.bx()];
+			auto * made = allocate<closure_object>(&target);
+			// Walk the descriptors the compiler resolved: each upvalue is
+			// either a cell sitting in THIS frame's register, or one this
+			// frame's own closure already holds. The second case is what
+			// carries a capture down through more than one level of nesting.
+			made->upvalues.reserve(target.upvalues.size());
+			for (const upvalue_desc & up : target.upvalues) {
+				if (up.from_parent_local) {
+					made->upvalues.push_back(reg(up.index));
+				} else if (frame.closure != nullptr && up.index < frame.closure->upvalues.size()) {
+					made->upvalues.push_back(frame.closure->upvalues[up.index]);
+				} else {
+					made->upvalues.push_back(value::undefined());
+				}
+			}
+			reg(in.a) = value::object(made);
 			break;
+		}
 
 		case op::call:
 		case op::call_method: {
@@ -500,7 +534,7 @@ inline value context::execute(const program & prog, const function_proto & entry
 				raise("call stack exhausted");
 				break;
 			}
-			frames_.push_back(call_frame{&target, 0, new_base, in.a});
+			frames_.push_back(call_frame{&target, 0, new_base, in.a, fnobj});
 			break;
 		}
 
@@ -515,10 +549,37 @@ inline value context::execute(const program & prog, const function_proto & entry
 		}
 
 		case op::type_of: reg(in.a) = string(std::string{type_of(reg(in.b))}); break;
-		case op::get_upvalue:
-		case op::close_over:
-			raise("upvalues are not implemented in this VM subset");
+
+		case op::new_cell: reg(in.a) = value::object(allocate<cell_object>(reg(in.a))); break;
+		case op::cell_get:
+			reg(in.a) = reg(in.b).is_kind(heap_kind::cell)
+			                ? static_cast<cell_object *>(reg(in.b).as_heap())->slot
+			                : value::undefined();
 			break;
+		case op::cell_set:
+			if (reg(in.a).is_kind(heap_kind::cell)) {
+				static_cast<cell_object *>(reg(in.a).as_heap())->slot = reg(in.b);
+			}
+			break;
+		case op::get_upvalue: {
+			reg(in.a) = value::undefined();
+			if (frame.closure != nullptr && in.b < frame.closure->upvalues.size()) {
+				const value cell = frame.closure->upvalues[in.b];
+				if (cell.is_kind(heap_kind::cell)) {
+					reg(in.a) = static_cast<cell_object *>(cell.as_heap())->slot;
+				}
+			}
+			break;
+		}
+		case op::set_upvalue: {
+			if (frame.closure != nullptr && in.a < frame.closure->upvalues.size()) {
+				const value cell = frame.closure->upvalues[in.a];
+				if (cell.is_kind(heap_kind::cell)) {
+					static_cast<cell_object *>(cell.as_heap())->slot = reg(in.b);
+				}
+			}
+			break;
+		}
 		case op::halt: return value::undefined();
 		}
 	}
