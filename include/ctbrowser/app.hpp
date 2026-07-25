@@ -20,6 +20,7 @@
 #ifndef CTBROWSER_IN_A_MODULE
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #endif
@@ -64,6 +65,47 @@ struct app_options {
 };
 
 namespace detail {
+
+// --- SDL handles, with scope-bound lifetimes -------------------------
+// SDL hands out raw pointers with matching destroy functions, which is
+// fine right up until an early return skips the destroy. Owning these
+// means the teardown cannot be forgotten - and it un-forgets one: the
+// renderer-creation failure path used to return without destroying the
+// window and the three cursors it had already made.
+template <auto Destroy> struct sdl_deleter {
+	template <typename T> void operator()(T * p) const noexcept {
+		if (p != nullptr) { Destroy(p); }
+	}
+};
+using window_ptr = std::unique_ptr<SDL_Window, sdl_deleter<SDL_DestroyWindow>>;
+using renderer_ptr = std::unique_ptr<SDL_Renderer, sdl_deleter<SDL_DestroyRenderer>>;
+using cursor_ptr = std::unique_ptr<SDL_Cursor, sdl_deleter<SDL_DestroyCursor>>;
+using texture_ptr = std::unique_ptr<SDL_Texture, sdl_deleter<SDL_DestroyTexture>>;
+
+// SDL_Init/SDL_Quit as a scope; SDL_Quit runs only if the init succeeded
+struct sdl_session {
+	bool ok = false;
+	explicit sdl_session(SDL_InitFlags flags) : ok(SDL_Init(flags)) {}
+	~sdl_session() {
+		if (ok) { SDL_Quit(); }
+	}
+	sdl_session(const sdl_session &) = delete;
+	sdl_session & operator=(const sdl_session &) = delete;
+};
+
+#ifdef CTBROWSER_WITH_TTF
+// the same for SDL_ttf - and this one is a fix: TTF_Quit used to run
+// unconditionally, including when TTF_Init had failed
+struct ttf_session {
+	bool ok = false;
+	ttf_session() : ok(TTF_Init()) {}
+	~ttf_session() {
+		if (ok) { TTF_Quit(); }
+	}
+	ttf_session(const ttf_session &) = delete;
+	ttf_session & operator=(const ttf_session &) = delete;
+};
+#endif
 
 // Resolve an asset path independently of the CURRENT DIRECTORY: try it
 // as-is (cwd), then relative to the executable's directory, then to
@@ -111,6 +153,8 @@ inline void draw_text(SDL_Renderer * r, const paint_cmd & cmd) {
 
 #ifdef CTBROWSER_WITH_TTF
 
+using font_ptr = std::unique_ptr<TTF_Font, sdl_deleter<TTF_CloseFont>>;
+
 // TrueType page text: fonts opened per size, glyphs rendered white
 // and tinted with a color mod, textures cached per (text, size)
 struct ttf_text {
@@ -128,8 +172,8 @@ struct ttf_text {
 	std::map<std::tuple<std::string, bool, bool>, face_src> faces;
 	std::string fallback_path; // opts.font_path or the probed system font
 	// opened fonts per (face-key, px, synth-style-bits)
-	std::map<std::tuple<std::string, bool, bool, std::int32_t>, TTF_Font *> fonts;
-	std::map<std::tuple<std::string, std::int32_t, std::uint8_t>, SDL_Texture *> cache;
+	std::map<std::tuple<std::string, bool, bool, std::int32_t>, font_ptr> fonts;
+	std::map<std::tuple<std::string, std::int32_t, std::uint8_t>, texture_ptr> cache;
 
 	bool ok() const { return !faces.empty() || !fallback_path.empty(); }
 
@@ -193,21 +237,23 @@ struct ttf_text {
 	TTF_Font * font(std::string_view family_list, bool bold, bool italic, std::int32_t px) {
 		auto [name, fb, fi, synth] = resolve(family_list, bold, italic);
 		const std::tuple key{name + (fb ? "/b" : "") + (fi ? "/i" : ""), bold, italic, px};
-		if (const auto it = fonts.find(key); it != fonts.end()) { return it->second; }
-		TTF_Font * f = nullptr;
+		if (const auto it = fonts.find(key); it != fonts.end()) { return it->second.get(); }
+		font_ptr f;
 		if (!name.empty()) {
 			const face_src & src = faces.at({name, fb, fi});
 			// a fresh IO per size; closeio=true has TTF read the font fully
 			// in and close it, so the bytes need only outlive this call
-			f = src.mem != nullptr
-			        ? TTF_OpenFontIO(SDL_IOFromConstMem(src.mem, src.mem_size), true, static_cast<float>(px))
-			        : TTF_OpenFont(src.path.c_str(), static_cast<float>(px));
+			f.reset(src.mem != nullptr
+			            ? TTF_OpenFontIO(SDL_IOFromConstMem(src.mem, src.mem_size), true,
+			                             static_cast<float>(px))
+			            : TTF_OpenFont(src.path.c_str(), static_cast<float>(px)));
 		} else if (!fallback_path.empty()) {
-			f = TTF_OpenFont(fallback_path.c_str(), static_cast<float>(px));
+			f.reset(TTF_OpenFont(fallback_path.c_str(), static_cast<float>(px)));
 		}
-		if (f != nullptr && synth != 0) { TTF_SetFontStyle(f, synth); }
-		fonts.emplace(key, f);
-		return f;
+		if (f && synth != 0) { TTF_SetFontStyle(f.get(), synth); }
+		TTF_Font * raw = f.get(); // the map owns it from here
+		fonts.emplace(key, std::move(f));
+		return raw;
 	}
 	std::int32_t measure(std::u32string_view text, std::int32_t px, std::string_view family, bool bold,
 	                     bool italic) {
@@ -228,19 +274,19 @@ struct ttf_text {
 		const std::tuple<std::string, std::int32_t, std::uint8_t> key{
 		    utf8 + "\x1f" + fold(cmd.font_family), cmd.font_px, stylebits};
 		if (const auto it = cache.find(key); it != cache.end()) {
-			t = it->second;
+			t = it->second.get();
 		} else {
-			if (cache.size() > 256) { // texts change rarely; cap the cache
-				for (auto & [k, tex] : cache) { SDL_DestroyTexture(tex); }
-				cache.clear();
-			}
+			// rendered strings change rarely, so the cache is dropped
+			// wholesale rather than evicted entry by entry
+			if (cache.size() > texture_cache_cap) { cache.clear(); }
 			SDL_Surface * s = TTF_RenderText_Blended(f, utf8.c_str(), utf8.size(),
 			                                         SDL_Color{255, 255, 255, 255});
 			if (s == nullptr) { return; }
-			t = SDL_CreateTextureFromSurface(renderer, s);
+			texture_ptr owned{SDL_CreateTextureFromSurface(renderer, s)};
 			SDL_DestroySurface(s);
-			if (t == nullptr) { return; }
-			cache.emplace(key, t);
+			if (!owned) { return; }
+			t = owned.get();
+			cache.emplace(key, std::move(owned));
 		}
 		SDL_SetTextureColorMod(t, static_cast<Uint8>((cmd.argb >> 16) & 0xFF),
 		                       static_cast<Uint8>((cmd.argb >> 8) & 0xFF),
@@ -251,10 +297,8 @@ struct ttf_text {
 		const SDL_FRect dst{static_cast<float>(cmd.x), static_cast<float>(cmd.y), tw, th};
 		SDL_RenderTexture(renderer, t, nullptr, &dst);
 	}
-	~ttf_text() {
-		for (auto & [k, t] : cache) { SDL_DestroyTexture(t); }
-		for (auto & [k, f] : fonts) { if (f != nullptr) { TTF_CloseFont(f); } }
-	}
+
+	static constexpr std::size_t texture_cache_cap = 256;
 };
 
 // find a usable font when none was configured
@@ -277,26 +321,27 @@ inline std::string probe_font() {
 
 struct canvas_textures {
 	SDL_Renderer * renderer = nullptr;
-	struct entry { SDL_Texture * tex; std::int32_t w, h; };
+	struct entry {
+		texture_ptr tex;
+		std::int32_t w = 0, h = 0;
+	};
 	std::map<const node *, entry> cache;
 
 	SDL_Texture * of(node * n) {
 		if (const auto it = cache.find(n); it != cache.end()) {
 			// the canvas kept its size: reuse; else recreate (engine.resize)
-			if (it->second.w == n->canvas_w && it->second.h == n->canvas_h) { return it->second.tex; }
-			SDL_DestroyTexture(it->second.tex);
-			cache.erase(it);
+			if (it->second.w == n->canvas_w && it->second.h == n->canvas_h) {
+				return it->second.tex.get();
+			}
+			cache.erase(it); // erasing destroys the stale texture
 		}
-		SDL_Texture * t = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
-		                                    SDL_TEXTUREACCESS_STREAMING, n->canvas_w,
-		                                    n->canvas_h);
-		SDL_SetTextureScaleMode(t, SDL_SCALEMODE_NEAREST);
-		SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND); // clearRect shows the page
-		cache.emplace(n, entry{t, n->canvas_w, n->canvas_h});
-		return t;
-	}
-	~canvas_textures() {
-		for (auto & [n, e] : cache) { SDL_DestroyTexture(e.tex); }
+		texture_ptr t{SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+		                                SDL_TEXTUREACCESS_STREAMING, n->canvas_w, n->canvas_h)};
+		SDL_SetTextureScaleMode(t.get(), SDL_SCALEMODE_NEAREST);
+		SDL_SetTextureBlendMode(t.get(), SDL_BLENDMODE_BLEND); // clearRect shows the page
+		SDL_Texture * raw = t.get(); // the map owns it from here
+		cache.emplace(n, entry{std::move(t), n->canvas_w, n->canvas_h});
+		return raw;
 	}
 };
 
@@ -423,27 +468,41 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 	e.ev.stop_audio = [&mixer](std::int32_t handle) { mixer.stop(handle); };
 	e.ev.set_audio_volume = [&mixer](float v) { mixer.set_volume(v); };
 
-	if (!SDL_Init(SDL_INIT_VIDEO)) {
+	// OWNERSHIP lives in these five (plus the session). Destructors run in
+	// reverse declaration order, which reproduces the teardown this
+	// function used to spell out by hand: cursors, then renderer, then
+	// window, then SDL_Quit - and now on the early return as well.
+	const detail::sdl_session sdl{SDL_INIT_VIDEO};
+	if (!sdl.ok) {
 		SDL_Log("ctbrowser: SDL_Init failed: %s", SDL_GetError());
 		return 1;
 	}
-	SDL_Window * window = SDL_CreateWindow(
+	detail::window_ptr owned_window{SDL_CreateWindow(
 	    e.title.c_str(), opts.width, opts.height,
-	    SDL_WINDOW_RESIZABLE | (want_fullscreen ? SDL_WINDOW_FULLSCREEN : 0));
-	SDL_Renderer * renderer = window ? SDL_CreateRenderer(window, nullptr) : nullptr;
+	    SDL_WINDOW_RESIZABLE | (want_fullscreen ? SDL_WINDOW_FULLSCREEN : 0))};
+	detail::renderer_ptr owned_renderer{
+	    owned_window ? SDL_CreateRenderer(owned_window.get(), nullptr) : nullptr};
+	// the hover cursors (arrow / hand over links / I-beam over text),
+	// switched per frame from the engine's CSS-resolved cursor kind
+	detail::cursor_ptr owned_arrow{SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT)};
+	detail::cursor_ptr owned_pointer{SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER)};
+	detail::cursor_ptr owned_text{SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_TEXT)};
+
+	// non-owning views: the shell below only ever uses the handles
+	SDL_Window * window = owned_window.get();
+	SDL_Renderer * renderer = owned_renderer.get();
+	SDL_Cursor * cur_arrow = owned_arrow.get();
+	SDL_Cursor * cur_pointer = owned_pointer.get();
+	SDL_Cursor * cur_text = owned_text.get();
+
 	if (window != nullptr) {
 		SDL_StartTextInput(window); // editable controls receive SDL_EVENT_TEXT_INPUT
 	}
-	// the hover cursors (arrow / hand over links / I-beam over text),
-	// switched per frame from the engine's CSS-resolved cursor kind
-	SDL_Cursor * cur_arrow = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
-	SDL_Cursor * cur_pointer = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER);
-	SDL_Cursor * cur_text = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_TEXT);
 	auto shown_cursor = decltype(e.cursor()){};
 	if (cur_arrow != nullptr) { SDL_SetCursor(cur_arrow); }
 	if (renderer == nullptr) {
+		// returning here used to leak the window and all three cursors
 		SDL_Log("ctbrowser: window/renderer failed: %s", SDL_GetError());
-		SDL_Quit();
 		return 1;
 	}
 	if (opts.logical_w > 0 && opts.logical_h > 0) {
@@ -455,11 +514,15 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 	SDL_SetRenderVSync(renderer, 1);
 
 
-	{ // scope: GPU/font resources release before the SDL teardown below
+#ifdef CTBROWSER_WITH_TTF
+	const detail::ttf_session ttf_lib; // declared out here so TTF_Quit follows `ttf`
+#endif
+
+	{ // scope: GPU/font resources release before the library teardown
 #ifdef CTBROWSER_WITH_TTF
 	detail::ttf_text ttf;
 	ttf.renderer = renderer;
-	if (TTF_Init()) {
+	if (ttf_lib.ok) {
 		// 1) the embedded default faces (fonts.hpp): serif/sans/mono in
 		// four styles each, registered under the generic family names
 		{
@@ -712,17 +775,11 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 		else if (opts.max_frames == 0) { ++frame; }
 	}
 	SDL_RemoveEventWatch(watch_cb, &rw);
-	} // resource scope
+	} // resource scope: the font cache and canvas textures release here
 
-#ifdef CTBROWSER_WITH_TTF
-	TTF_Quit();
-#endif
-	SDL_DestroyCursor(cur_arrow);
-	SDL_DestroyCursor(cur_pointer);
-	SDL_DestroyCursor(cur_text);
-	SDL_DestroyRenderer(renderer);
-	SDL_DestroyWindow(window);
-	SDL_Quit();
+	// No teardown block. The TTF session, the cursors, the renderer, the
+	// window and the SDL session all unwind from here in reverse
+	// declaration order - the same sequence, now impossible to skip.
 	return 0;
 }
 
