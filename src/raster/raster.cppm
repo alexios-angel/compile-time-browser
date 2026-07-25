@@ -20,6 +20,7 @@ export module ctbrowser.raster;
 
 export import :surface;
 export import :draw;
+export import :freetype;
 export import :tile;
 export import :backend;
 export import :software;

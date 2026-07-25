@@ -11,7 +11,11 @@ import ctbrowser;
 
 #include "check.hpp"
 
+#include <cstdint>
 #include <cstdio>
+#include <fstream>
+#include <iterator>
+#include <thread>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -27,6 +31,18 @@ void check(bool ok, std::string_view what) {
 		std::printf("FAIL %s\n", std::string{what}.c_str());
 		++ctbrowser_test_failures;
 	}
+}
+
+[[nodiscard]] std::vector<std::byte> read_font(const char * path) {
+	std::ifstream in{path, std::ios::binary};
+	std::vector<std::byte> out;
+	if (!in) { return out; }
+	const std::string text{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
+	out.resize(text.size());
+	for (std::size_t i = 0; i < text.size(); ++i) {
+		out[i] = static_cast<std::byte>(static_cast<unsigned char>(text[i]));
+	}
+	return out;
 }
 
 // Every text command the page draws, in order.
@@ -194,6 +210,219 @@ void test_font8x8_quantises_and_says_so() {
 	      "20px is the next bucket up");
 }
 
+
+// --- the real font backend ------------------------------------------------
+//
+// Skipped, loudly, where FreeType is absent - which is the same shape the GPU
+// test uses. A test that silently passes on a machine that cannot run it is
+// worse than one that says so.
+
+void test_real_fonts() {
+	if (!raster::freetype_available()) {
+		std::printf("     no FreeType in this build - real fonts skipped\n");
+		return;
+	}
+	browser page{browser_options{400, 200}};
+	// ASSERTED, not skipped: the OFL faces are checked into this repository and
+	// the tests run from its root, so a failure here is a real failure. A skip
+	// that cannot be told apart from a pass is how a whole feature quietly
+	// stops being tested.
+	check(page.use_real_fonts(), "the vendored faces load");
+	check(page.has_real_fonts(), "and the backend took");
+
+	page.load_html("<body><p>Hamburgefonstiv</p></body>");
+	check(page.frame().has_value(), "the page renders");
+
+	const paint::paint_command * run = run_saying(page, "Hamburgefonstiv");
+	check(run != nullptr, "the run was recorded");
+	if (run == nullptr) { return; }
+
+	// A proportional face is NOT font8x8's fixed 8-per-character grid, and the
+	// recorded box has to be the real width or the text overflows its line.
+	const float grid = raster::font8x8_advance("Hamburgefonstiv", run->font_size);
+	check(run->bounds.width != grid, "a real face does not measure on font8x8's grid");
+	check(run->bounds.width > 0, "and it measures something");
+
+	// It puts ANTIALIASED ink on the page: font8x8 is on or off, so a partly
+	// covered pixel can only come from an outline.
+	const auto image = page.read_pixels();
+	check(image.has_value(), "the frame composited");
+	std::size_t partial = 0;
+	if (image) {
+		for (int y = 0; y < image->height(); ++y) {
+			const auto row = image->row(y);
+			for (int x = 0; x < image->width(); ++x) {
+				const std::uint32_t px = row[static_cast<std::size_t>(x)] & 0x00FFFFFFU;
+				if (px != 0x000000U && px != 0xFFFFFFU) { ++partial; }
+			}
+		}
+	}
+	check(partial > 0, "the glyphs are antialiased, which font8x8 cannot be");
+}
+
+void test_real_fonts_distinguish_faces() {
+	if (!raster::freetype_available()) { return; }
+	const auto width_of = [](std::string_view style) {
+		browser page{browser_options{600, 200}};
+		check(page.use_real_fonts(), "the faces load");
+		page.load_html("<body><p style='" + std::string{style} + "'>Hamburgefonstiv</p></body>");
+		(void)page.frame();
+		const paint::paint_command * run = run_saying(page, "Hamburgefonstiv");
+		return run != nullptr ? run->bounds.width : 0.0f;
+	};
+	const float regular = width_of("font-family: Fira Sans");
+	check(regular > 0, "regular measures something");
+	// Bold is wider than regular in a real face, and a monospace family is a
+	// different width again. If any of these matched, the face was being
+	// ignored - which is exactly the bug this whole stage is about.
+	check(width_of("font-family: Fira Sans; font-weight: bold") != regular,
+	      "bold measures differently from regular");
+	check(width_of("font-family: Cousine") != regular, "and monospace differently again");
+	check(width_of("font-family: Fira Sans; font-style: italic") > 0, "italic loads too");
+}
+
+void test_unknown_family_falls_back() {
+	if (!raster::freetype_available()) { return; }
+	browser page{browser_options{400, 200}};
+	check(page.use_real_fonts(), "the faces load");
+	// A family nobody has must still draw - in the default face, not in
+	// nothing. A page asking for "Comic Sans MS" gets text.
+	page.load_html("<body><p style='font-family: Nonexistent Face'>fallback</p></body>");
+	check(page.frame().has_value(), "the page renders");
+	if (const paint::paint_command * run = run_saying(page, "fallback")) {
+		check(run->bounds.width > 0, "an unknown family still measures something");
+	}
+}
+
+
+// The glyph cache, hit CONCURRENTLY AND COLD.
+//
+// Going through the browser does not test this: layout measures every run
+// before raster draws it, so by the time tiles fan out the cache is warm and
+// the parallel path only reads. Removing the lock and watching TSan stay silent
+// is what showed that up. This drives the backend directly, from several
+// threads, on glyphs nobody has asked for yet - which is the only arrangement
+// where the lock is load bearing.
+void test_the_glyph_cache_is_thread_safe() {
+	if (!raster::freetype_available()) { return; }
+	raster::freetype_backend fonts;
+	check(fonts.ok(), "FreeType started");
+	const std::vector<std::byte> regular = read_font("fonts/FiraSans-Regular.ttf");
+	const std::vector<std::byte> bold = read_font("fonts/FiraSans-Bold.ttf");
+	check(!regular.empty(), "the vendored face is readable");
+	check(fonts.add_face("Fira Sans", false, false, regular), "the face loads");
+	check(fonts.add_face("Fira Sans", true, false, bold), "and its bold");
+
+	// Every thread measures a DIFFERENT size, so every one of them misses and
+	// rasterizes - which is the state the lock exists for.
+	const auto measure_all = [&fonts](int size) {
+		std::string out;
+		for (const char * word : {"Hamburgefonstiv", "quick brown fox", "0123456789"}) {
+			out += std::to_string(fonts.advance(word, static_cast<float>(size), "Fira Sans",
+			                                    size % 2 == 0, false));
+			out += ' ';
+		}
+		return out;
+	};
+	std::vector<std::string> expected;
+	for (int size = 8; size < 8 + 12; ++size) { expected.push_back(measure_all(size)); }
+
+	raster::freetype_backend concurrent;
+	check(concurrent.add_face("Fira Sans", false, false, regular), "the face loads again");
+	check(concurrent.add_face("Fira Sans", true, false, bold), "and its bold");
+	std::vector<std::string> got(expected.size());
+	std::vector<std::thread> threads;
+	for (std::size_t i = 0; i < expected.size(); ++i) {
+		threads.emplace_back([&, i] {
+			std::string out;
+			for (const char * word : {"Hamburgefonstiv", "quick brown fox", "0123456789"}) {
+				const int size = static_cast<int>(i) + 8;
+				out += std::to_string(concurrent.advance(word, static_cast<float>(size), "Fira Sans",
+				                                         size % 2 == 0, false));
+				out += ' ';
+			}
+			got[i] = std::move(out);
+		});
+	}
+	for (std::thread & t : threads) { t.join(); }
+	check(got == expected, "twelve threads measuring cold glyphs agree with one thread");
+}
+
+// A page's OWN font, from its @font-face rule. The file is named by the page
+// and loaded through the asset registry like any other resource, so a page can
+// ship a face the machine has never heard of.
+void test_page_font_face() {
+	if (!raster::freetype_available()) { return; }
+	const auto width_in = [](std::string_view family) {
+		browser page{browser_options{600, 200}};
+		check(page.use_real_fonts(), "the vendored faces load");
+		page.load_html(
+		    "<head><style>@font-face { font-family: 'Press Start 2P';"
+		    "  src: url(\"examples/assets/fonts/PressStart2P-Regular.ttf\"); }</style></head>"
+		    "<body><p style='font-family: " + std::string{family} + "'>ARCADE</p></body>");
+		(void)page.frame();
+		const paint::paint_command * run = run_saying(page, "ARCADE");
+		return run != nullptr ? run->bounds.width : 0.0f;
+	};
+	const float arcade = width_in("Press Start 2P");
+	const float serif = width_in("serif");
+	check(arcade > 0, "the page's own face measures something");
+	// Press Start 2P is a fixed-width arcade face and Tinos is not, so if these
+	// matched the @font-face file was never loaded and the request fell back.
+	check(arcade != serif, "and it is not just the default face under another name");
+}
+
+void test_real_fonts_are_deterministic_and_thread_safe() {
+	if (!raster::freetype_available()) { return; }
+	// Tiles raster in PARALLEL and an FT_Face is not reentrant, so the glyph
+	// cache is the one piece of shared mutable state in the whole text path.
+	// Rendering the same page twice - once across the scheduler - must give the
+	// same pixels, and TSan runs this suite.
+	const auto render = [](bool parallel) {
+		browser page{browser_options{800, 600}};
+		check(page.use_real_fonts(), "the faces load");
+		std::string html = "<body>";
+		for (int i = 0; i < 40; ++i) {
+			html += "<p style='font-size:" + std::to_string(12 + i % 9) +
+			        "px'>Hamburgefonstiv " + std::to_string(i) + "</p>";
+		}
+		html += "</body>";
+		page.load_html(html);
+		scheduler pool;
+		(void)page.frame(parallel ? &pool : nullptr);
+		std::vector<std::uint32_t> pixels;
+		if (const auto image = page.read_pixels()) {
+			for (int y = 0; y < image->height(); ++y) {
+				const auto row = image->row(y);
+				pixels.insert(pixels.end(), row.begin(), row.end());
+			}
+		}
+		return pixels;
+	};
+	const std::vector<std::uint32_t> once = render(false);
+	check(!once.empty(), "the page rendered");
+	check(render(false) == once, "the same page renders the same pixels twice");
+	check(render(true) == once, "and rastering across threads changes nothing");
+}
+
+void test_real_fonts_do_not_quantise() {
+	if (!raster::freetype_available()) { return; }
+	// The quantisation asserted above for font8x8 is a property of THAT font.
+	// An outline face has a distinct size for every pixel size, which is most
+	// of the reason to want one.
+	const auto width_at = [](int size) {
+		browser page{browser_options{600, 200}};
+		check(page.use_real_fonts(), "the faces load");
+		page.load_html("<body><p style='font-size:" + std::to_string(size) +
+		               "px'>Hamburgefonstiv</p></body>");
+		(void)page.frame();
+		const paint::paint_command * run = run_saying(page, "Hamburgefonstiv");
+		return run != nullptr ? run->bounds.width : 0.0f;
+	};
+	check(width_at(16) != width_at(18), "16px and 18px differ with a real face");
+	check(width_at(16) < width_at(24), "and bigger is bigger");
+}
+
 } // namespace
 
 int main() {
@@ -203,6 +432,14 @@ int main() {
 	test_the_underline_is_actually_drawn();
 	test_layout_measures_with_the_drawing_font();
 	test_font8x8_quantises_and_says_so();
+
+	test_real_fonts();
+	test_real_fonts_distinguish_faces();
+	test_unknown_family_falls_back();
+	test_page_font_face();
+	test_the_glyph_cache_is_thread_safe();
+	test_real_fonts_are_deterministic_and_thread_safe();
+	test_real_fonts_do_not_quantise();
 
 	REPORT("fonts_basics");
 }

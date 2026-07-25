@@ -165,6 +165,51 @@ splitter — the latter peels `!important` off and discards the flag, which is
 the entire question. Cached by attribute TEXT, so a table styling forty rows
 identically parses once and a re-resolve after a hover parses nothing.
 
+## v2 FONTS: real ones (stage 6, 2026-07-25)
+
+**Text is drawn with outline faces.** `ctbrowser.raster:freetype` is a
+`font_backend` over **FreeType** — NOT SDL3_ttf, which the plan proposed and
+which would have put SDL inside the engine that `tests-v2/api_surface` forbids
+it in. FreeType is an ordinary C library, so the engine stays headless and real
+text is TESTABLE without a display.
+
+The seam is `raster::font_backend`: `advance()`, `draw_run()` and `ascent()`
+together, because those are the ones that must agree — layout measures with the
+first and the rasterizer draws with the second, and text lands where layout
+thought only if ONE object answers both (`browser::fonts()` / `measure()`).
+`renderer::set_fonts()` hands it to both raster backends. `font8x8` is still an
+implementation of the same interface and still the default, so **the goldens do
+not move**.
+
+Font identity now runs the length of the pipeline: layout resolves
+`font-family` (first name of the list, unquoted), `font-weight` (≥600 is bold),
+`font-style` and `text-decoration` with the inherited-resolver pattern;
+`paint_command` carries the face and decoration because the rasterizer has no
+cascade to ask; underline and line-through are drawn as bands whose thickness
+follows the size. `layout::text_face` and `paint::font_face` are deliberately
+separate types — `:values` depends on nothing, and layout importing paint would
+invert the dependency the pipeline is built on.
+
+**Opt in with `browser::use_real_fonts()`**; `run_app` does it by default
+(`app_options::real_fonts`, `CTBROWSER_FONTS=font8x8` to force the bitmap font).
+It loads the vendored OFL faces (Tinos/Fira Sans/Cousine → serif/sans-serif/
+monospace) through the ASSET REGISTRY, so a binary that baked them in never
+touches the disk, and then the page's own `@font-face` files. An unknown family
+falls back to the default face, and a missing bold/italic variant to the
+upright one.
+
+**The glyph cache is the only shared mutable state in the text path** — tiles
+raster in parallel and an FT_Face is not reentrant — so it is mutex-guarded and
+`tests-v2/fonts_basics` drives it from twelve threads on COLD glyphs. Going
+through the browser does not test it: layout measures every run before raster
+draws it, so the parallel path only ever reads. Removing the lock and watching
+TSan stay silent is what showed that up.
+
+Rendering turned out to be byte-identical between FreeType 2.14.3 (linux) and
+2.13.3 (the mingw sysroot) for these faces — every example matches across
+platforms. That is not guaranteed in general, which is what `CTBROWSER_FONTS`
+is for.
+
 ## v2 INPUT: the page gets the events (2026-07-25)
 
 **Keys and the pointer reach SCRIPT, and the browser's own behaviour is the

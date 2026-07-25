@@ -8,6 +8,7 @@ module;
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -124,8 +125,10 @@ public:
 		load_inline_styles();
 		// Images are resolved BEFORE layout, because an <img> with no width
 		// attribute takes its size from the decoded bitmap and layout has no
-		// way to ask.
+		// way to ask. The page's @font-face files, for the same reason: layout
+		// measures with them.
 		load_images();
+		load_page_fonts();
 		mark(dirty::everything);
 		run_scripts();
 	}
@@ -149,6 +152,55 @@ public:
 		embedder_natives_.emplace_back(std::move(name), std::move(fn));
 		if (script_) { install_embedder_natives(); }
 	}
+
+	// Turn on real fonts. Loads the vendored OFL faces through the asset
+	// registry - so an application that baked them in never touches the disk -
+	// and leaves font8x8 in place if FreeType is absent or none of them load.
+	//
+	// OPT-IN rather than automatic: the goldens are font8x8's pixels, and a
+	// page that silently changed how it renders because a font file happened to
+	// be next to the binary would be a worse default than one that looks the
+	// same everywhere.
+	bool use_real_fonts(std::string_view directory = "fonts") {
+#if CTBROWSER_WITH_FREETYPE
+		auto backend = std::make_unique<ctbrowser::raster::freetype_backend>();
+		if (!backend->ok()) { return false; }
+		// family, then the four (bold, italic) files that make it up.
+		struct vendored {
+			std::string_view family;
+			std::string_view stem;
+		};
+		for (const vendored & face : {vendored{"serif", "Tinos"}, vendored{"Tinos", "Tinos"},
+		                              vendored{"sans-serif", "FiraSans"},
+		                              vendored{"Fira Sans", "FiraSans"},
+		                              vendored{"monospace", "Cousine"},
+		                              vendored{"Cousine", "Cousine"}}) {
+			for (const auto & [bold, italic, suffix] :
+			     {std::tuple{false, false, "Regular"}, std::tuple{true, false, "Bold"},
+			      std::tuple{false, true, "Italic"}, std::tuple{true, true, "BoldItalic"}}) {
+				const std::string path =
+				    std::string{directory} + "/" + std::string{face.stem} + "-" + suffix + ".ttf";
+				const std::vector<std::byte> bytes = assets_.load(path);
+				if (!bytes.empty()) {
+					(void)backend->add_face(std::string{face.family}, bold, italic, bytes);
+				}
+			}
+		}
+		if (backend->face_count() == 0) { return false; }
+		backend->set_default_family("serif"); // what the UA sheet gives <body>
+		freetype_ = std::move(backend);
+		load_page_fonts();
+		fonts_ = freetype_.get();
+		renderer_.set_fonts(fonts_);
+		// Everything measured so far was measured with the other font.
+		mark(dirty::everything);
+		return true;
+#else
+		(void)directory;
+		return false;
+#endif
+	}
+	[[nodiscard]] bool has_real_fonts() const noexcept { return fonts_ != nullptr; }
 
 	[[nodiscard]] asset_registry & assets() noexcept { return assets_; }
 	[[nodiscard]] image_store & images() noexcept { return images_; }
@@ -422,6 +474,21 @@ private:
 		return fonts_ != nullptr ? *fonts_ : ctbrowser::raster::font8x8_fonts();
 	}
 	[[nodiscard]] auto measure() const { return ctbrowser::raster::measure_with(fonts()); }
+
+	// The page's own @font-face rules, loaded through the asset registry like
+	// any other resource. Called when real fonts are turned on and again on
+	// every navigation, because the rules belong to the document.
+	void load_page_fonts() {
+#if CTBROWSER_WITH_FREETYPE
+		if (!freetype_) { return; }
+		for (const auto & face : styles_->page_fonts()) {
+			const std::vector<std::byte> bytes = assets_.load(face.source);
+			if (!bytes.empty()) {
+				(void)freetype_->add_face(face.family, face.bold, face.italic, bytes);
+			}
+		}
+#endif
+	}
 
 	void load_images() {
 		images_by_node_.clear();
@@ -873,6 +940,11 @@ private:
 	// Null means font8x8, which is always available and always identical - so a
 	// build with no font files still renders and its goldens still compare.
 	const ctbrowser::raster::font_backend * fonts_ = nullptr;
+#if CTBROWSER_WITH_FREETYPE
+	// Owned so its glyph cache outlives any one frame; the renderer only
+	// borrows it.
+	std::unique_ptr<ctbrowser::raster::freetype_backend> freetype_;
+#endif
 	std::vector<std::pair<std::string, script::native_fn>> embedder_natives_;
 	asset_registry assets_;
 	image_store images_;

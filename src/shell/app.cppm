@@ -83,6 +83,17 @@ struct app_options {
 	// Where a relative asset path (an <img src>, a page-local fetch) resolves
 	// from when the registry misses. Empty means the working directory.
 	std::filesystem::path asset_path;
+	// Real outline fonts, from the vendored OFL faces and whatever the page's
+	// @font-face rules ask for. ON by default - an application wants text that
+	// looks like text - and falling back to the built-in bitmap font when
+	// FreeType is absent or the files are not found.
+	//
+	// `CTBROWSER_FONTS=font8x8` forces the bitmap font, which is what makes a
+	// run reproducible ACROSS MACHINES: two FreeType versions do not rasterize
+	// identically, so a cross-platform byte comparison has to ask for font8x8.
+	bool real_fonts = true;
+	std::filesystem::path font_path = "fonts";
+
 	// Whether fetch() may open a socket for a url the registry does not have.
 	// On by default - it is a browser - and CTBROWSER_NETWORK=0 turns it off,
 	// which is what makes an example's ctest hermetic.
@@ -106,6 +117,7 @@ struct app_options {
 //   CTBROWSER_SCREENSHOT   -> screenshot_path
 //   CTBROWSER_RENDERER     -> software | gpu
 //   CTBROWSER_NETWORK      -> 0 disables fetch()'s network access
+//   CTBROWSER_FONTS        -> font8x8 forces the built-in bitmap font
 //
 // Carried over from v1 because it is what lets an example BE a ctest without
 // the example containing any test scaffolding.
@@ -121,6 +133,10 @@ inline void apply_environment(app_options & options) {
 		} else if (text == "gpu" || text == "hardware") {
 			options.renderer = renderer_preference::prefer_gpu;
 		}
+	}
+	if (const char * fonts = std::getenv("CTBROWSER_FONTS")) {
+		const std::string_view text{fonts};
+		options.real_fonts = !(text == "font8x8" || text == "bitmap" || text == "0");
 	}
 	if (const char * network = std::getenv("CTBROWSER_NETWORK")) {
 		const std::string_view text{network};
@@ -552,6 +568,7 @@ export namespace ctbrowser {
 	page.assets().set_base_path(options.asset_path);
 	page.allow_network(options.network);
 	detail::install_image_decoder(page.images());
+	if (options.real_fonts) { (void)page.use_real_fonts(options.font_path.string()); }
 
 	// Sound. `playSound(name [, volume])` is what the page calls; the HTML
 	// <audio> element is not implemented, and a native the embedder installs is

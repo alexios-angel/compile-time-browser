@@ -89,7 +89,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${PROJECT_SOURCE_DIR}/examples/assets/sprites.bmp"
             "${PROJECT_SOURCE_DIR}/examples/assets/blip.wav"
-            "${v2-dist-dir}/examples/assets")
+            "${v2-dist-dir}/examples/assets"
+    # The OFL faces back serif/sans-serif/monospace. Without them every exe
+    # falls back to the built-in bitmap font, which works but is not what the
+    # gallery is for; the licence rides along because the fonts do.
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${PROJECT_SOURCE_DIR}/fonts" "${v2-dist-dir}/fonts"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${PROJECT_SOURCE_DIR}/examples/assets/fonts"
+            "${v2-dist-dir}/examples/assets/fonts")
   add_custom_target(windows-dist-v2 ${v2-dist-commands}
     DEPENDS ${v2-dist-targets}
     COMMENT "collecting v2 Windows exes + pages into examples-windows-v2/"

@@ -61,8 +61,8 @@ Deleting v1 today removes working, tested functionality with no replacement:
   loading and texture decoding. ~4500 lines with three tests.
 - **Widget chrome.** Scrollbar, context menu, disclosure triangles, list
   markers — v2 draws none of these; the UA palette is carried but unused.
-- **Real fonts.** v2 renders text with font8x8 only. v1 has the vendored TTF
-  stack, `@font-face`, per-element family/weight/style resolution.
+- ~~**Real fonts.**~~ **DONE.** See above - v2's is FreeType in the engine
+  rather than SDL3_ttf in the shell.
 - ~~**Images and audio.**~~ **DONE (2026-07-25).** `ctbrowser.shell:assets` is
   the registry, `:images` decodes BMP with an optional SDL3_image hook, and
   `playSound` mixes WAVs through SDL3's own audio streams (no SDL3_mixer).
@@ -91,7 +91,10 @@ catches changes, not disagreements with a second implementation.
 are gone: script drives the page, HTML parsing is v2's own, and forms and canvas
 work. What remains is smaller and more specific:
 
-- **real fonts** - v2 renders text with font8x8 only
+- ~~**real fonts**~~ **DONE (2026-07-25).** FreeType backend, the vendored OFL
+  faces behind serif/sans-serif/monospace, per-element family/weight/style,
+  page `@font-face`, underline and line-through. v1 does this through SDL3_ttf
+  in its shell; v2's is in the ENGINE and therefore testable headlessly.
 - the **BabylonJS shim** with its software 3D rasterizer
 - **`<select>` popups**, page-level text selection, and the clipboard
 - **tables** as anything but ordinary boxes (no column sizing)

@@ -88,9 +88,34 @@ public:
 
 	void clear_states() { states_.clear(); }
 
+	// What a page's @font-face rules asked for: a family name and the file it
+	// should come from. The cascade has no opinion about these - they are a
+	// resource list - so they are collected rather than matched.
+	struct page_font {
+		std::string family;
+		std::string source; // the url(), unquoted
+		bool bold = false;
+		bool italic = false;
+	};
+	[[nodiscard]] const std::vector<page_font> & page_fonts() const noexcept { return fonts_; }
+
 	// origin 0 = user agent, 1 = author. Author wins ties, per the cascade.
 	void add_sheet(std::string_view css, std::uint8_t origin = 1) {
 		const ctcss::value_sheet sheet = ctcss::parse_value(css);
+		for (const ctcss::value_sheet::font_face & face : sheet.font_faces) {
+			page_font entry;
+			// UNQUOTED here: ctcss leaves `font-family: 'Press Start 2P'` with
+			// its quotes on, so registering the name as it comes back files the
+			// face under a name no element can ever ask for.
+			entry.family = std::string{unquoted(face.get("font-family"))};
+			entry.source = std::string{url_of(face.get("src"))};
+			const std::string_view weight = face.get("font-weight");
+			entry.bold = weight == "bold" || weight == "700" || weight == "800" ||
+			             weight == "900" || weight == "600";
+			const std::string_view style = face.get("font-style");
+			entry.italic = style == "italic" || style == "oblique";
+			if (!entry.family.empty() && !entry.source.empty()) { fonts_.push_back(std::move(entry)); }
+		}
 		for (const ctcss::value_sheet::entry & e : sheet.entries) {
 			if (e.selector < 0 ||
 			    static_cast<std::size_t>(e.selector) >= sheet.selectors.size()) {
@@ -254,6 +279,43 @@ private:
 	[[nodiscard]] atom style_name() const { return atoms_->intern("style"); }
 
 	flat_map<std::string, inline_block> inline_cache_;
+
+	// `src: url("x.ttf") format("truetype")` -> `x.ttf`. Only the first url is
+	// taken: this loads one file per face, and a list of alternatives is about
+	// formats a browser might not support rather than different fonts.
+	[[nodiscard]] static std::string_view unquoted(std::string_view text) {
+		while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {
+			text.remove_prefix(1);
+		}
+		while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) {
+			text.remove_suffix(1);
+		}
+		if (text.size() >= 2 && (text.front() == '"' || text.front() == '\'') &&
+		    text.back() == text.front()) {
+			text = text.substr(1, text.size() - 2);
+		}
+		return text;
+	}
+
+	[[nodiscard]] static std::string_view url_of(std::string_view src) {
+		const std::size_t open = src.find("url(");
+		if (open == std::string_view::npos) { return {}; }
+		const std::size_t start = open + 4;
+		const std::size_t close = src.find(')', start);
+		if (close == std::string_view::npos) { return {}; }
+		std::string_view inner = src.substr(start, close - start);
+		while (!inner.empty() && (inner.front() == ' ' || inner.front() == '"' ||
+		                          inner.front() == '\'')) {
+			inner.remove_prefix(1);
+		}
+		while (!inner.empty() &&
+		       (inner.back() == ' ' || inner.back() == '"' || inner.back() == '\'')) {
+			inner.remove_suffix(1);
+		}
+		return inner;
+	}
+
+	std::vector<page_font> fonts_;
 
 	[[nodiscard]] atom id_name() const { return atoms_->intern("id"); }
 	[[nodiscard]] atom class_name() const { return atoms_->intern("class"); }

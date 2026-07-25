@@ -185,6 +185,7 @@ target_sources(ctbrowser-raster
       raster/raster.cppm
       raster/surface.cppm
       raster/draw.cppm
+      raster/freetype.cppm
       raster/tile.cppm
       raster/backend.cppm
       raster/software.cppm
@@ -195,6 +196,21 @@ target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
 target_compile_options(ctbrowser-raster PRIVATE ${CTBROWSER_V2_WARNINGS})
 target_include_directories(ctbrowser-raster PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/raster")
 target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)
+# Real fonts. OPTIONAL: without FreeType the raster layer still builds and
+# still draws font8x8, which is what keeps the goldens reproducible on a machine
+# with no font libraries at all. NOT SDL3_ttf - that would put SDL inside the
+# engine, which tests-v2/api_surface forbids and which would make real text
+# untestable headlessly.
+find_package(Freetype QUIET)
+if(Freetype_FOUND)
+  target_link_libraries(ctbrowser-raster PUBLIC Freetype::Freetype)
+  target_compile_definitions(ctbrowser-raster PUBLIC CTBROWSER_WITH_FREETYPE=1)
+  message(STATUS "ctbrowser v2: FreeType ${FREETYPE_VERSION_STRING} - real fonts available")
+else()
+  target_compile_definitions(ctbrowser-raster PUBLIC CTBROWSER_WITH_FREETYPE=0)
+  message(STATUS "ctbrowser v2: no FreeType - text renders with font8x8 only")
+endif()
+
 set_target_properties(ctbrowser-raster PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
 add_library(ctbrowser::raster ALIAS ctbrowser-raster)
