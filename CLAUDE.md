@@ -18,6 +18,30 @@ without __builtin_std_embed. No gcc/MSVC/stock-clang paths. **CMake +
 Ninja is THE build** (Makefiles retired 2026-07-23). Work on `main`.
 Prefer `rg`.
 
+## v2 JAVASCRIPT (2026-07-25)
+
+**The MDN breakout tutorial runs, unmodified** — `examples-v2/pong.cpp` loads
+`examples-v2/pages/pong.html`, a byte-for-byte copy. That needed the whole of
+stages 2 and 3.
+
+Compiler now covers: `+=` and friends, member/index `++`, real `this`,
+`break`/`continue`/labels, `do..while`, `try`/`catch`/`finally`/`throw` (VM
+handler stack, unwinds call frames), computed method calls (`a[m]()` keeps its
+receiver). Still rejected with a clear message: `regex`; still missing:
+`for..of`, template literals, `switch`, `class`/`new`, optional chaining,
+`spread`, `async`/`await`.
+
+**Standard library** is `src/script/builtins.cppm` — `Math`, `Array.prototype`
+(incl. map/filter/reduce/sort, which call back into the VM via
+`context::call`), `String.prototype`, `Number.prototype`, `Object` statics,
+`JSON` parse/stringify, `parseInt`/`parseFloat`/`isNaN`/`String`/`Number`.
+Reached through **prototype tables per value kind** (`context::set_prototype`);
+one level, no `__proto__`. `Math.random` is seeded and DETERMINISTIC by
+default — the test story is byte-comparable goldens, and a page drawing with
+random cannot have one otherwise.
+
+`tests-v2/page_scripts` compiles the real example pages and asserts pong works.
+
 ## v2 APPLICATION API (2026-07-25)
 
 **`import ctbrowser;` + `ctbrowser::run_app(html, options)` is the whole

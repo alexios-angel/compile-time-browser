@@ -41,5 +41,13 @@ int main(int argc, char ** argv) {
 		            "                [--software]\n");
 		return 2;
 	}
+	// Report a page's script error rather than rendering a silently broken
+	// page. A browser that says nothing when the script failed is the single
+	// most annoying thing to debug a page against.
+	options.on_ready = [](ctbrowser::browser & page) {
+		if (!page.script_error().empty()) {
+			std::printf("script error: %s\n", page.script_error().c_str());
+		}
+	};
 	return ctbrowser::run_app_file(path, std::move(options));
 }

@@ -340,6 +340,29 @@ void test_canvas_is_sized_by_its_attributes() {
 	      "a canvas with no attributes is 300x150");
 }
 
+void test_canvas_width_and_height_are_readable() {
+	browser page{browser_options{400, 300}};
+	page.load_html("<html><body><canvas id=c width=200 height=90></canvas>"
+	               "<canvas id=d></canvas><script>"
+	               "var c = document.getElementById('c');"
+	               "var d = document.getElementById('d');"
+	               "console.log(c.width + 'x' + c.height);"
+	               "console.log(d.width + 'x' + d.height);"
+	               "console.log('half=' + (c.width / 2));"
+	               "</script></body></html>");
+	check(page.frame().has_value(), "the page renders");
+	const auto & log = page.bindings().console_output();
+	check(log.size() == 3, "three console lines");
+	if (log.size() != 3) { return; }
+	check(log[0] == "200x90", "canvas.width and .height read the attributes");
+	check(log[1] == "300x150", "and fall back to the HTML defaults");
+	// The failure this guards is silent and total: without these they are
+	// undefined, every coordinate computed from them is NaN, and the page draws
+	// nothing while reporting no error at all. `canvas.width/2` is the first
+	// line of most canvas pages.
+	check(log[2] == "half=100", "so arithmetic on them works");
+}
+
 void test_getcontext_only_answers_for_2d() {
 	browser page{browser_options{400, 300}};
 	page.load_html("<html><body><canvas id=c></canvas><script>"
@@ -488,6 +511,7 @@ int main() {
 	test_script_can_focus();
 
 	test_canvas_is_sized_by_its_attributes();
+	test_canvas_width_and_height_are_readable();
 	test_getcontext_only_answers_for_2d();
 	test_canvas_drawing_reaches_the_pixels();
 	test_fill_style_is_read_at_draw_time();

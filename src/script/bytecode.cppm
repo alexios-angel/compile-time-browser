@@ -88,6 +88,12 @@ enum class op : std::uint8_t {
 	closure,      // a = new closure of functions[bx]
 	call,         // a = call(a, args a+1 .. a+b)
 	call_method,  // a = call(a[k[c]], this=a, args a+1 .. a+b)
+	call_computed, // a = call(a[reg c], this=a, args a+1 .. a+b)
+	               // `obj[name](...)` where the property name is a VALUE. It
+	               // needs its own opcode because call_method takes the name
+	               // from the constant table, and a computed call compiled as a
+	               // plain `call` silently loses its receiver - so `this` inside
+	               // the method is undefined.
 	ret,          // return a
 	ret_undef,    // return undefined
 

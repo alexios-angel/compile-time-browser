@@ -1,4 +1,5 @@
 module;
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -129,6 +130,37 @@ public:
 	[[nodiscard]] static std::string_view type_of(value v);
 	[[nodiscard]] static bool loose_equals(value a, value b);
 
+	// --- prototypes ---------------------------------------------------------
+	//
+	// `"abc".split(...)` and `[1,2].push(...)` resolve to nothing without these:
+	// a string is not an object_object, so there is nowhere on it to put a
+	// method. Rather than special-case every builtin inside the interpreter,
+	// each VALUE KIND gets a prototype object, and property lookup falls back to
+	// it. Adding a method is then putting a native in a table - which is what
+	// makes a standard library mechanical instead of 2000 lines of switch.
+	//
+	// Not a full prototype CHAIN: there is one level, and no user-visible
+	// `__proto__` or `Object.create`. That is a real limitation, and it covers
+	// everything a page does with builtins.
+	enum class proto_kind : std::uint8_t { object, array, string, number, count_ };
+
+	void set_prototype(proto_kind kind, object_object * table) {
+		prototypes_[static_cast<std::size_t>(kind)] = table;
+	}
+	[[nodiscard]] object_object * prototype(proto_kind kind) const {
+		return prototypes_[static_cast<std::size_t>(kind)];
+	}
+
+	// One property lookup, shared by get_prop, get_index-with-a-string-key and
+	// call_method. Three copies of this is three chances for `a.length` and
+	// `a["length"]` to disagree.
+	[[nodiscard]] value lookup_property(value target, const std::string & name) const;
+	// `target[key]` for an arbitrary key value. Numeric keys index an array or
+	// a string; anything else is a named lookup. Shared by get_index and by
+	// computed method calls, because `a[0]()` and `a['push']()` must both work
+	// and they take different branches.
+	[[nodiscard]] value lookup_index(value target, value key);
+
 	// --- gc ----------------------------------------------------------------
 	std::size_t collect();
 	[[nodiscard]] std::size_t live_objects() const noexcept { return live_objects_; }
@@ -202,6 +234,7 @@ private:
 	// Live try blocks, innermost last. Not per-frame, because a throw has to be
 	// able to find a handler several frames up.
 	std::vector<handler> handlers_;
+	std::array<object_object *, static_cast<std::size_t>(proto_kind::count_)> prototypes_{};
 	value thrown_ = value::undefined();
 
 	flat_map<std::string, value> globals_;
@@ -329,6 +362,59 @@ inline void context::mark(value v) {
 	if (v.is_heap()) { mark_object(v.as_heap()); }
 }
 
+inline value context::lookup_index(value target, value key) {
+	if (target.is_array() && key.is_number()) {
+		auto * arr = static_cast<array_object *>(target.as_heap());
+		const auto i = static_cast<std::ptrdiff_t>(key.as_number());
+		if (i >= 0 && static_cast<std::size_t>(i) < arr->items.size()) {
+			return arr->items[static_cast<std::size_t>(i)];
+		}
+		return value::undefined();
+	}
+	if (target.is_string() && key.is_number()) {
+		const std::string & text = static_cast<string_object *>(target.as_heap())->text;
+		const auto i = static_cast<std::size_t>(key.as_number());
+		return i < text.size() ? string(std::string{text[i]}) : value::undefined();
+	}
+	return lookup_property(target, to_string(key));
+}
+
+inline value context::lookup_property(value target, const std::string & name) const {
+	// Own properties first: a page that writes `arr.length = 0` or shadows a
+	// method on one object must not be overridden by the prototype.
+	if (target.is_object()) {
+		if (value * found = static_cast<object_object *>(target.as_heap())->find(name)) {
+			return *found;
+		}
+		if (object_object * table = prototype(proto_kind::object)) {
+			if (value * found = table->find(name)) { return *found; }
+		}
+		return value::undefined();
+	}
+	if (target.is_array()) {
+		auto * arr = static_cast<array_object *>(target.as_heap());
+		if (name == "length") { return value::number(static_cast<double>(arr->items.size())); }
+		if (object_object * table = prototype(proto_kind::array)) {
+			if (value * found = table->find(name)) { return *found; }
+		}
+		return value::undefined();
+	}
+	if (target.is_string()) {
+		auto * str = static_cast<string_object *>(target.as_heap());
+		if (name == "length") { return value::number(static_cast<double>(str->text.size())); }
+		if (object_object * table = prototype(proto_kind::string)) {
+			if (value * found = table->find(name)) { return *found; }
+		}
+		return value::undefined();
+	}
+	if (target.is_number()) {
+		if (object_object * table = prototype(proto_kind::number)) {
+			if (value * found = table->find(name)) { return *found; }
+		}
+	}
+	return value::undefined();
+}
+
 inline std::size_t context::collect() {
 	// Precise roots: everything reachable is reachable from exactly these.
 	for (const auto & [name, v] : globals_) { mark(v); }
@@ -346,6 +432,11 @@ inline std::size_t context::collect() {
 	}
 	// A thrown value in flight is reachable from nothing else.
 	mark(thrown_);
+	// The prototype tables hold every builtin method. Nothing else references
+	// them, so without this the standard library is collected on the first gc.
+	for (object_object * table : prototypes_) {
+		if (table != nullptr) { mark_object(table); }
+	}
 
 	std::size_t freed = 0;
 	heap_object ** link = &heap_;
@@ -553,49 +644,15 @@ inline value context::run_loop(std::size_t stop_depth) {
 				static_cast<array_object *>(reg(in.a).as_heap())->items.push_back(reg(in.b));
 			}
 			break;
-		case op::get_prop: {
-			const value target = reg(in.b);
-			const std::string & name = fn.names[in.c];
-			reg(in.a) = value::undefined();
-			if (target.is_object()) {
-				if (value * found = static_cast<object_object *>(target.as_heap())->find(name)) {
-					reg(in.a) = *found;
-				}
-			} else if (target.is_array() && name == "length") {
-				reg(in.a) = value::number(
-				    static_cast<double>(static_cast<array_object *>(target.as_heap())->items.size()));
-			} else if (target.is_string() && name == "length") {
-				reg(in.a) = value::number(
-				    static_cast<double>(static_cast<string_object *>(target.as_heap())->text.size()));
-			}
+		case op::get_prop:
+			reg(in.a) = lookup_property(reg(in.b), fn.names[in.c]);
 			break;
-		}
 		case op::set_prop:
 			if (reg(in.a).is_object()) {
 				static_cast<object_object *>(reg(in.a).as_heap())->set(fn.names[in.b], reg(in.c));
 			}
 			break;
-		case op::get_index: {
-			const value target = reg(in.b);
-			const value key = reg(in.c);
-			reg(in.a) = value::undefined();
-			if (target.is_array() && key.is_number()) {
-				auto * arr = static_cast<array_object *>(target.as_heap());
-				const auto i = static_cast<std::ptrdiff_t>(key.as_number());
-				if (i >= 0 && static_cast<std::size_t>(i) < arr->items.size()) {
-					reg(in.a) = arr->items[static_cast<std::size_t>(i)];
-				}
-			} else if (target.is_object()) {
-				if (value * found = static_cast<object_object *>(target.as_heap())->find(to_string(key))) {
-					reg(in.a) = *found;
-				}
-			} else if (target.is_string() && key.is_number()) {
-				const std::string & s = static_cast<string_object *>(target.as_heap())->text;
-				const auto i = static_cast<std::size_t>(key.as_number());
-				if (i < s.size()) { reg(in.a) = string(std::string{s[i]}); }
-			}
-			break;
-		}
+		case op::get_index: reg(in.a) = lookup_index(reg(in.b), reg(in.c)); break;
 		case op::set_index: {
 			const value target = reg(in.a);
 			const value key = reg(in.b);
@@ -636,18 +693,18 @@ inline value context::run_loop(std::size_t stop_depth) {
 		}
 
 		case op::call:
-		case op::call_method: {
+		case op::call_method:
+		case op::call_computed: {
 			value callee = reg(in.a);
 			value receiver = value::undefined();
 			if (in.code == op::call_method) {
 				receiver = reg(in.a);
-				callee = value::undefined();
-				if (receiver.is_object()) {
-					if (value * found =
-					        static_cast<object_object *>(receiver.as_heap())->find(fn.names[in.c])) {
-						callee = *found;
-					}
-				}
+				// Through the SAME lookup as get_prop, so `s.split(...)` and
+				// `var f = s.split; f(...)` find the same function.
+				callee = lookup_property(receiver, fn.names[in.c]);
+			} else if (in.code == op::call_computed) {
+				receiver = reg(in.a);
+				callee = lookup_index(receiver, reg(in.c));
 			}
 			const std::size_t arg_base = base + in.a + 1;
 			if (callee.is_kind(heap_kind::native)) {

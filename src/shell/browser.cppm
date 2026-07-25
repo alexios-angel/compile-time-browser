@@ -335,6 +335,9 @@ private:
 		script_.reset();
 		script_program_.reset();
 		script_ = std::make_unique<script::context>();
+		// The standard library goes in FIRST, so a page's own globals can
+		// shadow it rather than the other way round.
+		script::install_builtins(*script_);
 		canvases_.clear();
 		forms_.clear();
 		focused_ = node_id{};

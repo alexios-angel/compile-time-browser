@@ -24,6 +24,7 @@ namespace {
 [[nodiscard]] std::string run_v2(std::string_view source, bool * ok = nullptr) {
 	const program prog = compiler::compile(source);
 	context cx;
+	install_builtins(cx);
 	const run_result r = cx.run(prog);
 	if (ok != nullptr) { *ok = r.ok; }
 	if (!r.ok) { return "<error: " + r.error + ">"; }
@@ -434,6 +435,133 @@ void test_break_out_of_try() {
 	              "var caught = 0; try { throw 5; } catch (e) { caught = e; } return caught;", "5");
 }
 
+
+// --- stage 3: the standard library ----------------------------------------
+
+void test_math() {
+	// Math.random aside, these are the functions every page reaches for. None
+	// of them existed: `Math` itself was undefined.
+	expect_result("return Math.floor(3.7);", "3");
+	expect_result("return Math.ceil(3.2);", "4");
+	expect_result("return Math.abs(-5);", "5");
+	expect_result("return Math.max(1, 9, 4);", "9");
+	expect_result("return Math.min(1, 9, 4);", "1");
+	expect_result("return Math.sqrt(16);", "4");
+	expect_result("return Math.pow(2, 10);", "1024");
+	// JS rounds .5 toward POSITIVE infinity; std::round rounds away from zero
+	// and would give -1 here.
+	expect_result("return Math.round(-0.5);", "0");
+	expect_result("return Math.round(2.5);", "3");
+	expect_result("return Math.floor(Math.PI * 100) / 100;", "3.14");
+}
+
+void test_math_random_is_in_range_and_moves() {
+	expect_result("var ok = true;"
+	              "for (var i = 0; i < 200; i++) { var r = Math.random();"
+	              "  if (r < 0 || r >= 1) { ok = false; } }"
+	              "return ok;", "true");
+	expect_result("var a = Math.random(); var b = Math.random(); return a != b;", "true");
+}
+
+void test_array_methods() {
+	// `arr.push` resolved to nothing before the prototype table existed.
+	expect_result("var a = [1,2]; a.push(3); return a.length;", "3");
+	expect_result("var a = [1,2,3]; return a.pop();", "3");
+	expect_result("var a = [1,2,3]; a.shift(); return a[0];", "2");
+	expect_result("var a = [2,3]; a.unshift(1); return a[0];", "1");
+	expect_result("return [1,2,3].indexOf(2);", "1");
+	expect_result("return [1,2,3].includes(9);", "false");
+	expect_result("return [1,2,3].join('-');", "1-2-3");
+	expect_result("return [1,2,3].slice(1).join('');", "23");
+	expect_result("return [1,2,3].concat([4]).length;", "4");
+	expect_result("var a = [1,2,3]; a.reverse(); return a.join('');", "321");
+	expect_result("var a = [1,2,3,4]; a.splice(1, 2); return a.join('');", "14");
+}
+
+void test_array_iteration_calls_back_into_the_vm() {
+	// These are the ones that need context::call - a native invoking a JS
+	// function. Without it none of them can exist at all.
+	expect_result("var t = 0; [1,2,3].forEach(function (x) { t += x; }); return t;", "6");
+	expect_result("return [1,2,3].map(function (x) { return x * 2; }).join(',');", "2,4,6");
+	expect_result("return [1,2,3,4].filter(function (x) { return x % 2 == 0; }).join(',');", "2,4");
+	expect_result("return [1,2,3,4].reduce(function (t, x) { return t + x; }, 0);", "10");
+	expect_result("return [1,2,3].find(function (x) { return x > 1; });", "2");
+	expect_result("return [1,2,3].some(function (x) { return x > 2; });", "true");
+	expect_result("return [1,2,3].every(function (x) { return x > 0; });", "true");
+	// The callback gets the index too, which half of real uses depend on.
+	expect_result("var s = ''; ['a','b'].forEach(function (x, i) { s += i + x; }); return s;", "0a1b");
+}
+
+void test_array_sort() {
+	expect_result("return [3,1,2].sort(function (a, b) { return a - b; }).join('');", "123");
+	expect_result("return [3,1,2].sort(function (a, b) { return b - a; }).join('');", "321");
+	// The default really is lexicographic on the string form, which is why
+	// [10, 9] sorts to [10, 9] and surprises everyone once.
+	expect_result("return [10,9].sort().join(',');", "10,9");
+}
+
+void test_string_methods() {
+	expect_result("return 'abc'.toUpperCase();", "ABC");
+	expect_result("return 'ABC'.toLowerCase();", "abc");
+	expect_result("return 'a,b,c'.split(',').length;", "3");
+	expect_result("return 'a,b,c'.split(',')[1];", "b");
+	expect_result("return 'hello'.indexOf('ll');", "2");
+	expect_result("return 'hello'.includes('ell');", "true");
+	expect_result("return 'hello'.slice(1, 3);", "el");
+	expect_result("return 'hello'.substring(3, 1);", "el"); // substring swaps
+	expect_result("return '  hi  '.trim();", "hi");
+	expect_result("return 'ab'.repeat(3);", "ababab");
+	expect_result("return 'a-b-a'.replace('a', 'X');", "X-b-a");    // first only
+	expect_result("return 'a-b-a'.replaceAll('a', 'X');", "X-b-X"); // all
+	expect_result("return '5'.padStart(3, '0');", "005");
+	expect_result("return 'abc'.charAt(1);", "b");
+	expect_result("return 'A'.charCodeAt(0);", "65");
+	expect_result("return 'abc'.startsWith('ab');", "true");
+	expect_result("return 'abc'.length;", "3"); // still works alongside the methods
+}
+
+void test_number_and_conversions() {
+	expect_result("return (3.14159).toFixed(2);", "3.14");
+	expect_result("return parseInt('42');", "42");
+	expect_result("return parseInt('ff', 16);", "255");
+	expect_result("return parseFloat('3.5');", "3.5");
+	// parseInt of nonsense is NaN, not an error - a page checks it with isNaN
+	// straight afterwards.
+	expect_result("return isNaN(parseInt('abc'));", "true");
+	expect_result("return String(42);", "42");
+	expect_result("return Number('7') + 1;", "8");
+}
+
+void test_object_statics() {
+	expect_result("return Object.keys({a: 1, b: 2}).join(',');", "a,b");
+	expect_result("return Object.values({a: 1, b: 2}).join(',');", "1,2");
+	expect_result("var t = Object.assign({}, {a: 1}, {b: 2}); return t.a + t.b;", "3");
+}
+
+void test_json() {
+	expect_result("return JSON.stringify({a: 1, b: 'x'});", "{\"a\":1,\"b\":\"x\"}");
+	expect_result("return JSON.stringify([1, 'two', true]);", "[1,\"two\",true]");
+	expect_result("return JSON.parse('{\"n\": 7}').n;", "7");
+	expect_result("return JSON.parse('[1,2,3]')[2];", "3");
+	expect_result("var o = JSON.parse(JSON.stringify({a: [1, {b: 2}]})); return o.a[1].b;", "2");
+	expect_result("return JSON.stringify(JSON.parse('{\"s\":\"a\\\\nb\"}'));",
+	              "{\"s\":\"a\\nb\"}"); // escapes survive a round trip
+}
+
+void test_own_properties_beat_the_prototype() {
+	// A page that puts its own `join` on an object must get its own, not the
+	// array method. Prototype lookup has to come SECOND.
+	expect_result("var o = {join: function () { return 'mine'; }}; return o.join();", "mine");
+}
+
+void test_computed_and_named_lookup_agree() {
+	// `a["length"]` and `a.length` went down different paths, so a page that
+	// computed a property name silently saw undefined.
+	expect_result("var a = [1,2,3]; return a['length'];", "3");
+	expect_result("var s = 'abc'; return s['length'];", "3");
+	expect_result("var a = [1,2]; var m = 'push'; a[m](3); return a.length;", "3");
+}
+
 } // namespace
 
 int main() {
@@ -462,6 +590,18 @@ int main() {
 	test_finally();
 	test_nested_try();
 	test_break_out_of_try();
+
+	test_math();
+	test_math_random_is_in_range_and_moves();
+	test_array_methods();
+	test_array_iteration_calls_back_into_the_vm();
+	test_array_sort();
+	test_string_methods();
+	test_number_and_conversions();
+	test_object_statics();
+	test_json();
+	test_own_properties_beat_the_prototype();
+	test_computed_and_named_lookup_agree();
 
 	REPORT("vm_basics");
 }

@@ -75,6 +75,7 @@ int main() {
 	must_compile("examples/pong.html");
 
 	report_progress("examples/fetchboard.html", "async/await");
+	// pong now RUNS, not just compiles - see examples-v2/pong.cpp.
 	report_progress("examples/space-invaders.html", "classes, for..of, template literals");
 
 	REPORT("page_scripts");

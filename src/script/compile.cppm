@@ -1031,6 +1031,15 @@ private:
 			const std::uint16_t name = proto().add_name(std::string{callee.text});
 			proto().emit(instruction{op::call_method, base, static_cast<std::uint8_t>(args.size()),
 			                         static_cast<std::uint8_t>(name)});
+		} else if (callee.kind == vp::nk::index) {
+			// `obj[name](...)` is a METHOD call: the receiver is obj. Compiling
+			// it as a plain call leaves `this` undefined inside the method.
+			compile_expr(callee.a, base); // the receiver
+			const std::uint8_t key = alloc_reg();
+			compile_expr(callee.b, key);
+			for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
+			proto().emit(instruction{op::call_computed, base,
+			                         static_cast<std::uint8_t>(args.size()), key});
 		} else {
 			compile_expr(n.a, base);
 			for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }

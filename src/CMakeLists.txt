@@ -83,7 +83,8 @@ target_sources(ctbrowser-script
       script/value.cppm
       script/bytecode.cppm
       script/compile.cppm
-      script/vm.cppm)
+      script/vm.cppm
+      script/builtins.cppm)
 target_compile_features(ctbrowser-script PUBLIC cxx_std_23)
 target_compile_options(ctbrowser-script PRIVATE ${CTBROWSER_V2_WARNINGS})
 target_include_directories(ctbrowser-script PRIVATE

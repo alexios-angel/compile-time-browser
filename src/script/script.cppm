@@ -7,6 +7,8 @@ export module ctbrowser.script;
 //   bytecode   a register instruction set; registers are frame slots
 //   compile    ctjs's existing Pratt parser to bytecode
 //   vm         the dispatch loop, mark-and-sweep GC over precise roots
+//   builtins   Math, Array, String, Number, Object, JSON - the standard
+//              library, without which a complete VM is still useless
 //
 // What v1 did and this does not: walk the AST on every execution, look every
 // identifier up by string each time round a loop, refcount every value, and
@@ -20,3 +22,4 @@ export import :value;
 export import :bytecode;
 export import :compile;
 export import :vm;
+export import :builtins;

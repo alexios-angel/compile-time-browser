@@ -208,6 +208,36 @@ private:
 		obj.set("tagName", cx.string(std::string{atoms_->text(txn.tag(id).value_or(atom{}))}));
 		obj.set("id", cx.string(std::string{txn.attribute_value(id, atoms_->intern("id"))}));
 		obj.set("className", cx.string(std::string{txn.attribute_value(id, atoms_->intern("class"))}));
+		// `width` and `height` are the ATTRIBUTES, not the laid-out box. For a
+		// <canvas> they are its pixel buffer's size, and essentially every
+		// canvas page computes with them - `canvas.width/2` is the first line
+		// of most of them. Without these they read as undefined and every
+		// coordinate derived from them becomes NaN, which draws nothing at all
+		// and reports no error.
+		const auto attribute_number = [&](std::string_view name) {
+			const std::string_view text = txn.attribute_value(id, atoms_->intern(name));
+			double parsed = 0;
+			bool any = false;
+			for (const char c : text) {
+				if (c < '0' || c > '9') { break; }
+				parsed = parsed * 10 + (c - '0');
+				any = true;
+			}
+			return any ? parsed : 0.0;
+		};
+		const std::string_view tag_text = atoms_->text(txn.tag(id).value_or(atom{}));
+		if (tag_text == "canvas") {
+			// The HTML defaults, which a page that omits the attributes relies on.
+			const double w = attribute_number("width");
+			const double h = attribute_number("height");
+			obj.set("width", value::number(w > 0 ? w : 300));
+			obj.set("height", value::number(h > 0 ? h : 150));
+		} else if (txn.has_attribute(id, atoms_->intern("width")) ||
+		           txn.has_attribute(id, atoms_->intern("height"))) {
+			obj.set("width", value::number(attribute_number("width")));
+			obj.set("height", value::number(attribute_number("height")));
+		}
+
 		const rect box = box_of(id);
 		obj.set("offsetLeft", value::number(static_cast<double>(box.x)));
 		obj.set("offsetTop", value::number(static_cast<double>(box.y)));
