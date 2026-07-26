@@ -11,7 +11,7 @@ function(ctbrowser_v2_test name)
     "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"
     "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/external/compile-time-containers/include"
     "${PROJECT_SOURCE_DIR}/external/compile-time-css/include")
-  target_compile_options(ctbrowser-v2-${name} PRIVATE ${CTBROWSER_V2_WARNINGS})
+  ctbrowser_v2_target(ctbrowser-v2-${name})
   target_include_directories(ctbrowser-v2-${name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   add_dependencies(ctbrowser-v2-test ctbrowser-v2-${name})
   # the source root, so goldens and other repo-relative paths resolve the same
@@ -70,7 +70,7 @@ function(ctbrowser_v2_bench name)
   add_executable(ctbrowser-v2-${name} EXCLUDE_FROM_ALL ${name}.cpp ${ARGN})
   target_link_libraries(ctbrowser-v2-${name}
     PRIVATE ctbrowser::core ctbrowser::dom ctbrowser::style ctbrowser::layout ctbrowser::paint ctbrowser::raster ctbrowser::shell ctbrowser::v2)
-  target_compile_options(ctbrowser-v2-${name} PRIVATE ${CTBROWSER_V2_WARNINGS})
+  ctbrowser_v2_target(ctbrowser-v2-${name})
   # the layout benchmark drives v1's layout() for comparison, which needs v1's
   # headers and the bricks underneath them
   target_include_directories(ctbrowser-v2-${name} PRIVATE

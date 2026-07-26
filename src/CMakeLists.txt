@@ -38,6 +38,31 @@ endif()
 # page-as-NTTP raw strings that v2 no longer has.
 set(CTBROWSER_V2_WARNINGS -O2 -pedantic -Wall -Wextra -Werror -Wconversion)
 
+# --- LINK WITH LLD ------------------------------------------------------
+# Measured on this tree: the same executable links in 0.65 s with lld and
+# 4.31 s with the default ld, and v2 produces TWENTY-SIX of them. That is the
+# single cheapest thing in this file. Checked rather than assumed, because a
+# toolchain without lld must still build.
+include(CheckLinkerFlag OPTIONAL RESULT_VARIABLE CTBROWSER_HAVE_LINKER_CHECK)
+option(CTBROWSER_V2_USE_LLD "Link v2 with lld when it is available" ON)
+set(CTBROWSER_V2_LINK_OPTIONS "")
+if(CTBROWSER_V2_USE_LLD AND CTBROWSER_HAVE_LINKER_CHECK)
+  check_linker_flag(CXX "-fuse-ld=lld" CTBROWSER_LLD_WORKS)
+  if(CTBROWSER_LLD_WORKS)
+    set(CTBROWSER_V2_LINK_OPTIONS -fuse-ld=lld)
+    message(STATUS "ctbrowser v2: linking with lld")
+  endif()
+endif()
+
+# Everything v2 builds - libraries, tests and examples - goes through this, so
+# there is one place that decides how v2 is compiled and linked.
+function(ctbrowser_v2_target name)
+  target_compile_options(${name} PRIVATE ${CTBROWSER_V2_WARNINGS})
+  if(CTBROWSER_V2_LINK_OPTIONS)
+    target_link_options(${name} PRIVATE ${CTBROWSER_V2_LINK_OPTIONS})
+  endif()
+endfunction()
+
 add_library(ctbrowser-core)
 target_sources(ctbrowser-core
   PUBLIC
@@ -51,7 +76,7 @@ target_sources(ctbrowser-core
       core/scheduler.cppm
       core/geometry.cppm)
 target_compile_features(ctbrowser-core PUBLIC cxx_std_23)
-target_compile_options(ctbrowser-core PRIVATE ${CTBROWSER_V2_WARNINGS})
+ctbrowser_v2_target(ctbrowser-core)
 target_link_libraries(ctbrowser-core PUBLIC Boost::headers)
 set_target_properties(ctbrowser-core PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
@@ -75,7 +100,7 @@ target_sources(ctbrowser-dom
       dom/treebuilder.cppm
       dom/html.cppm)
 target_compile_features(ctbrowser-dom PUBLIC cxx_std_23)
-target_compile_options(ctbrowser-dom PRIVATE ${CTBROWSER_V2_WARNINGS})
+ctbrowser_v2_target(ctbrowser-dom)
 target_include_directories(ctbrowser-dom PRIVATE)
 target_include_directories(ctbrowser-dom PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/dom")
 target_link_libraries(ctbrowser-dom PUBLIC ctbrowser-core)
@@ -97,9 +122,16 @@ target_sources(ctbrowser-script
       script/bytecode.cppm
       script/compile.cppm
       script/vm.cppm
-      script/builtins.cppm)
+      script/builtins.cppm
+  PRIVATE
+    # MODULE IMPLEMENTATION UNITS. Not in the CXX_MODULES file set - they
+    # export nothing - but still scanned, because `module ctbrowser.script;`
+    # is an import edge. This is where the code lives now: compiled ONCE into
+    # the library instead of in every translation unit that imports it.
+    script/builtins.cpp
+    script/vm.cpp)
 target_compile_features(ctbrowser-script PUBLIC cxx_std_23)
-target_compile_options(ctbrowser-script PRIVATE ${CTBROWSER_V2_WARNINGS})
+ctbrowser_v2_target(ctbrowser-script)
 target_include_directories(ctbrowser-script PRIVATE
   "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"
   "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/external/compile-time-containers/include")
@@ -124,7 +156,7 @@ target_sources(ctbrowser-style
       style/engine.cppm
       style/ua.cppm)
 target_compile_features(ctbrowser-style PUBLIC cxx_std_23)
-target_compile_options(ctbrowser-style PRIVATE ${CTBROWSER_V2_WARNINGS})
+ctbrowser_v2_target(ctbrowser-style)
 target_include_directories(ctbrowser-style PRIVATE
   "${PROJECT_SOURCE_DIR}/external/compile-time-css/include")
 target_link_libraries(ctbrowser-style PUBLIC ctbrowser-core ctbrowser-dom Boost::headers)
@@ -148,7 +180,7 @@ target_sources(ctbrowser-layout
       layout/algorithm.cppm
       layout/engine.cppm)
 target_compile_features(ctbrowser-layout PUBLIC cxx_std_23)
-target_compile_options(ctbrowser-layout PRIVATE ${CTBROWSER_V2_WARNINGS})
+ctbrowser_v2_target(ctbrowser-layout)
 target_link_libraries(ctbrowser-layout PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style)
 set_target_properties(ctbrowser-layout PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
@@ -168,7 +200,7 @@ target_sources(ctbrowser-paint
       paint/layer.cppm
       paint/record.cppm)
 target_compile_features(ctbrowser-paint PUBLIC cxx_std_23)
-target_compile_options(ctbrowser-paint PRIVATE ${CTBROWSER_V2_WARNINGS})
+ctbrowser_v2_target(ctbrowser-paint)
 target_link_libraries(ctbrowser-paint PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style ctbrowser-layout)
 set_target_properties(ctbrowser-paint PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
@@ -193,7 +225,7 @@ target_sources(ctbrowser-raster
       raster/compositor.cppm
       raster/pipeline.cppm)
 target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
-target_compile_options(ctbrowser-raster PRIVATE ${CTBROWSER_V2_WARNINGS})
+ctbrowser_v2_target(ctbrowser-raster)
 target_include_directories(ctbrowser-raster PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/raster")
 target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)
 # Real fonts. OPTIONAL: without FreeType the raster layer still builds and
@@ -230,9 +262,11 @@ target_sources(ctbrowser-shell
       shell/canvas.cppm
       shell/forms.cppm
       shell/bindings.cppm
-      shell/browser.cppm)
+      shell/browser.cppm
+  PRIVATE
+    shell/net.cpp)
 target_compile_features(ctbrowser-shell PUBLIC cxx_std_23)
-target_compile_options(ctbrowser-shell PRIVATE ${CTBROWSER_V2_WARNINGS})
+ctbrowser_v2_target(ctbrowser-shell)
 target_link_libraries(ctbrowser-shell PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style
                                              ctbrowser-layout ctbrowser-paint ctbrowser-raster
                                              ctbrowser-script Boost::headers)
@@ -280,9 +314,11 @@ add_library(ctbrowser::shell ALIAS ctbrowser-shell)
 add_library(ctbrowser-app)
 target_sources(ctbrowser-app
   PUBLIC
-    FILE_SET CXX_MODULES FILES shell/app.cppm)
+    FILE_SET CXX_MODULES FILES shell/app.cppm
+  PRIVATE
+    shell/app.cpp)
 target_compile_features(ctbrowser-app PUBLIC cxx_std_23)
-target_compile_options(ctbrowser-app PRIVATE ${CTBROWSER_V2_WARNINGS})
+ctbrowser_v2_target(ctbrowser-app)
 target_link_libraries(ctbrowser-app PUBLIC ctbrowser-core ctbrowser-paint ctbrowser-raster
                                            ctbrowser-shell)
 if(SDL3_FOUND)
@@ -314,7 +350,7 @@ target_sources(ctbrowser-v2
   PUBLIC
     FILE_SET CXX_MODULES FILES ctbrowser.cppm)
 target_compile_features(ctbrowser-v2 PUBLIC cxx_std_23)
-target_compile_options(ctbrowser-v2 PRIVATE ${CTBROWSER_V2_WARNINGS})
+ctbrowser_v2_target(ctbrowser-v2)
 target_link_libraries(ctbrowser-v2 PUBLIC
   ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style ctbrowser-layout
   ctbrowser-paint ctbrowser-raster ctbrowser-shell ctbrowser-app)
@@ -335,7 +371,7 @@ if(SDL3_FOUND)
         gpu/device.cppm
         gpu/select.cppm)
   target_compile_features(ctbrowser-gpu PUBLIC cxx_std_23)
-  target_compile_options(ctbrowser-gpu PRIVATE ${CTBROWSER_V2_WARNINGS})
+  ctbrowser_v2_target(ctbrowser-gpu)
   target_include_directories(ctbrowser-gpu PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/gpu")
   target_link_libraries(ctbrowser-gpu PUBLIC ctbrowser-core ctbrowser-paint ctbrowser-raster
                                              ${CTBROWSER_SDL3_TARGET})

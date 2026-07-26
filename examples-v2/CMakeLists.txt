@@ -17,7 +17,7 @@ foreach(source ${v2-example-sources})
   get_filename_component(example "${source}" NAME_WE)
   add_executable(ctbrowser-v2-example-${example} "${source}")
   target_link_libraries(ctbrowser-v2-example-${example} PRIVATE ctbrowser::v2)
-  target_compile_options(ctbrowser-v2-example-${example} PRIVATE ${CTBROWSER_V2_WARNINGS})
+  ctbrowser_v2_target(ctbrowser-v2-example-${example})
   # The target is prefixed so it cannot collide with v1's; the BINARY is not,
   # because `ctbrowse page.html` is what someone types.
   set_target_properties(ctbrowser-v2-example-${example} PROPERTIES OUTPUT_NAME ${example})
