@@ -82,6 +82,9 @@ struct box_node {
 	// `<table border=N>`. A presentational attribute rather than CSS, and it
 	// frames the cells as well as the table, so it rides on the box.
 	float border_px = 0;
+	// `white-space: pre`. The text keeps its newlines, and layout has to turn
+	// them into line breaks rather than letting them reach the rasterizer.
+	bool preformatted = false;
 
 	// What a replaced element is sized as when the sheet says nothing. Zero
 	// means it has none and falls back to the block rules.
@@ -98,7 +101,11 @@ struct box_node {
 	[[nodiscard]] bool is_cell() const noexcept { return tag == "td" || tag == "th"; }
 
 	[[nodiscard]] bool is_block_level() const noexcept {
-		return kind == box_kind::block || kind == box_kind::anonymous;
+		// A TABLE is block-level. Left out of this, a table shared a line with
+		// whatever came before it - two tables sat side by side, and a table sat
+		// beside the paragraph above it.
+		return kind == box_kind::block || kind == box_kind::anonymous ||
+		       kind == box_kind::table;
 	}
 	[[nodiscard]] bool is_replaced() const noexcept { return kind == box_kind::replaced; }
 	[[nodiscard]] bool establishes_inline_context() const noexcept {
@@ -187,6 +194,7 @@ private:
 				// `words_that_fit` splits on ' ' alone, so two words joined by a
 				// newline were one unbreakable word and the line overflowed.
 				t.text = preserve_whitespace ? std::string{text} : collapse_whitespace(text);
+				t.preformatted = preserve_whitespace;
 				t.font_size = inherited_font;
 				// A text box has no style of its own; it is drawn in whatever
 				// its parent element resolved to.

@@ -241,6 +241,26 @@ full of boxes is what finally showed it. It also broke wrapping — the wrap
 splits on `' '` alone, so two words joined by a newline were one unbreakable
 word and the line ran off the end of its box.
 
+**`</table>` NEVER POPPED THE TABLE.** `close_element` refuses to unwind past a
+special element looking for its match — and the implied `<tbody>` is special, so
+the search stopped there and the table stayed open. Everything after it was then
+foster-parented BEFORE it: two consecutive tables came out in reverse document
+order and the `<p>` after them ended up inside the second one's `<tbody>`. The
+guard now lets table structure be unwound when closing table structure.
+
+**A table is BLOCK-level.** Left out of `is_block_level()` it shared a line with
+whatever came before, so two tables sat side by side and a table sat beside the
+link above it.
+
+**Inline text of different sizes shares a BASELINE** — a line is bottom-aligned
+once its tallest item is known, so text grows upward from the bottom of the line
+instead of hanging from the top. Top-aligning is what made `<big>` and `<small>`
+look like they floated at different heights.
+
+**`white-space: pre` breaks lines.** A preserved newline is a LINE BREAK, not a
+character; handing it to the rasterizer draws `.notdef`, which is why a `<pre>`
+block was full of boxes.
+
 **Table parts are `display: block`** in the UA sheet. Left inline, `normalise`
 wraps them in anonymous boxes, and the table formatting context then looks for
 its rows and its caption among children that are no longer them — the

@@ -353,8 +353,19 @@ private:
 				found = i;
 				break;
 			}
-			// Do not unwind past a special element looking for a match.
-			if (is_special_element(open_[i].tag)) { break; }
+			// Do not unwind past a special element looking for a match - EXCEPT
+			// through table structure when closing table structure. The
+			// implied <tbody> is a special element, so `</table>` stopped at it
+			// and never popped the table at all: everything after the table was
+			// then foster-parented BEFORE it, which reversed two consecutive
+			// tables and swallowed whatever followed them.
+			// (is_table_structure excludes <table> itself - it is about what
+			// belongs INSIDE one - so the target is checked for both.)
+			const bool closing_table = tag == "table" || is_table_structure(tag);
+			if (is_special_element(open_[i].tag) &&
+			    !(closing_table && is_table_structure(open_[i].tag))) {
+				break;
+			}
 		}
 		if (found == open_.size()) { return; }
 		while (open_.size() > found) { pop(); }

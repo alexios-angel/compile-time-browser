@@ -270,8 +270,14 @@ public:
 		layers_.scroll_to(0, scroll_y_);
 		// The page's tiles survive - they are in CONTENT space, which is the
 		// point of the whole design - but the scrollbar's thumb is a function
-		// of where we now are, so its two rectangles are redrawn.
+		// of where we now are, so its two rectangles are redrawn AND its tile
+		// is invalidated. Redrawing the display list is not enough: a tile is
+		// identified by (layer, column, row), so the cached one is served again
+		// and the thumb never moves. That is the "does not update" report.
 		refresh_scrollbar();
+		if (page_layers_ < layers_.layers.size()) {
+			renderer_.discard_layer(static_cast<std::uint32_t>(page_layers_));
+		}
 		// NOT dirty otherwise. Tiles are in content space and survive this.
 	}
 	[[nodiscard]] float scroll_y() const noexcept { return scroll_y_; }

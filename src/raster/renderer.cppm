@@ -102,6 +102,10 @@ public:
 	// Every tile is stale. What a relayout calls.
 	void discard() { ops_->discard(self_); }
 
+	// ONE layer's tiles are stale. What a chrome overlay calls when it redraws
+	// itself and the page beneath it has not changed.
+	void discard_layer(std::uint32_t layer) { ops_->discard_layer(self_, layer); }
+
 	// A new viewport size. Goes through the seam rather than being done by
 	// replacing the renderer, because replacing it loses whichever backend was
 	// chosen at startup.
@@ -140,6 +144,7 @@ private:
 		std::expected<void, gpu_error> (*composite)(void *, std::span<const layer>);
 		std::expected<void, gpu_error> (*end_frame)(void *);
 		void (*discard)(void *);
+		void (*discard_layer)(void *, std::uint32_t);
 		void (*resize)(void *, int, int);
 		void (*set_clear_color)(void *, color);
 		void (*set_fonts)(void *, const font_backend *);
@@ -170,6 +175,7 @@ private:
 	    [](void * s, std::span<const layer> l) { return static_cast<B *>(s)->composite(l); },
 	    [](void * s) { return static_cast<B *>(s)->end_frame(); },
 	    [](void * s) { static_cast<B *>(s)->discard(); },
+	    [](void * s, std::uint32_t layer) { static_cast<B *>(s)->discard_layer(layer); },
 	    [](void * s, int w, int h) { static_cast<B *>(s)->resize(w, h); },
 	    [](void * s, color c) { static_cast<B *>(s)->clear_color = c; },
 	    [](void * s, const font_backend * f) { static_cast<B *>(s)->fonts = f; },

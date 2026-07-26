@@ -14,6 +14,7 @@ import ctbrowser;
 
 #include "check.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <string_view>
@@ -283,6 +284,52 @@ void test_a_click_on_the_scrollbar_is_not_a_click_on_the_page() {
 
 // --- what the reports were about ------------------------------------------
 
+// Text of different sizes on one line sits on a shared BASELINE - it grows
+// upward from the bottom of the line, it does not hang from the top. Aligning
+// the tops is what made <big> and <small> look like they were floating at
+// different heights.
+void test_inline_text_shares_a_baseline() {
+	browser page{browser_options{600, 200}};
+	page.load_html("<body><div><small id=s>small</small><span id=m>medium</span>"
+	               "<big id=b>big</big></div></body>");
+	check(page.frame().has_value(), "the page renders");
+
+	const rect small = box_of(page, "s");
+	const rect medium = box_of(page, "m");
+	const rect big = box_of(page, "b");
+	check(!small.empty() && !medium.empty() && !big.empty(), "all three are laid out");
+	check(small.y != big.y || small.height == big.height, "different sizes are not top-aligned");
+	// Their BOTTOMS line up, which is what a shared baseline looks like when
+	// the boxes are the text's own line boxes.
+	check(std::abs(small.bottom() - big.bottom()) <= 2, "small and big end on the same line");
+	check(std::abs(medium.bottom() - big.bottom()) <= 2, "and so does the one between them");
+}
+
+// A table is BLOCK-level: it starts on its own line and the next thing starts
+// below it. Left inline-level it shared a line with whatever came before -
+// two tables sat side by side, and a table sat beside the link above it.
+void test_tables_are_block_level() {
+	browser page{browser_options{600, 400}};
+	page.load_html(R"(<body>
+	  <a href="#" id=link>a link</a>
+	  <table><tr><td id=one>plain</td><td>table</td></tr></table>
+	  <table border=1><tr><td id=two>bordered</td></tr></table>
+	</body>)");
+	check(page.frame().has_value(), "the page renders");
+
+	const rect link = box_of(page, "link");
+	const rect first = box_of(page, "one");
+	const rect second = box_of(page, "two");
+	check(!link.empty() && !first.empty() && !second.empty(), "everything is laid out");
+
+	check(first.y >= link.bottom(), "the first table starts below the link");
+	check(second.y >= first.bottom(), "and the second below the first");
+	// Not beside: both tables start at the left edge, not at some x the
+	// previous one left the pen at.
+	check(first.x < 40, "the first table starts at the left margin");
+	check(second.x < 40, "and so does the second");
+}
+
 void test_html_whitespace_collapses() {
 	// A newline in a page's own SOURCE is not a character - HTML folds every
 	// run of whitespace into one space. v2 passed it straight to the
@@ -303,17 +350,23 @@ void test_html_whitespace_collapses() {
 	}
 	check(found, "the text was recorded");
 
-	// ...and <pre> still preserves it, which is the whole point of <pre>.
+	// ...and <pre> preserves the LINE STRUCTURE, which is the point of <pre>.
+	// It does NOT hand the newline to the rasterizer: a kept newline is a line
+	// break, and drawing it draws .notdef - a box - which is exactly what a
+	// <pre> block looked like. Two lines means two runs, on two rows.
 	browser pre{browser_options{400, 200}};
-	pre.load_html("<body><pre>a\nb</pre></body>");
+	pre.load_html("<body><pre>first\nsecond</pre></body>");
 	check(pre.frame().has_value(), "the pre page renders");
-	bool preserved = false;
+	float first_y = -1;
+	float second_y = -1;
 	for (const auto & c : commands(pre)) {
-		if (c.op == paint::paint_op::text_run && c.text.find('\n') != std::string::npos) {
-			preserved = true;
-		}
+		if (c.op != paint::paint_op::text_run) { continue; }
+		check(c.text.find('\n') == std::string::npos, "no newline reaches the rasterizer");
+		if (c.text.find("first") != std::string::npos) { first_y = c.bounds.y; }
+		if (c.text.find("second") != std::string::npos) { second_y = c.bounds.y; }
 	}
-	check(preserved, "<pre> keeps its newlines");
+	check(first_y >= 0 && second_y >= 0, "both <pre> lines are drawn");
+	check(second_y > first_y, "and the second is BELOW the first");
 }
 
 // The artifact in the report: text that runs past where it is allowed to be.
@@ -416,6 +469,8 @@ int main() {
 	test_dragging_the_thumb_scrolls();
 	test_clicking_the_track_pages();
 	test_a_click_on_the_scrollbar_is_not_a_click_on_the_page();
+	test_inline_text_shares_a_baseline();
+	test_tables_are_block_level();
 	test_html_whitespace_collapses();
 	test_a_newline_is_a_break_opportunity();
 	test_table_caption_and_border();

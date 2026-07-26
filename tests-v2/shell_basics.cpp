@@ -136,8 +136,31 @@ void test_a_scroll_only_recomposites() {
 	page.scroll_by(20);
 	check(page.scroll_y() == 20, "the scroll took effect");
 	check(page.frame().has_value(), "the scrolled frame renders");
-	// THE claim of the whole architecture. v1 re-ran layout here.
-	check(raster_calls(page) == after_first, "a small scroll rasters nothing new");
+	// THE claim of the whole architecture: the PAGE's tiles are in content
+	// space and survive a scroll. v1 re-ran layout here.
+	//
+	// The scrollbar's own tile does not survive, and must not: its thumb is a
+	// function of where the page now is, and a tile is identified by (layer,
+	// column, row) - so leaving it cached serves the old thumb forever, which
+	// is what "the scrollbar does not update" looked like. ONE tile, the
+	// chrome's, is the price.
+	const std::size_t scrolled = raster_calls(page);
+	check(scrolled > after_first, "the scrollbar's tile is redrawn");
+	check(scrolled - after_first <= 2, "and only the scrollbar's - not the page's");
+
+	// With no scrollbar there is nothing to redraw at all, which is the
+	// original claim with the chrome taken out of it.
+	browser_options no_chrome;
+	no_chrome.width = 400;
+	no_chrome.height = 200;
+	no_chrome.scrollbar_width = 0;
+	browser bare{no_chrome};
+	bare.load_html(demo_page);
+	check(bare.frame().has_value(), "the bare page renders");
+	const std::size_t bare_first = raster_calls(bare);
+	bare.scroll_by(20);
+	check(bare.frame().has_value(), "the bare scrolled frame renders");
+	check(raster_calls(bare) == bare_first, "a scroll with no scrollbar rasters NOTHING");
 }
 
 void test_scroll_clamps_to_the_document() {

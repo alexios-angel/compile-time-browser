@@ -331,6 +331,15 @@ public:
 		if (window_ == nullptr) { (void)build_target(); }
 	}
 
+	// ONE layer's tiles - see the note on the software backend.
+	void discard_layer(std::uint32_t layer) {
+		if (layer >= layers_.size()) { return; }
+		for (auto & [key, s] : layers_[layer]) {
+			if (s.texture != nullptr) { SDL_ReleaseGPUTexture(device_, s.texture); }
+		}
+		layers_[layer].clear();
+	}
+
 	void discard() {
 		for (auto & per_layer : layers_) {
 			for (auto & [key, s] : per_layer) {

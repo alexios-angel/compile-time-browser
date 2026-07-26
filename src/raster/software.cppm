@@ -105,6 +105,14 @@ public:
 	// tiles were drawn from no longer exists.
 	void discard() { layers_.clear(); }
 
+	// ONE layer's tiles. The scrollbar is chrome that changes on every scroll
+	// while the page underneath it does not - discarding everything for it
+	// would re-raster the whole document sixty times a second and undo the
+	// entire point of tiling in content space.
+	void discard_layer(std::uint32_t layer) {
+		if (layer < layers_.size()) { layers_[layer].clear(); }
+	}
+
 	// A new viewport size, KEEPING the backend. The alternative - building a
 	// fresh renderer - silently throws away a GPU device and drops the app to
 	// software on its first window resize, permanently.

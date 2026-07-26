@@ -131,9 +131,27 @@ struct inline_flow {
 		// makes everything after it overlap.
 		float line_extent = line_height;
 		float total_height = 0;
+		// Where the current line's fragments start in out.children, so the line
+		// can be BOTTOM-ALIGNED once its tallest item is known. Text of
+		// different sizes shares a baseline: it grows upward from the bottom of
+		// the line rather than hanging from the top, which is what made <big>
+		// and <small> look like they were floating at different heights.
+		std::size_t line_start = 0;
+		const auto align_line = [&out, &line_start](float top, float extent) {
+			for (std::size_t i = line_start; i < out.children.size(); ++i) {
+				fragment & f = out.children[i];
+				if (f.bounds.y != top) { continue; } // a later line already
+				f.bounds.y = top + extent - f.bounds.height;
+			}
+			line_start = out.children.size();
+		};
 		for (const box_node & child : b.children) {
 			if (child.kind == box_kind::text) {
-				place_text(child, c, measure_text, line_height, pen_x, pen_y, out);
+				if (child.preformatted) {
+					place_preformatted(child, line_height, pen_x, pen_y, out);
+				} else {
+					place_text(child, c, measure_text, line_height, pen_x, pen_y, out);
+				}
 				continue;
 			}
 			// an inline box: measured whole, wrapped to the next line if it
@@ -141,6 +159,7 @@ struct inline_flow {
 			const float w = child.is_replaced() ? child.intrinsic_width
 			                                    : measure(child, c, measure_text).max_content;
 			if (pen_x > 0 && pen_x + w > c.available_width) {
+				align_line(pen_y, line_extent);
 				pen_x = 0;
 				pen_y += line_extent;
 				line_extent = line_height;
@@ -156,6 +175,7 @@ struct inline_flow {
 			total_height = std::max(total_height, f.bounds.y + f.bounds.height);
 			out.children.push_back(std::move(f));
 		}
+		align_line(pen_y, line_extent); // the last line
 		for (const fragment & line : out.children) {
 			widest = std::max(widest, line.bounds.x + line.bounds.width);
 		}
@@ -172,6 +192,30 @@ private:
 	// Greedy wrap: take words while they fit, then break. Each visual line
 	// becomes its own fragment, which is exactly the case the fragment tree
 	// exists to represent.
+	// `white-space: pre` keeps the newlines, and a kept newline is a LINE
+	// BREAK - not a character. Handing it to the rasterizer draws .notdef,
+	// which is a box, which is precisely what a <pre> block looked like.
+	static void place_preformatted(const box_node & child, float line_height, float & pen_x,
+	                               float & pen_y, fragment & out) {
+		std::string_view rest = child.text;
+		for (;;) {
+			const std::size_t br = rest.find('\n');
+			const std::string_view line = rest.substr(0, br);
+			fragment f;
+			f.box = &child;
+			f.source = child.source;
+			f.text = std::string{line};
+			// Preformatted text is not wrapped and not re-measured: it is
+			// exactly the line the page wrote.
+			f.bounds = rect{pen_x, pen_y, 0, line_height};
+			out.children.push_back(std::move(f));
+			if (br == std::string_view::npos) { break; }
+			pen_x = 0;
+			pen_y += line_height;
+			rest = rest.substr(br + 1);
+		}
+	}
+
 	static void place_text(const box_node & child, const constraints & c,
 	                       const measure_text_fn & measure_text, float line_height, float & pen_x,
 	                       float & pen_y, fragment & out) {
