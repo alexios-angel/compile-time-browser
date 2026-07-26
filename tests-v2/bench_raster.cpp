@@ -76,7 +76,7 @@ void run_case(int sections, int rows, int viewport_w, int viewport_h, scheduler 
 	const style::style_map resolved = styles.resolve_all(txn);
 	layout::box_builder builder{atoms, resolved};
 	const layout::box_node boxes = builder.build(txn, txn.root());
-	const layout::engine eng{raster::measure_with_font8x8()};
+	const layout::engine eng{shell::font8x8_metrics()};
 	const layout::fragment placed = eng.run(boxes, static_cast<float>(viewport_w));
 
 	const paint::recorder rec{atoms};

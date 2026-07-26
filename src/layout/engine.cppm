@@ -39,9 +39,15 @@ export namespace ctbrowser::layout {
 // without fonts, and goldens have to be reproducible, so the default measure
 // is an exact function of the string rather than anything platform-dependent.
 [[nodiscard]] inline measure_text_fn monospace_measure(float advance_ratio = 0.6f) {
-	return [advance_ratio](std::string_view text, float font_size, const text_face &) {
+	measure_text_fn out;
+	out.measure = [advance_ratio](std::string_view text, float font_size, const text_face &) {
 		return static_cast<float>(text.size()) * font_size * advance_ratio;
 	};
+	// A plausible split for a stand-in face; the real numbers come from the
+	// font backend through shell::metrics_for.
+	out.ascent_of = [](float size, const text_face &) { return size * 0.8f; };
+	out.descent_of = [](float size, const text_face &) { return size * 0.2f; };
+	return out;
 }
 
 // A measure that asks a raster font backend. The two structs are deliberately

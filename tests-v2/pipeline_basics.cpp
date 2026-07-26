@@ -20,6 +20,7 @@ import ctbrowser.style;
 import ctbrowser.layout;
 import ctbrowser.paint;
 import ctbrowser.raster;
+import ctbrowser.shell; // shell::font8x8_metrics - see shell/metrics.cppm
 
 #include "check.hpp"
 #include <cstdint>
@@ -61,7 +62,7 @@ struct page {
 		resolved = styles.resolve_all(txn);
 		layout::box_builder builder{atoms, resolved};
 		boxes = builder.build(txn, txn.root());
-		const layout::engine eng{raster::measure_with_font8x8()};
+		const layout::engine eng{shell::font8x8_metrics()};
 		placed = eng.run(boxes, viewport);
 		const recorder rec{atoms};
 		layers = rec.record_layers(placed);

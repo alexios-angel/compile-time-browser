@@ -87,9 +87,13 @@ public:
 	virtual void draw_run(const rect & where, const paint_command & c, const pixel_rect & clip,
 	                      surface & into) const = 0;
 	// The distance from the top of the line box to the baseline, which a
-	// decoration band and a canvas fillText both need.
+	// decoration band and a canvas fillText both need - and which LAYOUT needs
+	// to put two different sizes on one baseline.
 	[[nodiscard]] virtual float ascent(float font_size, std::string_view family, bool bold,
 	                                   bool italic) const = 0;
+	// How far the face descends BELOW the baseline. Positive.
+	[[nodiscard]] virtual float descent(float font_size, std::string_view family, bool bold,
+	                                    bool italic) const = 0;
 };
 
 
@@ -180,6 +184,9 @@ public:
 		// The cell is 8 tall and the glyphs sit on its last row.
 		return static_cast<float>(8 * font8x8_scale(font_size));
 	}
+	[[nodiscard]] float descent(float, std::string_view, bool, bool) const override {
+		return 0; // nothing in font8x8 goes below the cell
+	}
 };
 
 [[nodiscard]] inline const font_backend & font8x8_fonts() {
@@ -187,17 +194,9 @@ public:
 	return backend;
 }
 
-// A layout measure that asks a backend. GENERIC in the face type on purpose:
-// layout::text_face and paint::font_face are deliberately separate types -
-// :values depends on nothing, and layout importing paint would invert the
-// dependency the pipeline is built on - so this converts without naming
-// either, and layout stays unaware that raster exists.
-[[nodiscard]] inline auto measure_with(const font_backend & fonts) {
-	return [&fonts](std::string_view text, float font_size, const auto & face) {
-		return fonts.advance(text, font_size, face.family, face.bold, face.italic);
-	};
-}
-[[nodiscard]] inline auto measure_with_font8x8() { return measure_with(font8x8_fonts()); }
+// The adapter that turns a backend into layout's text_metrics lives in the
+// SHELL (shell::metrics_for): it needs to name a layout type, and raster must
+// not import layout - the pipeline runs the other way.
 
 // A run plus whatever line CSS asked to be drawn through or under it. The bands
 // are the rasterizer's job rather than layout's because their thickness and

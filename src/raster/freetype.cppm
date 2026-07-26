@@ -132,6 +132,17 @@ public:
 		});
 	}
 
+	[[nodiscard]] float descent(float font_size, std::string_view family, bool bold,
+	                            bool italic) const override {
+		const int size = pixel_size(font_size);
+		const std::lock_guard guard{mutex_};
+		const loaded_face * face = resolve(family, bold, italic);
+		if (face == nullptr) { return font8x8_fonts().descent(font_size, family, bold, italic); }
+		if (FT_Set_Pixel_Sizes(face->handle, 0, static_cast<FT_UInt>(size)) != 0) { return 0; }
+		// FreeType's descender is NEGATIVE, and a descent is a distance.
+		return -static_cast<float>(face->handle->size->metrics.descender) / 64.0f;
+	}
+
 	[[nodiscard]] float ascent(float font_size, std::string_view family, bool bold,
 	                           bool italic) const override {
 		const int size = pixel_size(font_size);

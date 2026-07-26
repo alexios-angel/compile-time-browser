@@ -40,10 +40,45 @@ struct text_face {
 	[[nodiscard]] friend bool operator==(const text_face &, const text_face &) = default;
 };
 
+// What layout needs to know about a font: how wide a run is, and where its
+// BASELINE sits inside a line.
+//
+// Bundled rather than passed as separate callables because they travel
+// together through every formatting context - adding a second parameter to
+// measure/arrange and to every wrap helper would be the same information with
+// more places to get it wrong.
+//
+// The ascent is what makes text of different sizes line up: a line's items are
+// placed so that `y + ascent` is the same for all of them, which is the
+// definition of sharing a baseline. Aligning their boxes instead - tops or
+// bottoms - is only right when every item has the same metrics.
+//
+// Callable directly, so a measurement reads the same as it did when this was a
+// bare std::function.
+struct text_metrics {
+	std::function<float(std::string_view, float, const text_face &)> measure;
+	std::function<float(float, const text_face &)> ascent_of;
+	std::function<float(float, const text_face &)> descent_of;
+
+	[[nodiscard]] float operator()(std::string_view text, float size,
+	                               const text_face & face) const {
+		// The fallback is a deterministic monospace stand-in: layout has to be
+		// testable with no fonts at all.
+		return measure ? measure(text, size, face) : static_cast<float>(text.size()) * size * 0.6f;
+	}
+	[[nodiscard]] float ascent(float size, const text_face & face) const {
+		return ascent_of ? ascent_of(size, face) : size * 0.8f;
+	}
+	[[nodiscard]] float descent(float size, const text_face & face) const {
+		return descent_of ? descent_of(size, face) : size * 0.2f;
+	}
+	[[nodiscard]] explicit operator bool() const noexcept { return static_cast<bool>(measure); }
+};
+
 // The FACE is part of the question. It was not - the signature was
 // (text, size) - so a page could ask for bold 20px Fira Sans, get measured in
 // whatever the rasterizer felt like, and lay its text out at the wrong width.
-using measure_text_fn = std::function<float(std::string_view, float, const text_face &)>;
+using measure_text_fn = text_metrics;
 
 enum class unit : std::uint8_t { px, percent, em, rem, auto_, none };
 

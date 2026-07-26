@@ -19,6 +19,7 @@ export module ctbrowser.shell;
 // browser here needs no display, which is what lets tests render whole pages
 // and compare them byte for byte.
 
+export import :metrics;
 export import :input;
 export import :assets;
 export import :images;

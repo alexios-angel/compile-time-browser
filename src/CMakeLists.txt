@@ -270,6 +270,7 @@ target_sources(ctbrowser-shell
     FILE_SET CXX_MODULES FILES
       shell/shell.cppm
       shell/input.cppm
+      shell/metrics.cppm
       shell/assets.cppm
       shell/images.cppm
       shell/net.cppm

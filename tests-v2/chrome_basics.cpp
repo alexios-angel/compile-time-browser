@@ -284,12 +284,20 @@ void test_a_click_on_the_scrollbar_is_not_a_click_on_the_page() {
 
 // --- what the reports were about ------------------------------------------
 
-// Text of different sizes on one line sits on a shared BASELINE - it grows
-// upward from the bottom of the line, it does not hang from the top. Aligning
-// the tops is what made <big> and <small> look like they were floating at
-// different heights.
+// Text of different sizes on one line sits on a shared BASELINE: every item is
+// placed so that `y + ascent` is the same, which is what the rasterizer then
+// draws. Aligning the BOXES is only right when every item has the same metrics
+// - tops made <big> hang above its neighbours, and bottoms are a box's descent
+// below the baseline, which two faces do not share.
+//
+// REAL FONTS, deliberately: font8x8 quantises 13px, 16px and 19px to the same
+// 8x8 cell, so all three have the same ascent and every alignment looks
+// identical. The bug was only ever visible with outline faces, which is where
+// it was reported.
 void test_inline_text_shares_a_baseline() {
+	if (!raster::freetype_available()) { return; }
 	browser page{browser_options{600, 200}};
+	check(page.use_real_fonts(), "the vendored faces load");
 	page.load_html("<body><div><small id=s>small</small><span id=m>medium</span>"
 	               "<big id=b>big</big></div></body>");
 	check(page.frame().has_value(), "the page renders");
@@ -298,11 +306,34 @@ void test_inline_text_shares_a_baseline() {
 	const rect medium = box_of(page, "m");
 	const rect big = box_of(page, "b");
 	check(!small.empty() && !medium.empty() && !big.empty(), "all three are laid out");
-	check(small.y != big.y || small.height == big.height, "different sizes are not top-aligned");
-	// Their BOTTOMS line up, which is what a shared baseline looks like when
-	// the boxes are the text's own line boxes.
-	check(std::abs(small.bottom() - big.bottom()) <= 2, "small and big end on the same line");
-	check(std::abs(medium.bottom() - big.bottom()) <= 2, "and so does the one between them");
+
+	// The baseline of each, computed the way the rasterizer computes it.
+	const auto metrics = page.metrics();
+	const auto baseline = [&](std::string_view id, const rect & box) {
+		const node_id node = find_id(page, id);
+		float size = 16;
+		layout::text_face face;
+		const auto walk = [&](auto && self, const layout::fragment & f) -> void {
+			if (f.source == node && f.box != nullptr) {
+				size = f.box->font_size;
+				face = f.box->face;
+			}
+			for (const auto & c : f.children) { self(self, c); }
+		};
+		walk(walk, page.fragments());
+		return box.y + metrics.ascent(size, face);
+	};
+
+	const float small_base = baseline("s", small);
+	const float medium_base = baseline("m", medium);
+	const float big_base = baseline("b", big);
+	check(std::abs(small_base - big_base) < 0.6f, "small and big share a baseline");
+	check(std::abs(medium_base - big_base) < 0.6f, "and so does the one between them");
+
+	// Which is NOT the same as aligning the boxes, and this is the check that
+	// says so: bigger text starts HIGHER, and the boxes do not end together.
+	check(small.y > big.y, "the smaller text starts lower down the line");
+	check(std::abs(small.bottom() - big.bottom()) > 0.5f, "the boxes are not bottom-aligned");
 }
 
 // A table is BLOCK-level: it starts on its own line and the next thing starts

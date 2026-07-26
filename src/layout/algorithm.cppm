@@ -131,17 +131,36 @@ struct inline_flow {
 		// makes everything after it overlap.
 		float line_extent = line_height;
 		float total_height = 0;
-		// Where the current line's fragments start in out.children, so the line
-		// can be BOTTOM-ALIGNED once its tallest item is known. Text of
-		// different sizes shares a baseline: it grows upward from the bottom of
-		// the line rather than hanging from the top, which is what made <big>
-		// and <small> look like they were floating at different heights.
+		// BASELINE ALIGNMENT. Every item on a line is placed so that
+		// `y + ascent` is the same for all of them - which is what sharing a
+		// baseline means, and what the rasterizer then draws: it puts each
+		// run's glyphs at `y + ascent(its own size)`.
+		//
+		// Aligning the BOXES instead is only right when every item has the same
+		// metrics. Tops made <big> hang above its neighbours; bottoms were
+		// closer but still wrong, because a box's bottom is its descent below
+		// the baseline and two faces do not descend by the same amount.
+		//
+		// A REPLACED item - an <img>, a <canvas> - sits ON the baseline, so its
+		// ascent is its whole height. That is the CSS rule and it is why an
+		// image in a line of text does not sink into the descenders.
 		std::size_t line_start = 0;
-		const auto align_line = [&out, &line_start](float top, float extent) {
+		const auto ascent_of = [&measure_text](const fragment & f) {
+			if (f.box == nullptr) { return 0.0f; }
+			if (f.box->is_replaced()) { return f.bounds.height; }
+			return measure_text.ascent(f.box->font_size, f.box->face);
+		};
+		const auto align_line = [&out, &line_start, &ascent_of](float top) {
+			float line_ascent = 0;
+			for (std::size_t i = line_start; i < out.children.size(); ++i) {
+				if (out.children[i].bounds.y == top) {
+					line_ascent = std::max(line_ascent, ascent_of(out.children[i]));
+				}
+			}
 			for (std::size_t i = line_start; i < out.children.size(); ++i) {
 				fragment & f = out.children[i];
 				if (f.bounds.y != top) { continue; } // a later line already
-				f.bounds.y = top + extent - f.bounds.height;
+				f.bounds.y = top + line_ascent - ascent_of(f);
 			}
 			line_start = out.children.size();
 		};
@@ -159,7 +178,7 @@ struct inline_flow {
 			const float w = child.is_replaced() ? child.intrinsic_width
 			                                    : measure(child, c, measure_text).max_content;
 			if (pen_x > 0 && pen_x + w > c.available_width) {
-				align_line(pen_y, line_extent);
+				align_line(pen_y);
 				pen_x = 0;
 				pen_y += line_extent;
 				line_extent = line_height;
@@ -175,7 +194,7 @@ struct inline_flow {
 			total_height = std::max(total_height, f.bounds.y + f.bounds.height);
 			out.children.push_back(std::move(f));
 		}
-		align_line(pen_y, line_extent); // the last line
+		align_line(pen_y); // the last line
 		for (const fragment & line : out.children) {
 			widest = std::max(widest, line.bounds.x + line.bounds.width);
 		}

@@ -22,6 +22,7 @@ import ctbrowser.paint;
 import ctbrowser.raster;
 import ctbrowser.script;
 import :input;
+import :metrics;
 import :assets;
 import :images;
 import :canvas;
@@ -204,6 +205,9 @@ public:
 #endif
 	}
 	[[nodiscard]] bool has_real_fonts() const noexcept { return fonts_ != nullptr; }
+	// The metrics layout measured with, so a caller can ask where a run's
+	// baseline is. The same object the rasterizer draws with.
+	[[nodiscard]] ctbrowser::layout::measure_text_fn metrics() const { return measure(); }
 
 	[[nodiscard]] asset_registry & assets() noexcept { return assets_; }
 	[[nodiscard]] image_store & images() noexcept { return images_; }
@@ -520,7 +524,7 @@ private:
 	[[nodiscard]] const ctbrowser::raster::font_backend & fonts() const {
 		return fonts_ != nullptr ? *fonts_ : ctbrowser::raster::font8x8_fonts();
 	}
-	[[nodiscard]] auto measure() const { return ctbrowser::raster::measure_with(fonts()); }
+	[[nodiscard]] ctbrowser::layout::measure_text_fn measure() const { return metrics_for(fonts()); }
 
 	// The page's own @font-face rules, loaded through the asset registry like
 	// any other resource. Called when real fonts are turned on and again on

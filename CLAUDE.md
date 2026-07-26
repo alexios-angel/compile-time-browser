@@ -252,10 +252,25 @@ guard now lets table structure be unwound when closing table structure.
 whatever came before, so two tables sat side by side and a table sat beside the
 link above it.
 
-**Inline text of different sizes shares a BASELINE** — a line is bottom-aligned
-once its tallest item is known, so text grows upward from the bottom of the line
-instead of hanging from the top. Top-aligning is what made `<big>` and `<small>`
-look like they floated at different heights.
+**Inline text of different sizes shares a BASELINE.** Every item on a line is
+placed so `y + ascent` is the same — which is what sharing a baseline MEANS, and
+what the rasterizer then draws. Aligning boxes is only right when every item has
+the same metrics: tops made `<big>` hang above its neighbours, and bottoms are a
+box's descent below the baseline, which two faces do not share. A REPLACED item
+sits ON the baseline (its ascent is its whole height), so an image in a line of
+text does not sink into the descenders.
+
+That needed the font's real ascent in LAYOUT, so `measure_text_fn` is now a
+`text_metrics` struct — measure, ascent, descent — bundled because they travel
+together through every formatting context. It is still callable directly, so a
+measurement reads as it did. `shell::metrics_for(font_backend)` is the adapter,
+and it lives in the SHELL because it must name both a layout type and a raster
+one, and neither may name the other: paint and raster sit downstream of layout.
+
+**font8x8 hides this bug**: it quantises 13px, 16px and 19px to the same 8x8
+cell, so all three have the same ascent and every alignment looks identical.
+`tests-v2/chrome_basics` therefore tests it with REAL fonts, and the test is
+verified against BOTH wrong alignments — top and bottom each fail it.
 
 **`white-space: pre` breaks lines.** A preserved newline is a LINE BREAK, not a
 character; handing it to the rasterizer draws `.notdef`, which is why a `<pre>`
