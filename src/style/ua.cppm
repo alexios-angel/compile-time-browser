@@ -81,6 +81,10 @@ inline constexpr std::uint32_t ua_widget_mark = 0xFFFFFFFFu;
 inline constexpr std::uint32_t ua_widget_field = 0xFFFFFFFFu;
 inline constexpr std::uint32_t ua_selection_highlight = 0xFFB4D5FEu;
 inline constexpr std::uint32_t ua_canvas = 0xFFFFFFFFu; // the page behind everything
+// The overlay scrollbar, in Firefox's greys.
+inline constexpr std::uint32_t ua_scrollbar_track = 0xFFF0F0F0u;
+inline constexpr std::uint32_t ua_scrollbar_thumb = 0xFFC1C1C1u;
+inline constexpr std::uint32_t ua_scrollbar_thumb_active = 0xFF8F8F8Fu;
 
 // The origin the UA sheet loads at. Named rather than spelled 0 at call sites,
 // because "add_sheet(css, 0)" reads like a magic number and it is the entire

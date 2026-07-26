@@ -56,11 +56,16 @@ Deleting v1 today removes working, tested functionality with no replacement:
   all three forms from either an `<img>` or a `loadImage` handle. Still missing:
   gradients, and nonzero-winding fill (even-odd is used, which differs only on
   self-intersecting paths).
-- **Tables.** `emit_table`'s auto layout.
+- ~~**Tables.**~~ **DONE (2026-07-25).** `table_flow` is a real formatting
+  context with auto column sizing, transparent row groups and presentational
+  width attributes - v1 emitted tables from its block pass.
 - **The `r3d` software 3D rasterizer and the BabylonJS shim**, plus glTF/GLB
   loading and texture decoding. ~4500 lines with three tests.
-- **Widget chrome.** Scrollbar, context menu, disclosure triangles, list
-  markers — v2 draws none of these; the UA palette is carried but unused.
+- **Widget chrome.** PARTLY DONE (2026-07-25): scrollbar (overlay layer, thumb
+  drag, track paging, reserved width), list markers, disclosure triangles and
+  a `<select>` that shows its selected option all landed. Still missing: the
+  `<select>` POPUP, the context menu, page-level text selection, the clipboard
+  and system cursors.
 - ~~**Real fonts.**~~ **DONE.** See above - v2's is FreeType in the engine
   rather than SDL3_ttf in the shell.
 - ~~**Images and audio.**~~ **DONE (2026-07-25).** `ctbrowser.shell:assets` is

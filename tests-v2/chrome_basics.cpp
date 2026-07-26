@@ -22,6 +22,7 @@ import ctbrowser;
 using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
+using ctbrowser::shell::input_event;
 
 namespace {
 
@@ -199,6 +200,86 @@ void test_select_shows_its_option() {
 	check(!draws_text(page, "second"), "but only the selected one, not the list");
 }
 
+
+// --- the scrollbar --------------------------------------------------------
+
+[[nodiscard]] std::string tall_page() {
+	std::string html = "<body>";
+	for (int i = 0; i < 40; ++i) { html += "<p>line " + std::to_string(i) + "</p>"; }
+	return html + "</body>";
+}
+
+void test_scrollbar_appears_only_when_needed() {
+	browser shortish{browser_options{300, 400}};
+	shortish.load_html("<body><p>one line</p></body>");
+	check(shortish.frame().has_value(), "the short page renders");
+	check(shortish.max_scroll() == 0, "a short page does not scroll");
+	check(!shortish.on_scrollbar(295), "and has no scrollbar");
+
+	browser page{browser_options{300, 200}};
+	page.load_html(tall_page());
+	check(page.frame().has_value(), "the tall page renders");
+	check(page.max_scroll() > 0, "a tall page scrolls");
+	check(page.on_scrollbar(295), "and has a scrollbar at the right edge");
+	check(!page.on_scrollbar(100), "which is not the middle of the page");
+}
+
+void test_the_scrollbar_reserves_its_width() {
+	// Content laid out at the full width would run UNDER the bar. Two passes:
+	// lay out, and if it overflows, lay out again in what is left.
+	browser page{browser_options{300, 200}};
+	page.load_html(tall_page());
+	check(page.frame().has_value(), "the page renders");
+	// Every fragment ends before the scrollbar starts.
+	float rightmost = 0;
+	const auto walk = [&](auto && self, const layout::fragment & f, float dx, float dy) -> void {
+		const float right = f.bounds.x + dx + f.bounds.width;
+		if (!f.text.empty()) { rightmost = std::max(rightmost, right); }
+		for (const auto & c : f.children) { self(self, c, f.bounds.x + dx, f.bounds.y + dy); }
+	};
+	walk(walk, page.fragments(), 0, 0);
+	check(rightmost <= 300 - 15, "no text is laid out under the scrollbar");
+}
+
+void test_dragging_the_thumb_scrolls() {
+	browser page{browser_options{300, 200}};
+	page.load_html(tall_page());
+	check(page.frame().has_value(), "the page renders");
+	check(page.scroll_y() == 0, "starts at the top");
+
+	// Grab the thumb (it is at the top) and drag down.
+	(void)page.handle(input_event::mouse_down_at(295, 10));
+	(void)page.handle(input_event::mouse_move_to(295, 90));
+	check(page.scroll_y() > 0, "dragging the thumb scrolls the page");
+	const float dragged = page.scroll_y();
+	(void)page.handle(input_event::mouse_up_at(295, 90));
+
+	// After the release the pointer no longer drags.
+	(void)page.handle(input_event::mouse_move_to(295, 150));
+	check(page.scroll_y() == dragged, "and releasing it stops");
+}
+
+void test_clicking_the_track_pages() {
+	browser page{browser_options{300, 200}};
+	page.load_html(tall_page());
+	check(page.frame().has_value(), "the page renders");
+	// Well below the thumb: a page down, not a jump to the pointer.
+	(void)page.handle(input_event::mouse_down_at(295, 190));
+	(void)page.handle(input_event::mouse_up_at(295, 190));
+	check(page.scroll_y() > 0, "clicking the track below the thumb pages down");
+	check(page.scroll_y() < page.max_scroll(), "by a page, not to the end");
+}
+
+void test_a_click_on_the_scrollbar_is_not_a_click_on_the_page() {
+	browser page{browser_options{300, 200}};
+	page.load_html(tall_page() + "<script>document.addEventListener('click', function () {"
+	                             "  console.log('page clicked'); });</script>");
+	check(page.frame().has_value(), "the page renders");
+	(void)page.handle(input_event::mouse_down_at(295, 100));
+	(void)page.handle(input_event::mouse_up_at(295, 100));
+	check(page.bindings().console_output().empty(), "the page never sees the scrollbar's click");
+}
+
 } // namespace
 
 int main() {
@@ -209,6 +290,11 @@ int main() {
 	test_list_markers();
 	test_disclosure_triangle();
 	test_select_shows_its_option();
+	test_scrollbar_appears_only_when_needed();
+	test_the_scrollbar_reserves_its_width();
+	test_dragging_the_thumb_scrolls();
+	test_clicking_the_track_pages();
+	test_a_click_on_the_scrollbar_is_not_a_click_on_the_page();
 
 	REPORT("chrome_basics");
 }

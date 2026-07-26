@@ -232,6 +232,16 @@ element behind it, so it is drawn rather than laid out; the ordinal and the
 open/closed state are decided in the box builder, which is the only place that
 knows what the siblings and the parent are.
 
+**The scrollbar is its own non-scrolling LAYER**, not a paint into the page —
+the compositor already knows how to hold a layer still, so a scroll moves the
+page layer and leaves the bar where it is without re-recording anything. Thumb
+drag (with a grab offset, so it does not jump to centre itself), track clicks
+that page towards the pointer, and a click on the bar never reaches the page.
+A tall page LAYOUT IS RUN TWICE: content laid out at the full width would run
+under the bar. That terminates because narrowing a page can only make it
+taller, so a page that overflowed still overflows. `browser_options::
+scrollbar_width = 0` hides it, which is what a fixed-size game wants.
+
 **`<select>` shows its option.** It drew an EMPTY RECTANGLE before — it passed
 an empty string as the label and never read `<option>` at all. Now: the
 `selected` option, else the first, else whatever the user picked, plus a

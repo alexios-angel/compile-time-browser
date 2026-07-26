@@ -82,6 +82,9 @@ struct browser_options {
 	// A page taller than the window scrolls; this is how far one wheel notch
 	// moves it. v1 used the same figure.
 	float wheel_step = 53.0f;
+	// The overlay scrollbar's width, and the width a tall page gives up to it.
+	// 0 hides it - which is what a fixed-size game wants.
+	float scrollbar_width = 15.0f;
 };
 
 class browser {
@@ -269,6 +272,12 @@ public:
 	}
 	[[nodiscard]] float scroll_y() const noexcept { return scroll_y_; }
 	[[nodiscard]] float content_height() const noexcept { return content_height_; }
+	// Whether a viewport x lands on the scrollbar. Public because the app layer
+	// asks it to choose a cursor.
+	[[nodiscard]] bool on_scrollbar(float x) const noexcept {
+		return max_scroll() > 0 && options_.scrollbar_width > 0 &&
+		       x >= static_cast<float>(options_.width) - options_.scrollbar_width;
+	}
 	[[nodiscard]] float max_scroll() const noexcept {
 		return std::max(0.0f, content_height_ - static_cast<float>(options_.height));
 	}
@@ -284,6 +293,15 @@ public:
 			scroll_by(-event.wheel_y * options_.wheel_step);
 			return true;
 		case input_kind::mouse_move: {
+			if (sb_dragging_) {
+				// The grab offset is kept so the thumb does not jump to centre
+				// itself under the pointer on the first pixel of movement.
+				const float height = static_cast<float>(options_.height);
+				const float thumb_height = scrollbar_thumb().height;
+				const float travel = height - thumb_height;
+				scroll_to(travel > 0 ? (event.y - sb_grab_) / travel * max_scroll() : 0);
+				return true;
+			}
 			const node_id under = hit_test(event.x, event.y);
 			// A page tracking the pointer - MDN's breakout moves its paddle
 			// this way - needs the event whether or not the hover state moved.
@@ -291,10 +309,29 @@ public:
 			return set_hover(under) || dispatched;
 		}
 		case input_kind::mouse_down:
+			if (on_scrollbar(event.x)) {
+				const rect thumb = scrollbar_thumb();
+				if (event.y >= thumb.y && event.y < thumb.y + thumb.height) {
+					sb_dragging_ = true;
+					sb_grab_ = event.y - thumb.y;
+				} else {
+					// A click on the TRACK pages towards the pointer, which is
+					// what every scrollbar does with one.
+					scroll_by(event.y < thumb.y ? -static_cast<float>(options_.height) * 0.9f
+					                            : static_cast<float>(options_.height) * 0.9f);
+				}
+				mark(dirty::paint);
+				return true;
+			}
 			pressed_ = hit_test(event.x, event.y);
 			(void)dispatch_mouse("mousedown", pressed_, event);
 			return set_state(pressed_, state_active, true);
 		case input_kind::mouse_up: {
+			if (sb_dragging_) {
+				sb_dragging_ = false;
+				mark(dirty::paint);
+				return true;
+			}
 			bool changed = set_state(pressed_, state_active, false);
 			(void)dispatch_mouse("mouseup", hit_test(event.x, event.y), event);
 			// Focus follows the press, and moves even when the click lands on
@@ -536,6 +573,18 @@ private:
 		const ctbrowser::layout::engine eng{measure()};
 		fragments_ = eng.run(boxes_, static_cast<float>(options_.width));
 		content_height_ = fragments_.bounds.height;
+
+		// TWO PASSES when the page overflows: the scrollbar takes width away
+		// from the content, and content laid out at the full width would run
+		// under it. This terminates because narrowing a page can only make it
+		// TALLER, so a page that overflowed still overflows - it never
+		// oscillates between needing a bar and not.
+		if (options_.scrollbar_width > 0 &&
+		    content_height_ > static_cast<float>(options_.height)) {
+			fragments_ = eng.run(boxes_, static_cast<float>(options_.width) -
+			                                 options_.scrollbar_width);
+			content_height_ = fragments_.bounds.height;
+		}
 		scroll_y_ = std::clamp(scroll_y_, 0.0f, max_scroll());
 		// offsetWidth and friends read the fragment tree, so they answer with
 		// THIS layout rather than the one before it.
@@ -553,6 +602,44 @@ private:
 		};
 		layers_ = recorder_.record_layers(fragments_);
 		layers_.scroll_to(0, scroll_y_);
+		record_scrollbar();
+	}
+
+	// The scrollbar, as its OWN non-scrolling layer.
+	//
+	// A layer rather than a paint into the page: it must not move when the page
+	// does, and the compositor already knows how to hold a layer still. That is
+	// also why it survives a scroll without re-recording anything - a scroll
+	// moves the page layer and leaves this one where it is.
+	void record_scrollbar() {
+		if (max_scroll() <= 0 || options_.scrollbar_width <= 0) { return; }
+		const float width = options_.scrollbar_width;
+		const float height = static_cast<float>(options_.height);
+		const float left = static_cast<float>(options_.width) - width;
+
+		ctbrowser::paint::display_list list;
+		list.fill(rect{left, 0, width, height}, color{ctbrowser::style::ua_scrollbar_track});
+		const rect thumb = scrollbar_thumb();
+		list.fill(thumb, color{sb_dragging_ ? ctbrowser::style::ua_scrollbar_thumb_active
+		                                    : ctbrowser::style::ua_scrollbar_thumb});
+
+		ctbrowser::paint::layer overlay;
+		overlay.contents = std::make_shared<const ctbrowser::paint::display_list>(std::move(list));
+		overlay.scrolls = false; // chrome, not content
+		layers_.layers.push_back(std::move(overlay));
+	}
+
+	// Where the thumb sits. Proportional to how much of the document is
+	// visible, with a floor so a very long page still has something to grab.
+	[[nodiscard]] rect scrollbar_thumb() const {
+		const float width = options_.scrollbar_width;
+		const float height = static_cast<float>(options_.height);
+		const float left = static_cast<float>(options_.width) - width;
+		const float visible = content_height_ > 0 ? height / content_height_ : 1;
+		const float thumb_height = std::max(24.0f, height * std::min(1.0f, visible));
+		const float travel = height - thumb_height;
+		const float progress = max_scroll() > 0 ? scroll_y_ / max_scroll() : 0;
+		return rect{left + 1, progress * travel, width - 2, thumb_height};
 	}
 
 	// What a <canvas> or a form control draws. Everything here is chrome the
@@ -974,6 +1061,8 @@ private:
 	// call that compiled it and the context that executes it.
 	// Null means font8x8, which is always available and always identical - so a
 	// build with no font files still renders and its goldens still compare.
+	bool sb_dragging_ = false;
+	float sb_grab_ = 0; // where in the thumb the drag started
 	const ctbrowser::raster::font_backend * fonts_ = nullptr;
 #if CTBROWSER_WITH_FREETYPE
 	// Owned so its glyph cache outlives any one frame; the renderer only
