@@ -604,11 +604,20 @@ private:
 		case control_kind::button:
 		case control_kind::select: {
 			outline(box, frame, into, id);
-			const std::string label =
-			    kind == control_kind::select ? std::string{} : button_label(txn, id, control, type);
+			// The SELECTED OPTION'S TEXT. This drew an empty rectangle before -
+			// it passed an empty string as the label and never read <option> at
+			// all, so a select looked like a bug rather than like a control.
+			const std::string label = selected_option(txn, id);
 			if (!label.empty()) {
-				into.text(rect{box.x + 4, box.y + 3, box.width - 8, box.height - 6}, label,
+				into.text(rect{box.x + 4, box.y + 3, box.width - 20, box.height - 6}, label,
 				          font_size_of(id), text_colour(style), id);
+			}
+			// The drop-down arrow, in the gutter the intrinsic width reserves.
+			const float arrow = 4;
+			const float cx = box.x + box.width - 12;
+			const float cy = box.y + box.height / 2 - arrow / 2;
+			for (float row = 0; row < arrow; ++row) {
+				into.fill(rect{cx - (arrow - row), cy + row, 2 * (arrow - row), 1}, frame, id);
 			}
 			break;
 		}
@@ -745,6 +754,32 @@ private:
 	// cancelled it. Handling the key first and never telling the page was why a
 	// game could not read the keyboard at all: Space scrolled the document
 	// instead of firing the gun.
+	// The text of a <select>'s selected option: the one marked `selected`, or
+	// the first, which is what a browser shows for a select nobody has touched.
+	// Reads the DOM directly rather than caching, because the option list is
+	// document content and a script may have just changed it.
+	[[nodiscard]] std::string selected_option(const read_txn & txn, node_id id) {
+		const atom option_tag = atoms_.intern_lower("option");
+		const atom selected = atoms_.intern("selected");
+		std::string first;
+		std::string chosen;
+		const auto text_of = [&](node_id at) {
+			std::string out;
+			for (const node_id child : txn.children(at)) { out += txn.text(child); }
+			return out;
+		};
+		for (const node_id child : txn.children(id)) {
+			if (txn.tag(child).value_or(atom{}) != option_tag) { continue; }
+			if (first.empty()) { first = text_of(child); }
+			if (chosen.empty() && txn.has_attribute(child, selected)) { chosen = text_of(child); }
+		}
+		// Whatever the user picked wins over the markup.
+		if (const control_state * state = forms_.find(id); state != nullptr && !state->value.empty()) {
+			return state->value;
+		}
+		return chosen.empty() ? first : chosen;
+	}
+
 	bool handle_key(const input_event & event) {
 		if (dispatch_key("keydown", event)) { return true; }
 

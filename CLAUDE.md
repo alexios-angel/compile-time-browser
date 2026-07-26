@@ -206,6 +206,37 @@ splitter — the latter peels `!important` off and discards the flag, which is
 the entire question. Cached by attribute TEXT, so a table styling forty rows
 identically parses once and a re-resolve after a hover parses nothing.
 
+## v2 TABLES AND GENERATED CONTENT (stage 7, 2026-07-25)
+
+**`table_flow` is the third formatting context** the `LayoutAlgorithm` concept
+was written for, and the one that justifies the concept: a table cannot be laid
+out as blocks because a cell's width is not its own business — every cell in a
+column shares that column's width, so the whole table must be MEASURED before
+any of it is placed. That is exactly the `measure`/`arrange` split. Auto column
+sizing (widest natural content), rows through transparent
+`<thead>`/`<tbody>`/`<tfoot>`, cells stretched to the row height, and a stated
+width scales the columns rather than being ignored. `<table width=400>` works:
+**presentational attributes** (`width` on table/td/th/col) map to the CSS
+property at the bottom of the cascade, which is how a lot of existing HTML
+sizes a table.
+
+Finding it turned up a real bug in `block_flow::measure`: a TEXT child was
+handed to `inline_flow::measure`, which measures a box's CHILDREN — and a text
+box has none, so **every block whose content was text measured as zero wide**.
+Nothing noticed until a table asked how wide its columns wanted to be.
+
+**Generated content** — list markers (`<ol>` numbers counted among siblings,
+`<ul>` bullets) and `<summary>` disclosure triangles — is drawn by the recorder
+in the gutter the UA sheet's `padding-left` already reserves. There is no
+element behind it, so it is drawn rather than laid out; the ordinal and the
+open/closed state are decided in the box builder, which is the only place that
+knows what the siblings and the parent are.
+
+**`<select>` shows its option.** It drew an EMPTY RECTANGLE before — it passed
+an empty string as the label and never read `<option>` at all. Now: the
+`selected` option, else the first, else whatever the user picked, plus a
+drop-down arrow. The popup itself is still missing.
+
 ## v2 FONTS: real ones (stage 6, 2026-07-25)
 
 **Text is drawn with outline faces.** `ctbrowser.raster:freetype` is a

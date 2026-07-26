@@ -227,6 +227,8 @@ private:
 		return fits;
 	}
 
+public:
+	// Used by block_flow to measure a text child, and by table_flow through it.
 	[[nodiscard]] static float longest_word(const box_node & b, const measure_text_fn & measure_text) {
 		if (b.kind != box_kind::text) { return 0; }
 		float widest = 0;
@@ -258,8 +260,16 @@ struct block_flow {
 	                                      const measure_text_fn & measure_text) const {
 		intrinsic_sizes out;
 		for (const box_node & child : b.children) {
+			// A TEXT child is measured directly. Handing it to inline_flow -
+			// which measures a box's CHILDREN - asked a text box what its
+			// children were, and a text box has none, so every block whose
+			// content is text measured as ZERO WIDE. Nothing noticed until a
+			// table asked how wide its columns wanted to be and got 0.
 			const intrinsic_sizes child_sizes =
-			    child.establishes_inline_context() || child.kind == box_kind::text
+			    child.kind == box_kind::text
+			        ? intrinsic_sizes{inline_flow::longest_word(child, measure_text),
+			                          measure_text(child.text, child.font_size, child.face)}
+			    : child.establishes_inline_context()
 			        ? inline_flow{}.measure(child, c, measure_text)
 			        : measure(child, c, measure_text);
 			out.min_content = std::max(out.min_content, child_sizes.min_content);
@@ -318,6 +328,141 @@ struct block_flow {
 	}
 };
 
+// --- table formatting context ---------------------------------------------
+//
+// The third formatting context, and the one the LayoutAlgorithm concept was
+// written for: a table cannot be laid out as blocks because a cell's width is
+// not its own business. Every cell in a column shares that column's width, so
+// the whole table has to be MEASURED before any of it can be placed - which is
+// exactly the split `measure` and `arrange` make.
+//
+// AUTO layout, like v1's: each column takes the widest natural content in it,
+// and the table shrinks to the sum. A stated `width` scales the columns
+// proportionally rather than being ignored.
+//
+// The DOM shape is <table><tr><td>, with <thead>/<tbody>/<tfoot> transparent -
+// the tree builder inserts them, and a page that writes them means the same
+// thing as one that does not.
+struct table_flow {
+	static constexpr float cell_padding = 2;
+	static constexpr float cell_spacing = 2;
+
+	// Rows, flattened through any section elements.
+	[[nodiscard]] static std::vector<const box_node *> rows_of(const box_node & table) {
+		std::vector<const box_node *> out;
+		const auto walk = [&out](auto && self, const box_node & at) -> void {
+			for (const box_node & child : at.children) {
+				if (child.is_row()) {
+					out.push_back(&child);
+				} else if (child.is_row_group()) {
+					self(self, child); // <thead>/<tbody>/<tfoot> are transparent
+				}
+			}
+		};
+		walk(walk, table);
+		return out;
+	}
+
+	// What each column WANTS: the widest cell in it, measured at its own font.
+	[[nodiscard]] static std::vector<float> column_widths(const box_node & table,
+	                                                      const constraints & c,
+	                                                      const measure_text_fn & measure_text) {
+		std::vector<float> widths;
+		for (const box_node * row : rows_of(table)) {
+			std::size_t column = 0;
+			for (const box_node & cell : row->children) {
+				if (!cell.is_cell()) { continue; }
+				if (column >= widths.size()) { widths.push_back(0); }
+				const intrinsic_sizes wants = block_flow{}.measure(cell, c, measure_text);
+				widths[column] = std::max(widths[column], wants.max_content + 2 * cell_padding);
+				++column;
+			}
+		}
+		return widths;
+	}
+
+	[[nodiscard]] intrinsic_sizes measure(const box_node & b, const constraints & c,
+	                                      const measure_text_fn & measure_text) const {
+		const std::vector<float> widths = column_widths(b, c, measure_text);
+		float total = 0;
+		for (const float w : widths) { total += w + cell_spacing; }
+		total += cell_spacing;
+		return intrinsic_sizes{total, total};
+	}
+
+	[[nodiscard]] fragment arrange(const box_node & b, const constraints & c,
+	                               const measure_text_fn & measure_text,
+	                               precomputed * = nullptr) const {
+		const resolved_edges edges = resolve_edges(b, c);
+		std::vector<float> widths = column_widths(b, c, measure_text);
+
+		float natural = cell_spacing;
+		for (const float w : widths) { natural += w + cell_spacing; }
+		// A stated width SCALES the columns rather than being ignored, which is
+		// what `<table width=600>` and `table { width: 100% }` mean.
+		if (!b.width.is_auto()) {
+			const float wanted = b.width.resolve(c.available_width, b.font_size);
+			if (wanted > 0 && natural > cell_spacing) {
+				const float scale = (wanted - cell_spacing * static_cast<float>(widths.size() + 1)) /
+				                    (natural - cell_spacing * static_cast<float>(widths.size() + 1));
+				if (scale > 0) {
+					for (float & w : widths) { w *= scale; }
+					natural = wanted;
+				}
+			}
+		}
+
+		fragment out;
+		out.box = &b;
+		out.source = b.source;
+		float y = edges.pad_top + cell_spacing;
+
+		for (const box_node * row : rows_of(b)) {
+			float x = edges.pad_left + cell_spacing;
+			float row_height = 0;
+			std::vector<fragment> cells;
+			std::size_t column = 0;
+			for (const box_node & cell : row->children) {
+				if (!cell.is_cell()) { continue; }
+				const float column_width = column < widths.size() ? widths[column] : 0;
+				// The cell is laid out INSIDE its column: its text wraps to the
+				// column, which is what makes a narrow column tall instead of
+				// making the table wide.
+				fragment placed = block_flow{}.arrange(
+				    cell, constraints{column_width - 2 * cell_padding, 0, cell.font_size},
+				    measure_text);
+				placed.bounds.x = x + cell_padding;
+				placed.bounds.y = y + cell_padding;
+				placed.bounds.width = column_width - 2 * cell_padding;
+				row_height = std::max(row_height, placed.bounds.height + 2 * cell_padding);
+				cells.push_back(std::move(placed));
+				x += column_width + cell_spacing;
+				++column;
+			}
+			// Every cell in a row is as tall as the tallest, so a row reads as a
+			// row rather than as a ragged set of boxes.
+			for (fragment & cell : cells) {
+				cell.bounds.height = row_height - 2 * cell_padding;
+				out.children.push_back(std::move(cell));
+			}
+			// The row itself is a fragment too, so a page can style and hit-test
+			// it - a <tr> with a background is ordinary CSS.
+			fragment row_fragment;
+			row_fragment.box = row;
+			row_fragment.source = row->source;
+			row_fragment.bounds = rect{edges.pad_left + cell_spacing, y, natural - 2 * cell_spacing,
+			                           row_height};
+			out.children.push_back(std::move(row_fragment));
+			y += row_height + cell_spacing;
+		}
+
+		out.bounds.width = natural + edges.horizontal_padding();
+		out.bounds.height = y + edges.pad_bottom;
+		return out;
+	}
+};
+
+static_assert(LayoutAlgorithm<table_flow>);
 static_assert(LayoutAlgorithm<block_flow>);
 static_assert(LayoutAlgorithm<inline_flow>);
 
@@ -351,6 +496,7 @@ static_assert(LayoutAlgorithm<inline_flow>);
 		f.bounds.height += edges.vertical_padding();
 		return f;
 	}
+	if (b.kind == box_kind::table) { return table_flow{}.arrange(b, c, measure, ready); }
 	if (b.kind == box_kind::inline_) { return inline_flow{}.arrange(b, c, measure, ready); }
 	return block_flow{}.arrange(b, c, measure, ready);
 }

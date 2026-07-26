@@ -41,6 +41,10 @@ enum class box_kind : std::uint8_t {
 	inline_,   // an inline-level box
 	text,      // a run of text
 	anonymous, // a generated block wrapping inline children; no source element
+	table,     // a <table>: its rows share COLUMN widths, which is the whole
+	           // reason it cannot be laid out as blocks - a block sizes itself
+	           // from its own content, and a cell has to size itself from a
+	           // column its siblings in other rows also occupy
 	replaced,  // a box whose size comes from the ELEMENT, not its children:
 	           // <canvas>, <input>, <select>, <textarea>, <img>. CSS calls
 	           // these replaced elements, and the distinction is load bearing -
@@ -50,6 +54,10 @@ enum class box_kind : std::uint8_t {
 struct box_node {
 	box_kind kind = box_kind::block;
 	node_id source;              // empty for anonymous boxes
+	// The element's tag, for the handful of decisions that are about WHAT an
+	// element is rather than about its style - table parts, list items. A view
+	// into the atom table, which outlives every box tree built from it.
+	std::string_view tag;
 	computed_style_ptr style;    // shared; anonymous boxes inherit their parent's
 	std::string text;            // text boxes only
 	std::vector<box_node> children;
@@ -65,11 +73,26 @@ struct box_node {
 	text_face face{};
 	bool underline = false;
 	bool line_through = false;
+	// Generated content the recorder draws: a list item's number (0 = a disc,
+	// i.e. an unordered list) and whether a <details> is open. Decided here
+	// because it is a question about the DOCUMENT - which sibling this is, what
+	// the parent element says - and the recorder has neither.
+	int list_ordinal = 0;
+	bool details_open = false;
 
 	// What a replaced element is sized as when the sheet says nothing. Zero
 	// means it has none and falls back to the block rules.
 	float intrinsic_width = 0;
 	float intrinsic_height = 0;
+
+	// The table parts. Kept as predicates on the box rather than as more
+	// box_kinds: a row and a cell lay out as ordinary blocks, and only the
+	// TABLE needs its own formatting context.
+	[[nodiscard]] bool is_row() const noexcept { return tag == "tr"; }
+	[[nodiscard]] bool is_row_group() const noexcept {
+		return tag == "thead" || tag == "tbody" || tag == "tfoot";
+	}
+	[[nodiscard]] bool is_cell() const noexcept { return tag == "td" || tag == "th"; }
 
 	[[nodiscard]] bool is_block_level() const noexcept {
 		return kind == box_kind::block || kind == box_kind::anonymous;
@@ -140,6 +163,7 @@ private:
 	void build_children(const read_txn & txn, node_id parent, box_node & into,
 	                    float inherited_font, const text_face & inherited_face = {},
 	                    bool inherited_underline = false, bool inherited_line_through = false) {
+		int ordinal = 0;
 		for (const node_id child : txn.children(parent)) {
 			const node_kind kind = txn.kind(child).value_or(node_kind::comment);
 			if (kind == node_kind::text) {
@@ -169,13 +193,38 @@ private:
 
 			box_node b;
 			const std::string_view tag_text = atoms_->text(tag);
-			b.kind = is_replaced_tag(tag_text)
-			             ? box_kind::replaced
-			             : (d == display_kind::inline_level ? box_kind::inline_ : box_kind::block);
+			b.kind = is_replaced_tag(tag_text) ? box_kind::replaced
+			         : tag_text == "table"     ? box_kind::table
+			         : (d == display_kind::inline_level ? box_kind::inline_ : box_kind::block);
 			b.source = child;
+			b.tag = tag_text;
 			b.style = style;
+			if (tag_text == "li") {
+				// An <ol> numbers its items and a <ul> does not; the ordinal is
+				// this item's position among its element siblings.
+				const std::string_view parent_tag = atoms_->text(txn.tag(parent).value_or(atom{}));
+				b.list_ordinal = parent_tag == "ol" ? ++ordinal : 0;
+			}
+			if (tag_text == "summary") {
+				b.details_open = txn.has_attribute(parent, atoms_->intern("open"));
+			}
 			b.width = parse_length(prop(style, width_));
 			b.height = parse_length(prop(style, height_));
+			// PRESENTATIONAL ATTRIBUTES. `<table width=400>` and `<td width=50>`
+			// are how a great deal of existing HTML sizes a table, and they mean
+			// the CSS property - at the bottom of the cascade, so a sheet still
+			// wins. A bare number is pixels; `width="50%"` is a percentage.
+			if (b.width.is_auto() && (tag_text == "table" || tag_text == "td" ||
+			                          tag_text == "th" || tag_text == "col")) {
+				const std::string_view attribute =
+				    txn.attribute_value(child, atoms_->intern("width"));
+				if (!attribute.empty()) {
+					const length parsed = parse_length(attribute);
+					b.width = parsed.is_auto() && attribute.find('%') == std::string_view::npos
+					              ? length{parse_number(attribute), unit::px}
+					              : parsed;
+				}
+			}
 			b.margin = parse_sides(prop(style, margin_));
 			b.padding = parse_sides(prop(style, padding_));
 			const length fs = parse_length(prop(style, font_size_));
@@ -358,6 +407,14 @@ private:
 	// first name wins here; a real fallback chain needs to know which faces are
 	// loaded, which is the backend's business, so the backend gets the whole
 	// list only if the first name misses.
+	// A bare number, for a presentational attribute. Not parse_length: that
+	// wants a unit, and `width="400"` has none.
+	[[nodiscard]] static float parse_number(std::string_view text) {
+		float value = 0;
+		const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+		return parsed.ec == std::errc{} ? value : 0;
+	}
+
 	[[nodiscard]] static std::string first_family(std::string_view list) {
 		std::size_t start = 0;
 		while (start < list.size() && (list[start] == ' ' || list[start] == '\t')) { ++start; }

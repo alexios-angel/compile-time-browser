@@ -110,6 +110,7 @@ private:
 
 		if (const auto bg = parse_color(prop(style, background_))) { into.fill(box, *bg, f.source); }
 		emit_border(box, style, f.source, into);
+		emit_marker(f, box, text_color, into);
 
 		// Replaced elements paint themselves and have no laid-out children, so
 		// the recursion stops here.
@@ -130,6 +131,38 @@ private:
 	// Borders as four fills. Not a shortcut that needs apologising for: a solid
 	// border IS four rects, and the cases that are not (radii, dashes, per-side
 	// colours) need their own commands rather than a wider version of this one.
+	// The bullet or number in front of a list item, and the triangle in front of
+	// a <summary>. Generated content: there is no element behind these, so they
+	// are drawn rather than laid out, in the gutter the UA sheet's padding-left
+	// already reserves.
+	//
+	// The ORDINAL is counted among an item's siblings rather than stored, so
+	// `<ol>` numbering follows the document and needs nothing on the box.
+	void emit_marker(const fragment & f, const rect & box, color text_color,
+	                 display_list & into) const {
+		if (f.box == nullptr) { return; }
+		const float size = f.box->font_size;
+		if (f.box->tag == "summary") {
+			// The disclosure triangle: right when closed, down when open. Drawn
+			// as text so it follows the font, which is what a browser does.
+			const bool open = f.box->details_open;
+			into.text(rect{box.x - size, box.y, size, size}, open ? "v" : ">", size, text_color,
+			          f.source);
+			return;
+		}
+		if (f.box->tag != "li") { return; }
+		if (f.box->list_ordinal <= 0) {
+			// Unordered: a disc, which font8x8 has no glyph for, so it is a
+			// filled square scaled to the text. A round one needs a shape the
+			// display list does not have.
+			const float dot = std::max(2.0f, size * 0.3f);
+			into.fill(rect{box.x - size, box.y + (size - dot) / 2, dot, dot}, text_color, f.source);
+			return;
+		}
+		into.text(rect{box.x - size * 1.6f, box.y, size * 1.6f, size},
+		          std::to_string(f.box->list_ordinal) + ".", size, text_color, f.source);
+	}
+
 	void emit_border(const rect & box, const computed_style_ptr & style, node_id source,
 	                 display_list & into) const {
 		const auto c = parse_color(prop(style, border_color_));
