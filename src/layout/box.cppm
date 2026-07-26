@@ -79,6 +79,9 @@ struct box_node {
 	// the parent element says - and the recorder has neither.
 	int list_ordinal = 0;
 	bool details_open = false;
+	// `<table border=N>`. A presentational attribute rather than CSS, and it
+	// frames the cells as well as the table, so it rides on the box.
+	float border_px = 0;
 
 	// What a replaced element is sized as when the sheet says nothing. Zero
 	// means it has none and falls back to the block rules.
@@ -139,7 +142,8 @@ public:
 	      padding_(atoms.intern("padding")), font_size_(atoms.intern("font-size")),
 	      font_family_(atoms.intern("font-family")), font_weight_(atoms.intern("font-weight")),
 	      font_style_(atoms.intern("font-style")),
-	      text_decoration_(atoms.intern("text-decoration")) {}
+	      text_decoration_(atoms.intern("text-decoration")),
+	      white_space_(atoms.intern("white-space")) {}
 
 	[[nodiscard]] box_node build(const read_txn & txn, node_id root) {
 		box_node out;
@@ -162,7 +166,8 @@ private:
 
 	void build_children(const read_txn & txn, node_id parent, box_node & into,
 	                    float inherited_font, const text_face & inherited_face = {},
-	                    bool inherited_underline = false, bool inherited_line_through = false) {
+	                    bool inherited_underline = false, bool inherited_line_through = false,
+	                    bool preserve_whitespace = false) {
 		int ordinal = 0;
 		for (const node_id child : txn.children(parent)) {
 			const node_kind kind = txn.kind(child).value_or(node_kind::comment);
@@ -173,7 +178,15 @@ private:
 				t.kind = box_kind::text;
 				t.source = child;
 				t.style = into.style;
-				t.text = std::string{text};
+				// COLLAPSED, unless the element preserves whitespace. HTML folds
+				// every run of space/tab/newline into ONE SPACE, and v2 never
+				// did: the newlines in a page's own source went straight to the
+				// rasterizer. font8x8 drew nothing for them so nobody noticed;
+				// a real font draws .notdef, which is a BOX, and a line full of
+				// boxes is what finally showed it up. It also broke wrapping -
+				// `words_that_fit` splits on ' ' alone, so two words joined by a
+				// newline were one unbreakable word and the line overflowed.
+				t.text = preserve_whitespace ? std::string{text} : collapse_whitespace(text);
 				t.font_size = inherited_font;
 				// A text box has no style of its own; it is drawn in whatever
 				// its parent element resolved to.
@@ -199,6 +212,17 @@ private:
 			b.source = child;
 			b.tag = tag_text;
 			b.style = style;
+			// `border` on a table frames the table and every cell in it. The
+			// attribute is inherited down to the cells here because that is
+			// where the recorder can see it.
+			if (tag_text == "table") {
+				const std::string_view attribute =
+				    txn.attribute_value(child, atoms_->intern("border"));
+				if (!attribute.empty()) { b.border_px = std::max(0.0f, parse_number(attribute)); }
+			} else if (b.is_cell() || b.is_row_group() || b.is_row()) {
+				b.border_px = into.border_px > 0 && b.is_cell() ? 1.0f : 0.0f;
+				if (b.is_row() || b.is_row_group()) { b.border_px = into.border_px; }
+			}
 			if (tag_text == "li") {
 				// An <ol> numbers its items and a <ul> does not; the ordinal is
 				// this item's position among its element siblings.
@@ -243,7 +267,13 @@ private:
 			if (b.kind == box_kind::replaced) {
 				intrinsic_size_of(txn, child, tag_text, b);
 			} else {
-				build_children(txn, child, b, b.font_size, b.face, b.underline, b.line_through);
+				// `white-space: pre` INHERITS, which is what makes markup inside
+				// a <pre> keep its layout.
+				const std::string_view white_space = prop(style, white_space_);
+				const bool preserve = white_space.empty() ? preserve_whitespace
+				                                          : white_space.starts_with("pre");
+				build_children(txn, child, b, b.font_size, b.face, b.underline, b.line_through,
+				               preserve);
 				normalise(b);
 			}
 			into.children.push_back(std::move(b));
@@ -409,6 +439,27 @@ private:
 	// list only if the first name misses.
 	// A bare number, for a presentational attribute. Not parse_length: that
 	// wants a unit, and `width="400"` has none.
+	// HTML whitespace: every run of space, tab, newline, carriage return or
+	// form feed is ONE SPACE.
+	[[nodiscard]] static std::string collapse_whitespace(std::string_view text) {
+		const auto is_space = [](char c) {
+			return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
+		};
+		std::string out;
+		out.reserve(text.size());
+		bool in_run = false;
+		for (const char c : text) {
+			if (is_space(c)) {
+				if (!in_run) { out.push_back(' '); }
+				in_run = true;
+			} else {
+				out.push_back(c);
+				in_run = false;
+			}
+		}
+		return out;
+	}
+
 	[[nodiscard]] static float parse_number(std::string_view text) {
 		float value = 0;
 		const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
@@ -463,7 +514,7 @@ private:
 	const style::style_map * styles_;
 	measure_text_fn measure_;
 	atom display_, width_, height_, margin_, padding_, font_size_;
-	atom font_family_, font_weight_, font_style_, text_decoration_;
+	atom font_family_, font_weight_, font_style_, text_decoration_, white_space_;
 };
 
 } // namespace ctbrowser::layout

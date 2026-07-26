@@ -268,7 +268,11 @@ public:
 		if (clamped == scroll_y_) { return; }
 		scroll_y_ = clamped;
 		layers_.scroll_to(0, scroll_y_);
-		// NOT dirty. Tiles are in content space and survive this.
+		// The page's tiles survive - they are in CONTENT space, which is the
+		// point of the whole design - but the scrollbar's thumb is a function
+		// of where we now are, so its two rectangles are redrawn.
+		refresh_scrollbar();
+		// NOT dirty otherwise. Tiles are in content space and survive this.
 	}
 	[[nodiscard]] float scroll_y() const noexcept { return scroll_y_; }
 	[[nodiscard]] float content_height() const noexcept { return content_height_; }
@@ -602,6 +606,7 @@ private:
 		};
 		layers_ = recorder_.record_layers(fragments_);
 		layers_.scroll_to(0, scroll_y_);
+		page_layers_ = layers_.layers.size(); // everything after this is chrome
 		record_scrollbar();
 	}
 
@@ -611,6 +616,18 @@ private:
 	// does, and the compositor already knows how to hold a layer still. That is
 	// also why it survives a scroll without re-recording anything - a scroll
 	// moves the page layer and leaves this one where it is.
+	// Rebuilt on every frame whose scroll moved, NOT only when the page
+	// re-records. A scroll marks dirty::composite, which deliberately skips
+	// recording - so the thumb was drawn once and then stayed where it was
+	// until something else forced a re-record. That is the delay: the bar was
+	// always one edit behind.
+	//
+	// Cheap enough to do unconditionally: it is two rectangles.
+	void refresh_scrollbar() {
+		layers_.layers.resize(std::min(page_layers_, layers_.layers.size()));
+		record_scrollbar();
+	}
+
 	void record_scrollbar() {
 		if (max_scroll() <= 0 || options_.scrollbar_width <= 0) { return; }
 		const float width = options_.scrollbar_width;
@@ -1061,6 +1078,7 @@ private:
 	// call that compiled it and the context that executes it.
 	// Null means font8x8, which is always available and always identical - so a
 	// build with no font files still renders and its goldens still compare.
+	std::size_t page_layers_ = 0; // how many of layers_ are the page's
 	bool sb_dragging_ = false;
 	float sb_grab_ = 0; // where in the thumb the drag started
 	const ctbrowser::raster::font_backend * fonts_ = nullptr;

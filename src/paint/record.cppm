@@ -111,6 +111,13 @@ private:
 		if (const auto bg = parse_color(prop(style, background_))) { into.fill(box, *bg, f.source); }
 		emit_border(box, style, f.source, into);
 		emit_marker(f, box, text_color, into);
+		// `<table border=1>`: a presentational attribute, not CSS, and one that
+		// draws a frame around the table AND around every cell - which is what
+		// the attribute has always meant and what makes a bordered table read
+		// as a grid.
+		if (f.box != nullptr && f.box->border_px > 0) {
+			stroke(box, f.box->border_px, color{ctbrowser::style::ua_table_border}, f.source, into);
+		}
 
 		// Replaced elements paint themselves and have no laid-out children, so
 		// the recursion stops here.
@@ -163,6 +170,14 @@ private:
 		          std::to_string(f.box->list_ordinal) + ".", size, text_color, f.source);
 	}
 
+	// A rectangle's four edges, `t` thick.
+	static void stroke(const rect & box, float t, color c, node_id source, display_list & into) {
+		into.fill(rect{box.x, box.y, box.width, t}, c, source);
+		into.fill(rect{box.x, box.bottom() - t, box.width, t}, c, source);
+		into.fill(rect{box.x, box.y + t, t, box.height - 2 * t}, c, source);
+		into.fill(rect{box.right() - t, box.y + t, t, box.height - 2 * t}, c, source);
+	}
+
 	void emit_border(const rect & box, const computed_style_ptr & style, node_id source,
 	                 display_list & into) const {
 		const auto c = parse_color(prop(style, border_color_));
@@ -171,10 +186,7 @@ private:
 		const layout::length w = layout::parse_length(width_text);
 		const float t = w.is_auto() ? 0 : w.resolve(box.width, 16);
 		if (t <= 0) { return; }
-		into.fill(rect{box.x, box.y, box.width, t}, *c, source);
-		into.fill(rect{box.x, box.bottom() - t, box.width, t}, *c, source);
-		into.fill(rect{box.x, box.y + t, t, box.height - 2 * t}, *c, source);
-		into.fill(rect{box.right() - t, box.y + t, t, box.height - 2 * t}, *c, source);
+		stroke(box, t, *c, source, into);
 	}
 
 	atom background_, color_, border_color_, border_width_, overflow_;

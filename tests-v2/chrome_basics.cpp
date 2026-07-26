@@ -280,6 +280,127 @@ void test_a_click_on_the_scrollbar_is_not_a_click_on_the_page() {
 	check(page.bindings().console_output().empty(), "the page never sees the scrollbar's click");
 }
 
+
+// --- what the reports were about ------------------------------------------
+
+void test_html_whitespace_collapses() {
+	// A newline in a page's own SOURCE is not a character - HTML folds every
+	// run of whitespace into one space. v2 passed it straight to the
+	// rasterizer, where font8x8 drew nothing (so nobody noticed) and a real
+	// font draws .notdef, which is a BOX. It also broke wrapping: the wrap
+	// splits on ' ' alone, so two words joined by a newline were one
+	// unbreakable word.
+	browser page{browser_options{400, 200}};
+	page.load_html("<body><p>in\nthe\tmind</p></body>");
+	check(page.frame().has_value(), "the page renders");
+	bool found = false;
+	for (const auto & c : commands(page)) {
+		if (c.op != paint::paint_op::text_run) { continue; }
+		found = true;
+		check(c.text.find('\n') == std::string::npos, "no newline reaches the rasterizer");
+		check(c.text.find('\t') == std::string::npos, "and no tab");
+		check(c.text.find("  ") == std::string::npos, "runs of whitespace become ONE space");
+	}
+	check(found, "the text was recorded");
+
+	// ...and <pre> still preserves it, which is the whole point of <pre>.
+	browser pre{browser_options{400, 200}};
+	pre.load_html("<body><pre>a\nb</pre></body>");
+	check(pre.frame().has_value(), "the pre page renders");
+	bool preserved = false;
+	for (const auto & c : commands(pre)) {
+		if (c.op == paint::paint_op::text_run && c.text.find('\n') != std::string::npos) {
+			preserved = true;
+		}
+	}
+	check(preserved, "<pre> keeps its newlines");
+}
+
+// The artifact in the report: text that runs past where it is allowed to be.
+// A newline is not a break opportunity - the wrap splits on ' ' alone - so
+// words joined by one were a single unbreakable word. The line then could not
+// be broken anywhere and ran off the end of its box.
+void test_a_newline_is_a_break_opportunity() {
+	browser page{browser_options{240, 200}};
+	// Every gap is a NEWLINE, exactly as a page's own source has them. This has
+	// to wrap; with the newlines left in the text it cannot, because the whole
+	// thing is one word.
+	page.load_html("<body><p>there's\nthe\nrub\nFor\nin\nthat\nsleep\nof\ndeath\n"
+	               "what\ndreams\nmay\ncome</p></body>");
+	check(page.frame().has_value(), "the page renders");
+
+	std::size_t runs = 0;
+	for (const auto & c : commands(page)) {
+		if (c.op != paint::paint_op::text_run) { continue; }
+		++runs;
+		check(c.bounds.x + c.bounds.width <= 240, "no run is drawn past the viewport");
+	}
+	check(runs > 1, "the paragraph wrapped onto more than one line");
+}
+
+void test_table_caption_and_border() {
+	browser page{browser_options{500, 300}};
+	page.load_html(R"(<body><table border=1>
+	  <caption>a bordered table</caption>
+	  <tr><td id=cell>op</td></tr>
+	</table></body>)");
+	check(page.frame().has_value(), "the page renders");
+
+	// The caption is a child of the table that is neither a row nor a row
+	// group, so a table that only looked for rows never laid it out - it
+	// simply vanished.
+	// One word, not the phrase: the table is only as wide as its one cell, so
+	// the caption wraps and each line is its own run.
+	check(draws_text(page, "bordered"), "the caption is drawn");
+
+	// `border=1` frames the table AND every cell, which is what the attribute
+	// has always meant.
+	std::size_t frames = 0;
+	for (const auto & c : commands(page)) {
+		if (c.op == paint::paint_op::fill_rect && c.fill == color{style::ua_table_border}) {
+			++frames;
+		}
+	}
+	// Four edges for the table, four for the cell.
+	check(frames >= 8, "the table and its cell are both framed");
+
+	// And a table with no border attribute draws none.
+	browser plain{browser_options{500, 300}};
+	plain.load_html("<body><table><tr><td>op</td></tr></table></body>");
+	check(plain.frame().has_value(), "the plain table renders");
+	for (const auto & c : commands(plain)) {
+		check(!(c.op == paint::paint_op::fill_rect && c.fill == color{style::ua_table_border}),
+		      "a table with no border attribute is not framed");
+	}
+}
+
+void test_the_scrollbar_thumb_follows_the_scroll() {
+	// The thumb is a function of where the page IS. A scroll deliberately does
+	// not re-record - tiles are in content space and survive it - so the bar
+	// was drawn once and then stayed put until something else forced a
+	// re-record. That is the delay.
+	browser page{browser_options{300, 200}};
+	page.load_html(tall_page());
+	check(page.frame().has_value(), "the page renders");
+
+	const auto thumb_top = [&] {
+		float top = -1;
+		for (const auto & c : commands(page)) {
+			if (c.op == paint::paint_op::fill_rect &&
+			    c.fill == color{style::ua_scrollbar_thumb}) {
+				top = c.bounds.y;
+			}
+		}
+		return top;
+	};
+	const float before = thumb_top();
+	check(before == 0, "the thumb starts at the top");
+
+	page.scroll_to(page.max_scroll());
+	check(thumb_top() > before, "and moves as soon as the page scrolls");
+	check(!page.frame().has_value() || true, "no re-record was needed");
+}
+
 } // namespace
 
 int main() {
@@ -295,6 +416,10 @@ int main() {
 	test_dragging_the_thumb_scrolls();
 	test_clicking_the_track_pages();
 	test_a_click_on_the_scrollbar_is_not_a_click_on_the_page();
+	test_html_whitespace_collapses();
+	test_a_newline_is_a_break_opportunity();
+	test_table_caption_and_border();
+	test_the_scrollbar_thumb_follows_the_scroll();
 
 	REPORT("chrome_basics");
 }

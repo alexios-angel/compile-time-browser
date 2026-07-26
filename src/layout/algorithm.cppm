@@ -417,6 +417,21 @@ struct table_flow {
 		out.source = b.source;
 		float y = edges.pad_top + cell_spacing;
 
+		// THE CAPTION, above the grid and as wide as it. It is a child of the
+		// table that is neither a row nor a row group, so a table that only
+		// looked for rows never laid it out at all - it simply vanished.
+		for (const box_node & child : b.children) {
+			if (child.tag != "caption") { continue; }
+			fragment caption = block_flow{}.arrange(
+			    child, constraints{natural, 0, child.font_size}, measure_text);
+			caption.bounds.x = edges.pad_left;
+			caption.bounds.y = y;
+			caption.bounds.width = natural;
+			y += caption.bounds.height;
+			out.children.push_back(std::move(caption));
+			break; // one caption per table, per spec
+		}
+
 		for (const box_node * row : rows_of(b)) {
 			float x = edges.pad_left + cell_spacing;
 			float row_height = 0;

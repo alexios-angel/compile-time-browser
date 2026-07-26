@@ -40,6 +40,7 @@ inline constexpr std::string_view ua_css = R"(
 	h6 { font-size: 11px; margin: 37px 0 }
 
 	p, blockquote, figure, ul, ol, dl, pre { margin: 16px 0 }
+	pre, textarea { white-space: pre; font-family: monospace }
 	blockquote, figure { margin-left: 40px; margin-right: 40px }
 	ul, ol { padding-left: 40px }
 	dd { margin-left: 40px }
@@ -60,6 +61,11 @@ inline constexpr std::string_view ua_css = R"(
 	   Gecko does, and it is wrong for checkboxes - it made them 160px wide. */
 	th, td { padding: 1px }
 	caption { text-align: center }
+	/* Table parts are BLOCK-level here, not inline. Left inline, `normalise`
+	   wraps them in anonymous boxes and the table formatting context then looks
+	   for its rows and its caption among children that are no longer them - the
+	   caption simply vanished. */
+	caption, thead, tbody, tfoot, tr, th, td { display: block }
 	table { margin: 0 }
 
 	hr { height: 2px; background-color: #808080; margin: 8px 0 }
@@ -82,6 +88,8 @@ inline constexpr std::uint32_t ua_widget_field = 0xFFFFFFFFu;
 inline constexpr std::uint32_t ua_selection_highlight = 0xFFB4D5FEu;
 inline constexpr std::uint32_t ua_canvas = 0xFFFFFFFFu; // the page behind everything
 // The overlay scrollbar, in Firefox's greys.
+// The frame `<table border=N>` draws, in Gecko's grey.
+inline constexpr std::uint32_t ua_table_border = 0xFF808080u;
 inline constexpr std::uint32_t ua_scrollbar_track = 0xFFF0F0F0u;
 inline constexpr std::uint32_t ua_scrollbar_thumb = 0xFFC1C1C1u;
 inline constexpr std::uint32_t ua_scrollbar_thumb_active = 0xFF8F8F8Fu;

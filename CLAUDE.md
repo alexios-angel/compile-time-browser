@@ -232,6 +232,22 @@ element behind it, so it is drawn rather than laid out; the ordinal and the
 open/closed state are decided in the box builder, which is the only place that
 knows what the siblings and the parent are.
 
+**HTML WHITESPACE COLLAPSES** — every run of space/tab/newline is one space,
+except under `white-space: pre` (which the UA sheet now gives `pre` and
+`textarea`, and which INHERITS). v2 never did this: the newlines in a page's own
+SOURCE went straight to the rasterizer. font8x8 drew nothing for them so nobody
+noticed for six stages; a real font draws `.notdef`, which is a BOX, and a page
+full of boxes is what finally showed it. It also broke wrapping — the wrap
+splits on `' '` alone, so two words joined by a newline were one unbreakable
+word and the line ran off the end of its box.
+
+**Table parts are `display: block`** in the UA sheet. Left inline, `normalise`
+wraps them in anonymous boxes, and the table formatting context then looks for
+its rows and its caption among children that are no longer them — the
+`<caption>` simply vanished. `<caption>` lays out above the grid;
+`<table border=N>` frames the table AND each cell, which is what the attribute
+has always meant.
+
 **The scrollbar is its own non-scrolling LAYER**, not a paint into the page —
 the compositor already knows how to hold a layer still, so a scroll moves the
 page layer and leaves the bar where it is without re-recording anything. Thumb
