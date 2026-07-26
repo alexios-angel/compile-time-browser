@@ -54,12 +54,26 @@ if(CTBROWSER_V2_USE_LLD AND CTBROWSER_HAVE_LINKER_CHECK)
   endif()
 endif()
 
+# --- WHOLE-PROGRAM INLINING, IF YOU WANT IT BACK ------------------------
+# Moving the engine's code out of the module interfaces is what made consumer
+# builds fast, and the thing it gives up is the compiler's freedom to inline
+# ACROSS the library boundary - which is what an all-inline (or header-only)
+# engine gave for free, at the cost of recompiling it in every translation unit.
+#
+# LTO buys that back at link time instead of at compile time, which is the same
+# trade made in the right place. Off by default because it makes linking slow
+# again, and the default here is meant to be fast to build.
+option(CTBROWSER_V2_LTO "Inline across the engine boundary again, at link time" OFF)
+
 # Everything v2 builds - libraries, tests and examples - goes through this, so
 # there is one place that decides how v2 is compiled and linked.
 function(ctbrowser_v2_target name)
   target_compile_options(${name} PRIVATE ${CTBROWSER_V2_WARNINGS})
   if(CTBROWSER_V2_LINK_OPTIONS)
     target_link_options(${name} PRIVATE ${CTBROWSER_V2_LINK_OPTIONS})
+  endif()
+  if(CTBROWSER_V2_LTO)
+    set_property(TARGET ${name} PROPERTY INTERPROCEDURAL_OPTIMIZATION ON)
   endif()
 endfunction()
 
@@ -357,6 +371,40 @@ target_link_libraries(ctbrowser-v2 PUBLIC
 set_target_properties(ctbrowser-v2 PROPERTIES CXX_SCAN_FOR_MODULES ON)
 add_library(ctbrowser::v2 ALIAS ctbrowser-v2)
 
+# --- ONE ARCHIVE ---------------------------------------------------------
+# The engine is nine libraries because it is nine modules, and every one of
+# them ends up on every link line. `libctbrowser.a` is all of them merged, so
+# an application - or a build system that is not CMake - links ONE file.
+#
+# It is a merge, not a rebuild: the same objects, collected with the archiver.
+# CMake users need nothing new; `ctbrowser::v2` still works and still carries
+# the include paths and module BMIs, which an archive cannot.
+#
+# CTBROWSER_V2_SINGLE_LIB=OFF skips it.
+option(CTBROWSER_V2_SINGLE_LIB "Also produce one merged libctbrowser.a" ON)
+if(CTBROWSER_V2_SINGLE_LIB)
+  set(ctbrowser-merged "${CMAKE_CURRENT_BINARY_DIR}/libctbrowser.a")
+  set(ctbrowser-parts ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style
+                      ctbrowser-layout ctbrowser-paint ctbrowser-raster ctbrowser-shell
+                      ctbrowser-app ctbrowser-v2)
+  set(ctbrowser-part-files "")
+  foreach(part IN LISTS ctbrowser-parts)
+    list(APPEND ctbrowser-part-files "$<TARGET_FILE:${part}>")
+  endforeach()
+  # The MRI script is how llvm-ar and GNU ar both merge archives; writing it at
+  # build time keeps the generator expressions resolvable.
+  set(ctbrowser-mri "${CMAKE_CURRENT_BINARY_DIR}/ctbrowser-merge.mri")
+  file(GENERATE OUTPUT "${ctbrowser-mri}" CONTENT
+       "create ${ctbrowser-merged}\n$<JOIN:$<LIST:TRANSFORM,${ctbrowser-part-files},PREPEND,addlib >,\n>\nsave\nend\n")
+  add_custom_command(
+    OUTPUT "${ctbrowser-merged}"
+    COMMAND "${CMAKE_AR}" -M < "${ctbrowser-mri}"
+    DEPENDS ${ctbrowser-parts} "${ctbrowser-mri}"
+    COMMENT "merging the v2 engine into one libctbrowser.a"
+    VERBATIM)
+  add_custom_target(ctbrowser-single-lib ALL DEPENDS "${ctbrowser-merged}")
+endif()
+
 # --- ctbrowser.gpu -------------------------------------------------------
 # OPTIONAL by construction. Without SDL3 the engine still builds and still
 # renders - through the software backend - because raster::renderer is a
@@ -411,6 +459,22 @@ install(EXPORT ctbrowser-v2-targets
 set(CTBROWSER_V2_CONFIG_DEPS "find_dependency(Boost 1.80 CONFIG)\nfind_dependency(Threads)")
 if(SDL3_FOUND)
   string(APPEND CTBROWSER_V2_CONFIG_DEPS "\nfind_dependency(SDL3 CONFIG)")
+endif()
+# EVERY package an exported target links has to be findable by the consumer,
+# or find_package(ctbrowser-v2) fails on a target it cannot resolve. Adding an
+# optional dependency to a library and forgetting this line is exactly the kind
+# of break tools/check-package.sh exists to catch - it caught these two.
+if(Freetype_FOUND)
+  string(APPEND CTBROWSER_V2_CONFIG_DEPS "\nfind_dependency(Freetype)")
+endif()
+if(OpenSSL_FOUND)
+  string(APPEND CTBROWSER_V2_CONFIG_DEPS "\nfind_dependency(OpenSSL COMPONENTS SSL Crypto)")
+endif()
+if(SDL3_image_FOUND)
+  string(APPEND CTBROWSER_V2_CONFIG_DEPS "\nfind_dependency(SDL3_image CONFIG)")
+endif()
+if(SDL3_ttf_FOUND)
+  string(APPEND CTBROWSER_V2_CONFIG_DEPS "\nfind_dependency(SDL3_ttf CONFIG)")
 endif()
 file(WRITE "${PROJECT_BINARY_DIR}/ctbrowser-v2-config.cmake"
 "include(CMakeFindDependencyMacro)

@@ -79,6 +79,47 @@ close over each element at the top level.
 `tests-v2/page_scripts` compiles the real example pages and asserts what each
 one does; `tests-v2/vm_basics` has a test per language feature.
 
+## v2 BUILD SPEED (2026-07-25)
+
+Measured, then fixed. A clean v2 build was **143.7 s wall / 237.9 s CPU**; it is
+now **116.7 s / 221 s**, and the parts a user waits on moved most:
+`tests-v2` 221 s → 127 s, `examples-v2` 138 s → 36 s. A bare
+`import ctbrowser;` with an empty `main` costs **0.89 s**, so the umbrella is
+cheap — a consumer pays for what it USES.
+
+Three things did it:
+
+1. **lld.** The same executable links in 0.65 s against 4.31 s with the default
+   `ld`, and v2 builds twenty-six of them. `CTBROWSER_V2_USE_LLD=OFF` opts out;
+   `ctbrowser_v2_target()` is the one place that decides how v2 is built.
+2. **Module implementation units.** `script/{vm,builtins}.cpp`,
+   `shell/{app,net}.cpp` — interfaces DECLARE, `module X;` units DEFINE. Every
+   TU that imported the engine used to re-instantiate and re-optimise it:
+   `vm_basics.cpp.o` was 1.6 MB / 2698 symbols, of which `install_builtins` was
+   21 KB and the VM's `run_loop` 15 KB.
+3. **THIRD-PARTY HEADERS ARE NOT ALLOWED IN AN INTERFACE'S GMF.** This is the
+   one to remember: a module's global module fragment is **serialized into its
+   BMI**. `#include <boost/asio.hpp>` in `:net` made that BMI **27 MB**, and
+   `<SDL3/SDL.h>` made `ctbrowser.app.pcm` 26 MB — for headers whose types
+   neither module exposes. Moving them into the implementation units took
+   net.pcm to 3.7 MB. Put Boost/SDL/FreeType includes in a `.cpp`, never in a
+   `.cppm` interface, unless the type is genuinely in the public API.
+
+**One archive:** `libctbrowser.a` merges all nine engine libraries (an `ar`
+merge of the same objects, not a rebuild), so a non-CMake build links ONE file.
+`CTBROWSER_V2_SINGLE_LIB=OFF` skips it; CMake users keep using
+`ctbrowser::v2`, which also carries the include paths and BMIs an archive
+cannot.
+
+**The opt-out:** a modules project has no header-only mode, so the knob that
+buys back what an all-inline engine gave is `CTBROWSER_V2_LTO=ON` — inlining
+across the library boundary at LINK time rather than by recompiling the engine
+in every TU. Off by default, because the default is meant to be fast to build.
+
+`tools/check-package.sh` is what catches the other half of this: an exported
+target that links `Freetype::Freetype` needs a matching `find_dependency` in the
+installed config, and stage 6 shipped without one.
+
 ## v2 APPLICATION API (2026-07-25)
 
 **`import ctbrowser;` + `ctbrowser::run_app(html, options)` is the whole
