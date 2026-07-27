@@ -41,6 +41,9 @@ struct input_event {
 	// at the boundary. The private one ("Left", "Return") was invisible to
 	// pages, which compare against `e.code`.
 	std::string key;
+	// 0 is the left button. The DOM numbers the right one 2, and so does this -
+	// there was no concept of it at all before, so a context menu had nothing
+	// to open on.
 	std::uint8_t button = 0;
 	bool shift = false; // extends a selection rather than moving the caret
 	bool ctrl = false;  // the clipboard and select-all shortcuts
@@ -48,6 +51,9 @@ struct input_event {
 	[[nodiscard]] static input_event mouse_move_to(float x, float y) {
 		return input_event{input_kind::mouse_move, x, y, 0, {}, 0};
 	}
+	static constexpr std::uint8_t left_button = 0;
+	static constexpr std::uint8_t right_button = 2;
+
 	[[nodiscard]] static input_event mouse_down_at(float x, float y, std::uint8_t button = 0) {
 		return input_event{input_kind::mouse_down, x, y, 0, {}, button};
 	}

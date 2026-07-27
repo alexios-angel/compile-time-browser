@@ -48,9 +48,10 @@ Deleting v1 today removes working, tested functionality with no replacement:
   canvas context landed later.
 - ~~**Form controls and editing.**~~ **MOSTLY DONE.** Text fields, checkboxes,
   radios, buttons, focus, the caret, typing, editing keys, submit and reset all
-  work. Still missing: `<select>` option lists (the box draws, the popup does
-  not), textarea soft-wrap and multi-line caret movement, clipboard, and
-  page-level text selection.
+  work, and so do the `<select>` popup, the clipboard (Ctrl+C/X/V and the
+  right-click menu) and system cursors. Still missing: textarea soft-wrap and
+  multi-line caret movement, and page-level text SELECTION - selecting inside a
+  field works, selecting across a paragraph does not.
 - ~~**Canvas 2D.**~~ **MOSTLY DONE.** `getContext("2d")`, fills, strokes, paths,
   arcs, transforms, state stack, `fillText`, `measureText`, and `drawImage` in
   all three forms from either an `<img>` or a `loadImage` handle. Still missing:
@@ -61,11 +62,9 @@ Deleting v1 today removes working, tested functionality with no replacement:
   width attributes - v1 emitted tables from its block pass.
 - **The `r3d` software 3D rasterizer and the BabylonJS shim**, plus glTF/GLB
   loading and texture decoding. ~4500 lines with three tests.
-- **Widget chrome.** PARTLY DONE (2026-07-25): scrollbar (overlay layer, thumb
-  drag, track paging, reserved width), list markers, disclosure triangles and
-  a `<select>` that shows its selected option all landed. Still missing: the
-  `<select>` POPUP, the context menu, page-level text selection, the clipboard
-  and system cursors.
+- ~~**Widget chrome.**~~ **DONE (2026-07-25)** except page-level text
+  selection: scrollbar, list markers, disclosure triangles, the `<select>`
+  popup, the context menu, the clipboard and system cursors all landed.
 - ~~**Real fonts.**~~ **DONE.** See above - v2's is FreeType in the engine
   rather than SDL3_ttf in the shell.
 - ~~**Images and audio.**~~ **DONE (2026-07-25).** `ctbrowser.shell:assets` is

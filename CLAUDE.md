@@ -293,6 +293,23 @@ under the bar. That terminates because narrowing a page can only make it
 taller, so a page that overflowed still overflows. `browser_options::
 scrollbar_width = 0` hides it, which is what a fixed-size game wants.
 
+**Browser chrome is a stack of non-scrolling LAYERS** — the scrollbar, an open
+`<select>`'s option list, the context menu — rebuilt together by
+`record_chrome()` and invalidated with `discard_layer()` so the page's tiles
+survive. A `<select>` opens on click, closes on Escape or a click anywhere else,
+and the click that closes it does NOT reach the page.
+
+**Right button, context menu, clipboard, cursors.** `input_event` numbers
+buttons the way the DOM does (right = 2); SDL numbers from 1 and calls it 3, so
+passing SDL's number through made a right-click look like button 3, which
+nothing was looking for. The menu is Copy/Cut/Paste/Select All, and the page
+gets a CANCELABLE `contextmenu` first — `preventDefault` suppresses ours.
+Ctrl+C/X/V do the same verbs. The clipboard is TWO HOOKS on the browser, filled
+in by the app layer from SDL; without them copy and paste still work within the
+page, which is what makes the whole path testable headlessly.
+`browser::cursor_at()` returns a NAME (`pointer`, `text`, `default`) so the
+engine needs no cursor vocabulary and the app maps it to a system cursor.
+
 **`<select>` shows its option.** It drew an EMPTY RECTANGLE before — it passed
 an empty string as the label and never read `<option>` at all. Now: the
 `selected` option, else the first, else whatever the user picked, plus a

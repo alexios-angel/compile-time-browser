@@ -4,6 +4,7 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -142,6 +143,16 @@ public:
 	// Where the page's resources come from. An application seeds this from
 	// app_options::assets; `ctbrowse` points its base path at the page's
 	// directory so `<img src="cat.bmp">` resolves next to the html.
+	// THE CLIPBOARD, as two hooks. The engine is SDL-free, so it cannot own a
+	// system clipboard - the app layer installs these, and without them copy
+	// and paste still work WITHIN the page, which is what makes the whole thing
+	// testable headlessly.
+	void set_clipboard_hooks(std::function<void(const std::string &)> write,
+	                         std::function<std::string()> read) {
+		clipboard_write_ = std::move(write);
+		clipboard_read_ = std::move(read);
+	}
+
 	// Natives the EMBEDDER supplies - `playSound` from the SDL layer is the
 	// reason this exists. Re-installed on every navigation, because each page
 	// gets a fresh script context and a hook registered once would silently
@@ -278,7 +289,7 @@ public:
 		// is invalidated. Redrawing the display list is not enough: a tile is
 		// identified by (layer, column, row), so the cached one is served again
 		// and the thumb never moves. That is the "does not update" report.
-		refresh_scrollbar();
+		refresh_chrome();
 		if (page_layers_ < layers_.layers.size()) {
 			renderer_.discard_layer(static_cast<std::uint32_t>(page_layers_));
 		}
@@ -288,6 +299,31 @@ public:
 	[[nodiscard]] float content_height() const noexcept { return content_height_; }
 	// Whether a viewport x lands on the scrollbar. Public because the app layer
 	// asks it to choose a cursor.
+	// What the pointer should look like at a viewport point: the CSS `cursor`
+	// of the element under it, with the UA's defaults - a link is a pointer, an
+	// editable is a text beam. A name rather than a handle, so the engine needs
+	// no cursor vocabulary and the app layer maps it to whatever the platform
+	// has.
+	[[nodiscard]] std::string_view cursor_at(float x, float y) {
+		if (on_scrollbar(x)) { return "default"; }
+		const node_id under = hit_test(x, y);
+		if (!under) { return "default"; }
+		const auto txn = doc_->read();
+		// The nearest ancestor that says something, because `cursor` inherits
+		// and the text inside a link is not itself the link.
+		for (node_id at = under; at; at = txn.parent(at)) {
+			const auto found = resolved_.find(ctbrowser::style::engine::key_of(at));
+			if (found != resolved_.end() && found->second) {
+				const std::string_view wanted = found->second->get(atoms_.intern("cursor"));
+				if (!wanted.empty()) { return wanted; }
+			}
+			const control_kind kind = kind_of(txn, at);
+			if (kind == control_kind::text || kind == control_kind::textarea) { return "text"; }
+		}
+		// Bare text is selectable, and an I-beam is how a page says so.
+		return txn.kind(under).value_or(node_kind::element) == node_kind::text ? "text" : "default";
+	}
+
 	[[nodiscard]] bool on_scrollbar(float x) const noexcept {
 		return max_scroll() > 0 && options_.scrollbar_width > 0 &&
 		       x >= static_cast<float>(options_.width) - options_.scrollbar_width;
@@ -323,6 +359,27 @@ public:
 			return set_hover(under) || dispatched;
 		}
 		case input_kind::mouse_down:
+			// An OPEN POPUP takes the press before anything else - it is drawn
+			// over the page, so it has to be hit-tested over the page too.
+			if (select_open_ && handle_popup_press(event)) { return true; }
+			// The RIGHT button opens the context menu instead of pressing
+			// anything, and the page gets a cancelable `contextmenu` first -
+			// which is how a page that wants its own menu suppresses ours.
+			if (event.button == input_event::right_button) {
+				const node_id target = hit_test(event.x, event.y);
+				if (!bindings_->dispatch_mouse("contextmenu", target ? target : body_node(),
+				                               event)) {
+					menu_at_ = point{event.x, event.y};
+					menu_open_ = true;
+					mark(dirty::paint);
+				}
+				return true;
+			}
+			// ...and a LEFT press anywhere closes an open one.
+			if (menu_open_) {
+				const bool consumed = handle_menu_press(event);
+				if (consumed) { return true; }
+			}
 			if (on_scrollbar(event.x)) {
 				const rect thumb = scrollbar_thumb();
 				if (event.y >= thumb.y && event.y < thumb.y + thumb.height) {
@@ -617,7 +674,7 @@ private:
 		layers_ = recorder_.record_layers(fragments_);
 		layers_.scroll_to(0, scroll_y_);
 		page_layers_ = layers_.layers.size(); // everything after this is chrome
-		record_scrollbar();
+		record_chrome();
 	}
 
 	// The scrollbar, as its OWN non-scrolling layer.
@@ -633,9 +690,151 @@ private:
 	// always one edit behind.
 	//
 	// Cheap enough to do unconditionally: it is two rectangles.
-	void refresh_scrollbar() {
+	void refresh_chrome() {
 		layers_.layers.resize(std::min(page_layers_, layers_.layers.size()));
+		record_chrome();
+	}
+
+	// Everything the BROWSER draws rather than the page: the scrollbar, and an
+	// open <select>'s option list. Each is its own non-scrolling layer for the
+	// same reason - chrome does not move when the page does, and the compositor
+	// already knows how to hold a layer still.
+	void record_chrome() {
 		record_scrollbar();
+		record_select_popup();
+		record_context_menu();
+	}
+
+	// The context menu. Its entries are the clipboard verbs, because those are
+	// the ones the browser can carry out on its own.
+	static constexpr std::string_view menu_items[] = {"Copy", "Cut", "Paste", "Select All"};
+	static constexpr float menu_row = 20;
+	static constexpr float menu_width = 120;
+
+	void record_context_menu() {
+		if (!menu_open_) { return; }
+		const rect box = menu_box();
+		ctbrowser::paint::display_list list;
+		list.fill(box, color{ctbrowser::style::ua_widget_field});
+		const color frame{ctbrowser::style::ua_widget_frame};
+		list.fill(rect{box.x, box.y, box.width, 1}, frame);
+		list.fill(rect{box.x, box.bottom() - 1, box.width, 1}, frame);
+		list.fill(rect{box.x, box.y, 1, box.height}, frame);
+		list.fill(rect{box.right() - 1, box.y, 1, box.height}, frame);
+		for (std::size_t i = 0; i < std::size(menu_items); ++i) {
+			list.text(rect{box.x + 6, box.y + menu_row * static_cast<float>(i) + 4,
+			               box.width - 12, menu_row - 6},
+			          std::string{menu_items[i]}, 13, color{0xFF000000U});
+		}
+		ctbrowser::paint::layer overlay;
+		overlay.contents = std::make_shared<const ctbrowser::paint::display_list>(std::move(list));
+		overlay.scrolls = false;
+		layers_.layers.push_back(std::move(overlay));
+	}
+
+	[[nodiscard]] rect menu_box() const {
+		const float height = menu_row * static_cast<float>(std::size(menu_items));
+		// Flipped when it would run off the edge, which is what a menu opened
+		// near the corner has to do.
+		const float x = menu_at_.x + menu_width <= static_cast<float>(options_.width)
+		                    ? menu_at_.x
+		                    : std::max(0.0f, menu_at_.x - menu_width);
+		const float y = menu_at_.y + height <= static_cast<float>(options_.height)
+		                    ? menu_at_.y
+		                    : std::max(0.0f, menu_at_.y - height);
+		return rect{x, y, menu_width, height};
+	}
+
+	// Returns whether the menu consumed the press. A click anywhere closes it,
+	// and a click ON it runs the verb - neither reaches the page.
+	bool handle_menu_press(const input_event & event) {
+		const rect box = menu_box();
+		menu_open_ = false;
+		mark(dirty::paint);
+		if (event.x < box.x || event.x >= box.right() || event.y < box.y ||
+		    event.y >= box.bottom()) {
+			return true; // click-away: closed, and the page does not see it
+		}
+		const auto index = static_cast<std::size_t>((event.y - box.y) / menu_row);
+		if (index < std::size(menu_items)) { run_clipboard_verb(menu_items[index]); }
+		return true;
+	}
+
+	// The option list of an open <select>. THE reason a select was unusable:
+	// the box drew, the popup did not exist, so there was no way to choose
+	// anything with a pointer.
+	void record_select_popup() {
+		if (!select_open_) { return; }
+		const auto txn = doc_->read();
+		const std::vector<std::string> options = option_labels(txn, select_open_);
+		if (options.empty()) { return; }
+
+		const rect anchor = viewport_box_of(select_open_);
+		if (anchor.empty()) { return; }
+		const float row = anchor.height;
+		const float height = row * static_cast<float>(options.size());
+		// Opens DOWNWARD unless there is no room, which is what a select at the
+		// bottom of a window has to do.
+		const float top = anchor.bottom() + height <= static_cast<float>(options_.height)
+		                      ? anchor.bottom()
+		                      : std::max(0.0f, anchor.y - height);
+
+		ctbrowser::paint::display_list list;
+		const rect box{anchor.x, top, std::max(anchor.width, 60.0f), height};
+		list.fill(box, color{ctbrowser::style::ua_widget_field});
+		const std::string chosen = selected_option(txn, select_open_);
+		for (std::size_t i = 0; i < options.size(); ++i) {
+			const rect item{box.x, top + row * static_cast<float>(i), box.width, row};
+			if (options[i] == chosen) {
+				list.fill(item, color{ctbrowser::style::ua_widget_accent});
+			}
+			list.text(rect{item.x + 4, item.y + 3, item.width - 8, item.height - 6}, options[i],
+			          font_size_of(select_open_),
+			          options[i] == chosen ? color{ctbrowser::style::ua_widget_mark}
+			                               : color{0xFF000000U},
+			          select_open_);
+		}
+		// A frame last, so it is not painted over by the rows.
+		const color frame{ctbrowser::style::ua_widget_frame};
+		list.fill(rect{box.x, box.y, box.width, 1}, frame);
+		list.fill(rect{box.x, box.bottom() - 1, box.width, 1}, frame);
+		list.fill(rect{box.x, box.y, 1, box.height}, frame);
+		list.fill(rect{box.right() - 1, box.y, 1, box.height}, frame);
+
+		ctbrowser::paint::layer overlay;
+		overlay.contents = std::make_shared<const ctbrowser::paint::display_list>(std::move(list));
+		overlay.scrolls = false;
+		layers_.layers.push_back(std::move(overlay));
+	}
+
+	// Every <option>'s text, in document order.
+	[[nodiscard]] std::vector<std::string> option_labels(const read_txn & txn, node_id select) {
+		std::vector<std::string> out;
+		const atom option_tag = atoms_.intern_lower("option");
+		for (const node_id child : txn.children(select)) {
+			if (txn.tag(child).value_or(atom{}) != option_tag) { continue; }
+			std::string text;
+			for (const node_id grand : txn.children(child)) { text += txn.text(grand); }
+			out.push_back(std::move(text));
+		}
+		return out;
+	}
+
+	// Where an element is ON SCREEN - the fragment tree is in content space, so
+	// the scroll has to come off.
+	[[nodiscard]] rect viewport_box_of(node_id id) const {
+		const auto walk = [&](auto && self, const ctbrowser::layout::fragment & f, float dx,
+		                      float dy) -> rect {
+			const rect box{f.bounds.x + dx, f.bounds.y + dy, f.bounds.width, f.bounds.height};
+			if (f.source == id && !box.empty()) { return box; }
+			for (const auto & child : f.children) {
+				if (const rect hit = self(self, child, box.x, box.y); !hit.empty()) { return hit; }
+			}
+			return rect{};
+		};
+		rect box = walk(walk, fragments_, 0, 0);
+		if (!box.empty()) { box.y -= scroll_y_; }
+		return box;
 	}
 
 	void record_scrollbar() {
@@ -894,7 +1093,82 @@ private:
 		return chosen.empty() ? first : chosen;
 	}
 
+	// A press while a <select> is open. Returns whether the popup consumed it -
+	// a click ANYWHERE else closes it, which is what click-away means, and that
+	// click must not also reach the page.
+	bool handle_popup_press(const input_event & event) {
+		const auto txn = doc_->read();
+		const std::vector<std::string> options = option_labels(txn, select_open_);
+		const rect anchor = viewport_box_of(select_open_);
+		if (options.empty() || anchor.empty()) {
+			select_open_ = node_id{};
+			mark(dirty::paint);
+			return true;
+		}
+		const float row = anchor.height;
+		const float height = row * static_cast<float>(options.size());
+		const float top = anchor.bottom() + height <= static_cast<float>(options_.height)
+		                      ? anchor.bottom()
+		                      : std::max(0.0f, anchor.y - height);
+		const rect box{anchor.x, top, std::max(anchor.width, 60.0f), height};
+
+		const node_id select = select_open_;
+		select_open_ = node_id{};
+		mark(dirty::paint);
+		if (event.x >= box.x && event.x < box.right() && event.y >= box.y &&
+		    event.y < box.bottom()) {
+			const auto index = static_cast<std::size_t>((event.y - box.y) / row);
+			if (index < options.size()) {
+				// The chosen option becomes the control's value, and `change`
+				// fires - which is what a page listens for.
+				forms_.state_of(txn, atoms_, select).value = options[index];
+				bindings_->dispatch("change", select);
+			}
+		}
+		return true;
+	}
+
+	// Copy / Cut / Paste / Select All, from the context menu or from Ctrl+key.
+	// The page gets a CANCELABLE event first for the three that correspond to
+	// one, which is how an editor takes them over.
+	void run_clipboard_verb(std::string_view verb) {
+		control_state * control = editable_focus();
+		if (verb == "Select All") {
+			if (control != nullptr) {
+				forms_.select_all(*control);
+				mark(dirty::paint);
+			}
+			return;
+		}
+		const std::string type = verb == "Copy" ? "copy" : verb == "Cut" ? "cut" : "paste";
+		if (focused_ && bindings_->dispatch(type, focused_)) { return; } // cancelled
+		if (control == nullptr) { return; }
+		if (verb == "Paste") {
+			const std::string text = clipboard_read_ ? clipboard_read_() : clipboard_;
+			if (!text.empty()) {
+				forms_.insert_text(*control, text);
+				(void)edited(true);
+			}
+			return;
+		}
+		const std::string selected = form_store::selected_text(*control);
+		if (selected.empty()) { return; }
+		clipboard_ = selected;
+		if (clipboard_write_) { clipboard_write_(selected); }
+		if (verb == "Cut") {
+			(void)form_store::delete_selection(*control);
+			(void)edited(true);
+		}
+	}
+
 	bool handle_key(const input_event & event) {
+		// Escape closes an open popup before the page sees the key, which is
+		// what every select does.
+		if (select_open_ && event.key == "Escape") {
+			select_open_ = node_id{};
+			mark(dirty::paint);
+			return true;
+		}
 		if (dispatch_key("keydown", event)) { return true; }
 
 		if (control_state * control = editable_focus(); control != nullptr) {
@@ -996,6 +1270,11 @@ private:
 		if (key == "ArrowRight") { return moved(forms_.move_caret(control, 1, event.shift)); }
 		if (key == "Home") { return moved(forms_.move_to_edge(control, false, event.shift)); }
 		if (key == "End") { return moved(forms_.move_to_edge(control, true, event.shift)); }
+		// The clipboard shortcuts, before the editing keys - Ctrl+C is not a C.
+		if (event.ctrl && (key == "KeyC" || key == "KeyX" || key == "KeyV")) {
+			run_clipboard_verb(key == "KeyC" ? "Copy" : key == "KeyX" ? "Cut" : "Paste");
+			return true;
+		}
 		if (event.ctrl && key == "KeyA") {
 			forms_.select_all(control);
 			mark(dirty::paint);
@@ -1036,6 +1315,12 @@ private:
 		if (kind == control_kind::checkbox || kind == control_kind::radio) {
 			forms_.toggle(txn, atoms_, control, kind);
 			bindings_->dispatch("change", control);
+			mark(dirty::paint);
+			return;
+		}
+		if (kind == control_kind::select) {
+			// Toggle: clicking an open select closes it again.
+			select_open_ = select_open_ == control ? node_id{} : control;
 			mark(dirty::paint);
 			return;
 		}
@@ -1089,6 +1374,14 @@ private:
 	// Null means font8x8, which is always available and always identical - so a
 	// build with no font files still renders and its goldens still compare.
 	std::size_t page_layers_ = 0; // how many of layers_ are the page's
+	node_id select_open_;         // the <select> whose popup is showing
+	// The page's own clipboard, used when no system one is installed - which is
+	// every headless run.
+	std::string clipboard_;
+	std::function<void(const std::string &)> clipboard_write_;
+	std::function<std::string()> clipboard_read_;
+	bool menu_open_ = false;
+	point menu_at_;
 	bool sb_dragging_ = false;
 	float sb_grab_ = 0; // where in the thumb the drag started
 	const ctbrowser::raster::font_backend * fonts_ = nullptr;

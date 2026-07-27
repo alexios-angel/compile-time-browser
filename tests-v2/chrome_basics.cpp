@@ -485,6 +485,128 @@ void test_the_scrollbar_thumb_follows_the_scroll() {
 	check(!page.frame().has_value() || true, "no re-record was needed");
 }
 
+
+// --- the select popup, the context menu, the clipboard --------------------
+
+void test_select_popup_opens_and_chooses() {
+	browser page{browser_options{400, 300}};
+	page.load_html("<body><select id=s><option>one</option><option>two</option>"
+	               "<option>three</option></select></body>");
+	check(page.frame().has_value(), "the page renders");
+	// Closed, the list is not on screen - only the selected option is.
+	check(!draws_text(page, "three"), "the options are not drawn while it is closed");
+
+	const rect box = box_of(page, "s");
+	(void)page.handle(input_event::mouse_down_at(box.x + 5, box.y + 5));
+	(void)page.handle(input_event::mouse_up_at(box.x + 5, box.y + 5));
+	check(page.frame().has_value(), "the opened frame renders");
+	check(draws_text(page, "three"), "clicking the select shows the whole list");
+
+	// Pick the third row. The popup opens directly below the box, one row per
+	// option, each as tall as the box.
+	const float row = box.height;
+	(void)page.handle(input_event::mouse_down_at(box.x + 5, box.bottom() + row * 2.5f));
+	check(page.frame().has_value(), "the chosen frame renders");
+	check(!draws_text(page, "one"), "choosing closes the list");
+	check(draws_text(page, "three"), "and the choice is what the box now shows");
+}
+
+void test_clicking_away_closes_the_popup() {
+	browser page{browser_options{400, 300}};
+	page.load_html("<body><select id=s><option>alpha</option><option>beta</option></select>"
+	               "<p id=elsewhere>elsewhere</p></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect box = box_of(page, "s");
+	(void)page.handle(input_event::mouse_down_at(box.x + 5, box.y + 5));
+	(void)page.handle(input_event::mouse_up_at(box.x + 5, box.y + 5));
+	(void)page.frame();
+	check(draws_text(page, "beta"), "the list is open");
+
+	(void)page.handle(input_event::mouse_down_at(300, 250)); // nowhere near it
+	(void)page.frame();
+	check(!draws_text(page, "beta"), "a click anywhere else closes it");
+}
+
+void test_the_context_menu() {
+	browser page{browser_options{400, 300}};
+	page.load_html("<body><p>right click me</p></body>");
+	check(page.frame().has_value(), "the page renders");
+	check(!draws_text(page, "Paste"), "no menu to start with");
+
+	(void)page.handle(input_event::mouse_down_at(60, 40, input_event::right_button));
+	check(page.frame().has_value(), "the menu frame renders");
+	check(draws_text(page, "Copy") && draws_text(page, "Paste"), "the right button opens a menu");
+
+	(void)page.handle(input_event::mouse_down_at(300, 250));
+	(void)page.frame();
+	check(!draws_text(page, "Paste"), "and a click elsewhere closes it");
+}
+
+void test_a_page_can_take_over_the_context_menu() {
+	browser page{browser_options{400, 300}};
+	page.load_html("<body><p>own menu</p><script>"
+	               "document.addEventListener('contextmenu', function (e) { e.preventDefault(); });"
+	               "</script></body>");
+	check(page.script_error().empty(), "the script ran");
+	check(page.frame().has_value(), "the page renders");
+	(void)page.handle(input_event::mouse_down_at(60, 40, input_event::right_button));
+	(void)page.frame();
+	// preventDefault means the page is drawing its own; ours must not appear.
+	check(!draws_text(page, "Paste"), "a cancelled contextmenu suppresses the browser's menu");
+}
+
+void test_clipboard_round_trip() {
+	browser page{browser_options{400, 200}};
+	page.load_html("<body><input id=a type=text value=hello><input id=b type=text></body>");
+	check(page.frame().has_value(), "the page renders");
+
+	// Focus the first field, select everything, copy.
+	const rect first = box_of(page, "a");
+	(void)page.handle(input_event::mouse_down_at(first.x + 5, first.y + 5));
+	(void)page.handle(input_event::mouse_up_at(first.x + 5, first.y + 5));
+	(void)page.handle(input_event::key_press("KeyA", false, true)); // Ctrl+A
+	(void)page.handle(input_event::key_press("KeyC", false, true)); // Ctrl+C
+
+	// Focus the second and paste.
+	const rect second = box_of(page, "b");
+	(void)page.handle(input_event::mouse_down_at(second.x + 5, second.y + 5));
+	(void)page.handle(input_event::mouse_up_at(second.x + 5, second.y + 5));
+	(void)page.handle(input_event::key_press("KeyV", false, true)); // Ctrl+V
+
+	const auto txn = page.doc().read();
+	check(page.forms().state_of(txn, page.atoms(), find_id(page, "b")).value == "hello",
+	      "copy and paste move the text between fields");
+	// WITHOUT a system clipboard installed - this is headless - which is what
+	// makes the whole path testable.
+}
+
+void test_cut_removes_what_it_copied() {
+	browser page{browser_options{400, 200}};
+	page.load_html("<body><input id=a type=text value=gone></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect box = box_of(page, "a");
+	(void)page.handle(input_event::mouse_down_at(box.x + 5, box.y + 5));
+	(void)page.handle(input_event::mouse_up_at(box.x + 5, box.y + 5));
+	(void)page.handle(input_event::key_press("KeyA", false, true));
+	(void)page.handle(input_event::key_press("KeyX", false, true));
+	const auto txn = page.doc().read();
+	check(page.forms().state_of(txn, page.atoms(), find_id(page, "a")).value.empty(),
+	      "cut empties the field");
+}
+
+void test_the_cursor_follows_the_element() {
+	browser page{browser_options{400, 200}};
+	page.load_html("<body><a href='#' id=link>a link</a><input id=field type=text>"
+	               "<p id=plain>plain</p></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect link = box_of(page, "link");
+	const rect field = box_of(page, "field");
+	// The UA sheet gives a link `cursor: pointer`; an editable is an I-beam.
+	check(page.cursor_at(link.x + 2, link.y + link.height / 2) == "pointer", "a link is a pointer");
+	check(page.cursor_at(field.x + 2, field.y + field.height / 2) == "text", "a field is a beam");
+	check(page.cursor_at(395, 5) == "default", "and the scrollbar edge is not");
+}
+
 } // namespace
 
 int main() {
@@ -495,6 +617,13 @@ int main() {
 	test_list_markers();
 	test_disclosure_triangle();
 	test_select_shows_its_option();
+	test_select_popup_opens_and_chooses();
+	test_clicking_away_closes_the_popup();
+	test_the_context_menu();
+	test_a_page_can_take_over_the_context_menu();
+	test_clipboard_round_trip();
+	test_cut_removes_what_it_copied();
+	test_the_cursor_follows_the_element();
 	test_scrollbar_appears_only_when_needed();
 	test_the_scrollbar_reserves_its_width();
 	test_dragging_the_thumb_scrolls();

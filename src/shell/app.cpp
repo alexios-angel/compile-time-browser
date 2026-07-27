@@ -125,6 +125,9 @@ struct window_deleter {
 class sdl_host final : public host {
 public:
 	~sdl_host() override {
+		for (SDL_Cursor * cursor : {arrow_, hand_, beam_}) {
+			if (cursor != nullptr) { SDL_DestroyCursor(cursor); }
+		}
 		if (texture_ != nullptr) { SDL_DestroyTexture(texture_); }
 		if (renderer_ != nullptr) { SDL_DestroyRenderer(renderer_); }
 	}
@@ -149,6 +152,11 @@ public:
 		// Without this, SDL_EVENT_TEXT_INPUT never arrives and no <input> can
 		// be typed into.
 		SDL_StartTextInput(window_.get());
+		// System cursors, made once. A pointer over a link and an I-beam over
+		// text are most of what makes a page feel like a page.
+		arrow_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
+		hand_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER);
+		beam_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_TEXT);
 		return true;
 	}
 
@@ -161,9 +169,14 @@ public:
 			// every pointer event at three times the position it should be, and
 			// most of them outside the page entirely.
 			SDL_ConvertEventToRenderCoordinates(renderer_, &event);
+			if (event.type == SDL_EVENT_MOUSE_MOTION) {
+				mouse_x_ = event.motion.x;
+				mouse_y_ = event.motion.y;
+			}
 			input_event translated;
 			if (translate(event, translated) && page.handle(translated)) { changed = true; }
 		}
+		apply_cursor(page);
 		return true;
 	}
 
@@ -189,18 +202,28 @@ public:
 	[[nodiscard]] void * native_window() override { return window_.get(); }
 
 private:
+	[[nodiscard]] static std::uint8_t dom_button(std::uint8_t sdl_button) noexcept {
+		if (sdl_button == SDL_BUTTON_RIGHT) { return input_event::right_button; }
+		if (sdl_button == SDL_BUTTON_MIDDLE) { return 1; }
+		return input_event::left_button;
+	}
+
 	[[nodiscard]] bool translate(const SDL_Event & event, input_event & out) const {
 		switch (event.type) {
 		case SDL_EVENT_MOUSE_MOTION:
 			out = input_event::mouse_move_to(event.motion.x, event.motion.y);
 			return true;
+		// SDL numbers buttons from 1 and calls the right one 3; the DOM numbers
+		// from 0 and calls it 2, and so does input_event. Passing SDL's number
+		// straight through made a right-click look like button 3, which nothing
+		// was looking for.
 		case SDL_EVENT_MOUSE_BUTTON_DOWN:
 			out = input_event::mouse_down_at(event.button.x, event.button.y,
-			                                 static_cast<std::uint8_t>(event.button.button));
+			                                 dom_button(event.button.button));
 			return true;
 		case SDL_EVENT_MOUSE_BUTTON_UP:
 			out = input_event::mouse_up_at(event.button.x, event.button.y,
-			                               static_cast<std::uint8_t>(event.button.button));
+			                               dom_button(event.button.button));
 			return true;
 		case SDL_EVENT_MOUSE_WHEEL: out = input_event::wheel_by(event.wheel.y); return true;
 		case SDL_EVENT_TEXT_INPUT:
@@ -234,6 +257,26 @@ private:
 		}
 	}
 
+	// What the pointer should look like where it is now. Asked of the browser
+	// each frame rather than pushed, so the engine needs no cursor vocabulary
+	// beyond a name.
+	void apply_cursor(browser & page) {
+		SDL_Cursor * want = arrow_;
+		const std::string_view name = page.cursor_at(mouse_x_, mouse_y_);
+		if (name == "pointer") { want = hand_; }
+		else if (name == "text") { want = beam_; }
+		if (want != nullptr && want != current_cursor_) {
+			SDL_SetCursor(want);
+			current_cursor_ = want;
+		}
+	}
+
+	float mouse_x_ = 0;
+	float mouse_y_ = 0;
+	SDL_Cursor * arrow_ = nullptr;
+	SDL_Cursor * hand_ = nullptr;
+	SDL_Cursor * beam_ = nullptr;
+	SDL_Cursor * current_cursor_ = nullptr;
 	std::unique_ptr<SDL_Window, window_deleter> window_;
 	SDL_Renderer * renderer_ = nullptr;
 	SDL_Texture * texture_ = nullptr;
@@ -426,6 +469,17 @@ int run_app(std::string_view html, app_options options) {
 	page.assets().set_base_path(options.asset_path);
 	page.allow_network(options.network);
 	detail::install_image_decoder(page.images());
+	// The system clipboard. The engine keeps its own when this is absent, so
+	// copy and paste work headlessly - they just do not leave the process.
+#if CTBROWSER_WITH_SDL3
+	page.set_clipboard_hooks([](const std::string & text) { (void)SDL_SetClipboardText(text.c_str()); },
+	                         [] {
+		                         char * owned = SDL_GetClipboardText();
+		                         std::string text = owned != nullptr ? owned : "";
+		                         SDL_free(owned);
+		                         return text;
+	                         });
+#endif
 	if (options.real_fonts) { (void)page.use_real_fonts(options.font_path.string()); }
 
 	// Sound. `playSound(name [, volume])` is what the page calls; the HTML

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>widget gallery</title>
+<style>
+	h1 { font-size: 24px }
+	.row { margin: 6px 0 }
+	label { font-family: sans-serif; font-size: 14px }
+	#status { background-color: #eef4ff; padding: 6px; font-family: monospace; font-size: 13px }
+	button:hover { color: #003399 }
+</style>
+</head>
+<body>
+<h1>Widgets</h1>
+
+<form id=f>
+	<div class=row><label for=name>name</label> <input type=text id=name value=ada></div>
+	<div class=row><label for=pw>password</label> <input type=password id=pw></div>
+	<div class=row><textarea id=notes rows=3 cols=28>multi-line
+notes live here</textarea></div>
+	<div class=row>
+		<label><input type=checkbox id=opt checked> option one</label>
+		<label><input type=checkbox id=opt2> option two</label>
+	</div>
+	<div class=row>
+		<label><input type=radio name=size id=s1 checked> small</label>
+		<label><input type=radio name=size id=s2> large</label>
+	</div>
+	<div class=row><select id=color>
+		<option value=red>red</option>
+		<option value=green selected>green</option>
+		<option value=blue>blue</option>
+	</select></div>
+	<div class=row>
+		<button id=send>Submit</button>
+		<button type=reset id=undo>Reset</button>
+		<button id=off disabled>Disabled</button>
+	</div>
+</form>
+
+<details id=more><summary>more settings</summary>
+	<p>These unfold like Firefox's disclosure widget.</p>
+</details>
+
+<p><a href=https://example.com id=lnk>open example.com</a></p>
+
+<p id=status>ready.</p>
+<script>
+	const status = document.getElementById("status");
+	const name = document.getElementById("name");
+	const color = document.getElementById("color");
+	name.addEventListener("input", function () {
+		status.setText("name: " + name.value);
+	});
+	document.getElementById("opt").addEventListener("change", function () {
+		status.setText("option one: " + document.getElementById("opt").checked);
+	});
+	document.getElementById("s2").addEventListener("change", function () {
+		status.setText("size: large");
+	});
+	color.addEventListener("change", function () {
+		status.setText("color: " + color.value);
+	});
+	document.getElementById("f").addEventListener("submit", function (e) {
+		e.preventDefault();
+		status.setText("submitted: " + name.value + " / " + color.value);
+	});
+</script>
+</body>
+</html>

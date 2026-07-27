@@ -152,6 +152,27 @@ public:
 		control.caret = control.value.size();
 	}
 
+	// What is selected, as text. Empty when the caret and the anchor are in the
+	// same place, which is what "nothing is selected" is.
+	[[nodiscard]] static std::string selected_text(const control_state & control) {
+		const std::size_t from = std::min(control.caret, control.selection);
+		const std::size_t to = std::max(control.caret, control.selection);
+		if (from >= to || to > control.value.size()) { return {}; }
+		return control.value.substr(from, to - from);
+	}
+
+	// Remove it, leaving the caret where the selection started - which is where
+	// typing over a selection has to continue from.
+	static bool delete_selection(control_state & control) {
+		const std::size_t from = std::min(control.caret, control.selection);
+		const std::size_t to = std::max(control.caret, control.selection);
+		if (from >= to || to > control.value.size()) { return false; }
+		control.value.erase(from, to - from);
+		control.caret = from;
+		control.selection = from;
+		return true;
+	}
+
 	// --- checkboxes and radios --------------------------------------------
 
 	// A radio deselects every other radio with the same name in the document -
