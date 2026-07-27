@@ -55,6 +55,15 @@ public:
 	    std::function<void(node_id, const rect &, const computed_style_ptr &, display_list &)>;
 	replaced_painter paint_replaced;
 
+	// The highlighted part of a text fragment, in the fragment's own space, or
+	// an empty rect for none. A HOOK rather than a member on the fragment: a
+	// selection is a property of the browsing session, not of the layout, and
+	// the fragment tree is rebuilt by a relayout that a selection outlives.
+	//
+	// Called for every text run, and the fill goes UNDER the text - a highlight
+	// drawn over it would hide what is selected.
+	std::function<rect(const fragment &)> selection_of;
+
 	[[nodiscard]] std::shared_ptr<const display_list> record(const fragment & root) const {
 		auto list = std::make_shared<display_list>();
 		emit(root, 0, 0, default_text_color, *list);
@@ -103,6 +112,14 @@ private:
 				decoration = f.box->underline      ? text_decoration::underline
 				             : f.box->line_through ? text_decoration::line_through
 				                                   : text_decoration::none;
+			}
+			if (selection_of) {
+				const rect selected = selection_of(f);
+				if (!selected.empty()) {
+					into.fill(rect{box.x + selected.x, box.y + selected.y, selected.width,
+					               selected.height},
+					          color{ctbrowser::style::ua_selection_highlight}, f.source);
+				}
 			}
 			into.text(box, f.text, size, text_color, f.source, std::move(face), decoration);
 			return;

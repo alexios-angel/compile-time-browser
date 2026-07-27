@@ -607,6 +607,166 @@ void test_the_cursor_follows_the_element() {
 	check(page.cursor_at(395, 5) == "default", "and the scrollbar edge is not");
 }
 
+
+// --- page-level text selection --------------------------------------------
+//
+// Selecting inside a FIELD already worked; this is selecting across the page,
+// which is what "the browser can be used to read things" needs. A position is
+// (node, code point in that node), not a fragment pointer: a node's text is
+// split across as many fragments as it has visual lines, and a relayout
+// rebuilds all of them - a selection has to survive a window resize.
+
+void drag(browser & page, float x1, float y1, float x2, float y2) {
+	(void)page.handle(input_event::mouse_down_at(x1, y1));
+	(void)page.handle(input_event::mouse_move_to(x2, y2));
+	(void)page.handle(input_event::mouse_up_at(x2, y2));
+}
+
+void test_dragging_selects_text() {
+	browser page{browser_options{400, 200}};
+	page.load_html("<body><p id=p>selectable words here</p></body>");
+	check(page.frame().has_value(), "the page renders");
+	check(!page.has_selection(), "nothing is selected to start with");
+
+	const rect box = box_of(page, "p");
+	const float middle = box.y + box.height / 2;
+	drag(page, box.x + 1, middle, box.x + box.width - 1, middle);
+	check(page.has_selection(), "dragging across the line selects");
+	check(page.selected_text().find("selectable") != std::string::npos,
+	      "and the selected text is what was dragged over");
+
+	// A click WITHOUT a drag selects nothing - otherwise every click on a page
+	// would leave a stray one-character selection.
+	(void)page.handle(input_event::mouse_down_at(box.x + 20, middle));
+	(void)page.handle(input_event::mouse_up_at(box.x + 20, middle));
+	check(!page.has_selection(), "a plain click clears it");
+}
+
+void test_selection_is_drawn() {
+	// The proof is pixels: the highlight colour is on the page where the
+	// selection is, and nowhere when there is none.
+	const auto highlight_pixels = [](bool select) {
+		browser page{browser_options{300, 120}};
+		page.load_html("<body><p id=p>highlight me</p></body>");
+		(void)page.frame();
+		if (select) {
+			const rect box = box_of(page, "p");
+			const float middle = box.y + box.height / 2;
+			drag(page, box.x + 1, middle, box.x + box.width - 1, middle);
+			(void)page.frame();
+		}
+		std::size_t found = 0;
+		if (const auto image = page.read_pixels()) {
+			for (int y = 0; y < image->height(); ++y) {
+				const auto row = image->row(y);
+				for (int x = 0; x < image->width(); ++x) {
+					if ((row[static_cast<std::size_t>(x)] & 0x00FFFFFFU) ==
+					    (style::ua_selection_highlight & 0x00FFFFFFU)) {
+						++found;
+					}
+				}
+			}
+		}
+		return found;
+	};
+	check(highlight_pixels(false) == 0, "an unselected page has no highlight");
+	check(highlight_pixels(true) > 0, "a selected one does");
+}
+
+void test_selection_spans_elements() {
+	browser page{browser_options{400, 300}};
+	page.load_html("<body><p id=one>first para</p><p id=two>second para</p></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect first = box_of(page, "one");
+	const rect second = box_of(page, "two");
+	drag(page, first.x + 1, first.y + first.height / 2, second.right() - 1,
+	     second.y + second.height / 2);
+	const std::string selected = page.selected_text();
+	check(selected.find("first") != std::string::npos, "the selection starts in the first");
+	check(selected.find("second") != std::string::npos, "and ends in the second");
+}
+
+void test_selection_is_direction_agnostic() {
+	// Dragging backwards selects the same text as dragging forwards.
+	const auto select = [](bool backwards) {
+		browser page{browser_options{400, 200}};
+		page.load_html("<body><p id=p>forwards and backwards</p></body>");
+		(void)page.frame();
+		const rect box = box_of(page, "p");
+		const float middle = box.y + box.height / 2;
+		if (backwards) {
+			drag(page, box.right() - 1, middle, box.x + 1, middle);
+		} else {
+			drag(page, box.x + 1, middle, box.right() - 1, middle);
+		}
+		return page.selected_text();
+	};
+	check(select(false) == select(true), "a backwards drag selects the same text");
+	check(!select(false).empty(), "and it is not nothing");
+}
+
+void test_copying_the_page_selection() {
+	browser page{browser_options{400, 200}};
+	page.load_html("<body><p id=p>copy this</p><input id=field type=text></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect box = box_of(page, "p");
+	const float middle = box.y + box.height / 2;
+	drag(page, box.x + 1, middle, box.right() - 1, middle);
+	// Ctrl+C with nothing editable focused takes the PAGE selection.
+	(void)page.handle(input_event::key_press("KeyC", false, true));
+
+	// ...and it can be pasted into a field, which is the whole point of
+	// selecting text on a page.
+	const rect field = box_of(page, "field");
+	(void)page.handle(input_event::mouse_down_at(field.x + 5, field.y + 5));
+	(void)page.handle(input_event::mouse_up_at(field.x + 5, field.y + 5));
+	(void)page.handle(input_event::key_press("KeyV", false, true));
+	const auto txn = page.doc().read();
+	const std::string pasted = page.forms().state_of(txn, page.atoms(), find_id(page, "field")).value;
+	check(pasted.find("copy") != std::string::npos, "the page selection pastes into a field");
+}
+
+// A selection that crosses a LINE BREAK, which is where the offsets have to be
+// right: a wrap drops the space it broke at, so the fragments do not partition
+// the node's text, and summing their lengths puts every position past the first
+// line one character early.
+void test_selection_across_a_wrap() {
+	browser page{browser_options{200, 200}};
+	// Narrow enough that this must wrap.
+	page.load_html("<body><p id=p>alpha bravo charlie delta echo</p></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect box = box_of(page, "p");
+	check(box.height > 30, "the paragraph really did wrap");
+
+	// From the very start of the first line to the very end of the last.
+	drag(page, box.x + 1, box.y + 4, box.right() - 1, box.bottom() - 4);
+	const std::string selected = page.selected_text();
+	// Every word, each separated by exactly one space - including the spaces
+	// the wrap consumed, which are in no fragment at all.
+	check(selected == "alpha bravo charlie delta echo", "the whole paragraph, spaces and all");
+}
+
+void test_selection_survives_a_relayout() {
+	// THE reason a position is (node, code point) and not a fragment pointer:
+	// a resize rebuilds every fragment.
+	browser page{browser_options{400, 200}};
+	page.load_html("<body><p id=p>this text outlives a resize</p></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect box = box_of(page, "p");
+	drag(page, box.x + 1, box.y + box.height / 2, box.right() - 1, box.y + box.height / 2);
+	const std::string before = page.selected_text();
+	check(!before.empty(), "something is selected");
+
+	(void)page.handle(input_event::resized(300, 200));
+	check(page.frame().has_value(), "the resized frame renders");
+	check(page.has_selection(), "the selection survived the relayout");
+	// EXACTLY the same text, across a relayout that rebuilt every fragment and
+	// rewrapped the paragraph. That is what a (node, code point) position buys,
+	// and it is why the offsets are found by searching the node's text rather
+	// than by summing fragment lengths - a wrap drops the space it broke at.
+	check(page.selected_text() == before, "and it is the same text");
+}
+
 } // namespace
 
 int main() {
@@ -624,6 +784,13 @@ int main() {
 	test_clipboard_round_trip();
 	test_cut_removes_what_it_copied();
 	test_the_cursor_follows_the_element();
+	test_dragging_selects_text();
+	test_selection_is_drawn();
+	test_selection_spans_elements();
+	test_selection_is_direction_agnostic();
+	test_copying_the_page_selection();
+	test_selection_across_a_wrap();
+	test_selection_survives_a_relayout();
 	test_scrollbar_appears_only_when_needed();
 	test_the_scrollbar_reserves_its_width();
 	test_dragging_the_thumb_scrolls();

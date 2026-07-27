@@ -293,6 +293,24 @@ under the bar. That terminates because narrowing a page can only make it
 taller, so a page that overflowed still overflows. `browser_options::
 scrollbar_width = 0` hides it, which is what a fixed-size game wants.
 
+**PAGE-LEVEL TEXT SELECTION.** A position is `(node, code point IN THAT NODE)`,
+not a fragment pointer: a node's text is split across as many fragments as it
+has visual lines, and a relayout rebuilds every one of them — a selection has to
+survive a window resize, and there is a test that resizes and compares the text.
+
+The GLYPH GEOMETRY is not stored on the fragment. It is derived on demand from
+the same measure layout used, which costs a few measurements per click and left
+the fragment tree exactly the shape it was — the plan called publishing per-line
+glyph geometry the item most likely to spill, and this is why it did not have
+to.
+
+**A wrap DROPS the space it broke at**, so the fragments do not partition the
+node's text. Summing their lengths puts every position past the first line one
+character early; offsets are found by SEARCHING the node's text instead. For the
+same reason `selected_text()` extracts from each node's own text over the whole
+selected range rather than joining the runs — joining silently deletes one space
+per line from anything copied off a wrapped paragraph.
+
 **Browser chrome is a stack of non-scrolling LAYERS** — the scrollbar, an open
 `<select>`'s option list, the context menu — rebuilt together by
 `record_chrome()` and invalidated with `discard_layer()` so the page's tiles

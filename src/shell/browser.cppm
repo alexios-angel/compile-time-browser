@@ -143,6 +143,72 @@ public:
 	// Where the page's resources come from. An application seeds this from
 	// app_options::assets; `ctbrowse` points its base path at the page's
 	// directory so `<img src="cat.bmp">` resolves next to the html.
+	// PAGE-LEVEL TEXT SELECTION.
+	//
+	// A position is (node, code point WITHIN THAT NODE'S TEXT) rather than a
+	// fragment pointer: a node's text is broken across as many fragments as it
+	// has visual lines, and a relayout rebuilds all of them - a selection has
+	// to survive a window resize, and pointers do not.
+	//
+	// The GLYPH GEOMETRY is not stored on the fragment. It is derived on demand
+	// from the same measure layout used, which costs a few measurements per
+	// click and keeps the fragment tree exactly the shape it was - the plan
+	// called publishing per-line glyph geometry the one item most likely to
+	// spill, and this is why it did not have to.
+	struct text_position {
+		node_id node;
+		std::size_t code_point = 0;
+		[[nodiscard]] explicit operator bool() const noexcept { return static_cast<bool>(node); }
+	};
+
+	[[nodiscard]] bool has_selection() const noexcept {
+		return selection_anchor_.node && selection_focus_.node &&
+		       !(selection_anchor_.node == selection_focus_.node &&
+		         selection_anchor_.code_point == selection_focus_.code_point);
+	}
+	void clear_selection() {
+		if (!selection_anchor_.node && !selection_focus_.node) { return; }
+		selection_anchor_ = {};
+		selection_focus_ = {};
+		mark(dirty::paint);
+	}
+	// What is selected, in document order, as text.
+	[[nodiscard]] std::string selected_text() {
+		// Extracted from each NODE'S OWN TEXT over the whole selected range,
+		// not by concatenating the runs. A wrap drops the space it broke at, so
+		// that space is in no run at all - joining the runs would silently
+		// delete a space per line from anything copied off a wrapped paragraph.
+		std::string out;
+		node_id current;
+		std::size_t from = 0;
+		std::size_t to = 0;
+		const ctbrowser::layout::fragment * owner = nullptr;
+		const auto flush = [&] {
+			if (owner != nullptr && owner->box != nullptr && from < to) {
+				const std::string_view full{owner->box->text};
+				if (from < full.size()) {
+					if (!out.empty()) { out += ' '; }
+					out += full.substr(from, std::min(to, full.size()) - from);
+				}
+			}
+		};
+		for (const text_run & run : text_runs()) {
+			const auto [run_from, run_to] = selected_range(run);
+			if (run_from >= run_to) { continue; }
+			if (run.source != current) {
+				flush();
+				current = run.source;
+				owner = run.fragment;
+				from = run_from;
+				to = run_to;
+			} else {
+				to = std::max(to, run_to);
+			}
+		}
+		flush();
+		return out;
+	}
+
 	// THE CLIPBOARD, as two hooks. The engine is SDL-free, so it cannot own a
 	// system clipboard - the app layer installs these, and without them copy
 	// and paste still work WITHIN the page, which is what makes the whole thing
@@ -352,6 +418,18 @@ public:
 				scroll_to(travel > 0 ? (event.y - sb_grab_) / travel * max_scroll() : 0);
 				return true;
 			}
+			if (selecting_) {
+				// Extending. The ANCHOR stays put, which is what makes dragging
+				// back over the text shrink the selection rather than start a
+				// new one.
+				const text_position at = position_at(event.x, event.y);
+				if (at && (at.node != selection_focus_.node ||
+				           at.code_point != selection_focus_.code_point)) {
+					selection_focus_ = at;
+					mark(dirty::paint);
+				}
+				return true;
+			}
 			const node_id under = hit_test(event.x, event.y);
 			// A page tracking the pointer - MDN's breakout moves its paddle
 			// this way - needs the event whether or not the hover state moved.
@@ -396,6 +474,17 @@ public:
 			}
 			pressed_ = hit_test(event.x, event.y);
 			(void)dispatch_mouse("mousedown", pressed_, event);
+			// A press begins a SELECTION unless it landed on a control, which
+			// has its own idea of what dragging means.
+			if (kind_of(doc_->read(), control_ancestor(pressed_)) == control_kind::none) {
+				const text_position at = position_at(event.x, event.y);
+				selection_anchor_ = at;
+				selection_focus_ = at;
+				selecting_ = static_cast<bool>(at);
+				mark(dirty::paint);
+			} else {
+				clear_selection();
+			}
 			return set_state(pressed_, state_active, true);
 		case input_kind::mouse_up: {
 			if (sb_dragging_) {
@@ -403,6 +492,7 @@ public:
 				mark(dirty::paint);
 				return true;
 			}
+			selecting_ = false;
 			bool changed = set_state(pressed_, state_active, false);
 			(void)dispatch_mouse("mouseup", hit_test(event.x, event.y), event);
 			// Focus follows the press, and moves even when the click lands on
@@ -666,6 +756,11 @@ private:
 	}
 
 	void record() {
+		// The selection's highlight. Computed here rather than stored on the
+		// fragment, and looked up by the fragment the recorder is drawing.
+		recorder_.selection_of = [this](const ctbrowser::layout::fragment & f) {
+			return highlight_for(f);
+		};
 		recorder_.paint_replaced = [this](node_id id, const rect & box,
 		                                  const ctbrowser::style::computed_style_ptr & style,
 		                                  ctbrowser::paint::display_list & into) {
@@ -1131,18 +1226,180 @@ private:
 	// Copy / Cut / Paste / Select All, from the context menu or from Ctrl+key.
 	// The page gets a CANCELABLE event first for the three that correspond to
 	// one, which is how an editor takes them over.
+	// One visual line of one text node, with where it starts inside that node.
+	struct text_run {
+		const ctbrowser::layout::fragment * fragment = nullptr;
+		node_id source;
+		std::size_t offset = 0; // where this line begins in the node's text
+		std::string_view text;
+		rect box; // absolute, in content space
+		std::size_t order = 0;
+	};
+
+	// Every text run in DOCUMENT ORDER, which is the order a selection spans.
+	[[nodiscard]] std::vector<text_run> text_runs() const {
+		std::vector<text_run> out;
+		flat_map<std::uint64_t, std::size_t> consumed; // per source node
+		const auto walk = [&](auto && self, const ctbrowser::layout::fragment & f, float dx,
+		                      float dy) -> void {
+			const rect box{f.bounds.x + dx, f.bounds.y + dy, f.bounds.width, f.bounds.height};
+			if (!f.text.empty() && f.source) {
+				// WHERE this line begins in the node's text. Found by searching
+				// rather than by accumulating lengths: the wrap DROPS the space
+				// it broke at, so the fragments do not partition the text and
+				// summing their lengths drifts by one character per line - which
+				// made every position past the first line point at the wrong
+				// character.
+				std::size_t & at = consumed[f.source.key()];
+				const std::string_view full =
+				    f.box != nullptr ? std::string_view{f.box->text} : std::string_view{f.text};
+				const std::size_t found = full.find(f.text, at);
+				const std::size_t offset = found == std::string_view::npos ? at : found;
+				out.push_back(text_run{&f, f.source, offset, f.text, box, out.size()});
+				at = offset + f.text.size();
+			}
+			for (const auto & child : f.children) { self(self, child, box.x, box.y); }
+		};
+		walk(walk, fragments_, 0, 0);
+		return out;
+	}
+
+	// Where in the node's text a point falls: the nearest character boundary on
+	// the nearest line. Above the first line is its start and below the last is
+	// its end, so dragging past the edge takes whole lines - which is what a
+	// drag off the top of a paragraph has to do.
+	[[nodiscard]] text_position position_at(float x, float y) {
+		const std::vector<text_run> runs = text_runs();
+		if (runs.empty()) { return {}; }
+		const float content_y = y + scroll_y_;
+		const text_run * best = nullptr;
+		float best_distance = 0;
+		for (const text_run & run : runs) {
+			const float distance = content_y < run.box.y      ? run.box.y - content_y
+			                       : content_y > run.box.bottom() ? content_y - run.box.bottom()
+			                                                      : 0.0f;
+			if (best == nullptr || distance < best_distance) {
+				best = &run;
+				best_distance = distance;
+			}
+		}
+		if (best == nullptr) { return {}; }
+		return text_position{best->source, best->offset + code_point_at(*best, x)};
+	}
+
+	// The character boundary nearest an x, by MEASURING prefixes with the same
+	// function layout measured the line with - so the boundary is where the
+	// glyph actually is, not where a guess put it.
+	[[nodiscard]] std::size_t code_point_at(const text_run & run, float x) const {
+		if (x <= run.box.x) { return 0; }
+		if (x >= run.box.right()) { return run.text.size(); }
+		const auto metrics = measure();
+		const ctbrowser::layout::text_face face =
+		    run.fragment->box != nullptr ? run.fragment->box->face : ctbrowser::layout::text_face{};
+		const float size = run.fragment->box != nullptr ? run.fragment->box->font_size : 16.0f;
+		std::size_t best = 0;
+		float best_distance = std::abs(x - run.box.x);
+		for (std::size_t i = 1; i <= run.text.size(); ++i) {
+			// UTF-8: a boundary is not inside a continuation byte.
+			if (i < run.text.size() &&
+			    (static_cast<unsigned char>(run.text[i]) & 0xC0u) == 0x80u) {
+				continue;
+			}
+			const float edge = run.box.x + metrics(run.text.substr(0, i), size, face);
+			const float distance = std::abs(x - edge);
+			if (distance < best_distance) {
+				best_distance = distance;
+				best = i;
+			}
+		}
+		return best;
+	}
+
+	// The part of a run that is selected, as absolute code points in its node.
+	[[nodiscard]] std::pair<std::size_t, std::size_t> selected_range(const text_run & run) {
+		if (!has_selection()) { return {0, 0}; }
+		const std::vector<text_run> runs = text_runs();
+		// Which end comes first in DOCUMENT ORDER - a drag upward selects the
+		// same text as the same drag downward.
+		const auto locate = [&runs](const text_position & p) -> std::size_t {
+			std::size_t best = runs.size();
+			for (const text_run & r : runs) {
+				if (r.source != p.node) { continue; }
+				if (p.code_point >= r.offset && p.code_point <= r.offset + r.text.size()) {
+					return r.order;
+				}
+				best = std::min(best, r.order);
+			}
+			return best;
+		};
+		const std::size_t a_order = locate(selection_anchor_);
+		const std::size_t b_order = locate(selection_focus_);
+		text_position first = selection_anchor_;
+		text_position last = selection_focus_;
+		if (b_order < a_order ||
+		    (b_order == a_order && selection_focus_.code_point < selection_anchor_.code_point)) {
+			std::swap(first, last);
+		}
+		const std::size_t first_order = std::min(a_order, b_order);
+		const std::size_t last_order = std::max(a_order, b_order);
+		if (run.order < first_order || run.order > last_order) { return {0, 0}; }
+
+		const std::size_t run_start = run.offset;
+		const std::size_t run_end = run.offset + run.text.size();
+		const std::size_t from = run.order == first_order ? std::max(run_start, first.code_point)
+		                                                  : run_start;
+		const std::size_t to = run.order == last_order ? std::min(run_end, last.code_point)
+		                                               : run_end;
+		return {std::min(from, to), to};
+	}
+
+	// The highlighted part of one text fragment, in the fragment's own space.
+	[[nodiscard]] rect highlight_for(const ctbrowser::layout::fragment & f) {
+		if (!has_selection() || f.text.empty() || !f.source) { return rect{}; }
+		for (const text_run & run : text_runs()) {
+			if (run.fragment != &f) { continue; }
+			const auto [from, to] = selected_range(run);
+			if (from >= to) { return rect{}; }
+			const auto metrics = measure();
+			const ctbrowser::layout::text_face face =
+			    f.box != nullptr ? f.box->face : ctbrowser::layout::text_face{};
+			const float size = f.box != nullptr ? f.box->font_size : 16.0f;
+			const float left = metrics(run.text.substr(0, from - run.offset), size, face);
+			const float right = metrics(run.text.substr(0, to - run.offset), size, face);
+			return rect{left, 0, right - left, f.bounds.height};
+		}
+		return rect{};
+	}
+
 	void run_clipboard_verb(std::string_view verb) {
 		control_state * control = editable_focus();
 		if (verb == "Select All") {
 			if (control != nullptr) {
 				forms_.select_all(*control);
 				mark(dirty::paint);
+				return;
+			}
+			// Nothing editable focused: select the whole PAGE.
+			const std::vector<text_run> runs = text_runs();
+			if (!runs.empty()) {
+				selection_anchor_ = text_position{runs.front().source, runs.front().offset};
+				selection_focus_ = text_position{runs.back().source,
+				                                 runs.back().offset + runs.back().text.size()};
+				mark(dirty::paint);
 			}
 			return;
 		}
 		const std::string type = verb == "Copy" ? "copy" : verb == "Cut" ? "cut" : "paste";
 		if (focused_ && bindings_->dispatch(type, focused_)) { return; } // cancelled
-		if (control == nullptr) { return; }
+		if (control == nullptr) {
+			// No editable focused: Copy takes the PAGE selection. Cut and paste
+			// have nowhere to act, and a page is not editable.
+			if (verb == "Copy" && has_selection()) {
+				clipboard_ = selected_text();
+				if (clipboard_write_) { clipboard_write_(clipboard_); }
+			}
+			return;
+		}
 		if (verb == "Paste") {
 			const std::string text = clipboard_read_ ? clipboard_read_() : clipboard_;
 			if (!text.empty()) {
@@ -1170,6 +1427,19 @@ private:
 			return true;
 		}
 		if (dispatch_key("keydown", event)) { return true; }
+
+		// The CLIPBOARD SHORTCUTS come before the editing keys, and before the
+		// editable check: Ctrl+C is not a C, and copying the PAGE selection has
+		// to work when nothing is focused at all - which is the usual case for
+		// someone reading a page.
+		if (event.ctrl && (event.key == "KeyC" || event.key == "KeyX" || event.key == "KeyV" ||
+		                   event.key == "KeyA")) {
+			run_clipboard_verb(event.key == "KeyC"   ? "Copy"
+			                   : event.key == "KeyX" ? "Cut"
+			                   : event.key == "KeyV" ? "Paste"
+			                                         : "Select All");
+			return true;
+		}
 
 		if (control_state * control = editable_focus(); control != nullptr) {
 			if (edit_key(*control, event)) { return true; }
@@ -1270,11 +1540,6 @@ private:
 		if (key == "ArrowRight") { return moved(forms_.move_caret(control, 1, event.shift)); }
 		if (key == "Home") { return moved(forms_.move_to_edge(control, false, event.shift)); }
 		if (key == "End") { return moved(forms_.move_to_edge(control, true, event.shift)); }
-		// The clipboard shortcuts, before the editing keys - Ctrl+C is not a C.
-		if (event.ctrl && (key == "KeyC" || key == "KeyX" || key == "KeyV")) {
-			run_clipboard_verb(key == "KeyC" ? "Copy" : key == "KeyX" ? "Cut" : "Paste");
-			return true;
-		}
 		if (event.ctrl && key == "KeyA") {
 			forms_.select_all(control);
 			mark(dirty::paint);
@@ -1382,6 +1647,11 @@ private:
 	std::function<std::string()> clipboard_read_;
 	bool menu_open_ = false;
 	point menu_at_;
+	// The two ends of the page selection, and whether the pointer is currently
+	// dragging one of them.
+	text_position selection_anchor_;
+	text_position selection_focus_;
+	bool selecting_ = false;
 	bool sb_dragging_ = false;
 	float sb_grab_ = 0; // where in the thumb the drag started
 	const ctbrowser::raster::font_backend * fonts_ = nullptr;
