@@ -21,6 +21,7 @@ import ctbrowser.paint;
 import ctbrowser.raster;
 import ctbrowser.script;
 import ctbrowser.shell;
+import ctbrowser.app; // run_app, for the one test that drives the whole application
 
 #include "check.hpp"
 #include <algorithm>
@@ -334,6 +335,105 @@ void test_a_page_can_read_where_a_link_went() {
 	if (log_of(page).size() == 2) {
 		check(log_of(page)[1] == "/first", "and location.href is LIVE, not a page-load snapshot");
 	}
+}
+
+// --- garbage collection ---------------------------------------------------
+//
+// Collection never ran. Not "ran rarely" - the VM had no automatic trigger at
+// all, so a long-running page accumulated every object it ever made. The
+// reason it could not simply be switched on is that the DOM bindings hold
+// every listener, every timer callback and every element wrapper in C++
+// containers the collector cannot see, so a sweep would have freed a page's
+// own listeners while the page was still using them.
+void test_collection_keeps_what_the_page_still_uses() {
+	browser page{browser_options{300, 200}};
+	page.load_html(R"(<body><div id=a>click me</div><script>
+	var count = 0;
+	document.getElementById('a').addEventListener('click', function () {
+	  count = count + 1;
+	  console.log('fired ' + count);
+	});
+	setInterval(function () { console.log('tick'); }, 1000);
+	var kept = document.getElementById('a');
+	</script></body>)");
+	check(page.frame().has_value(), "the page renders");
+	check(page.script_error().empty(), "the script ran");
+
+	// Make a lot of garbage, then collect. Without external roots this frees
+	// the listener, the interval's callback and the wrapper `kept` refers to.
+	check(page.run_script("for (var i = 0; i < 20000; i = i + 1) { var junk = { n: i }; }"),
+	      "made some garbage");
+	const std::size_t freed = page.collect_garbage();
+	check(freed > 0, "and collecting freed some of it");
+
+	// The listener still fires.
+	(void)page.handle(input_event::mouse_down_at(20, 20));
+	(void)page.handle(input_event::mouse_up_at(20, 20));
+	check(!log_of(page).empty() && log_of(page).back() == "fired 1",
+	      "the listener survived the collection");
+
+	// The interval still fires.
+	check(page.tick(1100) >= 1, "the interval survived too");
+	check(log_of(page).back() == "tick", "and ran its callback");
+
+	// And the wrapper the page is holding is still the live element.
+	check(page.run_script("console.log(kept.tagName);"), "reading the kept wrapper works");
+	check(log_of(page).back() == "div", "it is still the element it was");
+}
+
+void test_collection_happens_on_its_own() {
+	browser page{browser_options{300, 200}};
+	page.load_html(R"(<body><p>x</p><script>
+	function churn() { for (var i = 0; i < 3000; i = i + 1) { var junk = { n: i }; } }
+	setInterval(churn, 16);
+	</script></body>)");
+	check(page.script_error().empty(), "the script ran");
+
+	// A page that makes garbage on a timer must not grow without bound. Before
+	// this, nothing was ever freed for the life of the document.
+	std::size_t peak = 0;
+	for (int i = 0; i < 60; ++i) {
+		(void)page.tick(20);
+		peak = std::max(peak, page.live_script_objects());
+	}
+	const std::size_t settled = page.live_script_objects();
+	check(peak > 3000, "the page really did allocate");
+	check(settled < peak, "and the heap came back down on its own");
+}
+
+// A LINK LEAVES THE PAGE THROUGH run_app, and lands in the SYSTEM BROWSER.
+//
+// Driven through run_app rather than the browser directly, because the wiring
+// is what was wrong: `ctbrowse` set browser::set_navigate_hook itself, which
+// REPLACES run_app's hook rather than chaining with it, so every http:// link
+// it was handed was silently swallowed. The application gets first refusal
+// now and anything it does not claim goes to SDL_OpenURL - the system default
+// browser, whatever that is.
+void test_a_link_reaches_the_application_through_run_app() {
+	std::vector<std::string> asked;
+	ctbrowser::app_options options;
+	options.width = 300;
+	options.height = 200;
+	options.max_frames = 3;
+	options.real_fonts = false;
+	options.network = false;
+	// Claimed, so the run does not actually open a browser mid-test. Returning
+	// FALSE is what sends it to the system one.
+	options.on_navigate = [&asked](const std::string & url) {
+		asked.push_back(url);
+		return true;
+	};
+	options.on_ready = [](shell::browser & page) {
+		// The click has to happen inside the run: run_app owns the browser.
+		(void)page.frame();
+		(void)page.handle(input_event::mouse_down_at(12, 12));
+		(void)page.handle(input_event::mouse_up_at(12, 12));
+	};
+	const int code = ctbrowser::run_app(
+	    "<body><a href='https://example.com/here'>a link</a></body>", options);
+	check(code == 0, "the application ran");
+	check(asked.size() == 1, "the link reached the application");
+	if (!asked.empty()) { check(asked[0] == "https://example.com/here", "with its href"); }
 }
 
 void test_click_dispatch() {
@@ -740,6 +840,9 @@ int main() {
 	test_a_link_is_handed_to_the_embedder();
 	test_a_fragment_scrolls_instead_of_navigating();
 	test_a_page_can_read_where_a_link_went();
+	test_collection_keeps_what_the_page_still_uses();
+	test_collection_happens_on_its_own();
+	test_a_link_reaches_the_application_through_run_app();
 	test_click_dispatch();
 	test_events_bubble_and_can_be_prevented();
 

@@ -2,6 +2,7 @@ module;
 #include "font8x8.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -108,6 +109,41 @@ inline void fill_rect(const rect & where, color c, const pixel_rect & clip, surf
 		const std::span<std::uint32_t> row = into.row(y);
 		for (int x = p.left; x < p.right; ++x) {
 			row[static_cast<std::size_t>(x)] = blend_over(row[static_cast<std::size_t>(x)], c);
+		}
+	}
+}
+
+// A filled ellipse inscribed in `where`, ANTIALIASED at the edge. A hard-edged
+// circle at 13 pixels across - the size of a radio button - looks like a
+// polygon, and the coverage here is cheap: the distance from the centre in
+// normalised ellipse space, one pixel wide at the boundary.
+inline void fill_ellipse(const rect & where, color c, const pixel_rect & clip, surface & into) {
+	pixel_rect p = to_pixels(where, into.width(), into.height());
+	p.left = std::max(p.left, clip.left);
+	p.top = std::max(p.top, clip.top);
+	p.right = std::min(p.right, clip.right);
+	p.bottom = std::min(p.bottom, clip.bottom);
+	if (p.empty() || where.width <= 0 || where.height <= 0) { return; }
+
+	const float cx = where.x + where.width / 2;
+	const float cy = where.y + where.height / 2;
+	const float rx = where.width / 2;
+	const float ry = where.height / 2;
+	// One pixel of falloff, expressed in the same normalised units the test is
+	// in - so a small circle and a large one both get a one-pixel edge.
+	const float feather = std::max(1.0f / std::max(rx, ry), 0.001f);
+	for (int y = p.top; y < p.bottom; ++y) {
+		const std::span<std::uint32_t> row = into.row(y);
+		const float dy = (static_cast<float>(y) + 0.5f - cy) / ry;
+		for (int x = p.left; x < p.right; ++x) {
+			const float dx = (static_cast<float>(x) + 0.5f - cx) / rx;
+			const float distance = std::sqrt(dx * dx + dy * dy);
+			const float coverage = std::clamp((1.0f - distance) / feather, 0.0f, 1.0f);
+			if (coverage <= 0) { continue; }
+			const color shade = color::rgba(
+			    c.red(), c.green(), c.blue(),
+			    static_cast<std::uint8_t>(static_cast<float>(c.alpha()) * coverage + 0.5f));
+			row[static_cast<std::size_t>(x)] = blend_over(row[static_cast<std::size_t>(x)], shade);
 		}
 	}
 }
@@ -264,6 +300,7 @@ inline void draw_commands(const std::vector<paint_command> & commands, const rec
 			}
 			break;
 		case paint_op::fill_rect: fill_rect(local, c.fill, clip, into); break;
+		case paint_op::fill_ellipse: fill_ellipse(local, c.fill, clip, into); break;
 		case paint_op::text_run: draw_text_run(local, c, clip, into, faces); break;
 		case paint_op::image: draw_image(local, c, clip, into); break;
 		}

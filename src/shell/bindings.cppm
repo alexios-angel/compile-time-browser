@@ -139,8 +139,25 @@ public:
 	void advance_clock(double ms) { now_ms_ += ms; }
 	[[nodiscard]] double now_ms() const noexcept { return now_ms_; }
 
+	// Everything this holds that the VM cannot see. Registered with the context
+	// so a collection does not free a page's own listeners out from under it.
+	void register_roots(context & cx) {
+		cx.set_external_roots([this](const context::root_visitor & mark) {
+			for (const listener & l : listeners_) { mark(l.callback); }
+			for (const timer & t : timers_) { mark(t.callback); }
+			for (const value & callback : animation_callbacks_) { mark(callback); }
+			for (const auto & [packed, obj] : wrappers_) {
+				if (obj != nullptr) { mark(value::object(obj)); }
+			}
+			mark(location_);
+			mark(document_);
+			mark(window_);
+		});
+	}
+
 	void install(context & cx) {
 		cx_ = &cx;
+		register_roots(cx);
 		install_console(cx);
 		location_ = make_location(cx);
 		install_document(cx);

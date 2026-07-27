@@ -10,6 +10,14 @@
 #
 # Verified by planting a race in sdl_gpu_backend and confirming it is still
 # caught with these suppressions active.
+# libdbus, reached through SDL's initialisation the moment a test drives the
+# whole application (run_app) rather than the browser alone. The inversion is
+# between two of dbus's own mutexes, taken inside
+# _dbus_connection_new_for_transport; nothing in ctbrowser is on either stack.
+deadlock:libdbus-1.so
+mutex:libdbus-1.so
+called_from_lib:libdbus-1.so
+
 race:libvulkan_lvp.so
 race:libvulkan.so
 race:libLLVM

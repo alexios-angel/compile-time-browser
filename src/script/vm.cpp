@@ -230,6 +230,17 @@ std::size_t context::collect() {
 	for (object_object * table : prototypes_) {
 		if (table != nullptr) { mark_object(table); }
 	}
+	// The per-function string cache. These are live `value`s held by the
+	// context itself and referenced from nowhere else - a sweep without them
+	// frees a string literal that a running loop is about to read again.
+	for (auto & [proto, cache] : string_cache_) {
+		for (auto & [index, v] : cache) { mark(v); }
+	}
+	// And whatever the embedder holds: every DOM listener, timer callback and
+	// element wrapper lives in the bindings, not in any VM structure.
+	if (external_roots_) {
+		external_roots_([this](value v) { mark(v); });
+	}
 
 	std::size_t freed = 0;
 	heap_object ** link = &heap_;

@@ -8,11 +8,6 @@ module;
 
 #include <algorithm>
 #include <chrono>
-#if defined(_WIN32)
-#  include <windows.h>
-#else
-#  include <sys/resource.h>
-#endif
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -481,31 +476,6 @@ struct frame_record {
 	bool rendered = false;
 };
 
-// Process CPU time. std::clock() is wall time on some Windows runtimes, which
-// would make the one number this exists to report a lie.
-[[nodiscard]] inline double process_cpu_seconds() {
-#if defined(_WIN32)
-	FILETIME created{};
-	FILETIME exited{};
-	FILETIME kernel{};
-	FILETIME user{};
-	if (GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user) == 0) { return 0; }
-	const auto to_seconds = [](const FILETIME & t) {
-		return static_cast<double>((static_cast<std::uint64_t>(t.dwHighDateTime) << 32) |
-		                           t.dwLowDateTime) *
-		       1e-7; // 100ns units
-	};
-	return to_seconds(kernel) + to_seconds(user);
-#else
-	rusage usage{};
-	if (getrusage(RUSAGE_SELF, &usage) != 0) { return 0; }
-	const auto to_seconds = [](const timeval & t) {
-		return static_cast<double>(t.tv_sec) + 1e-6 * static_cast<double>(t.tv_usec);
-	};
-	return to_seconds(usage.ru_utime) + to_seconds(usage.ru_stime);
-#endif
-}
-
 inline void report_profile(const std::vector<frame_record> & history, double wall_seconds,
                            double cpu_seconds, const std::string & path) {
 	if (history.empty()) { return; }
@@ -619,8 +589,17 @@ int run_app(std::string_view html, app_options options) {
 		(void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "ctbrowser", message.c_str(),
 		                               static_cast<SDL_Window *>(host->native_window()));
 	});
-	page.set_navigate_hook([](const std::string & url) { (void)SDL_OpenURL(url.c_str()); });
 #endif
+	// A LINK THAT LEAVES THE PAGE. The application gets first refusal - that is
+	// how `ctbrowse` follows a link to another local file - and anything it
+	// does not claim goes to the system browser, which is what clicking an
+	// http:// link means.
+	page.set_navigate_hook([&options](const std::string & url) {
+		if (options.on_navigate && options.on_navigate(url)) { return; }
+#if CTBROWSER_WITH_SDL3
+		(void)SDL_OpenURL(url.c_str());
+#endif
+	});
 	if (options.real_fonts) { (void)page.use_real_fonts(options.font_path.string()); }
 
 	// Sound. `playSound(name [, volume])` is what the page calls; the HTML
@@ -650,7 +629,7 @@ int run_app(std::string_view html, app_options options) {
 	std::vector<detail::frame_record> history;
 	std::size_t dropped_records = 0;
 	const auto started = clock::now();
-	const double cpu_started = detail::process_cpu_seconds();
+	const double cpu_started = process_cpu_seconds();
 	const auto since = [&started](clock::time_point at) {
 		return std::chrono::duration<double, std::milli>(at - started).count();
 	};
@@ -760,7 +739,7 @@ int run_app(std::string_view html, app_options options) {
 			            history.size(), dropped_records);
 		}
 		detail::report_profile(history, std::chrono::duration<double>(clock::now() - started).count(),
-		                       detail::process_cpu_seconds() - cpu_started, options.profile_path);
+		                       process_cpu_seconds() - cpu_started, options.profile_path);
 	}
 
 #if CTBROWSER_WITH_SDL3

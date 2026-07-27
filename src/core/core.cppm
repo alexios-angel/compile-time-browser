@@ -11,6 +11,7 @@ export module ctbrowser.core;
 //   epoch      the reclamation scheme that lets those reads take no locks
 //   atom       interned strings, so name comparison is an integer compare
 //   scheduler  work-stealing pool for style, layout and raster
+//   cpu_time   process CPU seconds, which std::clock() does not portably give
 //   geometry   points, rects, sides, colors
 //
 // Modules note: this stack uses the global-module-fragment form
@@ -25,4 +26,5 @@ export import :epoch;
 export import :slab;
 export import :atom;
 export import :scheduler;
+export import :cpu_time;
 export import :geometry;

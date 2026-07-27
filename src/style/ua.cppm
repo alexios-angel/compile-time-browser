@@ -88,6 +88,11 @@ inline constexpr std::uint32_t ua_widget_accent = 0xFF0060DFu;
 inline constexpr std::uint32_t ua_widget_mark = 0xFFFFFFFFu;
 inline constexpr std::uint32_t ua_widget_field = 0xFFFFFFFFu;
 inline constexpr std::uint32_t ua_selection_highlight = 0xFFB4D5FEu;
+// A DISABLED control. Firefox greys the text and flattens the face; without
+// this a disabled button is indistinguishable from one that works, which is
+// the whole point of the attribute.
+inline constexpr std::uint32_t ua_widget_disabled_text = 0xFF8F8F9Fu;
+inline constexpr std::uint32_t ua_widget_disabled_face = 0xFFF0F0F4u;
 inline constexpr std::uint32_t ua_canvas = 0xFFFFFFFFu; // the page behind everything
 // The overlay scrollbar, in Firefox's greys.
 // The frame `<table border=N>` draws, in Gecko's grey.

@@ -88,6 +88,7 @@ target_sources(ctbrowser-core
       core/slab.cppm
       core/atom.cppm
       core/scheduler.cppm
+      core/cpu_time.cppm
       core/geometry.cppm)
 target_compile_features(ctbrowser-core PUBLIC cxx_std_23)
 ctbrowser_v2_target(ctbrowser-core)

@@ -209,6 +209,28 @@ public:
 
 	// --- gc ----------------------------------------------------------------
 	std::size_t collect();
+
+	// ROOTS THE VM CANNOT SEE. The DOM bindings hold every event listener,
+	// every timer callback and every element wrapper in C++ containers, and
+	// nothing in the register file, the globals table or a call frame refers to
+	// them. A collection without this frees a page's listeners while the page
+	// is still using them - which is why collection never ran at all.
+	using root_visitor = std::function<void(value)>;
+	void set_external_roots(std::function<void(const root_visitor &)> enumerate) {
+		external_roots_ = std::move(enumerate);
+	}
+
+	// Collect if the heap has grown enough to be worth it. Called once per
+	// tick, so a long-running page's garbage is bounded instead of accumulating
+	// for the life of the document.
+	std::size_t collect_if_due() {
+		if (live_objects_ < collect_threshold_) { return 0; }
+		const std::size_t freed = collect();
+		// The next collection waits for the heap to grow again, so a page whose
+		// live set is genuinely large does not collect on every tick.
+		collect_threshold_ = std::max(minimum_collect_threshold, live_objects_ * 2);
+		return freed;
+	}
 	[[nodiscard]] std::size_t live_objects() const noexcept { return live_objects_; }
 
 private:
@@ -299,6 +321,9 @@ private:
 	std::vector<call_frame> frames_;
 	heap_object * heap_ = nullptr;
 	std::size_t live_objects_ = 0;
+	static constexpr std::size_t minimum_collect_threshold = 4096;
+	std::size_t collect_threshold_ = minimum_collect_threshold;
+	std::function<void(const root_visitor &)> external_roots_;
 	bool failed_ = false;
 	std::string error_;
 };

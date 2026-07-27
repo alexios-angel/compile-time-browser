@@ -55,6 +55,12 @@ if(SDL3_FOUND)
     "SDL_VIDEODRIVER=offscreen;TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tsan.supp")
 endif()
 
+# bindings_basics drives run_app, which initialises SDL - and SDL reaches
+# libdbus, whose own lock order TSan reports as an inversion. Same suppression
+# file, same rule: by LIBRARY, so a real one in our code is still caught.
+set_tests_properties(v2-bindings_basics PROPERTIES ENVIRONMENT
+  "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tsan.supp")
+
 # The stress test is the one that must never be skipped: it is the evidence
 # that the lock-free read path is actually sound. Give it room under TSan.
 set_tests_properties(v2-stress_slab PROPERTIES TIMEOUT 300)

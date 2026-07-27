@@ -83,6 +83,7 @@ void check(bool ok, std::string_view what) {
 	return page.bindings().console_output();
 }
 
+
 // --- the form-control batch ------------------------------------------------
 //
 // Eight bugs a real page found that the test suite did not, because every one
@@ -117,6 +118,262 @@ void check(bool ok, std::string_view what) {
 		}
 	}
 	return rows;
+}
+
+// --- editing with the mouse and the arrow keys ----------------------------
+
+[[nodiscard]] std::size_t caret_of(browser & page, std::string_view id) {
+	const auto * state = page.control_state_of(find_id(page, id));
+	return state == nullptr ? 0 : state->caret;
+}
+[[nodiscard]] std::pair<std::size_t, std::size_t> selection_of(browser & page,
+                                                              std::string_view id) {
+	const auto * state = page.control_state_of(find_id(page, id));
+	if (state == nullptr) { return {0, 0}; }
+	return {std::min(state->caret, state->selection), std::max(state->caret, state->selection)};
+}
+
+void click(browser & page, float x, float y) {
+	(void)page.handle(input_event::mouse_down_at(x, y));
+	(void)page.handle(input_event::mouse_up_at(x, y));
+}
+
+// A caret must be measured with the face the text is DRAWN in. A textarea is
+// monospace by UA rule and its text was drawn in the default serif, so the
+// caret ran ahead by the difference on every character - which reads as a
+// growing gap between what you typed and where the caret is.
+void test_a_control_draws_in_the_face_it_measures() {
+	browser page{browser_options{500, 300}};
+	check(page.use_real_fonts(), "the vendored faces load");
+	page.load_html("<body><textarea id=t rows=3 cols=20></textarea></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect box = box_of(page, "t");
+	click(page, box.x + 6, box.y + 6);
+	check(page.text_input("Hello world"), "typed");
+	check(page.frame().has_value(), "redraws");
+
+	std::string drawn;
+	float text_x = 0;
+	layout::text_face drawn_face;
+	for (const auto & c : commands(page)) {
+		if (c.op == paint::paint_op::text_run && c.source == find_id(page, "t")) {
+			drawn = c.text;
+			text_x = c.bounds.x;
+			drawn_face = layout::text_face{c.face.family, c.face.bold, c.face.italic};
+		}
+	}
+	check(drawn == "Hello world", "the value is drawn");
+	// The caret sits at the END of the drawn text, measured in the SAME face.
+	const std::vector<rect> bars = caret_bars(page, "t");
+	check(bars.size() == 1, "there is a caret");
+	if (bars.empty()) { return; }
+	const float expected = text_x + page.metrics()(drawn, 16, drawn_face);
+	check(std::fabs(bars[0].x - expected) < 2,
+	      "and it is where the drawn text ENDS, not a different font's width along");
+}
+
+void test_clicking_in_a_textarea_places_the_caret() {
+	browser page{browser_options{500, 300}};
+	page.load_html("<body><textarea id=t rows=3 cols=20>abcdef\nghijkl</textarea></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect box = box_of(page, "t");
+
+	// The start of the FIRST line.
+	click(page, box.x + 7, box.y + 6);
+	check(caret_of(page, "t") == 0, "clicking the first character lands before it");
+
+	// The start of the SECOND line: past the newline, at offset 7.
+	click(page, box.x + 7, box.y + 26);
+	check(caret_of(page, "t") == 7, "clicking the second line lands at its start");
+
+	// Well past the end of a line clamps to that line's end, not to the value's.
+	click(page, box.right() - 4, box.y + 6);
+	check(caret_of(page, "t") == 6, "clicking past a line's end lands at ITS end");
+}
+
+void test_arrows_move_by_visual_line_in_a_textarea() {
+	browser page{browser_options{500, 300}};
+	page.load_html("<body><textarea id=t rows=3 cols=20>abcdef\nghijkl</textarea></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect box = box_of(page, "t");
+	click(page, box.x + 7, box.y + 6); // caret at 0
+
+	(void)page.handle(input_event::key_press("ArrowRight"));
+	(void)page.handle(input_event::key_press("ArrowRight"));
+	check(caret_of(page, "t") == 2, "right moves by a character");
+
+	// DOWN keeps the column. Walking by characters through the newline would
+	// land at 3, which is not what down means.
+	(void)page.handle(input_event::key_press("ArrowDown"));
+	check(caret_of(page, "t") == 9, "down keeps the column on the next line");
+	(void)page.handle(input_event::key_press("ArrowUp"));
+	check(caret_of(page, "t") == 2, "and up comes back to it");
+
+	// HOME and END are that LINE's ends, not the whole value's.
+	(void)page.handle(input_event::key_press("ArrowDown"));
+	(void)page.handle(input_event::key_press("End"));
+	check(caret_of(page, "t") == 13, "End goes to the end of the second line");
+	(void)page.handle(input_event::key_press("Home"));
+	check(caret_of(page, "t") == 7, "Home to its start");
+}
+
+void test_dragging_selects_inside_a_field() {
+	browser page{browser_options{500, 300}};
+	page.load_html("<body><input type=text id=f value=abcdefgh size=20></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect field = box_of(page, "f");
+
+	(void)page.handle(input_event::mouse_down_at(field.x + 7, field.y + 10));
+	(void)page.handle(input_event::mouse_move_to(field.x + 40, field.y + 10));
+	(void)page.handle(input_event::mouse_up_at(field.x + 40, field.y + 10));
+	const auto [from, to] = selection_of(page, "f");
+	check(from == 0, "the selection starts where the press was");
+	check(to > from, "and covers what was dragged over");
+
+	// And it can be COPIED, which is the whole reason to select it.
+	std::string clipboard;
+	page.set_clipboard_hooks([&clipboard](const std::string & text) { clipboard = text; },
+	                         [&clipboard] { return clipboard; });
+	input_event copy = input_event::key_press("KeyC");
+	copy.ctrl = true;
+	(void)page.handle(copy);
+	check(!clipboard.empty(), "Ctrl+C copied something");
+	check(clipboard == std::string_view{"abcdefgh"}.substr(from, to - from),
+	      "and it is exactly what was selected");
+}
+
+void test_escape_and_blur_drop_a_field_selection() {
+	browser page{browser_options{500, 300}};
+	page.load_html("<body><input type=text id=f value=abcdef size=20>"
+	               "<p id=elsewhere>not a field</p></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect field = box_of(page, "f");
+	click(page, field.x + 6, field.y + 10);
+
+	input_event select_all = input_event::key_press("KeyA");
+	select_all.ctrl = true;
+	(void)page.handle(select_all);
+	{
+		const auto [from, to] = selection_of(page, "f");
+		check(to - from == 6, "Ctrl+A selects the whole value");
+	}
+	(void)page.handle(input_event::key_press("Escape"));
+	{
+		const auto [from, to] = selection_of(page, "f");
+		check(from == to, "Escape drops it, as a browser does");
+	}
+
+	// And so does clicking away: a highlight left behind in a field nobody is
+	// typing in reads as still selected.
+	(void)page.handle(select_all);
+	check(selection_of(page, "f").second > 0, "selected again");
+	const rect elsewhere = box_of(page, "elsewhere");
+	click(page, elsewhere.x + 4, elsewhere.y + 4);
+	{
+		const auto [from, to] = selection_of(page, "f");
+		check(from == to, "clicking somewhere else drops it too");
+	}
+}
+
+void test_a_password_shows_bullets() {
+	browser page{browser_options{500, 300}};
+	page.load_html("<body><input type=password id=p value=hunter2 size=20>"
+	               "<input type=text id=t value=hunter2 size=20></body>");
+	check(page.frame().has_value(), "the page renders");
+
+	std::string password_run;
+	std::string text_run;
+	for (const auto & c : commands(page)) {
+		if (c.op != paint::paint_op::text_run) { continue; }
+		if (c.source == find_id(page, "p")) { password_run = c.text; }
+		if (c.source == find_id(page, "t")) { text_run = c.text; }
+	}
+	check(text_run == "hunter2", "a text field shows its value");
+	check(!password_run.empty(), "a password field draws something");
+	check(password_run.find("hunter") == std::string::npos,
+	      "but NOT the password - it was drawn in plain text");
+	// One bullet per code point, so the field is the same length as the value.
+	check(password_run == "•••••••", "seven characters, seven bullets");
+}
+
+void test_a_password_caret_is_measured_on_the_bullets() {
+	browser page{browser_options{500, 300}};
+	check(page.use_real_fonts(), "the vendored faces load");
+	page.load_html("<body><input type=password id=p size=20></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect field = box_of(page, "p");
+	click(page, field.x + 6, field.y + 10);
+	check(page.text_input("abcd"), "typed");
+	check(page.frame().has_value(), "redraws");
+
+	float text_x = 0;
+	std::string drawn;
+	for (const auto & c : commands(page)) {
+		if (c.op == paint::paint_op::text_run && c.source == find_id(page, "p")) {
+			text_x = c.bounds.x;
+			drawn = c.text;
+		}
+	}
+	const std::vector<rect> bars = caret_bars(page, "p");
+	check(bars.size() == 1, "there is a caret");
+	if (bars.empty() || drawn.empty()) { return; }
+	// Measured on what is SHOWN. A bullet is wider than most letters, so
+	// measuring the letters puts the caret inside the bullets.
+	const float expected = text_x + page.metrics()(drawn, 16, layout::text_face{});
+	check(std::fabs(bars[0].x - expected) < 2, "and it sits after the last bullet");
+}
+
+// --- disabled --------------------------------------------------------------
+
+void test_a_disabled_control_looks_and_acts_disabled() {
+	browser page{browser_options{500, 300}};
+	page.load_html("<body><button id=on>Live</button><button id=off disabled>Dead</button>"
+	               "<input type=text id=f disabled value=x size=10></body>");
+	check(page.frame().has_value(), "the page renders");
+
+	color live{};
+	color dead{};
+	for (const auto & c : commands(page)) {
+		if (c.op != paint::paint_op::text_run) { continue; }
+		if (c.text == "Live") { live = c.fill; }
+		if (c.text == "Dead") { dead = c.fill; }
+	}
+	check(!(live == color{})&& !(dead == color{}), "both labels are drawn");
+	check(!(live == dead), "and a disabled button is NOT drawn like a live one");
+	check(dead == color{style::ua_widget_disabled_text}, "it is greyed");
+
+	// And it is INERT: no focus, no activation, no events.
+	const rect off = box_of(page, "off");
+	click(page, off.x + 6, off.y + 6);
+	check(!page.focused(), "a disabled button does not take focus");
+	const rect disabled_field = box_of(page, "f");
+	click(page, disabled_field.x + 6, disabled_field.y + 8);
+	check(!page.focused(), "and neither does a disabled field");
+	check(!page.text_input("hello"), "so typing goes nowhere");
+}
+
+void test_a_radio_is_round_and_a_checkbox_is_not() {
+	browser page{browser_options{400, 200}};
+	page.load_html("<body><input type=radio id=r checked><input type=checkbox id=c checked></body>");
+	check(page.frame().has_value(), "the page renders");
+
+	std::size_t radio_ellipses = 0;
+	std::size_t checkbox_ellipses = 0;
+	std::size_t checkbox_rects = 0;
+	for (const auto & c : commands(page)) {
+		if (c.source == find_id(page, "r") && c.op == paint::paint_op::fill_ellipse) {
+			++radio_ellipses;
+		}
+		if (c.source == find_id(page, "c")) {
+			if (c.op == paint::paint_op::fill_ellipse) { ++checkbox_ellipses; }
+			if (c.op == paint::paint_op::fill_rect) { ++checkbox_rects; }
+		}
+	}
+	// Drawn as squares the two controls are indistinguishable, and the shape is
+	// what tells you one of them is exclusive.
+	check(radio_ellipses >= 2, "a radio is drawn with ellipses");
+	check(checkbox_ellipses == 0, "a checkbox is not");
+	check(checkbox_rects > 0, "it is drawn with rectangles");
 }
 
 void test_a_button_shows_its_label() {
@@ -179,13 +436,14 @@ void test_a_textarea_shows_a_caret_on_the_right_line() {
 	page.load_html("<body><textarea id=t rows=3 cols=20>one\ntwo</textarea></body>");
 	check(page.frame().has_value(), "the page renders");
 	const rect box = box_of(page, "t");
-	(void)page.handle(input_event::mouse_down_at(box.x + 6, box.y + 6));
-	(void)page.handle(input_event::mouse_up_at(box.x + 6, box.y + 6));
+	// Clicked on the SECOND line, which is also the click-to-position test:
+	// the caret goes where the pointer was, not where it happened to be.
+	(void)page.handle(input_event::mouse_down_at(box.x + 6, box.y + 28));
+	(void)page.handle(input_event::mouse_up_at(box.x + 6, box.y + 28));
 	check(page.focused() == find_id(page, "t"), "the textarea is focused");
 	check(page.frame().has_value(), "it redraws");
 
-	// The caret is seeded at the END of the value, which is on the SECOND
-	// line. Measured as one run it landed the width of "one\ntwo" past the
+	// Measured as one run the caret landed the width of "one\ntwo" past the
 	// left edge - past the right edge of the box, where the clip threw it
 	// away. That is why a textarea appeared to have no caret at all.
 	const std::vector<rect> bars = caret_bars(page, "t");
@@ -327,8 +585,10 @@ void test_script_reads_a_live_control_value() {
 	}
 
 	const rect field = box_of(page, "f");
-	(void)page.handle(input_event::mouse_down_at(field.x + 4, field.y + 6));
-	(void)page.handle(input_event::mouse_up_at(field.x + 4, field.y + 6));
+	// Clicked PAST the end of the text, so the caret lands after it - a click
+	// places the caret now, and clicking at the left edge would insert there.
+	(void)page.handle(input_event::mouse_down_at(field.right() - 8, field.y + 6));
+	(void)page.handle(input_event::mouse_up_at(field.right() - 8, field.y + 6));
 	check(page.text_input("!"), "typed into it");
 	check(page.run_script("report()"), "the script call runs again");
 	check(log_of(page).back() == "start!/green", "and now reads what was TYPED, not the snapshot");
@@ -1198,6 +1458,15 @@ void test_selection_survives_a_relayout() {
 } // namespace
 
 int main() {
+	test_a_control_draws_in_the_face_it_measures();
+	test_clicking_in_a_textarea_places_the_caret();
+	test_arrows_move_by_visual_line_in_a_textarea();
+	test_dragging_selects_inside_a_field();
+	test_escape_and_blur_drop_a_field_selection();
+	test_a_password_shows_bullets();
+	test_a_password_caret_is_measured_on_the_bullets();
+	test_a_disabled_control_looks_and_acts_disabled();
+	test_a_radio_is_round_and_a_checkbox_is_not();
 	test_a_button_shows_its_label();
 	test_a_submit_button_has_a_default_label();
 	test_the_caret_is_measured_with_the_drawing_font();

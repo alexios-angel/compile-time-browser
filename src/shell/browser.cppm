@@ -340,6 +340,26 @@ public:
 	// not increment it.
 	[[nodiscard]] std::size_t layout_count() const noexcept { return layouts_; }
 
+	// Collect the script heap now, and how many objects it has. Exposed
+	// because "does a collection free what the page is still using" is only
+	// answerable from outside, and it is the question that kept the collector
+	// switched off.
+	std::size_t collect_garbage() { return script_ ? script_->collect() : 0; }
+	[[nodiscard]] std::size_t live_script_objects() const {
+		return script_ ? script_->live_objects() : 0;
+	}
+
+	// A control's live state - value, caret, selection, checked. Read-only and
+	// null for anything that is not a control: this is what a test asks where
+	// the caret ended up, and what an embedder asks to read a form without
+	// submitting it.
+	[[nodiscard]] const control_state * control_state_of(node_id id) {
+		if (!id) { return nullptr; }
+		const auto txn = doc_->read();
+		if (!txn.contains(id) || kind_of(txn, id) == control_kind::none) { return nullptr; }
+		return &forms_.state_of(txn, atoms_, id);
+	}
+
 	// Whether anything has changed that a frame would show. An event loop asks
 	// this rather than assuming: a caret blink and a scrollbar that appears
 	// after a relayout both change what should be on screen without any event
@@ -387,6 +407,11 @@ public:
 		if (focused_ && caret_visible() != was_visible) { mark(dirty::paint); }
 		bindings_->advance_clock(elapsed_ms);
 		const std::size_t ran = bindings_->run_due_callbacks();
+		// Collect between callbacks, never inside one - the same reason a
+		// reload is drained here. Nothing was ever collected before: the GC had
+		// no way to see the bindings' listeners, so running it would have freed
+		// them, and so it never ran at all.
+		if (script_) { (void)script_->collect_if_due(); }
 		// BETWEEN callbacks, never inside one: reloading tears down the script
 		// context, and location.reload() is called from a function running in
 		// it. A page that reloads on game-over would take the VM with it.
@@ -524,6 +549,22 @@ public:
 				scroll_to(travel > 0 ? (event.y - sb_grab_) / travel * max_scroll() : 0);
 				return true;
 			}
+			if (field_selecting_) {
+				// Extending a selection INSIDE a control. The anchor is the
+				// control's `selection`, so dragging back over the text shrinks
+				// it rather than starting again.
+				const auto txn = doc_->read();
+				const control_kind kind = kind_of(txn, field_selecting_);
+				control_state & state = forms_.state_of(txn, atoms_, field_selecting_);
+				const std::size_t at =
+				    offset_at_point(field_selecting_, state, kind, event.x, event.y);
+				if (at != state.caret) {
+					state.caret = at;
+					restart_caret_blink();
+					mark(dirty::paint);
+				}
+				return true;
+			}
 			if (selecting_) {
 				// Extending. The ANCHOR stays put, which is what makes dragging
 				// back over the text shrink the selection rather than start a
@@ -580,16 +621,33 @@ public:
 			}
 			pressed_ = hit_test(event.x, event.y);
 			(void)dispatch_mouse("mousedown", pressed_, event);
-			// A press begins a SELECTION unless it landed on a control, which
-			// has its own idea of what dragging means.
-			if (kind_of(doc_->read(), control_ancestor(pressed_)) == control_kind::none) {
-				const text_position at = position_at(event.x, event.y);
-				selection_anchor_ = at;
-				selection_focus_ = at;
-				selecting_ = static_cast<bool>(at);
-				mark(dirty::paint);
-			} else {
-				clear_selection();
+			// A press begins a SELECTION. Inside an editable control that is a
+			// selection of ITS text, anchored where the click landed; outside
+			// one it is a page selection. A control had neither: clicking in a
+			// textarea put the caret wherever it already was and dragging did
+			// nothing at all.
+			{
+				const auto txn = doc_->read();
+				const node_id control = control_ancestor(pressed_);
+				const control_kind kind = kind_of(txn, control);
+				if (kind == control_kind::text || kind == control_kind::textarea) {
+					clear_selection();
+					(void)focus(control); // before placing the caret: focus clears it
+					control_state & state = forms_.state_of(txn, atoms_, control);
+					state.caret = offset_at_point(control, state, kind, event.x, event.y);
+					state.selection = state.caret;
+					field_selecting_ = control;
+					restart_caret_blink();
+					mark(dirty::paint);
+				} else if (kind == control_kind::none) {
+					const text_position at = position_at(event.x, event.y);
+					selection_anchor_ = at;
+					selection_focus_ = at;
+					selecting_ = static_cast<bool>(at);
+					mark(dirty::paint);
+				} else {
+					clear_selection();
+				}
 			}
 			return set_state(pressed_, state_active, true);
 		case input_kind::mouse_up: {
@@ -599,6 +657,7 @@ public:
 				return true;
 			}
 			selecting_ = false;
+			field_selecting_ = node_id{};
 			bool changed = set_state(pressed_, state_active, false);
 			(void)dispatch_mouse("mouseup", hit_test(event.x, event.y), event);
 			// Focus follows the press, and moves even when the click lands on
@@ -1006,7 +1065,7 @@ private:
 			          font_size_of(select_open_),
 			          options[i] == chosen ? color{ctbrowser::style::ua_widget_mark}
 			                               : color{0xFF000000U},
-			          select_open_);
+			          select_open_, paint_face_of(select_open_));
 		}
 		// A frame last, so it is not painted over by the rows.
 		const color frame{ctbrowser::style::ua_widget_frame};
@@ -1125,23 +1184,38 @@ private:
 
 		control_state & control = forms_.state_of(txn, atoms_, id);
 		const bool focused = focused_ == id;
+		const bool disabled = is_disabled(id);
 		const color frame{ctbrowser::style::ua_widget_frame};
-		const color field{ctbrowser::style::ua_widget_field};
-		const color accent{ctbrowser::style::ua_widget_accent};
+		const color field{disabled ? color{ctbrowser::style::ua_widget_disabled_face}
+		                           : color{ctbrowser::style::ua_widget_field}};
+		const color accent{disabled ? color{ctbrowser::style::ua_widget_disabled_text}
+		                            : color{ctbrowser::style::ua_widget_accent}};
 
 		switch (kind) {
-		case control_kind::checkbox:
-		case control_kind::radio: {
+		case control_kind::checkbox: {
 			into.fill(box, control.checked ? accent : field, id);
 			outline(box, frame, into, id);
 			if (control.checked) {
-				// The mark, inset. A checkbox drawn as a filled square and a
-				// radio drawn as a filled square are indistinguishable, so the
-				// radio gets a smaller centred dot.
-				const float inset = kind == control_kind::radio ? box.width * 0.3f : box.width * 0.25f;
+				const float inset = box.width * 0.25f;
 				into.fill(rect{box.x + inset, box.y + inset, box.width - 2 * inset,
 				               box.height - 2 * inset},
 				          color{ctbrowser::style::ua_widget_mark}, id);
+			}
+			break;
+		}
+		case control_kind::radio: {
+			// A RADIO IS ROUND, and that is the whole visual difference between
+			// it and a checkbox - drawn as a square, the two controls are
+			// indistinguishable and the shape is what tells you one of them is
+			// exclusive. The display list had no ellipse until now.
+			into.fill_ellipse(box, frame, id);
+			into.fill_ellipse(rect{box.x + 1, box.y + 1, box.width - 2, box.height - 2},
+			                  control.checked ? accent : field, id);
+			if (control.checked) {
+				const float inset = box.width * 0.3f;
+				into.fill_ellipse(rect{box.x + inset, box.y + inset, box.width - 2 * inset,
+				                       box.height - 2 * inset},
+				                  color{ctbrowser::style::ua_widget_mark}, id);
 			}
 			break;
 		}
@@ -1167,7 +1241,7 @@ private:
 				const float size = font_size_of(id);
 				into.text(rect{box.x + control_padding, box.y + baseline_inset(box, size),
 				               box.width - control_padding - 20, size * 1.25f},
-				          label, size, text_colour(style), id);
+				          label, size, control_text_colour(id, style), id, paint_face_of(id));
 			}
 			// The drop-down arrow, in the gutter the intrinsic width reserves.
 			const float arrow = 4;
@@ -1199,7 +1273,7 @@ private:
 		const float width = measure()(label, size, face_of(id));
 		const float x = box.x + std::max(control_padding, (box.width - width) / 2);
 		into.text(rect{x, box.y + baseline_inset(box, size), box.width - (x - box.x), size * 1.25f},
-		          label, size, text_colour(style), id);
+		          label, size, control_text_colour(id, style), id, paint_face_of(id));
 	}
 
 	// Where a single line of text sits inside a control: vertically centred on
@@ -1209,36 +1283,198 @@ private:
 		return std::max(0.0f, (box.height - size * 1.25f) / 2);
 	}
 
+	// A control's text geometry, in ONE place. The painter draws from it and a
+	// click is mapped through it, so a caret cannot land where the text is not:
+	// two copies of "where does line 2 start" is how a click ends up putting
+	// the caret somewhere the glyphs never were.
+	struct field_layout {
+		rect inner;
+		float size = 16;
+		float line_height = 20;
+		ctbrowser::layout::text_face metrics_face;
+		std::vector<std::pair<std::size_t, std::size_t>> lines; // [begin, end) in the VALUE
+		bool masked = false;
+	};
+
+	[[nodiscard]] field_layout layout_of_field(const rect & box, node_id id,
+	                                           const control_state & control, control_kind kind) {
+		field_layout out;
+		out.size = font_size_of(id);
+		out.metrics_face = face_of(id);
+		out.line_height = out.size * 1.25f;
+		out.masked = is_password(id);
+		const bool multiline = kind == control_kind::textarea;
+		out.inner = rect{box.x + control_padding,
+		                 box.y + (multiline ? 3 : baseline_inset(box, out.size)),
+		                 box.width - 2 * control_padding, box.height - 6};
+		out.lines = multiline ? value_lines(control.value)
+		                      : std::vector<std::pair<std::size_t, std::size_t>>{
+		                            {0, control.value.size()}};
+		return out;
+	}
+
+	// `<input type=password>` shows BULLETS. Masked per CODE POINT rather than
+	// per byte, so a value with anything non-ASCII in it does not come out with
+	// three bullets for one character - and the caret, which counts the same
+	// way, still lands between them.
+	// A control is disabled by its own attribute or by an enclosing <fieldset>,
+	// which is how a form greys out a whole section at once.
+	[[nodiscard]] bool is_disabled(node_id id) {
+		if (!id) { return false; }
+		const auto txn = doc_->read();
+		const atom disabled = atoms_.intern("disabled");
+		const atom fieldset = atoms_.intern_lower("fieldset");
+		for (node_id at = id; at; at = txn.parent(at)) {
+			if (at == id || txn.tag(at).value_or(atom{}) == fieldset) {
+				if (txn.has_attribute(at, disabled)) { return true; }
+			}
+		}
+		return false;
+	}
+
+	[[nodiscard]] bool is_password(node_id id) {
+		const auto txn = doc_->read();
+		return txn.attribute_value(id, atoms_.intern("type")) == "password";
+	}
+	[[nodiscard]] static std::string masked_text(std::string_view text) {
+		std::string out;
+		for (std::size_t at = 0; at < text.size(); at = next_code_point(text, at)) {
+			out += "\xE2\x80\xA2"; // U+2022 BULLET
+		}
+		return out;
+	}
+	// What the user SEES for a stretch of the value.
+	[[nodiscard]] static std::string shown(std::string_view text, bool masked) {
+		return masked ? masked_text(text) : std::string{text};
+	}
+	[[nodiscard]] static std::size_t next_code_point(std::string_view text, std::size_t at) {
+		std::size_t next = at + 1;
+		while (next < text.size() && (static_cast<unsigned char>(text[next]) & 0xC0) == 0x80) {
+			++next;
+		}
+		return next;
+	}
+
+	// Where in a control's value a point falls. The nearest character boundary
+	// on the line the point is on - which is the ONLY way a click can put the
+	// caret where the user pointed, and a textarea had no such path at all.
+	[[nodiscard]] std::size_t offset_at_point(node_id id, const control_state & control,
+	                                          control_kind kind, float x, float y) {
+		const rect box = viewport_box_of(id);
+		if (box.empty()) { return control.caret; }
+		const field_layout geometry = layout_of_field(box, id, control, kind);
+		if (geometry.lines.empty()) { return 0; }
+
+		const auto line_index = static_cast<std::ptrdiff_t>(
+		    std::floor((y - geometry.inner.y) / geometry.line_height));
+		const std::size_t index = static_cast<std::size_t>(
+		    std::clamp<std::ptrdiff_t>(line_index, 0,
+		                               static_cast<std::ptrdiff_t>(geometry.lines.size()) - 1));
+		const auto [begin, end] = geometry.lines[index];
+		const std::string_view line{control.value.data() + begin, end - begin};
+
+		// Nearest BOUNDARY, not nearest character: clicking the right half of a
+		// glyph puts the caret after it, which is what makes clicking at the
+		// end of a word land where you meant.
+		const float want = x - geometry.inner.x;
+		std::size_t best = 0;
+		float best_distance = std::numeric_limits<float>::infinity();
+		for (std::size_t at = 0; at <= line.size();
+		     at = at < line.size() ? next_code_point(line, at) : line.size() + 1) {
+			const float where =
+			    measure()(shown(line.substr(0, at), geometry.masked), geometry.size,
+			              geometry.metrics_face);
+			if (const float distance = std::fabs(where - want); distance < best_distance) {
+				best_distance = distance;
+				best = at;
+			}
+			if (at == line.size()) { break; }
+		}
+		return begin + best;
+	}
+
+	// Move the caret one VISUAL LINE, keeping the column. A textarea without
+	// this has arrow keys that walk character by character through a newline,
+	// which is not what up and down mean.
+	bool move_caret_by_line(node_id id, control_state & control, control_kind kind, int direction,
+	                        bool extend) {
+		const rect box = viewport_box_of(id);
+		if (box.empty()) { return false; }
+		const field_layout geometry = layout_of_field(box, id, control, kind);
+		std::size_t index = 0;
+		for (std::size_t i = 0; i < geometry.lines.size(); ++i) {
+			if (control.caret >= geometry.lines[i].first && control.caret <= geometry.lines[i].second) {
+				index = i;
+				break;
+			}
+		}
+		const auto target = static_cast<std::ptrdiff_t>(index) + direction;
+		if (target < 0 || target >= static_cast<std::ptrdiff_t>(geometry.lines.size())) {
+			return false;
+		}
+		// The COLUMN is a distance, not a character count: two lines of the
+		// same text in a proportional font do not share character positions.
+		const auto [begin, end] = geometry.lines[index];
+		const float column =
+		    measure()(shown(std::string_view{control.value}.substr(begin, control.caret - begin),
+		                    geometry.masked),
+		              geometry.size, geometry.metrics_face);
+		const auto [to_begin, to_end] = geometry.lines[static_cast<std::size_t>(target)];
+		const std::string_view line{control.value.data() + to_begin, to_end - to_begin};
+		std::size_t best = 0;
+		float best_distance = std::numeric_limits<float>::infinity();
+		for (std::size_t at = 0; at <= line.size();
+		     at = at < line.size() ? next_code_point(line, at) : line.size() + 1) {
+			const float where = measure()(shown(line.substr(0, at), geometry.masked), geometry.size,
+			                              geometry.metrics_face);
+			if (const float distance = std::fabs(where - column); distance < best_distance) {
+				best_distance = distance;
+				best = at;
+			}
+			if (at == line.size()) { break; }
+		}
+		control.caret = to_begin + best;
+		if (!extend) { control.selection = control.caret; }
+		return true;
+	}
+
+	// Home and End are per LINE in a textarea, as they are in every editor.
+	bool move_to_line_edge(node_id id, control_state & control, control_kind kind, bool to_end,
+	                       bool extend) {
+		const rect box = viewport_box_of(id);
+		if (box.empty()) { return false; }
+		const field_layout geometry = layout_of_field(box, id, control, kind);
+		for (const auto & [begin, end] : geometry.lines) {
+			if (control.caret < begin || control.caret > end) { continue; }
+			control.caret = to_end ? end : begin;
+			if (!extend) { control.selection = control.caret; }
+			return true;
+		}
+		return false;
+	}
+
 	void paint_field_text(const rect & box, node_id id, const control_state & control,
 	                      control_kind kind, const ctbrowser::style::computed_style_ptr & style,
 	                      bool focused, ctbrowser::paint::display_list & into) {
-		const float size = font_size_of(id);
-		const ctbrowser::layout::text_face face = face_of(id);
-		const float line_height = size * 1.25f;
-		const bool multiline = kind == control_kind::textarea;
-		const rect inner{box.x + control_padding, box.y + (multiline ? 3 : baseline_inset(box, size)),
-		                 box.width - 2 * control_padding, box.height - 6};
-		// MEASURED WITH THE FONT THAT DRAWS IT. This used font8x8_advance while
-		// the text was drawn with the real face, so the caret sat wherever the
-		// bitmap font would have put it - about twice as far along, which reads
-		// as the caret jumping a character ahead of every keystroke.
-		const auto advance = [&](std::string_view text) { return measure()(text, size, face); };
+		const field_layout geometry = layout_of_field(box, id, control, kind);
+		const rect inner = geometry.inner;
+		const float size = geometry.size;
+		const float line_height = geometry.line_height;
+		const ctbrowser::paint::font_face face = paint_face_of(id);
+		// MEASURED WITH THE FONT THAT DRAWS IT, and with the text that IS
+		// drawn - a password's bullets are wider than its letters, so measuring
+		// the letters puts the caret inside the bullets.
+		const auto advance = [&](std::string_view text) {
+			return measure()(shown(text, geometry.masked), size, geometry.metrics_face);
+		};
 
 		// The field clips its own contents: a value longer than the box must not
 		// paint over the page beside it.
 		into.push_clip(box);
-		// A textarea is as many lines as its value has newlines; an input is
-		// one line however many it has. Doing this for both is what makes the
-		// caret findable in a textarea at all - measured as one run, a caret on
-		// the second line landed the width of the FIRST line past the box and
-		// was clipped away, which looked like no caret.
-		const std::vector<std::pair<std::size_t, std::size_t>> lines =
-		    multiline ? value_lines(control.value)
-		              : std::vector<std::pair<std::size_t, std::size_t>>{{0, control.value.size()}};
 		const std::size_t from = std::min(control.caret, control.selection);
 		const std::size_t to = std::max(control.caret, control.selection);
-		for (std::size_t index = 0; index < lines.size(); ++index) {
-			const auto [begin, end] = lines[index];
+		for (std::size_t index = 0; index < geometry.lines.size(); ++index) {
+			const auto [begin, end] = geometry.lines[index];
 			const std::string_view line{control.value.data() + begin, end - begin};
 			const float y = inner.y + static_cast<float>(index) * line_height;
 			if (from != to && from < end && to > begin) {
@@ -1249,8 +1485,8 @@ private:
 				          color{ctbrowser::style::ua_selection_highlight}, id);
 			}
 			if (!line.empty()) {
-				into.text(rect{inner.x, y, inner.width, line_height}, std::string{line}, size,
-				          text_colour(style), id);
+				into.text(rect{inner.x, y, inner.width, line_height}, shown(line, geometry.masked),
+				          size, control_text_colour(id, style), id, face);
 			}
 			// The caret sits on the line CONTAINING it. `<=` on the end so a
 			// caret at the very end of a line is on that line rather than
@@ -1259,7 +1495,7 @@ private:
 			if (focused && caret_visible() && control.caret >= begin && control.caret <= end) {
 				into.fill(rect{inner.x + advance(line.substr(0, control.caret - begin)), y, 1,
 				               line_height},
-				          text_colour(style), id);
+				          control_text_colour(id, style), id);
 			}
 		}
 		into.pop_clip();
@@ -1295,6 +1531,15 @@ private:
 		return text;
 	}
 
+	// The colour a control's own text is drawn in. A DISABLED control ignores
+	// the cascade here: `color` on a disabled button is not what a user needs
+	// to see, and greyed-out is the only signal the control is dead.
+	[[nodiscard]] color control_text_colour(node_id id,
+	                                        const ctbrowser::style::computed_style_ptr & style) {
+		return is_disabled(id) ? color{ctbrowser::style::ua_widget_disabled_text}
+		                       : text_colour(style);
+	}
+
 	[[nodiscard]] color text_colour(const ctbrowser::style::computed_style_ptr & style) {
 		if (style) {
 			if (const auto c = ctbrowser::paint::parse_color(style->get(atoms_.intern("color")))) {
@@ -1311,6 +1556,17 @@ private:
 	[[nodiscard]] ctbrowser::layout::text_face face_of(node_id id) const {
 		const layout::box_node * found = find_box(boxes_, id);
 		return found == nullptr ? ctbrowser::layout::text_face{} : found->face;
+	}
+
+	// The same face, as the paint layer names it. The two types are separate on
+	// purpose - layout may not import paint - so the conversion is explicit,
+	// and every control's text MUST go through it: drawing a control's text
+	// with the default face while measuring the caret with the element's own
+	// is a caret that drifts further right with every character typed. A
+	// textarea is monospace by UA rule and was drawn in the default serif.
+	[[nodiscard]] ctbrowser::paint::font_face paint_face_of(node_id id) const {
+		const ctbrowser::layout::text_face face = face_of(id);
+		return ctbrowser::paint::font_face{face.family, face.bold, face.italic};
 	}
 
 	[[nodiscard]] float font_size_of(node_id id) const {
@@ -1746,12 +2002,24 @@ private:
 	}
 
 	bool focus(node_id id) {
+		if (is_disabled(id)) { return false; } // a disabled control cannot take focus
 		if (id == focused_) { return false; }
 		if (focused_) {
 			// `change` fires on BLUR, not on every keystroke - that is the
 			// difference between it and `input`, and pages rely on it.
 			bindings_->dispatch("change", focused_);
 			(void)set_state(focused_, state_focus, false);
+			// And the outgoing field DROPS ITS SELECTION. A highlight left
+			// behind in a field nobody is typing in reads as still selected,
+			// and Ctrl+A followed by a click somewhere else did exactly that.
+			const auto txn = doc_->read();
+			if (txn.contains(focused_)) {
+				const control_kind kind = kind_of(txn, focused_);
+				if (kind == control_kind::text || kind == control_kind::textarea) {
+					control_state & state = forms_.state_of(txn, atoms_, focused_);
+					state.selection = state.caret;
+				}
+			}
 		}
 		focused_ = id;
 		restart_caret_blink(); // a field you just clicked into shows its caret at once
@@ -1765,12 +2033,41 @@ private:
 
 	bool edit_key(control_state & control, const input_event & event) {
 		const std::string & key = event.key;
+		const control_kind kind = kind_of(doc_->read(), focused_);
+		const bool multiline = kind == control_kind::textarea;
 		if (key == "Backspace") { return edited(forms_.backspace(control)); }
 		if (key == "Delete") { return edited(forms_.delete_forward(control)); }
 		if (key == "ArrowLeft") { return moved(forms_.move_caret(control, -1, event.shift)); }
 		if (key == "ArrowRight") { return moved(forms_.move_caret(control, 1, event.shift)); }
-		if (key == "Home") { return moved(forms_.move_to_edge(control, false, event.shift)); }
-		if (key == "End") { return moved(forms_.move_to_edge(control, true, event.shift)); }
+		// UP and DOWN are visual LINES, and Home/End are the ends of one. In a
+		// single-line field up and down are the whole value's ends, which is
+		// what a browser does with them there.
+		if (key == "ArrowUp") {
+			return moved(multiline ? move_caret_by_line(focused_, control, kind, -1, event.shift)
+			                       : forms_.move_to_edge(control, false, event.shift));
+		}
+		if (key == "ArrowDown") {
+			return moved(multiline ? move_caret_by_line(focused_, control, kind, 1, event.shift)
+			                       : forms_.move_to_edge(control, true, event.shift));
+		}
+		if (key == "Home") {
+			return moved(multiline ? move_to_line_edge(focused_, control, kind, false, event.shift)
+			                       : forms_.move_to_edge(control, false, event.shift));
+		}
+		if (key == "End") {
+			return moved(multiline ? move_to_line_edge(focused_, control, kind, true, event.shift)
+			                       : forms_.move_to_edge(control, true, event.shift));
+		}
+		// ESCAPE drops the selection and keeps the caret, which is what every
+		// browser does with it in a field. Ctrl+A then Escape left the whole
+		// value highlighted forever.
+		if (key == "Escape") {
+			if (control.selection == control.caret) { return false; }
+			control.selection = control.caret;
+			restart_caret_blink();
+			mark(dirty::paint);
+			return true;
+		}
 		if (event.ctrl && key == "KeyA") {
 			forms_.select_all(control);
 			mark(dirty::paint);
@@ -1806,6 +2103,10 @@ private:
 
 	// What clicking a control does once no listener has cancelled it.
 	void activate(node_id target) {
+		// A DISABLED control does nothing and dispatches nothing - it does not
+		// toggle, submit, focus or fire an event. Without this the attribute
+		// was purely decorative, and it was not even that.
+		if (is_disabled(control_ancestor(target))) { return; }
 		if (follow_link(target)) { return; }
 		if (toggle_details(target)) { return; }
 		const node_id control = control_ancestor(target);
@@ -1984,6 +2285,9 @@ private:
 	std::string clipboard_;
 	std::function<void(const std::string &)> clipboard_write_;
 	std::function<std::string()> clipboard_read_;
+	// The control a drag is selecting inside, if any. Empty means the drag is
+	// a page selection, or there is no drag.
+	node_id field_selecting_;
 	std::function<void(const std::string &)> alert_hook_;
 	std::vector<std::string> alerts_;
 	std::function<void(const std::string &)> navigate_hook_;

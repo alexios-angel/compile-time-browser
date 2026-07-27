@@ -117,6 +117,17 @@ struct app_options {
 	// applications that want to inspect the document or drive it themselves.
 	std::function<void(shell::browser &)> on_ready;
 
+	// A link the page followed that LEAVES this document. Return true if the
+	// application handled it - `ctbrowse` loads a local .html this way - and
+	// false to let it go to the SYSTEM BROWSER, which is what happens with no
+	// hook at all and what a user clicking an http:// link expects.
+	//
+	// A hook rather than a browser-level one so an application does not have to
+	// remember to chain: setting browser::set_navigate_hook directly REPLACES
+	// the system-browser fallback, which is how ctbrowse silently swallowed
+	// every external link it was given.
+	std::function<bool(const std::string & url)> on_navigate;
+
 	// --- profiling ---------------------------------------------------------
 	//
 	// WHERE THE TIME GOES, per loop iteration, written as CSV and summarised

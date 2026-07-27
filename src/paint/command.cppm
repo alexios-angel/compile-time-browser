@@ -34,6 +34,7 @@ using ctbrowser::rect;
 
 enum class paint_op : std::uint8_t {
 	fill_rect,  // a solid (possibly translucent) box
+	fill_ellipse, // the same, bounded by an ellipse - a radio button is round
 	text_run,   // one visual line of text, already broken by layout
 	image,      // a bitmap - a <canvas>, and later an <img>
 	push_clip,  // intersect the clip with `bounds` until the matching pop
@@ -118,6 +119,19 @@ public:
 		cmd.source = source;
 		commands_.push_back(std::move(cmd));
 		bounds_ = bounds_.united(where);
+	}
+
+	// A filled ellipse inscribed in `where`. Radio buttons are the reason this
+	// exists: drawn as a square they are indistinguishable from a checkbox, and
+	// "round" is the entire visual difference between the two controls.
+	void fill_ellipse(const rect & where, color c, node_id source = {}) {
+		if (where.empty() || c.transparent()) { return; }
+		paint_command cmd;
+		cmd.op = paint_op::fill_ellipse;
+		cmd.bounds = where;
+		cmd.fill = c;
+		cmd.source = source;
+		commands_.push_back(std::move(cmd));
 	}
 
 	void text(const rect & where, std::string run, float font_size, color c, node_id source = {},

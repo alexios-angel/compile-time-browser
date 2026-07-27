@@ -6,7 +6,6 @@ import ctbrowser.core;
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <ctime>
 #include <thread>
 #include <cstdint>
 #include <string>
@@ -178,12 +177,10 @@ void test_geometry() {
 // Measured as CPU time against wall time, which is the thing that was wrong;
 // counting wakeups would test the implementation instead of the symptom.
 void test_an_idle_pool_sleeps() {
-	const auto cpu_ms = [] {
-		return std::chrono::duration_cast<std::chrono::milliseconds>(
-		           std::chrono::steady_clock::duration{
-		               std::clock() * (1'000'000'000LL / CLOCKS_PER_SEC)})
-		    .count();
-	};
+	// process_cpu_seconds(), not std::clock(): the latter is WALL time on some
+	// Windows runtimes, so this test passed there for the wrong reason and then
+	// failed for the wrong reason too.
+	const auto cpu_ms = [] { return static_cast<long long>(process_cpu_seconds() * 1000.0); };
 	scheduler pool{4};
 	// Let the workers reach their wait.
 	std::this_thread::sleep_for(std::chrono::milliseconds{50});

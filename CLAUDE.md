@@ -333,6 +333,69 @@ an empty string as the label and never read `<option>` at all. Now: the
 `selected` option, else the first, else whatever the user picked, plus a
 drop-down arrow. The popup itself is still missing.
 
+## v2 EDITING, DISABLED, AND THE COLLECTOR (2026-07-27)
+
+**A control drew in a DIFFERENT FACE from the one it measured.** `into.text()`
+was called without a face, so every control's text came out in the default
+serif while the caret was measured with the element's own — and a textarea is
+monospace by UA rule. The caret ran ahead by the difference on every character,
+which reads as a gap that grows as you type. `paint_face_of()` is the
+conversion and every control text draw goes through it.
+
+**A field's geometry lives in ONE place** (`layout_of_field`): the inset, the
+line height, and where each line begins in the value. The painter draws from it
+and a click is mapped through it, so a caret cannot land where the glyphs are
+not — two copies of "where does line 2 start" is how a click ends up putting
+the caret somewhere the text never was.
+
+That is what made these possible at all, and none of them existed before:
+**clicking places the caret** (a textarea had no path from a point to an
+offset), **dragging selects** inside a field and Ctrl+C copies exactly that,
+**up and down move by VISUAL LINE** keeping the column — as a distance, not a
+character count, since two lines of a proportional font do not share character
+positions — and **Home/End are that line's ends**, not the whole value's.
+
+**Escape drops a field selection and so does clicking away.** Ctrl+A left the
+whole value highlighted forever otherwise; a highlight in a field nobody is
+typing in reads as still selected.
+
+**`type=password` shows BULLETS**, masked per CODE POINT so a value with
+anything non-ASCII in it does not come out with three bullets for one
+character. Measurement uses what is SHOWN — a bullet is wider than most
+letters, so measuring the letters puts the caret inside them.
+
+**`disabled` did nothing at all** — not visually, not behaviourally. A disabled
+control is greyed (and ignores `color` from the cascade: greyed-out is the only
+signal the control is dead), takes no focus, activates nothing and dispatches
+nothing. Inherited from an enclosing `<fieldset>`, which is how a form greys a
+whole section.
+
+**A radio is ROUND.** `paint_op::fill_ellipse` exists for it, antialiased at
+the edge, because a hard-edged circle 13 pixels across looks like a polygon.
+Drawn as squares a radio and a checkbox are indistinguishable, and the shape is
+what tells you one of them is exclusive.
+
+**`<a href>` reaches the SYSTEM BROWSER.** `app_options::on_navigate` gives the
+application first refusal — `ctbrowse` loads a local `.html` that way — and
+anything it does not claim goes to `SDL_OpenURL`. It is an app_options hook
+rather than a browser one because setting `browser::set_navigate_hook` directly
+REPLACES the fallback, which is how `ctbrowse` silently swallowed every
+external link it was handed.
+
+**THE COLLECTOR NEVER RAN.** Not rarely — there was no automatic trigger at
+all, so a document accumulated every object it ever made. It could not simply
+be switched on: the DOM bindings hold every listener, every timer callback and
+every element wrapper in C++ containers the collector cannot see, and the VM's
+own per-function string cache is not in any of its root structures either. Both
+are roots now (`context::set_external_roots`), and `collect_if_due()` runs
+between callbacks on a growth threshold. Verified by removing the external
+roots and watching the test **crash** — which is what a page dispatching a
+freed listener does.
+
+**`std::clock()` is WALL TIME on some Windows runtimes.** Walked into twice, so
+`ctbrowser.core:cpu_time` is the one portable `process_cpu_seconds()` and both
+the profiler and the idle-pool test use it.
+
 ## v2 CPU AND THE PROFILER (2026-07-27)
 
 **`CTBROWSER_PROFILE=out.csv CTBROWSER_PROFILE_SECONDS=10 ./widgets.exe`** — a
