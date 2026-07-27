@@ -479,6 +479,14 @@ int run_app(std::string_view html, app_options options) {
 		                         SDL_free(owned);
 		                         return text;
 	                         });
+	// alert() as a real modal, and a link that leaves the page handed to the
+	// system browser. Both are what a user expects and neither can live in the
+	// engine, which has no window and no idea what a browser is.
+	page.set_alert_hook([&host](const std::string & message) {
+		(void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "ctbrowser", message.c_str(),
+		                               static_cast<SDL_Window *>(host->native_window()));
+	});
+	page.set_navigate_hook([](const std::string & url) { (void)SDL_OpenURL(url.c_str()); });
 #endif
 	if (options.real_fonts) { (void)page.use_real_fonts(options.font_path.string()); }
 

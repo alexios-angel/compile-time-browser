@@ -183,8 +183,8 @@ by `intrinsic_size_of`, not by their children.
 A canvas draw marks `dirty::raster` — tiles are stale, the display list is
 not — so an animation re-rasters without re-recording or re-laying-out.
 
-**v1 IS NOT DELETED.** What it still has that v2 does not: real fonts, audio,
-the BabylonJS shim, `<select>` popups and page-level text selection. See
+**v1 IS NOT DELETED.** What it still has that v2 does not: the BabylonJS shim
+and its software 3D rasterizer, textarea soft-wrap, and canvas gradients. See
 `docs/v1-retirement.md`.
 
 ## v2 STYLE: the `style` attribute, with Chrome/Firefox precedence (2026-07-25)
@@ -332,6 +332,37 @@ engine needs no cursor vocabulary and the app maps it to a system cursor.
 an empty string as the label and never read `<option>` at all. Now: the
 `selected` option, else the first, else whatever the user picked, plus a
 drop-down arrow. The popup itself is still missing.
+
+## v2 NAVIGATION: alert, location, `<a href>` (2026-07-27)
+
+The last three things v1's script surface had and v2's did not — and the proof
+is that **MDN's breakout now survives its own game over.** It ends by calling
+`alert("GAME OVER")` and then `document.location.reload()`; both were undefined
+identifiers, so the one page in the suite that proves web compatibility died at
+the exact point every other test had stopped looking.
+
+**`location.reload()` cannot reload the page it is called from** — the reload
+tears down the script context and the program still running inside it. It
+records the request; `tick()` drains it BETWEEN callbacks. Same as v1.
+
+**`document.location`, `window.location` and the global `location` are ONE
+object**, not three copies — a page reads whichever it learned. `href`/`hash`
+are written THROUGH on every navigation: setting them once when the object was
+built made them a page-load snapshot, so a page could never read a link it had
+just followed.
+
+**Alerts are recorded on the BROWSER, not on the bindings.** A reload replaces
+the bindings, and the alert that caused the reload is exactly the one you still
+want to read. `set_alert_hook` is the app's modal (`SDL_ShowSimpleMessageBox`);
+without a hook the messages are still recorded, which is what makes alert
+testable headlessly — the clipboard's design.
+
+**`<a href>` takes the nearest `<a>` ANCESTOR**, since what gets clicked is the
+link's text. A `#fragment` is not a navigation: it scrolls this document and
+lands in `location.hash`. Everything else goes to `set_navigate_hook` — the SDL
+app hands it to the system browser, and `ctbrowse` loads a local `.html`,
+because deciding what a relative URL means is a BROWSER's business and the
+engine has no idea what a URL is.
 
 ## v2 FONTS: real ones (stage 6, 2026-07-25)
 

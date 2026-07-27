@@ -88,6 +88,32 @@ public:
 	// selects.
 	void allow_network(bool allowed) { network_allowed_ = allowed; }
 
+	// NAVIGATION, as state rather than as an action. `location.reload()` cannot
+	// reload the page where it is called: the reload tears down this context and
+	// the program still running inside it. So it records the request and the
+	// browser drains it between ticks, which is also how v1 did it.
+	[[nodiscard]] bool reload_requested() const noexcept { return reload_requested_; }
+	void clear_reload_request() noexcept { reload_requested_ = false; }
+	// What `location` reports. The browser sets it; the page can only read it,
+	// because assigning to location.href is a navigation and v2 has none.
+	void observe_location(std::string href, std::string hash) {
+		location_href_ = std::move(href);
+		location_hash_ = std::move(hash);
+		// WRITE THEM THROUGH. `href` was set once when the object was built,
+		// which made it a snapshot: a page reading location.href after
+		// following a link got whatever was true at page load, forever.
+		if (cx_ != nullptr && location_.is_object()) {
+			auto * loc = static_cast<script::object_object *>(location_.as_heap());
+			loc->set("href", cx_->string(location_href_));
+			loc->set("hash", cx_->string(location_hash_));
+		}
+	}
+	// Where alert() goes. The browser records them, because a reload replaces
+	// these bindings and the alert that caused it must survive that.
+	void set_alert_hook(std::function<void(const std::string &)> hook) {
+		on_alert_ = std::move(hook);
+	}
+
 	// Layout results, so offsetWidth and friends can answer. Set by the
 	// browser after each layout; null until the first one, and the natives
 	// return 0 then rather than pretending.
@@ -103,10 +129,12 @@ public:
 	void install(context & cx) {
 		cx_ = &cx;
 		install_console(cx);
+		location_ = make_location(cx);
 		install_document(cx);
 		install_window(cx);
 		install_timers(cx);
 		install_resources(cx);
+		install_navigation(cx);
 	}
 
 	// --- dispatch, from the browser --------------------------------------
@@ -730,7 +758,53 @@ private:
 
 		doc->set("body", wrap(cx, find_by_tag("body")));
 		doc->set("documentElement", wrap(cx, find_by_tag("html")));
-		cx.define_global("document", value::object(doc));
+		document_ = value::object(doc);
+		cx.define_global("document", document_);
+	}
+
+	// `alert` and `location`, the last two globals v1 had and v2 did not.
+	// MDN's breakout calls both the moment the game ends - alert("GAME OVER")
+	// then document.location.reload() - so a page could win or lose and then
+	// die on an undefined identifier.
+	void install_navigation(context & cx) {
+		cx.define_native("alert", [this](context & c, std::span<value> args) {
+			const std::string message = arg_string(c, args, 0);
+			if (on_alert_) { on_alert_(message); }
+			return value::undefined();
+		});
+		cx.define_global("location", location_);
+		// `document.location` and `window.location` are the SAME object as the
+		// global one, not three copies - a page reads whichever it learned, and
+		// they have to agree.
+		if (auto * doc = document_object()) { doc->set("location", location_); }
+		if (auto * window = window_object()) { window->set("location", location_); }
+	}
+
+	value make_location(context & cx) {
+		auto * loc = static_cast<script::object_object *>(cx.make_object().as_heap());
+		const auto method = [&](std::string name, script::native_fn fn) {
+			loc->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+		};
+		method("reload", [this](context &, std::span<value>) {
+			reload_requested_ = true;
+			return value::undefined();
+		});
+		method("toString", [this](context & c, std::span<value>) {
+			return c.string(location_href_);
+		});
+		loc->set("href", cx.string(location_href_));
+		loc->set("hash", cx.string(location_hash_));
+		return value::object(loc);
+	}
+
+	[[nodiscard]] script::object_object * document_object() {
+		return document_.is_object()
+		           ? static_cast<script::object_object *>(document_.as_heap())
+		           : nullptr;
+	}
+	[[nodiscard]] script::object_object * window_object() {
+		return window_.is_object() ? static_cast<script::object_object *>(window_.as_heap())
+		                           : nullptr;
 	}
 
 	void install_window(context & cx) {
@@ -751,7 +825,8 @@ private:
 			                            return value::number(now_ms_);
 		                            })));
 		window->set("performance", value::object(performance));
-		cx.define_global("window", value::object(window));
+		window_ = value::object(window);
+		cx.define_global("window", window_);
 		cx.define_global("performance", value::object(performance));
 	}
 
@@ -978,6 +1053,13 @@ private:
 	form_store * forms_;
 	std::function<void()> on_mutation_;
 	std::function<void(node_id)> on_focus_;
+	std::function<void(const std::string &)> on_alert_;
+	std::string location_href_;
+	std::string location_hash_;
+	value location_;
+	value document_;
+	value window_;
+	bool reload_requested_ = false;
 	asset_registry * assets_ = nullptr;
 	image_store * images_ = nullptr;
 	bool network_allowed_ = true;

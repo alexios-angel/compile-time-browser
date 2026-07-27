@@ -44,8 +44,8 @@ Deleting v1 today removes working, tested functionality with no replacement:
 
 - ~~**DOM script bindings.**~~ **DONE.** `ctbrowser.shell:bindings` binds
   `document`, element methods, events, timers and `requestAnimationFrame`.
-  Still missing from v1's surface: `alert` and `location`. `fetch` and the
-  canvas context landed later.
+  `fetch`, the canvas context, `alert`, `location` and `<a href>` landed later.
+  Nothing of v1's script surface is missing.
 - ~~**Form controls and editing.**~~ **MOSTLY DONE.** Text fields, checkboxes,
   radios, buttons, focus, the caret, typing, editing keys, submit and reset all
   work, and so do the `<select>` popup, the clipboard (Ctrl+C/X/V and the
@@ -64,8 +64,9 @@ Deleting v1 today removes working, tested functionality with no replacement:
 - ~~**Widget chrome.**~~ **DONE (2026-07-25).** Scrollbar, list markers,
   disclosure triangles, the `<select>` popup, the context menu, the clipboard,
   system cursors and page-level text selection all landed.
-- ~~**Real fonts.**~~ **DONE.** See above - v2's is FreeType in the engine
-  rather than SDL3_ttf in the shell.
+- ~~**Real fonts.**~~ **DONE.** See above - v2's is SDL3_ttf in the ENGINE
+  (`ctbrowser.raster:ttf`) rather than in the shell, so real text renders with
+  no window and stays testable headlessly.
 - ~~**Images and audio.**~~ **DONE (2026-07-25).** `ctbrowser.shell:assets` is
   the registry, `:images` decodes BMP with an optional SDL3_image hook, and
   `playSound` mixes WAVs through SDL3's own audio streams (no SDL3_mixer).

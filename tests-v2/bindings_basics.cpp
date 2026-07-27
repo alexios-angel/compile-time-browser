@@ -216,6 +216,126 @@ void test_layout_is_visible_to_script() {
 
 // --- events ---------------------------------------------------------------
 
+// --- alert, location, and <a href> -------------------------------------
+//
+// The last three things v1's script surface had and v2's did not. MDN's
+// breakout calls alert() and document.location.reload() the moment the game
+// ends, so a page could win and then die on an undefined identifier.
+
+void test_alert_is_recorded() {
+	browser page{browser_options{200, 100}};
+	page.load_html("<body><script>alert('hello'); alert('again');</script></body>");
+	check(page.script_error().empty(), "the script ran");
+	check(page.alerts().size() == 2, "both alerts were recorded");
+	if (page.alerts().size() == 2) {
+		check(page.alerts()[0] == "hello" && page.alerts()[1] == "again", "in order, with text");
+	}
+}
+
+void test_alert_reaches_the_hook() {
+	browser page{browser_options{200, 100}};
+	std::vector<std::string> seen;
+	page.set_alert_hook([&seen](const std::string & message) { seen.push_back(message); });
+	page.load_html("<body><script>alert('modal');</script></body>");
+	check(seen.size() == 1 && !seen.empty() && seen[0] == "modal", "the hook saw it");
+}
+
+void test_location_reload_reruns_the_page() {
+	browser page{browser_options{200, 100}};
+	// The script appends a paragraph, so a reload is visible as a page that
+	// has ONE again rather than two - a reload re-parses the source, it does
+	// not re-run the script over the mutated document.
+	page.load_html(R"(<body><div id=host></div><script>
+	var p = document.createElement('p');
+	p.setAttribute('id', 'added');
+	document.getElementById('host').appendChild(p);
+	</script></body>)");
+	check(page.script_error().empty(), "the script ran");
+
+	// A page that reloads itself from a timer: the request is recorded and
+	// drained BETWEEN callbacks, because a reload inside one would destroy the
+	// context the callback is running in.
+	page.load_html(R"(<body><p>page</p><script>
+	setTimeout(function () { document.location.reload(); }, 5);
+	var runs = 0;
+	</script></body>)");
+	check(page.script_error().empty(), "the reloading page ran");
+	(void)page.frame();
+	check(page.tick(10) == 1, "the timer fired");
+	// After the reload the page is fresh: the same timer is armed again.
+	check(page.script_error().empty(), "the reloaded page ran too");
+	check(page.tick(10) == 1, "and its timer fired, so the script really re-ran");
+}
+
+void test_window_and_document_share_one_location() {
+	browser page{browser_options{200, 100}};
+	page.load_html(R"(<body><script>
+	console.log(String(document.location === window.location));
+	console.log(String(location === window.location));
+	</script></body>)");
+	check(log_of(page).size() == 2, "both comparisons logged");
+	if (log_of(page).size() == 2) {
+		check(log_of(page)[0] == "true" && log_of(page)[1] == "true",
+		      "document.location, window.location and location are ONE object");
+	}
+}
+
+void test_a_link_is_handed_to_the_embedder() {
+	browser page{browser_options{400, 200}};
+	std::vector<std::string> visited;
+	page.set_navigate_hook([&visited](const std::string & url) { visited.push_back(url); });
+	page.load_html("<body><a href='https://example.com/x'>a link</a></body>");
+	check(page.frame().has_value(), "the page renders");
+
+	// Clicked on the link's TEXT, which is a different node from the <a>.
+	(void)page.handle(input_event::mouse_down_at(8, 8));
+	(void)page.handle(input_event::mouse_up_at(8, 8));
+	check(visited.size() == 1, "the link was followed");
+	if (!visited.empty()) { check(visited[0] == "https://example.com/x", "with its href"); }
+	check(page.location_href() == "https://example.com/x", "and location.href records it");
+}
+
+void test_a_fragment_scrolls_instead_of_navigating() {
+	browser page{browser_options{300, 200}};
+	std::vector<std::string> visited;
+	page.set_navigate_hook([&visited](const std::string & url) { visited.push_back(url); });
+	page.load_html(R"(<body><a href='#far'>jump</a>
+	<div style='height:1200px'>tall</div>
+	<p id=far>the target</p></body>)");
+	check(page.frame().has_value(), "the page renders");
+	check(page.scroll_y() == 0, "starts at the top");
+
+	(void)page.handle(input_event::mouse_down_at(8, 8));
+	(void)page.handle(input_event::mouse_up_at(8, 8));
+	check(visited.empty(), "a fragment is NOT handed to the embedder");
+	check(page.scroll_y() > 1000, "it scrolled to the target instead");
+	check(page.location_hash() == "#far", "and location.hash says where");
+}
+
+void test_a_page_can_read_where_a_link_went() {
+	browser page{browser_options{300, 200}};
+	page.set_navigate_hook([](const std::string &) {});
+	page.load_html(R"(<body><a href='/first'>go</a><script>
+	document.addEventListener('click', function () { console.log(location.href); });
+	</script></body>)");
+	check(page.frame().has_value(), "the page renders");
+
+	// A listener runs BEFORE the default action, so the first click logs the
+	// href from before it - empty - and the second logs the first link's.
+	// That second value is the point: `href` was written once when the object
+	// was built, so a page could never see a link it had already followed.
+	(void)page.handle(input_event::mouse_down_at(12, 12));
+	(void)page.handle(input_event::mouse_up_at(12, 12));
+	check(page.location_href() == "/first", "the browser recorded the href");
+	(void)page.handle(input_event::mouse_down_at(12, 12));
+	(void)page.handle(input_event::mouse_up_at(12, 12));
+	check(page.script_error().empty(), "reading location.href from script works");
+	check(log_of(page).size() == 2, "the listener fired twice");
+	if (log_of(page).size() == 2) {
+		check(log_of(page)[1] == "/first", "and location.href is LIVE, not a page-load snapshot");
+	}
+}
+
 void test_click_dispatch() {
 	browser page{browser_options{400, 300}};
 	page.load_html(R"(<html><head><style>#a { width: 200px; height: 100px }</style></head>
@@ -433,6 +553,39 @@ void test_mouse_reaches_script() {
 // not reach it the paddle simply never moves. Comparing frames with and without
 // input is the assertion, because "the paddle moved" is JS state this test
 // cannot see - but it can see the pixels.
+// The reason any of this exists: MDN's breakout ENDS by calling alert("GAME
+// OVER") and then document.location.reload(). Both were undefined identifiers,
+// so the one page in the suite that proves web compatibility died on its own
+// game-over - after the point every other test stops looking.
+void test_the_breakout_page_survives_its_own_game_over() {
+	browser page{browser_options{480, 320}};
+	std::ifstream in{"examples-v2/pages/pong.html", std::ios::binary};
+	std::ostringstream buffer;
+	buffer << in.rdbuf();
+	page.load_html(buffer.str());
+	check(page.script_error().empty(), "the page loaded");
+
+	// Left alone the paddle never moves, so the ball is missed and the game
+	// ends. Bounded so a page that never ends fails the check below instead of
+	// hanging.
+	for (int frame = 0; frame < 2000 && page.alerts().empty(); ++frame) {
+		(void)page.tick(1000.0 / 60.0);
+		(void)page.frame();
+	}
+	check(!page.alerts().empty(), "the game ended and alerted");
+	if (!page.alerts().empty()) { check(page.alerts()[0] == "GAME OVER", "with GAME OVER"); }
+	check(page.script_error().empty(), "and reloading itself did not break the script");
+
+	// The reload really re-ran the page: it is playing again, so it can end
+	// AGAIN rather than sitting on a dead context.
+	const std::size_t after_first = page.alerts().size();
+	for (int frame = 0; frame < 2000 && page.alerts().size() == after_first; ++frame) {
+		(void)page.tick(1000.0 / 60.0);
+		(void)page.frame();
+	}
+	check(page.alerts().size() > after_first, "and the reloaded game runs and ends too");
+}
+
 void test_a_real_page_responds_to_input() {
 	const auto render = [](std::string_view held) {
 		browser page{browser_options{480, 320}};
@@ -580,6 +733,13 @@ int main() {
 	test_a_stale_handle_is_inert();
 	test_layout_is_visible_to_script();
 
+	test_alert_is_recorded();
+	test_alert_reaches_the_hook();
+	test_location_reload_reruns_the_page();
+	test_window_and_document_share_one_location();
+	test_a_link_is_handed_to_the_embedder();
+	test_a_fragment_scrolls_instead_of_navigating();
+	test_a_page_can_read_where_a_link_went();
 	test_click_dispatch();
 	test_events_bubble_and_can_be_prevented();
 
@@ -593,6 +753,7 @@ int main() {
 	test_preventDefault_stops_the_browser_acting();
 	test_mouse_reaches_script();
 	test_a_real_page_responds_to_input();
+	test_the_breakout_page_survives_its_own_game_over();
 	test_the_invaders_page_responds_to_input();
 	test_the_invaders_page_shoots();
 	test_a_letterboxed_page_keeps_its_size();

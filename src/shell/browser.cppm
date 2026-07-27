@@ -119,6 +119,7 @@ public:
 	// Replace the document. Everything downstream is invalidated, which is the
 	// one case where that is the honest answer.
 	void load_html(std::string_view html) {
+		source_html_ = html; // what location.reload() re-runs
 		// Both the document and the cascade are rebuilt. Keeping the old style
 		// engine would accumulate every page's <style> rules across navigations,
 		// which shows up as the previous page bleeding into the next one.
@@ -140,9 +141,6 @@ public:
 
 	// --- script ----------------------------------------------------------
 
-	// Where the page's resources come from. An application seeds this from
-	// app_options::assets; `ctbrowse` points its base path at the page's
-	// directory so `<img src="cat.bmp">` resolves next to the html.
 	// PAGE-LEVEL TEXT SELECTION.
 	//
 	// A position is (node, code point WITHIN THAT NODE'S TEXT) rather than a
@@ -286,6 +284,9 @@ public:
 	// baseline is. The same object the rasterizer draws with.
 	[[nodiscard]] ctbrowser::layout::measure_text_fn metrics() const { return measure(); }
 
+	// Where the page's resources come from. An application seeds this from
+	// app_options::assets; `ctbrowse` points its base path at the page's
+	// directory so `<img src="cat.bmp">` resolves next to the html.
 	[[nodiscard]] asset_registry & assets() noexcept { return assets_; }
 	[[nodiscard]] image_store & images() noexcept { return images_; }
 	// Whether fetch() may open a socket when the registry misses.
@@ -317,8 +318,45 @@ public:
 	// how many callbacks ran, so a caller can tell an idle page from a busy one.
 	std::size_t tick(double elapsed_ms) {
 		bindings_->advance_clock(elapsed_ms);
-		return bindings_->run_due_callbacks();
+		const std::size_t ran = bindings_->run_due_callbacks();
+		// BETWEEN callbacks, never inside one: reloading tears down the script
+		// context, and location.reload() is called from a function running in
+		// it. A page that reloads on game-over would take the VM with it.
+		if (bindings_->reload_requested()) { reload(); }
+		return ran;
 	}
+
+	// Re-parse the page and run its script again from the top - navigation to
+	// where you already are, which is the only navigation v2 has.
+	void reload() {
+		const std::string source = source_html_;
+		load_html(source); // by value: load_html clears source_html_'s referent
+	}
+
+	// The system dialog `alert()` raises. The engine is SDL-free and has no
+	// window to put a dialog in, so this is a hook like the clipboard's; without
+	// one the messages are still recorded and readable, which is what makes
+	// alert testable headlessly.
+	void set_alert_hook(std::function<void(const std::string &)> hook) {
+		alert_hook_ = std::move(hook);
+	}
+	// Kept HERE rather than on the bindings, because a reload replaces the
+	// bindings - and the alert that caused the reload is exactly the one you
+	// want to still be able to read afterwards. MDN's breakout alerts and then
+	// reloads in the same breath.
+	[[nodiscard]] const std::vector<std::string> & alerts() const noexcept { return alerts_; }
+
+	// Where a link that leaves this page goes. v2 does not navigate, so the
+	// embedder decides - `ctbrowse` opens a local .html, the SDL app hands an
+	// http(s) URL to the system browser, and a program with no hook does
+	// nothing rather than pretending it followed the link.
+	void set_navigate_hook(std::function<void(const std::string &)> hook) {
+		navigate_hook_ = std::move(hook);
+	}
+	// What the last activated link recorded. A fragment lands in the hash, like
+	// v1, because scrolling to an anchor IS navigation within a document.
+	[[nodiscard]] const std::string & location_href() const noexcept { return location_href_; }
+	[[nodiscard]] const std::string & location_hash() const noexcept { return location_hash_; }
 
 	[[nodiscard]] std::string_view title() const noexcept { return title_; }
 	[[nodiscard]] const document & doc() const noexcept { return *doc_; }
@@ -638,6 +676,11 @@ private:
 		bindings_->observe_viewport(options_.width, options_.height);
 		bindings_->observe_resources(assets_, images_);
 		bindings_->allow_network(network_allowed_);
+		bindings_->set_alert_hook([this](const std::string & message) {
+			alerts_.push_back(message);
+			if (alert_hook_) { alert_hook_(message); }
+		});
+		bindings_->observe_location(location_href_, location_hash_);
 		bindings_->install(*script_);
 		install_embedder_natives();
 		script_error_.clear();
@@ -1573,6 +1616,7 @@ private:
 
 	// What clicking a control does once no listener has cancelled it.
 	void activate(node_id target) {
+		if (follow_link(target)) { return; }
 		const node_id control = control_ancestor(target);
 		if (!control) { return; }
 		const auto txn = doc_->read();
@@ -1600,6 +1644,77 @@ private:
 		// A <button> with no type is a submit button, which is the default
 		// people forget and then wonder why their form reloads.
 		if (type.empty() || type == "submit") { submit(form); }
+	}
+
+	// <a href> - the one navigation-shaped thing a document does on its own.
+	// Nearest <a> ANCESTOR, not the clicked node: a link's text, and anything
+	// else inside it, is what actually gets clicked.
+	bool follow_link(node_id target) {
+		std::string href;
+		{
+			const auto txn = doc_->read();
+			const atom anchor = atoms_.intern_lower("a");
+			const atom attribute = atoms_.intern("href");
+			for (node_id at = target; at; at = txn.parent(at)) {
+				if (txn.tag(at).value_or(atom{}) != anchor) { continue; }
+				href = txn.attribute_value(at, attribute);
+				break;
+			}
+		}
+		if (href.empty()) { return false; }
+		location_href_ = href;
+		if (href.front() == '#') {
+			// A FRAGMENT is not a navigation: it scrolls this document, and the
+			// page can read where it went through location.hash.
+			location_hash_ = href;
+			scroll_to_fragment(href.substr(1));
+			bindings_->observe_location(location_href_, location_hash_);
+			return true;
+		}
+		location_hash_.clear();
+		bindings_->observe_location(location_href_, location_hash_);
+		if (navigate_hook_) { navigate_hook_(href); }
+		return true;
+	}
+
+	// Put the element with that id at the top of the viewport, clamped the same
+	// way a scroll is - an anchor near the end of a short page cannot scroll
+	// past the bottom.
+	void scroll_to_fragment(std::string_view id) {
+		if (id.empty()) { return; }
+		node_id target;
+		{
+			const auto txn = doc_->read();
+			const atom key = atoms_.intern("id");
+			const auto walk = [&](auto && self, node_id at) -> void {
+				if (target) { return; }
+				if (txn.attribute_value(at, key) == id) {
+					target = at;
+					return;
+				}
+				for (const node_id child : txn.children(at)) { self(self, child); }
+			};
+			walk(walk, txn.root());
+		}
+		if (!target) { return; }
+		// Fragment bounds are relative to the containing block, so finding the
+		// element is not enough - the walk has to accumulate to get an absolute
+		// y, which is what a scroll offset is measured in.
+		bool found = false;
+		float top = 0;
+		const auto walk = [&](auto && self, const ctbrowser::layout::fragment & f, float dx,
+		                      float dy) -> void {
+			if (found) { return; }
+			const rect box = f.absolute_bounds(dx, dy);
+			if (f.source == target) {
+				found = true;
+				top = box.y;
+				return;
+			}
+			for (const auto & child : f.children) { self(self, child, box.x, box.y); }
+		};
+		walk(walk, fragments_, 0, 0);
+		if (found) { scroll_to(top); }
 	}
 
 	void submit(node_id form) {
@@ -1645,6 +1760,12 @@ private:
 	std::string clipboard_;
 	std::function<void(const std::string &)> clipboard_write_;
 	std::function<std::string()> clipboard_read_;
+	std::function<void(const std::string &)> alert_hook_;
+	std::vector<std::string> alerts_;
+	std::function<void(const std::string &)> navigate_hook_;
+	std::string source_html_;
+	std::string location_href_;
+	std::string location_hash_;
 	bool menu_open_ = false;
 	point menu_at_;
 	// The two ends of the page selection, and whether the pointer is currently
