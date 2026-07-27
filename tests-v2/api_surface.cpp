@@ -14,6 +14,8 @@
 #include <cstdio>
 #include <fstream>
 #include <sstream>
+#include <filesystem>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -96,21 +98,41 @@ int main() {
 	check_application_source("examples-v2/ctbrowse.cpp");
 	check_application_source("tests-v2/package/main.cpp");
 
-	// The engine itself may of course use SDL - but only in the two modules
-	// that are allowed to. If SDL appears anywhere else, the "engine is
-	// SDL-free" claim that makes headless rendering possible has broken.
-	const std::vector<std::string> allowed = {"src/shell/app.cppm", "src/gpu/device.cppm",
-	                                          "src/gpu/select.cppm", "src/gpu/gpu.cppm"};
-	(void)allowed; // enumerated for the reader; the sweep below is the check
-	for (const std::string & path :
-	     {std::string{"src/shell/browser.cppm"}, std::string{"src/shell/bindings.cppm"},
-	      std::string{"src/shell/canvas.cppm"}, std::string{"src/shell/forms.cppm"},
-	      std::string{"src/raster/software.cppm"}, std::string{"src/raster/compositor.cppm"},
-	      std::string{"src/layout/engine.cppm"}, std::string{"src/paint/record.cppm"}}) {
+	// The engine may use SDL only where it is ALLOWED to. Everywhere else,
+	// "the engine is SDL-free" - the claim that makes headless rendering and
+	// this whole test suite possible - has broken.
+	//
+	// A SWEEP of src/, not a hand-written list. The list version could not
+	// catch a NEW file that used SDL, and it did not: raster/ttf.cppm was added
+	// and this test stayed green because nobody had added it to the list.
+	const std::set<std::string> allowed = {
+	    "src/shell/app.cppm",   // the window, the event loop, audio, image decode
+	    "src/shell/app.cpp",    //   and its implementation
+	    "src/raster/ttf.cppm",  // real fonts, through SDL3_ttf - see its header
+	    "src/gpu/device.cppm",  // the SDL_GPUDevice backend
+	    "src/gpu/select.cppm",
+	    "src/gpu/gpu.cppm",
+	};
+	std::size_t swept = 0;
+	for (const auto & entry : std::filesystem::recursive_directory_iterator{"src"}) {
+		if (!entry.is_regular_file()) { continue; }
+		const std::string ext = entry.path().extension().string();
+		if (ext != ".cppm" && ext != ".cpp" && ext != ".hpp") { continue; }
+		std::string path = entry.path().generic_string();
+		if (allowed.contains(path)) { continue; }
+		++swept;
 		const std::string raw = read(path);
 		check(!raw.empty(), path + ": readable");
 		check(strip_comments(raw).find("SDL") == std::string::npos,
 		      path + ": engine module is SDL-free");
+	}
+	// If the sweep found nothing it is not passing, it is not looking.
+	check(swept > 20, "the sweep actually visited the engine");
+
+	// And every file claiming the exception has to exist, or the list is
+	// carrying a name that moved and is silently allowing nothing.
+	for (const std::string & path : allowed) {
+		check(std::filesystem::exists(path), path + ": the SDL exception list is current");
 	}
 
 	REPORT("api_surface");

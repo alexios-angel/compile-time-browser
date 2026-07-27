@@ -99,6 +99,18 @@ endforeach()
 set(CMAKE_CXX_FLAGS_INIT "-static")
 set(CMAKE_EXE_LINKER_FLAGS_INIT "-static")
 
+# PKG-CONFIG MUST NOT SEE THE HOST. CMAKE_FIND_ROOT_PATH_MODE_* governs
+# find_package/find_library, but pkg-config is a separate program with its own
+# search path - and SDL3_ttf's config resolves HarfBuzz through it. Left alone
+# it found the HOST's harfbuzz.pc and put `-L/home/linuxbrew/...`, `-lglib-2.0`
+# and `-lgraphite2` on a WINDOWS link line, which fails on the ones the host
+# has and would silently link the wrong ones if it had them all.
+#
+# PKG_CONFIG_LIBDIR (not _PATH) REPLACES the default search path rather than
+# adding to it, which is what makes this airtight.
+set(ENV{PKG_CONFIG_LIBDIR} "${_ctb_toolchain_root}/x86_64-w64-mingw32/lib/pkgconfig")
+unset(ENV{PKG_CONFIG_PATH})
+
 # find_*: programs from the host, everything else from the cross roots
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)

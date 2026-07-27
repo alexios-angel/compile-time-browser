@@ -300,11 +300,25 @@ drop-down arrow. The popup itself is still missing.
 
 ## v2 FONTS: real ones (stage 6, 2026-07-25)
 
-**Text is drawn with outline faces.** `ctbrowser.raster:freetype` is a
-`font_backend` over **FreeType** — NOT SDL3_ttf, which the plan proposed and
-which would have put SDL inside the engine that `tests-v2/api_surface` forbids
-it in. FreeType is an ordinary C library, so the engine stays headless and real
-text is TESTABLE without a display.
+**Text is drawn with outline faces.** `ctbrowser.raster:ttf` is a `font_backend`
+over **SDL3_ttf** — the one place the engine knows about SDL, and a deliberate
+exception rather than an oversight. `TTF_Init` needs no video subsystem, so real
+text is still TESTABLE with no display, which is what makes the exception safe.
+`tests-v2/api_surface` SWEEPS `src/` and names the exceptions; the old
+hand-written list could not catch a new file that used SDL, and did not.
+
+The Windows cross-build links a **static** SDL3_ttf with the **full stack** —
+FreeType, HarfBuzz and plutosvg — built by `../llvm-mingw/build-sdl3.sh`. That
+matters beyond features: without HarfBuzz the same page KERNS DIFFERENTLY, so
+the Windows renders stopped matching the Linux ones until HarfBuzz 14.2.1 (the
+version a linuxbrew host has) was on both sides. All six examples are
+byte-identical across platforms again.
+
+`PKG_CONFIG_LIBDIR` is pinned to the sysroot in the toolchain file:
+`CMAKE_FIND_ROOT_PATH_MODE_*` governs find_package, but **pkg-config is a
+separate program with its own search path**, and SDL3_ttf's config resolves
+HarfBuzz through it — it found the HOST's and put `-L/home/linuxbrew/...`,
+`-lglib-2.0` and `-lgraphite2` on a Windows link line.
 
 The seam is `raster::font_backend`: `advance()`, `draw_run()` and `ascent()`
 together, because those are the ones that must agree — layout measures with the

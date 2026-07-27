@@ -295,7 +295,7 @@ void test_a_click_on_the_scrollbar_is_not_a_click_on_the_page() {
 // identical. The bug was only ever visible with outline faces, which is where
 // it was reported.
 void test_inline_text_shares_a_baseline() {
-	if (!raster::freetype_available()) { return; }
+	if (!raster::ttf_available()) { return; }
 	browser page{browser_options{600, 200}};
 	check(page.use_real_fonts(), "the vendored faces load");
 	page.load_html("<body><div><small id=s>small</small><span id=m>medium</span>"

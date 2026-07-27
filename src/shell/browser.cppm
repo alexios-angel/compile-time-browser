@@ -159,15 +159,15 @@ public:
 
 	// Turn on real fonts. Loads the vendored OFL faces through the asset
 	// registry - so an application that baked them in never touches the disk -
-	// and leaves font8x8 in place if FreeType is absent or none of them load.
+	// and leaves font8x8 in place if SDL3_ttf is absent or none of them load.
 	//
 	// OPT-IN rather than automatic: the goldens are font8x8's pixels, and a
 	// page that silently changed how it renders because a font file happened to
 	// be next to the binary would be a worse default than one that looks the
 	// same everywhere.
 	bool use_real_fonts(std::string_view directory = "fonts") {
-#if CTBROWSER_WITH_FREETYPE
-		auto backend = std::make_unique<ctbrowser::raster::freetype_backend>();
+#if CTBROWSER_WITH_TTF
+		auto backend = std::make_unique<ctbrowser::raster::ttf_backend>();
 		if (!backend->ok()) { return false; }
 		// family, then the four (bold, italic) files that make it up.
 		struct vendored {
@@ -192,9 +192,9 @@ public:
 		}
 		if (backend->face_count() == 0) { return false; }
 		backend->set_default_family("serif"); // what the UA sheet gives <body>
-		freetype_ = std::move(backend);
+		ttf_ = std::move(backend);
 		load_page_fonts();
-		fonts_ = freetype_.get();
+		fonts_ = ttf_.get();
 		renderer_.set_fonts(fonts_);
 		// Everything measured so far was measured with the other font.
 		mark(dirty::everything);
@@ -530,12 +530,12 @@ private:
 	// any other resource. Called when real fonts are turned on and again on
 	// every navigation, because the rules belong to the document.
 	void load_page_fonts() {
-#if CTBROWSER_WITH_FREETYPE
-		if (!freetype_) { return; }
+#if CTBROWSER_WITH_TTF
+		if (!ttf_) { return; }
 		for (const auto & face : styles_->page_fonts()) {
 			const std::vector<std::byte> bytes = assets_.load(face.source);
 			if (!bytes.empty()) {
-				(void)freetype_->add_face(face.family, face.bold, face.italic, bytes);
+				(void)ttf_->add_face(face.family, face.bold, face.italic, bytes);
 			}
 		}
 #endif
@@ -1092,10 +1092,10 @@ private:
 	bool sb_dragging_ = false;
 	float sb_grab_ = 0; // where in the thumb the drag started
 	const ctbrowser::raster::font_backend * fonts_ = nullptr;
-#if CTBROWSER_WITH_FREETYPE
+#if CTBROWSER_WITH_TTF
 	// Owned so its glyph cache outlives any one frame; the renderer only
 	// borrows it.
-	std::unique_ptr<ctbrowser::raster::freetype_backend> freetype_;
+	std::unique_ptr<ctbrowser::raster::ttf_backend> ttf_;
 #endif
 	std::vector<std::pair<std::string, script::native_fn>> embedder_natives_;
 	asset_registry assets_;

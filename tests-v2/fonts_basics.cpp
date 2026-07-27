@@ -213,13 +213,13 @@ void test_font8x8_quantises_and_says_so() {
 
 // --- the real font backend ------------------------------------------------
 //
-// Skipped, loudly, where FreeType is absent - which is the same shape the GPU
+// Skipped, loudly, where SDL3_ttf is absent - the same shape the GPU
 // test uses. A test that silently passes on a machine that cannot run it is
 // worse than one that says so.
 
 void test_real_fonts() {
-	if (!raster::freetype_available()) {
-		std::printf("     no FreeType in this build - real fonts skipped\n");
+	if (!raster::ttf_available()) {
+		std::printf("     no SDL3_ttf in this build - real fonts skipped\n");
 		return;
 	}
 	browser page{browser_options{400, 200}};
@@ -261,7 +261,7 @@ void test_real_fonts() {
 }
 
 void test_real_fonts_distinguish_faces() {
-	if (!raster::freetype_available()) { return; }
+	if (!raster::ttf_available()) { return; }
 	const auto width_of = [](std::string_view style) {
 		browser page{browser_options{600, 200}};
 		check(page.use_real_fonts(), "the faces load");
@@ -282,7 +282,7 @@ void test_real_fonts_distinguish_faces() {
 }
 
 void test_unknown_family_falls_back() {
-	if (!raster::freetype_available()) { return; }
+	if (!raster::ttf_available()) { return; }
 	browser page{browser_options{400, 200}};
 	check(page.use_real_fonts(), "the faces load");
 	// A family nobody has must still draw - in the default face, not in
@@ -304,9 +304,9 @@ void test_unknown_family_falls_back() {
 // threads, on glyphs nobody has asked for yet - which is the only arrangement
 // where the lock is load bearing.
 void test_the_glyph_cache_is_thread_safe() {
-	if (!raster::freetype_available()) { return; }
-	raster::freetype_backend fonts;
-	check(fonts.ok(), "FreeType started");
+	if (!raster::ttf_available()) { return; }
+	raster::ttf_backend fonts;
+	check(fonts.ok(), "SDL3_ttf started");
 	const std::vector<std::byte> regular = read_font("fonts/FiraSans-Regular.ttf");
 	const std::vector<std::byte> bold = read_font("fonts/FiraSans-Bold.ttf");
 	check(!regular.empty(), "the vendored face is readable");
@@ -327,7 +327,7 @@ void test_the_glyph_cache_is_thread_safe() {
 	std::vector<std::string> expected;
 	for (int size = 8; size < 8 + 12; ++size) { expected.push_back(measure_all(size)); }
 
-	raster::freetype_backend concurrent;
+	raster::ttf_backend concurrent;
 	check(concurrent.add_face("Fira Sans", false, false, regular), "the face loads again");
 	check(concurrent.add_face("Fira Sans", true, false, bold), "and its bold");
 	std::vector<std::string> got(expected.size());
@@ -352,7 +352,7 @@ void test_the_glyph_cache_is_thread_safe() {
 // and loaded through the asset registry like any other resource, so a page can
 // ship a face the machine has never heard of.
 void test_page_font_face() {
-	if (!raster::freetype_available()) { return; }
+	if (!raster::ttf_available()) { return; }
 	const auto width_in = [](std::string_view family) {
 		browser page{browser_options{600, 200}};
 		check(page.use_real_fonts(), "the vendored faces load");
@@ -373,7 +373,7 @@ void test_page_font_face() {
 }
 
 void test_real_fonts_are_deterministic_and_thread_safe() {
-	if (!raster::freetype_available()) { return; }
+	if (!raster::ttf_available()) { return; }
 	// Tiles raster in PARALLEL and an FT_Face is not reentrant, so the glyph
 	// cache is the one piece of shared mutable state in the whole text path.
 	// Rendering the same page twice - once across the scheduler - must give the
@@ -406,7 +406,7 @@ void test_real_fonts_are_deterministic_and_thread_safe() {
 }
 
 void test_real_fonts_do_not_quantise() {
-	if (!raster::freetype_available()) { return; }
+	if (!raster::ttf_available()) { return; }
 	// The quantisation asserted above for font8x8 is a property of THAT font.
 	// An outline face has a distinct size for every pixel size, which is most
 	// of the reason to want one.

@@ -1,15 +1,15 @@
 module;
 
-#if CTBROWSER_WITH_FREETYPE
-#include <ft2build.h>
-#include FT_FREETYPE_H
+#if CTBROWSER_WITH_TTF
+#include <SDL3/SDL.h>
+#include <SDL3_ttf/SDL_ttf.h>
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <map>
-#include <memory>
 #include <mutex>
 #include <span>
 #include <string>
@@ -17,71 +17,72 @@ module;
 #include <utility>
 #include <vector>
 
-export module ctbrowser.raster:freetype;
+export module ctbrowser.raster:ttf;
 
 import ctbrowser.core;
 import ctbrowser.paint;
 import :surface;
 import :draw;
 
-// A real font backend, over FreeType.
+// Real fonts, through SDL3_ttf.
 //
-// NOT over SDL3_ttf, which is what the plan proposed. SDL3_ttf would have put
-// SDL inside the engine, and the engine being SDL-free is a rule this tree
-// enforces with a test (tests-v2/api_surface) - so the plan's own placement
-// contradicted the plan's own architecture. FreeType has no such problem: it is
-// an ordinary C library, the engine stays headless, and the consequence is that
-// REAL FONTS ARE TESTABLE without a display and comparable in a golden.
+// THIS IS THE ONE PLACE THE ENGINE KNOWS ABOUT SDL, and it is a deliberate
+// exception rather than an oversight. Everything else in ctbrowser.raster,
+// .shell and below is SDL-free so the browser can be driven headlessly, and
+// tests-v2/api_surface enforces that - with this module named as the exception.
 //
-// OPTIONAL. Without FreeType at configure time this module still compiles and
-// `freetype_available()` is false; the browser keeps font8x8 and every golden
-// still matches. That is the same shape as the GPU backend: present when the
-// machine has it, and honest when it does not.
+// The trade: SDL3_ttf is one dependency where FreeType plus a glyph pipeline
+// was two, and it is the same library the window and the audio already come
+// from. TTF_Init needs no video subsystem, so real text is still testable with
+// no display - which is what made this swap safe to make.
 //
-// THREAD SAFETY. Tiles raster in parallel, and an FT_Face is not reentrant, so
+// OPTIONAL, like everything else here: without SDL3_ttf the module still
+// compiles, `ttf_available()` is false, and text renders with font8x8, which is
+// what keeps the goldens reproducible on a machine with no font libraries.
+//
+// THREAD SAFETY. Tiles raster in parallel and a TTF_Font is not reentrant, so
 // glyphs are rasterized ONCE under a mutex into an immutable cache and drawn
 // from it afterwards. std::map's nodes are stable, so a pointer taken under the
 // lock stays valid while other threads insert.
 
 export namespace ctbrowser::raster {
 
-[[nodiscard]] constexpr bool freetype_available() noexcept {
-#if CTBROWSER_WITH_FREETYPE
+[[nodiscard]] constexpr bool ttf_available() noexcept {
+#if CTBROWSER_WITH_TTF
 	return true;
 #else
 	return false;
 #endif
 }
 
-#if CTBROWSER_WITH_FREETYPE
+#if CTBROWSER_WITH_TTF
 
-class freetype_backend final : public font_backend {
+class ttf_backend final : public font_backend {
 public:
-	freetype_backend() {
-		if (FT_Init_FreeType(&library_) != 0) { library_ = nullptr; }
-	}
-	~freetype_backend() override {
-		for (auto & [key, face] : faces_) {
-			if (face.handle != nullptr) { FT_Done_Face(face.handle); }
+	ttf_backend() { started_ = TTF_Init(); }
+	~ttf_backend() override {
+		for (auto & [key, font] : sized_) {
+			if (font != nullptr) { TTF_CloseFont(font); }
 		}
-		if (library_ != nullptr) { FT_Done_FreeType(library_); }
+		if (started_) { TTF_Quit(); }
 	}
 
-	[[nodiscard]] bool ok() const noexcept { return library_ != nullptr; }
+	[[nodiscard]] bool ok() const noexcept { return started_; }
 
-	// Register one face. The BYTES ARE COPIED and kept: FreeType reads from the
-	// buffer for the lifetime of the face, so handing it a span of somebody
-	// else's vector is a use-after-free waiting for the first garbage-collected
-	// page.
+	// Register one face. The BYTES ARE COPIED and kept: SDL3_ttf reads from the
+	// stream for the lifetime of the font, so handing it a span of somebody
+	// else's vector is a use-after-free waiting for the first page that gets
+	// collected.
 	bool add_face(std::string family, bool bold, bool italic, std::span<const std::byte> bytes) {
-		if (library_ == nullptr || bytes.empty()) { return false; }
+		if (!started_ || bytes.empty()) { return false; }
 		const std::lock_guard guard{mutex_};
+		// Opened once here purely to reject a file that is not a font; the
+		// sized fonts the drawing path uses are opened on demand.
 		loaded_face entry;
 		entry.bytes.assign(bytes.begin(), bytes.end());
-		if (FT_New_Memory_Face(library_, reinterpret_cast<const FT_Byte *>(entry.bytes.data()),
-		                       static_cast<FT_Long>(entry.bytes.size()), 0, &entry.handle) != 0) {
-			return false;
-		}
+		TTF_Font * probe = open_sized(entry.bytes, 16);
+		if (probe == nullptr) { return false; }
+		TTF_CloseFont(probe);
 		faces_[face_key{lowered(family), bold, italic}] = std::move(entry);
 		return true;
 	}
@@ -90,11 +91,13 @@ public:
 		const std::lock_guard guard{mutex_};
 		return faces_.size();
 	}
-	// The family a run would actually be drawn in, which is what makes the
-	// fallback chain observable instead of a guess.
 	[[nodiscard]] bool has_face(std::string_view family, bool bold, bool italic) const {
 		const std::lock_guard guard{mutex_};
 		return faces_.find(face_key{lowered(family), bold, italic}) != faces_.end();
+	}
+	void set_default_family(std::string family) {
+		const std::lock_guard guard{mutex_};
+		default_family_ = lowered(family);
 	}
 
 	[[nodiscard]] float advance(std::string_view text, float font_size, std::string_view family,
@@ -114,9 +117,9 @@ public:
 	void draw_run(const rect & where, const paint_command & c, const pixel_rect & clip,
 	              surface & into) const override {
 		const int size = pixel_size(c.font_size);
-		// The run's box top is the top of the LINE, and glyphs sit on a
-		// baseline inside it - the same convention font8x8 uses, so a page that
-		// mixes backends does not step up and down.
+		// The run's box top is the top of the LINE and glyphs sit on a baseline
+		// inside it - the same convention font8x8 uses, so a page that mixes
+		// backends does not step up and down.
 		const float baseline =
 		    where.y + ascent(c.font_size, c.face.family, c.face.bold, c.face.italic);
 		float pen = where.x;
@@ -132,27 +135,25 @@ public:
 		});
 	}
 
-	[[nodiscard]] float descent(float font_size, std::string_view family, bool bold,
-	                            bool italic) const override {
-		const int size = pixel_size(font_size);
-		const std::lock_guard guard{mutex_};
-		const loaded_face * face = resolve(family, bold, italic);
-		if (face == nullptr) { return font8x8_fonts().descent(font_size, family, bold, italic); }
-		if (FT_Set_Pixel_Sizes(face->handle, 0, static_cast<FT_UInt>(size)) != 0) { return 0; }
-		// FreeType's descender is NEGATIVE, and a descent is a distance.
-		return -static_cast<float>(face->handle->size->metrics.descender) / 64.0f;
-	}
-
 	[[nodiscard]] float ascent(float font_size, std::string_view family, bool bold,
 	                           bool italic) const override {
-		const int size = pixel_size(font_size);
 		const std::lock_guard guard{mutex_};
-		const loaded_face * face = resolve(family, bold, italic);
-		if (face == nullptr) {
+		TTF_Font * font = sized_font(family, bold, italic, pixel_size(font_size));
+		if (font == nullptr) {
 			return font8x8_fonts().ascent(font_size, family, bold, italic);
 		}
-		if (FT_Set_Pixel_Sizes(face->handle, 0, static_cast<FT_UInt>(size)) != 0) { return font_size; }
-		return static_cast<float>(face->handle->size->metrics.ascender) / 64.0f;
+		return static_cast<float>(TTF_GetFontAscent(font));
+	}
+
+	[[nodiscard]] float descent(float font_size, std::string_view family, bool bold,
+	                            bool italic) const override {
+		const std::lock_guard guard{mutex_};
+		TTF_Font * font = sized_font(family, bold, italic, pixel_size(font_size));
+		if (font == nullptr) {
+			return font8x8_fonts().descent(font_size, family, bold, italic);
+		}
+		// SDL3_ttf's descent is NEGATIVE, and a descent is a distance.
+		return -static_cast<float>(TTF_GetFontDescent(font));
 	}
 
 private:
@@ -163,8 +164,12 @@ private:
 		[[nodiscard]] friend auto operator<=>(const face_key &, const face_key &) = default;
 	};
 	struct loaded_face {
-		std::vector<std::byte> bytes; // FreeType reads these for the face's life
-		FT_Face handle = nullptr;
+		std::vector<std::byte> bytes; // SDL3_ttf reads these for the font's life
+	};
+	struct sized_key {
+		face_key face;
+		int size = 0;
+		[[nodiscard]] friend auto operator<=>(const sized_key &, const sized_key &) = default;
 	};
 	struct glyph_key {
 		face_key face;
@@ -215,10 +220,16 @@ private:
 		}
 	}
 
-	// The face a request resolves to. An unknown family falls back to the
-	// DEFAULT one rather than drawing nothing, and a missing bold/italic
-	// variant falls back to the upright one - which is what a browser does with
-	// a family it only has one weight of.
+	[[nodiscard]] static TTF_Font * open_sized(const std::vector<std::byte> & bytes, int size) {
+		SDL_IOStream * source = SDL_IOFromConstMem(bytes.data(), bytes.size());
+		if (source == nullptr) { return nullptr; }
+		// closeio: the stream belongs to the font from here on.
+		return TTF_OpenFontIO(source, true, static_cast<float>(size));
+	}
+
+	// An unknown family falls back to the DEFAULT one rather than drawing
+	// nothing, and a missing bold/italic variant to the upright one - which is
+	// what a browser does with a family it only has one weight of.
 	[[nodiscard]] const loaded_face * resolve(std::string_view family, bool bold,
 	                                          bool italic) const {
 		const std::string name = lowered(family);
@@ -231,37 +242,72 @@ private:
 		return faces_.empty() ? nullptr : &faces_.begin()->second;
 	}
 
+	// One TTF_Font per (face, pixel size). Opening per size rather than calling
+	// TTF_SetFontSize keeps the cached glyphs of one size valid while another
+	// is being drawn - resizing a shared font would invalidate them underneath
+	// whichever thread was using it.
+	//
+	// Caller holds the lock.
+	[[nodiscard]] TTF_Font * sized_font(std::string_view family, bool bold, bool italic,
+	                                    int size) const {
+		const loaded_face * face = resolve(family, bold, italic);
+		if (face == nullptr) { return nullptr; }
+		const sized_key key{face_key{lowered(family), bold, italic}, size};
+		if (const auto it = sized_.find(key); it != sized_.end()) { return it->second; }
+		TTF_Font * font = open_sized(face->bytes, size);
+		sized_.emplace(key, font);
+		return font;
+	}
+
 	// Rasterized once, then read. The lookup is under the lock; the BLIT is
 	// not, which is safe because a glyph never changes after it is inserted and
 	// std::map does not move its nodes.
 	[[nodiscard]] const glyph * glyph_for(std::string_view family, bool bold, bool italic, int size,
 	                                      char32_t code) const {
 		const std::lock_guard guard{mutex_};
-		const loaded_face * face = resolve(family, bold, italic);
-		if (face == nullptr) { return nullptr; }
+		TTF_Font * font = sized_font(family, bold, italic, size);
+		if (font == nullptr) { return nullptr; }
 		const glyph_key key{face_key{lowered(family), bold, italic}, size, code};
-		if (const auto it = glyphs_.find(key); it != glyphs_.end()) {
-			return it->second.width >= 0 ? &it->second : nullptr;
-		}
-		if (FT_Set_Pixel_Sizes(face->handle, 0, static_cast<FT_UInt>(size)) != 0) { return nullptr; }
-		if (FT_Load_Char(face->handle, code, FT_LOAD_RENDER) != 0) { return nullptr; }
-		const FT_GlyphSlot slot = face->handle->glyph;
+		if (const auto it = glyphs_.find(key); it != glyphs_.end()) { return &it->second; }
 
+		int minx = 0;
+		int maxx = 0;
+		int miny = 0;
+		int maxy = 0;
+		int advance = 0;
+		if (!TTF_GetGlyphMetrics(font, code, &minx, &maxx, &miny, &maxy, &advance)) {
+			return nullptr;
+		}
 		glyph made;
-		made.width = static_cast<int>(slot->bitmap.width);
-		made.height = static_cast<int>(slot->bitmap.rows);
-		made.left = slot->bitmap_left;
-		made.top = slot->bitmap_top;
-		made.advance = static_cast<float>(slot->advance.x) / 64.0f;
-		made.coverage.resize(static_cast<std::size_t>(made.width) *
-		                     static_cast<std::size_t>(made.height));
-		for (int y = 0; y < made.height; ++y) {
-			for (int x = 0; x < made.width; ++x) {
-				made.coverage[static_cast<std::size_t>(y) * static_cast<std::size_t>(made.width) +
-				              static_cast<std::size_t>(x)] =
-				    slot->bitmap.buffer[static_cast<std::size_t>(y) *
-				                            static_cast<std::size_t>(slot->bitmap.pitch) +
-				                        static_cast<std::size_t>(x)];
+		made.left = minx;
+		made.top = maxy;
+		made.advance = static_cast<float>(advance);
+
+		TTF_ImageType type = TTF_IMAGE_INVALID;
+		SDL_Surface * image = TTF_GetGlyphImage(font, code, &type);
+		if (image != nullptr) {
+			// Whatever SDL3_ttf produced, read it as straight 8-bit COVERAGE:
+			// the glyph is a mask that scales the text colour's alpha, and the
+			// text colour is the page's, not the font's.
+			SDL_Surface * alpha = SDL_ConvertSurface(image, SDL_PIXELFORMAT_RGBA32);
+			SDL_DestroySurface(image);
+			if (alpha != nullptr) {
+				made.width = alpha->w;
+				made.height = alpha->h;
+				made.coverage.resize(static_cast<std::size_t>(made.width) *
+				                     static_cast<std::size_t>(made.height));
+				for (int y = 0; y < made.height; ++y) {
+					const auto * row = reinterpret_cast<const std::uint8_t *>(
+					    static_cast<const std::byte *>(alpha->pixels) +
+					    static_cast<std::size_t>(y) * static_cast<std::size_t>(alpha->pitch));
+					for (int x = 0; x < made.width; ++x) {
+						made.coverage[static_cast<std::size_t>(y) *
+						                  static_cast<std::size_t>(made.width) +
+						              static_cast<std::size_t>(x)] =
+						    row[static_cast<std::size_t>(x) * 4U + 3U]; // the alpha channel
+					}
+				}
+				SDL_DestroySurface(alpha);
 			}
 		}
 		return &glyphs_.emplace(key, std::move(made)).first->second;
@@ -293,21 +339,14 @@ private:
 		}
 	}
 
-	FT_Library library_ = nullptr;
+	bool started_ = false;
 	mutable std::mutex mutex_;
 	std::map<face_key, loaded_face> faces_;
+	mutable std::map<sized_key, TTF_Font *> sized_;
 	mutable std::map<glyph_key, glyph> glyphs_;
 	std::string default_family_;
-
-public:
-	// Which family an unknown one falls back to. Set once, when the faces are
-	// registered.
-	void set_default_family(std::string family) {
-		const std::lock_guard guard{mutex_};
-		default_family_ = lowered(family);
-	}
 };
 
-#endif // CTBROWSER_WITH_FREETYPE
+#endif // CTBROWSER_WITH_TTF
 
 } // namespace ctbrowser::raster

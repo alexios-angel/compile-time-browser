@@ -2,7 +2,14 @@ module;
 
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+// <ostream> EXPLICITLY. `out << "P6\n"` needs the const char* inserter, and
+// without it the const void* one is chosen instead - which compiles, and
+// writes the POINTER as hex into the file. libstdc++ happened to make it
+// visible transitively and libc++ did not, so the screenshots the Windows
+// build wrote had a corrupt header while the Linux ones were fine.
+#include <ostream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -77,7 +84,7 @@ struct app_options {
 	// Real outline fonts, from the vendored OFL faces and whatever the page's
 	// @font-face rules ask for. ON by default - an application wants text that
 	// looks like text - and falling back to the built-in bitmap font when
-	// FreeType is absent or the files are not found.
+	// SDL3_ttf is absent or the files are not found.
 	//
 	// `CTBROWSER_FONTS=font8x8` forces the bitmap font, which is what makes a
 	// run reproducible ACROSS MACHINES: two FreeType versions do not rasterize
