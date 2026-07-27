@@ -69,7 +69,16 @@ struct app_options {
 	// >0: stop after this many frames. This is how a page becomes a CI test,
 	// and it forces a fixed timestep so the run is reproducible.
 	int max_frames = 0;
-	int max_fps = 60;    // 0 = uncapped. Fixed-step pages depend on the cap.
+	// THE CPU THROTTLE. An application redraws at most this often while
+	// something is changing, and does not redraw AT ALL while nothing is - an
+	// idle page blocks on the event queue and costs nothing, whatever this
+	// says. So the cost of a busy page is roughly this number times what one
+	// frame costs, and halving it halves the CPU.
+	//
+	// 0 = uncapped, which is what a benchmark wants and what a game with its
+	// own pacing can ask for. Fixed-step pages depend on the cap.
+	// `CTBROWSER_MAX_FPS` sets it from the environment.
+	int max_fps = 60;
 	double fixed_dt = 0; // >0: pretend every frame took exactly this long
 
 	bool fullscreen = false;
@@ -107,6 +116,22 @@ struct app_options {
 	// Called once before the first frame with the live browser, for
 	// applications that want to inspect the document or drive it themselves.
 	std::function<void(shell::browser &)> on_ready;
+
+	// --- profiling ---------------------------------------------------------
+	//
+	// WHERE THE TIME GOES, per loop iteration, written as CSV and summarised
+	// on stdout. Guessing at this is how you end up optimising the wrong
+	// thing: an application that feels busy might be re-rasterising every
+	// frame, or re-laying-out on every mouse move, or simply never sleeping,
+	// and those have nothing to do with each other.
+	//
+	// Reports CPU time against wall time, because "it uses 65% of my CPU" is
+	// the complaint and frames-per-second is not the same question.
+	//
+	// `CTBROWSER_PROFILE=out.csv` and `CTBROWSER_PROFILE_SECONDS=n` set these
+	// from the environment, so any example can be profiled without a rebuild.
+	std::string profile_path;  // "" = off; "-" = summary only, no file
+	double profile_seconds = 0; // >0: stop after this long, like max_frames
 };
 
 // Environment overrides, applied by run_app before anything else:
@@ -116,6 +141,9 @@ struct app_options {
 //   CTBROWSER_RENDERER     -> software | gpu
 //   CTBROWSER_NETWORK      -> 0 disables fetch()'s network access
 //   CTBROWSER_FONTS        -> font8x8 forces the built-in bitmap font
+//   CTBROWSER_MAX_FPS      -> max_fps, the redraw cap (0 = uncapped)
+//   CTBROWSER_PROFILE      -> profile_path ("-" = summary only)
+//   CTBROWSER_PROFILE_SECONDS -> profile_seconds
 //
 // Carried over from v1 because it is what lets an example BE a ctest without
 // the example containing any test scaffolding.
@@ -139,6 +167,11 @@ inline void apply_environment(app_options & options) {
 	if (const char * network = std::getenv("CTBROWSER_NETWORK")) {
 		const std::string_view text{network};
 		options.network = !(text == "0" || text == "off" || text == "no");
+	}
+	if (const char * fps = std::getenv("CTBROWSER_MAX_FPS")) { options.max_fps = std::atoi(fps); }
+	if (const char * profile = std::getenv("CTBROWSER_PROFILE")) { options.profile_path = profile; }
+	if (const char * seconds = std::getenv("CTBROWSER_PROFILE_SECONDS")) {
+		options.profile_seconds = std::atof(seconds);
 	}
 	// A bounded run has to be reproducible, or comparing its screenshot is a
 	// coin flip.

@@ -245,6 +245,46 @@ void test_the_caret_blinks() {
 	check(caret_bars(page, "f").size() == 1, "typing brings the caret straight back");
 }
 
+// The loop has to be TOLD to draw, and a blink is the case where nothing else
+// tells it: no event arrived and no callback ran. A loop that redraws only
+// when it did something itself shows a caret that appears late or not at all -
+// which is the same shape as the scrollbar that did not appear until the next
+// mouse move.
+void test_the_page_asks_for_a_frame_when_the_caret_blinks() {
+	browser_options options{400, 200};
+	options.caret_blink_ms = 500;
+	browser page{options};
+	page.load_html("<body><input type=text id=f value=hi></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect field = box_of(page, "f");
+	(void)page.handle(input_event::mouse_down_at(field.x + 4, field.y + 6));
+	(void)page.handle(input_event::mouse_up_at(field.x + 4, field.y + 6));
+	check(page.frame().has_value(), "redraws focused");
+	check(!page.needs_frame(), "and is then up to date");
+
+	// No event, no callback: only time passing.
+	check(page.tick(600) == 0, "no callbacks ran");
+	check(page.needs_frame(), "but the page wants a frame, because the caret changed");
+
+	// And it says when the NEXT one is due, so an idle loop can block instead
+	// of waking sixty times a second to find out.
+	check(page.frame().has_value(), "redraws");
+	const double due = page.next_wakeup_ms();
+	check(due > 0 && due <= 500, "the next blink is due within a period");
+}
+
+void test_an_idle_page_asks_for_nothing() {
+	browser page{browser_options{300, 200}};
+	page.load_html("<body><p>a page with no timers and nothing focused</p></body>");
+	check(page.frame().has_value(), "the page renders");
+	check(!page.needs_frame(), "nothing to draw");
+	check(page.tick(1000) == 0, "and nothing to run");
+	check(!page.needs_frame(), "still nothing to draw after a whole second");
+	// Infinity is what lets an application BLOCK rather than poll - the
+	// difference between an idle browser costing nothing and costing a core.
+	check(page.next_wakeup_ms() > 1e9, "and no wakeup is due at all");
+}
+
 void test_a_blink_does_not_relayout() {
 	browser_options options{400, 200};
 	options.caret_blink_ms = 500;
@@ -1165,6 +1205,8 @@ int main() {
 	test_a_textarea_draws_its_lines_separately();
 	test_the_caret_blinks();
 	test_a_blink_does_not_relayout();
+	test_the_page_asks_for_a_frame_when_the_caret_blinks();
+	test_an_idle_page_asks_for_nothing();
 	test_script_reads_a_live_control_value();
 	test_an_input_listener_sees_the_new_value();
 	test_script_writes_a_control_value();

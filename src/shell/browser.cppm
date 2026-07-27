@@ -2,6 +2,7 @@ module;
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -338,6 +339,30 @@ public:
 	// design exists to keep this number down: a caret blink or a scroll must
 	// not increment it.
 	[[nodiscard]] std::size_t layout_count() const noexcept { return layouts_; }
+
+	// Whether anything has changed that a frame would show. An event loop asks
+	// this rather than assuming: a caret blink and a scrollbar that appears
+	// after a relayout both change what should be on screen without any event
+	// having arrived, and a loop that only redraws when IT did something shows
+	// neither until the user happens to move the mouse.
+	[[nodiscard]] bool needs_frame() const noexcept { return dirty_ != dirty::nothing; }
+
+	// Milliseconds until this page next has something to do on its own - a
+	// timer, an animation frame, or the caret's next blink. Infinity when it
+	// has nothing, which is what lets an idle application BLOCK instead of
+	// waking up sixty times a second to discover there was nothing to do.
+	[[nodiscard]] double next_wakeup_ms() {
+		double soonest = std::numeric_limits<double>::infinity();
+		if (bindings_) { soonest = std::min(soonest, bindings_->next_callback_ms()); }
+		if (focused_ && options_.caret_blink_ms > 0 && has_editable_focus()) {
+			const double period = options_.caret_blink_ms * 2;
+			const double since = std::fmod(caret_clock_ms_ - caret_base_ms_, period);
+			soonest = std::min(soonest, since < options_.caret_blink_ms
+			                                ? options_.caret_blink_ms - since
+			                                : period - since);
+		}
+		return soonest;
+	}
 
 	// THE CARET BLINKS, in Chrome's 500 ms halves. The phase is measured from
 	// the last caret ACTIVITY rather than from page load: a caret that blinks
@@ -1684,6 +1709,17 @@ private:
 	}
 
 	// The focused control's editable state, or null when focus is elsewhere.
+	// Whether the focused element is one that shows a caret. Distinct from
+	// editable_focus(), which SEEDS the control's state - asking when the next
+	// blink is due must not create anything.
+	[[nodiscard]] bool has_editable_focus() {
+		if (!focused_) { return false; }
+		const auto txn = doc_->read();
+		if (!txn.contains(focused_)) { return false; }
+		const control_kind kind = kind_of(txn, focused_);
+		return kind == control_kind::text || kind == control_kind::textarea;
+	}
+
 	[[nodiscard]] control_state * editable_focus() {
 		if (!focused_) { return nullptr; }
 		const auto txn = doc_->read();

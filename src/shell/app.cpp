@@ -8,6 +8,11 @@ module;
 
 #include <algorithm>
 #include <chrono>
+#if defined(_WIN32)
+#  include <windows.h>
+#else
+#  include <sys/resource.h>
+#endif
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -44,6 +49,12 @@ public:
 	// Drain input into the browser. False means the user asked to quit.
 	[[nodiscard]] virtual bool pump(browser &, bool & changed) = 0;
 	virtual void present(browser &) = 0;
+	// Block until an event arrives or the timeout expires. The headless host
+	// has no events, so it sleeps - which is the same thing from the loop's
+	// point of view and keeps a headless run from spinning either.
+	virtual void wait_for_event(std::int32_t timeout_ms) {
+		std::this_thread::sleep_for(std::chrono::milliseconds{timeout_ms});
+	}
 	[[nodiscard]] virtual void * native_window() { return nullptr; }
 };
 
@@ -197,6 +208,15 @@ public:
 		SDL_RenderClear(renderer_);
 		SDL_RenderTexture(renderer_, texture_, nullptr, nullptr);
 		SDL_RenderPresent(renderer_);
+	}
+
+	void wait_for_event(std::int32_t timeout_ms) override {
+		// NULL: wait for an event to be THERE without taking it, so the next
+		// pump() sees it. Taking it and pushing it back looks equivalent and is
+		// not - SDL posts an internal poll sentinel to bound PollEvent loops,
+		// and pushing that back re-arms it, so the wait returns instantly,
+		// forever. Measured at eight million iterations in ten seconds.
+		(void)SDL_WaitEventTimeout(nullptr, timeout_ms);
 	}
 
 	[[nodiscard]] void * native_window() override { return window_.get(); }
@@ -445,6 +465,110 @@ inline void install_image_decoder(shell::image_store & images) {
 #endif
 }
 
+// --- the profiler ---------------------------------------------------------
+//
+// One record per loop iteration. Kept in memory and written at the end rather
+// than streamed, because writing to a file inside the loop is itself a cost
+// and would show up in its own measurements.
+struct frame_record {
+	double at_ms = 0;    // since the run started
+	double poll_ms = 0;  // events in
+	double tick_ms = 0;  // timers, rAF, the caret clock
+	double frame_ms = 0; // style, layout, record, raster
+	double present_ms = 0;
+	double wait_ms = 0; // deliberately asleep
+	std::uint32_t layouts = 0;
+	bool rendered = false;
+};
+
+// Process CPU time. std::clock() is wall time on some Windows runtimes, which
+// would make the one number this exists to report a lie.
+[[nodiscard]] inline double process_cpu_seconds() {
+#if defined(_WIN32)
+	FILETIME created{};
+	FILETIME exited{};
+	FILETIME kernel{};
+	FILETIME user{};
+	if (GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user) == 0) { return 0; }
+	const auto to_seconds = [](const FILETIME & t) {
+		return static_cast<double>((static_cast<std::uint64_t>(t.dwHighDateTime) << 32) |
+		                           t.dwLowDateTime) *
+		       1e-7; // 100ns units
+	};
+	return to_seconds(kernel) + to_seconds(user);
+#else
+	rusage usage{};
+	if (getrusage(RUSAGE_SELF, &usage) != 0) { return 0; }
+	const auto to_seconds = [](const timeval & t) {
+		return static_cast<double>(t.tv_sec) + 1e-6 * static_cast<double>(t.tv_usec);
+	};
+	return to_seconds(usage.ru_utime) + to_seconds(usage.ru_stime);
+#endif
+}
+
+inline void report_profile(const std::vector<frame_record> & history, double wall_seconds,
+                           double cpu_seconds, const std::string & path) {
+	if (history.empty()) { return; }
+	const auto total = [&history](double frame_record::*field) {
+		double sum = 0;
+		for (const frame_record & r : history) { sum += r.*field; }
+		return sum;
+	};
+	const auto percentile = [](std::vector<double> values, double fraction) {
+		if (values.empty()) { return 0.0; }
+		const auto at = static_cast<std::size_t>(fraction * static_cast<double>(values.size() - 1));
+		std::ranges::nth_element(values, values.begin() + static_cast<std::ptrdiff_t>(at));
+		return values[at];
+	};
+
+	std::size_t rendered = 0;
+	std::vector<double> frame_times;
+	for (const frame_record & r : history) {
+		if (!r.rendered) { continue; }
+		++rendered;
+		frame_times.push_back(r.frame_ms + r.present_ms);
+	}
+	const std::uint32_t layouts = history.back().layouts - history.front().layouts;
+
+	std::printf("\n--- ctbrowser profile ------------------------------------\n");
+	std::printf("  wall            %8.2f s\n", wall_seconds);
+	std::printf("  CPU             %8.2f s   (%.1f%% of one core)\n", cpu_seconds,
+	            wall_seconds > 0 ? 100.0 * cpu_seconds / wall_seconds : 0.0);
+	std::printf("  iterations      %8zu     (%.0f/s)\n", history.size(),
+	            wall_seconds > 0 ? static_cast<double>(history.size()) / wall_seconds : 0.0);
+	std::printf("  frames drawn    %8zu     (%.0f/s, %.0f%% of iterations)\n", rendered,
+	            wall_seconds > 0 ? static_cast<double>(rendered) / wall_seconds : 0.0,
+	            100.0 * static_cast<double>(rendered) / static_cast<double>(history.size()));
+	std::printf("  layouts run     %8u\n", layouts);
+	std::printf("  ---- where the wall time went (ms, total) ----\n");
+	std::printf("    poll events   %8.1f\n", total(&frame_record::poll_ms));
+	std::printf("    tick clock    %8.1f\n", total(&frame_record::tick_ms));
+	std::printf("    frame         %8.1f\n", total(&frame_record::frame_ms));
+	std::printf("    present       %8.1f\n", total(&frame_record::present_ms));
+	std::printf("    asleep        %8.1f\n", total(&frame_record::wait_ms));
+	if (!frame_times.empty()) {
+		std::printf("  ---- per drawn frame (ms) ----\n");
+		std::printf("    median %6.2f   p95 %6.2f   max %6.2f\n", percentile(frame_times, 0.5),
+		            percentile(frame_times, 0.95),
+		            *std::ranges::max_element(frame_times));
+	}
+	std::printf("-----------------------------------------------------------\n");
+
+	if (path.empty() || path == "-") { return; }
+	std::ofstream out{path};
+	if (!out) {
+		std::printf("ctbrowser: cannot write %s\n", path.c_str());
+		return;
+	}
+	out << "at_ms,poll_ms,tick_ms,frame_ms,present_ms,wait_ms,layouts,rendered\n";
+	for (const frame_record & r : history) {
+		out << r.at_ms << ',' << r.poll_ms << ',' << r.tick_ms << ',' << r.frame_ms << ','
+		    << r.present_ms << ',' << r.wait_ms << ',' << r.layouts << ',' << (r.rendered ? 1 : 0)
+		    << '\n';
+	}
+	std::printf("ctbrowser: profile history written to %s\n", path.c_str());
+}
+
 } // namespace ctbrowser::detail
 namespace ctbrowser {
 
@@ -452,6 +576,15 @@ namespace ctbrowser {
 //
 // This is the whole application API: it owns the window, the event loop, the
 // clock, the frame pacing and the teardown.
+// How long an idle application blocks before looking around anyway. Not
+// forever: a wait that never times out would need every source of change to be
+// an SDL event, and the browser has its own clock.
+constexpr std::int32_t idle_wait_ms = 250;
+
+// How many iterations a profile keeps. Past this it counts and drops: see the
+// note where it is used.
+constexpr std::size_t profile_history_limit = 200'000;
+
 int run_app(std::string_view html, app_options options) {
 	apply_environment(options);
 
@@ -513,10 +646,25 @@ int run_app(std::string_view html, app_options options) {
 	bool needs_frame = true;
 	bool running = true;
 
-	while (running) {
-		if (!host->pump(page, needs_frame)) { break; }
+	const bool profiling = !options.profile_path.empty() || options.profile_seconds > 0;
+	std::vector<detail::frame_record> history;
+	std::size_t dropped_records = 0;
+	const auto started = clock::now();
+	const double cpu_started = detail::process_cpu_seconds();
+	const auto since = [&started](clock::time_point at) {
+		return std::chrono::duration<double, std::milli>(at - started).count();
+	};
 
-		const auto now = clock::now();
+	while (running) {
+		const auto iteration_began = clock::now();
+		detail::frame_record record;
+		record.at_ms = since(iteration_began);
+
+		if (!host->pump(page, needs_frame)) { break; }
+		const auto after_poll = clock::now();
+		record.poll_ms = std::chrono::duration<double, std::milli>(after_poll - iteration_began).count();
+
+		const auto now = after_poll;
 		const double elapsed_ms =
 		    options.fixed_dt > 0
 		        ? options.fixed_dt * 1000.0
@@ -527,15 +675,33 @@ int run_app(std::string_view html, app_options options) {
 		// previous reference loop never called it, so every animated page was
 		// frozen and nothing said so.
 		if (page.tick(elapsed_ms) > 0) { needs_frame = true; }
+		// ASK THE PAGE. Not everything that changes what should be on screen
+		// comes from an event or a callback: a caret blinks, and a scrollbar
+		// appears when a relayout makes the page taller. A loop that redraws
+		// only when IT did something shows neither until the user happens to
+		// move the mouse - which is exactly how both of those looked.
+		if (page.needs_frame()) { needs_frame = true; }
+		const auto after_tick = clock::now();
+		record.tick_ms = std::chrono::duration<double, std::milli>(after_tick - after_poll).count();
 
 		if (needs_frame) {
 			if (!page.frame(&pool)) { break; }
+			const auto after_frame = clock::now();
+			record.frame_ms =
+			    std::chrono::duration<double, std::milli>(after_frame - after_tick).count();
 			host->present(page);
+			record.present_ms =
+			    std::chrono::duration<double, std::milli>(clock::now() - after_frame).count();
+			record.rendered = true;
 			needs_frame = false;
 		}
+		record.layouts = static_cast<std::uint32_t>(page.layout_count());
 
 		++frame;
-		const bool last = options.max_frames > 0 && frame >= options.max_frames;
+		const bool last =
+		    (options.max_frames > 0 && frame >= options.max_frames) ||
+		    (options.profile_seconds > 0 &&
+		     std::chrono::duration<double>(clock::now() - started).count() >= options.profile_seconds);
 		if (!options.screenshot_path.empty() &&
 		    (frame - 1 == options.screenshot_frame || (options.screenshot_frame < 0 && last))) {
 			if (const auto image = page.read_pixels()) {
@@ -544,14 +710,57 @@ int run_app(std::string_view html, app_options options) {
 		}
 		if (last) { running = false; }
 
-		if (options.max_fps > 0 && options.max_frames == 0) {
-			// Pace only interactive runs. A bounded run sprints: nobody is
-			// watching it, and a 30-frame test should not take half a second of
-			// wall clock to say so.
+		// PACING, and the difference between a browser and a spin loop.
+		//
+		// A bounded run sprints: nobody is watching it, and a 30-frame test
+		// should not take half a second of wall clock to say so.
+		const auto before_wait = clock::now();
+		if (options.max_fps > 0 && options.max_frames == 0 && running) {
 			const auto budget = std::chrono::nanoseconds{1'000'000'000 / options.max_fps};
 			const auto spent = clock::now() - now;
-			if (spent < budget) { std::this_thread::sleep_for(budget - spent); }
+			const auto left = budget > spent ? budget - spent : std::chrono::nanoseconds{0};
+
+			// DID WE DRAW? That is the question, not "is there more to draw" -
+			// which is false the instant a frame finishes, so asking it took
+			// the wait branch after every single frame and max_fps threw its
+			// cap away. An animating page ran at whatever rate vsync allowed
+			// however low the cap was set.
+			if (record.rendered) {
+				if (left.count() > 0) { std::this_thread::sleep_for(left); }
+			} else if (!page.needs_frame()) {
+				// Nothing to draw: WAIT FOR AN EVENT rather than sleeping out
+				// the budget and looking again. An idle page costs nothing at
+				// all this way, and an event is acted on the moment it arrives
+				// instead of up to a frame later.
+				//
+				// The timeout is however long until the page next has
+				// something to do on its own - a timer, an animation frame,
+				// the caret's next blink - so a blinking caret still blinks on
+				// time and a page with neither sleeps until the user acts.
+				const double due = page.next_wakeup_ms();
+				const std::int32_t timeout =
+				    due >= static_cast<double>(idle_wait_ms)
+				        ? idle_wait_ms
+				        : static_cast<std::int32_t>(std::max(1.0, due));
+				host->wait_for_event(timeout);
+			}
 		}
+		record.wait_ms = std::chrono::duration<double, std::milli>(clock::now() - before_wait).count();
+		// BOUNDED. A profile of a loop that has gone wrong is exactly when the
+		// history explodes - the first run of this wrote 306 MB in ten seconds
+		// - and a profiler that fills the disk cannot be used on the bug it is
+		// there to find.
+		if (profiling && history.size() < profile_history_limit) { history.push_back(record); }
+		else if (profiling) { ++dropped_records; }
+	}
+
+	if (profiling) {
+		if (dropped_records > 0) {
+			std::printf("ctbrowser: profile kept the first %zu iterations and dropped %zu more\n",
+			            history.size(), dropped_records);
+		}
+		detail::report_profile(history, std::chrono::duration<double>(clock::now() - started).count(),
+		                       detail::process_cpu_seconds() - cpu_started, options.profile_path);
 	}
 
 #if CTBROWSER_WITH_SDL3

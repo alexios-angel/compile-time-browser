@@ -50,10 +50,11 @@ public:
 
 	~scheduler() {
 		for (std::jthread & w : workers_) { w.request_stop(); }
-		for (queue & q : queues_) {
-			const std::lock_guard lock{q.mutex};
-			q.ready.notify_all();
+		{
+			const std::lock_guard lock{idle_mutex_};
+			stopping_ = true;
 		}
+		idle_.notify_all();
 	}
 
 	scheduler(const scheduler &) = delete;
@@ -82,7 +83,16 @@ public:
 			const std::lock_guard lock{q.mutex};
 			q.items.push_back(std::move(t));
 		}
-		q.ready.notify_one();
+		// Under the idle lock, not merely after an atomic increment. A worker
+		// evaluates the predicate holding this lock and wait() releases it
+		// atomically, so a notify that does not take it can be delivered
+		// between the two and lost - and a lost wakeup here is a pool that
+		// sleeps through the work it was just given.
+		{
+			const std::lock_guard lock{idle_mutex_};
+			pending_.fetch_add(1, std::memory_order_relaxed);
+		}
+		idle_.notify_one();
 	}
 
 	// Run f(0..n) across the pool and return once every index is done. The
@@ -110,7 +120,6 @@ public:
 private:
 	struct queue {
 		std::mutex mutex;
-		std::condition_variable ready;
 		std::deque<task> items;
 	};
 
@@ -121,6 +130,7 @@ private:
 		if (q.items.empty()) { return false; }
 		out = std::move(q.items.back());
 		q.items.pop_back();
+		pending_.fetch_sub(1, std::memory_order_relaxed);
 		return true;
 	}
 	[[nodiscard]] bool steal(std::size_t thief, task & out) {
@@ -130,6 +140,7 @@ private:
 			if (q.items.empty()) { continue; }
 			out = std::move(q.items.front());
 			q.items.pop_front();
+			pending_.fetch_sub(1, std::memory_order_relaxed);
 			return true;
 		}
 		return false;
@@ -151,15 +162,27 @@ private:
 	// must not become the synchronisation the queues exist to avoid.
 	static inline thread_local identity * current_ = nullptr;
 
+	// An idle worker SLEEPS until there is work, rather than waking up to look.
+	//
+	// This used to be `wait_for(1ms)` on the worker's own queue, because submit
+	// notifies only the queue it pushed to and a worker discovers STEALABLE
+	// work by looking. The cost of that is a pool which never sleeps: one
+	// wakeup per millisecond per worker, on every hardware thread, forever -
+	// which on an idle page is the entire CPU cost of the application and was
+	// measured at about 65% of a machine doing nothing.
+	//
+	// So the condition is now global - "are there tasks anywhere" - and one
+	// shared condvar covers every worker, whichever queue the work landed in.
 	void run(std::size_t i, const std::stop_token & stop) {
 		identity me{this, i};
 		current_ = &me;
 		while (!stop.stop_requested()) {
 			if (run_one(i)) { continue; }
-			queue & q = queues_[i];
-			std::unique_lock lock{q.mutex};
-			q.ready.wait_for(lock, std::chrono::milliseconds{1},
-			                 [&] { return !q.items.empty() || stop.stop_requested(); });
+			std::unique_lock lock{idle_mutex_};
+			idle_.wait(lock, [&] {
+				return pending_.load(std::memory_order_relaxed) > 0 || stopping_ ||
+				       stop.stop_requested();
+			});
 		}
 		current_ = nullptr;
 	}
@@ -167,6 +190,12 @@ private:
 	std::vector<queue> queues_;
 	std::vector<std::jthread> workers_;
 	std::atomic<std::size_t> next_{0};
+	// Tasks queued and not yet taken, anywhere. The predicate every idle
+	// worker waits on, so work in ANY queue wakes whoever can steal it.
+	std::atomic<std::size_t> pending_{0};
+	std::mutex idle_mutex_;
+	std::condition_variable idle_;
+	bool stopping_ = false;
 };
 
 } // namespace ctbrowser

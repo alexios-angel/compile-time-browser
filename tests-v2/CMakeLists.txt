@@ -84,6 +84,7 @@ endfunction()
 
 ctbrowser_v2_bench(bench_reads)
 ctbrowser_v2_bench(bench_style)
+ctbrowser_v2_bench(bench_interaction)
 ctbrowser_v2_bench(bench_layout bench_layout_v1.cpp)
 ctbrowser_v2_bench(bench_raster bench_layout_v1.cpp)
 if(SDL3_FOUND)

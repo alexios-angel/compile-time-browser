@@ -3,6 +3,7 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <span>
 #include <string>
@@ -243,6 +244,20 @@ public:
 	}
 
 	[[nodiscard]] std::size_t pending_timers() const noexcept { return timers_.size(); }
+	// When the next callback is due, in milliseconds from now. Infinity when
+	// there is none - which is what lets an idle application block rather than
+	// poll. An animation frame is due IMMEDIATELY: a page that asked for one
+	// wants the next frame, not a timer's worth of delay.
+	[[nodiscard]] double next_callback_ms() const {
+		if (!animation_callbacks_.empty()) { return 0; }
+		double soonest = std::numeric_limits<double>::infinity();
+		for (const timer & t : timers_) {
+			if (t.cancelled) { continue; }
+			soonest = std::min(soonest, std::max(0.0, t.due_ms - now_ms_));
+		}
+		return soonest;
+	}
+
 	[[nodiscard]] std::size_t pending_animation_frames() const noexcept {
 		return animation_callbacks_.size();
 	}

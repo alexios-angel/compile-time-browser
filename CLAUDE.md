@@ -333,6 +333,53 @@ an empty string as the label and never read `<option>` at all. Now: the
 `selected` option, else the first, else whatever the user picked, plus a
 drop-down arrow. The popup itself is still missing.
 
+## v2 CPU AND THE PROFILER (2026-07-27)
+
+**`CTBROWSER_PROFILE=out.csv CTBROWSER_PROFILE_SECONDS=10 ./widgets.exe`** — a
+record per loop iteration (poll / tick / frame / present / asleep, layouts,
+whether it drew), a summary on stdout, and **CPU time against wall time**,
+because "it uses 65% of my CPU" is not the same question as frames per second.
+`tests-v2/bench_interaction` is the headless half: what a mouse move, a hover
+change and a scroll each COST, with the implied CPU at 60 fps printed beside
+them.
+
+Measuring first was worth it — every guess was wrong.
+
+**The pool's idle poll was not the problem** (it looked like the obvious one: a
+worker waking every millisecond on every core, forever). It is fixed anyway —
+idle workers now sleep on a global "is there work anywhere" condition, since
+`submit` notifies one queue and a worker finds STEALABLE work by looking — but
+it measured well under 1%.
+
+**Nor was the engine.** A hover change is 0.9 ms and a scroll 0.5 ms; 60 fps of
+hover changes is about 5% of a core.
+
+**It was that the loop never stopped drawing.** An idle page redrew because
+nothing distinguished "nothing happened" from "nothing was asked for", and a
+busy page ignored `max_fps` entirely.
+
+**An idle application now BLOCKS.** `browser::needs_frame()` and
+`next_wakeup_ms()` are the contract: the loop asks the page whether anything
+changed and how long until it next has something to do on its own — a timer, an
+animation frame, the caret's next blink — and blocks on the event queue for
+exactly that long. Idle widgets.exe went 0.8% → **0.2% of one core**, and a
+caret blinks ON TIME instead of whenever the next event happens to arrive,
+which was the same shape as the scrollbar that did not appear until you moved
+the mouse.
+
+**`max_fps` IS the throttle**, and it did nothing before: pacing asked "is
+there more to draw", which is false the instant a frame finishes, so every
+frame took the wait branch and an animating page ran at whatever vsync allowed.
+It asks "did we draw" now. Measured on pong.exe with a real window: 60 fps =
+12.8%, 30 = 7.5%, 15 = 3.9%. `CTBROWSER_MAX_FPS` sets it without a rebuild.
+
+**`SDL_WaitEventTimeout(&event, ...)` then `SDL_PushEvent` is not a wait.** SDL
+posts an internal poll sentinel to bound PollEvent loops, and pushing that back
+re-arms it, so the wait returns instantly forever - eight million iterations in
+ten seconds, and a 306 MB profile. Pass **NULL** to wait without taking the
+event. The profiler's history is capped for the same reason: a profile of a
+loop that has gone wrong is exactly when it explodes.
+
 ## v2 FORM CONTROLS: the batch a real page found (2026-07-27)
 
 Eight bugs from ONE screenshot of the widget gallery, and the reason they all

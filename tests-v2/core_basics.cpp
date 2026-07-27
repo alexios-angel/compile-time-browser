@@ -4,6 +4,10 @@ import ctbrowser.core;
 
 #include "check.hpp"
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <ctime>
+#include <thread>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -162,6 +166,50 @@ void test_geometry() {
 	CHECK(true); // the assertions above are compile-time; this keeps the counter honest
 }
 
+// AN IDLE POOL COSTS NOTHING.
+//
+// Idle workers used to wait on their own queue with a ONE MILLISECOND timeout,
+// because submit() notifies only the queue it pushed to and a worker discovers
+// stealable work by looking. The cost is a pool that never sleeps: a thousand
+// wakeups per second per worker, on every hardware thread, forever. On an idle
+// page that was the entire CPU cost of the application - about 65% of a
+// machine with nothing on screen changing.
+//
+// Measured as CPU time against wall time, which is the thing that was wrong;
+// counting wakeups would test the implementation instead of the symptom.
+void test_an_idle_pool_sleeps() {
+	const auto cpu_ms = [] {
+		return std::chrono::duration_cast<std::chrono::milliseconds>(
+		           std::chrono::steady_clock::duration{
+		               std::clock() * (1'000'000'000LL / CLOCKS_PER_SEC)})
+		    .count();
+	};
+	scheduler pool{4};
+	// Let the workers reach their wait.
+	std::this_thread::sleep_for(std::chrono::milliseconds{50});
+
+	const auto cpu_before = cpu_ms();
+	const auto wall_before = std::chrono::steady_clock::now();
+	std::this_thread::sleep_for(std::chrono::milliseconds{500});
+	const auto cpu_spent = cpu_ms() - cpu_before;
+	const auto wall_spent = std::chrono::duration_cast<std::chrono::milliseconds>(
+	                            std::chrono::steady_clock::now() - wall_before)
+	                            .count();
+
+	// Four workers polling at 1 kHz spent several hundred ms of CPU over this
+	// half second. Asleep they spend approximately none; the bar is loose
+	// because a loaded machine can steal a few ms of scheduling noise.
+	CHECK(wall_spent >= 400); // the measurement window really elapsed
+	// Four idle workers burn well under a quarter of one core doing nothing.
+	CHECK(cpu_spent < wall_spent / 4);
+
+	// And it still WORKS: a sleeping pool that misses its wakeup is worse
+	// than a spinning one.
+	std::atomic<int> ran{0};
+	pool.parallel_for(64, [&ran](std::size_t) { ran.fetch_add(1); });
+	CHECK(ran.load() == 64); // every task still runs after the pool has been asleep
+}
+
 void test_scheduler() {
 	scheduler pool{4};
 	CHECK_EQ(pool.worker_count(), 4u);
@@ -197,5 +245,6 @@ int main() {
 	test_atoms();
 	test_geometry();
 	test_scheduler();
+	test_an_idle_pool_sleeps();
 	REPORT("core_basics");
 }
