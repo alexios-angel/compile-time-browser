@@ -326,7 +326,6 @@ value context::execute(const program & prog, const function_proto & entry) {
 	// Per-frame string interning: a literal in a loop should allocate once,
 	// not once per iteration.
 	string_cache_.clear();
-	string_cache_.resize(prog.functions.size());
 	return run_loop(0);
 }
 
@@ -336,7 +335,7 @@ value context::execute(const program & prog, const function_proto & entry) {
 // a second interpreter.
 value context::run_loop(std::size_t stop_depth) {
 	const program & prog = *program_;
-	std::vector<flat_map<std::uint16_t, value>> & string_cache = string_cache_;
+	auto & string_cache = string_cache_;
 
 	while (frames_.size() > stop_depth && !failed_) {
 		call_frame & frame = frames_.back();
@@ -349,9 +348,7 @@ value context::run_loop(std::size_t stop_depth) {
 		switch (in.code) {
 		case op::load_const: reg(in.a) = fn.constants[in.bx()]; break;
 		case op::load_string: {
-			const auto proto_index =
-			    static_cast<std::size_t>(&fn - prog.functions.data());
-			auto & cache = string_cache[proto_index];
+			auto & cache = string_cache[&fn];
 			const auto it = cache.find(in.bx());
 			if (it != cache.end()) {
 				reg(in.a) = it->second;

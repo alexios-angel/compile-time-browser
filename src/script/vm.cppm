@@ -280,7 +280,13 @@ private:
 	// The program being executed, so a call from C++ can find the string
 	// tables a nested frame needs.
 	const program * program_ = nullptr;
-	std::vector<flat_map<std::uint16_t, value>> string_cache_;
+	// Keyed by the FUNCTION rather than by its index in the current program.
+	// An index is only meaningful within one program, and a context can run
+	// more than one: a devtools-style eval calls a function the page defined,
+	// so the running frame's proto belongs to a DIFFERENT program from the one
+	// being executed. Subtracting its address from the wrong program's
+	// functions vector gave a garbage index and read off the end of the cache.
+	flat_map<const function_proto *, flat_map<std::uint16_t, value>> string_cache_;
 	// Live try blocks, innermost last. Not per-frame, because a throw has to be
 	// able to find a handler several frames up.
 	std::vector<handler> handlers_;

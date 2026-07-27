@@ -78,6 +78,394 @@ void check(bool ok, std::string_view what) {
 	return false;
 }
 
+
+[[nodiscard]] const std::vector<std::string> & log_of(browser & page) {
+	return page.bindings().console_output();
+}
+
+// --- the form-control batch ------------------------------------------------
+//
+// Eight bugs a real page found that the test suite did not, because every one
+// of them lives in what a control LOOKS like or what a script can READ from it
+// - and the example ctests only check that the process exits 0.
+
+// The caret bar for `id`, if one is drawn: a 1px-wide fill.
+[[nodiscard]] std::vector<rect> caret_bars(browser & page, std::string_view id) {
+	const node_id want = find_id(page, id);
+	const rect box = box_of(page, id);
+	std::vector<rect> out;
+	for (const auto & c : commands(page)) {
+		// Width 1 alone is not enough: the field's OUTLINE has two 1px-wide
+		// vertical edges, and they are the same colour and the same source.
+		// The caret is the one strictly INSIDE the box.
+		if (c.op == paint::paint_op::fill_rect && c.source == want && c.bounds.width == 1 &&
+		    c.bounds.x > box.x + 1 && c.bounds.right() < box.right() - 1) {
+			out.push_back(c.bounds);
+		}
+	}
+	return out;
+}
+
+[[nodiscard]] std::size_t arrow_rows(browser & page, std::string_view id) {
+	// The drop-down arrow is a stack of 1px-tall fills in the frame colour.
+	const node_id want = find_id(page, id);
+	std::size_t rows = 0;
+	for (const auto & c : commands(page)) {
+		if (c.op == paint::paint_op::fill_rect && c.source == want && c.bounds.height == 1 &&
+		    c.fill == color{style::ua_widget_frame} && c.bounds.width < 10) {
+			++rows;
+		}
+	}
+	return rows;
+}
+
+void test_a_button_shows_its_label() {
+	browser page{browser_options{400, 200}};
+	page.load_html("<body><button id=b>Send it</button><select id=s><option>red</option></select>"
+	               "</body>");
+	check(page.frame().has_value(), "the page renders");
+
+	// A BUTTON IS NOT A SELECT. They shared one painter arm, so a button was
+	// asked for its selected <option> - it has none, so the label came out
+	// empty - and then got the drop-down arrow anyway. Every button on the
+	// page was an empty box with an arrow in it.
+	check(draws_text(page, "Send it"), "the button draws its label");
+	check(arrow_rows(page, "b") == 0, "and has NO drop-down arrow");
+	check(arrow_rows(page, "s") > 0, "while the select still has one");
+}
+
+void test_a_submit_button_has_a_default_label() {
+	browser page{browser_options{400, 200}};
+	page.load_html("<body><input type=submit id=s><input type=reset id=r></body>");
+	check(page.frame().has_value(), "the page renders");
+	// <input type=submit> has no children to take a label from, so the UA
+	// supplies one - an unlabelled grey box is not a submit button.
+	check(draws_text(page, "Submit"), "submit is labelled");
+	check(draws_text(page, "Reset"), "and so is reset");
+}
+
+// The caret must be measured with the font that DRAWS the text. Verified with
+// real fonts on purpose: font8x8 quantises every size to the same cell, so the
+// two measurements agree there and the bug is invisible.
+void test_the_caret_is_measured_with_the_drawing_font() {
+	browser page{browser_options{400, 200}};
+	check(page.use_real_fonts(), "the vendored faces load");
+	page.load_html("<body><input type=text id=f style='font-family:serif'></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect field = box_of(page, "f");
+	(void)page.handle(input_event::mouse_down_at(field.x + 4, field.y + 6));
+	(void)page.handle(input_event::mouse_up_at(field.x + 4, field.y + 6));
+	check(page.focused() == find_id(page, "f"), "the field is focused");
+
+	check(page.text_input("abcd"), "typed");
+	check(page.frame().has_value(), "and it redraws");
+	const std::vector<rect> bars = caret_bars(page, "f");
+	check(bars.size() == 1, "there is one caret");
+	if (bars.size() != 1) { return; }
+
+	// Where the caret SHOULD be: the width of "abcd" in the field's own font,
+	// from the text's left edge. Measured through the browser's metrics, which
+	// is the same object the rasterizer draws with.
+	const float expected = page.metrics()("abcd", 16, layout::text_face{"serif", false, false});
+	const float actual = bars[0].x - field.x;
+	// Generous, because the inset is the painter's business - but nothing like
+	// the 2x that measuring with font8x8 produced.
+	check(std::fabs(actual - expected) < expected * 0.5f + 8,
+	      "the caret sits at the END of what was typed, not a font's width past it");
+}
+
+void test_a_textarea_shows_a_caret_on_the_right_line() {
+	browser page{browser_options{400, 200}};
+	page.load_html("<body><textarea id=t rows=3 cols=20>one\ntwo</textarea></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect box = box_of(page, "t");
+	(void)page.handle(input_event::mouse_down_at(box.x + 6, box.y + 6));
+	(void)page.handle(input_event::mouse_up_at(box.x + 6, box.y + 6));
+	check(page.focused() == find_id(page, "t"), "the textarea is focused");
+	check(page.frame().has_value(), "it redraws");
+
+	// The caret is seeded at the END of the value, which is on the SECOND
+	// line. Measured as one run it landed the width of "one\ntwo" past the
+	// left edge - past the right edge of the box, where the clip threw it
+	// away. That is why a textarea appeared to have no caret at all.
+	const std::vector<rect> bars = caret_bars(page, "t");
+	check(bars.size() == 1, "the textarea has a caret");
+	if (bars.size() != 1) { return; }
+	check(bars[0].x < box.right(), "and it is INSIDE the box, not clipped away past the end");
+	check(bars[0].y > box.y + 8, "on the second line, not the first");
+}
+
+void test_a_textarea_draws_its_lines_separately() {
+	browser page{browser_options{400, 200}};
+	page.load_html("<body><textarea id=t rows=3 cols=20>one\ntwo</textarea></body>");
+	check(page.frame().has_value(), "the page renders");
+	// Drawn as one run, the newline reaches the rasterizer as a glyph - a box,
+	// with a real font - and both words end up on one line.
+	check(draws_text(page, "one"), "the first line is drawn");
+	check(draws_text(page, "two"), "the second line is drawn");
+	check(!draws_text(page, "one\ntwo"), "and NOT as a single run with a newline in it");
+
+	float first = -1;
+	float second = -1;
+	for (const auto & c : commands(page)) {
+		if (c.op != paint::paint_op::text_run) { continue; }
+		if (c.text == "one") { first = c.bounds.y; }
+		if (c.text == "two") { second = c.bounds.y; }
+	}
+	check(first >= 0 && second > first, "the second line is BELOW the first");
+}
+
+void test_the_caret_blinks() {
+	browser_options options{400, 200};
+	options.caret_blink_ms = 500;
+	browser page{options};
+	page.load_html("<body><input type=text id=f value=hi></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect field = box_of(page, "f");
+	(void)page.handle(input_event::mouse_down_at(field.x + 4, field.y + 6));
+	(void)page.handle(input_event::mouse_up_at(field.x + 4, field.y + 6));
+	check(page.frame().has_value(), "it redraws focused");
+	check(caret_bars(page, "f").size() == 1, "the caret starts SOLID, right after the click");
+
+	(void)page.tick(600);
+	check(page.frame().has_value(), "redraws");
+	check(caret_bars(page, "f").empty(), "and is gone half a period later");
+
+	(void)page.tick(500);
+	check(page.frame().has_value(), "redraws");
+	check(caret_bars(page, "f").size() == 1, "and back again");
+
+	// TYPING RESTARTS IT SOLID. A caret that blinks out from under the
+	// character you just typed reads as a dropped keystroke.
+	(void)page.tick(600);
+	check(page.frame().has_value(), "redraws");
+	check(caret_bars(page, "f").empty(), "off again");
+	check(page.text_input("x"), "typed");
+	check(page.frame().has_value(), "redraws");
+	check(caret_bars(page, "f").size() == 1, "typing brings the caret straight back");
+}
+
+void test_a_blink_does_not_relayout() {
+	browser_options options{400, 200};
+	options.caret_blink_ms = 500;
+	browser page{options};
+	page.load_html("<body><input type=text id=f value=hi></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect field = box_of(page, "f");
+	(void)page.handle(input_event::mouse_down_at(field.x + 4, field.y + 6));
+	(void)page.handle(input_event::mouse_up_at(field.x + 4, field.y + 6));
+	check(page.frame().has_value(), "redraws");
+	const std::size_t layouts = page.layout_count();
+	(void)page.tick(600);
+	check(page.frame().has_value(), "redraws with the caret hidden");
+	// Only the caret changed. v1 re-ran layout every frame for exactly this,
+	// and it is the reason v2 has a dirty level per stage.
+	check(page.layout_count() == layouts, "a blink re-PAINTS and does not re-lay-out");
+}
+
+// --- what a script can read off a control ---------------------------------
+
+void test_script_reads_a_live_control_value() {
+	browser page{browser_options{400, 200}};
+	page.load_html(R"(<body><input type=text id=f value=start>
+	<select id=s><option value=red>red</option><option value=green selected>green</option></select>
+	<script>
+	var f = document.getElementById('f');
+	var s = document.getElementById('s');
+	function report() { console.log(f.value + '/' + s.value); }
+	</script></body>)");
+	check(page.script_error().empty(), "the script ran");
+	check(page.frame().has_value(), "the page renders");
+
+	// A wrapper's properties were a SNAPSHOT taken when it was made, so a page
+	// that kept the element in a variable - which every page does - read the
+	// page-load value forever. The widget gallery reported `color: undefined`.
+	check(page.run_script("report()"), "the script call runs");
+	check(!log_of(page).empty(), "it logged");
+	if (!log_of(page).empty()) {
+		check(log_of(page).back() == "start/green", "value and the selected option are readable");
+	}
+
+	const rect field = box_of(page, "f");
+	(void)page.handle(input_event::mouse_down_at(field.x + 4, field.y + 6));
+	(void)page.handle(input_event::mouse_up_at(field.x + 4, field.y + 6));
+	check(page.text_input("!"), "typed into it");
+	check(page.run_script("report()"), "the script call runs again");
+	check(log_of(page).back() == "start!/green", "and now reads what was TYPED, not the snapshot");
+}
+
+void test_an_input_listener_sees_the_new_value() {
+	browser page{browser_options{400, 200}};
+	page.load_html(R"(<body><input type=text id=f><script>
+	var f = document.getElementById('f');
+	f.addEventListener('input', function () { console.log('now:' + f.value); });
+	</script></body>)");
+	check(page.frame().has_value(), "the page renders");
+	const rect field = box_of(page, "f");
+	(void)page.handle(input_event::mouse_down_at(field.x + 4, field.y + 6));
+	(void)page.handle(input_event::mouse_up_at(field.x + 4, field.y + 6));
+	check(page.text_input("a"), "typed");
+	check(page.text_input("b"), "typed again");
+	// The handler runs AFTER the edit, so it must see the character that
+	// caused it. Refreshing wrappers only after layout would show the value
+	// from before the keystroke.
+	check(log_of(page).size() == 2, "the listener fired per keystroke");
+	if (log_of(page).size() == 2) {
+		check(log_of(page)[0] == "now:a" && log_of(page)[1] == "now:ab",
+		      "each one sees the value INCLUDING the character that fired it");
+	}
+}
+
+void test_script_writes_a_control_value() {
+	browser page{browser_options{400, 200}};
+	page.load_html(R"(<body><input type=text id=f value=old>
+	<input type=checkbox id=c></body>)");
+	check(page.frame().has_value(), "the page renders");
+	check(draws_text(page, "old"), "the field shows its attribute value");
+
+	check(page.run_script("document.getElementById('f').value = 'new';"
+	                      "document.getElementById('c').checked = true;"),
+	      "the script runs");
+	check(page.frame().has_value(), "the page redraws");
+	// The VM has no property accessors, so a write is a sync rather than a
+	// setter - without the write-back this sets a property nothing reads and
+	// the field keeps showing the old text.
+	check(draws_text(page, "new"), "the field shows what the script assigned");
+	check(!draws_text(page, "old"), "and not what it used to say");
+	check(page.run_script("console.log(String(document.getElementById('c').checked));"),
+	      "reads it back");
+	check(!log_of(page).empty() && log_of(page).back() == "true", "the checkbox is checked");
+}
+
+void test_one_wrapper_per_element() {
+	browser page{browser_options{300, 150}};
+	page.load_html(R"(<body><p id=p>x</p><script>
+	console.log(String(document.getElementById('p') === document.getElementById('p')));
+	</script></body>)");
+	check(!log_of(page).empty(), "it logged");
+	// A browser hands out the SAME object every time. Two wrappers for one
+	// element also meant two independent property snapshots.
+	if (!log_of(page).empty()) { check(log_of(page).back() == "true", "one element, one wrapper"); }
+}
+
+// --- <details> -------------------------------------------------------------
+
+void test_a_closed_details_hides_its_content() {
+	browser page{browser_options{400, 300}};
+	page.load_html("<body><details id=d><summary id=s>more</summary>"
+	               "<p id=body>the secret</p></details></body>");
+	check(page.frame().has_value(), "the page renders");
+	check(draws_text(page, "more"), "the summary is visible");
+	// The content of a closed <details> is not laid out at all. This cannot be
+	// a UA rule - `details > :not(summary)` needs a selector the cascade does
+	// not have - so it is decided in the box builder.
+	check(!draws_text(page, "the secret"), "and the content is NOT");
+	check(box_of(page, "body").empty(), "the hidden content has no box");
+}
+
+void test_clicking_a_summary_opens_it() {
+	browser page{browser_options{400, 300}};
+	page.load_html("<body><details id=d><summary id=s>more</summary>"
+	               "<p id=body>the secret</p></details></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect summary = box_of(page, "s");
+	check(!summary.empty(), "the summary has a box");
+
+	(void)page.handle(input_event::mouse_down_at(summary.x + 20, summary.y + 4));
+	(void)page.handle(input_event::mouse_up_at(summary.x + 20, summary.y + 4));
+	check(page.frame().has_value(), "it redraws");
+	check(draws_text(page, "the secret"), "clicking the summary reveals the content");
+
+	// And closes again - it is a toggle, and the state is the `open`
+	// ATTRIBUTE, so a script reading it agrees with what the user did.
+	check(page.run_script("console.log(String(document.getElementById('d').getAttribute('open') "
+	                      "!== null));"),
+	      "the script runs");
+	check(!log_of(page).empty() && log_of(page).back() == "true", "the attribute says open");
+	(void)page.handle(input_event::mouse_down_at(summary.x + 20, summary.y + 4));
+	(void)page.handle(input_event::mouse_up_at(summary.x + 20, summary.y + 4));
+	check(page.frame().has_value(), "it redraws");
+	check(!draws_text(page, "the secret"), "clicking again hides it");
+}
+
+void test_a_summary_draws_its_triangle() {
+	browser page{browser_options{400, 300}};
+	page.load_html("<body><details id=d><summary id=s>more</summary><p>x</p></details></body>");
+	check(page.frame().has_value(), "the page renders");
+	check(draws_text(page, ">"), "a closed summary has a right-pointing triangle");
+	const rect summary = box_of(page, "s");
+
+	// AND IT IS ON SCREEN. A list marker is drawn at `box.x - size` because
+	// its gutter is the parent <ul>'s padding; a summary's gutter is its OWN
+	// padding-left, so the same arithmetic put the triangle at a NEGATIVE x
+	// for a <details> at the page margin - drawn, but off the left edge of the
+	// window, which is exactly as useful as not drawing it.
+	float marker_x = -1;
+	for (const auto & c : commands(page)) {
+		if (c.op == paint::paint_op::text_run && c.text == ">") { marker_x = c.bounds.x; }
+	}
+	check(marker_x >= summary.x, "the triangle is INSIDE the summary, not off to its left");
+	check(marker_x < summary.x + 18, "in the gutter its padding reserves");
+
+	// And the LABEL is not drawn on top of it. The gutter is only a gutter if
+	// the summary's own padding-left actually moves its text.
+	float label_x = -1;
+	for (const auto & c : commands(page)) {
+		if (c.op == paint::paint_op::text_run && c.text == "more") { label_x = c.bounds.x; }
+	}
+	check(label_x > 0, "the summary's text is drawn");
+	check(label_x >= summary.x + 18, "and starts AFTER the triangle's gutter, not on top of it");
+	(void)page.handle(input_event::mouse_down_at(summary.x + 20, summary.y + 4));
+	(void)page.handle(input_event::mouse_up_at(summary.x + 20, summary.y + 4));
+	check(page.frame().has_value(), "it redraws");
+	check(draws_text(page, "v"), "and an open one points down");
+}
+
+// --- inter-element whitespace ---------------------------------------------
+
+void test_a_space_between_inline_elements_is_rendered() {
+	browser page{browser_options{600, 200}};
+	// The space between </label> and <input> is a whitespace-only TEXT NODE.
+	// Dropped outright, every label was glued to its control and the words of
+	// two adjacent inline elements ran together.
+	page.load_html("<body><label id=l>name</label> <input type=text id=f size=6></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect label = box_of(page, "l");
+	const rect field = box_of(page, "f");
+	check(!label.empty() && !field.empty(), "both are laid out");
+	check(field.x > label.right(), "the field starts AFTER the label, with the space between them");
+}
+
+void test_a_space_between_blocks_is_not_rendered() {
+	browser page{browser_options{600, 300}};
+	// The control: between BLOCKS the same whitespace is nothing at all.
+	// Rendering it would put a stray space-height line between every pair of
+	// paragraphs in every page ever written.
+	browser plain{browser_options{600, 300}};
+	plain.load_html("<body><p id=a>one</p><p id=b>two</p></body>");
+	check(plain.frame().has_value(), "the tight page renders");
+	page.load_html("<body>\n<p id=a>one</p>\n<p id=b>two</p>\n</body>");
+	check(page.frame().has_value(), "the spaced page renders");
+	check(box_of(page, "a").y == box_of(plain, "a").y, "the newlines in the source change nothing");
+	check(box_of(page, "b").y == box_of(plain, "b").y, "for either paragraph");
+}
+
+void test_a_control_insets_its_text() {
+	browser page{browser_options{400, 200}};
+	page.load_html("<body><input type=text id=f value=ada></body>");
+	check(page.frame().has_value(), "the page renders");
+	const rect field = box_of(page, "f");
+	float text_x = -1;
+	for (const auto & c : commands(page)) {
+		if (c.op == paint::paint_op::text_run && c.text == "ada") { text_x = c.bounds.x; }
+	}
+	check(text_x > 0, "the value is drawn");
+	// Flush against the border, a field's text looks like it has overflowed
+	// its box. Firefox insets it; so does this.
+	check(text_x >= field.x + 4, "and is inset from the field's left edge");
+	check(text_x < field.x + 20, "but not by a silly amount");
+}
+
 // --- tables ---------------------------------------------------------------
 
 void test_a_table_is_a_grid() {
@@ -770,6 +1158,23 @@ void test_selection_survives_a_relayout() {
 } // namespace
 
 int main() {
+	test_a_button_shows_its_label();
+	test_a_submit_button_has_a_default_label();
+	test_the_caret_is_measured_with_the_drawing_font();
+	test_a_textarea_shows_a_caret_on_the_right_line();
+	test_a_textarea_draws_its_lines_separately();
+	test_the_caret_blinks();
+	test_a_blink_does_not_relayout();
+	test_script_reads_a_live_control_value();
+	test_an_input_listener_sees_the_new_value();
+	test_script_writes_a_control_value();
+	test_one_wrapper_per_element();
+	test_a_closed_details_hides_its_content();
+	test_clicking_a_summary_opens_it();
+	test_a_summary_draws_its_triangle();
+	test_a_space_between_inline_elements_is_rendered();
+	test_a_space_between_blocks_is_not_rendered();
+	test_a_control_insets_its_text();
 	test_a_table_is_a_grid();
 	test_a_table_shrinks_to_its_content();
 	test_table_sections_are_transparent();

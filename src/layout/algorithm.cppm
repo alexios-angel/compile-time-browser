@@ -239,6 +239,12 @@ private:
 	                       const measure_text_fn & measure_text, float line_height, float & pen_x,
 	                       float & pen_y, fragment & out) {
 		std::string_view rest = child.text;
+		// A space at the START of a line is removed. Otherwise the space
+		// between two elements indents the next line whenever the first of them
+		// ends one.
+		if (pen_x == 0) {
+			while (!rest.empty() && rest.front() == ' ') { rest.remove_prefix(1); }
+		}
 		while (!rest.empty()) {
 			const std::size_t take = words_that_fit(rest, c.available_width - pen_x, child.font_size,
 			                                        child.face,
@@ -267,6 +273,13 @@ private:
 		}
 	}
 
+	// How much of `text` fits in `available`, measured in whole words. A break
+	// opportunity is AFTER a run of spaces, and a LEADING run of spaces belongs
+	// to the first candidate rather than being a zero-width candidate of its
+	// own. That distinction is the whole bug: the whitespace between two
+	// elements is a text run that IS a space, and treating the position before
+	// it as a break opportunity meant nothing ever fit - so a lone space
+	// wrapped the line and every label was left sitting above its control.
 	[[nodiscard]] static std::size_t words_that_fit(std::string_view text, float available,
 	                                                float font_size, const text_face & face,
 	                                                const measure_text_fn & measure_text) {
@@ -274,18 +287,21 @@ private:
 		std::size_t fits = 0;
 		std::size_t at = 0;
 		while (at < text.size()) {
-			const std::size_t space = text.find(' ', at);
-			const std::size_t end = space == std::string_view::npos ? text.size() : space;
+			std::size_t end = at;
+			while (end < text.size() && text[end] == ' ') { ++end; }
+			while (end < text.size() && text[end] != ' ') { ++end; }
 			if (measure_text(text.substr(0, end), font_size, face) > available) { break; }
 			fits = end;
-			if (space == std::string_view::npos) { break; }
-			at = space + 1;
+			at = end;
 		}
 		// A single word longer than the line still has to go somewhere, or
-		// layout makes no progress and loops forever.
-		if (fits == 0 && available > 0) {
-			const std::size_t space = text.find(' ');
-			return space == std::string_view::npos ? text.size() : space;
+		// layout makes no progress and loops forever. It overflows, which is
+		// what a browser does with an unbreakable word.
+		if (fits == 0) {
+			std::size_t end = 0;
+			while (end < text.size() && text[end] == ' ') { ++end; }
+			while (end < text.size() && text[end] != ' ') { ++end; }
+			return end;
 		}
 		return fits;
 	}

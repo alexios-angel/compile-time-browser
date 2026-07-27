@@ -169,8 +169,16 @@ private:
 		if (f.box->tag == "summary") {
 			// The disclosure triangle: right when closed, down when open. Drawn
 			// as text so it follows the font, which is what a browser does.
+			//
+			// INSIDE its own left padding, not to the left of the box. A list
+			// marker sits at `box.x - size` because the gutter belongs to the
+			// PARENT - `ul { padding-left: 40px }` - so that lands inside the
+			// list. A summary's gutter is its OWN padding-left, so the same
+			// arithmetic put the triangle outside the element: for a <details>
+			// at the page margin that is a negative x, off the left edge of the
+			// window, which is why no triangle ever appeared.
 			const bool open = f.box->details_open;
-			into.text(rect{box.x - size, box.y, size, size}, open ? "v" : ">", size, text_color,
+			into.text(rect{box.x + 3, box.y, size, size}, open ? "v" : ">", size, text_color,
 			          f.source);
 			return;
 		}

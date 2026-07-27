@@ -69,7 +69,9 @@ inline constexpr std::string_view ua_css = R"(
 	table { margin: 0 }
 
 	hr { height: 2px; background-color: #808080; margin: 8px 0 }
-	summary { padding-left: 18px }
+	/* The padding-left is the gutter the disclosure triangle is drawn IN -
+	   unlike a list marker's, which is the parent <ul>'s padding. */
+	summary { padding-left: 18px; cursor: pointer }
 	mark { background-color: #ffff00 }
 	small { font-size: 13px }
 	big { font-size: 19px }

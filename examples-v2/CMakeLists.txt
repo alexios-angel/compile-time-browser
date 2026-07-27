@@ -37,6 +37,22 @@ foreach(source ${v2-example-sources})
     # its catch branch here, which is the offline path and worth covering.
     set_tests_properties(v2-example-${example} PROPERTIES ENVIRONMENT
       "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;CTBROWSER_TEST_FRAMES=30;CTBROWSER_NETWORK=0;CTBROWSER_SCREENSHOT=${CMAKE_BINARY_DIR}/v2-shot-${example}.ppm")
+
+    # And for the two pages that exist to show what the ENGINE draws, compare
+    # the render to a golden. Exiting 0 is not evidence: a page renders with
+    # empty buttons, no caret, a <details> stuck open and every label glued to
+    # its control and still exits 0 - which is how all of those shipped.
+    #
+    # Only these two: the others animate or fetch, so a byte-comparison would
+    # be pinning a clock rather than a layout.
+    if(example STREQUAL "widgets" OR example STREQUAL "elements")
+      add_test(NAME v2-render-${example} COMMAND ${CMAKE_COMMAND}
+               -DEXE=$<TARGET_FILE:ctbrowser-v2-example-${example}>
+               -DOUT=${CMAKE_BINARY_DIR}/v2-render-${example}.ppm
+               -DGOLDEN=${PROJECT_SOURCE_DIR}/tests-v2/golden/${example}.ppm
+               -DWORKDIR=${PROJECT_SOURCE_DIR}
+               -P ${PROJECT_SOURCE_DIR}/tools/check-render.cmake)
+    endif()
   endif()
 endforeach()
 

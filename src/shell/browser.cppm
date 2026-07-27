@@ -1,6 +1,7 @@
 module;
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -87,6 +88,10 @@ struct browser_options {
 	// The overlay scrollbar's width, and the width a tall page gives up to it.
 	// 0 hides it - which is what a fixed-size game wants.
 	float scrollbar_width = 15.0f;
+	// Half the caret's blink period, in milliseconds - Chrome's figure. 0 stops
+	// it blinking, which is what a screenshot test wants: a caret that is
+	// sometimes there is not byte-comparable.
+	double caret_blink_ms = 500;
 };
 
 class browser {
@@ -306,6 +311,7 @@ public:
 		control_state * control = editable_focus();
 		if (control == nullptr || text.empty()) { return false; }
 		forms_.insert_text(*control, text);
+		restart_caret_blink(); // a caret that blinks out under what you typed looks broken
 		bindings_->dispatch("input", focused_);
 		mark(dirty::paint);
 		return true;
@@ -313,10 +319,47 @@ public:
 	[[nodiscard]] dom_bindings & bindings() noexcept { return *bindings_; }
 	[[nodiscard]] const std::string & script_error() const noexcept { return script_error_; }
 
+	// Run a snippet in the page's own script context - the same globals, the
+	// same document. This is what a devtools console types into, and what a
+	// test uses to ask a page a question. Returns whether it ran.
+	bool run_script(std::string_view source) {
+		if (!script_) { return false; }
+		script::program compiled = script::compiler::compile(std::string{source});
+		if (!compiled.ok) {
+			script_error_ = compiled.error;
+			return false;
+		}
+		const script::run_result result = script_->run(compiled);
+		if (!result.ok) { script_error_ = result.error; }
+		return result.ok;
+	}
+
+	// How many times layout has run. Observable because the whole dirty-level
+	// design exists to keep this number down: a caret blink or a scroll must
+	// not increment it.
+	[[nodiscard]] std::size_t layout_count() const noexcept { return layouts_; }
+
+	// THE CARET BLINKS, in Chrome's 500 ms halves. The phase is measured from
+	// the last caret ACTIVITY rather than from page load: a caret that blinks
+	// out from under the character you just typed looks broken, so typing,
+	// moving and clicking all restart it solid.
+	[[nodiscard]] bool caret_visible() const noexcept {
+		if (options_.caret_blink_ms <= 0) { return true; } // blinking off: always solid
+		const double since = caret_clock_ms_ - caret_base_ms_;
+		const double period = options_.caret_blink_ms * 2;
+		return std::fmod(since, period) < options_.caret_blink_ms;
+	}
+	void restart_caret_blink() noexcept { caret_base_ms_ = caret_clock_ms_; }
+
 	// Advance the page clock and run whatever became due - timers, then
 	// animation frames. An event loop calls this once per tick; the return is
 	// how many callbacks ran, so a caller can tell an idle page from a busy one.
 	std::size_t tick(double elapsed_ms) {
+		const bool was_visible = caret_visible();
+		caret_clock_ms_ += elapsed_ms;
+		// Only the CARET changed, so only the paint is stale - a blink must not
+		// re-run layout, which is what made v1 lay the page out every frame.
+		if (focused_ && caret_visible() != was_visible) { mark(dirty::paint); }
 		bindings_->advance_clock(elapsed_ms);
 		const std::size_t ran = bindings_->run_due_callbacks();
 		// BETWEEN callbacks, never inside one: reloading tears down the script
@@ -572,6 +615,9 @@ public:
 	// Run whatever this frame needs and composite. Cheap when nothing is dirty,
 	// which is the common case and the point.
 	std::expected<void, ctbrowser::raster::gpu_error> frame(scheduler * pool = nullptr) {
+		// A value the page assigned OUTSIDE an event handler - at the top of the
+		// script, say - reaches the control here. Dispatch covers the rest.
+		if (bindings_ && sync_controls()) { mark(dirty::paint); }
 		// Anything drawn into a canvas since the last frame makes its tiles
 		// stale. Asking here rather than being told keeps the bindings from
 		// having to know what a tile is.
@@ -588,6 +634,10 @@ public:
 		++frames_;
 		return ctbrowser::raster::draw(renderer_, layers_, pool, options_.tile_extent, viewport());
 	}
+
+	// Push anything a script wrote into `value`/`checked` through to the
+	// controls, and report whether that changed one.
+	[[nodiscard]] bool sync_controls() { return bindings_->refresh_wrappers(); }
 
 	[[nodiscard]] rect viewport() const noexcept {
 		return rect{0, 0, static_cast<float>(options_.width), static_cast<float>(options_.height)};
@@ -762,6 +812,7 @@ private:
 	}
 
 	void run_layout() {
+		++layouts_;
 		const auto txn = doc_->read();
 		ctbrowser::layout::box_builder builder{atoms_, resolved_, measure()};
 		// An <img> with no width/height attribute is as big as its bitmap. Only
@@ -946,6 +997,18 @@ private:
 	}
 
 	// Every <option>'s text, in document order.
+	// The value of the nth <option>, for the popup's pick.
+	[[nodiscard]] std::string option_value_at(const read_txn & txn, node_id select,
+	                                          std::size_t index) {
+		const atom option_tag = atoms_.intern_lower("option");
+		std::size_t at = 0;
+		for (const node_id child : txn.children(select)) {
+			if (txn.tag(child).value_or(atom{}) != option_tag) { continue; }
+			if (at++ == index) { return form_store::option_value(txn, atoms_, child); }
+		}
+		return {};
+	}
+
 	[[nodiscard]] std::vector<std::string> option_labels(const read_txn & txn, node_id select) {
 		std::vector<std::string> out;
 		const atom option_tag = atoms_.intern_lower("option");
@@ -1009,6 +1072,11 @@ private:
 	// What a <canvas> or a form control draws. Everything here is chrome the
 	// UA supplies rather than anything the document asked for, which is why the
 	// palette comes from :ua and not from the cascade.
+	// The inset a control's text sits at. Firefox uses 1px 2px on a text input
+	// and 1px 6px on a button; this is one number because the vertical inset is
+	// handled by centring instead.
+	static constexpr float control_padding = 6;
+
 	void paint_replaced(node_id id, const rect & box,
 	                    const ctbrowser::style::computed_style_ptr & style,
 	                    ctbrowser::paint::display_list & into) {
@@ -1052,7 +1120,18 @@ private:
 			}
 			break;
 		}
-		case control_kind::button:
+		case control_kind::button: {
+			// A BUTTON IS NOT A SELECT. Sharing this arm gave every button the
+			// drop-down arrow and asked selected_option() for its label - which
+			// looks for <option> children a button does not have, so every
+			// button on the page was an empty box with an arrow in it.
+			outline(box, frame, into, id);
+			const std::string label = button_label(txn, id, control, type);
+			if (!label.empty()) {
+				label_text(box, label, id, style, into);
+			}
+			break;
+		}
 		case control_kind::select: {
 			outline(box, frame, into, id);
 			// The SELECTED OPTION'S TEXT. This drew an empty rectangle before -
@@ -1060,8 +1139,10 @@ private:
 			// all, so a select looked like a bug rather than like a control.
 			const std::string label = selected_option(txn, id);
 			if (!label.empty()) {
-				into.text(rect{box.x + 4, box.y + 3, box.width - 20, box.height - 6}, label,
-				          font_size_of(id), text_colour(style), id);
+				const float size = font_size_of(id);
+				into.text(rect{box.x + control_padding, box.y + baseline_inset(box, size),
+				               box.width - control_padding - 20, size * 1.25f},
+				          label, size, text_colour(style), id);
 			}
 			// The drop-down arrow, in the gutter the intrinsic width reserves.
 			const float arrow = 4;
@@ -1076,44 +1157,102 @@ private:
 		case control_kind::textarea: {
 			into.fill(box, field, id);
 			outline(box, focused ? accent : frame, into, id);
-			paint_field_text(box, id, control, style, focused, into);
+			paint_field_text(box, id, control, kind, style, focused, into);
 			break;
 		}
 		case control_kind::none: break;
 		}
 	}
 
-	void paint_field_text(const rect & box, node_id id, const control_state & control,
-	                      const ctbrowser::style::computed_style_ptr & style, bool focused,
-	                      ctbrowser::paint::display_list & into) {
+	// A button's label is CENTRED, horizontally and on the box's middle. Left
+	// aligned at a fixed inset it drifts off centre the moment the button is
+	// wider than its text, which is every button with a width.
+	void label_text(const rect & box, const std::string & label, node_id id,
+	                const ctbrowser::style::computed_style_ptr & style,
+	                ctbrowser::paint::display_list & into) {
 		const float size = font_size_of(id);
-		const float pad = 3;
-		const rect inner{box.x + pad, box.y + pad, box.width - 2 * pad, box.height - 2 * pad};
+		const float width = measure()(label, size, face_of(id));
+		const float x = box.x + std::max(control_padding, (box.width - width) / 2);
+		into.text(rect{x, box.y + baseline_inset(box, size), box.width - (x - box.x), size * 1.25f},
+		          label, size, text_colour(style), id);
+	}
+
+	// Where a single line of text sits inside a control: vertically centred on
+	// the box rather than pinned to a constant, so a control that is taller
+	// than its text (every one with a border and padding) still centres it.
+	[[nodiscard]] static float baseline_inset(const rect & box, float size) {
+		return std::max(0.0f, (box.height - size * 1.25f) / 2);
+	}
+
+	void paint_field_text(const rect & box, node_id id, const control_state & control,
+	                      control_kind kind, const ctbrowser::style::computed_style_ptr & style,
+	                      bool focused, ctbrowser::paint::display_list & into) {
+		const float size = font_size_of(id);
+		const ctbrowser::layout::text_face face = face_of(id);
+		const float line_height = size * 1.25f;
+		const bool multiline = kind == control_kind::textarea;
+		const rect inner{box.x + control_padding, box.y + (multiline ? 3 : baseline_inset(box, size)),
+		                 box.width - 2 * control_padding, box.height - 6};
+		// MEASURED WITH THE FONT THAT DRAWS IT. This used font8x8_advance while
+		// the text was drawn with the real face, so the caret sat wherever the
+		// bitmap font would have put it - about twice as far along, which reads
+		// as the caret jumping a character ahead of every keystroke.
+		const auto advance = [&](std::string_view text) { return measure()(text, size, face); };
+
 		// The field clips its own contents: a value longer than the box must not
 		// paint over the page beside it.
 		into.push_clip(box);
-		if (control.selection != control.caret) {
-			const std::size_t from = std::min(control.caret, control.selection);
-			const std::size_t to = std::max(control.caret, control.selection);
-			const float x = inner.x + ctbrowser::raster::font8x8_advance(
-			                              std::string_view{control.value}.substr(0, from), size);
-			const float w = ctbrowser::raster::font8x8_advance(
-			    std::string_view{control.value}.substr(from, to - from), size);
-			into.fill(rect{x, inner.y, w, size * 1.25f},
-			          color{ctbrowser::style::ua_selection_highlight}, id);
-		}
-		if (!control.value.empty()) {
-			into.text(inner, control.value, size, text_colour(style), id);
-		}
-		if (focused) {
-			// The caret. Drawn only when focused, which is the difference
-			// between a text field and a picture of one.
-			const float x = inner.x + ctbrowser::raster::font8x8_advance(
-			                              std::string_view{control.value}.substr(0, control.caret),
-			                              size);
-			into.fill(rect{x, inner.y, 1, size * 1.25f}, text_colour(style), id);
+		// A textarea is as many lines as its value has newlines; an input is
+		// one line however many it has. Doing this for both is what makes the
+		// caret findable in a textarea at all - measured as one run, a caret on
+		// the second line landed the width of the FIRST line past the box and
+		// was clipped away, which looked like no caret.
+		const std::vector<std::pair<std::size_t, std::size_t>> lines =
+		    multiline ? value_lines(control.value)
+		              : std::vector<std::pair<std::size_t, std::size_t>>{{0, control.value.size()}};
+		const std::size_t from = std::min(control.caret, control.selection);
+		const std::size_t to = std::max(control.caret, control.selection);
+		for (std::size_t index = 0; index < lines.size(); ++index) {
+			const auto [begin, end] = lines[index];
+			const std::string_view line{control.value.data() + begin, end - begin};
+			const float y = inner.y + static_cast<float>(index) * line_height;
+			if (from != to && from < end && to > begin) {
+				const std::size_t a = std::max(from, begin) - begin;
+				const std::size_t b = std::min(to, end) - begin;
+				into.fill(rect{inner.x + advance(line.substr(0, a)), y,
+				               advance(line.substr(a, b - a)), line_height},
+				          color{ctbrowser::style::ua_selection_highlight}, id);
+			}
+			if (!line.empty()) {
+				into.text(rect{inner.x, y, inner.width, line_height}, std::string{line}, size,
+				          text_colour(style), id);
+			}
+			// The caret sits on the line CONTAINING it. `<=` on the end so a
+			// caret at the very end of a line is on that line rather than
+			// nowhere; the first match wins, which puts a caret sitting on a
+			// boundary at the end of the earlier line, as browsers do.
+			if (focused && caret_visible() && control.caret >= begin && control.caret <= end) {
+				into.fill(rect{inner.x + advance(line.substr(0, control.caret - begin)), y, 1,
+				               line_height},
+				          text_colour(style), id);
+			}
 		}
 		into.pop_clip();
+	}
+
+	// A value's lines as [begin, end) offsets, newlines excluded. Always at
+	// least one, so an empty value still has a line for the caret to be on.
+	[[nodiscard]] static std::vector<std::pair<std::size_t, std::size_t>>
+	value_lines(const std::string & value) {
+		std::vector<std::pair<std::size_t, std::size_t>> out;
+		std::size_t begin = 0;
+		for (std::size_t at = 0; at <= value.size(); ++at) {
+			if (at == value.size() || value[at] == '\n') {
+				out.emplace_back(begin, at);
+				begin = at + 1;
+			}
+		}
+		return out;
 	}
 
 	[[nodiscard]] std::string button_label(const read_txn & txn, node_id id,
@@ -1138,6 +1277,15 @@ private:
 			}
 		}
 		return color::rgba(0, 0, 0);
+	}
+
+	// The face a control's text is drawn in - the same one layout measured it
+	// with. Measuring a caret position with a different font from the one that
+	// drew the text is how the caret ends up a character or two past the end of
+	// what you typed.
+	[[nodiscard]] ctbrowser::layout::text_face face_of(node_id id) const {
+		const layout::box_node * found = find_box(boxes_, id);
+		return found == nullptr ? ctbrowser::layout::text_face{} : found->face;
 	}
 
 	[[nodiscard]] float font_size_of(node_id id) const {
@@ -1209,26 +1357,26 @@ private:
 	// the first, which is what a browser shows for a select nobody has touched.
 	// Reads the DOM directly rather than caching, because the option list is
 	// document content and a script may have just changed it.
+	// The LABEL a <select> shows: the text of the option whose value is the
+	// control's. Label and value are different things - `<option value=g>green
+	// </option>` is worth "g" to a form and shows "green" to a reader - so the
+	// control stores the value and this maps it back for display.
 	[[nodiscard]] std::string selected_option(const read_txn & txn, node_id id) {
+		const std::string value = forms_.state_of(txn, atoms_, id).value;
 		const atom option_tag = atoms_.intern_lower("option");
-		const atom selected = atoms_.intern("selected");
 		std::string first;
-		std::string chosen;
-		const auto text_of = [&](node_id at) {
-			std::string out;
-			for (const node_id child : txn.children(at)) { out += txn.text(child); }
-			return out;
-		};
+		bool have_first = false;
 		for (const node_id child : txn.children(id)) {
 			if (txn.tag(child).value_or(atom{}) != option_tag) { continue; }
-			if (first.empty()) { first = text_of(child); }
-			if (chosen.empty() && txn.has_attribute(child, selected)) { chosen = text_of(child); }
+			std::string text;
+			for (const node_id grand : txn.children(child)) { text += txn.text(grand); }
+			if (!have_first) {
+				first = text;
+				have_first = true;
+			}
+			if (form_store::option_value(txn, atoms_, child) == value) { return text; }
 		}
-		// Whatever the user picked wins over the markup.
-		if (const control_state * state = forms_.find(id); state != nullptr && !state->value.empty()) {
-			return state->value;
-		}
-		return chosen.empty() ? first : chosen;
+		return first;
 	}
 
 	// A press while a <select> is open. Returns whether the popup consumed it -
@@ -1259,7 +1407,10 @@ private:
 			if (index < options.size()) {
 				// The chosen option becomes the control's value, and `change`
 				// fires - which is what a page listens for.
-				forms_.state_of(txn, atoms_, select).value = options[index];
+				// The option's VALUE, not its label - that is what a form sends
+				// and what `select.value` reads.
+				forms_.state_of(txn, atoms_, select).value =
+				    option_value_at(txn, select, index);
 				bindings_->dispatch("change", select);
 			}
 		}
@@ -1567,6 +1718,7 @@ private:
 			(void)set_state(focused_, state_focus, false);
 		}
 		focused_ = id;
+		restart_caret_blink(); // a field you just clicked into shows its caret at once
 		if (focused_) {
 			(void)set_state(focused_, state_focus, true);
 			bindings_->dispatch("focus", focused_);
@@ -1605,11 +1757,13 @@ private:
 
 	bool edited(bool changed) {
 		if (!changed) { return false; }
+		restart_caret_blink();
 		bindings_->dispatch("input", focused_);
 		mark(dirty::paint);
 		return true;
 	}
 	bool moved(bool changed) {
+		restart_caret_blink();
 		if (changed) { mark(dirty::paint); }
 		return true; // the key was consumed either way - it must not scroll the page
 	}
@@ -1617,6 +1771,7 @@ private:
 	// What clicking a control does once no listener has cancelled it.
 	void activate(node_id target) {
 		if (follow_link(target)) { return; }
+		if (toggle_details(target)) { return; }
 		const node_id control = control_ancestor(target);
 		if (!control) { return; }
 		const auto txn = doc_->read();
@@ -1644,6 +1799,39 @@ private:
 		// A <button> with no type is a submit button, which is the default
 		// people forget and then wonder why their form reloads.
 		if (type.empty() || type == "submit") { submit(form); }
+	}
+
+	// Clicking a <summary> opens or closes its <details>. The state is the
+	// `open` ATTRIBUTE, as the spec says, so a script that reads or sets it
+	// agrees with what the user did - and layout, which builds a closed
+	// details' children away, picks it up from the same place.
+	bool toggle_details(node_id target) {
+		node_id summary;
+		node_id details;
+		{
+			const auto txn = doc_->read();
+			const atom summary_tag = atoms_.intern_lower("summary");
+			for (node_id at = target; at; at = txn.parent(at)) {
+				if (txn.tag(at).value_or(atom{}) == summary_tag) {
+					summary = at;
+					details = txn.parent(at);
+					break;
+				}
+			}
+		}
+		if (!summary || !details) { return false; }
+		{
+			const atom open = atoms_.intern("open");
+			const bool was_open = doc_->read().has_attribute(details, open);
+			if (was_open) {
+				(void)doc_->remove_attribute(details, open);
+			} else {
+				(void)doc_->set_attribute(details, open, "");
+			}
+		}
+		bindings_->dispatch("toggle", details);
+		mark(dirty::everything);
+		return true;
 	}
 
 	// <a href> - the one navigation-shaped thing a document does on its own.
@@ -1764,6 +1952,9 @@ private:
 	std::vector<std::string> alerts_;
 	std::function<void(const std::string &)> navigate_hook_;
 	std::string source_html_;
+	std::size_t layouts_ = 0;
+	double caret_clock_ms_ = 0;
+	double caret_base_ms_ = 0;
 	std::string location_href_;
 	std::string location_hash_;
 	bool menu_open_ = false;

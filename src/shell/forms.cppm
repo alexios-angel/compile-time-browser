@@ -70,6 +70,13 @@ public:
 		const std::string_view tag = atoms.text(txn.tag(id).value_or(atom{}));
 		if (tag == "textarea") {
 			for (const node_id child : txn.children(id)) { seeded.value += txn.text(child); }
+		} else if (tag == "select") {
+			// A <select> has no `value` attribute: its value is the SELECTED
+			// OPTION'S. Seeded from the attribute rather than from the option's
+			// text, because those differ - `<option value=g>green</option>` is
+			// worth "g" to a form and shows "green" to a reader, and reading
+			// the label back as the value is a silent wrong answer.
+			seeded.value = std::string{selected_option_value(txn, atoms, id)};
 		} else {
 			seeded.value = txn.attribute_value(id, atoms.intern("value"));
 		}
@@ -87,6 +94,49 @@ public:
 	void clear() { states_.clear(); }
 
 	// --- editing ----------------------------------------------------------
+
+	// An <option>'s value: the attribute if it has one, else its text. That
+	// fallback is the HTML rule, not a convenience.
+	[[nodiscard]] static std::string option_value(const read_txn & txn, atom_table & atoms,
+	                                              node_id option) {
+		const atom value_attr = atoms.intern("value");
+		if (txn.has_attribute(option, value_attr)) {
+			return std::string{txn.attribute_value(option, value_attr)};
+		}
+		std::string text;
+		for (const node_id child : txn.children(option)) { text += txn.text(child); }
+		return text;
+	}
+
+	// The value a <select> starts with: the `selected` option's, else the
+	// first one's, which is what a browser shows in a select nobody has
+	// touched.
+	[[nodiscard]] static std::string selected_option_value(const read_txn & txn, atom_table & atoms,
+	                                                       node_id select) {
+		const atom option_tag = atoms.intern_lower("option");
+		const atom selected = atoms.intern("selected");
+		std::string first;
+		bool have_first = false;
+		for (const node_id child : txn.children(select)) {
+			if (txn.tag(child).value_or(atom{}) != option_tag) { continue; }
+			if (!have_first) {
+				first = option_value(txn, atoms, child);
+				have_first = true;
+			}
+			if (txn.has_attribute(child, selected)) { return option_value(txn, atoms, child); }
+		}
+		return first;
+	}
+
+	// Replace the whole value - what `input.value = "x"` does. The caret goes
+	// to the end, which is where a browser puts it, and the control counts as
+	// edited so the `value` attribute stops being the answer.
+	static void set_value(control_state & control, std::string text) {
+		control.value = std::move(text);
+		control.caret = control.value.size();
+		control.selection = control.caret;
+		control.value_edited = true;
+	}
 
 	// Insert typed text at the caret, replacing any selection.
 	void insert_text(control_state & control, std::string_view text) {

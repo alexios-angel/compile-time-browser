@@ -114,6 +114,18 @@ public:
 		on_alert_ = std::move(hook);
 	}
 
+	// Returns whether a page write reached a control, so the browser knows the
+	// paint is stale without having to diff the form store.
+	bool refresh_wrappers() {
+		if (cx_ == nullptr) { return false; }
+		wrote_to_control_ = false;
+		for (auto & [packed, obj] : wrappers_) {
+			if (obj != nullptr) { refresh_element(*cx_, *obj, unpack(packed)); }
+		}
+		return wrote_to_control_;
+	}
+
+
 	// Layout results, so offsetWidth and friends can answer. Set by the
 	// browser after each layout; null until the first one, and the natives
 	// return 0 then rather than pretending.
@@ -183,6 +195,9 @@ public:
 	}
 
 	bool dispatch_event(std::string_view type, node_id target, value event) {
+		// BEFORE the listeners run. A handler for `input` reads the field's new
+		// value, so a wrapper still holding the old one is the whole bug.
+		(void)refresh_wrappers();
 		const auto txn = doc_->read();
 		for (node_id at = target; at; at = txn.parent(at)) {
 			fire_at(at, type, event);
@@ -252,15 +267,32 @@ private:
 
 	// --- element wrappers -------------------------------------------------
 
+	// ONE WRAPPER PER ELEMENT, cached. Two reasons, and the second is the one
+	// that showed up as a bug: `getElementById('x') === getElementById('x')` is
+	// true in a browser and was false here, and - far worse - a wrapper's
+	// properties are a SNAPSHOT taken when it was made. A page that does
+	//     const name = document.getElementById('name');
+	//     ... later ... name.value
+	// read whatever `value` was at page load, forever. That is what made the
+	// widget gallery report `color: undefined` and never update.
 	[[nodiscard]] value wrap(context & cx, node_id id) {
 		if (!id) { return value::null(); }
+		if (const auto it = wrappers_.find(pack(id)); it != wrappers_.end()) {
+			refresh_element(cx, *it->second, id);
+			return value::object(it->second);
+		}
 		auto * obj = static_cast<script::object_object *>(cx.make_object().as_heap());
 		value wrapper = value::object(obj);
 		obj->set(std::string{handle_property}, value::number(static_cast<double>(pack(id))));
 		install_element_methods(cx, *obj);
 		refresh_element(cx, *obj, id);
+		wrappers_.emplace(pack(id), obj);
 		return wrapper;
 	}
+
+	// Bring every live wrapper back in step with the document. Called before a
+	// dispatch and before a frame, which are the two moments a page can observe
+	// the difference.
 
 	[[nodiscard]] static std::uint64_t pack(node_id id) {
 		return (static_cast<std::uint64_t>(id.generation) << 32) | id.slot;
@@ -321,11 +353,46 @@ private:
 			obj.set("height", value::number(attribute_number("height")));
 		}
 
+		refresh_control(cx, obj, txn, id, tag_text);
+
 		const rect box = box_of(id);
 		obj.set("offsetLeft", value::number(static_cast<double>(box.x)));
 		obj.set("offsetTop", value::number(static_cast<double>(box.y)));
 		obj.set("offsetWidth", value::number(static_cast<double>(box.width)));
 		obj.set("offsetHeight", value::number(static_cast<double>(box.height)));
+	}
+
+	// `value` and `checked` on a form control, in BOTH directions. The VM has
+	// no property accessors, so a live property is a sync rather than a getter:
+	// what the page wrote wins (it wrote it after we last set it), otherwise
+	// the control's own state does. Without the write-back `input.value = ""`
+	// would set a property nothing reads and the field would not clear.
+	void refresh_control(context & cx, script::object_object & obj, const read_txn & txn,
+	                     node_id id, std::string_view tag_text) {
+		if (forms_ == nullptr) { return; }
+		const std::string_view type = txn.attribute_value(id, atoms_->intern("type"));
+		const control_kind kind = control_kind_of(tag_text, type);
+		if (kind == control_kind::none) { return; }
+		control_state & control = forms_->state_of(txn, *atoms_, id);
+		auto & mirror = mirrors_[pack(id)];
+
+		if (const value * written = obj.find("value");
+		    written != nullptr && cx.to_string(*written) != mirror.value) {
+			form_store::set_value(control, cx.to_string(*written));
+			wrote_to_control_ = true;
+		}
+		mirror.value = control.value;
+		obj.set("value", cx.string(control.value));
+
+		if (kind == control_kind::checkbox || kind == control_kind::radio) {
+			if (const value * written = obj.find("checked");
+			    written != nullptr && context::truthy(*written) != mirror.checked) {
+				control.checked = context::truthy(*written);
+				wrote_to_control_ = true;
+			}
+			mirror.checked = control.checked;
+			obj.set("checked", value::boolean(control.checked));
+		}
 	}
 
 	[[nodiscard]] rect box_of(node_id id) const {
@@ -359,9 +426,14 @@ private:
 			const node_id id = receiver(c);
 			if (!id) { return value::null(); }
 			const auto txn = doc_->read();
-			const std::string_view v =
-			    txn.attribute_value(id, atoms_->intern_lower(arg_string(c, args, 0)));
-			return v.empty() ? value::null() : c.string(std::string{v});
+			// PRESENT-BUT-EMPTY is not absent. `<details open>`, `<input
+			// disabled>` and `<option selected>` all have an empty value, and
+			// returning null for them made every boolean attribute unreadable
+			// from script - the one shape of attribute that is only ever tested
+			// for presence.
+			const atom name = atoms_->intern_lower(arg_string(c, args, 0));
+			if (!txn.has_attribute(id, name)) { return value::null(); }
+			return c.string(std::string{txn.attribute_value(id, name)});
 		});
 		method("setText", [this](context & c, std::span<value> args) {
 			set_text(id_or_nothing(c), arg_string(c, args, 0));
@@ -1054,6 +1126,15 @@ private:
 	std::function<void()> on_mutation_;
 	std::function<void(node_id)> on_focus_;
 	std::function<void(const std::string &)> on_alert_;
+	// What we last wrote into a wrapper, so a differing value means the PAGE
+	// wrote it. See refresh_control.
+	struct property_mirror {
+		std::string value;
+		bool checked = false;
+	};
+	flat_map<std::uint64_t, script::object_object *> wrappers_;
+	flat_map<std::uint64_t, property_mirror> mirrors_;
+	bool wrote_to_control_ = false;
 	std::string location_href_;
 	std::string location_hash_;
 	value location_;

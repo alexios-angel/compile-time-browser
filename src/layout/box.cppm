@@ -79,6 +79,10 @@ struct box_node {
 	// the parent element says - and the recorder has neither.
 	int list_ordinal = 0;
 	bool details_open = false;
+	// A text box that is ONE SPACE from collapsed inter-element whitespace.
+	// Rendered between inline content and dropped everywhere else; see
+	// drop_collapsible_spaces.
+	bool collapsible_space = false;
 	// `<table border=N>`. A presentational attribute rather than CSS, and it
 	// frames the cells as well as the table, so it rides on the box.
 	float border_px = 0;
@@ -147,6 +151,10 @@ public:
 	      display_(atoms.intern("display")), width_(atoms.intern("width")),
 	      height_(atoms.intern("height")), margin_(atoms.intern("margin")),
 	      padding_(atoms.intern("padding")), font_size_(atoms.intern("font-size")),
+	      margin_sides_{atoms.intern("margin-top"), atoms.intern("margin-right"),
+	                    atoms.intern("margin-bottom"), atoms.intern("margin-left")},
+	      padding_sides_{atoms.intern("padding-top"), atoms.intern("padding-right"),
+	                     atoms.intern("padding-bottom"), atoms.intern("padding-left")},
 	      font_family_(atoms.intern("font-family")), font_weight_(atoms.intern("font-weight")),
 	      font_style_(atoms.intern("font-style")),
 	      text_decoration_(atoms.intern("text-decoration")),
@@ -158,6 +166,7 @@ public:
 		out.source = root;
 		out.style = style_of(root);
 		build_children(txn, root, out, 16.0f);
+		drop_collapsible_spaces(out);
 		normalise(out);
 		return out;
 	}
@@ -176,11 +185,36 @@ private:
 	                    bool inherited_underline = false, bool inherited_line_through = false,
 	                    bool preserve_whitespace = false) {
 		int ordinal = 0;
+		// A <details> without `open` shows only its <summary>. Asked once, here,
+		// because the state is on the PARENT and the children are what it hides.
+		const bool closed_details =
+		    atoms_->text(txn.tag(parent).value_or(atom{})) == "details" &&
+		    !txn.has_attribute(parent, atoms_->intern("open"));
 		for (const node_id child : txn.children(parent)) {
 			const node_kind kind = txn.kind(child).value_or(node_kind::comment);
 			if (kind == node_kind::text) {
 				const std::string_view text = txn.text(child);
-				if (trimmed(text).empty()) { continue; } // whitespace-only: no box
+				// A WHITESPACE-ONLY text node is not always nothing. Between two
+				// inline-level boxes it collapses to one SPACE and is rendered -
+				// `</label> <input>` is a label, a space and a field. Dropping it
+				// outright glued every label to its control and ran the words of
+				// `<b>a</b> <b>b</b>` together. It IS nothing between blocks, and
+				// at the start or end of a line; drop_collapsible_spaces below
+				// decides that once the siblings are known.
+				if (!preserve_whitespace && trimmed(text).empty()) {
+					box_node space;
+					space.kind = box_kind::text;
+					space.source = child;
+					space.style = into.style;
+					space.text = " ";
+					space.collapsible_space = true;
+					space.font_size = inherited_font;
+					space.face = inherited_face;
+					space.underline = inherited_underline;
+					space.line_through = inherited_line_through;
+					into.children.push_back(std::move(space));
+					continue;
+				}
 				box_node t;
 				t.kind = box_kind::text;
 				t.source = child;
@@ -211,6 +245,11 @@ private:
 			const display_kind d =
 			    parse_display(prop(style, display_), default_display_for(atoms_->text(tag)));
 			if (d == display_kind::none) { continue; } // pruned: no box at all
+			// A CLOSED <details> shows its <summary> AND NOTHING ELSE. This
+			// cannot be a UA rule: `details > :not(summary) { display: none }`
+			// needs a selector the cascade does not have, and the state lives on
+			// the parent rather than on the hidden child.
+			if (closed_details && atoms_->text(tag) != "summary") { continue; }
 
 			box_node b;
 			const std::string_view tag_text = atoms_->text(tag);
@@ -257,8 +296,12 @@ private:
 					              : parsed;
 				}
 			}
-			b.margin = parse_sides(prop(style, margin_));
-			b.padding = parse_sides(prop(style, padding_));
+			// The LONGHANDS, which the style engine expands every shorthand
+			// into. Reading `margin`/`padding` directly meant a sheet that said
+			// `padding-left` was ignored outright - including the UA sheet's own
+			// `ul { padding-left: 40px }` and `summary { padding-left: 18px }`.
+			b.margin = sides_of(style, margin_sides_);
+			b.padding = sides_of(style, padding_sides_);
 			const length fs = parse_length(prop(style, font_size_));
 			b.font_size = fs.is_auto() ? inherited_font : fs.resolve(inherited_font, inherited_font);
 			b.face = face_of(style, inherited_face);
@@ -282,6 +325,7 @@ private:
 				                                          : white_space.starts_with("pre");
 				build_children(txn, child, b, b.font_size, b.face, b.underline, b.line_through,
 				               preserve);
+				drop_collapsible_spaces(b);
 				normalise(b);
 			}
 			into.children.push_back(std::move(b));
@@ -373,6 +417,33 @@ private:
 	// inline-level children, the inline runs get wrapped in anonymous blocks.
 	// Without this the two formatting contexts interleave and neither
 	// algorithm has a well-defined input.
+	// A collapsible space is rendered only BETWEEN inline-level content. At the
+	// start or end of its parent, or next to a block-level sibling, it is
+	// nothing at all - which is what stops `<div>\n<p>x</p>\n</div>` from
+	// drawing two spaces around the paragraph.
+	static void drop_collapsible_spaces(box_node & parent) {
+		const auto renders_inline = [](const box_node & b) {
+			return !b.is_block_level() && !b.collapsible_space;
+		};
+		std::vector<box_node> kept;
+		kept.reserve(parent.children.size());
+		for (std::size_t i = 0; i < parent.children.size(); ++i) {
+			if (parent.children[i].collapsible_space) {
+				const bool inline_before =
+				    !kept.empty() && renders_inline(kept.back());
+				bool inline_after = false;
+				for (std::size_t j = i + 1; j < parent.children.size(); ++j) {
+					if (parent.children[j].collapsible_space) { continue; }
+					inline_after = renders_inline(parent.children[j]);
+					break;
+				}
+				if (!inline_before || !inline_after) { continue; }
+			}
+			kept.push_back(std::move(parent.children[i]));
+		}
+		parent.children = std::move(kept);
+	}
+
 	static void normalise(box_node & parent) {
 		bool has_block = false;
 		bool has_inline = false;
@@ -403,6 +474,20 @@ private:
 		}
 		flush();
 		parent.children = std::move(rebuilt);
+	}
+
+	// The four longhands of one box-edge property.
+	struct side_atoms {
+		atom top, right, bottom, left;
+	};
+	[[nodiscard]] side_lengths sides_of(const computed_style_ptr & style,
+	                                    const side_atoms & names) const {
+		side_lengths out;
+		out.top = parse_length(prop(style, names.top));
+		out.right = parse_length(prop(style, names.right));
+		out.bottom = parse_length(prop(style, names.bottom));
+		out.left = parse_length(prop(style, names.left));
+		return out;
 	}
 
 	[[nodiscard]] static side_lengths parse_sides(std::string_view shorthand) {
@@ -522,6 +607,7 @@ private:
 	const style::style_map * styles_;
 	measure_text_fn measure_;
 	atom display_, width_, height_, margin_, padding_, font_size_;
+	side_atoms margin_sides_, padding_sides_;
 	atom font_family_, font_weight_, font_style_, text_decoration_, white_space_;
 };
 

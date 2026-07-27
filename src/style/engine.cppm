@@ -126,11 +126,65 @@ public:
 			if (selectors_[sel_index].parts.empty()) { continue; }
 			if (selectors_[sel_index].parts.front().never_matches) { continue; }
 
-			declarations_.push_back(declaration{atoms_->intern_lower(e.property), e.value});
-			index_.add(selectors_[sel_index],
-			           rule{sel_index, static_cast<std::uint32_t>(declarations_.size() - 1),
-			                e.order, origin, e.important});
+			const auto add = [&](std::string_view property, std::string_view value) {
+				declarations_.push_back(declaration{atoms_->intern_lower(property), std::string{value}});
+				index_.add(selectors_[sel_index],
+				           rule{sel_index, static_cast<std::uint32_t>(declarations_.size() - 1),
+				                e.order, origin, e.important});
+			};
+			const auto expanded = expand_shorthand(e.property, e.value);
+			if (expanded.empty()) {
+				add(e.property, e.value);
+			} else {
+				for (const auto & [property, value] : expanded) { add(property, value); }
+			}
 		}
+	}
+
+	// SHORTHAND EXPANSION. `margin: 1px 2px` becomes four longhand
+	// declarations, emitted in place of the shorthand.
+	//
+	// Expanding HERE rather than where the property is read is what makes the
+	// cascade come out right: the four carry the shorthand's source order, so
+	// a `padding-left` written after it sorts later and wins, and one written
+	// BEFORE it is overwritten - which is what CSS says and what reading
+	// "shorthand, then longhand if present" gets backwards.
+	//
+	// Before this, only the shorthand was read at all: `summary { padding-left:
+	// 18px }` and `ul { padding-left: 40px }` were in the UA sheet and did
+	// nothing, so a disclosure triangle was drawn on top of its own label and
+	// list markers sat outside the page.
+	[[nodiscard]] static std::vector<std::pair<std::string_view, std::string_view>>
+	expand_shorthand(std::string_view property, std::string_view value) {
+		if (property != "margin" && property != "padding") { return {}; }
+		std::vector<std::string_view> parts;
+		std::size_t at = 0;
+		while (at < value.size() && parts.size() < 4) {
+			const std::size_t begin = value.find_first_not_of(" \t\n\r\f", at);
+			if (begin == std::string_view::npos) { break; }
+			const std::size_t end = value.find_first_of(" \t\n\r\f", begin);
+			parts.push_back(value.substr(begin, end == std::string_view::npos
+			                                        ? std::string_view::npos
+			                                        : end - begin));
+			at = end == std::string_view::npos ? value.size() : end;
+		}
+		if (parts.empty()) { return {}; }
+		// 1 value: all four. 2: vertical, horizontal. 3: top, horizontal,
+		// bottom. 4: top, right, bottom, left.
+		const std::string_view top = parts[0];
+		const std::string_view right = parts.size() > 1 ? parts[1] : top;
+		const std::string_view bottom = parts.size() > 2 ? parts[2] : top;
+		const std::string_view left = parts.size() > 3 ? parts[3] : right;
+		if (property == "margin") {
+			return {{"margin-top", top},
+			        {"margin-right", right},
+			        {"margin-bottom", bottom},
+			        {"margin-left", left}};
+		}
+		return {{"padding-top", top},
+		        {"padding-right", right},
+		        {"padding-bottom", bottom},
+		        {"padding-left", left}};
 	}
 
 	[[nodiscard]] std::size_t rule_count() const noexcept { return index_.rule_count(); }
@@ -271,8 +325,15 @@ private:
 		inline_block parsed;
 		const ctcss::value_sheet sheet = ctcss::parse_value("*{" + std::string{text} + "}");
 		for (const ctcss::value_sheet::entry & e : sheet.entries) {
-			declaration d{atoms_->intern_lower(e.property), e.value};
-			(e.important ? parsed.important : parsed.normal).push_back(std::move(d));
+			auto & into = e.important ? parsed.important : parsed.normal;
+			const auto expanded = expand_shorthand(e.property, e.value);
+			if (expanded.empty()) {
+				into.push_back(declaration{atoms_->intern_lower(e.property), e.value});
+			} else {
+				for (const auto & [property, value] : expanded) {
+					into.push_back(declaration{atoms_->intern_lower(property), std::string{value}});
+				}
+			}
 		}
 		return inline_cache_.emplace(std::string{text}, std::move(parsed)).first->second;
 	}

@@ -82,6 +82,69 @@ void expect_value(fixture & f, node_id n, std::string_view property, std::string
 	}
 }
 
+// `margin: 1px 2px` IS four declarations. Expanding at RECORD time rather than
+// where the property is read is what makes the cascade come out right - the
+// four carry the shorthand's source order, so a longhand written after it wins
+// and one written before it loses, which is what CSS says.
+//
+// Before this, only the shorthand was read, so every per-side longhand in every
+// sheet did nothing - including the UA sheet's own `ul { padding-left: 40px }`.
+void test_shorthands_expand() {
+	{
+		fixture f;
+		f.load("<div id=a></div>", "#a { margin: 1px 2px 3px 4px }");
+		const node_id a = f.find("div");
+		expect_value(f, a, "margin-top", "1px", "four values: top");
+		expect_value(f, a, "margin-right", "2px", "four values: right");
+		expect_value(f, a, "margin-bottom", "3px", "four values: bottom");
+		expect_value(f, a, "margin-left", "4px", "four values: left");
+	}
+	{
+		fixture f;
+		f.load("<div id=a></div>", "#a { padding: 5px }");
+		const node_id a = f.find("div");
+		expect_value(f, a, "padding-top", "5px", "one value: all four");
+		expect_value(f, a, "padding-left", "5px", "one value: all four");
+	}
+	{
+		fixture f;
+		f.load("<div id=a></div>", "#a { padding: 5px 6px }");
+		const node_id a = f.find("div");
+		expect_value(f, a, "padding-top", "5px", "two values: vertical");
+		expect_value(f, a, "padding-left", "6px", "two values: horizontal");
+	}
+	{
+		fixture f;
+		f.load("<div id=a></div>", "#a { padding: 1px 2px 3px }");
+		const node_id a = f.find("div");
+		expect_value(f, a, "padding-top", "1px", "three values: top");
+		expect_value(f, a, "padding-right", "2px", "three values: horizontal");
+		expect_value(f, a, "padding-bottom", "3px", "three values: bottom");
+		expect_value(f, a, "padding-left", "2px", "three values: left mirrors right");
+	}
+	// SOURCE ORDER, both ways round. This is the half that reading "shorthand
+	// first, then longhand" gets backwards.
+	{
+		fixture f;
+		f.load("<div id=a></div>", "#a { padding: 1px; padding-left: 9px }");
+		expect_value(f, f.find("div"), "padding-left", "9px", "a longhand AFTER wins");
+		expect_value(f, f.find("div"), "padding-right", "1px", "and leaves the others alone");
+	}
+	{
+		fixture f;
+		f.load("<div id=a></div>", "#a { padding-left: 9px; padding: 1px }");
+		expect_value(f, f.find("div"), "padding-left", "1px", "a shorthand AFTER overwrites it");
+	}
+	// And through the style ATTRIBUTE, which takes a different path into the
+	// cascade than a sheet does.
+	{
+		fixture f;
+		f.load("<div id=a style='margin: 7px 8px'></div>", "");
+		expect_value(f, f.find("div"), "margin-top", "7px", "inline styles expand too");
+		expect_value(f, f.find("div"), "margin-right", "8px", "inline styles expand too");
+	}
+}
+
 void test_simple_selectors() {
 	fixture f;
 	f.load("<div id=box class='a b'><p>hi</p></div>",
@@ -91,9 +154,11 @@ void test_simple_selectors() {
 
 	expect_value(f, div, "color", "red", "tag selector");
 	expect_value(f, p, "color", "blue", "tag selector (other)");
-	expect_value(f, div, "margin", "1px", "class selector");
-	expect_value(f, div, "padding", "2px", "id selector");
-	expect_value(f, p, "margin", "", "class must not leak to a child");
+	// The LONGHANDS: a shorthand is expanded when it is recorded, so `margin`
+	// itself is not a resolved property. See test_shorthands_expand.
+	expect_value(f, div, "margin-left", "1px", "class selector");
+	expect_value(f, div, "padding-left", "2px", "id selector");
+	expect_value(f, p, "margin-left", "", "class must not leak to a child");
 }
 
 // Bucketing files a rule under its RIGHTMOST compound. These selectors are
@@ -300,6 +365,7 @@ void test_inline_style_is_per_element() {
 } // namespace
 
 int main() {
+	test_shorthands_expand();
 	test_simple_selectors();
 	test_bucketing_uses_the_rightmost_compound();
 	test_descendant_and_child_combinators();

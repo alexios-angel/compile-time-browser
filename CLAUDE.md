@@ -333,6 +333,91 @@ an empty string as the label and never read `<option>` at all. Now: the
 `selected` option, else the first, else whatever the user picked, plus a
 drop-down arrow. The popup itself is still missing.
 
+## v2 FORM CONTROLS: the batch a real page found (2026-07-27)
+
+Eight bugs from ONE screenshot of the widget gallery, and the reason they all
+shipped is at the bottom of this section.
+
+**PER-SIDE LONGHANDS DID NOTHING.** Layout read the `padding` and `margin`
+SHORTHANDS and nothing else, so `padding-left: 18px` was parsed, cascaded,
+resolved — and ignored. The UA sheet's own `ul { padding-left: 40px }` and
+`summary { padding-left: 18px }` were dead, which is why a disclosure triangle
+was drawn on top of its own label. A shorthand is now EXPANDED into four
+longhands **when it is recorded**, not where it is read: the four carry the
+shorthand's source order, so a longhand written after it wins and one written
+before it loses. Reading "shorthand, then longhand if present" gets that
+backwards.
+
+**A whitespace-only text node is not always nothing.** Between two inline-level
+boxes it collapses to one SPACE and is RENDERED — `</label> <input>` is a
+label, a space and a field. It was dropped outright, so every label was glued
+to its control. It IS nothing between blocks and at the start of a line;
+`drop_collapsible_spaces` decides that once the siblings are known.
+
+That exposed a second one: **`words_that_fit` could never consume a leading
+space**, so a text run that IS a space fit nothing and forced a line break —
+which put every label on its own line above its control.
+
+**A BUTTON IS NOT A SELECT.** They shared one painter arm, so a button was
+asked for its selected `<option>` — it has none, so the label came out empty —
+and then got the drop-down arrow anyway. Every button was an empty box with an
+arrow in it. `button_label()` already existed and was never called.
+
+**The caret was measured with font8x8 while the text was drawn with the real
+face**, so it sat about twice as far along as the text — reading as a caret
+that jumps a character ahead of every keystroke. font8x8 hides this too: it
+quantises every size to one cell, so the two measurements agree there.
+
+**A textarea drew its whole value as ONE run.** A caret on the second line
+landed the width of the first line past the box, where the clip threw it away
+— which is why a textarea appeared to have no caret at all — and the newline
+reached the rasterizer as a glyph. Both are per-line now.
+
+**The caret BLINKS** in Chrome's 500 ms halves, measured from the last caret
+ACTIVITY: typing, moving and clicking restart it solid, because a caret that
+blinks out from under the character you just typed reads as a dropped
+keystroke. A blink re-PAINTS and does not re-lay-out — `browser::layout_count()`
+is observable so a test can hold that line.
+
+**`<details>` had no behaviour at all**: a closed one laid out its contents (so
+nothing was ever hidden) and clicking `<summary>` did nothing. The state is the
+`open` ATTRIBUTE, so a script reading it agrees with what the user did. A
+closed details' non-summary children are built away in the box builder, which
+cannot be a UA rule — `details > :not(summary)` needs a selector the cascade
+does not have, and the state lives on the PARENT.
+
+**A wrapper's properties were a SNAPSHOT** taken when it was made, and no
+element had `value` or `checked` at all. A page that does `const c =
+getElementById('color')` and later reads `c.value` — which is every page — read
+the page-load value forever; the gallery reported `color: undefined`. There is
+now ONE wrapper per element (so `getElementById('x') === getElementById('x')`,
+which a browser guarantees and this did not), refreshed before every dispatch
+and every frame. The VM has no property accessors, so a live property is a
+SYNC rather than a getter: what the page wrote wins, else the control's state
+does.
+
+**A `<select>`'s value is its selected OPTION's**, and value is not label —
+`<option value=g>green</option>` is worth "g" to a form and shows "green" to a
+reader. The store seeds from the attribute and the painter maps it back for
+display.
+
+**`getAttribute` returned null for a present-but-EMPTY attribute**, which is
+every boolean one: `<details open>`, `<input disabled>`, `<option selected>`.
+
+**The VM keyed its string cache by INDEX INTO THE CURRENT PROGRAM.** A context
+can run more than one — `browser::run_script` evaluates a snippet that calls a
+function the page defined — so the running frame's proto belongs to a different
+program, and subtracting its address from the wrong program's vector gave a
+garbage index and a SEGFAULT. Keyed by the function now.
+
+**Why all eight shipped: the example ctests only checked that the process
+exited 0.** A page renders with empty buttons, no caret, a `<details>` stuck
+open and every label glued to its control and still exits 0. `v2-render-widgets`
+and `v2-render-elements` now byte-compare the render against
+`tests-v2/golden/`, with `CTBROWSER_FONTS=font8x8` so the golden pins LAYOUT
+and does not move when FreeType does. Both goldens are byte-identical from the
+Windows exes.
+
 ## v2 NAVIGATION: alert, location, `<a href>` (2026-07-27)
 
 The last three things v1's script surface had and v2's did not — and the proof
