@@ -14,12 +14,13 @@ module;
 #include <string_view>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+#include <ctbrowser/script/script.hpp>
+
 export module ctbrowser.app;
 
-import ctbrowser.core;
 import ctbrowser.paint;
 import ctbrowser.raster;
-import ctbrowser.script;
 import ctbrowser.shell;
 
 // The application shell: a window, an event loop, and one function to call.

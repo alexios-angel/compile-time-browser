@@ -10,6 +10,9 @@
 // EMPTY RECTANGLE - it passed an empty string as its label and never read
 // <option>.
 
+#include <ctbrowser/core/core.hpp>
+#include <ctbrowser/script/script.hpp>
+
 import ctbrowser;
 
 #include "check.hpp"

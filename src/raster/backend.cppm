@@ -4,9 +4,10 @@ module;
 #include <expected>
 #include <span>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.raster:backend;
 
-import ctbrowser.core;
 import ctbrowser.paint;
 import :tile;
 

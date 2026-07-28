@@ -6,7 +6,7 @@
 // both engines are in the tree - a rewrite that can be differentially tested
 // against the thing it replaces should be, and the window closes when the previous engine goes.
 
-import ctbrowser.script;
+#include <ctbrowser/script/script.hpp>
 
 #include "check.hpp"
 #include <cmath>

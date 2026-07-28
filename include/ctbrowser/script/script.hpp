@@ -1,5 +1,4 @@
-export module ctbrowser.script;
-
+#pragma once
 // The script engine: a register-based bytecode VM.
 //
 //   value      one 64-bit NaN-boxed word - doubles native, 4 singletons,
@@ -18,8 +17,8 @@ export module ctbrowser.script;
 // context; what threads share is the DOM, which has its own concurrency
 // control. That is also how the web platform defines agents.
 
-export import :value;
-export import :bytecode;
-export import :compile;
-export import :vm;
-export import :builtins;
+#include <ctbrowser/script/builtins.hpp>
+#include <ctbrowser/script/bytecode.hpp>
+#include <ctbrowser/script/compile.hpp>
+#include <ctbrowser/script/value.hpp>
+#include <ctbrowser/script/vm.hpp>

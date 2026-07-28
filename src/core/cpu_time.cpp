@@ -1,12 +1,5 @@
-module;
+#include <ctbrowser/core/cpu_time.hpp>
 
-// PROCESS CPU TIME, portably.
-//
-// Not std::clock(): on some Windows runtimes it returns WALL time since the
-// process started, which makes the one number this exists to report a lie -
-// and "how much CPU does an idle browser use" is exactly the question it is
-// here to answer. That trap was walked into twice: once in the profiler and
-// once in the test that measures whether an idle worker pool sleeps.
 #if defined(_WIN32)
 #include <windows.h>
 #else
@@ -15,13 +8,9 @@ module;
 
 #include <cstdint>
 
-export module ctbrowser.core:cpu_time;
+namespace ctbrowser {
 
-export namespace ctbrowser {
-
-// Seconds of CPU - user plus kernel - this process has consumed. Summed across
-// threads, so a four-thread pool spinning for one second reports four.
-[[nodiscard]] inline double process_cpu_seconds() {
+double process_cpu_seconds() {
 #if defined(_WIN32)
     FILETIME created{};
     FILETIME exited{};

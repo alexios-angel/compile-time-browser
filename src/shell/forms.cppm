@@ -7,9 +7,10 @@ module;
 #include <utility>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.shell:forms;
 
-import ctbrowser.core;
 import ctbrowser.dom;
 import ctbrowser.style;
 

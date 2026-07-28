@@ -1,10 +1,8 @@
-module;
+#pragma once
 #include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-
-export module ctbrowser.core:handle;
 
 // A generation-tagged reference into a slab.
 //
@@ -22,7 +20,7 @@ export module ctbrowser.core:handle;
 // be passed where a layer_id is expected, and that is a compile error rather
 // than a very confusing bug.
 
-export namespace ctbrowser {
+namespace ctbrowser {
 
 template <typename Tag> struct handle {
     std::uint32_t slot = 0;
@@ -43,7 +41,7 @@ template <typename Tag> struct handle {
 } // namespace ctbrowser
 
 // hashable, so handles can key the unordered_flat_maps in style and script
-export template <typename Tag> struct std::hash<ctbrowser::handle<Tag>> {
+template <typename Tag> struct std::hash<ctbrowser::handle<Tag>> {
     [[nodiscard]] std::size_t operator()(ctbrowser::handle<Tag> h) const noexcept {
         return std::hash<std::uint64_t>{}(h.key());
     }

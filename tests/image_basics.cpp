@@ -5,6 +5,9 @@
 // binary blob checked in beside it fails for reasons that have nothing to do
 // with the code.
 
+#include <ctbrowser/core/core.hpp>
+#include <ctbrowser/script/script.hpp>
+
 import ctbrowser;
 
 #include "check.hpp"

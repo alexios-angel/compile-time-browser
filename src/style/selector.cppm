@@ -8,9 +8,9 @@ module;
 #include <string_view>
 #include <vector>
 
-export module ctbrowser.style:selector;
+#include <ctbrowser/core/core.hpp>
 
-import ctbrowser.core;
+export module ctbrowser.style:selector;
 
 // Selector matching, arranged so that most rules are never even considered.
 //

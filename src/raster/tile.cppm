@@ -3,9 +3,9 @@ module;
 #include <cstdint>
 #include <vector>
 
-export module ctbrowser.raster:tile;
+#include <ctbrowser/core/core.hpp>
 
-import ctbrowser.core;
+export module ctbrowser.raster:tile;
 
 // Tiles: the unit of raster work.
 //

@@ -14,7 +14,7 @@
 // Run it under the asan and tsan presets, not just the default one - a clean
 // pass without sanitizers proves very little about either property.
 
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 
 #include "check.hpp"
 #include <atomic>

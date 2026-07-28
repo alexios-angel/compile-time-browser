@@ -12,9 +12,10 @@ module;
 #include <thread>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.raster:pipeline;
 
-import ctbrowser.core;
 import ctbrowser.paint;
 import :backend;
 import :compositor;

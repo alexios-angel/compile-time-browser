@@ -22,7 +22,7 @@
 // A clean run WITHOUT sanitizers proves very little. Run the tsan and asan
 // presets.
 
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 import ctbrowser.dom;
 
 #include "check.hpp"

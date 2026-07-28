@@ -17,9 +17,10 @@ module;
 #include <utility>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.raster:ttf;
 
-import ctbrowser.core;
 import ctbrowser.paint;
 import :surface;
 import :draw;

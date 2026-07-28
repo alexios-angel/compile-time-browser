@@ -1,3 +1,7 @@
+module;
+#include <ctbrowser/core/core.hpp>
+#include <ctbrowser/script/script.hpp>
+
 export module ctbrowser;
 
 // The whole engine, in one import.
@@ -12,9 +16,7 @@ export module ctbrowser;
 // browser's own signatures mention `scheduler`, `surface`, `rect` and `node_id`,
 // so a consumer needs them whether they asked for them or not.
 
-export import ctbrowser.core;
 export import ctbrowser.dom;
-export import ctbrowser.script;
 export import ctbrowser.style;
 export import ctbrowser.layout;
 export import ctbrowser.paint;

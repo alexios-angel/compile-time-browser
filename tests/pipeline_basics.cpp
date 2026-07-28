@@ -14,7 +14,7 @@
 // This runs on the software backend on purpose: it is the half of stage 6 that
 // needs no GPU, so it is the half CI can enforce.
 
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 import ctbrowser.dom;
 import ctbrowser.style;
 import ctbrowser.layout;

@@ -12,7 +12,7 @@
 //   4. A SCROLL DOES NOT RASTER. This is the reason tiles are kept in content
 //      space at all; the evidence is that the raster counter does not move.
 
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 import ctbrowser.dom;
 import ctbrowser.style;
 import ctbrowser.layout;

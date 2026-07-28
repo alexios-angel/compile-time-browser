@@ -9,9 +9,9 @@ module;
 #include <utility>
 #include <vector>
 
-export module ctbrowser.shell:assets;
+#include <ctbrowser/core/core.hpp>
 
-import ctbrowser.core;
+export module ctbrowser.shell:assets;
 
 // Everything a page loads by name - sprites, sounds, JSON, whatever `fetch`
 // asks for - comes through here.

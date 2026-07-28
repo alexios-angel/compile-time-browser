@@ -12,9 +12,10 @@ module;
 #include <string_view>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.dom:document;
 
-import ctbrowser.core;
 import :node;
 
 // The live document.

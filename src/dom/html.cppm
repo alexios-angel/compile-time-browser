@@ -2,9 +2,10 @@ module;
 #include <string>
 #include <string_view>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.dom:html;
 
-import ctbrowser.core;
 import :document;
 import :node;
 import :treebuilder;

@@ -13,7 +13,7 @@
 // Where there is no device this prints what it can and says the rest is
 // unavailable, rather than reporting zeros.
 
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 import ctbrowser.dom;
 import ctbrowser.style;
 import ctbrowser.layout;

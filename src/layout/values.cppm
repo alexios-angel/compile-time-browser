@@ -6,9 +6,9 @@ module;
 #include <string>
 #include <string_view>
 
-export module ctbrowser.layout:values;
+#include <ctbrowser/core/core.hpp>
 
-import ctbrowser.core;
+export module ctbrowser.layout:values;
 
 // Turning style strings into layout numbers.
 //

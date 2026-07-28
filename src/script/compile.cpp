@@ -1,4 +1,5 @@
-module;
+#include <ctbrowser/script/compile.hpp>
+
 #include <charconv>
 #include <cstdint>
 #include <memory>
@@ -8,61 +9,19 @@ module;
 
 #include <ctjs/vparse.hpp>
 
-export module ctbrowser.script:compile;
+#include <ctbrowser/script/value.hpp>
 
-import :bytecode;
-import :value;
-
-// AST to bytecode.
-//
-// The front end is ctjs's existing Pratt parser, reused rather than rewritten
-// for the same reason cthtml's parser is reused in the DOM: it works, and
-// blocking a VM on a fresh JavaScript parser would be the wrong order to
-// build in. What is replaced is everything after it - the previous engine walked this tree on
-// every execution, re-deciding what each node meant each time round a loop.
-// Compiling once and dispatching on 4-byte instructions is the entire point.
-//
-// Register allocation is a high-water mark. Locals take the low registers of
-// a frame and keep them for their scope; expression temporaries are allocated
-// above the locals and released as each statement finishes. No liveness
-// analysis, no spilling - the frame is simply as large as the deepest
-// expression needed.
-//
-// CLOSURES use boxed cells. A local that any nested function mentions is
-// allocated as a heap cell instead of living directly in its register, and
-// every read and write goes through the cell. Nested functions capture the
-// CELL, not the value, which is what makes mutation through a closure visible
-// to the enclosing scope - the whole point, and what capture-by-value gets
-// silently wrong.
-//
-// Which locals need boxing is decided by a pre-pass (mark_captured). It
-// deliberately OVER-APPROXIMATES: if a nested function mentions the name at
-// all, the outer local is boxed, without checking whether the nested function
-// shadows it with its own binding. The cost of being wrong that way is one
-// heap cell for a variable that did not need one; the cost of the precise
-// analysis is a scope-resolution pass that has to be right. Worth revisiting
-// when there is a benchmark that cares.
-
-export namespace ctbrowser::script {
+namespace ctbrowser::script {
 
 namespace vp = ctjs::vp;
 
-class compiler {
-public:
-    [[nodiscard]] static program compile(std::string_view source) {
-        const vp::ast tree = vp::parse(source);
-        program out;
-        if (!tree.ok) {
-            out.ok = false;
-            out.error = "parse error: " + std::string{tree.error};
-            return out;
-        }
-        compiler c{tree, out};
-        c.compile_program();
-        return out;
-    }
+namespace {
 
-private:
+// The compiler proper. Everything here was in the module interface before, so
+// every translation unit that imported it re-instantiated the lot; it is an
+// implementation detail and it lives in one translation unit now.
+class compiler_impl {
+public:
     struct local {
         std::string name;
         std::uint8_t reg = 0;
@@ -81,7 +40,8 @@ private:
         bool is_async = false; // `return v` hands back a settled promise of v
     };
 
-    compiler(const vp::ast & tree, program & out) : ast_(tree), current_ast_(&tree), out_(out) {}
+    compiler_impl(const vp::ast & tree, program & out)
+        : ast_(tree), current_ast_(&tree), out_(out) {}
 
     // --- AST access -------------------------------------------------------
     [[nodiscard]] const vp::node & at(std::int32_t i) const {
@@ -1710,5 +1670,20 @@ private:
     std::string pending_label_;
     std::size_t handler_depth_ = 0;
 };
+
+} // namespace
+
+program compiler::compile(std::string_view source) {
+    const vp::ast tree = vp::parse(source);
+    program out;
+    if (!tree.ok) {
+        out.ok = false;
+        out.error = "parse error: " + std::string{tree.error};
+        return out;
+    }
+    compiler_impl c{tree, out};
+    c.compile_program();
+    return out;
+}
 
 } // namespace ctbrowser::script

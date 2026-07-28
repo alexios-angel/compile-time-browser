@@ -23,6 +23,9 @@ module;
 #include <utility>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+#include <ctbrowser/script/script.hpp>
+
 module ctbrowser.app;
 
 // The window, the event loop and the only place SDL is read. See the note in

@@ -10,7 +10,7 @@
 // resize or a scroll pays layout alone - and real frames are overwhelmingly
 // the second.
 
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 import ctbrowser.dom;
 import ctbrowser.style;
 import ctbrowser.layout;

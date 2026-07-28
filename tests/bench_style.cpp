@@ -11,7 +11,7 @@
 // and the engine for resolving each element once. Charging the previous engine for a single
 // property would flatter it and measure nothing anybody runs.
 
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 import ctbrowser.dom;
 import ctbrowser.style;
 

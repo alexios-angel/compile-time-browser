@@ -6,7 +6,7 @@
 // compound files them in an unexpected bucket, and descendant selectors the
 // filter is supposed to reject without walking.
 
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 import ctbrowser.dom;
 import ctbrowser.style;
 

@@ -16,7 +16,7 @@
 // The fallback itself is still tested, since that is the path those machines
 // actually take.
 
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 import ctbrowser.dom;
 import ctbrowser.style;
 import ctbrowser.layout;

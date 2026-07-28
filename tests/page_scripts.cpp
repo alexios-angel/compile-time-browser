@@ -11,6 +11,9 @@
 // And the constructs the compiler REFUSES are asserted to be refused BY NAME,
 // which is the difference between a deferred feature and a mis-compile.
 
+#include <ctbrowser/core/core.hpp>
+#include <ctbrowser/script/script.hpp>
+
 import ctbrowser;
 
 #include "check.hpp"

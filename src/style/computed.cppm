@@ -9,9 +9,9 @@ module;
 #include <string_view>
 #include <vector>
 
-export module ctbrowser.style:computed;
+#include <ctbrowser/core/core.hpp>
 
-import ctbrowser.core;
+export module ctbrowser.style:computed;
 
 // The resolved style of one element, and the table that shares them.
 //

@@ -6,9 +6,9 @@ module;
 #include <string>
 #include <vector>
 
-export module ctbrowser.dom:node;
+#include <ctbrowser/core/core.hpp>
 
-import ctbrowser.core;
+export module ctbrowser.dom:node;
 
 // The DOM node, and the reason reads take no locks.
 //

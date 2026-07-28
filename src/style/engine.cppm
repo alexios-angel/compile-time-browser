@@ -10,9 +10,10 @@ module;
 
 #include <ctcss.hpp>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.style:engine;
 
-import ctbrowser.core;
 import ctbrowser.dom;
 import :computed;
 import :selector;

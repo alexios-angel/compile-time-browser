@@ -22,6 +22,9 @@
 #include <thread>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+#include <ctbrowser/script/script.hpp>
+
 import ctbrowser;
 
 #include "check.hpp"

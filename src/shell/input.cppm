@@ -3,9 +3,9 @@ module;
 #include <string>
 #include <string_view>
 
-export module ctbrowser.shell:input;
+#include <ctbrowser/core/core.hpp>
 
-import ctbrowser.core;
+export module ctbrowser.shell:input;
 
 // Input, described without reference to SDL.
 //

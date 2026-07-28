@@ -8,7 +8,7 @@
 // deterministic, and it can be queried per region so a tile pays only for what
 // touches it.
 
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 import ctbrowser.dom;
 import ctbrowser.style;
 import ctbrowser.layout;

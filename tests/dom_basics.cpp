@@ -1,6 +1,6 @@
 // ctbrowser.dom single-threaded semantics. The concurrent guarantees are in
 // stress_dom.cpp, which runs under TSan.
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 import ctbrowser.dom;
 
 #include "check.hpp"

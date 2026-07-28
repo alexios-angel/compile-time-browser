@@ -15,15 +15,16 @@ module;
 #include <utility>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+#include <ctbrowser/script/script.hpp>
+
 export module ctbrowser.shell:browser;
 
-import ctbrowser.core;
 import ctbrowser.dom;
 import ctbrowser.style;
 import ctbrowser.layout;
 import ctbrowser.paint;
 import ctbrowser.raster;
-import ctbrowser.script;
 import :input;
 import :metrics;
 import :assets;

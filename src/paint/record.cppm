@@ -5,9 +5,10 @@ module;
 #include <string_view>
 #include <utility>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.paint:record;
 
-import ctbrowser.core;
 import ctbrowser.style;
 import ctbrowser.layout;
 import :command;

@@ -9,9 +9,10 @@ module;
 #include <utility>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.shell:canvas;
 
-import ctbrowser.core;
 import ctbrowser.dom;
 import ctbrowser.paint;
 import ctbrowser.raster;

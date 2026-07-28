@@ -1,4 +1,3 @@
-module;
 #include <array>
 #include <charconv>
 #include <cmath>
@@ -11,7 +10,7 @@ module;
 #include <system_error>
 #include <vector>
 
-module ctbrowser.script;
+#include <ctbrowser/script/vm.hpp>
 
 // The VM's implementation.
 //

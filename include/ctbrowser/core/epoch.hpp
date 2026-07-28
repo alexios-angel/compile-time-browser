@@ -1,14 +1,10 @@
-module;
-#include <algorithm>
+#pragma once
 #include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <mutex>
 #include <vector>
-
-export module ctbrowser.core:epoch;
 
 // Epoch-based reclamation: the reason DOM reads take no locks.
 //
@@ -35,7 +31,7 @@ export module ctbrowser.core:epoch;
 // explicit fences is left until the TSan stress suite is established and can
 // prove the change.
 
-export namespace ctbrowser {
+namespace ctbrowser {
 
 // A process-wide, reusable thread index. Reusable matters: a naive
 // fetch_add-per-thread leaks indices, so a program that churns threads would
@@ -44,40 +40,17 @@ class thread_registry {
 public:
     static constexpr std::size_t max_threads = 256;
 
-    [[nodiscard]] static std::size_t index() {
-        thread_local slot_lease lease;
-        return lease.index;
-    }
+    [[nodiscard]] static std::size_t index();
 
 private:
     struct slot_lease {
         std::size_t index;
-        slot_lease() : index(acquire_slot()) {}
-        ~slot_lease() { release_slot(index); }
+        slot_lease();
+        ~slot_lease();
     };
 
-    [[nodiscard]] static std::mutex & mutex() {
-        static std::mutex m;
-        return m;
-    }
-    [[nodiscard]] static std::vector<std::size_t> & free_list() {
-        static std::vector<std::size_t> f;
-        return f;
-    }
-    [[nodiscard]] static std::size_t acquire_slot() {
-        const std::lock_guard lock{mutex()};
-        if (!free_list().empty()) {
-            const std::size_t i = free_list().back();
-            free_list().pop_back();
-            return i;
-        }
-        static std::size_t next = 0;
-        return next < max_threads ? next++ : max_threads - 1;
-    }
-    static void release_slot(std::size_t i) {
-        const std::lock_guard lock{mutex()};
-        free_list().push_back(i);
-    }
+    [[nodiscard]] static std::size_t acquire_slot();
+    static void release_slot(std::size_t i);
 };
 
 class epoch_domain {
@@ -88,17 +61,8 @@ public:
     // retired after it began can be destroyed.
     class guard {
     public:
-        explicit guard(epoch_domain & domain) noexcept
-            : domain_(&domain), slot_(thread_registry::index()) {
-            // Publish BEFORE reading anything. A reclaiming writer that misses
-            // this store could free a node this reader is about to touch, so
-            // the store must not sink below the reads that follow it.
-            domain_->participants_[slot_].announced.store(
-                domain_->epoch_.load(std::memory_order_relaxed), std::memory_order_seq_cst);
-        }
-        ~guard() {
-            domain_->participants_[slot_].announced.store(inactive, std::memory_order_seq_cst);
-        }
+        explicit guard(epoch_domain & domain) noexcept;
+        ~guard();
         guard(const guard &) = delete;
         guard & operator=(const guard &) = delete;
 
@@ -114,10 +78,7 @@ public:
 
     // Hand over an object that has ALREADY been unlinked. Ownership passes to
     // the domain; `destroy` runs once no reader can still reach it.
-    void retire(void * object, void (*destroy)(void *)) {
-        const std::lock_guard lock{retired_mutex_};
-        retired_.push_back({epoch_.load(std::memory_order_relaxed), object, destroy});
-    }
+    void retire(void * object, void (*destroy)(void *));
 
     // The epoch of the longest-running reader still inside the tree, or "no
     // readers at all". Anything retired STRICTLY BEFORE this is unreachable.
@@ -125,14 +86,7 @@ public:
     // Exposed because containers with their own storage (the slab recycles
     // slots rather than freeing memory) need this answer without duplicating
     // the participant scan.
-    [[nodiscard]] std::uint64_t oldest_active() const noexcept {
-        std::uint64_t oldest = std::numeric_limits<std::uint64_t>::max();
-        for (const participant & p : participants_) {
-            const std::uint64_t announced = p.announced.load(std::memory_order_seq_cst);
-            if (announced != inactive) { oldest = std::min(oldest, announced); }
-        }
-        return oldest;
-    }
+    [[nodiscard]] std::uint64_t oldest_active() const noexcept;
 
     // Bump the epoch so that everything retired up to now is strictly older
     // than anything a reader can announce from here on.
@@ -140,29 +94,10 @@ public:
 
     // Destroy everything now provably unreachable. Called by writers, not
     // readers. Returns how many objects were destroyed.
-    std::size_t reclaim() {
-        advance();
-        const std::uint64_t oldest_reader = oldest_active();
-
-        std::vector<entry> doomed;
-        {
-            const std::lock_guard lock{retired_mutex_};
-            const auto split =
-                std::partition(retired_.begin(), retired_.end(), [oldest_reader](const entry & e) {
-                    return e.retired_at >= oldest_reader;
-                });
-            doomed.assign(std::make_move_iterator(split), std::make_move_iterator(retired_.end()));
-            retired_.erase(split, retired_.end());
-        }
-        for (const entry & e : doomed) { e.destroy(e.object); }
-        return doomed.size();
-    }
+    std::size_t reclaim();
 
     // how many objects are retired but not yet destroyed
-    [[nodiscard]] std::size_t pending() const {
-        const std::lock_guard lock{retired_mutex_};
-        return retired_.size();
-    }
+    [[nodiscard]] std::size_t pending() const;
 
     // Destroying the domain destroys whatever is still retired. Without this
     // every object retired since the last reclaim() simply leaks, which is
@@ -170,9 +105,7 @@ public:
     // ASan caught it only once the stress test started reclaiming mid-run.
     // No reader can exist here: the domain is going away, so anything holding
     // a guard into it would already be a lifetime bug.
-    ~epoch_domain() {
-        for (const entry & e : retired_) { e.destroy(e.object); }
-    }
+    ~epoch_domain();
 
     epoch_domain() = default;
     epoch_domain(const epoch_domain &) = delete;

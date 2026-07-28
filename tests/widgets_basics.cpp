@@ -10,7 +10,7 @@
 // because a control whose value changes without the page redrawing is not a
 // working control, whatever a unit test of the store says.
 
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 import ctbrowser.dom;
 import ctbrowser.style;
 import ctbrowser.layout;

@@ -13,9 +13,10 @@ module;
 #include <string>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.gpu:device;
 
-import ctbrowser.core;
 import ctbrowser.paint;
 import ctbrowser.raster;
 

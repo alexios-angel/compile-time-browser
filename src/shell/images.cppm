@@ -10,9 +10,10 @@ module;
 #include <utility>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.shell:images;
 
-import ctbrowser.core;
 import ctbrowser.paint;
 import :assets;
 

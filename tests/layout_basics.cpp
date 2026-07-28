@@ -14,7 +14,7 @@
 //      float-for-float equality means the concurrency is not free, and
 //      "mostly the same" is not a layout engine.
 
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 import ctbrowser.dom;
 import ctbrowser.style;
 import ctbrowser.layout;

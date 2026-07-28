@@ -13,13 +13,13 @@
 // than against the bindings in isolation: a binding that mutates the DOM but
 // does not change what is drawn is not working, whatever a unit test says.
 
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 import ctbrowser.dom;
 import ctbrowser.style;
 import ctbrowser.layout;
 import ctbrowser.paint;
 import ctbrowser.raster;
-import ctbrowser.script;
+#include <ctbrowser/script/script.hpp>
 import ctbrowser.shell;
 import ctbrowser.app; // run_app, for the one test that drives the whole application
 

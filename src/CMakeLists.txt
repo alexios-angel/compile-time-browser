@@ -77,23 +77,35 @@ function(ctbrowser_target name)
   endif()
 endfunction()
 
+# Headers live in include/ctbrowser/<subsystem>/ and implementations in
+# src/<subsystem>/. A header declares, its .cpp defines, and the few that are
+# templates (slab, handle) or constexpr value types (geometry) stay whole in
+# the header because there is nothing to move out of them.
+set(CTBROWSER_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/include")
+
 add_library(ctbrowser-core)
 target_sources(ctbrowser-core
+  PRIVATE
+    core/atom.cpp
+    core/epoch.cpp
+    core/scheduler.cpp
+    core/cpu_time.cpp
   PUBLIC
-    FILE_SET CXX_MODULES FILES
-      core/core.cppm
-      core/containers.cppm
-      core/handle.cppm
-      core/epoch.cppm
-      core/slab.cppm
-      core/atom.cppm
-      core/scheduler.cppm
-      core/cpu_time.cppm
-      core/geometry.cppm)
+    FILE_SET HEADERS
+      BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
+      FILES
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/core.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/containers.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/handle.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/epoch.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/slab.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/atom.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/scheduler.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/cpu_time.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/geometry.hpp")
 target_compile_features(ctbrowser-core PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-core)
 target_link_libraries(ctbrowser-core PUBLIC Boost::headers)
-set_target_properties(ctbrowser-core PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
 find_package(Threads REQUIRED)
 target_link_libraries(ctbrowser-core PUBLIC Threads::Threads)
@@ -130,28 +142,29 @@ add_library(ctbrowser::dom ALIAS ctbrowser-dom)
 # with the DOM by design (one agent per thread).
 add_library(ctbrowser-script)
 target_sources(ctbrowser-script
-  PUBLIC
-    FILE_SET CXX_MODULES FILES
-      script/script.cppm
-      script/value.cppm
-      script/bytecode.cppm
-      script/compile.cppm
-      script/vm.cppm
-      script/builtins.cppm
   PRIVATE
-    # MODULE IMPLEMENTATION UNITS. Not in the CXX_MODULES file set - they
-    # export nothing - but still scanned, because `module ctbrowser.script;`
-    # is an import edge. This is where the code lives now: compiled ONCE into
-    # the library instead of in every translation unit that imports it.
+    # Where the code lives: compiled ONCE into the library rather than in every
+    # translation unit that uses it. compile.cpp holds the whole compiler -
+    # only compiler::compile() is declared in the header.
+    script/compile.cpp
     script/builtins.cpp
-    script/vm.cpp)
+    script/vm.cpp
+  PUBLIC
+    FILE_SET HEADERS
+      BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
+      FILES
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/script.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/value.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/bytecode.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/compile.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/vm.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/builtins.hpp")
 target_compile_features(ctbrowser-script PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-script)
 target_include_directories(ctbrowser-script PRIVATE
   "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"
   "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/external/compile-time-containers/include")
 target_link_libraries(ctbrowser-script PUBLIC ctbrowser-core Boost::headers)
-set_target_properties(ctbrowser-script PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
 add_library(ctbrowser::script ALIAS ctbrowser-script)
 
@@ -452,6 +465,7 @@ endif()
 
 install(TARGETS ${CTBROWSER_TARGETS}
   EXPORT ctbrowser-targets
+  FILE_SET HEADERS DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
   FILE_SET CXX_MODULES DESTINATION "${CMAKE_INSTALL_LIBDIR}/ctbrowser/modules"
   ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
   LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")

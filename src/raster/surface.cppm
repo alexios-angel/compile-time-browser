@@ -4,9 +4,9 @@ module;
 #include <span>
 #include <vector>
 
-export module ctbrowser.raster:surface;
+#include <ctbrowser/core/core.hpp>
 
-import ctbrowser.core;
+export module ctbrowser.raster:surface;
 
 // A block of 0xAARRGGBB pixels, addressed as span + explicit stride.
 //

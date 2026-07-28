@@ -1,4 +1,4 @@
-module;
+#pragma once
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -9,8 +9,6 @@ module;
 #include <thread>
 #include <utility>
 #include <vector>
-
-export module ctbrowser.core:scheduler;
 
 // A work-stealing pool.
 //
@@ -27,8 +25,11 @@ export module ctbrowser.core:scheduler;
 // touch opposite ends and rarely collide. A lock-free Chase-Lev deque is the
 // next step if profiling ever shows this mutex mattering; it is much harder to
 // get right and there is no evidence yet that it is needed.
+//
+// parallel_for is the only member that stays in this header, because it is a
+// template. Everything else lives in scheduler.cpp.
 
-export namespace ctbrowser {
+namespace ctbrowser {
 
 class scheduler {
 public:
@@ -36,26 +37,9 @@ public:
 
     // 0 means "one worker per hardware thread, minus this one" - the calling
     // thread participates in parallel_for, so it is a worker too.
-    explicit scheduler(std::size_t worker_count = 0) {
-        if (worker_count == 0) {
-            const unsigned hw = std::thread::hardware_concurrency();
-            worker_count = hw > 1 ? hw - 1 : 1;
-        }
-        queues_ = std::vector<queue>(worker_count);
-        workers_.reserve(worker_count);
-        for (std::size_t i = 0; i < worker_count; ++i) {
-            workers_.emplace_back([this, i](const std::stop_token & stop) { run(i, stop); });
-        }
-    }
+    explicit scheduler(std::size_t worker_count = 0);
 
-    ~scheduler() {
-        for (std::jthread & w : workers_) { w.request_stop(); }
-        {
-            const std::lock_guard lock{idle_mutex_};
-            stopping_ = true;
-        }
-        idle_.notify_all();
-    }
+    ~scheduler();
 
     scheduler(const scheduler &) = delete;
     scheduler & operator=(const scheduler &) = delete;
@@ -76,24 +60,7 @@ public:
     // One more than worker_count(): every worker, plus whoever is helping.
     [[nodiscard]] std::size_t producer_slots() const noexcept { return queues_.size() + 1; }
 
-    void submit(task t) {
-        const std::size_t i = next_.fetch_add(1, std::memory_order_relaxed) % queues_.size();
-        queue & q = queues_[i];
-        {
-            const std::lock_guard lock{q.mutex};
-            q.items.push_back(std::move(t));
-        }
-        // Under the idle lock, not merely after an atomic increment. A worker
-        // evaluates the predicate holding this lock and wait() releases it
-        // atomically, so a notify that does not take it can be delivered
-        // between the two and lost - and a lost wakeup here is a pool that
-        // sleeps through the work it was just given.
-        {
-            const std::lock_guard lock{idle_mutex_};
-            pending_.fetch_add(1, std::memory_order_relaxed);
-        }
-        idle_.notify_one();
-    }
+    void submit(task t);
 
     // Run f(0..n) across the pool and return once every index is done. The
     // CALLING thread helps, so parallel_for from inside a task cannot deadlock
@@ -124,35 +91,9 @@ private:
     };
 
     // Owner pops the back (LIFO, cache-hot); thieves take the front.
-    [[nodiscard]] bool pop_local(std::size_t i, task & out) {
-        queue & q = queues_[i];
-        const std::lock_guard lock{q.mutex};
-        if (q.items.empty()) { return false; }
-        out = std::move(q.items.back());
-        q.items.pop_back();
-        pending_.fetch_sub(1, std::memory_order_relaxed);
-        return true;
-    }
-    [[nodiscard]] bool steal(std::size_t thief, task & out) {
-        for (std::size_t n = 1; n < queues_.size(); ++n) {
-            queue & q = queues_[(thief + n) % queues_.size()];
-            const std::lock_guard lock{q.mutex};
-            if (q.items.empty()) { continue; }
-            out = std::move(q.items.front());
-            q.items.pop_front();
-            pending_.fetch_sub(1, std::memory_order_relaxed);
-            return true;
-        }
-        return false;
-    }
-    [[nodiscard]] bool run_one(std::size_t i) {
-        task t;
-        if (pop_local(i, t) || steal(i, t)) {
-            t();
-            return true;
-        }
-        return false;
-    }
+    [[nodiscard]] bool pop_local(std::size_t i, task & out);
+    [[nodiscard]] bool steal(std::size_t thief, task & out);
+    [[nodiscard]] bool run_one(std::size_t i);
 
     struct identity {
         const scheduler * owner = nullptr;
@@ -173,19 +114,7 @@ private:
     //
     // So the condition is now global - "are there tasks anywhere" - and one
     // shared condvar covers every worker, whichever queue the work landed in.
-    void run(std::size_t i, const std::stop_token & stop) {
-        identity me{this, i};
-        current_ = &me;
-        while (!stop.stop_requested()) {
-            if (run_one(i)) { continue; }
-            std::unique_lock lock{idle_mutex_};
-            idle_.wait(lock, [&] {
-                return pending_.load(std::memory_order_relaxed) > 0 || stopping_ ||
-                       stop.stop_requested();
-            });
-        }
-        current_ = nullptr;
-    }
+    void run(std::size_t i, const std::stop_token & stop);
 
     std::vector<queue> queues_;
     std::vector<std::jthread> workers_;

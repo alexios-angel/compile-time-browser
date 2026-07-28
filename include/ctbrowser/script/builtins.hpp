@@ -1,4 +1,4 @@
-module;
+#pragma once
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -13,11 +13,10 @@ module;
 #include <utility>
 #include <vector>
 
-export module ctbrowser.script:builtins;
+#include <ctbrowser/core/core.hpp>
 
-import ctbrowser.core;
-import :value;
-import :vm;
+#include <ctbrowser/script/value.hpp>
+#include <ctbrowser/script/vm.hpp>
 
 // The JavaScript standard library.
 //
@@ -31,7 +30,7 @@ import :vm;
 // spec lists. The omissions that matter are named at the bottom of this file
 // rather than left to be discovered.
 
-export namespace ctbrowser::script {
+namespace ctbrowser::script {
 
 // Install the standard library into a context.
 //

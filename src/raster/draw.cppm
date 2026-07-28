@@ -9,9 +9,10 @@ module;
 #include <string_view>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.raster:draw;
 
-import ctbrowser.core;
 import ctbrowser.paint;
 import :surface;
 

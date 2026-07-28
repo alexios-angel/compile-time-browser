@@ -1,4 +1,4 @@
-module;
+#pragma once
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -6,9 +6,7 @@ module;
 #include <string_view>
 #include <vector>
 
-export module ctbrowser.script:value;
-
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 
 // The JS value, in one 64-bit word.
 //
@@ -34,7 +32,7 @@ import ctbrowser.core;
 // of heap object in the object's own header rather than in the tag keeps the
 // tag space small and means adding a new heap type costs nothing here.
 
-export namespace ctbrowser::script {
+namespace ctbrowser::script {
 
 // Bit 50 is deliberately part of the mask: it keeps the boxed patterns clear
 // of the canonical quiet NaN a real computation can produce, so an actual

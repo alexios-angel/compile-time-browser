@@ -2,9 +2,9 @@ module;
 #include <cstdint>
 #include <string_view>
 
-export module ctbrowser.style:ua;
+#include <ctbrowser/core/core.hpp>
 
-import ctbrowser.core;
+export module ctbrowser.style:ua;
 
 // The user-agent stylesheet: what a document looks like before anyone styles it.
 //

@@ -1,6 +1,6 @@
 // ctbrowser.core: the single-threaded contracts. The concurrent ones live in
 // stress_slab.cpp, which runs under TSan.
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 
 #include "check.hpp"
 #include <algorithm>

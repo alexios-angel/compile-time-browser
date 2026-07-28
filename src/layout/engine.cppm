@@ -4,9 +4,10 @@ module;
 #include <string_view>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.layout:engine;
 
-import ctbrowser.core;
 import :algorithm;
 import :box;
 import :fragment;

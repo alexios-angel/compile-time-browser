@@ -3,9 +3,10 @@ module;
 #include <memory>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.paint:layer;
 
-import ctbrowser.core;
 import :command;
 
 // Layers: the unit the compositor moves.

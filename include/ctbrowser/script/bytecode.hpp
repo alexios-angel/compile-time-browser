@@ -1,11 +1,9 @@
-module;
+#pragma once
 #include <cstdint>
 #include <string>
 #include <vector>
 
-export module ctbrowser.script:bytecode;
-
-import :value;
+#include <ctbrowser/script/value.hpp>
 
 // A register-based instruction set.
 //
@@ -26,7 +24,7 @@ import :value;
 // a wider operand (constant indices, jump offsets) read b and c as one 16-bit
 // field, which is why `bx()` exists.
 
-export namespace ctbrowser::script {
+namespace ctbrowser::script {
 
 enum class op : std::uint8_t {
     // --- moves and constants

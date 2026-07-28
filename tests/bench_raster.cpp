@@ -13,7 +13,7 @@
 // Everything here is measured with the software backend, which is the point of
 // writing it first: the numbers are reproducible on a machine with no GPU.
 
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 import ctbrowser.dom;
 import ctbrowser.style;
 import ctbrowser.layout;

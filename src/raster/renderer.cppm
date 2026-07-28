@@ -8,9 +8,10 @@ module;
 #include <string_view>
 #include <utility>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.raster:renderer;
 
-import ctbrowser.core;
 import ctbrowser.paint;
 import :backend;
 import :software;

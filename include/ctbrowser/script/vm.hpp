@@ -1,4 +1,4 @@
-module;
+#pragma once
 #include <array>
 #include <charconv>
 #include <cmath>
@@ -11,12 +11,10 @@ module;
 #include <system_error>
 #include <vector>
 
-export module ctbrowser.script:vm;
+#include <ctbrowser/core/core.hpp>
 
-import ctbrowser.core;
-
-import :bytecode;
-import :value;
+#include <ctbrowser/script/bytecode.hpp>
+#include <ctbrowser/script/value.hpp>
 
 // The interpreter.
 //
@@ -36,7 +34,7 @@ import :value;
 // and is not meant to be. Workers get their own context; what they share is
 // the DOM, which has its own concurrency control.
 
-export namespace ctbrowser::script {
+namespace ctbrowser::script {
 
 struct closure_object;
 

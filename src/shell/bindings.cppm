@@ -11,11 +11,12 @@ module;
 #include <utility>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+#include <ctbrowser/script/script.hpp>
+
 export module ctbrowser.shell:bindings;
 
-import ctbrowser.core;
 import ctbrowser.dom;
-import ctbrowser.script;
 import ctbrowser.layout;
 import ctbrowser.paint;
 import :input;

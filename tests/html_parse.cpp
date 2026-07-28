@@ -12,7 +12,7 @@
 // parser knowingly differs, the test says so rather than asserting the wrong
 // thing.
 
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 import ctbrowser.dom;
 
 #include "check.hpp"

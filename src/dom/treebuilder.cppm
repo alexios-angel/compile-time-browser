@@ -7,9 +7,10 @@ module;
 #include <utility>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.dom:treebuilder;
 
-import ctbrowser.core;
 import :document;
 import :node;
 import :tokenizer;

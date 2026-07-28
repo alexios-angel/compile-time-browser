@@ -7,9 +7,10 @@ module;
 #include <string_view>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.layout:algorithm;
 
-import ctbrowser.core;
 import :box;
 import :fragment;
 import :values;

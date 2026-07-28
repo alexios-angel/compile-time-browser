@@ -9,9 +9,10 @@ module;
 #include <system_error>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.layout:box;
 
-import ctbrowser.core;
 import ctbrowser.dom;
 import ctbrowser.style;
 import :values;

@@ -8,9 +8,9 @@ module;
 #include <utility>
 #include <vector>
 
-export module ctbrowser.dom:tokenizer;
+#include <ctbrowser/core/core.hpp>
 
-import ctbrowser.core;
+export module ctbrowser.dom:tokenizer;
 
 // The HTML tokenizer, following the WHATWG state machine.
 //

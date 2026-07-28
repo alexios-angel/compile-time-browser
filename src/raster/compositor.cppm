@@ -5,9 +5,10 @@ module;
 #include <span>
 #include <vector>
 
+#include <ctbrowser/core/core.hpp>
+
 export module ctbrowser.raster:compositor;
 
-import ctbrowser.core;
 import ctbrowser.paint;
 import :backend;
 import :tile;

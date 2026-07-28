@@ -19,7 +19,7 @@
 //
 // Not a ctest gate - numbers move with the machine. Run it, read it, decide.
 
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 
 #include <atomic>
 #include <chrono>

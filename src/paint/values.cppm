@@ -4,9 +4,9 @@ module;
 #include <optional>
 #include <string_view>
 
-export module ctbrowser.paint:values;
+#include <ctbrowser/core/core.hpp>
 
-import ctbrowser.core;
+export module ctbrowser.paint:values;
 
 // CSS colours, parsed where they are consumed.
 //

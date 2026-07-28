@@ -1,4 +1,4 @@
-module;
+#pragma once
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -8,10 +8,8 @@ module;
 #include <utility>
 #include <vector>
 
-export module ctbrowser.core:slab;
-
-import :epoch;
-import :handle;
+#include <ctbrowser/core/epoch.hpp>
+#include <ctbrowser/core/handle.hpp>
 
 // Stable, generation-tagged storage with LOCK-FREE reads.
 //
@@ -38,8 +36,11 @@ import :handle;
 // Structural operations (insert/erase/collect) must be serialized by the
 // caller. In the engine that serialization is the DOM's write transaction;
 // the slab does not lock, so it does not pay for locking on the read path.
+//
+// A template, so it stays in the header: there is no fixed set of T to
+// instantiate it for in one place.
 
-export namespace ctbrowser {
+namespace ctbrowser {
 
 template <typename T, typename Tag, std::uint32_t ChunkBits = 12> class slab {
 public:

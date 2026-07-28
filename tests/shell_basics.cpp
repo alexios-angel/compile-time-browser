@@ -13,7 +13,7 @@
 // Plus the things a browser is simply expected to do: apply the UA stylesheet,
 // hit-test through scroll, and render the same bytes twice.
 
-import ctbrowser.core;
+#include <ctbrowser/core/core.hpp>
 import ctbrowser.dom;
 import ctbrowser.style;
 import ctbrowser.layout;

@@ -1,4 +1,3 @@
-module;
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -13,7 +12,8 @@ module;
 #include <utility>
 #include <vector>
 
-module ctbrowser.script;
+#include <ctbrowser/script/builtins.hpp>
+
 // The JavaScript standard library.
 //
 // the engine had NONE of this. The whole property surface was `.length`, numeric
