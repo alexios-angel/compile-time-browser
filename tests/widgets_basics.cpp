@@ -292,6 +292,112 @@ void test_selection_and_replacement() {
 
 // --- checkboxes, radios and forms -----------------------------------------
 
+// --- labels -----------------------------------------------------------------
+
+// Clicking a point rather than a box centre. The centre of a <label> that wraps
+// its control can land on the CONTROL, which would pass whether or not labels
+// work at all - the whole point is to hit the label's TEXT.
+void click_at(browser & page, float x, float y) {
+    (void)page.handle(input_event::mouse_down_at(x, y));
+    (void)page.handle(input_event::mouse_up_at(x, y));
+}
+
+// The IMPLICIT form, <label><input> text</label>, which is what widgets.html
+// uses for its checkboxes and radios. The control is a SIBLING of the clicked
+// text, so the upward walk that finds a control from a click can never see it -
+// clicking "large" used to blur whatever was focused and do nothing else.
+void test_clicking_label_text_activates_the_control() {
+    browser page{browser_options{400, 300}};
+    page.load_html("<html><body>"
+                   "<label id=la><input type=radio name=size id=s1 checked> small</label>"
+                   "<label id=lb><input type=radio name=size id=s2> large</label>"
+                   "</body></html>");
+    check(page.frame().has_value(), "the page renders");
+    check(checked_of(page, "s1"), "the first radio starts checked");
+
+    // The right-hand end of the second label's box is its text, well clear of
+    // the radio at the left-hand end.
+    const rect label = box_of(page, "lb");
+    const rect radio = box_of(page, "s2");
+    check(label.width > radio.width, "the label is wider than its control");
+    click_at(page, label.right() - 4, label.y + label.height / 2);
+
+    check(checked_of(page, "s2"), "clicking the label's TEXT checks the radio");
+    check(!checked_of(page, "s1"), "and the other radio in the group is cleared");
+    check(page.focused() == find_id(page, "s2"), "and the control takes focus");
+}
+
+// A checkbox toggles, so the same click twice must not land twice. This is the
+// guard on resolving a click only ONCE: a press on the control inside a label
+// finds it on the upward walk and must never also resolve through the label.
+void test_clicking_a_checkbox_inside_a_label_toggles_once() {
+    browser page{browser_options{400, 300}};
+    page.load_html("<html><body>"
+                   "<label id=l><input type=checkbox id=c> option one</label>"
+                   "</body></html>");
+    check(page.frame().has_value(), "the page renders");
+    check(!checked_of(page, "c"), "it starts unchecked");
+
+    const rect box = box_of(page, "c");
+    click_at(page, box.x + box.width / 2, box.y + box.height / 2);
+    check(checked_of(page, "c"), "clicking the box itself checks it");
+
+    const rect label = box_of(page, "l");
+    click_at(page, label.right() - 4, label.y + label.height / 2);
+    check(!checked_of(page, "c"), "and clicking its label text unchecks it again");
+}
+
+// The EXPLICIT form, <label for=id>. widgets.html labels its text fields this
+// way, so both have to work for that page to behave.
+void test_a_label_for_a_field_focuses_it_without_disturbing_it() {
+    browser page{browser_options{400, 300}};
+    page.load_html("<html><body>"
+                   "<label id=l for=name>name</label> <input type=text id=name value=ada>"
+                   "</body></html>");
+    check(page.frame().has_value(), "the page renders");
+
+    // Put the caret somewhere specific first, then click the label.
+    click(page, box_of(page, "name"));
+    check(page.handle(input_event::key_press("Home")), "Home is handled");
+    check(page.focused() == find_id(page, "name"), "the field is focused");
+
+    // Focus elsewhere so the click has something to move.
+    click_at(page, 2, 290);
+    const rect label = box_of(page, "l");
+    click_at(page, label.x + label.width / 2, label.y + label.height / 2);
+    check(page.focused() == find_id(page, "name"), "clicking the label focuses the field");
+
+    // ...and does NOT drop a caret wherever the label happened to be. The
+    // pointer was over the label's glyphs, not the value's.
+    const auto * state = page.control_state_of(find_id(page, "name"));
+    check(state != nullptr, "the field has state");
+    if (state != nullptr) {
+        check(state->caret == 0, "the caret is left where it was, not moved to the click");
+        check(state->selection == state->caret, "and no selection was begun");
+    }
+}
+
+// A `for` that names nothing labels NOTHING - it must not quietly fall back to
+// a control the label happens to contain. And a label around a disabled control
+// stays inert, because activate() already refuses those.
+void test_a_label_that_resolves_to_nothing_does_nothing() {
+    browser page{browser_options{400, 300}};
+    page.load_html("<html><body>"
+                   "<label id=l for=nosuch><input type=checkbox id=c> nope</label>"
+                   "<label id=d><input type=checkbox id=e disabled> off</label>"
+                   "</body></html>");
+    check(page.frame().has_value(), "the page renders");
+
+    const rect dangling = box_of(page, "l");
+    click_at(page, dangling.right() - 4, dangling.y + dangling.height / 2);
+    check(!checked_of(page, "c"), "an unresolvable for= does not fall back to a contained control");
+
+    const rect disabled = box_of(page, "d");
+    click_at(page, disabled.right() - 4, disabled.y + disabled.height / 2);
+    check(!checked_of(page, "e"), "and a label around a disabled control is inert");
+    check(page.focused() != find_id(page, "e"), "which also takes no focus");
+}
+
 void test_checkbox_toggles_on_click() {
     browser page{browser_options{400, 200}};
     page.load_html("<html><body><input id=c type=checkbox></body></html>");
@@ -697,6 +803,10 @@ int main() {
     test_editing_keys_do_not_scroll_the_page();
     test_selection_and_replacement();
 
+    test_clicking_label_text_activates_the_control();
+    test_clicking_a_checkbox_inside_a_label_toggles_once();
+    test_a_label_for_a_field_focuses_it_without_disturbing_it();
+    test_a_label_that_resolves_to_nothing_does_nothing();
     test_checkbox_toggles_on_click();
     test_radios_are_exclusive_within_a_name();
     test_form_submission_collects_successful_controls();

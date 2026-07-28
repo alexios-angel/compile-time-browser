@@ -592,6 +592,16 @@ private:
         // the rest are scrolled to rather than grown into. At least one, or a
         // box too short for a single line could never show the caret.
         std::size_t visible_lines = 1;
+        // THE EFFECTIVE VIEW ORIGIN - control_state's, clamped to what the
+        // value and the box currently are. Everything that draws or hit-tests
+        // reads these rather than the stored ones, so a scroll left stale by a
+        // shrinking value, a scripted `el.value =`, or a resize that rewraps to
+        // fewer lines can never be OBSERVED: it is corrected here, once, where
+        // the geometry is derived. The stored value is only ever a request.
+        std::size_t scroll_line = 0;
+        float scroll_x = 0;
+        // The widest line, which is how far right there is to scroll.
+        float content_width = 0;
     };
 
     [[nodiscard]] field_layout layout_of_field(const rect & box, node_id id,
@@ -615,6 +625,23 @@ private:
                                 ? std::max<std::size_t>(1, static_cast<std::size_t>(
                                                                out.inner.height / out.line_height))
                                 : 1;
+        // Clamp the requested view to what there is to look at.
+        const std::size_t most =
+            out.lines.size() > out.visible_lines ? out.lines.size() - out.visible_lines : 0;
+        out.scroll_line = std::min(control.scroll_line, most);
+        // The WIDEST line, not the current one: a field scrolls its content as
+        // a whole, so moving between a long line and a short one must not jerk
+        // the view sideways.
+        for (const auto & [begin, end] : out.lines) {
+            const std::string_view line{control.value.data() + begin, end - begin};
+            out.content_width = std::max(
+                out.content_width, measure()(shown(line, out.masked), out.size, out.metrics_face));
+        }
+        // `+ 1` because the caret is a 1px bar drawn AT the caret's x: without
+        // the extra pixel a caret at the very end of the value sits exactly on
+        // the clip's right edge and is invisible.
+        out.scroll_x = std::clamp(control.scroll_x, 0.0f,
+                                  std::max(0.0f, out.content_width + 1 - out.inner.width));
         return out;
     }
 
@@ -648,7 +675,7 @@ private:
         // pointed.
         const auto line_index =
             static_cast<std::ptrdiff_t>(std::floor((y - geometry.inner.y) / geometry.line_height)) +
-            static_cast<std::ptrdiff_t>(control.scroll_line);
+            static_cast<std::ptrdiff_t>(geometry.scroll_line);
         const std::size_t index = static_cast<std::size_t>(std::clamp<std::ptrdiff_t>(
             line_index, 0, static_cast<std::ptrdiff_t>(geometry.lines.size()) - 1));
         const auto [begin, end] = geometry.lines[index];
@@ -657,7 +684,13 @@ private:
         // Nearest BOUNDARY, not nearest character: clicking the right half of a
         // glyph puts the caret after it, which is what makes clicking at the
         // end of a word land where you meant.
-        const float want = x - geometry.inner.x;
+        //
+        // `+ scroll_x` puts the click back into VALUE space: `where` below is
+        // measured from the start of the line, `x` arrives in box space, and
+        // the scroll is exactly the difference. Same sign convention as the
+        // `+ scroll_line` above, and the exact inverse of the `- dx` the
+        // painter applies.
+        const float want = x - geometry.inner.x + geometry.scroll_x;
         std::size_t best = 0;
         float best_distance = std::numeric_limits<float>::infinity();
         for (std::size_t at = 0; at <= line.size();
@@ -715,18 +748,44 @@ private:
         return true;
     }
 
-    // Scroll a textarea the MINIMUM needed to put the caret's line back in
-    // view. Called after anything that moves the caret or changes the value -
-    // typing off the bottom of a box that cannot grow is otherwise typing into
-    // somewhere you cannot see.
+    // THREE THINGS MOVE A FIELD'S VIEW, and they must never run on the same
+    // event or they fight each other. Every bug in this area is a violation of
+    // this split, so it is written here once:
+    //
+    //   1. The CARET moves and the view follows - typing, editing keys, paste,
+    //      cut, select-all, `el.value =`. That is reveal_caret, below. The
+    //      caret drives.
+    //   2. The USER moves the view directly - the wheel. The scroll moves and
+    //      the caret does NOT; it is left off screen if that is where it was,
+    //      which is what every browser does. Nothing re-reveals here: calling
+    //      reveal_caret on a wheel would snap the view straight back and make
+    //      the wheel useless. The next keystroke brings it back, by rule 1.
+    //   3. AUTO-SCROLL during a drag - the scroll steps and the caret is then
+    //      re-derived from where the pointer is. The view drives.
+
+    // Scroll a field the MINIMUM needed to bring the caret back into view, in
+    // BOTH axes. Called after anything that moves the caret or changes the
+    // value - typing off the edge of a box that cannot grow is otherwise typing
+    // into somewhere you cannot see.
+    //
+    // Both axes for both kinds. The vertical half is a natural no-op for a
+    // single-line field, which has exactly one line; the horizontal half is NOT
+    // a no-op for a textarea, because an unbreakable word longer than the line
+    // overflows sideways there too.
     void reveal_caret(node_id id, control_state & control, control_kind kind) {
-        if (kind != control_kind::textarea) { return; }
+        if (kind != control_kind::text && kind != control_kind::textarea) { return; }
         const rect box = viewport_box_of(id);
         if (box.empty()) { return; }
         const field_layout geometry = layout_of_field(box, id, control, kind);
+        if (geometry.lines.empty()) { return; }
         const std::size_t on_line = caret_line(geometry, control.caret);
+        bool moved = false;
+
+        // --- vertical ---
         const std::size_t visible = std::max<std::size_t>(1, geometry.visible_lines);
-        std::size_t first = control.scroll_line;
+        // From the EFFECTIVE origin, not the stored one, so this converges on
+        // the clamp in layout_of_field instead of arguing with it.
+        std::size_t first = geometry.scroll_line;
         if (on_line < first) {
             first = on_line;
         } else if (on_line >= first + visible) {
@@ -737,9 +796,36 @@ private:
         const std::size_t most =
             geometry.lines.size() > visible ? geometry.lines.size() - visible : 0;
         first = std::min(first, most);
-        if (first == control.scroll_line) { return; }
-        control.scroll_line = first;
-        mark(dirty::paint);
+        if (first != control.scroll_line) {
+            control.scroll_line = first;
+            moved = true;
+        }
+
+        // --- horizontal ---
+        const auto [begin, end] = geometry.lines[on_line];
+        const std::string_view line{control.value.data() + begin, end - begin};
+        const auto advance = [&](std::size_t upto) {
+            return measure()(shown(line.substr(0, upto), geometry.masked), geometry.size,
+                             geometry.metrics_face);
+        };
+        const float caret_x = advance(control.caret >= begin ? control.caret - begin : 0);
+        float scroll = geometry.scroll_x;
+        // A pixel of slack on the right so the caret bar itself is inside the
+        // box rather than drawn on its edge.
+        if (caret_x < scroll) {
+            scroll = caret_x;
+        } else if (caret_x > scroll + geometry.inner.width - 1) {
+            scroll = caret_x - geometry.inner.width + 1;
+        }
+        // ...and never scrolled past the end of the content, for the same
+        // reason as `most` above: a shrinking value must not leave an empty box.
+        scroll = std::clamp(scroll, 0.0f,
+                            std::max(0.0f, geometry.content_width + 1 - geometry.inner.width));
+        if (scroll != control.scroll_x) {
+            control.scroll_x = scroll;
+            moved = true;
+        }
+        if (moved) { mark(dirty::paint); }
     }
 
     // Home and End are per LINE in a textarea, as they are in every editor.
@@ -772,9 +858,21 @@ private:
             return measure()(shown(text, geometry.masked), size, geometry.metrics_face);
         };
 
+        // Scrolled out to the left. Subtracted from every x below; offset_at_point
+        // adds the same number back, and those two must always agree - it is
+        // what the one-place-for-geometry rule exists to protect.
+        const float dx = geometry.scroll_x;
+
         // The field clips its own contents: a value longer than the box must not
-        // paint over the page beside it.
-        into.push_clip(box);
+        // paint over the page beside it. Clipped to the inner box HORIZONTALLY,
+        // because a run's rect width does not bound it - the clip is the only
+        // thing that does - so with a scroll offset the glyphs would otherwise
+        // slide into the padding gutter and under the border.
+        //
+        // Vertically it stays the full BOX. `inner` is six pixels shorter, and
+        // clipping to that shaves the descenders off the bottom row and cuts
+        // the caret's line-height bar short.
+        into.push_clip(rect{inner.x, box.y, inner.width, box.height});
         const std::size_t from = std::min(control.caret, control.selection);
         const std::size_t to = std::max(control.caret, control.selection);
         // Where the caret is, decided ONCE. Drawn per-line without this, a
@@ -784,7 +882,7 @@ private:
         // Lines above the scroll offset are not drawn at all, and the rest are
         // positioned relative to it. This and offset_at_point below must agree,
         // which is the whole reason the geometry lives in one place.
-        const std::size_t first = std::min(control.scroll_line, geometry.lines.size());
+        const std::size_t first = geometry.scroll_line;
         for (std::size_t index = first; index < geometry.lines.size(); ++index) {
             const auto [begin, end] = geometry.lines[index];
             const std::string_view line{control.value.data() + begin, end - begin};
@@ -795,19 +893,26 @@ private:
             if (from != to && from < end && to > begin) {
                 const std::size_t a = std::max(from, begin) - begin;
                 const std::size_t b = std::min(to, end) - begin;
-                into.fill(rect{inner.x + advance(line.substr(0, a)), y,
+                into.fill(rect{inner.x - dx + advance(line.substr(0, a)), y,
                                advance(line.substr(a, b - a)), line_height},
                           color{ctbrowser::style::ua_selection_highlight}, id);
             }
             if (!line.empty()) {
-                into.text(rect{inner.x, y, inner.width, line_height}, shown(line, geometry.masked),
-                          size, control_text_colour(id, style), id, face);
+                // The rect's WIDTH is the run's true advance, not the box's.
+                // Nothing clips a glyph to it - both backends read only
+                // `where.x`/`where.y` - but display_list::intersecting culls by
+                // these bounds per tile, so a rect narrower than the glyphs
+                // drops the whole run in a tile it visibly covers. It is also
+                // what an underline band is measured against.
+                into.text(rect{inner.x - dx, y, advance(line), line_height},
+                          shown(line, geometry.masked), size, control_text_colour(id, style), id,
+                          face);
             }
             // The caret sits on the line CONTAINING it - see caret_line(),
             // which puts a caret on a boundary at the end of the earlier line,
             // as browsers do.
             if (focused && caret_visible() && index == on_line) {
-                into.fill(rect{inner.x + advance(line.substr(0, control.caret - begin)), y, 1,
+                into.fill(rect{inner.x - dx + advance(line.substr(0, control.caret - begin)), y, 1,
                                line_height},
                           control_text_colour(id, style), id);
             }
@@ -1004,7 +1109,10 @@ private:
     // The highlighted part of one text fragment, in the fragment's own space.
     [[nodiscard]] rect highlight_for(const ctbrowser::layout::fragment & f);
 
+    // Copy / Cut / Paste / Select All. The wrapper reveals the caret afterwards
+    // whatever the verb did; `clipboard_verb` is the verb itself.
     void run_clipboard_verb(std::string_view verb);
+    void clipboard_verb(std::string_view verb);
 
     bool handle_key(const input_event & event);
 
@@ -1029,9 +1137,35 @@ private:
 
     [[nodiscard]] control_kind kind_of(const read_txn & txn, node_id id);
 
+    // The element with this `id`, or nothing. One walk, because there were
+    // three: the bindings' getElementById, scroll_to_fragment's own copy, and a
+    // test helper.
+    [[nodiscard]] node_id node_by_id(const read_txn & txn, std::string_view want);
+
+    // The control a <label> labels, per HTML: its `for` attribute resolved by
+    // id, or failing that the FIRST labelable element inside it.
+    //
+    // `from` is where the click landed, which for label text is the TEXT NODE -
+    // hit testing returns the deepest fragment's source, never the <label>
+    // itself - so this walks up to the enclosing label first.
+    //
+    // LABELABLE is exactly "is a control": control_kind_of already maps
+    // `input type=hidden` to none, so HTML's notion falls out of what is here
+    // rather than needing a second list to keep in step.
+    [[nodiscard]] node_id labelled_control(const read_txn & txn, node_id from);
+
     // The control a click landed in. A click on the text inside a <button> has
-    // to focus the button, not the text node.
+    // to focus the button, not the text node - and a click on a <label>'s text
+    // has to reach the control that label names, which is a SIBLING of the text
+    // rather than an ancestor of it, so the upward walk alone cannot find it.
     [[nodiscard]] node_id control_ancestor(node_id from);
+
+    // Whether `from` reaches its control only THROUGH a label. A label click
+    // focuses and activates, but must not place a caret or begin a selection:
+    // the pointer is over the label's text, nowhere near the field's glyphs,
+    // so mapping the click through offset_at_point would put the caret at
+    // whichever end of the value the label happened to sit on.
+    [[nodiscard]] bool via_label(node_id from);
 
     bool focus(node_id id);
 

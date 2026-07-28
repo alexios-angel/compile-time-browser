@@ -330,6 +330,11 @@ bool browser::handle(const input_event & event) {
             const std::size_t at = offset_at_point(field_selecting_, state, kind, event.x, event.y);
             if (at != state.caret) {
                 state.caret = at;
+                // Rule 1 while the pointer is still INSIDE the box: the caret
+                // leads and the view follows it. Once the pointer leaves, rule
+                // 3 takes over in tick() and the view leads instead - the two
+                // must never both run, or they oscillate.
+                reveal_caret(field_selecting_, state, kind);
                 restart_caret_blink();
                 mark(dirty::paint);
             }
@@ -402,10 +407,20 @@ bool browser::handle(const input_event & event) {
             if (kind == control_kind::text || kind == control_kind::textarea) {
                 clear_selection();
                 (void)focus(control); // before placing the caret: focus clears it
-                control_state & state = forms_.state_of(txn, atoms_, control);
-                state.caret = offset_at_point(control, state, kind, event.x, event.y);
-                state.selection = state.caret;
-                field_selecting_ = control;
+                // A click that reached the field through its LABEL focuses it
+                // and stops there. The pointer is over the label's text, not
+                // over any glyph of the value, so mapping it through
+                // offset_at_point would drop the caret at whichever end the
+                // label sits on and begin a drag-selection from there.
+                if (!via_label(pressed_)) {
+                    control_state & state = forms_.state_of(txn, atoms_, control);
+                    state.caret = offset_at_point(control, state, kind, event.x, event.y);
+                    state.selection = state.caret;
+                    field_selecting_ = control;
+                    // Clicking near an edge of a scrolled field nudges the view
+                    // so the caret you just placed is actually on screen.
+                    reveal_caret(control, state, kind);
+                }
                 restart_caret_blink();
                 mark(dirty::paint);
             } else if (kind == control_kind::none) {
@@ -1091,6 +1106,18 @@ rect browser::highlight_for(const ctbrowser::layout::fragment & f) {
 }
 
 void browser::run_clipboard_verb(std::string_view verb) {
+    clipboard_verb(verb);
+    // EVERY verb that acts on a field moves its caret - Select All to the end
+    // of the value, Paste to past what it inserted, Cut back to where the
+    // deletion started - and none of them did anything about the view, so a
+    // paste into a scrolled field left the caret off screen. One place rather
+    // than three returns, so a verb added later cannot forget.
+    if (control_state * control = editable_focus(); control != nullptr) {
+        reveal_caret(focused_, *control, kind_of(doc_->read(), focused_));
+    }
+}
+
+void browser::clipboard_verb(std::string_view verb) {
     control_state * control = editable_focus();
     if (verb == "Select All") {
         if (control != nullptr) {
@@ -1264,13 +1291,79 @@ control_kind browser::kind_of(const read_txn & txn, node_id id) {
                            txn.attribute_value(id, atoms_.intern("type")));
 }
 
+node_id browser::node_by_id(const read_txn & txn, std::string_view want) {
+    if (want.empty()) { return node_id{}; }
+    const atom key = atoms_.intern("id");
+    node_id found{};
+    const auto walk = [&](auto && self, node_id at) -> void {
+        if (found) { return; }
+        if (txn.attribute_value(at, key) == want) {
+            found = at;
+            return;
+        }
+        for (const node_id child : txn.children(at)) { self(self, child); }
+    };
+    walk(walk, txn.root());
+    return found;
+}
+
+node_id browser::labelled_control(const read_txn & txn, node_id from) {
+    if (!from) { return node_id{}; }
+    const atom label_tag = atoms_.intern_lower("label");
+    node_id label;
+    for (node_id at = from; at; at = txn.parent(at)) {
+        if (txn.tag(at).value_or(atom{}) == label_tag) {
+            label = at;
+            break;
+        }
+    }
+    if (!label) { return node_id{}; }
+
+    // `for` wins when it is there, even if it names nothing - an explicit
+    // reference that does not resolve labels NOTHING, rather than quietly
+    // falling back to whatever the label happens to contain.
+    const std::string_view target = txn.attribute_value(label, atoms_.intern("for"));
+    if (!target.empty()) {
+        const node_id named = node_by_id(txn, target);
+        return kind_of(txn, named) != control_kind::none ? named : node_id{};
+    }
+
+    // Otherwise the first labelable DESCENDANT, in document order. The label
+    // itself cannot be the answer - a <label> is not a control - so the walk
+    // starts at its children.
+    node_id found{};
+    const auto walk = [&](auto && self, node_id at) -> void {
+        if (found) { return; }
+        if (at != label && kind_of(txn, at) != control_kind::none) {
+            found = at;
+            return;
+        }
+        for (const node_id child : txn.children(at)) { self(self, child); }
+    };
+    walk(walk, label);
+    return found;
+}
+
 node_id browser::control_ancestor(node_id from) {
     if (!from) { return node_id{}; }
     const auto txn = doc_->read();
     for (node_id at = from; at; at = txn.parent(at)) {
         if (kind_of(txn, at) != control_kind::none) { return at; }
     }
-    return node_id{};
+    // Nothing up the tree IS a control, so the click may still be on a label
+    // FOR one. Second, not first: a press on the control inside a label finds
+    // it on the walk above and never reaches here, so a click can never resolve
+    // twice and toggle a checkbox back off again.
+    return labelled_control(txn, from);
+}
+
+bool browser::via_label(node_id from) {
+    if (!from) { return false; }
+    const auto txn = doc_->read();
+    for (node_id at = from; at; at = txn.parent(at)) {
+        if (kind_of(txn, at) != control_kind::none) { return false; }
+    }
+    return static_cast<bool>(labelled_control(txn, from));
 }
 
 bool browser::focus(node_id id) {
@@ -1511,16 +1604,7 @@ void browser::scroll_to_fragment(std::string_view id) {
     node_id target;
     {
         const auto txn = doc_->read();
-        const atom key = atoms_.intern("id");
-        const auto walk = [&](auto && self, node_id at) -> void {
-            if (target) { return; }
-            if (txn.attribute_value(at, key) == id) {
-                target = at;
-                return;
-            }
-            for (const node_id child : txn.children(at)) { self(self, child); }
-        };
-        walk(walk, txn.root());
+        target = node_by_id(txn, id);
     }
     if (!target) { return; }
     // Fragment bounds are relative to the containing block, so finding the

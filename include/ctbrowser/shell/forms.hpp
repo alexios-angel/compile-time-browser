@@ -54,11 +54,22 @@ struct control_state {
     std::size_t selection = 0; // anchor; equal to caret means no selection
     bool checked = false;
     bool value_edited = false; // once true, the `value` attribute stops being the answer
+    // WHERE THE FIELD IS LOOKING. A control's value can be bigger than the box
+    // it is drawn in, in either direction, and these say which part of it is on
+    // screen. View state, so it belongs here beside the caret rather than on
+    // the node - the node is document content.
+    //
     // The first VISUAL line a textarea shows. A textarea is sized by its `rows`
     // and does not grow, so once its value wraps past the bottom the caret
-    // would type off the end of a box that cannot show it. View state, so it
-    // belongs here beside the caret rather than on the node.
+    // would type off the end of a box that cannot show it.
     std::size_t scroll_line = 0;
+    // How far right the view has moved, in PIXELS rather than characters: the
+    // painter and the click mapping both work in pixels against measure(), and
+    // a character offset would quantise the scroll so a caret at the right edge
+    // could never sit flush against it. Applies to a textarea too - an
+    // unbreakable word longer than the line is returned whole by
+    // words_that_fit, so a wrapped field can still overflow sideways.
+    float scroll_x = 0;
 };
 
 class form_store {

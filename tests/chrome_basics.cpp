@@ -594,6 +594,93 @@ void test_a_textarea_scrolls_to_keep_the_caret_visible() {
     check(scroll_of() == 0, "and moving back up scrolls it home again");
 }
 
+// --- a field scrolls to keep the caret in view ------------------------------
+
+[[nodiscard]] float scroll_x_of(browser & page, std::string_view id) {
+    const auto * state = page.control_state_of(find_id(page, id));
+    return state == nullptr ? 0 : state->scroll_x;
+}
+[[nodiscard]] std::size_t scroll_line_of(browser & page, std::string_view id) {
+    const auto * state = page.control_state_of(find_id(page, id));
+    return state == nullptr ? 0 : state->scroll_line;
+}
+
+// A single-line <input> never scrolled sideways: the value ran off the clip and
+// the caret went with it, so you could not see what you were typing.
+void test_a_single_line_field_scrolls_horizontally() {
+    browser page{browser_options{400, 200}};
+    page.load_html("<body><input type=text id=t size=8></body>");
+    check(page.frame().has_value(), "the page renders");
+    const rect box = box_of(page, "t");
+    click(page, box.x + 4, box.y + box.height / 2);
+    check(page.focused() == find_id(page, "t"), "the field is focused");
+    check(scroll_x_of(page, "t") == 0, "it starts unscrolled");
+
+    check(page.text_input("the quick brown fox jumps over the lazy dog"), "typing is accepted");
+    (void)page.frame();
+    check(scroll_x_of(page, "t") > 0, "typing past the right edge scrolls the view");
+    // ...and the caret came with it. caret_bars only counts bars strictly
+    // INSIDE the box, so this is exactly the "can I see what I am typing" test.
+    check(caret_bars(page, "t").size() == 1, "and the caret is still visible");
+
+    (void)page.handle(input_event::key_press("Home"));
+    (void)page.frame();
+    check(scroll_x_of(page, "t") == 0, "Home scrolls back to the start");
+    check(caret_bars(page, "t").size() == 1, "with the caret visible there too");
+}
+
+// The painter subtracts the scroll and the click mapping adds it back. Get the
+// sign wrong in either and they disagree by twice the scroll.
+void test_clicking_a_scrolled_field_lands_where_you_pointed() {
+    browser page{browser_options{400, 200}};
+    page.load_html("<body><input type=text id=t size=8></body>");
+    check(page.frame().has_value(), "the page renders");
+    const rect box = box_of(page, "t");
+    click(page, box.x + 4, box.y + box.height / 2);
+    check(page.text_input("abcdefghijklmnopqrstuvwxyz"), "typing is accepted");
+    (void)page.frame();
+    check(scroll_x_of(page, "t") > 0, "the field is scrolled");
+
+    // Click at the left inside edge: that is the first character still visible,
+    // which is NOT offset 0 - it is wherever the scroll starts.
+    click(page, box.x + 7, box.y + box.height / 2);
+    (void)page.frame();
+    const std::size_t at = caret_of(page, "t");
+    check(at > 0, "clicking a scrolled field does not snap back to the start");
+    check(at < 26, "nor to the end");
+
+    // And the caret it produced is drawn near where the click was, rather than
+    // a scroll's width away from it.
+    const auto bars = caret_bars(page, "t");
+    check(bars.size() == 1, "one caret is drawn");
+    if (bars.size() == 1) {
+        check(std::fabs(bars[0].x - (box.x + 7)) < 12,
+              "and it is drawn at the point that was clicked");
+    }
+}
+
+// The stale-scroll class, killed by clamping the view where the geometry is
+// derived rather than chasing every writer of the value.
+void test_a_shrinking_value_does_not_leave_an_empty_field() {
+    browser page{browser_options{400, 200}};
+    page.load_html("<body><textarea id=t rows=2 cols=12></textarea>"
+                   "<script>function shrink() {"
+                   "  document.getElementById('t').value = 'hi';"
+                   "}</script></body>");
+    check(page.frame().has_value(), "the page renders");
+    const rect box = box_of(page, "t");
+    click(page, box.x + 4, box.y + 6);
+    check(page.text_input("aaa bbb ccc ddd eee fff ggg hhh iii jjj"), "typing is accepted");
+    (void)page.frame();
+    check(scroll_line_of(page, "t") > 0, "the textarea scrolled down");
+
+    // Script replaces the value with something that fits on one line. The
+    // stored scroll is now far past the end.
+    check(page.run_script("shrink();"), "the script ran");
+    (void)page.frame();
+    check(draws_text(page, "hi"), "the new value is drawn rather than an empty box");
+}
+
 void test_the_caret_blinks() {
     browser_options options{400, 200};
     options.caret_blink_ms = 500;
@@ -1593,6 +1680,9 @@ int main() {
     test_a_soft_wrapped_textarea_shows_exactly_one_caret();
     test_clicking_the_second_visual_line_of_a_wrapped_textarea();
     test_a_textarea_scrolls_to_keep_the_caret_visible();
+    test_a_single_line_field_scrolls_horizontally();
+    test_clicking_a_scrolled_field_lands_where_you_pointed();
+    test_a_shrinking_value_does_not_leave_an_empty_field();
     test_the_caret_blinks();
     test_a_blink_does_not_relayout();
     test_the_page_asks_for_a_frame_when_the_caret_blinks();
