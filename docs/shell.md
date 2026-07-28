@@ -145,9 +145,91 @@ and `reveal_caret()` moves it the minimum needed to keep the caret in view —
 called from the two places that can move a caret, `handle_key` and `text_input`.
 The painter draws from that offset and `offset_at_point` adds it back; those two
 must move together, which is the whole reason the geometry lives in one place.
-Still out of scope, and deliberately: horizontal scrolling for a single-line
-`<input>` (it clips, as it always has), a visible scrollbar on the textarea,
-wheel-scrolling a hovered one, and `wrap="off"`.
+**A FIELD'S VIEW IS A FIRST-CLASS THING, IN BOTH AXES (2026-07-28).**
+`control_state` carries `scroll_line` and `scroll_x` — the latter in PIXELS, not
+characters, because the painter and the click mapping both work in pixels
+against `measure()` and a character offset would quantise the scroll so a caret
+at the right edge could never sit flush. Both axes apply to both kinds: a
+textarea overflows sideways too, since `words_that_fit` returns an over-long
+unbreakable word whole.
+
+**THREE THINGS MOVE THAT VIEW and they must never run on the same event**, or
+they oscillate. The rule is written at `reveal_caret` and every bug in this area
+is a violation of it:
+
+1. **The caret drives** — typing, editing keys, the clipboard verbs, `el.value=`.
+   `reveal_caret` moves the scroll the minimum needed to show the caret.
+2. **The user drives** — the wheel. The scroll moves and the caret does NOT; it
+   is left off screen if that is where it was. Nothing re-reveals here, and a
+   test pins that: adding a well-meaning `reveal_caret` to the wheel path snaps
+   the view back on every notch and makes the wheel useless.
+3. **The drag drives** — auto-scroll. The scroll steps and the caret is then
+   re-derived from where the pointer is.
+
+The consequence, which is what a browser does: wheel away from the caret and it
+stays out of view until the next keystroke, when rule 1 brings it back.
+
+**Stale scroll is impossible by construction rather than by discipline.**
+`field_layout` carries the EFFECTIVE origin — `control_state`'s, clamped against
+the freshly-wrapped lines — and everything that draws or hit-tests reads that
+rather than the stored number, which is only ever a request. So a scroll left
+behind by a shrinking value, a scripted `el.value =`, or a resize that rewraps
+to fewer lines cannot be observed. Chasing the writers was the alternative and
+it is unwinnable: `form_store::set_value` is reached from the bindings' control
+refresh, which has no access to the geometry and never will.
+
+**The wheel goes to the field under the pointer** and falls through to the page
+once that field is at its end — otherwise a textarea at its last line swallows
+every notch and the page looks stuck. This needed a pointer position on the
+wheel event, which it never had: `wheel_at` carries one and `wheel_by` remains
+for the headless case. It is taken from the host's TRACKED pointer rather than
+SDL's `wheel.mouse_x`, because `SDL_ConvertEventToRenderCoordinates` documents
+itself as converting mouse, touch and pen and does not name the wheel's — and an
+unconverted position is wrong by the letterbox factor, which is a bug the
+pointer events already had once. PageUp/PageDown belong to a focused textarea
+for the same reason.
+
+**Auto-scroll while drag-selecting** runs off `tick()` on the caret blink's
+shape — the one clock, a due time, a `next_wakeup_ms` contribution — because a
+pointer held still outside the box produces no events at all, and
+`offset_at_point` clamps to what the value has, so the selection would freeze
+one line short for ever. The rate rises with distance
+(`autoscroll_ms / (1 + d / autoscroll_ramp_px)`, floored). The wakeup is
+contributed **only while a step can actually happen**: at the scroll's limit it
+reports nothing, or an idle loop with the pointer parked below a fully-scrolled
+field would spin at the step interval. `tick` runs a LOOP, so one long tick
+performs every step it covers rather than silently making the rate the frame
+rate. A reload clears the in-flight drag, since those are handles into a slab
+that has just been rebuilt.
+
+Still out of scope, and deliberately: a visible scrollbar on the textarea,
+`wrap="off"`, horizontal wheel, and auto-scroll for the PAGE selection drag
+(dragging below the viewport while selecting page text) — the machinery here
+would serve it, but wiring it is a separate change.
+
+**A `<label>` ACTIVATES ITS CONTROL (2026-07-28).** It was unsupported
+outright — not a `control_kind`, `for` never interned, no UA rule.
+`control_ancestor` walks strictly UPWARD, and in
+`<label><input type=radio> small</label>` the control is a SIBLING of the
+clicked text (hit testing returns the deepest fragment's source, which is the
+DOM text node), so the walk found nothing and clicking the word *blurred*
+whatever was focused. `labelled_control` resolves the nearest label ancestor:
+`for` by id if present, else the first labelable descendant — where labelable is
+exactly `control_kind_of(...) != none`, which already maps `input type=hidden`
+to none, so HTML's notion falls out rather than needing a second list to keep in
+step. `control_ancestor` falls back to it, which fixes focus, the caret and
+every arm of `activate()` at once, since all of them re-derive through it.
+
+A `for` naming nothing labels NOTHING — no quiet fallback to a control the label
+happens to contain. Resolution happens ONCE: a press on the control inside a
+label finds it on the upward walk and never reaches the fallback, so a checkbox
+cannot toggle twice. And a label for a TEXT field focuses it and stops —
+`via_label` is the test — because the pointer is over the label's glyphs, so
+mapping the click through `offset_at_point` would drop the caret at whichever
+end of the value the label sat on and start a drag from there.
+
+**No UA rule was added**, deliberately: `label` is already inline by default,
+and a UA declaration is the one thing here that could move `widgets.ppm`.
 
 **TAB MOVES FOCUS (2026-07-28).** It reached the browser as DOM code `"Tab"`
 and nothing claimed it, so focus never moved. `focus_next()` walks

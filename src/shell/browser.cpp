@@ -206,6 +206,12 @@ double browser::next_wakeup_ms() {
             std::min(soonest, since < options_.caret_blink_ms ? options_.caret_blink_ms - since
                                                               : period - since);
     }
+    // Only while a step is actually DUE TO HAPPEN - autoscroll_now() reports
+    // nothing once the view has hit its limit, so a pointer parked below a
+    // fully-scrolled field costs no wakeups at all.
+    if (autoscroll_now().live()) {
+        soonest = std::min(soonest, std::max(0.0, autoscroll_due_ms_ - caret_clock_ms_));
+    }
     return soonest;
 }
 
@@ -219,6 +225,25 @@ bool browser::caret_visible() const noexcept {
 std::size_t browser::tick(double elapsed_ms) {
     const bool was_visible = caret_visible();
     caret_clock_ms_ += elapsed_ms;
+    // Auto-scroll steps that came due.
+    autoscroll_state at = autoscroll_now();
+    if (!at.live()) {
+        // Idle: keep the due time pinned to now. Letting it fall behind while
+        // nothing is scrolling would make the moment it ARMS fire one step for
+        // every interval it sat idle - a drag that pauses in the middle of a
+        // field and then leaves it would jump instead of creeping.
+        autoscroll_due_ms_ = caret_clock_ms_;
+    }
+    // A LOOP, not a single step: one tick covering half a second must perform
+    // every step that fits in it, or the scroll rate silently becomes the frame
+    // rate. It terminates because each step moves the view towards a limit and
+    // autoscroll_now() reports nothing once it is there. The interval is
+    // re-read each time, so dragging further away speeds it up mid-tick.
+    while (at.live() && caret_clock_ms_ >= autoscroll_due_ms_) {
+        autoscroll_step(at);
+        autoscroll_due_ms_ += autoscroll_interval_ms(at.below != 0 ? at.below : at.beside);
+        at = autoscroll_now();
+    }
     // Only the CARET changed, so only the paint is stale - a blink must not
     // re-run layout, which is what made the previous engine lay the page out every frame.
     if (focused_ && caret_visible() != was_visible) { mark(dirty::paint); }
@@ -308,8 +333,23 @@ float browser::max_scroll() const noexcept {
 }
 
 bool browser::handle(const input_event & event) {
+    // Remembered for anything that has to keep aiming at the pointer after the
+    // events stop - the drag auto-scroll, which runs off tick() and is handed
+    // no coordinates of its own.
+    if (event.kind == input_kind::mouse_move || event.kind == input_kind::mouse_down ||
+        event.kind == input_kind::mouse_up ||
+        (event.kind == input_kind::wheel && event.has_pointer)) {
+        pointer_ = point{event.x, event.y};
+        have_pointer_ = true;
+    }
     switch (event.kind) {
-    case input_kind::wheel: scroll_by(-event.wheel_y * options_.wheel_step); return true;
+    case input_kind::wheel:
+        // The field under the pointer takes the notch first, and only what it
+        // cannot use falls through to the page - which is what makes a textarea
+        // at its last line stop swallowing the wheel.
+        if (scroll_field_under(event)) { return true; }
+        scroll_by(-event.wheel_y * options_.wheel_step);
+        return true;
     case input_kind::mouse_move: {
         if (sb_dragging_) {
             // The grab offset is kept so the thumb does not jump to centre
@@ -549,6 +589,13 @@ void browser::run_scripts() {
     canvases_.clear();
     forms_.clear();
     focused_ = node_id{};
+    // The in-flight drag goes with the document. These are HANDLES into a slab
+    // that has just been rebuilt, and forms_.state_of would happily seed fresh
+    // state for a stale one - a page that reloads mid-drag would otherwise keep
+    // auto-scrolling a field that no longer exists.
+    field_selecting_ = node_id{};
+    pressed_ = node_id{};
+    selecting_ = false;
     bindings_ = std::make_unique<dom_bindings>(
         *doc_, atoms_, canvases_, forms_, [this] { mark(dirty::paint); },
         [this](node_id id) { (void)focus(id); });
@@ -1416,6 +1463,117 @@ std::vector<node_id> browser::focusable_controls() {
     return out;
 }
 
+browser::autoscroll_state browser::autoscroll_now() {
+    autoscroll_state out;
+    if (!field_selecting_ || !have_pointer_ || options_.autoscroll_ms <= 0) { return out; }
+    const rect box = viewport_box_of(field_selecting_);
+    if (box.empty()) { return out; }
+    const auto txn = doc_->read();
+    if (!txn.contains(field_selecting_)) { return out; }
+    const control_kind kind = kind_of(txn, field_selecting_);
+    control_state & state = forms_.state_of(txn, atoms_, field_selecting_);
+    const field_layout geometry = layout_of_field(box, field_selecting_, state, kind);
+
+    // How far outside, per axis. Inside on an axis means no motion on it, so a
+    // drag straight down does not also creep sideways.
+    const float below = pointer_.y > box.bottom() ? pointer_.y - box.bottom()
+                        : pointer_.y < box.y      ? pointer_.y - box.y
+                                                  : 0;
+    const float beside = pointer_.x > box.right() ? pointer_.x - box.right()
+                         : pointer_.x < box.x     ? pointer_.x - box.x
+                                                  : 0;
+
+    // ...and only where the view can still MOVE that way. Without this the
+    // wakeup below is scheduled forever and an idle loop with the pointer
+    // parked below a fully-scrolled field spins at the step interval.
+    const std::size_t most = geometry.lines.size() > geometry.visible_lines
+                                 ? geometry.lines.size() - geometry.visible_lines
+                                 : 0;
+    if ((below > 0 && geometry.scroll_line < most) || (below < 0 && geometry.scroll_line > 0)) {
+        out.below = below;
+    }
+    const float widest = std::max(0.0f, geometry.content_width + 1 - geometry.inner.width);
+    if ((beside > 0 && geometry.scroll_x < widest) || (beside < 0 && geometry.scroll_x > 0)) {
+        out.beside = beside;
+    }
+    if (out.below != 0 || out.beside != 0) { out.field = field_selecting_; }
+    return out;
+}
+
+double browser::autoscroll_interval_ms(float distance) const {
+    const float d = std::fabs(distance);
+    const double ramp = options_.autoscroll_ramp_px > 0
+                            ? 1.0 + static_cast<double>(d) / options_.autoscroll_ramp_px
+                            : 1.0;
+    return std::max(options_.autoscroll_min_ms, options_.autoscroll_ms / ramp);
+}
+
+void browser::autoscroll_step(const autoscroll_state & at) {
+    const rect box = viewport_box_of(at.field);
+    if (box.empty()) { return; }
+    const auto txn = doc_->read();
+    const control_kind kind = kind_of(txn, at.field);
+    control_state & state = forms_.state_of(txn, atoms_, at.field);
+    {
+        const field_layout geometry = layout_of_field(box, at.field, state, kind);
+        // THE VIEW MOVES FIRST. One line, one character - the smallest step
+        // there is, so the rate alone decides how fast it goes.
+        if (at.below > 0) {
+            state.scroll_line = geometry.scroll_line + 1;
+        } else if (at.below < 0 && geometry.scroll_line > 0) {
+            state.scroll_line = geometry.scroll_line - 1;
+        }
+        if (at.beside != 0) {
+            // A character's worth, measured rather than assumed: "one column"
+            // means nothing in a proportional face.
+            const float step = measure()("n", geometry.size, geometry.metrics_face);
+            state.scroll_x = geometry.scroll_x + (at.beside > 0 ? step : -step);
+        }
+    }
+    // ...and THEN the caret follows it, derived from where the pointer actually
+    // is against the view we just moved. Not reveal_caret, which is the inverse
+    // and would drag the view back to the caret it is trying to lead.
+    const std::size_t caret = offset_at_point(at.field, state, kind, pointer_.x, pointer_.y);
+    if (caret != state.caret) { state.caret = caret; }
+    restart_caret_blink();
+    mark(dirty::paint);
+}
+
+bool browser::scroll_field_under(const input_event & event) {
+    if (!event.has_pointer || event.wheel_y == 0) { return false; }
+    const node_id under = control_ancestor(hit_test(event.x, event.y));
+    if (!under) { return false; }
+    const auto txn = doc_->read();
+    const control_kind kind = kind_of(txn, under);
+    // Only a textarea scrolls vertically. A single-line field's overflow is
+    // sideways, and a wheel is not how anyone asks for that.
+    if (kind != control_kind::textarea) { return false; }
+
+    control_state & state = forms_.state_of(txn, atoms_, under);
+    const rect box = viewport_box_of(under);
+    if (box.empty()) { return false; }
+    const field_layout geometry = layout_of_field(box, under, state, kind);
+    const std::size_t most = geometry.lines.size() > geometry.visible_lines
+                                 ? geometry.lines.size() - geometry.visible_lines
+                                 : 0;
+    if (most == 0) { return false; } // nothing to scroll: the page takes it
+
+    // Negative wheel_y is towards the user, which is down the document.
+    const auto step = static_cast<std::ptrdiff_t>(options_.wheel_lines);
+    const auto delta = event.wheel_y > 0 ? -step : step;
+    const auto want = static_cast<std::ptrdiff_t>(geometry.scroll_line) + delta;
+    const auto next = static_cast<std::size_t>(
+        std::clamp<std::ptrdiff_t>(want, 0, static_cast<std::ptrdiff_t>(most)));
+    // ALREADY AT THAT END: the notch is not ours, so the page gets it. Without
+    // this a textarea scrolled to its bottom swallows every further notch and
+    // the page appears stuck.
+    if (next == geometry.scroll_line) { return false; }
+
+    state.scroll_line = next;
+    mark(dirty::paint);
+    return true;
+}
+
 bool browser::focus_next(bool backwards) {
     const std::vector<node_id> order = focusable_controls();
     if (order.empty()) { return false; }
@@ -1453,6 +1611,27 @@ bool browser::edit_key(control_state & control, const input_event & event) {
     if (key == "ArrowDown") {
         return moved(multiline ? move_caret_by_line(focused_, control, kind, 1, event.shift)
                                : forms_.move_to_edge(control, true, event.shift));
+    }
+    // PAGE UP AND DOWN BELONG TO THE FIELD when a multi-line one has focus.
+    // They fell through to the page-scrolling keys, so paging inside a textarea
+    // scrolled the document out from under it.
+    if (multiline && (key == "PageUp" || key == "PageDown")) {
+        const rect box = viewport_box_of(focused_);
+        int lines = 1;
+        if (!box.empty()) {
+            const field_layout geometry = layout_of_field(box, focused_, control, kind);
+            lines = std::max(1, static_cast<int>(geometry.visible_lines) - 1);
+        }
+        const int direction = key == "PageDown" ? 1 : -1;
+        bool any = false;
+        for (int i = 0; i < lines; ++i) {
+            if (!move_caret_by_line(focused_, control, kind, direction, event.shift)) { break; }
+            any = true;
+        }
+        // Consumed either way: a caret already at the top or bottom of the
+        // value must not hand the key to the page and scroll the document.
+        (void)moved(any);
+        return true;
     }
     if (key == "Home") {
         return moved(multiline ? move_to_line_edge(focused_, control, kind, false, event.shift)

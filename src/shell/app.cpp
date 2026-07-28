@@ -255,7 +255,17 @@ private:
             out = input_event::mouse_up_at(event.button.x, event.button.y,
                                            dom_button(event.button.button));
             return true;
-        case SDL_EVENT_MOUSE_WHEEL: out = input_event::wheel_by(event.wheel.y); return true;
+        // The TRACKED pointer, not event.wheel.mouse_x. SDL3's wheel event does
+        // carry a position, but SDL_ConvertEventToRenderCoordinates documents
+        // itself as converting mouse, touch and pen events and does not name
+        // the wheel's - and under logical presentation an unconverted position
+        // is wrong by the letterbox factor, which is exactly the bug the
+        // pointer events already had once. mouse_x_/mouse_y_ are taken from
+        // motion events AFTER the blanket convert, so they are definitely in
+        // render coordinates.
+        case SDL_EVENT_MOUSE_WHEEL:
+            out = input_event::wheel_at(mouse_x_, mouse_y_, event.wheel.y);
+            return true;
         case SDL_EVENT_TEXT_INPUT:
             // The typed text itself, which is not derivable from key codes.
             out = input_event::typed(std::string{event.text.text});

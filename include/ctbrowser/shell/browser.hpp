@@ -85,6 +85,10 @@ struct browser_options {
     // A page taller than the window scrolls; this is how far one wheel notch
     // moves it. the previous engine used the same figure.
     float wheel_step = 53.0f;
+    // How many VISUAL LINES one notch moves a textarea. Lines rather than
+    // pixels, because a field scrolls by whole lines - a half-line offset would
+    // need the painter to carry a sub-line origin for no gain.
+    int wheel_lines = 3;
     // The overlay scrollbar's width, and the width a tall page gives up to it.
     // 0 hides it - which is what a fixed-size game wants.
     float scrollbar_width = 15.0f;
@@ -92,6 +96,18 @@ struct browser_options {
     // it blinking, which is what a screenshot test wants: a caret that is
     // sometimes there is not byte-comparable.
     double caret_blink_ms = 500;
+    // AUTO-SCROLL WHILE DRAG-SELECTING, when the pointer is held outside the
+    // field. The rate rises with how far outside it is, so a small overshoot
+    // creeps and a big one races:
+    //
+    //   interval = autoscroll_ms / (1 + distance / autoscroll_ramp_px)
+    //
+    // clamped to autoscroll_min_ms. At the defaults: 1px out is ~95ms a step,
+    // 20px is 50ms, 60px is 25ms, and past ~110px it is the floor. 0 for
+    // autoscroll_ms turns the whole thing off.
+    double autoscroll_ms = 100;
+    double autoscroll_min_ms = 16;
+    float autoscroll_ramp_px = 20;
 };
 
 class browser {
@@ -1190,6 +1206,46 @@ private:
     // control returns to the first rather than dropping focus into nothing.
     bool focus_next(bool backwards);
 
+    // AUTO-SCROLL WHILE DRAG-SELECTING - rule 3 of the three at reveal_caret.
+    //
+    // Holding the pointer outside a field you are selecting in has to keep
+    // scrolling it, with no further mouse events: offset_at_point clamps to
+    // what the value has, so a stationary pointer one pixel below the box picks
+    // the same offset forever and the selection freezes one line short.
+    //
+    // Built on the caret blink's shape - the one clock tick() already advances,
+    // a due time, and a next_wakeup_ms contribution - because that is how this
+    // engine does "happens on a timer" and an idle loop must still block.
+    //
+    // THE VIEW DRIVES HERE, the caret follows. reveal_caret is the other way
+    // round, so the drag path must never call it: one moves the scroll to
+    // follow the caret and the other moves the caret to follow the scroll, and
+    // together they oscillate.
+
+    // How far outside its field the pointer is, on each axis. Zero when inside.
+    // A step is due only when this is non-zero AND the scroll can still move
+    // that way - otherwise the wakeup is never scheduled and an idle loop with
+    // a pointer parked below a fully-scrolled field does not spin.
+    struct autoscroll_state {
+        node_id field;
+        float below = 0;  // >0 down, <0 up
+        float beside = 0; // >0 right, <0 left
+        [[nodiscard]] bool live() const noexcept { return field && (below != 0 || beside != 0); }
+    };
+    [[nodiscard]] autoscroll_state autoscroll_now();
+    [[nodiscard]] double autoscroll_interval_ms(float distance) const;
+    // One step. Moves the view, then re-derives the caret from where the
+    // pointer actually is.
+    void autoscroll_step(const autoscroll_state & state);
+
+    // A wheel notch aimed at a scrollable field. True when the field took it.
+    //
+    // Rule 2 of the three at reveal_caret: this moves the VIEW and leaves the
+    // caret alone, off screen if that is where it was. Revealing the caret here
+    // would snap the view straight back and make the wheel useless; the next
+    // keystroke brings it back instead, which is what browsers do.
+    [[nodiscard]] bool scroll_field_under(const input_event & event);
+
     bool edit_key(control_state & control, const input_event & event);
 
     bool edited(bool changed);
@@ -1255,6 +1311,12 @@ private:
     // The control a drag is selecting inside, if any. Empty means the drag is
     // a page selection, or there is no drag.
     node_id field_selecting_;
+    // Where the pointer last was. tick() gets no coordinates, so an auto-repeat
+    // that has to keep aiming at the pointer needs it remembered.
+    point pointer_;
+    bool have_pointer_ = false;
+    // When the next auto-scroll step falls due, on caret_clock_ms_'s scale.
+    double autoscroll_due_ms_ = 0;
     std::function<void(const std::string &)> alert_hook_;
     std::vector<std::string> alerts_;
     std::function<void(const std::string &)> navigate_hook_;

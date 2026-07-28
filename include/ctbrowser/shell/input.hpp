@@ -45,6 +45,12 @@ struct input_event {
     std::uint8_t button = 0;
     bool shift = false; // extends a selection rather than moving the caret
     bool ctrl = false;  // the clipboard and select-all shortcuts
+    // Whether `x`/`y` mean anything. Only a WHEEL needs asking: the pointer
+    // events all carry a position by construction, and a wheel did not carry
+    // one at all until a wheel over a textarea had to scroll the textarea.
+    // Trailing, with a default, so every existing aggregate initialiser above
+    // keeps compiling.
+    bool has_pointer = false;
 
     [[nodiscard]] static input_event mouse_move_to(float x, float y) {
         return input_event{input_kind::mouse_move, x, y, 0, {}, 0};
@@ -58,8 +64,18 @@ struct input_event {
     [[nodiscard]] static input_event mouse_up_at(float x, float y, std::uint8_t button = 0) {
         return input_event{input_kind::mouse_up, x, y, 0, {}, button};
     }
+    // A wheel with no pointer position. The page scrolls, since there is no
+    // way to tell what the notch was aimed at.
     [[nodiscard]] static input_event wheel_by(float notches) {
         return input_event{input_kind::wheel, 0, 0, notches, {}, 0};
+    }
+    // A wheel AT a point. `x`/`y` are where the pointer is, not a delta - a
+    // wheel over a scrollable control scrolls that control rather than the
+    // page, and without a position there is nothing to ask.
+    [[nodiscard]] static input_event wheel_at(float x, float y, float notches) {
+        input_event out{input_kind::wheel, x, y, notches, {}, 0};
+        out.has_pointer = true;
+        return out;
     }
     [[nodiscard]] static input_event key_press(std::string code, bool shift = false,
                                                bool ctrl = false) {
