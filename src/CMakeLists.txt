@@ -281,6 +281,7 @@ add_library(ctbrowser-shell)
 target_sources(ctbrowser-shell
   PRIVATE
     shell/browser.cpp
+    shell/bindings.cpp
     shell/net.cpp
   PUBLIC
     FILE_SET HEADERS
