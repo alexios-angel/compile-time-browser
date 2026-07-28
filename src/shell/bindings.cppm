@@ -25,21 +25,21 @@ import :forms;
 import :images;
 import :net;
 
-// The web platform, bound to the v2 VM.
+// The web platform, bound to the the engine VM.
 //
-// v1 had ~179 hand-written set_method calls against a tree-walking interpreter
+// the previous engine had ~179 hand-written set_method calls against a tree-walking interpreter
 // that held raw `node *`. Two things changed and both matter:
 //
 //   * SCRIPT HOLDS HANDLES, NOT POINTERS. An element wrapper carries a
 //     node_id, and every native resolves it against the live document. A stale
 //     reference is a failed lookup that returns undefined, not a use-after-free.
-//     v1 was only safe because the document owned every node forever and
+//     the previous engine was only safe because the document owned every node forever and
 //     nothing was concurrent.
 //   * MUTATION IS A CALLBACK. A native that changes the document calls
 //     on_mutation, and the browser decides what that invalidates. Bindings do
 //     not know about layout, and layout does not know script exists.
 //
-// The surface is deliberately the part of v1's that real pages use, and the
+// The surface is deliberately the part of the previous engine's that real pages use, and the
 // gaps are named rather than stubbed: a `getContext` that returns an object
 // with no drawing on it is worse than one that is absent, because a page
 // checking for canvas support gets the wrong answer.
@@ -49,7 +49,7 @@ export namespace ctbrowser::shell {
 using ctbrowser::script::context;
 using ctbrowser::script::value;
 
-// Argument coercion. v1 open-coded these at 150 call sites; the plan's answer
+// Argument coercion. the previous engine open-coded these at 150 call sites; the plan's answer
 // was an IDL generator, and this is the part of it that is actually load
 // bearing - the codegen would emit exactly these.
 [[nodiscard]] inline std::string arg_string(context & cx, std::span<value> args, std::size_t i) {
@@ -92,11 +92,11 @@ public:
 	// NAVIGATION, as state rather than as an action. `location.reload()` cannot
 	// reload the page where it is called: the reload tears down this context and
 	// the program still running inside it. So it records the request and the
-	// browser drains it between ticks, which is also how v1 did it.
+	// browser drains it between ticks, which is also how the previous engine did it.
 	[[nodiscard]] bool reload_requested() const noexcept { return reload_requested_; }
 	void clear_reload_request() noexcept { reload_requested_ = false; }
 	// What `location` reports. The browser sets it; the page can only read it,
-	// because assigning to location.href is a navigation and v2 has none.
+	// because assigning to location.href is a navigation and the engine has none.
 	void observe_location(std::string href, std::string hash) {
 		location_href_ = std::move(href);
 		location_hash_ = std::move(hash);
@@ -863,7 +863,7 @@ private:
 		cx.define_global("document", document_);
 	}
 
-	// `alert` and `location`, the last two globals v1 had and v2 did not.
+	// `alert` and `location`, the last two globals the previous engine had and the engine did not.
 	// MDN's breakout calls both the moment the game ends - alert("GAME OVER")
 	// then document.location.reload() - so a page could win or lose and then
 	// die on an undefined identifier.

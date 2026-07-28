@@ -16,7 +16,7 @@ module;
 module ctbrowser.script;
 // The JavaScript standard library.
 //
-// v2 had NONE of this. The whole property surface was `.length`, numeric
+// the engine had NONE of this. The whole property surface was `.length`, numeric
 // indexing and named lookup on plain objects - no `arr.push`, no `str.split`,
 // no `Math.floor`, no `JSON.parse`. A VM can be complete and still useless if
 // nothing can be done with a value once you have one, and that is what this
@@ -77,7 +77,7 @@ inline void method(context & cx, object_object * table, std::string name, native
 
 // --- promises ---------------------------------------------------------------
 //
-// SETTLED-ONLY, like v1's. A promise here is an ordinary object carrying
+// SETTLED-ONLY, like the previous engine's. A promise here is an ordinary object carrying
 // `__value` and `__rejected`, created ALREADY settled: there is no job queue,
 // no microtask checkpoint, and nothing pending. `then` therefore runs its
 // callback IMMEDIATELY rather than after the current turn.

@@ -5,7 +5,7 @@
 #include <string_view>
 
 // Carried forward from external/compile-time-html/include/cthtml/entities.hpp
-// as a COPY, the same way src/raster/font8x8.hpp is: v2 must not include v1's
+// as a COPY, the same way src/raster/font8x8.hpp is: the engine must not include the previous engine's
 // headers, and this is generated data that does not change.
 //
 // The WHATWG named character reference table (2125 names, the

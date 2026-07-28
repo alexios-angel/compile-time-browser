@@ -15,7 +15,7 @@ import ctbrowser.style;
 
 // Form control state.
 //
-// Kept in a store keyed by node_id, NOT on the node. v1 put value, caret,
+// Kept in a store keyed by node_id, NOT on the node. the previous engine put value, caret,
 // selection and scroll offset on `node`, which is what made its node struct
 // carry thirty-odd fields that only the shell cared about - and what made a
 // document snapshot mean "including whatever the user had half-typed".

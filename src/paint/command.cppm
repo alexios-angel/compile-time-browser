@@ -15,8 +15,8 @@ import ctbrowser.dom;
 
 // The display list: what to draw, recorded once and then never changed.
 //
-// This is the object v1 never had. v1's layout returned a std::vector<paint_cmd>
-// that the shell consumed immediately and threw away, so every scroll, every
+// This is the object the previous engine never had. the previous engine's layout returned a
+// std::vector<paint_cmd> that the shell consumed immediately and threw away, so every scroll, every
 // caret blink and every hover re-ran the whole layout to get a new one. A
 // display list that outlives the frame changes what scrolling costs: the
 // compositor moves a layer and re-composites, and nothing is re-recorded.
@@ -77,7 +77,7 @@ struct bitmap {
 
 // WHICH face a run is drawn in. Carried on the command because the rasterizer
 // has no way back to the element: by the time a tile is drawn, the DOM and the
-// cascade are behind it. v1 carried exactly these four things for the same
+// cascade are behind it. the previous engine carried exactly these four things for the same
 // reason.
 //
 // `family` is the resolved name, not the CSS list - "Fira Sans", not

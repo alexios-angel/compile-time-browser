@@ -1,8 +1,8 @@
 #!/bin/sh
-# Install v2 into a temporary prefix and build tests-v2/package against it.
+# Install the engine into a temporary prefix and build tests/package against it.
 #
-# The only proof that `find_package(ctbrowser-v2)` actually works. Everything
-# else in the tree consumes v2 through add_subdirectory, which cannot fail the
+# The only proof that `find_package(ctbrowser)` actually works. Everything
+# else in the tree consumes the engine through add_subdirectory, which cannot fail the
 # way an install can.
 set -e
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -11,7 +11,7 @@ build=$(mktemp -d)
 consumer=$(mktemp -d)
 compiler=${CXX:-clang++}
 
-echo "--- configuring v2 (no v1) ---"
+echo "--- configuring ---"
 cmake -S "$root" -B "$build" -G Ninja \
   -DCMAKE_CXX_COMPILER="$compiler" \
   -DCTBROWSER_BUILD_V1=OFF -DCTBROWSER_BUILD_TESTS=OFF \
@@ -23,7 +23,7 @@ cmake --build "$build" >/dev/null
 cmake --install "$build" >/dev/null
 
 echo "--- building the consumer against $prefix ---"
-cmake -S "$root/tests-v2/package" -B "$consumer" -G Ninja \
+cmake -S "$root/tests/package" -B "$consumer" -G Ninja \
   -DCMAKE_CXX_COMPILER="$compiler" \
   -DCMAKE_PREFIX_PATH="$prefix" >/dev/null
 cmake --build "$consumer" >/dev/null

@@ -18,7 +18,7 @@ import :values;
 
 // The box tree, which is NOT the DOM tree.
 //
-// This separation is the whole point of the stage. In v1, layout wrote its
+// This separation is the whole point of the stage. In the previous engine, layout wrote its
 // results back onto the DOM node - n.x, n.y, n.w, n.h, ui_lines, ui_font_px -
 // and that one decision caused three problems at once: layout could not run
 // concurrently (it mutated shared state), the node struct carried thirty-odd
@@ -29,7 +29,7 @@ import :values;
 // does not contain. A block container holding a mix of inline and block
 // children has to wrap the inline runs in ANONYMOUS block boxes, or the
 // formatting contexts interleave illegally. There is no DOM node to hang those
-// on, which is why every real engine has a box tree and v1 could not do it.
+// on, which is why every real engine has a box tree and the previous engine could not do it.
 
 export namespace ctbrowser::layout {
 
@@ -217,7 +217,7 @@ private:
 				t.source = child;
 				t.style = into.style;
 				// COLLAPSED, unless the element preserves whitespace. HTML folds
-				// every run of space/tab/newline into ONE SPACE, and v2 never
+				// every run of space/tab/newline into ONE SPACE, and the engine never
 				// did: the newlines in a page's own source went straight to the
 				// rasterizer. font8x8 drew nothing for them so nobody noticed;
 				// a real font draws .notdef, which is a BOX, and a line full of

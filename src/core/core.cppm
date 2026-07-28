@@ -17,7 +17,7 @@ export module ctbrowser.core;
 // Modules note: this stack uses the global-module-fragment form
 // (`module;` + #include + `export module`) rather than `import std;`.
 // libstdc++ 13 ships no std module, so `import std;` does not compile with
-// this toolchain - the .cppm files inherited from v1's bricks all use it and
+// this toolchain - the .cppm files inherited from the previous engine's bricks all use it and
 // none of them currently build. Revisit when libstdc++ catches up.
 
 export import :containers;

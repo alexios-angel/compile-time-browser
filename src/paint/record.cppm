@@ -18,7 +18,7 @@ import :values;
 //
 // Paint order here is document order with each box's background emitted before
 // its children, which is already back-to-front for the subset that exists
-// (no z-index, no stacking contexts, no floats). v1 needed a separate
+// (no z-index, no stacking contexts, no floats). the previous engine needed a separate
 // collect_backgrounds() pre-pass because it wrote into a flat command vector
 // where a parent's background would otherwise land on top of its children's
 // text. Emitting in tree order into a list that is CONSUMED in order gets the

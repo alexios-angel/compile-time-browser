@@ -21,7 +21,7 @@ import :vm;
 
 // The JavaScript standard library.
 //
-// v2 had NONE of this. The whole property surface was `.length`, numeric
+// The VM started with NONE of this. The whole property surface was `.length`, numeric
 // indexing and named lookup on plain objects - no `arr.push`, no `str.split`,
 // no `Math.floor`, no `JSON.parse`. A VM can be complete and still useless if
 // nothing can be done with a value once you have one, and that is what this

@@ -16,7 +16,7 @@ import :values;
 
 // Formatting contexts, one algorithm each.
 //
-// v1 laid everything out in one 300-line function with a chain of ifs for
+// the previous engine laid everything out in one 300-line function with a chain of ifs for
 // tables, inputs, textareas, selects and flow content. Adding flex to that
 // means adding branches to a function that already does five unrelated jobs.
 // Here a formatting context is a TYPE that satisfies a concept, so flex and
@@ -415,7 +415,7 @@ struct block_flow {
 // the whole table has to be MEASURED before any of it can be placed - which is
 // exactly the split `measure` and `arrange` make.
 //
-// AUTO layout, like v1's: each column takes the widest natural content in it,
+// AUTO layout, like the previous engine's: each column takes the widest natural content in it,
 // and the table shrinks to the sum. A stated `width` scales the columns
 // proportionally rather than being ignored.
 //

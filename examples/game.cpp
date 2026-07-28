@@ -1,75 +1,71 @@
-// The games-and-emulators proof: a <canvas> driven by page JavaScript.
-// The script was parsed at compile time; at runtime onFrame(dt) runs
-// as optimizer-specialized code, draws into the canvas pixel buffer,
-// and SDL3 streams it to the GPU. Arrow keys move the paddle.
+// A small canvas game, driven by keys.
 //
-// Build: make game   (or the CMake examples; needs SDL3)
+// the previous engine's version of this used engine-specific shorthand - getContext("game") by
+// element id, and global onKey/onFrame callbacks. None of that is here: the
+// page below is ordinary web code, because the engine now supports ordinary
+// web code and a shim that only this browser understands is a shim nobody can
+// test against a real one.
 
-#include <SDL3/SDL_main.h>
-#include <ctbrowser.hpp>
-#include <ctbrowser/app.hpp>
+import ctbrowser;
 
-using app = ctbrowser::page<R"(<!DOCTYPE html>
-<title>ctpong</title>
+int main() {
+	ctbrowser::app_options options;
+	options.title = "game";
+	options.width = 480;
+	options.height = 360;
+
+	return ctbrowser::run_app(R"(<!DOCTYPE html>
+<title>game</title>
 <style>
-	body   { padding: 12px; font-size: 16px; }
-	h1     { font-size: 24px; color: #222222; }
-	#score { color: #ff8800; }
-	canvas { margin: 8px; }
+	body   { margin: 0; padding: 8px; background-color: #101018; color: #e8e8f0 }
+	h1     { font-size: 16px; margin: 0 0 8px 0 }
+	canvas { background-color: #1c1c28 }
+	#score { font-size: 16px; margin: 8px 0 0 0 }
 </style>
-<h1>ctpong</h1>
-<p id=score>score 0</p>
-<canvas id=game width=320 height=200></canvas>
-<p>left/right arrows move the paddle</p>
+<h1>arrow keys to move, space to drop a marker</h1>
+<canvas id=board width=460 height=280></canvas>
+<p id=score>markers: 0</p>
 <script>
-	let ctx = getContext("game");
-	let x = 160; let y = 60;
-	let vx = 120; let vy = 95;
-	let paddle = 130; let held = 0;
-	let score = 0; let best = 0;
+	var ctx = document.getElementById("board").getContext("2d");
+	var board = document.getElementById("board");
+	var x = board.width / 2;
+	var y = board.height / 2;
+	var held = {};
+	var markers = [];
 
-	function onKey(key, down) {
-		if (key === "Left") { held = down ? -1 : 0; }
-		if (key === "Right") { held = down ? 1 : 0; }
-	}
+	// e.code is the PHYSICAL key, so this reads the same on any layout.
+	document.addEventListener("keydown", function (e) { held[e.code] = true; });
+	document.addEventListener("keyup", function (e) { held[e.code] = false; });
 
-	function onFrame(dt) {
-		if (dt > 0.1) { dt = 0.1; }
-		paddle += held * 220 * dt;
-		if (paddle < 0) { paddle = 0; }
-		if (paddle > 260) { paddle = 260; }
+	function step() {
+		var speed = 4;
+		if (held["ArrowLeft"])  { x -= speed; }
+		if (held["ArrowRight"]) { x += speed; }
+		if (held["ArrowUp"])    { y -= speed; }
+		if (held["ArrowDown"])  { y += speed; }
+		x = Math.max(10, Math.min(board.width - 10, x));
+		y = Math.max(10, Math.min(board.height - 10, y));
 
-		x += vx * dt;
-		y += vy * dt;
-		if (x < 4) { x = 4; vx = -vx; }
-		if (x > 316) { x = 316; vx = -vx; }
-		if (y < 4) { y = 4; vy = -vy; }
-		if (y >= 186 && y <= 196 && vy > 0 && x >= paddle && x <= paddle + 60) {
-			y = 186; vy = -vy;
-			vx *= 1.05; vy *= 1.05;
-			score += 1;
-			if (score > best) { best = score; }
-			getElementById("score").setText("score " + score + "  best " + best);
-		}
-		if (y > 210) {
-			x = 160; y = 60; vx = 120; vy = 95;
-			score = 0;
-			getElementById("score").setText("score 0  best " + best);
+		if (held["Space"] && markers.length < 40) {
+			markers.push({ x: x, y: y });
+			held["Space"] = false;
+			document.getElementById("score").setText("markers: " + markers.length);
 		}
 
-		ctx.fillStyle = "#102030";
-		ctx.fillRect(0, 0, 320, 200);
-		ctx.fillStyle = "#ffffff";
-		ctx.fillRect(0, 0, 320, 2);
-		ctx.fillStyle = "#ff8800";
-		ctx.fillRect(x - 4, y - 4, 8, 8);
-		ctx.fillStyle = "#00cc66";
-		ctx.fillRect(paddle, 190, 60, 6);
+		ctx.fillStyle = "#1c1c28";
+		ctx.fillRect(0, 0, board.width, board.height);
+
+		ctx.fillStyle = "#3a6ea5";
+		markers.forEach(function (m) { ctx.fillRect(m.x - 3, m.y - 3, 6, 6); });
+
+		ctx.fillStyle = "#ffcc33";
+		ctx.beginPath();
+		ctx.arc(x, y, 10, 0, Math.PI * 2);
+		ctx.fill();
+
+		requestAnimationFrame(step);
 	}
-</script>)">;
-
-static_assert(ctjs::vp::is_valid(app::script_text()));
-
-int main(int, char **) {
-	return ctbrowser::run_app<app>();
+	requestAnimationFrame(step);
+</script>)",
+	                          options);
 }

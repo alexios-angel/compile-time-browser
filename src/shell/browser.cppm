@@ -42,14 +42,14 @@ import :bindings;
 //   resize                     box tree -> layout -> record   (styles survive)
 //   scroll                                          composite (nothing else)
 //
-// v1 had one path. engine::frame() re-ran layout every frame, so a caret blink
+// the previous engine had one path. engine::frame() re-ran layout every frame, so a caret blink
 // cost a full layout of the document. Here the pipeline is split at the points
 // where work can be reused, and `dirty_` is the record of how far back the
 // current frame has to start.
 //
 // Deliberately SDL-FREE. The window and the event loop live in :app, gated on
 // SDL3, and this is what they drive - which is what makes the whole engine
-// testable headlessly, exactly as v1 kept engine.hpp separate from app.hpp.
+// testable headlessly, exactly as the previous engine kept engine.hpp separate from app.hpp.
 
 export namespace ctbrowser::shell {
 
@@ -84,7 +84,7 @@ struct browser_options {
 	// because that is what a browser with no page background shows.
 	color background = color{ctbrowser::style::ua_canvas};
 	// A page taller than the window scrolls; this is how far one wheel notch
-	// moves it. v1 used the same figure.
+	// moves it. the previous engine used the same figure.
 	float wheel_step = 53.0f;
 	// The overlay scrollbar's width, and the width a tall page gives up to it.
 	// 0 hides it - which is what a fixed-size game wants.
@@ -402,7 +402,7 @@ public:
 		const bool was_visible = caret_visible();
 		caret_clock_ms_ += elapsed_ms;
 		// Only the CARET changed, so only the paint is stale - a blink must not
-		// re-run layout, which is what made v1 lay the page out every frame.
+		// re-run layout, which is what made the previous engine lay the page out every frame.
 		if (focused_ && caret_visible() != was_visible) { mark(dirty::paint); }
 		bindings_->advance_clock(elapsed_ms);
 		const std::size_t ran = bindings_->run_due_callbacks();
@@ -419,7 +419,7 @@ public:
 	}
 
 	// Re-parse the page and run its script again from the top - navigation to
-	// where you already are, which is the only navigation v2 has.
+	// where you already are, which is the only navigation the engine has.
 	void reload() {
 		const std::string source = source_html_;
 		load_html(source); // by value: load_html clears source_html_'s referent
@@ -438,7 +438,7 @@ public:
 	// reloads in the same breath.
 	[[nodiscard]] const std::vector<std::string> & alerts() const noexcept { return alerts_; }
 
-	// Where a link that leaves this page goes. v2 does not navigate, so the
+	// Where a link that leaves this page goes. the engine does not navigate, so the
 	// embedder decides - `ctbrowse` opens a local .html, the SDL app hands an
 	// http(s) URL to the system browser, and a program with no hook does
 	// nothing rather than pretending it followed the link.
@@ -446,7 +446,7 @@ public:
 		navigate_hook_ = std::move(hook);
 	}
 	// What the last activated link recorded. A fragment lands in the hash, like
-	// v1, because scrolling to an anchor IS navigation within a document.
+	// the previous engine, because scrolling to an anchor IS navigation within a document.
 	[[nodiscard]] const std::string & location_href() const noexcept { return location_href_; }
 	[[nodiscard]] const std::string & location_hash() const noexcept { return location_hash_; }
 
@@ -472,7 +472,7 @@ public:
 	// --- scrolling -------------------------------------------------------
 	//
 	// The payoff of the whole architecture: this touches no stage but the
-	// compositor. v1's equivalent re-ran layout.
+	// compositor. the previous engine's equivalent re-ran layout.
 	void scroll_by(float dy) { scroll_to(scroll_y_ + dy); }
 	void scroll_to(float y) {
 		const float clamped = std::clamp(y, 0.0f, max_scroll());

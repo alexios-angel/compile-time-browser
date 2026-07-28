@@ -51,7 +51,7 @@ public:
 	[[nodiscard]] bool contains(std::string_view name) const { return !find(name).empty(); }
 
 	// Where a relative path is resolved from when the registry misses. The
-	// probe order is v1's: the working directory, then here, then two levels
+	// probe order is the previous engine's: the working directory, then here, then two levels
 	// up - which is what makes `assets/sprites.bmp` resolve both from a source
 	// checkout and from a build directory beside it.
 	void set_base_path(std::filesystem::path base) { base_ = std::move(base); }

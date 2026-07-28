@@ -12,7 +12,7 @@ import ctbrowser.core;
 
 // The JS value, in one 64-bit word.
 //
-// v1 represented a value as a std::variant over string/array/object/function
+// the previous engine represented a value as a std::variant over string/array/object/function
 // with hand-rolled refcounting, because it had to stay constexpr-evaluable.
 // Retiring the compile-time thesis retired that constraint, and NaN-boxing is
 // the first thing it buys: every value is a machine word, passed in a
@@ -181,7 +181,7 @@ struct array_object final : heap_object {
 };
 
 // Insertion-ordered, like a JS object. A flat hash index over the property
-// names keeps lookup O(1) - v1 scanned a vector of pairs linearly on every
+// names keeps lookup O(1) - the previous engine scanned a vector of pairs linearly on every
 // property access, which is the single largest interpreter cost there is.
 // This is the slot a shape/inline-cache design replaces later; the map is
 // already the right shape for that, since it hands back a stable index.

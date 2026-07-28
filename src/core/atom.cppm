@@ -13,7 +13,7 @@ import :containers;
 
 // Interned strings.
 //
-// v1 compared tag, class and attribute names as std::string, by value, on every
+// the previous engine compared tag, class and attribute names as std::string, by value, on every
 // selector match and every attribute lookup - so the hottest inner loop in the
 // style system was strcmp. An atom is a 32-bit id; equality is an integer
 // compare, and the id can key a hash map directly.

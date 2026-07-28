@@ -3,7 +3,7 @@
   "configurePresets": [
     {
       "name": "default",
-      "displayName": "Ninja Release (std::embed clang)",
+      "displayName": "Ninja Release",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
@@ -11,16 +11,8 @@
       }
     },
     {
-      "name": "fetch",
-      "displayName": "Ninja Release + compile-time fetches",
-      "inherits": "default",
-      "cacheVariables": {
-        "CTBROWSER_EXAMPLES_FETCH": "ON"
-      }
-    },
-    {
       "name": "tsan",
-      "displayName": "v2 + ThreadSanitizer (the thread-safe DOM's real test)",
+      "displayName": "ThreadSanitizer (the thread-safe DOM's real test)",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-tsan",
       "cacheVariables": {
@@ -28,13 +20,12 @@
         "CTBROWSER_BUILD_EXAMPLES": "OFF",
         "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer -g",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
-        "CMAKE_CXX_COMPILER": "/home/linuxbrew/.linuxbrew/bin/clang++",
-        "CTBROWSER_BUILD_V1": "OFF"
+        "CMAKE_CXX_COMPILER": "/home/linuxbrew/.linuxbrew/bin/clang++"
       }
     },
     {
       "name": "asan",
-      "displayName": "v2 + Address/UB sanitizers",
+      "displayName": "Address/UB sanitizers",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-asan",
       "cacheVariables": {
@@ -42,87 +33,42 @@
         "CTBROWSER_BUILD_EXAMPLES": "OFF",
         "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer -g",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
-        "CMAKE_CXX_COMPILER": "/home/linuxbrew/.linuxbrew/bin/clang++",
-        "CTBROWSER_BUILD_V1": "OFF"
+        "CMAKE_CXX_COMPILER": "/home/linuxbrew/.linuxbrew/bin/clang++"
       }
     },
     {
       "name": "windows",
-      "displayName": "Windows x86_64 cross (llvm-mingw std::embed)",
+      "displayName": "Windows x86_64 cross (llvm-mingw)",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-windows",
       "toolchainFile": "${sourceDir}/cmake/toolchain-windows-x86_64.cmake",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CTBROWSER_BUILD_TESTS": "ON",
-        "CTBROWSER_BUILD_V2": "ON"
-      }
-    },
-    {
-      "name": "windows-fetch",
-      "displayName": "Windows cross + compile-time fetches",
-      "inherits": "windows",
-      "cacheVariables": {
-        "CTBROWSER_EXAMPLES_FETCH": "ON",
-        "CTBROWSER_BUILD_TESTS": "ON",
-        "CTBROWSER_BUILD_V2": "ON"
+        "CTBROWSER_BUILD_TESTS": "ON"
       }
     }
   ],
   "buildPresets": [
-    {
-      "name": "default",
-      "configurePreset": "default"
-    },
-    {
-      "name": "fetch",
-      "configurePreset": "fetch"
-    },
-    {
-      "name": "windows",
-      "configurePreset": "windows"
-    },
-    {
-      "name": "windows-fetch",
-      "configurePreset": "windows-fetch"
-    },
-    {
-      "name": "tsan",
-      "configurePreset": "tsan"
-    },
-    {
-      "name": "asan",
-      "configurePreset": "asan"
-    }
+    { "name": "default", "configurePreset": "default" },
+    { "name": "windows", "configurePreset": "windows" },
+    { "name": "tsan", "configurePreset": "tsan" },
+    { "name": "asan", "configurePreset": "asan" }
   ],
   "testPresets": [
     {
       "name": "default",
       "configurePreset": "default",
-      "output": {
-        "outputOnFailure": true
-      }
-    },
-    {
-      "name": "fetch",
-      "configurePreset": "fetch",
-      "output": {
-        "outputOnFailure": true
-      }
+      "output": { "outputOnFailure": true }
     },
     {
       "name": "tsan",
       "configurePreset": "tsan",
-      "output": {
-        "outputOnFailure": true
-      }
+      "output": { "outputOnFailure": true }
     },
     {
       "name": "asan",
       "configurePreset": "asan",
-      "output": {
-        "outputOnFailure": true
-      }
+      "output": { "outputOnFailure": true }
     }
   ]
 }

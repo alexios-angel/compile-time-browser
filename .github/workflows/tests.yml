@@ -1,37 +1,38 @@
 name: Tests
 on: [push, pull_request]
-# ONLY the project's std::embed clang is supported (std::embed is
-# load-bearing - assets.hpp). CI fetches the toolchain from the embed
-# repo's GitHub release; CMake refuses anything else.
+# The engine needs an ordinary C++23 compiler - but one NEW ENOUGH TO REPORT ITS
+# IMPORT GRAPH, or CMake cannot build modules at all, and says so in terms that
+# mention neither modules nor the compiler version. Ubuntu's default is not new
+# enough, so CI installs clang from apt.llvm.org.
 env:
-  CLANG_STD_EMBED_RELEASE: https://github.com/alexios-angel/embed/releases/download/clang-std-embed-23dd34f8f924/clang-std-embed-23dd34f8f924-linux-x86_64.tar.xz
+  CLANG_VERSION: "20"
 jobs:
-  # Formatting first, and on its own runner: it needs no submodules, no GLM and
-  # no build, so it answers in seconds rather than after the whole suite.
+  # Formatting first, and on its own runner: it needs no submodules and no
+  # build, so it answers in seconds rather than after the whole suite.
   format:
     name: "clang-format"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: "Install the std::embed clang toolchain"
+      - name: "Install clang-format"
         run: |
-          mkdir -p tools/clang-std-embed
-          curl -fsSL "$CLANG_STD_EMBED_RELEASE" | tar -xJ --strip-components=1 -C tools/clang-std-embed
+          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- "$CLANG_VERSION"
+          sudo apt-get install -y "clang-format-$CLANG_VERSION"
+          sudo ln -sf "/usr/bin/clang-format-$CLANG_VERSION" /usr/local/bin/clang-format
       - run: tools/format.sh --check
 
   cmake:
-    name: "CMake + Ninja (std::embed clang, C++23)"
+    name: "CMake + Ninja (C++23 modules)"
     runs-on: ubuntu-latest
     steps:
-      - run: sudo apt-get update && sudo apt-get install -y ninja-build libglm-dev
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: "Install the std::embed clang toolchain"
+      - name: "Install ninja and clang"
         run: |
-          mkdir -p tools/clang-std-embed
-          curl -fsSL "$CLANG_STD_EMBED_RELEASE" | tar -xJ --strip-components=1 -C tools/clang-std-embed
-          tools/clang-std-embed/bin/clang++ --version
+          sudo apt-get update && sudo apt-get install -y ninja-build
+          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- "$CLANG_VERSION"
+          echo "CXX=clang++-$CLANG_VERSION" >> "$GITHUB_ENV"
       - run: cmake --preset default
       - run: cmake --build --preset default
       - run: ctest --preset default
@@ -42,6 +43,6 @@ jobs:
         with:
           name: screenshots
           path: |
-            build/shot-*.png
-            tests/render-out.png
+            build/shot-*.ppm
+            build/render-*.ppm
           if-no-files-found: ignore

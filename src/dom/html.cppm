@@ -9,7 +9,7 @@ import :document;
 import :node;
 import :treebuilder;
 
-// HTML into the v2 DOM.
+// HTML into the DOM.
 //
 // Through stage 7 this WRAPPED cthtml's value parser - a practical subset,
 // correctly parsed, and a deliberate staging decision so the architecture was

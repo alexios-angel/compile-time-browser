@@ -19,7 +19,7 @@ import :values;
 // asserting that it is:
 //
 //   * layout READS the box tree and writes only its own fragments. The box
-//     tree is const throughout; v1 wrote geometry back onto shared nodes,
+//     tree is const throughout; the previous engine wrote geometry back onto shared nodes,
 //     which is what made concurrency impossible there.
 //   * a block child's layout depends on exactly one thing from its siblings:
 //     the content width, which every sibling shares. Its HEIGHT is computed
@@ -69,7 +69,7 @@ public:
 
 	// Below this many boxes, distributing the work costs more than doing it.
 	//
-	// MEASURED (tests-v2/bench_layout.cpp, 22-core WSL2), parallel vs sequential
+	// MEASURED (tests/bench_layout.cpp, 22-core WSL2), parallel vs sequential
 	// by box count: 0.08x at 60 boxes, 0.26x at 244, 0.70x at 2164, 1.15x at
 	// 4764, 1.72x at 10084, 1.84x at 37204. The crossover is between 2164 and
 	// 4764, which is where this is set.

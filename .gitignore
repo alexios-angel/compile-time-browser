@@ -16,8 +16,8 @@ examples/pong.inc
 # clone and every golden test fails with "no golden" on a machine that has
 # never generated one.
 *.ppm
-!tests-v2/golden/*.ppm
+!tests/golden/*.ppm
 examples-windows/
-examples-windows-v2/
+examples-windows/
 tools/llvm-mingw/
 build*

@@ -19,12 +19,11 @@ import :selector;
 
 // Style resolution.
 //
-// The shape of the work is different from v1's, not just the speed. v1 asked
-// for ONE PROPERTY at a time and rescanned the sheet for each: layout would
-// ask for `display`, then `width`, then `margin`, then `color`, and every one
-// of those walked every rule. This resolves an element ONCE, producing its
-// whole computed style, and layout then reads properties out of a small
-// vector.
+// The shape of the work is different from the previous engine's, not just the speed. the previous
+// engine asked for ONE PROPERTY at a time and rescanned the sheet for each: layout would ask for
+// `display`, then `width`, then `margin`, then `color`, and every one of those walked every rule.
+// This resolves an element ONCE, producing its whole computed style, and layout then reads
+// properties out of a small vector.
 //
 // Matching is a pure function of (document snapshot, element) - it writes
 // nothing shared except the intern table - which is what lets it run across
@@ -63,7 +62,7 @@ public:
 	// same element it was already on - which is most mouse moves.
 	//
 	// State lives HERE rather than on the node. It is a style input, not
-	// document content, and putting it on the node is exactly what left v1's
+	// document content, and putting it on the node is exactly what left the previous engine's
 	// node struct carrying UI caches that layout and paint both had opinions
 	// about.
 	bool set_state(node_id id, std::uint32_t bits, bool on) {

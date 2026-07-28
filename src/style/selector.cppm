@@ -14,7 +14,7 @@ import ctbrowser.core;
 
 // Selector matching, arranged so that most rules are never even considered.
 //
-// v1 asked `query(sheet, chain, property)` and that scanned EVERY entry in the
+// the previous engine asked `query(sheet, chain, property)` and that scanned EVERY entry in the
 // sheet - for every property, for every element, every frame. Two structures
 // fix that, and they are the two every production engine uses:
 //

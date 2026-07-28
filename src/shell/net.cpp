@@ -12,7 +12,7 @@ module;
 #include <vector>
 
 // Asio, from whichever distribution the build found. Boost's is what this tree
-// already depends on (Boost::headers is on three other v2 targets and is
+// already depends on (Boost::headers is on three other engine targets and is
 // HEADER-ONLY, which is the standing constraint); STANDALONE Asio is the same
 // library under a different namespace, so it is a configure-time switch rather
 // than a rewrite.

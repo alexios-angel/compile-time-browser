@@ -1,66 +1,121 @@
-# windowed examples: need SDL3 (found by the top-level list). They run
-# under ctest with the dummy video driver for a bounded number of
-# frames via CTBROWSER_TEST_FRAMES, so CI exercises them headless.
-file(GLOB example-sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+# the engine examples. Ordinary programs: no NTTP, no page<>, no compile-time anything.
+#
+# Registration is a glob - dropping a .cpp in here is the whole process, the way
+# the previous engine's examples worked. Each one links ONE target and imports ONE module; that
+# claim is enforced by tests/api_surface, not just asserted here.
 
-# assets sit next to the built binaries so the shell's executable-
-# relative path resolution finds them no matter the launch directory
-file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/assets" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+if(NOT CTBROWSER_BUILD_EXAMPLES)
+  return()
+endif()
+
+file(GLOB example-sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
+  file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/assets" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+endif()
 
 foreach(source ${example-sources})
   get_filename_component(example "${source}" NAME_WE)
   add_executable(ctbrowser-example-${example} "${source}")
-  if(TARGET ctbrowser-${example}-inc)
-    add_dependencies(ctbrowser-example-${example} ctbrowser-${example}-inc)
-  endif()
-  if(CTBROWSER_EXAMPLES_FETCH)
-    if(example STREQUAL "fetchboard")
-      target_compile_options(ctbrowser-example-${example} PRIVATE
-        "--fetch-allow=https://example.com/"
-        "--fetch-allow=https://raw.githubusercontent.com/**")
-    elseif(example STREQUAL "babylon-model")
-      target_compile_options(ctbrowser-example-${example} PRIVATE
-        "--fetch-allow=https://assets.babylonjs.com/**")
+  target_link_libraries(ctbrowser-example-${example} PRIVATE ctbrowser::ctbrowser)
+  ctbrowser_target(ctbrowser-example-${example})
+  # The target is prefixed so it cannot collide with the previous engine's; the BINARY is not,
+  # because `ctbrowse page.html` is what someone types.
+  set_target_properties(ctbrowser-example-${example} PROPERTIES OUTPUT_NAME ${example})
+
+  # Every example is also a test: a bounded, fixed-timestep run that writes a
+  # screenshot. `run_app` reads these env vars itself, so the example source
+  # contains no test scaffolding at all.
+  #
+  # ctbrowse is the exception - it is a CLI that opens a file you name, so it
+  # has nothing to render with no arguments. It is still built (and still
+  # linted by tests/api_surface), just not run.
+  if(NOT CMAKE_CROSSCOMPILING AND BUILD_TESTING AND NOT example STREQUAL "ctbrowse")
+    add_test(NAME example-${example} COMMAND ctbrowser-example-${example}
+             WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+    # CTBROWSER_NETWORK=0: a test that reaches the internet fails for reasons
+    # that have nothing to do with this code. fetchboard's network card takes
+    # its catch branch here, which is the offline path and worth covering.
+    set_tests_properties(example-${example} PROPERTIES ENVIRONMENT
+      "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;CTBROWSER_TEST_FRAMES=30;CTBROWSER_NETWORK=0;CTBROWSER_SCREENSHOT=${CMAKE_BINARY_DIR}/shot-${example}.ppm")
+
+    # And for the two pages that exist to show what the ENGINE draws, compare
+    # the render to a golden. Exiting 0 is not evidence: a page renders with
+    # empty buttons, no caret, a <details> stuck open and every label glued to
+    # its control and still exits 0 - which is how all of those shipped.
+    #
+    # Only these two: the others animate or fetch, so a byte-comparison would
+    # be pinning a clock rather than a layout.
+    if(example STREQUAL "widgets" OR example STREQUAL "elements")
+      add_test(NAME render-${example} COMMAND ${CMAKE_COMMAND}
+               -DEXE=$<TARGET_FILE:ctbrowser-example-${example}>
+               -DOUT=${CMAKE_BINARY_DIR}/render-${example}.ppm
+               -DGOLDEN=${PROJECT_SOURCE_DIR}/tests/golden/${example}.ppm
+               -DWORKDIR=${PROJECT_SOURCE_DIR}
+               -P ${PROJECT_SOURCE_DIR}/tools/check-render.cmake)
     endif()
   endif()
-  target_link_libraries(ctbrowser-example-${example} PRIVATE ctbrowser::ctbrowser SDL3::SDL3 ${CTBROWSER_SAT_LIBS})
-  target_compile_options(ctbrowser-example-${example} PRIVATE ${CTBROWSER_WARNING_OPTIONS})
-  target_compile_definitions(ctbrowser-example-${example} PRIVATE ${CTBROWSER_SAT_DEFS})
-  if(TARGET ctbrowser-pch-anchor)
-    target_precompile_headers(ctbrowser-example-${example} REUSE_FROM ctbrowser-pch-anchor)
-  endif()
-  if(NOT CMAKE_CROSSCOMPILING)
-    add_test(NAME example-${example} COMMAND ctbrowser-example-${example}
-      WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
-    set_tests_properties(example-${example} PROPERTIES
-      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;CTBROWSER_TEST_FRAMES=30;CTBROWSER_SCREENSHOT=${CMAKE_BINARY_DIR}/shot-${example}.png")
-  endif()
-  list(APPEND ctbrowser-example-targets ctbrowser-example-${example})
 endforeach()
 
-# cross builds for Windows: `windows-dist` collects the .exes plus
-# SDL3.dll (the ONE runtime dependency - everything else is static)
-# into examples-windows/, ready to run on the Windows host
+# --- Windows cross builds -------------------------------------------------
+#
+# `windows-dist` collects the exes, SDL3.dll (the ONE runtime dependency -
+# everything else is static) and the DATA the examples load into
+# examples-windows/, ready to copy to a Windows host and run.
+#
+# The pages and assets have to come too: a the engine example calls run_app_file with a
+# REPOSITORY-RELATIVE path, so the folder mirrors that layout and the exes work
+# when run from its root.
+#
+# Its own directory rather than the previous engine's examples-windows/: several names collide
+# (counter, game, invaders, fetchboard) and overwriting the previous engine's binaries with this engine's
+# would be silent.
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
-  find_file(CTBROWSER_SDL3_DLL SDL3.dll PATH_SUFFIXES bin)
-  find_file(CTBROWSER_SDL3_TTF_DLL SDL3_ttf.dll PATH_SUFFIXES bin)
   set(dist-dir "${PROJECT_SOURCE_DIR}/examples-windows")
   set(dist-commands COMMAND ${CMAKE_COMMAND} -E make_directory "${dist-dir}")
-  foreach(target IN LISTS ctbrowser-example-targets)
-    # short artifact names (counter.exe, pong.exe ...) - the established
-    # convention of the shipped folder
-    string(REPLACE "ctbrowser-example-" "" exe-name "${target}")
+  foreach(source ${example-sources})
+    get_filename_component(example "${source}" NAME_WE)
     list(APPEND dist-commands
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:${target}>" "${dist-dir}/${exe-name}.exe")
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              "$<TARGET_FILE:ctbrowser-example-${example}>" "${dist-dir}/${example}.exe")
+    list(APPEND dist-targets ctbrowser-example-${example})
   endforeach()
-  foreach(dll IN LISTS CTBROWSER_SDL3_DLL CTBROWSER_SDL3_TTF_DLL)
-    if(dll)
+  # A statically linked SDL3 has no DLL to ship, which is the whole point:
+  # the folder is exes and data, and each exe runs on its own. With the shared
+  # SDL3 devel package instead, SDL3.dll (and SDL3_ttf.dll) come along.
+  if(NOT CTBROWSER_SDL3_IS_STATIC)
+    find_file(CTBROWSER_SDL3_DLL SDL3.dll PATH_SUFFIXES bin)
+    if(CTBROWSER_SDL3_DLL)
       list(APPEND dist-commands
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${dll}" "${dist-dir}")
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CTBROWSER_SDL3_DLL}" "${dist-dir}")
     endif()
-  endforeach()
+  endif()
+  if(CTBROWSER_WITH_TTF AND NOT CTBROWSER_SDL3_TTF_IS_STATIC)
+    find_file(CTBROWSER_SDL3_TTF_DLL SDL3_ttf.dll PATH_SUFFIXES bin)
+    if(CTBROWSER_SDL3_TTF_DLL)
+      list(APPEND dist-commands
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CTBROWSER_SDL3_TTF_DLL}" "${dist-dir}")
+    endif()
+  endif()
+  # Named files, not the whole assets tree: that also holds the previous engine's glTF models
+  # and p5.js, which is 20 MB no the engine example opens.
+  list(APPEND dist-commands
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/pages" "${dist-dir}/examples/pages"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${dist-dir}/examples/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${PROJECT_SOURCE_DIR}/examples/assets/sprites.bmp"
+            "${PROJECT_SOURCE_DIR}/examples/assets/blip.wav"
+            "${dist-dir}/examples/assets"
+    # The OFL faces back serif/sans-serif/monospace. Without them every exe
+    # falls back to the built-in bitmap font, which works but is not what the
+    # gallery is for; the licence rides along because the fonts do.
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${PROJECT_SOURCE_DIR}/fonts" "${dist-dir}/fonts"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${PROJECT_SOURCE_DIR}/examples/assets/fonts"
+            "${dist-dir}/examples/assets/fonts")
   add_custom_target(windows-dist ${dist-commands}
-    DEPENDS ${ctbrowser-example-targets}
-    COMMENT "collecting Windows exes + SDL3.dll into examples-windows/"
+    DEPENDS ${dist-targets}
+    COMMENT "collecting Windows exes + pages into examples-windows/"
     VERBATIM)
 endif()

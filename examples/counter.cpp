@@ -1,24 +1,28 @@
-// The hero demo: one HTML string is the whole application. The markup,
-// the CSS and the JS all parse WHILE THIS FILE COMPILES - break any of
-// the three and the build fails - and at runtime SDL3 opens a window,
-// clicks flow into the script, the script mutates the DOM, ctcss
-// restyles, and the layout reflows.
+// The hero demo: one HTML string is the whole application.
 //
-// Build: make counter   (or the CMake examples; needs SDL3)
+// Compare with the previous engine's counter.cpp: two includes, a platform main shim, a `page<>`
+// NTTP and two static_asserts. This is one import and one call - and the page is
+// an ordinary runtime string, so it can come from a file, a socket or a text box
+// just as easily.
 
-#include <SDL3/SDL_main.h>
-#include <ctbrowser.hpp>
-#include <ctbrowser/app.hpp>
+import ctbrowser;
 
-using app = ctbrowser::page<R"(<!DOCTYPE html>
+int main() {
+	ctbrowser::app_options options;
+	options.title = "counter";
+	options.width = 480;
+	options.height = 320;
+
+	return ctbrowser::run_app(R"(<!DOCTYPE html>
 <title>counter</title>
 <style>
-	body    { font-size: 16px; padding: 16px; }
-	h1      { font-size: 32px; color: #222222; }
-	#count  { font-size: 48px; color: gray; padding: 8px; }
-	#count.hot { color: #ff8800; }
-	#panel  { background-color: #eeeeee; padding: 12px; width: 320px; }
-	.hint   { color: #888888; }
+	body       { font-size: 16px; padding: 16px; background-color: #f6f7f9 }
+	h1         { font-size: 32px; color: #222222 }
+	#panel     { background-color: #ffffff; padding: 12px; width: 320px;
+	             border-color: #c8ccd4; border-width: 1px }
+	#count     { font-size: 48px; color: gray; padding: 8px }
+	#count.hot { color: #ff8800 }
+	.hint      { color: #888888 }
 </style>
 <h1>Clicks</h1>
 <div id=panel>
@@ -26,23 +30,13 @@ using app = ctbrowser::page<R"(<!DOCTYPE html>
 	<p class=hint>click the number</p>
 </div>
 <script>
-	let clicks = 0;
-	function onClick(id) {
-		if (id !== "count" && id !== "panel") { return; }
-		clicks += 1;
-		let el = getElementById("count");
+	var clicks = 0;
+	document.getElementById("panel").addEventListener("click", function () {
+		clicks = clicks + 1;
+		var el = document.getElementById("count");
 		el.setText(String(clicks));
 		if (clicks >= 5) { el.addClass("hot"); }
-		setTitle("clicked " + clicks);
-	}
-</script>)">;
-
-// initial style, proven during compilation
-constexpr ctcss::element_ref initial[] = {
-    {"html"}, {"body"}, {"div", "panel", ""}, {"p", "count", ""}};
-static_assert(ctcss::query(ctcss::parse_value(app::style_text()), initial, "color") == "gray");
-static_assert(ctjs::vp::is_valid(app::script_text()));
-
-int main(int, char **) {
-	return ctbrowser::run_app<app>();
+	});
+</script>)",
+	                          options);
 }

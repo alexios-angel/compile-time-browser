@@ -15,7 +15,7 @@
 #              glm/ only. Never a general /usr/include: that would drag the
 #              host's glibc headers into the mingw compile.
 #   Boost      $BOOST_INC, ~/projects/boost-inc - the same idea, holding
-#              boost/ only. v2 uses Boost HEADER-ONLY (containers, unordered,
+#              boost/ only. the engine uses Boost HEADER-ONLY (containers, unordered,
 #              asio), so headers are the whole dependency; a symlink to the
 #              host's boost/ inside an otherwise empty directory is enough.
 
@@ -78,7 +78,7 @@ foreach(_root IN LISTS _ctb_glm_roots)
 endforeach()
 
 # --- Boost (header-only): the isolated include dir. There is no BoostConfig
-# for the cross target, and there does not need to be - v2 links Boost::headers
+# for the cross target, and there does not need to be - the engine links Boost::headers
 # and nothing else, so src/CMakeLists.txt builds that target from this path.
 set(_ctb_boost_roots "$ENV{BOOST_INC}" "$ENV{HOME}/projects/boost-inc")
 foreach(_root IN LISTS _ctb_boost_roots)

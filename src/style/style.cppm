@@ -8,7 +8,7 @@ export module ctbrowser.style;
 //              selector, plus the counting ancestor filter
 //   engine     matching and the cascade
 //
-// Two things differ from v1 beyond speed. It resolves an element ONCE into a
+// Two things differ from the previous engine beyond speed. It resolves an element ONCE into a
 // whole computed style rather than answering one property at a time by
 // rescanning the sheet. And it takes a document read transaction rather than
 // the live tree, so matching observes a stable view and writes nothing that

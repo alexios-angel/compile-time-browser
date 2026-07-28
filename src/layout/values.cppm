@@ -129,7 +129,7 @@ struct length {
 	if (suffix.starts_with('%')) { return length{value, unit::percent}; }
 	if (suffix.starts_with("rem")) { return length{value, unit::rem}; }
 	if (suffix.starts_with("em")) { return length{value, unit::em}; }
-	return length{value, unit::none}; // unitless: treated as px, like v1 did
+	return length{value, unit::none}; // unitless: treated as px, like the previous engine did
 }
 
 // The `display` values the box tree distinguishes. Everything else collapses
@@ -159,7 +159,7 @@ struct side_lengths {
 
 // Tags that generate NO box unless a sheet overrides them. This is not an
 // optimisation - without it a page's <script> source and <style> rules render
-// as visible text, which is what v1's layout::detail::skipped_tag existed to
+// as visible text, which is what the previous engine's layout::detail::skipped_tag existed to
 // prevent. It is a stand-in for the UA stylesheet's display:none rules, which
 // arrive with ua.hpp's port.
 [[nodiscard]] inline bool generates_no_box(std::string_view tag) {

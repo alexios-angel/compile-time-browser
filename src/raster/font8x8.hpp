@@ -11,7 +11,7 @@
 // no font library at all.
 
 // Carried forward from include/ctbrowser/font8x8.hpp, deliberately as a COPY.
-// v2 must not include v1's headers - v1's tree is deleted at stage 7, and a
+// the engine must not include the previous engine's headers - the previous engine's tree is deleted at stage 7, and a
 // dependency on it would have to be untangled then instead of now. The table
 // itself is generated from dhepper's public-domain font8x8 (see NOTICE) and
 // does not change, so a copy costs nothing but the bytes.

@@ -34,8 +34,8 @@ import ctbrowser.shell;
 // The previous version of this file was a translator, not a shell: it exported
 // SDL_Window*, SDL_Event and SDL_Renderer*, and left SDL_Init, the poll loop,
 // the renderer object, frame pacing and quit handling to the caller. The
-// reference consumer wrote a dozen SDL calls by hand to open one page. v1's
-// `run_app<page>(opts)` was better than that, and this is v1's shape without
+// reference consumer wrote a dozen SDL calls by hand to open one page. the previous engine's
+// `run_app<page>(opts)` was better than that, and this is the previous engine's shape without
 // the compile-time machinery.
 
 // SDL IS NOT INCLUDED ABOVE, and that is the point. A module's global module
@@ -159,7 +159,7 @@ struct app_options {
 //   CTBROWSER_PROFILE      -> profile_path ("-" = summary only)
 //   CTBROWSER_PROFILE_SECONDS -> profile_seconds
 //
-// Carried over from v1 because it is what lets an example BE a ctest without
+// Carried over from the previous engine because it is what lets an example BE a ctest without
 // the example containing any test scaffolding.
 inline void apply_environment(app_options & options) {
 	if (const char * frames = std::getenv("CTBROWSER_TEST_FRAMES")) {

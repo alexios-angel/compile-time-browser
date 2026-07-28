@@ -27,10 +27,10 @@ import ctbrowser.core;
 // That is RCU, and it is why a reader needs no lock: it never observes a
 // half-updated anything. It sees the old block or the new one.
 //
-// What this deliberately does NOT store, and v1's node did: layout rects,
+// What this deliberately does NOT store, and the previous engine's node did: layout rects,
 // text-line caches, widget state, selection ranges, caret positions, blink
 // phase. Those are outputs of style and layout, and keeping them on the node
-// is what made v1's layout unable to run concurrently. They belong to the box
+// is what made the previous engine's layout unable to run concurrently. They belong to the box
 // tree, which is not the DOM tree.
 
 export namespace ctbrowser {

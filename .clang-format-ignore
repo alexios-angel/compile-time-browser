@@ -6,17 +6,9 @@
 # GENERATED. Reformatting these changes nothing that survives the next run of
 # the generator, and makes the diff between "the generator changed" and "the
 # formatter ran" impossible to read.
-include/ctbrowser/font8x8.hpp
 src/raster/font8x8.hpp
 src/dom/entities.hpp
 src/gpu/shaders/tile_spv.hpp
-examples/*.inc
-examples-v2/*.inc
-
-# VENDORED. Not ours to reformat: a local diff against upstream is what makes
-# the next update reviewable, and NOTICE names these by name.
-include/ctbrowser/stb_image.h
-include/ctbrowser/stb_image_write.h
 
 # Submodules and the fetched toolchain are separate projects entirely.
 external/*

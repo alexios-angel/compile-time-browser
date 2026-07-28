@@ -11,7 +11,7 @@ export module ctbrowser.layout;
 //              grid arrive as new types rather than new if-statements
 //   engine     the driver, sequential and parallel
 //
-// v1 wrote geometry back onto the DOM node. That single decision is what made
+// the previous engine wrote geometry back onto the DOM node. That single decision is what made
 // its layout unparallelisable, what put thirty layout-only fields on `node`,
 // and what left nowhere to put a box with no element behind it.
 

@@ -12,7 +12,7 @@ import ctbrowser.core;
 // The engine takes THESE, and :app translates SDL events into them. That is
 // what keeps the whole browser testable headlessly: a test drives clicks,
 // scrolls and keys directly, with no window, no display and no event queue.
-// v1 made the same split for the same reason.
+// the previous engine made the same split for the same reason.
 
 export namespace ctbrowser::shell {
 

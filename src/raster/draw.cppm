@@ -64,7 +64,7 @@ using ctbrowser::paint::paint_op;
 // THE SEAM a real font plugs into.
 //
 // Everything above this line is font8x8: an 8x8 bitmap per code point scaled by
-// an INTEGER factor, which is why v2 quantises font sizes to multiples of 8 -
+// an INTEGER factor, which is why font8x8 quantises font sizes to multiples of 8 -
 // 16px and 20px text render identically, and that is a property of the font,
 // not a rounding bug. A backend with outlines removes it.
 //

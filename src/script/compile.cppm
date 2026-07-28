@@ -18,7 +18,7 @@ import :value;
 // The front end is ctjs's existing Pratt parser, reused rather than rewritten
 // for the same reason cthtml's parser is reused in the DOM: it works, and
 // blocking a VM on a fresh JavaScript parser would be the wrong order to
-// build in. What is replaced is everything after it - v1 walked this tree on
+// build in. What is replaced is everything after it - the previous engine walked this tree on
 // every execution, re-deciding what each node meant each time round a loop.
 // Compiling once and dispatching on 4-byte instructions is the entire point.
 //
@@ -1130,7 +1130,7 @@ private:
 		} else if (n.text == "await") {
 			// Promises here are SETTLED on creation - there is no event loop
 			// suspending a frame - so awaiting one is reading its value, and
-			// awaiting a plain value is the value. That is the same subset v1
+			// awaiting a plain value is the value. That is the same subset the previous engine
 			// shipped, and it is what `await fetch(...)` needs.
 			proto().emit(instruction{op::await_value, dst, operand});
 		} else if (n.text == "+") {

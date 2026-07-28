@@ -1,24 +1,38 @@
-// The compile-time network example: examples/fetchboard.html awaits
-// fetch() of REAL resources - example.com and a commit-pinned
-// raw.githubusercontent.com JSON - which the build fetched via
-// std::fetch and embedded (assets.hpp scans the script's fetch("...")
-// literals). The runtime opens no sockets; await just unwraps the
-// settled bytes.
+// fetch, both ways: a resource baked into the binary and a real HTTP request.
 //
-// Build: make FETCH=1 fetchboard      (plain `make fetchboard` builds
-// offline and the page explains what is missing; needs SDL3)
+// The registry is consulted first, so the first card answers with no socket at
+// all. The second one goes to the network - and takes its catch branch when
+// there is none, which is what `CTBROWSER_NETWORK=0` sets up. That is how this
+// example can be a test: the run is deterministic and touches nothing outside
+// the process.
+//
+// The page is what changed most in the port. the previous engine's fetched at COMPILE time
+// through a patched clang's std::fetch; the engine has a real HTTP client, so the page
+// is written the way a page would be.
 
-#include <SDL3/SDL_main.h>
-#include <ctbrowser.hpp>
-#include <ctbrowser/app.hpp>
+import ctbrowser;
 
-using fetchboard = ctbrowser::page<
-#include "fetchboard.inc"
-    >;
+#include <fstream>
+#include <iterator>
+#include <string>
+#include <vector>
 
-int main(int, char **) {
-	ctbrowser::app_options opts;
-	opts.width = 640;
-	opts.height = 400;
-	return ctbrowser::run_app<fetchboard>(opts);
+int main() {
+	ctbrowser::app_options options;
+	options.title = "fetchboard";
+	options.width = 720;
+	options.height = 420;
+
+	// Bake the JSON in, which is what `app_options::assets` is for: the page
+	// asks for "fetchboard-data.json" and never learns whether it came from the
+	// binary, the disk or the network.
+	std::ifstream in{"examples/pages/fetchboard-data.json", std::ios::binary};
+	const std::string text{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
+	std::vector<std::byte> bytes(text.size());
+	for (std::size_t i = 0; i < text.size(); ++i) {
+		bytes[i] = static_cast<std::byte>(static_cast<unsigned char>(text[i]));
+	}
+	options.assets.push_back({"fetchboard-data.json", std::move(bytes)});
+
+	return ctbrowser::run_app_file("examples/pages/fetchboard.html", options);
 }

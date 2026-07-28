@@ -10,13 +10,13 @@ import :command;
 
 // Layers: the unit the compositor moves.
 //
-// This is where scrolling stops being a layout problem. In v1 a scroll shifted
+// This is where scrolling stops being a layout problem. In the previous engine a scroll shifted
 // every paint command and re-ran layout to reserve the scrollbar; here the page
 // is one layer, scrolling changes its `offset`, and the compositor re-composites
 // already-rasterized tiles. Nothing is re-recorded and nothing is re-rastered.
 //
 // position:fixed falls out of the same mechanism rather than needing the
-// per-command `fixed` flag v1 carried: fixed content is its own layer whose
+// per-command `fixed` flag the previous engine carried: fixed content is its own layer whose
 // offset the scroll does not touch.
 
 export namespace ctbrowser::paint {

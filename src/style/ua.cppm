@@ -8,7 +8,7 @@ import ctbrowser.core;
 
 // The user-agent stylesheet: what a document looks like before anyone styles it.
 //
-// Carried over from v1's include/ctbrowser/ua.hpp, which took its values from
+// Carried over from the previous engine's include/ctbrowser/ua.hpp, which took its values from
 // Gecko's html.css and Firefox's modern widget theme. It is not decoration -
 // without it an <h1> is body text, a <ul> has no indent, a link is not blue, and
 // <script> renders its own source. Every one of those is what "unstyled" looks
@@ -18,14 +18,14 @@ import ctbrowser.core;
 // ties, which is exactly the rule the CSS spec gives - so a page saying
 // `h1 { font-size: 12px }` wins without anything here having to know about it.
 //
-// What is deliberately absent: the widget CHROME. v1 drew checkboxes, radios,
-// scrollbar thumbs and menus from layout, using the palette below. v2 has no
+// What is deliberately absent: the widget CHROME. the previous engine drew checkboxes, radios,
+// scrollbar thumbs and menus from layout, using the palette below. the engine has no
 // form widgets yet, so the palette is carried forward and the drawing is not -
 // exporting colours nothing paints would be worse than the gap it hides.
 
 export namespace ctbrowser::style {
 
-// Firefox/Gecko defaults, trimmed to the properties v2's layout and paint
+// Firefox/Gecko defaults, trimmed to the properties this engine's layout and paint
 // actually read. A declaration nothing consumes is a comment that costs
 // selector matching, so the port is a subset on purpose - it grows when a
 // consumer for the property does.

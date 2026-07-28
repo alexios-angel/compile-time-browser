@@ -1,8 +1,8 @@
 # ctbrowser 2.0 - the concurrent, GPU-composited engine.
 #
-# v2 builds ALONGSIDE v1 until the staging plan retires v1, so this subtree is
-# self-contained: it does not touch the v1 interface target, its PCH, or its
-# tests. v1's 33 tests must keep passing throughout the rewrite.
+# the engine builds ALONGSIDE the previous engine until the staging plan retires the previous engine, so this subtree is
+# self-contained: it does not touch the the previous engine interface target, its PCH, or its
+# tests. the previous engine's 33 tests must keep passing throughout the rewrite.
 #
 # Modules need a newer CMake than the top level asks for, and they need the
 # scanner on, so the requirement is raised here rather than repo-wide.
@@ -10,7 +10,7 @@ cmake_minimum_required(VERSION 3.28)
 include(GNUInstallDirs)
 
 if(CMAKE_VERSION VERSION_LESS 3.28)
-  message(FATAL_ERROR "ctbrowser v2 needs CMake >= 3.28 for C++ module support")
+  message(FATAL_ERROR "ctbrowser needs CMake >= 3.28 for C++ module support")
 endif()
 
 # CONFIG mode: FindBoost was removed in CMake 4 (policy CMP0167), and Boost has
@@ -18,7 +18,7 @@ endif()
 # plan's dependency policy: compiled Boost would mean cross-compiling Boost
 # itself for the llvm-mingw Windows presets.
 #
-# CROSS BUILDS have no BoostConfig for the target and do not need one: what v2
+# CROSS BUILDS have no BoostConfig for the target and do not need one: what the engine
 # links is Boost::headers, so an isolated include directory (the toolchain finds
 # it, the same way it finds GLM's) is the entire dependency.
 if(CTBROWSER_BOOST_INCLUDE_DIR)
@@ -27,30 +27,30 @@ if(CTBROWSER_BOOST_INCLUDE_DIR)
     set_target_properties(Boost::headers PROPERTIES
       INTERFACE_INCLUDE_DIRECTORIES "${CTBROWSER_BOOST_INCLUDE_DIR}")
   endif()
-  message(STATUS "ctbrowser v2: header-only Boost from ${CTBROWSER_BOOST_INCLUDE_DIR}")
+  message(STATUS "ctbrowser: header-only Boost from ${CTBROWSER_BOOST_INCLUDE_DIR}")
 else()
   find_package(Boost 1.80 REQUIRED CONFIG)
 endif()
 
-# v2 is NOT header-only and does NOT depend on std::embed. Keeping the warning
-# set identical to v1's is deliberate - the rewrite should not quietly relax the
-# bar - minus the v1-specific -Wno-overlength-strings, which existed only for
-# page-as-NTTP raw strings that v2 no longer has.
-set(CTBROWSER_V2_WARNINGS -O2 -pedantic -Wall -Wextra -Werror -Wconversion)
+# the engine is NOT header-only and does NOT depend on std::embed. Keeping the warning
+# set identical to the previous engine's is deliberate - the rewrite should not quietly relax the
+# bar - minus the specific to the previous engine -Wno-overlength-strings, which existed only for
+# page-as-NTTP raw strings that the engine no longer has.
+set(CTBROWSER_STRICT_WARNINGS -O2 -pedantic -Wall -Wextra -Werror -Wconversion)
 
 # --- LINK WITH LLD ------------------------------------------------------
 # Measured on this tree: the same executable links in 0.65 s with lld and
-# 4.31 s with the default ld, and v2 produces TWENTY-SIX of them. That is the
+# 4.31 s with the default ld, and the engine produces TWENTY-SIX of them. That is the
 # single cheapest thing in this file. Checked rather than assumed, because a
 # toolchain without lld must still build.
 include(CheckLinkerFlag OPTIONAL RESULT_VARIABLE CTBROWSER_HAVE_LINKER_CHECK)
-option(CTBROWSER_V2_USE_LLD "Link v2 with lld when it is available" ON)
-set(CTBROWSER_V2_LINK_OPTIONS "")
-if(CTBROWSER_V2_USE_LLD AND CTBROWSER_HAVE_LINKER_CHECK)
+option(CTBROWSER_USE_LLD "Link with lld when it is available" ON)
+set(CTBROWSER_LINK_OPTIONS "")
+if(CTBROWSER_USE_LLD AND CTBROWSER_HAVE_LINKER_CHECK)
   check_linker_flag(CXX "-fuse-ld=lld" CTBROWSER_LLD_WORKS)
   if(CTBROWSER_LLD_WORKS)
-    set(CTBROWSER_V2_LINK_OPTIONS -fuse-ld=lld)
-    message(STATUS "ctbrowser v2: linking with lld")
+    set(CTBROWSER_LINK_OPTIONS -fuse-ld=lld)
+    message(STATUS "ctbrowser: linking with lld")
   endif()
 endif()
 
@@ -63,16 +63,16 @@ endif()
 # LTO buys that back at link time instead of at compile time, which is the same
 # trade made in the right place. Off by default because it makes linking slow
 # again, and the default here is meant to be fast to build.
-option(CTBROWSER_V2_LTO "Inline across the engine boundary again, at link time" OFF)
+option(CTBROWSER_LTO "Inline across the engine boundary again, at link time" OFF)
 
-# Everything v2 builds - libraries, tests and examples - goes through this, so
-# there is one place that decides how v2 is compiled and linked.
-function(ctbrowser_v2_target name)
-  target_compile_options(${name} PRIVATE ${CTBROWSER_V2_WARNINGS})
-  if(CTBROWSER_V2_LINK_OPTIONS)
-    target_link_options(${name} PRIVATE ${CTBROWSER_V2_LINK_OPTIONS})
+# Everything the engine builds - libraries, tests and examples - goes through this, so
+# there is one place that decides how the engine is compiled and linked.
+function(ctbrowser_target name)
+  target_compile_options(${name} PRIVATE ${CTBROWSER_STRICT_WARNINGS})
+  if(CTBROWSER_LINK_OPTIONS)
+    target_link_options(${name} PRIVATE ${CTBROWSER_LINK_OPTIONS})
   endif()
-  if(CTBROWSER_V2_LTO)
+  if(CTBROWSER_LTO)
     set_property(TARGET ${name} PROPERTY INTERPROCEDURAL_OPTIMIZATION ON)
   endif()
 endfunction()
@@ -91,7 +91,7 @@ target_sources(ctbrowser-core
       core/cpu_time.cppm
       core/geometry.cppm)
 target_compile_features(ctbrowser-core PUBLIC cxx_std_23)
-ctbrowser_v2_target(ctbrowser-core)
+ctbrowser_target(ctbrowser-core)
 target_link_libraries(ctbrowser-core PUBLIC Boost::headers)
 set_target_properties(ctbrowser-core PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
@@ -115,7 +115,7 @@ target_sources(ctbrowser-dom
       dom/treebuilder.cppm
       dom/html.cppm)
 target_compile_features(ctbrowser-dom PUBLIC cxx_std_23)
-ctbrowser_v2_target(ctbrowser-dom)
+ctbrowser_target(ctbrowser-dom)
 target_include_directories(ctbrowser-dom PRIVATE)
 target_include_directories(ctbrowser-dom PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/dom")
 target_link_libraries(ctbrowser-dom PUBLIC ctbrowser-core)
@@ -124,7 +124,7 @@ set_target_properties(ctbrowser-dom PROPERTIES CXX_SCAN_FOR_MODULES ON)
 add_library(ctbrowser::dom ALIAS ctbrowser-dom)
 
 # --- ctbrowser.script ----------------------------------------------------
-# ctjs v2. Reuses ctjs's Pratt parser (vparse.hpp) and replaces everything
+# The script engine. Reuses ctjs's Pratt parser (vparse.hpp) and replaces everything
 # after it; the tree-walk interpreter and the refcounted variant value model
 # are gone. Depends on core only for the warning set - the VM shares no state
 # with the DOM by design (one agent per thread).
@@ -146,7 +146,7 @@ target_sources(ctbrowser-script
     script/builtins.cpp
     script/vm.cpp)
 target_compile_features(ctbrowser-script PUBLIC cxx_std_23)
-ctbrowser_v2_target(ctbrowser-script)
+ctbrowser_target(ctbrowser-script)
 target_include_directories(ctbrowser-script PRIVATE
   "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"
   "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/external/compile-time-containers/include")
@@ -156,7 +156,7 @@ set_target_properties(ctbrowser-script PROPERTIES CXX_SCAN_FOR_MODULES ON)
 add_library(ctbrowser::script ALIAS ctbrowser-script)
 
 # --- ctbrowser.style -----------------------------------------------------
-# Reuses ctcss's parser and replaces its matching: v1's query() rescanned the
+# Reuses ctcss's parser and replaces its matching: the previous engine's query() rescanned the
 # whole sheet per property per element, this buckets rules by their rightmost
 # simple selector and rejects descendant selectors with an ancestor filter.
 # Depends on dom for read_txn - matching consumes a stable read view, never
@@ -171,7 +171,7 @@ target_sources(ctbrowser-style
       style/engine.cppm
       style/ua.cppm)
 target_compile_features(ctbrowser-style PUBLIC cxx_std_23)
-ctbrowser_v2_target(ctbrowser-style)
+ctbrowser_target(ctbrowser-style)
 target_include_directories(ctbrowser-style PRIVATE
   "${PROJECT_SOURCE_DIR}/external/compile-time-css/include")
 target_link_libraries(ctbrowser-style PUBLIC ctbrowser-core ctbrowser-dom Boost::headers)
@@ -195,7 +195,7 @@ target_sources(ctbrowser-layout
       layout/algorithm.cppm
       layout/engine.cppm)
 target_compile_features(ctbrowser-layout PUBLIC cxx_std_23)
-ctbrowser_v2_target(ctbrowser-layout)
+ctbrowser_target(ctbrowser-layout)
 target_link_libraries(ctbrowser-layout PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style)
 set_target_properties(ctbrowser-layout PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
@@ -215,7 +215,7 @@ target_sources(ctbrowser-paint
       paint/layer.cppm
       paint/record.cppm)
 target_compile_features(ctbrowser-paint PUBLIC cxx_std_23)
-ctbrowser_v2_target(ctbrowser-paint)
+ctbrowser_target(ctbrowser-paint)
 target_link_libraries(ctbrowser-paint PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style ctbrowser-layout)
 set_target_properties(ctbrowser-paint PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
@@ -240,12 +240,12 @@ target_sources(ctbrowser-raster
       raster/compositor.cppm
       raster/pipeline.cppm)
 target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
-ctbrowser_v2_target(ctbrowser-raster)
+ctbrowser_target(ctbrowser-raster)
 target_include_directories(ctbrowser-raster PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/raster")
 target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)
 # Real fonts, through SDL3_ttf. THE ONE PLACE THE ENGINE LINKS SDL, and a
 # deliberate exception rather than an oversight - see the header of
-# raster/ttf.cppm and the note in tests-v2/api_surface. TTF_Init needs no video
+# raster/ttf.cppm and the note in tests/api_surface. TTF_Init needs no video
 # subsystem, so real text stays testable with no display, which is what makes
 # the exception safe.
 #
@@ -257,10 +257,10 @@ if(SDL3_FOUND AND SDL3_ttf_FOUND)
   ctbrowser_pick_sdl_target(sdl_target sdl_static SDL3::SDL3)
   target_link_libraries(ctbrowser-raster PUBLIC ${ttf_target} ${sdl_target})
   target_compile_definitions(ctbrowser-raster PUBLIC CTBROWSER_WITH_TTF=1)
-  message(STATUS "ctbrowser v2: SDL3_ttf - real fonts available")
+  message(STATUS "ctbrowser: SDL3_ttf - real fonts available")
 else()
   target_compile_definitions(ctbrowser-raster PUBLIC CTBROWSER_WITH_TTF=0)
-  message(STATUS "ctbrowser v2: no SDL3_ttf - text renders with font8x8 only")
+  message(STATUS "ctbrowser: no SDL3_ttf - text renders with font8x8 only")
 endif()
 
 set_target_properties(ctbrowser-raster PROPERTIES CXX_SCAN_FOR_MODULES ON)
@@ -287,13 +287,13 @@ target_sources(ctbrowser-shell
   PRIVATE
     shell/net.cpp)
 target_compile_features(ctbrowser-shell PUBLIC cxx_std_23)
-ctbrowser_v2_target(ctbrowser-shell)
+ctbrowser_target(ctbrowser-shell)
 target_link_libraries(ctbrowser-shell PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style
                                              ctbrowser-layout ctbrowser-paint ctbrowser-raster
                                              ctbrowser-script Boost::headers)
 
 # Asio comes from Boost by default - Boost::headers is already a dependency of
-# three v2 targets and is header-only. A build that would rather not have Boost
+# three the engine targets and is header-only. A build that would rather not have Boost
 # at all can point at STANDALONE Asio instead; the module supports both.
 find_path(CTBROWSER_STANDALONE_ASIO_INCLUDE asio.hpp)
 option(CTBROWSER_ASIO_STANDALONE "Use standalone Asio instead of Boost.Asio"
@@ -301,7 +301,7 @@ option(CTBROWSER_ASIO_STANDALONE "Use standalone Asio instead of Boost.Asio"
 if(CTBROWSER_ASIO_STANDALONE AND CTBROWSER_STANDALONE_ASIO_INCLUDE)
   target_include_directories(ctbrowser-shell PUBLIC ${CTBROWSER_STANDALONE_ASIO_INCLUDE})
   target_compile_definitions(ctbrowser-shell PUBLIC CTBROWSER_ASIO_STANDALONE=1 ASIO_STANDALONE=1)
-  message(STATUS "ctbrowser v2: networking on standalone Asio")
+  message(STATUS "ctbrowser: networking on standalone Asio")
 else()
   target_compile_definitions(ctbrowser-shell PUBLIC CTBROWSER_ASIO_STANDALONE=0)
 endif()
@@ -318,10 +318,10 @@ find_package(OpenSSL QUIET COMPONENTS SSL Crypto)
 if(OpenSSL_FOUND)
   target_link_libraries(ctbrowser-shell PUBLIC OpenSSL::SSL OpenSSL::Crypto)
   target_compile_definitions(ctbrowser-shell PUBLIC CTBROWSER_WITH_TLS=1)
-  message(STATUS "ctbrowser v2: https:// enabled (OpenSSL ${OPENSSL_VERSION})")
+  message(STATUS "ctbrowser: https:// enabled (OpenSSL ${OPENSSL_VERSION})")
 else()
   target_compile_definitions(ctbrowser-shell PUBLIC CTBROWSER_WITH_TLS=0)
-  message(STATUS "ctbrowser v2: no OpenSSL - fetch() does http:// only")
+  message(STATUS "ctbrowser: no OpenSSL - fetch() does http:// only")
 endif()
 set_target_properties(ctbrowser-shell PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
@@ -339,7 +339,7 @@ target_sources(ctbrowser-app
   PRIVATE
     shell/app.cpp)
 target_compile_features(ctbrowser-app PUBLIC cxx_std_23)
-ctbrowser_v2_target(ctbrowser-app)
+ctbrowser_target(ctbrowser-app)
 target_link_libraries(ctbrowser-app PUBLIC ctbrowser-core ctbrowser-paint ctbrowser-raster
                                            ctbrowser-shell)
 if(SDL3_FOUND)
@@ -352,48 +352,51 @@ if(SDL3_FOUND)
     target_compile_definitions(ctbrowser-app PRIVATE CTBROWSER_WITH_IMAGE=1)
     ctbrowser_pick_sdl_target(image_target image_static SDL3_image::SDL3_image)
     target_link_libraries(ctbrowser-app PUBLIC ${image_target})
-    message(STATUS "ctbrowser v2: SDL3_image found - <img> reads PNG/JPEG too")
+    message(STATUS "ctbrowser: SDL3_image found - <img> reads PNG/JPEG too")
   else()
     target_compile_definitions(ctbrowser-app PRIVATE CTBROWSER_WITH_IMAGE=0)
-    message(STATUS "ctbrowser v2: no SDL3_image - <img> reads BMP only")
+    message(STATUS "ctbrowser: no SDL3_image - <img> reads BMP only")
   endif()
 else()
   target_compile_definitions(ctbrowser-app PRIVATE CTBROWSER_WITH_SDL3=0 CTBROWSER_WITH_IMAGE=0)
-  message(STATUS "ctbrowser: SDL3 not found - v2 builds headless (run_app still works)")
+  message(STATUS "ctbrowser: SDL3 not found - builds headless (run_app still works)")
 endif()
 set_target_properties(ctbrowser-app PROPERTIES CXX_SCAN_FOR_MODULES ON)
 add_library(ctbrowser::app ALIAS ctbrowser-app)
 
 # --- ctbrowser (umbrella) ------------------------------------------------
 # What an application imports and links. One of each.
-add_library(ctbrowser-v2)
-target_sources(ctbrowser-v2
+add_library(ctbrowser)
+target_sources(ctbrowser
   PUBLIC
     FILE_SET CXX_MODULES FILES ctbrowser.cppm)
-target_compile_features(ctbrowser-v2 PUBLIC cxx_std_23)
-ctbrowser_v2_target(ctbrowser-v2)
-target_link_libraries(ctbrowser-v2 PUBLIC
+target_compile_features(ctbrowser PUBLIC cxx_std_23)
+ctbrowser_target(ctbrowser)
+target_link_libraries(ctbrowser PUBLIC
   ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style ctbrowser-layout
   ctbrowser-paint ctbrowser-raster ctbrowser-shell ctbrowser-app)
-set_target_properties(ctbrowser-v2 PROPERTIES CXX_SCAN_FOR_MODULES ON)
-add_library(ctbrowser::v2 ALIAS ctbrowser-v2)
+set_target_properties(ctbrowser PROPERTIES CXX_SCAN_FOR_MODULES ON)
+add_library(ctbrowser::ctbrowser ALIAS ctbrowser)
 
 # --- ONE ARCHIVE ---------------------------------------------------------
 # The engine is nine libraries because it is nine modules, and every one of
-# them ends up on every link line. `libctbrowser.a` is all of them merged, so
-# an application - or a build system that is not CMake - links ONE file.
+# them ends up on every link line. `libctbrowser-all.a` is all of them merged,
+# so an application - or a build system that is not CMake - links ONE file.
+#
+# `-all` rather than `libctbrowser.a`, which is the umbrella TARGET's own
+# output: two rules producing one path is a build that refuses to generate.
 #
 # It is a merge, not a rebuild: the same objects, collected with the archiver.
-# CMake users need nothing new; `ctbrowser::v2` still works and still carries
+# CMake users need nothing new; `ctbrowser::ctbrowser` still works and still carries
 # the include paths and module BMIs, which an archive cannot.
 #
-# CTBROWSER_V2_SINGLE_LIB=OFF skips it.
-option(CTBROWSER_V2_SINGLE_LIB "Also produce one merged libctbrowser.a" ON)
-if(CTBROWSER_V2_SINGLE_LIB)
-  set(ctbrowser-merged "${CMAKE_CURRENT_BINARY_DIR}/libctbrowser.a")
+# CTBROWSER_SINGLE_LIB=OFF skips it.
+option(CTBROWSER_SINGLE_LIB "Also produce one merged libctbrowser-all.a" ON)
+if(CTBROWSER_SINGLE_LIB)
+  set(ctbrowser-merged "${CMAKE_CURRENT_BINARY_DIR}/libctbrowser-all.a")
   set(ctbrowser-parts ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style
                       ctbrowser-layout ctbrowser-paint ctbrowser-raster ctbrowser-shell
-                      ctbrowser-app ctbrowser-v2)
+                      ctbrowser-app ctbrowser)
   set(ctbrowser-part-files "")
   foreach(part IN LISTS ctbrowser-parts)
     list(APPEND ctbrowser-part-files "$<TARGET_FILE:${part}>")
@@ -407,7 +410,7 @@ if(CTBROWSER_V2_SINGLE_LIB)
     OUTPUT "${ctbrowser-merged}"
     COMMAND "${CMAKE_AR}" -M < "${ctbrowser-mri}"
     DEPENDS ${ctbrowser-parts} "${ctbrowser-mri}"
-    COMMENT "merging the v2 engine into one libctbrowser.a"
+    COMMENT "merging the engine into one libctbrowser-all.a"
     VERBATIM)
   add_custom_target(ctbrowser-single-lib ALL DEPENDS "${ctbrowser-merged}")
 endif()
@@ -426,7 +429,7 @@ if(SDL3_FOUND)
         gpu/device.cppm
         gpu/select.cppm)
   target_compile_features(ctbrowser-gpu PUBLIC cxx_std_23)
-  ctbrowser_v2_target(ctbrowser-gpu)
+  ctbrowser_target(ctbrowser-gpu)
   target_include_directories(ctbrowser-gpu PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/gpu")
   target_link_libraries(ctbrowser-gpu PUBLIC ctbrowser-core ctbrowser-paint ctbrowser-raster
                                              ${CTBROWSER_SDL3_TARGET})
@@ -434,65 +437,65 @@ if(SDL3_FOUND)
   add_library(ctbrowser::gpu ALIAS ctbrowser-gpu)
 endif()
 
-# --- installing v2 -------------------------------------------------------
+# --- installing the engine -------------------------------------------------------
 # C++ modules install as a FILE_SET, and consuming them from an installed tree
 # needs CXX_MODULES_DIRECTORY on the export. Without this the only way to use
-# v2 was add_subdirectory() of this repo - every install() in the project was
-# v1's, so `find_package(ctbrowser)` handed back a header-only interface target
+# the engine was add_subdirectory() of this repo - every install() in the project was
+# the previous engine's, so `find_package(ctbrowser)` handed back a header-only interface target
 # and none of the engine.
-set(CTBROWSER_V2_TARGETS
+set(CTBROWSER_TARGETS
   ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style ctbrowser-layout
-  ctbrowser-paint ctbrowser-raster ctbrowser-shell ctbrowser-app ctbrowser-v2)
+  ctbrowser-paint ctbrowser-raster ctbrowser-shell ctbrowser-app ctbrowser)
 if(TARGET ctbrowser-gpu)
-  list(APPEND CTBROWSER_V2_TARGETS ctbrowser-gpu)
+  list(APPEND CTBROWSER_TARGETS ctbrowser-gpu)
 endif()
 
-install(TARGETS ${CTBROWSER_V2_TARGETS}
-  EXPORT ctbrowser-v2-targets
+install(TARGETS ${CTBROWSER_TARGETS}
+  EXPORT ctbrowser-targets
   FILE_SET CXX_MODULES DESTINATION "${CMAKE_INSTALL_LIBDIR}/ctbrowser/modules"
   ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
   LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")
 
-install(EXPORT ctbrowser-v2-targets
-  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ctbrowser-v2"
+install(EXPORT ctbrowser-targets
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ctbrowser"
   NAMESPACE ctbrowser::
   CXX_MODULES_DIRECTORY .)
 
-# The alias an application links. `ctbrowser::v2` is the build-tree name;
+# The alias an application links. `ctbrowser::ctbrowser` is the build-tree name;
 # this is what survives an install.
 # Whatever the exported targets name in their link interface, the consumer has
 # to be able to resolve. SDL3 is conditional because the app module links it
 # only when it was found - a headless install must not demand it back.
-set(CTBROWSER_V2_CONFIG_DEPS "find_dependency(Boost 1.80 CONFIG)\nfind_dependency(Threads)")
+set(CTBROWSER_CONFIG_DEPS "find_dependency(Boost 1.80 CONFIG)\nfind_dependency(Threads)")
 if(SDL3_FOUND)
-  string(APPEND CTBROWSER_V2_CONFIG_DEPS "\nfind_dependency(SDL3 CONFIG)")
+  string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(SDL3 CONFIG)")
 endif()
 # EVERY package an exported target links has to be findable by the consumer,
-# or find_package(ctbrowser-v2) fails on a target it cannot resolve. Adding an
+# or find_package(ctbrowser) fails on a target it cannot resolve. Adding an
 # optional dependency to a library and forgetting this line is exactly the kind
 # of break tools/check-package.sh exists to catch - it caught these two.
 if(Freetype_FOUND)
-  string(APPEND CTBROWSER_V2_CONFIG_DEPS "\nfind_dependency(Freetype)")
+  string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(Freetype)")
 endif()
 if(OpenSSL_FOUND)
-  string(APPEND CTBROWSER_V2_CONFIG_DEPS "\nfind_dependency(OpenSSL COMPONENTS SSL Crypto)")
+  string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(OpenSSL COMPONENTS SSL Crypto)")
 endif()
 if(SDL3_image_FOUND)
-  string(APPEND CTBROWSER_V2_CONFIG_DEPS "\nfind_dependency(SDL3_image CONFIG)")
+  string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(SDL3_image CONFIG)")
 endif()
 if(SDL3_ttf_FOUND)
-  string(APPEND CTBROWSER_V2_CONFIG_DEPS "\nfind_dependency(SDL3_ttf CONFIG)")
+  string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(SDL3_ttf CONFIG)")
 endif()
-file(WRITE "${PROJECT_BINARY_DIR}/ctbrowser-v2-config.cmake"
+file(WRITE "${PROJECT_BINARY_DIR}/ctbrowser-config.cmake"
 "include(CMakeFindDependencyMacro)
-${CTBROWSER_V2_CONFIG_DEPS}
-include(\"\${CMAKE_CURRENT_LIST_DIR}/ctbrowser-v2-targets.cmake\")
+${CTBROWSER_CONFIG_DEPS}
+include(\"\${CMAKE_CURRENT_LIST_DIR}/ctbrowser-targets.cmake\")
 ")
-install(FILES "${PROJECT_BINARY_DIR}/ctbrowser-v2-config.cmake"
-        DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ctbrowser-v2")
+install(FILES "${PROJECT_BINARY_DIR}/ctbrowser-config.cmake"
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ctbrowser")
 
-add_subdirectory(../examples-v2 "${CMAKE_CURRENT_BINARY_DIR}/examples-v2")
+add_subdirectory(../examples "${CMAKE_CURRENT_BINARY_DIR}/examples")
 
 if(CTBROWSER_BUILD_TESTS)
-  add_subdirectory(../tests-v2 "${CMAKE_CURRENT_BINARY_DIR}/tests-v2")
+  add_subdirectory(../tests "${CMAKE_CURRENT_BINARY_DIR}/tests")
 endif()

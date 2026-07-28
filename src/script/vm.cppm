@@ -20,7 +20,7 @@ import :value;
 
 // The interpreter.
 //
-// v1 walked the AST on every execution: each time round a loop it re-decided
+// the previous engine walked the AST on every execution: each time round a loop it re-decided
 // what every node meant, re-looked-up every identifier by string, and
 // re-dispatched through a virtual call per node. This walks a flat array of
 // 4-byte instructions with registers already assigned.

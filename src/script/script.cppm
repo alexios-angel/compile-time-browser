@@ -1,6 +1,6 @@
 export module ctbrowser.script;
 
-// ctjs v2: a register-based bytecode VM.
+// The script engine: a register-based bytecode VM.
 //
 //   value      one 64-bit NaN-boxed word - doubles native, 4 singletons,
 //              48-bit heap pointers with the kind in the object header
@@ -10,7 +10,7 @@ export module ctbrowser.script;
 //   builtins   Math, Array, String, Number, Object, JSON - the standard
 //              library, without which a complete VM is still useless
 //
-// What v1 did and this does not: walk the AST on every execution, look every
+// What the previous engine did and this does not: walk the AST on every execution, look every
 // identifier up by string each time round a loop, refcount every value, and
 // scan a vector of name/value pairs linearly for each property access.
 //

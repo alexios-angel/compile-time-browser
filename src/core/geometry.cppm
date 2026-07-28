@@ -5,7 +5,7 @@ module;
 
 export module ctbrowser.core:geometry;
 
-// Layout geometry. Deliberately float, not the int32 pixels v1 used: a
+// Layout geometry. Deliberately float, not the int32 pixels the previous engine used: a
 // fractional box model is required for zoom, device pixel ratios and
 // transforms, and rounding only at raster time is what keeps sub-pixel text
 // positioning possible.

@@ -16,7 +16,7 @@ import :values;
 // A fragment is where a box ended up. Immutability is the useful property: the
 // compositor, hit testing and the paint pass all read fragments, potentially
 // while the next layout is already running, and nothing they read can change
-// underneath them. v1 had no such object - it wrote geometry onto the DOM node
+// underneath them. the previous engine had no such object - it wrote geometry onto the DOM node
 // and every consumer raced the next layout pass by construction.
 //
 // It is a tree rather than a flat list because one box can produce SEVERAL

@@ -1,9 +1,0 @@
-*
-!.gitignore
-!Makefile
-!CMakeLists.txt
-!README.md
-!*.cpp
-!assets
-!assets/**
-!*.html

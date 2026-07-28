@@ -14,7 +14,7 @@ import ctbrowser.core;
 
 // The HTML tokenizer, following the WHATWG state machine.
 //
-// v2 wrapped cthtml's parser through stage 7 - a practical subset, correctly
+// This wrapped cthtml's parser at first - a practical subset, correctly
 // parsed. This replaces it, and the reason is not tidiness: REAL PAGES ARE
 // MALFORMED. Unclosed <p> and <li>, stray </div>, attributes without quotes,
 // `<b><i></b></i>`. A subset parser does something reasonable-looking with each

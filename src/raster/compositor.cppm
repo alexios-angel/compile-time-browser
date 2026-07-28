@@ -21,7 +21,7 @@ import :tile;
 //   recomposite() composite only. What a SCROLL costs, because tiles are in
 //                 content space and a scroll only moves the layer.
 //
-// v1 had one path: re-run layout, re-emit every paint command, redraw. That is
+// the previous engine had one path: re-run layout, re-emit every paint command, redraw. That is
 // why scrolling it re-laid-out the document.
 
 export namespace ctbrowser::raster {
