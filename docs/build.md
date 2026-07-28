@@ -11,24 +11,27 @@ measure the engine's CPU cost at runtime.
 
 ## Headers, measured (2026-07-28)
 
-Same tree, same compiler (clang), same 22-core machine, clean build:
+Same tree, same compiler (clang), same machine, clean build:
 
-| | modules | headers |
-|---|---|---|
-| wall | 89.1 s | **50.0 s** |
-| CPU | 243 s | **672 s** |
-| peak RSS | 1.14 GB | 0.64 GB |
-| ninja targets | 272 | 73 |
+| | modules | headers, all inline | headers, split |
+|---|---|---|---|
+| wall | 89.1 s | 50.0 s | **46.5 s** |
+| CPU | 243 s | 672 s | **303 s** |
+| peak RSS | 1.14 GB | 0.64 GB | **0.51 GB** |
 
-Wall time nearly halved: nothing serialises on scanning the module graph any
-more, so 22 cores are actually usable. Total CPU nearly tripled: 38 translation
-units re-parse what one BMI used to hold. Wall time is what a person waits for
-and it got better; the CPU figure is the bill for header-only subsystems, and
-it is paid down by moving definitions into `.cpp` files.
+Read the middle column as the cost of doing nothing else. Dropping modules
+halves wall time on its own - nothing serialises on scanning the import graph
+any more - but it nearly TRIPLES total CPU, because every translation unit
+re-parses what one BMI used to hold once.
 
-Only `core`, `script`, `shell` and `app` have done that so far.
-`script/compile` is the shape to copy: the header declares one function,
-`compile.cpp` holds 1,689 lines of compiler, and no consumer parses any of it.
+The third column is after every significant header got a `.cpp`. That gives
+back 55% of the CPU, leaving it 24% above the modules baseline while wall time
+stays near half. The rule it comes from: a header declares, its `.cpp` defines,
+and nobody pays to parse a body they do not call.
+
+`script/compile` is the extreme case and the shape to copy - the header
+declares one function, `compile.cpp` holds 1,689 lines of compiler, and no
+consumer parses any of it.
 
 **The rule that survives the modules era**: no third-party header in a public
 header. It used to be about BMI size - `<boost/asio.hpp>` in the `:net`
