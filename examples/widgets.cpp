@@ -10,7 +10,7 @@
 // The page is the previous engine's, unchanged apart from being a file rather than an NTTP -
 // it was already written against the ordinary web APIs.
 
-#include <ctbrowser/ctbrowser.hpp>
+#include <ctbrowser.hpp>
 
 int main() {
     ctbrowser::app_options options;

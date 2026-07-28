@@ -7,7 +7,7 @@
 // the face the command carries, and the width layout measured is the width the
 // rasterizer draws.
 
-#include <ctbrowser/ctbrowser.hpp>
+#include <ctbrowser.hpp>
 
 #include "check.hpp"
 

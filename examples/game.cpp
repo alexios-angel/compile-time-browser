@@ -6,7 +6,7 @@
 // web code and a shim that only this browser understands is a shim nobody can
 // test against a real one.
 
-#include <ctbrowser/ctbrowser.hpp>
+#include <ctbrowser.hpp>
 
 int main() {
     ctbrowser::app_options options;

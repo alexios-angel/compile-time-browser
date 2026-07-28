@@ -1,8 +1,9 @@
 # CLAUDE.md — ctbrowser
 
-A browser engine in C++23. `include/ctbrowser/` is the engine's headers and
-`src/` its implementations; `tests/` is the suite, `examples/` the programs
-that use it. Namespace `ctbrowser`. **CMake + Ninja is THE build**, CMake >=
+A browser engine in C++23. `include/ctbrowser.hpp` is the one-include public
+API, `include/ctbrowser/` the engine's headers and `src/` its implementations;
+`tests/` is the suite, `examples/` the programs that use it. Namespace
+`ctbrowser`. **CMake + Ninja is THE build**, CMake >=
 3.20, an ordinary clang or gcc with C++23 - the system default will do. Work on
 `main`. Prefer `rg`.
 
@@ -68,9 +69,9 @@ gate and CI runs it.
 ## The tree
 
 ```
+include/ctbrowser.hpp      the one-include API: includes all of it
 include/ctbrowser/<sub>/   the engine's headers, one directory per subsystem
 src/<sub>/                 its implementations, where a subsystem has any
-include/ctbrowser/ctbrowser.hpp   includes all of it: the one-include API
 
 core         slab, generation-tagged handles, epochs, atoms, thread pool, geometry
 dom          WHATWG tokenizer + tree builder, the document

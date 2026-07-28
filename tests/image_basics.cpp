@@ -5,7 +5,7 @@
 // binary blob checked in beside it fails for reasons that have nothing to do
 // with the code.
 
-#include <ctbrowser/ctbrowser.hpp>
+#include <ctbrowser.hpp>
 
 #include "check.hpp"
 

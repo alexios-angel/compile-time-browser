@@ -12,7 +12,7 @@
 
 // The whole engine, in one include.
 //
-// `#include <ctbrowser/ctbrowser.hpp>` and link `ctbrowser::ctbrowser` is everything an
+// `#include <ctbrowser.hpp>` and link `ctbrowser::ctbrowser` is everything an
 // application needs. The subsystem headers stay includable for anyone who wants
 // to reach past the shell, but nobody should have to name five of them and five
 // link targets to open one page - which is what the reference consumer did

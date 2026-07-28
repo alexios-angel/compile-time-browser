@@ -1,6 +1,8 @@
 # Architecture — where everything lives
 
-~21,000 lines in nine subsystems. Headers are `include/ctbrowser/<sub>/`,
+~21,000 lines in nine subsystems, behind one public header — `include/ctbrowser.hpp`,
+which sits BESIDE the subsystem tree rather than inside it, so the include an
+application writes is `<ctbrowser.hpp>`. Headers are `include/ctbrowser/<sub>/`,
 implementations are `src/<sub>/`.
 
 ## The shape
@@ -16,7 +18,7 @@ src/layout/*.cpp                         definitions, where there are any
 
 `#include <ctbrowser/layout/layout.hpp>` gets you the whole subsystem;
 including one piece directly is fine when that is all you want. At the top,
-`include/ctbrowser/ctbrowser.hpp` includes all nine plus `shell/app.hpp`, which
+`include/ctbrowser.hpp` includes all nine plus `shell/app.hpp`, which
 is why one include is the entire API.
 
 **Adding a file** means: the header in `include/ctbrowser/<sub>/`, an

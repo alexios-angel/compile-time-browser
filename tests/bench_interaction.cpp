@@ -14,7 +14,7 @@
 // Measured against the same page from the widget gallery, headlessly, so the
 // figure is about the ENGINE and not about a compositor or a driver.
 
-#include <ctbrowser/ctbrowser.hpp>
+#include <ctbrowser.hpp>
 
 #include <algorithm>
 #include <chrono>

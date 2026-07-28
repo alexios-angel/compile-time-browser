@@ -22,7 +22,7 @@
 #include <thread>
 #include <vector>
 
-#include <ctbrowser/ctbrowser.hpp>
+#include <ctbrowser.hpp>
 
 #include "check.hpp"
 

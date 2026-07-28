@@ -7,7 +7,7 @@ browser, `bindings.hpp` the API a page's script sees, plus `forms`, `canvas`,
 
 ## APPLICATION API (2026-07-25)
 
-**`#include <ctbrowser/ctbrowser.hpp>` + `ctbrowser::run_app(html, options)` is
+**`#include <ctbrowser.hpp>` + `ctbrowser::run_app(html, options)` is
 the whole API.** One include, one link target (`ctbrowser::ctbrowser` in-tree,
 `ctbrowser::ctbrowser` installed), NO SDL header in the application. See
 `examples/counter.cpp` — 40 lines, most of it the page.

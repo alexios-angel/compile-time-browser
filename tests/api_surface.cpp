@@ -69,8 +69,14 @@ void check(bool ok, std::string_view what) {
     std::string line;
     while (std::getline(in, line)) {
         const std::size_t at = line.find_first_not_of(" \t");
-        if (at != std::string::npos && line.find("<ctbrowser/") != std::string::npos &&
-            line.compare(at, 8, "#include") == 0) {
+        // BOTH spellings: the umbrella is <ctbrowser.hpp>, which sits beside
+        // the subsystem directory rather than inside it, so a test that looked
+        // only for "<ctbrowser/" would match every reach-past include and miss
+        // the one legal include entirely - reporting zero and failing every
+        // application source for the opposite of the real reason.
+        const bool names_engine = line.find("<ctbrowser/") != std::string::npos ||
+                                  line.find("<ctbrowser.hpp>") != std::string::npos;
+        if (at != std::string::npos && names_engine && line.compare(at, 8, "#include") == 0) {
             out.push_back(line.substr(at));
         }
     }
@@ -91,8 +97,8 @@ void check_application_source(const std::string & path) {
     const auto includes = engine_includes(source);
     check(includes.size() == 1, path + ": exactly one engine include");
     if (includes.size() == 1) {
-        check(includes[0] == "#include <ctbrowser/ctbrowser.hpp>",
-              path + ": and it is `#include <ctbrowser/ctbrowser.hpp>`");
+        check(includes[0] == "#include <ctbrowser.hpp>",
+              path + ": and it is `#include <ctbrowser.hpp>`");
     }
 }
 

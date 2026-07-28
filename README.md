@@ -20,7 +20,7 @@ MDN's breakout tutorial runs unmodified, start to game over.
 ## The whole API
 
 ```cpp
-#include <ctbrowser/ctbrowser.hpp>
+#include <ctbrowser.hpp>
 
 int main() {
     ctbrowser::app_options options;

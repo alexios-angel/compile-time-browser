@@ -5,7 +5,7 @@
 // an ordinary runtime string, so it can come from a file, a socket or a text box
 // just as easily.
 
-#include <ctbrowser/ctbrowser.hpp>
+#include <ctbrowser.hpp>
 
 int main() {
     ctbrowser::app_options options;

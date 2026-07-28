@@ -408,7 +408,7 @@ target_sources(ctbrowser
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
       FILES
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/ctbrowser.hpp")
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser.hpp")
 target_compile_features(ctbrowser INTERFACE cxx_std_23)
 target_link_libraries(ctbrowser INTERFACE
   ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style ctbrowser-layout
