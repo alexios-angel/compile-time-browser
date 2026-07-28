@@ -280,6 +280,7 @@ add_library(ctbrowser::raster ALIAS ctbrowser-raster)
 add_library(ctbrowser-shell)
 target_sources(ctbrowser-shell
   PRIVATE
+    shell/browser.cpp
     shell/net.cpp
   PUBLIC
     FILE_SET HEADERS
