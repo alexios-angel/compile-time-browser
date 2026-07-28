@@ -61,33 +61,9 @@ public:
     // The live state of a control, seeded from its attributes the first time it
     // is asked for. Seeding lazily is what makes `<input value=hi>` show "hi"
     // without the store having to walk the document up front.
-    [[nodiscard]] control_state & state_of(const read_txn & txn, atom_table & atoms, node_id id) {
-        auto it = states_.find(id.key());
-        if (it != states_.end()) { return it->second; }
-        control_state seeded;
-        const std::string_view tag = atoms.text(txn.tag(id).value_or(atom{}));
-        if (tag == "textarea") {
-            for (const node_id child : txn.children(id)) { seeded.value += txn.text(child); }
-        } else if (tag == "select") {
-            // A <select> has no `value` attribute: its value is the SELECTED
-            // OPTION'S. Seeded from the attribute rather than from the option's
-            // text, because those differ - `<option value=g>green</option>` is
-            // worth "g" to a form and shows "green" to a reader, and reading
-            // the label back as the value is a silent wrong answer.
-            seeded.value = std::string{selected_option_value(txn, atoms, id)};
-        } else {
-            seeded.value = txn.attribute_value(id, atoms.intern("value"));
-        }
-        seeded.checked = txn.has_attribute(id, atoms.intern("checked"));
-        seeded.caret = seeded.value.size();
-        seeded.selection = seeded.caret;
-        return states_.emplace(id.key(), std::move(seeded)).first->second;
-    }
+    [[nodiscard]] control_state & state_of(const read_txn & txn, atom_table & atoms, node_id id);
 
-    [[nodiscard]] const control_state * find(node_id id) const {
-        const auto it = states_.find(id.key());
-        return it == states_.end() ? nullptr : &it->second;
-    }
+    [[nodiscard]] const control_state * find(node_id id) const;
 
     void clear() { states_.clear(); }
 
@@ -129,135 +105,42 @@ public:
     // Replace the whole value - what `input.value = "x"` does. The caret goes
     // to the end, which is where a browser puts it, and the control counts as
     // edited so the `value` attribute stops being the answer.
-    static void set_value(control_state & control, std::string text) {
-        control.value = std::move(text);
-        control.caret = control.value.size();
-        control.selection = control.caret;
-        control.value_edited = true;
-    }
+    static void set_value(control_state & control, std::string text);
 
     // Insert typed text at the caret, replacing any selection.
-    void insert_text(control_state & control, std::string_view text) {
-        erase_selection(control);
-        control.value.insert(control.caret, text);
-        control.caret += text.size();
-        control.selection = control.caret;
-        control.value_edited = true;
-    }
+    void insert_text(control_state & control, std::string_view text);
 
     // Returns whether anything changed, so the caller can skip a repaint.
-    bool backspace(control_state & control) {
-        if (control.caret != control.selection) {
-            erase_selection(control);
-            control.value_edited = true;
-            return true;
-        }
-        if (control.caret == 0) { return false; }
-        // One CODE POINT, not one byte. Deleting a byte out of a multi-byte
-        // character leaves invalid UTF-8 in the value, which then renders as
-        // replacement characters for the rest of the field.
-        const std::size_t start = previous_code_point(control.value, control.caret);
-        control.value.erase(start, control.caret - start);
-        control.caret = start;
-        control.selection = start;
-        control.value_edited = true;
-        return true;
-    }
+    bool backspace(control_state & control);
 
-    bool delete_forward(control_state & control) {
-        if (control.caret != control.selection) {
-            erase_selection(control);
-            control.value_edited = true;
-            return true;
-        }
-        if (control.caret >= control.value.size()) { return false; }
-        const std::size_t end = next_code_point(control.value, control.caret);
-        control.value.erase(control.caret, end - control.caret);
-        control.value_edited = true;
-        return true;
-    }
+    bool delete_forward(control_state & control);
 
-    bool move_caret(control_state & control, int by, bool extend) {
-        const std::size_t before = control.caret;
-        if (by < 0 && control.caret > 0) {
-            control.caret = previous_code_point(control.value, control.caret);
-        } else if (by > 0 && control.caret < control.value.size()) {
-            control.caret = next_code_point(control.value, control.caret);
-        }
-        if (!extend) { control.selection = control.caret; }
-        return control.caret != before;
-    }
+    bool move_caret(control_state & control, int by, bool extend);
 
-    bool move_to_edge(control_state & control, bool to_end, bool extend) {
-        const std::size_t before = control.caret;
-        control.caret = to_end ? control.value.size() : 0;
-        if (!extend) { control.selection = control.caret; }
-        return control.caret != before;
-    }
+    bool move_to_edge(control_state & control, bool to_end, bool extend);
 
-    void select_all(control_state & control) {
-        control.selection = 0;
-        control.caret = control.value.size();
-    }
+    void select_all(control_state & control);
 
     // What is selected, as text. Empty when the caret and the anchor are in the
     // same place, which is what "nothing is selected" is.
-    [[nodiscard]] static std::string selected_text(const control_state & control) {
-        const std::size_t from = std::min(control.caret, control.selection);
-        const std::size_t to = std::max(control.caret, control.selection);
-        if (from >= to || to > control.value.size()) { return {}; }
-        return control.value.substr(from, to - from);
-    }
+    [[nodiscard]] static std::string selected_text(const control_state & control);
 
     // Remove it, leaving the caret where the selection started - which is where
     // typing over a selection has to continue from.
-    static bool delete_selection(control_state & control) {
-        const std::size_t from = std::min(control.caret, control.selection);
-        const std::size_t to = std::max(control.caret, control.selection);
-        if (from >= to || to > control.value.size()) { return false; }
-        control.value.erase(from, to - from);
-        control.caret = from;
-        control.selection = from;
-        return true;
-    }
+    static bool delete_selection(control_state & control);
 
     // --- checkboxes and radios --------------------------------------------
 
     // A radio deselects every other radio with the same name in the document -
     // which is why this needs the document and a checkbox toggle does not.
-    void toggle(const read_txn & txn, atom_table & atoms, node_id id, control_kind kind) {
-        control_state & control = state_of(txn, atoms, id);
-        if (kind == control_kind::checkbox) {
-            control.checked = !control.checked;
-            return;
-        }
-        if (kind != control_kind::radio) { return; }
-        const atom name_attr = atoms.intern("name");
-        const std::string_view group = txn.attribute_value(id, name_attr);
-        const auto walk = [&](auto && self, node_id at) -> void {
-            if (txn.attribute_value(at, name_attr) == group && at != id) {
-                const std::string_view type = txn.attribute_value(at, atoms.intern("type"));
-                if (type == "radio") { state_of(txn, atoms, at).checked = false; }
-            }
-            for (const node_id child : txn.children(at)) { self(self, child); }
-        };
-        // An unnamed radio is its own group, per spec - so do not clear anything.
-        if (!group.empty()) { walk(walk, txn.root()); }
-        control.checked = true;
-    }
+    void toggle(const read_txn & txn, atom_table & atoms, node_id id, control_kind kind);
 
     // --- forms ------------------------------------------------------------
 
     // Reset every control in the form back to its markup. `value_edited` is
     // what makes this different from doing nothing: it is the flag that said
     // the attribute had stopped being the answer.
-    void reset_form(const read_txn & txn, node_id form) {
-        const auto walk = [&](auto && self, node_id at) -> void {
-            states_.erase(at.key());
-            for (const node_id child : txn.children(at)) { self(self, child); }
-        };
-        walk(walk, form);
-    }
+    void reset_form(const read_txn & txn, node_id form);
 
     // The successful controls of a form, as name/value pairs, in document
     // order. This is what a submission would send - there is no network yet, so
@@ -303,29 +186,10 @@ public:
     }
 
 private:
-    void erase_selection(control_state & control) {
-        if (control.caret == control.selection) { return; }
-        const std::size_t from = std::min(control.caret, control.selection);
-        const std::size_t to = std::max(control.caret, control.selection);
-        control.value.erase(from, to - from);
-        control.caret = from;
-        control.selection = from;
-    }
+    void erase_selection(control_state & control);
 
-    [[nodiscard]] static std::size_t previous_code_point(const std::string & text, std::size_t at) {
-        if (at == 0) { return 0; }
-        --at;
-        while (at > 0 && (static_cast<unsigned char>(text[at]) & 0xC0u) == 0x80u) { --at; }
-        return at;
-    }
-    [[nodiscard]] static std::size_t next_code_point(const std::string & text, std::size_t at) {
-        if (at >= text.size()) { return text.size(); }
-        ++at;
-        while (at < text.size() && (static_cast<unsigned char>(text[at]) & 0xC0u) == 0x80u) {
-            ++at;
-        }
-        return at;
-    }
+    [[nodiscard]] static std::size_t previous_code_point(const std::string & text, std::size_t at);
+    [[nodiscard]] static std::size_t next_code_point(const std::string & text, std::size_t at);
 
     flat_map<std::uint64_t, control_state> states_;
 };

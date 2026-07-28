@@ -170,9 +170,11 @@ add_library(ctbrowser::script ALIAS ctbrowser-script)
 # simple selector and rejects descendant selectors with an ancestor filter.
 # Depends on dom for read_txn - matching consumes a stable read view, never
 # the live tree, which is what makes it parallelisable.
-add_library(ctbrowser-style INTERFACE)
+add_library(ctbrowser-style)
 target_sources(ctbrowser-style
-  INTERFACE
+  PRIVATE
+    style/engine.cpp
+  PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
       FILES
@@ -181,12 +183,13 @@ target_sources(ctbrowser-style
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/selector.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/engine.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/ua.hpp")
-target_compile_features(ctbrowser-style INTERFACE cxx_std_23)
+target_compile_features(ctbrowser-style PUBLIC cxx_std_23)
+ctbrowser_target(ctbrowser-style)
 # ctcss's headers are part of style's own headers, so a consumer needs the path.
 # BUILD_INTERFACE only: an exported target may not name a source-tree path.
-target_include_directories(ctbrowser-style INTERFACE
+target_include_directories(ctbrowser-style PUBLIC
   "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/external/compile-time-css/include>")
-target_link_libraries(ctbrowser-style INTERFACE ctbrowser-core ctbrowser-dom Boost::headers)
+target_link_libraries(ctbrowser-style PUBLIC ctbrowser-core ctbrowser-dom Boost::headers)
 
 add_library(ctbrowser::style ALIAS ctbrowser-style)
 
@@ -195,9 +198,11 @@ add_library(ctbrowser::style ALIAS ctbrowser-style)
 # on core (scheduler, geometry), dom (read_txn) and style (computed styles) -
 # but NOT the other way round: nothing upstream knows layout exists, which is
 # what keeps the pipeline acyclic.
-add_library(ctbrowser-layout INTERFACE)
+add_library(ctbrowser-layout)
 target_sources(ctbrowser-layout
-  INTERFACE
+  PRIVATE
+    layout/box.cpp
+  PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
       FILES
@@ -207,8 +212,9 @@ target_sources(ctbrowser-layout
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/layout/fragment.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/layout/algorithm.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/layout/engine.hpp")
-target_compile_features(ctbrowser-layout INTERFACE cxx_std_23)
-target_link_libraries(ctbrowser-layout INTERFACE ctbrowser-core ctbrowser-dom ctbrowser-style)
+target_compile_features(ctbrowser-layout PUBLIC cxx_std_23)
+ctbrowser_target(ctbrowser-layout)
+target_link_libraries(ctbrowser-layout PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style)
 
 add_library(ctbrowser::layout ALIAS ctbrowser-layout)
 
@@ -286,6 +292,8 @@ target_sources(ctbrowser-shell
   PRIVATE
     shell/browser.cpp
     shell/bindings.cpp
+    shell/canvas.cpp
+    shell/forms.cpp
     shell/net.cpp
   PUBLIC
     FILE_SET HEADERS
