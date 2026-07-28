@@ -350,6 +350,48 @@ void test_a_disabled_control_looks_and_acts_disabled() {
     check(!page.text_input("hello"), "so typing goes nowhere");
 }
 
+// A CHECKED checkbox has a TICK in it, and that is what distinguishes it from
+// an unchecked one. What it used to draw was a white square inset a quarter of
+// the box - at 13x13, an empty blue ring - so checked and unchecked differed by
+// a border and a checked box read as unchecked.
+//
+// Counted in PIXELS rather than commands: the tick is a staircase of short
+// rows, so "how many commands" says nothing about whether it looks like a tick,
+// and a future implementation that draws it differently should still pass.
+void test_a_checked_checkbox_draws_a_tick() {
+    browser page{browser_options{400, 200}};
+    page.load_html("<body><input type=checkbox id=on checked><input type=checkbox id=off></body>");
+    check(page.frame().has_value(), "the page renders");
+
+    const auto mark_pixels = [&page](std::string_view id) {
+        const rect box = box_of(page, id);
+        const auto image = page.read_pixels();
+        std::size_t marks = 0;
+        if (!image) { return marks; }
+        // White INSIDE the box's border - the tick, or nothing.
+        for (int y = static_cast<int>(box.y) + 2; y < static_cast<int>(box.bottom()) - 2; ++y) {
+            const auto row = image->row(y);
+            for (int x = static_cast<int>(box.x) + 2; x < static_cast<int>(box.right()) - 2; ++x) {
+                if ((row[static_cast<std::size_t>(x)] & 0x00FFFFFFU) == 0x00FFFFFFU) { ++marks; }
+            }
+        }
+        return marks;
+    };
+
+    // An unchecked box is white THROUGHOUT, so it has the most white of all -
+    // the comparison that matters is that the checked one has some white (the
+    // tick) but much less (the blue fill around it).
+    const std::size_t on = mark_pixels("on");
+    const std::size_t off = mark_pixels("off");
+    check(on > 0, "a checked checkbox draws something in the mark colour");
+    check(on < off / 2, "but far less than an unchecked one, which is white throughout");
+
+    // ...and it is not a solid block: a tick leaves most of the box coloured.
+    const rect box = box_of(page, "on");
+    const auto inside = static_cast<std::size_t>((box.width - 4) * (box.height - 4));
+    check(on < inside / 2, "the mark is a stroke, not a filled square");
+}
+
 void test_a_radio_is_round_and_a_checkbox_is_not() {
     browser page{browser_options{400, 200}};
     page.load_html(
@@ -1856,6 +1898,7 @@ int main() {
     test_a_password_shows_bullets();
     test_a_password_caret_is_measured_on_the_bullets();
     test_a_disabled_control_looks_and_acts_disabled();
+    test_a_checked_checkbox_draws_a_tick();
     test_a_radio_is_round_and_a_checkbox_is_not();
     test_a_button_shows_its_label();
     test_a_submit_button_has_a_default_label();

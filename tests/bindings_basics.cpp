@@ -129,6 +129,97 @@ void test_attributes_and_classes() {
     check(count_fill(page, color::rgba(255, 0, 0)) == 1, "addClass restyled the element");
 }
 
+// --- the document's own properties ------------------------------------------
+
+// `document.title` and `getElementsByTagName` simply were not there. A page
+// asking for either got `undefined` and, in the second case, died on calling
+// it - which is how the comparison rig found them.
+void test_document_title_and_tag_lookup() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><head><title>a page</title></head><body>
+    <p>one</p><p>two</p><div><p>three</p></div>
+    <script>
+    console.log('title=' + document.title);
+    console.log('paragraphs=' + document.getElementsByTagName('p').length);
+    console.log('second=' + document.getElementsByTagName('p')[1].getText());
+    console.log('star=' + (document.getElementsByTagName('*').length > 5));
+    console.log('none=' + document.getElementsByTagName('blink').length);
+    </script></body></html>)");
+    check(page.frame().has_value(), "the page renders");
+    check(page.script_error().empty(), "the script ran without error");
+
+    const auto & log = log_of(page);
+    check(log.size() == 5, "five console lines");
+    if (log.size() != 5) { return; }
+    check(log[0] == "title=a page", "document.title is the <title>'s text");
+    // Nested ones too: the walk is the whole tree, not the body's children.
+    check(log[1] == "paragraphs=3", "getElementsByTagName finds every match");
+    check(log[2] == "second=two", "in document order, and they are real elements");
+    check(log[3] == "star=true", "'*' matches every element");
+    check(log[4] == "none=0", "and a tag nothing uses is an empty list");
+
+    // ...and the title is LIVE, not a snapshot taken when the document object
+    // was built. Rewriting the <title> has to be visible, which is the same bug
+    // class location.href had: set once at install and wrong ever after.
+    (void)page.run_script("document.getElementsByTagName('title')[0].setText('renamed');");
+    check(page.frame().has_value(), "the page redraws");
+    (void)page.run_script("console.log('after=' + document.title);");
+    check(log.size() == 6 && log[5] == "after=renamed", "document.title follows the element");
+}
+
+// `document.activeElement` is the script-visible mirror of browser::focused().
+// The bindings could SET focus - element.focus() - but nothing came back, so
+// the property could not exist at all.
+void test_document_active_element_follows_focus() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body>
+    <input id=a><input id=b>
+    <script>
+    function active() { return document.activeElement ? document.activeElement.id : 'none'; }
+    </script></body></html>)");
+    check(page.frame().has_value(), "the page renders");
+
+    const auto ask = [&page](const char * label) {
+        (void)page.run_script(std::string{"console.log('"} + label + "=' + active())");
+    };
+    ask("start");
+
+    // Focus by SCRIPT...
+    (void)page.run_script("document.getElementById('b').focus();");
+    ask("scripted");
+    // ...by the KEYBOARD...
+    (void)page.handle(input_event::key_press("Tab"));
+    ask("tabbed");
+    // ...and blurred.
+    (void)page.run_script("document.getElementById('b').blur();");
+    ask("blurred");
+
+    const auto & log = log_of(page);
+    check(log.size() == 4, "four answers");
+    if (log.size() != 4) { return; }
+    check(log[0] == "start=none", "nothing is focused to begin with");
+    check(log[1] == "scripted=b", "element.focus() is visible as activeElement");
+    check(log[2] == "tabbed=a", "and Tab moves it, wrapping past the last control");
+    check(log[3] == "blurred=none", "and blur clears it");
+}
+
+// A page that errors ONCE used to report that error for ever: run_script only
+// ever assigned script_error_, never cleared it, so every later success still
+// carried the old message. The rig hit this immediately - a perfectly good eval
+// came back with a failure from three calls earlier.
+void test_a_script_error_does_not_outlive_the_script() {
+    browser page{browser_options{400, 300}};
+    page.load_html("<body><p id=p>x</p></body>");
+    check(page.frame().has_value(), "the page renders");
+    check(page.script_error().empty(), "no error to begin with");
+
+    check(!page.run_script("nosuchfunction();"), "a broken script fails");
+    check(!page.script_error().empty(), "and says so");
+
+    check(page.run_script("console.log('fine');"), "a good script runs");
+    check(page.script_error().empty(), "and the old error is gone");
+}
+
 void test_removeclass_undoes_it() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><head><style>.hot { background-color: #ff0000 }</style></head>
@@ -873,6 +964,9 @@ void test_a_letterboxed_page_keeps_its_size() {
 int main() {
     test_script_mutates_what_is_drawn();
     test_attributes_and_classes();
+    test_document_title_and_tag_lookup();
+    test_document_active_element_follows_focus();
+    test_a_script_error_does_not_outlive_the_script();
     test_removeclass_undoes_it();
     test_create_and_append();
     test_remove_child();

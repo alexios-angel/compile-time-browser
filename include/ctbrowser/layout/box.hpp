@@ -354,11 +354,17 @@ private:
             }
             return;
         }
+        // The room a control keeps around its text is `control_text_inset` per
+        // side, which is what the painter actually insets by - see the note on
+        // the constant. Reserving less than that is why a field's text used to
+        // start inside its own padding.
+        const float chrome_x = 2 * control_text_inset;
+        const float chrome_y = 2 * control_border_inset;
         if (tag == "textarea") {
             const float columns = attribute_number("cols", 20);
             const float rows = attribute_number("rows", 2);
-            into.intrinsic_width = columns * text_width("0", into.font_size) + 8;
-            into.intrinsic_height = rows * into.font_size * 1.25f + 8;
+            into.intrinsic_width = columns * text_width("0", into.font_size) + chrome_x;
+            into.intrinsic_height = rows * into.font_size * 1.25f + chrome_y;
             return;
         }
         if (tag == "input") {
@@ -369,13 +375,35 @@ private:
                 return;
             }
             const float size = attribute_number("size", 20);
-            into.intrinsic_width = size * text_width("0", into.font_size) + 8;
-            into.intrinsic_height = into.font_size * 1.25f + 6;
+            into.intrinsic_width = size * text_width("0", into.font_size) + chrome_x;
+            into.intrinsic_height = into.font_size * 1.25f + chrome_y;
             return;
         }
         if (tag == "select") {
-            into.intrinsic_width = 12 * text_width("0", into.font_size) + 24;
-            into.intrinsic_height = into.font_size * 1.25f + 6;
+            // AS WIDE AS ITS WIDEST OPTION, not a fixed twelve characters. The
+            // constant made every select the same size whatever it held - a
+            // three-letter colour picker as wide as a country list - where a
+            // real one shrinks to what it shows.
+            float widest = 0;
+            const atom option = atoms_->intern_lower("option");
+            const auto walk = [&](auto && self, node_id at) -> void {
+                if (txn.tag(at).value_or(atom{}) == option) {
+                    std::string label;
+                    const auto text = [&](auto && me, node_id node) -> void {
+                        label += txn.text(node);
+                        for (const node_id child : txn.children(node)) { me(me, child); }
+                    };
+                    text(text, at);
+                    widest = std::max(widest, text_width(label, into.font_size));
+                }
+                for (const node_id child : txn.children(at)) { self(self, child); }
+            };
+            walk(walk, id);
+            // The gutter on the right is the drop-down arrow's; the painter
+            // draws it 12 in from the edge, so this is what keeps the label
+            // from running underneath it.
+            into.intrinsic_width = widest + chrome_x + 20;
+            into.intrinsic_height = into.font_size * 1.25f + chrome_y;
             return;
         }
         if (tag == "button") {

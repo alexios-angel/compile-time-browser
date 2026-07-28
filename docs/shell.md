@@ -266,6 +266,57 @@ the edge, because a hard-edged circle 13 pixels across looks like a polygon.
 Drawn as squares a radio and a checkbox are indistinguishable, and the shape is
 what tells you one of them is exclusive.
 
+**And a CHECKED CHECKBOX HAS A TICK (2026-07-28).** It had a white square inset
+a quarter of the box — at 13×13, a 6px white square in a blue one, which reads
+as an empty blue ring. Checked and unchecked differed by a border, so a checked
+box looked unchecked. The tick is a staircase of 1px rows, the same way the
+`<select>`'s arrow is built: `paint_op` has fills, ellipses, text, images and
+clips and nothing else, so a 45° stroke is not expressible and a stack of short
+rows is what a diagonal *is* here. Not a glyph either — the goldens render with
+font8x8, which has no U+2713. And not `fill_ellipse`: `chrome_basics` asserts a
+checkbox draws none, which is what keeps it from looking like a radio.
+
+## WHAT A REAL BROWSER DOES DIFFERENTLY (2026-07-28)
+
+Found by pointing `tools/compare.py` at `widgets.html` and reading the answers,
+which is what that rig is for. Each of these was a measured difference, not a
+suspicion:
+
+**The UA sheet had no `font-weight` at all**, so every heading and every `<b>`
+rendered at regular weight — the resolver had always understood the keyword,
+there was simply no rule saying so. The text-level defaults went in with it:
+italic for `i`/`em`/`cite`/`var`/`dfn`, monospace for `code`/`kbd`/`samp`/`tt`,
+underline and line-through for `u`/`ins` and `s`/`del`.
+
+**The heading margins were `em` values pre-multiplied against the wrong basis.**
+`h6 { margin: 2.33em 0 }` is 25px of an 11px h6, not the 37px a 16px parent
+gives — and `em` in a margin resolves against the element's OWN size. They are
+written as `em` now, as the real sheets write them, and resolve correctly.
+
+**Layout and the painter disagreed about a control's padding.** The box reserved
+4 per side and the painter drew text 6 in, so every field's text started inside
+the room set aside for it. One constant, `layout::control_text_inset`, in the
+one place both can see — layout cannot see the shell, so that is the only
+direction that works.
+
+**A `<select>` was a fixed twelve characters wide** whatever it held. It is as
+wide as its widest `<option>` now.
+
+**Three document properties did not exist** — `title`, `activeElement` and
+`getElementsByTagName`. `activeElement` needed a new inbound channel:
+`observe_focus`, because the focus hook was write-only, script could set focus
+and nothing came back. It is pushed the same way `location.href` is, and for the
+same reason — a value set once at install is a snapshot.
+
+**`script_error()` never cleared.** It was only ever assigned, so one broken
+script made every later good one report that same error for the rest of the
+page's life.
+
+**Still divergent, and deliberately:** line-height is a fixed 1.25 factor with
+nine hardcoded copies, so ctbrowser's rows still sit further apart than
+Chrome's. It is the single largest remaining difference and it is left for its
+own change — it touches ten sites and `layout_basics` asserts the 1.25 outright.
+
 **`<a href>` reaches the SYSTEM BROWSER.** `app_options::on_navigate` gives the
 application first refusal — `ctbrowse` loads a local `.html` that way — and
 anything it does not claim goes to `SDL_OpenURL`. It is an app_options hook

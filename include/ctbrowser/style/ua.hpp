@@ -30,12 +30,27 @@ namespace ctbrowser::style {
 inline constexpr std::string_view ua_css = R"(
     body { margin: 8px; font-family: serif; color: #000000 }
 
-    h1 { font-size: 32px; margin: 21px 0 }
-    h2 { font-size: 24px; margin: 20px 0 }
-    h3 { font-size: 19px; margin: 16px 0 }
-    h4 { font-size: 16px; margin: 21px 0 }
-    h5 { font-size: 13px; margin: 27px 0 }
-    h6 { font-size: 11px; margin: 37px 0 }
+    /* In `em`, as the real sheets write them, rather than pre-multiplied. The
+       numbers here used to be those products worked out against a 16px parent,
+       which is right for font-size and WRONG for margin: a margin's `em`
+       resolves against the element's OWN size. h6 was the worst of it - 2.33em
+       of an 11px h6 is 25px, not the 37px a 16px basis gives - and that error
+       is why headings sat further apart here than anywhere else. */
+    h1 { font-size: 2em; margin: 0.67em 0; font-weight: bold }
+    h2 { font-size: 1.5em; margin: 0.83em 0; font-weight: bold }
+    h3 { font-size: 1.17em; margin: 1em 0; font-weight: bold }
+    h4 { font-size: 1em; margin: 1.33em 0; font-weight: bold }
+    h5 { font-size: 0.83em; margin: 1.67em 0; font-weight: bold }
+    h6 { font-size: 0.67em; margin: 2.33em 0; font-weight: bold }
+
+    /* The text-level defaults. Every one of these was missing, so `<b>` was not
+       bold and `<i>` was not italic - the resolver has always understood them,
+       there was simply no rule saying so. */
+    b, strong, th { font-weight: bold }
+    i, em, cite, var, dfn, address { font-style: italic }
+    u, ins { text-decoration: underline }
+    s, del, strike { text-decoration: line-through }
+    code, kbd, samp, tt { font-family: monospace }
 
     p, blockquote, figure, ul, ol, dl, pre { margin: 16px 0 }
     pre, textarea { white-space: pre; font-family: monospace }
@@ -78,9 +93,10 @@ inline constexpr std::string_view ua_css = R"(
     track, area, base, noscript { display: none }
 )";
 
-// The chrome palette, in 0xAARRGGBB. Nothing paints these yet - they are here
-// because they are the Firefox values and re-deriving them later would be worse
-// than carrying them. See the note above.
+// The chrome palette, in 0xAARRGGBB - the Firefox values. Every one of these is
+// painted now, by browser::paint_replaced: the frame is a control's border, the
+// accent fills a checked box, and the mark is the tick and the radio's dot.
+// (This said "nothing paints these yet" long after they all did.)
 inline constexpr std::uint32_t ua_widget_frame = 0xFF8F8F9Du;
 inline constexpr std::uint32_t ua_widget_accent = 0xFF0060DFu;
 inline constexpr std::uint32_t ua_widget_mark = 0xFFFFFFFFu;

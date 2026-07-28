@@ -34,7 +34,21 @@ bool dom_bindings::refresh_wrappers() {
     for (auto & [packed, obj] : wrappers_) {
         if (obj != nullptr) { refresh_element(*cx_, *obj, unpack(packed)); }
     }
+    // The document's live properties too - this loop walks `wrappers_`, which
+    // the document object is not in, so activeElement and title would go stale
+    // the moment focus moved.
+    refresh_document();
     return wrote_to_control_;
+}
+
+// WHERE FOCUS IS, pushed in. The hook the bindings already hold is write-only:
+// script can call element.focus() and the browser hears it, but nothing came
+// back, so `document.activeElement` had nothing to read. Same shape as
+// observe_location, and for the same reason - a value set once at install is a
+// snapshot, and this one changes on every click.
+void dom_bindings::observe_focus(node_id id) {
+    focused_ = id;
+    refresh_document();
 }
 
 void dom_bindings::observe_viewport(int width, int height) {
@@ -729,11 +743,35 @@ void dom_bindings::install_document(context & cx) {
         listeners_.push_back(listener{node_id{}, arg_string(c, args, 0), arg(args, 1)});
         return value::undefined();
     });
+    method("getElementsByTagName", [this](context & c, std::span<value> args) {
+        const std::vector<node_id> found = all_by_tag(arg_string(c, args, 0));
+        auto * list = static_cast<script::object_object *>(c.make_object().as_heap());
+        // An ARRAY-SHAPED object: the VM has no Array, so a live collection is
+        // indices plus a length, which is what `for (i = 0; i < n; i++)` - the
+        // way every page walks one - actually reads.
+        for (std::size_t i = 0; i < found.size(); ++i) {
+            list->set(std::to_string(i), wrap(c, found[i]));
+        }
+        list->set("length", value::number(static_cast<double>(found.size())));
+        return value::object(list);
+    });
 
     doc->set("body", wrap(cx, find_by_tag("body")));
     doc->set("documentElement", wrap(cx, find_by_tag("html")));
     document_ = value::object(doc);
     cx.define_global("document", document_);
+    refresh_document();
+}
+
+// The document's own live properties. `body` and `documentElement` can be set
+// once because the node never changes; these cannot - a title is rewritten by
+// script and the focused element changes on every click - so they are pushed
+// again whenever the wrappers are, exactly as location.href is.
+void dom_bindings::refresh_document() {
+    auto * doc = document_object();
+    if (doc == nullptr || cx_ == nullptr) { return; }
+    doc->set("title", cx_->string(text_of(find_by_tag("title"))));
+    doc->set("activeElement", wrap(*cx_, focused_));
 }
 
 void dom_bindings::install_navigation(context & cx) {
@@ -942,6 +980,22 @@ node_id dom_bindings::find_by_id(const std::string & want) {
     node_id found{};
     const auto walk = [&](auto && self, node_id at) -> void {
         if (!found && txn.attribute_value(at, key) == want) { found = at; }
+        for (const node_id child : txn.children(at)) { self(self, child); }
+    };
+    walk(walk, txn.root());
+    return found;
+}
+
+std::vector<node_id> dom_bindings::all_by_tag(std::string_view tag) {
+    const auto txn = doc_->read();
+    // "*" is every ELEMENT, which is how a page asks for the whole document.
+    const bool every = tag == "*";
+    const atom want = every ? atom{} : atoms_->intern_lower(tag);
+    std::vector<node_id> found;
+    const auto walk = [&](auto && self, node_id at) -> void {
+        if (const auto tagged = txn.tag(at); tagged && (every || *tagged == want)) {
+            found.push_back(at);
+        }
         for (const node_id child : txn.children(at)) { self(self, child); }
     };
     walk(walk, txn.root());

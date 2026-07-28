@@ -95,6 +95,11 @@ public:
     // What `location` reports. The browser sets it; the page can only read it,
     // because assigning to location.href is a navigation and the engine has none.
     void observe_location(std::string href, std::string hash);
+
+    // Where focus is now, so `document.activeElement` can answer. The focus
+    // hook below goes the other way - script setting focus - and left the
+    // bindings with no way to READ it.
+    void observe_focus(node_id id);
     // Where alert() goes. The browser records them, because a reload replaces
     // these bindings and the alert that caused it must survive that.
     void set_alert_hook(std::function<void(const std::string &)> hook);
@@ -357,6 +362,10 @@ private:
     [[nodiscard]] node_id find_by_id(const std::string & want);
 
     [[nodiscard]] node_id find_by_tag(std::string_view tag);
+    // Every element with this tag, in document order; "*" means all of them.
+    [[nodiscard]] std::vector<node_id> all_by_tag(std::string_view tag);
+    // The document's own live properties - title and activeElement.
+    void refresh_document();
 
     document * doc_;
     atom_table * atoms_;
@@ -374,6 +383,8 @@ private:
     flat_map<std::uint64_t, script::object_object *> wrappers_;
     flat_map<std::uint64_t, property_mirror> mirrors_;
     bool wrote_to_control_ = false;
+    // What the browser last told us has focus, for document.activeElement.
+    node_id focused_;
     std::string location_href_;
     std::string location_hash_;
     value location_;

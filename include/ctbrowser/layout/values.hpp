@@ -38,6 +38,18 @@ struct text_face {
     [[nodiscard]] friend bool operator==(const text_face &, const text_face &) = default;
 };
 
+// A FORM CONTROL'S CHROME, in one place because two subsystems have to agree
+// about it: layout reserves this much room around a control's text, and the
+// shell's painter insets the text by exactly the same amount. They did not
+// agree - the box reserved 4 per side and the painter drew 6 in - so every
+// field's text started two pixels inside the room that had been set aside for
+// it, and a value that just fitted was clipped anyway.
+//
+// Here rather than in the shell because layout cannot see the shell; the shell
+// can see layout, so this is the only direction that works.
+inline constexpr float control_text_inset = 6;   // border + padding, per side
+inline constexpr float control_border_inset = 2; // top and bottom, per side
+
 // What layout needs to know about a font: how wide a run is, and where its
 // BASELINE sits inside a line.
 //

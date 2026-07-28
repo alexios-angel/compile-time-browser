@@ -112,6 +112,51 @@ void test_controls_are_sized_by_the_element() {
     check(button_box.width < 400, "but not as wide as the page");
 }
 
+// A SELECT IS AS WIDE AS WHAT IT SHOWS. It used to be a fixed twelve
+// characters whatever it held, so a three-letter colour picker was as wide as
+// a list of country names, and neither was the size it should have been.
+void test_a_select_is_as_wide_as_its_widest_option() {
+    browser page{browser_options{600, 300}};
+    page.load_html("<html><body>"
+                   "<select id=short><option>red</option><option>green</option></select>"
+                   "<select id=long><option>red</option>"
+                   "<option>a considerably longer option</option></select>"
+                   "</body></html>");
+    check(page.frame().has_value(), "the page renders");
+
+    const rect small = box_of(page, "short");
+    const rect big = box_of(page, "long");
+    check(!small.empty() && !big.empty(), "both selects are laid out");
+    check(big.width > small.width * 2, "the one with a long option is much wider");
+    // The WIDEST option decides it, not the first or the selected one - `red`
+    // is first in both.
+    check(big.width >= raster::font8x8_advance("a considerably longer option", 16),
+          "wide enough for its longest label");
+    check(small.width >= raster::font8x8_advance("green", 16), "and so is the short one");
+    // The old rule was a flat twelve characters regardless of content. Stated
+    // against the measured width of twelve characters rather than a pixel
+    // count, so it holds whichever font backend is in use.
+    check(small.width < raster::font8x8_advance("000000000000", 16),
+          "but not padded out to the old fixed twelve characters");
+}
+
+// Layout reserves room around a control's text and the painter insets by the
+// same amount. They were two separate numbers - 4 per side reserved, 6 drawn -
+// so text started inside the space set aside for it.
+void test_a_control_reserves_the_room_its_text_is_drawn_in() {
+    browser page{browser_options{600, 300}};
+    page.load_html("<html><body><input id=t size=10 value=0000000000></body></html>");
+    check(page.frame().has_value(), "the page renders");
+
+    const rect box = box_of(page, "t");
+    const float text = raster::font8x8_advance("0000000000", 16);
+    // Ten characters of value in a size=10 field: the box has to hold the text
+    // plus the inset on BOTH sides, or the last character is clipped by a
+    // field that claimed it would fit.
+    check(box.width >= text + 2 * layout::control_text_inset,
+          "the box holds its full value plus the inset on both sides");
+}
+
 void test_a_seeded_value_is_drawn() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><body><input id=t type=text value="hello"></body></html>)");
@@ -792,6 +837,8 @@ void test_drawing_after_a_frame_redraws() {
 
 int main() {
     test_controls_are_sized_by_the_element();
+    test_a_select_is_as_wide_as_its_widest_option();
+    test_a_control_reserves_the_room_its_text_is_drawn_in();
     test_a_seeded_value_is_drawn();
 
     test_typing_and_editing();

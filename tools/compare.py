@@ -132,19 +132,41 @@ def font_conf(path: Path) -> Path:
     differences that are actually about the engine.
     """
     fonts = ROOT / "fonts"
-    families = [("serif", "Tinos"), ("sans-serif", "Fira Sans"), ("monospace", "Cousine")]
+    # The CONCRETE names matter as much as the generics. A browser's default
+    # standard font is "Times New Roman", not "serif" - map only the generics
+    # and that request falls through to whatever happens to be first in the
+    # directory, which is how a heading came out sans-serif and looked like an
+    # engine bug for a while. Tinos, Fira Sans and Cousine are metric-compatible
+    # with the three names below, which is why those pairings and not others.
+    families = [
+        ("serif", "Tinos"),
+        ("Times New Roman", "Tinos"),
+        ("Times", "Tinos"),
+        ("sans-serif", "Fira Sans"),
+        ("Arial", "Fira Sans"),
+        ("Helvetica", "Fira Sans"),
+        ("monospace", "Cousine"),
+        ("Courier New", "Cousine"),
+        ("Courier", "Cousine"),
+    ]
     rules = "".join(
         f"""  <match target="pattern">
-    <test qual="any" name="family"><string>{generic}</string></test>
+    <test qual="any" name="family"><string>{asked}</string></test>
     <edit name="family" mode="assign" binding="strong"><string>{real}</string></edit>
   </match>
 """
-        for generic, real in families
+        for asked, real in families
     )
     path.write_text(
         '<?xml version="1.0"?>\n'
         '<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n'
-        f"<fontconfig>\n  <dir>{fonts}</dir>\n{rules}</fontconfig>\n"
+        f"<fontconfig>\n  <dir>{fonts}</dir>\n{rules}"
+        # And a last resort, so a family named by neither list still lands on a
+        # face from this directory rather than on a system font.
+        '  <match target="pattern">\n'
+        '    <edit name="family" mode="append_last"><string>Tinos</string></edit>\n'
+        "  </match>\n"
+        "</fontconfig>\n"
     )
     return path
 
@@ -291,10 +313,15 @@ class Reference:
         # Shaped like ctdrive's answer, which reports what the script LOGGED -
         # run_script cannot return a value. Wrapping console.log on this side
         # keeps one question askable of both engines.
+        # The internals are __cmp_-prefixed because they share a scope with the
+        # script being evaluated: named `out`, a page script declaring its own
+        # `out` dies with "Identifier 'out' has already been declared" in the
+        # reference browser ONLY, which reads exactly like an engine difference.
         logged = self.page.evaluate(
-            "(src) => { const out = []; const real = console.log;"
-            " console.log = (...a) => out.push(a.join(' '));"
-            " try { eval(src); } finally { console.log = real; } return out; }",
+            "(__cmp_src) => { const __cmp_log = []; const __cmp_real = console.log;"
+            " console.log = (...a) => __cmp_log.push(a.join(' '));"
+            " try { eval(__cmp_src); } finally { console.log = __cmp_real; }"
+            " return __cmp_log; }",
             script,
         )
         return {"ok": True, "error": "", "console": logged}

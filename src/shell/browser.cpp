@@ -181,7 +181,11 @@ bool browser::run_script(std::string_view source) {
         return false;
     }
     const script::run_result result = script_->run(compiled);
-    if (!result.ok) { script_error_ = result.error; }
+    // CLEARED ON SUCCESS, not only set on failure. It was only ever assigned,
+    // so one broken script made every later good one report that same error for
+    // the rest of the page's life - and callers use this to decide whether the
+    // script ran at all.
+    script_error_ = result.ok ? std::string{} : result.error;
     return result.ok;
 }
 
@@ -1434,6 +1438,10 @@ bool browser::focus(node_id id) {
         }
     }
     focused_ = id;
+    // Told to the bindings BEFORE the event fires, so a `focus` listener asking
+    // document.activeElement gets the element it was just handed rather than
+    // the one that had focus a moment ago.
+    bindings_->observe_focus(focused_);
     restart_caret_blink(); // a field you just clicked into shows its caret at once
     if (focused_) {
         (void)set_state(focused_, state_focus, true);

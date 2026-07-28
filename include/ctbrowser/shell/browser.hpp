@@ -470,7 +470,10 @@ private:
     // The inset a control's text sits at. Firefox uses 1px 2px on a text input
     // and 1px 6px on a button; this is one number because the vertical inset is
     // handled by centring instead.
-    static constexpr float control_padding = 6;
+    // THE SAME NUMBER layout reserves - see the note on the constant. Two
+    // copies is how the painter came to draw text 6 in on a box that had set
+    // aside 4.
+    static constexpr float control_padding = ctbrowser::layout::control_text_inset;
 
     void paint_replaced(node_id id, const rect & box,
                         const ctbrowser::style::computed_style_ptr & style,
@@ -508,12 +511,7 @@ private:
         case control_kind::checkbox: {
             into.fill(box, control.checked ? accent : field, id);
             outline(box, frame, into, id);
-            if (control.checked) {
-                const float inset = box.width * 0.25f;
-                into.fill(rect{box.x + inset, box.y + inset, box.width - 2 * inset,
-                               box.height - 2 * inset},
-                          color{ctbrowser::style::ua_widget_mark}, id);
-            }
+            if (control.checked) { check_mark(box, into, id); }
             break;
         }
         case control_kind::radio: {
@@ -571,6 +569,42 @@ private:
             break;
         }
         case control_kind::none: break;
+        }
+    }
+
+    // THE TICK IN A CHECKED CHECKBOX.
+    //
+    // What was here was a white square inset a quarter of the box - at 13x13, a
+    // 6px white square inside a blue one, which reads as an empty blue RING.
+    // Checked and unchecked differed by a thin border and nothing else, so a
+    // checked box looked unchecked.
+    //
+    // Drawn as a staircase of 1px rows, the same way the select's drop-down
+    // triangle is: `paint_op` has fill_rect, fill_ellipse, text_run, image and
+    // the two clips, and nothing else - no line, no path, no transform - so a
+    // stroke at 45 degrees is not expressible and a stack of short rows is what
+    // a diagonal IS here. A glyph is not an option either: the goldens render
+    // with font8x8, which has no U+2713.
+    //
+    // Two rows per step so the stroke reads as a stroke at 13px rather than as
+    // a dotted line, and the short arm rises half as far as the long one, which
+    // is what makes it a tick rather than a V.
+    void check_mark(const rect & box, ctbrowser::paint::display_list & into, node_id id) {
+        const color mark{ctbrowser::style::ua_widget_mark};
+        const float unit = std::max(1.0f, std::round(box.width / 13.0f));
+        // The elbow sits below and left of centre, where a drawn tick's does.
+        const float elbow_x = box.x + box.width * 0.42f;
+        const float elbow_y = box.y + box.height * 0.72f;
+        const float thick = unit * 2;
+        // Down-right into the elbow, then up-right and twice as far.
+        for (float step = 0; step < 3; ++step) {
+            into.fill(rect{elbow_x - (3 - step) * unit, elbow_y - (3 - step) * unit - thick, unit,
+                           thick + unit},
+                      mark, id);
+        }
+        for (float step = 0; step < 5; ++step) {
+            into.fill(rect{elbow_x + step * unit, elbow_y - step * unit - thick, unit, thick}, mark,
+                      id);
         }
     }
 
