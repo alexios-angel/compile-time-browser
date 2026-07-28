@@ -6,9 +6,9 @@
 # GENERATED. Reformatting these changes nothing that survives the next run of
 # the generator, and makes the diff between "the generator changed" and "the
 # formatter ran" impossible to read.
-src/raster/font8x8.hpp
-src/dom/entities.hpp
-src/gpu/shaders/tile_spv.hpp
+include/ctbrowser/raster/font8x8.hpp
+include/ctbrowser/dom/entities.hpp
+include/ctbrowser/gpu/shaders/tile_spv.hpp
 
 # Submodules and the fetched toolchain are separate projects entirely.
 external/*

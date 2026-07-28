@@ -259,6 +259,7 @@ target_sources(ctbrowser-raster
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/surface.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/draw.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/ttf.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/font8x8.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/tile.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/software.hpp"
@@ -267,7 +268,6 @@ target_sources(ctbrowser-raster
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/pipeline.hpp")
 target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-raster)
-target_include_directories(ctbrowser-raster PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/raster>")
 target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)
 # Real fonts, through SDL3_ttf. THE ONE PLACE THE ENGINE LINKS SDL, and a
 # deliberate exception rather than an oversight - see the header of
@@ -467,10 +467,10 @@ if(SDL3_FOUND)
         BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
         FILES
           "${CTBROWSER_INCLUDE_DIR}/ctbrowser/gpu/gpu.hpp"
+          "${CTBROWSER_INCLUDE_DIR}/ctbrowser/gpu/shaders/tile_spv.hpp"
           "${CTBROWSER_INCLUDE_DIR}/ctbrowser/gpu/device.hpp"
           "${CTBROWSER_INCLUDE_DIR}/ctbrowser/gpu/select.hpp")
   target_compile_features(ctbrowser-gpu INTERFACE cxx_std_23)
-  target_include_directories(ctbrowser-gpu INTERFACE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/gpu>")
   target_link_libraries(ctbrowser-gpu INTERFACE ctbrowser-core ctbrowser-paint ctbrowser-raster
                                              ${CTBROWSER_SDL3_TARGET})
   add_library(ctbrowser::gpu ALIAS ctbrowser-gpu)

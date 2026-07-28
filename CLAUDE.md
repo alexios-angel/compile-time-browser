@@ -31,7 +31,7 @@ gate and CI runs it.
 ## Tooling
 - `tools/gen-assets.py` — regenerates `examples/assets/` (sprites.bmp, blip.wav)
   deterministically, so no foreign binary is committed.
-- `tools/gen-shaders.py` — GLSL -> the SPIR-V in `src/gpu/shaders/tile_spv.hpp`.
+- `tools/gen-shaders.py` — GLSL -> the SPIR-V in `include/ctbrowser/gpu/shaders/tile_spv.hpp`.
 - `tools/format.sh`, `tools/check-package.sh`, `tools/check-render.cmake`,
   `tools/remote-build.sh`.
 

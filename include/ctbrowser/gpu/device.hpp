@@ -2,7 +2,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_gpu.h>
 
-#include "shaders/tile_spv.hpp"
+#include <ctbrowser/gpu/shaders/tile_spv.hpp>
 
 #include <algorithm>
 #include <cstddef>
