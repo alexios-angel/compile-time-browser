@@ -9,7 +9,7 @@ export module ctbrowser.dom;
 //             concurrently. Those belong to the box tree.
 //   document  creation, structural and per-node writes, reclamation
 //   read_txn  a pinned, lock-free read view
-//   html      cthtml's parser behind document::builder, for now
+//   html      the WHATWG tokenizer and tree builder, behind document::builder
 //
 // See :document for the locking policy and for precisely which atomicity
 // guarantees this does and does not make.

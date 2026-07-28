@@ -8,9 +8,10 @@ gcc with C++23. Work on `main`. Prefer `rg`.
 The compile-time engine this repository is named for is GONE from the tree
 (2026-07-27) and lives in the git history: the page was a structural NTTP and
 the parsers ran in constant evaluation. What that cost and what it left behind
-is in `docs/`. Two of the bricks remain as submodules doing runtime work -
-ctcss parses CSS, ctjs parses script - and cthtml does not: the DOM has its own
-WHATWG tokenizer and tree builder.
+is in `docs/`. Two bricks remain as submodules doing runtime work - ctcss parses CSS, ctjs
+parses script. cthtml does not, and is no longer a submodule at all: the DOM
+has its own WHATWG tokenizer and tree builder, and `src/dom/entities.hpp` is
+the entity table carried forward from it.
 
 ## Build & test
 ```bash

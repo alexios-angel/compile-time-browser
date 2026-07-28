@@ -101,9 +101,9 @@ target_link_libraries(ctbrowser-core PUBLIC Threads::Threads)
 add_library(ctbrowser::core ALIAS ctbrowser-core)
 
 # --- ctbrowser.dom -------------------------------------------------------
-# Still consumes cthtml's value parser (stage 1 wraps it rather than replacing
-# it - see src/dom/html.cppm), so it needs that include path. That dependency
-# is expected to disappear when the conformant parser lands.
+# Its own WHATWG tokenizer and tree builder. This wrapped cthtml's value parser
+# at first; the conformant one replaced it, and with it the last reason the DOM
+# needed a parser from outside.
 add_library(ctbrowser-dom)
 target_sources(ctbrowser-dom
   PUBLIC

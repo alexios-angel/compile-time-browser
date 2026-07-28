@@ -79,7 +79,7 @@ SDL3_image), audio, and `fetch` over HTTP with Boost.Asio.
 ## Building
 
 ```bash
-git submodule update --init --recursive
+git submodule update --init --recursive   # ctcss + ctjs
 cmake --preset default && cmake --build --preset default && ctest --preset default
 ```
 
