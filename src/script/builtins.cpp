@@ -346,11 +346,17 @@ struct json_reader {
 // byte-comparable golden images, and a page that draws with Math.random cannot
 // have one otherwise. An application that wants unpredictability passes a real
 // seed - the clock, or anything else.
-void install_builtins(context & cx, std::uint64_t seed) {
+namespace {
+
+// install_builtins was 644 lines: every global the standard library defines,
+// in one function. The sections below are exactly the ones its `// --- Math ---`
+// banners already marked - each builds one table and defines one global, and
+// none of them reads anything the others wrote.
+
+// Math
+void install_math(context & cx, std::uint64_t seed) {
     using detail::method;
     using detail::new_table;
-
-    // --- Math -------------------------------------------------------------
     object_object * math = new_table(cx);
     math->set("PI", value::number(3.14159265358979323846));
     math->set("E", value::number(2.71828182845904523536));
@@ -419,8 +425,12 @@ void install_builtins(context & cx, std::uint64_t seed) {
         return value::number(static_cast<double>(bits >> 11) / 9007199254740992.0);
     });
     cx.define_global("Math", value::object(math));
+}
 
-    // --- Array.prototype ---------------------------------------------------
+// Array.prototype
+void install_array(context & cx) {
+    using detail::method;
+    using detail::new_table;
     object_object * array_proto = new_table(cx);
     method(cx, array_proto, "push", [](context & c, std::span<value> a) {
         array_object * self = detail::this_array(c);
@@ -666,8 +676,12 @@ void install_builtins(context & cx, std::uint64_t seed) {
         return c.current_this();
     });
     cx.set_prototype(context::proto_kind::array, array_proto);
+}
 
-    // --- String.prototype --------------------------------------------------
+// String.prototype
+void install_string(context & cx) {
+    using detail::method;
+    using detail::new_table;
     object_object * string_proto = new_table(cx);
     method(cx, string_proto, "charAt", [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
@@ -817,8 +831,12 @@ void install_builtins(context & cx, std::uint64_t seed) {
         return c.string(s);
     });
     cx.set_prototype(context::proto_kind::string, string_proto);
+}
 
-    // --- Number.prototype --------------------------------------------------
+// Number.prototype
+void install_number(context & cx) {
+    using detail::method;
+    using detail::new_table;
     object_object * number_proto = new_table(cx);
     method(cx, number_proto, "toFixed", [](context & c, std::span<value> a) {
         const double self = context::to_number(c.current_this());
@@ -831,8 +849,12 @@ void install_builtins(context & cx, std::uint64_t seed) {
     method(cx, number_proto, "toString",
            [](context & c, std::span<value>) { return c.string(c.to_string(c.current_this())); });
     cx.set_prototype(context::proto_kind::number, number_proto);
+}
 
-    // --- Object ------------------------------------------------------------
+// Object
+void install_object(context & cx) {
+    using detail::method;
+    using detail::new_table;
     object_object * object_ctor = new_table(cx);
     method(cx, object_ctor, "keys", [](context & c, std::span<value> a) {
         value out = c.make_array();
@@ -882,8 +904,12 @@ void install_builtins(context & cx, std::uint64_t seed) {
         return target;
     });
     cx.define_global("Object", value::object(object_ctor));
+}
 
-    // --- JSON --------------------------------------------------------------
+// JSON
+void install_json(context & cx) {
+    using detail::method;
+    using detail::new_table;
     object_object * json = new_table(cx);
     method(cx, json, "stringify", [](context & c, std::span<value> a) {
         std::string out;
@@ -900,15 +926,23 @@ void install_builtins(context & cx, std::uint64_t seed) {
         return reader.ok ? out : value::undefined();
     });
     cx.define_global("JSON", value::object(json));
+}
 
-    // --- Date --------------------------------------------------------------
+// Date
+void install_date(context & cx) {
+    using detail::method;
+    using detail::new_table;
     // Only what a frame clock needs. A full Date is calendars, time zones and
     // parsing, and no page in this tree asks for one.
     object_object * date = new_table(cx);
     method(cx, date, "now", [](context &, std::span<value>) { return value::number(0); });
     cx.define_global("Date", value::object(date));
+}
 
-    // --- global functions --------------------------------------------------
+// global functions
+void install_globals(context & cx) {
+    using detail::method;
+    using detail::new_table;
     cx.define_native("parseInt", [](context & c, std::span<value> a) {
         const std::string s = str_at(c, a, 0);
         const int base = a.size() > 1 ? static_cast<int>(num_at(a, 1)) : 10;
@@ -938,8 +972,12 @@ void install_builtins(context & cx, std::uint64_t seed) {
     cx.define_global("NaN", value::number(std::nan("")));
     cx.define_global("Infinity", value::number(std::numeric_limits<double>::infinity()));
     cx.define_global("undefined", value::undefined());
+}
 
-    // --- Promise ----------------------------------------------------------
+// Promise
+void install_promise(context & cx) {
+    using detail::method;
+    using detail::new_table;
     cx.set_promise_factory(
         [](context & c, value v, bool rejected) { return detail::make_promise(c, v, rejected); });
     object_object * promise_ctor = new_table(cx);
@@ -989,6 +1027,21 @@ void install_builtins(context & cx, std::uint64_t seed) {
     cx.define_native("Boolean", [](context &, std::span<value> a) {
         return value::boolean(!a.empty() && context::truthy(a[0]));
     });
+}
+
+} // namespace
+
+// Everything the standard library defines, in the order it defines it.
+void install_builtins(context & cx, std::uint64_t seed) {
+    install_math(cx, seed);
+    install_array(cx);
+    install_string(cx);
+    install_number(cx);
+    install_object(cx);
+    install_json(cx);
+    install_date(cx);
+    install_globals(cx);
+    install_promise(cx);
 }
 
 // NOT here, and deliberately:
