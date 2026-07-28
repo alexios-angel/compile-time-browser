@@ -16,10 +16,10 @@ import subprocess
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent.parent
-# the GLSL sources stay beside the code that uses them; the GENERATED header
-# goes where every other engine header lives
-SHADERS = HERE / "src" / "gpu" / "shaders"
-GENERATED = HERE / "include" / "ctbrowser" / "gpu" / "shaders"
+# the GLSL sources and the header generated from them live together, under
+# include/ with the rest of the engine
+SHADERS = HERE / "include" / "ctbrowser" / "gpu" / "shaders"
+GENERATED = SHADERS
 
 
 def compile_one(name: str, stage: str) -> bytes:

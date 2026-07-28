@@ -202,6 +202,7 @@ add_library(ctbrowser-layout)
 target_sources(ctbrowser-layout
   PRIVATE
     layout/box.cpp
+    layout/algorithm.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
@@ -248,6 +249,7 @@ add_library(ctbrowser::paint ALIAS ctbrowser-paint)
 add_library(ctbrowser-raster)
 target_sources(ctbrowser-raster
   PRIVATE
+    raster/draw.cpp
     raster/ttf.cpp
     raster/software.cpp
     raster/renderer.cpp
