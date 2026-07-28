@@ -12,6 +12,7 @@
 // which is the difference between a deferred feature and a mis-compile.
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/dom/dom.hpp>
 #include <ctbrowser/script/script.hpp>
 
 import ctbrowser;

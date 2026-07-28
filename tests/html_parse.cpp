@@ -13,7 +13,7 @@
 // thing.
 
 #include <ctbrowser/core/core.hpp>
-import ctbrowser.dom;
+#include <ctbrowser/dom/dom.hpp>
 
 #include "check.hpp"
 #include <cstdio>

@@ -6,6 +6,7 @@ module;
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/dom/dom.hpp>
 
 export module ctbrowser.layout:fragment;
 

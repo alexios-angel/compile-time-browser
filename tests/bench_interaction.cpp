@@ -15,6 +15,7 @@
 // figure is about the ENGINE and not about a compositor or a driver.
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/dom/dom.hpp>
 #include <ctbrowser/script/script.hpp>
 
 import ctbrowser;

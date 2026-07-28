@@ -8,10 +8,10 @@ module;
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/dom/dom.hpp>
 
 export module ctbrowser.shell:forms;
 
-import ctbrowser.dom;
 import ctbrowser.style;
 
 // Form control state.

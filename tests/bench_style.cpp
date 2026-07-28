@@ -12,7 +12,7 @@
 // property would flatter it and measure nothing anybody runs.
 
 #include <ctbrowser/core/core.hpp>
-import ctbrowser.dom;
+#include <ctbrowser/dom/dom.hpp>
 import ctbrowser.style;
 
 #include <chrono>

@@ -116,22 +116,21 @@ add_library(ctbrowser::core ALIAS ctbrowser-core)
 # Its own WHATWG tokenizer and tree builder. This wrapped cthtml's value parser
 # at first; the conformant one replaced it, and with it the last reason the DOM
 # needed a parser from outside.
-add_library(ctbrowser-dom)
+add_library(ctbrowser-dom INTERFACE)
 target_sources(ctbrowser-dom
-  PUBLIC
-    FILE_SET CXX_MODULES FILES
-      dom/dom.cppm
-      dom/node.cppm
-      dom/document.cppm
-      dom/tokenizer.cppm
-      dom/treebuilder.cppm
-      dom/html.cppm)
-target_compile_features(ctbrowser-dom PUBLIC cxx_std_23)
-ctbrowser_target(ctbrowser-dom)
-target_include_directories(ctbrowser-dom PRIVATE)
-target_include_directories(ctbrowser-dom PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/dom")
-target_link_libraries(ctbrowser-dom PUBLIC ctbrowser-core)
-set_target_properties(ctbrowser-dom PROPERTIES CXX_SCAN_FOR_MODULES ON)
+  INTERFACE
+    FILE_SET HEADERS
+      BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
+      FILES
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/dom/dom.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/dom/node.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/dom/document.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/dom/tokenizer.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/dom/treebuilder.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/dom/html.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/dom/entities.hpp")
+target_compile_features(ctbrowser-dom INTERFACE cxx_std_23)
+target_link_libraries(ctbrowser-dom INTERFACE ctbrowser-core)
 
 add_library(ctbrowser::dom ALIAS ctbrowser-dom)
 
@@ -410,9 +409,15 @@ if(CTBROWSER_SINGLE_LIB)
   set(ctbrowser-parts ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style
                       ctbrowser-layout ctbrowser-paint ctbrowser-raster ctbrowser-shell
                       ctbrowser-app ctbrowser)
+  # A header-only subsystem is an INTERFACE library: it has no archive to merge
+  # because it contributes no objects, so asking for its TARGET_FILE is an
+  # error rather than an omission.
   set(ctbrowser-part-files "")
   foreach(part IN LISTS ctbrowser-parts)
-    list(APPEND ctbrowser-part-files "$<TARGET_FILE:${part}>")
+    get_target_property(part_type ${part} TYPE)
+    if(NOT part_type STREQUAL "INTERFACE_LIBRARY")
+      list(APPEND ctbrowser-part-files "$<TARGET_FILE:${part}>")
+    endif()
   endforeach()
   # The MRI script is how llvm-ar and GNU ar both merge archives; writing it at
   # build time keeps the generator expressions resolvable.

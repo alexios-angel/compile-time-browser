@@ -1,14 +1,12 @@
-module;
+#pragma once
 #include <string>
 #include <string_view>
 
 #include <ctbrowser/core/core.hpp>
 
-export module ctbrowser.dom:html;
-
-import :document;
-import :node;
-import :treebuilder;
+#include <ctbrowser/dom/document.hpp>
+#include <ctbrowser/dom/node.hpp>
+#include <ctbrowser/dom/treebuilder.hpp>
 
 // HTML into the DOM.
 //
@@ -27,7 +25,7 @@ import :treebuilder;
 // Everything above this file speaks to `document::builder`, which is why the
 // swap touched only these three files.
 
-export namespace ctbrowser {
+namespace ctbrowser {
 
 struct parse_result {
     node_id root;

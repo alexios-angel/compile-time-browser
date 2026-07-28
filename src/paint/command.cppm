@@ -9,10 +9,9 @@ module;
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/dom/dom.hpp>
 
 export module ctbrowser.paint:command;
-
-import ctbrowser.dom;
 
 // The display list: what to draw, recorded once and then never changed.
 //

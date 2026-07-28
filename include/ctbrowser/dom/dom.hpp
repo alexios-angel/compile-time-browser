@@ -1,5 +1,4 @@
-export module ctbrowser.dom;
-
+#pragma once
 // The runtime document: a slab of nodes addressed by generation-tagged
 // handles, with lock-free reads and RCU-published payloads.
 //
@@ -14,8 +13,8 @@ export module ctbrowser.dom;
 // See :document for the locking policy and for precisely which atomicity
 // guarantees this does and does not make.
 
-export import :node;
-export import :document;
-export import :tokenizer;
-export import :treebuilder;
-export import :html;
+#include <ctbrowser/dom/document.hpp>
+#include <ctbrowser/dom/html.hpp>
+#include <ctbrowser/dom/node.hpp>
+#include <ctbrowser/dom/tokenizer.hpp>
+#include <ctbrowser/dom/treebuilder.hpp>

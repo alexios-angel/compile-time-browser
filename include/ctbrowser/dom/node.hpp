@@ -1,4 +1,4 @@
-module;
+#pragma once
 #include <atomic>
 #include <boost/container/small_vector.hpp>
 #include <cstddef>
@@ -7,8 +7,6 @@ module;
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
-
-export module ctbrowser.dom:node;
 
 // The DOM node, and the reason reads take no locks.
 //
@@ -33,7 +31,7 @@ export module ctbrowser.dom:node;
 // is what made the previous engine's layout unable to run concurrently. They belong to the box
 // tree, which is not the DOM tree.
 
-export namespace ctbrowser {
+namespace ctbrowser {
 
 struct node_tag {};
 using node_id = handle<node_tag>;

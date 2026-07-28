@@ -1,4 +1,4 @@
-module;
+#pragma once
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -14,9 +14,7 @@ module;
 
 #include <ctbrowser/core/core.hpp>
 
-export module ctbrowser.dom:document;
-
-import :node;
+#include <ctbrowser/dom/node.hpp>
 
 // The live document.
 //
@@ -56,7 +54,7 @@ import :node;
 // it pins the epoch (nothing is destroyed underneath you) and gives per-node
 // coherent reads.
 
-export namespace ctbrowser {
+namespace ctbrowser {
 
 enum class dom_error : std::uint8_t {
     no_such_node,   // the handle is stale or was never valid

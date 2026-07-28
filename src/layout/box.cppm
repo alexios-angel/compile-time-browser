@@ -10,10 +10,10 @@ module;
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/dom/dom.hpp>
 
 export module ctbrowser.layout:box;
 
-import ctbrowser.dom;
 import ctbrowser.style;
 import :values;
 

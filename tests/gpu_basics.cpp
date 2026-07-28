@@ -17,7 +17,7 @@
 // actually take.
 
 #include <ctbrowser/core/core.hpp>
-import ctbrowser.dom;
+#include <ctbrowser/dom/dom.hpp>
 import ctbrowser.style;
 import ctbrowser.layout;
 import ctbrowser.paint;

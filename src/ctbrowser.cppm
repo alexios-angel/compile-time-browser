@@ -1,5 +1,6 @@
 module;
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/dom/dom.hpp>
 #include <ctbrowser/script/script.hpp>
 
 export module ctbrowser;
@@ -16,7 +17,6 @@ export module ctbrowser;
 // browser's own signatures mention `scheduler`, `surface`, `rect` and `node_id`,
 // so a consumer needs them whether they asked for them or not.
 
-export import ctbrowser.dom;
 export import ctbrowser.style;
 export import ctbrowser.layout;
 export import ctbrowser.paint;

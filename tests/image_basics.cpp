@@ -6,6 +6,7 @@
 // with the code.
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/dom/dom.hpp>
 #include <ctbrowser/script/script.hpp>
 
 import ctbrowser;

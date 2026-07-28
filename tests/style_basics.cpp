@@ -7,7 +7,7 @@
 // filter is supposed to reject without walking.
 
 #include <ctbrowser/core/core.hpp>
-import ctbrowser.dom;
+#include <ctbrowser/dom/dom.hpp>
 import ctbrowser.style;
 
 #include "check.hpp"

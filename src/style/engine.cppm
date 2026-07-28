@@ -11,10 +11,10 @@ module;
 #include <ctcss.hpp>
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/dom/dom.hpp>
 
 export module ctbrowser.style:engine;
 
-import ctbrowser.dom;
 import :computed;
 import :selector;
 

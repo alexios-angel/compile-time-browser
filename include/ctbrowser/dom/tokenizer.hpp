@@ -1,5 +1,5 @@
-module;
-#include "entities.hpp"
+#pragma once
+#include <ctbrowser/dom/entities.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -9,8 +9,6 @@ module;
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
-
-export module ctbrowser.dom:tokenizer;
 
 // The HTML tokenizer, following the WHATWG state machine.
 //
@@ -32,7 +30,7 @@ export module ctbrowser.dom:tokenizer;
 // "<!--<script>" is tokenized as plain script data here, which ends the script
 // at the first </script> rather than the second), and CDATA sections.
 
-export namespace ctbrowser::html {
+namespace ctbrowser::html {
 
 enum class token_kind : std::uint8_t {
     doctype,

@@ -15,7 +15,7 @@
 //      "mostly the same" is not a layout engine.
 
 #include <ctbrowser/core/core.hpp>
-import ctbrowser.dom;
+#include <ctbrowser/dom/dom.hpp>
 import ctbrowser.style;
 import ctbrowser.layout;
 

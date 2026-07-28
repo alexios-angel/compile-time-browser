@@ -1,4 +1,4 @@
-module;
+#pragma once
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -9,11 +9,9 @@ module;
 
 #include <ctbrowser/core/core.hpp>
 
-export module ctbrowser.dom:treebuilder;
-
-import :document;
-import :node;
-import :tokenizer;
+#include <ctbrowser/dom/document.hpp>
+#include <ctbrowser/dom/node.hpp>
+#include <ctbrowser/dom/tokenizer.hpp>
 
 // Tree construction: tokens into a DOM.
 //
@@ -38,7 +36,7 @@ import :tokenizer;
 // named here rather than silently missing - a <svg> subtree parses as ordinary
 // HTML elements, which is wrong but predictable, and is the next thing to do.
 
-export namespace ctbrowser::html {
+namespace ctbrowser::html {
 
 // Elements that never have children and close themselves.
 [[nodiscard]] inline bool is_void_element(std::string_view tag) {
