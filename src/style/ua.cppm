@@ -8,7 +8,7 @@ import ctbrowser.core;
 
 // The user-agent stylesheet: what a document looks like before anyone styles it.
 //
-// Carried over from the previous engine's include/ctbrowser/ua.hpp, which took its values from
+// Carried over from the previous engine's ua.hpp, which took its values from
 // Gecko's html.css and Firefox's modern widget theme. It is not decoration -
 // without it an <h1> is body text, a <ul> has no indent, a link is not blue, and
 // <script> renders its own source. Every one of those is what "unstyled" looks

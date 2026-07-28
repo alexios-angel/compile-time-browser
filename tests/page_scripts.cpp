@@ -8,10 +8,8 @@
 // `fetchboard.html` is the async/await proof - fetch, await, try/catch,
 // template literals and for..of in one page.
 //
-// `space-invaders.html` is a 66 KB BUNDLE (21 ES modules through
-// tools/js-bundle.py) and is the stress case. It is a progress marker rather
-// than an assertion: it stops on a regex literal, which is DEFERRED - there is
-// no regex engine - so this prints what it is waiting on instead of failing.
+// And the constructs the compiler REFUSES are asserted to be refused BY NAME,
+// which is the difference between a deferred feature and a mis-compile.
 
 import ctbrowser;
 

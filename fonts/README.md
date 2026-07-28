@@ -13,7 +13,6 @@ are licensed under the SIL Open Font License 1.1:
 - **Cousine** (monospace) — metric-compatible with Courier New.
   Copyright The Cousine Project Authors. License: OFL-Cousine.txt.
 
-ctbrowser std::embed's these at compile time (include/ctbrowser/
-fonts.hpp) as the engine's default serif / sans-serif / monospace
-faces; a checkout without this directory still builds and falls back
-to a probed system font or the built-in 8x8 bitmap face.
+ctbrowser loads these through the asset registry as its default serif /
+sans-serif / monospace faces; a checkout without this directory still
+builds and falls back to the built-in 8x8 bitmap face.

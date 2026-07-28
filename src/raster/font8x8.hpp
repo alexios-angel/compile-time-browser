@@ -10,7 +10,7 @@
 // what lets ctbrowser render text through plain SDL rectangles with
 // no font library at all.
 
-// Carried forward from include/ctbrowser/font8x8.hpp, deliberately as a COPY.
+// Carried forward from the compile-time engine, deliberately as a COPY.
 // the engine must not include the previous engine's headers - the previous engine's tree is deleted at stage 7, and a
 // dependency on it would have to be untangled then instead of now. The table
 // itself is generated from dhepper's public-domain font8x8 (see NOTICE) and

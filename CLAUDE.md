@@ -155,8 +155,7 @@ code in it.
 SDL3 the engine still renders and `run_app` still works.
 
 **Installing:** `tools/check-package.sh` is the proof — installs the engine to a temp
-prefix, builds `tests/package/` against it via `find_package`. GLM and the
-submodules are no longer configure requirements.
+prefix, builds `tests/package/` against it via `find_package`.
 
 `tests/api_surface` lints the claim: application sources must contain exactly
 one `import ctbrowser;` and no SDL symbol, and the engine modules must stay
@@ -170,13 +169,13 @@ SDL-free.
 is the only module that knows SDL exists. A frame runs only what changed:
 a scroll re-composites, an idle frame does nothing, a resize re-lays-out.
 
-**`std::embed` is no longer required to configure.** `CTBROWSER_BUILD_V1` is
-now `AUTO`: the previous engine builds where the compiler has `__builtin_std_embed` and is
-skipped with a STATUS message where it does not. `cmake -S . -B build
--DCMAKE_CXX_COMPILER=clang++` on stock clang builds and tests the engine alone.
-`-DCTBROWSER_BUILD_V1=ON` still hard-errors on the wrong toolchain, on
-purpose — silently building something other than what was asked for is how
-CI reports success for a target it never built.
+**The compiler is ORDINARY.** `std::embed` was load-bearing for the compile-time
+engine and went with it; stock clang or gcc with C++23 builds this. What it
+must have is the ability to REPORT ITS IMPORT GRAPH, or CMake cannot build
+modules — and it says so in terms that mention neither modules nor the compiler
+version, so the root CMakeLists searches for a new-enough clang before
+`project()` locks the toolchain. `CXX=` or `-DCMAKE_CXX_COMPILER=` overrides
+that entirely.
 
 **Script and HTML parsing are the engine's own now.** `ctbrowser.shell:bindings`
 gives pages `document`/element methods/events/timers/rAF (handles, not
@@ -772,12 +771,11 @@ implementations racing. Headless GPU runs need `SDL_VIDEODRIVER=offscreen`;
 
 ## Windows cross-build (2026-07-25)
 
-`cmake --preset windows -DCTBROWSER_BUILD_V1=OFF && cmake --build --preset
-windows && cmake --build --preset windows --target windows-dist` →
-**`examples-windows/`** (its own directory: four example names collide with
-the previous engine's `examples-windows/`). It carries the exes, SDL3.dll and the pages/assets
-the examples load, laid out repo-relatively so the exes work from its root.
-The exes import **only SDL3.dll + the system UCRT** — no libc++, no libunwind.
+`cmake --preset windows && cmake --build --preset windows && cmake --build
+--preset windows --target windows-dist` → **`examples-windows/`**, carrying the
+exes and the pages/assets they load, laid out repo-relatively so they work from
+its root. The exes import **only the system UCRT** — no libc++, no libunwind,
+and no SDL3.dll (see below).
 
 **The exes are SELF-CONTAINED — no SDL3.dll.** `../llvm-mingw/build-sdl3.sh`
 builds SDL3 and SDL3_ttf as STATIC libraries into the toolchain's own
@@ -791,11 +789,12 @@ lands there ships the DLL. `CTBROWSER_SDL3_STATIC=OFF` forces it.
 `SDL3::SDL3-shared` and tells `windows-dist` whether a DLL has to travel.
 Cost: 3.5 MB → 7.2 MB per exe.
 
-Toolchain, all fetched rather than built: llvm-mingw std::embed release
-(`tools/llvm-mingw/`, 84 MB) and **Boost as an isolated include dir**
+Toolchain, fetched rather than built: llvm-mingw (`tools/llvm-mingw/`, 84 MB —
+still the std::embed build, which is simply the one that is there; nothing needs
+the builtin now) and **Boost as an isolated include dir**
 (`~/projects/boost-inc/boost` symlinked at the host's) — there is no BoostConfig
-for the cross target and none is needed, since the engine links `Boost::headers` and
-nothing else. The toolchain file finds it the same way it finds GLM's.
+for the cross target and none is needed, since the engine links `Boost::headers`
+and nothing else.
 
 Degrades as designed: no OpenSSL for mingw → `fetch` does http:// only and says
 so; no SDL3_image → `<img>` reads BMP only. Asio needs `ws2_32`/`mswsock`, which
@@ -815,10 +814,10 @@ the frame cap.
 
 ## ⚠️ Working environment & in-flight work (READ FIRST — 2026-07-22)
 
-**Heavy builds go on the shared devbox; grammar-free ctbrowser now
-builds fine locally** (the old OOM risk died with the bricks' grammar
-bakes). `rsync` from `/mnt/c` into the server is flaky (symlink +
-DrvFs). The devbox
+**Builds are fast locally now** — nothing folds a page in the constant
+evaluator any more, so the old OOM risk is gone with the engine that caused it.
+The devbox is still the faster machine for a full matrix. `rsync` from `/mnt/c`
+into it is flaky (symlink + DrvFs). The devbox
 (github.com/alexios-angel/infra, sibling checkout `../infra`) replaced the old
 per-project build server: 8 vCPU / 32 GB, Ubuntu 24.04, apt toolchain (GLM,
 cmake 3.28, LLVM 18 suite), **no SDL3** (so examples skip there). It
@@ -833,24 +832,15 @@ SSH_AUTH_SOCK=~/.ssh/build-agent.sock ssh-add ~/.ssh/id_ed25519` — the
 **Clean clones live at `~/projects/` on the box** (`compile-time-browser`
 with submodules init'd + clang toolchain installed, and `embed`) — ssh in and
 work there directly, or sync this tree with `./tools/remote-build.sh
-[target]` (converges the pinned clang-std-embed toolchain + glm, then
-runs the CMake `default` preset in `~/projects/compile-time-browser`).
+[target]`, which runs the CMake `default` preset in
+`~/projects/compile-time-browser`. NOTE it still converges the old
+clang-std-embed toolchain and GLM, neither of which this project needs any
+more — that script has not been revisited since the compile-time engine went.
 
-**Windows cross-builds are CMake presets**: `windows` / `windows-fetch`
-+ `cmake/toolchain-windows-x86_64.cmake` (llvm-mingw std::embed clang,
-SDL3-devel mingw package, isolated GLM dir - env LLVM_MINGW /
-SDL3_MINGW / GLM_INC override the ~/projects/* defaults; -static rides
-CXX flags so PCH predefines match; SDL3 links via the import lib's
-full path so -static leaves it dynamic). `windows-dist` collects
-exes + SDL3.dll into examples-windows/. `./tools/remote-build.sh
-windows` runs the whole thing on the devbox and rsyncs the exes back.
-
-**Makefile retirement: DONE (2026-07-23).** CMake+Ninja is the sole
-build in all 4 repos. The old findings all landed: GLM find_path on the
-build interface, the __builtin_std_embed probe runs with
-CMAKE_REQUIRED_FLAGS=-std=c++23, CTBROWSER_WARNING_OPTIONS carries the
-strict flags (tests/examples/pch-anchor - the anchor MUST share them or
-gcc-style predefine checks reject the PCH), space-invaders.inc
-generates, babylon-model gets its fetch-allow under
-CTBROWSER_EXAMPLES_FETCH (preset `fetch`). CI = cmake+ninja with apt
-ninja-build + libglm-dev. remote-build.sh drives the presets.
+**The Windows cross-build is the `windows` preset** +
+`cmake/toolchain-windows-x86_64.cmake` (llvm-mingw, a STATIC SDL3 and SDL3_ttf
+in the toolchain's own sysroot, an isolated Boost include dir; env
+LLVM_MINGW / SDL3_MINGW override the `~/projects/*` defaults).
+`windows-dist` collects the exes and the pages they load into
+`examples-windows/`. `./tools/remote-build.sh windows` runs it on the devbox
+and rsyncs the exes back. The exes are SELF-CONTAINED - no DLL beside them.

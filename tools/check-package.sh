@@ -14,7 +14,7 @@ compiler=${CXX:-clang++}
 echo "--- configuring ---"
 cmake -S "$root" -B "$build" -G Ninja \
   -DCMAKE_CXX_COMPILER="$compiler" \
-  -DCTBROWSER_BUILD_V1=OFF -DCTBROWSER_BUILD_TESTS=OFF \
+  -DCTBROWSER_BUILD_TESTS=OFF \
   -DCTBROWSER_BUILD_EXAMPLES=OFF \
   -DCMAKE_INSTALL_PREFIX="$prefix" >/dev/null
 
