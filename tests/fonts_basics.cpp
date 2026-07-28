@@ -302,6 +302,7 @@ void test_unknown_family_falls_back() {
 // threads, on glyphs nobody has asked for yet - which is the only arrangement
 // where the lock is load bearing.
 void test_the_glyph_cache_is_thread_safe() {
+#if CTBROWSER_WITH_TTF
     if (!raster::ttf_available()) { return; }
     raster::ttf_backend fonts;
     check(fonts.ok(), "SDL3_ttf started");
@@ -344,6 +345,7 @@ void test_the_glyph_cache_is_thread_safe() {
     }
     for (std::thread & t : threads) { t.join(); }
     check(got == expected, "twelve threads measuring cold glyphs agree with one thread");
+#endif
 }
 
 // A page's OWN font, from its @font-face rule. The file is named by the page
