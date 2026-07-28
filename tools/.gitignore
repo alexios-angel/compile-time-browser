@@ -1,3 +1,8 @@
 # Toolchains unpacked in place, neither of them ours to commit.
 clang-std-embed/
 llvm-mingw/
+
+# The virtualenv `compare.py setup` builds, holding Playwright. Machine-local
+# and hundreds of megabytes once its browsers are fetched; recreate it with
+# `tools/compare.py setup` rather than committing it.
+.venv/

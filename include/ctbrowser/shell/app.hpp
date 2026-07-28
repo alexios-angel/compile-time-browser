@@ -83,6 +83,13 @@ struct app_options {
 
     bool fullscreen = false;
 
+    // Half the caret's blink period, in milliseconds; 0 holds it solid.
+    // Chrome's 500 by default, which is what a person wants and what a
+    // SCREENSHOT does not: a caret that is present in one run and absent in
+    // the next is the difference between two otherwise identical images.
+    // browser_options has always had this; run_app had no way to pass it.
+    double caret_blink_ms = 500;
+
     std::string screenshot_path; // "" = never
     int screenshot_frame = -1;   // -1 = the last frame
 
@@ -116,6 +123,20 @@ struct app_options {
     // Called once before the first frame with the live browser, for
     // applications that want to inspect the document or drive it themselves.
     std::function<void(shell::browser &)> on_ready;
+
+    // Called EVERY iteration, just after the window's events and before the
+    // clock advances. `on_ready` fires once and the loop is otherwise closed,
+    // so an application that wants to drive the page as it runs - replaying a
+    // script, taking commands off a socket, which is what `ctdrive` does - had
+    // nowhere to stand.
+    //
+    // Called on the LOOP'S OWN THREAD. That is the point rather than a
+    // limitation: the page is ticked and drawn from this thread, so a browser
+    // driven from any other while that happens is a data race. Handle input
+    // here and there is nothing to synchronise.
+    //
+    // An empty hook costs one std::function check per iteration.
+    std::function<void(shell::browser &)> on_frame;
 
     // A link the page followed that LEAVES this document. Return true if the
     // application handled it - `ctbrowse` loads a local .html this way - and

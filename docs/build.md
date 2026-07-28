@@ -172,3 +172,63 @@ ten seconds, and a 306 MB profile. Pass **NULL** to wait without taking the
 event. The profiler's history is capped for the same reason: a profile of a
 loop that has gone wrong is exactly when it explodes.
 
+
+## COMPARING AGAINST A REAL BROWSER (2026-07-28)
+
+The goldens prove ctbrowser renders the same as it did yesterday. They say
+nothing about whether it matches a browser, and parity with Chrome/Firefox is
+the goal — so `tools/compare.py` opens the same page in ctbrowser AND a real
+browser and sends both the same clicks and keystrokes, **one command at a
+time**.
+
+```bash
+tools/compare.py setup                       # once: a venv holding Playwright
+tools/compare.py start --engine=ctbrowse --engine=chrome \
+                 --headed --delay 400 examples/pages/widgets.html
+tools/compare.py click 132 99
+tools/compare.py type Claude
+tools/compare.py key Tab
+tools/compare.py shot after-tab              # build/compare/shots/after-tab/*.png
+tools/compare.py stop
+```
+
+`--headed --delay` is the point rather than a debugging aid: both windows are
+open and the pace is human, so someone watching can say "that click missed"
+while it is still happening and the next command can correct it. Leave them off
+and the same verbs run headless and instantly.
+
+**`--engine=`** picks who is driven — `ctbrowse` (alias `normal`), `chrome`
+(alias `chromium`), `firefox` — repeatable and comma-accepting, default
+`ctbrowse,chrome`. Each stands alone: `--engine=chrome` asks what a real
+browser does before deciding what ctbrowser should do, and `--engine=ctbrowse`
+drives the engine by hand with no venv and nothing downloaded.
+
+**The engines cannot live in one invocation** — every command is a new process —
+so `start` leaves a daemon holding them and every other verb is a one-line
+client. Loopback TCP and a port file rather than a unix socket: the repo sits on
+a DrvFs mount, which does not support unix sockets at all.
+
+**`examples/ctdrive.cpp` is the ctbrowser half**, and the two engine changes it
+needed are worth knowing. `app_options::on_frame` is called every loop
+iteration — `on_ready` fires once and the loop was otherwise closed, which is
+why `ctbrowse` cannot be scripted — and commands are applied from it, on the
+loop's own thread, because a browser driven from any other while this one ticks
+and draws it is a data race. `app_options::caret_blink_ms` simply had no way
+through: `browser_options` always had it, `run_app` never passed it.
+
+**Coordinates, not selectors, and deliberately.** A selector would let each
+engine resolve its own geometry, which hides the thing being hunted: when the
+same click lands on different elements, that IS the finding. The first run
+against `widgets.html` showed it — ctbrowser puts the name field at y=86 and
+Chrome at y=60, so one click typed into the field and the other missed entirely.
+
+**What is by design and should not be read as a difference:** ctbrowser's
+`Math.random` is a fixed-seed xorshift and a real browser's is not; its
+`wheel_step` (53), `wheel_lines` (3) and `scrollbar_width` (15) are its own
+numbers; and antialiasing and hinting will never match. Fonts are handled —
+`compare.py` points the reference browser at the repo's own Tinos/Fira
+Sans/Cousine through `FONTCONFIG_FILE`, since otherwise every glyph differs and
+substitution buries everything else. `--system-fonts` opts out.
+
+Not a ctest and not in CI, for the reason the benchmarks are not: a
+browser-versus-browser diff should be read, not silently failed.

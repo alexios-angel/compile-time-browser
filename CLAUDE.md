@@ -33,6 +33,10 @@ gate and CI runs it.
 - `tools/gen-assets.py` — regenerates `examples/assets/` (sprites.bmp, blip.wav)
   deterministically, so no foreign binary is committed.
 - `tools/gen-shaders.py` — GLSL -> the SPIR-V in `include/ctbrowser/gpu/shaders/tile_spv.hpp`.
+- `tools/compare.py` — drives ctbrowser AND Chrome/Firefox through the same
+  clicks and keystrokes, live, so parity can be seen rather than guessed.
+  `--headed --delay` makes it watchable; `examples/ctdrive.cpp` is the
+  ctbrowser half. See `docs/build.md`.
 - `tools/format.sh`, `tools/check-package.sh`, `tools/check-render.cmake`,
   `tools/remote-build.sh`.
 

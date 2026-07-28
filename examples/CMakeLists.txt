@@ -26,10 +26,11 @@ foreach(source ${example-sources})
   # screenshot. `run_app` reads these env vars itself, so the example source
   # contains no test scaffolding at all.
   #
-  # ctbrowse is the exception - it is a CLI that opens a file you name, so it
-  # has nothing to render with no arguments. It is still built (and still
-  # linted by tests/api_surface), just not run.
-  if(NOT CMAKE_CROSSCOMPILING AND BUILD_TESTING AND NOT example STREQUAL "ctbrowse")
+  # ctbrowse and ctdrive are the exceptions - both are CLIs that open a file you
+  # name, so they have nothing to render with no arguments (and ctdrive would
+  # sit waiting on a socket forever). Both are still built, just not run.
+  if(NOT CMAKE_CROSSCOMPILING AND BUILD_TESTING
+     AND NOT example STREQUAL "ctbrowse" AND NOT example STREQUAL "ctdrive")
     add_test(NAME example-${example} COMMAND ctbrowser-example-${example}
              WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
     # CTBROWSER_NETWORK=0: a test that reaches the internet fails for reasons

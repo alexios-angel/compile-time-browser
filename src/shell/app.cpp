@@ -591,6 +591,7 @@ int run_app(std::string_view html, app_options options) {
     shell::browser_options browser_options;
     browser_options.width = options.logical_width > 0 ? options.logical_width : options.width;
     browser_options.height = options.logical_height > 0 ? options.logical_height : options.height;
+    browser_options.caret_blink_ms = options.caret_blink_ms;
     shell::browser page{browser_options};
 
     // Resources BEFORE the page: an <img src> is resolved while the document
@@ -668,6 +669,21 @@ int run_app(std::string_view html, app_options options) {
         record.at_ms = since(iteration_began);
 
         if (!host->pump(page, needs_frame)) { break; }
+        // THE EMBEDDER'S TURN, right after the window's. An application that
+        // drives the page itself - replaying a script, taking commands off a
+        // socket - has nowhere else to stand: on_ready is called once and the
+        // loop is otherwise closed, which is why `ctbrowse` cannot be scripted.
+        //
+        // HERE, on the main thread, rather than from a thread of the
+        // embedder's own: the page is ticked and drawn from this one, and a
+        // browser mutated from another while that happens is a data race the
+        // suite would find under TSan.
+        if (options.on_frame) {
+            options.on_frame(page);
+            // It may have handled input, so the frame it caused must be drawn
+            // the same way one from the window would be.
+            if (page.needs_frame()) { needs_frame = true; }
+        }
         const auto after_poll = clock::now();
         record.poll_ms =
             std::chrono::duration<double, std::milli>(after_poll - iteration_began).count();

@@ -35,7 +35,10 @@ SDL-free.
 ## THE SHELL IS THE ENGINE (2026-07-25)
 
 `ctbrowse` (examples/) is the browser: `ctbrowse page.html`, or
-`ctbrowse page.html --headless out.ppm --size W H` with no display at all.
+`ctbrowse page.html --frames 30 --shot out.ppm --size W H` with no display at
+all. (There is no `--headless` flag and never was; this line said so for
+months.) Its sibling `ctdrive` opens the same page and takes commands on a
+socket instead of from a user — see `docs/build.md`.
 `ctbrowser.shell::browser` is the assembly and is SDL-FREE — `ctbrowser.app`
 is the only module that knows SDL exists. A frame runs only what changed:
 a scroll re-composites, an idle frame does nothing, a resize re-lays-out.
