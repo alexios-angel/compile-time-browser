@@ -51,10 +51,10 @@ gate and CI runs it.
   — and it says so in terms mentioning neither modules nor a version, so the
   root `CMakeLists.txt` searches for a new-enough clang *before* `project()`
   locks the toolchain. `CXX=` or `-DCMAKE_CXX_COMPILER=` overrides that.
-- **`.clang-format` is LLVM with five measured deviations** (tabs, 100 columns,
-  `const rect & box`, one-line `if (x) { return; }`, unindented namespaces).
-  They are what the code already was; do not "fix" them toward stock LLVM.
-  Generated and vendored files are in `.clang-format-ignore`.
+- **`.clang-format` is LLVM with measured deviations** — spaces four wide (not
+  LLVM's two), 100 columns, `const rect & box`, one-line `if (x) { return; }`,
+  unindented namespaces. They are what the code already was; do not "fix" them
+  toward stock LLVM. Generated and vendored files are in `.clang-format-ignore`.
 - **A frame runs only what changed** — a scroll re-composites, a canvas draw
   re-rasters without re-recording, an idle page blocks on the event queue.
   Reaching for a full relayout is almost always the wrong fix.

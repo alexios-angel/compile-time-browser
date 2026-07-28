@@ -54,6 +54,11 @@ lines against 2,600), 100 columns, `const rect & box` (881 against 16), one-line
 would rewrite every line; the point of a formatter is to be a no-op on code
 that is already right.
 
+> **Superseded on the tab count (2026-07-27, commit `3a7de2a`).** `UseTab` went
+> `ForIndentation` -> `Never` and the whole tree was reformatted: it is SPACES
+> now, `IndentWidth: 4`. The other four deviations stand. Read `.clang-format`
+> for the current settings rather than this paragraph.
+
 Two settings are non-obvious and were both wrong on the first pass:
 `AllowShortIfStatementsOnASingleLine` must be `WithoutElse`, not `Never` -
 `AllowShortBlocksOnASingleLine` governs the block but the `if` is governed
