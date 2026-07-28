@@ -1,5 +1,4 @@
-module;
-
+#pragma once
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -19,8 +18,6 @@ module;
 #include <ctbrowser/raster/raster.hpp>
 #include <ctbrowser/script/script.hpp>
 #include <ctbrowser/shell/shell.hpp>
-
-export module ctbrowser.app;
 
 // The application shell: a window, an event loop, and one function to call.
 //
@@ -44,7 +41,7 @@ export module ctbrowser.app;
 // deserialize - for a header whose types this module deliberately never
 // exposes. It is included by app.cpp, once.
 
-export namespace ctbrowser {
+namespace ctbrowser {
 
 // A file the page can reach by name - what an asset lookup finds before it
 // touches the filesystem.

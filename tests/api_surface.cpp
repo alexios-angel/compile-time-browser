@@ -60,13 +60,17 @@ void check(bool ok, std::string_view what) {
     return out;
 }
 
-[[nodiscard]] std::vector<std::string> import_lines(const std::string & source) {
+// Every #include naming the engine. An application is allowed <cstdio> and
+// friends; what it is not allowed is to reach past the umbrella header into
+// the subsystems, which is the header-era shape of "exactly one import".
+[[nodiscard]] std::vector<std::string> engine_includes(const std::string & source) {
     std::vector<std::string> out;
     std::istringstream in{source};
     std::string line;
     while (std::getline(in, line)) {
         const std::size_t at = line.find_first_not_of(" \t");
-        if (at != std::string::npos && line.compare(at, 7, "import ") == 0) {
+        if (at != std::string::npos && line.find("<ctbrowser/") != std::string::npos &&
+            line.compare(at, 8, "#include") == 0) {
             out.push_back(line.substr(at));
         }
     }
@@ -84,10 +88,11 @@ void check_application_source(const std::string & path) {
     check(source.find("SDL3/") == std::string::npos, path + ": no SDL header");
     check(source.find("SDL_") == std::string::npos, path + ": no SDL symbol");
 
-    const auto imports = import_lines(source);
-    check(imports.size() == 1, path + ": exactly one import");
-    if (imports.size() == 1) {
-        check(imports[0] == "import ctbrowser;", path + ": and it is `import ctbrowser;`");
+    const auto includes = engine_includes(source);
+    check(includes.size() == 1, path + ": exactly one engine include");
+    if (includes.size() == 1) {
+        check(includes[0] == "#include <ctbrowser/ctbrowser.hpp>",
+              path + ": and it is `#include <ctbrowser/ctbrowser.hpp>`");
     }
 }
 
@@ -109,7 +114,7 @@ int main() {
     // Both trees, since the engine is headers in include/ and implementations
     // in src/: sweeping one of them would leave the other unwatched.
     const std::set<std::string> allowed = {
-        "src/shell/app.cppm",               // the window, the event loop, audio, image decode
+        "include/ctbrowser/shell/app.hpp",  // the window, the event loop, audio, image decode
         "src/shell/app.cpp",                //   and its implementation
         "include/ctbrowser/raster/ttf.hpp", // real fonts, through SDL3_ttf - see its header
         "include/ctbrowser/gpu/device.hpp", // the SDL_GPUDevice backend
@@ -117,7 +122,7 @@ int main() {
         "include/ctbrowser/gpu/gpu.hpp",
     };
     std::size_t swept = 0;
-    for (const std::string & tree : {"include", "src"}) {
+    for (const char * tree : {"include", "src"}) {
         for (const auto & entry : std::filesystem::recursive_directory_iterator{tree}) {
             if (!entry.is_regular_file()) { continue; }
             const std::string ext = entry.path().extension().string();

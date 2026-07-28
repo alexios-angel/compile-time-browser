@@ -10,7 +10,7 @@
 // The page path is relative to the repository root, the same convention the previous engine's
 // examples used for their assets.
 
-import ctbrowser;
+#include <ctbrowser/ctbrowser.hpp>
 
 int main() {
     ctbrowser::app_options options;

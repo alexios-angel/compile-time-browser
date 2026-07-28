@@ -9,7 +9,7 @@
 // do - window, event loop, clock, frame pacing, screenshots, teardown - is
 // behind it. There is no SDL header here.
 
-import ctbrowser;
+#include <ctbrowser/ctbrowser.hpp>
 
 #include <cstdio>
 #include <cstdlib>

@@ -4,14 +4,7 @@
 # self-contained: it does not touch the the previous engine interface target, its PCH, or its
 # tests. the previous engine's 33 tests must keep passing throughout the rewrite.
 #
-# Modules need a newer CMake than the top level asks for, and they need the
-# scanner on, so the requirement is raised here rather than repo-wide.
-cmake_minimum_required(VERSION 3.28)
 include(GNUInstallDirs)
-
-if(CMAKE_VERSION VERSION_LESS 3.28)
-  message(FATAL_ERROR "ctbrowser needs CMake >= 3.28 for C++ module support")
-endif()
 
 # CONFIG mode: FindBoost was removed in CMake 4 (policy CMP0167), and Boost has
 # shipped its own package config for years. Header-only usage only - see the
@@ -349,10 +342,13 @@ add_library(ctbrowser::shell ALIAS ctbrowser-shell)
 # is optional" true of the BUILD and not just of the engine.
 add_library(ctbrowser-app)
 target_sources(ctbrowser-app
-  PUBLIC
-    FILE_SET CXX_MODULES FILES shell/app.cppm
   PRIVATE
-    shell/app.cpp)
+    shell/app.cpp
+  PUBLIC
+    FILE_SET HEADERS
+      BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
+      FILES
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/app.hpp")
 target_compile_features(ctbrowser-app PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-app)
 target_link_libraries(ctbrowser-app PUBLIC ctbrowser-core ctbrowser-paint ctbrowser-raster
@@ -376,21 +372,21 @@ else()
   target_compile_definitions(ctbrowser-app PRIVATE CTBROWSER_WITH_SDL3=0 CTBROWSER_WITH_IMAGE=0)
   message(STATUS "ctbrowser: SDL3 not found - builds headless (run_app still works)")
 endif()
-set_target_properties(ctbrowser-app PROPERTIES CXX_SCAN_FOR_MODULES ON)
 add_library(ctbrowser::app ALIAS ctbrowser-app)
 
 # --- ctbrowser (umbrella) ------------------------------------------------
 # What an application imports and links. One of each.
-add_library(ctbrowser)
+add_library(ctbrowser INTERFACE)
 target_sources(ctbrowser
-  PUBLIC
-    FILE_SET CXX_MODULES FILES ctbrowser.cppm)
-target_compile_features(ctbrowser PUBLIC cxx_std_23)
-ctbrowser_target(ctbrowser)
-target_link_libraries(ctbrowser PUBLIC
+  INTERFACE
+    FILE_SET HEADERS
+      BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
+      FILES
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/ctbrowser.hpp")
+target_compile_features(ctbrowser INTERFACE cxx_std_23)
+target_link_libraries(ctbrowser INTERFACE
   ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style ctbrowser-layout
   ctbrowser-paint ctbrowser-raster ctbrowser-shell ctbrowser-app)
-set_target_properties(ctbrowser PROPERTIES CXX_SCAN_FOR_MODULES ON)
 add_library(ctbrowser::ctbrowser ALIAS ctbrowser)
 
 # --- ONE ARCHIVE ---------------------------------------------------------
@@ -459,11 +455,10 @@ if(SDL3_FOUND)
 endif()
 
 # --- installing the engine -------------------------------------------------------
-# C++ modules install as a FILE_SET, and consuming them from an installed tree
-# needs CXX_MODULES_DIRECTORY on the export. Without this the only way to use
-# the engine was add_subdirectory() of this repo - every install() in the project was
-# the previous engine's, so `find_package(ctbrowser)` handed back a header-only interface target
-# and none of the engine.
+# Headers install to include/, archives to lib/. This was a great deal more
+# involved when the engine was modules: a CXX_MODULES file set, a
+# CXX_MODULES_DIRECTORY on the export, and a consumer that had to be able to
+# rebuild BMIs from the installed sources.
 set(CTBROWSER_TARGETS
   ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style ctbrowser-layout
   ctbrowser-paint ctbrowser-raster ctbrowser-shell ctbrowser-app ctbrowser)
@@ -474,14 +469,12 @@ endif()
 install(TARGETS ${CTBROWSER_TARGETS}
   EXPORT ctbrowser-targets
   FILE_SET HEADERS DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
-  FILE_SET CXX_MODULES DESTINATION "${CMAKE_INSTALL_LIBDIR}/ctbrowser/modules"
   ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
   LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")
 
 install(EXPORT ctbrowser-targets
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ctbrowser"
-  NAMESPACE ctbrowser::
-  CXX_MODULES_DIRECTORY .)
+  NAMESPACE ctbrowser::)
 
 # The alias an application links. `ctbrowser::ctbrowser` is the build-tree name;
 # this is what survives an install.

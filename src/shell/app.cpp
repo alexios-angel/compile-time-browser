@@ -1,4 +1,3 @@
-module;
 #if CTBROWSER_WITH_SDL3
 #include <SDL3/SDL.h>
 #if CTBROWSER_WITH_IMAGE
@@ -27,12 +26,11 @@ module;
 #include <ctbrowser/paint/paint.hpp>
 #include <ctbrowser/raster/raster.hpp>
 #include <ctbrowser/script/script.hpp>
+#include <ctbrowser/shell/app.hpp>
 #include <ctbrowser/shell/shell.hpp>
 
-module ctbrowser.app;
-
 // The window, the event loop and the only place SDL is read. See the note in
-// app.cppm about why its headers are not in the interface.
+// app.hpp about why SDL's headers are not in the header.
 
 namespace ctbrowser::detail {
 

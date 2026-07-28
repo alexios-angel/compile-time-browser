@@ -9,7 +9,7 @@
 // loads. TABLES still lay out as ordinary boxes rather than as grids, and list
 // markers and disclosure triangles are not drawn - both are stage 7.
 
-import ctbrowser;
+#include <ctbrowser/ctbrowser.hpp>
 
 int main() {
     ctbrowser::app_options options;

@@ -3,7 +3,7 @@
 // This file is the acceptance criterion for the whole packaging story. If it
 // compiles against an installed prefix, an outside project can use ctbrowser.
 
-import ctbrowser;
+#include <ctbrowser/ctbrowser.hpp>
 
 #include <cstdio>
 

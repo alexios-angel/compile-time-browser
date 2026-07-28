@@ -10,7 +10,7 @@
 // through a patched clang's std::fetch; the engine has a real HTTP client, so the page
 // is written the way a page would be.
 
-import ctbrowser;
+#include <ctbrowser/ctbrowser.hpp>
 
 #include <fstream>
 #include <iterator>

@@ -1,32 +1,22 @@
-cmake_minimum_required(VERSION 3.28)
+cmake_minimum_required(VERSION 3.20)
 
-# ctbrowser: a browser engine in C++23 named modules. The engine is `src/`;
-# `tests/` and `examples/` are added from there.
+# ctbrowser: a browser engine in C++23. Headers are `include/ctbrowser/`, the
+# implementations are `src/`; `tests/` and `examples/` are added from there.
 #
-# C++ MODULES need CMake 3.28, and that is a hard floor rather than an opt-out
-# because the whole engine is modules.
+# The COMPILER is ordinary: stock clang or gcc with C++23, and the BUILD asks
+# nothing unusual of it. It used to: the engine was C++ named modules, which
+# meant CMake 3.28 as a hard floor and a compiler able to report its import
+# graph to the build system - a requirement that announced itself as "the
+# compiler does not provide a way to discover the import graph dependencies",
+# which says nothing about modules to anyone who has not met it before. This
+# file searched for a new-enough clang before project() to soften that. Plain
+# headers need none of it.
 #
-# The COMPILER is ordinary: stock clang or gcc with C++23. The std::embed fork
-# this project used to require went with the compile-time engine it existed
-# for - the engine parses at runtime now - and losing that requirement is what
-# makes the sanitizer presets possible at all: the fork ships no compiler-rt
-# runtimes, and TSan is the primary evidence that the lock-free read path is
-# sound.
-
-# A MODULES-CAPABLE COMPILER, chosen before project() locks the toolchain.
-#
-# `import` needs the compiler to report its import graph to the build system,
-# and the system default is routinely too old for that - which shows up as
-# "the compiler does not provide a way to discover the import graph
-# dependencies" rather than as anything about modules. Setting CMAKE_CXX_COMPILER
-# or CXX overrides this entirely; the search is only a default.
-if(NOT CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX} AND NOT CMAKE_TOOLCHAIN_FILE)
-  find_program(CTBROWSER_CXX NAMES clang++-20 clang++-19 clang++-18 clang++
-    HINTS /home/linuxbrew/.linuxbrew/bin /opt/homebrew/bin /usr/local/bin /usr/bin)
-  if(CTBROWSER_CXX)
-    set(CMAKE_CXX_COMPILER "${CTBROWSER_CXX}")
-  endif()
-endif()
+# The std::embed fork this project once required went with the compile-time
+# engine it existed for - the engine parses at runtime now - and losing that
+# requirement is what makes the sanitizer presets possible at all: the fork
+# ships no compiler-rt runtimes, and TSan is the primary evidence that the
+# lock-free read path is sound.
 
 project(ctbrowser
   HOMEPAGE_URL "https://github.com/alexios-angel/compile-time-browser"

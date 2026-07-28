@@ -11,7 +11,7 @@
 // and are resolved relative to the repository root, which is where the test
 // runs from.
 
-import ctbrowser;
+#include <ctbrowser/ctbrowser.hpp>
 
 int main() {
     ctbrowser::app_options options;

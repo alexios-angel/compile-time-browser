@@ -19,9 +19,9 @@
 #include <ctbrowser/paint/paint.hpp>
 #include <ctbrowser/raster/raster.hpp>
 #include <ctbrowser/script/script.hpp>
+#include <ctbrowser/shell/app.hpp>
 #include <ctbrowser/shell/shell.hpp>
 #include <ctbrowser/style/style.hpp>
-import ctbrowser.app; // run_app, for the one test that drives the whole application
 
 #include "check.hpp"
 #include <algorithm>
