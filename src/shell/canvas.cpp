@@ -6,8 +6,9 @@
 namespace ctbrowser::shell {
 
 void canvas_context::save() {
-    stack_.push_back(
-        state{transform_, fill_style, stroke_style, line_width, global_alpha, font_size});
+    stack_.push_back(state{transform_, fill_style, stroke_style, line_width, global_alpha,
+                           font_size, font_family, font_bold, font_italic, font_spec, fill_spec,
+                           stroke_spec});
 }
 
 void canvas_context::restore() {
@@ -19,6 +20,12 @@ void canvas_context::restore() {
     line_width = s.line_width;
     global_alpha = s.alpha;
     font_size = s.font_size;
+    font_family = s.font_family;
+    font_bold = s.font_bold;
+    font_italic = s.font_italic;
+    font_spec = s.font_spec;
+    fill_spec = s.fill_spec;
+    stroke_spec = s.stroke_spec;
     stack_.pop_back();
 }
 
@@ -126,27 +133,73 @@ void canvas_context::stroke() {
     touch();
 }
 
+float canvas_context::measure_text(std::string_view text) const {
+    return fonts().advance(text, font_size, font_family, font_bold, font_italic);
+}
+
 void canvas_context::fill_text(std::string_view text, float x, float y) {
-    if (!pixels_) { return; }
-    const int scale = raster::font8x8_scale(font_size);
-    const point origin = transform_.apply(x, y);
-    int cell = 0;
-    for (const char raw : text) {
-        const auto byte = static_cast<unsigned char>(raw);
-        if ((byte & 0xC0u) == 0x80u) { continue; } // continuation
-        const int left = static_cast<int>(origin.x) + cell * 8 * scale;
-        const int top = static_cast<int>(origin.y) - 8 * scale; // baseline to cell top
-        ++cell;
-        if (byte > 0x7F) { continue; }
-        for (int gy = 0; gy < 8; ++gy) {
-            for (int gx = 0; gx < 8; ++gx) {
-                if (!raster::glyph_pixel(byte, gy, gx)) { continue; }
-                for (int sy = 0; sy < scale; ++sy) {
-                    for (int sx = 0; sx < scale; ++sx) {
-                        blend(left + gx * scale + sx, top + gy * scale + sy, fill_style);
-                    }
-                }
-            }
+    if (!pixels_ || text.empty()) { return; }
+    const raster::font_backend & backend = fonts();
+    const float width = measure_text(text);
+    const float ascent = backend.ascent(font_size, font_family, font_bold, font_italic);
+    const float descent = backend.descent(font_size, font_family, font_bold, font_italic);
+    if (width <= 0 || ascent + descent <= 0) { return; }
+
+    // `draw_run` writes into a raster::surface and a canvas owns a
+    // paint::bitmap. They have the same pixel layout but surface OWNS its
+    // storage, so rather than reshape a type the whole raster path passes by
+    // value, the run is drawn into a scratch surface the size of its own
+    // bounding box and copied back.
+    //
+    // The scratch is SEEDED FROM THE DESTINATION first. Against a blank one,
+    // blend_over would composite an antialiased glyph edge onto transparent
+    // black and that premultiplied result would then be blended into the
+    // canvas a second time - a dark halo around every glyph.
+    const point origin = transform_.apply(x, y); // the BASELINE, per spec
+    // A pixel of margin each side for antialiasing and any overhang, and an
+    // integral left/top so the fraction stays in `where` and sub-pixel
+    // positioning survives the round trip.
+    const int left = static_cast<int>(std::floor(origin.x)) - 1;
+    const int top = static_cast<int>(std::floor(origin.y - ascent)) - 1;
+    const int w = static_cast<int>(std::ceil(width)) + 3;
+    const int h = static_cast<int>(std::ceil(ascent + descent)) + 3;
+
+    // Clipped to the canvas, so a run drawn mostly off the edge costs only the
+    // part that lands - and an entirely off-canvas run costs nothing.
+    const int from_x = std::max(0, left);
+    const int from_y = std::max(0, top);
+    const int to_x = std::min(pixels_->width, left + w);
+    const int to_y = std::min(pixels_->height, top + h);
+    if (from_x >= to_x || from_y >= to_y) { return; }
+
+    raster::surface scratch{w, h};
+    for (int sy = from_y; sy < to_y; ++sy) {
+        const std::span<std::uint32_t> row = scratch.row(sy - top);
+        for (int sx = from_x; sx < to_x; ++sx) {
+            row[static_cast<std::size_t>(sx - left)] = pixels_->at(sx, sy);
+        }
+    }
+
+    // `where.y` is the TOP of the run box, not the baseline: both backends add
+    // their own ascent. Passing the baseline through is the failure mode here,
+    // and it puts every glyph one ascent too low.
+    const rect where{origin.x - static_cast<float>(left),
+                     (origin.y - ascent) - static_cast<float>(top), width, ascent + descent};
+
+    ctbrowser::paint::paint_command run;
+    run.op = ctbrowser::paint::paint_op::text_run;
+    run.bounds = where;
+    run.text = std::string{text};
+    run.font_size = font_size;
+    run.face = ctbrowser::paint::font_face{font_family, font_bold, font_italic};
+    run.fill = with_alpha(fill_style); // globalAlpha, as every other verb honours it
+
+    backend.draw_run(where, run, raster::pixel_rect{0, 0, w, h}, scratch);
+
+    for (int sy = from_y; sy < to_y; ++sy) {
+        const std::span<const std::uint32_t> row = scratch.row(sy - top);
+        for (int sx = from_x; sx < to_x; ++sx) {
+            pixels_->put(sx, sy, row[static_cast<std::size_t>(sx - left)]);
         }
     }
     touch();
@@ -245,11 +298,16 @@ void canvas_context::line(point a, point b, float thickness) {
     }
 }
 
+void canvas_store::set_fonts(const raster::font_backend * fonts) {
+    fonts_ = fonts;
+    for (auto & [key, canvas] : canvases_) { canvas.set_fonts(fonts); }
+}
+
 canvas_context * canvas_store::context_for(node_id id, int width, int height) {
     auto it = canvases_.find(id.key());
     if (it == canvases_.end()) {
         auto pixels = std::make_shared<bitmap>(width, height);
-        it = canvases_.emplace(id.key(), canvas_context{std::move(pixels)}).first;
+        it = canvases_.emplace(id.key(), canvas_context{std::move(pixels), fonts_}).first;
     }
     return &it->second;
 }

@@ -472,6 +472,128 @@ void test_a_textarea_draws_its_lines_separately() {
     check(first >= 0 && second > first, "the second line is BELOW the first");
 }
 
+// A textarea SOFT-WRAPS a line too long for it.
+//
+// value_lines split on '\n' and nothing else, so a paragraph with no newline in
+// it was one line however long, drawn straight through the right edge of the
+// box and clipped. This is the last thing on docs/v1-retirement.md's list that
+// the deleted engine had and this one did not.
+//
+// Deliberately NOT use_real_fonts(): font8x8's advance is exactly
+// 8 * round(size/8) per glyph, so where the break falls is the same number on
+// every machine, and this test does not need SDL3_ttf to mean something.
+void test_a_textarea_soft_wraps_a_long_line() {
+    browser page{browser_options{400, 200}};
+    page.load_html("<body><textarea id=t rows=4 cols=10>aaaaaaaaaa bbbbbbbbbb</textarea></body>");
+    check(page.frame().has_value(), "the page renders");
+
+    // The whole value cannot fit: cols=10 at 16px gives an inner width of
+    // about nine glyphs, and the value is 21.
+    check(!draws_text(page, "aaaaaaaaaa bbbbbbbbbb"),
+          "the value is NOT drawn as one run running off the box");
+
+    std::vector<rect> runs;
+    std::string rebuilt;
+    for (const auto & c : commands(page)) {
+        if (c.op != paint::paint_op::text_run || c.source != find_id(page, "t")) { continue; }
+        runs.push_back(c.bounds);
+        rebuilt += c.text;
+    }
+    check(runs.size() >= 2, "it is drawn as two or more lines");
+    if (runs.size() >= 2) { check(runs[1].y > runs[0].y, "the second line is BELOW the first"); }
+    // A soft break consumes NO character, unlike a '\n'. If the wrapper ate the
+    // space it broke at, this is where it shows.
+    check(rebuilt == "aaaaaaaaaa bbbbbbbbbb", "and the lines still spell the whole value");
+}
+
+// The regression guard for the boundary case the wrap creates. After a soft
+// break line n's end IS line n+1's begin, so a caret sitting exactly there
+// satisfies both lines' range test - and the painter, which loops over lines,
+// drew a bar on each.
+void test_a_soft_wrapped_textarea_shows_exactly_one_caret() {
+    browser page{browser_options{400, 200}};
+    // Words that FIT, so every caret position lands well inside the box and
+    // caret_bars can see it. (An unbreakable word wider than the field
+    // overflows by design, and a caret at its end sits on the frame, where the
+    // helper cannot tell it from the outline.)
+    page.load_html(
+        "<body><textarea id=t rows=4 cols=20>aaaa bbbb cccc dddd eeee</textarea></body>");
+    check(page.frame().has_value(), "the page renders");
+    const rect box = box_of(page, "t");
+    click(page, box.x + 4, box.y + 8); // into the first visual line
+    check(page.focused() == find_id(page, "t"), "the textarea is focused");
+    (void)page.handle(input_event::key_press("Home"));
+
+    // Walk the caret across the whole value. At no position may there be two
+    // carets - and the wrap boundary is one of the positions visited.
+    for (std::size_t step = 0; step <= 24; ++step) {
+        (void)page.frame(); // the display list is what caret_bars reads
+        const std::size_t bars = caret_bars(page, "t").size();
+        check(bars == 1, "exactly one caret is drawn at every offset");
+        if (bars != 1) { break; }
+        (void)page.handle(input_event::key_press("ArrowRight"));
+    }
+}
+
+// Click and paint must agree about which line is which, including after a soft
+// break - the whole reason the geometry lives in one place.
+void test_clicking_the_second_visual_line_of_a_wrapped_textarea() {
+    browser page{browser_options{400, 200}};
+    page.load_html("<body><textarea id=t rows=4 cols=10>aaaaaaaaaa bbbbbbbbbb</textarea></body>");
+    check(page.frame().has_value(), "the page renders");
+    const rect box = box_of(page, "t");
+
+    // Find where the painter actually put the second line, and click there
+    // rather than guessing a y.
+    std::vector<rect> runs;
+    for (const auto & c : commands(page)) {
+        if (c.op == paint::paint_op::text_run && c.source == find_id(page, "t")) {
+            runs.push_back(c.bounds);
+        }
+    }
+    check(runs.size() >= 2, "the value wrapped");
+    if (runs.size() < 2) { return; }
+
+    click(page, box.x + 4, runs[1].y + runs[1].height / 2);
+    // Past the break, which is at offset 11 ("aaaaaaaaaa " is 11 bytes).
+    check(caret_of(page, "t") >= 10, "clicking the second visual line lands past the wrap");
+
+    // And ArrowUp from there comes back to the first line.
+    (void)page.handle(input_event::key_press("ArrowUp"));
+    check(caret_of(page, "t") <= 11, "and ArrowUp returns to the first visual line");
+}
+
+// A textarea is sized by `rows` and does not grow, so wrapping past the bottom
+// has to scroll or the caret types somewhere nobody can see.
+void test_a_textarea_scrolls_to_keep_the_caret_visible() {
+    browser page{browser_options{400, 200}};
+    page.load_html("<body><textarea id=t rows=2 cols=10></textarea></body>");
+    check(page.frame().has_value(), "the page renders");
+    const rect box = box_of(page, "t");
+    click(page, box.x + 4, box.y + 8);
+    check(page.focused() == find_id(page, "t"), "the textarea is focused");
+
+    const auto scroll_of = [&page] {
+        const auto * state = page.control_state_of(find_id(page, "t"));
+        return state == nullptr ? 0 : state->scroll_line;
+    };
+    check(scroll_of() == 0, "it starts at the top");
+
+    // Six words at ~9 glyphs a line is well past two visible rows.
+    check(page.text_input("aaaa bbbb cccc dddd eeee ffff"), "typing is accepted");
+    (void)page.frame();
+    check(scroll_of() > 0, "typing past the last visible row scrolls the textarea");
+
+    // The caret's line is still inside the visible window - which is the point
+    // of scrolling at all - so a caret is still drawn.
+    check(caret_bars(page, "t").size() == 1, "and the caret is still visible");
+
+    // Home to the top of the value brings it back.
+    for (int i = 0; i < 40; ++i) { (void)page.handle(input_event::key_press("ArrowUp")); }
+    (void)page.frame();
+    check(scroll_of() == 0, "and moving back up scrolls it home again");
+}
+
 void test_the_caret_blinks() {
     browser_options options{400, 200};
     options.caret_blink_ms = 500;
@@ -1467,6 +1589,10 @@ int main() {
     test_the_caret_is_measured_with_the_drawing_font();
     test_a_textarea_shows_a_caret_on_the_right_line();
     test_a_textarea_draws_its_lines_separately();
+    test_a_textarea_soft_wraps_a_long_line();
+    test_a_soft_wrapped_textarea_shows_exactly_one_caret();
+    test_clicking_the_second_visual_line_of_a_wrapped_textarea();
+    test_a_textarea_scrolls_to_keep_the_caret_visible();
     test_the_caret_blinks();
     test_a_blink_does_not_relayout();
     test_the_page_asks_for_a_frame_when_the_caret_blinks();

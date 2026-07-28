@@ -138,7 +138,7 @@ std::expected<void, dom_error> document::append_child(node_id parent, node_id ch
 }
 
 std::expected<void, dom_error> document::insert_before(node_id parent, node_id child,
-                                                              node_id before) {
+                                                       node_id before) {
     const std::lock_guard structure{structure_};
     node * parent_node = find(parent);
     node * child_node = find(child);
@@ -171,7 +171,7 @@ std::expected<void, dom_error> document::remove_child(node_id child) {
 }
 
 std::expected<void, dom_error> document::set_attribute(node_id id, atom name,
-                                                              std::string_view value) {
+                                                       std::string_view value) {
     const std::lock_guard lock{stripe_of(id)};
     node * n = find(id);
     if (n == nullptr) { return std::unexpected{dom_error::no_such_node}; }

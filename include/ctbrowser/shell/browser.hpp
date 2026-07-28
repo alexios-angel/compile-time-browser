@@ -587,6 +587,11 @@ private:
         ctbrowser::layout::text_face metrics_face;
         std::vector<std::pair<std::size_t, std::size_t>> lines; // [begin, end) in the VALUE
         bool masked = false;
+        // How many lines fit in the box. A textarea is a replaced box sized by
+        // its `rows`, so wrapping can produce more lines than it can show and
+        // the rest are scrolled to rather than grown into. At least one, or a
+        // box too short for a single line could never show the caret.
+        std::size_t visible_lines = 1;
     };
 
     [[nodiscard]] field_layout layout_of_field(const rect & box, node_id id,
@@ -600,9 +605,16 @@ private:
         out.inner =
             rect{box.x + control_padding, box.y + (multiline ? 3 : baseline_inset(box, out.size)),
                  box.width - 2 * control_padding, box.height - 6};
+        // A single-line field does not wrap - it scrolls horizontally, which it
+        // has always done by clipping. Only a textarea gets visual lines.
         out.lines =
-            multiline ? value_lines(control.value)
-                      : std::vector<std::pair<std::size_t, std::size_t>>{{0, control.value.size()}};
+            multiline
+                ? value_lines(control.value, out.inner.width, out.size, out.metrics_face, measure())
+                : std::vector<std::pair<std::size_t, std::size_t>>{{0, control.value.size()}};
+        out.visible_lines = out.line_height > 0
+                                ? std::max<std::size_t>(1, static_cast<std::size_t>(
+                                                               out.inner.height / out.line_height))
+                                : 1;
         return out;
     }
 
@@ -630,8 +642,13 @@ private:
         const field_layout geometry = layout_of_field(box, id, control, kind);
         if (geometry.lines.empty()) { return 0; }
 
+        // Relative to the FIRST VISIBLE line, not to the first line: a click
+        // maps through the same scroll offset the painter drew with, or a
+        // scrolled textarea puts the caret several lines from where you
+        // pointed.
         const auto line_index =
-            static_cast<std::ptrdiff_t>(std::floor((y - geometry.inner.y) / geometry.line_height));
+            static_cast<std::ptrdiff_t>(std::floor((y - geometry.inner.y) / geometry.line_height)) +
+            static_cast<std::ptrdiff_t>(control.scroll_line);
         const std::size_t index = static_cast<std::size_t>(std::clamp<std::ptrdiff_t>(
             line_index, 0, static_cast<std::ptrdiff_t>(geometry.lines.size()) - 1));
         const auto [begin, end] = geometry.lines[index];
@@ -664,14 +681,10 @@ private:
         const rect box = viewport_box_of(id);
         if (box.empty()) { return false; }
         const field_layout geometry = layout_of_field(box, id, control, kind);
-        std::size_t index = 0;
-        for (std::size_t i = 0; i < geometry.lines.size(); ++i) {
-            if (control.caret >= geometry.lines[i].first &&
-                control.caret <= geometry.lines[i].second) {
-                index = i;
-                break;
-            }
-        }
+        // The same rule the painter uses, so Up/Down start from the line the
+        // caret is DRAWN on. Two copies of "which line is this" is how the
+        // caret and the arrow keys start disagreeing at a wrap boundary.
+        const std::size_t index = caret_line(geometry, control.caret);
         const auto target = static_cast<std::ptrdiff_t>(index) + direction;
         if (target < 0 || target >= static_cast<std::ptrdiff_t>(geometry.lines.size())) {
             return false;
@@ -700,6 +713,33 @@ private:
         control.caret = to_begin + best;
         if (!extend) { control.selection = control.caret; }
         return true;
+    }
+
+    // Scroll a textarea the MINIMUM needed to put the caret's line back in
+    // view. Called after anything that moves the caret or changes the value -
+    // typing off the bottom of a box that cannot grow is otherwise typing into
+    // somewhere you cannot see.
+    void reveal_caret(node_id id, control_state & control, control_kind kind) {
+        if (kind != control_kind::textarea) { return; }
+        const rect box = viewport_box_of(id);
+        if (box.empty()) { return; }
+        const field_layout geometry = layout_of_field(box, id, control, kind);
+        const std::size_t on_line = caret_line(geometry, control.caret);
+        const std::size_t visible = std::max<std::size_t>(1, geometry.visible_lines);
+        std::size_t first = control.scroll_line;
+        if (on_line < first) {
+            first = on_line;
+        } else if (on_line >= first + visible) {
+            first = on_line - visible + 1;
+        }
+        // Never leave blank rows below a value that would fill them: deleting
+        // a long value while scrolled down otherwise shows an empty box.
+        const std::size_t most =
+            geometry.lines.size() > visible ? geometry.lines.size() - visible : 0;
+        first = std::min(first, most);
+        if (first == control.scroll_line) { return; }
+        control.scroll_line = first;
+        mark(dirty::paint);
     }
 
     // Home and End are per LINE in a textarea, as they are in every editor.
@@ -737,10 +777,21 @@ private:
         into.push_clip(box);
         const std::size_t from = std::min(control.caret, control.selection);
         const std::size_t to = std::max(control.caret, control.selection);
-        for (std::size_t index = 0; index < geometry.lines.size(); ++index) {
+        // Where the caret is, decided ONCE. Drawn per-line without this, a
+        // caret sitting on a soft-wrap boundary belongs to two lines and gets a
+        // bar on each.
+        const std::size_t on_line = caret_line(geometry, control.caret);
+        // Lines above the scroll offset are not drawn at all, and the rest are
+        // positioned relative to it. This and offset_at_point below must agree,
+        // which is the whole reason the geometry lives in one place.
+        const std::size_t first = std::min(control.scroll_line, geometry.lines.size());
+        for (std::size_t index = first; index < geometry.lines.size(); ++index) {
             const auto [begin, end] = geometry.lines[index];
             const std::string_view line{control.value.data() + begin, end - begin};
-            const float y = inner.y + static_cast<float>(index) * line_height;
+            const float y = inner.y + static_cast<float>(index - first) * line_height;
+            // Past the bottom of the box: the clip would drop it anyway, and
+            // stopping here means a long value costs nothing to skip.
+            if (y > inner.y + inner.height) { break; }
             if (from != to && from < end && to > begin) {
                 const std::size_t a = std::max(from, begin) - begin;
                 const std::size_t b = std::min(to, end) - begin;
@@ -752,11 +803,10 @@ private:
                 into.text(rect{inner.x, y, inner.width, line_height}, shown(line, geometry.masked),
                           size, control_text_colour(id, style), id, face);
             }
-            // The caret sits on the line CONTAINING it. `<=` on the end so a
-            // caret at the very end of a line is on that line rather than
-            // nowhere; the first match wins, which puts a caret sitting on a
-            // boundary at the end of the earlier line, as browsers do.
-            if (focused && caret_visible() && control.caret >= begin && control.caret <= end) {
+            // The caret sits on the line CONTAINING it - see caret_line(),
+            // which puts a caret on a boundary at the end of the earlier line,
+            // as browsers do.
+            if (focused && caret_visible() && index == on_line) {
                 into.fill(rect{inner.x + advance(line.substr(0, control.caret - begin)), y, 1,
                                line_height},
                           control_text_colour(id, style), id);
@@ -765,19 +815,63 @@ private:
         into.pop_clip();
     }
 
-    // A value's lines as [begin, end) offsets, newlines excluded. Always at
-    // least one, so an empty value still has a line for the caret to be on.
+    // A value's VISUAL lines as [begin, end) offsets: split on newlines, then
+    // soft-wrapped within each of those to `wrap_width`. Always at least one,
+    // so an empty value still has a line for the caret to be on.
+    //
+    // THE TWO BREAKS DIFFER, and everything downstream depends on how. A hard
+    // '\n' is CONSUMED, so the next line begins at end + 1. A soft break
+    // consumes nothing, so the next line begins exactly AT end - which is how a
+    // consumer tells them apart without a flag, and why caret_line() below has
+    // to exist. Trailing spaces stay on the earlier line, inside [begin, end):
+    // browsers hang them the same way, and it is what keeps end == begin true.
+    //
+    // A zero or negative width means no wrapping - a degenerate box must not
+    // turn into an infinite loop of empty lines.
     [[nodiscard]] static std::vector<std::pair<std::size_t, std::size_t>> value_lines(
-        const std::string & value) {
+        const std::string & value, float wrap_width, float size,
+        const ctbrowser::layout::text_face & face,
+        const ctbrowser::layout::measure_text_fn & measure) {
         std::vector<std::pair<std::size_t, std::size_t>> out;
         std::size_t begin = 0;
         for (std::size_t at = 0; at <= value.size(); ++at) {
-            if (at == value.size() || value[at] == '\n') {
-                out.emplace_back(begin, at);
-                begin = at + 1;
+            if (at != value.size() && value[at] != '\n') { continue; }
+            // One hard segment, [begin, at). Wrapped greedily with the SAME
+            // rule the page's inline layout uses, so a field and the text
+            // around it never disagree about where a line breaks.
+            std::size_t from = begin;
+            while (wrap_width > 0 && from < at) {
+                const std::string_view rest{value.data() + from, at - from};
+                if (measure(rest, size, face) <= wrap_width) { break; }
+                const std::size_t take =
+                    ctbrowser::layout::words_that_fit(rest, wrap_width, size, face, measure);
+                // words_that_fit only returns 0 when there is no room at all,
+                // and it returns an over-long word whole otherwise - but guard
+                // anyway, because a 0 here would never terminate.
+                if (take == 0 || take >= rest.size()) { break; }
+                out.emplace_back(from, from + take);
+                from += take;
             }
+            out.emplace_back(from, at);
+            begin = at + 1;
         }
         return out;
+    }
+
+    // The line a caret is ON, as an index into `lines`. FIRST match wins.
+    //
+    // This has to be a real guard rather than a convention, now that lines soft
+    // wrap. With hard breaks alone a line's end was the '\n' and the next
+    // line's begin was one past it, so `caret >= begin && caret <= end` could
+    // only ever match once and a loop with no `break` got away with it. A soft
+    // break makes end == begin, so a caret sitting on a wrap boundary matches
+    // BOTH lines - and the painter, which draws per line, drew TWO carets.
+    [[nodiscard]] static std::size_t caret_line(const field_layout & geometry, std::size_t caret) {
+        for (std::size_t index = 0; index < geometry.lines.size(); ++index) {
+            const auto [begin, end] = geometry.lines[index];
+            if (caret >= begin && caret <= end) { return index; }
+        }
+        return geometry.lines.empty() ? 0 : geometry.lines.size() - 1;
     }
 
     [[nodiscard]] std::string button_label(const read_txn & txn, node_id id,
@@ -940,6 +1034,27 @@ private:
     [[nodiscard]] node_id control_ancestor(node_id from);
 
     bool focus(node_id id);
+
+    // Every control the user can Tab to, in DOCUMENT ORDER.
+    //
+    // Document order IS the tab order here, because there is no `tabindex` -
+    // which is also what a document without one gets in a real browser. Two
+    // deliberate gaps, so nobody has to rediscover them: a positive `tabindex`
+    // does not reorder anything, and each radio button is its own stop rather
+    // than a group being one.
+    [[nodiscard]] std::vector<node_id> focusable_controls();
+
+    // A control takes focus if it IS one, is not disabled (by its own attribute
+    // or an enclosing <fieldset>'s), and is actually RENDERED. `display: none`
+    // leaves no fragment, and tabbing into something nobody can see is how
+    // focus appears to vanish. Note a control scrolled off-screen still HAS a
+    // fragment and so stays tabbable, which is correct - it is reachable, just
+    // not visible yet.
+    [[nodiscard]] bool is_focusable(const read_txn & txn, node_id id);
+
+    // Sequential focus navigation. Wraps at both ends, so Tab off the last
+    // control returns to the first rather than dropping focus into nothing.
+    bool focus_next(bool backwards);
 
     bool edit_key(control_state & control, const input_event & event);
 

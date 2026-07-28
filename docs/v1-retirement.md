@@ -49,8 +49,11 @@ Deleting v1 today removes working, tested functionality with no replacement:
 - ~~**Form controls and editing.**~~ **MOSTLY DONE.** Text fields, checkboxes,
   radios, buttons, focus, the caret, typing, editing keys, submit and reset all
   work, and so do the `<select>` popup, the clipboard (Ctrl+C/X/V and the
-  right-click menu), system cursors and page-level text selection. Still
-  missing: textarea soft-wrap and multi-line caret movement.
+  right-click menu), system cursors and page-level text selection. Multi-line
+  caret movement landed 2026-07-27, and **textarea soft-wrap 2026-07-28** —
+  with the scrolling it needs, since a textarea is sized by `rows` and cannot
+  grow into the lines wrapping adds. Nothing here is missing now. Tab moving
+  focus between controls landed with it.
 - ~~**Canvas 2D.**~~ **MOSTLY DONE.** `getContext("2d")`, fills, strokes, paths,
   arcs, transforms, state stack, `fillText`, `measureText`, and `drawImage` in
   all three forms from either an `<img>` or a `loadImage` handle. Still missing:

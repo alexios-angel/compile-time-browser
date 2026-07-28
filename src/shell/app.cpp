@@ -198,6 +198,17 @@ public:
             texture_ =
                 SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
                                   image->width(), image->height());
+            // NEAREST, because SDL3 defaults a texture to LINEAR and the only
+            // time this one is SCALED is under logical presentation - where a
+            // 320x240 playfield is stretched over a 960x720 window and bilinear
+            // filtering smears every sprite edge into a soft ramp.
+            //
+            // Unconditional rather than gated on letterboxing: without it a
+            // resize reflows the page and this texture is recreated at the new
+            // size, so the blit is 1:1 and the filter cannot be observed - bar
+            // the single frame between the resize event and the reflow, where
+            // the old texture is stretched and NEAREST is the right answer too.
+            if (texture_ != nullptr) { SDL_SetTextureScaleMode(texture_, SDL_SCALEMODE_NEAREST); }
             width_ = image->width();
             height_ = image->height();
         }

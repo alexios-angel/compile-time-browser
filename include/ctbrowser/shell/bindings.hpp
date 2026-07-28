@@ -241,9 +241,19 @@ private:
 
     [[nodiscard]] static float number(std::span<value> args, std::size_t i);
 
-    // "bold 16px sans-serif" -> 16. Only the size is read, because only the
-    // size changes anything font8x8 can draw.
+    // "bold 16px sans-serif" -> 16.
     [[nodiscard]] static float font_size_from(std::string_view font);
+
+    // ...and -> family "sans-serif", bold, not italic. The family used to be
+    // thrown away, which is how a canvas asking for Arial got the bitmap font's
+    // 8-pixel monospaced cell and a HUD laid out from the right edge ran off it.
+    //
+    // An honest subset of the CSS `font` shorthand: tokens before the <n>px one
+    // supply bold/italic, and the first entry of the family list after it is
+    // the family. Not handled, and not pretended to be: `font-weight: 700` as a
+    // number, `<size>/<line-height>`, and keyword sizes like `medium`.
+    static void font_face_from(std::string_view font, std::string & family, bool & bold,
+                               bool & italic);
 
     [[nodiscard]] node_id handle_of(value v);
 

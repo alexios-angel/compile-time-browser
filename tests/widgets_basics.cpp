@@ -157,6 +157,100 @@ void test_typing_and_editing() {
     check(value_of(page, "t") == "XabZ", "appends");
 }
 
+// --- Tab walks the form ---------------------------------------------------
+
+// The order is DOCUMENT order, and the two things that must be left out of it
+// are the two a user cannot reach: a disabled control and one that is not
+// rendered. Both used to be reachable for the simple reason that nothing was.
+void test_tab_moves_focus_between_controls() {
+    browser page{browser_options{400, 300}};
+    page.load_html("<html><body>"
+                   "<input id=a type=text>"
+                   "<input id=b type=text disabled>"
+                   "<input id=c type=text style='display:none'>"
+                   "<textarea id=d></textarea>"
+                   "<button id=e>Go</button>"
+                   "</body></html>");
+    check(page.frame().has_value(), "the page renders");
+
+    click(page, box_of(page, "a"));
+    check(page.focused() == find_id(page, "a"), "clicking the first field focuses it");
+
+    check(page.handle(input_event::key_press("Tab")), "Tab is handled");
+    check(page.focused() == find_id(page, "d"),
+          "Tab skips the disabled and the unrendered control");
+
+    check(page.handle(input_event::key_press("Tab")), "Tab again");
+    check(page.focused() == find_id(page, "e"), "and reaches the button");
+
+    check(page.handle(input_event::key_press("Tab")), "Tab off the end");
+    check(page.focused() == find_id(page, "a"), "wraps around to the first");
+
+    check(page.handle(input_event::key_press("Tab", /*shift=*/true)), "Shift+Tab is handled");
+    check(page.focused() == find_id(page, "e"), "and goes backwards, wrapping the other way");
+
+    check(page.handle(input_event::key_press("Tab", true)), "Shift+Tab again");
+    check(page.focused() == find_id(page, "d"), "stepping back through the order");
+}
+
+void test_tab_with_nothing_focused_starts_at_an_end() {
+    browser page{browser_options{400, 300}};
+    page.load_html("<html><body><input id=a><input id=b></body></html>");
+    check(page.frame().has_value(), "the page renders");
+
+    check(!page.focused(), "nothing is focused to begin with");
+    check(page.handle(input_event::key_press("Tab")), "Tab is handled");
+    check(page.focused() == find_id(page, "a"), "Tab starts at the first control");
+
+    browser back{browser_options{400, 300}};
+    back.load_html("<html><body><input id=a><input id=b></body></html>");
+    check(back.frame().has_value(), "the page renders");
+    check(back.handle(input_event::key_press("Tab", true)), "Shift+Tab is handled");
+    check(back.focused() == find_id(back, "b"), "and Shift+Tab starts at the last");
+}
+
+// Tab is a DEFAULT ACTION, so it must not also scroll the page - the bug every
+// key here has had at least once - and a page that claims the key keeps it.
+void test_tab_does_not_scroll_and_can_be_prevented() {
+    browser page{browser_options{200, 100}};
+    page.load_html("<html><body><input id=a><input id=b>"
+                   "<div style='height:900px'>tall</div></body></html>");
+    check(page.frame().has_value(), "the page renders");
+    check(page.max_scroll() > 0, "the page is scrollable, so a stray scroll would show");
+
+    click(page, box_of(page, "a"));
+    (void)page.handle(input_event::key_press("Tab"));
+    check(page.scroll_y() == 0, "Tab moved focus without scrolling the page");
+
+    browser cancelled{browser_options{200, 100}};
+    cancelled.load_html("<html><body><input id=a><input id=b>"
+                        "<script>document.addEventListener('keydown', function(e) {"
+                        "  if (e.code == 'Tab') { e.preventDefault(); }"
+                        "}, false);</script></body></html>");
+    check(cancelled.frame().has_value(), "the page renders");
+    click(cancelled, box_of(cancelled, "a"));
+    const node_id before = cancelled.focused();
+    check(before == find_id(cancelled, "a"), "the first field is focused");
+    (void)cancelled.handle(input_event::key_press("Tab"));
+    check(cancelled.focused() == before, "a page that preventDefaults Tab keeps focus");
+}
+
+// The other half of Tab: the key must not arrive as TEXT. Nothing reachable
+// through SDL produces it, but the headless path does, and a control character
+// inserted into a field is invisible and permanent.
+void test_typing_a_control_character_inserts_nothing() {
+    browser page{browser_options{400, 200}};
+    page.load_html("<html><body><input id=t type=text></body></html>");
+    check(page.frame().has_value(), "the page renders");
+
+    click(page, box_of(page, "t"));
+    check(page.text_input("ab"), "ordinary text is accepted");
+    check(!page.text_input("\t"), "a tab is not text and is refused");
+    check(value_of(page, "t") == "ab", "and nothing was inserted");
+    check(page.text_input("c\td"), "text around a control character is still accepted");
+    check(value_of(page, "t") == "abcd", "with the control character dropped");
+}
+
 void test_backspace_deletes_a_whole_code_point() {
     browser page{browser_options{400, 200}};
     page.load_html("<html><body><input id=t type=text></body></html>");
@@ -384,6 +478,102 @@ void test_getcontext_only_answers_for_2d() {
     }
 }
 
+// measureText is the one canvas method that changes no pixels, so it is not
+// wrapped in draws() - and it was therefore the one method that never SYNCED
+// the JS-side properties onto the context. A page that set ctx.font and then
+// measured got whatever font the last DRAWING call had left behind, which on a
+// first call is the 10px default rather than the font it just asked for.
+//
+// Checked with the bitmap font on purpose: font8x8's advance is exactly
+// 8 * round(size/8) per glyph, so the numbers are the same on every machine
+// and this test needs no SDL3_ttf.
+void test_measuretext_reads_the_font_just_set() {
+    browser page{browser_options{400, 300}};
+    page.load_html("<html><body><canvas id=c width=300 height=100></canvas><script>"
+                   "var ctx = document.getElementById('c').getContext('2d');"
+                   "ctx.font = '40px sans-serif';"
+                   "console.log('first=' + ctx.measureText('AA').width);"
+                   "ctx.font = '16px sans-serif';"
+                   "console.log('second=' + ctx.measureText('AA').width);"
+                   "</script></body></html>");
+    check(page.frame().has_value(), "the page renders");
+    const auto & log = page.bindings().console_output();
+    check(log.size() == 2, "two console lines");
+    if (log.size() != 2) { return; }
+    // 40px -> scale 5 -> 40px a glyph -> 80 for two. Before the fix this was
+    // 16: the default 10px size, scale 1, 8px a glyph.
+    check(log[0] == "first=80", "measureText on the FIRST call uses the font just set");
+    check(log[1] == "second=32", "and a later change is picked up too");
+}
+
+// save()/restore() covers the whole drawing state, not just the transform.
+//
+// It used to cover only the transform, and for a reason that looked like a
+// canvas bug and was really a bindings one: fillStyle, strokeStyle, lineWidth,
+// globalAlpha and font are all JS PROPERTIES, sync() copies them onto the
+// context before every call, and restore() popped the C++ stack without
+// touching the object script reads. The next draw put the "restored" values
+// straight back. The transform survived because it is the one piece of state
+// with no property behind it.
+void test_the_canvas_state_stack_restores_every_property() {
+    browser page{browser_options{400, 300}};
+    page.load_html("<html><body><canvas id=c width=300 height=100></canvas><script>"
+                   "var ctx = document.getElementById('c').getContext('2d');"
+                   "ctx.font = '16px sans-serif';"
+                   "ctx.fillStyle = '#112233';"
+                   "ctx.strokeStyle = '#445566';"
+                   "ctx.lineWidth = 3;"
+                   "ctx.globalAlpha = 0.5;"
+                   "ctx.save();"
+                   "ctx.font = '40px monospace';"
+                   "ctx.fillStyle = '#aabbcc';"
+                   "ctx.strokeStyle = '#ddeeff';"
+                   "ctx.lineWidth = 9;"
+                   "ctx.globalAlpha = 1;"
+                   "ctx.restore();"
+                   // Read back THROUGH the JS properties, which is what a page
+                   // sees and what the next draw call re-reads.
+                   "console.log('font=' + ctx.font);"
+                   "console.log('fill=' + ctx.fillStyle);"
+                   "console.log('stroke=' + ctx.strokeStyle);"
+                   "console.log('lw=' + ctx.lineWidth);"
+                   "console.log('alpha=' + ctx.globalAlpha);"
+                   // And that the restored font is what actually MEASURES,
+                   // i.e. the C++ side and the JS side agree after a restore.
+                   "console.log('w=' + ctx.measureText('AA').width);"
+                   "</script></body></html>");
+    check(page.frame().has_value(), "the page renders");
+    const auto & log = page.bindings().console_output();
+    check(log.size() == 6, "six console lines");
+    if (log.size() != 6) { return; }
+    check(log[0] == "font=16px sans-serif", "restore() puts the font back");
+    check(log[1] == "fill=#112233", "and fillStyle");
+    check(log[2] == "stroke=#445566", "and strokeStyle");
+    check(log[3] == "lw=3", "and lineWidth");
+    check(log[4] == "alpha=0.5", "and globalAlpha");
+    // 16px -> font8x8 scale 2 -> 16px a glyph -> 32 for two. If the write-back
+    // and the C++ state had disagreed this would still be the 40px figure.
+    check(log[5] == "w=32", "and the restored font is the one that measures");
+}
+
+// An unbalanced restore() must not corrupt the state - a page that restores
+// more than it saved is common enough that it cannot be allowed to reset the
+// context to defaults.
+void test_an_unbalanced_canvas_restore_is_harmless() {
+    browser page{browser_options{400, 300}};
+    page.load_html("<html><body><canvas id=c width=300 height=100></canvas><script>"
+                   "var ctx = document.getElementById('c').getContext('2d');"
+                   "ctx.fillStyle = '#123456';"
+                   "ctx.restore();" // nothing was saved
+                   "console.log('fill=' + ctx.fillStyle);"
+                   "</script></body></html>");
+    check(page.frame().has_value(), "the page renders");
+    const auto & log = page.bindings().console_output();
+    check(log.size() == 1, "one console line");
+    if (log.size() != 1) { return; }
+    check(log[0] == "fill=#123456", "a restore with an empty stack changes nothing");
+}
+
 void test_canvas_drawing_reaches_the_pixels() {
     browser page{browser_options{400, 300}};
     page.load_html("<html><body><canvas id=c width=100 height=60></canvas><script>"
@@ -499,6 +689,10 @@ int main() {
     test_a_seeded_value_is_drawn();
 
     test_typing_and_editing();
+    test_tab_moves_focus_between_controls();
+    test_tab_with_nothing_focused_starts_at_an_end();
+    test_tab_does_not_scroll_and_can_be_prevented();
+    test_typing_a_control_character_inserts_nothing();
     test_backspace_deletes_a_whole_code_point();
     test_editing_keys_do_not_scroll_the_page();
     test_selection_and_replacement();
@@ -515,6 +709,9 @@ int main() {
     test_canvas_is_sized_by_its_attributes();
     test_canvas_width_and_height_are_readable();
     test_getcontext_only_answers_for_2d();
+    test_measuretext_reads_the_font_just_set();
+    test_the_canvas_state_stack_restores_every_property();
+    test_an_unbalanced_canvas_restore_is_harmless();
     test_canvas_drawing_reaches_the_pixels();
     test_fill_style_is_read_at_draw_time();
     test_paths_transforms_and_clear();

@@ -125,6 +125,10 @@ bool browser::use_real_fonts(std::string_view directory) {
     load_page_fonts();
     fonts_ = ttf_.get();
     renderer_.set_fonts(fonts_);
+    // The canvas measures and draws its own text, so it needs the same backend
+    // - otherwise a page's canvas keeps the bitmap font while the document
+    // around it switches to real faces.
+    canvases_.set_fonts(fonts_);
     // Everything measured so far was measured with the other font.
     mark(dirty::everything);
     return true;
@@ -142,7 +146,27 @@ void browser::allow_network(bool allowed) {
 bool browser::text_input(std::string_view text) {
     control_state * control = editable_focus();
     if (control == nullptr || text.empty()) { return false; }
-    forms_.insert_text(*control, text);
+    // This path is for PRINTABLE text; a control character is a KEY, and one
+    // arriving here would be inserted literally - a Tab dropped into the very
+    // field Tab is supposed to leave. SDL never sends one, so this is a guard
+    // on the headless path, which is exactly where a test driving Tab would
+    // produce it by accident. Bytes >= 0x80 are left alone: they are UTF-8
+    // continuation bytes, not controls.
+    std::string printable;
+    printable.reserve(text.size());
+    for (const char c : text) {
+        const auto byte = static_cast<unsigned char>(c);
+        // '\n' survives: a textarea wants it, and insert_text is where a
+        // newline in a pasted value has to land.
+        if (byte == '\n' || byte >= 0x20) {
+            if (byte != 0x7F) { printable.push_back(c); }
+        }
+    }
+    if (printable.empty()) { return false; }
+    forms_.insert_text(*control, printable);
+    // Typing past the last visible row of a textarea scrolls it, or the caret
+    // walks off a box that cannot grow to follow it.
+    reveal_caret(focused_, *control, kind_of(doc_->read(), focused_));
     restart_caret_blink(); // a caret that blinks out under what you typed looks broken
     bindings_->dispatch("input", focused_);
     mark(dirty::paint);
@@ -1136,8 +1160,27 @@ bool browser::handle_key(const input_event & event) {
         return true;
     }
 
+    // TAB moves focus, and it is a DEFAULT ACTION like every other key here -
+    // the page already saw this keydown above, and a preventDefault returned
+    // before we got here.
+    //
+    // Before edit_key deliberately: edit_key has no "Tab" arm today, but one
+    // added later would silently eat the key in the very control Tab exists to
+    // LEAVE. It returns true whatever focus_next decides, so Tab can never fall
+    // through to the page-scrolling keys below.
+    if (event.key == "Tab") {
+        (void)focus_next(event.shift);
+        return true;
+    }
+
     if (control_state * control = editable_focus(); control != nullptr) {
-        if (edit_key(*control, event)) { return true; }
+        if (edit_key(*control, event)) {
+            // One place rather than an arm-by-arm sprinkle: every editing key
+            // either moves the caret or changes the value, and both can put it
+            // outside a textarea's visible rows.
+            reveal_caret(focused_, *control, kind_of(doc_->read(), focused_));
+            return true;
+        }
     }
     const float page = static_cast<float>(options_.height) * 0.9f;
     if (event.key == "ArrowDown") {
@@ -1257,6 +1300,45 @@ bool browser::focus(node_id id) {
         bindings_->dispatch("focus", focused_);
     }
     mark(dirty::paint);
+    return true;
+}
+
+bool browser::is_focusable(const read_txn & txn, node_id id) {
+    // Every focusable kind is exactly "is a control", so there is no per-kind
+    // list to keep in step with control_kind_of - and adding one would be the
+    // obvious wrong edit here.
+    if (kind_of(txn, id) == control_kind::none) { return false; }
+    if (is_disabled(id)) { return false; }
+    return !viewport_box_of(id).empty();
+}
+
+std::vector<node_id> browser::focusable_controls() {
+    const auto txn = doc_->read();
+    std::vector<node_id> out;
+    const auto walk = [&](auto && self, node_id at) -> void {
+        if (is_focusable(txn, at)) { out.push_back(at); }
+        for (const node_id child : txn.children(at)) { self(self, child); }
+    };
+    walk(walk, txn.root());
+    return out;
+}
+
+bool browser::focus_next(bool backwards) {
+    const std::vector<node_id> order = focusable_controls();
+    if (order.empty()) { return false; }
+    const auto at = std::find(order.begin(), order.end(), focused_);
+    std::size_t next = 0;
+    if (at == order.end()) {
+        // Nothing focused, or focus is on something that is not a control:
+        // Tab starts at the top of the document and Shift+Tab at the bottom.
+        next = backwards ? order.size() - 1 : 0;
+    } else {
+        const auto here = static_cast<std::size_t>(at - order.begin());
+        next = backwards ? (here + order.size() - 1) % order.size() : (here + 1) % order.size();
+    }
+    // Discarded: focus() reports "nothing changed" on a page with one control,
+    // and that must not read as "Tab did nothing" - the key was still handled.
+    (void)focus(order[next]);
     return true;
 }
 

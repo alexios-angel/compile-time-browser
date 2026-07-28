@@ -60,7 +60,8 @@ struct transform {
 // One canvas's pixels and drawing state.
 class canvas_context {
 public:
-    canvas_context(std::shared_ptr<bitmap> pixels) : pixels_(std::move(pixels)) {}
+    canvas_context(std::shared_ptr<bitmap> pixels, const raster::font_backend * fonts = nullptr)
+        : pixels_(std::move(pixels)), fonts_(fonts) {}
 
     [[nodiscard]] const std::shared_ptr<bitmap> & surface() const noexcept { return pixels_; }
     [[nodiscard]] int width() const noexcept { return pixels_ ? pixels_->width : 0; }
@@ -78,6 +79,37 @@ public:
     float line_width = 1;
     float global_alpha = 1;
     float font_size = 10;
+    // The FAMILY is part of the state, not just the size. It was dropped on the
+    // floor - `ctx.font = "16px Arial"` kept the 16 and threw "Arial" away - so
+    // every canvas drew in the bitmap font whatever it asked for, at a
+    // monospaced 8-pixel cell. A HUD positioned from the right edge by real
+    // Arial metrics then ran off the canvas.
+    std::string font_family;
+    bool font_bold = false;
+    bool font_italic = false;
+
+    // The SPEC STRINGS exactly as script set them - "16px Arial", "#0095DD".
+    // Kept because restore() has to put them back on the JavaScript object, and
+    // the parsed forms cannot be turned back into text faithfully: a colour is
+    // a packed integer by then, and a font has been split into size, family and
+    // two flags. Storing what was written is both simpler and lossless, and it
+    // means `ctx.fillStyle` reads back what the page assigned.
+    std::string font_spec = "10px sans-serif";
+    std::string fill_spec = "#000000";
+    std::string stroke_spec = "#000000";
+
+    // The backend that both MEASURES and DRAWS this canvas's text. One object
+    // answers both, which is the rule the rest of the engine already follows
+    // (docs/raster.md): text lands where it was measured only if the thing that
+    // measured it is the thing that drew it.
+    void set_fonts(const raster::font_backend * fonts) noexcept { fonts_ = fonts; }
+    [[nodiscard]] const raster::font_backend & fonts() const noexcept {
+        return fonts_ != nullptr ? *fonts_ : raster::font8x8_fonts();
+    }
+
+    // The advance of `text` in the current font. `measureText` and `fillText`
+    // both go through this rather than each computing their own.
+    [[nodiscard]] float measure_text(std::string_view text) const;
 
     void save();
     void restore();
@@ -113,8 +145,11 @@ public:
 
     // --- text and images --------------------------------------------------
 
-    // font8x8, the same glyphs the page rasterizer uses, so a canvas and the
-    // text around it look like one document. `y` is the BASELINE, per spec.
+    // Drawn through the same font backend the page text around it uses, in the
+    // family `ctx.font` asked for, so a canvas and the document look like one
+    // page - and so that measureText and fillText agree. `y` is the BASELINE,
+    // per spec. With no real fonts loaded the backend is font8x8 and this is
+    // the bitmap font it always was.
     void fill_text(std::string_view text, float x, float y);
 
     // The nine-argument drawImage: a rectangle out of the source, into a
@@ -154,6 +189,21 @@ private:
         float line_width;
         float alpha;
         float font_size;
+        // The face travels with save()/restore() like every other bit of state.
+        // Leaving it out is the classic follow-on bug: a restore() puts the
+        // size back and leaves the family from whatever drew last.
+        std::string font_family;
+        bool font_bold;
+        bool font_italic;
+        // And the spec strings, because everything here except the transform is
+        // ALSO a JavaScript property, and the bindings' sync() copies those
+        // onto this object before every call. Popping the C++ stack alone was
+        // undone by the very next draw - the transform survived a restore()
+        // only because it is the one piece of state script cannot assign
+        // directly. `restore` writes these back to the JS object.
+        std::string font_spec;
+        std::string fill_spec;
+        std::string stroke_spec;
     };
 
     void touch() { ++revision_; }
@@ -178,6 +228,7 @@ private:
     void line(point a, point b, float thickness);
 
     std::shared_ptr<bitmap> pixels_;
+    const raster::font_backend * fonts_ = nullptr;
     transform transform_;
     std::vector<subpath> subpaths_;
     std::vector<state> stack_;
@@ -189,6 +240,11 @@ private:
 // not something the DOM should own or copy.
 class canvas_store {
 public:
+    // Remembered AND stamped on every context that already exists: real fonts
+    // are loaded by use_real_fonts(), which can run either side of a page
+    // making its contexts, and clear() on reload must not lose the backend.
+    void set_fonts(const raster::font_backend * fonts);
+
     [[nodiscard]] canvas_context * context_for(node_id id, int width, int height);
     [[nodiscard]] const canvas_context * find(node_id id) const;
     [[nodiscard]] std::shared_ptr<const bitmap> pixels_of(node_id id) const;
@@ -200,6 +256,7 @@ public:
 
 private:
     flat_map<std::uint64_t, canvas_context> canvases_;
+    const raster::font_backend * fonts_ = nullptr;
 };
 
 } // namespace ctbrowser::shell

@@ -75,6 +75,45 @@ struct precomputed {
 [[nodiscard]] fragment layout_box(const box_node & b, const constraints & c,
                                   const measure_text_fn & measure, precomputed * ready = nullptr);
 
+// How much of `text` fits in `available`, measured in whole words. A break
+// opportunity is AFTER a run of spaces, and a LEADING run of spaces belongs
+// to the first candidate rather than being a zero-width candidate of its
+// own. That distinction is the whole bug: the whitespace between two
+// elements is a text run that IS a space, and treating the position before
+// it as a break opportunity meant nothing ever fit - so a lone space
+// wrapped the line and every label was left sitting above its control.
+//
+// A free function rather than a private member of inline_flow, because a
+// textarea soft-wraps its value with exactly this rule and the shell has to be
+// able to call it. Two greedy wrappers would be two answers to "where does this
+// line break", and a field that disagrees with the page around it is the bug
+// this being shared prevents.
+[[nodiscard]] inline std::size_t words_that_fit(std::string_view text, float available,
+                                                float font_size, const text_face & face,
+                                                const measure_text_fn & measure_text) {
+    if (available <= 0) { return 0; }
+    std::size_t fits = 0;
+    std::size_t at = 0;
+    while (at < text.size()) {
+        std::size_t end = at;
+        while (end < text.size() && text[end] == ' ') { ++end; }
+        while (end < text.size() && text[end] != ' ') { ++end; }
+        if (measure_text(text.substr(0, end), font_size, face) > available) { break; }
+        fits = end;
+        at = end;
+    }
+    // A single word longer than the line still has to go somewhere, or
+    // layout makes no progress and loops forever. It overflows, which is
+    // what a browser does with an unbreakable word.
+    if (fits == 0) {
+        std::size_t end = 0;
+        while (end < text.size() && text[end] == ' ') { ++end; }
+        while (end < text.size() && text[end] != ' ') { ++end; }
+        return end;
+    }
+    return fits;
+}
+
 // --- inline formatting context -------------------------------------------
 // Text and inline boxes on shared lines, wrapping at the content width. Line
 // breaking is greedy and breaks at spaces, which is what browsers do for
@@ -258,39 +297,6 @@ private:
                 pen_y += line_height;
             }
         }
-    }
-
-    // How much of `text` fits in `available`, measured in whole words. A break
-    // opportunity is AFTER a run of spaces, and a LEADING run of spaces belongs
-    // to the first candidate rather than being a zero-width candidate of its
-    // own. That distinction is the whole bug: the whitespace between two
-    // elements is a text run that IS a space, and treating the position before
-    // it as a break opportunity meant nothing ever fit - so a lone space
-    // wrapped the line and every label was left sitting above its control.
-    [[nodiscard]] static std::size_t words_that_fit(std::string_view text, float available,
-                                                    float font_size, const text_face & face,
-                                                    const measure_text_fn & measure_text) {
-        if (available <= 0) { return 0; }
-        std::size_t fits = 0;
-        std::size_t at = 0;
-        while (at < text.size()) {
-            std::size_t end = at;
-            while (end < text.size() && text[end] == ' ') { ++end; }
-            while (end < text.size() && text[end] != ' ') { ++end; }
-            if (measure_text(text.substr(0, end), font_size, face) > available) { break; }
-            fits = end;
-            at = end;
-        }
-        // A single word longer than the line still has to go somewhere, or
-        // layout makes no progress and loops forever. It overflows, which is
-        // what a browser does with an unbreakable word.
-        if (fits == 0) {
-            std::size_t end = 0;
-            while (end < text.size() && text[end] == ' ') { ++end; }
-            while (end < text.size() && text[end] != ' ') { ++end; }
-            return end;
-        }
-        return fits;
     }
 
 public:

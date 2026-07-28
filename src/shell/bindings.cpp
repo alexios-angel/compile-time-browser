@@ -436,14 +436,21 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
         const value self_value = c.current_this();
         if (!self_value.is_object()) { return; }
         auto * o = static_cast<script::object_object *>(self_value.as_heap());
+        // The spec strings are remembered alongside the parsed values, and only
+        // when the parse SUCCEEDED - an unreadable colour leaves both halves
+        // alone, so what restore() puts back always matches what is drawn.
         if (const value * v = o->find("fillStyle")) {
-            if (const auto parsed = paint::parse_color(c.to_string(*v))) {
+            std::string spec = c.to_string(*v);
+            if (const auto parsed = paint::parse_color(spec)) {
                 canvas->fill_style = *parsed;
+                canvas->fill_spec = std::move(spec);
             }
         }
         if (const value * v = o->find("strokeStyle")) {
-            if (const auto parsed = paint::parse_color(c.to_string(*v))) {
+            std::string spec = c.to_string(*v);
+            if (const auto parsed = paint::parse_color(spec)) {
                 canvas->stroke_style = *parsed;
+                canvas->stroke_spec = std::move(spec);
             }
         }
         if (const value * v = o->find("lineWidth")) {
@@ -453,7 +460,10 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
             canvas->global_alpha = static_cast<float>(context::to_number(*v));
         }
         if (const value * v = o->find("font")) {
-            canvas->font_size = font_size_from(c.to_string(*v));
+            std::string font = c.to_string(*v);
+            canvas->font_size = font_size_from(font);
+            font_face_from(font, canvas->font_family, canvas->font_bold, canvas->font_italic);
+            canvas->font_spec = std::move(font);
         }
     };
 
@@ -517,7 +527,30 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
     method("fill", draws([canvas](context &, std::span<value>) { canvas->fill(); }));
     method("stroke", draws([canvas](context &, std::span<value>) { canvas->stroke(); }));
     method("save", draws([canvas](context &, std::span<value>) { canvas->save(); }));
-    method("restore", draws([canvas](context &, std::span<value>) { canvas->restore(); }));
+    // restore() has to write the state BACK TO THE JAVASCRIPT OBJECT, not just
+    // pop the C++ stack. Everything on that stack except the transform is also
+    // a property script can assign - fillStyle, strokeStyle, lineWidth,
+    // globalAlpha, font - and sync() copies those onto the context before every
+    // call. A restore that only popped was therefore undone by the very next
+    // draw, and the transform appeared to be the only thing save() protected
+    // for exactly that reason: it is the one piece of state with no property
+    // behind it.
+    //
+    // Ordering is what makes this correct: draws() runs sync() FIRST, so any
+    // assignment made since the last call is folded in before restore() pops
+    // over it - which is what the spec means by restoring the state as of the
+    // matching save().
+    method("restore", draws([canvas](context & c, std::span<value>) {
+               canvas->restore();
+               const value self_value = c.current_this();
+               if (!self_value.is_object()) { return; }
+               auto * o = static_cast<script::object_object *>(self_value.as_heap());
+               o->set("fillStyle", c.string(canvas->fill_spec));
+               o->set("strokeStyle", c.string(canvas->stroke_spec));
+               o->set("font", c.string(canvas->font_spec));
+               o->set("lineWidth", value::number(canvas->line_width));
+               o->set("globalAlpha", value::number(canvas->global_alpha));
+           }));
     method("translate", draws([canvas](context &, std::span<value> a) {
                canvas->translate(number(a, 0), number(a, 1));
            }));
@@ -532,11 +565,18 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
                canvas->fill_text(a.empty() ? std::string{} : c.to_string(a[0]), number(a, 1),
                                  number(a, 2));
            }));
-    method("measureText", [canvas](context & c, std::span<value> a) {
+    // NOT wrapped in draws() - it changes no pixels - but it must still SYNC,
+    // and it did not. It is the one method that read the canvas's font state
+    // without refreshing it first, so `ctx.font = '20px X'; ctx.measureText(s)`
+    // measured in whatever font the last DRAWING call happened to leave behind.
+    method("measureText", [canvas, sync](context & c, std::span<value> a) {
+        sync(c);
         auto * metrics = static_cast<script::object_object *>(c.make_object().as_heap());
         const std::string text = a.empty() ? std::string{} : c.to_string(a[0]);
-        metrics->set("width", value::number(static_cast<double>(
-                                  raster::font8x8_advance(text, canvas->font_size))));
+        // Through the canvas, so the object that measures is the object that
+        // draws - see docs/raster.md. Measuring with font8x8 while fillText
+        // drew with a real face is exactly how text ends up where it was not.
+        metrics->set("width", value::number(static_cast<double>(canvas->measure_text(text))));
         return value::object(metrics);
     });
     return self;
@@ -556,6 +596,32 @@ float dom_bindings::font_size_from(std::string_view font) {
         size = size * 10 + static_cast<float>(font[i] - '0');
     }
     return size > 0 ? size : 10;
+}
+
+void dom_bindings::font_face_from(std::string_view font, std::string & family, bool & bold,
+                                  bool & italic) {
+    family.clear();
+    bold = false;
+    italic = false;
+    const std::size_t px = font.find("px");
+    if (px == std::string_view::npos) { return; }
+
+    // Before the size: the style and weight keywords.
+    const std::string_view before = font.substr(0, px);
+    bold = before.find("bold") != std::string_view::npos;
+    italic = before.find("italic") != std::string_view::npos ||
+             before.find("oblique") != std::string_view::npos;
+
+    // After it: the family list. The FIRST entry, which is what the rest of the
+    // engine resolves too (layout takes the first name of the list as well).
+    std::string_view rest = font.substr(px + 2);
+    if (const std::size_t comma = rest.find(','); comma != std::string_view::npos) {
+        rest = rest.substr(0, comma);
+    }
+    const std::size_t first = rest.find_first_not_of(" \t'\"");
+    if (first == std::string_view::npos) { return; }
+    const std::size_t last = rest.find_last_not_of(" \t'\"");
+    family = rest.substr(first, last - first + 1);
 }
 
 node_id dom_bindings::handle_of(value v) {

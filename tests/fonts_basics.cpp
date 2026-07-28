@@ -68,6 +68,18 @@ void check(bool ok, std::string_view what) {
     return nullptr;
 }
 
+[[nodiscard]] node_id find_id(browser & page, std::string_view want) {
+    const auto txn = page.doc().read();
+    const atom key = page.atoms().intern("id");
+    node_id found{};
+    const auto walk = [&](auto && self, node_id at) -> void {
+        if (!found && txn.attribute_value(at, key) == want) { found = at; }
+        for (const node_id c : txn.children(at)) { self(self, c); }
+    };
+    walk(walk, txn.root());
+    return found;
+}
+
 // --- the face reaches the command -----------------------------------------
 
 void test_family_weight_and_style_resolve() {
@@ -295,6 +307,67 @@ void test_unknown_family_falls_back() {
     }
 }
 
+// CANVAS text goes through the same backend as the page around it.
+//
+// It did not: canvas_context::fill_text drew 8x8 bitmap cells scaled by an
+// integer whatever `ctx.font` said, and measureText answered from the same
+// table - so "16px Arial" advanced a monospaced 16px a glyph where real Arial
+// takes about 7. That is what clipped pong's HUD: MDN positions "Lives: N" at
+// canvas.width - 65, which is right for the metrics it asked for and 63px short
+// of the metrics it got.
+void test_canvas_text_uses_the_real_font() {
+    if (!raster::ttf_available()) { return; }
+    browser page{browser_options{520, 360}};
+    check(page.use_real_fonts(), "the faces load");
+    // pong's HUD, reproduced exactly: same canvas width, same font, same offset.
+    page.load_html("<body><canvas id=c width=480 height=320></canvas><script>"
+                   "var ctx = document.getElementById('c').getContext('2d');"
+                   "ctx.font = '16px Arial';"
+                   "ctx.fillStyle = '#000000';"
+                   "console.log('w=' + ctx.measureText('Lives: 3').width);"
+                   "ctx.fillText('Lives: 3', 480 - 65, 20);"
+                   "</script></body>");
+    check(page.frame().has_value(), "the page renders");
+
+    // font8x8 gives exactly 8 glyphs * 8px * scale(16)=2 = 128. A real 16px
+    // face is nowhere near that, and 65 of room is enough for it.
+    const auto & log = page.bindings().console_output();
+    check(log.size() == 1, "one console line");
+    if (log.size() != 1) { return; }
+    float width = 0;
+    check(std::sscanf(log[0].c_str(), "w=%f", &width) == 1, "the width parses");
+    check(width > 0, "the text measures something");
+    check(width < 65, "and fits in the 65px pong leaves for it (font8x8 wanted 128)");
+
+    // Now the pixels, because a width that is merely a smaller NUMBER proves
+    // nothing about what was drawn. The run must start inside the HUD area and
+    // must END before the canvas edge - clipping is precisely what it did not.
+    const shell::canvas_context * canvas = page.canvases().find(find_id(page, "c"));
+    check(canvas != nullptr, "the canvas exists");
+    if (canvas == nullptr) { return; }
+    const paint::bitmap * pixels = canvas->surface().get();
+    check(pixels != nullptr, "it has pixels");
+    if (pixels == nullptr) { return; }
+
+    int leftmost = pixels->width;
+    int rightmost = -1;
+    for (int y = 0; y < pixels->height; ++y) {
+        for (int x = 0; x < pixels->width; ++x) {
+            if ((pixels->at(x, y) >> 24) == 0) { continue; } // untouched
+            if (x < leftmost) { leftmost = x; }
+            if (x > rightmost) { rightmost = x; }
+        }
+    }
+    check(rightmost >= 0, "something was drawn");
+    check(leftmost >= 480 - 65, "the run starts where the page put it");
+    check(rightmost < 479, "and ends INSIDE the canvas rather than against its edge");
+
+    // And the invariant behind all of it: what measured the text is what drew
+    // it, so the ink cannot run past where the measurement said it would.
+    check(static_cast<float>(rightmost) <= (480 - 65) + width + 1,
+          "the ink ends where measureText said it would");
+}
+
 // The glyph cache, hit CONCURRENTLY AND COLD.
 //
 // Going through the browser does not test this: layout measures every run
@@ -439,6 +512,7 @@ int main() {
     test_real_fonts();
     test_real_fonts_distinguish_faces();
     test_unknown_family_falls_back();
+    test_canvas_text_uses_the_real_font();
     test_page_font_face();
     test_the_glyph_cache_is_thread_safe();
     test_real_fonts_are_deterministic_and_thread_safe();

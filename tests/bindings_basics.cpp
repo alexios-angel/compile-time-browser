@@ -686,6 +686,52 @@ void test_the_breakout_page_survives_its_own_game_over() {
     check(page.alerts().size() > after_first, "and the reloaded game runs and ends too");
 }
 
+// The paddle stays ON the canvas however the mouse is moved.
+//
+// MDN's mouseMoveHandler gates on the CURSOR being inside the canvas and then
+// centres the paddle on it WITHOUT clamping the resulting rect, so the paddle
+// hangs up to half its width off either edge - in Chrome and Firefox too. The
+// page carries one deviation from the tutorial to fix that (see the comment in
+// examples/pong.cpp); this is what says the deviation is still there.
+void test_the_breakout_paddle_stays_on_the_canvas() {
+    browser page{browser_options{480, 320}};
+    std::ifstream in{"examples/pages/pong.html", std::ios::binary};
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    page.load_html(buffer.str());
+    check(page.script_error().empty(), "the page loaded");
+    // The page computes relativeX as clientX - canvas.offsetLeft, and offsetLeft
+    // is 0 only because the canvas is exactly the viewport width and nothing
+    // scrolls. Assert it rather than assume it: if either stops holding, the
+    // arithmetic below is measuring something else and the test goes vacuous.
+    check(page.max_scroll() <= 0, "the page does not scroll, so the canvas is at x=0");
+
+    // Ask the page a question in its own context. `alert` is recorded on the
+    // browser, which is what makes a JS-side value readable from a test at all.
+    const auto ask = [&page](const char * expression) {
+        const std::size_t before = page.alerts().size();
+        (void)page.run_script(std::string{"alert("} + expression + ");");
+        return page.alerts().size() > before ? page.alerts().back() : std::string{"<no answer>"};
+    };
+
+    // Hard against the left wall. relativeX = 2 puts MDN's unclamped paddle at
+    // -35.5 - most of a 75px paddle off the canvas.
+    (void)page.handle(input_event::mouse_move_to(2, 300));
+    check(ask("paddleX >= 0 ? 'in' : 'out'") == "in", "the paddle does not cross the left wall");
+
+    // And the right, where the bound is canvas.width - paddleWidth = 405;
+    // relativeX = 478 puts the unclamped paddle at 440.5.
+    (void)page.handle(input_event::mouse_move_to(478, 300));
+    check(ask("paddleX <= 480 - 75 ? 'in' : 'out'") == "in",
+          "the paddle does not cross the right wall");
+
+    // The control: the clamp must not have pinned the paddle to a wall for
+    // every input. A cursor mid-canvas still centres the paddle on it.
+    (void)page.handle(input_event::mouse_move_to(240, 300));
+    check(ask("paddleX > 0 && paddleX < 405 ? 'free' : 'stuck'") == "free",
+          "and it still tracks the mouse in between");
+}
+
 void test_a_real_page_responds_to_input() {
     const auto render = [](std::string_view held) {
         browser page{browser_options{480, 320}};
@@ -857,6 +903,7 @@ int main() {
     test_mouse_reaches_script();
     test_a_real_page_responds_to_input();
     test_the_breakout_page_survives_its_own_game_over();
+    test_the_breakout_paddle_stays_on_the_canvas();
     test_the_invaders_page_responds_to_input();
     test_the_invaders_page_shoots();
     test_a_letterboxed_page_keeps_its_size();

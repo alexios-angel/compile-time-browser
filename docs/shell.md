@@ -67,9 +67,36 @@ by `intrinsic_size_of`, not by their children.
 A canvas draw marks `dirty::raster` — tiles are stale, the display list is
 not — so an animation re-rasters without re-recording or re-laying-out.
 
+**CANVAS TEXT GOES THROUGH THE REAL FONT BACKEND (2026-07-28).** It did not:
+`fill_text` drew 8x8 bitmap cells scaled by an integer whatever `ctx.font` said,
+and `measureText` answered from the same table, so `"16px Arial"` advanced a
+monospaced 16px a glyph where the face it asked for takes about seven. That is
+what clipped pong's HUD — MDN puts "Lives: N" at `canvas.width - 65`, correct
+for the metrics it requested and 63px short of the ones it got. The family was
+being parsed and thrown away; `font_face_from` keeps it, with bold and italic,
+and it travels on `canvas_context` beside the size. `canvas_store::set_fonts`
+hands the backend down from `use_real_fonts()`, and a null one means font8x8 —
+the same fallback `browser::fonts()` has, so a build without SDL3_ttf is
+unchanged.
+
+`measureText` and `fillText` now both go through `canvas_context::measure_text`,
+which is `docs/raster.md`'s rule applied to the canvas: ONE object answers both,
+or text does not land where it was measured. `measureText` also gained the
+`sync()` it never had — it is the one method that changes no pixels and so was
+not wrapped in `draws()`, which meant it read whatever font the last DRAWING
+call had left behind.
+
+`draw_run` writes into a `raster::surface` and a canvas owns a `paint::bitmap`,
+so the run is drawn into a scratch surface and copied back. **The scratch is
+seeded from the destination first** — against a blank one, `blend_over`
+composites the antialiased edge onto transparent black and that premultiplied
+result is blended in again, which is a dark halo on every glyph. And `where.y`
+is the run box TOP, not the baseline: both backends add their own ascent.
+
 **THE PREVIOUS ENGINE IS DELETED.** What it still has that the engine does not: the BabylonJS shim
-and its software 3D rasterizer, textarea soft-wrap, and canvas gradients. See
-`docs/v1-retirement.md`.
+and its software 3D rasterizer, and canvas gradients. See
+`docs/v1-retirement.md`. (Textarea soft-wrap was the last item on that list and
+landed 2026-07-28 — see below.)
 
 ## EDITING, DISABLED, AND THE COLLECTOR (2026-07-27)
 
@@ -92,6 +119,47 @@ offset), **dragging selects** inside a field and Ctrl+C copies exactly that,
 **up and down move by VISUAL LINE** keeping the column — as a distance, not a
 character count, since two lines of a proportional font do not share character
 positions — and **Home/End are that line's ends**, not the whole value's.
+
+**A TEXTAREA SOFT-WRAPS, AND SCROLLS TO FOLLOW THE CARET (2026-07-28).**
+`value_lines` split on `'\n'` and nothing else, so a paragraph with no newline
+in it was one visual line however long, drawn straight through the right edge
+and clipped. It wraps in `layout_of_field` — the one place — with
+`layout::words_that_fit`, the SAME greedy break the page's inline layout uses,
+promoted out of `inline_flow` for the purpose. Two wrappers would be two answers
+to where a line breaks, and a field disagreeing with the text around it is what
+sharing it prevents.
+
+**A soft break consumes no character and a hard one does**, so after a wrap
+line *n*'s `end` IS line *n+1*'s `begin`, where a `'\n'` would have left a gap
+of one. That is how a consumer tells them apart without a flag — and it is why
+`caret_line()` had to become a real function. The painter loops over lines with
+no `break`, and got away with it only because the old gap made the range test
+`caret >= begin && caret <= end` match once; with a soft break a caret sitting
+on the boundary matches BOTH lines and a bar was drawn on each. **Two carets.**
+`caret_line` decides once, and `move_caret_by_line` asks it too rather than
+keeping a second copy of the rule.
+
+A textarea is a replaced box sized by its `rows` and does not grow into the
+lines wrapping adds, so `control_state::scroll_line` is the first visible line
+and `reveal_caret()` moves it the minimum needed to keep the caret in view —
+called from the two places that can move a caret, `handle_key` and `text_input`.
+The painter draws from that offset and `offset_at_point` adds it back; those two
+must move together, which is the whole reason the geometry lives in one place.
+Still out of scope, and deliberately: horizontal scrolling for a single-line
+`<input>` (it clips, as it always has), a visible scrollbar on the textarea,
+wheel-scrolling a hovered one, and `wrap="off"`.
+
+**TAB MOVES FOCUS (2026-07-28).** It reached the browser as DOM code `"Tab"`
+and nothing claimed it, so focus never moved. `focus_next()` walks
+`focusable_controls()` — every control, in document order, that is not disabled
+and has a fragment (`display:none` leaves none, and tabbing somewhere invisible
+is how focus appears to vanish). It wraps at both ends, and Shift+Tab runs it
+backwards. It is a DEFAULT ACTION like every other key here, so it sits after
+`dispatch_key` and a page's `preventDefault` suppresses it. Two gaps written
+down rather than implied: no `tabindex` ordering, and each radio is its own stop
+rather than a group being one. `text_input` now drops control characters too —
+SDL never sends a tab there, but the headless path can, and it would be inserted
+into the very field Tab exists to leave.
 
 **Escape drops a field selection and so does clicking away.** Ctrl+A left the
 whole value highlighted forever otherwise; a highlight in a field nobody is
@@ -275,6 +343,20 @@ game's viewport to 960x720 — leaving the canvas, which is 320x240 by its own
 attributes, drawn into a ninth of the page. `app_options::logical_width/height`
 now pins the viewport; without them a resize still reflows, which is what a
 document wants.
+
+**And it is scaled NEAREST.** Letterboxing was treated as a coordinate problem
+for a year — convert the pointer, pin the viewport — and the FILTER went
+unnoticed: SDL3 defaults a texture to `SDL_SCALEMODE_LINEAR`, so the 320x240
+playfield was bilinearly smeared over 960x720 and invaders looked softly out of
+focus at an exact 3x. `present()` sets `SDL_SCALEMODE_NEAREST` on the texture it
+creates. Unconditional, because the only path that ever SCALES is this one — a
+resize without logical presentation reflows the page and the texture is
+recreated at the new size, so the blit is 1:1 and the filter is unobservable.
+
+Note that no test can see this. Goldens, `--headless`, and
+`CTBROWSER_SCREENSHOT` all read `browser::read_pixels()`, which never reaches
+SDL; the scale mode exists only in the window blit. It is verified by running an
+example and looking at it.
 
 Three things the SDL layer was missing and now has:
 - **`SDL_EVENT_KEY_UP`** — `input_kind::key_up`. Without a release every held

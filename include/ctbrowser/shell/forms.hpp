@@ -54,6 +54,11 @@ struct control_state {
     std::size_t selection = 0; // anchor; equal to caret means no selection
     bool checked = false;
     bool value_edited = false; // once true, the `value` attribute stops being the answer
+    // The first VISUAL line a textarea shows. A textarea is sized by its `rows`
+    // and does not grow, so once its value wraps past the bottom the caret
+    // would type off the end of a box that cannot show it. View state, so it
+    // belongs here beside the caret rather than on the node.
+    std::size_t scroll_line = 0;
 };
 
 class form_store {
