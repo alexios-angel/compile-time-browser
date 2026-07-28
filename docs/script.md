@@ -1,9 +1,10 @@
 # Script — the compiler, the VM, the standard library
 
-`src/script/` — `compile.cppm` (JS -> bytecode), `vm.cppm`/`vm.cpp` (the
-register machine), `value.cppm` (NaN boxing), `bytecode.cppm`,
-`builtins.cppm`/`builtins.cpp` (the standard library). The DOM API pages call
-is not here - that is `src/shell/bindings.cppm`, in `docs/shell.md`.
+`include/ctbrowser/script/` and `src/script/` — `compile.hpp`/`compile.cpp`
+(JS -> bytecode; the header declares one function and the .cpp holds the whole
+compiler), `vm.hpp`/`vm.cpp` (the register machine), `value.hpp` (NaN boxing),
+`bytecode.hpp`, `builtins.hpp`/`builtins.cpp` (the standard library). The DOM
+API pages call is not here - that is `shell/bindings.hpp`, in `docs/shell.md`.
 
 ## JAVASCRIPT (2026-07-25)
 
@@ -48,7 +49,7 @@ uses it (pong) worked and invaders did not. `NaN`, `Infinity` and `undefined`
 are defined globals now too — `NaN` was an undefined global, so `NaN === NaN`
 was TRUE.
 
-**Standard library** is `src/script/builtins.cppm` — `Math`, `Array.prototype`
+**Standard library** is `src/script/builtins.cpp` — `Math`, `Array.prototype`
 (incl. map/filter/reduce/sort, which call back into the VM via
 `context::call`), `String.prototype`, `Number.prototype`, `Object` statics,
 `JSON` parse/stringify, `Promise` (resolve/reject/all),

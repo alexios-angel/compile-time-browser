@@ -9,8 +9,8 @@
 
 # ctbrowser
 
-A browser engine in C++23 named modules: HTML, CSS and JavaScript in, pixels
-out. It parses its own HTML (the WHATWG tokenizer and tree builder), resolves a
+A browser engine in C++23: HTML, CSS and JavaScript in, pixels out. It parses
+its own HTML (the WHATWG tokenizer and tree builder), resolves a
 real cascade, lays out block, inline and table formatting contexts, records a
 display list, rasterises it in tiles across a thread pool, and runs the page's
 script on a register-based bytecode VM with a standard library.
@@ -20,7 +20,7 @@ MDN's breakout tutorial runs unmodified, start to game over.
 ## The whole API
 
 ```cpp
-import ctbrowser;
+#include <ctbrowser/ctbrowser.hpp>
 
 int main() {
     ctbrowser::app_options options;
@@ -43,7 +43,7 @@ int main() {
 }
 ```
 
-One import, one link target, no SDL header. `run_app` owns the window, the
+One include, one link target, no SDL header. `run_app` owns the window, the
 event loop, the clock, frame pacing, screenshots and teardown. See
 [`examples/counter.cpp`](examples/counter.cpp) — forty lines, most of it the
 page.
@@ -71,7 +71,7 @@ ctbrowse page.html --headless out.ppm --size 900 700   # no display at all
 | **Raster** | tiles, drawn in parallel; a software backend always, `SDL_GPUDevice` when there is one, byte-identical between them |
 | **Script** | register-based bytecode VM, NaN-boxed values, mark-and-sweep GC, and a standard library (`Math`, `Array`, `String`, `Number`, `Object`, `JSON`, `Promise`) |
 | **Shell** | the assembly — forms, canvas 2D, the scrollbar, selection, the clipboard, `<select>` popups, context menus. Entirely SDL-free |
-| **App** | the only module that knows SDL exists, and it is optional at build time |
+| **App** | the only part that knows SDL exists, and it is optional at build time |
 
 Real fonts (SDL3_ttf over vendored OFL faces), images (BMP built in, more with
 SDL3_image), audio, and `fetch` over HTTP with Boost.Asio.
@@ -83,9 +83,9 @@ git submodule update --init --recursive   # ctcss + ctjs
 cmake --preset default && cmake --build --preset default && ctest --preset default
 ```
 
-Needs CMake 3.28 (C++ modules) and a clang or gcc new enough to report its
-import graph. SDL3 is found if installed; without it the engine still builds
-and still renders — `run_app` runs headless.
+Needs CMake 3.20 and a clang or gcc with C++23 — the system default will do.
+SDL3 is found if installed; without it the engine still builds and still
+renders — `run_app` runs headless.
 
 ```bash
 cmake --preset tsan && ctest --preset tsan     # the thread-safe DOM's real test

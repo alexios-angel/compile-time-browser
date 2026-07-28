@@ -1,14 +1,14 @@
 # The shell — the assembly, the application API, and what a page can do
 
-`src/shell/` is the engine assembled: `browser.cppm` is the whole browser,
-`bindings.cppm` the API a page's script sees, plus `forms`, `canvas`, `input`,
-`net`, `images`, `assets`, `metrics`. It is SDL-FREE; `src/shell/app.cpp` is
-the only translation unit that knows SDL exists.
+`include/ctbrowser/shell/` is the engine assembled: `browser.hpp` is the whole
+browser, `bindings.hpp` the API a page's script sees, plus `forms`, `canvas`,
+`input`, `net`, `images`, `assets`, `metrics`. It is SDL-FREE; `app.hpp` and
+`src/shell/app.cpp` are the only places that know SDL exists.
 
 ## APPLICATION API (2026-07-25)
 
-**`import ctbrowser;` + `ctbrowser::run_app(html, options)` is the whole
-API.** One module, one link target (`ctbrowser::ctbrowser` in-tree,
+**`#include <ctbrowser/ctbrowser.hpp>` + `ctbrowser::run_app(html, options)` is
+the whole API.** One include, one link target (`ctbrowser::ctbrowser` in-tree,
 `ctbrowser::ctbrowser` installed), NO SDL header in the application. See
 `examples/counter.cpp` — 40 lines, most of it the page.
 
@@ -29,7 +29,7 @@ SDL3 the engine still renders and `run_app` still works.
 prefix, builds `tests/package/` against it via `find_package`.
 
 `tests/api_surface` lints the claim: application sources must contain exactly
-one `import ctbrowser;` and no SDL symbol, and the engine modules must stay
+one engine include - the umbrella header - and no SDL symbol, and the engine must stay
 SDL-free.
 
 ## THE SHELL IS THE ENGINE (2026-07-25)

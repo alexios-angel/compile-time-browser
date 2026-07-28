@@ -1,32 +1,41 @@
-# Architecture — the module graph
+# Architecture — where everything lives
 
-Written down because it was only ever recoverable by grepping for
-`export module`. ~21,500 lines of `src/`, in nine subsystems.
+~21,000 lines in nine subsystems. Headers are `include/ctbrowser/<sub>/`,
+implementations are `src/<sub>/`.
 
 ## The shape
 
-Every subsystem is **one named module with partitions**, one CMake target, one
-directory:
+One directory per subsystem, one aggregate header, one CMake target:
 
 ```
-src/layout/box.cppm        export module ctbrowser.layout:box;    <- a partition
-src/layout/layout.cppm     export module ctbrowser.layout;        <- the aggregator
-                           export import :values; :box; :fragment; :algorithm; :engine;
+include/ctbrowser/layout/values.hpp      a piece of the subsystem
+include/ctbrowser/layout/box.hpp
+include/ctbrowser/layout/layout.hpp      the aggregate: includes its siblings
+src/layout/*.cpp                         definitions, where there are any
 ```
 
-The aggregator is small and does nothing but re-export its partitions. Its
-header comment is the subsystem's one-line description — read that first.
-`src/ctbrowser.cppm` then re-exports all nine plus `ctbrowser.app`, which is
-why `import ctbrowser;` is the entire API.
+`#include <ctbrowser/layout/layout.hpp>` gets you the whole subsystem;
+including one piece directly is fine when that is all you want. At the top,
+`include/ctbrowser/ctbrowser.hpp` includes all nine plus `shell/app.hpp`, which
+is why one include is the entire API.
 
-**Adding a file to a subsystem** means: `export module ctbrowser.<sub>:<name>;`
-in the new `.cppm`, an `export import :<name>;` line in the aggregator, and the
-source listed in `src/CMakeLists.txt`. Order matters in the aggregator — a
-partition may only import partitions listed before it.
+**Adding a file** means: the header in `include/ctbrowser/<sub>/`, an
+`#include` in that subsystem's aggregate header, and — if it has definitions to
+compile — a `.cpp` in `src/<sub>/` listed in `src/CMakeLists.txt`.
 
-Modules use the **global-module-fragment form** (`module;` + `#include` +
-`export module`), not `import std;` — libstdc++ 13 ships no std module. See
-the note at the top of `src/core/core.cppm`.
+This was C++20 named modules until 2026-07-28: `module;` fragments,
+`export module ctbrowser.layout:box;`, partitions, and a build that needed
+CMake 3.28 and a compiler able to report its import graph. `git log` has it.
+Two things worth knowing from that, because the code still shows the marks:
+
+- a header does **not** re-export what it includes. Modules did, so several
+  files used to get `node_id` or `font8x8_advance` through somebody else's
+  import. They include what they use now.
+- `core/containers.hpp` exists because boost::unordered defines `static inline`
+  functions, which under modules got internal linkage per global module
+  fragment and collided when two of them met in one translation unit. Include
+  guards make that impossible, so the file is now just the seam for swapping in
+  `std::flat_map` later.
 
 ## The pipeline
 
@@ -40,26 +49,38 @@ script --------- bindings ------------------------------ shell drives all of it
 
 ## The nine, and where to start reading
 
-| module | target | owns | start in |
+| subsystem | target | owns | start in |
 |---|---|---|---|
-| `ctbrowser.core` | `ctbrowser::core` | the foundation; knows nothing about browsers. Slab allocation, generation-tagged handles, epochs, atoms, the thread pool, geometry, CPU time | `scheduler.cppm` 201, `slab.cppm` 197, `epoch.cppm` 198 |
-| `ctbrowser.dom` | `ctbrowser::dom` | the WHATWG tokenizer and tree builder, and the document as a slab addressed by handles | `treebuilder.cppm` 570, `document.cppm` 485, `tokenizer.cppm` 450 |
-| `ctbrowser.style` | `ctbrowser::style` | selector matching, the cascade, computed values, the UA sheet | `engine.cppm` 496 |
-| `ctbrowser.layout` | `ctbrowser::layout` | styled elements -> placed geometry: block, inline and table formatting contexts | `box.cppm` 611, `algorithm.cppm` 599 |
-| `ctbrowser.paint` | `ctbrowser::paint` | geometry -> a recorded display list of layers | `command.cppm` 232, `record.cppm` 222 |
-| `ctbrowser.raster` | `ctbrowser::raster` | display list -> pixels, in tiles across the pool; software always, fonts via SDL3_ttf | `ttf.cppm` 348, `draw.cppm` 319, `pipeline.cppm` 274 |
-| `ctbrowser.gpu` | `ctbrowser::gpu` | `SDL_GPUDevice` composition, and the fallback when there is no adapter | `device.cppm` 559 |
-| `ctbrowser.script` | `ctbrowser::script` | JS -> bytecode -> a register machine over NaN-boxed values, plus the standard library | `compile.cppm` 1714, `builtins.cpp` 1009, `vm.cpp` 860 |
-| `ctbrowser.shell` | `ctbrowser::shell` | the assembly: the browser itself, the API a page's script sees, forms, canvas, input, net, images | `browser.cppm` 2357, `bindings.cppm` 1185 |
-| `ctbrowser.app` | `ctbrowser::app` | the window, the event loop, the clock, screenshots. **The only module that knows SDL exists** | `app.cpp` 775 |
+| `core` | `ctbrowser::core` | the foundation; knows nothing about browsers. Slab allocation, generation-tagged handles, epochs, atoms, the thread pool, geometry, CPU time | `scheduler.hpp`, `slab.hpp`, `epoch.hpp` |
+| `dom` | `ctbrowser::dom` | the WHATWG tokenizer and tree builder, and the document as a slab addressed by handles | `treebuilder.hpp` 569, `document.hpp` 485, `tokenizer.hpp` 450 |
+| `style` | `ctbrowser::style` | selector matching, the cascade, computed values, the UA sheet | `engine.hpp` 496 |
+| `layout` | `ctbrowser::layout` | styled elements -> placed geometry: block, inline and table formatting contexts | `box.hpp` 610, `algorithm.hpp` 598 |
+| `paint` | `ctbrowser::paint` | geometry -> a recorded display list of layers | `command.hpp`, `record.hpp` |
+| `raster` | `ctbrowser::raster` | display list -> pixels, in tiles across the pool; software always, fonts via SDL3_ttf | `ttf.hpp`, `draw.hpp`, `pipeline.hpp` |
+| `gpu` | `ctbrowser::gpu` | `SDL_GPUDevice` composition, and the fallback when there is no adapter | `device.hpp` 557 |
+| `script` | `ctbrowser::script` | JS -> bytecode -> a register machine over NaN-boxed values, plus the standard library | `compile.cpp` 1689, `builtins.cpp` 1009, `vm.cpp` 859 |
+| `shell` | `ctbrowser::shell` | the assembly: the browser itself, the API a page's script sees, forms, canvas, input, net, images | `browser.hpp` 2356, `bindings.hpp` 1185 |
+| `app` | `ctbrowser::app` | the window, the event loop, the clock, screenshots. **The only place that knows SDL exists** | `src/shell/app.cpp` 779 |
 
-Two files nobody should read: `src/dom/entities.hpp` (2172 lines, the HTML
-entity table carried over from cthtml) and `src/gpu/shaders/tile_spv.hpp`
-(generated by `tools/gen-shaders.py`).
+Two files nobody should read: `dom/entities.hpp` (2172 lines, the HTML entity
+table carried over from cthtml) and `src/gpu/shaders/tile_spv.hpp` (generated by
+`tools/gen-shaders.py`).
 
-`ctbrowser.core`, `.dom` and `.raster` are re-exported from `ctbrowser` even
-though an application never names them: the browser's own signatures mention
-`scheduler`, `surface`, `rect` and `node_id`.
+`core`, `dom` and `raster` are included from `ctbrowser.hpp` even though an
+application never names them: the browser's own signatures mention `scheduler`,
+`surface`, `rect` and `node_id`.
+
+## Which subsystems have a .cpp
+
+Only `core`, `script`, `shell` and `app`. The rest are header-only, so their
+CMake targets are `INTERFACE` libraries — which is also why the single-archive
+merge skips them: a target with no objects has no archive to merge.
+
+That is the current state, not the intended end state. `script` shows what the
+rest should look like: `compile.hpp` declares one function and `compile.cpp`
+holds all 1,689 lines of the compiler, so a reader who wants to know what the
+compiler *is* reads 51 lines. Moving definitions out of the remaining headers
+is what pays down the CPU cost measured in `docs/build.md`.
 
 ## external/
 
@@ -67,9 +88,7 @@ Two submodules, both doing **runtime** work:
 
 - `external/compile-time-css` — ctcss, the CSS parser and value resolver
 - `external/compile-time-javascript` — ctjs, the JS parser (`tests/vm_basics`
-  also differentially tests the VM against ctjs's own interpreter, which is
-  why the brick's headers reach into the test target)
+  also differentially tests the VM against ctjs's own interpreter)
 
-`compile-time-containers` sits under ctjs, nested. **cthtml is gone** — it
-stopped being a submodule in `2902eb2`; the DOM has its own tokenizer and
-tree builder now.
+`compile-time-containers` sits under ctjs, nested. **cthtml is gone** — the DOM
+has its own tokenizer and tree builder.

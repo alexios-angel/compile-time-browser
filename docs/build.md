@@ -3,6 +3,39 @@
 How long a build takes and why, the formatting gate CI runs, and how to
 measure the engine's CPU cost at runtime.
 
+> **The engine stopped being C++ modules on 2026-07-28.** Everything below
+> about BMIs, module interfaces and the import graph is history now; the
+> measurements it records were real and are kept because the reasoning still
+> applies to headers, in the form at the bottom of this file. Read
+> **"Headers, measured"** first if you only want the current numbers.
+
+## Headers, measured (2026-07-28)
+
+Same tree, same compiler (clang), same 22-core machine, clean build:
+
+| | modules | headers |
+|---|---|---|
+| wall | 89.1 s | **50.0 s** |
+| CPU | 243 s | **672 s** |
+| peak RSS | 1.14 GB | 0.64 GB |
+| ninja targets | 272 | 73 |
+
+Wall time nearly halved: nothing serialises on scanning the module graph any
+more, so 22 cores are actually usable. Total CPU nearly tripled: 38 translation
+units re-parse what one BMI used to hold. Wall time is what a person waits for
+and it got better; the CPU figure is the bill for header-only subsystems, and
+it is paid down by moving definitions into `.cpp` files.
+
+Only `core`, `script`, `shell` and `app` have done that so far.
+`script/compile` is the shape to copy: the header declares one function,
+`compile.cpp` holds 1,689 lines of compiler, and no consumer parses any of it.
+
+**The rule that survives the modules era**: no third-party header in a public
+header. It used to be about BMI size - `<boost/asio.hpp>` in the `:net`
+interface made that BMI 27 MB, `<SDL3/SDL.h>` made `ctbrowser.app.pcm` 26 MB.
+Now it is about every consumer re-parsing them. Same rule, same fix, different
+reason: put them in the `.cpp`, as `core/cpu_time.cpp` does with `<windows.h>`.
+
 ## BUILD SPEED (2026-07-25)
 
 Measured, then fixed. A clean the engine build was **143.7 s wall / 237.9 s CPU**; it is

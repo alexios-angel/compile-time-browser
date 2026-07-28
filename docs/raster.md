@@ -1,8 +1,8 @@
 # Raster — tiles, backends, and real fonts
 
-`src/raster/` — `pipeline.cppm`, `tile.cppm`, `software.cppm`, `draw.cppm`,
-`compositor.cppm`, `ttf.cppm` (SDL3_ttf) and `font8x8.hpp` (the built-in
-bitmap fallback the goldens are rendered with).
+`include/ctbrowser/raster/` — `pipeline.hpp`, `tile.hpp`, `software.hpp`,
+`draw.hpp`, `compositor.hpp`, `ttf.hpp` (SDL3_ttf) and `font8x8.hpp` (the
+built-in bitmap fallback the goldens are rendered with).
 
 ## FONTS: real ones (stage 6, 2026-07-25)
 

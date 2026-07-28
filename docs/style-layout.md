@@ -1,7 +1,9 @@
 # Style and layout — the cascade, formatting contexts, generated content
 
-`src/style/` (selector matching, the cascade, computed values, the UA sheet)
-and `src/layout/` (`box.cppm`, `algorithm.cppm`, `engine.cppm`, `fragment.cppm`).
+`include/ctbrowser/style/` (selector matching, the cascade, computed values,
+the UA sheet)
+and `include/ctbrowser/layout/` (`box.hpp`, `algorithm.hpp`, `engine.hpp`,
+`fragment.hpp`).
 
 ## STYLE: the `style` attribute, with Chrome/Firefox precedence (2026-07-25)
 
