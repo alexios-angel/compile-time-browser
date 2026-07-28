@@ -79,9 +79,8 @@ public:
 
 	// Offscreen when `window` is null - which is how the tests run it, and what
 	// makes the result downloadable and comparable against the software backend.
-	[[nodiscard]] static std::expected<sdl_gpu_backend, device_error>
-	create(int width, int height, SDL_Window * window = nullptr,
-	       int extent = default_tile_extent) {
+	[[nodiscard]] static std::expected<sdl_gpu_backend, device_error> create(
+	    int width, int height, SDL_Window * window = nullptr, int extent = default_tile_extent) {
 		if (!SDL_WasInit(SDL_INIT_VIDEO)) { return std::unexpected(device_error::no_sdl_video); }
 		if (!SDL_GPUSupportsShaderFormats(SDL_GPU_SHADERFORMAT_SPIRV, nullptr)) {
 			return std::unexpected(device_error::no_supported_driver);
@@ -93,7 +92,9 @@ public:
 		if (window != nullptr && !SDL_ClaimWindowForGPUDevice(device, window)) {
 			return std::unexpected(device_error::window_claim_failed);
 		}
-		if (!out.build_pipeline()) { return std::unexpected(device_error::pipeline_creation_failed); }
+		if (!out.build_pipeline()) {
+			return std::unexpected(device_error::pipeline_creation_failed);
+		}
 		if (!out.build_target()) { return std::unexpected(device_error::device_creation_failed); }
 		return out;
 	}
@@ -431,9 +432,8 @@ private:
 		blend.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
 
 		SDL_GPUColorTargetDescription target{};
-		target.format = window_ != nullptr
-		                    ? SDL_GetGPUSwapchainTextureFormat(device_, window_)
-		                    : SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM;
+		target.format = window_ != nullptr ? SDL_GetGPUSwapchainTextureFormat(device_, window_)
+		                                   : SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM;
 		target.blend_state = blend;
 
 		SDL_GPUGraphicsPipelineCreateInfo info{};

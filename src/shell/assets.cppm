@@ -85,8 +85,7 @@ private:
 		std::vector<std::byte> bytes;
 		bytes.resize(static_cast<std::size_t>(std::filesystem::file_size(path, failed)));
 		if (failed) { return {}; }
-		in.read(reinterpret_cast<char *>(bytes.data()),
-		        static_cast<std::streamsize>(bytes.size()));
+		in.read(reinterpret_cast<char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
 		bytes.resize(static_cast<std::size_t>(in.gcount()));
 		return bytes;
 	}

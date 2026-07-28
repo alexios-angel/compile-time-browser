@@ -26,12 +26,12 @@
 // probed system font, or the built-in 8x8 bitmap face.
 
 #if defined(__has_builtin)
-#	if __has_builtin(__builtin_std_embed)
-#		pragma clang diagnostic push
-#		pragma clang diagnostic ignored "-Wc++2d-extensions"
+#if __has_builtin(__builtin_std_embed)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wc++2d-extensions"
 #depend "fonts/**"
-#		pragma clang diagnostic pop
-#	endif
+#pragma clang diagnostic pop
+#endif
 #endif
 
 namespace ctbrowser::detail {
@@ -45,15 +45,19 @@ inline std::vector<embedded_asset> default_font_assets() {
 	static constexpr auto serif_r = ctbrowser::try_embed<unsigned char>("fonts/Tinos-Regular.ttf");
 	static constexpr auto serif_b = ctbrowser::try_embed<unsigned char>("fonts/Tinos-Bold.ttf");
 	static constexpr auto serif_i = ctbrowser::try_embed<unsigned char>("fonts/Tinos-Italic.ttf");
-	static constexpr auto serif_z = ctbrowser::try_embed<unsigned char>("fonts/Tinos-BoldItalic.ttf");
-	static constexpr auto sans_r = ctbrowser::try_embed<unsigned char>("fonts/FiraSans-Regular.ttf");
+	static constexpr auto serif_z =
+	    ctbrowser::try_embed<unsigned char>("fonts/Tinos-BoldItalic.ttf");
+	static constexpr auto sans_r =
+	    ctbrowser::try_embed<unsigned char>("fonts/FiraSans-Regular.ttf");
 	static constexpr auto sans_b = ctbrowser::try_embed<unsigned char>("fonts/FiraSans-Bold.ttf");
 	static constexpr auto sans_i = ctbrowser::try_embed<unsigned char>("fonts/FiraSans-Italic.ttf");
-	static constexpr auto sans_z = ctbrowser::try_embed<unsigned char>("fonts/FiraSans-BoldItalic.ttf");
+	static constexpr auto sans_z =
+	    ctbrowser::try_embed<unsigned char>("fonts/FiraSans-BoldItalic.ttf");
 	static constexpr auto mono_r = ctbrowser::try_embed<unsigned char>("fonts/Cousine-Regular.ttf");
 	static constexpr auto mono_b = ctbrowser::try_embed<unsigned char>("fonts/Cousine-Bold.ttf");
 	static constexpr auto mono_i = ctbrowser::try_embed<unsigned char>("fonts/Cousine-Italic.ttf");
-	static constexpr auto mono_z = ctbrowser::try_embed<unsigned char>("fonts/Cousine-BoldItalic.ttf");
+	static constexpr auto mono_z =
+	    ctbrowser::try_embed<unsigned char>("fonts/Cousine-BoldItalic.ttf");
 	add("ctbrowser:font/serif-regular", serif_r);
 	add("ctbrowser:font/serif-bold", serif_b);
 	add("ctbrowser:font/serif-italic", serif_i);

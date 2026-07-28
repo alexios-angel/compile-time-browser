@@ -128,14 +128,16 @@ void run_case(int rows, int w, int h) {
 		gpu_scroll = scroll_frame_ms(*device, p, viewport, 60);
 	}
 
-	std::printf("%5d %6dx%-5d %9.3f %9.3f %11.3f %11.3f %7.2fx\n", rows, w, h, cpu_first, cpu_scroll,
-	            gpu_first, gpu_scroll, cpu_scroll / gpu_scroll);
+	std::printf("%5d %6dx%-5d %9.3f %9.3f %11.3f %11.3f %7.2fx\n", rows, w, h, cpu_first,
+	            cpu_scroll, gpu_first, gpu_scroll, cpu_scroll / gpu_scroll);
 }
 
 } // namespace
 
 int main() {
-	if (std::getenv("SDL_VIDEODRIVER") == nullptr) { SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen"); }
+	if (std::getenv("SDL_VIDEODRIVER") == nullptr) {
+		SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
+	}
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
 		std::printf("SDL video would not start: %s\n", SDL_GetError());
 		return 0;

@@ -167,7 +167,7 @@ void test_simple_selectors() {
 void test_bucketing_uses_the_rightmost_compound() {
 	fixture f;
 	f.load("<nav id=nav><a class=link>x</a></nav><a class=link>y</a>",
-	       "#nav a { color: red }"      // filed under tag `a`
+	       "#nav a { color: red }"       // filed under tag `a`
 	       ".wrap .link { color: blue }" // filed under class `link`
 	       "nav .link { font-size: 9px }");
 	const auto txn = f.doc.read();
@@ -200,9 +200,9 @@ void test_descendant_and_child_combinators() {
 void test_specificity_and_source_order() {
 	fixture f;
 	f.load("<div id=x class=c>hi</div>",
-	       "div { color: tag }"     // 0,0,1
-	       ".c { color: class }"    // 0,1,0 - beats tag
-	       "#x { color: id }");     // 1,0,0 - beats class
+	       "div { color: tag }"  // 0,0,1
+	       ".c { color: class }" // 0,1,0 - beats tag
+	       "#x { color: id }");  // 1,0,0 - beats class
 	const node_id div = f.find("div");
 	expect_value(f, div, "color", "id", "id beats class beats tag");
 
@@ -216,8 +216,8 @@ void test_specificity_and_source_order() {
 void test_author_beats_user_agent() {
 	fixture f;
 	f.load("<div id=x>hi</div>",
-	       "div { color: author }",  // author, low specificity
-	       "#x { color: ua }");      // UA, high specificity
+	       "div { color: author }", // author, low specificity
+	       "#x { color: ua }");     // UA, high specificity
 	expect_value(f, f.find("div"), "color", "author", "author origin outranks UA specificity");
 }
 
@@ -268,7 +268,6 @@ void test_unmatched_element_gets_empty_style() {
 	CHECK(f.value_of(em, "color").empty());
 	CHECK(static_cast<bool>(f.style_of(em))); // resolved, just to nothing
 }
-
 
 // --- the style attribute --------------------------------------------------
 //

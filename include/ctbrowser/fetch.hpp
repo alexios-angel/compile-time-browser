@@ -38,9 +38,9 @@
 // builtin is absent - only the project's std::embed clang has it.
 
 #if defined(__has_builtin)
-#	if __has_builtin(__builtin_std_fetch)
-#		define CTBROWSER_HAS_STD_FETCH 1
-#	endif
+#if __has_builtin(__builtin_std_fetch)
+#define CTBROWSER_HAS_STD_FETCH 1
+#endif
 #endif
 
 #ifdef CTBROWSER_HAS_STD_FETCH

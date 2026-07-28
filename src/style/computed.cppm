@@ -1,7 +1,7 @@
 module;
+#include <atomic>
 #include <boost/container/small_vector.hpp>
 #include <boost/intrusive_ptr.hpp>
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -75,9 +75,7 @@ public:
 		}
 		return {};
 	}
-	[[nodiscard]] bool has(atom property) const noexcept {
-		return !get(property).empty();
-	}
+	[[nodiscard]] bool has(atom property) const noexcept { return !get(property).empty(); }
 	[[nodiscard]] std::size_t size() const noexcept { return declarations.size(); }
 
 	[[nodiscard]] bool operator==(const computed_style & o) const noexcept {

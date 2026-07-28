@@ -141,7 +141,6 @@ public:
 	[[nodiscard]] const measure_text_fn & measure() const noexcept { return measure_; }
 
 private:
-
 	// Lay `split`'s children out concurrently, then let the ORDINARY sequential
 	// pass assemble the document around them.
 	//
@@ -162,10 +161,10 @@ private:
 		constraints inner = c;
 		for (std::size_t i = 0; i + 1 < path.size(); ++i) {
 			const resolved_edges edges = resolve_edges(*path[i], inner);
-			inner = constraints{content_width_of(*path[i], inner, edges), 0, path[i + 1]->font_size};
+			inner =
+			    constraints{content_width_of(*path[i], inner, edges), 0, path[i + 1]->font_size};
 		}
-		const float content_width =
-		    content_width_of(*split, inner, resolve_edges(*split, inner));
+		const float content_width = content_width_of(*split, inner, resolve_edges(*split, inner));
 
 		// THE PARALLEL PART. Each chunk of children is laid out into its own
 		// slots against the same content width; the box tree is const and
@@ -181,7 +180,8 @@ private:
 		pool.parallel_for(chunks.size(), [&](std::size_t k) {
 			for (std::size_t i = chunks[k].first; i < chunks[k].last; ++i) {
 				const box_node & child = split->children[i];
-				pieces[i] = layout_box(child, constraints{content_width, 0, child.font_size}, measure_);
+				pieces[i] =
+				    layout_box(child, constraints{content_width, 0, child.font_size}, measure_);
 			}
 		});
 

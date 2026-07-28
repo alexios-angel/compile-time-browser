@@ -25,11 +25,11 @@ import ctbrowser.app; // run_app, for the one test that drives the whole applica
 
 #include "check.hpp"
 #include <algorithm>
-#include <span>
-#include <fstream>
-#include <sstream>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
+#include <span>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -91,8 +91,9 @@ void check(bool ok, std::string_view what) {
 
 void test_script_mutates_what_is_drawn() {
 	browser page{browser_options{400, 200}};
-	page.load_html("<html><body><div id=a>original</div>"
-	               "<script>document.getElementById('a').setText('replaced');</script></body></html>");
+	page.load_html(
+	    "<html><body><div id=a>original</div>"
+	    "<script>document.getElementById('a').setText('replaced');</script></body></html>");
 	check(page.frame().has_value(), "the page renders");
 	check(page.script_error().empty(), "the script ran without error");
 	// The whole point: the mutation reached the pixels, not just the DOM.
@@ -429,8 +430,8 @@ void test_a_link_reaches_the_application_through_run_app() {
 		(void)page.handle(input_event::mouse_down_at(12, 12));
 		(void)page.handle(input_event::mouse_up_at(12, 12));
 	};
-	const int code = ctbrowser::run_app(
-	    "<body><a href='https://example.com/here'>a link</a></body>", options);
+	const int code =
+	    ctbrowser::run_app("<body><a href='https://example.com/here'>a link</a></body>", options);
 	check(code == 0, "the application ran");
 	check(asked.size() == 1, "the link reached the application");
 	if (!asked.empty()) { check(asked[0] == "https://example.com/here", "with its href"); }
@@ -539,7 +540,8 @@ void test_request_animation_frame() {
 
 void test_a_broken_script_still_renders() {
 	browser page{browser_options{300, 200}};
-	page.load_html("<html><body><p>content</p><script>this is not javascript(((</script></body></html>");
+	page.load_html(
+	    "<html><body><p>content</p><script>this is not javascript(((</script></body></html>");
 	check(page.frame().has_value(), "the page still renders");
 	check(!page.script_error().empty(), "and the error is recorded");
 	// A page whose script fails must still show its markup. Anything else
@@ -561,7 +563,6 @@ void test_window_and_performance() {
 		check(log[1] == "t0 0", "and the page clock starts at zero");
 	}
 }
-
 
 // --- input reaches script -------------------------------------------------
 //
@@ -646,7 +647,6 @@ void test_mouse_reaches_script() {
 		check(log[2] == "up", "and the release");
 	}
 }
-
 
 // The end-to-end version of the three tests above, against a page nobody wrote
 // for this engine: MDN's breakout reads e.code and e.clientX, and if input does

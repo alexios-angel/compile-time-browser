@@ -3,17 +3,17 @@
 // scrolling with caret-follow, and resize-driven rewrap (words keep
 // their size; the layout changes). Headless.
 
-#include <ctbrowser.hpp>
 #include <cstdio>
+#include <ctbrowser.hpp>
 #include <string>
 
 static int fails = 0;
-#define CHECK(cond)                                                    \
-	do {                                                               \
-		if (!(cond)) {                                                 \
-			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
-			++fails;                                                   \
-		}                                                              \
+#define CHECK(cond)                                                                                \
+	do {                                                                                           \
+		if (!(cond)) {                                                                             \
+			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                            \
+			++fails;                                                                               \
+		}                                                                                          \
 	} while (0)
 
 using page = ctbrowser::page<R"(<!DOCTYPE html>
@@ -149,7 +149,8 @@ int main() {
 		std::int32_t px_wide = 0, px_narrow = 0;
 		e.resize_viewport(600, 300);
 		for (const auto & c : e.frame(600)) {
-			if (c.what == ctbrowser::paint_cmd::kind::text && c.text.find(U"nobler") != std::u32string::npos) {
+			if (c.what == ctbrowser::paint_cmd::kind::text &&
+			    c.text.find(U"nobler") != std::u32string::npos) {
 				px_wide = c.font_px;
 			}
 		}
@@ -164,7 +165,8 @@ int main() {
 		const std::int32_t hr_wide = rule->w;
 		e.resize_viewport(250, 300);
 		for (const auto & c : e.frame(250)) {
-			if (c.what == ctbrowser::paint_cmd::kind::text && c.text.find(U"nobler") != std::u32string::npos) {
+			if (c.what == ctbrowser::paint_cmd::kind::text &&
+			    c.text.find(U"nobler") != std::u32string::npos) {
 				px_narrow = c.font_px;
 			}
 		}

@@ -4,8 +4,8 @@
 // cycles (c.fn = () => c), the kind the DOM/game create constantly. Two natives
 // expose glibc's in-use heap and a manual collect(); the script allocates pure
 // garbage cycles and we assert collect() gives the memory back. No SDL.
-#include <ctbrowser.hpp>
 #include <cstdio>
+#include <ctbrowser.hpp>
 #include <malloc.h>
 #include <vector>
 
@@ -22,15 +22,19 @@ using page = ctbrowser::page<R"(<!DOCTYPE html>
 
 int main() {
 	std::vector<ctjs::binding> extra;
-	extra.push_back({"__heap", ctjs::native([](const std::vector<ctjs::value> &) {
-		                                          return ctjs::value{static_cast<double>(mallinfo2().uordblks)};
-	                                          },
-	                                          "__heap")});
-	extra.push_back({"__collect", ctjs::native([](const std::vector<ctjs::value> &) {
-		                                            ctjs::gc::collect();
-		                                            return ctjs::value{static_cast<double>(mallinfo2().uordblks)};
-	                                            },
-	                                            "__collect")});
+	extra.push_back({"__heap", ctjs::native(
+	                               [](const std::vector<ctjs::value> &) {
+		                               return ctjs::value{
+		                                   static_cast<double>(mallinfo2().uordblks)};
+	                               },
+	                               "__heap")});
+	extra.push_back({"__collect", ctjs::native(
+	                                  [](const std::vector<ctjs::value> &) {
+		                                  ctjs::gc::collect();
+		                                  return ctjs::value{
+		                                      static_cast<double>(mallinfo2().uordblks)};
+	                                  },
+	                                  "__collect")});
 	ctbrowser::engine<page> e(std::move(extra));
 	if (!e.script.ok()) {
 		std::printf("FAIL: script threw: %s\n", e.script.exception_message().c_str());
@@ -40,14 +44,28 @@ int main() {
 	const double objAfter = e.script["objAfter"].to_number();
 	const double closLeak = e.script["closLeak"].to_number();
 	const double closAfter = e.script["closAfter"].to_number();
-	std::printf("object cycles : leaked %.0f KB, after collect() %.0f KB\n", objLeak / 1024, objAfter / 1024);
-	std::printf("closure cycles: leaked %.0f KB, after collect() %.0f KB\n", closLeak / 1024, closAfter / 1024);
+	std::printf("object cycles : leaked %.0f KB, after collect() %.0f KB\n", objLeak / 1024,
+	            objAfter / 1024);
+	std::printf("closure cycles: leaked %.0f KB, after collect() %.0f KB\n", closLeak / 1024,
+	            closAfter / 1024);
 
 	int fails = 0;
-	if (objLeak < 1000000) { std::printf("FAIL: object cycles did not leak (test setup)\n"); ++fails; }
-	if (objAfter > objLeak * 0.30) { std::printf("FAIL: object cycles not collected\n"); ++fails; }
-	if (closLeak < 1000000) { std::printf("FAIL: closure cycles did not leak (test setup)\n"); ++fails; }
-	if (closAfter > closLeak * 0.30) { std::printf("FAIL: closure cycles not collected\n"); ++fails; }
+	if (objLeak < 1000000) {
+		std::printf("FAIL: object cycles did not leak (test setup)\n");
+		++fails;
+	}
+	if (objAfter > objLeak * 0.30) {
+		std::printf("FAIL: object cycles not collected\n");
+		++fails;
+	}
+	if (closLeak < 1000000) {
+		std::printf("FAIL: closure cycles did not leak (test setup)\n");
+		++fails;
+	}
+	if (closAfter > closLeak * 0.30) {
+		std::printf("FAIL: closure cycles not collected\n");
+		++fails;
+	}
 	if (fails == 0) { std::printf("gc: PASS (object AND closure cycles reclaimed)\n"); }
 	return fails == 0 ? 0 : 1;
 }

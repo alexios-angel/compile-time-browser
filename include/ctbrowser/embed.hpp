@@ -38,9 +38,9 @@
 // builtin is absent - only the project's std::embed clang has it.
 
 #if defined(__has_builtin)
-#	if __has_builtin(__builtin_std_embed)
-#		define CTBROWSER_HAS_STD_EMBED 1
-#	endif
+#if __has_builtin(__builtin_std_embed)
+#define CTBROWSER_HAS_STD_EMBED 1
+#endif
 #endif
 
 #ifdef CTBROWSER_HAS_STD_EMBED
@@ -67,8 +67,7 @@ consteval std::span<const T> embed_impl(std::string_view path, std::size_t offse
 	std::int32_t status = -1;
 	std::size_t len = 0;
 	const T * res = nullptr;
-	res = __builtin_std_embed(embed_dirs_only, status, len, res, path.size(), path.data(),
-	                          offset);
+	res = __builtin_std_embed(embed_dirs_only, status, len, res, path.size(), path.data(), offset);
 	if (status == 1 && res != nullptr) { return {res, len}; }
 	if (status == 3) { return {}; } // present, zero bytes
 	if (!opportunistic) {

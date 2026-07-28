@@ -1,0 +1,95 @@
+# ctbrowser formatting. LLVM style, with five deviations.
+#
+# The deviations are not preferences invented here - they are what the ~40,000
+# lines of this repository were already written in, measured before this file
+# existed:
+#
+#   indentation   30,000 tab-indented lines against 2,600 space-indented ones
+#   column limit  hand-wrapped at 100; only 223 lines exceed it
+#   pointers      `const rect & box` 881 times against `const rect &box` 16
+#   short blocks  1,057 one-line `if (x) { return; }`
+#   namespaces    contents never indented
+#
+# Adopting stock LLVM (2-space, 80 columns, `Type *name`, no short blocks)
+# would rewrite essentially every line in the repository. If that is what you
+# want, delete everything below BasedOnStyle - it is a one-line change, and the
+# reformat is mechanical. This file exists so that running clang-format is a
+# no-op on code that is already right, which is the only way a formatter stays
+# useful.
+#
+# Generated and vendored files are excluded in .clang-format-ignore. Places
+# where the layout carries meaning - hand-aligned tables, bit patterns - are
+# fenced with `// clang-format off` at the site.
+---
+Language: Cpp
+BasedOnStyle: LLVM
+
+# --- the five deviations -------------------------------------------------
+UseTab: ForIndentation
+TabWidth: 4
+IndentWidth: 4
+ColumnLimit: 100
+PointerAlignment: Middle
+ReferenceAlignment: Pointer
+AllowShortBlocksOnASingleLine: Always
+NamespaceIndentation: None
+# `public:` sits at the CLASS's indentation, not one step in from it. LLVM's
+# -2 assumes a 2-space indent; with 4 the offset has to be -4 or every access
+# specifier in the repository moves.
+AccessModifierOffset: -4
+
+# --- consequences of the above -------------------------------------------
+#
+# Continuation lines are ALIGNED, which means spaces past the tab indent:
+# `UseTab: ForIndentation` is what keeps alignment working when the file is
+# viewed at a different tab width.
+ContinuationIndentWidth: 4
+AlignAfterOpenBracket: Align
+
+# A one-line `if (x) { return; }` is only readable when the whole statement
+# fits, which ColumnLimit already enforces. This has to be WithoutElse rather
+# than Never: AllowShortBlocksOnASingleLine governs the BLOCK, but the `if`
+# statement is governed here, and Never overrules it - which expands all 1,057
+# of them.
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortEnumsOnASingleLine: false
+
+# Comments are this codebase's documentation and are hand-wrapped. Reflowing
+# only touches comments that EXCEED the limit, which is what we want: fix the
+# over-long ones, leave deliberate line breaks alone.
+ReflowComments: true
+
+# `import std;` is unavailable here, so every module names its includes in a
+# global module fragment. Sorting them across the fragment's blank-line groups
+# would merge the "third-party" and "standard" groups that are kept apart on
+# purpose - see the note in CLAUDE.md about what belongs in an interface's GMF.
+SortIncludes: CaseSensitive
+IncludeBlocks: Preserve
+
+# Modules: keep `export module`, `import` and `module :private;` on their own
+# lines and unindented.
+IndentExternBlock: NoIndent
+IndentRequiresClause: false
+
+# `[[nodiscard]]` is on nearly every accessor here; breaking after it would put
+# a line break in front of half the declarations in the codebase.
+BreakBeforeBraces: Attach
+AlwaysBreakAfterReturnType: None
+PenaltyReturnTypeOnItsOwnLine: 1000
+
+# Initialisers are PACKED, several to a line, as they already are.
+BreakConstructorInitializers: BeforeColon
+PackConstructorInitializers: BinPack
+
+# Trailing `//` comments line up when they already did.
+AlignTrailingComments:
+  Kind: Always
+  OverEmptyLines: 0
+
+InsertNewlineAtEOF: true
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+SpacesBeforeTrailingComments: 1

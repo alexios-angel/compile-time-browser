@@ -32,7 +32,10 @@ constexpr char32_t utf8_next(std::string_view s, std::size_t & i) noexcept {
 	if (i >= n) { return 0; }
 	const auto byte = [&](std::size_t k) { return static_cast<unsigned char>(s[k]); };
 	const unsigned char b0 = byte(i);
-	if (b0 < 0x80) { ++i; return b0; } // ASCII
+	if (b0 < 0x80) {
+		++i;
+		return b0;
+	} // ASCII
 	const auto cont = [&](std::size_t k, std::uint32_t lo, std::uint32_t hi) {
 		return i + k < n && byte(i + k) >= lo && byte(i + k) <= hi;
 	};
@@ -42,9 +45,9 @@ constexpr char32_t utf8_next(std::string_view s, std::size_t & i) noexcept {
 			i += 2;
 			return cp;
 		}
-	} else if (b0 >= 0xE0 && b0 <= 0xEF) { // 3-byte
-		const std::uint32_t lo1 = b0 == 0xE0 ? 0xA0 : 0x80;              // guard overlong
-		const std::uint32_t hi1 = b0 == 0xED ? 0x9F : 0xBF;              // guard surrogates
+	} else if (b0 >= 0xE0 && b0 <= 0xEF) {                  // 3-byte
+		const std::uint32_t lo1 = b0 == 0xE0 ? 0xA0 : 0x80; // guard overlong
+		const std::uint32_t hi1 = b0 == 0xED ? 0x9F : 0xBF; // guard surrogates
 		if (cont(1, lo1, hi1) && cont(2, 0x80, 0xBF)) {
 			const char32_t cp = static_cast<char32_t>((b0 & 0x0F) << 12) |
 			                    static_cast<char32_t>((byte(i + 1) & 0x3F) << 6) |
@@ -52,9 +55,9 @@ constexpr char32_t utf8_next(std::string_view s, std::size_t & i) noexcept {
 			i += 3;
 			return cp;
 		}
-	} else if (b0 >= 0xF0 && b0 <= 0xF4) { // 4-byte
-		const std::uint32_t lo1 = b0 == 0xF0 ? 0x90 : 0x80;             // guard overlong
-		const std::uint32_t hi1 = b0 == 0xF4 ? 0x8F : 0xBF;             // guard > U+10FFFF
+	} else if (b0 >= 0xF0 && b0 <= 0xF4) {                  // 4-byte
+		const std::uint32_t lo1 = b0 == 0xF0 ? 0x90 : 0x80; // guard overlong
+		const std::uint32_t hi1 = b0 == 0xF4 ? 0x8F : 0xBF; // guard > U+10FFFF
 		if (cont(1, lo1, hi1) && cont(2, 0x80, 0xBF) && cont(3, 0x80, 0xBF)) {
 			const char32_t cp = static_cast<char32_t>((b0 & 0x07) << 18) |
 			                    static_cast<char32_t>((byte(i + 1) & 0x3F) << 12) |
@@ -122,7 +125,8 @@ constexpr void utf8_append(std::string & out, char32_t cp) {
 		if (u >= 0xD800 && u <= 0xDBFF) { // high surrogate
 			if (i < s.size() && s[i] >= 0xDC00 && s[i] <= 0xDFFF) {
 				const char32_t lo = s[i++];
-				out.push_back(0x10000 + ((static_cast<char32_t>(u - 0xD800) << 10) | (lo - 0xDC00)));
+				out.push_back(0x10000 +
+				              ((static_cast<char32_t>(u - 0xD800) << 10) | (lo - 0xDC00)));
 			} else {
 				out.push_back(REPLACEMENT_CHAR);
 			}

@@ -23,7 +23,6 @@ export module ctbrowser.shell:net;
 // the build still does http:// and rejects https:// by name rather than
 // silently failing to connect.
 
-
 // NOTHING third-party is included above. Asio's headers are ~1 MB of C++ and a
 // module's global module fragment is SERIALIZED INTO ITS BMI, so including
 // them here made ctbrowser.shell-net.pcm 27 MB and every translation unit that
@@ -41,8 +40,8 @@ struct http_options {
 
 struct http_response {
 	int status = 0;
-	std::string url;                // the FINAL url, after redirects
-	std::string error;              // non-empty: the request never completed
+	std::string url;   // the FINAL url, after redirects
+	std::string error; // non-empty: the request never completed
 	std::vector<std::byte> body;
 	std::string content_type;
 
@@ -60,7 +59,6 @@ struct http_response {
 	return false;
 #endif
 }
-
 
 // A GET, following redirects. Never throws: a failure is an `error` on the
 // response, because that is what the caller has to turn into a rejected

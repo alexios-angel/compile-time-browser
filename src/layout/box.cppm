@@ -1,12 +1,12 @@
 module;
 #include <charconv>
-#include <system_error>
-#include <functional>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 export module ctbrowser.layout:box;
@@ -53,13 +53,13 @@ enum class box_kind : std::uint8_t {
 
 struct box_node {
 	box_kind kind = box_kind::block;
-	node_id source;              // empty for anonymous boxes
+	node_id source; // empty for anonymous boxes
 	// The element's tag, for the handful of decisions that are about WHAT an
 	// element is rather than about its style - table parts, list items. A view
 	// into the atom table, which outlives every box tree built from it.
 	std::string_view tag;
-	computed_style_ptr style;    // shared; anonymous boxes inherit their parent's
-	std::string text;            // text boxes only
+	computed_style_ptr style; // shared; anonymous boxes inherit their parent's
+	std::string text;         // text boxes only
 	std::vector<box_node> children;
 
 	// Resolved once at construction so the algorithms do not re-parse strings
@@ -108,8 +108,7 @@ struct box_node {
 		// A TABLE is block-level. Left out of this, a table shared a line with
 		// whatever came before it - two tables sat side by side, and a table sat
 		// beside the paragraph above it.
-		return kind == box_kind::block || kind == box_kind::anonymous ||
-		       kind == box_kind::table;
+		return kind == box_kind::block || kind == box_kind::anonymous || kind == box_kind::table;
 	}
 	[[nodiscard]] bool is_replaced() const noexcept { return kind == box_kind::replaced; }
 	[[nodiscard]] bool establishes_inline_context() const noexcept {
@@ -152,9 +151,9 @@ public:
 	      height_(atoms.intern("height")), margin_(atoms.intern("margin")),
 	      padding_(atoms.intern("padding")), font_size_(atoms.intern("font-size")),
 	      margin_sides_{atoms.intern("margin-top"), atoms.intern("margin-right"),
-	                    atoms.intern("margin-bottom"), atoms.intern("margin-left")},
+		                atoms.intern("margin-bottom"), atoms.intern("margin-left")},
 	      padding_sides_{atoms.intern("padding-top"), atoms.intern("padding-right"),
-	                     atoms.intern("padding-bottom"), atoms.intern("padding-left")},
+		                 atoms.intern("padding-bottom"), atoms.intern("padding-left")},
 	      font_family_(atoms.intern("font-family")), font_weight_(atoms.intern("font-weight")),
 	      font_style_(atoms.intern("font-style")),
 	      text_decoration_(atoms.intern("text-decoration")),
@@ -180,16 +179,14 @@ private:
 		return s ? s->get(name) : std::string_view{};
 	}
 
-	void build_children(const read_txn & txn, node_id parent, box_node & into,
-	                    float inherited_font, const text_face & inherited_face = {},
-	                    bool inherited_underline = false, bool inherited_line_through = false,
-	                    bool preserve_whitespace = false) {
+	void build_children(const read_txn & txn, node_id parent, box_node & into, float inherited_font,
+	                    const text_face & inherited_face = {}, bool inherited_underline = false,
+	                    bool inherited_line_through = false, bool preserve_whitespace = false) {
 		int ordinal = 0;
 		// A <details> without `open` shows only its <summary>. Asked once, here,
 		// because the state is on the PARENT and the children are what it hides.
-		const bool closed_details =
-		    atoms_->text(txn.tag(parent).value_or(atom{})) == "details" &&
-		    !txn.has_attribute(parent, atoms_->intern("open"));
+		const bool closed_details = atoms_->text(txn.tag(parent).value_or(atom{})) == "details" &&
+		                            !txn.has_attribute(parent, atoms_->intern("open"));
 		for (const node_id child : txn.children(parent)) {
 			const node_kind kind = txn.kind(child).value_or(node_kind::comment);
 			if (kind == node_kind::text) {
@@ -254,8 +251,9 @@ private:
 			box_node b;
 			const std::string_view tag_text = atoms_->text(tag);
 			b.kind = is_replaced_tag(tag_text) ? box_kind::replaced
-			         : tag_text == "table"     ? box_kind::table
-			         : (d == display_kind::inline_level ? box_kind::inline_ : box_kind::block);
+			         : tag_text == "table"
+			             ? box_kind::table
+			             : (d == display_kind::inline_level ? box_kind::inline_ : box_kind::block);
 			b.source = child;
 			b.tag = tag_text;
 			b.style = style;
@@ -285,8 +283,8 @@ private:
 			// are how a great deal of existing HTML sizes a table, and they mean
 			// the CSS property - at the bottom of the cascade, so a sheet still
 			// wins. A bare number is pixels; `width="50%"` is a percentage.
-			if (b.width.is_auto() && (tag_text == "table" || tag_text == "td" ||
-			                          tag_text == "th" || tag_text == "col")) {
+			if (b.width.is_auto() && (tag_text == "table" || tag_text == "td" || tag_text == "th" ||
+			                          tag_text == "col")) {
 				const std::string_view attribute =
 				    txn.attribute_value(child, atoms_->intern("width"));
 				if (!attribute.empty()) {
@@ -303,7 +301,8 @@ private:
 			b.margin = sides_of(style, margin_sides_);
 			b.padding = sides_of(style, padding_sides_);
 			const length fs = parse_length(prop(style, font_size_));
-			b.font_size = fs.is_auto() ? inherited_font : fs.resolve(inherited_font, inherited_font);
+			b.font_size =
+			    fs.is_auto() ? inherited_font : fs.resolve(inherited_font, inherited_font);
 			b.face = face_of(style, inherited_face);
 			b.underline = inherited_underline;
 			b.line_through = inherited_line_through;
@@ -321,8 +320,8 @@ private:
 				// `white-space: pre` INHERITS, which is what makes markup inside
 				// a <pre> keep its layout.
 				const std::string_view white_space = prop(style, white_space_);
-				const bool preserve = white_space.empty() ? preserve_whitespace
-				                                          : white_space.starts_with("pre");
+				const bool preserve =
+				    white_space.empty() ? preserve_whitespace : white_space.starts_with("pre");
 				build_children(txn, child, b, b.font_size, b.face, b.underline, b.line_through,
 				               preserve);
 				drop_collapsible_spaces(b);
@@ -355,10 +354,8 @@ private:
 			// which is why this asks whether each was specified rather than
 			// defaulting each to the natural size independently.
 			const intrinsic_size natural = intrinsic_image ? intrinsic_image(id) : intrinsic_size{};
-			const bool has_width =
-			    !txn.attribute_value(id, atoms_->intern("width")).empty();
-			const bool has_height =
-			    !txn.attribute_value(id, atoms_->intern("height")).empty();
+			const bool has_width = !txn.attribute_value(id, atoms_->intern("width")).empty();
+			const bool has_height = !txn.attribute_value(id, atoms_->intern("height")).empty();
 			const float width = attribute_number("width", natural.width);
 			const float height = attribute_number("height", natural.height);
 			into.intrinsic_width = width;
@@ -429,8 +426,7 @@ private:
 		kept.reserve(parent.children.size());
 		for (std::size_t i = 0; i < parent.children.size(); ++i) {
 			if (parent.children[i].collapsible_space) {
-				const bool inline_before =
-				    !kept.empty() && renders_inline(kept.back());
+				const bool inline_before = !kept.empty() && renders_inline(kept.back());
 				bool inline_after = false;
 				for (std::size_t j = i + 1; j < parent.children.size(); ++j) {
 					if (parent.children[j].collapsible_space) { continue; }
@@ -590,7 +586,8 @@ private:
 			// 600 and up is bold, per the CSS mapping; `bolder`/`lighter` are
 			// relative and are treated as their common case.
 			int numeric = 0;
-			const auto parsed = std::from_chars(weight.data(), weight.data() + weight.size(), numeric);
+			const auto parsed =
+			    std::from_chars(weight.data(), weight.data() + weight.size(), numeric);
 			if (parsed.ec == std::errc{}) {
 				out.bold = numeric >= 600;
 			} else {

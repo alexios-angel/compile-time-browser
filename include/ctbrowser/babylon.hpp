@@ -39,6 +39,7 @@
 #ifndef CTBROWSER_IN_A_MODULE
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -48,12 +49,11 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#include <bit>
-#define GLM_FORCE_CTOR_INIT     // default-construct vec/mat as zero
-#define GLM_ENABLE_EXPERIMENTAL // for gtx/euler_angles (glm::yawPitchRoll)
-#include <glm/glm.hpp>      // the vector/matrix types AND math (constexpr-capable)
-#include <glm/gtc/matrix_transform.hpp> // glm::translate/scale/rotate/lookAtLH
+#define GLM_FORCE_CTOR_INIT              // default-construct vec/mat as zero
+#define GLM_ENABLE_EXPERIMENTAL          // for gtx/euler_angles (glm::yawPitchRoll)
 #include <glm/ext/matrix_clip_space.hpp> // glm::perspectiveLH_ZO
+#include <glm/glm.hpp>                   // the vector/matrix types AND math (constexpr-capable)
+#include <glm/gtc/matrix_transform.hpp>  // glm::translate/scale/rotate/lookAtLH
 #include <glm/gtx/euler_angles.hpp>      // glm::yawPitchRoll
 #endif
 
@@ -97,7 +97,10 @@ using mat4 = glm::dmat4;
 constexpr double ct_sqrt(double x) noexcept { // Newton-Raphson (compile-time only)
 	if (!(x > 0.0)) { return 0.0; }
 	double g = x, prev = 0.0;
-	for (std::int32_t i = 0; i < 64 && g != prev; ++i) { prev = g; g = 0.5 * (g + x / g); }
+	for (std::int32_t i = 0; i < 64 && g != prev; ++i) {
+		prev = g;
+		g = 0.5 * (g + x / g);
+	}
 	return g;
 }
 constexpr double ct_floor(double x) noexcept {
@@ -109,26 +112,50 @@ constexpr double ct_ceil(double x) noexcept {
 	return static_cast<double>(x > static_cast<double>(i) ? i + 1 : i);
 }
 constexpr double fsqrt(double x) noexcept {
-	if consteval { return ct_sqrt(x); } else { return glm::sqrt(x); }
+	if consteval {
+		return ct_sqrt(x);
+	} else {
+		return glm::sqrt(x);
+	}
 }
 constexpr double ffloor(double x) noexcept {
-	if consteval { return ct_floor(x); } else { return glm::floor(x); }
+	if consteval {
+		return ct_floor(x);
+	} else {
+		return glm::floor(x);
+	}
 }
 constexpr double fceil(double x) noexcept {
-	if consteval { return ct_ceil(x); } else { return glm::ceil(x); }
+	if consteval {
+		return ct_ceil(x);
+	} else {
+		return glm::ceil(x);
+	}
 }
 
-constexpr vec3 V3(double x, double y, double z) noexcept { return vec3(x, y, z); }
-constexpr vec2 V2(double x, double y) noexcept { return vec2(x, y); }
+constexpr vec3 V3(double x, double y, double z) noexcept {
+	return vec3(x, y, z);
+}
+constexpr vec2 V2(double x, double y) noexcept {
+	return vec2(x, y);
+}
 
 // --- vector helpers via GLM. GLM's construction/+/-/dot/cross and matrix
 // products are constexpr on this toolchain, so they fold in the compile-time
 // renderer; normalize/length are NOT, so norm3 keeps an `if consteval` constexpr
 // path (best of both worlds - GLM at runtime, the ccmath path at compile time).
-constexpr vec3 sub(const vec3 & a, const vec3 & b) noexcept { return a - b; }
-constexpr double dot3(const vec3 & a, const vec3 & b) noexcept { return glm::dot(a, b); }
-constexpr vec3 cross3(const vec3 & a, const vec3 & b) noexcept { return glm::cross(a, b); }
-constexpr double mag3(const vec3 & a) noexcept { return fsqrt(dot3(a, a)); }
+constexpr vec3 sub(const vec3 & a, const vec3 & b) noexcept {
+	return a - b;
+}
+constexpr double dot3(const vec3 & a, const vec3 & b) noexcept {
+	return glm::dot(a, b);
+}
+constexpr vec3 cross3(const vec3 & a, const vec3 & b) noexcept {
+	return glm::cross(a, b);
+}
+constexpr double mag3(const vec3 & a) noexcept {
+	return fsqrt(dot3(a, a));
+}
 constexpr vec3 norm3(const vec3 & a) noexcept {
 	if consteval { // glm::normalize is not constexpr; use the ccmath path
 		const double m = mag3(a);
@@ -139,7 +166,9 @@ constexpr vec3 norm3(const vec3 & a) noexcept {
 }
 
 // --- colors
-struct rgba { double r = 1, g = 1, b = 1, a = 1; };
+struct rgba {
+	double r = 1, g = 1, b = 1, a = 1;
+};
 
 constexpr uint32_t pack(const rgba & c, double lit) noexcept {
 	auto ch = [&](double v) -> uint32_t {
@@ -158,16 +187,13 @@ constexpr uint32_t pack(const rgba & c, double lit) noexcept {
 // interpolation. Accurate to ~1e-4, and unlike std::sin/std::cos/std::tan
 // (not constexpr until C++26) it evaluates at COMPILE TIME. Angles: radians.
 inline constexpr std::int32_t kCosTable[91] = {
-    64000, 63990, 63961, 63912, 63844, 63756, 63649, 63523, 63377, 63212,
-    63028, 62824, 62601, 62360, 62099, 61819, 61521, 61204, 60868, 60513,
-    60140, 59749, 59340, 58912, 58467, 58004, 57523, 57024, 56509, 55976,
-    55426, 54859, 54275, 53675, 53058, 52426, 51777, 51113, 50433, 49737,
-    49027, 48301, 47561, 46807, 46038, 45255, 44458, 43648, 42824, 41988,
-    41138, 40277, 39402, 38516, 37618, 36709, 35788, 34857, 33915, 32962,
-    32000, 31028, 30046, 29055, 28056, 27048, 26031, 25007, 23975, 22936,
-    21889, 20836, 19777, 18712, 17641, 16564, 15483, 14397, 13306, 12212,
-    11113, 10012,  8907,  7800,  6690,  5578,  4464,  3350,  2234,  1117,
-        0};
+    64000, 63990, 63961, 63912, 63844, 63756, 63649, 63523, 63377, 63212, 63028, 62824, 62601,
+    62360, 62099, 61819, 61521, 61204, 60868, 60513, 60140, 59749, 59340, 58912, 58467, 58004,
+    57523, 57024, 56509, 55976, 55426, 54859, 54275, 53675, 53058, 52426, 51777, 51113, 50433,
+    49737, 49027, 48301, 47561, 46807, 46038, 45255, 44458, 43648, 42824, 41988, 41138, 40277,
+    39402, 38516, 37618, 36709, 35788, 34857, 33915, 32962, 32000, 31028, 30046, 29055, 28056,
+    27048, 26031, 25007, 23975, 22936, 21889, 20836, 19777, 18712, 17641, 16564, 15483, 14397,
+    13306, 12212, 11113, 10012, 8907,  7800,  6690,  5578,  4464,  3350,  2234,  1117,  0};
 
 // cos of x degrees, x in [0,90], interpolated between table samples
 constexpr double cos_deg01(double x) noexcept {
@@ -185,27 +211,49 @@ constexpr void fsincos(double rad, double & s, double & c) noexcept {
 	double deg = rad * 57.295779513082320876; // 180/pi
 	const std::int64_t k = static_cast<std::int64_t>(deg * (1.0 / 360.0));
 	deg -= 360.0 * static_cast<double>(k);
-	if (deg < 0.0) { deg += 360.0; }               // now in [0, 360)
+	if (deg < 0.0) { deg += 360.0; } // now in [0, 360)
 	const std::int32_t quad = static_cast<std::int32_t>(deg * (1.0 / 90.0)) & 3;
 	const double d = deg - 90.0 * static_cast<double>(quad); // [0, 90)
-	const double cd = cos_deg01(d);                // cos(d)
-	const double sd = cos_deg01(90.0 - d);         // sin(d) = cos(90-d)
+	const double cd = cos_deg01(d);                          // cos(d)
+	const double sd = cos_deg01(90.0 - d);                   // sin(d) = cos(90-d)
 	switch (quad) {
-		case 0: c = cd;  s = sd;  break;
-		case 1: c = -sd; s = cd;  break;            // 90 + d
-		case 2: c = -cd; s = -sd; break;            // 180 + d
-		default: c = sd; s = -cd; break;            // 270 + d
+	case 0:
+		c = cd;
+		s = sd;
+		break;
+	case 1:
+		c = -sd;
+		s = cd;
+		break; // 90 + d
+	case 2:
+		c = -cd;
+		s = -sd;
+		break; // 180 + d
+	default:
+		c = sd;
+		s = -cd;
+		break; // 270 + d
 	}
 }
 // At runtime use GLM's full-precision trig; at compile time (where std/glm trig
 // is not constexpr) fall back to the fast lookup-table above.
 constexpr double fcos(double rad) noexcept {
-	if consteval { double s = 0, c = 0; fsincos(rad, s, c); return c; }
-	else { return glm::cos(rad); }
+	if consteval {
+		double s = 0, c = 0;
+		fsincos(rad, s, c);
+		return c;
+	} else {
+		return glm::cos(rad);
+	}
 }
 constexpr double fsin(double rad) noexcept {
-	if consteval { double s = 0, c = 0; fsincos(rad, s, c); return s; }
-	else { return glm::sin(rad); }
+	if consteval {
+		double s = 0, c = 0;
+		fsincos(rad, s, c);
+		return s;
+	} else {
+		return glm::sin(rad);
+	}
 }
 constexpr double ftan(double rad) noexcept {
 	if consteval {
@@ -218,7 +266,9 @@ constexpr double ftan(double rad) noexcept {
 }
 
 // --- matrix builders (explicit element fills, column-vector M*p)
-constexpr mat4 identity() noexcept { return mat4(1.0); } // GLM identity
+constexpr mat4 identity() noexcept {
+	return mat4(1.0);
+} // GLM identity
 constexpr mat4 translation(double x, double y, double z) noexcept {
 	return glm::translate(mat4(1.0), vec3(x, y, z)); // GLM (constexpr on this clang)
 }
@@ -231,7 +281,10 @@ constexpr mat4 rotationX(double t) noexcept {
 	if consteval {
 		mat4 m = identity();
 		const double c = fcos(t), s = fsin(t);
-		m[1][1] = c; m[2][1] = -s; m[1][2] = s; m[2][2] = c;
+		m[1][1] = c;
+		m[2][1] = -s;
+		m[1][2] = s;
+		m[2][2] = c;
 		return m;
 	} else {
 		return glm::rotate(mat4(1.0), t, vec3(1, 0, 0));
@@ -241,7 +294,10 @@ constexpr mat4 rotationY(double t) noexcept {
 	if consteval {
 		mat4 m = identity();
 		const double c = fcos(t), s = fsin(t);
-		m[0][0] = c; m[2][0] = s; m[0][2] = -s; m[2][2] = c;
+		m[0][0] = c;
+		m[2][0] = s;
+		m[0][2] = -s;
+		m[2][2] = c;
 		return m;
 	} else {
 		return glm::rotate(mat4(1.0), t, vec3(0, 1, 0));
@@ -251,13 +307,18 @@ constexpr mat4 rotationZ(double t) noexcept {
 	if consteval {
 		mat4 m = identity();
 		const double c = fcos(t), s = fsin(t);
-		m[0][0] = c; m[1][0] = -s; m[0][1] = s; m[1][1] = c;
+		m[0][0] = c;
+		m[1][0] = -s;
+		m[0][1] = s;
+		m[1][1] = c;
 		return m;
 	} else {
 		return glm::rotate(mat4(1.0), t, vec3(0, 0, 1));
 	}
 }
-constexpr mat4 matmul(const mat4 & a, const mat4 & b) noexcept { return a * b; } // GLM product
+constexpr mat4 matmul(const mat4 & a, const mat4 & b) noexcept {
+	return a * b;
+} // GLM product
 // Babylon mesh.rotation Vector3 (rx,ry,rz) = yaw-pitch-roll, applied YXZ
 constexpr mat4 rotationYPR(double rx, double ry, double rz) noexcept {
 	if consteval {
@@ -266,7 +327,9 @@ constexpr mat4 rotationYPR(double rx, double ry, double rz) noexcept {
 		return glm::yawPitchRoll(ry, rx, rz);
 	}
 }
-constexpr mat4 mul(const mat4 & a, const mat4 & b) noexcept { return matmul(a, b); }
+constexpr mat4 mul(const mat4 & a, const mat4 & b) noexcept {
+	return matmul(a, b);
+}
 
 // left-handed perspective (column-vector: clip = P * viewPos)
 constexpr mat4 perspectiveFovLH(double fov, double aspect, double zn, double zf) noexcept {
@@ -288,14 +351,26 @@ constexpr mat4 perspectiveFovLH(double fov, double aspect, double zn, double zf)
 // left-handed lookAt (column-vector view matrix)
 constexpr mat4 lookAtLH(const vec3 & eye, const vec3 & target, const vec3 & up) noexcept {
 	if consteval {
-		const vec3 z = norm3(sub(target, eye));       // forward, +Z into screen
-		const vec3 x = norm3(cross3(up, z));          // right
-		const vec3 y = cross3(z, x);                   // true up
+		const vec3 z = norm3(sub(target, eye)); // forward, +Z into screen
+		const vec3 x = norm3(cross3(up, z));    // right
+		const vec3 y = cross3(z, x);            // true up
 		mat4 m = identity();
-		m[0][0] = x[0]; m[1][0] = x[1]; m[2][0] = x[2]; m[3][0] = -dot3(x, eye);
-		m[0][1] = y[0]; m[1][1] = y[1]; m[2][1] = y[2]; m[3][1] = -dot3(y, eye);
-		m[0][2] = z[0]; m[1][2] = z[1]; m[2][2] = z[2]; m[3][2] = -dot3(z, eye);
-		m[0][3] = 0; m[1][3] = 0; m[2][3] = 0; m[3][3] = 1;
+		m[0][0] = x[0];
+		m[1][0] = x[1];
+		m[2][0] = x[2];
+		m[3][0] = -dot3(x, eye);
+		m[0][1] = y[0];
+		m[1][1] = y[1];
+		m[2][1] = y[2];
+		m[3][1] = -dot3(y, eye);
+		m[0][2] = z[0];
+		m[1][2] = z[1];
+		m[2][2] = z[2];
+		m[3][2] = -dot3(z, eye);
+		m[0][3] = 0;
+		m[1][3] = 0;
+		m[2][3] = 0;
+		m[3][3] = 1;
 		return m;
 	} else {
 		return glm::lookAtLH(eye, target, up);
@@ -303,7 +378,9 @@ constexpr mat4 lookAtLH(const vec3 & eye, const vec3 & target, const vec3 & up) 
 }
 
 // transform a point (w=1); returns the full vec4 (keep w for the divide)
-constexpr vec4 xform(const mat4 & m, const vec3 & p) noexcept { return m * vec4(p, 1.0); }
+constexpr vec4 xform(const mat4 & m, const vec3 & p) noexcept {
+	return m * vec4(p, 1.0);
+}
 
 // --- geometry
 struct geo {
@@ -326,7 +403,8 @@ struct texture {
 		std::int32_t tx = static_cast<std::int32_t>(uu * w), ty = static_cast<std::int32_t>(vv * h);
 		tx = tx < 0 ? 0 : (tx >= w ? w - 1 : tx);
 		ty = ty < 0 ? 0 : (ty >= h ? h - 1 : ty);
-		return texel[static_cast<std::size_t>(ty) * static_cast<std::size_t>(w) + static_cast<std::size_t>(tx)];
+		return texel[static_cast<std::size_t>(ty) * static_cast<std::size_t>(w) +
+		             static_cast<std::size_t>(tx)];
 	}
 };
 
@@ -336,7 +414,8 @@ struct texture {
 inline std::shared_ptr<texture> decode_texture(const unsigned char * data, std::size_t len) {
 	if (data == nullptr || len == 0) { return nullptr; }
 	std::int32_t tw = 0, th = 0, comp = 0;
-	unsigned char * p = stbi_load_from_memory(data, static_cast<std::int32_t>(len), &tw, &th, &comp, 4);
+	unsigned char * p =
+	    stbi_load_from_memory(data, static_cast<std::int32_t>(len), &tw, &th, &comp, 4);
 	if (p == nullptr || tw <= 0 || th <= 0) {
 		if (p != nullptr) { stbi_image_free(p); }
 		return nullptr;
@@ -358,9 +437,10 @@ inline std::shared_ptr<texture> decode_texture(const unsigned char * data, std::
 constexpr geo make_box(double size) {
 	const double h = size * 0.5;
 	geo g;
-	g.verts = { V3(-h,-h,-h), V3(h,-h,-h), V3(h,h,-h), V3(-h,h,-h),
-	            V3(-h,-h, h), V3(h,-h, h), V3(h,h, h), V3(-h,h, h) };
-	const std::int32_t f[6][4] = { {0,1,2,3}, {5,4,7,6}, {4,0,3,7}, {1,5,6,2}, {3,2,6,7}, {4,5,1,0} };
+	g.verts = {V3(-h, -h, -h), V3(h, -h, -h), V3(h, h, -h), V3(-h, h, -h),
+	           V3(-h, -h, h),  V3(h, -h, h),  V3(h, h, h),  V3(-h, h, h)};
+	const std::int32_t f[6][4] = {{0, 1, 2, 3}, {5, 4, 7, 6}, {4, 0, 3, 7},
+	                              {1, 5, 6, 2}, {3, 2, 6, 7}, {4, 5, 1, 0}};
 	// wound so each face normal points OUTWARD (else backface culling
 	// keeps the interior faces and the cube renders inside-out)
 	for (auto & q : f) {
@@ -376,12 +456,11 @@ constexpr geo make_sphere(double diameter, std::int32_t segments) {
 	const std::int32_t rings = seg, sectors = seg * 2;
 	geo g;
 	for (std::int32_t i = 0; i <= rings; ++i) {
-		const double phi = std::numbers::pi * (double(i) / rings);       // 0..pi
+		const double phi = std::numbers::pi * (double(i) / rings); // 0..pi
 		for (std::int32_t j = 0; j <= sectors; ++j) {
 			const double theta = 2.0 * std::numbers::pi * (double(j) / sectors);
-			g.verts.push_back(V3(rad * fsin(phi) * fcos(theta),
-			                     rad * fcos(phi),
-			                     rad * fsin(phi) * fsin(theta)));
+			g.verts.push_back(
+			    V3(rad * fsin(phi) * fcos(theta), rad * fcos(phi), rad * fsin(phi) * fsin(theta)));
 		}
 	}
 	const std::int32_t stride = sectors + 1;
@@ -398,8 +477,8 @@ constexpr geo make_sphere(double diameter, std::int32_t segments) {
 constexpr geo make_ground(double width, double height) {
 	const double x = width * 0.5, z = height * 0.5;
 	geo g;
-	g.verts = { V3(-x, 0, -z), V3(x, 0, -z), V3(x, 0, z), V3(-x, 0, z) };
-	g.tris = { {0, 2, 1}, {0, 3, 2} }; // wound so the face normal points +Y (up)
+	g.verts = {V3(-x, 0, -z), V3(x, 0, -z), V3(x, 0, z), V3(-x, 0, z)};
+	g.tris = {{0, 2, 1}, {0, 3, 2}}; // wound so the face normal points +Y (up)
 	return g;
 }
 
@@ -416,14 +495,16 @@ constexpr geo make_cylinder(double height, double diameter, std::int32_t tess) {
 		const double a = 2.0 * std::numbers::pi * (double(i) / n);
 		g.verts.push_back(V3(r * fcos(a), -hh, r * fsin(a)));
 	}
-	const std::int32_t topC = static_cast<std::int32_t>(g.verts.size()); g.verts.push_back(V3(0, hh, 0));
-	const std::int32_t botC = static_cast<std::int32_t>(g.verts.size()); g.verts.push_back(V3(0, -hh, 0));
+	const std::int32_t topC = static_cast<std::int32_t>(g.verts.size());
+	g.verts.push_back(V3(0, hh, 0));
+	const std::int32_t botC = static_cast<std::int32_t>(g.verts.size());
+	g.verts.push_back(V3(0, -hh, 0));
 	for (std::int32_t i = 0; i < n; ++i) {
 		const std::int32_t j = (i + 1) % n;
-		g.tris.push_back({top0 + i, bot0 + i, top0 + j});   // side
+		g.tris.push_back({top0 + i, bot0 + i, top0 + j}); // side
 		g.tris.push_back({top0 + j, bot0 + i, bot0 + j});
-		g.tris.push_back({topC, top0 + j, top0 + i});        // top cap
-		g.tris.push_back({botC, bot0 + i, bot0 + j});        // bottom cap
+		g.tris.push_back({topC, top0 + j, top0 + i}); // top cap
+		g.tris.push_back({botC, bot0 + i, bot0 + j}); // bottom cap
 	}
 	return g;
 }
@@ -459,8 +540,7 @@ class renderer {
 public:
 	// rasterize into a raw ARGB8888 span (row-major, stride = w)
 	constexpr void render(uint32_t * px, std::int32_t w, std::int32_t h, const view & vw,
-	            const std::vector<draw_item> & items,
-	            const std::vector<light> & lights) {
+	                      const std::vector<draw_item> & items, const std::vector<light> & lights) {
 		if (px == nullptr || w <= 0 || h <= 0) { return; }
 		const std::size_t n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
 		const uint32_t clear = pack(vw.clear, 1.0);
@@ -470,9 +550,7 @@ public:
 		for (const draw_item & it : items) {
 			if (it.g == nullptr) { continue; }
 			const mat4 mvp = matmul(vw.vp_proj, matmul(vw.vp_view, it.world));
-			for (const auto & tri : it.g->tris) {
-				raster_tri(px, w, h, it, mvp, tri, lights);
-			}
+			for (const auto & tri : it.g->tris) { raster_tri(px, w, h, it, mvp, tri, lights); }
 		}
 	}
 
@@ -485,15 +563,16 @@ private:
 			const vec3 d = norm3(L.direction);
 			if (L.type == light_directional) { // travels along `direction`
 				lit += L.intensity * std::max(0.0, dot3(N, V3(-d[0], -d[1], -d[2])));
-			} else {           // hemispheric: soft sky/ground term about `direction`
+			} else { // hemispheric: soft sky/ground term about `direction`
 				lit += L.intensity * (dot3(N, d) * 0.5 + 0.5);
 			}
 		}
 		return lit < 0 ? 0 : (lit > 1 ? 1 : lit);
 	}
 
-	constexpr void raster_tri(uint32_t * px, std::int32_t w, std::int32_t h, const draw_item & it, const mat4 & mvp,
-	                const std::array<std::int32_t, 3> & tri, const std::vector<light> & lights) {
+	constexpr void raster_tri(uint32_t * px, std::int32_t w, std::int32_t h, const draw_item & it,
+	                          const mat4 & mvp, const std::array<std::int32_t, 3> & tri,
+	                          const std::vector<light> & lights) {
 		const vec3 & p0 = it.g->verts[static_cast<std::size_t>(tri[0])];
 		const vec3 & p1 = it.g->verts[static_cast<std::size_t>(tri[1])];
 		const vec3 & p2 = it.g->verts[static_cast<std::size_t>(tri[2])];
@@ -505,8 +584,8 @@ private:
 		if (c0[3] <= eps || c1[3] <= eps || c2[3] <= eps) { return; } // near-plane guard
 
 		// perspective-correct texture setup: per-vertex 1/w and the triangle's UVs
-		const bool textured = it.tex != nullptr && it.tex->valid() &&
-		                      it.g->uvs.size() == it.g->verts.size();
+		const bool textured =
+		    it.tex != nullptr && it.tex->valid() && it.g->uvs.size() == it.g->verts.size();
 		const double iw0 = 1.0 / c0[3], iw1 = 1.0 / c1[3], iw2 = 1.0 / c2[3];
 		vec2 uv0{}, uv1{}, uv2{};
 		if (textured) {
@@ -524,11 +603,13 @@ private:
 			sz = c[2] * iw;
 		};
 		double x0, y0, z0, x1, y1, z1, x2, y2, z2;
-		scr(c0, x0, y0, z0); scr(c1, x1, y1, z1); scr(c2, x2, y2, z2);
+		scr(c0, x0, y0, z0);
+		scr(c1, x1, y1, z1);
+		scr(c2, x2, y2, z2);
 
 		const double area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
-		if (glm::abs(area) < 1e-9) { return; }             // degenerate
-		if (it.cull && area <= 0) { return; }                // backface (CW in screen space)
+		if (glm::abs(area) < 1e-9) { return; } // degenerate
+		if (it.cull && area <= 0) { return; }  // backface (CW in screen space)
 
 		const vec3 N = norm3(cross3(sub(V3(w1[0], w1[1], w1[2]), V3(w0[0], w0[1], w0[2])),
 		                            sub(V3(w2[0], w2[1], w2[2]), V3(w0[0], w0[1], w0[2]))));
@@ -541,8 +622,10 @@ private:
 		std::int32_t maxx = static_cast<std::int32_t>(fceil(std::max({x0, x1, x2})));
 		std::int32_t miny = static_cast<std::int32_t>(ffloor(std::min({y0, y1, y2})));
 		std::int32_t maxy = static_cast<std::int32_t>(fceil(std::max({y0, y1, y2})));
-		minx = std::max(minx, 0); miny = std::max(miny, 0);
-		maxx = std::min(maxx, w - 1); maxy = std::min(maxy, h - 1);
+		minx = std::max(minx, 0);
+		miny = std::max(miny, 0);
+		maxx = std::min(maxx, w - 1);
+		maxy = std::min(maxy, h - 1);
 		const double inv = 1.0 / area;
 
 		for (std::int32_t py = miny; py <= maxy; ++py) {
@@ -554,7 +637,8 @@ private:
 				if (b0 < 0 || b1 < 0 || b2 < 0) { continue; }
 				const double depth = b0 * z0 + b1 * z1 + b2 * z2;
 				if (depth < 0 || depth > 1) { continue; }
-				const std::size_t idx = static_cast<std::size_t>(py) * static_cast<std::size_t>(w) + static_cast<std::size_t>(pxi);
+				const std::size_t idx = static_cast<std::size_t>(py) * static_cast<std::size_t>(w) +
+				                        static_cast<std::size_t>(pxi);
 				if (depth >= zbuf_[idx]) { continue; }
 				uint32_t out = color;
 				if (textured) {
@@ -576,7 +660,9 @@ private:
 		}
 	}
 
-	static constexpr vec4 mvp_point(const mat4 & mvp, const vec3 & p) noexcept { return xform(mvp, p); }
+	static constexpr vec4 mvp_point(const mat4 & mvp, const vec3 & p) noexcept {
+		return xform(mvp, p);
+	}
 };
 
 } // namespace r3d
@@ -595,11 +681,18 @@ struct jval;
 using jarr = std::vector<jval>;
 using jobj = std::vector<std::pair<std::string, jval>>;
 struct jval {
-	enum kind { nul, boolean, number, string, array, object } k = nul;
+	enum kind {
+		nul,
+		boolean,
+		number,
+		string,
+		array,
+		object
+	} k = nul;
 	double num = 0;
 	bool boo = false;
 	std::string str;
-	std::unique_ptr<jarr> arr;   // unique_ptr is constexpr (shared_ptr is not)
+	std::unique_ptr<jarr> arr; // unique_ptr is constexpr (shared_ptr is not)
 	std::unique_ptr<jobj> obj;
 
 	// move-only; the destructor is defined OUT OF LINE (below) where the
@@ -614,7 +707,9 @@ struct jval {
 
 	constexpr const jval * get(std::string_view key) const {
 		if (k != object || !obj) { return nullptr; }
-		for (const auto & kv : *obj) { if (kv.first == key) { return &kv.second; } }
+		for (const auto & kv : *obj) {
+			if (kv.first == key) { return &kv.second; }
+		}
 		return nullptr;
 	}
 	// unchecked: callers index only valid array positions (sizes guarded)
@@ -623,7 +718,9 @@ struct jval {
 		return k == array && arr ? arr->size() : (k == object && obj ? obj->size() : 0);
 	}
 	constexpr double as_num(double d = 0) const { return k == number ? num : d; }
-	constexpr std::int32_t as_int(std::int32_t d = 0) const { return k == number ? static_cast<std::int32_t>(num) : d; }
+	constexpr std::int32_t as_int(std::int32_t d = 0) const {
+		return k == number ? static_cast<std::int32_t>(num) : d;
+	}
 	constexpr std::string as_str() const { return k == string ? str : std::string{}; }
 };
 // jarr (vector<jval>) and jobj are complete here -> the unique_ptr member
@@ -633,20 +730,40 @@ constexpr jval::~jval() = default;
 // constexpr helpers (std::strtod/memcpy/memcmp/to_string aren't constexpr)
 constexpr double parse_double(const char * s, const char * e) noexcept {
 	double sign = 1.0;
-	if (s < e && *s == '-') { sign = -1.0; ++s; } else if (s < e && *s == '+') { ++s; }
+	if (s < e && *s == '-') {
+		sign = -1.0;
+		++s;
+	} else if (s < e && *s == '+') {
+		++s;
+	}
 	double val = 0.0;
-	while (s < e && *s >= '0' && *s <= '9') { val = val * 10.0 + (*s - '0'); ++s; }
+	while (s < e && *s >= '0' && *s <= '9') {
+		val = val * 10.0 + (*s - '0');
+		++s;
+	}
 	if (s < e && *s == '.') {
 		++s;
 		double f = 0.1;
-		while (s < e && *s >= '0' && *s <= '9') { val += (*s - '0') * f; f *= 0.1; ++s; }
+		while (s < e && *s >= '0' && *s <= '9') {
+			val += (*s - '0') * f;
+			f *= 0.1;
+			++s;
+		}
 	}
 	if (s < e && (*s == 'e' || *s == 'E')) {
 		++s;
 		std::int32_t esign = 1;
-		if (s < e && *s == '-') { esign = -1; ++s; } else if (s < e && *s == '+') { ++s; }
+		if (s < e && *s == '-') {
+			esign = -1;
+			++s;
+		} else if (s < e && *s == '+') {
+			++s;
+		}
 		std::int32_t ex = 0;
-		while (s < e && *s >= '0' && *s <= '9') { ex = ex * 10 + (*s - '0'); ++s; }
+		while (s < e && *s >= '0' && *s <= '9') {
+			ex = ex * 10 + (*s - '0');
+			++s;
+		}
 		double pw = 1.0;
 		for (std::int32_t i = 0; i < ex; ++i) { pw *= 10.0; }
 		val = esign > 0 ? val * pw : val / pw;
@@ -657,29 +774,60 @@ constexpr uint32_t read_u32le(const unsigned char * p) noexcept {
 	return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
 	       (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
 }
-constexpr float read_f32le(const unsigned char * p) noexcept { return std::bit_cast<float>(read_u32le(p)); }
+constexpr float read_f32le(const unsigned char * p) noexcept {
+	return std::bit_cast<float>(read_u32le(p));
+}
 constexpr std::string cstr_int(std::size_t v) {
 	if (v == 0) { return "0"; }
 	std::string r;
-	while (v != 0) { r += static_cast<char>('0' + v % 10); v /= 10; }
-	for (std::size_t i = 0, j = r.size() - 1; i < j; ++i, --j) { const char t = r[i]; r[i] = r[j]; r[j] = t; }
+	while (v != 0) {
+		r += static_cast<char>('0' + v % 10);
+		v /= 10;
+	}
+	for (std::size_t i = 0, j = r.size() - 1; i < j; ++i, --j) {
+		const char t = r[i];
+		r[i] = r[j];
+		r[j] = t;
+	}
 	return r;
 }
 
 struct jparser {
 	const char * p;
 	const char * e;
-	constexpr void ws() { while (p < e && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) { ++p; } }
+	constexpr void ws() {
+		while (p < e && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) { ++p; }
+	}
 	constexpr jval value() {
 		ws();
 		if (p >= e) { return {}; }
 		const char c = *p;
 		if (c == '{') { return object(); }
 		if (c == '[') { return array(); }
-		if (c == '"') { jval v; v.k = jval::string; v.str = str(); return v; }
-		if (c == 't') { p += 4; jval v; v.k = jval::boolean; v.boo = true; return v; }
-		if (c == 'f') { p += 5; jval v; v.k = jval::boolean; v.boo = false; return v; }
-		if (c == 'n') { p += 4; return {}; }
+		if (c == '"') {
+			jval v;
+			v.k = jval::string;
+			v.str = str();
+			return v;
+		}
+		if (c == 't') {
+			p += 4;
+			jval v;
+			v.k = jval::boolean;
+			v.boo = true;
+			return v;
+		}
+		if (c == 'f') {
+			p += 5;
+			jval v;
+			v.k = jval::boolean;
+			v.boo = false;
+			return v;
+		}
+		if (c == 'n') {
+			p += 4;
+			return {};
+		}
 		return number();
 	}
 	constexpr std::string str() {
@@ -690,23 +838,31 @@ struct jparser {
 			if (c == '\\' && p < e) {
 				const char x = *p++;
 				switch (x) {
-					case 'n': s += '\n'; break;
-					case 't': s += '\t'; break;
-					case 'r': s += '\r'; break;
-					case 'b': s += '\b'; break;
-					case 'f': s += '\f'; break;
-					case 'u': {
-						std::uint32_t cp = 0;
-						for (std::int32_t i = 0; i < 4 && p < e; ++i) {
-							const char h = *p++;
-							cp = cp * 16 + static_cast<std::uint32_t>(h <= '9' ? h - '0' : (h | 0x20) - 'a' + 10);
-						}
-						if (cp < 0x80) { s += static_cast<char>(cp); }
-						else if (cp < 0x800) { s += static_cast<char>(0xC0 | (cp >> 6)); s += static_cast<char>(0x80 | (cp & 0x3F)); }
-						else { s += static_cast<char>(0xE0 | (cp >> 12)); s += static_cast<char>(0x80 | ((cp >> 6) & 0x3F)); s += static_cast<char>(0x80 | (cp & 0x3F)); }
-						break;
+				case 'n': s += '\n'; break;
+				case 't': s += '\t'; break;
+				case 'r': s += '\r'; break;
+				case 'b': s += '\b'; break;
+				case 'f': s += '\f'; break;
+				case 'u': {
+					std::uint32_t cp = 0;
+					for (std::int32_t i = 0; i < 4 && p < e; ++i) {
+						const char h = *p++;
+						cp = cp * 16 +
+						     static_cast<std::uint32_t>(h <= '9' ? h - '0' : (h | 0x20) - 'a' + 10);
 					}
-					default: s += x;
+					if (cp < 0x80) {
+						s += static_cast<char>(cp);
+					} else if (cp < 0x800) {
+						s += static_cast<char>(0xC0 | (cp >> 6));
+						s += static_cast<char>(0x80 | (cp & 0x3F));
+					} else {
+						s += static_cast<char>(0xE0 | (cp >> 12));
+						s += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+						s += static_cast<char>(0x80 | (cp & 0x3F));
+					}
+					break;
+				}
+				default: s += x;
 				}
 			} else {
 				s += c;
@@ -718,26 +874,49 @@ struct jparser {
 	constexpr jval number() {
 		const char * s = p;
 		while (p < e && (*p == '-' || *p == '+' || *p == '.' || *p == 'e' || *p == 'E' ||
-		                 (*p >= '0' && *p <= '9'))) { ++p; }
+		                 (*p >= '0' && *p <= '9'))) {
+			++p;
+		}
 		jval v;
 		v.k = jval::number;
 		v.num = parse_double(s, p);
 		return v;
 	}
 	constexpr jval array() {
-		jval v; v.k = jval::array; v.arr = std::make_unique<jarr>(); ++p; ws();
-		if (p < e && *p == ']') { ++p; return v; }
+		jval v;
+		v.k = jval::array;
+		v.arr = std::make_unique<jarr>();
+		++p;
+		ws();
+		if (p < e && *p == ']') {
+			++p;
+			return v;
+		}
 		while (p < e) {
-			v.arr->push_back(value()); ws();
-			if (p < e && *p == ',') { ++p; continue; }
-			if (p < e && *p == ']') { ++p; break; }
+			v.arr->push_back(value());
+			ws();
+			if (p < e && *p == ',') {
+				++p;
+				continue;
+			}
+			if (p < e && *p == ']') {
+				++p;
+				break;
+			}
 			break;
 		}
 		return v;
 	}
 	constexpr jval object() {
-		jval v; v.k = jval::object; v.obj = std::make_unique<jobj>(); ++p; ws();
-		if (p < e && *p == '}') { ++p; return v; }
+		jval v;
+		v.k = jval::object;
+		v.obj = std::make_unique<jobj>();
+		++p;
+		ws();
+		if (p < e && *p == '}') {
+			++p;
+			return v;
+		}
 		while (p < e) {
 			ws();
 			std::string key = str();
@@ -746,8 +925,14 @@ struct jparser {
 			jval val = value();
 			v.obj->emplace_back(std::move(key), std::move(val));
 			ws();
-			if (p < e && *p == ',') { ++p; continue; }
-			if (p < e && *p == '}') { ++p; break; }
+			if (p < e && *p == ',') {
+				++p;
+				continue;
+			}
+			if (p < e && *p == '}') {
+				++p;
+				break;
+			}
 			break;
 		}
 		return v;
@@ -762,7 +947,11 @@ constexpr jval json_parse(std::string_view s) {
 // --- the parsed model
 // base defaults to WHITE (the glTF baseColorFactor default) so a baseColor
 // TEXTURE is sampled untinted; base_tex indexes model.textures (-1 = none).
-struct material { std::string name; r3d::rgba base{1, 1, 1, 1}; std::int32_t base_tex = -1; };
+struct material {
+	std::string name;
+	r3d::rgba base{1, 1, 1, 1};
+	std::int32_t base_tex = -1;
+};
 struct primitive {
 	std::vector<r3d::vec3> verts;
 	std::vector<std::array<std::int32_t, 3>> tris;
@@ -786,7 +975,8 @@ constexpr r3d::mat4 node_matrix(const jval & node) {
 		if (m->size() == 16) {
 			r3d::mat4 M = r3d::identity();
 			for (std::int32_t c = 0; c < 4; ++c)
-				for (std::int32_t r = 0; r < 4; ++r) M[c][r] = (*m)[static_cast<std::size_t>(c * 4 + r)].as_num();
+				for (std::int32_t r = 0; r < 4; ++r)
+					M[c][r] = (*m)[static_cast<std::size_t>(c * 4 + r)].as_num();
 			return M;
 		}
 	}
@@ -797,17 +987,26 @@ constexpr r3d::mat4 node_matrix(const jval & node) {
 		S = r3d::scaling((*s)[0].as_num(1), (*s)[1].as_num(1), (*s)[2].as_num(1));
 	if (const jval * q = node.get("rotation"); q != nullptr && q->size() >= 4) {
 		// quaternion (x,y,z,w) -> rotation matrix
-		const double x = (*q)[0].as_num(), y = (*q)[1].as_num(), z = (*q)[2].as_num(), w = (*q)[3].as_num(1);
-		R[0][0] = 1 - 2 * (y * y + z * z); R[1][0] = 2 * (x * y - z * w); R[2][0] = 2 * (x * z + y * w);
-		R[0][1] = 2 * (x * y + z * w); R[1][1] = 1 - 2 * (x * x + z * z); R[2][1] = 2 * (y * z - x * w);
-		R[0][2] = 2 * (x * z - y * w); R[1][2] = 2 * (y * z + x * w); R[2][2] = 1 - 2 * (x * x + y * y);
+		const double x = (*q)[0].as_num(), y = (*q)[1].as_num(), z = (*q)[2].as_num(),
+		             w = (*q)[3].as_num(1);
+		R[0][0] = 1 - 2 * (y * y + z * z);
+		R[1][0] = 2 * (x * y - z * w);
+		R[2][0] = 2 * (x * z + y * w);
+		R[0][1] = 2 * (x * y + z * w);
+		R[1][1] = 1 - 2 * (x * x + z * z);
+		R[2][1] = 2 * (y * z - x * w);
+		R[0][2] = 2 * (x * z - y * w);
+		R[1][2] = 2 * (y * z + x * w);
+		R[2][2] = 1 - 2 * (x * x + y * y);
 	}
 	return r3d::matmul(T, r3d::matmul(R, S));
 }
 
 constexpr model parse_glb(const unsigned char * data, std::size_t len) {
 	model out;
-	if (len < 20 || !(data[0] == 'g' && data[1] == 'l' && data[2] == 'T' && data[3] == 'F')) { return out; }
+	if (len < 20 || !(data[0] == 'g' && data[1] == 'l' && data[2] == 'T' && data[3] == 'F')) {
+		return out;
+	}
 	auto rd32 = [&](std::size_t o) { return read_u32le(data + o); };
 	const uint32_t jlen = rd32(12);
 	const std::string json_str(data + 20, data + 20 + jlen); // char copy (no reinterpret_cast)
@@ -822,7 +1021,9 @@ constexpr model parse_glb(const unsigned char * data, std::size_t len) {
 	const jval * meshes = doc.get("meshes");
 	const jval * nodes = doc.get("nodes");
 	const jval * mats = doc.get("materials");
-	if (accessors == nullptr || bufferViews == nullptr || meshes == nullptr || nodes == nullptr) { return out; }
+	if (accessors == nullptr || bufferViews == nullptr || meshes == nullptr || nodes == nullptr) {
+		return out;
+	}
 
 	if (mats != nullptr) {
 		for (std::size_t i = 0; i < mats->size(); ++i) {
@@ -855,12 +1056,19 @@ constexpr model parse_glb(const unsigned char * data, std::size_t len) {
 			if (images != nullptr && src != nullptr) {
 				const std::int32_t im = src->as_int();
 				if (im >= 0 && im < static_cast<std::int32_t>(images->size())) {
-					if (const jval * bvj = (*images)[static_cast<std::size_t>(im)].get("bufferView")) {
+					if (const jval * bvj =
+					        (*images)[static_cast<std::size_t>(im)].get("bufferView")) {
 						const std::int32_t bvi = bvj->as_int();
 						if (bvi >= 0 && bvi < static_cast<std::int32_t>(bufferViews->size())) {
 							const jval & bv = (*bufferViews)[static_cast<std::size_t>(bvi)];
-							const std::size_t bo = bv.get("byteOffset") ? static_cast<std::size_t>(bv.get("byteOffset")->as_num()) : 0;
-							const std::size_t bl = bv.get("byteLength") ? static_cast<std::size_t>(bv.get("byteLength")->as_num()) : 0;
+							const std::size_t bo =
+							    bv.get("byteOffset")
+							        ? static_cast<std::size_t>(bv.get("byteOffset")->as_num())
+							        : 0;
+							const std::size_t bl =
+							    bv.get("byteLength")
+							        ? static_cast<std::size_t>(bv.get("byteLength")->as_num())
+							        : 0;
 							bytes.assign(bin + bo, bin + bo + bl);
 						}
 					}
@@ -870,18 +1078,24 @@ constexpr model parse_glb(const unsigned char * data, std::size_t len) {
 		}
 	}
 
-	auto acc_view = [&](std::int32_t acc, std::size_t & count, std::size_t & stride, std::int32_t & ctype) -> const unsigned char * {
-		count = 0; stride = 0; ctype = 5126;
+	auto acc_view = [&](std::int32_t acc, std::size_t & count, std::size_t & stride,
+	                    std::int32_t & ctype) -> const unsigned char * {
+		count = 0;
+		stride = 0;
+		ctype = 5126;
 		if (acc < 0 || acc >= static_cast<std::int32_t>(accessors->size())) { return nullptr; }
 		const jval & a = (*accessors)[static_cast<std::size_t>(acc)];
 		count = static_cast<std::size_t>(a.get("count") ? a.get("count")->as_num() : 0);
 		ctype = a.get("componentType") ? a.get("componentType")->as_int() : 5126;
 		const std::int32_t bvi = a.get("bufferView") ? a.get("bufferView")->as_int() : 0;
 		if (bvi < 0 || bvi >= static_cast<std::int32_t>(bufferViews->size())) { return nullptr; }
-		const std::size_t aoff = a.get("byteOffset") ? static_cast<std::size_t>(a.get("byteOffset")->as_num()) : 0;
+		const std::size_t aoff =
+		    a.get("byteOffset") ? static_cast<std::size_t>(a.get("byteOffset")->as_num()) : 0;
 		const jval & bv = (*bufferViews)[static_cast<std::size_t>(bvi)];
-		const std::size_t boff = bv.get("byteOffset") ? static_cast<std::size_t>(bv.get("byteOffset")->as_num()) : 0;
-		stride = bv.get("byteStride") ? static_cast<std::size_t>(bv.get("byteStride")->as_num()) : 0;
+		const std::size_t boff =
+		    bv.get("byteOffset") ? static_cast<std::size_t>(bv.get("byteOffset")->as_num()) : 0;
+		stride =
+		    bv.get("byteStride") ? static_cast<std::size_t>(bv.get("byteStride")->as_num()) : 0;
 		return bin + boff + aoff;
 	};
 
@@ -898,27 +1112,35 @@ constexpr model parse_glb(const unsigned char * data, std::size_t len) {
 		for (std::size_t pi = 0; pi < prims->size(); ++pi) {
 			const jval & pr = (*prims)[pi];
 			const jval * attr = pr.get("attributes");
-			if (attr == nullptr || attr->get("POSITION") == nullptr || pr.get("indices") == nullptr) { continue; }
+			if (attr == nullptr || attr->get("POSITION") == nullptr ||
+			    pr.get("indices") == nullptr) {
+				continue;
+			}
 			primitive out_p;
 			out_p.node_name = node.get("name") ? node.get("name")->as_str() : "";
 			out_p.material = pr.get("material") ? pr.get("material")->as_int() : -1;
 
 			// POSITION (VEC3 float), transformed by the node matrix
-			std::size_t vcount, vstride; std::int32_t vtype;
-			const unsigned char * vp = acc_view(attr->get("POSITION")->as_int(), vcount, vstride, vtype);
+			std::size_t vcount, vstride;
+			std::int32_t vtype;
+			const unsigned char * vp =
+			    acc_view(attr->get("POSITION")->as_int(), vcount, vstride, vtype);
 			if (vp == nullptr) { continue; }
 			if (vstride == 0) { vstride = 12; }
 			out_p.verts.reserve(vcount);
 			for (std::size_t i = 0; i < vcount; ++i) {
 				const r3d::vec4 w = r3d::xform(xf, r3d::V3(read_f32le(vp + i * vstride),
-				                                          read_f32le(vp + i * vstride + 4),
-				                                          read_f32le(vp + i * vstride + 8)));
+				                                           read_f32le(vp + i * vstride + 4),
+				                                           read_f32le(vp + i * vstride + 8)));
 				// glTF is right-handed (+Z toward the viewer); this renderer is
 				// left-handed (+Z into the screen). Negate Z (and flip the triangle
 				// winding below) to convert - otherwise models face backwards.
 				const r3d::vec3 v = r3d::V3(w[0], w[1], -w[2]);
 				out_p.verts.push_back(v);
-				if (first) { out.bmin = out.bmax = v; first = false; }
+				if (first) {
+					out.bmin = out.bmax = v;
+					first = false;
+				}
 				for (std::int32_t c = 0; c < 3; ++c) {
 					out.bmin[c] = std::min(out.bmin[c], v[c]);
 					out.bmax[c] = std::max(out.bmax[c], v[c]);
@@ -927,35 +1149,45 @@ constexpr model parse_glb(const unsigned char * data, std::size_t len) {
 			// TEXCOORD_0 (VEC2) -> per-vertex UVs, parallel to verts. Float, or
 			// normalized ubyte/ushort per the glTF accessor's componentType.
 			if (const jval * tc = attr->get("TEXCOORD_0")) {
-				std::size_t tcount, tstride; std::int32_t ttype;
+				std::size_t tcount, tstride;
+				std::int32_t ttype;
 				const unsigned char * tp = acc_view(tc->as_int(), tcount, tstride, ttype);
 				if (tp != nullptr) {
-					const std::size_t st = tstride != 0 ? tstride
-					                  : (ttype == 5126 ? 8u : (ttype == 5123 ? 4u : 2u));
+					const std::size_t st =
+					    tstride != 0 ? tstride : (ttype == 5126 ? 8u : (ttype == 5123 ? 4u : 2u));
 					out_p.uvs.reserve(tcount);
 					for (std::size_t i = 0; i < tcount; ++i) {
 						const unsigned char * e = tp + i * st;
 						double u = 0, v = 0;
-						if (ttype == 5126) { u = read_f32le(e); v = read_f32le(e + 4); }
-						else if (ttype == 5123) {
+						if (ttype == 5126) {
+							u = read_f32le(e);
+							v = read_f32le(e + 4);
+						} else if (ttype == 5123) {
 							u = (e[0] | (e[1] << 8)) / 65535.0;
 							v = (e[2] | (e[3] << 8)) / 65535.0;
-						} else { u = e[0] / 255.0; v = e[1] / 255.0; }
+						} else {
+							u = e[0] / 255.0;
+							v = e[1] / 255.0;
+						}
 						out_p.uvs.push_back(r3d::V2(u, v));
 					}
 				}
 			}
 
 			// indices (ubyte/ushort/uint) -> triangles
-			std::size_t icount, istride; std::int32_t itype;
-			const unsigned char * ip = acc_view(pr.get("indices")->as_int(), icount, istride, itype);
+			std::size_t icount, istride;
+			std::int32_t itype;
+			const unsigned char * ip =
+			    acc_view(pr.get("indices")->as_int(), icount, istride, itype);
 			if (ip == nullptr) { continue; }
 			const std::size_t comp = itype == 5121 ? 1 : (itype == 5123 ? 2 : 4);
 			std::vector<std::int32_t> idx;
 			idx.reserve(icount);
 			for (std::size_t i = 0; i < icount; ++i) {
 				uint32_t v = 0;
-				for (std::size_t b = 0; b < comp; ++b) { v |= static_cast<uint32_t>(ip[i * comp + b]) << (8 * b); }
+				for (std::size_t b = 0; b < comp; ++b) {
+					v |= static_cast<uint32_t>(ip[i * comp + b]) << (8 * b);
+				}
 				idx.push_back(static_cast<std::int32_t>(v));
 			}
 			for (std::size_t i = 0; i + 2 < idx.size(); i += 3) {
@@ -1003,8 +1235,7 @@ using ctbrowser::detail::set_method;
 // the babylon-shaped readers stay here - they speak r3d types
 inline r3d::vec3 read_vec3(const objptr & o, r3d::vec3 dflt) {
 	if (!o) { return dflt; }
-	return r3d::V3(num_prop(o, "x", dflt[0]), num_prop(o, "y", dflt[1]),
-	               num_prop(o, "z", dflt[2]));
+	return r3d::V3(num_prop(o, "x", dflt[0]), num_prop(o, "y", dflt[1]), num_prop(o, "z", dflt[2]));
 }
 inline r3d::rgba read_color(const objptr & o, r3d::rgba dflt) {
 	if (!o) { return dflt; }
@@ -1024,31 +1255,41 @@ struct mesh_rec {
 	bool cull = true;
 	bool disposed = false;
 	bool enabled = true;
-	std::vector<observer> before_render;   // mesh.onBeforeRenderObservable
-	std::int32_t scene_id = -1;                     // owning scene (for clone/createInstance)
-	bool frozen_world = false;             // freezeWorldMatrix: use frozen_matrix, ignore live transforms
-	r3d::mat4 frozen_matrix{};             // the world matrix captured at freeze time
-	bool has_pivot = false;                // setPivotPoint: rotate/scale about `pivot`
+	std::vector<observer> before_render; // mesh.onBeforeRenderObservable
+	std::int32_t scene_id = -1;          // owning scene (for clone/createInstance)
+	bool frozen_world = false; // freezeWorldMatrix: use frozen_matrix, ignore live transforms
+	r3d::mat4 frozen_matrix{}; // the world matrix captured at freeze time
+	bool has_pivot = false;    // setPivotPoint: rotate/scale about `pivot`
 	r3d::vec3 pivot{};
-	std::shared_ptr<r3d::texture> tex{};   // glTF baseColor texture (shared across clones)
+	std::shared_ptr<r3d::texture> tex{}; // glTF baseColor texture (shared across clones)
 };
-struct light_rec { objptr handle; std::int32_t type; }; // r3d::light_hemispheric | _directional
+struct light_rec {
+	objptr handle;
+	std::int32_t type;
+}; // r3d::light_hemispheric | _directional
 // which camera model a camera_rec drives (internal: no aggregate-init
 // contract with the tests, so this one gets to be a real enum)
-enum class camera_kind : std::int32_t { arc_rotate, free_look };
-struct camera_rec { objptr handle; camera_kind kind; bool attached = false; };
+enum class camera_kind : std::int32_t {
+	arc_rotate,
+	free_look
+};
+struct camera_rec {
+	objptr handle;
+	camera_kind kind;
+	bool attached = false;
+};
 struct scene_rec {
 	objptr handle;
 	std::vector<std::int32_t> mesh_ids, light_ids;
 	std::int32_t active_camera = -1;
 	std::vector<std::pair<std::string, objptr>> materials; // for getMaterialById
-	r3d::vec3 bmin{}, bmax{}; // model bounds (for createDefaultCamera)
+	r3d::vec3 bmin{}, bmax{};                              // model bounds (for createDefaultCamera)
 	bool has_bounds = false;
-	std::vector<observer> before_render;  // scene.onBeforeRenderObservable
-	std::vector<observer> after_render;   // scene.registerAfterRender / onAfterRenderObservable
-	std::vector<objptr> glow_layers;      // GlowLayer instances (additive bloom post-FX)
-	std::vector<objptr> action_managers;  // scene ActionManagers (OnEveryFrameTrigger)
-	bool active_meshes_frozen = false;    // freezeActiveMeshes (API-fidelity flag; no cull cache here)
+	std::vector<observer> before_render; // scene.onBeforeRenderObservable
+	std::vector<observer> after_render;  // scene.registerAfterRender / onAfterRenderObservable
+	std::vector<objptr> glow_layers;     // GlowLayer instances (additive bloom post-FX)
+	std::vector<objptr> action_managers; // scene ActionManagers (OnEveryFrameTrigger)
+	bool active_meshes_frozen = false; // freezeActiveMeshes (API-fidelity flag; no cull cache here)
 	double delta_ms = 16.6;
 };
 struct world {
@@ -1063,8 +1304,8 @@ struct world {
 	objptr engine_handle; // the BABYLON.Engine JS handle (scene.getEngine())
 	bool loop_active = false;
 	double prev_ms = 0, last_dt_ms = 16.6;
-	std::int32_t next_obs = 1;    // Observable observer-id counter
-	std::int32_t next_uid = 1;    // uniqueId / getUniqueId counter
+	std::int32_t next_obs = 1;                             // Observable observer-id counter
+	std::int32_t next_uid = 1;                             // uniqueId / getUniqueId counter
 	std::uint32_t rng = 0x2545F4914F6CDD1Du & 0xffffffffu; // Scalar.RandomRange PRNG
 	std::vector<objptr> guis;    // AdvancedDynamicTextures - rendered as a 2D overlay
 	std::vector<objptr> sprites; // Sprites (starfield) - projected + drawn as quads
@@ -1081,9 +1322,13 @@ inline value make_observable(const worldptr & W, std::int32_t id, bool is_mesh) 
 	auto o = objptr::make();
 	const auto sink = [W, id, is_mesh]() -> std::vector<observer> * {
 		if (is_mesh) {
-			return (id >= 0 && id < static_cast<std::int32_t>(W->meshes.size())) ? &W->meshes[static_cast<std::size_t>(id)].before_render : nullptr;
+			return (id >= 0 && id < static_cast<std::int32_t>(W->meshes.size()))
+			           ? &W->meshes[static_cast<std::size_t>(id)].before_render
+					   : nullptr;
 		}
-		return (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) ? &W->scenes[static_cast<std::size_t>(id)].before_render : nullptr;
+		return (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size()))
+		           ? &W->scenes[static_cast<std::size_t>(id)].before_render
+				   : nullptr;
 	};
 	set_method(o, "add", [W, sink](ctjs::context &, const std::vector<value> & a) -> value {
 		std::vector<observer> * v = sink();
@@ -1096,10 +1341,14 @@ inline value make_observable(const worldptr & W, std::int32_t id, bool is_mesh) 
 	});
 	set_method(o, "remove", [sink](ctjs::context &, const std::vector<value> & a) -> value {
 		std::vector<observer> * v = sink();
-		const std::int32_t oid = (!a.empty() && a[0].is_object()) ? index_of(a[0].as_object(), "__obs_id") : -1;
+		const std::int32_t oid =
+		    (!a.empty() && a[0].is_object()) ? index_of(a[0].as_object(), "__obs_id") : -1;
 		if (v != nullptr && oid >= 0) {
 			for (std::size_t k = 0; k < v->size(); ++k) {
-				if ((*v)[k].id == oid) { v->erase(v->begin() + static_cast<std::ptrdiff_t>(k)); break; }
+				if ((*v)[k].id == oid) {
+					v->erase(v->begin() + static_cast<std::ptrdiff_t>(k));
+					break;
+				}
 			}
 		}
 		return value{true};
@@ -1124,9 +1373,11 @@ inline value make_dead_observable() {
 		obs->set("__obs_id", value{0.0});
 		return value{obs};
 	});
-	set_method(o, "remove", [](ctjs::context &, const std::vector<value> &) { return value{true}; });
+	set_method(o, "remove",
+	           [](ctjs::context &, const std::vector<value> &) { return value{true}; });
 	set_method(o, "clear", [](ctjs::context &, const std::vector<value> &) { return value{}; });
-	set_method(o, "hasObservers", [](ctjs::context &, const std::vector<value> &) { return value{false}; });
+	set_method(o, "hasObservers",
+	           [](ctjs::context &, const std::vector<value> &) { return value{false}; });
 	return value{o};
 }
 
@@ -1135,13 +1386,15 @@ inline value make_dead_observable() {
 // meshes mid-iteration.
 inline void fire_before_render(const worldptr & W, std::int32_t scene_id, ctjs::context & cx) {
 	if (scene_id < 0 || scene_id >= static_cast<std::int32_t>(W->scenes.size())) { return; }
-	const std::vector<observer> scene_cbs = W->scenes[static_cast<std::size_t>(scene_id)].before_render;
+	const std::vector<observer> scene_cbs =
+	    W->scenes[static_cast<std::size_t>(scene_id)].before_render;
 	for (const observer & ob : scene_cbs) { ctjs::call_value(cx, ob.cb, {}); }
 	const std::vector<std::int32_t> ids = W->scenes[static_cast<std::size_t>(scene_id)].mesh_ids;
 	for (std::int32_t mi : ids) {
 		if (mi < 0 || mi >= static_cast<std::int32_t>(W->meshes.size())) { continue; }
 		if (W->meshes[static_cast<std::size_t>(mi)].disposed) { continue; }
-		const std::vector<observer> mesh_cbs = W->meshes[static_cast<std::size_t>(mi)].before_render;
+		const std::vector<observer> mesh_cbs =
+		    W->meshes[static_cast<std::size_t>(mi)].before_render;
 		for (const observer & ob : mesh_cbs) { ctjs::call_value(cx, ob.cb, {}); }
 	}
 }
@@ -1192,8 +1445,11 @@ inline value make_vector3(double x, double y, double z) {
 	o->set("z", value{z});
 	set_method(o, "set", [](ctjs::context & cx, const std::vector<value> & a) -> value {
 		objptr s = self_of(cx);
-		if (s) { s->set("x", value{arg_num(a, 0, 0)}); s->set("y", value{arg_num(a, 1, 0)});
-		s->set("z", value{arg_num(a, 2, 0)}); }
+		if (s) {
+			s->set("x", value{arg_num(a, 0, 0)});
+			s->set("y", value{arg_num(a, 1, 0)});
+			s->set("z", value{arg_num(a, 2, 0)});
+		}
 		return cx.current_this;
 	});
 	set_method(o, "clone", [](ctjs::context & cx, const std::vector<value> &) -> value {
@@ -1217,12 +1473,16 @@ inline value make_vector3(double x, double y, double z) {
 	});
 	set_method(o, "length", [](ctjs::context & cx, const std::vector<value> &) -> value {
 		const r3d::vec3 s = read_vec3(self_of(cx), r3d::V3(0, 0, 0));
-		return value{std::sqrt(s[0]*s[0] + s[1]*s[1] + s[2]*s[2])};
+		return value{std::sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2])};
 	});
 	set_method(o, "normalize", [](ctjs::context & cx, const std::vector<value> &) -> value {
 		const r3d::vec3 n = r3d::norm3(read_vec3(self_of(cx), r3d::V3(0, 0, 0)));
 		objptr s = self_of(cx);
-		if (s) { s->set("x", value{n[0]}); s->set("y", value{n[1]}); s->set("z", value{n[2]}); }
+		if (s) {
+			s->set("x", value{n[0]});
+			s->set("y", value{n[1]});
+			s->set("z", value{n[2]});
+		}
 		return cx.current_this;
 	});
 	return value{o};
@@ -1237,7 +1497,8 @@ inline value make_color3(double r, double g, double b) {
 	o->set("b", value{b});
 	set_method(o, "toColor4", [](ctjs::context & cx, const std::vector<value> & a) -> value {
 		const objptr s = self_of(cx);
-		return make_color4(num_prop(s, "r", 0), num_prop(s, "g", 0), num_prop(s, "b", 0), arg_num(a, 0, 1));
+		return make_color4(num_prop(s, "r", 0), num_prop(s, "g", 0), num_prop(s, "b", 0),
+		                   arg_num(a, 0, 1));
 	});
 	set_method(o, "clone", [](ctjs::context & cx, const std::vector<value> &) -> value {
 		const objptr s = self_of(cx);
@@ -1246,7 +1507,8 @@ inline value make_color3(double r, double g, double b) {
 	set_method(o, "scale", [](ctjs::context & cx, const std::vector<value> & a) -> value {
 		const objptr s = self_of(cx);
 		const double k = arg_num(a, 0, 1);
-		return make_color3(num_prop(s, "r", 0) * k, num_prop(s, "g", 0) * k, num_prop(s, "b", 0) * k);
+		return make_color3(num_prop(s, "r", 0) * k, num_prop(s, "g", 0) * k,
+		                   num_prop(s, "b", 0) * k);
 	});
 	return value{o};
 }
@@ -1258,7 +1520,8 @@ inline value make_color4(double r, double g, double b, double a) {
 	o->set("a", value{a});
 	set_method(o, "clone", [](ctjs::context & cx, const std::vector<value> &) -> value {
 		const objptr s = self_of(cx);
-		return make_color4(num_prop(s, "r", 0), num_prop(s, "g", 0), num_prop(s, "b", 0), num_prop(s, "a", 1));
+		return make_color4(num_prop(s, "r", 0), num_prop(s, "g", 0), num_prop(s, "b", 0),
+		                   num_prop(s, "a", 1));
 	});
 	set_method(o, "toColor3", [](ctjs::context & cx, const std::vector<value> &) -> value {
 		const objptr s = self_of(cx);
@@ -1277,8 +1540,8 @@ inline void set_static(value & fn, const char * name, value v) {
 // --- the 2D overlay drawn OVER the 3D pass (these were no-op stubs).
 
 // a font8x8 string blitted into the pixel buffer (top-left origin)
-inline void overlay_text(uint32_t * px, std::int32_t w, std::int32_t h, std::int32_t x0, std::int32_t y0, std::string_view s,
-                         std::int32_t scale, uint32_t argb) {
+inline void overlay_text(uint32_t * px, std::int32_t w, std::int32_t h, std::int32_t x0,
+                         std::int32_t y0, std::string_view s, std::int32_t scale, uint32_t argb) {
 	std::int32_t pen = x0;
 	for (std::size_t i = 0; i < s.size();) { // decode UTF-8 -> code points
 		const char32_t ch = ctbrowser::utf8_next(s, i);
@@ -1288,7 +1551,10 @@ inline void overlay_text(uint32_t * px, std::int32_t w, std::int32_t h, std::int
 				for (std::int32_t sy = 0; sy < scale; ++sy) {
 					for (std::int32_t sx = 0; sx < scale; ++sx) {
 						const std::int32_t x = pen + col * scale + sx, y = y0 + row * scale + sy;
-						if (x >= 0 && x < w && y >= 0 && y < h) { px[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)] = argb; }
+						if (x >= 0 && x < w && y >= 0 && y < h) {
+							px[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+							   static_cast<std::size_t>(x)] = argb;
+						}
 					}
 				}
 			}
@@ -1308,7 +1574,9 @@ inline void render_guis(const worldptr & W, uint32_t * px, std::int32_t w, std::
 			const objptr c = cv.as_object();
 			const value * t = c->find("text");
 			if (t == nullptr) { continue; } // TextBlocks carry .text
-			if (const value * vis = c->find("isVisible"); vis != nullptr && !vis->truthy()) { continue; }
+			if (const value * vis = c->find("isVisible"); vis != nullptr && !vis->truthy()) {
+				continue;
+			}
 			const std::string text = t->to_string();
 			if (text.empty()) { continue; }
 			const double fs = num_prop(c, "fontSize", 18);
@@ -1317,9 +1585,12 @@ inline void render_guis(const worldptr & W, uint32_t * px, std::int32_t w, std::
 			if (const value * cc = c->find("color")) {
 				col = ctbrowser::detail::css_to_argb(cc->to_string(), 0xFFFFFFFFu);
 			}
-			const std::int32_t halign = static_cast<std::int32_t>(num_prop(c, "textHorizontalAlignment", 2));
-			const std::int32_t valign = static_cast<std::int32_t>(num_prop(c, "textVerticalAlignment", 2));
-			const std::int32_t tw = static_cast<std::int32_t>(text.size()) * 8 * scale, th = 8 * scale;
+			const std::int32_t halign =
+			    static_cast<std::int32_t>(num_prop(c, "textHorizontalAlignment", 2));
+			const std::int32_t valign =
+			    static_cast<std::int32_t>(num_prop(c, "textVerticalAlignment", 2));
+			const std::int32_t tw = static_cast<std::int32_t>(text.size()) * 8 * scale,
+			                   th = 8 * scale;
 			std::int32_t x = (halign == 0) ? 0 : (halign == 1) ? (w - tw) : (w - tw) / 2;
 			std::int32_t y = (valign == 0) ? 0 : (valign == 1) ? (h - th) : (h - th) / 2;
 			x += static_cast<std::int32_t>(num_prop(c, "left", 0));
@@ -1331,12 +1602,15 @@ inline void render_guis(const worldptr & W, uint32_t * px, std::int32_t w, std::
 
 // Sprites (the starfield): project each 3D position through the camera and draw
 // a screen-space quad in the sprite's colour
-inline void render_sprites(const worldptr & W, uint32_t * px, std::int32_t w, std::int32_t h, const r3d::view & vw) {
+inline void render_sprites(const worldptr & W, uint32_t * px, std::int32_t w, std::int32_t h,
+                           const r3d::view & vw) {
 	if (W->sprites.empty()) { return; }
 	const r3d::mat4 vp = r3d::matmul(vw.vp_proj, vw.vp_view);
 	const double Wd = w, Hd = h;
 	for (const objptr & sp : W->sprites) {
-		if (const value * vis = sp->find("isVisible"); vis != nullptr && !vis->truthy()) { continue; }
+		if (const value * vis = sp->find("isVisible"); vis != nullptr && !vis->truthy()) {
+			continue;
+		}
 		const r3d::vec3 pos = read_vec3(child_obj(sp, "position"), r3d::V3(0, 0, 0));
 		const r3d::vec4 clip = r3d::xform(vp, pos);
 		if (clip[3] <= 1e-6) { continue; } // behind the camera
@@ -1346,7 +1620,8 @@ inline void render_sprites(const worldptr & W, uint32_t * px, std::int32_t w, st
 		if (sx < 0 || sx >= w || sy < 0 || sy >= h) { continue; }
 		const r3d::rgba c = read_color(child_obj(sp, "color"), r3d::rgba{1, 1, 1, 1});
 		// perspective-scaled half-extent (fov 0.8 -> 2*tan(0.4) ~ 0.8455)
-		std::int32_t half = static_cast<std::int32_t>(num_prop(sp, "size", 1.0) * 0.5 * Hd * iw / 0.8455);
+		std::int32_t half =
+		    static_cast<std::int32_t>(num_prop(sp, "size", 1.0) * 0.5 * Hd * iw / 0.8455);
 		half = half < 0 ? 0 : half > 32 ? 32 : half;
 		// draw a soft, additively-blended glowing dot (a bright solid core plus a
 		// quadratic-falloff halo) - this is what the game's star_glow.png sprite
@@ -1371,7 +1646,8 @@ inline void render_sprites(const worldptr & W, uint32_t * px, std::int32_t w, st
 					if (t >= 1.0) { continue; }
 					f = (1.0 - t) * (1.0 - t);
 				}
-				const std::size_t idx = static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x);
+				const std::size_t idx = static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+				                        static_cast<std::size_t>(x);
 				const uint32_t p = px[idx];
 				const uint32_t nr = add((p >> 16) & 0xff, c.r * 255.0 * f);
 				const uint32_t ng = add((p >> 8) & 0xff, c.g * 255.0 * f);
@@ -1396,7 +1672,9 @@ inline void apply_glow(uint32_t * px, std::int32_t w, std::int32_t h, double int
                        const std::vector<uint8_t> * mask = nullptr) {
 	if (intensity <= 0 || w <= 0 || h <= 0) { return; }
 	const std::int32_t n = w * h;
-	const auto at = [w](std::int32_t x, std::int32_t y, std::int32_t c) { return static_cast<std::size_t>((y * w + x) * 3 + c); };
+	const auto at = [w](std::int32_t x, std::int32_t y, std::int32_t c) {
+		return static_cast<std::size_t>((y * w + x) * 3 + c);
+	};
 	std::vector<float> br(static_cast<std::size_t>(n) * 3, 0.0f);
 	const float thr = 0.55f;
 	for (std::int32_t i = 0; i < n; ++i) {
@@ -1419,11 +1697,13 @@ inline void apply_glow(uint32_t * px, std::int32_t w, std::int32_t h, double int
 		for (std::int32_t y = 0; y < h; ++y) { // horizontal
 			for (std::int32_t x = 0; x < w; ++x) {
 				for (std::int32_t c = 0; c < 3; ++c) {
-					float s = 0; std::int32_t cnt = 0;
+					float s = 0;
+					std::int32_t cnt = 0;
 					for (std::int32_t dx = -rad; dx <= rad; ++dx) {
 						const std::int32_t xx = x + dx;
 						if (xx < 0 || xx >= w) { continue; }
-						s += br[at(xx, y, c)]; ++cnt;
+						s += br[at(xx, y, c)];
+						++cnt;
 					}
 					tmp[at(x, y, c)] = s / static_cast<float>(cnt);
 				}
@@ -1432,11 +1712,13 @@ inline void apply_glow(uint32_t * px, std::int32_t w, std::int32_t h, double int
 		for (std::int32_t x = 0; x < w; ++x) { // vertical
 			for (std::int32_t y = 0; y < h; ++y) {
 				for (std::int32_t c = 0; c < 3; ++c) {
-					float s = 0; std::int32_t cnt = 0;
+					float s = 0;
+					std::int32_t cnt = 0;
 					for (std::int32_t dy = -rad; dy <= rad; ++dy) {
 						const std::int32_t yy = y + dy;
 						if (yy < 0 || yy >= h) { continue; }
-						s += tmp[at(x, yy, c)]; ++cnt;
+						s += tmp[at(x, yy, c)];
+						++cnt;
 					}
 					br[at(x, y, c)] = s / static_cast<float>(cnt);
 				}
@@ -1447,29 +1729,32 @@ inline void apply_glow(uint32_t * px, std::int32_t w, std::int32_t h, double int
 	const auto clamp01 = [](float v) { return v < 0 ? 0.0f : v > 1 ? 1.0f : v; };
 	for (std::int32_t i = 0; i < n; ++i) {
 		const uint32_t p = px[static_cast<std::size_t>(i)];
-		const float r = clamp01(static_cast<float>((p >> 16) & 0xff) / 255.0f + br[static_cast<std::size_t>(i) * 3 + 0] * gain);
-		const float g = clamp01(static_cast<float>((p >> 8) & 0xff) / 255.0f + br[static_cast<std::size_t>(i) * 3 + 1] * gain);
-		const float b = clamp01(static_cast<float>(p & 0xff) / 255.0f + br[static_cast<std::size_t>(i) * 3 + 2] * gain);
-		px[static_cast<std::size_t>(i)] = (p & 0xff000000u) |
-		    (static_cast<uint32_t>(r * 255.0f) << 16) |
-		    (static_cast<uint32_t>(g * 255.0f) << 8) |
-		    static_cast<uint32_t>(b * 255.0f);
+		const float r = clamp01(static_cast<float>((p >> 16) & 0xff) / 255.0f +
+		                        br[static_cast<std::size_t>(i) * 3 + 0] * gain);
+		const float g = clamp01(static_cast<float>((p >> 8) & 0xff) / 255.0f +
+		                        br[static_cast<std::size_t>(i) * 3 + 1] * gain);
+		const float b = clamp01(static_cast<float>(p & 0xff) / 255.0f +
+		                        br[static_cast<std::size_t>(i) * 3 + 2] * gain);
+		px[static_cast<std::size_t>(i)] =
+		    (p & 0xff000000u) | (static_cast<uint32_t>(r * 255.0f) << 16) |
+		    (static_cast<uint32_t>(g * 255.0f) << 8) | static_cast<uint32_t>(b * 255.0f);
 	}
 }
 
 // the mesh's world matrix from its live transforms (position * pivot * rotation *
 // scaling * pivot^-1), or the captured matrix if freezeWorldMatrix() was called.
-inline r3d::mat4 mesh_world_matrix(const worldptr & W, std::int32_t mi, bool ignore_freeze = false) {
+inline r3d::mat4 mesh_world_matrix(const worldptr & W, std::int32_t mi,
+                                   bool ignore_freeze = false) {
 	mesh_rec & M = W->meshes[static_cast<std::size_t>(mi)];
 	if (M.frozen_world && !ignore_freeze) { return M.frozen_matrix; }
 	const r3d::vec3 p = read_vec3(child_obj(M.handle, "position"), r3d::V3(0, 0, 0));
 	const r3d::vec3 rot = read_vec3(child_obj(M.handle, "rotation"), r3d::V3(0, 0, 0));
 	const r3d::vec3 s = read_vec3(child_obj(M.handle, "scaling"), r3d::V3(1, 1, 1));
-	r3d::mat4 rs = r3d::matmul(r3d::rotationYPR(rot[0], rot[1], rot[2]),
-	                          r3d::scaling(s[0], s[1], s[2]));
+	r3d::mat4 rs =
+	    r3d::matmul(r3d::rotationYPR(rot[0], rot[1], rot[2]), r3d::scaling(s[0], s[1], s[2]));
 	if (M.has_pivot) { // rotate/scale about the pivot: T(pivot) * R*S * T(-pivot)
 		rs = r3d::matmul(r3d::translation(M.pivot[0], M.pivot[1], M.pivot[2]),
-		     r3d::matmul(rs, r3d::translation(-M.pivot[0], -M.pivot[1], -M.pivot[2])));
+		                 r3d::matmul(rs, r3d::translation(-M.pivot[0], -M.pivot[1], -M.pivot[2])));
 	}
 	return r3d::matmul(r3d::translation(p[0], p[1], p[2]), rs);
 }
@@ -1483,13 +1768,21 @@ inline r3d::draw_item build_draw_item(const worldptr & W, std::int32_t mi) {
 	const objptr mat = child_obj(M.handle, "material");
 	r3d::rgba mc{0.85, 0.85, 0.85, 1};
 	if (mat) {
-		if (child_obj(mat, "baseColor")) { mc = read_color(child_obj(mat, "baseColor"), mc); }
-		else if (child_obj(mat, "albedoColor")) { mc = read_color(child_obj(mat, "albedoColor"), mc); }
-		else { mc = read_color(child_obj(mat, "diffuseColor"), mc); }
+		if (child_obj(mat, "baseColor")) {
+			mc = read_color(child_obj(mat, "baseColor"), mc);
+		} else if (child_obj(mat, "albedoColor")) {
+			mc = read_color(child_obj(mat, "albedoColor"), mc);
+		} else {
+			mc = read_color(child_obj(mat, "diffuseColor"), mc);
+		}
 	}
 	// mesh.visibility (0..1) dims the color so a fading particle darkens out
 	const double vis = num_prop(M.handle, "visibility", 1.0);
-	if (vis < 1.0) { mc.r *= vis; mc.g *= vis; mc.b *= vis; }
+	if (vis < 1.0) {
+		mc.r *= vis;
+		mc.g *= vis;
+		mc.b *= vis;
+	}
 	it.diffuse = mc;
 	// glTF baseColor texture (sampled per pixel, tinted by `diffuse`)
 	it.tex = (M.tex && M.tex->valid()) ? M.tex.get() : nullptr;
@@ -1518,12 +1811,16 @@ inline value make_matrix(const r3d::mat4 & m) {
 inline void read_id_list(const objptr & o, const char * key, std::vector<std::int32_t> & out) {
 	const value * v = o->find(key);
 	if (v == nullptr || !v->is_array()) { return; }
-	for (const value & e : *v->as_array()) { out.push_back(static_cast<std::int32_t>(e.to_number())); }
+	for (const value & e : *v->as_array()) {
+		out.push_back(static_cast<std::int32_t>(e.to_number()));
+	}
 }
 
 inline void do_render(const worldptr & W, std::int32_t scene_id) {
 	if (!W || W->target == nullptr || scene_id < 0 ||
-	    scene_id >= static_cast<std::int32_t>(W->scenes.size())) { return; }
+	    scene_id >= static_cast<std::int32_t>(W->scenes.size())) {
+		return;
+	}
 	ctbrowser::node * n = W->target;
 	const std::int32_t w = n->canvas_w, h = n->canvas_h;
 	if (w <= 0 || h <= 0 || n->pixels.empty()) { return; }
@@ -1570,7 +1867,9 @@ inline void do_render(const worldptr & W, std::int32_t scene_id) {
 		if (M.disposed || !M.enabled) { continue; }
 		// honor mesh.isVisible (bool) and mesh.visibility (0..1 opacity): the game
 		// fades explosion particles to visibility 0 to hide them (never disposed)
-		if (const value * iv = M.handle->find("isVisible"); iv != nullptr && !iv->truthy()) { continue; }
+		if (const value * iv = M.handle->find("isVisible"); iv != nullptr && !iv->truthy()) {
+			continue;
+		}
 		if (num_prop(M.handle, "visibility", 1.0) <= 0.02) { continue; }
 		items.push_back(build_draw_item(W, mi));
 	}
@@ -1587,7 +1886,7 @@ inline void do_render(const worldptr & W, std::int32_t scene_id) {
 		read_id_list(gl, "includedOnlyMeshes", inc);
 		read_id_list(gl, "excludedMeshes", exc);
 		if (inc.empty() && exc.empty()) {
-			apply_glow(n->pixels.data(), w, h, gi);           // whole frame glows
+			apply_glow(n->pixels.data(), w, h, gi); // whole frame glows
 			continue;
 		}
 		// render only the glowing meshes into a scratch buffer -> coverage mask
@@ -1601,7 +1900,7 @@ inline void do_render(const worldptr & W, std::int32_t scene_id) {
 		}
 		std::vector<uint32_t> scratch(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
 		r3d::view gv = vw;
-		gv.clear = r3d::rgba{0, 0, 0, 0};                     // transparent: alpha marks coverage
+		gv.clear = r3d::rgba{0, 0, 0, 0}; // transparent: alpha marks coverage
 		W->rdr.render(scratch.data(), w, h, gv, gitems, lights);
 		std::vector<uint8_t> mask(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
 		for (std::size_t i = 0; i < mask.size(); ++i) { mask[i] = (scratch[i] >> 24) != 0 ? 1 : 0; }
@@ -1610,11 +1909,13 @@ inline void do_render(const worldptr & W, std::int32_t scene_id) {
 }
 
 // --- register a mesh/light with its scene (by the scene handle arg)
-inline void register_with_scene(const worldptr & W, const objptr & scene, std::int32_t id, bool is_mesh) {
+inline void register_with_scene(const worldptr & W, const objptr & scene, std::int32_t id,
+                                bool is_mesh) {
 	const std::int32_t si = index_of(scene, "__scene");
 	if (si < 0 || si >= static_cast<std::int32_t>(W->scenes.size())) { return; }
 	(is_mesh ? W->scenes[static_cast<std::size_t>(si)].mesh_ids
-	         : W->scenes[static_cast<std::size_t>(si)].light_ids).push_back(id);
+	         : W->scenes[static_cast<std::size_t>(si)].light_ids)
+	    .push_back(id);
 	if (is_mesh && id >= 0 && id < static_cast<std::int32_t>(W->meshes.size())) {
 		W->meshes[static_cast<std::size_t>(id)].scene_id = si;
 	}
@@ -1630,8 +1931,12 @@ inline void mesh_aabb(const worldptr & W, std::int32_t id, r3d::vec3 & lo, r3d::
 	r3d::vec3 gmin = r3d::V3(0, 0, 0), gmax = r3d::V3(0, 0, 0);
 	for (const r3d::vec3 & v : m.geom.verts) {
 		for (std::int32_t k = 0; k < 3; ++k) {
-			if (first) { gmin[k] = gmax[k] = v[k]; }
-			else { gmin[k] = std::min(gmin[k], v[k]); gmax[k] = std::max(gmax[k], v[k]); }
+			if (first) {
+				gmin[k] = gmax[k] = v[k];
+			} else {
+				gmin[k] = std::min(gmin[k], v[k]);
+				gmax[k] = std::max(gmax[k], v[k]);
+			}
 		}
 		first = false;
 	}
@@ -1678,7 +1983,9 @@ inline value make_material(std::string name) {
 // the plain data props a script reads and writes
 inline void install_mesh_state(const objptr & h, const worldptr & W, std::int32_t id) {
 	h->set("metadata", value{objptr::make()});
-	if (h->find("uniqueId") == nullptr) { h->set("uniqueId", value{static_cast<double>(W->next_uid++)}); }
+	if (h->find("uniqueId") == nullptr) {
+		h->set("uniqueId", value{static_cast<double>(W->next_uid++)});
+	}
 	h->set("isVisible", value{true});
 	h->set("visibility", value{1.0});
 	h->set("isPickable", value{true});
@@ -1695,15 +2002,17 @@ inline void install_mesh_state(const objptr & h, const worldptr & W, std::int32_
 		h->set("collider", value{col});
 	}
 	h->set("onBeforeRenderObservable", make_observable(W, id, true));
-	set_method(h, "registerInstancedBuffer", [](ctjs::context &, const std::vector<value> &) { return value{}; });
-
+	set_method(h, "registerInstancedBuffer",
+	           [](ctjs::context &, const std::vector<value> &) { return value{}; });
 }
 
 // getScene / setEnabled / isEnabled / dispose
 inline void install_mesh_lifecycle(const objptr & h, const worldptr & W, std::size_t ix) {
 	set_method(h, "getScene", [W, ix](ctjs::context &, const std::vector<value> &) -> value {
 		const std::int32_t si = ix < W->meshes.size() ? W->meshes[ix].scene_id : -1;
-		return (si >= 0 && si < static_cast<std::int32_t>(W->scenes.size())) ? value{W->scenes[static_cast<std::size_t>(si)].handle} : value{};
+		return (si >= 0 && si < static_cast<std::int32_t>(W->scenes.size()))
+		           ? value{W->scenes[static_cast<std::size_t>(si)].handle}
+				   : value{};
 	});
 	set_method(h, "setEnabled", [W, ix](ctjs::context &, const std::vector<value> & a) -> value {
 		if (ix < W->meshes.size()) { W->meshes[ix].enabled = a.empty() || a[0].truthy(); }
@@ -1730,7 +2039,8 @@ inline void install_mesh_lifecycle(const objptr & h, const worldptr & W, std::si
 		const std::int32_t sid = m.scene_id;
 		if (sid >= 0 && sid < static_cast<std::int32_t>(W->scenes.size())) {
 			auto & ids = W->scenes[static_cast<std::size_t>(sid)].mesh_ids;
-			ids.erase(std::remove(ids.begin(), ids.end(), static_cast<std::int32_t>(ix)), ids.end());
+			ids.erase(std::remove(ids.begin(), ids.end(), static_cast<std::int32_t>(ix)),
+			          ids.end());
 		}
 		// BabylonJS notifies onDispose WITH the mesh (its callbacks take it)
 		const value * od = self->find("onDispose");
@@ -1740,7 +2050,6 @@ inline void install_mesh_lifecycle(const objptr & h, const worldptr & W, std::si
 		}
 		return value{};
 	});
-
 }
 
 // clone and createInstance: same geometry, copied transform
@@ -1786,44 +2095,49 @@ inline void install_mesh_cloning(const objptr & h, const worldptr & W, std::size
 	};
 	set_method(h, "clone", cloner);
 	set_method(h, "createInstance", cloner);
-
 }
 
 // movement: collisions, translate, rotate
 inline void install_mesh_movement(const objptr & h, const worldptr & W, std::size_t ix) {
 	// moveWithCollisions(v): move by v, then set collider.collidedMesh to the
 	// first overlapping mesh whose group this mesh's mask selects
-	set_method(h, "moveWithCollisions", [W, ix](ctjs::context &, const std::vector<value> & a) -> value {
-		if (ix >= W->meshes.size()) { return value{}; }
-		const objptr self = W->meshes[ix].handle;
-		const objptr pos = child_obj(self, "position");
-		const r3d::vec3 v = read_vec3(arg_obj(a, 0), r3d::V3(0, 0, 0));
-		if (pos) {
-			pos->set("x", value{num_prop(pos, "x", 0) + v[0]});
-			pos->set("y", value{num_prop(pos, "y", 0) + v[1]});
-			pos->set("z", value{num_prop(pos, "z", 0) + v[2]});
-		}
-		r3d::vec3 lo, hi;
-		mesh_aabb(W, static_cast<std::int32_t>(ix), lo, hi);
-		const std::int32_t mask = static_cast<std::int32_t>(num_prop(self, "collisionMask", -1));
-		objptr hit;
-		for (std::size_t mj = 0; mj < W->meshes.size(); ++mj) {
-			if (mj == ix) { continue; }
-			mesh_rec & o = W->meshes[mj];
-			if (o.disposed || !o.enabled) { continue; }
-			const std::int32_t grp = static_cast<std::int32_t>(num_prop(o.handle, "collisionGroup", -1));
-			if ((mask & grp) == 0) { continue; }
-			r3d::vec3 olo, ohi;
-			mesh_aabb(W, static_cast<std::int32_t>(mj), olo, ohi);
-			const bool overlap = lo[0] <= ohi[0] && hi[0] >= olo[0] && lo[1] <= ohi[1] &&
-			hi[1] >= olo[1] && lo[2] <= ohi[2] && hi[2] >= olo[2];
-			if (overlap) { hit = o.handle; break; }
-		}
-		if (const objptr col = child_obj(self, "collider")) {
-			col->set("collidedMesh", hit ? value{hit} : value{});
-		}
-		return value{};
-	});
+	set_method(h, "moveWithCollisions",
+	           [W, ix](ctjs::context &, const std::vector<value> & a) -> value {
+		           if (ix >= W->meshes.size()) { return value{}; }
+		           const objptr self = W->meshes[ix].handle;
+		           const objptr pos = child_obj(self, "position");
+		           const r3d::vec3 v = read_vec3(arg_obj(a, 0), r3d::V3(0, 0, 0));
+		           if (pos) {
+			           pos->set("x", value{num_prop(pos, "x", 0) + v[0]});
+			           pos->set("y", value{num_prop(pos, "y", 0) + v[1]});
+			           pos->set("z", value{num_prop(pos, "z", 0) + v[2]});
+		           }
+		           r3d::vec3 lo, hi;
+		           mesh_aabb(W, static_cast<std::int32_t>(ix), lo, hi);
+		           const std::int32_t mask =
+		               static_cast<std::int32_t>(num_prop(self, "collisionMask", -1));
+		           objptr hit;
+		           for (std::size_t mj = 0; mj < W->meshes.size(); ++mj) {
+			           if (mj == ix) { continue; }
+			           mesh_rec & o = W->meshes[mj];
+			           if (o.disposed || !o.enabled) { continue; }
+			           const std::int32_t grp =
+			               static_cast<std::int32_t>(num_prop(o.handle, "collisionGroup", -1));
+			           if ((mask & grp) == 0) { continue; }
+			           r3d::vec3 olo, ohi;
+			           mesh_aabb(W, static_cast<std::int32_t>(mj), olo, ohi);
+			           const bool overlap = lo[0] <= ohi[0] && hi[0] >= olo[0] && lo[1] <= ohi[1] &&
+					                        hi[1] >= olo[1] && lo[2] <= ohi[2] && hi[2] >= olo[2];
+			           if (overlap) {
+				           hit = o.handle;
+				           break;
+			           }
+		           }
+		           if (const objptr col = child_obj(self, "collider")) {
+			           col->set("collidedMesh", hit ? value{hit} : value{});
+		           }
+		           return value{};
+	           });
 
 	set_method(h, "calcMovePOV", [](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_vector3(arg_num(a, 0, 0), arg_num(a, 1, 0), arg_num(a, 2, 0));
@@ -1855,8 +2169,8 @@ inline void install_mesh_movement(const objptr & h, const worldptr & W, std::siz
 	// receiveShadows is a plain flag (no shadow system, so it has no visual
 	// effect, but reads/writes behave); mesh.registerAfterRender is unmodeled.
 	h->set("receiveShadows", value{false});
-	set_method(h, "registerAfterRender", [](ctjs::context &, const std::vector<value> &) { return value{}; });
-
+	set_method(h, "registerAfterRender",
+	           [](ctjs::context &, const std::vector<value> &) { return value{}; });
 }
 
 // bounding info and the world matrix
@@ -1868,8 +2182,12 @@ inline void install_mesh_bounds(const objptr & h, const worldptr & W, std::size_
 		bool first = true;
 		for (const r3d::vec3 & v : W->meshes[ix].geom.verts) {
 			for (std::int32_t k = 0; k < 3; ++k) {
-				if (first) { lmin[k] = lmax[k] = v[k]; }
-				else { lmin[k] = std::min(lmin[k], v[k]); lmax[k] = std::max(lmax[k], v[k]); }
+				if (first) {
+					lmin[k] = lmax[k] = v[k];
+				} else {
+					lmin[k] = std::min(lmin[k], v[k]);
+					lmax[k] = std::max(lmax[k], v[k]);
+				}
 			}
 			first = false;
 		}
@@ -1880,16 +2198,16 @@ inline void install_mesh_bounds(const objptr & h, const worldptr & W, std::size_
 		box->set("maximum", make_vector3(lmax[0], lmax[1], lmax[2]));
 		box->set("minimumWorld", make_vector3(wmin[0], wmin[1], wmin[2]));
 		box->set("maximumWorld", make_vector3(wmax[0], wmax[1], wmax[2]));
-		box->set("centerWorld", make_vector3((wmin[0] + wmax[0]) * 0.5,
-		(wmin[1] + wmax[1]) * 0.5, (wmin[2] + wmax[2]) * 0.5));
-		box->set("extendSize", make_vector3((lmax[0] - lmin[0]) * 0.5,
-		(lmax[1] - lmin[1]) * 0.5, (lmax[2] - lmin[2]) * 0.5));
+		box->set("centerWorld", make_vector3((wmin[0] + wmax[0]) * 0.5, (wmin[1] + wmax[1]) * 0.5,
+		                                     (wmin[2] + wmax[2]) * 0.5));
+		box->set("extendSize", make_vector3((lmax[0] - lmin[0]) * 0.5, (lmax[1] - lmin[1]) * 0.5,
+		                                    (lmax[2] - lmin[2]) * 0.5));
 		double rad = 0;
 		for (std::int32_t k = 0; k < 3; ++k) { rad = std::max(rad, (wmax[k] - wmin[k]) * 0.5); }
 		auto sph = objptr::make();
 		sph->set("radiusWorld", value{rad});
-		sph->set("center", make_vector3((lmin[0] + lmax[0]) * 0.5,
-		(lmin[1] + lmax[1]) * 0.5, (lmin[2] + lmax[2]) * 0.5));
+		sph->set("center", make_vector3((lmin[0] + lmax[0]) * 0.5, (lmin[1] + lmax[1]) * 0.5,
+		                                (lmin[2] + lmax[2]) * 0.5));
 		auto bi = objptr::make();
 		bi->set("boundingBox", value{box});
 		bi->set("boundingSphere", value{sph});
@@ -1899,22 +2217,27 @@ inline void install_mesh_bounds(const objptr & h, const worldptr & W, std::size_
 	});
 	// refreshBoundingInfo(): bounds are computed on demand, so this just validates
 	// the mesh and returns it (Babylon returns the mesh for chaining).
-	set_method(h, "refreshBoundingInfo", [W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
-		return (ix < W->meshes.size()) ? value{W->meshes[ix].handle} : cx.current_this;
-	});
+	set_method(h, "refreshBoundingInfo",
+	           [W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
+		           return (ix < W->meshes.size()) ? value{W->meshes[ix].handle} : cx.current_this;
+	           });
 
 	// computeWorldMatrix(force): return the current world matrix; if forced while
 	// frozen, recapture the frozen matrix from the live transforms first.
-	set_method(h, "computeWorldMatrix", [W, ix](ctjs::context &, const std::vector<value> & a) -> value {
-		if (ix >= W->meshes.size()) { return value{}; }
-		const bool force = arg_bool(a, 0);
-		if (force && W->meshes[ix].frozen_world) {
-			W->meshes[ix].frozen_matrix = mesh_world_matrix(W, static_cast<std::int32_t>(ix), true);
-		}
-		return make_matrix(mesh_world_matrix(W, static_cast<std::int32_t>(ix)));
-	});
+	set_method(h, "computeWorldMatrix",
+	           [W, ix](ctjs::context &, const std::vector<value> & a) -> value {
+		           if (ix >= W->meshes.size()) { return value{}; }
+		           const bool force = arg_bool(a, 0);
+		           if (force && W->meshes[ix].frozen_world) {
+			           W->meshes[ix].frozen_matrix =
+			               mesh_world_matrix(W, static_cast<std::int32_t>(ix), true);
+		           }
+		           return make_matrix(mesh_world_matrix(W, static_cast<std::int32_t>(ix)));
+	           });
 	set_method(h, "getWorldMatrix", [W, ix](ctjs::context &, const std::vector<value> &) -> value {
-		return (ix < W->meshes.size()) ? make_matrix(mesh_world_matrix(W, static_cast<std::int32_t>(ix))) : value{};
+		return (ix < W->meshes.size())
+		           ? make_matrix(mesh_world_matrix(W, static_cast<std::int32_t>(ix)))
+				   : value{};
 	});
 }
 
@@ -1922,17 +2245,20 @@ inline void install_mesh_bounds(const objptr & h, const worldptr & W, std::size_
 inline void install_mesh_transform(const objptr & h, const worldptr & W, std::size_t ix) {
 	// freezeWorldMatrix(): capture the world matrix now; the renderer then ignores
 	// later position/rotation/scaling edits until unfreezeWorldMatrix().
-	set_method(h, "freezeWorldMatrix", [W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
-		if (ix < W->meshes.size()) {
-			W->meshes[ix].frozen_matrix = mesh_world_matrix(W, static_cast<std::int32_t>(ix), true);
-			W->meshes[ix].frozen_world = true;
-		}
-		return (ix < W->meshes.size()) ? value{W->meshes[ix].handle} : cx.current_this;
-	});
-	set_method(h, "unfreezeWorldMatrix", [W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
-		if (ix < W->meshes.size()) { W->meshes[ix].frozen_world = false; }
-		return (ix < W->meshes.size()) ? value{W->meshes[ix].handle} : cx.current_this;
-	});
+	set_method(h, "freezeWorldMatrix",
+	           [W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
+		           if (ix < W->meshes.size()) {
+			           W->meshes[ix].frozen_matrix =
+			               mesh_world_matrix(W, static_cast<std::int32_t>(ix), true);
+			           W->meshes[ix].frozen_world = true;
+		           }
+		           return (ix < W->meshes.size()) ? value{W->meshes[ix].handle} : cx.current_this;
+	           });
+	set_method(h, "unfreezeWorldMatrix",
+	           [W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
+		           if (ix < W->meshes.size()) { W->meshes[ix].frozen_world = false; }
+		           return (ix < W->meshes.size()) ? value{W->meshes[ix].handle} : cx.current_this;
+	           });
 
 	// setPivotPoint(vec3): rotation/scaling then pivot about this local point.
 	set_method(h, "setPivotPoint", [W, ix](ctjs::context &, const std::vector<value> & a) -> value {
@@ -1949,21 +2275,34 @@ inline void install_mesh_transform(const objptr & h, const worldptr & W, std::si
 
 	// bakeCurrentTransformIntoVertices(): fold the current world transform into the
 	// geometry and reset position/rotation/scaling/pivot to identity.
-	set_method(h, "bakeCurrentTransformIntoVertices", [W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
-		if (ix >= W->meshes.size()) { return cx.current_this; }
-		mesh_rec & M = W->meshes[ix];
-		const r3d::mat4 wm = mesh_world_matrix(W, static_cast<std::int32_t>(ix), true);
-		for (r3d::vec3 & v : M.geom.verts) {
-			const r3d::vec4 t = r3d::xform(wm, v);
-			v = r3d::V3(t[0], t[1], t[2]);
-		}
-		if (const objptr p = child_obj(M.handle, "position")) { p->set("x", value{0.0}); p->set("y", value{0.0}); p->set("z", value{0.0}); }
-		if (const objptr r = child_obj(M.handle, "rotation")) { r->set("x", value{0.0}); r->set("y", value{0.0}); r->set("z", value{0.0}); }
-		if (const objptr s = child_obj(M.handle, "scaling")) { s->set("x", value{1.0}); s->set("y", value{1.0}); s->set("z", value{1.0}); }
-		M.has_pivot = false;
-		M.frozen_world = false;
-		return value{M.handle};
-	});
+	set_method(h, "bakeCurrentTransformIntoVertices",
+	           [W, ix](ctjs::context & cx, const std::vector<value> &) -> value {
+		           if (ix >= W->meshes.size()) { return cx.current_this; }
+		           mesh_rec & M = W->meshes[ix];
+		           const r3d::mat4 wm = mesh_world_matrix(W, static_cast<std::int32_t>(ix), true);
+		           for (r3d::vec3 & v : M.geom.verts) {
+			           const r3d::vec4 t = r3d::xform(wm, v);
+			           v = r3d::V3(t[0], t[1], t[2]);
+		           }
+		           if (const objptr p = child_obj(M.handle, "position")) {
+			           p->set("x", value{0.0});
+			           p->set("y", value{0.0});
+			           p->set("z", value{0.0});
+		           }
+		           if (const objptr r = child_obj(M.handle, "rotation")) {
+			           r->set("x", value{0.0});
+			           r->set("y", value{0.0});
+			           r->set("z", value{0.0});
+		           }
+		           if (const objptr s = child_obj(M.handle, "scaling")) {
+			           s->set("x", value{1.0});
+			           s->set("y", value{1.0});
+			           s->set("z", value{1.0});
+		           }
+		           M.has_pivot = false;
+		           M.frozen_world = false;
+		           return value{M.handle};
+	           });
 }
 
 inline void decorate_mesh(const worldptr & W, const objptr & h, std::int32_t id) {
@@ -2013,7 +2352,9 @@ inline void load_model(const worldptr & W, const objptr & scene, const gltf::mod
 		if (p.material >= 0 && p.material < static_cast<std::int32_t>(mat_handles.size())) {
 			h->set("material", value{mat_handles[static_cast<std::size_t>(p.material)]});
 			const std::int32_t bt = mdl.materials[static_cast<std::size_t>(p.material)].base_tex;
-			if (bt >= 0 && bt < static_cast<std::int32_t>(tex_decoded.size())) { ptex = tex_decoded[static_cast<std::size_t>(bt)]; }
+			if (bt >= 0 && bt < static_cast<std::int32_t>(tex_decoded.size())) {
+				ptex = tex_decoded[static_cast<std::size_t>(bt)];
+			}
 		} else {
 			h->set("material", value{});
 		}
@@ -2049,35 +2390,47 @@ inline value make_light(const worldptr & W, std::int32_t type, std::string name,
 // only after attachControl flips camera_rec.attached (avoids nested
 // lambda captures — clang's -Wunused-lambda-capture dislikes those)
 inline void register_orbit(const worldptr & W, dom_events & ev, std::int32_t id) {
-	const auto in_range = [W](std::int32_t i) { return i >= 0 && i < static_cast<std::int32_t>(W->cameras.size()); };
-	ev.listeners["mousedown"].push_back(value::function([W, id, in_range](ctjs::context &, const std::vector<value> & a) -> value {
-		if (in_range(id) && W->cameras[static_cast<std::size_t>(id)].attached) {
-			const objptr e = arg_obj(a, 0);
-			W->cam_dragging = true;
-			W->cam_lastx = num_prop(e, "clientX", 0);
-			W->cam_lasty = num_prop(e, "clientY", 0);
-		}
-		return value{};
-	}, "_bjsDown"));
-	ev.listeners["mouseup"].push_back(value::function([W](ctjs::context &, const std::vector<value> &) -> value {
-		W->cam_dragging = false;
-		return value{};
-	}, "_bjsUp"));
-	ev.listeners["mousemove"].push_back(value::function([W, id, in_range](ctjs::context &, const std::vector<value> & a) -> value {
-		if (!W->cam_dragging || !in_range(id) || !W->cameras[static_cast<std::size_t>(id)].attached) { return value{}; }
-		const objptr e = arg_obj(a, 0);
-		const double x = num_prop(e, "clientX", W->cam_lastx);
-		const double y = num_prop(e, "clientY", W->cam_lasty);
-		const double dx = x - W->cam_lastx, dy = y - W->cam_lasty;
-		W->cam_lastx = x;
-		W->cam_lasty = y;
-		const objptr ch = W->cameras[static_cast<std::size_t>(id)].handle;
-		double beta = num_prop(ch, "beta", 1) - dy * 0.01;
-		beta = beta < 0.05 ? 0.05 : (beta > std::numbers::pi - 0.05 ? std::numbers::pi - 0.05 : beta);
-		ch->set("alpha", value{num_prop(ch, "alpha", 0) - dx * 0.01});
-		ch->set("beta", value{beta});
-		return value{};
-	}, "_bjsMove"));
+	const auto in_range = [W](std::int32_t i) {
+		return i >= 0 && i < static_cast<std::int32_t>(W->cameras.size());
+	};
+	ev.listeners["mousedown"].push_back(value::function(
+	    [W, id, in_range](ctjs::context &, const std::vector<value> & a) -> value {
+		    if (in_range(id) && W->cameras[static_cast<std::size_t>(id)].attached) {
+			    const objptr e = arg_obj(a, 0);
+			    W->cam_dragging = true;
+			    W->cam_lastx = num_prop(e, "clientX", 0);
+			    W->cam_lasty = num_prop(e, "clientY", 0);
+		    }
+		    return value{};
+	    },
+	    "_bjsDown"));
+	ev.listeners["mouseup"].push_back(value::function(
+	    [W](ctjs::context &, const std::vector<value> &) -> value {
+		    W->cam_dragging = false;
+		    return value{};
+	    },
+	    "_bjsUp"));
+	ev.listeners["mousemove"].push_back(value::function(
+	    [W, id, in_range](ctjs::context &, const std::vector<value> & a) -> value {
+		    if (!W->cam_dragging || !in_range(id) ||
+			    !W->cameras[static_cast<std::size_t>(id)].attached) {
+			    return value{};
+		    }
+		    const objptr e = arg_obj(a, 0);
+		    const double x = num_prop(e, "clientX", W->cam_lastx);
+		    const double y = num_prop(e, "clientY", W->cam_lasty);
+		    const double dx = x - W->cam_lastx, dy = y - W->cam_lasty;
+		    W->cam_lastx = x;
+		    W->cam_lasty = y;
+		    const objptr ch = W->cameras[static_cast<std::size_t>(id)].handle;
+		    double beta = num_prop(ch, "beta", 1) - dy * 0.01;
+		    beta = beta < 0.05 ? 0.05
+			                   : (beta > std::numbers::pi - 0.05 ? std::numbers::pi - 0.05 : beta);
+		    ch->set("alpha", value{num_prop(ch, "alpha", 0) - dx * 0.01});
+		    ch->set("beta", value{beta});
+		    return value{};
+	    },
+	    "_bjsMove"));
 }
 
 inline value make_camera_arc(const worldptr & W, dom_events & ev, std::string name, double alpha,
@@ -2146,12 +2499,15 @@ inline value make_camera_free(const worldptr & W, std::string name, const objptr
 		const objptr p = s ? child_obj(s, "position") : objptr{};
 		if (p && !a.empty() && a[0].is_object()) {
 			const r3d::vec3 v = read_vec3(a[0].as_object(), r3d::V3(0, 0, 0));
-			p->set("x", value{v[0]}); p->set("y", value{v[1]}); p->set("z", value{v[2]});
+			p->set("x", value{v[0]});
+			p->set("y", value{v[1]});
+			p->set("z", value{v[2]});
 		}
 		return value{};
 	});
 	for (const char * nm : {"attachControl", "detachControl"}) {
-		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
+		h->set(nm, value::function(
+		               [](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 	}
 	W->cameras.push_back(camera_rec{h, camera_kind::free_look, false});
 	const std::int32_t si = index_of(scene, "__scene");
@@ -2164,31 +2520,42 @@ inline value make_camera_free(const worldptr & W, std::string name, const objptr
 
 // the per-frame hooks: registerBefore/AfterRender and their Observables
 inline void install_scene_observables(const objptr & h, const worldptr & W, std::int32_t id) {
-	set_method(h, "registerBeforeRender", [W, id](ctjs::context &, const std::vector<value> & a) -> value {
-		if (!a.empty() && a[0].is_function() && id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) {
-			W->scenes[static_cast<std::size_t>(id)].before_render.push_back({W->next_obs++, a[0]});
-		}
-		return value{};
-	});
-	set_method(h, "registerAfterRender", [W, id](ctjs::context &, const std::vector<value> & a) -> value {
-		if (!a.empty() && a[0].is_function() && id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) {
-			W->scenes[static_cast<std::size_t>(id)].after_render.push_back({W->next_obs++, a[0]});
-		}
-		return value{};
-	});
+	set_method(h, "registerBeforeRender",
+	           [W, id](ctjs::context &, const std::vector<value> & a) -> value {
+		           if (!a.empty() && a[0].is_function() && id >= 0 &&
+				       id < static_cast<std::int32_t>(W->scenes.size())) {
+			           W->scenes[static_cast<std::size_t>(id)].before_render.push_back(
+			               {W->next_obs++, a[0]});
+		           }
+		           return value{};
+	           });
+	set_method(h, "registerAfterRender",
+	           [W, id](ctjs::context &, const std::vector<value> & a) -> value {
+		           if (!a.empty() && a[0].is_function() && id >= 0 &&
+				       id < static_cast<std::int32_t>(W->scenes.size())) {
+			           W->scenes[static_cast<std::size_t>(id)].after_render.push_back(
+			               {W->next_obs++, a[0]});
+		           }
+		           return value{};
+	           });
 	// onAfterRenderObservable mirrors registerAfterRender (both feed after_render)
 	{
 		auto obs = objptr::make();
 		set_method(obs, "add", [W, id](ctjs::context &, const std::vector<value> & a) -> value {
-			if (a.empty() || !a[0].is_function() || id < 0 || id >= static_cast<std::int32_t>(W->scenes.size())) { return value{}; }
+			if (a.empty() || !a[0].is_function() || id < 0 ||
+			    id >= static_cast<std::int32_t>(W->scenes.size())) {
+				return value{};
+			}
 			const std::int32_t oid = W->next_obs++;
 			W->scenes[static_cast<std::size_t>(id)].after_render.push_back({oid, a[0]});
 			auto ob = objptr::make();
 			ob->set("__obs_id", value{static_cast<double>(oid)});
 			return value{ob};
 		});
-		set_method(obs, "remove", [](ctjs::context &, const std::vector<value> &) { return value{true}; });
-		set_method(obs, "clear", [](ctjs::context &, const std::vector<value> &) { return value{}; });
+		set_method(obs, "remove",
+		           [](ctjs::context &, const std::vector<value> &) { return value{true}; });
+		set_method(obs, "clear",
+		           [](ctjs::context &, const std::vector<value> &) { return value{}; });
 		h->set("onAfterRenderObservable", value{obs});
 	}
 }
@@ -2198,75 +2565,100 @@ inline void install_scene_optimizations(const objptr & h, const worldptr & W, st
 	// freezeActiveMeshes/unfreezeActiveMeshes: a Babylon optimization that caches
 	// the active-mesh list. We rebuild the draw list each frame regardless, so this
 	// only records the flag (scene.__activeMeshesFrozen) for API fidelity.
-	set_method(h, "freezeActiveMeshes", [W, id](ctjs::context &, const std::vector<value> &) -> value {
-		if (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) { W->scenes[static_cast<std::size_t>(id)].active_meshes_frozen = true; }
-		return value{};
-	});
-	set_method(h, "unfreezeActiveMeshes", [W, id](ctjs::context &, const std::vector<value> &) -> value {
-		if (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) { W->scenes[static_cast<std::size_t>(id)].active_meshes_frozen = false; }
-		return value{};
-	});
+	set_method(h, "freezeActiveMeshes",
+	           [W, id](ctjs::context &, const std::vector<value> &) -> value {
+		           if (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) {
+			           W->scenes[static_cast<std::size_t>(id)].active_meshes_frozen = true;
+		           }
+		           return value{};
+	           });
+	set_method(h, "unfreezeActiveMeshes",
+	           [W, id](ctjs::context &, const std::vector<value> &) -> value {
+		           if (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) {
+			           W->scenes[static_cast<std::size_t>(id)].active_meshes_frozen = false;
+		           }
+		           return value{};
+	           });
 	// clearCachedVertexData: on real Babylon this frees CPU geometry after GPU
 	// upload. The software rasterizer needs the vertices every frame, so there is
 	// nothing to free - a genuine no-op, kept so scripts calling it don't throw.
-	set_method(h, "clearCachedVertexData", [](ctjs::context &, const std::vector<value> &) { return value{}; });
+	set_method(h, "clearCachedVertexData",
+	           [](ctjs::context &, const std::vector<value> &) { return value{}; });
 	// getUniqueId(): a real monotonic id (scripts key maps on it)
 	set_method(h, "getUniqueId", [W](ctjs::context &, const std::vector<value> &) -> value {
 		return value{static_cast<double>(W->next_uid++)};
 	});
 	// commonly-probed no-ops so real scripts don't throw
 	for (const char * nm : {"beforeRender", "dispose", "attachControl", "detachControl"}) {
-		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
+		h->set(nm, value::function(
+		               [](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 	}
 	// getEngine() hands back the BABYLON.Engine handle (scene.getEngine().getDeltaTime())
 	set_method(h, "getEngine", [W](ctjs::context &, const std::vector<value> &) -> value {
 		return W->engine_handle ? value{W->engine_handle} : value{};
 	});
-
 }
 
 // the model-viewer helpers (glTF loading path) and the debug inspector
-inline void install_scene_model_helpers(const objptr & h, const worldptr & W, dom_events & ev, std::int32_t id) {
+inline void install_scene_model_helpers(const objptr & h, const worldptr & W, dom_events & ev,
+                                        std::int32_t id) {
 	// --- model-viewer helpers (glTF loading path)
-	set_method(h, "getMaterialById", [W, id](ctjs::context &, const std::vector<value> & a) -> value {
-		if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size()) || a.empty()) { return value{}; }
-		const std::string name = a[0].to_string();
-		for (const auto & mm : W->scenes[static_cast<std::size_t>(id)].materials) {
-			if (mm.first == name) { return value{mm.second}; }
-		}
-		return value{};
-	});
+	set_method(h, "getMaterialById",
+	           [W, id](ctjs::context &, const std::vector<value> & a) -> value {
+		           if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size()) || a.empty()) {
+			           return value{};
+		           }
+		           const std::string name = a[0].to_string();
+		           for (const auto & mm : W->scenes[static_cast<std::size_t>(id)].materials) {
+			           if (mm.first == name) { return value{mm.second}; }
+		           }
+		           return value{};
+	           });
 	h->set("getMaterialByName", h->find("getMaterialById") ? *h->find("getMaterialById") : value{});
-	set_method(h, "createDefaultCamera", [W, id, &ev](ctjs::context &, const std::vector<value> &) -> value {
-		if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size())) { return value{}; }
-		scene_rec & sc = W->scenes[static_cast<std::size_t>(id)];
-		r3d::vec3 c = r3d::V3(0, 0, 0);
-		double rad = 2.0;
-		if (sc.has_bounds) {
-			c = r3d::V3((sc.bmin[0] + sc.bmax[0]) * 0.5, (sc.bmin[1] + sc.bmax[1]) * 0.5,
-			(sc.bmin[2] + sc.bmax[2]) * 0.5);
-			rad = 0.001;
-			for (std::int32_t k = 0; k < 3; ++k) { rad = std::max(rad, sc.bmax[k] - sc.bmin[k]); }
-		}
-		const objptr target = make_vector3(c[0], c[1], c[2]).as_object();
-		return make_camera_arc(W, ev, "default_camera", -std::numbers::pi / 2, std::numbers::pi / 2.5, rad * 2.2, target, sc.handle);
-	});
-	set_method(h, "createDefaultLight", [W, id](ctjs::context &, const std::vector<value> &) -> value {
-		if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size())) { return value{}; }
-		return make_light(W, r3d::light_hemispheric, "default_light", r3d::V3(0, 1, 0), W->scenes[static_cast<std::size_t>(id)].handle);
-	});
+	set_method(h, "createDefaultCamera",
+	           [W, id, &ev](ctjs::context &, const std::vector<value> &) -> value {
+		           if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size())) {
+			           return value{};
+		           }
+		           scene_rec & sc = W->scenes[static_cast<std::size_t>(id)];
+		           r3d::vec3 c = r3d::V3(0, 0, 0);
+		           double rad = 2.0;
+		           if (sc.has_bounds) {
+			           c = r3d::V3((sc.bmin[0] + sc.bmax[0]) * 0.5, (sc.bmin[1] + sc.bmax[1]) * 0.5,
+					               (sc.bmin[2] + sc.bmax[2]) * 0.5);
+			           rad = 0.001;
+			           for (std::int32_t k = 0; k < 3; ++k) {
+				           rad = std::max(rad, sc.bmax[k] - sc.bmin[k]);
+			           }
+		           }
+		           const objptr target = make_vector3(c[0], c[1], c[2]).as_object();
+		           return make_camera_arc(W, ev, "default_camera", -std::numbers::pi / 2,
+				                          std::numbers::pi / 2.5, rad * 2.2, target, sc.handle);
+	           });
+	set_method(h, "createDefaultLight",
+	           [W, id](ctjs::context &, const std::vector<value> &) -> value {
+		           if (id < 0 || id >= static_cast<std::int32_t>(W->scenes.size())) {
+			           return value{};
+		           }
+		           return make_light(W, r3d::light_hemispheric, "default_light", r3d::V3(0, 1, 0),
+				                     W->scenes[static_cast<std::size_t>(id)].handle);
+	           });
 	for (const char * nm : {"createDefaultSkybox", "createDefaultEnvironment"}) {
-		h->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
+		h->set(nm, value::function(
+		               [](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 	}
 	// debug inspector: no-ops satisfying `await scene.debugLayer.show(...).select(...)`
 	{
 		object_t dbg;
 		set_method(dbg, "show", [](ctjs::context &, const std::vector<value> &) -> value {
 			object_t d;
-			d.set("select", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "select"));
+			d.set("select", value::function(
+			                    [](ctjs::context &, const std::vector<value> &) { return value{}; },
+			                    "select"));
 			return ctjs::make_promise(value::object(std::move(d)), false);
 		});
-		set_method(dbg, "hide", [](ctjs::context &, const std::vector<value> &) { return value{}; });
+		set_method(dbg, "hide",
+		           [](ctjs::context &, const std::vector<value> &) { return value{}; });
 		h->set("debugLayer", value::object(std::move(dbg)));
 	}
 
@@ -2304,20 +2696,23 @@ inline value make_scene(const worldptr & W, dom_events & ev) {
 	//     while (scene.meshes.length) scene.meshes[0].dispose();
 	// and dispose() removes the id from sc.mesh_ids. A snapshot array would never
 	// shrink mid-loop, so the loop would spin forever (hanging the whole app).
-	ctjs::attach_accessor(*h, "meshes", 'g', value::function(
-	    [W, id](ctjs::context &, const std::vector<value> &) -> value {
-		    std::vector<value> ms;
-		    if (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) {
-			    scene_rec & sc = W->scenes[static_cast<std::size_t>(id)];
-			    for (std::int32_t mi : sc.mesh_ids) {
-				    if (mi >= 0 && mi < static_cast<std::int32_t>(W->meshes.size()) &&
-				        !W->meshes[static_cast<std::size_t>(mi)].disposed) {
-					    ms.push_back(value{W->meshes[static_cast<std::size_t>(mi)].handle});
-				    }
-			    }
-		    }
-		    return value::array(std::move(ms));
-	    }, "get meshes"));
+	ctjs::attach_accessor(
+	    *h, "meshes", 'g',
+	    value::function(
+	        [W, id](ctjs::context &, const std::vector<value> &) -> value {
+		        std::vector<value> ms;
+		        if (id >= 0 && id < static_cast<std::int32_t>(W->scenes.size())) {
+			        scene_rec & sc = W->scenes[static_cast<std::size_t>(id)];
+			        for (std::int32_t mi : sc.mesh_ids) {
+				        if (mi >= 0 && mi < static_cast<std::int32_t>(W->meshes.size()) &&
+						    !W->meshes[static_cast<std::size_t>(mi)].disposed) {
+					        ms.push_back(value{W->meshes[static_cast<std::size_t>(mi)].handle});
+				        }
+			        }
+		        }
+		        return value::array(std::move(ms));
+	        },
+	        "get meshes"));
 	// data props the game sets/reads
 	h->set("collisionsEnabled", value{false});
 	h->set("gravity", make_vector3(0, -9.81, 0));
@@ -2343,35 +2738,38 @@ inline value make_engine(const worldptr & W, dom_events & ev, const std::vector<
 	}
 	auto h = objptr::make();
 	W->engine_handle = h; // scene.getEngine() hands this back
-	set_method(h, "runRenderLoop", [W, &ev](ctjs::context & cx, const std::vector<value> & a) -> value {
-		ev.cx = &cx;
-		if (!a.empty() && a[0].is_function()) { W->render_cb = a[0]; }
-		if (!W->loop_active) {
-			W->loop_active = true;
-			std::weak_ptr<world> wk = W;
-			W->loop_wrapper = value::function(
-			[wk, &ev](ctjs::context & cx2, const std::vector<value> & b) -> value {
-				auto w = wk.lock();
-				if (!w) { return value{}; } // world gone -> stop the loop
-				ev.cx = &cx2;
-				const double now = b.empty() ? ev.now_ms : b[0].to_number();
-				w->last_dt_ms = (w->prev_ms == 0) ? 16.6 : (now - w->prev_ms);
-				w->prev_ms = now;
-				if (w->render_cb.is_function()) { ctjs::call_value(cx2, w->render_cb, {}); }
-				ev.raf.push_back(w->loop_wrapper); // re-register for next frame
-				return value{};
-			}, "babylonRenderLoop");
-			ev.raf.push_back(W->loop_wrapper);
-		}
-		return value{};
-	});
+	set_method(h, "runRenderLoop",
+	           [W, &ev](ctjs::context & cx, const std::vector<value> & a) -> value {
+		           ev.cx = &cx;
+		           if (!a.empty() && a[0].is_function()) { W->render_cb = a[0]; }
+		           if (!W->loop_active) {
+			           W->loop_active = true;
+			           std::weak_ptr<world> wk = W;
+			           W->loop_wrapper = value::function(
+			               [wk, &ev](ctjs::context & cx2, const std::vector<value> & b) -> value {
+				               auto w = wk.lock();
+				               if (!w) { return value{}; } // world gone -> stop the loop
+				               ev.cx = &cx2;
+				               const double now = b.empty() ? ev.now_ms : b[0].to_number();
+				               w->last_dt_ms = (w->prev_ms == 0) ? 16.6 : (now - w->prev_ms);
+				               w->prev_ms = now;
+				               if (w->render_cb.is_function()) {
+					               ctjs::call_value(cx2, w->render_cb, {});
+				               }
+				               ev.raf.push_back(w->loop_wrapper); // re-register for next frame
+				               return value{};
+			               },
+			               "babylonRenderLoop");
+			           ev.raf.push_back(W->loop_wrapper);
+		           }
+		           return value{};
+	           });
 	set_method(h, "stopRenderLoop", [W](ctjs::context &, const std::vector<value> &) -> value {
 		W->render_cb = value{};
 		return value{};
 	});
-	set_method(h, "getDeltaTime", [W](ctjs::context &, const std::vector<value> &) {
-		return value{W->last_dt_ms};
-	});
+	set_method(h, "getDeltaTime",
+	           [W](ctjs::context &, const std::vector<value> &) { return value{W->last_dt_ms}; });
 	set_method(h, "getFps", [W](ctjs::context &, const std::vector<value> &) {
 		return value{W->last_dt_ms > 0 ? 1000.0 / W->last_dt_ms : 60.0};
 	});
@@ -2379,20 +2777,24 @@ inline value make_engine(const worldptr & W, dom_events & ev, const std::vector<
 	// viewport (window inner size) so the 3D view fills the resized window
 	set_method(h, "resize", [W, &ev](ctjs::context &, const std::vector<value> &) -> value {
 		if (W->target != nullptr && ev.viewport_w > 0 && ev.viewport_h > 0 &&
-		(W->target->canvas_w != ev.viewport_w || W->target->canvas_h != ev.viewport_h)) {
+		    (W->target->canvas_w != ev.viewport_w || W->target->canvas_h != ev.viewport_h)) {
 			ctbrowser::node * n = W->target;
 			n->canvas_w = ev.viewport_w;
 			n->canvas_h = ev.viewport_h;
-			n->pixels.assign(static_cast<std::size_t>(n->canvas_w) * static_cast<std::size_t>(n->canvas_h), 0xFF000000u);
+			n->pixels.assign(static_cast<std::size_t>(n->canvas_w) *
+			                     static_cast<std::size_t>(n->canvas_h),
+			                 0xFF000000u);
 		}
 		return value{};
 	});
 	// the render buffer size (Environment reads these for the ortho camera)
 	set_method(h, "getRenderWidth", [W, &ev](ctjs::context &, const std::vector<value> &) {
-		return value{static_cast<double>(W->target != nullptr ? W->target->canvas_w : ev.viewport_w)};
+		return value{
+		    static_cast<double>(W->target != nullptr ? W->target->canvas_w : ev.viewport_w)};
 	});
 	set_method(h, "getRenderHeight", [W, &ev](ctjs::context &, const std::vector<value> &) {
-		return value{static_cast<double>(W->target != nullptr ? W->target->canvas_h : ev.viewport_h)};
+		return value{
+		    static_cast<double>(W->target != nullptr ? W->target->canvas_h : ev.viewport_h)};
 	});
 	h->set("onResizeObservable", make_dead_observable());
 	set_method(h, "dispose", [](ctjs::context &, const std::vector<value> &) { return value{}; });
@@ -2405,17 +2807,21 @@ inline value make_engine(const worldptr & W, dom_events & ev, const std::vector<
 		const std::int32_t cw = n->canvas_w, ch = n->canvas_h;
 		std::string text = "Loading...";
 		if (const objptr self = self_of(cx)) {
-			if (const value * t = self->find("loadingUIText"); t != nullptr && !t->is_undefined()) { text = t->to_string(); }
+			if (const value * t = self->find("loadingUIText"); t != nullptr && !t->is_undefined()) {
+				text = t->to_string();
+			}
 		}
 		for (uint32_t & px : n->pixels) { px = 0xFF060606u; }
 		const std::int32_t scale = cw >= 200 ? 2 : 1;
 		const std::int32_t tw = static_cast<std::int32_t>(text.size()) * 8 * scale;
-		overlay_text(n->pixels.data(), cw, ch, (cw - tw) / 2, ch / 2 - 4 * scale, text, scale, 0xFFCCCCCCu);
+		overlay_text(n->pixels.data(), cw, ch, (cw - tw) / 2, ch / 2 - 4 * scale, text, scale,
+		             0xFFCCCCCCu);
 		return value{};
 	});
 	// hideLoadingUI(): the loading frame lives in the canvas until the next render
 	// paints over it, so nothing to tear down here.
-	set_method(h, "hideLoadingUI", [](ctjs::context &, const std::vector<value> &) { return value{}; });
+	set_method(h, "hideLoadingUI",
+	           [](ctjs::context &, const std::vector<value> &) { return value{}; });
 	{
 		object_t hi;
 		hi.set("isMobile", value{false});
@@ -2425,87 +2831,147 @@ inline value make_engine(const worldptr & W, dom_events & ev, const std::vector<
 }
 
 // --- geometry option readers for MeshBuilder
-inline double opt(const objptr & o, const char * k, double dflt) { return num_prop(o, k, dflt); }
+inline double opt(const objptr & o, const char * k, double dflt) {
+	return num_prop(o, k, dflt);
+}
 
 // AppendSceneAsync / ImportMeshAsync, and the stubbed CubeTexture
 inline void install_loaders(const objptr & B, const worldptr & W, image_store & images) {
 	// AppendSceneAsync(url, scene, opts): resolve the .glb from the
 	// embedded-asset registry (same path as fetch), parse it, add its
 	// meshes/materials to the scene; returns a settled (resolved) promise.
-	auto append_scene = value::function([W, &images](ctjs::context &, const std::vector<value> & a) -> value {
-		const std::string url = arg_str(a, 0);
-		const objptr scene = arg_obj(a, 1);
-		const ctbrowser::embedded_asset * hit = ctbrowser::find_asset(images.embedded, url);
-		if (hit == nullptr) {
-			return ctjs::make_promise(ctjs::make_error("Error", "glTF not embedded (build with --fetch-allow): " + url), true);
-		}
-		const gltf::model mdl = gltf::parse_glb(reinterpret_cast<const unsigned char *>(hit->data), hit->size);
-		if (mdl.ok) { load_model(W, scene, mdl); }
-		return ctjs::make_promise(value{}, false);
-	}, "AppendSceneAsync");
+	auto append_scene = value::function(
+	    [W, &images](ctjs::context &, const std::vector<value> & a) -> value {
+		    const std::string url = arg_str(a, 0);
+		    const objptr scene = arg_obj(a, 1);
+		    const ctbrowser::embedded_asset * hit = ctbrowser::find_asset(images.embedded, url);
+		    if (hit == nullptr) {
+			    return ctjs::make_promise(
+			        ctjs::make_error("Error",
+					                 "glTF not embedded (build with --fetch-allow): " + url),
+			        true);
+		    }
+		    const gltf::model mdl =
+		        gltf::parse_glb(reinterpret_cast<const unsigned char *>(hit->data), hit->size);
+		    if (mdl.ok) { load_model(W, scene, mdl); }
+		    return ctjs::make_promise(value{}, false);
+	    },
+	    "AppendSceneAsync");
 	B->set("AppendSceneAsync", append_scene);
 	B->set("appendSceneAsync", append_scene);
 	B->set("ImportMeshAsync", append_scene);
 	// CubeTexture / environment: stubbed (no IBL) so scripts don't throw
 	{
 		object_t ct;
-		set_method(ct, "CreateFromPrefilteredData", [](ctjs::context &, const std::vector<value> &) -> value {
-			object_t o; o.set("__cubeTexture", value{true}); return value::object(std::move(o));
-		});
-		value CubeTexture = value::function([](ctjs::context &, const std::vector<value> &) -> value {
-			object_t o; o.set("__cubeTexture", value{true}); return value::object(std::move(o));
-		}, "CubeTexture");
+		set_method(ct, "CreateFromPrefilteredData",
+		           [](ctjs::context &, const std::vector<value> &) -> value {
+			           object_t o;
+			           o.set("__cubeTexture", value{true});
+			           return value::object(std::move(o));
+		           });
+		value CubeTexture = value::function(
+		    [](ctjs::context &, const std::vector<value> &) -> value {
+			    object_t o;
+			    o.set("__cubeTexture", value{true});
+			    return value::object(std::move(o));
+		    },
+		    "CubeTexture");
 		set_static(CubeTexture, "CreateFromPrefilteredData", *ct.find("CreateFromPrefilteredData"));
 		B->set("CubeTexture", CubeTexture);
 	}
-
 }
 
 // Vector3 / Color3 / Color4 (callable, with their statics)
 inline void install_math_types(const objptr & B) {
 	// Vector3 (callable + statics)
-	value Vector3 = value::function([](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_vector3(arg_num(a, 0, 0), arg_num(a, 1, 0), arg_num(a, 2, 0));
-	}, "Vector3");
-	set_static(Vector3, "Zero", value::function([](ctjs::context &, const std::vector<value> &) { return make_vector3(0, 0, 0); }, "Zero"));
-	set_static(Vector3, "One", value::function([](ctjs::context &, const std::vector<value> &) { return make_vector3(1, 1, 1); }, "One"));
-	set_static(Vector3, "Up", value::function([](ctjs::context &, const std::vector<value> &) { return make_vector3(0, 1, 0); }, "Up"));
-	set_static(Vector3, "Down", value::function([](ctjs::context &, const std::vector<value> &) { return make_vector3(0, -1, 0); }, "Down"));
-	set_static(Vector3, "Forward", value::function([](ctjs::context &, const std::vector<value> &) { return make_vector3(0, 0, 1); }, "Forward"));
-	set_static(Vector3, "Backward", value::function([](ctjs::context &, const std::vector<value> &) { return make_vector3(0, 0, -1); }, "Backward"));
-	set_static(Vector3, "Right", value::function([](ctjs::context &, const std::vector<value> &) { return make_vector3(1, 0, 0); }, "Right"));
-	set_static(Vector3, "Left", value::function([](ctjs::context &, const std::vector<value> &) { return make_vector3(-1, 0, 0); }, "Left"));
+	value Vector3 = value::function(
+	    [](ctjs::context &, const std::vector<value> & a) -> value {
+		    return make_vector3(arg_num(a, 0, 0), arg_num(a, 1, 0), arg_num(a, 2, 0));
+	    },
+	    "Vector3");
+	set_static(Vector3, "Zero",
+	           value::function([](ctjs::context &,
+	                              const std::vector<value> &) { return make_vector3(0, 0, 0); },
+	                           "Zero"));
+	set_static(Vector3, "One",
+	           value::function([](ctjs::context &,
+	                              const std::vector<value> &) { return make_vector3(1, 1, 1); },
+	                           "One"));
+	set_static(Vector3, "Up",
+	           value::function([](ctjs::context &,
+	                              const std::vector<value> &) { return make_vector3(0, 1, 0); },
+	                           "Up"));
+	set_static(Vector3, "Down",
+	           value::function([](ctjs::context &,
+	                              const std::vector<value> &) { return make_vector3(0, -1, 0); },
+	                           "Down"));
+	set_static(Vector3, "Forward",
+	           value::function([](ctjs::context &,
+	                              const std::vector<value> &) { return make_vector3(0, 0, 1); },
+	                           "Forward"));
+	set_static(Vector3, "Backward",
+	           value::function([](ctjs::context &,
+	                              const std::vector<value> &) { return make_vector3(0, 0, -1); },
+	                           "Backward"));
+	set_static(Vector3, "Right",
+	           value::function([](ctjs::context &,
+	                              const std::vector<value> &) { return make_vector3(1, 0, 0); },
+	                           "Right"));
+	set_static(Vector3, "Left",
+	           value::function([](ctjs::context &,
+	                              const std::vector<value> &) { return make_vector3(-1, 0, 0); },
+	                           "Left"));
 	B->set("Vector3", Vector3);
 
-	value Color3 = value::function([](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_color3(arg_num(a, 0, 0), arg_num(a, 1, 0), arg_num(a, 2, 0));
-	}, "Color3");
-	set_static(Color3, "White", value::function([](ctjs::context &, const std::vector<value> &) { return make_color3(1, 1, 1); }, "White"));
-	set_static(Color3, "Black", value::function([](ctjs::context &, const std::vector<value> &) { return make_color3(0, 0, 0); }, "Black"));
-	set_static(Color3, "Red", value::function([](ctjs::context &, const std::vector<value> &) { return make_color3(1, 0, 0); }, "Red"));
-	set_static(Color3, "Green", value::function([](ctjs::context &, const std::vector<value> &) { return make_color3(0, 1, 0); }, "Green"));
-	set_static(Color3, "Blue", value::function([](ctjs::context &, const std::vector<value> &) { return make_color3(0, 0, 1); }, "Blue"));
+	value Color3 = value::function(
+	    [](ctjs::context &, const std::vector<value> & a) -> value {
+		    return make_color3(arg_num(a, 0, 0), arg_num(a, 1, 0), arg_num(a, 2, 0));
+	    },
+	    "Color3");
+	set_static(Color3, "White",
+	           value::function(
+	               [](ctjs::context &, const std::vector<value> &) { return make_color3(1, 1, 1); },
+	               "White"));
+	set_static(Color3, "Black",
+	           value::function(
+	               [](ctjs::context &, const std::vector<value> &) { return make_color3(0, 0, 0); },
+	               "Black"));
+	set_static(Color3, "Red",
+	           value::function(
+	               [](ctjs::context &, const std::vector<value> &) { return make_color3(1, 0, 0); },
+	               "Red"));
+	set_static(Color3, "Green",
+	           value::function(
+	               [](ctjs::context &, const std::vector<value> &) { return make_color3(0, 1, 0); },
+	               "Green"));
+	set_static(Color3, "Blue",
+	           value::function(
+	               [](ctjs::context &, const std::vector<value> &) { return make_color3(0, 0, 1); },
+	               "Blue"));
 	B->set("Color3", Color3);
 
-	value Color4 = value::function([](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_color4(arg_num(a, 0, 0), arg_num(a, 1, 0), arg_num(a, 2, 0), arg_num(a, 3, 1));
-	}, "Color4");
+	value Color4 = value::function(
+	    [](ctjs::context &, const std::vector<value> & a) -> value {
+		    return make_color4(arg_num(a, 0, 0), arg_num(a, 1, 0), arg_num(a, 2, 0),
+			                   arg_num(a, 3, 1));
+	    },
+	    "Color4");
 	B->set("Color4", Color4);
 }
 
 // Engine, Scene, the cameras, the lights, StandardMaterial
 inline void install_scene_graph(const objptr & B, const worldptr & W, dom_events & ev) {
-
 	set_method(B, "Engine", [W, &ev](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_engine(W, ev, a);
 	});
 	set_method(B, "Scene", [W, &ev](ctjs::context &, const std::vector<value> &) -> value {
 		return make_scene(W, ev);
 	});
-	set_method(B, "ArcRotateCamera", [W, &ev](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_camera_arc(W, ev, arg_str(a, 0), arg_num(a, 1, 0), arg_num(a, 2, 1),
-		arg_num(a, 3, 10), arg_obj(a, 4), arg_obj(a, 5));
-	});
+	set_method(B, "ArcRotateCamera",
+	           [W, &ev](ctjs::context &, const std::vector<value> & a) -> value {
+		           return make_camera_arc(W, ev, arg_str(a, 0), arg_num(a, 1, 0), arg_num(a, 2, 1),
+				                          arg_num(a, 3, 10), arg_obj(a, 4), arg_obj(a, 5));
+	           });
 	set_method(B, "FreeCamera", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_camera_free(W, arg_str(a, 0), arg_obj(a, 1), arg_obj(a, 2));
 	});
@@ -2513,18 +2979,20 @@ inline void install_scene_graph(const objptr & B, const worldptr & W, dom_events
 		return make_camera_free(W, arg_str(a, 0), arg_obj(a, 1), arg_obj(a, 2));
 	});
 	set_method(B, "HemisphericLight", [W](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_light(W, r3d::light_hemispheric, arg_str(a, 0), read_vec3(arg_obj(a, 1), r3d::V3(0, 1, 0)), arg_obj(a, 2));
+		return make_light(W, r3d::light_hemispheric, arg_str(a, 0),
+		                  read_vec3(arg_obj(a, 1), r3d::V3(0, 1, 0)), arg_obj(a, 2));
 	});
 	set_method(B, "DirectionalLight", [W](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_light(W, r3d::light_directional, arg_str(a, 0), read_vec3(arg_obj(a, 1), r3d::V3(0, -1, 0)), arg_obj(a, 2));
+		return make_light(W, r3d::light_directional, arg_str(a, 0),
+		                  read_vec3(arg_obj(a, 1), r3d::V3(0, -1, 0)), arg_obj(a, 2));
 	});
 	set_method(B, "PointLight", [W](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_light(W, r3d::light_directional, arg_str(a, 0), read_vec3(arg_obj(a, 1), r3d::V3(0, -1, 0)), arg_obj(a, 2));
+		return make_light(W, r3d::light_directional, arg_str(a, 0),
+		                  read_vec3(arg_obj(a, 1), r3d::V3(0, -1, 0)), arg_obj(a, 2));
 	});
 	set_method(B, "StandardMaterial", [](ctjs::context &, const std::vector<value> & a) -> value {
 		return make_material(arg_str(a, 0));
 	});
-
 }
 
 // MeshBuilder.Create* and the legacy positional Mesh.Create*
@@ -2538,18 +3006,22 @@ inline void install_mesh_builders(const objptr & B, const worldptr & W) {
 	});
 	set_method(mb, "CreateSphere", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		const objptr o = arg_obj(a, 1);
-		return make_mesh(W, r3d::make_sphere(opt(o, "diameter", 1.0), static_cast<std::int32_t>(opt(o, "segments", 16))),
-		arg_str(a, 0), true, arg_obj(a, 2));
+		return make_mesh(W,
+		                 r3d::make_sphere(opt(o, "diameter", 1.0),
+		                                  static_cast<std::int32_t>(opt(o, "segments", 16))),
+		                 arg_str(a, 0), true, arg_obj(a, 2));
 	});
 	set_method(mb, "CreateGround", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		const objptr o = arg_obj(a, 1);
 		return make_mesh(W, r3d::make_ground(opt(o, "width", 1.0), opt(o, "height", 1.0)),
-		arg_str(a, 0), false, arg_obj(a, 2));
+		                 arg_str(a, 0), false, arg_obj(a, 2));
 	});
 	set_method(mb, "CreateCylinder", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		const objptr o = arg_obj(a, 1);
-		return make_mesh(W, r3d::make_cylinder(opt(o, "height", 2.0), opt(o, "diameter", 1.0), static_cast<std::int32_t>(opt(o, "tessellation", 24))),
-		arg_str(a, 0), true, arg_obj(a, 2));
+		return make_mesh(W,
+		                 r3d::make_cylinder(opt(o, "height", 2.0), opt(o, "diameter", 1.0),
+		                                    static_cast<std::int32_t>(opt(o, "tessellation", 24))),
+		                 arg_str(a, 0), true, arg_obj(a, 2));
 	});
 	B->set("MeshBuilder", value::object(std::move(mb)));
 
@@ -2559,15 +3031,15 @@ inline void install_mesh_builders(const objptr & B, const worldptr & W) {
 		return make_mesh(W, r3d::make_box(arg_num(a, 1, 1)), arg_str(a, 0), true, arg_obj(a, 2));
 	});
 	set_method(mesh, "CreateSphere", [W](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_mesh(W, r3d::make_sphere(arg_num(a, 2, 1), static_cast<std::int32_t>(arg_num(a, 1, 16))),
-		arg_str(a, 0), true, arg_obj(a, 3));
+		return make_mesh(
+		    W, r3d::make_sphere(arg_num(a, 2, 1), static_cast<std::int32_t>(arg_num(a, 1, 16))),
+		    arg_str(a, 0), true, arg_obj(a, 3));
 	});
 	set_method(mesh, "CreateGround", [W](ctjs::context &, const std::vector<value> & a) -> value {
-		return make_mesh(W, r3d::make_ground(arg_num(a, 1, 1), arg_num(a, 2, 1)),
-		arg_str(a, 0), false, arg_obj(a, 4));
+		return make_mesh(W, r3d::make_ground(arg_num(a, 1, 1), arg_num(a, 2, 1)), arg_str(a, 0),
+		                 false, arg_obj(a, 4));
 	});
 	B->set("Mesh", value::object(std::move(mesh)));
-
 }
 
 // Scalar / Axis / Space / Camera constants / Sound
@@ -2605,9 +3077,11 @@ inline void install_gameplay_math(const objptr & B, const worldptr & W, dom_even
 	}
 	// --- Camera: projection-mode constants (base class the game reads statics off)
 	{
-		value Camera = value::function([](ctjs::context &, const std::vector<value> &) -> value {
-			return value{objptr::make()};
-		}, "Camera");
+		value Camera = value::function(
+		    [](ctjs::context &, const std::vector<value> &) -> value {
+			    return value{objptr::make()};
+		    },
+		    "Camera");
 		set_static(Camera, "PERSPECTIVE_CAMERA", value{0.0});
 		set_static(Camera, "ORTHOGRAPHIC_CAMERA", value{1.0});
 		B->set("Camera", Camera);
@@ -2617,7 +3091,8 @@ inline void install_gameplay_math(const objptr & B, const worldptr & W, dom_even
 	set_method(B, "Sound", [&ev](ctjs::context &, const std::vector<value> & a) -> value {
 		auto o = objptr::make();
 		const std::string url = a.size() > 1 ? a[1].to_string() : std::string{};
-		const bool loop = a.size() > 4 && a[4].is_object() && num_prop(a[4].as_object(), "loop", 0) != 0;
+		const bool loop =
+		    a.size() > 4 && a[4].is_object() && num_prop(a[4].as_object(), "loop", 0) != 0;
 		o->set("name", value{arg_str(a, 0)});
 		o->set("isPlaying", value{false});
 		o->set("isReady", value{true});
@@ -2625,19 +3100,28 @@ inline void install_gameplay_math(const objptr & B, const worldptr & W, dom_even
 		// route through the shell's audio hook (empty in headless builds). The
 		// live track handle is shared between play() and stop() (no rc cycle).
 		auto handle = std::make_shared<std::int32_t>(0);
-		o->set("play", value::function([&ev, url, loop, handle](ctjs::context &, const std::vector<value> &) -> value {
-			if (ev.play_audio) { *handle = ev.play_audio(url, loop); }
-			return value{};
-		}, "play"));
-		o->set("stop", value::function([&ev, handle](ctjs::context &, const std::vector<value> &) -> value {
-			if (ev.stop_audio && *handle != 0) { ev.stop_audio(*handle); }
-			*handle = 0;
-			return value{};
-		}, "stop"));
-		o->set("setVolume", value::function([&ev](ctjs::context &, const std::vector<value> & sa) -> value {
-			if (ev.set_audio_volume && !sa.empty()) { ev.set_audio_volume(static_cast<float>(sa[0].to_number())); }
-			return value{};
-		}, "setVolume"));
+		o->set("play",
+		       value::function(
+		           [&ev, url, loop, handle](ctjs::context &, const std::vector<value> &) -> value {
+			           if (ev.play_audio) { *handle = ev.play_audio(url, loop); }
+			           return value{};
+		           },
+		           "play"));
+		o->set("stop", value::function(
+		                   [&ev, handle](ctjs::context &, const std::vector<value> &) -> value {
+			                   if (ev.stop_audio && *handle != 0) { ev.stop_audio(*handle); }
+			                   *handle = 0;
+			                   return value{};
+		                   },
+		                   "stop"));
+		o->set("setVolume", value::function(
+		                        [&ev](ctjs::context &, const std::vector<value> & sa) -> value {
+			                        if (ev.set_audio_volume && !sa.empty()) {
+				                        ev.set_audio_volume(static_cast<float>(sa[0].to_number()));
+			                        }
+			                        return value{};
+		                        },
+		                        "setVolume"));
 		// pause/dispose stop playback through the mixer (we have no true pause, so
 		// pause == stop). Spatial audio (setPlaybackRate/attachToMesh/setPosition)
 		// is unmodeled - the mixer is non-positional.
@@ -2649,11 +3133,11 @@ inline void install_gameplay_math(const objptr & B, const worldptr & W, dom_even
 		o->set("pause", value::function(stopper, "pause"));
 		o->set("dispose", value::function(stopper, "dispose"));
 		for (const char * nm : {"setPlaybackRate", "attachToMesh", "setPosition"}) {
-			o->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
+			o->set(nm,
+			       value::function(
+			           [](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 		}
-		if (a.size() > 3 && a[3].is_function()) {
-			ev.timers.arm(ev.now_ms, 0, a[3], false);
-		}
+		if (a.size() > 3 && a[3].is_function()) { ev.timers.arm(ev.now_ms, 0, a[3], false); }
 		return value{o};
 	});
 }
@@ -2665,65 +3149,78 @@ inline void install_asset_loading(const objptr & B, const worldptr & W, image_st
 	// ONE mesh (the game clones meshes[1] per alien) - else a box placeholder.
 	{
 		object_t sl;
-		set_method(sl, "ImportMeshAsync", [W, &images](ctjs::context &, const std::vector<value> & a) -> value {
-			const std::string root_url = a.size() > 1 ? a[1].to_string() : std::string{};
-			const std::string fname = a.size() > 2 ? a[2].to_string() : std::string{};
-			const std::string url = root_url + fname; // e.g. "/assets/models/Alien_1.glb"
-			std::string base = fname;                 // display name: strip dir + ext
-			if (const std::size_t s = base.find_last_of("/\\"); s != std::string::npos) { base = base.substr(s + 1); }
-			if (const std::size_t d = base.rfind('.'); d != std::string::npos) { base = base.substr(0, d); }
-			const objptr scene = arg_obj(a, 3);
-			const value root = make_mesh(W, r3d::make_box(0.01), "__root__", true, scene);
-			value body;
-			const ctbrowser::embedded_asset * hit = ctbrowser::find_asset(images.embedded, url);
-			gltf::model mdl;
-			if (hit != nullptr) { mdl = gltf::parse_glb(hit->data, hit->size); }
-			if (mdl.ok && !mdl.prims.empty()) {
-				r3d::geo merged;
-				r3d::rgba col{1, 1, 1, 1};
-				std::shared_ptr<r3d::texture> mtex; // first baseColor texture found
-				for (const gltf::primitive & p : mdl.prims) {
-					const std::int32_t off = static_cast<std::int32_t>(merged.verts.size());
-					for (const r3d::vec3 & v : p.verts) { merged.verts.push_back(v); }
-					for (const std::array<std::int32_t, 3> & t : p.tris) {
-						merged.tris.push_back({t[0] + off, t[1] + off, t[2] + off});
-					}
-					// keep UVs parallel to verts (pad missing prims with zeros)
-					if (p.uvs.size() == p.verts.size()) {
-						for (const r3d::vec2 & uv : p.uvs) { merged.uvs.push_back(uv); }
-					} else {
-						for (std::size_t k = 0; k < p.verts.size(); ++k) { merged.uvs.push_back(r3d::V2(0, 0)); }
-					}
-					if (p.material >= 0 && p.material < static_cast<std::int32_t>(mdl.materials.size())) {
-						col = mdl.materials[static_cast<std::size_t>(p.material)].base;
-						const std::int32_t bt = mdl.materials[static_cast<std::size_t>(p.material)].base_tex;
-						if (!mtex && bt >= 0 && bt < static_cast<std::int32_t>(mdl.textures.size())) {
-							mtex = r3d::decode_texture(mdl.textures[static_cast<std::size_t>(bt)].data(),
-							mdl.textures[static_cast<std::size_t>(bt)].size());
-						}
-					}
-				}
-				if (!mtex) { merged.uvs.clear(); } // no texture => flat-colour path
-				const std::int32_t bid = static_cast<std::int32_t>(W->meshes.size()); // id make_mesh will assign
-				body = make_mesh(W, std::move(merged), base, true, scene);
-				if (mtex && bid < static_cast<std::int32_t>(W->meshes.size())) {
-					W->meshes[static_cast<std::size_t>(bid)].tex = mtex;
-				}
-				auto mh = objptr::make(); // a material so it isn't the default gray
-				mh->set("diffuseColor", make_color3(col.r, col.g, col.b));
-				mh->set("baseColor", make_color3(col.r, col.g, col.b));
-				if (body.is_object()) { body.as_object()->set("material", value{mh}); }
-			} else {
-				body = make_mesh(W, r3d::make_box(2.0), base, true, scene); // placeholder
-			}
-			auto res = objptr::make();
-			res->set("meshes", value::array({root, body}));
-			res->set("particleSystems", value::array({}));
-			res->set("skeletons", value::array({}));
-			res->set("animationGroups", value::array({}));
-			res->set("transformNodes", value::array({}));
-			return ctjs::make_promise(value{res}, false);
-		});
+		set_method(
+		    sl, "ImportMeshAsync",
+		    [W, &images](ctjs::context &, const std::vector<value> & a) -> value {
+			    const std::string root_url = a.size() > 1 ? a[1].to_string() : std::string{};
+			    const std::string fname = a.size() > 2 ? a[2].to_string() : std::string{};
+			    const std::string url = root_url + fname; // e.g. "/assets/models/Alien_1.glb"
+			    std::string base = fname;                 // display name: strip dir + ext
+			    if (const std::size_t s = base.find_last_of("/\\"); s != std::string::npos) {
+				    base = base.substr(s + 1);
+			    }
+			    if (const std::size_t d = base.rfind('.'); d != std::string::npos) {
+				    base = base.substr(0, d);
+			    }
+			    const objptr scene = arg_obj(a, 3);
+			    const value root = make_mesh(W, r3d::make_box(0.01), "__root__", true, scene);
+			    value body;
+			    const ctbrowser::embedded_asset * hit = ctbrowser::find_asset(images.embedded, url);
+			    gltf::model mdl;
+			    if (hit != nullptr) { mdl = gltf::parse_glb(hit->data, hit->size); }
+			    if (mdl.ok && !mdl.prims.empty()) {
+				    r3d::geo merged;
+				    r3d::rgba col{1, 1, 1, 1};
+				    std::shared_ptr<r3d::texture> mtex; // first baseColor texture found
+				    for (const gltf::primitive & p : mdl.prims) {
+					    const std::int32_t off = static_cast<std::int32_t>(merged.verts.size());
+					    for (const r3d::vec3 & v : p.verts) { merged.verts.push_back(v); }
+					    for (const std::array<std::int32_t, 3> & t : p.tris) {
+						    merged.tris.push_back({t[0] + off, t[1] + off, t[2] + off});
+					    }
+					    // keep UVs parallel to verts (pad missing prims with zeros)
+					    if (p.uvs.size() == p.verts.size()) {
+						    for (const r3d::vec2 & uv : p.uvs) { merged.uvs.push_back(uv); }
+					    } else {
+						    for (std::size_t k = 0; k < p.verts.size(); ++k) {
+							    merged.uvs.push_back(r3d::V2(0, 0));
+						    }
+					    }
+					    if (p.material >= 0 &&
+						    p.material < static_cast<std::int32_t>(mdl.materials.size())) {
+						    col = mdl.materials[static_cast<std::size_t>(p.material)].base;
+						    const std::int32_t bt =
+						        mdl.materials[static_cast<std::size_t>(p.material)].base_tex;
+						    if (!mtex && bt >= 0 &&
+							    bt < static_cast<std::int32_t>(mdl.textures.size())) {
+							    mtex = r3d::decode_texture(
+							        mdl.textures[static_cast<std::size_t>(bt)].data(),
+							        mdl.textures[static_cast<std::size_t>(bt)].size());
+						    }
+					    }
+				    }
+				    if (!mtex) { merged.uvs.clear(); } // no texture => flat-colour path
+				    const std::int32_t bid =
+				        static_cast<std::int32_t>(W->meshes.size()); // id make_mesh will assign
+				    body = make_mesh(W, std::move(merged), base, true, scene);
+				    if (mtex && bid < static_cast<std::int32_t>(W->meshes.size())) {
+					    W->meshes[static_cast<std::size_t>(bid)].tex = mtex;
+				    }
+				    auto mh = objptr::make(); // a material so it isn't the default gray
+				    mh->set("diffuseColor", make_color3(col.r, col.g, col.b));
+				    mh->set("baseColor", make_color3(col.r, col.g, col.b));
+				    if (body.is_object()) { body.as_object()->set("material", value{mh}); }
+			    } else {
+				    body = make_mesh(W, r3d::make_box(2.0), base, true, scene); // placeholder
+			    }
+			    auto res = objptr::make();
+			    res->set("meshes", value::array({root, body}));
+			    res->set("particleSystems", value::array({}));
+			    res->set("skeletons", value::array({}));
+			    res->set("animationGroups", value::array({}));
+			    res->set("transformNodes", value::array({}));
+			    return ctjs::make_promise(value{res}, false);
+		    });
 		sl.set("AppendAsync", *B->find("AppendSceneAsync"));
 		B->set("SceneLoader", value::object(std::move(sl)));
 	}
@@ -2753,22 +3250,34 @@ inline void install_asset_loading(const objptr & B, const worldptr & W, image_st
 				}
 			}
 		};
-		set_method(B, "AssetContainer", [move_container](ctjs::context &, const std::vector<value> &) -> value {
-			auto o = objptr::make();
-			o->set("meshes", value::array({}));
-			o->set("materials", value::array({}));
-			o->set("textures", value::array({}));
-			o->set("removeAllFromScene", value::function([move_container](ctjs::context & cx, const std::vector<value> &) -> value {
-				move_container(cx, false);
-				return value{};
-			}, "removeAllFromScene"));
-			o->set("addAllToScene", value::function([move_container](ctjs::context & cx, const std::vector<value> &) -> value {
-				move_container(cx, true);
-				return value{};
-			}, "addAllToScene"));
-			o->set("dispose", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "dispose"));
-			return value{o};
-		});
+		set_method(
+		    B, "AssetContainer",
+		    [move_container](ctjs::context &, const std::vector<value> &) -> value {
+			    auto o = objptr::make();
+			    o->set("meshes", value::array({}));
+			    o->set("materials", value::array({}));
+			    o->set("textures", value::array({}));
+			    o->set(
+			        "removeAllFromScene",
+			        value::function(
+			            [move_container](ctjs::context & cx, const std::vector<value> &) -> value {
+				            move_container(cx, false);
+				            return value{};
+			            },
+			            "removeAllFromScene"));
+			    o->set("addAllToScene", value::function(
+			                                [move_container](ctjs::context & cx,
+											                 const std::vector<value> &) -> value {
+				                                move_container(cx, true);
+				                                return value{};
+			                                },
+			                                "addAllToScene"));
+			    o->set("dispose",
+				       value::function(
+			               [](ctjs::context &, const std::vector<value> &) { return value{}; },
+			               "dispose"));
+			    return value{o};
+		    });
 	}
 }
 
@@ -2778,7 +3287,9 @@ inline void install_effects(const objptr & B, const worldptr & W) {
 		auto o = objptr::make();
 		o->set("sprites", value::array({}));
 		for (const char * nm : {"dispose", "render"}) {
-			o->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
+			o->set(nm,
+			       value::function(
+			           [](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 		}
 		return value{o};
 	});
@@ -2793,12 +3304,18 @@ inline void install_effects(const objptr & B, const worldptr & W) {
 		o->set("angle", value{0.0});
 		o->set("isVisible", value{true});
 		// dispose hides it from the overlay (render_sprites skips !isVisible)
-		o->set("dispose", value::function([](ctjs::context & cx, const std::vector<value> &) -> value {
-			if (const objptr s = self_of(cx)) { s->set("isVisible", value{false}); }
-			return value{};
-		}, "dispose"));
+		o->set("dispose", value::function(
+		                      [](ctjs::context & cx, const std::vector<value> &) -> value {
+			                      if (const objptr s = self_of(cx)) {
+				                      s->set("isVisible", value{false});
+			                      }
+			                      return value{};
+		                      },
+		                      "dispose"));
 		for (const char * nm : {"playAnimation", "stopAnimation"}) {
-			o->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
+			o->set(nm,
+			       value::function(
+			           [](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
 		}
 		W->sprites.push_back(o); // drawn as a 2D overlay by render_sprites
 		return value{o};
@@ -2810,44 +3327,59 @@ inline void install_effects(const objptr & B, const worldptr & W) {
 	set_method(B, "GlowLayer", [W](ctjs::context &, const std::vector<value> & a) -> value {
 		auto o = objptr::make();
 		double inten = 1.0;
-		if (a.size() > 2 && a[2].is_object()) { inten = num_prop(a[2].as_object(), "intensity", 1.0); }
+		if (a.size() > 2 && a[2].is_object()) {
+			inten = num_prop(a[2].as_object(), "intensity", 1.0);
+		}
 		o->set("intensity", value{inten});
 		o->set("blurKernelSize", value{16.0});
 		o->set("customEmissiveColorSelector", value{});
 		o->set("__disposed", value{0.0});
 		o->set("includedOnlyMeshes", value::array({}));
 		o->set("excludedMeshes", value::array({}));
-		o->set("dispose", value::function([](ctjs::context & cx, const std::vector<value> &) -> value {
-			if (const objptr self = self_of(cx)) { self->set("__disposed", value{1.0}); }
-			return value{};
-		}, "dispose"));
+		o->set("dispose", value::function(
+		                      [](ctjs::context & cx, const std::vector<value> &) -> value {
+			                      if (const objptr self = self_of(cx)) {
+				                      self->set("__disposed", value{1.0});
+			                      }
+			                      return value{};
+		                      },
+		                      "dispose"));
 		// include/exclude lists are REAL: they hold mesh __mesh ids and gate which
 		// meshes seed the bloom (do_render builds a coverage mask from them).
 		const auto edit_list = [](const char * key, bool add) {
-			return value::function([key, add](ctjs::context & cx, const std::vector<value> & a) -> value {
-				const objptr self = self_of(cx);
-				if (!self || a.empty() || !a[0].is_object()) { return value{}; }
-				const double mid = num_prop(a[0].as_object(), "__mesh", -1);
-				if (mid < 0) { return value{}; }
-				value * lst = self->find(key);
-				if (lst == nullptr || !lst->is_array()) { return value{}; }
-				auto & arr = *lst->as_array(); // std::vector<value>&
-				if (add) {
-					for (const value & e : arr) { if (e.to_number() == mid) { return value{}; } }
-					arr.push_back(value{mid});
-				} else {
-					for (std::size_t k = 0; k < arr.size(); ++k) {
-						if (arr[k].to_number() == mid) { arr.erase(arr.begin() + static_cast<std::ptrdiff_t>(k)); break; }
-					}
-				}
-				return value{};
-			}, key);
+			return value::function(
+			    [key, add](ctjs::context & cx, const std::vector<value> & a) -> value {
+				    const objptr self = self_of(cx);
+				    if (!self || a.empty() || !a[0].is_object()) { return value{}; }
+				    const double mid = num_prop(a[0].as_object(), "__mesh", -1);
+				    if (mid < 0) { return value{}; }
+				    value * lst = self->find(key);
+				    if (lst == nullptr || !lst->is_array()) { return value{}; }
+				    auto & arr = *lst->as_array(); // std::vector<value>&
+				    if (add) {
+					    for (const value & e : arr) {
+						    if (e.to_number() == mid) { return value{}; }
+					    }
+					    arr.push_back(value{mid});
+				    } else {
+					    for (std::size_t k = 0; k < arr.size(); ++k) {
+						    if (arr[k].to_number() == mid) {
+							    arr.erase(arr.begin() + static_cast<std::ptrdiff_t>(k));
+							    break;
+						    }
+					    }
+				    }
+				    return value{};
+			    },
+			    key);
 		};
 		o->set("addIncludedOnlyMesh", edit_list("includedOnlyMeshes", true));
 		o->set("removeIncludedOnlyMesh", edit_list("includedOnlyMeshes", false));
 		o->set("addExcludedMesh", edit_list("excludedMeshes", true));
 		o->set("removeExcludedMesh", edit_list("excludedMeshes", false));
-		o->set("referenceMeshToUseItsOwnMaterial", value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, "referenceMeshToUseItsOwnMaterial"));
+		o->set("referenceMeshToUseItsOwnMaterial",
+		       value::function([](ctjs::context &, const std::vector<value> &) { return value{}; },
+		                       "referenceMeshToUseItsOwnMaterial"));
 		if (a.size() > 1 && a[1].is_object()) {
 			const std::int32_t si = index_of(a[1].as_object(), "__scene");
 			if (si >= 0 && si < static_cast<std::int32_t>(W->scenes.size())) {
@@ -2863,40 +3395,56 @@ inline void install_actions(const objptr & B, const worldptr & W) {
 	// each frame by scene.render). Other triggers (pick/pointer/key) are stored on
 	// the manager but not yet dispatched - ctbrowser routes input through the DOM,
 	// which is what the games actually use.
-	value ActionManager = value::function([W](ctjs::context &, const std::vector<value> & a) -> value {
-		auto o = objptr::make();
-		o->set("__actions", value::array({}));
-		set_method(o, "registerAction", [](ctjs::context & cx, const std::vector<value> & args) -> value {
-			const objptr self = self_of(cx);
-			if (self && !args.empty()) {
-				if (const value * acts = self->find("__actions"); acts != nullptr && acts->is_array()) {
-					acts->as_array()->push_back(args[0]);
-				}
-			}
-			return args.empty() ? value{} : args[0]; // Babylon returns the action
-		});
-		set_method(o, "dispose", [](ctjs::context & cx, const std::vector<value> &) -> value {
-			if (const objptr self = self_of(cx)) { self->set("__actions", value::array({})); }
-			return value{};
-		});
-		set_method(o, "hasSpecificTrigger", [](ctjs::context &, const std::vector<value> &) { return value{false}; });
-		// register with the scene (arg 0) so OnEveryFrameTrigger actions fire per frame
-		if (!a.empty() && a[0].is_object()) {
-			const std::int32_t si = index_of(a[0].as_object(), "__scene");
-			if (si >= 0 && si < static_cast<std::int32_t>(W->scenes.size())) {
-				W->scenes[static_cast<std::size_t>(si)].action_managers.push_back(o);
-			}
-		}
-		return value{o};
-	}, "ActionManager");
+	value ActionManager = value::function(
+	    [W](ctjs::context &, const std::vector<value> & a) -> value {
+		    auto o = objptr::make();
+		    o->set("__actions", value::array({}));
+		    set_method(o, "registerAction",
+			           [](ctjs::context & cx, const std::vector<value> & args) -> value {
+			               const objptr self = self_of(cx);
+			               if (self && !args.empty()) {
+				               if (const value * acts = self->find("__actions");
+							       acts != nullptr && acts->is_array()) {
+					               acts->as_array()->push_back(args[0]);
+				               }
+			               }
+			               return args.empty() ? value{} : args[0]; // Babylon returns the action
+		               });
+		    set_method(o, "dispose", [](ctjs::context & cx, const std::vector<value> &) -> value {
+			    if (const objptr self = self_of(cx)) { self->set("__actions", value::array({})); }
+			    return value{};
+		    });
+		    set_method(o, "hasSpecificTrigger",
+			           [](ctjs::context &, const std::vector<value> &) { return value{false}; });
+		    // register with the scene (arg 0) so OnEveryFrameTrigger actions fire per frame
+		    if (!a.empty() && a[0].is_object()) {
+			    const std::int32_t si = index_of(a[0].as_object(), "__scene");
+			    if (si >= 0 && si < static_cast<std::int32_t>(W->scenes.size())) {
+				    W->scenes[static_cast<std::size_t>(si)].action_managers.push_back(o);
+			    }
+		    }
+		    return value{o};
+	    },
+	    "ActionManager");
 	// trigger-id statics (Babylon's enum) so `ActionManager.OnEveryFrameTrigger` resolves
-	for (const auto & [nm, id] : std::initializer_list<std::pair<const char *, double>>{
-	         {"NothingTrigger", 0}, {"OnPickTrigger", 1}, {"OnLeftPickTrigger", 2},
-	         {"OnRightPickTrigger", 3}, {"OnCenterPickTrigger", 4}, {"OnPickDownTrigger", 5},
-	         {"OnDoublePickTrigger", 6}, {"OnPickUpTrigger", 7}, {"OnLongPressTrigger", 8},
-	         {"OnPointerOverTrigger", 9}, {"OnPointerOutTrigger", 10}, {"OnEveryFrameTrigger", 11},
-	         {"OnIntersectionEnterTrigger", 12}, {"OnIntersectionExitTrigger", 13},
-	         {"OnKeyDownTrigger", 14}, {"OnKeyUpTrigger", 15}, {"OnPickOutTrigger", 16}}) {
+	for (const auto & [nm, id] :
+	     std::initializer_list<std::pair<const char *, double>>{{"NothingTrigger", 0},
+	                                                            {"OnPickTrigger", 1},
+	                                                            {"OnLeftPickTrigger", 2},
+	                                                            {"OnRightPickTrigger", 3},
+	                                                            {"OnCenterPickTrigger", 4},
+	                                                            {"OnPickDownTrigger", 5},
+	                                                            {"OnDoublePickTrigger", 6},
+	                                                            {"OnPickUpTrigger", 7},
+	                                                            {"OnLongPressTrigger", 8},
+	                                                            {"OnPointerOverTrigger", 9},
+	                                                            {"OnPointerOutTrigger", 10},
+	                                                            {"OnEveryFrameTrigger", 11},
+	                                                            {"OnIntersectionEnterTrigger", 12},
+	                                                            {"OnIntersectionExitTrigger", 13},
+	                                                            {"OnKeyDownTrigger", 14},
+	                                                            {"OnKeyUpTrigger", 15},
+	                                                            {"OnPickOutTrigger", 16}}) {
 		set_static(ActionManager, nm, value{id});
 	}
 	B->set("ActionManager", ActionManager);
@@ -2906,15 +3454,17 @@ inline void install_actions(const objptr & B, const worldptr & W) {
 		auto o = objptr::make();
 		double trig = 0;
 		if (!a.empty()) {
-			if (a[0].is_object()) { trig = num_prop(a[0].as_object(), "trigger", 0); }
-			else { trig = a[0].to_number(); }
+			if (a[0].is_object()) {
+				trig = num_prop(a[0].as_object(), "trigger", 0);
+			} else {
+				trig = a[0].to_number();
+			}
 		}
 		o->set("__trigger", value{trig});
 		o->set("trigger", value{trig});
 		if (a.size() > 1 && a[1].is_function()) { o->set("__func", a[1]); }
 		return value{o};
 	});
-
 }
 
 // BABYLON.GUI (the bundler maps @babylonjs/gui here)
@@ -2924,45 +3474,60 @@ inline void install_gui(const objptr & B, const worldptr & W) {
 		// AdvancedDynamicTexture.CreateFullscreenUI -> a texture that collects
 		// controls (addControl); rendering the HUD is a later step
 		{
-			value ADT = value::function([](ctjs::context &, const std::vector<value> &) -> value {
-				return value{objptr::make()};
-			}, "AdvancedDynamicTexture");
-			set_static(ADT, "CreateFullscreenUI", value::function([W](ctjs::context &, const std::vector<value> &) -> value {
-				auto o = objptr::make();
-				o->set("controls", value::array({}));
-				set_method(o, "addControl", [](ctjs::context & cx, const std::vector<value> & a) -> value {
-					objptr self = self_of(cx);
-					if (self && !a.empty()) {
-						const value * c = self->find("controls");
-						if (c != nullptr && c->is_array()) { c->as_array()->push_back(a[0]); }
-					}
-					return cx.current_this;
-				});
-				object_t cv;
-				const double cw = W->target != nullptr ? W->target->canvas_w : 1280;
-				const double chh = W->target != nullptr ? W->target->canvas_h : 720;
-				cv.set("width", value{cw});
-				cv.set("height", value{chh});
-				o->set("_canvas", value::object(std::move(cv)));
-				set_method(o, "removeControl", [](ctjs::context & cx, const std::vector<value> & a) -> value {
-					objptr self = self_of(cx);
-					if (self && !a.empty()) {
-						if (const value * c = self->find("controls"); c != nullptr && c->is_array()) {
-							auto & arr = *c->as_array();
-							for (std::size_t k = 0; k < arr.size(); ++k) {
-								if (arr[k].is_object() && a[0].is_object() && arr[k].as_object() == a[0].as_object()) {
-									arr.erase(arr.begin() + static_cast<std::ptrdiff_t>(k));
-									break;
-								}
-							}
-						}
-					}
-					return value{};
-				});
-				set_method(o, "dispose", [](ctjs::context &, const std::vector<value> &) { return value{}; });
-				W->guis.push_back(o); // rendered as a 2D overlay by render_guis
-				return value{o};
-			}, "CreateFullscreenUI"));
+			value ADT = value::function(
+			    [](ctjs::context &, const std::vector<value> &) -> value {
+				    return value{objptr::make()};
+			    },
+			    "AdvancedDynamicTexture");
+			set_static(
+			    ADT, "CreateFullscreenUI",
+			    value::function(
+			        [W](ctjs::context &, const std::vector<value> &) -> value {
+				        auto o = objptr::make();
+				        o->set("controls", value::array({}));
+				        set_method(o, "addControl",
+						           [](ctjs::context & cx, const std::vector<value> & a) -> value {
+					                   objptr self = self_of(cx);
+					                   if (self && !a.empty()) {
+						                   const value * c = self->find("controls");
+						                   if (c != nullptr && c->is_array()) {
+							                   c->as_array()->push_back(a[0]);
+						                   }
+					                   }
+					                   return cx.current_this;
+				                   });
+				        object_t cv;
+				        const double cw = W->target != nullptr ? W->target->canvas_w : 1280;
+				        const double chh = W->target != nullptr ? W->target->canvas_h : 720;
+				        cv.set("width", value{cw});
+				        cv.set("height", value{chh});
+				        o->set("_canvas", value::object(std::move(cv)));
+				        set_method(o, "removeControl",
+						           [](ctjs::context & cx, const std::vector<value> & a) -> value {
+					                   objptr self = self_of(cx);
+					                   if (self && !a.empty()) {
+						                   if (const value * c = self->find("controls");
+										       c != nullptr && c->is_array()) {
+							                   auto & arr = *c->as_array();
+							                   for (std::size_t k = 0; k < arr.size(); ++k) {
+								                   if (arr[k].is_object() && a[0].is_object() &&
+												       arr[k].as_object() == a[0].as_object()) {
+									                   arr.erase(arr.begin() +
+													             static_cast<std::ptrdiff_t>(k));
+									                   break;
+								                   }
+							                   }
+						                   }
+					                   }
+					                   return value{};
+				                   });
+				        set_method(o, "dispose", [](ctjs::context &, const std::vector<value> &) {
+					        return value{};
+				        });
+				        W->guis.push_back(o); // rendered as a 2D overlay by render_guis
+				        return value{o};
+			        },
+			        "CreateFullscreenUI"));
 			GUI->set("AdvancedDynamicTexture", ADT);
 		}
 		// TextBlock: data props the game sets (text/color/font/alignment/pos)
@@ -2978,15 +3543,19 @@ inline void install_gui(const objptr & B, const worldptr & W) {
 			o->set("textHorizontalAlignment", value{0.0});
 			o->set("isVisible", value{true});
 			for (const char * nm : {"dispose", "addControl"}) {
-				o->set(nm, value::function([](ctjs::context &, const std::vector<value> &) { return value{}; }, nm));
+				o->set(nm, value::function(
+				               [](ctjs::context &, const std::vector<value> &) { return value{}; },
+				               nm));
 			}
 			return value{o};
 		});
 		// Control: alignment constants (BabylonJS values)
 		{
-			value Control = value::function([](ctjs::context &, const std::vector<value> &) -> value {
-				return value{objptr::make()};
-			}, "Control");
+			value Control = value::function(
+			    [](ctjs::context &, const std::vector<value> &) -> value {
+				    return value{objptr::make()};
+			    },
+			    "Control");
 			set_static(Control, "VERTICAL_ALIGNMENT_TOP", value{0.0});
 			set_static(Control, "VERTICAL_ALIGNMENT_BOTTOM", value{1.0});
 			set_static(Control, "VERTICAL_ALIGNMENT_CENTER", value{2.0});
@@ -2996,23 +3565,29 @@ inline void install_gui(const objptr & B, const worldptr & W) {
 			GUI->set("Control", Control);
 		}
 		// mobile-only / unused controls: constructible stubs
-		for (const char * nm : {"Rectangle", "Ellipse", "Line", "Style", "Image", "Button", "StackPanel"}) {
-			GUI->set(nm, value::function([](ctjs::context &, const std::vector<value> &) -> value {
-				auto o = objptr::make();
-				set_method(o, "addControl", [](ctjs::context & cx, const std::vector<value> &) { return cx.current_this; });
-				return value{o};
-			}, nm));
+		for (const char * nm :
+		     {"Rectangle", "Ellipse", "Line", "Style", "Image", "Button", "StackPanel"}) {
+			GUI->set(nm, value::function(
+			                 [](ctjs::context &, const std::vector<value> &) -> value {
+				                 auto o = objptr::make();
+				                 set_method(o, "addControl",
+								            [](ctjs::context & cx, const std::vector<value> &) {
+					                            return cx.current_this;
+				                            });
+				                 return value{o};
+			                 },
+			                 nm));
 		}
 		B->set("GUI", value{GUI});
 	}
-
 }
 
 // the constants scripts read off Engine / Scene themselves
 inline void install_class_statics(const objptr & B) {
 	if (value * eng = B->find("Engine")) {
 		object_t ae;
-		set_method(ae, "unlock", [](ctjs::context &, const std::vector<value> &) { return value{}; });
+		set_method(ae, "unlock",
+		           [](ctjs::context &, const std::vector<value> &) { return value{}; });
 		ae.set("audioContext", value{});
 		ae.set("canUseWebAudio", value{false});
 		set_static(*eng, "audioEngine", value::object(std::move(ae)));
@@ -3023,7 +3598,6 @@ inline void install_class_statics(const objptr & B) {
 		set_static(*scn, "FOGMODE_EXP2", value{2.0});
 		set_static(*scn, "FOGMODE_LINEAR", value{3.0});
 	}
-
 }
 
 inline value build_babylon(const worldptr & W, dom_events & ev, image_store & images) {

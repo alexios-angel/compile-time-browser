@@ -30,10 +30,10 @@ using ctbrowser::node_id;
 using ctbrowser::rect;
 
 struct fragment {
-	rect bounds;                     // border box, in the containing block's space
-	node_id source;                  // empty for anonymous boxes
-	const box_node * box = nullptr;  // borrowed; the box tree outlives layout
-	std::string text;                // text fragments carry their run
+	rect bounds;                    // border box, in the containing block's space
+	node_id source;                 // empty for anonymous boxes
+	const box_node * box = nullptr; // borrowed; the box tree outlives layout
+	std::string text;               // text fragments carry their run
 	std::vector<fragment> children;
 
 	[[nodiscard]] std::size_t count() const noexcept {

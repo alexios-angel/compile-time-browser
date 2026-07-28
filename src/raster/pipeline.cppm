@@ -116,8 +116,8 @@ private:
 	// memory without limit when the compositor stalls; a bounded one makes the
 	// producer notice, and the producer noticing is what backpressure IS.
 	static constexpr std::size_t channel_capacity = 1024;
-	using queue_type = boost::lockfree::spsc_queue<tile_id,
-	                                               boost::lockfree::capacity<channel_capacity>>;
+	using queue_type =
+	    boost::lockfree::spsc_queue<tile_id, boost::lockfree::capacity<channel_capacity>>;
 	struct channel {
 		queue_type queue;
 	};

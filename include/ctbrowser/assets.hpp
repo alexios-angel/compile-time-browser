@@ -38,11 +38,9 @@ namespace detail {
 // / fetch("...")
 template <typename Src> struct script_asset_scan {
 	static constexpr std::string_view text = Src::get();
-	static constexpr std::array<std::string_view, 5> needles{"loadImage(\"",
-	                                                         "playSound(\"",
-	                                                         "fetch(\"",
-	                                                         "AppendSceneAsync(\"",
-	                                                         "url(\""}; // CSS @font-face src, e.g. url("...")
+	static constexpr std::array<std::string_view, 5> needles{
+	    "loadImage(\"", "playSound(\"", "fetch(\"", "AppendSceneAsync(\"",
+	    "url(\""}; // CSS @font-face src, e.g. url("...")
 
 	// {offset, length} of the path at position i, or length 0
 	static consteval std::pair<std::size_t, std::size_t> ref_at(std::size_t i) {
@@ -51,9 +49,7 @@ template <typename Src> struct script_asset_scan {
 			if (text.substr(i, needle.size()) != needle) { continue; }
 			const std::size_t start = i + needle.size();
 			const std::size_t close = text.find('"', start);
-			if (close != std::string_view::npos && close > start) {
-				return {start, close - start};
-			}
+			if (close != std::string_view::npos && close > start) { return {start, close - start}; }
 		}
 		return {0, 0};
 	}
@@ -145,10 +141,12 @@ template <typename Page> inline std::vector<embedded_asset> auto_assets() {
 	// (@font-face src url("...")) - fonts referenced in CSS embed the same way
 	using sscan = detail::script_asset_scan<typename Page::script_source>;
 	using cscan = detail::script_asset_scan<typename Page::style_source>;
-	std::vector<embedded_asset> from_script = detail::collect_auto_assets<typename Page::script_source>(
-	    std::make_index_sequence<sscan::N>{});
-	std::vector<embedded_asset> from_style = detail::collect_auto_assets<typename Page::style_source>(
-	    std::make_index_sequence<cscan::N>{});
+	std::vector<embedded_asset> from_script =
+	    detail::collect_auto_assets<typename Page::script_source>(
+	        std::make_index_sequence<sscan::N>{});
+	std::vector<embedded_asset> from_style =
+	    detail::collect_auto_assets<typename Page::style_source>(
+	        std::make_index_sequence<cscan::N>{});
 	return detail::merge_assets(std::move(from_script), std::move(from_style));
 #else
 	return {};

@@ -4,17 +4,17 @@
 // in. Tests inject the "fetched" bytes through the engine's embedded-
 // asset seam (the same registry compile-time std::fetch fills on
 // --fetch-allow builds), so no network is touched here.
-#include <ctbrowser.hpp>
 #include <cstdio>
 #include <cstring>
+#include <ctbrowser.hpp>
 
 static int failures = 0;
-#define CHECK(cond) \
-	do { \
-		if (!(cond)) { \
-			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
-			++failures; \
-		} \
+#define CHECK(cond)                                                                                \
+	do {                                                                                           \
+		if (!(cond)) {                                                                             \
+			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                            \
+			++failures;                                                                            \
+		}                                                                                          \
 	} while (0)
 
 using app = ctbrowser::page<R"(<!DOCTYPE html>
@@ -73,8 +73,7 @@ int main() {
 	                 reinterpret_cast<const unsigned char *>(config_json),
 	                 std::strlen(config_json)});
 	baked.push_back({"https://assets.test/motd.txt",
-	                 reinterpret_cast<const unsigned char *>(motd_txt),
-	                 std::strlen(motd_txt)});
+	                 reinterpret_cast<const unsigned char *>(motd_txt), std::strlen(motd_txt)});
 
 	ctbrowser::engine<app> e({}, {}, std::move(baked));
 	CHECK(e.script.ok());

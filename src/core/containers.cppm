@@ -31,8 +31,7 @@ export namespace ctbrowser {
 // Open addressing, and the reason it is here rather than std::unordered_map:
 // the standard one is a linked list of nodes and every lookup is a pointer
 // chase. These are the atom table, the style intern table and the VM's globals.
-template <typename Key, typename Value>
-using flat_map = boost::unordered_flat_map<Key, Value>;
+template <typename Key, typename Value> using flat_map = boost::unordered_flat_map<Key, Value>;
 
 template <typename Key> using flat_set = boost::unordered_flat_set<Key>;
 

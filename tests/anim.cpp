@@ -1,8 +1,8 @@
 // CSS @keyframes at runtime: the engine advances animations each frame(),
 // writing interpolated values into the animated element's inline style. This
 // drives a color+opacity fade and checks the interpolation at t=0 / 0.5.
-#include <ctbrowser.hpp>
 #include <cstdio>
+#include <ctbrowser.hpp>
 #include <string_view>
 
 using page = ctbrowser::page<R"HTML(

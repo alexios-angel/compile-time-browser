@@ -15,8 +15,8 @@
 namespace bench_v1 {
 
 struct result {
-	double ms = 0;           // one layout pass
-	std::size_t placed = 0;  // elements that got a rect, for the cross-check
+	double ms = 0;          // one layout pass
+	std::size_t placed = 0; // elements that got a rect, for the cross-check
 };
 
 [[nodiscard]] result layout(const std::string & html, std::int32_t viewport, int reps);

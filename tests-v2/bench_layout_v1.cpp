@@ -35,15 +35,14 @@ namespace bench_v1 {
 
 result layout(const std::string & html, std::int32_t viewport, int reps) {
 	ctbrowser::document doc = ctbrowser::instantiate_html(html);
-	const ctbrowser::style_fn resolve{
-	    [](const ctcss::element_ref * chain, std::size_t depth,
-	       std::string_view prop) -> std::string_view {
-		    if (chain == nullptr || depth == 0) { return {}; }
-		    const auto tag = table.find(std::string{chain[depth - 1].tag});
-		    if (tag == table.end()) { return {}; }
-		    const auto value = tag->second.find(std::string{prop});
-		    return value == tag->second.end() ? std::string_view{} : std::string_view{value->second};
-	    }};
+	const ctbrowser::style_fn resolve{[](const ctcss::element_ref * chain, std::size_t depth,
+	                                     std::string_view prop) -> std::string_view {
+		if (chain == nullptr || depth == 0) { return {}; }
+		const auto tag = table.find(std::string{chain[depth - 1].tag});
+		if (tag == table.end()) { return {}; }
+		const auto value = tag->second.find(std::string{prop});
+		return value == tag->second.end() ? std::string_view{} : std::string_view{value->second};
+	}};
 
 	const auto start = std::chrono::steady_clock::now();
 	for (int i = 0; i < reps; ++i) { (void)ctbrowser::layout(doc, viewport, resolve); }

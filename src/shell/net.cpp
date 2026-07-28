@@ -103,10 +103,9 @@ struct parsed_url {
 }
 
 [[nodiscard]] inline bool iequals(std::string_view a, std::string_view b) {
-	return a.size() == b.size() &&
-	       std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+	return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
 		       return std::tolower(static_cast<unsigned char>(x)) ==
-		              std::tolower(static_cast<unsigned char>(y));
+			          std::tolower(static_cast<unsigned char>(y));
 	       });
 }
 
@@ -161,8 +160,9 @@ struct message {
 
 	bool chunked = false;
 	std::size_t content_length = std::string_view::npos;
-	std::string_view rest = first_line_end == std::string_view::npos ? std::string_view{}
-	                                                                : head.substr(first_line_end + 2);
+	std::string_view rest = first_line_end == std::string_view::npos
+	                            ? std::string_view{}
+	                            : head.substr(first_line_end + 2);
 	while (!rest.empty()) {
 		const std::size_t line_end = rest.find("\r\n");
 		const std::string_view line = rest.substr(0, line_end);
@@ -171,10 +171,13 @@ struct message {
 			const std::string_view name = line.substr(0, colon);
 			std::string_view v = line.substr(colon + 1);
 			while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) { v.remove_prefix(1); }
-			if (iequals(name, "location")) { out.location = std::string{v}; }
-			else if (iequals(name, "content-type")) { out.content_type = std::string{v}; }
-			else if (iequals(name, "transfer-encoding")) { chunked = v.find("chunked") != std::string_view::npos; }
-			else if (iequals(name, "content-length")) {
+			if (iequals(name, "location")) {
+				out.location = std::string{v};
+			} else if (iequals(name, "content-type")) {
+				out.content_type = std::string{v};
+			} else if (iequals(name, "transfer-encoding")) {
+				chunked = v.find("chunked") != std::string_view::npos;
+			} else if (iequals(name, "content-length")) {
 				std::size_t parsed = 0;
 				if (std::from_chars(v.data(), v.data() + v.size(), parsed).ec == std::errc{}) {
 					content_length = parsed;
@@ -198,8 +201,8 @@ struct message {
 			if (line_end == std::string_view::npos) { break; }
 			std::size_t size = 0;
 			const std::string_view size_text = body.substr(0, line_end);
-			if (std::from_chars(size_text.data(), size_text.data() + size_text.size(), size, 16).ec !=
-			    std::errc{}) {
+			if (std::from_chars(size_text.data(), size_text.data() + size_text.size(), size, 16)
+			        .ec != std::errc{}) {
 				break;
 			}
 			if (size == 0) { break; } // the terminating chunk
@@ -252,12 +255,12 @@ struct message {
 				const error_code read_failed = with_deadline(
 				    io,
 				    [&](auto handler) {
-					    stream.async_read_some(aio::buffer(chunk),
-					                           [&got, handler](const error_code & ec,
-					                                           std::size_t n) {
-						                           got = n;
-						                           handler(ec, n);
-					                           });
+					    stream.async_read_some(
+					        aio::buffer(chunk),
+					        [&got, handler](const error_code & ec, std::size_t n) {
+						        got = n;
+						        handler(ec, n);
+					        });
 				    },
 				    timeout);
 				raw.append(chunk, got);
@@ -297,21 +300,19 @@ struct message {
 			        [&](auto handler) {
 				        aio::async_connect(
 				            stream.next_layer(), endpoints,
-				            [handler](const error_code & ec, const auto &) {
-					            handler(ec, 0);
-				            });
+				            [handler](const error_code & ec, const auto &) { handler(ec, 0); });
 			        },
 			        timeout)) {
-				out.error = "could not connect to " + url.host + " (" + connect_failed.message() + ")";
+				out.error =
+				    "could not connect to " + url.host + " (" + connect_failed.message() + ")";
 				return out;
 			}
 			if (const error_code handshake_failed = with_deadline(
 			        io,
 			        [&](auto handler) {
-				        stream.async_handshake(aio::ssl::stream_base::client,
-				                               [handler](const error_code & ec) {
-					                               handler(ec, 0);
-				                               });
+				        stream.async_handshake(
+				            aio::ssl::stream_base::client,
+				            [handler](const error_code & ec) { handler(ec, 0); });
 			        },
 			        timeout)) {
 				out.error = "TLS handshake with " + url.host + " failed (" +
@@ -320,9 +321,7 @@ struct message {
 			}
 			if (const error_code write_failed = with_deadline(
 			        io,
-			        [&](auto handler) {
-				        aio::async_write(stream, aio::buffer(request), handler);
-			        },
+			        [&](auto handler) { aio::async_write(stream, aio::buffer(request), handler); },
 			        timeout)) {
 				out.error = write_failed.message();
 				return out;
@@ -340,19 +339,16 @@ struct message {
 			        [&](auto handler) {
 				        aio::async_connect(
 				            socket, endpoints,
-				            [handler](const error_code & ec, const auto &) {
-					            handler(ec, 0);
-				            });
+				            [handler](const error_code & ec, const auto &) { handler(ec, 0); });
 			        },
 			        timeout)) {
-				out.error = "could not connect to " + url.host + " (" + connect_failed.message() + ")";
+				out.error =
+				    "could not connect to " + url.host + " (" + connect_failed.message() + ")";
 				return out;
 			}
 			if (const error_code write_failed = with_deadline(
 			        io,
-			        [&](auto handler) {
-				        aio::async_write(socket, aio::buffer(request), handler);
-			        },
+			        [&](auto handler) { aio::async_write(socket, aio::buffer(request), handler); },
 			        timeout)) {
 				out.error = write_failed.message();
 				return out;

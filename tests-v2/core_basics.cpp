@@ -6,10 +6,10 @@ import ctbrowser.core;
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <thread>
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 using namespace ctbrowser;
@@ -66,9 +66,9 @@ void test_stale_handle_does_not_resolve() {
 	CHECK_EQ(s.collect(), 1u); // no readers pinned, so it recycles at once
 
 	const thing_id second = s.insert("second");
-	CHECK_EQ(second.slot, slot);           // the slot really was reused...
+	CHECK_EQ(second.slot, slot);                  // the slot really was reused...
 	CHECK(second.generation != first.generation); // ...with a fresh generation
-	CHECK(s.get(first) == nullptr);        // so the stale handle is dead
+	CHECK(s.get(first) == nullptr);               // so the stale handle is dead
 	CHECK_EQ(*s.get(second), std::string{"second"});
 }
 
@@ -127,10 +127,10 @@ void test_atoms() {
 	const atom same = atoms.intern("div");
 	const atom span = atoms.intern("span");
 
-	CHECK(div == same);  // interning is idempotent...
-	CHECK(div != span);  // ...and distinct strings stay distinct
+	CHECK(div == same); // interning is idempotent...
+	CHECK(div != span); // ...and distinct strings stay distinct
 	CHECK_EQ(atoms.text(div), std::string_view{"div"});
-	CHECK(!atom{});      // the empty atom is falsy
+	CHECK(!atom{}); // the empty atom is falsy
 	CHECK_EQ(atoms.text(atom{}), std::string_view{});
 	CHECK(atoms.intern_lower("DIV") == div); // HTML names fold
 	CHECK(atoms.intern_lower("DiV") == div);

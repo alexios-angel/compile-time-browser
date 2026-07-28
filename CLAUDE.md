@@ -333,6 +333,42 @@ an empty string as the label and never read `<option>` at all. Now: the
 `selected` option, else the first, else whatever the user picked, plus a
 drop-down arrow. The popup itself is still missing.
 
+## FORMATTING (2026-07-27)
+
+**`tools/format.sh`**, and `--check` in CI on its own runner. `.clang-format`
+is **LLVM with five deviations**, and the deviations are not preferences - they
+are what the repository was measured to already be: tabs (30,000 tab-indented
+lines against 2,600), 100 columns, `const rect & box` (881 against 16), one-line
+`if (x) { return; }` (1,057 of them), and unindented namespaces. Stock LLVM
+would rewrite every line; the point of a formatter is to be a no-op on code
+that is already right.
+
+Two settings are non-obvious and were both wrong on the first pass:
+`AllowShortIfStatementsOnASingleLine` must be `WithoutElse`, not `Never` -
+`AllowShortBlocksOnASingleLine` governs the block but the `if` is governed
+here, and `Never` overrules it - and `AccessModifierOffset` must be **-4**,
+since LLVM's -2 assumes a 2-space indent. Getting those two right halved the
+diff, from 14,394 lines to 7,065.
+
+**What is NOT formatted is in `.clang-format-ignore`**: generated files
+(font8x8, entities, the SPIR-V blobs), vendored ones (stb), submodules and the
+fetched toolchain. Formatting a generated file makes "the generator changed"
+and "the formatter ran" indistinguishable in a diff.
+
+Sanitizer suppressions grew alongside: the one test that drives `run_app`
+initialises SDL, which reaches libdbus (a lock-order inversion TSan reports)
+and leaves EGL allocated (a leak LSan reports). Both suppressed BY LIBRARY in
+`tests-v2/{tsan,lsan}.supp`, and both files say they were verified by planting
+a fault in our own code and confirming it is still caught - which was actually
+done, for the leak, in the commit that added it.
+
+Two repository problems the formatting turned up, neither of them formatting:
+**`build-timing/` was committed** - 457 files, 408 MB, from a `git add -A` -
+and is untracked now, though the history still carries it. And **the goldens
+were never tracked at all**: `*.ppm` in `.gitignore` swallowed
+`tests-v2/golden/`, so every golden test would have failed on a fresh clone
+with "no golden". There is an exception for them now.
+
 ## v2 EDITING, DISABLED, AND THE COLLECTOR (2026-07-27)
 
 **A control drew in a DIFFERENT FACE from the one it measured.** `into.text()`

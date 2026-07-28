@@ -76,7 +76,9 @@ std::size_t count_kind(const box_node & at, box_kind kind) {
 	return n;
 }
 
-bool near(float a, float b) { return std::fabs(a - b) < 0.01f; }
+bool near(float a, float b) {
+	return std::fabs(a - b) < 0.01f;
+}
 
 // CHECK() from check.hpp prints the expression that failed. Layout failures
 // read far better as prose ("second block stacks below the first") than as a
@@ -116,13 +118,15 @@ void test_whitespace_between_blocks_produces_no_box() {
 
 void test_mixed_content_generates_anonymous_boxes() {
 	fixture f;
-	f.load("<html><body><div id=m>text <span>inline</span><p id=p>block</p></div></body></html>", "");
+	f.load("<html><body><div id=m>text <span>inline</span><p id=p>block</p></div></body></html>",
+	       "");
 	const box_node * m = box_for(f.root, f.find_id("m"));
 	check(m != nullptr, "mixed container has a box");
 	if (m == nullptr) { return; }
 	// "text " and <span> are inline, <p> is block. The inline run has to be
 	// wrapped, or the two formatting contexts interleave.
-	check(count_kind(*m, box_kind::anonymous) == 1, "the inline run is wrapped in ONE anonymous box");
+	check(count_kind(*m, box_kind::anonymous) == 1,
+	      "the inline run is wrapped in ONE anonymous box");
 	check(m->children.size() == 2, "container now has [anonymous, p] as children");
 	if (m->children.size() == 2) {
 		check(m->children[0].kind == box_kind::anonymous, "anonymous wrapper comes first");
@@ -135,13 +139,16 @@ void test_mixed_content_generates_anonymous_boxes() {
 void test_homogeneous_content_is_not_wrapped() {
 	fixture f;
 	f.load("<html><body><div id=a><p>x</p><p>y</p></div>"
-	       "<div id=b>text <span>more</span></div></body></html>", "");
+	       "<div id=b>text <span>more</span></div></body></html>",
+	       "");
 	const box_node * a = box_for(f.root, f.find_id("a"));
 	const box_node * b = box_for(f.root, f.find_id("b"));
 	// Wrapping content that needs no wrapping would add a level of boxes to
 	// every ordinary paragraph in every document.
-	check(a != nullptr && count_kind(*a, box_kind::anonymous) == 0, "all-block content is not wrapped");
-	check(b != nullptr && count_kind(*b, box_kind::anonymous) == 0, "all-inline content is not wrapped");
+	check(a != nullptr && count_kind(*a, box_kind::anonymous) == 0,
+	      "all-block content is not wrapped");
+	check(b != nullptr && count_kind(*b, box_kind::anonymous) == 0,
+	      "all-inline content is not wrapped");
 }
 
 // --- 2. geometry ----------------------------------------------------------
@@ -289,14 +296,38 @@ void test_fragments_carry_no_geometry_back_to_the_dom() {
 
 // Structural equality, to the float. Approximate agreement is not the claim.
 bool identical(const fragment & a, const fragment & b, std::string & where) {
-	if (a.source != b.source) { where = "source"; return false; }
-	if (a.box != b.box) { where = "box"; return false; }
-	if (a.text != b.text) { where = "text: '" + a.text + "' vs '" + b.text + "'"; return false; }
-	if (!near(a.bounds.x, b.bounds.x)) { where = "x"; return false; }
-	if (!near(a.bounds.y, b.bounds.y)) { where = "y"; return false; }
-	if (!near(a.bounds.width, b.bounds.width)) { where = "width"; return false; }
-	if (!near(a.bounds.height, b.bounds.height)) { where = "height"; return false; }
-	if (a.children.size() != b.children.size()) { where = "child count"; return false; }
+	if (a.source != b.source) {
+		where = "source";
+		return false;
+	}
+	if (a.box != b.box) {
+		where = "box";
+		return false;
+	}
+	if (a.text != b.text) {
+		where = "text: '" + a.text + "' vs '" + b.text + "'";
+		return false;
+	}
+	if (!near(a.bounds.x, b.bounds.x)) {
+		where = "x";
+		return false;
+	}
+	if (!near(a.bounds.y, b.bounds.y)) {
+		where = "y";
+		return false;
+	}
+	if (!near(a.bounds.width, b.bounds.width)) {
+		where = "width";
+		return false;
+	}
+	if (!near(a.bounds.height, b.bounds.height)) {
+		where = "height";
+		return false;
+	}
+	if (a.children.size() != b.children.size()) {
+		where = "child count";
+		return false;
+	}
 	for (std::size_t i = 0; i < a.children.size(); ++i) {
 		if (!identical(a.children[i], b.children[i], where)) { return false; }
 	}
@@ -330,7 +361,8 @@ void test_parallel_matches_sequential() {
 		const fragment parallel_result = eng.run_parallel(f.root, 320, pool);
 		std::string where;
 		if (!identical(sequential, parallel_result, where)) {
-			std::printf("FAIL parallel layout diverged on attempt %d at %s\n", attempt, where.c_str());
+			std::printf("FAIL parallel layout diverged on attempt %d at %s\n", attempt,
+			            where.c_str());
 			++ctbrowser_test_failures;
 			return;
 		}
@@ -369,7 +401,9 @@ void test_parallel_survives_a_document_that_is_all_one_subtree() {
 	// One wrapper holding everything: the split point has to be found BELOW
 	// it, not at the root, or the pool gets one item and does nothing.
 	std::string html = "<html><body><main>";
-	for (int i = 0; i < 32; ++i) { html += "<section><p>content " + std::to_string(i) + "</p></section>"; }
+	for (int i = 0; i < 32; ++i) {
+		html += "<section><p>content " + std::to_string(i) + "</p></section>";
+	}
 	html += "</main></body></html>";
 	fixture g;
 	g.load(html, "body { margin: 0 } p { font-size: 10px; margin: 2px }");

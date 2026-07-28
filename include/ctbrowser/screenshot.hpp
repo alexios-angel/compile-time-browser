@@ -39,7 +39,8 @@ inline bool write_ppm(const char * path, std::int32_t w, std::int32_t h, const u
 	std::ofstream out{path, std::ios::binary};
 	out << "P6\n" << w << ' ' << h << "\n255\n";
 	for (std::int32_t y = 0; y < h; ++y) {
-		const unsigned char * row = rgba + static_cast<std::size_t>(y) * static_cast<std::size_t>(pitch);
+		const unsigned char * row =
+		    rgba + static_cast<std::size_t>(y) * static_cast<std::size_t>(pitch);
 		for (std::int32_t x = 0; x < w; ++x) {
 			out.write(reinterpret_cast<const char *>(row + x * 4), 3); // RGB of RGBA
 		}

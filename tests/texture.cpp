@@ -14,14 +14,21 @@ using namespace ctbrowser::babylon;
 
 // 2x2 RGBA PNG: TL red, TR green, BL blue, BR white (generated with Pillow)
 static const unsigned char PNG2x2[] = {
-    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 2, 8,
-    6, 0, 0, 0, 114, 182, 13, 36, 0, 0, 0, 25, 73, 68, 65, 84, 120, 156, 5, 193, 1, 13, 0, 0,
-    12, 195, 32, 150, 220, 191, 229, 30, 68, 210, 77, 194, 3, 62, 255, 6, 0, 133, 208, 147,
-    156, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130};
+    137, 80,  78,  71,  13,  10, 26, 10,  0,   0,   0,   13, 73,  72,  68, 82,  0,
+    0,   0,   2,   0,   0,   0,  2,  8,   6,   0,   0,   0,  114, 182, 13, 36,  0,
+    0,   0,   25,  73,  68,  65, 84, 120, 156, 5,   193, 1,  13,  0,   0,  12,  195,
+    32,  150, 220, 191, 229, 30, 68, 210, 77,  194, 3,   62, 255, 6,   0,  133, 208,
+    147, 156, 0,   0,   0,   0,  73, 69,  78,  68,  174, 66, 96,  130};
 
-static int R(uint32_t p) { return static_cast<int>((p >> 16) & 0xFFu); }
-static int G(uint32_t p) { return static_cast<int>((p >> 8) & 0xFFu); }
-static int B(uint32_t p) { return static_cast<int>(p & 0xFFu); }
+static int R(uint32_t p) {
+	return static_cast<int>((p >> 16) & 0xFFu);
+}
+static int G(uint32_t p) {
+	return static_cast<int>((p >> 8) & 0xFFu);
+}
+static int B(uint32_t p) {
+	return static_cast<int>(p & 0xFFu);
+}
 
 static bool fail(const char * what) {
 	std::printf("FAIL: %s\n", what);
@@ -47,8 +54,8 @@ int main() {
 
 	// --- 3) rasterize a textured quad filling the view (identity MVP: NDC == world)
 	r3d::geo quad;
-	quad.verts = {r3d::V3(-0.9, -0.9, 0.5), r3d::V3(0.9, -0.9, 0.5),
-	              r3d::V3(0.9, 0.9, 0.5), r3d::V3(-0.9, 0.9, 0.5)};
+	quad.verts = {r3d::V3(-0.9, -0.9, 0.5), r3d::V3(0.9, -0.9, 0.5), r3d::V3(0.9, 0.9, 0.5),
+	              r3d::V3(-0.9, 0.9, 0.5)};
 	// screen Y is flipped, so the top verts (+Y) get UV v=0 (top of the texture)
 	quad.uvs = {r3d::V2(0, 1), r3d::V2(1, 1), r3d::V2(1, 0), r3d::V2(0, 0)};
 	quad.tris = {{0, 1, 2}, {0, 2, 3}};
@@ -61,9 +68,8 @@ int main() {
 
 	// two opposite hemispheric lights sum to a flat lit == 1 everywhere, so the
 	// rasterized colour is the raw texel (no shading to reason about)
-	std::vector<r3d::light> lights = {
-	    r3d::light{0, r3d::V3(0, 0, 1), 1.0, r3d::rgba{1, 1, 1, 1}},
-	    r3d::light{0, r3d::V3(0, 0, -1), 1.0, r3d::rgba{1, 1, 1, 1}}};
+	std::vector<r3d::light> lights = {r3d::light{0, r3d::V3(0, 0, 1), 1.0, r3d::rgba{1, 1, 1, 1}},
+	                                  r3d::light{0, r3d::V3(0, 0, -1), 1.0, r3d::rgba{1, 1, 1, 1}}};
 
 	const int W = 64, H = 64;
 	std::vector<uint32_t> px(static_cast<size_t>(W * H), 0);
@@ -73,17 +79,25 @@ int main() {
 	rr.render(px.data(), W, H, vw, {it}, lights);
 
 	// sample one pixel from the middle of each screen quadrant
-	auto at = [&](int x, int y) { return px[static_cast<size_t>(y) * static_cast<size_t>(W) + static_cast<size_t>(x)]; };
+	auto at = [&](int x, int y) {
+		return px[static_cast<size_t>(y) * static_cast<size_t>(W) + static_cast<size_t>(x)];
+	};
 	const uint32_t q_tl = at(W / 4, H / 4);         // top-left  -> red
 	const uint32_t q_tr = at(3 * W / 4, H / 4);     // top-right -> green
 	const uint32_t q_bl = at(W / 4, 3 * H / 4);     // bot-left  -> blue
 	const uint32_t q_br = at(3 * W / 4, 3 * H / 4); // bot-right -> white
-	std::printf("quadrants: TL=%06X TR=%06X BL=%06X BR=%06X\n", q_tl & 0xFFFFFFu,
-	            q_tr & 0xFFFFFFu, q_bl & 0xFFFFFFu, q_br & 0xFFFFFFu);
+	std::printf("quadrants: TL=%06X TR=%06X BL=%06X BR=%06X\n", q_tl & 0xFFFFFFu, q_tr & 0xFFFFFFu,
+	            q_bl & 0xFFFFFFu, q_br & 0xFFFFFFu);
 	if (!(R(q_tl) > G(q_tl) && R(q_tl) > B(q_tl))) { return fail("raster TL not red-dominant"), 1; }
-	if (!(G(q_tr) > R(q_tr) && G(q_tr) > B(q_tr))) { return fail("raster TR not green-dominant"), 1; }
-	if (!(B(q_bl) > R(q_bl) && B(q_bl) > G(q_bl))) { return fail("raster BL not blue-dominant"), 1; }
-	if (!(R(q_br) > 150 && G(q_br) > 150 && B(q_br) > 150)) { return fail("raster BR not white"), 1; }
+	if (!(G(q_tr) > R(q_tr) && G(q_tr) > B(q_tr))) {
+		return fail("raster TR not green-dominant"), 1;
+	}
+	if (!(B(q_bl) > R(q_bl) && B(q_bl) > G(q_bl))) {
+		return fail("raster BL not blue-dominant"), 1;
+	}
+	if (!(R(q_br) > 150 && G(q_br) > 150 && B(q_br) > 150)) {
+		return fail("raster BR not white"), 1;
+	}
 
 	std::printf("texture render: PASS (textured quad samples correctly)\n");
 	return 0;

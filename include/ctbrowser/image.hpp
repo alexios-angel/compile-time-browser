@@ -35,8 +35,7 @@ inline uint32_t read_u32(const unsigned char * p) {
 	       (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
 }
 inline uint16_t read_u16(const unsigned char * p) {
-	return static_cast<uint16_t>(static_cast<uint16_t>(p[0]) |
-	                             (static_cast<uint16_t>(p[1]) << 8));
+	return static_cast<uint16_t>(static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8));
 }
 
 } // namespace detail
@@ -94,8 +93,7 @@ inline image parse_bmp(const unsigned char * data, std::size_t size) {
 			const uint32_t r = px[2];
 			const uint32_t a = bytes_pp == 4 ? px[3] : 0xFFu;
 			out.pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
-			           static_cast<std::size_t>(x)] =
-			    (a << 24) | (r << 16) | (g << 8) | b;
+			           static_cast<std::size_t>(x)] = (a << 24) | (r << 16) | (g << 8) | b;
 		}
 	}
 	return out;

@@ -30,17 +30,17 @@ export namespace ctbrowser::script {
 
 enum class op : std::uint8_t {
 	// --- moves and constants
-	load_const,   // a = k[bx]          (number/bool - an immediate, no heap)
-	load_string,  // a = intern(strings[bx])
-	load_undef,   // a = undefined
-	load_null,    // a = null
-	load_true,    // a = true
-	load_false,   // a = false
-	move,         // a = b
+	load_const,  // a = k[bx]          (number/bool - an immediate, no heap)
+	load_string, // a = intern(strings[bx])
+	load_undef,  // a = undefined
+	load_null,   // a = null
+	load_true,   // a = true
+	load_false,  // a = false
+	move,        // a = b
 
 	// --- globals and locals
-	get_global,   // a = globals[k[bx]]
-	set_global,   // globals[k[bx]] = a
+	get_global, // a = globals[k[bx]]
+	set_global, // globals[k[bx]] = a
 
 	// --- captured variables. A local that some nested function refers to is
 	// stored in a heap CELL rather than directly in its register, and every
@@ -48,73 +48,85 @@ enum class op : std::uint8_t {
 	// closure visible to the enclosing scope - the alternative, copying the
 	// value into the closure, silently gets the commonest closure idiom
 	// (a counter) wrong.
-	new_cell,     // a = cell(a)          (box the value already in a)
-	cell_get,     // a = *b
-	cell_set,     // *a = b
-	get_upvalue,  // a = *upvalues[b]     (upvalues are always cells)
-	set_upvalue,  // *upvalues[a] = b
+	new_cell,    // a = cell(a)          (box the value already in a)
+	cell_get,    // a = *b
+	cell_set,    // *a = b
+	get_upvalue, // a = *upvalues[b]     (upvalues are always cells)
+	set_upvalue, // *upvalues[a] = b
 
 	// --- arithmetic. JS `+` is add_or_concat: it is the one operator whose
 	// meaning depends on its operand types, so it gets its own opcode rather
 	// than a runtime branch inside a generic `add`.
-	add,          // a = b + c   (numeric)
-	concat,       // a = b + c   (string)
-	add_generic,  // a = b + c   (either, decided at runtime)
-	sub, mul, div, mod, pow,
-	negate,       // a = -b
-	logical_not,  // a = !b
+	add,         // a = b + c   (numeric)
+	concat,      // a = b + c   (string)
+	add_generic, // a = b + c   (either, decided at runtime)
+	sub,
+	mul,
+	div,
+	mod,
+	pow,
+	negate,      // a = -b
+	logical_not, // a = !b
 
 	// --- comparison
-	equal,        // a = b === c
-	not_equal,    // a = b !== c
-	loose_equal,  // a = b == c
+	equal,           // a = b === c
+	not_equal,       // a = b !== c
+	loose_equal,     // a = b == c
 	loose_not_equal, // a = b != c
-	less, less_equal, greater, greater_equal,
+	less,
+	less_equal,
+	greater,
+	greater_equal,
 	instance_of,  // a = b instanceof c   (walks b's prototype chain)
 	has_property, // a = b in c
 
 	// --- bitwise. JavaScript's operate on ToInt32/ToUint32 of a double, so
 	// they are not just the C operators on the stored number.
-	bit_and, bit_or, bit_xor, shl, shr, ushr,
-	bit_not,      // a = ~b
+	bit_and,
+	bit_or,
+	bit_xor,
+	shl,
+	shr,
+	ushr,
+	bit_not, // a = ~b
 
 	// --- control flow
-	jump,         // ip += sbx
-	jump_if_false,// if (!truthy(a)) ip += sbx
-	jump_if_true, // if (truthy(a)) ip += sbx
+	jump,          // ip += sbx
+	jump_if_false, // if (!truthy(a)) ip += sbx
+	jump_if_true,  // if (truthy(a)) ip += sbx
 
 	// --- objects and arrays
-	new_object,   // a = {}
-	new_array,    // a = []
-	get_prop,     // a = b[k[c]]        (named; the inline-cache site)
-	set_prop,     // a[k[b]] = c
-	get_index,    // a = b[c]           (computed)
-	set_index,    // a[b] = c
-	append,       // a.push(b)          (array literals)
+	new_object, // a = {}
+	new_array,  // a = []
+	get_prop,   // a = b[k[c]]        (named; the inline-cache site)
+	set_prop,   // a[k[b]] = c
+	get_index,  // a = b[c]           (computed)
+	set_index,  // a[b] = c
+	append,     // a.push(b)          (array literals)
 
 	// --- calls
-	closure,      // a = new closure of functions[bx]
-	call,         // a = call(a, args a+1 .. a+b)
-	call_method,  // a = call(a[k[c]], this=a, args a+1 .. a+b)
+	closure,       // a = new closure of functions[bx]
+	call,          // a = call(a, args a+1 .. a+b)
+	call_method,   // a = call(a[k[c]], this=a, args a+1 .. a+b)
 	call_computed, // a = call(a[reg c], this=a, args a+1 .. a+b)
-	construct,    // a = new a(args a+1 .. a+b)
+	construct,     // a = new a(args a+1 .. a+b)
 	call_receiver, // a = call(a, this=c, args a+1 .. a+b) - `super.m(...)`
-	copy_props,   // a gets every own property of b   (`{...o}`, Object.assign)
-	delete_prop,  // a[k[b]] = gone
-	delete_index, // a[b] = gone
-	own_keys,     // a = the own property names of b, as an array (for..in)
-	set_proto,    // a.__proto__ = b, for `class X extends Y`
-	get_proto,    // a = b's prototype, for `super`
-	load_home,    // a = the home object of the running method (its class's
-	              // prototype); `super` starts its lookup at the home's proto
-	await_value,  // a = the settled value of b (a promise, or b itself)
-	wrap_promise, // a = a as a SETTLED promise (what an `async` function returns)
-	ret,          // return a
-	ret_undef,    // return undefined
+	copy_props,    // a gets every own property of b   (`{...o}`, Object.assign)
+	delete_prop,   // a[k[b]] = gone
+	delete_index,  // a[b] = gone
+	own_keys,      // a = the own property names of b, as an array (for..in)
+	set_proto,     // a.__proto__ = b, for `class X extends Y`
+	get_proto,     // a = b's prototype, for `super`
+	load_home,     // a = the home object of the running method (its class's
+	               // prototype); `super` starts its lookup at the home's proto
+	await_value,   // a = the settled value of b (a promise, or b itself)
+	wrap_promise,  // a = a as a SETTLED promise (what an `async` function returns)
+	ret,           // return a
+	ret_undef,     // return undefined
 
 	// --- misc
-	type_of,      // a = typeof b
-	load_this,    // a = the receiver of the call that entered this frame
+	type_of,   // a = typeof b
+	load_this, // a = the receiver of the call that entered this frame
 
 	// --- exceptions. `try` pushes a handler with the address to jump to;
 	// `throw` unwinds call frames until it finds one. Unwinding is what makes
@@ -169,7 +181,7 @@ struct function_proto {
 	// there is an agent per thread.
 	std::vector<value> constants;
 	std::vector<std::string> strings;
-	std::vector<std::string> names;    // for get_global/get_prop operands
+	std::vector<std::string> names; // for get_global/get_prop operands
 	std::vector<upvalue_desc> upvalues;
 	std::vector<std::uint32_t> nested; // indices into program::functions
 

@@ -57,15 +57,15 @@ struct sample {
 }
 
 // One measured operation: do the thing, then draw the frame it made necessary.
-template <typename F>
-[[nodiscard]] sample measure(browser & page, int repeats, F && operation) {
+template <typename F> [[nodiscard]] sample measure(browser & page, int repeats, F && operation) {
 	std::vector<double> times;
 	times.reserve(static_cast<std::size_t>(repeats));
 	for (int i = 0; i < repeats; ++i) {
 		const auto began = clock_type::now();
 		operation(i);
 		(void)page.frame();
-		times.push_back(std::chrono::duration<double, std::milli>(clock_type::now() - began).count());
+		times.push_back(
+		    std::chrono::duration<double, std::milli>(clock_type::now() - began).count());
 	}
 	return summarise(std::move(times));
 }
@@ -101,7 +101,8 @@ int main() {
 		(void)page.handle(input_event::mouse_move_to(i % 2 == 0 ? x1 : x2, i % 2 == 0 ? y1 : y2));
 	});
 	const std::size_t layouts_before = page.layout_count();
-	const sample scroll = measure(page, 200, [&](int i) { page.scroll_by(i % 2 == 0 ? 4.0f : -4.0f); });
+	const sample scroll =
+	    measure(page, 200, [&](int i) { page.scroll_by(i % 2 == 0 ? 4.0f : -4.0f); });
 	const std::size_t scroll_layouts = page.layout_count() - layouts_before;
 
 	std::printf("\n  operation           median ms    p95 ms   implied CPU at 60fps\n");

@@ -100,8 +100,7 @@ void test_unclosed_paragraphs() {
 	            "a <p> start tag closes an open <p>");
 	expect_tree("<p>one<div>two</div>", R"(html(body(p("one") div("two"))))",
 	            "and so does any block-level start tag");
-	expect_tree("<p>one<b>two", R"(html(body(p("one" b("two")))))",
-	            "but an inline one does not");
+	expect_tree("<p>one<b>two", R"(html(body(p("one" b("two")))))", "but an inline one does not");
 }
 
 void test_unclosed_list_items() {
@@ -112,14 +111,12 @@ void test_unclosed_list_items() {
 }
 
 void test_headings_do_not_nest() {
-	expect_tree("<h1>a<h2>b", R"(html(body(h1("a") h2("b"))))",
-	            "a heading closes an open heading");
+	expect_tree("<h1>a<h2>b", R"(html(body(h1("a") h2("b"))))", "a heading closes an open heading");
 }
 
 void test_void_elements() {
 	expect_tree("<p>a<br>b</p>", R"(html(body(p("a" br "b"))))", "<br> takes no children");
-	expect_tree("<img src=x><p>after", R"(html(body(img p("after"))))",
-	            "and neither does <img>");
+	expect_tree("<img src=x><p>after", R"(html(body(img p("after"))))", "and neither does <img>");
 	expect_tree("<br/>", R"(html(body(br)))", "a self-closing void element is still just void");
 }
 
@@ -142,8 +139,7 @@ void test_unclosed_at_eof() {
 void test_table_implies_its_sections() {
 	// A page writing <table><tr><td> gets a <tbody> it never asked for, and
 	// `table > tbody > tr` selectors in the wild depend on it.
-	expect_tree("<table><tr><td>a</table>",
-	            R"(html(body(table(tbody(tr(td("a")))))))",
+	expect_tree("<table><tr><td>a</table>", R"(html(body(table(tbody(tr(td("a")))))))",
 	            "<tr> in a <table> grows a <tbody>");
 	expect_tree("<table><tbody><tr><td>a<td>b</table>",
 	            R"(html(body(table(tbody(tr(td("a") td("b")))))))",
@@ -157,8 +153,7 @@ void test_foster_parenting() {
 	// Text directly inside a <table> goes BEFORE the table, not inside it.
 	// Every browser does this; a parser that nests it instead puts stray text
 	// into the table layout and the page shifts.
-	expect_tree("<table>stray<tr><td>a</table>",
-	            R"(html(body("stray" table(tbody(tr(td("a")))))))",
+	expect_tree("<table>stray<tr><td>a</table>", R"(html(body("stray" table(tbody(tr(td("a")))))))",
 	            "text inside a table is foster-parented out of it");
 }
 
@@ -242,8 +237,7 @@ void test_raw_text_elements() {
 	expect_tree("<script>if (a<b) { }</script>", R"(html(head(script("if (a<b) { }"))))",
 	            "<script> contents are text, not markup");
 	expect_tree("<style>p::after { content: '<' }</style>",
-	            R"(html(head(style("p::after { content: '<' }"))))",
-	            "and so are <style> contents");
+	            R"(html(head(style("p::after { content: '<' }"))))", "and so are <style> contents");
 	expect_tree("<title>a &amp; b</title>", R"(html(head(title("a & b"))))",
 	            "<title> is RCDATA: entities decode, markup does not");
 	expect_tree("<textarea><b>not bold</b></textarea>",

@@ -25,7 +25,7 @@ void test_create_and_read() {
 		CHECK(r.contains(a));
 		CHECK(r.kind(a).value() == node_kind::element);
 		CHECK(r.tag(a).value() == div);
-		CHECK(!r.parent(a));            // created detached
+		CHECK(!r.parent(a)); // created detached
 		CHECK(r.children(a).empty());
 		CHECK(r.attributes(a).empty()); // and allocation-free while empty
 	}

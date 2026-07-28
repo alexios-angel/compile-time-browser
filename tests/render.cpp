@@ -6,23 +6,23 @@
 //   2. byte-exact golden compare against tests/golden/render.ppm
 //      (regenerate with REGOLDEN=1 ./tests/render).
 // A PNG of the same frame lands in tests/render-out.png for humans.
-#include <ctbrowser.hpp>
-#include <ctbrowser/app.hpp>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <ctbrowser.hpp>
+#include <ctbrowser/app.hpp>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
 
 static int failures = 0;
-#define CHECK(cond) \
-	do { \
-		if (!(cond)) { \
-			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
-			++failures; \
-		} \
+#define CHECK(cond)                                                                                \
+	do {                                                                                           \
+		if (!(cond)) {                                                                             \
+			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                            \
+			++failures;                                                                            \
+		}                                                                                          \
 	} while (0)
 
 using scene = ctbrowser::page<R"(<!DOCTYPE html>
@@ -101,9 +101,9 @@ int main() {
 		// page background beyond it
 		CHECK(rgb_is(img, 200, 20, 255, 255, 255));
 		// the canvas sits below the red box (y offset 40)
-		CHECK(rgb_is(img, 60, 60, 0, 0, 255));           // blue fill (clear of the text)
-		CHECK(rgb_is(img, 32, 32 + 40, 255, 170, 51));   // orange circle center
-		CHECK(rgb_is(img, 42, 40 + 40, 102, 255, 102));  // alien sprite pixel (drawImage)
+		CHECK(rgb_is(img, 60, 60, 0, 0, 255));          // blue fill (clear of the text)
+		CHECK(rgb_is(img, 32, 32 + 40, 255, 170, 51));  // orange circle center
+		CHECK(rgb_is(img, 42, 40 + 40, 102, 255, 102)); // alien sprite pixel (drawImage)
 		// fillText left white pixels near the canvas top-left
 		int text_px = 0;
 		for (int y = 40 + 2; y < 40 + 10; ++y) {
@@ -132,8 +132,7 @@ int main() {
 		                    std::istreambuf_iterator<char>());
 		CHECK(a == b);
 	} else {
-		std::printf("note: no golden at %s (run REGOLDEN=1 ./tests/render)\n",
-		            golden_path.c_str());
+		std::printf("note: no golden at %s (run REGOLDEN=1 ./tests/render)\n", golden_path.c_str());
 	}
 
 	if (failures == 0) { std::printf("render suite: all checks passed\n"); }

@@ -110,7 +110,7 @@ void test_arithmetic() {
 void test_plus_is_overloaded() {
 	diff_vs_v1("'a' + 'b'", "ab");
 	diff_vs_v1("'n=' + 42", "n=42");
-	diff_vs_v1("1 + '2'", "12");   // string wins
+	diff_vs_v1("1 + '2'", "12");     // string wins
 	diff_vs_v1("1 + 2 + '3'", "33"); // ...but only once it appears
 	diff_vs_v1("'1' + 2 + 3", "123");
 }
@@ -166,10 +166,12 @@ void test_functions() {
 	// hoisting: callable before its declaration appears
 	expect("let r = twice(21); function twice(n) { return n * 2; } return r;", "42");
 	// recursion, and therefore real frame handling
-	expect("function fact(n) { if (n <= 1) { return 1; } return n * fact(n - 1); } return fact(10);",
-	       "3628800");
-	expect("function fib(n) { if (n < 2) { return n; } return fib(n-1) + fib(n-2); } return fib(20);",
-	       "6765");
+	expect(
+	    "function fact(n) { if (n <= 1) { return 1; } return n * fact(n - 1); } return fact(10);",
+	    "3628800");
+	expect(
+	    "function fib(n) { if (n < 2) { return n; } return fib(n-1) + fib(n-2); } return fib(20);",
+	    "6765");
 	// a missing argument is undefined, not an error
 	expect("function f(a, b) { return typeof b; } return f(1);", "undefined");
 	// function expressions and arrows
@@ -189,7 +191,8 @@ void test_objects_and_arrays() {
 	expect("let a = [1,2,3]; a[1] = 9; return a[1];", "9");
 	expect("return 'hello'.length;", "5");
 	expect("let o = { a: 1 }; return o['a'];", "1");
-	expect("let a = [1,2,3]; let s = 0; for (let i = 0; i < a.length; i++) { s = s + a[i]; } return s;",
+	expect("let a = [1,2,3]; let s = 0; for (let i = 0; i < a.length; i++) { s = s + a[i]; } "
+	       "return s;",
 	       "6");
 	// nested structure
 	expect("let o = { inner: { deep: 42 } }; return o.inner.deep;", "42");
@@ -266,20 +269,18 @@ void test_closures() {
 // while the closure is still live and the closure returns garbage.
 void test_gc_traces_captured_cells() {
 	context cx;
-	const program prog = compiler::compile(
-	    "function make(v) { return function() { return v; }; }"
-	    "let keep = make(99);"
-	    "for (let i = 0; i < 100; i++) { let junk = make(i); }"
-	    "return 0;");
+	const program prog = compiler::compile("function make(v) { return function() { return v; }; }"
+	                                       "let keep = make(99);"
+	                                       "for (let i = 0; i < 100; i++) { let junk = make(i); }"
+	                                       "return 0;");
 	const run_result r = cx.run(prog);
 	CHECK(r.ok);
 	const std::size_t freed = cx.collect();
 	CHECK(freed > 0); // the 100 discarded closures and their cells
 
 	// and the surviving closure still works after the sweep
-	const program check = compiler::compile(
-	    "function make(v) { return function() { return v; }; }"
-	    "let keep = make(99); return keep();");
+	const program check = compiler::compile("function make(v) { return function() { return v; }; }"
+	                                        "let keep = make(99); return keep();");
 	context cx2;
 	const run_result r2 = cx2.run(check);
 	CHECK(r2.ok);
@@ -300,10 +301,10 @@ void test_native_bindings() {
 
 void test_gc_collects_unreachable() {
 	context cx;
-	const program prog = compiler::compile(
-	    "let keep = { alive: 1 };"
-	    "for (let i = 0; i < 200; i++) { let junk = { dead: i }; }"
-	    "return keep.alive;");
+	const program prog =
+	    compiler::compile("let keep = { alive: 1 };"
+		                  "for (let i = 0; i < 200; i++) { let junk = { dead: i }; }"
+		                  "return keep.alive;");
 	const run_result r = cx.run(prog);
 	CHECK(r.ok);
 	CHECK_EQ(cx.to_string(r.returned), std::string{"1"});
@@ -326,7 +327,6 @@ void test_errors_are_reported_not_crashes() {
 	const program bad = compiler::compile("let x = ;");
 	CHECK(!bad.ok);
 }
-
 
 // --- stage 2: the things ordinary code needs ------------------------------
 
@@ -365,22 +365,27 @@ void test_this() {
 	expect_result("var o = {n: 7, get: function () { return this.n; }}; return o.get();", "7");
 	// and it follows the CALL SITE, not the definition
 	expect_result("var a = {n: 1, get: function () { return this.n; }};"
-	              "var b = {n: 2, get: a.get}; return b.get();", "2");
+	              "var b = {n: 2, get: a.get}; return b.get();",
+	              "2");
 }
 
 void test_break_and_continue() {
 	// Without these no loop could exit early: every search loop, every guard,
 	// every early-out in a game loop.
 	expect_result("var t = 0; for (var i = 0; i < 10; i++) { if (i == 5) { break; } t += 1; }"
-	              "return t;", "5");
+	              "return t;",
+	              "5");
 	expect_result("var t = 0; for (var i = 0; i < 5; i++) { if (i == 2) { continue; } t += 1; }"
-	              "return t;", "4");
+	              "return t;",
+	              "4");
 	// The subtle one: `continue` in a for-loop must run the UPDATE. If it jumped
 	// back to the condition instead, this would never terminate.
 	expect_result("var n = 0; for (var i = 0; i < 4; i++) { if (i < 2) { continue; } n += 1; }"
-	              "return n;", "2");
+	              "return n;",
+	              "2");
 	expect_result("var t = 0; var i = 0; while (i < 10) { i += 1; if (i > 3) { break; } t += 1; }"
-	              "return t;", "3");
+	              "return t;",
+	              "3");
 	expect_result("var t = 0; var i = 0; do { i += 1; t += i; } while (i < 3); return t;", "6");
 }
 
@@ -390,11 +395,13 @@ void test_labeled_break() {
 	expect_result("var n = 0;"
 	              "outer: for (var i = 0; i < 3; i++) {"
 	              "  for (var j = 0; j < 3; j++) { n += 1; if (j == 0) { break outer; } }"
-	              "} return n;", "1");
+	              "} return n;",
+	              "1");
 	expect_result("var n = 0;"
 	              "outer: for (var i = 0; i < 3; i++) {"
 	              "  for (var j = 0; j < 3; j++) { if (j == 0) { continue outer; } n += 1; }"
-	              "} return n;", "0");
+	              "} return n;",
+	              "0");
 }
 
 void test_try_catch() {
@@ -409,21 +416,25 @@ void test_exceptions_unwind_call_frames() {
 	// in between.
 	expect_result("function deep() { throw 42; }"
 	              "function middle() { deep(); return 1; }"
-	              "var r = 0; try { middle(); } catch (e) { r = e; } return r;", "42");
+	              "var r = 0; try { middle(); } catch (e) { r = e; } return r;",
+	              "42");
 	expect_result("function f() { try { throw 1; } catch (e) { return 5; } return 9; }"
-	              "return f();", "5");
+	              "return f();",
+	              "5");
 }
 
 void test_finally() {
 	expect_result("var r = 0; try { r = 1; } finally { r += 10; } return r;", "11");
 	expect_result("var r = 0; try { throw 1; } catch (e) { r = 2; } finally { r += 10; }"
-	              "return r;", "12");
+	              "return r;",
+	              "12");
 }
 
 void test_nested_try() {
 	expect_result("var r = 0;"
 	              "try { try { throw 1; } catch (e) { r = 1; throw 2; } } catch (e) { r += e; }"
-	              "return r;", "3");
+	              "return r;",
+	              "3");
 }
 
 void test_break_out_of_try() {
@@ -432,9 +443,9 @@ void test_break_out_of_try() {
 	// code - a crash, not a wrong answer.
 	expect_result("var n = 0;"
 	              "for (var i = 0; i < 3; i++) { try { n += 1; break; } catch (e) { n = 99; } }"
-	              "var caught = 0; try { throw 5; } catch (e) { caught = e; } return caught;", "5");
+	              "var caught = 0; try { throw 5; } catch (e) { caught = e; } return caught;",
+	              "5");
 }
-
 
 // --- stage 3: the standard library ----------------------------------------
 
@@ -459,7 +470,8 @@ void test_math_random_is_in_range_and_moves() {
 	expect_result("var ok = true;"
 	              "for (var i = 0; i < 200; i++) { var r = Math.random();"
 	              "  if (r < 0 || r >= 1) { ok = false; } }"
-	              "return ok;", "true");
+	              "return ok;",
+	              "true");
 	expect_result("var a = Math.random(); var b = Math.random(); return a != b;", "true");
 }
 
@@ -489,7 +501,8 @@ void test_array_iteration_calls_back_into_the_vm() {
 	expect_result("return [1,2,3].some(function (x) { return x > 2; });", "true");
 	expect_result("return [1,2,3].every(function (x) { return x > 0; });", "true");
 	// The callback gets the index too, which half of real uses depend on.
-	expect_result("var s = ''; ['a','b'].forEach(function (x, i) { s += i + x; }); return s;", "0a1b");
+	expect_result("var s = ''; ['a','b'].forEach(function (x, i) { s += i + x; }); return s;",
+	              "0a1b");
 }
 
 void test_array_sort() {
@@ -562,25 +575,28 @@ void test_computed_and_named_lookup_agree() {
 	expect_result("var a = [1,2]; var m = 'push'; a[m](3); return a.length;", "3");
 }
 
-
 // --- stage 4: the rest of the language ------------------------------------
 
 void test_for_of() {
 	expect_result("var t = 0; for (const x of [1,2,3]) { t += x; } return t;", "6");
 	expect_result("var s = ''; for (const c of 'abc') { s += c; } return s;", "abc");
 	expect_result("var t = 0; for (const x of [1,2,3]) { if (x == 2) { continue; } t += x; }"
-	              "return t;", "4");
+	              "return t;",
+	              "4");
 	expect_result("var t = 0; for (const x of [1,2,3]) { if (x == 2) { break; } t += x; }"
-	              "return t;", "1");
+	              "return t;",
+	              "1");
 	// The loop variable is per-iteration, so a closure made in the body sees
 	// THIS element and not the last one.
 	expect_result("var fns = []; for (const x of [1,2,3]) { fns.push(function () { return x; }); }"
-	              "return fns[0]() + fns[2]();", "4");
+	              "return fns[0]() + fns[2]();",
+	              "4");
 }
 
 void test_for_in() {
 	expect_result("var keys = ''; for (const k in {a: 1, b: 2}) { keys += k; } return keys;", "ab");
-	expect_result("var t = 0; var o = {a: 1, b: 2}; for (const k in o) { t += o[k]; } return t;", "3");
+	expect_result("var t = 0; var o = {a: 1, b: 2}; for (const k in o) { t += o[k]; } return t;",
+	              "3");
 }
 
 void test_template_literals() {
@@ -595,47 +611,58 @@ void test_template_literals() {
 
 void test_switch() {
 	expect_result("var r = 0; switch (2) { case 1: r = 10; break; case 2: r = 20; break; }"
-	              "return r;", "20");
-	expect_result("var r = 0; switch (9) { case 1: r = 10; break; default: r = 99; } return r;", "99");
+	              "return r;",
+	              "20");
+	expect_result("var r = 0; switch (9) { case 1: r = 10; break; default: r = 99; } return r;",
+	              "99");
 	// FALLTHROUGH is the behaviour code relies on, so it has to be preserved.
 	expect_result("var r = ''; switch (1) { case 1: r += 'a'; case 2: r += 'b'; break;"
-	              "  case 3: r += 'c'; } return r;", "ab");
+	              "  case 3: r += 'c'; } return r;",
+	              "ab");
 	// switch matches STRICTLY - `switch (1)` does not match `case '1'`.
 	expect_result("var r = 'no'; switch (1) { case '1': r = 'yes'; break; } return r;", "no");
 }
 
 void test_new_and_classes() {
 	expect_result("class P { constructor(n) { this.n = n; } }"
-	              "var p = new P(7); return p.n;", "7");
+	              "var p = new P(7); return p.n;",
+	              "7");
 	expect_result("class P { constructor(n) { this.n = n; } double() { return this.n * 2; } }"
-	              "return new P(4).double();", "8");
+	              "return new P(4).double();",
+	              "8");
 	// A method lives on the prototype, so two instances share one function and
 	// both find it.
 	expect_result("class P { hi() { return 'hi'; } }"
-	              "var a = new P(); var b = new P(); return a.hi() + b.hi();", "hihi");
+	              "var a = new P(); var b = new P(); return a.hi() + b.hi();",
+	              "hihi");
 	expect_result("class P { static make() { return 'static'; } } return P.make();", "static");
 	// `extends` chains the prototypes, so an inherited method is reachable.
 	expect_result("class A { who() { return 'A'; } }"
-	              "class B extends A { } return new B().who();", "A");
+	              "class B extends A { } return new B().who();",
+	              "A");
 	expect_result("class A { who() { return 'A'; } }"
-	              "class B extends A { who() { return 'B'; } } return new B().who();", "B");
+	              "class B extends A { who() { return 'B'; } } return new B().who();",
+	              "B");
 
 	// `super(...)` runs the parent constructor against the SAME object, so the
 	// fields it sets are on the instance.
 	expect_result("class A { constructor(n) { this.n = n; } }"
 	              "class B extends A { constructor() { super(3); this.m = 4; } }"
-	              "var b = new B(); return b.n + b.m;", "7");
+	              "var b = new B(); return b.n + b.m;",
+	              "7");
 	// `super.m()` calls the parent's version, and `this` inside it is still the
 	// instance.
 	expect_result("class A { label() { return 'A' + this.n; } }"
 	              "class B extends A { constructor() { this.n = 1; }"
-	              "  label() { return super.label() + 'B'; } } return new B().label();", "A1B");
+	              "  label() { return super.label() + 'B'; } } return new B().label();",
+	              "A1B");
 	// Three deep. This is what resolving super against `this` gets wrong: C's
 	// method would find itself again and recurse until the stack gave out.
 	expect_result("class A { who() { return 'A'; } }"
 	              "class B extends A { who() { return super.who() + 'B'; } }"
 	              "class C extends B { who() { return super.who() + 'C'; } }"
-	              "return new C().who();", "ABC");
+	              "return new C().who();",
+	              "ABC");
 	expect_result("class A { }; return typeof new A().constructor;", "function");
 }
 
@@ -655,7 +682,6 @@ void test_spread() {
 	expect_result("return [...'abc'].length;", "3");
 }
 
-
 void test_async_and_promises() {
 	// Promises are SETTLED on creation - there is no job queue - so `await`
 	// reads the value straight out and `then` runs at once. That is the subset,
@@ -666,33 +692,40 @@ void test_async_and_promises() {
 	// `f().then(...)` has nothing to call.
 	expect_result("async function f() { return 5; } return typeof f().then;", "function");
 	expect_result("async function f() { return 5; } var r = 0; f().then(function (v) { r = v; });"
-	              "return r;", "5");
+	              "return r;",
+	              "5");
 	expect_result("async function f() { return 1; } async function g() { return await f() + 1; }"
-	              "return await g();", "2");
+	              "return await g();",
+	              "2");
 	// await inside a loop, which is the fetchboard shape.
-	expect_result("async function one(n) { return n * 2; }"
-	              "async function run() { var t = 0; for (const n of [1,2,3]) { t += await one(n); }"
-	              "  return t; } return await run();", "12");
+	expect_result(
+	    "async function one(n) { return n * 2; }"
+	    "async function run() { var t = 0; for (const n of [1,2,3]) { t += await one(n); }"
+	    "  return t; } return await run();",
+	    "12");
 
 	expect_result("return await Promise.resolve(7);", "7");
-	expect_result("var r = 0; Promise.resolve(2).then(function (v) { r = v * 3; }); return r;", "6");
+	expect_result("var r = 0; Promise.resolve(2).then(function (v) { r = v * 3; }); return r;",
+	              "6");
 	// then() chains: each callback's return settles the next promise.
 	expect_result("var r = 0; Promise.resolve(2).then(function (v) { return v + 1; })"
-	              "  .then(function (v) { r = v; }); return r;", "3");
+	              "  .then(function (v) { r = v; }); return r;",
+	              "3");
 	// A rejected promise skips then and reaches catch.
 	expect_result("var r = 'none'; Promise.reject('bad').then(function () { r = 'ran'; })"
-	              "  .catch(function (e) { r = e; }); return r;", "bad");
+	              "  .catch(function (e) { r = e; }); return r;",
+	              "bad");
 	expect_result("var r = 0; Promise.reject(1).catch(function () { return 9; })"
-	              "  .then(function (v) { r = v; }); return r;", "9");
+	              "  .then(function (v) { r = v; }); return r;",
+	              "9");
 	expect_result("var r = 0; Promise.resolve(1).finally(function () { r = 5; }); return r;", "5");
 	expect_result("var p = await Promise.all([Promise.resolve(1), 2]); return p.join(',');", "1,2");
 
 	// Awaiting a rejected promise THROWS, which is what makes try/catch around
 	// an await behave the way pages assume.
-	expect_result("var r = 0; try { await Promise.reject(9); } catch (e) { r = e; } return r;", "9");
+	expect_result("var r = 0; try { await Promise.reject(9); } catch (e) { r = e; } return r;",
+	              "9");
 }
-
-
 
 void test_bitwise_and_friends() {
 	// JavaScript's bitwise operators work on ToInt32 of a double, so they are
@@ -704,7 +737,7 @@ void test_bitwise_and_friends() {
 	expect_result("return -16 >> 2;", "-4");
 	expect_result("return -1 >>> 0;", "4294967295"); // unsigned: NOT -1
 	expect_result("return ~5;", "-6");
-	expect_result("return 2.7 | 0;", "2");  // truncates toward zero
+	expect_result("return 2.7 | 0;", "2"); // truncates toward zero
 	expect_result("return -2.7 | 0;", "-2");
 	expect_result("return (1 << 33);", "2"); // the shift count is taken mod 32
 
@@ -721,7 +754,8 @@ void test_delete_in_instanceof() {
 	// index has to be rebuilt, not just have one entry removed.
 	expect_result("var o = {a: 1, b: 2, c: 3}; delete o.b; return o.a + o.c;", "4");
 	expect_result("var o = {a: 1, b: 2}; delete o.a; var keys = '';"
-	              "for (const k in o) { keys += k; } return keys;", "b");
+	              "for (const k in o) { keys += k; } return keys;",
+	              "b");
 	expect_result("var o = {a: 1}; delete o['a']; return typeof o.a;", "undefined");
 
 	expect_result("var o = {a: 1}; return 'a' in o;", "true");
@@ -744,9 +778,9 @@ void test_object_literal_keys() {
 	expect_result("var a = {x: 1, y: 2}; var b = {...a, y: 3}; return b.x + b.y;", "4");
 	expect_result("var a = {x: 1}; var b = {...a}; b.x = 9; return a.x;", "1"); // a copy
 	expect_result("var a = {x: 1}; var b = {y: 2, ...a}; var keys = '';"
-	              "for (const k in b) { keys += k; } return keys;", "yx");
+	              "for (const k in b) { keys += k; } return keys;",
+	              "yx");
 }
-
 
 void test_string_identity() {
 	// `===` on strings compares CONTENT. Comparing the values bit for bit is
@@ -775,7 +809,8 @@ void test_string_identity() {
 
 	// The three places this reached beyond the operator itself.
 	expect_result("var r = ''; switch ('b') { case 'a': r = 'A'; break; case 'b': r = 'B'; break; }"
-	              "return r;", "B");
+	              "return r;",
+	              "B");
 	expect_result("var k = 'b'; return ['a', 'b', 'c'].indexOf(k);", "1");
 	expect_result("var k = 'b'; return ['a', 'b'].includes(k);", "true");
 	expect_result("var o = {}; o['x' + 'y'] = 3; return o.xy;", "3");

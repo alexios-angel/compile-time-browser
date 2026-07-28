@@ -5,8 +5,8 @@
 // disposed. When it was a per-frame snapshot the array never shrank mid-loop and
 // the loop spun forever, freezing the whole app. An iteration guard here catches
 // a regression as a finite failure instead of hanging the test. No SDL.
-#include <ctbrowser.hpp>
 #include <cstdio>
+#include <ctbrowser.hpp>
 
 using page = ctbrowser::page<R"(<!DOCTYPE html>
 <canvas id="c" width="200" height="200"></canvas>
@@ -55,11 +55,25 @@ int main() {
 	std::printf("teardown ran=%d runaway=%d meshesAfter=%d iters=%d\n", ran, runaway, after, iters);
 
 	int fails = 0;
-	if (ran != 1) { std::printf("FAIL: teardown never ran\n"); ++fails; }
-	if (runaway != 0) { std::printf("FAIL: runaway loop - scene.meshes did not shrink\n"); ++fails; }
-	if (after != 0) { std::printf("FAIL: scene not fully torn down (meshes=%d)\n", after); ++fails; }
-	if (iters != 20) { std::printf("FAIL: expected 20 disposals, got %d\n", iters); ++fails; }
+	if (ran != 1) {
+		std::printf("FAIL: teardown never ran\n");
+		++fails;
+	}
+	if (runaway != 0) {
+		std::printf("FAIL: runaway loop - scene.meshes did not shrink\n");
+		++fails;
+	}
+	if (after != 0) {
+		std::printf("FAIL: scene not fully torn down (meshes=%d)\n", after);
+		++fails;
+	}
+	if (iters != 20) {
+		std::printf("FAIL: expected 20 disposals, got %d\n", iters);
+		++fails;
+	}
 
-	if (fails == 0) { std::printf("scene teardown: PASS (dispose loop terminates, scene emptied)\n"); }
+	if (fails == 0) {
+		std::printf("scene teardown: PASS (dispose loop terminates, scene emptied)\n");
+	}
 	return fails == 0 ? 0 : 1;
 }

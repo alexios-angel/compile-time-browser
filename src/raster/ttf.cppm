@@ -139,9 +139,7 @@ public:
 	                           bool italic) const override {
 		const std::lock_guard guard{mutex_};
 		TTF_Font * font = sized_font(family, bold, italic, pixel_size(font_size));
-		if (font == nullptr) {
-			return font8x8_fonts().ascent(font_size, family, bold, italic);
-		}
+		if (font == nullptr) { return font8x8_fonts().ascent(font_size, family, bold, italic); }
 		return static_cast<float>(TTF_GetFontAscent(font));
 	}
 
@@ -149,9 +147,7 @@ public:
 	                            bool italic) const override {
 		const std::lock_guard guard{mutex_};
 		TTF_Font * font = sized_font(family, bold, italic, pixel_size(font_size));
-		if (font == nullptr) {
-			return font8x8_fonts().descent(font_size, family, bold, italic);
-		}
+		if (font == nullptr) { return font8x8_fonts().descent(font_size, family, bold, italic); }
 		// SDL3_ttf's descent is NEGATIVE, and a descent is a distance.
 		return -static_cast<float>(TTF_GetFontDescent(font));
 	}
@@ -180,8 +176,8 @@ private:
 	struct glyph {
 		int width = 0;
 		int height = 0;
-		int left = 0;   // from the pen, positive right
-		int top = 0;    // from the baseline, positive up
+		int left = 0; // from the pen, positive right
+		int top = 0;  // from the baseline, positive up
 		float advance = 0;
 		std::vector<std::uint8_t> coverage; // width * height, 0..255
 	};
@@ -233,9 +229,9 @@ private:
 	[[nodiscard]] const loaded_face * resolve(std::string_view family, bool bold,
 	                                          bool italic) const {
 		const std::string name = lowered(family);
-		for (const face_key & candidate : {face_key{name, bold, italic}, face_key{name, false, false},
-		                                   face_key{default_family_, bold, italic},
-		                                   face_key{default_family_, false, false}}) {
+		for (const face_key & candidate :
+		     {face_key{name, bold, italic}, face_key{name, false, false},
+		      face_key{default_family_, bold, italic}, face_key{default_family_, false, false}}) {
 			if (candidate.family.empty()) { continue; }
 			if (const auto it = faces_.find(candidate); it != faces_.end()) { return &it->second; }
 		}
@@ -328,13 +324,13 @@ private:
 				if (px < clip.left || px >= clip.right) { continue; }
 				const std::uint8_t coverage =
 				    g.coverage[static_cast<std::size_t>(y) * static_cast<std::size_t>(g.width) +
-				               static_cast<std::size_t>(x)];
+					           static_cast<std::size_t>(x)];
 				if (coverage == 0) { continue; }
 				const auto alpha = static_cast<std::uint8_t>(
 				    (static_cast<std::uint32_t>(fill.alpha()) * coverage) / 255u);
 				row[static_cast<std::size_t>(px)] =
 				    blend_over(row[static_cast<std::size_t>(px)],
-				               color::rgba(fill.red(), fill.green(), fill.blue(), alpha));
+					           color::rgba(fill.red(), fill.green(), fill.blue(), alpha));
 			}
 		}
 	}

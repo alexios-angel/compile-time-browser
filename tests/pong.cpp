@@ -6,21 +6,21 @@
 // path API and font-scaled fillText all behave enough like a browser
 // that the ball flies, the paddle obeys ArrowRight and mousemove, and
 // the bricks are where MDN says they are. No SDL anywhere.
-#include <ctbrowser.hpp>
 #include <cstdio>
+#include <ctbrowser.hpp>
 
 static int failures = 0;
-#define CHECK(cond) \
-	do { \
-		if (!(cond)) { \
-			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
-			++failures; \
-		} \
+#define CHECK(cond)                                                                                \
+	do {                                                                                           \
+		if (!(cond)) {                                                                             \
+			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                            \
+			++failures;                                                                            \
+		}                                                                                          \
 	} while (0)
 
 using pong = ctbrowser::page<
 #include "../examples/pong.inc"
->;
+    >;
 
 static constexpr uint32_t BLUE = 0xFF0095DDu; // the tutorial's #0095DD
 
@@ -46,11 +46,11 @@ int main() {
 	e.frame(480); // layout (also refreshes offsetLeft on the handle)
 
 	// initial scene, straight from the tutorial's constants:
-	CHECK(px(35, 35) == BLUE);    // first brick (30,30 75x20)
-	CHECK(px(240, 315) == BLUE);  // paddle centered: x in [202,277], y in [310,320)
-	CHECK(px(240, 290) == BLUE);  // ball at (width/2, height-30), r=10
-	CHECK(px(470, 200) == 0u);    // empty area stays transparent
-	bool score_text = false;      // "Score: 0" at baseline (8,20), 16px -> 2x font8x8
+	CHECK(px(35, 35) == BLUE);   // first brick (30,30 75x20)
+	CHECK(px(240, 315) == BLUE); // paddle centered: x in [202,277], y in [310,320)
+	CHECK(px(240, 290) == BLUE); // ball at (width/2, height-30), r=10
+	CHECK(px(470, 200) == 0u);   // empty area stays transparent
+	bool score_text = false;     // "Score: 0" at baseline (8,20), 16px -> 2x font8x8
 	for (int y = 4; y < 20 && !score_text; ++y) {
 		for (int x = 8; x < 120 && !score_text; ++x) {
 			if (px(x, y) == BLUE) { score_text = true; }

@@ -2,17 +2,17 @@
 // forwarding, details/summary disclosure, and the anchor default (open
 // the OS browser - here a test hook). Plus the UA stylesheet basics.
 
-#include <ctbrowser.hpp>
 #include <cstdio>
+#include <ctbrowser.hpp>
 #include <string>
 
 static int fails = 0;
-#define CHECK(cond)                                                    \
-	do {                                                               \
-		if (!(cond)) {                                                 \
-			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
-			++fails;                                                   \
-		}                                                              \
+#define CHECK(cond)                                                                                \
+	do {                                                                                           \
+		if (!(cond)) {                                                                             \
+			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                            \
+			++fails;                                                                               \
+		}                                                                                          \
 	} while (0)
 
 using page = ctbrowser::page<R"(<!DOCTYPE html>
@@ -79,7 +79,9 @@ int main() {
 	{
 		bool accent = false;
 		for (const auto & cmd : e.frame(500)) {
-			if (cmd.what == ctbrowser::paint_cmd::kind::box && cmd.argb == 0xFF0060DFu) { accent = true; }
+			if (cmd.what == ctbrowser::paint_cmd::kind::box && cmd.argb == 0xFF0060DFu) {
+				accent = true;
+			}
 		}
 		CHECK(accent);
 	}
@@ -145,7 +147,8 @@ int main() {
 		CHECK(d->open); // opened by the click above
 		for (const auto & cmd : e.frame(500)) {
 			if (cmd.what == ctbrowser::paint_cmd::kind::box && cmd.h == 1 && cmd.w > 2 &&
-			    sum2 != nullptr && cmd.y >= sum2->y && cmd.y < sum2->y + sum2->h && cmd.x < sum2->x + 18) {
+			    sum2 != nullptr && cmd.y >= sum2->y && cmd.y < sum2->y + sum2->h &&
+			    cmd.x < sum2->x + 18) {
 				++open_marks; // down-triangle rows are wide-and-1px-tall
 			}
 		}
@@ -153,7 +156,8 @@ int main() {
 		click(e.doc.by_id("sum")); // close it again
 		for (const auto & cmd : e.frame(500)) {
 			if (cmd.what == ctbrowser::paint_cmd::kind::box && cmd.w == 1 && cmd.h > 2 &&
-			    sum2 != nullptr && cmd.y >= sum2->y && cmd.y < sum2->y + sum2->h && cmd.x < sum2->x + 18) {
+			    sum2 != nullptr && cmd.y >= sum2->y && cmd.y < sum2->y + sum2->h &&
+			    cmd.x < sum2->x + 18) {
 				++closed_marks; // right-triangle columns are 1px-wide-and-tall
 			}
 		}
@@ -183,7 +187,9 @@ int main() {
 		CHECK(rule->h == 2);
 		bool field_text = false;
 		for (const auto & cmd : e.frame(500)) {
-			if (cmd.what == ctbrowser::paint_cmd::kind::text && cmd.text == U"secret") { field_text = true; }
+			if (cmd.what == ctbrowser::paint_cmd::kind::text && cmd.text == U"secret") {
+				field_text = true;
+			}
 		}
 		CHECK(field_text);
 	}

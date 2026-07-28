@@ -3,8 +3,8 @@
 
 #include <cstddef>
 
-#include <cthtml.hpp>
 #include <ctcss.hpp>
+#include <cthtml.hpp>
 #ifndef CTBROWSER_IN_A_MODULE
 #include <charconv>
 #include <cstdint>
@@ -81,8 +81,8 @@ struct node {
 	std::int32_t x = 0, y = 0, w = 0, h = 0;
 
 	// <select> widget state (runtime only): chosen <option> + dropdown open
-	std::int32_t select_index = -1;    // -1 => not set yet, treated as the first option
-	bool select_open = false; // the popup list is expanded
+	std::int32_t select_index = -1; // -1 => not set yet, treated as the first option
+	bool select_open = false;       // the popup list is expanded
 
 	// interaction state (runtime only, engine-maintained). hovered/pressed
 	// apply to the WHOLE ancestor chain of the pointer target (that is what
@@ -132,9 +132,15 @@ struct node {
 	bool ui_bold = false;
 	bool ui_italic = false;
 
-	[[nodiscard]] constexpr std::int32_t sel_begin() const { return sel_anchor < caret ? sel_anchor : caret; }
-	[[nodiscard]] constexpr std::int32_t sel_end() const { return sel_anchor < caret ? caret : sel_anchor; }
-	[[nodiscard]] constexpr bool has_selection() const { return sel_anchor >= 0 && sel_anchor != caret; }
+	[[nodiscard]] constexpr std::int32_t sel_begin() const {
+		return sel_anchor < caret ? sel_anchor : caret;
+	}
+	[[nodiscard]] constexpr std::int32_t sel_end() const {
+		return sel_anchor < caret ? caret : sel_anchor;
+	}
+	[[nodiscard]] constexpr bool has_selection() const {
+		return sel_anchor >= 0 && sel_anchor != caret;
+	}
 
 	[[nodiscard]] constexpr bool is_canvas() const { return tag == "canvas"; }
 	[[nodiscard]] constexpr bool is_select() const { return tag == "select"; }
@@ -187,17 +193,15 @@ struct node {
 	[[nodiscard]] constexpr bool is_link() const { return tag == "a" && has_attribute("href"); }
 	// the set :disabled can apply to
 	[[nodiscard]] constexpr bool is_form_control() const {
-		return tag == "input" || tag == "button" || tag == "select" ||
-		       tag == "textarea" || tag == "option" || tag == "optgroup" ||
-		       tag == "fieldset";
+		return tag == "input" || tag == "button" || tag == "select" || tag == "textarea" ||
+		       tag == "option" || tag == "optgroup" || tag == "fieldset";
 	}
 	[[nodiscard]] constexpr bool is_disabled() const {
 		return is_form_control() && has_attribute("disabled");
 	}
 	[[nodiscard]] constexpr bool is_focusable() const {
 		if (is_link()) { return true; }
-		return (tag == "input" || tag == "button" || tag == "select" ||
-		        tag == "textarea") &&
+		return (tag == "input" || tag == "button" || tag == "select" || tag == "textarea") &&
 		       !is_disabled();
 	}
 
@@ -289,7 +293,9 @@ struct node {
 				std::int32_t k = 0;
 				for (const auto & c : n->parent->children) {
 					if (c->tag != "option") { continue; }
-					if (c.get() == n && k == n->parent->selected_option()) { st |= ctcss::ps_checked; }
+					if (c.get() == n && k == n->parent->selected_option()) {
+						st |= ctcss::ps_checked;
+					}
 					++k;
 				}
 			}
@@ -393,7 +399,8 @@ constexpr void init_canvas(node & out) {
 	if (out.is_canvas()) {
 		out.canvas_w = parse_int_attr(out.attribute("width"), 300);
 		out.canvas_h = parse_int_attr(out.attribute("height"), 150);
-		out.pixels.assign(static_cast<std::size_t>(out.canvas_w) * static_cast<std::size_t>(out.canvas_h),
+		out.pixels.assign(static_cast<std::size_t>(out.canvas_w) *
+		                      static_cast<std::size_t>(out.canvas_h),
 		                  0xFF000000u);
 	}
 }
@@ -498,7 +505,9 @@ struct document {
 	std::vector<std::unique_ptr<node>> detached;
 
 	[[nodiscard]] constexpr node * body() { return root ? root->find_first("body") : nullptr; }
-	[[nodiscard]] constexpr node * by_id(std::string_view id) { return root ? root->find_by_id(id) : nullptr; }
+	[[nodiscard]] constexpr node * by_id(std::string_view id) {
+		return root ? root->find_by_id(id) : nullptr;
+	}
 
 	// the web's node factory: scripts MAY create elements (this
 	// deliberately relaxes the original never-create rule - p5 and

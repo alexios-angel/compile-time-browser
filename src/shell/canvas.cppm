@@ -42,8 +42,8 @@ struct transform {
 		return point{a * x + c * y + e, b * x + d * y + f};
 	}
 	[[nodiscard]] transform then(const transform & next) const noexcept {
-		return transform{a * next.a + b * next.c,         a * next.b + b * next.d,
-		                 c * next.a + d * next.c,         c * next.b + d * next.d,
+		return transform{a * next.a + b * next.c,          a * next.b + b * next.d,
+		                 c * next.a + d * next.c,          c * next.b + d * next.d,
 		                 e * next.a + f * next.c + next.e, e * next.b + f * next.d + next.f};
 	}
 	[[nodiscard]] static transform translation(float x, float y) noexcept {
@@ -81,8 +81,10 @@ public:
 	float global_alpha = 1;
 	float font_size = 10;
 
-	void save() { stack_.push_back(state{transform_, fill_style, stroke_style, line_width,
-	                                     global_alpha, font_size}); }
+	void save() {
+		stack_.push_back(
+		    state{transform_, fill_style, stroke_style, line_width, global_alpha, font_size});
+	}
 	void restore() {
 		if (stack_.empty()) { return; }
 		const state & s = stack_.back();
@@ -118,7 +120,9 @@ public:
 	// --- paths ------------------------------------------------------------
 
 	void begin_path() { subpaths_.clear(); }
-	void move_to(float x, float y) { subpaths_.push_back(subpath{{transform_.apply(x, y)}, false}); }
+	void move_to(float x, float y) {
+		subpaths_.push_back(subpath{{transform_.apply(x, y)}, false});
+	}
 	void line_to(float x, float y) {
 		if (subpaths_.empty()) { return move_to(x, y); }
 		subpaths_.back().points.push_back(transform_.apply(x, y));
@@ -247,8 +251,7 @@ public:
 		const int left = static_cast<int>(at.x);
 		const int top = static_cast<int>(at.y);
 		for (int y = 0; y < static_cast<int>(dh); ++y) {
-			const int source_y =
-			    static_cast<int>(sy + static_cast<float>(y) / dh * sh);
+			const int source_y = static_cast<int>(sy + static_cast<float>(y) / dh * sh);
 			for (int x = 0; x < static_cast<int>(dw); ++x) {
 				const int source_x = static_cast<int>(sx + static_cast<float>(x) / dw * sw);
 				const std::uint32_t texel = source.at(source_x, source_y);
@@ -268,7 +271,8 @@ public:
 		const int left = static_cast<int>(at.x);
 		const int top = static_cast<int>(at.y);
 		for (int dy = 0; dy < static_cast<int>(h); ++dy) {
-			const int sy = static_cast<int>(static_cast<float>(dy) / h * static_cast<float>(source.height));
+			const int sy =
+			    static_cast<int>(static_cast<float>(dy) / h * static_cast<float>(source.height));
 			for (int dx = 0; dx < static_cast<int>(w); ++dx) {
 				const int sx =
 				    static_cast<int>(static_cast<float>(dx) / w * static_cast<float>(source.width));

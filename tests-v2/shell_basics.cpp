@@ -22,12 +22,12 @@ import ctbrowser.raster;
 import ctbrowser.shell;
 
 #include "check.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <string>
-#include <algorithm>
-#include <type_traits>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 using namespace ctbrowser;
@@ -171,7 +171,8 @@ void test_scroll_clamps_to_the_document() {
 	check(page.scroll_y() == 0, "scrolling above the top clamps");
 	page.scroll_to(1e9f);
 	check(page.scroll_y() == page.max_scroll(), "scrolling past the end clamps to max_scroll");
-	check(page.max_scroll() == page.content_height() - 200, "which is the content minus a viewport");
+	check(page.max_scroll() == page.content_height() - 200,
+	      "which is the content minus a viewport");
 }
 
 void test_a_resize_relayouts() {
@@ -230,8 +231,7 @@ void test_hit_testing_follows_the_scroll() {
 	const node_id deeper_unscrolled = page.hit_test(10, 10 + step);
 	page.scroll_by(step);
 	check(page.scroll_y() == step, "the scroll took effect");
-	check(page.hit_test(10, 10) == deeper_unscrolled,
-	      "hit testing follows the scroll exactly");
+	check(page.hit_test(10, 10) == deeper_unscrolled, "hit testing follows the scroll exactly");
 
 	// And it really did move to a different element - otherwise the check above
 	// would pass on a page where scrolling changes nothing.
@@ -252,7 +252,8 @@ void test_wheel_and_keys_scroll() {
 	check(page.handle(input_event::key_press("Home")), "Home is handled");
 	check(page.scroll_y() == 0, "and comes back to the top");
 
-	check(!page.handle(input_event::key_press("F13")), "an unhandled key reports that it did nothing");
+	check(!page.handle(input_event::key_press("F13")),
+	      "an unhandled key reports that it did nothing");
 }
 
 void test_hover_restyles() {

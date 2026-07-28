@@ -128,7 +128,6 @@ inline value settle_with(context & cx, value on_ok, value on_err) {
 	return value::object(promise);
 }
 
-
 // --- JSON -----------------------------------------------------------------
 
 inline void write_json(context & cx, value v, std::string & out) {
@@ -196,8 +195,8 @@ struct json_reader {
 	bool ok = true;
 
 	void skip() {
-		while (at < text.size() && (text[at] == ' ' || text[at] == '\t' || text[at] == '\n' ||
-		                            text[at] == '\r')) {
+		while (at < text.size() &&
+		       (text[at] == ' ' || text[at] == '\t' || text[at] == '\n' || text[at] == '\r')) {
 			++at;
 		}
 	}
@@ -245,9 +244,8 @@ struct json_reader {
 					for (int i = 0; i < 4 && at + 1 < text.size(); ++i) {
 						++at;
 						const char h = text[at];
-						code = code * 16 +
-						       static_cast<std::uint32_t>(h <= '9' ? h - '0'
-						                                           : (h | 0x20) - 'a' + 10);
+						code = code * 16 + static_cast<std::uint32_t>(
+						                       h <= '9' ? h - '0' : (h | 0x20) - 'a' + 10);
 					}
 					if (code >= 0xD800 && code <= 0xDFFF) { code = 0xFFFD; }
 					if (code < 0x80) {
@@ -275,16 +273,17 @@ struct json_reader {
 	[[nodiscard]] value parse_number() {
 		const std::size_t start = at;
 		if (at < text.size() && (text[at] == '-' || text[at] == '+')) { ++at; }
-		while (at < text.size() && ((text[at] >= '0' && text[at] <= '9') || text[at] == '.' ||
-		                            text[at] == 'e' || text[at] == 'E' || text[at] == '-' ||
-		                            text[at] == '+')) {
+		while (at < text.size() &&
+		       ((text[at] >= '0' && text[at] <= '9') || text[at] == '.' || text[at] == 'e' ||
+		        text[at] == 'E' || text[at] == '-' || text[at] == '+')) {
 			++at;
 		}
 		if (at == start) {
 			ok = false;
 			return value::undefined();
 		}
-		return value::number(std::strtod(std::string{text.substr(start, at - start)}.c_str(), nullptr));
+		return value::number(
+		    std::strtod(std::string{text.substr(start, at - start)}.c_str(), nullptr));
 	}
 	[[nodiscard]] value parse_array() {
 		auto * arr = static_cast<array_object *>(cx.make_array().as_heap());
@@ -356,9 +355,8 @@ void install_builtins(context & cx, std::uint64_t seed) {
 	math->set("PI", value::number(3.14159265358979323846));
 	math->set("E", value::number(2.71828182845904523536));
 	const auto unary = [&](std::string name, double (*fn)(double)) {
-		method(cx, math, name, [fn](context &, std::span<value> a) {
-			return value::number(fn(num_at(a, 0)));
-		});
+		method(cx, math, name,
+		       [fn](context &, std::span<value> a) { return value::number(fn(num_at(a, 0))); });
 	};
 	unary("floor", [](double x) { return std::floor(x); });
 	unary("ceil", [](double x) { return std::ceil(x); });
@@ -469,7 +467,7 @@ void install_builtins(context & cx, std::uint64_t seed) {
 		const std::size_t from = clamp_index(num_at(a, 0), n);
 		const std::size_t count =
 		    a.size() > 1 ? std::min(n - from, static_cast<std::size_t>(std::max(0.0, num_at(a, 1))))
-		                 : n - from;
+			             : n - from;
 		auto * out = static_cast<array_object *>(removed.as_heap());
 		for (std::size_t i = 0; i < count; ++i) { out->items.push_back(self->items[from + i]); }
 		self->items.erase(self->items.begin() + static_cast<std::ptrdiff_t>(from),
@@ -712,8 +710,8 @@ void install_builtins(context & cx, std::uint64_t seed) {
 		// substring CLAMPS negatives to 0 and swaps its arguments if they are
 		// backwards, which is the whole difference from slice.
 		std::size_t from = static_cast<std::size_t>(std::max(0.0, num_at(a, 0)));
-		std::size_t to = a.size() > 1 ? static_cast<std::size_t>(std::max(0.0, num_at(a, 1)))
-		                              : s.size();
+		std::size_t to =
+		    a.size() > 1 ? static_cast<std::size_t>(std::max(0.0, num_at(a, 1))) : s.size();
 		from = std::min(from, s.size());
 		to = std::min(to, s.size());
 		if (from > to) { std::swap(from, to); }
@@ -830,9 +828,8 @@ void install_builtins(context & cx, std::uint64_t seed) {
 		out.resize(written > 0 ? static_cast<std::size_t>(written) : 0);
 		return c.string(out);
 	});
-	method(cx, number_proto, "toString", [](context & c, std::span<value>) {
-		return c.string(c.to_string(c.current_this()));
-	});
+	method(cx, number_proto, "toString",
+	       [](context & c, std::span<value>) { return c.string(c.to_string(c.current_this())); });
 	cx.set_prototype(context::proto_kind::number, number_proto);
 
 	// --- Object ------------------------------------------------------------
@@ -918,7 +915,8 @@ void install_builtins(context & cx, std::uint64_t seed) {
 		try {
 			std::size_t used = 0;
 			const long long out = std::stoll(s, &used, base == 0 ? 10 : base);
-			return used == 0 ? value::number(std::nan("")) : value::number(static_cast<double>(out));
+			return used == 0 ? value::number(std::nan(""))
+			                 : value::number(static_cast<double>(out));
 		} catch (...) {
 			// parseInt("abc") is NaN, not an error - a page must not blow up on
 			// a malformed number it is about to check with isNaN.
@@ -931,9 +929,7 @@ void install_builtins(context & cx, std::uint64_t seed) {
 			std::size_t used = 0;
 			const double out = std::stod(s, &used);
 			return used == 0 ? value::number(std::nan("")) : value::number(out);
-		} catch (...) {
-			return value::number(std::nan(""));
-		}
+		} catch (...) { return value::number(std::nan("")); }
 	});
 
 	// The value globals. Missing entirely before, so `NaN` was an undefined
@@ -944,9 +940,8 @@ void install_builtins(context & cx, std::uint64_t seed) {
 	cx.define_global("undefined", value::undefined());
 
 	// --- Promise ----------------------------------------------------------
-	cx.set_promise_factory([](context & c, value v, bool rejected) {
-		return detail::make_promise(c, v, rejected);
-	});
+	cx.set_promise_factory(
+	    [](context & c, value v, bool rejected) { return detail::make_promise(c, v, rejected); });
 	object_object * promise_ctor = new_table(cx);
 	method(cx, promise_ctor, "resolve", [](context & c, std::span<value> a) {
 		return detail::make_promise(c, a.empty() ? value::undefined() : a[0], false);

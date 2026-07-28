@@ -18,8 +18,8 @@ export namespace ctbrowser::shell {
 // Layout metrics backed by a real font. The SAME object answers "how wide is
 // this run" and "where is its baseline" that the rasterizer will draw with -
 // text lands where layout thought it would only if one thing answers both.
-[[nodiscard]] inline ctbrowser::layout::measure_text_fn
-metrics_for(const ctbrowser::raster::font_backend & fonts) {
+[[nodiscard]] inline ctbrowser::layout::measure_text_fn metrics_for(
+    const ctbrowser::raster::font_backend & fonts) {
 	ctbrowser::layout::measure_text_fn out;
 	out.measure = [&fonts](std::string_view text, float size,
 	                       const ctbrowser::layout::text_face & face) {

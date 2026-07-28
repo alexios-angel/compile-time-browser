@@ -166,9 +166,8 @@ void test_timeout() {
 		while (!stop.load()) { std::this_thread::sleep_for(std::chrono::milliseconds{10}); }
 	}};
 
-	const auto response =
-	    ctbrowser::shell::http_get("http://127.0.0.1:" + std::to_string(port) + "/hang",
-	                               {.timeout_ms = 300});
+	const auto response = ctbrowser::shell::http_get(
+	    "http://127.0.0.1:" + std::to_string(port) + "/hang", {.timeout_ms = 300});
 	CHECK(!response.completed());
 	stop.store(true);
 	server.join();

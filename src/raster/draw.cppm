@@ -82,8 +82,7 @@ public:
 	// measuring is the hot path - a text wrap measures the same run repeatedly -
 	// and building a face would allocate its family string on every call.
 	[[nodiscard]] virtual float advance(std::string_view text, float font_size,
-	                                    std::string_view family, bool bold,
-	                                    bool italic) const = 0;
+	                                    std::string_view family, bool bold, bool italic) const = 0;
 	// `where` is TILE-LOCAL; `clip` is in the same space.
 	virtual void draw_run(const rect & where, const paint_command & c, const pixel_rect & clip,
 	                      surface & into) const = 0;
@@ -96,7 +95,6 @@ public:
 	[[nodiscard]] virtual float descent(float font_size, std::string_view family, bool bold,
 	                                    bool italic) const = 0;
 };
-
 
 inline void fill_rect(const rect & where, color c, const pixel_rect & clip, surface & into) {
 	pixel_rect p = to_pixels(where, into.width(), into.height());
@@ -268,7 +266,8 @@ inline void draw_image(const rect & where, const paint_command & c, const pixel_
 		const std::span<std::uint32_t> row = into.row(y);
 		const int source_y = static_cast<int>((static_cast<float>(y) + 0.5f - where.y) * scale_y);
 		for (int x = p.left; x < p.right; ++x) {
-			const int source_x = static_cast<int>((static_cast<float>(x) + 0.5f - where.x) * scale_x);
+			const int source_x =
+			    static_cast<int>((static_cast<float>(x) + 0.5f - where.x) * scale_x);
 			const std::uint32_t texel = c.pixels->at(source_x, source_y);
 			if ((texel >> 24) == 0) { continue; }
 			row[static_cast<std::size_t>(x)] =

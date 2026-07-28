@@ -35,18 +35,20 @@ using ctbrowser::color;
 		std::uint32_t rgb;
 	};
 	static constexpr entry table[] = {
-	    {"black", 0x000000},   {"silver", 0xC0C0C0},  {"gray", 0x808080},   {"grey", 0x808080},
-	    {"white", 0xFFFFFF},   {"maroon", 0x800000},  {"red", 0xFF0000},    {"purple", 0x800080},
-	    {"fuchsia", 0xFF00FF}, {"magenta", 0xFF00FF}, {"green", 0x008000},  {"lime", 0x00FF00},
-	    {"olive", 0x808000},   {"yellow", 0xFFFF00},  {"navy", 0x000080},   {"blue", 0x0000FF},
-	    {"teal", 0x008080},    {"aqua", 0x00FFFF},    {"cyan", 0x00FFFF},   {"orange", 0xFFA500},
-	    {"pink", 0xFFC0CB},    {"brown", 0xA52A2A},   {"gold", 0xFFD700},   {"beige", 0xF5F5DC},
-	    {"ivory", 0xFFFFF0},   {"khaki", 0xF0E68C},   {"crimson", 0xDC143C},
-	    {"lightgray", 0xD3D3D3}, {"lightgrey", 0xD3D3D3}, {"darkgray", 0xA9A9A9},
-	    {"darkgrey", 0xA9A9A9}, {"lightblue", 0xADD8E6}, {"darkblue", 0x00008B},
+	    {"black", 0x000000},      {"silver", 0xC0C0C0},    {"gray", 0x808080},
+	    {"grey", 0x808080},       {"white", 0xFFFFFF},     {"maroon", 0x800000},
+	    {"red", 0xFF0000},        {"purple", 0x800080},    {"fuchsia", 0xFF00FF},
+	    {"magenta", 0xFF00FF},    {"green", 0x008000},     {"lime", 0x00FF00},
+	    {"olive", 0x808000},      {"yellow", 0xFFFF00},    {"navy", 0x000080},
+	    {"blue", 0x0000FF},       {"teal", 0x008080},      {"aqua", 0x00FFFF},
+	    {"cyan", 0x00FFFF},       {"orange", 0xFFA500},    {"pink", 0xFFC0CB},
+	    {"brown", 0xA52A2A},      {"gold", 0xFFD700},      {"beige", 0xF5F5DC},
+	    {"ivory", 0xFFFFF0},      {"khaki", 0xF0E68C},     {"crimson", 0xDC143C},
+	    {"lightgray", 0xD3D3D3},  {"lightgrey", 0xD3D3D3}, {"darkgray", 0xA9A9A9},
+	    {"darkgrey", 0xA9A9A9},   {"lightblue", 0xADD8E6}, {"darkblue", 0x00008B},
 	    {"lightgreen", 0x90EE90}, {"darkgreen", 0x006400}, {"whitesmoke", 0xF5F5F5},
-	    {"gainsboro", 0xDCDCDC}, {"tomato", 0xFF6347}, {"salmon", 0xFA8072},
-	    {"indigo", 0x4B0082}, {"violet", 0xEE82EE}, {"turquoise", 0x40E0D0},
+	    {"gainsboro", 0xDCDCDC},  {"tomato", 0xFF6347},    {"salmon", 0xFA8072},
+	    {"indigo", 0x4B0082},     {"violet", 0xEE82EE},    {"turquoise", 0x40E0D0},
 	};
 	for (const entry & e : table) {
 		if (e.name == name) { return color{0xFF000000u | e.rgb}; }
@@ -60,7 +62,9 @@ using ctbrowser::color;
 // than silently painting black - `background-color: <garbage>` must leave the
 // element unpainted, not fill it.
 [[nodiscard]] inline std::optional<color> parse_color(std::string_view text) {
-	while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) { text.remove_prefix(1); }
+	while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {
+		text.remove_prefix(1);
+	}
 	while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) { text.remove_suffix(1); }
 	if (text.empty()) { return std::nullopt; }
 
@@ -77,7 +81,8 @@ using ctbrowser::color;
 		}
 		if (digits.size() <= 4) { // shorthand: each digit is doubled
 			const std::uint8_t a = digits.size() == 4 ? static_cast<std::uint8_t>(v[3] * 17) : 255;
-			return color::rgba(static_cast<std::uint8_t>(v[0] * 17), static_cast<std::uint8_t>(v[1] * 17),
+			return color::rgba(static_cast<std::uint8_t>(v[0] * 17),
+			                   static_cast<std::uint8_t>(v[1] * 17),
 			                   static_cast<std::uint8_t>(v[2] * 17), a);
 		}
 		const auto byte = [&](std::size_t i) {

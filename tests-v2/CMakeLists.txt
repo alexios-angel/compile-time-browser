@@ -58,8 +58,10 @@ endif()
 # bindings_basics drives run_app, which initialises SDL - and SDL reaches
 # libdbus, whose own lock order TSan reports as an inversion. Same suppression
 # file, same rule: by LIBRARY, so a real one in our code is still caught.
+# ...and its offscreen video driver initialises EGL without releasing it, which
+# LeakSanitizer reports. Both suppressed by LIBRARY - see the files.
 set_tests_properties(v2-bindings_basics PROPERTIES ENVIRONMENT
-  "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tsan.supp")
+  "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tsan.supp;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan.supp")
 
 # The stress test is the one that must never be skipped: it is the evidence
 # that the lock-free read path is actually sound. Give it room under TSan.

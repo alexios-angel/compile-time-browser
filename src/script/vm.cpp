@@ -43,7 +43,9 @@ double context::to_number(value v) {
 		try {
 			std::size_t consumed = 0;
 			const double d = std::stod(s, &consumed);
-			while (consumed < s.size() && (s[consumed] == ' ' || s[consumed] == '\t')) { ++consumed; }
+			while (consumed < s.size() && (s[consumed] == ' ' || s[consumed] == '\t')) {
+				++consumed;
+			}
 			return consumed == s.size() ? d : std::nan("");
 		} catch (...) {
 			return s.find_first_not_of(" \t\n\r") == std::string::npos ? 0.0 : std::nan("");
@@ -120,9 +122,7 @@ void context::mark_object(heap_object * o) {
 		mark(obj->prototype);
 		break;
 	}
-	case heap_kind::cell:
-		mark(static_cast<cell_object *>(o)->slot);
-		break;
+	case heap_kind::cell: mark(static_cast<cell_object *>(o)->slot); break;
 	case heap_kind::function: {
 		auto * closure = static_cast<closure_object *>(o);
 		// A closure OWNS its upvalue cells. Missing this frees a captured
@@ -475,9 +475,8 @@ value context::run_loop(std::size_t stop_depth) {
 			reg(in.a) = value::number(to_int32(reg(in.b)) ^ to_int32(reg(in.c)));
 			break;
 		case op::shl:
-			reg(in.a) = value::number(
-			    static_cast<std::int32_t>(static_cast<std::uint32_t>(to_int32(reg(in.b)))
-			                              << (to_uint32(reg(in.c)) & 31U)));
+			reg(in.a) = value::number(static_cast<std::int32_t>(
+			    static_cast<std::uint32_t>(to_int32(reg(in.b))) << (to_uint32(reg(in.c)) & 31U)));
 			break;
 		case op::shr:
 			reg(in.a) = value::number(to_int32(reg(in.b)) >> (to_uint32(reg(in.c)) & 31U));
@@ -514,7 +513,8 @@ value context::run_loop(std::size_t stop_depth) {
 			break;
 		case op::delete_index:
 			if (reg(in.a).is_object()) {
-				(void)static_cast<object_object *>(reg(in.a).as_heap())->erase(to_string(reg(in.b)));
+				(void)static_cast<object_object *>(reg(in.a).as_heap())
+				    ->erase(to_string(reg(in.b)));
 			}
 			break;
 
@@ -531,7 +531,9 @@ value context::run_loop(std::size_t stop_depth) {
 			reg(in.a) = value::boolean(to_number(reg(in.b)) >= to_number(reg(in.c)));
 			break;
 
-		case op::jump: frame.ip = static_cast<std::size_t>(static_cast<std::int64_t>(frame.ip) + in.sbx()); break;
+		case op::jump:
+			frame.ip = static_cast<std::size_t>(static_cast<std::int64_t>(frame.ip) + in.sbx());
+			break;
 		case op::jump_if_false:
 			if (!truthy(reg(in.a))) {
 				frame.ip = static_cast<std::size_t>(static_cast<std::int64_t>(frame.ip) + in.sbx());
@@ -550,9 +552,7 @@ value context::run_loop(std::size_t stop_depth) {
 				static_cast<array_object *>(reg(in.a).as_heap())->items.push_back(reg(in.b));
 			}
 			break;
-		case op::get_prop:
-			reg(in.a) = lookup_property(reg(in.b), fn.names[in.c]);
-			break;
+		case op::get_prop: reg(in.a) = lookup_property(reg(in.b), fn.names[in.c]); break;
 		case op::set_prop:
 			if (reg(in.a).is_object()) {
 				static_cast<object_object *>(reg(in.a).as_heap())->set(fn.names[in.b], reg(in.c));
@@ -655,7 +655,8 @@ value context::run_loop(std::size_t stop_depth) {
 				raise("call stack exhausted");
 				break;
 			}
-			frames_.push_back(call_frame{&target, 0, new_base, in.a, fnobj, receiver, handlers_.size()});
+			frames_.push_back(
+			    call_frame{&target, 0, new_base, in.a, fnobj, receiver, handlers_.size()});
 			break;
 		}
 
@@ -684,12 +685,16 @@ value context::run_loop(std::size_t stop_depth) {
 			value out = make_array();
 			auto * keys = static_cast<array_object *>(out.as_heap());
 			if (reg(in.b).is_object()) {
-				for (const auto & [name, item] : static_cast<object_object *>(reg(in.b).as_heap())->props) {
+				for (const auto & [name, item] :
+				     static_cast<object_object *>(reg(in.b).as_heap())->props) {
 					keys->items.push_back(string(name));
 				}
 			} else if (reg(in.b).is_array()) {
-				const std::size_t n = static_cast<array_object *>(reg(in.b).as_heap())->items.size();
-				for (std::size_t i = 0; i < n; ++i) { keys->items.push_back(string(std::to_string(i))); }
+				const std::size_t n =
+				    static_cast<array_object *>(reg(in.b).as_heap())->items.size();
+				for (std::size_t i = 0; i < n; ++i) {
+					keys->items.push_back(string(std::to_string(i)));
+				}
 			}
 			reg(in.a) = out;
 			break;
@@ -713,7 +718,7 @@ value context::run_loop(std::size_t stop_depth) {
 				auto * obj = static_cast<object_object *>(awaited.as_heap());
 				if (value * state = obj->find("__rejected"); state != nullptr && truthy(*state)) {
 					thrown_ = obj->find("__value") != nullptr ? *obj->find("__value")
-					                                         : value::undefined();
+					                                          : value::undefined();
 					if (!unwind_to_handler()) { raise("uncaught rejection"); }
 					break;
 				}
@@ -754,11 +759,13 @@ value context::run_loop(std::size_t stop_depth) {
 			// class reachable from every instance.
 			auto * instance = allocate<object_object>();
 			if (callee.is_object()) {
-				if (value * proto = static_cast<object_object *>(callee.as_heap())->find("prototype")) {
+				if (value * proto =
+				        static_cast<object_object *>(callee.as_heap())->find("prototype")) {
 					instance->prototype = *proto;
 				}
 			} else if (callee.is_kind(heap_kind::function)) {
-				if (value * proto = static_cast<closure_object *>(callee.as_heap())->find("prototype")) {
+				if (value * proto =
+				        static_cast<closure_object *>(callee.as_heap())->find("prototype")) {
 					instance->prototype = *proto;
 				}
 			}
@@ -800,19 +807,17 @@ value context::run_loop(std::size_t stop_depth) {
 		}
 
 		case op::push_handler:
-			handlers_.push_back(handler{frames_.size() - 1,
-			                            static_cast<std::size_t>(frame.ip) +
-			                                static_cast<std::size_t>(in.sbx()),
-			                            registers_.size(), in.a});
+			handlers_.push_back(
+			    handler{frames_.size() - 1,
+				        static_cast<std::size_t>(frame.ip) + static_cast<std::size_t>(in.sbx()),
+				        registers_.size(), in.a});
 			break;
 		case op::pop_handler:
 			if (!handlers_.empty()) { handlers_.pop_back(); }
 			break;
 		case op::throw_value: {
 			thrown_ = reg(in.a);
-			if (!unwind_to_handler()) {
-				raise("uncaught exception: " + to_string(thrown_));
-			}
+			if (!unwind_to_handler()) { raise("uncaught exception: " + to_string(thrown_)); }
 			break;
 		}
 

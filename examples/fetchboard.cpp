@@ -8,13 +8,13 @@
 // Build: make FETCH=1 fetchboard      (plain `make fetchboard` builds
 // offline and the page explains what is missing; needs SDL3)
 
+#include <SDL3/SDL_main.h>
 #include <ctbrowser.hpp>
 #include <ctbrowser/app.hpp>
-#include <SDL3/SDL_main.h>
 
 using fetchboard = ctbrowser::page<
 #include "fetchboard.inc"
->;
+    >;
 
 int main(int, char **) {
 	ctbrowser::app_options opts;

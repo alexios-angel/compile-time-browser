@@ -92,19 +92,19 @@ namespace {
 	out[0] = 'B';
 	out[1] = 'M';
 	put32(2, static_cast<std::uint32_t>(out.size()));
-	put32(10, 54);                                    // where the pixels start
-	put32(14, 40);                                    // BITMAPINFOHEADER
+	put32(10, 54); // where the pixels start
+	put32(14, 40); // BITMAPINFOHEADER
 	put32(18, static_cast<std::uint32_t>(width));
 	put32(22, static_cast<std::uint32_t>(top_down ? -height : height));
-	out[26] = 1;                                      // planes
-	out[28] = 24;                                     // bits per pixel
+	out[26] = 1;  // planes
+	out[28] = 24; // bits per pixel
 	// Row by row, because a BMP row is PADDED to four bytes - writing pixels
 	// straight through the block runs off the end of the last row.
 	for (int y = 0; y < height; ++y) {
 		const std::size_t row = 54 + stride * static_cast<std::size_t>(y);
 		for (int x = 0; x < width; ++x) {
 			const std::size_t at = row + static_cast<std::size_t>(x) * 3U;
-			out[at] = static_cast<unsigned char>(colour & 0xFF);            // blue
+			out[at] = static_cast<unsigned char>(colour & 0xFF);             // blue
 			out[at + 1] = static_cast<unsigned char>((colour >> 8) & 0xFF);  // green
 			out[at + 2] = static_cast<unsigned char>((colour >> 16) & 0xFF); // red
 		}

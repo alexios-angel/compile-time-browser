@@ -1,6 +1,6 @@
 module;
-#include <boost/container/small_vector.hpp>
 #include <algorithm>
+#include <boost/container/small_vector.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -114,20 +114,23 @@ public:
 			             weight == "900" || weight == "600";
 			const std::string_view style = face.get("font-style");
 			entry.italic = style == "italic" || style == "oblique";
-			if (!entry.family.empty() && !entry.source.empty()) { fonts_.push_back(std::move(entry)); }
+			if (!entry.family.empty() && !entry.source.empty()) {
+				fonts_.push_back(std::move(entry));
+			}
 		}
 		for (const ctcss::value_sheet::entry & e : sheet.entries) {
-			if (e.selector < 0 ||
-			    static_cast<std::size_t>(e.selector) >= sheet.selectors.size()) {
+			if (e.selector < 0 || static_cast<std::size_t>(e.selector) >= sheet.selectors.size()) {
 				continue;
 			}
-			const ctcss::value_sheet::selector & src = sheet.selectors[static_cast<std::size_t>(e.selector)];
+			const ctcss::value_sheet::selector & src =
+			    sheet.selectors[static_cast<std::size_t>(e.selector)];
 			const std::uint32_t sel_index = compile_selector(src);
 			if (selectors_[sel_index].parts.empty()) { continue; }
 			if (selectors_[sel_index].parts.front().never_matches) { continue; }
 
 			const auto add = [&](std::string_view property, std::string_view value) {
-				declarations_.push_back(declaration{atoms_->intern_lower(property), std::string{value}});
+				declarations_.push_back(
+				    declaration{atoms_->intern_lower(property), std::string{value}});
 				index_.add(selectors_[sel_index],
 				           rule{sel_index, static_cast<std::uint32_t>(declarations_.size() - 1),
 				                e.order, origin, e.important});
@@ -163,9 +166,8 @@ public:
 			const std::size_t begin = value.find_first_not_of(" \t\n\r\f", at);
 			if (begin == std::string_view::npos) { break; }
 			const std::size_t end = value.find_first_of(" \t\n\r\f", begin);
-			parts.push_back(value.substr(begin, end == std::string_view::npos
-			                                        ? std::string_view::npos
-			                                        : end - begin));
+			parts.push_back(value.substr(
+			    begin, end == std::string_view::npos ? std::string_view::npos : end - begin));
 			at = end == std::string_view::npos ? value.size() : end;
 		}
 		if (parts.empty()) { return {}; }
@@ -213,7 +215,9 @@ public:
 		}
 		collect(index_.by_tag, self.tag, txn, node, self, ancestors);
 		for (const rule & r : index_.universal) {
-			if (matches(txn, node, self, ancestors, selectors_[r.selector])) { matches_.push_back(r); }
+			if (matches(txn, node, self, ancestors, selectors_[r.selector])) {
+				matches_.push_back(r);
+			}
 		}
 
 		// The cascade: origin, then importance, then specificity, then source
@@ -365,8 +369,8 @@ private:
 		const std::size_t close = src.find(')', start);
 		if (close == std::string_view::npos) { return {}; }
 		std::string_view inner = src.substr(start, close - start);
-		while (!inner.empty() && (inner.front() == ' ' || inner.front() == '"' ||
-		                          inner.front() == '\'')) {
+		while (!inner.empty() &&
+		       (inner.front() == ' ' || inner.front() == '"' || inner.front() == '\'')) {
 			inner.remove_prefix(1);
 		}
 		while (!inner.empty() &&
@@ -384,7 +388,9 @@ private:
 	void split_classes(std::string_view list, boost::container::small_vector<atom, 4> & out) const {
 		std::size_t i = 0;
 		while (i < list.size()) {
-			while (i < list.size() && (list[i] == ' ' || list[i] == '\t' || list[i] == '\n')) { ++i; }
+			while (i < list.size() && (list[i] == ' ' || list[i] == '\t' || list[i] == '\n')) {
+				++i;
+			}
 			const std::size_t start = i;
 			while (i < list.size() && list[i] != ' ' && list[i] != '\t' && list[i] != '\n') { ++i; }
 			if (i > start) { out.push_back(atoms_->intern(list.substr(start, i - start))); }
@@ -398,7 +404,9 @@ private:
 		const auto it = bucket.find(key.id);
 		if (it == bucket.end()) { return; }
 		for (const rule & r : it->second) {
-			if (matches(txn, node, self, ancestors, selectors_[r.selector])) { matches_.push_back(r); }
+			if (matches(txn, node, self, ancestors, selectors_[r.selector])) {
+				matches_.push_back(r);
+			}
 		}
 	}
 
@@ -454,9 +462,13 @@ private:
 		for (std::size_t i = src.steps.size(); i-- > 0;) {
 			const ctcss::value_sheet::step & s = src.steps[i];
 			compound c;
-			if (!s.comp.tag.empty() && s.comp.tag != "*") { c.tag = atoms_->intern_lower(s.comp.tag); }
+			if (!s.comp.tag.empty() && s.comp.tag != "*") {
+				c.tag = atoms_->intern_lower(s.comp.tag);
+			}
 			if (!s.comp.id.empty()) { c.id = atoms_->intern(s.comp.id); }
-			for (const std::string & cls : s.comp.classes) { c.classes.push_back(atoms_->intern(cls)); }
+			for (const std::string & cls : s.comp.classes) {
+				c.classes.push_back(atoms_->intern(cls));
+			}
 			c.states = s.comp.states;
 			c.never_matches = s.comp.impossible;
 			out.parts.push_back(std::move(c));

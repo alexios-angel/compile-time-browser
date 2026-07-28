@@ -11,7 +11,12 @@ tests/*
 tools/clang-std-embed/
 examples/pong.inc
 *.log
+# Screenshots are build output - EXCEPT the goldens, which are the test data a
+# byte comparison compares against. Ignored, they are missing from a fresh
+# clone and every golden test fails with "no golden" on a machine that has
+# never generated one.
 *.ppm
+!tests-v2/golden/*.ppm
 examples-windows/
 examples-windows-v2/
 tools/llvm-mingw/

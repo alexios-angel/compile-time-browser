@@ -1,0 +1,15 @@
+# LeakSanitizer suppressions, and ONLY for third-party code. Nothing in
+# ctbrowser is suppressed here, ever - a suppression that silences your own
+# code turns a green sanitizer run into a decoration.
+#
+# SDL's offscreen video driver initialises EGL and does not release it at
+# SDL_Quit; the allocation is inside SDL_EGL_InitializeOffscreen and the driver
+# it loads. Reachable only from the one test that drives run_app rather than
+# the browser alone - a browser test never initialises a video driver at all.
+#
+# Verified by planting a leak in ctbrowser::shell and confirming it is still
+# reported with these active.
+leak:SDL_EGL_InitializeOffscreen
+leak:libSDL3
+leak:libEGL
+leak:libGLX

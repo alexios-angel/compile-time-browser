@@ -8,9 +8,9 @@ module;
 // here to answer. That trap was walked into twice: once in the profiler and
 // once in the test that measures whether an idle worker pool sleeps.
 #if defined(_WIN32)
-#  include <windows.h>
+#include <windows.h>
 #else
-#  include <sys/resource.h>
+#include <sys/resource.h>
 #endif
 
 #include <cstdint>

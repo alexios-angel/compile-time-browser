@@ -5,10 +5,10 @@
 
 #include <cstddef>
 
+#include "audio.hpp"
 #include "engine.hpp"
 #include "font8x8.hpp"
 #include "fonts.hpp"
-#include "audio.hpp"
 #include "screenshot.hpp"
 #include <SDL3/SDL.h>
 #ifdef CTBROWSER_WITH_IMAGE
@@ -44,17 +44,17 @@ namespace ctbrowser {
 struct app_options {
 	std::int32_t width = 800;
 	std::int32_t height = 600;
-	std::int32_t max_frames = 0;          // 0 = run until quit; >0 = auto-exit (tests/CI)
+	std::int32_t max_frames = 0; // 0 = run until quit; >0 = auto-exit (tests/CI)
 	double fixed_dt = 0;         // 0 = real time; >0 = deterministic timestep
-	std::int32_t max_fps = 60;            // interactive frame cap (0 = uncapped); browsers
+	std::int32_t max_fps = 60;   // interactive frame cap (0 = uncapped); browsers
 	                             // throttle requestAnimationFrame the same way -
 	                             // fixed-step pages (examples/pong.html) depend on it
-	std::int32_t logical_w = 0;           // >0: fixed-resolution presentation,
-	std::int32_t logical_h = 0;           //     letterboxed and scaled to the window
+	std::int32_t logical_w = 0;  // >0: fixed-resolution presentation,
+	std::int32_t logical_h = 0;  //     letterboxed and scaled to the window
 	bool fullscreen = false;
-	bool clear_white = true;     // page background
-	std::string screenshot_path; // capture to PNG...
-	std::int32_t screenshot_frame = -1;   // ...at this frame (-1 = the last one)
+	bool clear_white = true;            // page background
+	std::string screenshot_path;        // capture to PNG...
+	std::int32_t screenshot_frame = -1; // ...at this frame (-1 = the last one)
 	// a TrueType font for page text (SDL3_ttf builds); "" probes common
 	// system locations and falls back to the embedded 8x8 font
 	std::string font_path;
@@ -136,8 +136,9 @@ struct ttf_session {
 // paint_cmd carries 0xAARRGGBB; SDL wants the channels apart. This
 // unpacking appeared at every place a paint reached the renderer.
 [[nodiscard]] constexpr SDL_Color sdl_color_of(std::uint32_t argb) noexcept {
-	return SDL_Color{static_cast<Uint8>((argb >> 16) & 0xFF), static_cast<Uint8>((argb >> 8) & 0xFF),
-	                 static_cast<Uint8>(argb & 0xFF), static_cast<Uint8>((argb >> 24) & 0xFF)};
+	return SDL_Color{static_cast<Uint8>((argb >> 16) & 0xFF),
+	                 static_cast<Uint8>((argb >> 8) & 0xFF), static_cast<Uint8>(argb & 0xFF),
+	                 static_cast<Uint8>((argb >> 24) & 0xFF)};
 }
 inline void set_draw_color(SDL_Renderer * r, std::uint32_t argb) {
 	const SDL_Color c = sdl_color_of(argb);
@@ -221,7 +222,9 @@ struct ttf_text {
 
 	static std::string fold(std::string_view s) {
 		std::string out;
-		for (const char c : s) { out.push_back(c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c); }
+		for (const char c : s) {
+			out.push_back(c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c);
+		}
 		return out;
 	}
 	void register_face(std::string_view family, bool bold, bool italic, face_src src) {
@@ -236,22 +239,28 @@ struct ttf_text {
 			return fold(name).find(needle) != std::string::npos;
 		};
 		if (has("mono") || has("courier") || has("consol")) { return "monospace"; }
-		if (has("sans") || has("arial") || has("helvetica") || has("system-ui") || has("ui-sans")) { return "sans-serif"; }
+		if (has("sans") || has("arial") || has("helvetica") || has("system-ui") || has("ui-sans")) {
+			return "sans-serif";
+		}
 		if (has("serif") || has("times") || has("georgia")) { return "serif"; }
 		return {};
 	}
 	// resolve (family-list, bold, italic) -> the face key to open + which
 	// synthetic styles TTF must add because the exact variant is missing
-	std::tuple<std::string, bool, bool, std::uint8_t> resolve(std::string_view family_list, bool bold,
-	                                                          bool italic) {
+	std::tuple<std::string, bool, bool, std::uint8_t> resolve(std::string_view family_list,
+	                                                          bool bold, bool italic) {
 		const auto try_family = [this, bold, italic](std::string name)
 		    -> std::optional<std::tuple<std::string, bool, bool, std::uint8_t>> {
 			// exact variant, then regular + synthetic styling
-			if (faces.contains({name, bold, italic})) { return std::tuple{name, bold, italic, std::uint8_t{0}}; }
+			if (faces.contains({name, bold, italic})) {
+				return std::tuple{name, bold, italic, std::uint8_t{0}};
+			}
 			std::uint8_t synth = 0;
 			if (bold) { synth |= TTF_STYLE_BOLD; }
 			if (italic) { synth |= TTF_STYLE_ITALIC; }
-			if (faces.contains({name, false, false})) { return std::tuple{name, false, false, synth}; }
+			if (faces.contains({name, false, false})) {
+				return std::tuple{name, false, false, synth};
+			}
 			return std::nullopt;
 		};
 		std::string_view rest = family_list;
@@ -259,8 +268,13 @@ struct ttf_text {
 			const std::size_t comma = rest.find(',');
 			std::string_view tok = comma == std::string_view::npos ? rest : rest.substr(0, comma);
 			rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
-			while (!tok.empty() && (tok.front() == ' ' || tok.front() == '"' || tok.front() == '\'')) { tok.remove_prefix(1); }
-			while (!tok.empty() && (tok.back() == ' ' || tok.back() == '"' || tok.back() == '\'')) { tok.remove_suffix(1); }
+			while (!tok.empty() &&
+			       (tok.front() == ' ' || tok.front() == '"' || tok.front() == '\'')) {
+				tok.remove_prefix(1);
+			}
+			while (!tok.empty() && (tok.back() == ' ' || tok.back() == '"' || tok.back() == '\'')) {
+				tok.remove_suffix(1);
+			}
 			if (tok.empty()) { continue; }
 			if (auto hit = try_family(fold(tok))) { return *hit; }
 			const std::string gen = generic_of(tok);
@@ -285,10 +299,9 @@ struct ttf_text {
 			const face_src & src = faces.at({name, fb, fi});
 			// a fresh IO per size; closeio=true has TTF read the font fully
 			// in and close it, so the bytes need only outlive this call
-			f.reset(src.mem != nullptr
-			            ? TTF_OpenFontIO(SDL_IOFromConstMem(src.mem, src.mem_size), true,
-			                             static_cast<float>(px))
-			            : TTF_OpenFont(src.path.c_str(), static_cast<float>(px)));
+			f.reset(src.mem != nullptr ? TTF_OpenFontIO(SDL_IOFromConstMem(src.mem, src.mem_size),
+			                                            true, static_cast<float>(px))
+			                           : TTF_OpenFont(src.path.c_str(), static_cast<float>(px)));
 		} else if (!fallback_path.empty()) {
 			f.reset(TTF_OpenFont(fallback_path.c_str(), static_cast<float>(px)));
 		}
@@ -297,8 +310,8 @@ struct ttf_text {
 		fonts.emplace(key, std::move(f));
 		return raw;
 	}
-	std::int32_t measure(std::u32string_view text, std::int32_t px, std::string_view family, bool bold,
-	                     bool italic) {
+	std::int32_t measure(std::u32string_view text, std::int32_t px, std::string_view family,
+	                     bool bold, bool italic) {
 		TTF_Font * f = font(family, bold, italic, px);
 		const std::string utf8 = utf32_to_utf8(text); // SDL_ttf takes UTF-8
 		if (f == nullptr) { return static_cast<std::int32_t>(text.size()) * px; }
@@ -321,8 +334,8 @@ struct ttf_text {
 			// rendered strings change rarely, so the cache is dropped
 			// wholesale rather than evicted entry by entry
 			if (cache.size() > texture_cache_cap) { cache.clear(); }
-			SDL_Surface * s = TTF_RenderText_Blended(f, utf8.c_str(), utf8.size(),
-			                                         SDL_Color{255, 255, 255, 255});
+			SDL_Surface * s =
+			    TTF_RenderText_Blended(f, utf8.c_str(), utf8.size(), SDL_Color{255, 255, 255, 255});
 			if (s == nullptr) { return; }
 			texture_ptr owned{SDL_CreateTextureFromSurface(renderer, s)};
 			SDL_DestroySurface(s);
@@ -352,9 +365,8 @@ struct ttf_text {
 	    "C:\\Windows\\Fonts\\arial.ttf",
 	};
 	std::error_code ignored;
-	const auto hit = std::ranges::find_if(candidates, [&](std::string_view c) {
-		return std::filesystem::exists(c, ignored);
-	});
+	const auto hit = std::ranges::find_if(
+	    candidates, [&](std::string_view c) { return std::filesystem::exists(c, ignored); });
 	return hit != candidates.end() ? std::string{*hit} : std::string{};
 }
 
@@ -380,7 +392,7 @@ struct canvas_textures {
 		                                SDL_TEXTUREACCESS_STREAMING, n->canvas_w, n->canvas_h)};
 		SDL_SetTextureScaleMode(t.get(), SDL_SCALEMODE_NEAREST);
 		SDL_SetTextureBlendMode(t.get(), SDL_BLENDMODE_BLEND); // clearRect shows the page
-		SDL_Texture * raw = t.get(); // the map owns it from here
+		SDL_Texture * raw = t.get();                           // the map owns it from here
 		cache.emplace(n, entry{std::move(t), n->canvas_w, n->canvas_h});
 		return raw;
 	}
@@ -396,7 +408,9 @@ inline void apply_env_defaults(app_options & opts) {
 	// AFTER any caller-provided assets - user entries win on key clashes
 	for (embedded_asset & fa : default_font_assets()) { opts.assets.push_back(std::move(fa)); }
 	if (opts.max_frames == 0) {
-		if (const char * env = SDL_getenv("CTBROWSER_TEST_FRAMES")) { opts.max_frames = SDL_atoi(env); }
+		if (const char * env = SDL_getenv("CTBROWSER_TEST_FRAMES")) {
+			opts.max_frames = SDL_atoi(env);
+		}
 	}
 	if (opts.screenshot_path.empty()) {
 		if (const char * env = SDL_getenv("CTBROWSER_SCREENSHOT")) { opts.screenshot_path = env; }
@@ -474,12 +488,11 @@ void register_faces(ttf_text & ttf, Engine & e, const app_options & opts) {
 		const std::string path = unquote(src.substr(s, close - s));
 		const std::string weight{ff.get("font-weight")};
 		const std::string style{ff.get("font-style")};
-		const bool bold = weight.find("bold") != std::string::npos ||
-		                  weight.find("700") != std::string::npos ||
-		                  weight.find("800") != std::string::npos ||
-		                  weight.find("900") != std::string::npos;
-		const bool italic = style.find("italic") != std::string::npos ||
-		                    style.find("oblique") != std::string::npos;
+		const bool bold =
+		    weight.find("bold") != std::string::npos || weight.find("700") != std::string::npos ||
+		    weight.find("800") != std::string::npos || weight.find("900") != std::string::npos;
+		const bool italic =
+		    style.find("italic") != std::string::npos || style.find("oblique") != std::string::npos;
 		if (const embedded_asset * emb = find_asset(&e.assets, path)) {
 			ttf.register_face(family, bold, italic, {emb->data, emb->size, {}});
 			continue;
@@ -509,9 +522,7 @@ void draw_paints(SDL_Renderer * r, const std::vector<paint_cmd> & paints,
 			SDL_RenderFillRect(r, &box);
 			break;
 		}
-		case paint_cmd::kind::text:
-			draw_text_cmd(cmd);
-			break;
+		case paint_cmd::kind::text: draw_text_cmd(cmd); break;
 		case paint_cmd::kind::canvas: {
 			SDL_Texture * t = textures.of(cmd.canvas_node);
 			SDL_UpdateTexture(t, nullptr, cmd.canvas_node->pixels.data(),
@@ -532,8 +543,7 @@ template <typename Engine> [[nodiscard]] bool pump_events(Engine & e, SDL_Render
 	SDL_Event ev;
 	while (SDL_PollEvent(&ev)) {
 		switch (ev.type) {
-		case SDL_EVENT_QUIT:
-			return false;
+		case SDL_EVENT_QUIT: return false;
 		case SDL_EVENT_MOUSE_MOTION:
 			SDL_ConvertEventToRenderCoordinates(r, &ev);
 			e.mouse_move(ev.motion.x, ev.motion.y);
@@ -553,15 +563,12 @@ template <typename Engine> [[nodiscard]] bool pump_events(Engine & e, SDL_Render
 				e.key(SDL_GetKeyName(ev.key.key), ev.type == SDL_EVENT_KEY_DOWN);
 			}
 			break;
-		case SDL_EVENT_TEXT_INPUT:
-			e.text_input(ev.text.text);
-			break;
+		case SDL_EVENT_TEXT_INPUT: e.text_input(ev.text.text); break;
 		case SDL_EVENT_MOUSE_WHEEL:
 			SDL_ConvertEventToRenderCoordinates(r, &ev);
 			e.wheel(ev.wheel.mouse_x, ev.wheel.mouse_y, ev.wheel.y);
 			break;
-		default:
-			break;
+		default: break;
 		}
 	}
 	return true;
@@ -582,7 +589,7 @@ template <typename Engine> [[nodiscard]] bool pump_events(Engine & e, SDL_Render
 		                                const std::string resolved = resolve_asset(arg_str(a, 0));
 		                                if (resolved.empty()) {
 			                                SDL_Log("ctbrowser: playSound: no such file: %s",
-			                                        arg_str(a, 0).c_str());
+											        arg_str(a, 0).c_str());
 			                                return ctjs::value{false};
 		                                }
 		                                return ctjs::value{mixer.play(resolved)};
@@ -596,21 +603,21 @@ template <typename Engine> [[nodiscard]] bool pump_events(Engine & e, SDL_Render
 		                                return {};
 	                                },
 	                                "setVolume")});
-	out.push_back({"screenshot", ctjs::native(
-	                                 [&pending_shot](const std::vector<ctjs::value> & a) -> ctjs::value {
-		                                 if (!a.empty()) { pending_shot = arg_str(a, 0); }
-		                                 return {};
-	                                 },
-	                                 "screenshot")});
-	out.push_back({"setFullscreen",
-	               ctjs::native(
-	                   [&want_fullscreen, &fullscreen_dirty](
-	                       const std::vector<ctjs::value> & a) -> ctjs::value {
-		                   want_fullscreen = arg_bool(a, 0);
-		                   fullscreen_dirty = true;
-		                   return {};
-	                   },
-	                   "setFullscreen")});
+	out.push_back(
+	    {"screenshot", ctjs::native(
+	                       [&pending_shot](const std::vector<ctjs::value> & a) -> ctjs::value {
+		                       if (!a.empty()) { pending_shot = arg_str(a, 0); }
+		                       return {};
+	                       },
+	                       "screenshot")});
+	out.push_back({"setFullscreen", ctjs::native(
+	                                    [&want_fullscreen, &fullscreen_dirty](
+	                                        const std::vector<ctjs::value> & a) -> ctjs::value {
+		                                    want_fullscreen = arg_bool(a, 0);
+		                                    fullscreen_dirty = true;
+		                                    return {};
+	                                    },
+	                                    "setFullscreen")});
 	return out;
 }
 
@@ -635,7 +642,9 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 	// browser at that URL (fragment links never reach this hook)
 	e.open_url = [](std::string_view url) { SDL_OpenURL(std::string{url}.c_str()); };
 	// the system clipboard behind Ctrl+C/X/V and the context menu
-	e.clipboard_set = [](std::string_view text) { SDL_SetClipboardText(std::string{text}.c_str()); };
+	e.clipboard_set = [](std::string_view text) {
+		SDL_SetClipboardText(std::string{text}.c_str());
+	};
 	e.clipboard_get = []() -> std::string {
 		char * t = SDL_GetClipboardText();
 		std::string out = t != nullptr ? t : "";
@@ -661,9 +670,9 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 		SDL_Log("ctbrowser: SDL_Init failed: %s", SDL_GetError());
 		return 1;
 	}
-	detail::window_ptr owned_window{SDL_CreateWindow(
-	    e.title.c_str(), opts.width, opts.height,
-	    SDL_WINDOW_RESIZABLE | (want_fullscreen ? SDL_WINDOW_FULLSCREEN : 0))};
+	detail::window_ptr owned_window{
+	    SDL_CreateWindow(e.title.c_str(), opts.width, opts.height,
+		                 SDL_WINDOW_RESIZABLE | (want_fullscreen ? SDL_WINDOW_FULLSCREEN : 0))};
 	detail::renderer_ptr owned_renderer{
 	    owned_window ? SDL_CreateRenderer(owned_window.get(), nullptr) : nullptr};
 	// the hover cursors (arrow / hand over links / I-beam over text),
@@ -697,151 +706,159 @@ template <typename Page> std::int32_t run_app(app_options opts = {}) {
 	// the rest (dummy driver, disabled compositors, >60 Hz displays)
 	SDL_SetRenderVSync(renderer, 1);
 
-
 #ifdef CTBROWSER_WITH_TTF
 	const detail::ttf_session ttf_lib; // declared out here so TTF_Quit follows `ttf`
 #endif
 
 	{ // scope: GPU/font resources release before the library teardown
 #ifdef CTBROWSER_WITH_TTF
-	detail::ttf_text ttf;
-	ttf.renderer = renderer;
-	if (ttf_lib.ok) {
-		detail::register_faces(ttf, e, opts);
-		if (ttf.ok()) {
-			e.measure = [&ttf](std::u32string_view text, std::int32_t px, std::string_view family,
-			                   bool bold, bool italic) {
-				return ttf.measure(text, px, family, bold, italic);
-			};
-		}
-	}
-#endif
-
-	detail::canvas_textures textures{renderer, {}};
-	std::string shown_title = e.title;
-	Uint64 last = SDL_GetTicks();
-	Uint64 frame_start_ns = SDL_GetTicksNS();
-	std::int32_t frame = 0;
-	bool running = true;
-
-	bool in_render = false;
-	// The presentation size: a fixed logical resolution when one is
-	// configured (letterboxed), else whatever the window currently is.
-	// render_one needs this twice - once to keep the engine viewport in
-	// sync, once to lay out - and the two must not drift apart.
-	const auto view_size = [&opts, window] {
-		std::pair<std::int32_t, std::int32_t> wh{opts.width, opts.height};
-		if (opts.logical_w > 0) { wh = {opts.logical_w, opts.logical_h}; }
-		else { SDL_GetWindowSize(window, &wh.first, &wh.second); }
-		return wh;
-	};
-	// one full frame: fullscreen, viewport (+ resize event), tick, layout,
-	// paint. Factored out so the live-resize event watch below can drive it
-	// while the OS modal resize loop has our while() blocked.
-	std::function<void()> render_one = [&]() {
-		if (in_render) { return; }
-		in_render = true;
-		if (fullscreen_dirty) {
-			fullscreen_dirty = false;
-			SDL_SetWindowFullscreen(window, want_fullscreen);
-		}
-
-		// keep the viewport in sync with the window BEFORE the frame runs;
-		// a size change fires a DOM "resize" event so scripts can react
-		// (BabylonJS: window.addEventListener('resize', ()=>engine.resize()))
-		{
-			const auto [vw, vh] = view_size();
-			e.resize_viewport(vw, vh);
-		}
-
-		const Uint64 now = SDL_GetTicks();
-		const double dt =
-		    opts.fixed_dt > 0 ? opts.fixed_dt : static_cast<double>(now - last) / 1000.0;
-		last = now;
-		e.tick(dt);
-
-		if (e.title != shown_title) {
-			shown_title = e.title;
-			SDL_SetWindowTitle(window, shown_title.c_str());
-		}
-		if (const auto want = e.cursor(); want != shown_cursor) {
-			shown_cursor = want;
-			using ck = std::remove_const_t<decltype(want)>;
-			SDL_Cursor * c = want == ck::pointer ? cur_pointer
-			                 : want == ck::text  ? cur_text
-			                                     : cur_arrow;
-			if (c != nullptr) { SDL_SetCursor(c); }
-		}
-
-		const auto [view_w, view_h] = view_size();
-		const std::vector<paint_cmd> paints = e.frame(view_w);
-
-		detail::set_draw_color(renderer, opts.clear_white ? 0xFFFFFFFFu : 0xFF000000u);
-		SDL_RenderClear(renderer);
-		detail::draw_paints(renderer, paints, textures, [&](const paint_cmd & cmd) {
-#ifdef CTBROWSER_WITH_TTF
+		detail::ttf_text ttf;
+		ttf.renderer = renderer;
+		if (ttf_lib.ok) {
+			detail::register_faces(ttf, e, opts);
 			if (ttf.ok()) {
-				ttf.draw(cmd);
-				return;
+				e.measure = [&ttf](std::u32string_view text, std::int32_t px,
+				                   std::string_view family, bool bold, bool italic) {
+					return ttf.measure(text, px, family, bold, italic);
+				};
 			}
+		}
 #endif
-			detail::draw_text(renderer, cmd);
-		});
-		in_render = false;
-	};
 
-	// live window resize: while the user drags a window edge the OS runs a
-	// modal loop that blocks our while(); an SDL event watch still fires
-	// there, so we render + present from it to track the drag smoothly.
-	struct resize_watch { std::function<void()> * render; SDL_Renderer * renderer; };
-	resize_watch rw{&render_one, renderer};
-	SDL_EventFilter watch_cb = [](void * ud, SDL_Event * we) -> bool {
-		static bool in_watch = false;
-		auto * st = static_cast<resize_watch *>(ud);
-		if (!in_watch && (we->type == SDL_EVENT_WINDOW_RESIZED ||
-		                  we->type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED ||
-		                  we->type == SDL_EVENT_WINDOW_EXPOSED)) {
-			in_watch = true;
-			(*st->render)();
-			SDL_RenderPresent(st->renderer);
-			in_watch = false;
+		detail::canvas_textures textures{renderer, {}};
+		std::string shown_title = e.title;
+		Uint64 last = SDL_GetTicks();
+		Uint64 frame_start_ns = SDL_GetTicksNS();
+		std::int32_t frame = 0;
+		bool running = true;
+
+		bool in_render = false;
+		// The presentation size: a fixed logical resolution when one is
+		// configured (letterboxed), else whatever the window currently is.
+		// render_one needs this twice - once to keep the engine viewport in
+		// sync, once to lay out - and the two must not drift apart.
+		const auto view_size = [&opts, window] {
+			std::pair<std::int32_t, std::int32_t> wh{opts.width, opts.height};
+			if (opts.logical_w > 0) {
+				wh = {opts.logical_w, opts.logical_h};
+			} else {
+				SDL_GetWindowSize(window, &wh.first, &wh.second);
+			}
+			return wh;
+		};
+		// one full frame: fullscreen, viewport (+ resize event), tick, layout,
+		// paint. Factored out so the live-resize event watch below can drive it
+		// while the OS modal resize loop has our while() blocked.
+		std::function<void()> render_one = [&]() {
+			if (in_render) { return; }
+			in_render = true;
+			if (fullscreen_dirty) {
+				fullscreen_dirty = false;
+				SDL_SetWindowFullscreen(window, want_fullscreen);
+			}
+
+			// keep the viewport in sync with the window BEFORE the frame runs;
+			// a size change fires a DOM "resize" event so scripts can react
+			// (BabylonJS: window.addEventListener('resize', ()=>engine.resize()))
+			{
+				const auto [vw, vh] = view_size();
+				e.resize_viewport(vw, vh);
+			}
+
+			const Uint64 now = SDL_GetTicks();
+			const double dt =
+			    opts.fixed_dt > 0 ? opts.fixed_dt : static_cast<double>(now - last) / 1000.0;
+			last = now;
+			e.tick(dt);
+
+			if (e.title != shown_title) {
+				shown_title = e.title;
+				SDL_SetWindowTitle(window, shown_title.c_str());
+			}
+			if (const auto want = e.cursor(); want != shown_cursor) {
+				shown_cursor = want;
+				using ck = std::remove_const_t<decltype(want)>;
+				SDL_Cursor * c = want == ck::pointer ? cur_pointer
+				                 : want == ck::text  ? cur_text
+				                                     : cur_arrow;
+				if (c != nullptr) { SDL_SetCursor(c); }
+			}
+
+			const auto [view_w, view_h] = view_size();
+			const std::vector<paint_cmd> paints = e.frame(view_w);
+
+			detail::set_draw_color(renderer, opts.clear_white ? 0xFFFFFFFFu : 0xFF000000u);
+			SDL_RenderClear(renderer);
+			detail::draw_paints(renderer, paints, textures, [&](const paint_cmd & cmd) {
+#ifdef CTBROWSER_WITH_TTF
+				if (ttf.ok()) {
+					ttf.draw(cmd);
+					return;
+				}
+#endif
+				detail::draw_text(renderer, cmd);
+			});
+			in_render = false;
+		};
+
+		// live window resize: while the user drags a window edge the OS runs a
+		// modal loop that blocks our while(); an SDL event watch still fires
+		// there, so we render + present from it to track the drag smoothly.
+		struct resize_watch {
+			std::function<void()> * render;
+			SDL_Renderer * renderer;
+		};
+		resize_watch rw{&render_one, renderer};
+		SDL_EventFilter watch_cb = [](void * ud, SDL_Event * we) -> bool {
+			static bool in_watch = false;
+			auto * st = static_cast<resize_watch *>(ud);
+			if (!in_watch && (we->type == SDL_EVENT_WINDOW_RESIZED ||
+			                  we->type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED ||
+			                  we->type == SDL_EVENT_WINDOW_EXPOSED)) {
+				in_watch = true;
+				(*st->render)();
+				SDL_RenderPresent(st->renderer);
+				in_watch = false;
+			}
+			return true;
+		};
+		SDL_AddEventWatch(watch_cb, &rw);
+
+		while (running) {
+			running = detail::pump_events(e, renderer);
+
+			render_one();
+
+			// screenshots capture BEFORE present (the composed frame)
+			const bool auto_shot =
+			    !opts.screenshot_path.empty() &&
+			    ((opts.screenshot_frame >= 0 && frame == opts.screenshot_frame) ||
+				 (opts.screenshot_frame < 0 && opts.max_frames > 0 &&
+				  frame == opts.max_frames - 1));
+			if (auto_shot) { save_screenshot(renderer, opts.screenshot_path.c_str()); }
+			if (!pending_shot.empty()) {
+				save_screenshot(renderer, pending_shot.c_str());
+				pending_shot.clear();
+			}
+
+			SDL_RenderPresent(renderer);
+
+			// interactive runs pace like a browser paces requestAnimationFrame;
+			// bounded (test/CI) runs sprint through their frames instead
+			if (opts.max_frames == 0 && opts.max_fps > 0) {
+				const Uint64 target_ns = 1000000000ull / static_cast<Uint64>(opts.max_fps);
+				const Uint64 elapsed_ns = SDL_GetTicksNS() - frame_start_ns;
+				if (elapsed_ns < target_ns) { SDL_DelayNS(target_ns - elapsed_ns); }
+				frame_start_ns = SDL_GetTicksNS();
+			}
+
+			if (opts.max_frames > 0 && ++frame >= opts.max_frames) {
+				running = false;
+			} else if (opts.max_frames == 0) {
+				++frame;
+			}
 		}
-		return true;
-	};
-	SDL_AddEventWatch(watch_cb, &rw);
-
-	while (running) {
-		running = detail::pump_events(e, renderer);
-
-		render_one();
-
-		// screenshots capture BEFORE present (the composed frame)
-		const bool auto_shot =
-		    !opts.screenshot_path.empty() &&
-		    ((opts.screenshot_frame >= 0 && frame == opts.screenshot_frame) ||
-		     (opts.screenshot_frame < 0 && opts.max_frames > 0 &&
-		      frame == opts.max_frames - 1));
-		if (auto_shot) { save_screenshot(renderer, opts.screenshot_path.c_str()); }
-		if (!pending_shot.empty()) {
-			save_screenshot(renderer, pending_shot.c_str());
-			pending_shot.clear();
-		}
-
-		SDL_RenderPresent(renderer);
-
-		// interactive runs pace like a browser paces requestAnimationFrame;
-		// bounded (test/CI) runs sprint through their frames instead
-		if (opts.max_frames == 0 && opts.max_fps > 0) {
-			const Uint64 target_ns = 1000000000ull / static_cast<Uint64>(opts.max_fps);
-			const Uint64 elapsed_ns = SDL_GetTicksNS() - frame_start_ns;
-			if (elapsed_ns < target_ns) { SDL_DelayNS(target_ns - elapsed_ns); }
-			frame_start_ns = SDL_GetTicksNS();
-		}
-
-		if (opts.max_frames > 0 && ++frame >= opts.max_frames) { running = false; }
-		else if (opts.max_frames == 0) { ++frame; }
-	}
-	SDL_RemoveEventWatch(watch_cb, &rw);
+		SDL_RemoveEventWatch(watch_cb, &rw);
 	} // resource scope: the font cache and canvas textures release here
 
 	// No teardown block. The TTF session, the cursors, the renderer, the

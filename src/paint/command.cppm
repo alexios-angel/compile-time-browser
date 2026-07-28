@@ -1,7 +1,7 @@
 module;
 #include <cstddef>
-#include <memory>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -33,11 +33,11 @@ using ctbrowser::node_id;
 using ctbrowser::rect;
 
 enum class paint_op : std::uint8_t {
-	fill_rect,  // a solid (possibly translucent) box
+	fill_rect,    // a solid (possibly translucent) box
 	fill_ellipse, // the same, bounded by an ellipse - a radio button is round
-	text_run,   // one visual line of text, already broken by layout
-	image,      // a bitmap - a <canvas>, and later an <img>
-	push_clip,  // intersect the clip with `bounds` until the matching pop
+	text_run,     // one visual line of text, already broken by layout
+	image,        // a bitmap - a <canvas>, and later an <img>
+	push_clip,    // intersect the clip with `bounds` until the matching pop
 	pop_clip,
 };
 
@@ -92,18 +92,22 @@ struct font_face {
 	[[nodiscard]] friend bool operator==(const font_face &, const font_face &) = default;
 };
 
-enum class text_decoration : std::uint8_t { none, underline, line_through };
+enum class text_decoration : std::uint8_t {
+	none,
+	underline,
+	line_through
+};
 
 struct paint_command {
 	paint_op op = paint_op::fill_rect;
-	rect bounds;             // fill: the box. text: the run's box. clip: the region.
-	color fill;              // fill: the colour. text: the text colour.
-	float font_size = 16;    // text only
-	font_face face;          // text only
+	rect bounds;          // fill: the box. text: the run's box. clip: the region.
+	color fill;           // fill: the colour. text: the text colour.
+	float font_size = 16; // text only
+	font_face face;       // text only
 	text_decoration decoration = text_decoration::none; // text only
-	std::string text;        // text only, UTF-8
-	std::shared_ptr<const bitmap> pixels; // image only
-	node_id source;          // provenance, for hit testing and for debugging goldens
+	std::string text;                                   // text only, UTF-8
+	std::shared_ptr<const bitmap> pixels;               // image only
+	node_id source; // provenance, for hit testing and for debugging goldens
 
 	[[nodiscard]] friend bool operator==(const paint_command &, const paint_command &) = default;
 };

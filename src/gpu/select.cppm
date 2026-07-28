@@ -67,11 +67,9 @@ struct renderer_choice {
 // Returns an empty renderer only if force_gpu was asked for and the GPU failed:
 // a caller that demanded hardware gets told, rather than silently getting
 // something else.
-[[nodiscard]] inline renderer_choice create_renderer(int width, int height,
-                                                     SDL_Window * window = nullptr,
-                                                     int extent = raster::default_tile_extent,
-                                                     renderer_preference want =
-                                                         renderer_preference::automatic) {
+[[nodiscard]] inline renderer_choice create_renderer(
+    int width, int height, SDL_Window * window = nullptr, int extent = raster::default_tile_extent,
+    renderer_preference want = renderer_preference::automatic) {
 	renderer_choice out;
 	if (want == renderer_preference::force_software) {
 		out.renderer = raster::renderer::software(width, height, extent);
@@ -85,8 +83,8 @@ struct renderer_choice {
 		// reading its own output, needs to know which it got.
 		const std::string name = "gpu (" + device->driver() + ": " + device->adapter() + ")";
 		out.software_adapter = device->adapter_is_software();
-		out.renderer = raster::renderer::adopt(
-		    std::make_unique<sdl_gpu_backend>(std::move(*device)), name);
+		out.renderer =
+		    raster::renderer::adopt(std::make_unique<sdl_gpu_backend>(std::move(*device)), name);
 		return out;
 	}
 

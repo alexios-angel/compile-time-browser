@@ -69,9 +69,7 @@ public:
 		for (const deferred & d : pending_) {
 			if (entry * e = locate(d.slot)) { std::destroy_at(value_of(e)); }
 		}
-		for (std::atomic<entry *> & c : directory_) {
-			delete[] c.load(std::memory_order_relaxed);
-		}
+		for (std::atomic<entry *> & c : directory_) { delete[] c.load(std::memory_order_relaxed); }
 	}
 
 	// --- reader side: lock-free, safe to call from any thread inside an

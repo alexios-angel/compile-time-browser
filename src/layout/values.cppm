@@ -1,9 +1,9 @@
 module;
-#include <string>
 #include <charconv>
-#include <functional>
 #include <cstdint>
+#include <functional>
 #include <optional>
+#include <string>
 #include <string_view>
 
 export module ctbrowser.layout:values;
@@ -80,7 +80,14 @@ struct text_metrics {
 // whatever the rasterizer felt like, and lay its text out at the wrong width.
 using measure_text_fn = text_metrics;
 
-enum class unit : std::uint8_t { px, percent, em, rem, auto_, none };
+enum class unit : std::uint8_t {
+	px,
+	percent,
+	em,
+	rem,
+	auto_,
+	none
+};
 
 struct length {
 	float value = 0;
@@ -129,7 +136,12 @@ struct length {
 // into one of these for now - a box tree that models `display` exhaustively
 // before there is a flex or grid algorithm to consume it would be modelling
 // nothing.
-enum class display_kind : std::uint8_t { none, block, inline_level, inline_block };
+enum class display_kind : std::uint8_t {
+	none,
+	block,
+	inline_level,
+	inline_block
+};
 
 [[nodiscard]] inline display_kind parse_display(std::string_view text, display_kind fallback) {
 	if (text == "none") { return display_kind::none; }
@@ -151,8 +163,8 @@ struct side_lengths {
 // prevent. It is a stand-in for the UA stylesheet's display:none rules, which
 // arrive with ua.hpp's port.
 [[nodiscard]] inline bool generates_no_box(std::string_view tag) {
-	constexpr std::string_view hidden[] = {"head",  "style", "script", "title", "meta",
-	                                       "link",  "base",  "template"};
+	constexpr std::string_view hidden[] = {"head", "style", "script", "title",
+	                                       "meta", "link",  "base",   "template"};
 	for (const std::string_view t : hidden) {
 		if (t == tag) { return true; }
 	}
@@ -162,9 +174,9 @@ struct side_lengths {
 // The tag list HTML renders inline by default, when the sheet says nothing.
 [[nodiscard]] inline bool is_inline_by_default(std::string_view tag) {
 	constexpr std::string_view inline_tags[] = {
-	    "a",    "span", "b",   "i",    "u",     "s",      "em",  "strong", "code", "small",
-	    "big",  "mark", "sub", "sup",  "tt",    "kbd",    "samp","cite",   "var",  "dfn",
-	    "abbr", "ins",  "del", "img",  "q",     "time",   "output", "label", "br"};
+	    "a",    "span", "b",   "i",   "u",  "s",    "em",     "strong", "code", "small",
+	    "big",  "mark", "sub", "sup", "tt", "kbd",  "samp",   "cite",   "var",  "dfn",
+	    "abbr", "ins",  "del", "img", "q",  "time", "output", "label",  "br"};
 	for (const std::string_view t : inline_tags) {
 		if (t == tag) { return true; }
 	}
@@ -176,8 +188,8 @@ struct side_lengths {
 // either out from its children gives a box of zero height, which is what
 // happens to every parser that does not know about replaced elements.
 [[nodiscard]] inline bool is_replaced_tag(std::string_view tag) {
-	constexpr std::string_view names[] = {"canvas", "img",    "input",  "select", "textarea",
-	                                      "button", "video",  "iframe", "embed",  "object"};
+	constexpr std::string_view names[] = {"canvas", "img",   "input",  "select", "textarea",
+	                                      "button", "video", "iframe", "embed",  "object"};
 	for (const std::string_view t : names) {
 		if (t == tag) { return true; }
 	}

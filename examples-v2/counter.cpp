@@ -37,5 +37,6 @@ int main() {
 		el.setText(String(clicks));
 		if (clicks >= 5) { el.addClass("hot"); }
 	});
-</script>)", options);
+</script>)",
+	                          options);
 }

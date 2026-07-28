@@ -2,17 +2,17 @@
 // list markers, bold/italic/decoration stamping on paint cmds, the
 // serif/sans/mono UA families, and form submit/reset defaults.
 
-#include <ctbrowser.hpp>
 #include <cstdio>
+#include <ctbrowser.hpp>
 #include <string>
 
 static int fails = 0;
-#define CHECK(cond)                                                    \
-	do {                                                               \
-		if (!(cond)) {                                                 \
-			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
-			++fails;                                                   \
-		}                                                              \
+#define CHECK(cond)                                                                                \
+	do {                                                                                           \
+		if (!(cond)) {                                                                             \
+			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                            \
+			++fails;                                                                               \
+		}                                                                                          \
 	} while (0)
 
 using page = ctbrowser::page<R"(<!DOCTYPE html>
@@ -110,12 +110,12 @@ int main() {
 		ctbrowser::node * c11 = e.doc.by_id("c11");
 		ctbrowser::node * c12 = e.doc.by_id("c12");
 		CHECK(cap && h1c && c11 && c12);
-		CHECK(cap->y < h1c->y);           // caption above the grid
+		CHECK(cap->y < h1c->y); // caption above the grid
 		ctbrowser::node * tb = e.doc.by_id("tb");
-		CHECK(tb->w < 200);               // AUTO layout: shrink-to-fit, not full-width
-		CHECK(c11->w == c12->w);          // equal naturals -> equal columns
-		CHECK(c12->x > c11->x + c11->w);  // side by side with spacing
-		CHECK(c11->y == c12->y);          // same row
+		CHECK(tb->w < 200);              // AUTO layout: shrink-to-fit, not full-width
+		CHECK(c11->w == c12->w);         // equal naturals -> equal columns
+		CHECK(c12->x > c11->x + c11->w); // side by side with spacing
+		CHECK(c11->y == c12->y);         // same row
 		const ctbrowser::paint_cmd * th = nullptr;
 		for (const auto & c : cmds) {
 			if (c.what == ctbrowser::paint_cmd::kind::text && c.text == U"a") { th = &c; }

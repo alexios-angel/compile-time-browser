@@ -1,6 +1,6 @@
 module;
-#include <boost/container/small_vector.hpp>
 #include <array>
+#include <boost/container/small_vector.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -48,10 +48,10 @@ enum class combinator : std::uint8_t {
 // One compound selector: `div#id.a.b` - a tag, an id and some classes, all
 // optional, plus any required pseudo-state bits.
 struct compound {
-	atom tag;                                       // empty => universal
-	atom id;                                        // empty => unconstrained
+	atom tag; // empty => universal
+	atom id;  // empty => unconstrained
 	boost::container::small_vector<atom, 2> classes;
-	std::uint32_t states = 0; // :hover, :focus, ... as bits
+	std::uint32_t states = 0;   // :hover, :focus, ... as bits
 	bool never_matches = false; // an unrecognised pseudo makes the rule dead
 };
 
@@ -63,10 +63,10 @@ struct compiled_selector {
 };
 
 struct rule {
-	std::uint32_t selector = 0;  // index into selectors
+	std::uint32_t selector = 0;    // index into selectors
 	std::uint32_t declaration = 0; // index into the sheet's declaration list
-	std::int32_t order = 0;      // source order, the final cascade tiebreak
-	std::uint8_t origin = 0;     // 0 = user agent, 1 = author. Author wins.
+	std::int32_t order = 0;        // source order, the final cascade tiebreak
+	std::uint8_t origin = 0;       // 0 = user agent, 1 = author. Author wins.
 	bool important = false;
 };
 

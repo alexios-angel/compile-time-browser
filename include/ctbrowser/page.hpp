@@ -2,10 +2,10 @@
 #define CTBROWSER__PAGE__HPP
 
 #include "embed.hpp"
-#include <cthtml.hpp>
-#include <ctcss.hpp>
-#include <ctjs.hpp>
 #include <ctc/string.hpp>
+#include <ctcss.hpp>
+#include <cthtml.hpp>
+#include <ctjs.hpp>
 #ifndef CTBROWSER_IN_A_MODULE
 #include <array>
 #include <cstddef>
@@ -58,13 +58,19 @@ constexpr std::size_t scan_raw_tag(std::string_view h, std::string_view tag, cha
 	while (i < h.size()) {
 		if (h[i] == '<' && tag_at(h, i + 1, tag)) {
 			std::size_t j = i + 1 + tag.size();
-			while (j < h.size() && h[j] != '>') { ++j; }   // skip the open tag's attrs
-			if (j < h.size()) { ++j; }                       // past '>'
+			while (j < h.size() && h[j] != '>') { ++j; } // skip the open tag's attrs
+			if (j < h.size()) { ++j; }                   // past '>'
 			std::size_t start = j;
-			while (j < h.size() && !(h[j] == '<' && j + 1 < h.size() && h[j + 1] == '/' &&
-			                         tag_at(h, j + 2, tag))) { ++j; }
-			for (std::size_t k = start; k < j; ++k) { if (out) { out[written] = h[k]; } ++written; }
-			if (out) { out[written] = '\n'; } ++written;
+			while (j < h.size() &&
+			       !(h[j] == '<' && j + 1 < h.size() && h[j + 1] == '/' && tag_at(h, j + 2, tag))) {
+				++j;
+			}
+			for (std::size_t k = start; k < j; ++k) {
+				if (out) { out[written] = h[k]; }
+				++written;
+			}
+			if (out) { out[written] = '\n'; }
+			++written;
 			i = j;
 		} else {
 			++i;
@@ -117,8 +123,12 @@ template <ctc::string Src> struct page {
 	// the <title> text ("ctbrowser" when absent), extracted linearly
 	static constexpr std::string_view title() noexcept {
 		std::string_view t = detail::raw_tag_text<Src, detail::title_tag>::get();
-		while (!t.empty() && (t.back() == '\n' || t.back() == ' ' || t.back() == '\t')) { t.remove_suffix(1); }
-		while (!t.empty() && (t.front() == ' ' || t.front() == '\t' || t.front() == '\n')) { t.remove_prefix(1); }
+		while (!t.empty() && (t.back() == '\n' || t.back() == ' ' || t.back() == '\t')) {
+			t.remove_suffix(1);
+		}
+		while (!t.empty() && (t.front() == ' ' || t.front() == '\t' || t.front() == '\n')) {
+			t.remove_prefix(1);
+		}
 		return t.empty() ? std::string_view{"ctbrowser"} : t;
 	}
 };

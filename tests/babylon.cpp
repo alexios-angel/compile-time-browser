@@ -4,10 +4,10 @@
 // pixel buffer. We tick frames and assert the buffer actually rendered
 // (non-clear, opaque geometry) and animates (a rotating box changes
 // pixels between frames) - no SDL, no GPU.
-#include <ctbrowser.hpp>
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <ctbrowser.hpp>
 #include <vector>
 
 // fast CONSTEXPR trig (lookup-table idea): std::sin/std::cos are not
@@ -15,10 +15,10 @@
 namespace ftrig = ctbrowser::babylon::r3d;
 static_assert(ftrig::fcos(0.0) == 1.0);
 static_assert(ftrig::fsin(0.0) == 0.0);
-static_assert(ftrig::fcos(3.141592653589793) < -0.999);         // cos(pi) ~ -1
-static_assert(ftrig::fsin(1.5707963267948966) > 0.999);          // sin(pi/2) ~ 1
+static_assert(ftrig::fcos(3.141592653589793) < -0.999); // cos(pi) ~ -1
+static_assert(ftrig::fsin(1.5707963267948966) > 0.999); // sin(pi/2) ~ 1
 static_assert(ftrig::fcos(1.5707963267948966) < 1e-3 &&
-              ftrig::fcos(1.5707963267948966) > -1e-3);           // cos(pi/2) ~ 0
+              ftrig::fcos(1.5707963267948966) > -1e-3); // cos(pi/2) ~ 0
 // ...and a whole rotation matrix folds at compile time from it:
 static_assert(ftrig::rotationY(3.141592653589793)[0][0] < -0.999);
 
@@ -41,13 +41,16 @@ constexpr int ct_box_render() {
 	vw.clear = {0.1, 0.1, 0.15, 1};
 	vw.vp_view = ftrig::lookAtLH(ftrig::V3(1.5, 1.8, -4), ftrig::V3(0, 0, 0), ftrig::V3(0, 1, 0));
 	vw.vp_proj = ftrig::perspectiveFovLH(0.8, 1.0, 0.1, 100.0);
-	std::vector<ftrig::draw_item> items{ftrig::draw_item{&box, ftrig::identity(), {0.9, 0.3, 0.2, 1}, true}};
+	std::vector<ftrig::draw_item> items{
+	    ftrig::draw_item{&box, ftrig::identity(), {0.9, 0.3, 0.2, 1}, true}};
 	std::vector<ftrig::light> lights{ftrig::light{0, ftrig::V3(0, 1, 0), 1.0, {1, 1, 1, 1}}};
 	ftrig::renderer rr;
 	rr.render(px.data(), W, H, vw, items, lights);
 	const uint32_t clear = ftrig::pack(vw.clear, 1.0);
 	int n = 0;
-	for (uint32_t p : px) { if (p != clear) { ++n; } }
+	for (uint32_t p : px) {
+		if (p != clear) { ++n; }
+	}
 	return n;
 }
 static_assert(ct_box_render() > 40, "the whole 3D renderer rasterizes a box at compile time");
@@ -55,19 +58,21 @@ static_assert(ct_box_render() > 40, "the whole 3D renderer rasterizes a box at c
 // the glTF loader is constexpr too: its JSON parser (unique_ptr recursion
 // + a constexpr number parser replacing strtod) folds at compile time
 namespace gltfns = ctbrowser::babylon::gltf;
-static_assert([] {
-	auto d = gltfns::json_parse(R"({"nodes":[{"mesh":0}],"v":[0.5,-1.6e-2,3],"n":"core"})");
-	return d.get("nodes")->size() == 1 && (*d.get("v"))[0].as_num() == 0.5 &&
-	       d.get("v")->size() == 3 && d.get("n")->as_str() == "core";
-}(), "glTF JSON parses at compile time");
+static_assert(
+    [] {
+	    auto d = gltfns::json_parse(R"({"nodes":[{"mesh":0}],"v":[0.5,-1.6e-2,3],"n":"core"})");
+	    return d.get("nodes")->size() == 1 && (*d.get("v"))[0].as_num() == 0.5 &&
+		       d.get("v")->size() == 3 && d.get("n")->as_str() == "core";
+    }(),
+    "glTF JSON parses at compile time");
 
 static int failures = 0;
-#define CHECK(cond)                                                          \
-	do {                                                                     \
-		if (!(cond)) {                                                       \
-			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);      \
-			++failures;                                                      \
-		}                                                                    \
+#define CHECK(cond)                                                                                \
+	do {                                                                                           \
+		if (!(cond)) {                                                                             \
+			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                            \
+			++failures;                                                                            \
+		}                                                                                          \
 	} while (0)
 
 using app = ctbrowser::page<R"(<!DOCTYPE html>
@@ -200,18 +205,18 @@ int main() {
 	CHECK(c != nullptr && c->canvas_w == 320 && c->canvas_h == 240);
 	if (c == nullptr) { return 1; }
 
-	e.frame(320);            // layout (not required for pixels, but realistic)
+	e.frame(320); // layout (not required for pixels, but realistic)
 
 	// before any tick the render loop hasn't run: buffer is initial black
 	const uint32_t init = c->pixels[0];
 
 	for (int i = 0; i < 3; ++i) { e.tick(1.0 / 60.0); }
-	std::vector<uint32_t> snapA = c->pixels;   // after a few frames
+	std::vector<uint32_t> snapA = c->pixels; // after a few frames
 
 	// the render loop re-registered itself (one rAF wrapper in flight)
 	CHECK(e.ev.raf.size() == 1);
 
-	const uint32_t clear = ((0xFFu) << 24) |            // ARGB, from clearColor (0.1,0.1,0.15)
+	const uint32_t clear = ((0xFFu) << 24) | // ARGB, from clearColor (0.1,0.1,0.15)
 	                       (static_cast<uint32_t>(0.1 * 255 + 0.5) << 16) |
 	                       (static_cast<uint32_t>(0.1 * 255 + 0.5) << 8) |
 	                       static_cast<uint32_t>(0.15 * 255 + 0.5);
@@ -223,12 +228,12 @@ int main() {
 		if (rr > gg && rr > bb && rr > 60) { ++reddish; }
 		if (p != init) { ++distinct_from_init; }
 	}
-	std::printf("nonClear=%zu opaque=%zu reddish=%zu of %zu\n",
-	            nonClear, opaque, reddish, snapA.size());
-	CHECK(distinct_from_init > 0);              // the loop rendered SOMETHING
-	CHECK(nonClear > 500);                      // real geometry rasterized
-	CHECK(opaque == snapA.size());              // renderer writes opaque pixels
-	CHECK(reddish > 100);                       // the red-material sphere is visible
+	std::printf("nonClear=%zu opaque=%zu reddish=%zu of %zu\n", nonClear, opaque, reddish,
+	            snapA.size());
+	CHECK(distinct_from_init > 0); // the loop rendered SOMETHING
+	CHECK(nonClear > 500);         // real geometry rasterized
+	CHECK(opaque == snapA.size()); // renderer writes opaque pixels
+	CHECK(reddish > 100);          // the red-material sphere is visible
 
 	// animation: the spinning box changes the picture between frames
 	for (int i = 0; i < 8; ++i) { e.tick(1.0 / 60.0); }
@@ -237,19 +242,21 @@ int main() {
 		if (c->pixels[i] != snapA[i]) { ++changed; }
 	}
 	std::printf("pixels changed after spinning=%zu\n", changed);
-	CHECK(changed > 30);                        // rotation.y += ... actually animated
+	CHECK(changed > 30); // rotation.y += ... actually animated
 
 	// attachControl: camera.attachControl registered mouse-orbit listeners,
 	// and a drag orbits the camera without crashing (still renders)
 	CHECK(e.ev.listeners.count("mousemove") == 1);
 	CHECK(e.ev.listeners.count("mousedown") == 1);
-	e.mouse_button(160, 120, true);             // press
-	e.mouse_move(230, 80);                       // drag -> orbit alpha/beta
+	e.mouse_button(160, 120, true); // press
+	e.mouse_move(230, 80);          // drag -> orbit alpha/beta
 	e.tick(1.0 / 60.0);
-	e.mouse_button(230, 80, false);             // release
+	e.mouse_button(230, 80, false); // release
 	size_t stillRendering = 0;
-	for (uint32_t p : c->pixels) { if (p != clear) { ++stillRendering; } }
-	CHECK(stillRendering > 500);                // orbiting keeps a valid render
+	for (uint32_t p : c->pixels) {
+		if (p != clear) { ++stillRendering; }
+	}
+	CHECK(stillRendering > 500); // orbiting keeps a valid render
 
 	// renderer regression: a SOLID box must occlude a bright sphere placed
 	// INSIDE it. Guards the box winding — inward-facing normals get the
@@ -276,8 +283,8 @@ int main() {
 			if (r > g && r > b && r > 120) { ++redThrough; }
 			if (b > r && b > 80) { ++blueBox; }
 		}
-		CHECK(blueBox > 100);        // the box renders
-		CHECK(redThrough == 0);      // ...and occludes the interior sphere (outward winding)
+		CHECK(blueBox > 100);   // the box renders
+		CHECK(redThrough == 0); // ...and occludes the interior sphere (outward winding)
 	}
 
 	// window resize: resize_viewport fires the DOM "resize" event, whose
@@ -285,11 +292,13 @@ int main() {
 	// new viewport (so the 3D view fills the resized window)
 	e.resize_viewport(500, 400);
 	CHECK(c->canvas_w == 500 && c->canvas_h == 400);
-	e.tick(1.0 / 60.0);                          // renders at the new size
+	e.tick(1.0 / 60.0); // renders at the new size
 	CHECK(c->pixels.size() == static_cast<size_t>(500) * 400);
 	size_t nonClearBig = 0;
-	for (uint32_t p : c->pixels) { if (p != clear) { ++nonClearBig; } }
-	CHECK(nonClearBig > 500);                    // still rendering after resize
+	for (uint32_t p : c->pixels) {
+		if (p != clear) { ++nonClearBig; }
+	}
+	CHECK(nonClearBig > 500); // still rendering after resize
 
 	// fast trig accuracy vs std:: over a few full turns
 	{
@@ -310,15 +319,15 @@ int main() {
 		const int GW = 32, GH = 32;
 		std::vector<uint32_t> buf(static_cast<size_t>(GW) * GH, 0xFF000000u); // opaque black
 		const size_t ctr = static_cast<size_t>(GH / 2) * GW + GW / 2;
-		buf[ctr] = 0xFFFFFFFFu;                        // one white pixel
+		buf[ctr] = 0xFFFFFFFFu; // one white pixel
 		bab::apply_glow(buf.data(), GW, GH, 1.5);
 		const uint32_t center_r = (buf[ctr] >> 16) & 0xFF;
-		const uint32_t near_r = (buf[ctr - 2] >> 16) & 0xFF;  // 2px left, was black
-		const uint32_t far_r = (buf[0] >> 16) & 0xFF;         // top-left corner, ~22px away
+		const uint32_t near_r = (buf[ctr - 2] >> 16) & 0xFF; // 2px left, was black
+		const uint32_t far_r = (buf[0] >> 16) & 0xFF;        // top-left corner, ~22px away
 		std::printf("glow: center=%u near=%u far=%u\n", center_r, near_r, far_r);
-		CHECK(center_r > 0);   // center stays lit
-		CHECK(near_r > 0);     // bloom spread to a neighbour that was black
-		CHECK(far_r == 0);     // and did NOT reach the far corner
+		CHECK(center_r > 0); // center stays lit
+		CHECK(near_r > 0);   // bloom spread to a neighbour that was black
+		CHECK(far_r == 0);   // and did NOT reach the far corner
 	}
 
 	// --- the newly-real Babylon surface (app2): registerBeforeRender /
@@ -341,18 +350,20 @@ int main() {
 		const int frames = static_cast<int>(e2.script["frameCount"].to_number());
 		const int trigVal = static_cast<int>(e2.script["trigVal"].to_number());
 		const int actLen = static_cast<int>(e2.script["actLen"].to_number());
-		std::printf("hooks: before=%d after=%d frame=%d (ticks=%d) trigVal=%d actLen=%d\n",
-		            before, after, frames, N, trigVal, actLen);
-		CHECK(trigVal == 11);  // BABYLON.ActionManager.OnEveryFrameTrigger static resolves
-		CHECK(actLen == 1);    // registerAction stored the action (this-binding across `new` arg)
-		CHECK(before == N);    // scene.registerBeforeRender fired each frame
-		CHECK(after == N);     // scene.registerAfterRender fired each frame
-		CHECK(frames == N);    // ActionManager OnEveryFrameTrigger fired each frame
+		std::printf("hooks: before=%d after=%d frame=%d (ticks=%d) trigVal=%d actLen=%d\n", before,
+		            after, frames, N, trigVal, actLen);
+		CHECK(trigVal == 11); // BABYLON.ActionManager.OnEveryFrameTrigger static resolves
+		CHECK(actLen == 1);   // registerAction stored the action (this-binding across `new` arg)
+		CHECK(before == N);   // scene.registerBeforeRender fired each frame
+		CHECK(after == N);    // scene.registerAfterRender fired each frame
+		CHECK(frames == N);   // ActionManager OnEveryFrameTrigger fired each frame
 		size_t lit = 0;
 		if (c2 != nullptr) {
-			for (uint32_t p : c2->pixels) { if ((p & 0x00FFFFFFu) != 0) { ++lit; } }
+			for (uint32_t p : c2->pixels) {
+				if ((p & 0x00FFFFFFu) != 0) { ++lit; }
+			}
 		}
-		CHECK(lit > 200);     // the glowing white box rasterized
+		CHECK(lit > 200); // the glowing white box rasterized
 	}
 
 	// --- glow include/exclude masking, unit-tested: two bright pixels, only the
@@ -366,13 +377,13 @@ int main() {
 		buf[left] = 0xFFFFFFFFu;
 		buf[right] = 0xFFFFFFFFu;
 		std::vector<uint8_t> mask(static_cast<size_t>(MW) * MH, 0);
-		mask[left] = 1;                                // only the left pixel glows
+		mask[left] = 1; // only the left pixel glows
 		bab::apply_glow(buf.data(), MW, MH, 1.5, &mask);
 		const uint32_t lhalo = (buf[left - 2] >> 16) & 0xFF;
 		const uint32_t rhalo = (buf[right - 2] >> 16) & 0xFF;
 		std::printf("masked glow: lhalo=%u rhalo=%u\n", lhalo, rhalo);
-		CHECK(lhalo > 0);    // the included pixel bloomed
-		CHECK(rhalo == 0);   // the excluded pixel did not
+		CHECK(lhalo > 0);  // the included pixel bloomed
+		CHECK(rhalo == 0); // the excluded pixel did not
 	}
 
 	// --- mesh transform surface (app3): bounds, world matrix, pivot, freeze, bake
@@ -383,21 +394,22 @@ int main() {
 			std::printf("FAIL app3 threw: %s\n", e3.script.exception_message().c_str());
 		}
 		const auto num = [&](const char * k) { return e3.script[k].to_number(); };
-		std::printf("mesh: bmaxx=%g bminx=%g wtx=%g pvsum=%g frozenTx=%g liveTx=%g bakedPosX=%g bakedMaxX=%g\n",
-		            num("bmaxx"), num("bminx"), num("wtx"), num("pvsum"),
-		            num("frozenTx"), num("liveTx"), num("bakedPosX"), num("bakedMaxX"));
-		CHECK(num("bmaxx") == 1.0);              // getBoundingInfo local bounds
+		std::printf("mesh: bmaxx=%g bminx=%g wtx=%g pvsum=%g frozenTx=%g liveTx=%g bakedPosX=%g "
+		            "bakedMaxX=%g\n",
+		            num("bmaxx"), num("bminx"), num("wtx"), num("pvsum"), num("frozenTx"),
+		            num("liveTx"), num("bakedPosX"), num("bakedMaxX"));
+		CHECK(num("bmaxx") == 1.0); // getBoundingInfo local bounds
 		CHECK(num("bminx") == -1.0);
-		CHECK(num("wtx") == 5.0);                // computeWorldMatrix translation
-		CHECK(num("pvsum") == 6.0);              // setPivotPoint/getPivotPoint round-trip
-		CHECK(num("frozenTx") == 5.0);           // freezeWorldMatrix ignores later edits
-		CHECK(num("liveTx") == 9.0);             // ...until unfreezeWorldMatrix
-		CHECK(num("bakedPosX") == 0.0);          // bake resets position
+		CHECK(num("wtx") == 5.0);                         // computeWorldMatrix translation
+		CHECK(num("pvsum") == 6.0);                       // setPivotPoint/getPivotPoint round-trip
+		CHECK(num("frozenTx") == 5.0);                    // freezeWorldMatrix ignores later edits
+		CHECK(num("liveTx") == 9.0);                      // ...until unfreezeWorldMatrix
+		CHECK(num("bakedPosX") == 0.0);                   // bake resets position
 		CHECK(std::fabs(num("bakedMaxX") - 11.0) < 1e-6); // ...folding it into the verts
-		CHECK(num("sameEngine") == 1.0);         // scene.getEngine() returns the engine
-		CHECK(num("uidDiff") == 1.0);            // meshes have distinct uniqueId
-		CHECK(num("uidInc") == 1.0);             // scene.getUniqueId() increments
-		CHECK(num("camsum") == 12.0);            // camera.setPosition moved the eye
+		CHECK(num("sameEngine") == 1.0);                  // scene.getEngine() returns the engine
+		CHECK(num("uidDiff") == 1.0);                     // meshes have distinct uniqueId
+		CHECK(num("uidInc") == 1.0);                      // scene.getUniqueId() increments
+		CHECK(num("camsum") == 12.0);                     // camera.setPosition moved the eye
 	}
 
 	// GLM runtime path: norm3's `else` (runtime) branch matches its constexpr
@@ -417,7 +429,8 @@ int main() {
 		constexpr ftrig::mat4 cy = ftrig::rotationY(0.6);
 		constexpr ftrig::mat4 cz = ftrig::rotationZ(0.6);
 		volatile double a = 0.6; // runtime -> glm::rotate branch
-		const ftrig::mat4 rx = ftrig::rotationX(a), ry = ftrig::rotationY(a), rz = ftrig::rotationZ(a);
+		const ftrig::mat4 rx = ftrig::rotationX(a), ry = ftrig::rotationY(a),
+		                  rz = ftrig::rotationZ(a);
 		double maxd = 0;
 		for (int c = 0; c < 4; ++c) {
 			for (int r = 0; r < 4; ++r) {
@@ -450,9 +463,9 @@ int main() {
 		const ftrig::mat4 rpersp = ftrig::perspectiveFovLH(0.8 * one, 1.3333, 0.1, 100.0);
 		const ftrig::mat4 rlook =
 		    ftrig::lookAtLH(ftrig::V3(1.5 * one, 1.8, -4), ftrig::V3(0, 0, 0), ftrig::V3(0, 1, 0));
-		std::printf("ypr=%.2e persp=%.2e look=%.2e\n", maxdiff(cypr, rypr),
-		            maxdiff(cpersp, rpersp), maxdiff(clook, rlook));
-		CHECK(maxdiff(cypr, rypr) < 2e-3);   // glm::yawPitchRoll == Ry*Rx*Rz
+		std::printf("ypr=%.2e persp=%.2e look=%.2e\n", maxdiff(cypr, rypr), maxdiff(cpersp, rpersp),
+		            maxdiff(clook, rlook));
+		CHECK(maxdiff(cypr, rypr) < 2e-3);     // glm::yawPitchRoll == Ry*Rx*Rz
 		CHECK(maxdiff(cpersp, rpersp) < 2e-3); // glm::perspectiveLH_ZO == the fill
 		CHECK(maxdiff(clook, rlook) < 2e-3);   // glm::lookAtLH == the fill
 	}

@@ -72,8 +72,8 @@ int main() {
 		flat.push_back(payload{i});
 	}
 
-	std::printf("ctbrowser.core read throughput  (%zu objects, %zu reads/thread)\n\n",
-	            object_count, reads_per_thread);
+	std::printf("ctbrowser.core read throughput  (%zu objects, %zu reads/thread)\n\n", object_count,
+	            reads_per_thread);
 
 	// --- baseline: no safety machinery at all -----------------------------
 	std::uint64_t checksum_baseline = 0;
@@ -201,9 +201,9 @@ int main() {
 	            static_cast<unsigned long long>(checksum_indirect),
 	            static_cast<unsigned long long>(checksum_guarded),
 	            static_cast<unsigned long long>(total.load()));
-	const bool consistent =
-	    checksum_baseline == checksum_guarded && checksum_baseline == checksum_indirect &&
-	    checksum_seq_flat == checksum_seq_guarded;
+	const bool consistent = checksum_baseline == checksum_guarded &&
+	                        checksum_baseline == checksum_indirect &&
+	                        checksum_seq_flat == checksum_seq_guarded;
 	if (!consistent) { std::printf("  MISMATCH: the arms did not do the same work\n"); }
 	return consistent ? 0 : 1;
 }

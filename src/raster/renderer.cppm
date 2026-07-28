@@ -166,11 +166,14 @@ private:
 		}
 	}
 
-	template <typename B> static constexpr vtable ops_for{
+	template <typename B>
+	static constexpr vtable ops_for{
 	    [](void * s) { return static_cast<B *>(s)->begin_frame(); },
 	    [](void * s, std::span<const tile> t) { return static_cast<B *>(s)->reserve_tiles(t); },
 	    [](const void * s, tile_id id) { return static_cast<const B *>(s)->needs_raster(id); },
-	    [](void * s, tile_id id, const display_list & l) { return static_cast<B *>(s)->raster(id, l); },
+	    [](void * s, tile_id id, const display_list & l) {
+		    return static_cast<B *>(s)->raster(id, l);
+	    },
 	    [](void * s, tile_id id) { static_cast<B *>(s)->tile_ready(id); },
 	    [](void * s, std::span<const layer> l) { return static_cast<B *>(s)->composite(l); },
 	    [](void * s) { return static_cast<B *>(s)->end_frame(); },

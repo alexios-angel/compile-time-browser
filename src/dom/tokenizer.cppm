@@ -50,8 +50,8 @@ struct token_attribute {
 
 struct token {
 	token_kind kind = token_kind::character;
-	std::string name;              // tag or doctype name
-	std::string data;              // character run, or comment text
+	std::string name; // tag or doctype name
+	std::string data; // character run, or comment text
 	std::vector<token_attribute> attributes;
 	bool self_closing = false;
 	bool force_quirks = false;
@@ -78,9 +78,7 @@ public:
 		close_tag_ = for_tag;
 	}
 
-	[[nodiscard]] bool at_end() const noexcept {
-		return at_ >= input_.size() && pending_.empty();
-	}
+	[[nodiscard]] bool at_end() const noexcept { return at_ >= input_.size() && pending_.empty(); }
 
 	[[nodiscard]] token next() {
 		if (!pending_.empty()) {
@@ -88,7 +86,9 @@ public:
 			pending_.erase(pending_.begin());
 			return out;
 		}
-		if (at_ >= input_.size()) { return token{token_kind::end_of_file, {}, {}, {}, false, false}; }
+		if (at_ >= input_.size()) {
+			return token{token_kind::end_of_file, {}, {}, {}, false, false};
+		}
 		switch (model_) {
 		case content_model::data: return in_data();
 		case content_model::rcdata: return in_text_until_close(true);
@@ -150,8 +150,8 @@ private:
 			if (c == '<') {
 				// Only stop if this `<` actually begins markup; otherwise it is
 				// part of the text run.
-				if (is_alpha(peek(1)) || (peek(1) == '/' && is_alpha(peek(2))) || looking_at("<!") ||
-				    looking_at("<?")) {
+				if (is_alpha(peek(1)) || (peek(1) == '/' && is_alpha(peek(2))) ||
+				    looking_at("<!") || looking_at("<?")) {
 					break;
 				}
 			}
@@ -370,8 +370,8 @@ private:
 		}
 
 		std::size_t end = at_;
-		while (end < input_.size() && (is_alpha(input_[end]) ||
-		                               (input_[end] >= '0' && input_[end] <= '9'))) {
+		while (end < input_.size() &&
+		       (is_alpha(input_[end]) || (input_[end] >= '0' && input_[end] <= '9'))) {
 			++end;
 		}
 		const bool semicolon = end < input_.size() && input_[end] == ';';

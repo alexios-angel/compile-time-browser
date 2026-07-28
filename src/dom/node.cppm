@@ -1,6 +1,6 @@
 module;
-#include <boost/container/small_vector.hpp>
 #include <atomic>
+#include <boost/container/small_vector.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -38,7 +38,12 @@ export namespace ctbrowser {
 struct node_tag {};
 using node_id = handle<node_tag>;
 
-enum class node_kind : std::uint8_t { document, element, text, comment };
+enum class node_kind : std::uint8_t {
+	document,
+	element,
+	text,
+	comment
+};
 
 struct attribute {
 	atom name;

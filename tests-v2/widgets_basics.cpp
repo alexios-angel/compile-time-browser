@@ -67,8 +67,7 @@ void check(bool ok, std::string_view what) {
 // Where a control ended up, so a test can click it rather than guessing.
 [[nodiscard]] rect box_of(browser & page, std::string_view id) {
 	const node_id want = find_id(page, id);
-	const auto walk = [&](auto && self, const layout::fragment & f, float dx,
-	                      float dy) -> rect {
+	const auto walk = [&](auto && self, const layout::fragment & f, float dx, float dy) -> rect {
 		const rect box{f.bounds.x + dx, f.bounds.y + dy, f.bounds.width, f.bounds.height};
 		if (f.source == want && !box.empty()) { return box; }
 		for (const auto & child : f.children) {
@@ -244,7 +243,8 @@ void test_form_submission_collects_successful_controls() {
 	const auto & sent = page.last_submission();
 	check(sent.size() == 2, "only successful controls are submitted");
 	if (sent.size() >= 2) {
-		check(sent[0].first == "user" && sent[0].second == "alice", "the text field, with its value");
+		check(sent[0].first == "user" && sent[0].second == "alice",
+		      "the text field, with its value");
 		// An UNCHECKED box is not a successful control and is omitted entirely -
 		// a server that sees the name at all knows it was ticked.
 		check(sent[1].first == "agree", "the checked box");

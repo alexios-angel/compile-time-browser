@@ -15,9 +15,9 @@ import ctbrowser;
 #include <cstdio>
 #include <fstream>
 #include <iterator>
-#include <thread>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 using namespace ctbrowser;
@@ -210,7 +210,6 @@ void test_font8x8_quantises_and_says_so() {
 	      "20px is the next bucket up");
 }
 
-
 // --- the real font backend ------------------------------------------------
 //
 // Skipped, loudly, where SDL3_ttf is absent - the same shape the GPU
@@ -294,7 +293,6 @@ void test_unknown_family_falls_back() {
 	}
 }
 
-
 // The glyph cache, hit CONCURRENTLY AND COLD.
 //
 // Going through the browser does not test this: layout measures every run
@@ -318,8 +316,8 @@ void test_the_glyph_cache_is_thread_safe() {
 	const auto measure_all = [&fonts](int size) {
 		std::string out;
 		for (const char * word : {"Hamburgefonstiv", "quick brown fox", "0123456789"}) {
-			out += std::to_string(fonts.advance(word, static_cast<float>(size), "Fira Sans",
-			                                    size % 2 == 0, false));
+			out += std::to_string(
+			    fonts.advance(word, static_cast<float>(size), "Fira Sans", size % 2 == 0, false));
 			out += ' ';
 		}
 		return out;
@@ -337,8 +335,8 @@ void test_the_glyph_cache_is_thread_safe() {
 			std::string out;
 			for (const char * word : {"Hamburgefonstiv", "quick brown fox", "0123456789"}) {
 				const int size = static_cast<int>(i) + 8;
-				out += std::to_string(concurrent.advance(word, static_cast<float>(size), "Fira Sans",
-				                                         size % 2 == 0, false));
+				out += std::to_string(concurrent.advance(word, static_cast<float>(size),
+				                                         "Fira Sans", size % 2 == 0, false));
 				out += ' ';
 			}
 			got[i] = std::move(out);
@@ -359,7 +357,8 @@ void test_page_font_face() {
 		page.load_html(
 		    "<head><style>@font-face { font-family: 'Press Start 2P';"
 		    "  src: url(\"examples/assets/fonts/PressStart2P-Regular.ttf\"); }</style></head>"
-		    "<body><p style='font-family: " + std::string{family} + "'>ARCADE</p></body>");
+		    "<body><p style='font-family: " +
+		    std::string{family} + "'>ARCADE</p></body>");
 		(void)page.frame();
 		const paint::paint_command * run = run_saying(page, "ARCADE");
 		return run != nullptr ? run->bounds.width : 0.0f;
@@ -383,8 +382,8 @@ void test_real_fonts_are_deterministic_and_thread_safe() {
 		check(page.use_real_fonts(), "the faces load");
 		std::string html = "<body>";
 		for (int i = 0; i < 40; ++i) {
-			html += "<p style='font-size:" + std::to_string(12 + i % 9) +
-			        "px'>Hamburgefonstiv " + std::to_string(i) + "</p>";
+			html += "<p style='font-size:" + std::to_string(12 + i % 9) + "px'>Hamburgefonstiv " +
+			        std::to_string(i) + "</p>";
 		}
 		html += "</body>";
 		page.load_html(html);

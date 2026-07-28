@@ -4,17 +4,17 @@
 // overrides), and the right-click context menu (contextmenu
 // preventDefault suppresses it). Headless: clipboard hooks are stubs.
 
-#include <ctbrowser.hpp>
 #include <cstdio>
+#include <ctbrowser.hpp>
 #include <string>
 
 static int fails = 0;
-#define CHECK(cond)                                                    \
-	do {                                                               \
-		if (!(cond)) {                                                 \
-			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
-			++fails;                                                   \
-		}                                                              \
+#define CHECK(cond)                                                                                \
+	do {                                                                                           \
+		if (!(cond)) {                                                                             \
+			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                            \
+			++fails;                                                                               \
+		}                                                                                          \
 	} while (0)
 
 using page = ctbrowser::page<R"(<!DOCTYPE html>

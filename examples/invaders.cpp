@@ -8,9 +8,9 @@
 // Build: make invaders   (or the CMake examples; needs SDL3)
 // Assets: python3 ../tools/gen-assets.py (checked in, deterministic)
 
+#include <SDL3/SDL_main.h>
 #include <ctbrowser.hpp>
 #include <ctbrowser/app.hpp>
-#include <SDL3/SDL_main.h>
 
 using app = ctbrowser::page<R"(<!DOCTYPE html>
 <title>ctinvaders</title>
@@ -108,12 +108,12 @@ static_assert(ctjs::vp::is_valid(app::script_text()));
 // constant evaluator may read files; other compilers skip the
 // directive and fall back to runtime loading of the same files.
 #if defined(__has_builtin)
-#	if __has_builtin(__builtin_std_embed)
-#		pragma clang diagnostic push
-#		pragma clang diagnostic ignored "-Wc++2d-extensions"
+#if __has_builtin(__builtin_std_embed)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wc++2d-extensions"
 #depend "examples/assets/**"
-#		pragma clang diagnostic pop
-#	endif
+#pragma clang diagnostic pop
+#endif
 #endif
 
 int main(int, char **) {

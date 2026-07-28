@@ -166,7 +166,8 @@ public:
 				// has ever shown. Compositing all of them would make a scroll get
 				// slower the longer it went on. Skip the ones that land off the
 				// target entirely.
-				if (at_x + static_cast<float>(extent_) <= 0 || at_y + static_cast<float>(extent_) <= 0 ||
+				if (at_x + static_cast<float>(extent_) <= 0 ||
+				    at_y + static_cast<float>(extent_) <= 0 ||
 				    at_x >= static_cast<float>(target_.width()) ||
 				    at_y >= static_cast<float>(target_.height())) {
 					continue;

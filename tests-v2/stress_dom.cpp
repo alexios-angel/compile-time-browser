@@ -37,7 +37,7 @@ using namespace ctbrowser;
 
 namespace {
 
-constexpr std::size_t pool_size = 256;    // elements shuffled around the tree
+constexpr std::size_t pool_size = 256; // elements shuffled around the tree
 constexpr std::size_t reader_threads = 4;
 constexpr std::size_t writer_threads = 2;
 constexpr int writer_rounds = 20'000;
@@ -51,10 +51,10 @@ struct shared {
 
 	std::atomic<bool> stop{false};
 	std::atomic<std::uint64_t> visits{0};
-	std::atomic<std::uint64_t> cycles{0};       // invariant 1
-	std::atomic<std::uint64_t> mismatched{0};   // invariant 2
-	std::atomic<std::uint64_t> torn{0};         // invariant 3
-	std::atomic<std::uint64_t> reclaimed{0};    // proof that anything was freed at all
+	std::atomic<std::uint64_t> cycles{0};     // invariant 1
+	std::atomic<std::uint64_t> mismatched{0}; // invariant 2
+	std::atomic<std::uint64_t> torn{0};       // invariant 3
+	std::atomic<std::uint64_t> reclaimed{0};  // proof that anything was freed at all
 };
 
 // Attribute values encode their own node, so a reader can tell whether the

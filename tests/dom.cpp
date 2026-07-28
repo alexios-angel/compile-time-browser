@@ -4,11 +4,12 @@
 // COMPILE TIME - proven by the static_assert below - and the SAME value path
 // (instantiate_html / ctcss::parse_value) runs at runtime. ctbrowser is
 // grammar-free (CT{HTML,CSS,JS}_NO_GRAMMAR): the lark type path is never used.
-#include <ctbrowser.hpp>
 #include <cstdio>
+#include <ctbrowser.hpp>
 #include <string_view>
 
-#define PAGE_HTML R"(<!DOCTYPE html>
+#define PAGE_HTML                                                                                  \
+	R"(<!DOCTYPE html>
 <title>dom test</title>
 <div id=app class="wrap main">
 	<h1>Hello</h1>
@@ -63,12 +64,12 @@ static_assert(dom_compile_time(),
 // ===================== runtime: value path == type path ================
 
 static int failures = 0;
-#define CHECK(cond)                                                          \
-	do {                                                                     \
-		if (!(cond)) {                                                       \
-			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);      \
-			++failures;                                                      \
-		}                                                                    \
+#define CHECK(cond)                                                                                \
+	do {                                                                                           \
+		if (!(cond)) {                                                                             \
+			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                            \
+			++failures;                                                                            \
+		}                                                                                          \
 	} while (0)
 
 using Page = ctbrowser::page<PAGE_HTML>;
@@ -81,14 +82,16 @@ using Page = ctbrowser::page<PAGE_HTML>;
 constexpr bool layout_compile_time() {
 	ctbrowser::document d = ctbrowser::instantiate_html(kHtml);
 	const ctcss::value_sheet sheet = ctcss::parse_value(Page::style_text());
-	ctbrowser::style_fn resolve =
-	    [&sheet](const ctcss::element_ref * c, size_t n, std::string_view p) {
-		    return ctcss::query(sheet, c, n, p);
-	    };
+	ctbrowser::style_fn resolve = [&sheet](const ctcss::element_ref * c, size_t n,
+	                                       std::string_view p) {
+		return ctcss::query(sheet, c, n, p);
+	};
 	std::vector<ctbrowser::paint_cmd> cmds = ctbrowser::layout(d, 800, resolve);
 	bool saw_hello = false, saw_canvas = false;
 	for (const ctbrowser::paint_cmd & cmd : cmds) {
-		if (cmd.what == ctbrowser::paint_cmd::kind::text && cmd.text == U"Hello") { saw_hello = true; }
+		if (cmd.what == ctbrowser::paint_cmd::kind::text && cmd.text == U"Hello") {
+			saw_hello = true;
+		}
 		if (cmd.what == ctbrowser::paint_cmd::kind::canvas) { saw_canvas = true; }
 	}
 	return !cmds.empty() && saw_hello && saw_canvas;

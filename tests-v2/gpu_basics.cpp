@@ -252,7 +252,8 @@ void test_gpu_scrolling_does_not_reraster() {
 	if (!device) { return; }
 
 	const rect viewport{0, 0, 300, 200};
-	check(raster::draw(*device, p.layers, nullptr, 64, viewport).has_value(), "the first frame draws");
+	check(raster::draw(*device, p.layers, nullptr, 64, viewport).has_value(),
+	      "the first frame draws");
 
 	// Same frame again: the incremental path has to hold on the GPU backend
 	// too, or hardware acceleration is paid for by re-uploading the page.
@@ -297,7 +298,9 @@ int main() {
 	// The GPU backend needs SDL video up before a device can exist. `offscreen`
 	// so this runs with no display; `dummy` has no Vulkan surface support and
 	// is what a naive headless setup would pick.
-	if (std::getenv("SDL_VIDEODRIVER") == nullptr) { SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen"); }
+	if (std::getenv("SDL_VIDEODRIVER") == nullptr) {
+		SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
+	}
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
 		std::printf("SKIP all gpu tests (SDL video would not start: %s)\n", SDL_GetError());
 		REPORT("gpu_basics");
@@ -313,7 +316,9 @@ int main() {
 	test_gpu_scrolling_does_not_reraster();
 	test_gpu_through_the_compositor_thread();
 
-	if (skipped > 0) { std::printf("     %d gpu test(s) skipped - no device on this machine\n", skipped); }
+	if (skipped > 0) {
+		std::printf("     %d gpu test(s) skipped - no device on this machine\n", skipped);
+	}
 	SDL_Quit();
 	REPORT("gpu_basics");
 }

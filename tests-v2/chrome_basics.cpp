@@ -78,11 +78,9 @@ void check(bool ok, std::string_view what) {
 	return false;
 }
 
-
 [[nodiscard]] const std::vector<std::string> & log_of(browser & page) {
 	return page.bindings().console_output();
 }
-
 
 // --- the form-control batch ------------------------------------------------
 //
@@ -127,7 +125,7 @@ void check(bool ok, std::string_view what) {
 	return state == nullptr ? 0 : state->caret;
 }
 [[nodiscard]] std::pair<std::size_t, std::size_t> selection_of(browser & page,
-                                                              std::string_view id) {
+                                                               std::string_view id) {
 	const auto * state = page.control_state_of(find_id(page, id));
 	if (state == nullptr) { return {0, 0}; }
 	return {std::min(state->caret, state->selection), std::max(state->caret, state->selection)};
@@ -338,7 +336,7 @@ void test_a_disabled_control_looks_and_acts_disabled() {
 		if (c.text == "Live") { live = c.fill; }
 		if (c.text == "Dead") { dead = c.fill; }
 	}
-	check(!(live == color{})&& !(dead == color{}), "both labels are drawn");
+	check(!(live == color{}) && !(dead == color{}), "both labels are drawn");
 	check(!(live == dead), "and a disabled button is NOT drawn like a live one");
 	check(dead == color{style::ua_widget_disabled_text}, "it is greyed");
 
@@ -354,7 +352,8 @@ void test_a_disabled_control_looks_and_acts_disabled() {
 
 void test_a_radio_is_round_and_a_checkbox_is_not() {
 	browser page{browser_options{400, 200}};
-	page.load_html("<body><input type=radio id=r checked><input type=checkbox id=c checked></body>");
+	page.load_html(
+	    "<body><input type=radio id=r checked><input type=checkbox id=c checked></body>");
 	check(page.frame().has_value(), "the page renders");
 
 	std::size_t radio_ellipses = 0;
@@ -889,7 +888,6 @@ void test_select_shows_its_option() {
 	check(!draws_text(page, "second"), "but only the selected one, not the list");
 }
 
-
 // --- the scrollbar --------------------------------------------------------
 
 [[nodiscard]] std::string tall_page() {
@@ -968,7 +966,6 @@ void test_a_click_on_the_scrollbar_is_not_a_click_on_the_page() {
 	(void)page.handle(input_event::mouse_up_at(295, 100));
 	check(page.bindings().console_output().empty(), "the page never sees the scrollbar's click");
 }
-
 
 // --- what the reports were about ------------------------------------------
 
@@ -1158,8 +1155,7 @@ void test_the_scrollbar_thumb_follows_the_scroll() {
 	const auto thumb_top = [&] {
 		float top = -1;
 		for (const auto & c : commands(page)) {
-			if (c.op == paint::paint_op::fill_rect &&
-			    c.fill == color{style::ua_scrollbar_thumb}) {
+			if (c.op == paint::paint_op::fill_rect && c.fill == color{style::ua_scrollbar_thumb}) {
 				top = c.bounds.y;
 			}
 		}
@@ -1172,7 +1168,6 @@ void test_the_scrollbar_thumb_follows_the_scroll() {
 	check(thumb_top() > before, "and moves as soon as the page scrolls");
 	check(!page.frame().has_value() || true, "no re-record was needed");
 }
-
 
 // --- the select popup, the context menu, the clipboard --------------------
 
@@ -1295,7 +1290,6 @@ void test_the_cursor_follows_the_element() {
 	check(page.cursor_at(395, 5) == "default", "and the scrollbar edge is not");
 }
 
-
 // --- page-level text selection --------------------------------------------
 //
 // Selecting inside a FIELD already worked; this is selecting across the page,
@@ -1410,7 +1404,8 @@ void test_copying_the_page_selection() {
 	(void)page.handle(input_event::mouse_up_at(field.x + 5, field.y + 5));
 	(void)page.handle(input_event::key_press("KeyV", false, true));
 	const auto txn = page.doc().read();
-	const std::string pasted = page.forms().state_of(txn, page.atoms(), find_id(page, "field")).value;
+	const std::string pasted =
+	    page.forms().state_of(txn, page.atoms(), find_id(page, "field")).value;
 	check(pasted.find("copy") != std::string::npos, "the page selection pastes into a field");
 }
 

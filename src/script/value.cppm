@@ -48,7 +48,14 @@ inline constexpr std::uint64_t tag_null = qnan_mask | 1;
 inline constexpr std::uint64_t tag_false = qnan_mask | 2;
 inline constexpr std::uint64_t tag_true = qnan_mask | 3;
 
-enum class heap_kind : std::uint8_t { string, object, array, function, native, cell };
+enum class heap_kind : std::uint8_t {
+	string,
+	object,
+	array,
+	function,
+	native,
+	cell
+};
 
 struct heap_object; // every heap value starts with one
 
@@ -66,9 +73,9 @@ public:
 		return from_bits(std::bit_cast<std::uint64_t>(d));
 	}
 	[[nodiscard]] static value object(heap_object * p) noexcept {
-		return from_bits(sign_bit | qnan_mask |
-		                 (static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(p)) &
-		                  payload_mask));
+		return from_bits(
+		    sign_bit | qnan_mask |
+		    (static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(p)) & payload_mask));
 	}
 	[[nodiscard]] static constexpr value from_bits(std::uint64_t b) noexcept {
 		value v;

@@ -22,7 +22,6 @@ import ctbrowser.raster;
 import ctbrowser.script;
 import ctbrowser.shell;
 
-
 // The application shell: a window, an event loop, and one function to call.
 //
 // NO SDL TYPE APPEARS IN THIS INTERFACE. That is the point of the file. SDL sits
@@ -54,7 +53,11 @@ struct asset {
 	std::vector<std::byte> bytes;
 };
 
-enum class renderer_preference : std::uint8_t { automatic, prefer_gpu, force_software };
+enum class renderer_preference : std::uint8_t {
+	automatic,
+	prefer_gpu,
+	force_software
+};
 
 struct app_options {
 	std::string title = "ctbrowser";
@@ -141,7 +144,7 @@ struct app_options {
 	//
 	// `CTBROWSER_PROFILE=out.csv` and `CTBROWSER_PROFILE_SECONDS=n` set these
 	// from the environment, so any example can be profiled without a rebuild.
-	std::string profile_path;  // "" = off; "-" = summary only, no file
+	std::string profile_path;   // "" = off; "-" = summary only, no file
 	double profile_seconds = 0; // >0: stop after this long, like max_frames
 };
 
@@ -200,14 +203,12 @@ inline void apply_environment(app_options & options) {
 		for (int x = 0; x < image.width(); ++x) {
 			const std::uint32_t p = image.row(y)[static_cast<std::size_t>(x)];
 			const char rgb[3] = {static_cast<char>((p >> 16) & 0xFFu),
-			                     static_cast<char>((p >> 8) & 0xFFu),
-			                     static_cast<char>(p & 0xFFu)};
+			                     static_cast<char>((p >> 8) & 0xFFu), static_cast<char>(p & 0xFFu)};
 			out.write(rgb, 3);
 		}
 	}
 	return out.good();
 }
-
 
 // Run a page. Returns a process exit code.
 //

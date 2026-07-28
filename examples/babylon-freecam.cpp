@@ -4,9 +4,9 @@
 //
 //   brew install boost sdl3
 //   make babylon-freecam && LD_LIBRARY_PATH=$(brew --prefix)/lib ./babylon-freecam
+#include <SDL3/SDL_main.h>
 #include <ctbrowser.hpp>
 #include <ctbrowser/app.hpp>
-#include <SDL3/SDL_main.h>
 
 using app = ctbrowser::page<R"(<!DOCTYPE html>
 <title>Babylon basic scene</title>

@@ -30,10 +30,10 @@ export namespace ctbrowser::shell {
 
 enum class control_kind : std::uint8_t {
 	none,
-	text,     // <input type=text|search|url|email|tel|password> and friends
+	text, // <input type=text|search|url|email|tel|password> and friends
 	checkbox,
 	radio,
-	button,   // <button>, <input type=button|submit|reset>
+	button, // <button>, <input type=button|submit|reset>
 	textarea,
 	select,
 };
@@ -264,8 +264,9 @@ public:
 	// The successful controls of a form, as name/value pairs, in document
 	// order. This is what a submission would send - there is no network yet, so
 	// producing the data and stopping there is the honest half.
-	[[nodiscard]] std::vector<std::pair<std::string, std::string>>
-	form_data(const read_txn & txn, atom_table & atoms, node_id form) {
+	[[nodiscard]] std::vector<std::pair<std::string, std::string>> form_data(const read_txn & txn,
+	                                                                         atom_table & atoms,
+	                                                                         node_id form) {
 		std::vector<std::pair<std::string, std::string>> out;
 		const atom name_attr = atoms.intern("name");
 		const atom type_attr = atoms.intern("type");
@@ -273,8 +274,7 @@ public:
 			const std::string_view name = txn.attribute_value(at, name_attr);
 			if (!name.empty()) {
 				const std::string_view tag = atoms.text(txn.tag(at).value_or(atom{}));
-				const control_kind kind =
-				    control_kind_of(tag, txn.attribute_value(at, type_attr));
+				const control_kind kind = control_kind_of(tag, txn.attribute_value(at, type_attr));
 				if (kind != control_kind::none && kind != control_kind::button) {
 					control_state & control = state_of(txn, atoms, at);
 					// Unchecked boxes are NOT successful controls and are omitted
@@ -314,8 +314,7 @@ private:
 		control.selection = from;
 	}
 
-	[[nodiscard]] static std::size_t previous_code_point(const std::string & text,
-	                                                     std::size_t at) {
+	[[nodiscard]] static std::size_t previous_code_point(const std::string & text, std::size_t at) {
 		if (at == 0) { return 0; }
 		--at;
 		while (at > 0 && (static_cast<unsigned char>(text[at]) & 0xC0u) == 0x80u) { --at; }

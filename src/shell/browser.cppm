@@ -2,11 +2,11 @@ module;
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <limits>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -255,11 +255,10 @@ public:
 			std::string_view family;
 			std::string_view stem;
 		};
-		for (const vendored & face : {vendored{"serif", "Tinos"}, vendored{"Tinos", "Tinos"},
-		                              vendored{"sans-serif", "FiraSans"},
-		                              vendored{"Fira Sans", "FiraSans"},
-		                              vendored{"monospace", "Cousine"},
-		                              vendored{"Cousine", "Cousine"}}) {
+		for (const vendored & face :
+		     {vendored{"serif", "Tinos"}, vendored{"Tinos", "Tinos"},
+		      vendored{"sans-serif", "FiraSans"}, vendored{"Fira Sans", "FiraSans"},
+		      vendored{"monospace", "Cousine"}, vendored{"Cousine", "Cousine"}}) {
 			for (const auto & [bold, italic, suffix] :
 			     {std::tuple{false, false, "Regular"}, std::tuple{true, false, "Bold"},
 			      std::tuple{false, true, "Italic"}, std::tuple{true, true, "BoldItalic"}}) {
@@ -377,9 +376,9 @@ public:
 		if (focused_ && options_.caret_blink_ms > 0 && has_editable_focus()) {
 			const double period = options_.caret_blink_ms * 2;
 			const double since = std::fmod(caret_clock_ms_ - caret_base_ms_, period);
-			soonest = std::min(soonest, since < options_.caret_blink_ms
-			                                ? options_.caret_blink_ms - since
-			                                : period - since);
+			soonest =
+			    std::min(soonest, since < options_.caret_blink_ms ? options_.caret_blink_ms - since
+				                                                  : period - since);
 		}
 		return soonest;
 	}
@@ -536,9 +535,7 @@ public:
 	// hot fan.
 	bool handle(const input_event & event) {
 		switch (event.kind) {
-		case input_kind::wheel:
-			scroll_by(-event.wheel_y * options_.wheel_step);
-			return true;
+		case input_kind::wheel: scroll_by(-event.wheel_y * options_.wheel_step); return true;
 		case input_kind::mouse_move: {
 			if (sb_dragging_) {
 				// The grab offset is kept so the thumb does not jump to centre
@@ -848,7 +845,9 @@ private:
 	[[nodiscard]] const ctbrowser::raster::font_backend & fonts() const {
 		return fonts_ != nullptr ? *fonts_ : ctbrowser::raster::font8x8_fonts();
 	}
-	[[nodiscard]] ctbrowser::layout::measure_text_fn measure() const { return metrics_for(fonts()); }
+	[[nodiscard]] ctbrowser::layout::measure_text_fn measure() const {
+		return metrics_for(fonts());
+	}
 
 	// The page's own @font-face rules, loaded through the asset registry like
 	// any other resource. Called when real fonts are turned on and again on
@@ -904,8 +903,10 @@ private:
 		// learn how.
 		builder.intrinsic_image = [this](node_id id) {
 			const auto pixels = image_of(id);
-			return pixels ? ctbrowser::layout::box_builder::intrinsic_size{static_cast<float>(pixels->width),
-			                                                  static_cast<float>(pixels->height)}
+			return pixels ? ctbrowser::layout::box_builder::intrinsic_size{static_cast<float>(
+			                                                                   pixels->width),
+			                                                               static_cast<float>(
+			                                                                   pixels->height)}
 			              : ctbrowser::layout::box_builder::intrinsic_size{};
 		};
 		boxes_ = builder.build(txn, txn.root());
@@ -918,10 +919,9 @@ private:
 		// under it. This terminates because narrowing a page can only make it
 		// TALLER, so a page that overflowed still overflows - it never
 		// oscillates between needing a bar and not.
-		if (options_.scrollbar_width > 0 &&
-		    content_height_ > static_cast<float>(options_.height)) {
-			fragments_ = eng.run(boxes_, static_cast<float>(options_.width) -
-			                                 options_.scrollbar_width);
+		if (options_.scrollbar_width > 0 && content_height_ > static_cast<float>(options_.height)) {
+			fragments_ =
+			    eng.run(boxes_, static_cast<float>(options_.width) - options_.scrollbar_width);
 			content_height_ = fragments_.bounds.height;
 		}
 		scroll_y_ = std::clamp(scroll_y_, 0.0f, max_scroll());
@@ -939,11 +939,9 @@ private:
 		recorder_.selection_of = [this](const ctbrowser::layout::fragment & f) {
 			return highlight_for(f);
 		};
-		recorder_.paint_replaced = [this](node_id id, const rect & box,
-		                                  const ctbrowser::style::computed_style_ptr & style,
-		                                  ctbrowser::paint::display_list & into) {
-			paint_replaced(id, box, style, into);
-		};
+		recorder_.paint_replaced =
+		    [this](node_id id, const rect & box, const ctbrowser::style::computed_style_ptr & style,
+			       ctbrowser::paint::display_list & into) { paint_replaced(id, box, style, into); };
 		layers_ = recorder_.record_layers(fragments_);
 		layers_.scroll_to(0, scroll_y_);
 		page_layers_ = layers_.layers.size(); // everything after this is chrome
@@ -995,8 +993,8 @@ private:
 		list.fill(rect{box.x, box.y, 1, box.height}, frame);
 		list.fill(rect{box.right() - 1, box.y, 1, box.height}, frame);
 		for (std::size_t i = 0; i < std::size(menu_items); ++i) {
-			list.text(rect{box.x + 6, box.y + menu_row * static_cast<float>(i) + 4,
-			               box.width - 12, menu_row - 6},
+			list.text(rect{box.x + 6, box.y + menu_row * static_cast<float>(i) + 4, box.width - 12,
+			               menu_row - 6},
 			          std::string{menu_items[i]}, 13, color{0xFF000000U});
 		}
 		ctbrowser::paint::layer overlay;
@@ -1168,7 +1166,9 @@ private:
 		const std::string_view tag = atoms_.text(txn.tag(id).value_or(atom{}));
 
 		if (tag == "canvas") {
-			if (auto pixels = canvases_.pixels_of(id)) { into.draw_image(box, std::move(pixels), id); }
+			if (auto pixels = canvases_.pixels_of(id)) {
+				into.draw_image(box, std::move(pixels), id);
+			}
 			return;
 		}
 		if (tag == "img") {
@@ -1226,9 +1226,7 @@ private:
 			// button on the page was an empty box with an arrow in it.
 			outline(box, frame, into, id);
 			const std::string label = button_label(txn, id, control, type);
-			if (!label.empty()) {
-				label_text(box, label, id, style, into);
-			}
+			if (!label.empty()) { label_text(box, label, id, style, into); }
 			break;
 		}
 		case control_kind::select: {
@@ -1304,12 +1302,12 @@ private:
 		out.line_height = out.size * 1.25f;
 		out.masked = is_password(id);
 		const bool multiline = kind == control_kind::textarea;
-		out.inner = rect{box.x + control_padding,
-		                 box.y + (multiline ? 3 : baseline_inset(box, out.size)),
-		                 box.width - 2 * control_padding, box.height - 6};
-		out.lines = multiline ? value_lines(control.value)
-		                      : std::vector<std::pair<std::size_t, std::size_t>>{
-		                            {0, control.value.size()}};
+		out.inner =
+		    rect{box.x + control_padding, box.y + (multiline ? 3 : baseline_inset(box, out.size)),
+			     box.width - 2 * control_padding, box.height - 6};
+		out.lines =
+		    multiline ? value_lines(control.value)
+			          : std::vector<std::pair<std::size_t, std::size_t>>{{0, control.value.size()}};
 		return out;
 	}
 
@@ -1365,11 +1363,10 @@ private:
 		const field_layout geometry = layout_of_field(box, id, control, kind);
 		if (geometry.lines.empty()) { return 0; }
 
-		const auto line_index = static_cast<std::ptrdiff_t>(
-		    std::floor((y - geometry.inner.y) / geometry.line_height));
-		const std::size_t index = static_cast<std::size_t>(
-		    std::clamp<std::ptrdiff_t>(line_index, 0,
-		                               static_cast<std::ptrdiff_t>(geometry.lines.size()) - 1));
+		const auto line_index =
+		    static_cast<std::ptrdiff_t>(std::floor((y - geometry.inner.y) / geometry.line_height));
+		const std::size_t index = static_cast<std::size_t>(std::clamp<std::ptrdiff_t>(
+		    line_index, 0, static_cast<std::ptrdiff_t>(geometry.lines.size()) - 1));
 		const auto [begin, end] = geometry.lines[index];
 		const std::string_view line{control.value.data() + begin, end - begin};
 
@@ -1381,9 +1378,8 @@ private:
 		float best_distance = std::numeric_limits<float>::infinity();
 		for (std::size_t at = 0; at <= line.size();
 		     at = at < line.size() ? next_code_point(line, at) : line.size() + 1) {
-			const float where =
-			    measure()(shown(line.substr(0, at), geometry.masked), geometry.size,
-			              geometry.metrics_face);
+			const float where = measure()(shown(line.substr(0, at), geometry.masked), geometry.size,
+			                              geometry.metrics_face);
 			if (const float distance = std::fabs(where - want); distance < best_distance) {
 				best_distance = distance;
 				best = at;
@@ -1403,7 +1399,8 @@ private:
 		const field_layout geometry = layout_of_field(box, id, control, kind);
 		std::size_t index = 0;
 		for (std::size_t i = 0; i < geometry.lines.size(); ++i) {
-			if (control.caret >= geometry.lines[i].first && control.caret <= geometry.lines[i].second) {
+			if (control.caret >= geometry.lines[i].first &&
+			    control.caret <= geometry.lines[i].second) {
 				index = i;
 				break;
 			}
@@ -1417,8 +1414,8 @@ private:
 		const auto [begin, end] = geometry.lines[index];
 		const float column =
 		    measure()(shown(std::string_view{control.value}.substr(begin, control.caret - begin),
-		                    geometry.masked),
-		              geometry.size, geometry.metrics_face);
+			                geometry.masked),
+			          geometry.size, geometry.metrics_face);
 		const auto [to_begin, to_end] = geometry.lines[static_cast<std::size_t>(target)];
 		const std::string_view line{control.value.data() + to_begin, to_end - to_begin};
 		std::size_t best = 0;
@@ -1503,8 +1500,8 @@ private:
 
 	// A value's lines as [begin, end) offsets, newlines excluded. Always at
 	// least one, so an empty value still has a line for the caret to be on.
-	[[nodiscard]] static std::vector<std::pair<std::size_t, std::size_t>>
-	value_lines(const std::string & value) {
+	[[nodiscard]] static std::vector<std::pair<std::size_t, std::size_t>> value_lines(
+	    const std::string & value) {
 		std::vector<std::pair<std::size_t, std::size_t>> out;
 		std::size_t begin = 0;
 		for (std::size_t at = 0; at <= value.size(); ++at) {
@@ -1573,7 +1570,8 @@ private:
 		const layout::box_node * found = find_box(boxes_, id);
 		return found == nullptr ? 16.0f : found->font_size;
 	}
-	[[nodiscard]] static const layout::box_node * find_box(const layout::box_node & at, node_id id) {
+	[[nodiscard]] static const layout::box_node * find_box(const layout::box_node & at,
+	                                                       node_id id) {
 		if (at.source == id) { return &at; }
 		for (const layout::box_node & child : at.children) {
 			if (const layout::box_node * hit = find_box(child, id)) { return hit; }
@@ -1690,8 +1688,7 @@ private:
 				// fires - which is what a page listens for.
 				// The option's VALUE, not its label - that is what a form sends
 				// and what `select.value` reads.
-				forms_.state_of(txn, atoms_, select).value =
-				    option_value_at(txn, select, index);
+				forms_.state_of(txn, atoms_, select).value = option_value_at(txn, select, index);
 				bindings_->dispatch("change", select);
 			}
 		}
@@ -1750,7 +1747,7 @@ private:
 		const text_run * best = nullptr;
 		float best_distance = 0;
 		for (const text_run & run : runs) {
-			const float distance = content_y < run.box.y      ? run.box.y - content_y
+			const float distance = content_y < run.box.y          ? run.box.y - content_y
 			                       : content_y > run.box.bottom() ? content_y - run.box.bottom()
 			                                                      : 0.0f;
 			if (best == nullptr || distance < best_distance) {
@@ -1776,8 +1773,7 @@ private:
 		float best_distance = std::abs(x - run.box.x);
 		for (std::size_t i = 1; i <= run.text.size(); ++i) {
 			// UTF-8: a boundary is not inside a continuation byte.
-			if (i < run.text.size() &&
-			    (static_cast<unsigned char>(run.text[i]) & 0xC0u) == 0x80u) {
+			if (i < run.text.size() && (static_cast<unsigned char>(run.text[i]) & 0xC0u) == 0x80u) {
 				continue;
 			}
 			const float edge = run.box.x + metrics(run.text.substr(0, i), size, face);
@@ -1821,10 +1817,10 @@ private:
 
 		const std::size_t run_start = run.offset;
 		const std::size_t run_end = run.offset + run.text.size();
-		const std::size_t from = run.order == first_order ? std::max(run_start, first.code_point)
-		                                                  : run_start;
-		const std::size_t to = run.order == last_order ? std::min(run_end, last.code_point)
-		                                               : run_end;
+		const std::size_t from =
+		    run.order == first_order ? std::max(run_start, first.code_point) : run_start;
+		const std::size_t to =
+		    run.order == last_order ? std::min(run_end, last.code_point) : run_end;
 		return {std::min(from, to), to};
 	}
 
@@ -1858,8 +1854,8 @@ private:
 			const std::vector<text_run> runs = text_runs();
 			if (!runs.empty()) {
 				selection_anchor_ = text_position{runs.front().source, runs.front().offset};
-				selection_focus_ = text_position{runs.back().source,
-				                                 runs.back().offset + runs.back().text.size()};
+				selection_focus_ =
+				    text_position{runs.back().source, runs.back().offset + runs.back().text.size()};
 				mark(dirty::paint);
 			}
 			return;
@@ -1920,12 +1916,30 @@ private:
 			if (edit_key(*control, event)) { return true; }
 		}
 		const float page = static_cast<float>(options_.height) * 0.9f;
-		if (event.key == "ArrowDown") { scroll_by(options_.wheel_step); return true; }
-		if (event.key == "ArrowUp") { scroll_by(-options_.wheel_step); return true; }
-		if (event.key == "PageDown" || event.key == "Space") { scroll_by(page); return true; }
-		if (event.key == "PageUp") { scroll_by(-page); return true; }
-		if (event.key == "Home") { scroll_to(0); return true; }
-		if (event.key == "End") { scroll_to(max_scroll()); return true; }
+		if (event.key == "ArrowDown") {
+			scroll_by(options_.wheel_step);
+			return true;
+		}
+		if (event.key == "ArrowUp") {
+			scroll_by(-options_.wheel_step);
+			return true;
+		}
+		if (event.key == "PageDown" || event.key == "Space") {
+			scroll_by(page);
+			return true;
+		}
+		if (event.key == "PageUp") {
+			scroll_by(-page);
+			return true;
+		}
+		if (event.key == "Home") {
+			scroll_to(0);
+			return true;
+		}
+		if (event.key == "End") {
+			scroll_to(max_scroll());
+			return true;
+		}
 		return false;
 	}
 
@@ -2253,8 +2267,8 @@ public:
 	// What the last submission would have sent. There is no network, so
 	// producing the data and stopping is the honest half of submitting - and it
 	// is what a test can check.
-	[[nodiscard]] const std::vector<std::pair<std::string, std::string>> &
-	last_submission() const noexcept {
+	[[nodiscard]] const std::vector<std::pair<std::string, std::string>> & last_submission()
+	    const noexcept {
 		return last_submission_;
 	}
 
@@ -2318,7 +2332,8 @@ private:
 	// Decoded once per document, and held here rather than on the node: the DOM
 	// stays free of rendering state, which is the whole reason forms and canvas
 	// pixels live outside it too.
-	std::vector<std::pair<node_id, std::shared_ptr<const ctbrowser::paint::bitmap>>> images_by_node_;
+	std::vector<std::pair<node_id, std::shared_ptr<const ctbrowser::paint::bitmap>>>
+	    images_by_node_;
 	bool network_allowed_ = true;
 	canvas_store canvases_;
 	form_store forms_;

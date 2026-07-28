@@ -4,17 +4,17 @@
 // parses (JS). RUNTIME: the DOM instantiates, the script runs against
 // the DOM bindings, clicks mutate, ctcss restyles, layout reflows -
 // no SDL anywhere.
-#include <ctbrowser.hpp>
 #include <cstdio>
+#include <ctbrowser.hpp>
 #include <string>
 
 static int failures = 0;
-#define CHECK(cond) \
-	do { \
-		if (!(cond)) { \
-			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
-			++failures; \
-		} \
+#define CHECK(cond)                                                                                \
+	do {                                                                                           \
+		if (!(cond)) {                                                                             \
+			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                            \
+			++failures;                                                                            \
+		}                                                                                          \
 	} while (0)
 
 using app = ctbrowser::page<R"(<!DOCTYPE html>
@@ -98,16 +98,16 @@ int main() {
 	ctbrowser::node * game = e.doc.by_id("game");
 	CHECK(game != nullptr && game->is_canvas());
 	CHECK(game->canvas_w == 64 && game->canvas_h == 32);
-	CHECK(game->pixels[0] == 0xFF0000FFu);                     // blue fill
-	CHECK(game->pixels[11 * 64 + 11] == 0xFFFF0000u);          // red square
+	CHECK(game->pixels[0] == 0xFF0000FFu);            // blue fill
+	CHECK(game->pixels[11 * 64 + 11] == 0xFFFF0000u); // red square
 	CHECK(game->pixels[0] != game->pixels[11 * 64 + 11]);
 
 	// initial layout: hidden element collapsed, panel styled
 	(void)e.frame(800);
 	ctbrowser::node * note = e.doc.by_id("note");
 	ctbrowser::node * panel = e.doc.by_id("panel");
-	CHECK(note != nullptr && note->w == 0 && note->h == 0);    // display:none
-	CHECK(panel != nullptr && panel->w == 300);                // width:300px
+	CHECK(note != nullptr && note->w == 0 && note->h == 0); // display:none
+	CHECK(panel != nullptr && panel->w == 300);             // width:300px
 
 	// click -> script mutates DOM -> restyle changes the computed color
 	ctbrowser::node * count = e.doc.by_id("count");
@@ -140,11 +140,11 @@ int main() {
 	const auto px = [&](int x, int y) {
 		return game->pixels[static_cast<size_t>(y) * 64 + static_cast<size_t>(x)];
 	};
-	CHECK(px(50, 16) == 0xFFFFAA33u);        // fillCircle center, orange
-	CHECK(px(0, 31) == 0xFF00FF00u);         // strokeRect bottom-left, green
-	CHECK(px(30, 0) == 0x00000000u);         // clearRect -> transparent
-	CHECK(px(22, 2) == 0xFF66FF66u);         // alien sprite pixel via drawImage
-	CHECK(px(3, 0) == 0xFFFFAA33u);          // ship pixel via drawImageRegion
+	CHECK(px(50, 16) == 0xFFFFAA33u); // fillCircle center, orange
+	CHECK(px(0, 31) == 0xFF00FF00u);  // strokeRect bottom-left, green
+	CHECK(px(30, 0) == 0x00000000u);  // clearRect -> transparent
+	CHECK(px(22, 2) == 0xFF66FF66u);  // alien sprite pixel via drawImage
+	CHECK(px(3, 0) == 0xFFFFAA33u);   // ship pixel via drawImageRegion
 	{
 		int text_px = 0; // fillText("HI") left a white glyph trail
 		for (int y = 20; y < 28; ++y) {

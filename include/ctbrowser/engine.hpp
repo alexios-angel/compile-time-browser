@@ -5,14 +5,14 @@
 
 #include <cstddef>
 
-#include "page.hpp"
+#include "anim.hpp"
+#include "assets.hpp"
+#include "babylon.hpp"
 #include "dom.hpp"
 #include "image.hpp"
-#include "assets.hpp"
 #include "layout.hpp"
-#include "anim.hpp"
+#include "page.hpp"
 #include "script.hpp"
-#include "babylon.hpp"
 #ifndef CTBROWSER_IN_A_MODULE
 #include <limits>
 #include <optional>
@@ -94,7 +94,8 @@ inline constexpr std::int64_t line_rank_vertical_weight = 100000;
 	while (seg <= all.size()) {
 		const std::size_t nl = std::u32string_view{all}.substr(seg).find(U'\n');
 		const std::size_t seg_end = nl == std::u32string_view::npos ? all.size() : seg + nl;
-		out.push_back({static_cast<std::int32_t>(seg), static_cast<std::int32_t>(seg_end), 0, 0, 0, true});
+		out.push_back(
+		    {static_cast<std::int32_t>(seg), static_cast<std::int32_t>(seg_end), 0, 0, 0, true});
 		if (seg_end == all.size()) { break; }
 		seg = seg_end + 1;
 	}
@@ -102,7 +103,7 @@ inline constexpr std::int64_t line_rank_vertical_weight = 100000;
 	return out;
 }
 [[nodiscard]] inline std::int32_t caret_visual_line(const std::vector<node::text_line> & lines,
-                                      std::int32_t caret_cp) {
+                                                    std::int32_t caret_cp) {
 	for (std::size_t i = 0; i < lines.size(); ++i) {
 		const node::text_line & l = lines[i];
 		if (caret_cp < l.cp_end || (caret_cp == l.cp_end && l.hard)) {
@@ -184,13 +185,14 @@ struct scrollbar_model {
 		const std::int32_t travel = viewport_h - h;
 		const std::int32_t limit = max_scroll();
 		const std::int32_t y =
-		    limit > 0 ? static_cast<std::int32_t>(static_cast<std::int64_t>(scroll_y) * travel / limit)
-		              : 0;
+		    limit > 0
+		        ? static_cast<std::int32_t>(static_cast<std::int64_t>(scroll_y) * travel / limit)
+		        : 0;
 		return rect{viewport_w - width, y, width, h};
 	}
 	// dragging the thumb so its top lands at `ty` means this offset
 	[[nodiscard]] constexpr std::int32_t scroll_for_thumb_top(std::int32_t ty,
-	                                            std::int32_t thumb_h) const noexcept {
+	                                                          std::int32_t thumb_h) const noexcept {
 		const std::int32_t travel = viewport_h - thumb_h;
 		return travel > 0 ? static_cast<std::int32_t>(static_cast<std::int64_t>(ty) * max_scroll() /
 		                                              travel)
@@ -273,8 +275,7 @@ public:
 	explicit engine(std::vector<ctjs::binding> extra = {},
 	                std::function<image(const std::string &)> image_decoder = {},
 	                std::vector<embedded_asset> embedded = {})
-	    : doc(instantiate_html(Page::html_text())),
-	      title(Page::title()),
+	    : doc(instantiate_html(Page::html_text())), title(Page::title()),
 	      assets(detail::merge_assets(std::move(embedded), auto_assets<Page>())),
 	      images{{}, std::move(image_decoder), &assets},
 	      css_sheet(ctcss::parse_value(Page::style_text())),
@@ -309,7 +310,7 @@ public:
 		update_caret_blink(); // BEFORE layout: this frame's paints carry the phase
 		std::vector<paint_cmd> cmds = layout_reserving_scrollbar(viewport_w);
 		apply_scroll(cmds);
-		paint_scrollbar(cmds);   // the overlay bar, on top
+		paint_scrollbar(cmds);    // the overlay bar, on top
 		paint_context_menu(cmds); // and the menu above even that
 		ev.refresh_tracked();
 		return cmds;
@@ -326,7 +327,8 @@ public:
 		node * hit = hit_test_at(x, y);
 		for (node * n = hit; n != nullptr; n = n->parent) {
 			if (n->is_textarea()) {
-				n->scroll_top -= static_cast<std::int32_t>(dy * detail::wheel_step_px); // layout clamps
+				n->scroll_top -=
+				    static_cast<std::int32_t>(dy * detail::wheel_step_px); // layout clamps
 				return;
 			}
 		}
@@ -338,7 +340,11 @@ public:
 	// to a system cursor. CSS `cursor` (resolved through the ordinary
 	// cascade, so pages override it) wins; otherwise Firefox behavior:
 	// I-beam over selectable text, arrow elsewhere.
-	enum class cursor_kind : std::uint8_t { arrow, pointer, text };
+	enum class cursor_kind : std::uint8_t {
+		arrow,
+		pointer,
+		text
+	};
 	// one element's resolved property, inline style first (the same
 	// precedence layout's computed_style uses)
 	[[nodiscard]] std::string_view styled(const node * n, std::string_view prop) const {
@@ -378,7 +384,8 @@ public:
 	// NOT [[nodiscard]]: the geometry comes back through the out-params, and
 	// a caller that already knows the bar is visible legitimately calls this
 	// just to refresh them (tests/browserui.cpp does, after a thumb drag).
-	bool scrollbar_thumb(std::int32_t & x, std::int32_t & y, std::int32_t & w, std::int32_t & h) const {
+	bool scrollbar_thumb(std::int32_t & x, std::int32_t & y, std::int32_t & w,
+	                     std::int32_t & h) const {
 		const auto t = scrollbar().thumb();
 		if (!t) { return false; }
 		x = t->x;
@@ -422,7 +429,8 @@ public:
 			if (n->is_disabled()) { return; }
 			if (n->is_form_control()) { break; } // only the control itself gates
 		}
-		ctjs::value evt = detail::mouse_event(static_cast<double>(x), static_cast<double>(y), "click");
+		ctjs::value evt =
+		    detail::mouse_event(static_cast<double>(x), static_cast<double>(y), "click");
 		for (node * n = hit; n != nullptr; n = n->parent) {
 			if (const auto it = ev.click_listeners.find(n); it != ev.click_listeners.end()) {
 				const std::vector<ctjs::value> fns = it->second; // copy: handlers may mutate
@@ -459,19 +467,36 @@ public:
 			return;
 		}
 		if (down && !detail::event_flag(evt, "defaultPrevented") && ctrl_down()) {
-			if (name == "C") { do_copy(); return; }
-			if (name == "X") { do_cut(); return; }
-			if (name == "V") { do_paste(); return; }
-			if (name == "A") { do_select_all(); return; }
+			if (name == "C") {
+				do_copy();
+				return;
+			}
+			if (name == "X") {
+				do_cut();
+				return;
+			}
+			if (name == "V") {
+				do_paste();
+				return;
+			}
+			if (name == "A") {
+				do_select_all();
+				return;
+			}
 		}
 		if (down && !detail::event_flag(evt, "defaultPrevented")) {
 			if (focused_ != nullptr && focused_->is_editable() && !focused_->is_disabled()) {
 				edit_key(name);
 			} else { // page scrolling (clamped in frame())
-				if (name == "PageDown") { scroll_y_ += page_scroll_step(); }
-				else if (name == "PageUp") { scroll_y_ -= page_scroll_step(); }
-				else if (name == "Home") { scroll_y_ = 0; }
-				else if (name == "End") { scroll_y_ = page_h_; }
+				if (name == "PageDown") {
+					scroll_y_ += page_scroll_step();
+				} else if (name == "PageUp") {
+					scroll_y_ -= page_scroll_step();
+				} else if (name == "Home") {
+					scroll_y_ = 0;
+				} else if (name == "End") {
+					scroll_y_ = page_h_;
+				}
 			}
 		}
 	}
@@ -527,8 +552,12 @@ public:
 		if (hit != hovered_) {
 			set_chain_flag(hovered_, &node::hovered, false);
 			set_chain_flag(hit, &node::hovered, true);
-			if (hovered_ != nullptr) { ev.dispatch("mouseout", detail::mouse_event(x, y, "mouseout")); }
-			if (hit != nullptr) { ev.dispatch("mouseover", detail::mouse_event(x, y, "mouseover")); }
+			if (hovered_ != nullptr) {
+				ev.dispatch("mouseout", detail::mouse_event(x, y, "mouseout"));
+			}
+			if (hit != nullptr) {
+				ev.dispatch("mouseover", detail::mouse_event(x, y, "mouseover"));
+			}
 			hovered_ = hit;
 		}
 	}
@@ -551,8 +580,11 @@ public:
 			return;
 		}
 		if (down && scrollbar_hit(x, y)) { return; } // the bar ate the press
-		if (down) { press(x, y); }
-		else { release(x, y); }
+		if (down) {
+			press(x, y);
+		} else {
+			release(x, y);
+		}
 	}
 	void tick(double dt) {
 		deliver(script, "onFrame", dt);
@@ -562,7 +594,9 @@ public:
 		// re-register themselves for the NEXT frame
 		std::vector<ctjs::value> due;
 		due.swap(ev.raf);
-		for (const ctjs::value & fn : due) { ev.invoke(fn, {ctjs::value{ev.now_ms}}); }
+		for (const ctjs::value & fn : due) {
+			ev.invoke(fn, {ctjs::value{ev.now_ms}});
+		}
 		if (ev.reload) { do_reload(); }
 		// reclaim reference cycles the page created this second (bullets/observers/
 		// closures the game disposed but that still point at each other - pure
@@ -711,8 +745,8 @@ private:
 		if (!menu_.open) { return; }
 		const auto items = menu_items();
 		const std::int32_t mh = menu_.height(items.size());
-		const auto boxc = [&cmds](std::int32_t bx, std::int32_t by, std::int32_t bw, std::int32_t bh,
-		                          std::uint32_t argb) {
+		const auto boxc = [&cmds](std::int32_t bx, std::int32_t by, std::int32_t bw,
+		                          std::int32_t bh, std::uint32_t argb) {
 			cmds.push_back(detail::box_cmd(bx, by, bw, bh, argb, /*fixed=*/true));
 		};
 		boxc(menu_.x, menu_.y, menu_.width, mh, detail::ua_menu_bg);
@@ -721,19 +755,19 @@ private:
 			boxc(menu_.x, menu_.row_top(menu_.hover), menu_.width, menu_.item_h,
 			     detail::ua_menu_hover);
 		}
-		boxc(menu_.x, menu_.y, menu_.width, 1, detail::ua_menu_border);            // top
-		boxc(menu_.x, menu_.y + mh - 1, menu_.width, 1, detail::ua_menu_border);   // bottom
-		boxc(menu_.x, menu_.y, 1, mh, detail::ua_menu_border);                     // left
-		boxc(menu_.x + menu_.width - 1, menu_.y, 1, mh, detail::ua_menu_border);   // right
+		boxc(menu_.x, menu_.y, menu_.width, 1, detail::ua_menu_border);          // top
+		boxc(menu_.x, menu_.y + mh - 1, menu_.width, 1, detail::ua_menu_border); // bottom
+		boxc(menu_.x, menu_.y, 1, mh, detail::ua_menu_border);                   // left
+		boxc(menu_.x + menu_.width - 1, menu_.y, 1, mh, detail::ua_menu_border); // right
 		std::int32_t iy = menu_.y;
 		for (const auto & it : items) {
 			std::u32string label = utf8_to_utf32(std::string{it.label});
 			const std::int32_t lw =
 			    measure_text(label, menu_.font_px, menu_.font_family, false, false);
-			paint_cmd txt = detail::text_cmd(
-			    menu_.x + menu_.pad_x, iy + menu_.pad_y, lw, menu_.font_px,
-			    it.enabled ? detail::ua_menu_text : detail::ua_menu_text_disabled, std::move(label),
-			    menu_.font_px);
+			paint_cmd txt =
+			    detail::text_cmd(menu_.x + menu_.pad_x, iy + menu_.pad_y, lw, menu_.font_px,
+				                 it.enabled ? detail::ua_menu_text : detail::ua_menu_text_disabled,
+				                 std::move(label), menu_.font_px);
 			txt.fixed = true;
 			txt.font_family = menu_.font_family;
 			cmds.push_back(std::move(txt));
@@ -748,9 +782,9 @@ private:
 
 	// the deepest node under a point, in viewport coordinates
 	[[nodiscard]] node * hit_test_at(double x, double y) {
-		return doc.root ? doc.root->hit_test(static_cast<std::int32_t>(x),
-		                                     static_cast<std::int32_t>(y))
-		                : nullptr;
+		return doc.root
+		           ? doc.root->hit_test(static_cast<std::int32_t>(x), static_cast<std::int32_t>(y))
+				   : nullptr;
 	}
 
 	// Route a mouse press through a <select>: if a popup is open, a click on an
@@ -764,7 +798,8 @@ private:
 			for (const auto & c : sel->children) {
 				if (c->tag != "option") { continue; }
 				node * opt = c.get();
-				if (opt->w > 0 && x >= opt->x && x < opt->x + opt->w && y >= opt->y && y < opt->y + opt->h) {
+				if (opt->w > 0 && x >= opt->x && x < opt->x + opt->w && y >= opt->y &&
+				    y < opt->y + opt->h) {
 					sel->select_index = idx;
 					sel->select_open = false;
 					open_select_ = nullptr;
@@ -825,7 +860,7 @@ private:
 	[[nodiscard]] std::int32_t page_scroll_step() const {
 		return ev.viewport_h > detail::page_scroll_overlap_px
 		           ? ev.viewport_h - detail::page_scroll_overlap_px
-		           : detail::page_scroll_overlap_px;
+				   : detail::page_scroll_overlap_px;
 	}
 
 	// --- interaction helpers -------------------------------------------
@@ -945,8 +980,8 @@ private:
 			std::int32_t cp = l.cp_start;
 			std::int32_t prev_w = 0;
 			for (std::size_t i = 1; i <= line.size(); ++i) {
-				const std::int32_t w =
-				    measure_text(line.substr(0, i), f->ui_font_px, f->ui_family, f->ui_bold, f->ui_italic);
+				const std::int32_t w = measure_text(line.substr(0, i), f->ui_font_px, f->ui_family,
+				                                    f->ui_bold, f->ui_italic);
 				if (rel < (prev_w + w) / 2) { break; }
 				prev_w = w;
 				cp = l.cp_start + static_cast<std::int32_t>(i);
@@ -955,7 +990,8 @@ private:
 		}
 		// text input: the view starts at the persisted scroll_cp - clicks
 		// map into the VISIBLE window
-		std::size_t ls = static_cast<std::size_t>(detail::byte_of_cp(v, f->scroll_cp)), le = v.size();
+		std::size_t ls = static_cast<std::size_t>(detail::byte_of_cp(v, f->scroll_cp)),
+		            le = v.size();
 		// walk the line's code points; the caret snaps to the NEAREST glyph
 		// boundary (click in a glyph's left half lands before it)
 		const std::int32_t rel = static_cast<std::int32_t>(mx) - f->ui_text_x;
@@ -967,7 +1003,8 @@ private:
 			std::size_t j = i;
 			const char32_t cp = utf8_next(v, j);
 			prefix.push_back(cp);
-			const std::int32_t w = measure_text(prefix, f->ui_font_px, f->ui_family, f->ui_bold, f->ui_italic);
+			const std::int32_t w =
+			    measure_text(prefix, f->ui_font_px, f->ui_family, f->ui_bold, f->ui_italic);
 			if (rel < (prev_w + w) / 2) { break; }
 			prev_w = w;
 			i = j;
@@ -983,7 +1020,8 @@ private:
 		f->sel_anchor = -1;
 		f->value_dirty = true;
 	}
-	[[nodiscard]] bool page_select_none(node * n) const { // CSS user-select: none (overridable seam)
+	[[nodiscard]] bool page_select_none(
+	    node * n) const { // CSS user-select: none (overridable seam)
 		for (node * p = n; p != nullptr; p = p->parent) {
 			const std::string_view v = styled(p, "user-select");
 			if (v == "none") { return true; }
@@ -1026,14 +1064,15 @@ private:
 			return best;
 		}
 		const std::u32string all = utf8_to_utf32(best->text);
-		const std::u32string_view line{all.data() + best_line->cp_start,
-		                               static_cast<std::size_t>(best_line->cp_end - best_line->cp_start)};
+		const std::u32string_view line{
+		    all.data() + best_line->cp_start,
+		    static_cast<std::size_t>(best_line->cp_end - best_line->cp_start)};
 		const std::int32_t rel = ix - best_line->x;
 		std::int32_t cp = best_line->cp_start;
 		std::int32_t prev_w = 0;
 		for (std::size_t i = 1; i <= line.size(); ++i) {
-			const std::int32_t w = measure_text(line.substr(0, i), best->ui_font_px, best->ui_family,
-			                                    best->ui_bold, best->ui_italic);
+			const std::int32_t w = measure_text(line.substr(0, i), best->ui_font_px,
+			                                    best->ui_family, best->ui_bold, best->ui_italic);
 			if (rel < (prev_w + w) / 2) { break; }
 			prev_w = w;
 			cp = best_line->cp_start + static_cast<std::int32_t>(i);
@@ -1046,12 +1085,10 @@ private:
 		if (selectable_text(&n)) {
 			for (const node::text_line & l : n.ui_lines) {
 				// vertical distance to the line band, then horizontal to its span
-				const std::int32_t vd = iy < l.y            ? l.y - iy
+				const std::int32_t vd = iy < l.y                   ? l.y - iy
 				                        : iy >= l.y + n.ui_font_px ? iy - (l.y + n.ui_font_px) + 1
 				                                                   : 0;
-				const std::int32_t hd = ix < l.x         ? l.x - ix
-				                        : ix > l.x + l.w ? ix - (l.x + l.w)
-				                                         : 0;
+				const std::int32_t hd = ix < l.x ? l.x - ix : ix > l.x + l.w ? ix - (l.x + l.w) : 0;
 				const std::int64_t d =
 				    static_cast<std::int64_t>(vd) * detail::line_rank_vertical_weight + hd;
 				if (d < best_d) {
@@ -1115,7 +1152,9 @@ private:
 			marking = false;
 			return;
 		}
-		for (const auto & c : n.children) { mark_range(*c, first, last, first_cp, last_cp, marking); }
+		for (const auto & c : n.children) {
+			mark_range(*c, first, last, first_cp, last_cp, marking);
+		}
 		if (is_last) { marking = false; }
 	}
 	[[nodiscard]] std::string page_selection_text() const {
@@ -1150,15 +1189,18 @@ private:
 		if (detail::event_flag(evt, "defaultPrevented")) { return; }
 		std::string text;
 		if (focused_ != nullptr && focused_->has_selection()) {
-			text = focused_->value.substr(static_cast<std::size_t>(focused_->sel_begin()),
-			                              static_cast<std::size_t>(focused_->sel_end() - focused_->sel_begin()));
+			text = focused_->value.substr(
+			    static_cast<std::size_t>(focused_->sel_begin()),
+			    static_cast<std::size_t>(focused_->sel_end() - focused_->sel_begin()));
 		} else {
 			text = page_selection_text();
 		}
 		if (!text.empty() && clipboard_set) { clipboard_set(text); }
 	}
 	void do_cut() {
-		if (focused_ == nullptr || !focused_->is_editable() || !focused_->has_selection()) { return; }
+		if (focused_ == nullptr || !focused_->is_editable() || !focused_->has_selection()) {
+			return;
+		}
 		ctjs::value evt = detail::simple_event("cut");
 		ev.dispatch("cut", evt);
 		if (detail::event_flag(evt, "defaultPrevented")) { return; }
@@ -1215,7 +1257,8 @@ private:
 		void (engine::*action)();
 	};
 	[[nodiscard]] std::vector<menu_item> menu_items() const {
-		const bool editable = focused_ != nullptr && focused_->is_editable() && !focused_->is_disabled();
+		const bool editable =
+		    focused_ != nullptr && focused_->is_editable() && !focused_->is_disabled();
 		return {
 		    {"Copy", can_copy(), &engine::do_copy},
 		    {"Cut", editable && focused_->has_selection(), &engine::do_cut},
@@ -1258,12 +1301,12 @@ private:
 	void edit_key(std::string_view name) {
 		node * f = focused_;
 		if (f == nullptr || !f->is_editable() || f->is_disabled()) { return; }
-		f->caret_follow = true; // layout scrolls the caret into view
+		f->caret_follow = true;     // layout scrolls the caret into view
 		caret_base_ms_ = ev.now_ms; // caret activity restarts the blink
 		// caret motion: Shift extends the selection, plain motion drops it;
 		// an edit replaces the selection first
-		const bool motion = name == "Left" || name == "Right" || name == "Home" ||
-		                    name == "End" || name == "Up" || name == "Down";
+		const bool motion = name == "Left" || name == "Right" || name == "Home" || name == "End" ||
+		                    name == "Up" || name == "Down";
 		if (motion) {
 			if (shift_down()) {
 				if (f->sel_anchor < 0) { f->sel_anchor = f->caret; }
@@ -1339,9 +1382,7 @@ private:
 			}
 		}
 	}
-	void fire_input(node * n) {
-		dispatch_to(ev.input_listeners, n, detail::simple_event("input"));
-	}
+	void fire_input(node * n) { dispatch_to(ev.input_listeners, n, detail::simple_event("input")); }
 
 	// --- form submission / reset ---------------------------------------
 	void submit_form(node * form) {
@@ -1375,24 +1416,25 @@ private:
 
 	std::vector<ctjs::binding> all_bindings(std::vector<ctjs::binding> extra) {
 		std::vector<ctjs::binding> out = dom_bindings(doc, title, images, ev);
-		out.push_back({"isKeyDown",
-		               ctjs::native([this](const std::vector<ctjs::value> & a) -> ctjs::value {
-			               return ctjs::value{!a.empty() &&
-			                                  keys_down.contains(a[0].to_string())};
-		               },
-		               "isKeyDown")});
-		out.push_back({"mouseX", ctjs::native([this](const std::vector<ctjs::value> &) {
-			               return ctjs::value{mouse_x};
-		               },
-		               "mouseX")});
-		out.push_back({"mouseY", ctjs::native([this](const std::vector<ctjs::value> &) {
-			               return ctjs::value{mouse_y};
-		               },
-		               "mouseY")});
-		out.push_back({"isMouseDown", ctjs::native([this](const std::vector<ctjs::value> &) {
-			               return ctjs::value{mouse_down};
-		               },
-		               "isMouseDown")});
+		out.push_back({"isKeyDown", ctjs::native(
+		                                [this](const std::vector<ctjs::value> & a) -> ctjs::value {
+			                                return ctjs::value{
+			                                    !a.empty() && keys_down.contains(a[0].to_string())};
+		                                },
+		                                "isKeyDown")});
+		out.push_back(
+		    {"mouseX",
+			 ctjs::native([this](const std::vector<ctjs::value> &) { return ctjs::value{mouse_x}; },
+			              "mouseX")});
+		out.push_back(
+		    {"mouseY",
+			 ctjs::native([this](const std::vector<ctjs::value> &) { return ctjs::value{mouse_y}; },
+			              "mouseY")});
+		out.push_back({"isMouseDown", ctjs::native(
+		                                  [this](const std::vector<ctjs::value> &) {
+			                                  return ctjs::value{mouse_down};
+		                                  },
+		                                  "isMouseDown")});
 		// core BabylonJS API, backed by a software 3D rasterizer into <canvas>
 		babylon::install(out, ev, images);
 		for (ctjs::binding & b : extra) { out.push_back(std::move(b)); }

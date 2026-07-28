@@ -89,7 +89,7 @@ public:
 	// Loads at most once per name: two <img src="x"> and a script loadImage("x")
 	// share one decode and one bitmap.
 	[[nodiscard]] std::shared_ptr<const paint::bitmap> load(const asset_registry & assets,
-	                                                       std::string_view name) {
+	                                                        std::string_view name) {
 		for (const auto & [cached, image] : cache_) {
 			if (cached == name) { return image; }
 		}

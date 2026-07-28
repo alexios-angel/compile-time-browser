@@ -34,8 +34,8 @@ enum class gpu_error : std::uint8_t {
 	device_lost,
 	out_of_memory,
 	unsupported,
-	no_frame,      // raster/composite called outside begin_frame..end_frame
-	bad_tile,      // a tile id the backend has no storage for
+	no_frame, // raster/composite called outside begin_frame..end_frame
+	bad_tile, // a tile id the backend has no storage for
 };
 
 // Identifies the in-flight frame. Opaque on purpose: on the GPU path it will
@@ -65,17 +65,16 @@ struct frame_token {
 // tile wastes exactly as much there - so neither is a software accommodation
 // leaking into the interface.
 template <typename B>
-concept RasterBackend =
-    requires(B & b, tile_id t, std::span<const tile> ts, const paint::display_list & dl,
-             std::span<const paint::layer> ls) {
-	    { b.begin_frame() } -> std::same_as<std::expected<frame_token, gpu_error>>;
-	    { b.reserve_tiles(ts) } -> std::same_as<std::expected<void, gpu_error>>;
-	    { b.needs_raster(t) } -> std::same_as<bool>;
-	    { b.raster(t, dl) } -> std::same_as<std::expected<void, gpu_error>>;
-	    { b.tile_ready(t) } -> std::same_as<void>;
-	    { b.composite(ls) } -> std::same_as<std::expected<void, gpu_error>>;
-	    { b.end_frame() } -> std::same_as<std::expected<void, gpu_error>>;
-	    { B::is_hardware } -> std::convertible_to<bool>;
-    };
+concept RasterBackend = requires(B & b, tile_id t, std::span<const tile> ts,
+                                 const paint::display_list & dl, std::span<const paint::layer> ls) {
+	{ b.begin_frame() } -> std::same_as<std::expected<frame_token, gpu_error>>;
+	{ b.reserve_tiles(ts) } -> std::same_as<std::expected<void, gpu_error>>;
+	{ b.needs_raster(t) } -> std::same_as<bool>;
+	{ b.raster(t, dl) } -> std::same_as<std::expected<void, gpu_error>>;
+	{ b.tile_ready(t) } -> std::same_as<void>;
+	{ b.composite(ls) } -> std::same_as<std::expected<void, gpu_error>>;
+	{ b.end_frame() } -> std::same_as<std::expected<void, gpu_error>>;
+	{ B::is_hardware } -> std::convertible_to<bool>;
+};
 
 } // namespace ctbrowser::raster

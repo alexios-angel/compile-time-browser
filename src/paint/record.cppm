@@ -125,7 +125,9 @@ private:
 			return;
 		}
 
-		if (const auto bg = parse_color(prop(style, background_))) { into.fill(box, *bg, f.source); }
+		if (const auto bg = parse_color(prop(style, background_))) {
+			into.fill(box, *bg, f.source);
+		}
 		emit_border(box, style, f.source, into);
 		emit_marker(f, box, text_color, into);
 		// `<table border=1>`: a presentational attribute, not CSS, and one that

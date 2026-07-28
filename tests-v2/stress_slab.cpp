@@ -109,13 +109,14 @@ void writer_loop(shared_state & st, int rounds) {
 			// tell whether the object it got is the one it asked for
 			const payload_id fresh = st.objects.insert(0u);
 			if (payload * p = st.objects.get(fresh)) { *p = payload{fresh.slot}; }
-			const std::uint64_t previous = st.published[where].exchange(pack(fresh),
-			                                                           std::memory_order_release);
+			const std::uint64_t previous =
+			    st.published[where].exchange(pack(fresh), std::memory_order_release);
 			if (previous != 0) { st.objects.erase(unpack(previous)); }
 		} else if (roll < 85) {
 			// unpublish then erase: readers stop being ABLE to find it before
 			// it stops resolving, which is the ordering the DOM will use
-			const std::uint64_t previous = st.published[where].exchange(0, std::memory_order_release);
+			const std::uint64_t previous =
+			    st.published[where].exchange(0, std::memory_order_release);
 			if (previous != 0) { st.objects.erase(unpack(previous)); }
 		} else {
 			st.objects.collect();
@@ -126,7 +127,8 @@ void writer_loop(shared_state & st, int rounds) {
 }
 
 void test_concurrent_slab() {
-	CHECK(std::atomic<std::uint64_t>::is_always_lock_free); // else the test measures the wrong thing
+	CHECK(
+	    std::atomic<std::uint64_t>::is_always_lock_free); // else the test measures the wrong thing
 
 	shared_state st;
 	std::vector<std::jthread> readers;
@@ -182,8 +184,8 @@ void test_concurrent_interning() {
 	for (std::size_t t = 1; t < threads; ++t) {
 		if (results[t] != results[0]) { agree = false; }
 	}
-	CHECK(agree);                          // every thread got the same ids
-	CHECK_EQ(atoms.size(), names + 1u);    // interned once each, plus the empty atom
+	CHECK(agree);                       // every thread got the same ids
+	CHECK_EQ(atoms.size(), names + 1u); // interned once each, plus the empty atom
 	CHECK_EQ(atoms.text(results[0][7]), std::string_view{"tag7"});
 }
 

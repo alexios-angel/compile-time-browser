@@ -41,9 +41,9 @@ export namespace ctbrowser::html {
 
 // Elements that never have children and close themselves.
 [[nodiscard]] inline bool is_void_element(std::string_view tag) {
-	constexpr std::string_view names[] = {"area", "base",  "br",   "col",   "embed",  "hr",
-	                                      "img",  "input", "link", "meta",  "param",  "source",
-	                                      "track", "wbr"};
+	constexpr std::string_view names[] = {"area",  "base",   "br",    "col",  "embed",
+	                                      "hr",    "img",    "input", "link", "meta",
+	                                      "param", "source", "track", "wbr"};
 	return std::ranges::find(names, tag) != std::ranges::end(names);
 }
 
@@ -51,34 +51,36 @@ export namespace ctbrowser::html {
 // close themselves when the same tag opens again.
 [[nodiscard]] inline bool closes_open_paragraph(std::string_view tag) {
 	constexpr std::string_view names[] = {
-	    "address", "article", "aside",   "blockquote", "details", "div",     "dl",
-	    "fieldset", "figcaption", "figure", "footer",  "form",    "h1",      "h2",
-	    "h3",      "h4",      "h5",      "h6",         "header",  "hgroup",  "hr",
-	    "main",    "menu",    "nav",     "ol",         "p",       "pre",     "section",
-	    "summary", "table",   "ul",      "li",         "dd",      "dt"};
+	    "address",  "article",    "aside",  "blockquote", "details", "div",    "dl",
+	    "fieldset", "figcaption", "figure", "footer",     "form",    "h1",     "h2",
+	    "h3",       "h4",         "h5",     "h6",         "header",  "hgroup", "hr",
+	    "main",     "menu",       "nav",    "ol",         "p",       "pre",    "section",
+	    "summary",  "table",      "ul",     "li",         "dd",      "dt"};
 	return std::ranges::find(names, tag) != std::ranges::end(names);
 }
 
 // Formatting elements get the adoption agency treatment.
 [[nodiscard]] inline bool is_formatting_element(std::string_view tag) {
-	constexpr std::string_view names[] = {"a", "b",      "big", "code", "em",     "font", "i",
-	                                      "nobr", "s",   "small", "strike", "strong", "tt", "u"};
+	constexpr std::string_view names[] = {"a",    "b", "big",   "code",   "em",     "font", "i",
+	                                      "nobr", "s", "small", "strike", "strong", "tt",   "u"};
 	return std::ranges::find(names, tag) != std::ranges::end(names);
 }
 
 // "Special" in the spec's sense: these break out of formatting scope.
 [[nodiscard]] inline bool is_special_element(std::string_view tag) {
 	constexpr std::string_view names[] = {
-	    "address", "applet", "area",   "article", "aside",   "base",    "basefont", "bgsound",
-	    "blockquote", "body", "br",    "button",  "caption", "center",  "col",      "colgroup",
-	    "dd",      "details", "dir",   "div",     "dl",      "dt",      "embed",    "fieldset",
-	    "figcaption", "figure", "footer", "form", "frame",   "frameset", "h1",      "h2",
-	    "h3",      "h4",     "h5",     "h6",      "head",    "header",  "hgroup",   "hr",
-	    "html",    "iframe", "img",    "input",   "li",      "link",    "listing",  "main",
-	    "marquee", "menu",   "meta",   "nav",     "noembed", "noframes", "noscript", "object",
-	    "ol",      "p",      "param",  "plaintext", "pre",   "script",  "section",  "select",
-	    "source",  "style",  "summary", "table",  "tbody",   "td",      "textarea", "tfoot",
-	    "th",      "thead",  "title",  "tr",      "track",   "ul",      "wbr",      "xmp"};
+	    "address",  "applet",     "area",     "article",    "aside",    "base",     "basefont",
+	    "bgsound",  "blockquote", "body",     "br",         "button",   "caption",  "center",
+	    "col",      "colgroup",   "dd",       "details",    "dir",      "div",      "dl",
+	    "dt",       "embed",      "fieldset", "figcaption", "figure",   "footer",   "form",
+	    "frame",    "frameset",   "h1",       "h2",         "h3",       "h4",       "h5",
+	    "h6",       "head",       "header",   "hgroup",     "hr",       "html",     "iframe",
+	    "img",      "input",      "li",       "link",       "listing",  "main",     "marquee",
+	    "menu",     "meta",       "nav",      "noembed",    "noframes", "noscript", "object",
+	    "ol",       "p",          "param",    "plaintext",  "pre",      "script",   "section",
+	    "select",   "source",     "style",    "summary",    "table",    "tbody",    "td",
+	    "textarea", "tfoot",      "th",       "thead",      "title",    "tr",       "track",
+	    "ul",       "wbr",        "xmp"};
 	return std::ranges::find(names, tag) != std::ranges::end(names);
 }
 
@@ -180,7 +182,9 @@ private:
 	};
 
 	[[nodiscard]] insertion_point where_to_insert() const {
-		if (!foster_parenting()) { return insertion_point{current(), node_id{}}; }
+		if (!foster_parenting()) {
+			return insertion_point{current(), node_id{}};
+		}
 		for (std::size_t i = open_.size(); i-- > 0;) {
 			if (open_[i].tag == "table") {
 				return insertion_point{i > 0 ? open_[i - 1].id : root_, open_[i].id};
@@ -198,8 +202,7 @@ private:
 	}
 	[[nodiscard]] bool foster_parenting() const {
 		const std::string_view tag = current_tag();
-		return tag == "table" || tag == "tbody" || tag == "thead" || tag == "tfoot" ||
-		       tag == "tr";
+		return tag == "table" || tag == "tbody" || tag == "thead" || tag == "tfoot" || tag == "tr";
 	}
 
 	// Table structure belongs INSIDE the table; everything else that turns up
@@ -290,8 +293,8 @@ private:
 		return tag.size() == 2 && tag[0] == 'h' && tag[1] >= '1' && tag[1] <= '6';
 	}
 	[[nodiscard]] static bool is_head_only(std::string_view tag) {
-		constexpr std::string_view names[] = {"base", "basefont", "bgsound", "link",
-		                                      "meta", "noscript", "script",  "style",
+		constexpr std::string_view names[] = {"base",     "basefont", "bgsound", "link",
+		                                      "meta",     "noscript", "script",  "style",
 		                                      "template", "title"};
 		return std::ranges::find(names, tag) != std::ranges::end(names);
 	}
@@ -384,8 +387,8 @@ private:
 				while (open_.size() > i) { pop(); }
 				return;
 			}
-			if (is_special_element(open_[i].tag) && open_[i].tag != "div" &&
-			    open_[i].tag != "p" && open_[i].tag != "address") {
+			if (is_special_element(open_[i].tag) && open_[i].tag != "div" && open_[i].tag != "p" &&
+			    open_[i].tag != "address") {
 				return;
 			}
 		}
@@ -487,9 +490,8 @@ private:
 		const formatting target = active_[found];
 		if (!on_stack(target.id)) {
 			// Active but already gone from the stack: just forget it.
-			std::erase_if(active_, [&](const formatting & f) {
-				return !f.marker && f.id == target.id;
-			});
+			std::erase_if(active_,
+			              [&](const formatting & f) { return !f.marker && f.id == target.id; });
 			return true;
 		}
 

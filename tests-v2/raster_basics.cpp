@@ -85,7 +85,8 @@ void test_blend_over() {
 	// subtly the wrong shade, which is exactly the kind of bug a golden image
 	// catches long after it was introduced.
 	check(blend_over(0xFF000000u, color{0xFFFF0000u}) == 0xFFFF0000u, "an opaque source replaces");
-	check(blend_over(0xFF00FF00u, color{0x00FF0000u}) == 0xFF00FF00u, "a transparent source does nothing");
+	check(blend_over(0xFF00FF00u, color{0x00FF0000u}) == 0xFF00FF00u,
+	      "a transparent source does nothing");
 	const std::uint32_t half = blend_over(0xFF000000u, color::rgba(255, 255, 255, 128));
 	const std::uint32_t red = (half >> 16) & 0xFFu;
 	check(red >= 126 && red <= 130, "half alpha over black lands near the midpoint");
@@ -202,7 +203,8 @@ void test_scrolling_recomposites_without_rastering() {
 		if (pixel_at(backend.target(), 10, y) != before[static_cast<std::size_t>(y + 20)]) {
 			shifted = false;
 			std::printf("     first mismatch at y=%d: %08X vs %08X\n", y,
-			            pixel_at(backend.target(), 10, y), before[static_cast<std::size_t>(y + 20)]);
+			            pixel_at(backend.target(), 10, y),
+			            before[static_cast<std::size_t>(y + 20)]);
 			break;
 		}
 	}
@@ -326,7 +328,8 @@ void test_relayout_invalidates_every_tile() {
 constexpr std::string_view golden_path = "tests-v2/golden/page.ppm";
 
 [[nodiscard]] std::string to_ppm(const surface & s) {
-	std::string out = "P6\n" + std::to_string(s.width()) + " " + std::to_string(s.height()) + "\n255\n";
+	std::string out =
+	    "P6\n" + std::to_string(s.width()) + " " + std::to_string(s.height()) + "\n255\n";
 	out.reserve(out.size() + static_cast<std::size_t>(s.width() * s.height()) * 3);
 	for (int y = 0; y < s.height(); ++y) {
 		for (int x = 0; x < s.width(); ++x) {
@@ -368,7 +371,8 @@ void test_golden_page() {
 		}
 		std::fwrite(got.data(), 1, got.size(), f);
 		std::fclose(f);
-		std::printf("     regenerated %s (%zu bytes)\n", std::string{golden_path}.c_str(), got.size());
+		std::printf("     regenerated %s (%zu bytes)\n", std::string{golden_path}.c_str(),
+		            got.size());
 		return;
 	}
 
@@ -381,7 +385,9 @@ void test_golden_page() {
 	}
 	std::string want;
 	char buffer[4096];
-	while (const std::size_t n = std::fread(buffer, 1, sizeof buffer, f)) { want.append(buffer, n); }
+	while (const std::size_t n = std::fread(buffer, 1, sizeof buffer, f)) {
+		want.append(buffer, n);
+	}
 	std::fclose(f);
 
 	if (got == want) {

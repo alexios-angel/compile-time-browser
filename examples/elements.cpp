@@ -8,17 +8,17 @@
 //
 // Build: cmake --build --preset default --target ctbrowser-example-elements
 
+#include <SDL3/SDL_main.h>
 #include <ctbrowser.hpp>
 #include <ctbrowser/app.hpp>
-#include <SDL3/SDL_main.h>
 
 #if defined(__has_builtin)
-#	if __has_builtin(__builtin_std_embed)
-#		pragma clang diagnostic push
-#		pragma clang diagnostic ignored "-Wc++2d-extensions"
+#if __has_builtin(__builtin_std_embed)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wc++2d-extensions"
 #depend "examples/assets/fonts/**"
-#		pragma clang diagnostic pop
-#	endif
+#pragma clang diagnostic pop
+#endif
 #endif
 
 using app = ctbrowser::page<R"(<!DOCTYPE html>

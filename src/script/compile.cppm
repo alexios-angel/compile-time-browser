@@ -71,11 +71,11 @@ private:
 	struct frame {
 		std::uint32_t proto = 0;
 		std::vector<local> locals;
-		std::vector<std::string> declared;    // pre-scanned; see collect_declared_names
-		std::vector<std::string> captured;    // names some nested function mentions
+		std::vector<std::string> declared;      // pre-scanned; see collect_declared_names
+		std::vector<std::string> captured;      // names some nested function mentions
 		std::vector<std::string> upvalue_names; // parallel to proto().upvalues
 		std::vector<std::string> predeclared;   // hoisted at body entry; see predeclare_locals
-		std::vector<std::size_t> scope_marks; // locals.size() at each scope entry
+		std::vector<std::size_t> scope_marks;   // locals.size() at each scope entry
 		std::uint8_t next_reg = 0;
 		std::uint8_t high_water = 0;
 		bool is_async = false; // `return v` hands back a settled promise of v
@@ -218,7 +218,8 @@ private:
 
 	// Names that any nested function inside `body` mentions. Over-approximate
 	// on purpose - see the note at the top of this file.
-	void collect_captured_names(std::int32_t idx, bool inside_nested, std::vector<std::string> & out) {
+	void collect_captured_names(std::int32_t idx, bool inside_nested,
+	                            std::vector<std::string> & out) {
 		if (idx < 0) { return; }
 		const vp::node & n = at(idx);
 		const bool nested = inside_nested || n.kind == vp::nk::func_decl ||
@@ -242,8 +243,8 @@ private:
 	// wrong by two characters, which shows up as 'a' + 'b' === "'a''b'" and
 	// as o['a'] failing to find the property named a.
 	[[nodiscard]] static std::string decode_string_literal(std::string_view lexeme) {
-		if (lexeme.size() >= 2 && (lexeme.front() == '\'' || lexeme.front() == '"' ||
-		                           lexeme.front() == '`')) {
+		if (lexeme.size() >= 2 &&
+		    (lexeme.front() == '\'' || lexeme.front() == '"' || lexeme.front() == '`')) {
 			lexeme = lexeme.substr(1, lexeme.size() - 2);
 		}
 		std::string out;
@@ -275,7 +276,9 @@ private:
 		if (body < 0) { return; }
 		const vp::node & n = at(body);
 		if (n.kind == vp::nk::var_decl) {
-			for (const std::int32_t d : kids(n)) { fn().declared.push_back(std::string{at(d).text}); }
+			for (const std::int32_t d : kids(n)) {
+				fn().declared.push_back(std::string{at(d).text});
+			}
 			return;
 		}
 		if (n.kind == vp::nk::block || n.kind == vp::nk::program) {
@@ -625,14 +628,12 @@ private:
 
 		const std::uint8_t source = alloc_reg();
 		compile_expr(n.b, source);
-		if (n.text == "in") {
-			proto().emit(instruction{op::own_keys, source, source});
-		}
+		if (n.text == "in") { proto().emit(instruction{op::own_keys, source, source}); }
 
 		const std::uint8_t length = alloc_reg();
 		const std::uint16_t length_name = proto().add_name("length");
-		proto().emit(instruction{op::get_prop, length, source,
-		                         static_cast<std::uint8_t>(length_name)});
+		proto().emit(
+		    instruction{op::get_prop, length, source, static_cast<std::uint8_t>(length_name)});
 		const std::uint8_t index = alloc_reg();
 		emit_const(index, value::number(0));
 		const std::uint8_t one = alloc_reg();
@@ -1020,9 +1021,9 @@ private:
 		if (target.kind == vp::nk::member) {
 			const std::uint8_t object = alloc_reg();
 			compile_expr(target.a, object);
-			proto().emit(instruction{op::delete_prop, object,
-			                         static_cast<std::uint8_t>(
-			                             proto().add_name(std::string{target.text}))});
+			proto().emit(
+			    instruction{op::delete_prop, object,
+				            static_cast<std::uint8_t>(proto().add_name(std::string{target.text}))});
 			emit_const(dst, value::boolean(true));
 		} else if (target.kind == vp::nk::index) {
 			const std::uint8_t object = alloc_reg();
@@ -1045,31 +1046,56 @@ private:
 		compile_expr(n.b, rhs);
 		const std::string_view o = n.text;
 		op code = op::add_generic;
-		if (o == "+") { code = op::add_generic; }
-		else if (o == "-") { code = op::sub; }
-		else if (o == "*") { code = op::mul; }
-		else if (o == "/") { code = op::div; }
-		else if (o == "%") { code = op::mod; }
-		else if (o == "**") { code = op::pow; }
-		else if (o == "===") { code = op::equal; }
-		else if (o == "!==") { code = op::not_equal; }
+		if (o == "+") {
+			code = op::add_generic;
+		} else if (o == "-") {
+			code = op::sub;
+		} else if (o == "*") {
+			code = op::mul;
+		} else if (o == "/") {
+			code = op::div;
+		} else if (o == "%") {
+			code = op::mod;
+		} else if (o == "**") {
+			code = op::pow;
+		} else if (o == "===") {
+			code = op::equal;
+		} else if (o == "!==") {
+			code = op::not_equal;
+		}
 		// `==` and `!=` are LOOSE. Compiling `!=` as `!==` made `1 != "1"` true,
 		// which is the opposite of what the operator means.
-		else if (o == "==") { code = op::loose_equal; }
-		else if (o == "!=") { code = op::loose_not_equal; }
-		else if (o == "&") { code = op::bit_and; }
-		else if (o == "|") { code = op::bit_or; }
-		else if (o == "^") { code = op::bit_xor; }
-		else if (o == "<<") { code = op::shl; }
-		else if (o == ">>") { code = op::shr; }
-		else if (o == ">>>") { code = op::ushr; }
-		else if (o == "instanceof") { code = op::instance_of; }
-		else if (o == "in") { code = op::has_property; }
-		else if (o == "<") { code = op::less; }
-		else if (o == "<=") { code = op::less_equal; }
-		else if (o == ">") { code = op::greater; }
-		else if (o == ">=") { code = op::greater_equal; }
-		else { fail("unsupported binary operator '" + std::string{o} + "'"); }
+		else if (o == "==") {
+			code = op::loose_equal;
+		} else if (o == "!=") {
+			code = op::loose_not_equal;
+		} else if (o == "&") {
+			code = op::bit_and;
+		} else if (o == "|") {
+			code = op::bit_or;
+		} else if (o == "^") {
+			code = op::bit_xor;
+		} else if (o == "<<") {
+			code = op::shl;
+		} else if (o == ">>") {
+			code = op::shr;
+		} else if (o == ">>>") {
+			code = op::ushr;
+		} else if (o == "instanceof") {
+			code = op::instance_of;
+		} else if (o == "in") {
+			code = op::has_property;
+		} else if (o == "<") {
+			code = op::less;
+		} else if (o == "<=") {
+			code = op::less_equal;
+		} else if (o == ">") {
+			code = op::greater;
+		} else if (o == ">=") {
+			code = op::greater_equal;
+		} else {
+			fail("unsupported binary operator '" + std::string{o} + "'");
+		}
 		proto().emit(instruction{code, dst, lhs, rhs});
 		release_to(mark);
 	}
@@ -1095,21 +1121,29 @@ private:
 		const std::uint8_t mark = reg_mark();
 		const std::uint8_t operand = alloc_reg();
 		compile_expr(n.a, operand);
-		if (n.text == "-") { proto().emit(instruction{op::negate, dst, operand}); }
-		else if (n.text == "!") { proto().emit(instruction{op::logical_not, dst, operand}); }
-		else if (n.text == "typeof") { proto().emit(instruction{op::type_of, dst, operand}); }
-		else if (n.text == "await") {
+		if (n.text == "-") {
+			proto().emit(instruction{op::negate, dst, operand});
+		} else if (n.text == "!") {
+			proto().emit(instruction{op::logical_not, dst, operand});
+		} else if (n.text == "typeof") {
+			proto().emit(instruction{op::type_of, dst, operand});
+		} else if (n.text == "await") {
 			// Promises here are SETTLED on creation - there is no event loop
 			// suspending a frame - so awaiting one is reading its value, and
 			// awaiting a plain value is the value. That is the same subset v1
 			// shipped, and it is what `await fetch(...)` needs.
 			proto().emit(instruction{op::await_value, dst, operand});
+		} else if (n.text == "+") {
+			proto().emit(instruction{op::move, dst, operand});
+		} else if (n.text == "~") {
+			proto().emit(instruction{op::bit_not, dst, operand});
 		}
-		else if (n.text == "+") { proto().emit(instruction{op::move, dst, operand}); }
-		else if (n.text == "~") { proto().emit(instruction{op::bit_not, dst, operand}); }
 		// `void x` evaluates x for its effects and yields undefined.
-		else if (n.text == "void") { proto().emit(instruction{op::load_undef, dst}); }
-		else { fail("unsupported unary operator '" + std::string{n.text} + "'"); }
+		else if (n.text == "void") {
+			proto().emit(instruction{op::load_undef, dst});
+		} else {
+			fail("unsupported unary operator '" + std::string{n.text} + "'");
+		}
 		release_to(mark);
 	}
 
@@ -1121,7 +1155,14 @@ private:
 	// increment i twice and store into the wrong slot. This is the shape that
 	// makes both of them correct, and it is why they share a code path.
 	struct reference {
-		enum class kind : std::uint8_t { local, boxed_local, upvalue, global, member, index };
+		enum class kind : std::uint8_t {
+			local,
+			boxed_local,
+			upvalue,
+			global,
+			member,
+			index
+		};
 		kind what = kind::local;
 		std::uint8_t reg = 0;   // local/boxed: its register. member/index: the object.
 		std::uint8_t key = 0;   // index: the key register
@@ -1177,7 +1218,8 @@ private:
 			proto().emit(instruction::with_bx(op::get_global, dst, ref.name));
 			break;
 		case reference::kind::member:
-			proto().emit(instruction{op::get_prop, dst, ref.reg, static_cast<std::uint8_t>(ref.name)});
+			proto().emit(
+			    instruction{op::get_prop, dst, ref.reg, static_cast<std::uint8_t>(ref.name)});
 			break;
 		case reference::kind::index:
 			proto().emit(instruction{op::get_index, dst, ref.reg, ref.key});
@@ -1198,7 +1240,8 @@ private:
 			proto().emit(instruction::with_bx(op::set_global, src, ref.name));
 			break;
 		case reference::kind::member:
-			proto().emit(instruction{op::set_prop, ref.reg, static_cast<std::uint8_t>(ref.name), src});
+			proto().emit(
+			    instruction{op::set_prop, ref.reg, static_cast<std::uint8_t>(ref.name), src});
 			break;
 		case reference::kind::index:
 			proto().emit(instruction{op::set_index, ref.reg, ref.key, src});
@@ -1368,8 +1411,8 @@ private:
 		const std::uint8_t mark = reg_mark();
 		const std::uint8_t base = alloc_reg();
 
-		const bool super_method =
-		    callee.kind == vp::nk::member && callee.a >= 0 && at(callee.a).kind == vp::nk::super_lit;
+		const bool super_method = callee.kind == vp::nk::member && callee.a >= 0 &&
+		                          at(callee.a).kind == vp::nk::super_lit;
 		if (callee.kind == vp::nk::super_lit || super_method) {
 			// `super(...)` is the parent CONSTRUCTOR run against this same
 			// object - it does not make a new one - so the receiver is `this`
@@ -1381,8 +1424,8 @@ private:
 			for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
 			const std::uint8_t self = alloc_reg();
 			proto().emit(instruction{op::load_this, self});
-			proto().emit(instruction{op::call_receiver, base,
-			                         static_cast<std::uint8_t>(args.size()), self});
+			proto().emit(
+			    instruction{op::call_receiver, base, static_cast<std::uint8_t>(args.size()), self});
 			proto().emit(instruction{op::move, dst, base});
 			release_to(mark);
 			return;
@@ -1401,8 +1444,8 @@ private:
 			const std::uint8_t key = alloc_reg();
 			compile_expr(callee.b, key);
 			for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
-			proto().emit(instruction{op::call_computed, base,
-			                         static_cast<std::uint8_t>(args.size()), key});
+			proto().emit(
+			    instruction{op::call_computed, base, static_cast<std::uint8_t>(args.size()), key});
 		} else {
 			compile_expr(n.a, base);
 			for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
@@ -1442,8 +1485,9 @@ private:
 		const std::size_t skip = proto().emit(instruction{op::jump_if_true, test});
 
 		if (n.kind == vp::nk::opt_member) {
-			proto().emit(instruction{op::get_prop, dst, object,
-			                         static_cast<std::uint8_t>(proto().add_name(std::string{n.text}))});
+			proto().emit(
+			    instruction{op::get_prop, dst, object,
+				            static_cast<std::uint8_t>(proto().add_name(std::string{n.text}))});
 		} else if (n.kind == vp::nk::opt_index) {
 			const std::uint8_t key = alloc_reg();
 			compile_expr(n.b, key);
@@ -1640,17 +1684,17 @@ private:
 
 	// --- helpers -------------------------------------------------------------
 	void emit_string(std::uint8_t dst, std::string text) {
-		proto().emit(instruction::with_bx(op::load_string, dst, proto().add_string(std::move(text))));
+		proto().emit(
+		    instruction::with_bx(op::load_string, dst, proto().add_string(std::move(text))));
 	}
 	void emit_const(std::uint8_t dst, value v) {
 		proto().emit(instruction::with_bx(op::load_const, dst, proto().add_constant(v)));
 	}
 
-	void patch_here(std::size_t at_index) {
-		patch_jump(at_index, proto().code.size());
-	}
+	void patch_here(std::size_t at_index) { patch_jump(at_index, proto().code.size()); }
 	void patch_jump(std::size_t at_index, std::size_t target) {
-		const auto offset = static_cast<std::int32_t>(target) - static_cast<std::int32_t>(at_index) - 1;
+		const auto offset =
+		    static_cast<std::int32_t>(target) - static_cast<std::int32_t>(at_index) - 1;
 		instruction & jump = proto().code[at_index];
 		const auto narrow = static_cast<std::uint16_t>(static_cast<std::int16_t>(offset));
 		jump.b = static_cast<std::uint8_t>(narrow >> 8);

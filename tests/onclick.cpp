@@ -3,8 +3,8 @@
 // how the Space-Invaders "PLAY AGAIN" panel restarts the game (it uses
 // panel.onclick, not addEventListener). Also checks the onclick getter, direct
 // (non-bubbling) onclick, reassignment, and that a miss does nothing. No SDL.
-#include <ctbrowser.hpp>
 #include <cstdio>
+#include <ctbrowser.hpp>
 
 using page = ctbrowser::page<R"(<!DOCTYPE html>
 <title>onclick</title>
@@ -26,9 +26,12 @@ using page = ctbrowser::page<R"(<!DOCTYPE html>
 </script>)">;
 
 static int fails = 0;
-#define CHECK(c)                                                                   \
-	do {                                                                           \
-		if (!(c)) { std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); ++fails; } \
+#define CHECK(c)                                                                                   \
+	do {                                                                                           \
+		if (!(c)) {                                                                                \
+			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c);                               \
+			++fails;                                                                               \
+		}                                                                                          \
 	} while (0)
 
 static int num(ctbrowser::engine<page> & e, const char * g) {
@@ -38,7 +41,10 @@ static int num(ctbrowser::engine<page> & e, const char * g) {
 int main() {
 	ctbrowser::engine<page> e;
 	CHECK(e.script.ok());
-	if (!e.script.ok()) { std::printf("script threw: %s\n", e.script.exception_message().c_str()); return 1; }
+	if (!e.script.ok()) {
+		std::printf("script threw: %s\n", e.script.exception_message().c_str());
+		return 1;
+	}
 	e.resize_viewport(500, 500);
 	e.frame(500);
 

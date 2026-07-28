@@ -32,13 +32,23 @@ namespace detail {
 inline double anim_num(std::string_view s) noexcept {
 	std::size_t i = 0;
 	bool neg = false;
-	if (i < s.size() && (s[i] == '+' || s[i] == '-')) { neg = s[i] == '-'; ++i; }
+	if (i < s.size() && (s[i] == '+' || s[i] == '-')) {
+		neg = s[i] == '-';
+		++i;
+	}
 	double v = 0;
-	while (i < s.size() && s[i] >= '0' && s[i] <= '9') { v = v * 10 + (s[i] - '0'); ++i; }
+	while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
+		v = v * 10 + (s[i] - '0');
+		++i;
+	}
 	if (i < s.size() && s[i] == '.') {
 		++i;
 		double f = 0.1;
-		while (i < s.size() && s[i] >= '0' && s[i] <= '9') { v += (s[i] - '0') * f; f *= 0.1; ++i; }
+		while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
+			v += (s[i] - '0') * f;
+			f *= 0.1;
+			++i;
+		}
 	}
 	return neg ? -v : v;
 }
@@ -75,7 +85,8 @@ inline std::string interp_value(std::string_view a, std::string_view b, double t
 			return v < 0 ? 0 : v > 255 ? 255 : v;
 		};
 		char buf[8];
-		std::snprintf(buf, sizeof buf, "#%02x%02x%02x", L(ca.r, cb.r), L(ca.g, cb.g), L(ca.b, cb.b));
+		std::snprintf(buf, sizeof buf, "#%02x%02x%02x", L(ca.r, cb.r), L(ca.g, cb.g),
+		              L(ca.b, cb.b));
 		return std::string{buf};
 	}
 	// number-shape interpolation: identical non-numeric runs, matching numbers
@@ -124,7 +135,8 @@ inline void anim_apply_progress(node * e, const ctcss::value_sheet::keyframes_ru
 	double t = span > 1e-9 ? (p - f0->at) / span : 0.0;
 	t = t < 0 ? 0 : t > 1 ? 1 : t;
 
-	const auto decl_get = [](const ctcss::value_sheet::keyframe * f, const std::string & prop) -> std::string_view {
+	const auto decl_get = [](const ctcss::value_sheet::keyframe * f,
+	                         const std::string & prop) -> std::string_view {
 		for (const auto & d : f->decls) {
 			if (d.property == prop) { return d.value; }
 		}
@@ -133,7 +145,9 @@ inline void anim_apply_progress(node * e, const ctcss::value_sheet::keyframes_ru
 	std::vector<std::string> props;
 	for (const auto & d : f0->decls) { props.push_back(d.property); }
 	for (const auto & d : f1->decls) {
-		if (std::find(props.begin(), props.end(), d.property) == props.end()) { props.push_back(d.property); }
+		if (std::find(props.begin(), props.end(), d.property) == props.end()) {
+			props.push_back(d.property);
+		}
 	}
 	for (const std::string & prop : props) {
 		std::string_view va = decl_get(f0, prop);
@@ -167,8 +181,12 @@ inline void anim_node(node * e, const ctcss::value_sheet & sheet, double now_ms)
 				start = k + 1;
 				if (tok.empty()) { continue; }
 				const double tms = css_time_ms(tok);
-				if (tms > 0 && !got_time) { dur = tms; got_time = true; }
-				else if (name.empty() && sheet.animation(tok) != nullptr) { name = std::string{tok}; }
+				if (tms > 0 && !got_time) {
+					dur = tms;
+					got_time = true;
+				} else if (name.empty() && sheet.animation(tok) != nullptr) {
+					name = std::string{tok};
+				}
 			}
 		}
 	}

@@ -37,8 +37,8 @@ public:
 		                                                 stride());
 	}
 	[[nodiscard]] std::span<const std::uint32_t> row(int y) const noexcept {
-		return std::span<const std::uint32_t>{pixels_}.subspan(static_cast<std::size_t>(y) * stride(),
-		                                                       stride());
+		return std::span<const std::uint32_t>{pixels_}.subspan(
+		    static_cast<std::size_t>(y) * stride(), stride());
 	}
 	[[nodiscard]] std::span<const std::uint32_t> pixels() const noexcept { return pixels_; }
 
@@ -91,7 +91,8 @@ struct pixel_rect {
 	return static_cast<int>(f < 0 ? f - 0.5f : f + 0.5f);
 }
 
-[[nodiscard]] inline pixel_rect to_pixels(const rect & r, int clip_width, int clip_height) noexcept {
+[[nodiscard]] inline pixel_rect to_pixels(const rect & r, int clip_width,
+                                          int clip_height) noexcept {
 	pixel_rect out;
 	out.left = round_to_pixel(r.x);
 	out.top = round_to_pixel(r.y);

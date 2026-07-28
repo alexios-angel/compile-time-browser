@@ -3,9 +3,9 @@
 // parks its model ORIGINALS in a container and clones them each round; without
 // this, the second game clones disposed (empty) meshes -> invisible aliens/ship.
 // This reproduces the exact sequence headlessly and asserts the clone renders.
-#include <ctbrowser.hpp>
 #include <cstdint>
 #include <cstdio>
+#include <ctbrowser.hpp>
 
 using page = ctbrowser::page<R"(<!DOCTYPE html>
 <title>ac</title>

@@ -128,8 +128,7 @@ void test_nothing_is_recorded_for_nothing() {
 
 void test_text_is_recorded_with_the_inherited_colour() {
 	fixture f;
-	f.load("<html><body><div id=a>hello</div></body></html>",
-	       "body { color: #0000ff } #a { }");
+	f.load("<html><body><div id=a>hello</div></body></html>", "body { color: #0000ff } #a { }");
 	const auto list = f.record();
 	std::size_t runs = 0;
 	for (const paint_command & c : list->commands()) {
@@ -198,8 +197,10 @@ void test_intersecting_culls_by_region() {
 	display_list list;
 	list.fill(rect{0, 0, 10, 10}, color::rgba(255, 0, 0));
 	list.fill(rect{500, 500, 10, 10}, color::rgba(0, 255, 0));
-	check(list.intersecting(rect{0, 0, 100, 100}).size() == 1, "a region sees only what touches it");
-	check(list.intersecting(rect{400, 400, 200, 200}).size() == 1, "and the far region sees the other");
+	check(list.intersecting(rect{0, 0, 100, 100}).size() == 1,
+	      "a region sees only what touches it");
+	check(list.intersecting(rect{400, 400, 200, 200}).size() == 1,
+	      "and the far region sees the other");
 	check(list.intersecting(rect{2000, 2000, 10, 10}).empty(), "an empty region sees nothing");
 }
 
@@ -257,7 +258,8 @@ void test_bounds_is_the_union() {
 
 void test_scrolling_moves_layers_not_commands() {
 	fixture f;
-	f.load("<html><body><div id=a></div></body></html>", "#a { height: 30px; background-color: red }");
+	f.load("<html><body><div id=a></div></body></html>",
+	       "#a { height: 30px; background-color: red }");
 	const recorder rec{f.atoms};
 	layer_tree tree = rec.record_layers(f.placed);
 	check(tree.size() == 1, "one page, one layer for now");

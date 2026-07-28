@@ -3,16 +3,16 @@
 // document.body.appendChild, getContext("2d"), transformed path
 // drawing, window probing, a requestAnimationFrame loop - all through
 // GENERAL web APIs (no library-specific bindings anywhere). Headless.
-#include <ctbrowser.hpp>
 #include <cstdio>
+#include <ctbrowser.hpp>
 
 static int failures = 0;
-#define CHECK(cond) \
-	do { \
-		if (!(cond)) { \
-			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
-			++failures; \
-		} \
+#define CHECK(cond)                                                                                \
+	do {                                                                                           \
+		if (!(cond)) {                                                                             \
+			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                            \
+			++failures;                                                                            \
+		}                                                                                          \
 	} while (0)
 
 using app = ctbrowser::page<R"(<!DOCTYPE html>

@@ -28,7 +28,6 @@ module ctbrowser.app;
 // The window, the event loop and the only place SDL is read. See the note in
 // app.cppm about why its headers are not in the interface.
 
-
 namespace ctbrowser::detail {
 
 using ctbrowser::shell::browser;
@@ -141,7 +140,8 @@ public:
 	[[nodiscard]] bool start(const app_options & options) override {
 		SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
 		if (options.fullscreen) { flags |= SDL_WINDOW_FULLSCREEN; }
-		window_.reset(SDL_CreateWindow(options.title.c_str(), options.width, options.height, flags));
+		window_.reset(
+		    SDL_CreateWindow(options.title.c_str(), options.width, options.height, flags));
 		if (!window_) { return false; }
 
 		renderer_ = SDL_CreateRenderer(window_.get(), nullptr);
@@ -191,9 +191,9 @@ public:
 		if (!image || image->empty()) { return; }
 		if (texture_ == nullptr || width_ != image->width() || height_ != image->height()) {
 			if (texture_ != nullptr) { SDL_DestroyTexture(texture_); }
-			texture_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888,
-			                             SDL_TEXTUREACCESS_STREAMING, image->width(),
-			                             image->height());
+			texture_ =
+			    SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
+				                  image->width(), image->height());
 			width_ = image->width();
 			height_ = image->height();
 		}
@@ -278,8 +278,11 @@ private:
 	void apply_cursor(browser & page) {
 		SDL_Cursor * want = arrow_;
 		const std::string_view name = page.cursor_at(mouse_x_, mouse_y_);
-		if (name == "pointer") { want = hand_; }
-		else if (name == "text") { want = beam_; }
+		if (name == "pointer") {
+			want = hand_;
+		} else if (name == "text") {
+			want = beam_;
+		}
 		if (want != nullptr && want != current_cursor_) {
 			SDL_SetCursor(want);
 			current_cursor_ = want;
@@ -479,7 +482,7 @@ struct frame_record {
 inline void report_profile(const std::vector<frame_record> & history, double wall_seconds,
                            double cpu_seconds, const std::string & path) {
 	if (history.empty()) { return; }
-	const auto total = [&history](double frame_record::*field) {
+	const auto total = [&history](double frame_record::* field) {
 		double sum = 0;
 		for (const frame_record & r : history) { sum += r.*field; }
 		return sum;
@@ -519,8 +522,7 @@ inline void report_profile(const std::vector<frame_record> & history, double wal
 	if (!frame_times.empty()) {
 		std::printf("  ---- per drawn frame (ms) ----\n");
 		std::printf("    median %6.2f   p95 %6.2f   max %6.2f\n", percentile(frame_times, 0.5),
-		            percentile(frame_times, 0.95),
-		            *std::ranges::max_element(frame_times));
+		            percentile(frame_times, 0.95), *std::ranges::max_element(frame_times));
 	}
 	std::printf("-----------------------------------------------------------\n");
 
@@ -575,13 +577,14 @@ int run_app(std::string_view html, app_options options) {
 	// The system clipboard. The engine keeps its own when this is absent, so
 	// copy and paste work headlessly - they just do not leave the process.
 #if CTBROWSER_WITH_SDL3
-	page.set_clipboard_hooks([](const std::string & text) { (void)SDL_SetClipboardText(text.c_str()); },
-	                         [] {
-		                         char * owned = SDL_GetClipboardText();
-		                         std::string text = owned != nullptr ? owned : "";
-		                         SDL_free(owned);
-		                         return text;
-	                         });
+	page.set_clipboard_hooks(
+	    [](const std::string & text) { (void)SDL_SetClipboardText(text.c_str()); },
+	    [] {
+		    char * owned = SDL_GetClipboardText();
+		    std::string text = owned != nullptr ? owned : "";
+		    SDL_free(owned);
+		    return text;
+	    });
 	// alert() as a real modal, and a link that leaves the page handed to the
 	// system browser. Both are what a user expects and neither can live in the
 	// engine, which has no window and no idea what a browser is.
@@ -607,13 +610,13 @@ int run_app(std::string_view html, app_options options) {
 	// the honest way to say so rather than a half-built element that looks like
 	// the real thing.
 	detail::audio_device audio;
-	page.define_native("playSound", [&audio, &page](script::context & cx,
-	                                                std::span<script::value> args) {
-		const std::string name = args.empty() ? std::string{} : cx.to_string(args[0]);
-		const float volume =
-		    args.size() > 1 ? static_cast<float>(script::context::to_number(args[1])) : 1.0F;
-		return script::value::boolean(audio.play(page.assets(), name, volume));
-	});
+	page.define_native(
+	    "playSound", [&audio, &page](script::context & cx, std::span<script::value> args) {
+		    const std::string name = args.empty() ? std::string{} : cx.to_string(args[0]);
+		    const float volume =
+		        args.size() > 1 ? static_cast<float>(script::context::to_number(args[1])) : 1.0F;
+		    return script::value::boolean(audio.play(page.assets(), name, volume));
+	    });
 
 	page.load_html(html);
 	if (options.on_ready) { options.on_ready(page); }
@@ -641,7 +644,8 @@ int run_app(std::string_view html, app_options options) {
 
 		if (!host->pump(page, needs_frame)) { break; }
 		const auto after_poll = clock::now();
-		record.poll_ms = std::chrono::duration<double, std::milli>(after_poll - iteration_began).count();
+		record.poll_ms =
+		    std::chrono::duration<double, std::milli>(after_poll - iteration_began).count();
 
 		const auto now = after_poll;
 		const double elapsed_ms =
@@ -677,10 +681,10 @@ int run_app(std::string_view html, app_options options) {
 		record.layouts = static_cast<std::uint32_t>(page.layout_count());
 
 		++frame;
-		const bool last =
-		    (options.max_frames > 0 && frame >= options.max_frames) ||
-		    (options.profile_seconds > 0 &&
-		     std::chrono::duration<double>(clock::now() - started).count() >= options.profile_seconds);
+		const bool last = (options.max_frames > 0 && frame >= options.max_frames) ||
+		                  (options.profile_seconds > 0 &&
+		                   std::chrono::duration<double>(clock::now() - started).count() >=
+		                       options.profile_seconds);
 		if (!options.screenshot_path.empty() &&
 		    (frame - 1 == options.screenshot_frame || (options.screenshot_frame < 0 && last))) {
 			if (const auto image = page.read_pixels()) {
@@ -717,20 +721,23 @@ int run_app(std::string_view html, app_options options) {
 				// the caret's next blink - so a blinking caret still blinks on
 				// time and a page with neither sleeps until the user acts.
 				const double due = page.next_wakeup_ms();
-				const std::int32_t timeout =
-				    due >= static_cast<double>(idle_wait_ms)
-				        ? idle_wait_ms
-				        : static_cast<std::int32_t>(std::max(1.0, due));
+				const std::int32_t timeout = due >= static_cast<double>(idle_wait_ms)
+				                                 ? idle_wait_ms
+				                                 : static_cast<std::int32_t>(std::max(1.0, due));
 				host->wait_for_event(timeout);
 			}
 		}
-		record.wait_ms = std::chrono::duration<double, std::milli>(clock::now() - before_wait).count();
+		record.wait_ms =
+		    std::chrono::duration<double, std::milli>(clock::now() - before_wait).count();
 		// BOUNDED. A profile of a loop that has gone wrong is exactly when the
 		// history explodes - the first run of this wrote 306 MB in ten seconds
 		// - and a profiler that fills the disk cannot be used on the bug it is
 		// there to find.
-		if (profiling && history.size() < profile_history_limit) { history.push_back(record); }
-		else if (profiling) { ++dropped_records; }
+		if (profiling && history.size() < profile_history_limit) {
+			history.push_back(record);
+		} else if (profiling) {
+			++dropped_records;
+		}
 	}
 
 	if (profiling) {
@@ -738,7 +745,8 @@ int run_app(std::string_view html, app_options options) {
 			std::printf("ctbrowser: profile kept the first %zu iterations and dropped %zu more\n",
 			            history.size(), dropped_records);
 		}
-		detail::report_profile(history, std::chrono::duration<double>(clock::now() - started).count(),
+		detail::report_profile(history,
+		                       std::chrono::duration<double>(clock::now() - started).count(),
 		                       process_cpu_seconds() - cpu_started, options.profile_path);
 	}
 

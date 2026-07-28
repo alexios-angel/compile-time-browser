@@ -71,8 +71,7 @@ template <typename F> [[nodiscard]] double time_ms(int reps, F && f) {
 // that is not there. Filtering to non-text boxes is the like-for-like measure.
 std::size_t count_elements(const ctbrowser::layout::fragment & f) {
 	using ctbrowser::layout::box_kind;
-	std::size_t total =
-	    (f.source && f.box != nullptr && f.box->kind != box_kind::text) ? 1u : 0u;
+	std::size_t total = (f.source && f.box != nullptr && f.box->kind != box_kind::text) ? 1u : 0u;
 	for (const auto & c : f.children) { total += count_elements(c); }
 	return total;
 }
@@ -138,13 +137,13 @@ int main() {
 	ctbrowser::scheduler pool;
 	std::printf("layout, viewport 900px, %zu pool workers + the calling thread\n\n",
 	            pool.worker_count());
-	std::printf("%-12s %6s %6s %-7s %7s %6s  %8s %8s %8s %8s  %7s %7s\n", "  document",
-	            "v1 el", "boxes", "counts", "frags", "split", "v1 ms", "v2 build", "v2 seq",
-	            "v2 par", "seq/v1", "par/seq");
+	std::printf("%-12s %6s %6s %-7s %7s %6s  %8s %8s %8s %8s  %7s %7s\n", "  document", "v1 el",
+	            "boxes", "counts", "frags", "split", "v1 ms", "v2 build", "v2 seq", "v2 par",
+	            "seq/v1", "par/seq");
 	std::printf("%s\n", std::string(110, '-').c_str());
-	for (const auto [sections, rows] : {std::pair{4, 5}, std::pair{10, 10}, std::pair{16, 14},
-	                                    std::pair{24, 18}, std::pair{40, 25}, std::pair{70, 32},
-	                                    std::pair{120, 40}, std::pair{300, 60}}) {
+	for (const auto [sections, rows] :
+	     {std::pair{4, 5}, std::pair{10, 10}, std::pair{16, 14}, std::pair{24, 18},
+	      std::pair{40, 25}, std::pair{70, 32}, std::pair{120, 40}, std::pair{300, 60}}) {
 		run_case(sections, rows, 900, pool);
 	}
 	std::printf("\nv1 ms is layout AND paint-command recording; v2 ms is layout only\n"

@@ -136,9 +136,7 @@ public:
 
 	// Bump the epoch so that everything retired up to now is strictly older
 	// than anything a reader can announce from here on.
-	std::uint64_t advance() noexcept {
-		return epoch_.fetch_add(1, std::memory_order_seq_cst) + 1;
-	}
+	std::uint64_t advance() noexcept { return epoch_.fetch_add(1, std::memory_order_seq_cst) + 1; }
 
 	// Destroy everything now provably unreachable. Called by writers, not
 	// readers. Returns how many objects were destroyed.
@@ -149,10 +147,10 @@ public:
 		std::vector<entry> doomed;
 		{
 			const std::lock_guard lock{retired_mutex_};
-			const auto split = std::partition(retired_.begin(), retired_.end(),
-			                                  [oldest_reader](const entry & e) {
-				                                  return e.retired_at >= oldest_reader;
-			                                  });
+			const auto split =
+			    std::partition(retired_.begin(), retired_.end(), [oldest_reader](const entry & e) {
+				    return e.retired_at >= oldest_reader;
+			    });
 			doomed.assign(std::make_move_iterator(split), std::make_move_iterator(retired_.end()));
 			retired_.erase(split, retired_.end());
 		}

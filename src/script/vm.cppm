@@ -79,7 +79,8 @@ struct closure_object final : heap_object {
 
 	const function_proto * proto = nullptr;
 	std::vector<value> upvalues; // each one is a cell_object
-	explicit closure_object(const function_proto * p) : heap_object(heap_kind::function), proto(p) {}
+	explicit closure_object(const function_proto * p)
+	    : heap_object(heap_kind::function), proto(p) {}
 };
 
 struct run_result {
@@ -142,8 +143,7 @@ public:
 	// Re-entrant: it runs a nested interpreter loop on the existing register
 	// stack rather than resetting it, so a listener may itself call back into
 	// script.
-	value call(value callable, std::span<const value> args,
-	           value this_value = value::undefined());
+	value call(value callable, std::span<const value> args, value this_value = value::undefined());
 
 	// --- conversions (ECMA-262 shaped, and shared with the bindings) -------
 	[[nodiscard]] static bool truthy(value v);
@@ -176,7 +176,13 @@ public:
 	// Not a full prototype CHAIN: there is one level, and no user-visible
 	// `__proto__` or `Object.create`. That is a real limitation, and it covers
 	// everything a page does with builtins.
-	enum class proto_kind : std::uint8_t { object, array, string, number, count_ };
+	enum class proto_kind : std::uint8_t {
+		object,
+		array,
+		string,
+		number,
+		count_
+	};
 
 	void set_prototype(proto_kind kind, object_object * table) {
 		prototypes_[static_cast<std::size_t>(kind)] = table;
@@ -255,10 +261,10 @@ private:
 
 	// A live try block: where to jump, and where the state was when it started.
 	struct handler {
-		std::size_t frame = 0;    // index into frames_
-		std::size_t address = 0;  // the catch block
-		std::size_t reg_top = 0;  // registers_ size on entry
-		std::uint8_t slot = 0;    // where to put the thrown value
+		std::size_t frame = 0;   // index into frames_
+		std::size_t address = 0; // the catch block
+		std::size_t reg_top = 0; // registers_ size on entry
+		std::uint8_t slot = 0;   // where to put the thrown value
 	};
 
 	[[nodiscard]] value execute(const program & prog, const function_proto & entry);

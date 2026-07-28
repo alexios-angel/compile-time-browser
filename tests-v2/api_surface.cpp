@@ -12,10 +12,10 @@
 #include "check.hpp"
 #include <algorithm>
 #include <cstdio>
-#include <fstream>
-#include <sstream>
 #include <filesystem>
+#include <fstream>
 #include <set>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -106,12 +106,11 @@ int main() {
 	// catch a NEW file that used SDL, and it did not: raster/ttf.cppm was added
 	// and this test stayed green because nobody had added it to the list.
 	const std::set<std::string> allowed = {
-	    "src/shell/app.cppm",   // the window, the event loop, audio, image decode
-	    "src/shell/app.cpp",    //   and its implementation
-	    "src/raster/ttf.cppm",  // real fonts, through SDL3_ttf - see its header
-	    "src/gpu/device.cppm",  // the SDL_GPUDevice backend
-	    "src/gpu/select.cppm",
-	    "src/gpu/gpu.cppm",
+	    "src/shell/app.cppm",  // the window, the event loop, audio, image decode
+	    "src/shell/app.cpp",   //   and its implementation
+	    "src/raster/ttf.cppm", // real fonts, through SDL3_ttf - see its header
+	    "src/gpu/device.cppm", // the SDL_GPUDevice backend
+	    "src/gpu/select.cppm", "src/gpu/gpu.cppm",
 	};
 	std::size_t swept = 0;
 	for (const auto & entry : std::filesystem::recursive_directory_iterator{"src"}) {

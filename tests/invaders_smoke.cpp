@@ -2,13 +2,13 @@
 // the full Vite+BabylonJS bundle, value-parsed and run against babylon.hpp. We
 // let assets load, confirm the script ran without an uncaught throw, press Enter
 // to start, drive frames, and confirm the 3D canvas rendered non-clear pixels.
-#include <ctbrowser.hpp>
 #include <cstdint>
 #include <cstdio>
+#include <ctbrowser.hpp>
 
 using page = ctbrowser::page<
 #include "../examples/space-invaders.inc"
->;
+    >;
 
 static int count_nonclear(const ctbrowser::node * c) {
 	if (c == nullptr || c->pixels.empty()) { return -1; }
@@ -54,7 +54,11 @@ int main() {
 		e.frame(900);
 		e.tick(1.0 / 60.0);
 		// move + shoot so the mesh/collision paths exercise
-		if (i % 20 < 10) { e.key("ArrowLeft", true); } else { e.key("ArrowLeft", false); }
+		if (i % 20 < 10) {
+			e.key("ArrowLeft", true);
+		} else {
+			e.key("ArrowLeft", false);
+		}
 		if (i % 30 == 0) { e.key("Space", true); }
 		if (i % 30 == 8) { e.key("Space", false); }
 	}

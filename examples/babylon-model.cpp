@@ -10,9 +10,9 @@
 //   brew install boost sdl3
 //   make babylon-model FETCH=1
 //   LD_LIBRARY_PATH=$(brew --prefix)/lib ./babylon-model
+#include <SDL3/SDL_main.h>
 #include <ctbrowser.hpp>
 #include <ctbrowser/app.hpp>
-#include <SDL3/SDL_main.h>
 
 using app = ctbrowser::page<R"(<!DOCTYPE html>
 <title>Babylon glTF model</title>

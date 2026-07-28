@@ -96,8 +96,7 @@ private:
 		if (const auto it = cache_.find(path); it != cache_.end()) { return it->second; }
 		MIX_Audio * a = nullptr;
 		if (const embedded_asset * em = find_asset(embedded, path)) {
-			a = MIX_LoadAudio_IO(mixer_, SDL_IOFromConstMem(em->data, em->size), true,
-			                     true);
+			a = MIX_LoadAudio_IO(mixer_, SDL_IOFromConstMem(em->data, em->size), true, true);
 		}
 		if (a == nullptr) { a = MIX_LoadAudio(mixer_, path.c_str(), true); }
 		cache_.emplace(path, a); // nullptr negative-caches the miss
@@ -148,8 +147,8 @@ public:
 		}
 		wav_data * wav = load(path);
 		if (wav == nullptr) { return 0; }
-		SDL_AudioStream * stream = SDL_OpenAudioDeviceStream(
-		    SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &wav->spec, nullptr, nullptr);
+		SDL_AudioStream * stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
+		                                                     &wav->spec, nullptr, nullptr);
 		if (stream == nullptr) { return 0; }
 		SDL_SetAudioStreamGain(stream, volume_);
 		SDL_PutAudioStreamData(stream, wav->data, static_cast<std::int32_t>(wav->len));
@@ -185,8 +184,8 @@ private:
 		wav_data wav;
 		bool ok = false;
 		if (const embedded_asset * em = find_asset(embedded, path)) {
-			ok = SDL_LoadWAV_IO(SDL_IOFromConstMem(em->data, em->size), true, &wav.spec,
-			                    &wav.data, &wav.len);
+			ok = SDL_LoadWAV_IO(SDL_IOFromConstMem(em->data, em->size), true, &wav.spec, &wav.data,
+			                    &wav.len);
 		}
 		if (!ok && !SDL_LoadWAV(path.c_str(), &wav.spec, &wav.data, &wav.len)) {
 			cache_.emplace(path, wav_data{}); // negative-cache the miss

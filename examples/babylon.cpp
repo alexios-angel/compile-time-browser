@@ -10,9 +10,9 @@
 // Build & run (needs SDL3 + Boost; both via linuxbrew):
 //   brew install boost sdl3
 //   make babylon && ./babylon
+#include <SDL3/SDL_main.h>
 #include <ctbrowser.hpp>
 #include <ctbrowser/app.hpp>
-#include <SDL3/SDL_main.h>
 
 using app = ctbrowser::page<R"(<!DOCTYPE html>
 <title>Babylon on ctbrowser</title>

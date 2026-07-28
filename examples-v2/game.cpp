@@ -66,5 +66,6 @@ int main() {
 		requestAnimationFrame(step);
 	}
 	requestAnimationFrame(step);
-</script>)", options);
+</script>)",
+	                          options);
 }

@@ -126,7 +126,6 @@ public:
 		return wrote_to_control_;
 	}
 
-
 	// Layout results, so offsetWidth and friends can answer. Set by the
 	// browser after each layout; null until the first one, and the natives
 	// return 0 then rather than pretending.
@@ -217,9 +216,7 @@ public:
 		// value, so a wrapper still holding the old one is the whole bug.
 		(void)refresh_wrappers();
 		const auto txn = doc_->read();
-		for (node_id at = target; at; at = txn.parent(at)) {
-			fire_at(at, type, event);
-		}
+		for (node_id at = target; at; at = txn.parent(at)) { fire_at(at, type, event); }
 		fire_global(type, event);
 		return prevented(event);
 	}
@@ -354,7 +351,8 @@ private:
 		const auto txn = doc_->read();
 		obj.set("tagName", cx.string(std::string{atoms_->text(txn.tag(id).value_or(atom{}))}));
 		obj.set("id", cx.string(std::string{txn.attribute_value(id, atoms_->intern("id"))}));
-		obj.set("className", cx.string(std::string{txn.attribute_value(id, atoms_->intern("class"))}));
+		obj.set("className",
+		        cx.string(std::string{txn.attribute_value(id, atoms_->intern("class"))}));
 		// `width` and `height` are the ATTRIBUTES, not the laid-out box. For a
 		// <canvas> they are its pixel buffer's size, and essentially every
 		// canvas page computes with them - `canvas.width/2` is the first line
@@ -660,68 +658,67 @@ private:
 		};
 
 		method("fillRect", draws([canvas](context &, std::span<value> a) {
-			canvas->fill_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
-		}));
+			       canvas->fill_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
+		       }));
 		method("clearRect", draws([canvas](context &, std::span<value> a) {
-			canvas->clear_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
-		}));
+			       canvas->clear_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
+		       }));
 		method("strokeRect", draws([canvas](context &, std::span<value> a) {
-			canvas->stroke_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
-		}));
+			       canvas->stroke_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
+		       }));
 		method("beginPath", draws([canvas](context &, std::span<value>) { canvas->begin_path(); }));
 		method("closePath", draws([canvas](context &, std::span<value>) { canvas->close_path(); }));
 		method("moveTo", draws([canvas](context &, std::span<value> a) {
-			canvas->move_to(number(a, 0), number(a, 1));
-		}));
+			       canvas->move_to(number(a, 0), number(a, 1));
+		       }));
 		method("lineTo", draws([canvas](context &, std::span<value> a) {
-			canvas->line_to(number(a, 0), number(a, 1));
-		}));
+			       canvas->line_to(number(a, 0), number(a, 1));
+		       }));
 		method("rect", draws([canvas](context &, std::span<value> a) {
-			canvas->rect_path(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
-		}));
+			       canvas->rect_path(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
+		       }));
 		method("arc", draws([canvas](context & c, std::span<value> a) {
-			canvas->arc(number(a, 0), number(a, 1), number(a, 2), number(a, 3), number(a, 4),
-			            a.size() > 5 && context::truthy(a[5]));
-			(void)c;
-		}));
+			       canvas->arc(number(a, 0), number(a, 1), number(a, 2), number(a, 3), number(a, 4),
+				               a.size() > 5 && context::truthy(a[5]));
+			       (void)c;
+		       }));
 		// drawImage(image, dx, dy [, dw, dh]) and the source-rect form. `image`
 		// is either a loadImage() handle or an <img> element wrapper - the same
 		// two things a page can hold, and both have to work.
 		method("drawImage", draws([this, canvas](context &, std::span<value> a) {
-			const std::shared_ptr<const paint::bitmap> source = image_argument(arg(a, 0));
-			if (!source) { return; }
-			const auto natural_w = static_cast<float>(source->width);
-			const auto natural_h = static_cast<float>(source->height);
-			if (a.size() >= 9) {
-				// The nine-argument form takes a rectangle OUT of the source.
-				canvas->draw_image_region(*source, number(a, 1), number(a, 2), number(a, 3),
-				                          number(a, 4), number(a, 5), number(a, 6), number(a, 7),
-				                          number(a, 8));
-				return;
-			}
-			const float w = a.size() >= 4 ? number(a, 3) : natural_w;
-			const float h = a.size() >= 5 ? number(a, 4) : natural_h;
-			canvas->draw_image(*source, number(a, 1), number(a, 2), w, h);
-		}));
+			       const std::shared_ptr<const paint::bitmap> source = image_argument(arg(a, 0));
+			       if (!source) { return; }
+			       const auto natural_w = static_cast<float>(source->width);
+			       const auto natural_h = static_cast<float>(source->height);
+			       if (a.size() >= 9) {
+				       // The nine-argument form takes a rectangle OUT of the source.
+				       canvas->draw_image_region(*source, number(a, 1), number(a, 2), number(a, 3),
+					                             number(a, 4), number(a, 5), number(a, 6),
+					                             number(a, 7), number(a, 8));
+				       return;
+			       }
+			       const float w = a.size() >= 4 ? number(a, 3) : natural_w;
+			       const float h = a.size() >= 5 ? number(a, 4) : natural_h;
+			       canvas->draw_image(*source, number(a, 1), number(a, 2), w, h);
+		       }));
 		method("fill", draws([canvas](context &, std::span<value>) { canvas->fill(); }));
 		method("stroke", draws([canvas](context &, std::span<value>) { canvas->stroke(); }));
 		method("save", draws([canvas](context &, std::span<value>) { canvas->save(); }));
 		method("restore", draws([canvas](context &, std::span<value>) { canvas->restore(); }));
 		method("translate", draws([canvas](context &, std::span<value> a) {
-			canvas->translate(number(a, 0), number(a, 1));
-		}));
+			       canvas->translate(number(a, 0), number(a, 1));
+		       }));
 		method("scale", draws([canvas](context &, std::span<value> a) {
-			canvas->scale(number(a, 0), number(a, 1));
-		}));
-		method("rotate", draws([canvas](context &, std::span<value> a) {
-			canvas->rotate(number(a, 0));
-		}));
+			       canvas->scale(number(a, 0), number(a, 1));
+		       }));
+		method("rotate",
+		       draws([canvas](context &, std::span<value> a) { canvas->rotate(number(a, 0)); }));
 		method("resetTransform",
 		       draws([canvas](context &, std::span<value>) { canvas->reset_transform(); }));
 		method("fillText", draws([canvas](context & c, std::span<value> a) {
-			canvas->fill_text(a.empty() ? std::string{} : c.to_string(a[0]), number(a, 1),
-			                  number(a, 2));
-		}));
+			       canvas->fill_text(a.empty() ? std::string{} : c.to_string(a[0]), number(a, 1),
+				                     number(a, 2));
+		       }));
 		method("measureText", [canvas](context & c, std::span<value> a) {
 			auto * metrics = static_cast<script::object_object *>(c.make_object().as_heap());
 			const std::string text = a.empty() ? std::string{} : c.to_string(a[0]);
@@ -893,18 +890,16 @@ private:
 			reload_requested_ = true;
 			return value::undefined();
 		});
-		method("toString", [this](context & c, std::span<value>) {
-			return c.string(location_href_);
-		});
+		method("toString",
+		       [this](context & c, std::span<value>) { return c.string(location_href_); });
 		loc->set("href", cx.string(location_href_));
 		loc->set("hash", cx.string(location_hash_));
 		return value::object(loc);
 	}
 
 	[[nodiscard]] script::object_object * document_object() {
-		return document_.is_object()
-		           ? static_cast<script::object_object *>(document_.as_heap())
-		           : nullptr;
+		return document_.is_object() ? static_cast<script::object_object *>(document_.as_heap())
+		                             : nullptr;
 	}
 	[[nodiscard]] script::object_object * window_object() {
 		return window_.is_object() ? static_cast<script::object_object *>(window_.as_heap())
@@ -919,8 +914,8 @@ private:
 		window->set("addEventListener",
 		            value::object(cx.allocate<script::native_object>(
 		                "addEventListener", [this](context & c, std::span<value> args) {
-			                listeners_.push_back(listener{node_id{}, arg_string(c, args, 0),
-			                                              arg(args, 1)});
+			                listeners_.push_back(
+			                    listener{node_id{}, arg_string(c, args, 0), arg(args, 1)});
 			                return value::undefined();
 		                })));
 		auto * performance = static_cast<script::object_object *>(cx.make_object().as_heap());
@@ -942,15 +937,13 @@ private:
 			return value::number(images_->handle_for(*assets_, arg_string(c, args, 0)));
 		});
 		cx.define_native("imageWidth", [this](context &, std::span<value> args) {
-			const auto image = images_ != nullptr
-			                       ? images_->at(static_cast<int>(arg_number(args, 0)))
-			                       : nullptr;
+			const auto image =
+			    images_ != nullptr ? images_->at(static_cast<int>(arg_number(args, 0))) : nullptr;
 			return value::number(image ? image->width : 0);
 		});
 		cx.define_native("imageHeight", [this](context &, std::span<value> args) {
-			const auto image = images_ != nullptr
-			                       ? images_->at(static_cast<int>(arg_number(args, 0)))
-			                       : nullptr;
+			const auto image =
+			    images_ != nullptr ? images_->at(static_cast<int>(arg_number(args, 0))) : nullptr;
 			return value::number(image ? image->height : 0);
 		});
 
@@ -1030,8 +1023,8 @@ private:
 			// what JSON means here.
 			const value parser = c.global("JSON");
 			if (parser.is_object()) {
-				if (value * parse = static_cast<script::object_object *>(parser.as_heap())
-				                        ->find("parse")) {
+				if (value * parse =
+				        static_cast<script::object_object *>(parser.as_heap())->find("parse")) {
 					const value text_value = c.string(text);
 					const value args[1] = {text_value};
 					return c.make_promise(c.call(*parse, args), false);

@@ -77,11 +77,11 @@ inline constexpr std::string_view ua_css = R"(
 )";
 
 // Firefox's modern form-widget theme colors (the chrome layout draws)
-inline constexpr std::uint32_t ua_widget_frame = 0xFF8F8F9Du;  // borders
-inline constexpr std::uint32_t ua_widget_accent = 0xFF0060DFu; // checked fill
-inline constexpr std::uint32_t ua_widget_mark = 0xFFFFFFFFu;   // the check/dot
+inline constexpr std::uint32_t ua_widget_frame = 0xFF8F8F9Du;          // borders
+inline constexpr std::uint32_t ua_widget_accent = 0xFF0060DFu;         // checked fill
+inline constexpr std::uint32_t ua_widget_mark = 0xFFFFFFFFu;           // the check/dot
 inline constexpr std::uint32_t ua_widget_frame_disabled = 0xFFC8C8CEu; // greyed border
-inline constexpr std::uint32_t ua_widget_field = 0xFFFFFFFFu;  // unchecked box / radio face
+inline constexpr std::uint32_t ua_widget_field = 0xFFFFFFFFu;          // unchecked box / radio face
 
 // selected text sits on Firefox's light blue; the glyphs stay black
 inline constexpr std::uint32_t ua_selection_highlight = 0xFFB4D5FEu;

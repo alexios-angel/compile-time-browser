@@ -1,8 +1,8 @@
 module;
-#include <boost/container/small_vector.hpp>
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <boost/container/small_vector.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -58,10 +58,10 @@ import :node;
 export namespace ctbrowser {
 
 enum class dom_error : std::uint8_t {
-	no_such_node,    // the handle is stale or was never valid
-	not_an_element,  // attributes and children need an element
-	would_cycle,     // reparenting a node beneath its own descendant
-	is_root,         // the root has no parent to detach from
+	no_such_node,   // the handle is stale or was never valid
+	not_an_element, // attributes and children need an element
+	would_cycle,    // reparenting a node beneath its own descendant
+	is_root,        // the root has no parent to detach from
 };
 
 class document;
@@ -203,7 +203,9 @@ private:
 
 inline read_txn::read_txn(const document & doc) noexcept : doc_(&doc), guard_(doc.domain_) {}
 
-inline bool read_txn::contains(node_id id) const noexcept { return doc_->find(id) != nullptr; }
+inline bool read_txn::contains(node_id id) const noexcept {
+	return doc_->find(id) != nullptr;
+}
 
 inline std::expected<node_kind, dom_error> read_txn::kind(node_id id) const noexcept {
 	const node * n = doc_->find(id);
@@ -255,8 +257,12 @@ inline bool read_txn::has_attribute(node_id id, atom name) const noexcept {
 	return std::ranges::any_of(attrs, [name](const attribute & a) { return a.name == name; });
 }
 
-inline node_id read_txn::root() const noexcept { return doc_->root_; }
-inline std::uint64_t read_txn::version() const noexcept { return doc_->version(); }
+inline node_id read_txn::root() const noexcept {
+	return doc_->root_;
+}
+inline std::uint64_t read_txn::version() const noexcept {
+	return doc_->version();
+}
 
 inline bool read_txn::is_ancestor_of(node_id ancestor, node_id descendant) const noexcept {
 	for (node_id at = descendant; at; at = parent(at)) {
@@ -370,8 +376,8 @@ inline std::expected<void, dom_error> document::set_attribute(node_id id, atom n
 
 	const attr_list * stale = n->attributes.load(std::memory_order_acquire);
 	auto * fresh = new attr_list{stale->items};
-	const auto at = std::ranges::find_if(fresh->items,
-	                                     [name](const attribute & a) { return a.name == name; });
+	const auto at =
+	    std::ranges::find_if(fresh->items, [name](const attribute & a) { return a.name == name; });
 	if (at != fresh->items.end()) {
 		at->value = std::string{value};
 	} else {
@@ -388,8 +394,8 @@ inline std::expected<void, dom_error> document::remove_attribute(node_id id, ato
 	if (n == nullptr) { return std::unexpected{dom_error::no_such_node}; }
 	const attr_list * stale = n->attributes.load(std::memory_order_acquire);
 	auto * fresh = new attr_list{stale->items};
-	const auto gone =
-	    std::ranges::remove_if(fresh->items, [name](const attribute & a) { return a.name == name; });
+	const auto gone = std::ranges::remove_if(
+	    fresh->items, [name](const attribute & a) { return a.name == name; });
 	fresh->items.erase(gone.begin(), gone.end());
 	publish(n->attributes, static_cast<const attr_list *>(fresh));
 	bump_version();

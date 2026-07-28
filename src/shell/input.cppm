@@ -31,8 +31,8 @@ enum class input_kind : std::uint8_t {
 
 struct input_event {
 	input_kind kind = input_kind::mouse_move;
-	float x = 0; // viewport pixels; for `resize`, the new width
-	float y = 0; // viewport pixels; for `resize`, the new height
+	float x = 0;       // viewport pixels; for `resize`, the new width
+	float y = 0;       // viewport pixels; for `resize`, the new height
 	float wheel_y = 0; // notches, positive = away from the user
 	// key_down/key_up: the DOM `code` of the physical key - "ArrowLeft",
 	// "Space", "KeyA", "Digit1", "Enter". text_input: the typed text.
@@ -75,8 +75,8 @@ struct input_event {
 		return input_event{input_kind::text_input, 0, 0, 0, std::move(text), 0, false, false};
 	}
 	[[nodiscard]] static input_event resized(int width, int height) {
-		return input_event{input_kind::resize, static_cast<float>(width),
-		                   static_cast<float>(height), 0, {}, 0};
+		return input_event{
+		    input_kind::resize, static_cast<float>(width), static_cast<float>(height), 0, {}, 0};
 	}
 };
 

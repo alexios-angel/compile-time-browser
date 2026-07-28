@@ -6,6 +6,19 @@ on: [push, pull_request]
 env:
   CLANG_STD_EMBED_RELEASE: https://github.com/alexios-angel/embed/releases/download/clang-std-embed-23dd34f8f924/clang-std-embed-23dd34f8f924-linux-x86_64.tar.xz
 jobs:
+  # Formatting first, and on its own runner: it needs no submodules, no GLM and
+  # no build, so it answers in seconds rather than after the whole suite.
+  format:
+    name: "clang-format"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Install the std::embed clang toolchain"
+        run: |
+          mkdir -p tools/clang-std-embed
+          curl -fsSL "$CLANG_STD_EMBED_RELEASE" | tar -xJ --strip-components=1 -C tools/clang-std-embed
+      - run: tools/format.sh --check
+
   cmake:
     name: "CMake + Ninja (std::embed clang, C++23)"
     runs-on: ubuntu-latest

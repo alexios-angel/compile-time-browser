@@ -2,17 +2,17 @@
 // aware), caret rendering, change-on-blur, input events, and implicit
 // form submission from a text input. Headless.
 
-#include <ctbrowser.hpp>
 #include <cstdio>
+#include <ctbrowser.hpp>
 #include <string>
 
 static int fails = 0;
-#define CHECK(cond)                                                    \
-	do {                                                               \
-		if (!(cond)) {                                                 \
-			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
-			++fails;                                                   \
-		}                                                              \
+#define CHECK(cond)                                                                                \
+	do {                                                                                           \
+		if (!(cond)) {                                                                             \
+			std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                            \
+			++fails;                                                                               \
+		}                                                                                          \
 	} while (0)
 
 using page = ctbrowser::page<R"(<!DOCTYPE html>
@@ -45,7 +45,7 @@ int main() {
 	ctbrowser::node * t = e.doc.by_id("t");
 	ctbrowser::node * ta = e.doc.by_id("ta");
 	CHECK(t && ta);
-	CHECK(t->value == "hi");     // value attribute initializes
+	CHECK(t->value == "hi");      // value attribute initializes
 	CHECK(ta->value == "ab\ncd"); // textarea content initializes
 
 	const auto click = [&e](ctbrowser::node * n) {
