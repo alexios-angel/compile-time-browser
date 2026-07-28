@@ -12,11 +12,11 @@
 import ctbrowser;
 
 int main() {
-	ctbrowser::app_options options;
-	options.title = "element gallery";
-	options.width = 900;
-	options.height = 700;
-	// The page is taller than the window on purpose: scroll it with the wheel,
-	// PageUp/PageDown, Home and End.
-	return ctbrowser::run_app_file("examples/pages/elements.html", options);
+    ctbrowser::app_options options;
+    options.title = "element gallery";
+    options.width = 900;
+    options.height = 700;
+    // The page is taller than the window on purpose: scroll it with the wheel,
+    // PageUp/PageDown, Home and End.
+    return ctbrowser::run_app_file("examples/pages/elements.html", options);
 }

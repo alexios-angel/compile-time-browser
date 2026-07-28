@@ -20,66 +20,66 @@ import ctbrowser;
 #include <string_view>
 
 int main(int argc, char ** argv) {
-	std::string path;
-	ctbrowser::app_options options;
+    std::string path;
+    ctbrowser::app_options options;
 
-	for (int i = 1; i < argc; ++i) {
-		const std::string_view arg{argv[i]};
-		if (arg == "--size" && i + 2 < argc) {
-			options.width = std::atoi(argv[++i]);
-			options.height = std::atoi(argv[++i]);
-		} else if (arg == "--frames" && i + 1 < argc) {
-			options.max_frames = std::atoi(argv[++i]);
-		} else if (arg == "--shot" && i + 1 < argc) {
-			options.screenshot_path = argv[++i];
-		} else if (arg == "--software") {
-			options.renderer = ctbrowser::renderer_preference::force_software;
-		} else if (!arg.starts_with("--")) {
-			path = arg;
-		}
-	}
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view arg{argv[i]};
+        if (arg == "--size" && i + 2 < argc) {
+            options.width = std::atoi(argv[++i]);
+            options.height = std::atoi(argv[++i]);
+        } else if (arg == "--frames" && i + 1 < argc) {
+            options.max_frames = std::atoi(argv[++i]);
+        } else if (arg == "--shot" && i + 1 < argc) {
+            options.screenshot_path = argv[++i];
+        } else if (arg == "--software") {
+            options.renderer = ctbrowser::renderer_preference::force_software;
+        } else if (!arg.starts_with("--")) {
+            path = arg;
+        }
+    }
 
-	if (path.empty()) {
-		std::printf("usage: ctbrowse <page.html> [--size W H] [--frames N] [--shot out.ppm]\n"
-		            "                [--software]\n");
-		return 2;
-	}
-	// Report a page's script error rather than rendering a silently broken
-	// page. A browser that says nothing when the script failed is the single
-	// most annoying thing to debug a page against.
-	// The live browser, so a followed link can replace the document. run_app
-	// owns it; this is the handle it hands out.
-	ctbrowser::browser * live = nullptr;
-	options.on_ready = [&live](ctbrowser::browser & page) {
-		live = &page;
-		if (!page.script_error().empty()) {
-			std::printf("script error: %s\n", page.script_error().c_str());
-		}
-	};
-	// FOLLOW A LINK TO ANOTHER LOCAL PAGE. The engine hands out an href and
-	// stops - it has no idea what a URL means. Deciding that a relative one
-	// names a file next to the current page is a BROWSER's business, and this
-	// program is the browser. Returning false for anything else hands it to
-	// the system browser rather than swallowing it, which is what an http://
-	// link in a page is for.
-	options.on_navigate = [&path, &live](const std::string & href) {
-		if (href.find("://") != std::string::npos) { return false; }
-		namespace fs = std::filesystem;
-		const fs::path target = fs::path{path}.parent_path() / href;
-		std::ifstream in{target, std::ios::binary};
-		if (!in || live == nullptr) {
-			std::printf("cannot open %s\n", target.string().c_str());
-			return true; // claimed, and reported - not the system browser's problem
-		}
-		const std::string html{std::istreambuf_iterator<char>{in},
-		                       std::istreambuf_iterator<char>{}};
-		path = target.string(); // relative links on the NEW page resolve there
-		live->assets().set_base_path(target.parent_path().string());
-		live->load_html(html);
-		if (!live->script_error().empty()) {
-			std::printf("script error: %s\n", live->script_error().c_str());
-		}
-		return true;
-	};
-	return ctbrowser::run_app_file(path, std::move(options));
+    if (path.empty()) {
+        std::printf("usage: ctbrowse <page.html> [--size W H] [--frames N] [--shot out.ppm]\n"
+                    "                [--software]\n");
+        return 2;
+    }
+    // Report a page's script error rather than rendering a silently broken
+    // page. A browser that says nothing when the script failed is the single
+    // most annoying thing to debug a page against.
+    // The live browser, so a followed link can replace the document. run_app
+    // owns it; this is the handle it hands out.
+    ctbrowser::browser * live = nullptr;
+    options.on_ready = [&live](ctbrowser::browser & page) {
+        live = &page;
+        if (!page.script_error().empty()) {
+            std::printf("script error: %s\n", page.script_error().c_str());
+        }
+    };
+    // FOLLOW A LINK TO ANOTHER LOCAL PAGE. The engine hands out an href and
+    // stops - it has no idea what a URL means. Deciding that a relative one
+    // names a file next to the current page is a BROWSER's business, and this
+    // program is the browser. Returning false for anything else hands it to
+    // the system browser rather than swallowing it, which is what an http://
+    // link in a page is for.
+    options.on_navigate = [&path, &live](const std::string & href) {
+        if (href.find("://") != std::string::npos) { return false; }
+        namespace fs = std::filesystem;
+        const fs::path target = fs::path{path}.parent_path() / href;
+        std::ifstream in{target, std::ios::binary};
+        if (!in || live == nullptr) {
+            std::printf("cannot open %s\n", target.string().c_str());
+            return true; // claimed, and reported - not the system browser's problem
+        }
+        const std::string html{std::istreambuf_iterator<char>{in},
+                               std::istreambuf_iterator<char>{}};
+        path = target.string(); // relative links on the NEW page resolve there
+        live->assets().set_base_path(target.parent_path().string());
+        live->load_html(html);
+        if (!live->script_error().empty()) {
+            std::printf("script error: %s\n", live->script_error().c_str());
+        }
+        return true;
+    };
+    return ctbrowser::run_app_file(path, std::move(options));
 }

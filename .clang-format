@@ -1,14 +1,19 @@
-# ctbrowser formatting. LLVM style, with five deviations.
+# ctbrowser formatting. LLVM style, with four deviations.
 #
-# The deviations are not preferences invented here - they are what the ~40,000
-# lines of this repository were already written in, measured before this file
-# existed:
+# INDENTATION IS SPACES, four of them. That one is a decision rather than a
+# measurement: the repository was written with tabs (30,000 tab-indented lines
+# against 2,600) and was converted wholesale in one commit. Four rather than
+# LLVM's two because the code was wrapped for a four-wide indent and re-wrapping
+# it to two buys nothing.
 #
-#   indentation   30,000 tab-indented lines against 2,600 space-indented ones
+# The other three are not preferences invented here - they are what the ~40,000
+# lines were already written in, measured before this file existed:
+#
 #   column limit  hand-wrapped at 100; only 223 lines exceed it
 #   pointers      `const rect & box` 881 times against `const rect &box` 16
 #   short blocks  1,057 one-line `if (x) { return; }`
-#   namespaces    contents never indented
+#
+# ...plus unindented namespaces, which LLVM already does.
 #
 # Adopting stock LLVM (2-space, 80 columns, `Type *name`, no short blocks)
 # would rewrite essentially every line in the repository. If that is what you
@@ -24,8 +29,8 @@
 Language: Cpp
 BasedOnStyle: LLVM
 
-# --- the five deviations -------------------------------------------------
-UseTab: ForIndentation
+# --- the deviations ------------------------------------------------------
+UseTab: Never
 TabWidth: 4
 IndentWidth: 4
 ColumnLimit: 100
@@ -40,9 +45,9 @@ AccessModifierOffset: -4
 
 # --- consequences of the above -------------------------------------------
 #
-# Continuation lines are ALIGNED, which means spaces past the tab indent:
-# `UseTab: ForIndentation` is what keeps alignment working when the file is
-# viewed at a different tab width.
+# Continuation lines are ALIGNED under what they continue, which is the reason
+# indentation is spaces at all: alignment past a tab only lands where it was
+# meant to when the reader's tab width matches the writer's.
 ContinuationIndentWidth: 4
 AlignAfterOpenBracket: Align
 

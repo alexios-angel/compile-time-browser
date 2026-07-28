@@ -25,41 +25,41 @@ using ctbrowser::point;
 using ctbrowser::rect;
 
 struct layer {
-	// Shared and const: the raster threads, the compositor and hit testing all
-	// read the same recorded list, concurrently, while the next frame records.
-	std::shared_ptr<const display_list> contents;
+    // Shared and const: the raster threads, the compositor and hit testing all
+    // read the same recorded list, concurrently, while the next frame records.
+    std::shared_ptr<const display_list> contents;
 
-	// Where this layer's content origin sits in the viewport. Scrolling writes
-	// here. Rastered tiles are in CONTENT space and do not know about it, which
-	// is exactly why they survive a scroll.
-	point offset;
+    // Where this layer's content origin sits in the viewport. Scrolling writes
+    // here. Rastered tiles are in CONTENT space and do not know about it, which
+    // is exactly why they survive a scroll.
+    point offset;
 
-	// Viewport-space clip. Empty means the whole viewport.
-	rect clip;
+    // Viewport-space clip. Empty means the whole viewport.
+    rect clip;
 
-	// Scroll does not move this layer. The scroller sets it; the compositor
-	// only reads it.
-	bool scrolls = true;
+    // Scroll does not move this layer. The scroller sets it; the compositor
+    // only reads it.
+    bool scrolls = true;
 
-	[[nodiscard]] rect content_bounds() const noexcept {
-		return contents ? contents->bounds() : rect{};
-	}
+    [[nodiscard]] rect content_bounds() const noexcept {
+        return contents ? contents->bounds() : rect{};
+    }
 };
 
 // The layers of a frame, back to front.
 struct layer_tree {
-	std::vector<layer> layers;
+    std::vector<layer> layers;
 
-	[[nodiscard]] bool empty() const noexcept { return layers.empty(); }
-	[[nodiscard]] std::size_t size() const noexcept { return layers.size(); }
+    [[nodiscard]] bool empty() const noexcept { return layers.empty(); }
+    [[nodiscard]] std::size_t size() const noexcept { return layers.size(); }
 
-	// Move every scrolling layer. The point of the whole design: a scroll is
-	// this function, and then a composite.
-	void scroll_to(float x, float y) {
-		for (layer & l : layers) {
-			if (l.scrolls) { l.offset = point{-x, -y}; }
-		}
-	}
+    // Move every scrolling layer. The point of the whole design: a scroll is
+    // this function, and then a composite.
+    void scroll_to(float x, float y) {
+        for (layer & l : layers) {
+            if (l.scrolls) { l.offset = point{-x, -y}; }
+        }
+    }
 };
 
 } // namespace ctbrowser::paint

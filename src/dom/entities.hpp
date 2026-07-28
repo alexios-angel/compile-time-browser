@@ -18,9 +18,9 @@
 namespace ctbrowser::html_entities {
 
 struct entity_ref {
-	std::string_view name;
-	char32_t first;
-	char32_t second;
+    std::string_view name;
+    char32_t first;
+    char32_t second;
 };
 
 inline constexpr entity_ref entity_table[] = {
@@ -2152,19 +2152,19 @@ inline constexpr entity_ref entity_table[] = {
 };
 
 constexpr const entity_ref * find_entity(std::string_view name) noexcept {
-	std::size_t lo = 0;
-	std::size_t hi = sizeof(entity_table) / sizeof(entity_table[0]);
-	while (lo < hi) {
-		const std::size_t mid = lo + (hi - lo) / 2;
-		if (entity_table[mid].name < name) {
-			lo = mid + 1;
-		} else if (name < entity_table[mid].name) {
-			hi = mid;
-		} else {
-			return &entity_table[mid];
-		}
-	}
-	return nullptr;
+    std::size_t lo = 0;
+    std::size_t hi = sizeof(entity_table) / sizeof(entity_table[0]);
+    while (lo < hi) {
+        const std::size_t mid = lo + (hi - lo) / 2;
+        if (entity_table[mid].name < name) {
+            lo = mid + 1;
+        } else if (name < entity_table[mid].name) {
+            hi = mid;
+        } else {
+            return &entity_table[mid];
+        }
+    }
+    return nullptr;
 }
 
 } // namespace ctbrowser::html_entities

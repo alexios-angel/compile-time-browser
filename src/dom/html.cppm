@@ -29,15 +29,15 @@ import :treebuilder;
 export namespace ctbrowser {
 
 struct parse_result {
-	node_id root;
-	bool wellformed = true; // the tree builder recovers from everything; kept for callers
+    node_id root;
+    bool wellformed = true; // the tree builder recovers from everything; kept for callers
 };
 
 [[nodiscard]] inline parse_result parse_html(document & doc, std::string_view source) {
-	html::tree_builder builder{doc, doc.atoms()};
-	parse_result out;
-	out.root = builder.parse(source);
-	return out;
+    html::tree_builder builder{doc, doc.atoms()};
+    parse_result out;
+    out.root = builder.parse(source);
+    return out;
 }
 
 } // namespace ctbrowser

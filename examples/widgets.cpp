@@ -13,9 +13,9 @@
 import ctbrowser;
 
 int main() {
-	ctbrowser::app_options options;
-	options.title = "widget gallery";
-	options.width = 640;
-	options.height = 560;
-	return ctbrowser::run_app_file("examples/pages/widgets.html", options);
+    ctbrowser::app_options options;
+    options.title = "widget gallery";
+    options.width = 640;
+    options.height = 560;
+    return ctbrowser::run_app_file("examples/pages/widgets.html", options);
 }

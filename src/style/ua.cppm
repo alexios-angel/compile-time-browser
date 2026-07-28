@@ -30,54 +30,54 @@ export namespace ctbrowser::style {
 // selector matching, so the port is a subset on purpose - it grows when a
 // consumer for the property does.
 inline constexpr std::string_view ua_css = R"(
-	body { margin: 8px; font-family: serif; color: #000000 }
+    body { margin: 8px; font-family: serif; color: #000000 }
 
-	h1 { font-size: 32px; margin: 21px 0 }
-	h2 { font-size: 24px; margin: 20px 0 }
-	h3 { font-size: 19px; margin: 16px 0 }
-	h4 { font-size: 16px; margin: 21px 0 }
-	h5 { font-size: 13px; margin: 27px 0 }
-	h6 { font-size: 11px; margin: 37px 0 }
+    h1 { font-size: 32px; margin: 21px 0 }
+    h2 { font-size: 24px; margin: 20px 0 }
+    h3 { font-size: 19px; margin: 16px 0 }
+    h4 { font-size: 16px; margin: 21px 0 }
+    h5 { font-size: 13px; margin: 27px 0 }
+    h6 { font-size: 11px; margin: 37px 0 }
 
-	p, blockquote, figure, ul, ol, dl, pre { margin: 16px 0 }
-	pre, textarea { white-space: pre; font-family: monospace }
-	blockquote, figure { margin-left: 40px; margin-right: 40px }
-	ul, ol { padding-left: 40px }
-	dd { margin-left: 40px }
-	li { display: block }
+    p, blockquote, figure, ul, ol, dl, pre { margin: 16px 0 }
+    pre, textarea { white-space: pre; font-family: monospace }
+    blockquote, figure { margin-left: 40px; margin-right: 40px }
+    ul, ol { padding-left: 40px }
+    dd { margin-left: 40px }
+    li { display: block }
 
-	a { color: #0000ee; text-decoration: underline; cursor: pointer }
-	a:active { color: #ee0000 }
-	input, textarea { cursor: text }
+    a { color: #0000ee; text-decoration: underline; cursor: pointer }
+    a:active { color: #ee0000 }
+    input, textarea { cursor: text }
 
-	button, select { background-color: #e9e9ed; color: #000000 }
-	button:hover, select:hover { background-color: #d0d0d7 }
-	button:active { background-color: #b1b1b9 }
-	input, textarea { background-color: #ffffff }
+    button, select { background-color: #e9e9ed; color: #000000 }
+    button:hover, select:hover { background-color: #d0d0d7 }
+    button:active { background-color: #b1b1b9 }
+    input, textarea { background-color: #ffffff }
 
-	/* No width or padding on the controls: they are REPLACED elements, so
-	   their size comes from the element itself (layout's intrinsic_size_of),
-	   not from the cascade. A blanket `input { width: 160px }` here is what
-	   Gecko does, and it is wrong for checkboxes - it made them 160px wide. */
-	th, td { padding: 1px }
-	caption { text-align: center }
-	/* Table parts are BLOCK-level here, not inline. Left inline, `normalise`
-	   wraps them in anonymous boxes and the table formatting context then looks
-	   for its rows and its caption among children that are no longer them - the
-	   caption simply vanished. */
-	caption, thead, tbody, tfoot, tr, th, td { display: block }
-	table { margin: 0 }
+    /* No width or padding on the controls: they are REPLACED elements, so
+       their size comes from the element itself (layout's intrinsic_size_of),
+       not from the cascade. A blanket `input { width: 160px }` here is what
+       Gecko does, and it is wrong for checkboxes - it made them 160px wide. */
+    th, td { padding: 1px }
+    caption { text-align: center }
+    /* Table parts are BLOCK-level here, not inline. Left inline, `normalise`
+       wraps them in anonymous boxes and the table formatting context then looks
+       for its rows and its caption among children that are no longer them - the
+       caption simply vanished. */
+    caption, thead, tbody, tfoot, tr, th, td { display: block }
+    table { margin: 0 }
 
-	hr { height: 2px; background-color: #808080; margin: 8px 0 }
-	/* The padding-left is the gutter the disclosure triangle is drawn IN -
-	   unlike a list marker's, which is the parent <ul>'s padding. */
-	summary { padding-left: 18px; cursor: pointer }
-	mark { background-color: #ffff00 }
-	small { font-size: 13px }
-	big { font-size: 19px }
+    hr { height: 2px; background-color: #808080; margin: 8px 0 }
+    /* The padding-left is the gutter the disclosure triangle is drawn IN -
+       unlike a list marker's, which is the parent <ul>'s padding. */
+    summary { padding-left: 18px; cursor: pointer }
+    mark { background-color: #ffff00 }
+    small { font-size: 13px }
+    big { font-size: 19px }
 
-	head, style, script, title, meta, link, template, datalist, param, source,
-	track, area, base, noscript { display: none }
+    head, style, script, title, meta, link, template, datalist, param, source,
+    track, area, base, noscript { display: none }
 )";
 
 // The chrome palette, in 0xAARRGGBB. Nothing paints these yet - they are here

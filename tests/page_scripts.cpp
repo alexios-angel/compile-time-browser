@@ -27,40 +27,40 @@ namespace {
 // Every <script> body in a page, concatenated - which is what the browser does
 // with them, since there is one global scope.
 [[nodiscard]] std::string page_script(const std::string & path) {
-	std::ifstream in{path};
-	if (!in) { return {}; }
-	std::ostringstream buffer;
-	buffer << in.rdbuf();
-	const std::string html = buffer.str();
+    std::ifstream in{path};
+    if (!in) { return {}; }
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    const std::string html = buffer.str();
 
-	std::string js;
-	std::size_t at = 0;
-	while ((at = html.find("<script", at)) != std::string::npos) {
-		const std::size_t open = html.find('>', at);
-		const std::size_t close = html.find("</script", open);
-		if (open == std::string::npos || close == std::string::npos) { break; }
-		js += html.substr(open + 1, close - open - 1);
-		js += '\n';
-		at = close;
-	}
-	return js;
+    std::string js;
+    std::size_t at = 0;
+    while ((at = html.find("<script", at)) != std::string::npos) {
+        const std::size_t open = html.find('>', at);
+        const std::size_t close = html.find("</script", open);
+        if (open == std::string::npos || close == std::string::npos) { break; }
+        js += html.substr(open + 1, close - open - 1);
+        js += '\n';
+        at = close;
+    }
+    return js;
 }
 
 void must_compile(const std::string & path) {
-	const std::string js = page_script(path);
-	if (js.empty()) {
-		std::printf("FAIL %s: no script found\n", path.c_str());
-		++ctbrowser_test_failures;
-		return;
-	}
-	const auto program = ctbrowser::script::compiler::compile(js);
-	if (!program.ok) {
-		std::printf("FAIL %s (%zu bytes of JS): %s\n", path.c_str(), js.size(),
-		            program.error.c_str());
-		++ctbrowser_test_failures;
-		return;
-	}
-	std::printf("     %s: %zu bytes of JS, compiles\n", path.c_str(), js.size());
+    const std::string js = page_script(path);
+    if (js.empty()) {
+        std::printf("FAIL %s: no script found\n", path.c_str());
+        ++ctbrowser_test_failures;
+        return;
+    }
+    const auto program = ctbrowser::script::compiler::compile(js);
+    if (!program.ok) {
+        std::printf("FAIL %s (%zu bytes of JS): %s\n", path.c_str(), js.size(),
+                    program.error.c_str());
+        ++ctbrowser_test_failures;
+        return;
+    }
+    std::printf("     %s: %zu bytes of JS, compiles\n", path.c_str(), js.size());
 }
 
 // Not yet expected to compile. The blocker is asserted, not just printed: if it
@@ -69,41 +69,41 @@ void must_compile(const std::string & path) {
 // The same check against a snippet rather than a file: what is being tested
 // is the compiler's refusal, not anybody's page.
 void must_stop_at_source(const std::string & source, std::string_view blocker) {
-	const ctbrowser::script::program compiled = ctbrowser::script::compiler::compile(source);
-	if (compiled.ok) {
-		std::printf("FAIL `%s` COMPILES - promote it\n", source.c_str());
-		++ctbrowser_test_failures;
-		return;
-	}
-	if (compiled.error.find(blocker) == std::string::npos) {
-		std::printf("FAIL `%s` stops at \"%s\", not at \"%s\"\n", source.c_str(),
-		            compiled.error.c_str(), std::string{blocker}.c_str());
-		++ctbrowser_test_failures;
-	}
+    const ctbrowser::script::program compiled = ctbrowser::script::compiler::compile(source);
+    if (compiled.ok) {
+        std::printf("FAIL `%s` COMPILES - promote it\n", source.c_str());
+        ++ctbrowser_test_failures;
+        return;
+    }
+    if (compiled.error.find(blocker) == std::string::npos) {
+        std::printf("FAIL `%s` stops at \"%s\", not at \"%s\"\n", source.c_str(),
+                    compiled.error.c_str(), std::string{blocker}.c_str());
+        ++ctbrowser_test_failures;
+    }
 }
 
 } // namespace
 
 int main() {
-	// The web-compat proof. Nothing in it was written for this engine.
-	must_compile("examples/pages/pong.html");
+    // The web-compat proof. Nothing in it was written for this engine.
+    must_compile("examples/pages/pong.html");
 
-	// async/await, template literals, for..of and try/catch, in a page written
-	// against the real web platform.
-	must_compile("examples/pages/fetchboard.html");
+    // async/await, template literals, for..of and try/catch, in a page written
+    // against the real web platform.
+    must_compile("examples/pages/fetchboard.html");
 
-	// The pages the engine actually ships.
-	must_compile("examples/pages/widgets.html");
-	must_compile("examples/pages/invaders.html");
+    // The pages the engine actually ships.
+    must_compile("examples/pages/widgets.html");
+    must_compile("examples/pages/invaders.html");
 
-	// REGEX IS REJECTED BY NAME rather than mis-compiled. This used to be
-	// checked against a 66 KB bundled page whose only blocker was one regex
-	// literal - a mobile user-agent sniff. That page went with the engine it
-	// was bundled for, so the claim is made directly: what mattered was never
-	// the page, it was that the compiler says which construct it will not
-	// take.
-	must_stop_at_source("var mobile = /iphone|android/i.test(navigator.userAgent);",
-	                    "regular expression literals");
+    // REGEX IS REJECTED BY NAME rather than mis-compiled. This used to be
+    // checked against a 66 KB bundled page whose only blocker was one regex
+    // literal - a mobile user-agent sniff. That page went with the engine it
+    // was bundled for, so the claim is made directly: what mattered was never
+    // the page, it was that the compiler says which construct it will not
+    // take.
+    must_stop_at_source("var mobile = /iphone|android/i.test(navigator.userAgent);",
+                        "regular expression literals");
 
-	REPORT("page_scripts");
+    REPORT("page_scripts");
 }

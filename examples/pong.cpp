@@ -13,12 +13,12 @@
 import ctbrowser;
 
 int main() {
-	ctbrowser::app_options options;
-	options.title = "pong";
-	options.width = 480;
-	options.height = 340;
-	// The page is a fixed-step game and depends on the frame cap, exactly as
-	// it does in a real browser.
-	options.max_fps = 60;
-	return ctbrowser::run_app_file("examples/pages/pong.html", options);
+    ctbrowser::app_options options;
+    options.title = "pong";
+    options.width = 480;
+    options.height = 340;
+    // The page is a fixed-step game and depends on the frame cap, exactly as
+    // it does in a real browser.
+    options.max_fps = 60;
+    return ctbrowser::run_app_file("examples/pages/pong.html", options);
 }

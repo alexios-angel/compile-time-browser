@@ -18,21 +18,21 @@ import ctbrowser;
 #include <vector>
 
 int main() {
-	ctbrowser::app_options options;
-	options.title = "fetchboard";
-	options.width = 720;
-	options.height = 420;
+    ctbrowser::app_options options;
+    options.title = "fetchboard";
+    options.width = 720;
+    options.height = 420;
 
-	// Bake the JSON in, which is what `app_options::assets` is for: the page
-	// asks for "fetchboard-data.json" and never learns whether it came from the
-	// binary, the disk or the network.
-	std::ifstream in{"examples/pages/fetchboard-data.json", std::ios::binary};
-	const std::string text{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
-	std::vector<std::byte> bytes(text.size());
-	for (std::size_t i = 0; i < text.size(); ++i) {
-		bytes[i] = static_cast<std::byte>(static_cast<unsigned char>(text[i]));
-	}
-	options.assets.push_back({"fetchboard-data.json", std::move(bytes)});
+    // Bake the JSON in, which is what `app_options::assets` is for: the page
+    // asks for "fetchboard-data.json" and never learns whether it came from the
+    // binary, the disk or the network.
+    std::ifstream in{"examples/pages/fetchboard-data.json", std::ios::binary};
+    const std::string text{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
+    std::vector<std::byte> bytes(text.size());
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        bytes[i] = static_cast<std::byte>(static_cast<unsigned char>(text[i]));
+    }
+    options.assets.push_back({"fetchboard-data.json", std::move(bytes)});
 
-	return ctbrowser::run_app_file("examples/pages/fetchboard.html", options);
+    return ctbrowser::run_app_file("examples/pages/fetchboard.html", options);
 }

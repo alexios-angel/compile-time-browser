@@ -157,8 +157,8 @@ inline constexpr unsigned char font8x8[128][8] = {
 // glyph here (returns blank - a .notdef) and is meant to be drawn through a real
 // font via SDL_ttf, which covers the loaded font's full Unicode repertoire.
 constexpr bool glyph_pixel(char32_t cp, int row, int col) noexcept {
-	if (cp >= 128 || row < 0 || row > 7 || col < 0 || col > 7) { return false; }
-	return (font8x8[cp][row] >> col) & 1;
+    if (cp >= 128 || row < 0 || row > 7 || col < 0 || col > 7) { return false; }
+    return (font8x8[cp][row] >> col) & 1;
 }
 
 } // namespace ctbrowser::raster::font8x8_data

@@ -20,149 +20,149 @@ using thing_id = handle<thing_tag>;
 namespace {
 
 void test_handle() {
-	CHECK(!thing_id{});                       // a zeroed handle is null
-	CHECK(static_cast<bool>(thing_id{0, 1})); // slot 0 is a real slot
-	CHECK((thing_id{3, 1} == thing_id{3, 1}));
-	CHECK((thing_id{3, 1} != thing_id{3, 2})); // same slot, different generation
+    CHECK(!thing_id{});                       // a zeroed handle is null
+    CHECK(static_cast<bool>(thing_id{0, 1})); // slot 0 is a real slot
+    CHECK((thing_id{3, 1} == thing_id{3, 1}));
+    CHECK((thing_id{3, 1} != thing_id{3, 2})); // same slot, different generation
 
-	// the total order is what makes multi-node locking deadlock-free, so it
-	// has to actually be a total order
-	std::vector<thing_id> ids{{2, 1}, {1, 5}, {1, 2}, {3, 1}};
-	std::ranges::sort(ids, [](thing_id a, thing_id b) { return a.key() < b.key(); });
-	CHECK(std::ranges::is_sorted(ids, [](thing_id a, thing_id b) { return a.key() < b.key(); }));
-	CHECK_EQ(ids.front().slot, 1u);
+    // the total order is what makes multi-node locking deadlock-free, so it
+    // has to actually be a total order
+    std::vector<thing_id> ids{{2, 1}, {1, 5}, {1, 2}, {3, 1}};
+    std::ranges::sort(ids, [](thing_id a, thing_id b) { return a.key() < b.key(); });
+    CHECK(std::ranges::is_sorted(ids, [](thing_id a, thing_id b) { return a.key() < b.key(); }));
+    CHECK_EQ(ids.front().slot, 1u);
 }
 
 void test_slab_basics() {
-	epoch_domain domain;
-	slab<std::string, thing_tag> s{domain};
+    epoch_domain domain;
+    slab<std::string, thing_tag> s{domain};
 
-	CHECK_EQ(s.size(), 0u);
-	const thing_id a = s.insert("alpha");
-	const thing_id b = s.insert("beta");
-	CHECK_EQ(s.size(), 2u);
-	CHECK(s.get(a) != nullptr);
-	CHECK_EQ(*s.get(a), std::string{"alpha"});
-	CHECK_EQ(*s.get(b), std::string{"beta"});
-	CHECK(s.get(thing_id{}) == nullptr);
+    CHECK_EQ(s.size(), 0u);
+    const thing_id a = s.insert("alpha");
+    const thing_id b = s.insert("beta");
+    CHECK_EQ(s.size(), 2u);
+    CHECK(s.get(a) != nullptr);
+    CHECK_EQ(*s.get(a), std::string{"alpha"});
+    CHECK_EQ(*s.get(b), std::string{"beta"});
+    CHECK(s.get(thing_id{}) == nullptr);
 
-	// erase is IMMEDIATE for readers even though destruction is deferred
-	CHECK(s.erase(a));
-	CHECK(s.get(a) == nullptr);
-	CHECK_EQ(s.size(), 1u);
-	CHECK(!s.erase(a)); // and it is not erasable twice
-	CHECK_EQ(*s.get(b), std::string{"beta"});
+    // erase is IMMEDIATE for readers even though destruction is deferred
+    CHECK(s.erase(a));
+    CHECK(s.get(a) == nullptr);
+    CHECK_EQ(s.size(), 1u);
+    CHECK(!s.erase(a)); // and it is not erasable twice
+    CHECK_EQ(*s.get(b), std::string{"beta"});
 }
 
 // The whole point of generations: a recycled slot must not answer to the
 // handle that used to name it.
 void test_stale_handle_does_not_resolve() {
-	epoch_domain domain;
-	slab<std::string, thing_tag> s{domain};
+    epoch_domain domain;
+    slab<std::string, thing_tag> s{domain};
 
-	const thing_id first = s.insert("first");
-	const std::uint32_t slot = first.slot;
-	CHECK(s.erase(first));
-	CHECK_EQ(s.collect(), 1u); // no readers pinned, so it recycles at once
+    const thing_id first = s.insert("first");
+    const std::uint32_t slot = first.slot;
+    CHECK(s.erase(first));
+    CHECK_EQ(s.collect(), 1u); // no readers pinned, so it recycles at once
 
-	const thing_id second = s.insert("second");
-	CHECK_EQ(second.slot, slot);                  // the slot really was reused...
-	CHECK(second.generation != first.generation); // ...with a fresh generation
-	CHECK(s.get(first) == nullptr);               // so the stale handle is dead
-	CHECK_EQ(*s.get(second), std::string{"second"});
+    const thing_id second = s.insert("second");
+    CHECK_EQ(second.slot, slot);                  // the slot really was reused...
+    CHECK(second.generation != first.generation); // ...with a fresh generation
+    CHECK(s.get(first) == nullptr);               // so the stale handle is dead
+    CHECK_EQ(*s.get(second), std::string{"second"});
 }
 
 // A pinned reader must hold off recycling, or its pointer dangles.
 void test_pin_defers_recycling() {
-	epoch_domain domain;
-	slab<std::string, thing_tag> s{domain};
+    epoch_domain domain;
+    slab<std::string, thing_tag> s{domain};
 
-	const thing_id id = s.insert("pinned");
-	{
-		const auto guard = domain.pin();
-		CHECK(s.erase(id));
-		CHECK_EQ(s.collect(), 0u); // a reader from before the erase is live
-		CHECK_EQ(s.pending(), 1u);
-	}
-	CHECK_EQ(s.collect(), 1u); // it left; now it recycles
-	CHECK_EQ(s.pending(), 0u);
+    const thing_id id = s.insert("pinned");
+    {
+        const auto guard = domain.pin();
+        CHECK(s.erase(id));
+        CHECK_EQ(s.collect(), 0u); // a reader from before the erase is live
+        CHECK_EQ(s.pending(), 1u);
+    }
+    CHECK_EQ(s.collect(), 1u); // it left; now it recycles
+    CHECK_EQ(s.pending(), 0u);
 }
 
 void test_slab_grows_past_a_chunk() {
-	epoch_domain domain;
-	slab<int, thing_tag, 4> s{domain}; // 16 slots per chunk, so this spans several
-	std::vector<thing_id> ids;
-	for (int i = 0; i < 100; ++i) { ids.push_back(s.insert(i)); }
-	CHECK_EQ(s.size(), 100u);
-	for (int i = 0; i < 100; ++i) {
-		const int * v = s.get(ids[static_cast<std::size_t>(i)]);
-		CHECK(v != nullptr && *v == i); // every handle still resolves after growth
-	}
+    epoch_domain domain;
+    slab<int, thing_tag, 4> s{domain}; // 16 slots per chunk, so this spans several
+    std::vector<thing_id> ids;
+    for (int i = 0; i < 100; ++i) { ids.push_back(s.insert(i)); }
+    CHECK_EQ(s.size(), 100u);
+    for (int i = 0; i < 100; ++i) {
+        const int * v = s.get(ids[static_cast<std::size_t>(i)]);
+        CHECK(v != nullptr && *v == i); // every handle still resolves after growth
+    }
 }
 
 void test_epoch_retire() {
-	epoch_domain domain;
-	int destroyed = 0;
-	static int * counter = nullptr;
-	counter = &destroyed;
+    epoch_domain domain;
+    int destroyed = 0;
+    static int * counter = nullptr;
+    counter = &destroyed;
 
-	auto * payload = new int{7};
-	domain.retire(payload, [](void * p) {
-		++(*counter);
-		delete static_cast<int *>(p);
-	});
-	CHECK_EQ(domain.pending(), 1u);
-	{
-		const auto guard = domain.pin();
-		CHECK_EQ(domain.reclaim(), 0u); // pinned: nothing may be destroyed
-	}
-	CHECK_EQ(domain.reclaim(), 1u);
-	CHECK_EQ(destroyed, 1);
-	CHECK_EQ(domain.pending(), 0u);
+    auto * payload = new int{7};
+    domain.retire(payload, [](void * p) {
+        ++(*counter);
+        delete static_cast<int *>(p);
+    });
+    CHECK_EQ(domain.pending(), 1u);
+    {
+        const auto guard = domain.pin();
+        CHECK_EQ(domain.reclaim(), 0u); // pinned: nothing may be destroyed
+    }
+    CHECK_EQ(domain.reclaim(), 1u);
+    CHECK_EQ(destroyed, 1);
+    CHECK_EQ(domain.pending(), 0u);
 }
 
 void test_atoms() {
-	atom_table atoms;
-	const atom div = atoms.intern("div");
-	const atom same = atoms.intern("div");
-	const atom span = atoms.intern("span");
+    atom_table atoms;
+    const atom div = atoms.intern("div");
+    const atom same = atoms.intern("div");
+    const atom span = atoms.intern("span");
 
-	CHECK(div == same); // interning is idempotent...
-	CHECK(div != span); // ...and distinct strings stay distinct
-	CHECK_EQ(atoms.text(div), std::string_view{"div"});
-	CHECK(!atom{}); // the empty atom is falsy
-	CHECK_EQ(atoms.text(atom{}), std::string_view{});
-	CHECK(atoms.intern_lower("DIV") == div); // HTML names fold
-	CHECK(atoms.intern_lower("DiV") == div);
+    CHECK(div == same); // interning is idempotent...
+    CHECK(div != span); // ...and distinct strings stay distinct
+    CHECK_EQ(atoms.text(div), std::string_view{"div"});
+    CHECK(!atom{}); // the empty atom is falsy
+    CHECK_EQ(atoms.text(atom{}), std::string_view{});
+    CHECK(atoms.intern_lower("DIV") == div); // HTML names fold
+    CHECK(atoms.intern_lower("DiV") == div);
 
-	// the views must survive growth of the table they point into
-	std::vector<atom> many;
-	for (int i = 0; i < 5000; ++i) { many.push_back(atoms.intern("name" + std::to_string(i))); }
-	CHECK_EQ(atoms.text(many[0]), std::string_view{"name0"});
-	CHECK_EQ(atoms.text(div), std::string_view{"div"});
+    // the views must survive growth of the table they point into
+    std::vector<atom> many;
+    for (int i = 0; i < 5000; ++i) { many.push_back(atoms.intern("name" + std::to_string(i))); }
+    CHECK_EQ(atoms.text(many[0]), std::string_view{"name0"});
+    CHECK_EQ(atoms.text(div), std::string_view{"div"});
 }
 
 void test_geometry() {
-	constexpr rect a{0, 0, 10, 10};
-	constexpr rect b{5, 5, 10, 10};
-	static_assert(a.contains(point{5, 5}));
-	static_assert(!a.contains(point{10, 5})); // right edge is exclusive
-	static_assert(a.intersects(b));
-	static_assert(a.intersected(b) == rect{5, 5, 5, 5});
-	static_assert(a.united(b) == rect{0, 0, 15, 15});
-	static_assert(rect{}.united(a) == a); // empty unites to the other side
-	static_assert(!a.intersects(rect{20, 20, 1, 1}));
-	static_assert(a.translated(2, 3) == rect{2, 3, 10, 10});
+    constexpr rect a{0, 0, 10, 10};
+    constexpr rect b{5, 5, 10, 10};
+    static_assert(a.contains(point{5, 5}));
+    static_assert(!a.contains(point{10, 5})); // right edge is exclusive
+    static_assert(a.intersects(b));
+    static_assert(a.intersected(b) == rect{5, 5, 5, 5});
+    static_assert(a.united(b) == rect{0, 0, 15, 15});
+    static_assert(rect{}.united(a) == a); // empty unites to the other side
+    static_assert(!a.intersects(rect{20, 20, 1, 1}));
+    static_assert(a.translated(2, 3) == rect{2, 3, 10, 10});
 
-	constexpr color c = color::rgba(0x11, 0x22, 0x33, 0x44);
-	static_assert(c.argb == 0x44112233u);
-	static_assert(c.red() == 0x11 && c.green() == 0x22 && c.blue() == 0x33 && c.alpha() == 0x44);
-	static_assert(color::rgba(0, 0, 0, 255).opaque());
-	static_assert(color::rgba(0, 0, 0, 0).transparent());
+    constexpr color c = color::rgba(0x11, 0x22, 0x33, 0x44);
+    static_assert(c.argb == 0x44112233u);
+    static_assert(c.red() == 0x11 && c.green() == 0x22 && c.blue() == 0x33 && c.alpha() == 0x44);
+    static_assert(color::rgba(0, 0, 0, 255).opaque());
+    static_assert(color::rgba(0, 0, 0, 0).transparent());
 
-	constexpr sides s{1, 2, 3, 4};
-	static_assert(s.horizontal() == 6 && s.vertical() == 4);
-	CHECK(true); // the assertions above are compile-time; this keeps the counter honest
+    constexpr sides s{1, 2, 3, 4};
+    static_assert(s.horizontal() == 6 && s.vertical() == 4);
+    CHECK(true); // the assertions above are compile-time; this keeps the counter honest
 }
 
 // AN IDLE POOL COSTS NOTHING.
@@ -177,71 +177,71 @@ void test_geometry() {
 // Measured as CPU time against wall time, which is the thing that was wrong;
 // counting wakeups would test the implementation instead of the symptom.
 void test_an_idle_pool_sleeps() {
-	// process_cpu_seconds(), not std::clock(): the latter is WALL time on some
-	// Windows runtimes, so this test passed there for the wrong reason and then
-	// failed for the wrong reason too.
-	const auto cpu_ms = [] { return static_cast<long long>(process_cpu_seconds() * 1000.0); };
-	scheduler pool{4};
-	// Let the workers reach their wait.
-	std::this_thread::sleep_for(std::chrono::milliseconds{50});
+    // process_cpu_seconds(), not std::clock(): the latter is WALL time on some
+    // Windows runtimes, so this test passed there for the wrong reason and then
+    // failed for the wrong reason too.
+    const auto cpu_ms = [] { return static_cast<long long>(process_cpu_seconds() * 1000.0); };
+    scheduler pool{4};
+    // Let the workers reach their wait.
+    std::this_thread::sleep_for(std::chrono::milliseconds{50});
 
-	const auto cpu_before = cpu_ms();
-	const auto wall_before = std::chrono::steady_clock::now();
-	std::this_thread::sleep_for(std::chrono::milliseconds{500});
-	const auto cpu_spent = cpu_ms() - cpu_before;
-	const auto wall_spent = std::chrono::duration_cast<std::chrono::milliseconds>(
-	                            std::chrono::steady_clock::now() - wall_before)
-	                            .count();
+    const auto cpu_before = cpu_ms();
+    const auto wall_before = std::chrono::steady_clock::now();
+    std::this_thread::sleep_for(std::chrono::milliseconds{500});
+    const auto cpu_spent = cpu_ms() - cpu_before;
+    const auto wall_spent = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - wall_before)
+                                .count();
 
-	// Four workers polling at 1 kHz spent several hundred ms of CPU over this
-	// half second. Asleep they spend approximately none; the bar is loose
-	// because a loaded machine can steal a few ms of scheduling noise.
-	CHECK(wall_spent >= 400); // the measurement window really elapsed
-	// Four idle workers burn well under a quarter of one core doing nothing.
-	CHECK(cpu_spent < wall_spent / 4);
+    // Four workers polling at 1 kHz spent several hundred ms of CPU over this
+    // half second. Asleep they spend approximately none; the bar is loose
+    // because a loaded machine can steal a few ms of scheduling noise.
+    CHECK(wall_spent >= 400); // the measurement window really elapsed
+    // Four idle workers burn well under a quarter of one core doing nothing.
+    CHECK(cpu_spent < wall_spent / 4);
 
-	// And it still WORKS: a sleeping pool that misses its wakeup is worse
-	// than a spinning one.
-	std::atomic<int> ran{0};
-	pool.parallel_for(64, [&ran](std::size_t) { ran.fetch_add(1); });
-	CHECK(ran.load() == 64); // every task still runs after the pool has been asleep
+    // And it still WORKS: a sleeping pool that misses its wakeup is worse
+    // than a spinning one.
+    std::atomic<int> ran{0};
+    pool.parallel_for(64, [&ran](std::size_t) { ran.fetch_add(1); });
+    CHECK(ran.load() == 64); // every task still runs after the pool has been asleep
 }
 
 void test_scheduler() {
-	scheduler pool{4};
-	CHECK_EQ(pool.worker_count(), 4u);
+    scheduler pool{4};
+    CHECK_EQ(pool.worker_count(), 4u);
 
-	std::vector<int> out(1000, 0);
-	pool.parallel_for(out.size(), [&](std::size_t i) { out[i] = static_cast<int>(i) * 2; });
-	bool all = true;
-	for (std::size_t i = 0; i < out.size(); ++i) {
-		if (out[i] != static_cast<int>(i) * 2) { all = false; }
-	}
-	CHECK(all);
+    std::vector<int> out(1000, 0);
+    pool.parallel_for(out.size(), [&](std::size_t i) { out[i] = static_cast<int>(i) * 2; });
+    bool all = true;
+    for (std::size_t i = 0; i < out.size(); ++i) {
+        if (out[i] != static_cast<int>(i) * 2) { all = false; }
+    }
+    CHECK(all);
 
-	// nested parallel_for must not deadlock: the caller helps drain the pool,
-	// which is the property that makes recursive layout safe
-	std::vector<int> nested(64, 0);
-	pool.parallel_for(8, [&](std::size_t outer) {
-		pool.parallel_for(8, [&](std::size_t inner) { nested[outer * 8 + inner] = 1; });
-	});
-	CHECK(std::ranges::all_of(nested, [](int v) { return v == 1; }));
+    // nested parallel_for must not deadlock: the caller helps drain the pool,
+    // which is the property that makes recursive layout safe
+    std::vector<int> nested(64, 0);
+    pool.parallel_for(8, [&](std::size_t outer) {
+        pool.parallel_for(8, [&](std::size_t inner) { nested[outer * 8 + inner] = 1; });
+    });
+    CHECK(std::ranges::all_of(nested, [](int v) { return v == 1; }));
 
-	pool.parallel_for(0, [](std::size_t) { CHECK(false); }); // n == 0 runs nothing
+    pool.parallel_for(0, [](std::size_t) { CHECK(false); }); // n == 0 runs nothing
 }
 
 } // namespace
 
 int main() {
-	test_handle();
-	test_slab_basics();
-	test_stale_handle_does_not_resolve();
-	test_pin_defers_recycling();
-	test_slab_grows_past_a_chunk();
-	test_epoch_retire();
-	test_atoms();
-	test_geometry();
-	test_scheduler();
-	test_an_idle_pool_sleeps();
-	REPORT("core_basics");
+    test_handle();
+    test_slab_basics();
+    test_stale_handle_does_not_resolve();
+    test_pin_defers_recycling();
+    test_slab_grows_past_a_chunk();
+    test_epoch_retire();
+    test_atoms();
+    test_geometry();
+    test_scheduler();
+    test_an_idle_pool_sleeps();
+    REPORT("core_basics");
 }

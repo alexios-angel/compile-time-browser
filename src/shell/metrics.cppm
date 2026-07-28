@@ -20,23 +20,23 @@ export namespace ctbrowser::shell {
 // text lands where layout thought it would only if one thing answers both.
 [[nodiscard]] inline ctbrowser::layout::measure_text_fn metrics_for(
     const ctbrowser::raster::font_backend & fonts) {
-	ctbrowser::layout::measure_text_fn out;
-	out.measure = [&fonts](std::string_view text, float size,
-	                       const ctbrowser::layout::text_face & face) {
-		return fonts.advance(text, size, face.family, face.bold, face.italic);
-	};
-	out.ascent_of = [&fonts](float size, const ctbrowser::layout::text_face & face) {
-		return fonts.ascent(size, face.family, face.bold, face.italic);
-	};
-	out.descent_of = [&fonts](float size, const ctbrowser::layout::text_face & face) {
-		return fonts.descent(size, face.family, face.bold, face.italic);
-	};
-	return out;
+    ctbrowser::layout::measure_text_fn out;
+    out.measure = [&fonts](std::string_view text, float size,
+                           const ctbrowser::layout::text_face & face) {
+        return fonts.advance(text, size, face.family, face.bold, face.italic);
+    };
+    out.ascent_of = [&fonts](float size, const ctbrowser::layout::text_face & face) {
+        return fonts.ascent(size, face.family, face.bold, face.italic);
+    };
+    out.descent_of = [&fonts](float size, const ctbrowser::layout::text_face & face) {
+        return fonts.descent(size, face.family, face.bold, face.italic);
+    };
+    return out;
 }
 
 // The always-available one, for tests and for a build with no font files.
 [[nodiscard]] inline ctbrowser::layout::measure_text_fn font8x8_metrics() {
-	return metrics_for(ctbrowser::raster::font8x8_fonts());
+    return metrics_for(ctbrowser::raster::font8x8_fonts());
 }
 
 } // namespace ctbrowser::shell

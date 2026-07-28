@@ -32,31 +32,31 @@ export module ctbrowser.shell:net;
 export namespace ctbrowser::shell {
 
 struct http_options {
-	int timeout_ms = 5000;
-	int max_redirects = 5;
-	std::size_t max_bytes = 8U * 1024U * 1024U;
-	std::string user_agent = "ctbrowser/2.0";
+    int timeout_ms = 5000;
+    int max_redirects = 5;
+    std::size_t max_bytes = 8U * 1024U * 1024U;
+    std::string user_agent = "ctbrowser/2.0";
 };
 
 struct http_response {
-	int status = 0;
-	std::string url;   // the FINAL url, after redirects
-	std::string error; // non-empty: the request never completed
-	std::vector<std::byte> body;
-	std::string content_type;
+    int status = 0;
+    std::string url;   // the FINAL url, after redirects
+    std::string error; // non-empty: the request never completed
+    std::vector<std::byte> body;
+    std::string content_type;
 
-	// `Response.ok` in the fetch API is the 2xx range, and it is NOT the same
-	// question as "did the request complete" - a 404 completed.
-	[[nodiscard]] bool ok() const noexcept { return status >= 200 && status < 300; }
-	[[nodiscard]] bool completed() const noexcept { return error.empty(); }
+    // `Response.ok` in the fetch API is the 2xx range, and it is NOT the same
+    // question as "did the request complete" - a 404 completed.
+    [[nodiscard]] bool ok() const noexcept { return status >= 200 && status < 300; }
+    [[nodiscard]] bool completed() const noexcept { return error.empty(); }
 };
 
 // Whether this build can do https:// at all.
 [[nodiscard]] constexpr bool tls_available() noexcept {
 #if CTBROWSER_WITH_TLS
-	return true;
+    return true;
 #else
-	return false;
+    return false;
 #endif
 }
 

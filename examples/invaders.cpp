@@ -14,14 +14,14 @@
 import ctbrowser;
 
 int main() {
-	ctbrowser::app_options options;
-	options.title = "ctinvaders";
-	options.width = 960;
-	options.height = 720;
-	// Render at the playfield's size and letterbox it: the game is written in
-	// 320x240 coordinates and should not care what the window is.
-	options.logical_width = 320;
-	options.logical_height = 240;
-	options.max_fps = 60;
-	return ctbrowser::run_app_file("examples/pages/invaders.html", options);
+    ctbrowser::app_options options;
+    options.title = "ctinvaders";
+    options.width = 960;
+    options.height = 720;
+    // Render at the playfield's size and letterbox it: the game is written in
+    // 320x240 coordinates and should not care what the window is.
+    options.logical_width = 320;
+    options.logical_height = 240;
+    options.max_fps = 60;
+    return ctbrowser::run_app_file("examples/pages/invaders.html", options);
 }
