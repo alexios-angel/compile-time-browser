@@ -1,11 +1,8 @@
-module;
-
+#pragma once
 #include <cstddef>
 #include <string>
 #include <string_view>
 #include <vector>
-
-export module ctbrowser.shell:net;
 
 // HTTP over Boost.Asio - HEADER-ONLY Boost, which is the project's standing
 // constraint (see NOTICE: compiled Boost, Boost.Context above all, breaks the
@@ -29,7 +26,7 @@ export module ctbrowser.shell:net;
 // imported the browser paid to deserialize all of it. They live in net.cpp now,
 // where they are compiled once and reach nobody.
 
-export namespace ctbrowser::shell {
+namespace ctbrowser::shell {
 
 struct http_options {
     int timeout_ms = 5000;

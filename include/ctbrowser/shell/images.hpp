@@ -1,5 +1,4 @@
-module;
-
+#pragma once
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -13,9 +12,7 @@ module;
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/paint/paint.hpp>
 
-export module ctbrowser.shell:images;
-
-import :assets;
+#include <ctbrowser/shell/assets.hpp>
 
 // Decoding images into the bitmap the display list already carries.
 //
@@ -26,7 +23,7 @@ import :assets;
 // loading and drawing are testable headless, and a build without SDL3_image
 // still shows BMPs rather than nothing.
 
-export namespace ctbrowser::shell {
+namespace ctbrowser::shell {
 
 // Decode an uncompressed 24- or 32-bit BMP. An empty bitmap on any problem -
 // truncated, or a flavour this does not read.

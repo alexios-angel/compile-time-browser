@@ -1,5 +1,4 @@
-export module ctbrowser.shell;
-
+#pragma once
 // The shell: the engine assembled into something that loads a page.
 //
 //   input    events described without SDL, so the whole browser is drivable
@@ -19,12 +18,12 @@ export module ctbrowser.shell;
 // browser here needs no display, which is what lets tests render whole pages
 // and compare them byte for byte.
 
-export import :metrics;
-export import :input;
-export import :assets;
-export import :images;
-export import :net;
-export import :canvas;
-export import :forms;
-export import :bindings;
-export import :browser;
+#include <ctbrowser/shell/assets.hpp>
+#include <ctbrowser/shell/bindings.hpp>
+#include <ctbrowser/shell/browser.hpp>
+#include <ctbrowser/shell/canvas.hpp>
+#include <ctbrowser/shell/forms.hpp>
+#include <ctbrowser/shell/images.hpp>
+#include <ctbrowser/shell/input.hpp>
+#include <ctbrowser/shell/metrics.hpp>
+#include <ctbrowser/shell/net.hpp>

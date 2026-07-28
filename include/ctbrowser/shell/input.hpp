@@ -1,11 +1,9 @@
-module;
+#pragma once
 #include <cstdint>
 #include <string>
 #include <string_view>
 
 #include <ctbrowser/core/core.hpp>
-
-export module ctbrowser.shell:input;
 
 // Input, described without reference to SDL.
 //
@@ -14,7 +12,7 @@ export module ctbrowser.shell:input;
 // scrolls and keys directly, with no window, no display and no event queue.
 // the previous engine made the same split for the same reason.
 
-export namespace ctbrowser::shell {
+namespace ctbrowser::shell {
 
 enum class input_kind : std::uint8_t {
     mouse_move,

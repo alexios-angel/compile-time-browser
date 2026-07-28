@@ -17,8 +17,8 @@
 #include <ctbrowser/layout/layout.hpp>
 #include <ctbrowser/paint/paint.hpp>
 #include <ctbrowser/raster/raster.hpp>
+#include <ctbrowser/shell/shell.hpp> // shell::font8x8_metrics - see shell/metrics.cppm
 #include <ctbrowser/style/style.hpp>
-import ctbrowser.shell; // shell::font8x8_metrics - see shell/metrics.cppm
 
 #include "check.hpp"
 #include <cstdint>

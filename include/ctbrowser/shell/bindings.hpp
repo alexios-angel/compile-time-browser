@@ -1,4 +1,4 @@
-module;
+#pragma once
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -18,14 +18,12 @@ module;
 #include <ctbrowser/raster/raster.hpp>
 #include <ctbrowser/script/script.hpp>
 
-export module ctbrowser.shell:bindings;
-
-import :input;
-import :assets;
-import :canvas;
-import :forms;
-import :images;
-import :net;
+#include <ctbrowser/shell/assets.hpp>
+#include <ctbrowser/shell/canvas.hpp>
+#include <ctbrowser/shell/forms.hpp>
+#include <ctbrowser/shell/images.hpp>
+#include <ctbrowser/shell/input.hpp>
+#include <ctbrowser/shell/net.hpp>
 
 // The web platform, bound to the the engine VM.
 //
@@ -46,7 +44,7 @@ import :net;
 // with no drawing on it is worse than one that is absent, because a page
 // checking for canvas support gets the wrong answer.
 
-export namespace ctbrowser::shell {
+namespace ctbrowser::shell {
 
 using ctbrowser::script::context;
 using ctbrowser::script::value;

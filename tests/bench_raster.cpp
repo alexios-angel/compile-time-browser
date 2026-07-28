@@ -18,8 +18,8 @@
 #include <ctbrowser/layout/layout.hpp>
 #include <ctbrowser/paint/paint.hpp>
 #include <ctbrowser/raster/raster.hpp>
+#include <ctbrowser/shell/shell.hpp> // metrics_for/font8x8_metrics, the layout<->raster adapter
 #include <ctbrowser/style/style.hpp>
-import ctbrowser.shell; // metrics_for/font8x8_metrics, the layout<->raster adapter
 
 #include <chrono>
 #include <cstdio>

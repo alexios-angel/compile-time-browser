@@ -1,4 +1,4 @@
-module;
+#pragma once
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -14,8 +14,6 @@ module;
 #include <ctbrowser/paint/paint.hpp>
 #include <ctbrowser/raster/raster.hpp>
 
-export module ctbrowser.shell:canvas;
-
 // The 2D canvas.
 //
 // A canvas is the one place a page draws pixels directly, and it is what every
@@ -30,7 +28,7 @@ export module ctbrowser.shell:canvas;
 // must be transformed as they are ADDED to the path, not when it is filled, or
 // a translate between moveTo and lineTo moves the wrong end of the line.
 
-export namespace ctbrowser::shell {
+namespace ctbrowser::shell {
 
 using ctbrowser::paint::bitmap;
 

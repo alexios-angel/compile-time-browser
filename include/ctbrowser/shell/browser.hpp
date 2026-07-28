@@ -1,4 +1,4 @@
-module;
+#pragma once
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -23,15 +23,13 @@ module;
 #include <ctbrowser/script/script.hpp>
 #include <ctbrowser/style/style.hpp>
 
-export module ctbrowser.shell:browser;
-
-import :input;
-import :metrics;
-import :assets;
-import :images;
-import :canvas;
-import :forms;
-import :bindings;
+#include <ctbrowser/shell/assets.hpp>
+#include <ctbrowser/shell/bindings.hpp>
+#include <ctbrowser/shell/canvas.hpp>
+#include <ctbrowser/shell/forms.hpp>
+#include <ctbrowser/shell/images.hpp>
+#include <ctbrowser/shell/input.hpp>
+#include <ctbrowser/shell/metrics.hpp>
 
 // The engine, assembled.
 //
@@ -52,7 +50,7 @@ import :bindings;
 // SDL3, and this is what they drive - which is what makes the whole engine
 // testable headlessly, exactly as the previous engine kept engine.hpp separate from app.hpp.
 
-export namespace ctbrowser::shell {
+namespace ctbrowser::shell {
 
 using ctbrowser::layout::box_node;
 using ctbrowser::layout::fragment;

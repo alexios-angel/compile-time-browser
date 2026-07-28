@@ -286,20 +286,22 @@ add_library(ctbrowser::raster ALIAS ctbrowser-raster)
 # display is a browser you can test.
 add_library(ctbrowser-shell)
 target_sources(ctbrowser-shell
-  PUBLIC
-    FILE_SET CXX_MODULES FILES
-      shell/shell.cppm
-      shell/input.cppm
-      shell/metrics.cppm
-      shell/assets.cppm
-      shell/images.cppm
-      shell/net.cppm
-      shell/canvas.cppm
-      shell/forms.cppm
-      shell/bindings.cppm
-      shell/browser.cppm
   PRIVATE
-    shell/net.cpp)
+    shell/net.cpp
+  PUBLIC
+    FILE_SET HEADERS
+      BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
+      FILES
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/shell.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/input.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/metrics.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/assets.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/images.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/net.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/canvas.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/forms.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/bindings.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/browser.hpp")
 target_compile_features(ctbrowser-shell PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-shell)
 target_link_libraries(ctbrowser-shell PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style
@@ -337,7 +339,6 @@ else()
   target_compile_definitions(ctbrowser-shell PUBLIC CTBROWSER_WITH_TLS=0)
   message(STATUS "ctbrowser: no OpenSSL - fetch() does http:// only")
 endif()
-set_target_properties(ctbrowser-shell PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
 add_library(ctbrowser::shell ALIAS ctbrowser-shell)
 

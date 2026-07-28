@@ -15,8 +15,8 @@
 #include <ctbrowser/layout/layout.hpp>
 #include <ctbrowser/paint/paint.hpp>
 #include <ctbrowser/raster/raster.hpp>
+#include <ctbrowser/shell/shell.hpp>
 #include <ctbrowser/style/style.hpp>
-import ctbrowser.shell;
 
 #include "check.hpp"
 #include <cstdint>

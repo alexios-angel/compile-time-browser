@@ -1,4 +1,4 @@
-module;
+#pragma once
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -10,8 +10,6 @@ module;
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
 #include <ctbrowser/style/style.hpp>
-
-export module ctbrowser.shell:forms;
 
 // Form control state.
 //
@@ -26,7 +24,7 @@ export module ctbrowser.shell:forms;
 // because both are the shell's business, but only the first is what a script
 // reads back through `.value`.
 
-export namespace ctbrowser::shell {
+namespace ctbrowser::shell {
 
 enum class control_kind : std::uint8_t {
     none,

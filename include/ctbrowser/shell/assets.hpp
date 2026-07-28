@@ -1,5 +1,4 @@
-module;
-
+#pragma once
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -11,8 +10,6 @@ module;
 
 #include <ctbrowser/core/core.hpp>
 
-export module ctbrowser.shell:assets;
-
 // Everything a page loads by name - sprites, sounds, JSON, whatever `fetch`
 // asks for - comes through here.
 //
@@ -23,7 +20,7 @@ export module ctbrowser.shell:assets;
 // is what makes `ctbrowse page.html` able to show a page's images without the
 // caller registering anything.
 
-export namespace ctbrowser::shell {
+namespace ctbrowser::shell {
 
 class asset_registry {
 public:

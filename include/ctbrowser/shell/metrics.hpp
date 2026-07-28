@@ -1,9 +1,7 @@
-module;
+#pragma once
 #include <ctbrowser/layout/layout.hpp>
 #include <ctbrowser/raster/raster.hpp>
 #include <string_view>
-
-export module ctbrowser.shell:metrics;
 
 // The one place layout's idea of a font and raster's meet.
 //
@@ -12,7 +10,7 @@ export module ctbrowser.shell:metrics;
 // invert the direction the whole pipeline runs in. The shell is the assembly,
 // so the shell converts - which is the same reason the browser owns the fonts.
 
-export namespace ctbrowser::shell {
+namespace ctbrowser::shell {
 
 // Layout metrics backed by a real font. The SAME object answers "how wide is
 // this run" and "where is its baseline" that the rasterizer will draw with -

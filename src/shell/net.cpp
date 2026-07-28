@@ -1,4 +1,3 @@
-module;
 
 #include <algorithm>
 #include <charconv>
@@ -33,6 +32,8 @@ module;
 #include <boost/asio/write.hpp>
 #if CTBROWSER_WITH_TLS
 #include <boost/asio/ssl.hpp>
+
+#include <ctbrowser/shell/net.hpp>
 #endif
 #endif
 
@@ -47,8 +48,6 @@ namespace aio = ::boost::asio;
 using error_code = ::boost::system::error_code;
 #endif
 } // namespace ctbrowser::shell::detail
-
-module ctbrowser.shell;
 
 // The HTTP client's implementation - and the only place Asio's headers are
 // read. See the note in net.cppm about why they are not in the interface.
