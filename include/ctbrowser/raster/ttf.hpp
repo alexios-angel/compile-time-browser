@@ -71,32 +71,11 @@ public:
     // stream for the lifetime of the font, so handing it a span of somebody
     // else's vector is a use-after-free waiting for the first page that gets
     // collected.
-    bool add_face(std::string family, bool bold, bool italic, std::span<const std::byte> bytes) {
-        if (!started_ || bytes.empty()) { return false; }
-        const std::lock_guard guard{mutex_};
-        // Opened once here purely to reject a file that is not a font; the
-        // sized fonts the drawing path uses are opened on demand.
-        loaded_face entry;
-        entry.bytes.assign(bytes.begin(), bytes.end());
-        TTF_Font * probe = open_sized(entry.bytes, 16);
-        if (probe == nullptr) { return false; }
-        TTF_CloseFont(probe);
-        faces_[face_key{lowered(family), bold, italic}] = std::move(entry);
-        return true;
-    }
+    bool add_face(std::string family, bool bold, bool italic, std::span<const std::byte> bytes);
 
-    [[nodiscard]] std::size_t face_count() const {
-        const std::lock_guard guard{mutex_};
-        return faces_.size();
-    }
-    [[nodiscard]] bool has_face(std::string_view family, bool bold, bool italic) const {
-        const std::lock_guard guard{mutex_};
-        return faces_.find(face_key{lowered(family), bold, italic}) != faces_.end();
-    }
-    void set_default_family(std::string family) {
-        const std::lock_guard guard{mutex_};
-        default_family_ = lowered(family);
-    }
+    [[nodiscard]] std::size_t face_count() const;
+    [[nodiscard]] bool has_face(std::string_view family, bool bold, bool italic) const;
+    void set_default_family(std::string family);
 
     [[nodiscard]] float advance(std::string_view text, float font_size, std::string_view family,
                                 bool bold, bool italic) const override {
@@ -180,16 +159,8 @@ private:
         std::vector<std::uint8_t> coverage; // width * height, 0..255
     };
 
-    [[nodiscard]] static std::string lowered(std::string_view text) {
-        std::string out{text};
-        std::ranges::transform(out, out.begin(),
-                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        return out;
-    }
-    [[nodiscard]] static int pixel_size(float font_size) noexcept {
-        const int size = static_cast<int>(font_size + 0.5f);
-        return size < 1 ? 1 : size;
-    }
+    [[nodiscard]] static std::string lowered(std::string_view text);
+    [[nodiscard]] static int pixel_size(float font_size) noexcept;
 
     template <typename Fn> static void for_each_code_point(std::string_view text, Fn && fn) {
         for (std::size_t i = 0; i < text.size();) {
@@ -214,12 +185,7 @@ private:
         }
     }
 
-    [[nodiscard]] static TTF_Font * open_sized(const std::vector<std::byte> & bytes, int size) {
-        SDL_IOStream * source = SDL_IOFromConstMem(bytes.data(), bytes.size());
-        if (source == nullptr) { return nullptr; }
-        // closeio: the stream belongs to the font from here on.
-        return TTF_OpenFontIO(source, true, static_cast<float>(size));
-    }
+    [[nodiscard]] static TTF_Font * open_sized(const std::vector<std::byte> & bytes, int size);
 
     // An unknown family falls back to the DEFAULT one rather than drawing
     // nothing, and a missing bold/italic variant to the upright one - which is

@@ -222,9 +222,11 @@ add_library(ctbrowser::layout ALIAS ctbrowser-layout)
 # Records a display list from the fragment tree. Nothing downstream of layout
 # knows paint exists; paint knows nothing about how the list is drawn, which
 # is what allows a software and a GPU backend to consume the same recording.
-add_library(ctbrowser-paint INTERFACE)
+add_library(ctbrowser-paint)
 target_sources(ctbrowser-paint
-  INTERFACE
+  PRIVATE
+    paint/record.cpp
+  PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
       FILES
@@ -233,8 +235,9 @@ target_sources(ctbrowser-paint
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/paint/command.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/paint/layer.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/paint/record.hpp")
-target_compile_features(ctbrowser-paint INTERFACE cxx_std_23)
-target_link_libraries(ctbrowser-paint INTERFACE ctbrowser-core ctbrowser-dom ctbrowser-style ctbrowser-layout)
+target_compile_features(ctbrowser-paint PUBLIC cxx_std_23)
+ctbrowser_target(ctbrowser-paint)
+target_link_libraries(ctbrowser-paint PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style ctbrowser-layout)
 
 add_library(ctbrowser::paint ALIAS ctbrowser-paint)
 
@@ -242,9 +245,13 @@ add_library(ctbrowser::paint ALIAS ctbrowser-paint)
 # Turns display lists into pixels. Knows nothing about the DOM, style or
 # layout - only about paint's recorded commands, which is what lets a second
 # backend (SDL3 GPU, stage 6) drop in beside the software one.
-add_library(ctbrowser-raster INTERFACE)
+add_library(ctbrowser-raster)
 target_sources(ctbrowser-raster
-  INTERFACE
+  PRIVATE
+    raster/ttf.cpp
+    raster/software.cpp
+    raster/renderer.cpp
+  PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
       FILES
@@ -258,9 +265,10 @@ target_sources(ctbrowser-raster
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/renderer.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/compositor.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/pipeline.hpp")
-target_compile_features(ctbrowser-raster INTERFACE cxx_std_23)
-target_include_directories(ctbrowser-raster INTERFACE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/raster>")
-target_link_libraries(ctbrowser-raster INTERFACE ctbrowser-core ctbrowser-paint)
+target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
+ctbrowser_target(ctbrowser-raster)
+target_include_directories(ctbrowser-raster PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/raster>")
+target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)
 # Real fonts, through SDL3_ttf. THE ONE PLACE THE ENGINE LINKS SDL, and a
 # deliberate exception rather than an oversight - see the header of
 # raster/ttf.cppm and the note in tests/api_surface. TTF_Init needs no video
@@ -273,11 +281,11 @@ target_link_libraries(ctbrowser-raster INTERFACE ctbrowser-core ctbrowser-paint)
 if(SDL3_FOUND AND SDL3_ttf_FOUND)
   ctbrowser_pick_sdl_target(ttf_target ttf_static SDL3_ttf::SDL3_ttf)
   ctbrowser_pick_sdl_target(sdl_target sdl_static SDL3::SDL3)
-  target_link_libraries(ctbrowser-raster INTERFACE ${ttf_target} ${sdl_target})
-  target_compile_definitions(ctbrowser-raster INTERFACE CTBROWSER_WITH_TTF=1)
+  target_link_libraries(ctbrowser-raster PUBLIC ${ttf_target} ${sdl_target})
+  target_compile_definitions(ctbrowser-raster PUBLIC CTBROWSER_WITH_TTF=1)
   message(STATUS "ctbrowser: SDL3_ttf - real fonts available")
 else()
-  target_compile_definitions(ctbrowser-raster INTERFACE CTBROWSER_WITH_TTF=0)
+  target_compile_definitions(ctbrowser-raster PUBLIC CTBROWSER_WITH_TTF=0)
   message(STATUS "ctbrowser: no SDL3_ttf - text renders with font8x8 only")
 endif()
 

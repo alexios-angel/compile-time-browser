@@ -63,26 +63,16 @@ public:
     // drawn over it would hide what is selected.
     std::function<rect(const fragment &)> selection_of;
 
-    [[nodiscard]] std::shared_ptr<const display_list> record(const fragment & root) const {
-        auto list = std::make_shared<display_list>();
-        emit(root, 0, 0, default_text_color, *list);
-        return list;
-    }
+    [[nodiscard]] std::shared_ptr<const display_list> record(const fragment & root) const;
 
     // One page, one layer, for now. Layer assignment is a stacking-context
     // question (position:fixed, transforms, will-change, scrollers), and the
     // tree cannot answer it before stacking contexts exist - so this returns
     // the honest one-layer answer rather than a guess at the shape.
-    [[nodiscard]] layer_tree record_layers(const fragment & root) const {
-        layer_tree tree;
-        tree.layers.push_back(layer{record(root), point{}, rect{}, true});
-        return tree;
-    }
+    [[nodiscard]] layer_tree record_layers(const fragment & root) const;
 
 private:
-    [[nodiscard]] std::string_view prop(const computed_style_ptr & s, atom name) const {
-        return s ? s->get(name) : std::string_view{};
-    }
+    [[nodiscard]] std::string_view prop(const computed_style_ptr & s, atom name) const;
 
     void emit(const fragment & f, float dx, float dy, color inherited_text,
               display_list & into) const {
@@ -197,12 +187,7 @@ private:
     }
 
     // A rectangle's four edges, `t` thick.
-    static void stroke(const rect & box, float t, color c, node_id source, display_list & into) {
-        into.fill(rect{box.x, box.y, box.width, t}, c, source);
-        into.fill(rect{box.x, box.bottom() - t, box.width, t}, c, source);
-        into.fill(rect{box.x, box.y + t, t, box.height - 2 * t}, c, source);
-        into.fill(rect{box.right() - t, box.y + t, t, box.height - 2 * t}, c, source);
-    }
+    static void stroke(const rect & box, float t, color c, node_id source, display_list & into);
 
     void emit_border(const rect & box, const computed_style_ptr & style, node_id source,
                      display_list & into) const {

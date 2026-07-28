@@ -117,6 +117,7 @@ int main() {
         "include/ctbrowser/shell/app.hpp",  // the window, the event loop, audio, image decode
         "src/shell/app.cpp",                //   and its implementation
         "include/ctbrowser/raster/ttf.hpp", // real fonts, through SDL3_ttf - see its header
+        "src/raster/ttf.cpp",               //   and its implementation
         "include/ctbrowser/gpu/device.hpp", // the SDL_GPUDevice backend
         "include/ctbrowser/gpu/select.hpp",
         "include/ctbrowser/gpu/gpu.hpp",

@@ -82,20 +82,12 @@ public:
 
     static constexpr bool is_hardware = false; // compile-time; see hardware()
 
-    [[nodiscard]] std::expected<frame_token, gpu_error> begin_frame() {
-        return ops_->begin_frame(self_);
-    }
-    [[nodiscard]] std::expected<void, gpu_error> reserve_tiles(std::span<const tile> tiles) {
-        return ops_->reserve_tiles(self_, tiles);
-    }
+    [[nodiscard]] std::expected<frame_token, gpu_error> begin_frame();
+    [[nodiscard]] std::expected<void, gpu_error> reserve_tiles(std::span<const tile> tiles);
     [[nodiscard]] bool needs_raster(tile_id id) const { return ops_->needs_raster(self_, id); }
-    [[nodiscard]] std::expected<void, gpu_error> raster(tile_id id, const display_list & list) {
-        return ops_->raster(self_, id, list);
-    }
+    [[nodiscard]] std::expected<void, gpu_error> raster(tile_id id, const display_list & list);
     void tile_ready(tile_id id) { ops_->tile_ready(self_, id); }
-    [[nodiscard]] std::expected<void, gpu_error> composite(std::span<const layer> layers) {
-        return ops_->composite(self_, layers);
-    }
+    [[nodiscard]] std::expected<void, gpu_error> composite(std::span<const layer> layers);
     [[nodiscard]] std::expected<void, gpu_error> end_frame() { return ops_->end_frame(self_); }
 
     // Every tile is stale. What a relayout calls.
@@ -123,9 +115,7 @@ public:
     // The composited image, when the backend can produce one. The software
     // backend always can; a GPU backend can only when it is offscreen, which is
     // what makes the two comparable in tests.
-    [[nodiscard]] std::expected<surface, gpu_error> read_target() {
-        return ops_->read_target(self_);
-    }
+    [[nodiscard]] std::expected<surface, gpu_error> read_target();
 
     // The concrete backend, when a caller needs something outside the concept.
     // Returns null if the renderer is not holding that type.
@@ -185,17 +175,8 @@ private:
         [](void * s) { delete static_cast<B *>(s); },
     };
 
-    void steal(renderer && other) noexcept {
-        self_ = std::exchange(other.self_, nullptr);
-        ops_ = std::exchange(other.ops_, nullptr);
-        name_ = std::move(other.name_);
-        hardware_ = other.hardware_;
-    }
-    void destroy() {
-        if (self_ != nullptr && ops_ != nullptr) { ops_->destroy(self_); }
-        self_ = nullptr;
-        ops_ = nullptr;
-    }
+    void steal(renderer && other) noexcept;
+    void destroy();
 
     void * self_ = nullptr;
     const vtable * ops_ = nullptr;
