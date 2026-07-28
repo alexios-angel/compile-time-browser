@@ -119,6 +119,7 @@ int main() {
         "include/ctbrowser/raster/ttf.hpp", // real fonts, through SDL3_ttf - see its header
         "src/raster/ttf.cpp",               //   and its implementation
         "include/ctbrowser/gpu/device.hpp", // the SDL_GPUDevice backend
+        "src/gpu/device.cpp",               //   and its implementation
         "include/ctbrowser/gpu/select.hpp",
         "include/ctbrowser/gpu/gpu.hpp",
     };

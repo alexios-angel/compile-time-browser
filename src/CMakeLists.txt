@@ -460,9 +460,11 @@ endif()
 # runtime seam rather than a compile-time one. That is the same reason a
 # machine with no GPU still gets a browser.
 if(SDL3_FOUND)
-  add_library(ctbrowser-gpu INTERFACE)
+  add_library(ctbrowser-gpu)
   target_sources(ctbrowser-gpu
-    INTERFACE
+    PRIVATE
+      gpu/device.cpp
+    PUBLIC
       FILE_SET HEADERS
         BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
         FILES
@@ -470,8 +472,9 @@ if(SDL3_FOUND)
           "${CTBROWSER_INCLUDE_DIR}/ctbrowser/gpu/shaders/tile_spv.hpp"
           "${CTBROWSER_INCLUDE_DIR}/ctbrowser/gpu/device.hpp"
           "${CTBROWSER_INCLUDE_DIR}/ctbrowser/gpu/select.hpp")
-  target_compile_features(ctbrowser-gpu INTERFACE cxx_std_23)
-  target_link_libraries(ctbrowser-gpu INTERFACE ctbrowser-core ctbrowser-paint ctbrowser-raster
+  target_compile_features(ctbrowser-gpu PUBLIC cxx_std_23)
+  ctbrowser_target(ctbrowser-gpu)
+  target_link_libraries(ctbrowser-gpu PUBLIC ctbrowser-core ctbrowser-paint ctbrowser-raster
                                              ${CTBROWSER_SDL3_TARGET})
   add_library(ctbrowser::gpu ALIAS ctbrowser-gpu)
 endif()
