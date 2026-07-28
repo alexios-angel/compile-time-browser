@@ -112,6 +112,7 @@ add_library(ctbrowser::core ALIAS ctbrowser-core)
 add_library(ctbrowser-dom)
 target_sources(ctbrowser-dom
   PRIVATE
+    dom/document.cpp
     dom/tokenizer.cpp
     dom/treebuilder.cpp
   PUBLIC
@@ -203,6 +204,7 @@ target_sources(ctbrowser-layout
   PRIVATE
     layout/box.cpp
     layout/algorithm.cpp
+    layout/engine.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
