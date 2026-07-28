@@ -10,6 +10,10 @@
 #include <utility>
 #include <vector>
 
+// Unconditional, and above the switch below on purpose: this is what the file
+// implements, so it must not sit inside anyone's #if.
+#include <ctbrowser/shell/net.hpp>
+
 // Asio, from whichever distribution the build found. Boost's is what this tree
 // already depends on (Boost::headers is on three other engine targets and is
 // HEADER-ONLY, which is the standing constraint); STANDALONE Asio is the same
@@ -32,8 +36,6 @@
 #include <boost/asio/write.hpp>
 #if CTBROWSER_WITH_TLS
 #include <boost/asio/ssl.hpp>
-
-#include <ctbrowser/shell/net.hpp>
 #endif
 #endif
 
