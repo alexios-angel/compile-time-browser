@@ -1,23 +1,13 @@
-*.o
-*.d
-build/
-.claude
-*.pch
-*.gch
-*.pch.tmp
-tests/*
-!tests/*.cpp
-!tests/CMakeLists.txt
-tools/clang-std-embed/
-examples/pong.inc
-*.log
-# Screenshots are build output - EXCEPT the goldens, which are the test data a
-# byte comparison compares against. Ignored, they are missing from a fresh
-# clone and every golden test fails with "no golden" on a machine that has
-# never generated one.
-*.ppm
-!tests/golden/*.ppm
-examples-windows/
-examples-windows/
-tools/llvm-mingw/
-build*
+# Only what lands at the REPO ROOT. Every pattern is anchored with a leading
+# slash on purpose: a bare pattern matches at every depth, which is what made
+# this file a catch-all governing directories that can speak for themselves.
+# tests/, tools/ and examples/ carry their own rules.
+/.claude/
+/build*/
+/examples-*/
+
+# ctest runs every test with WORKING_DIRECTORY = the source root, so a stray
+# screenshot, profile or log lands HERE rather than beside the test.
+/*.ppm
+/*.log
+/*.csv

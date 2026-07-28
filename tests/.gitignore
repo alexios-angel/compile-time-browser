@@ -1,0 +1,7 @@
+# Scratch output from running a test by hand; the binaries themselves are in
+# build*/. Anchored to THIS directory so it cannot reach golden/, which is test
+# data rather than output - a bare `*.ppm` matches golden/ too, and then every
+# new golden is silently unaddable.
+/*.ppm
+/*.log
+/*.csv

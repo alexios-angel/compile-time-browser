@@ -1,0 +1,6 @@
+# A page run in place - `ctbrowse pages/widgets.html --headless out.ppm` from
+# here, or CTBROWSER_PROFILE. Anchored: nothing under pages/ or assets/ is
+# output.
+/*.ppm
+/*.log
+/*.csv
