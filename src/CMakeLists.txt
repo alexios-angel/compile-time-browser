@@ -109,9 +109,12 @@ add_library(ctbrowser::core ALIAS ctbrowser-core)
 # Its own WHATWG tokenizer and tree builder. This wrapped cthtml's value parser
 # at first; the conformant one replaced it, and with it the last reason the DOM
 # needed a parser from outside.
-add_library(ctbrowser-dom INTERFACE)
+add_library(ctbrowser-dom)
 target_sources(ctbrowser-dom
-  INTERFACE
+  PRIVATE
+    dom/tokenizer.cpp
+    dom/treebuilder.cpp
+  PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
       FILES
@@ -122,8 +125,9 @@ target_sources(ctbrowser-dom
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/dom/treebuilder.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/dom/html.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/dom/entities.hpp")
-target_compile_features(ctbrowser-dom INTERFACE cxx_std_23)
-target_link_libraries(ctbrowser-dom INTERFACE ctbrowser-core)
+target_compile_features(ctbrowser-dom PUBLIC cxx_std_23)
+ctbrowser_target(ctbrowser-dom)
+target_link_libraries(ctbrowser-dom PUBLIC ctbrowser-core)
 
 add_library(ctbrowser::dom ALIAS ctbrowser-dom)
 
