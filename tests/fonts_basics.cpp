@@ -33,7 +33,9 @@ void check(bool ok, std::string_view what) {
     }
 }
 
-[[nodiscard]] std::vector<std::byte> read_font(const char * path) {
+// Only the glyph-cache test reads a face off disk, and that test compiles
+// away without SDL3_ttf - so this is unused, not dead, on such a build.
+[[maybe_unused, nodiscard]] std::vector<std::byte> read_font(const char * path) {
     std::ifstream in{path, std::ios::binary};
     std::vector<std::byte> out;
     if (!in) { return out; }
