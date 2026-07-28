@@ -9,10 +9,9 @@ module;
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
+#include <ctbrowser/style/style.hpp>
 
 export module ctbrowser.shell:forms;
-
-import ctbrowser.style;
 
 // Form control state.
 //

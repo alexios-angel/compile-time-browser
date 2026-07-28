@@ -173,21 +173,23 @@ add_library(ctbrowser::script ALIAS ctbrowser-script)
 # simple selector and rejects descendant selectors with an ancestor filter.
 # Depends on dom for read_txn - matching consumes a stable read view, never
 # the live tree, which is what makes it parallelisable.
-add_library(ctbrowser-style)
+add_library(ctbrowser-style INTERFACE)
 target_sources(ctbrowser-style
-  PUBLIC
-    FILE_SET CXX_MODULES FILES
-      style/style.cppm
-      style/computed.cppm
-      style/selector.cppm
-      style/engine.cppm
-      style/ua.cppm)
-target_compile_features(ctbrowser-style PUBLIC cxx_std_23)
-ctbrowser_target(ctbrowser-style)
-target_include_directories(ctbrowser-style PRIVATE
-  "${PROJECT_SOURCE_DIR}/external/compile-time-css/include")
-target_link_libraries(ctbrowser-style PUBLIC ctbrowser-core ctbrowser-dom Boost::headers)
-set_target_properties(ctbrowser-style PROPERTIES CXX_SCAN_FOR_MODULES ON)
+  INTERFACE
+    FILE_SET HEADERS
+      BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
+      FILES
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/style.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/computed.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/selector.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/engine.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/ua.hpp")
+target_compile_features(ctbrowser-style INTERFACE cxx_std_23)
+# ctcss's headers are part of style's own headers, so a consumer needs the path.
+# BUILD_INTERFACE only: an exported target may not name a source-tree path.
+target_include_directories(ctbrowser-style INTERFACE
+  "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/external/compile-time-css/include>")
+target_link_libraries(ctbrowser-style INTERFACE ctbrowser-core ctbrowser-dom Boost::headers)
 
 add_library(ctbrowser::style ALIAS ctbrowser-style)
 
@@ -196,20 +198,20 @@ add_library(ctbrowser::style ALIAS ctbrowser-style)
 # on core (scheduler, geometry), dom (read_txn) and style (computed styles) -
 # but NOT the other way round: nothing upstream knows layout exists, which is
 # what keeps the pipeline acyclic.
-add_library(ctbrowser-layout)
+add_library(ctbrowser-layout INTERFACE)
 target_sources(ctbrowser-layout
-  PUBLIC
-    FILE_SET CXX_MODULES FILES
-      layout/layout.cppm
-      layout/values.cppm
-      layout/box.cppm
-      layout/fragment.cppm
-      layout/algorithm.cppm
-      layout/engine.cppm)
-target_compile_features(ctbrowser-layout PUBLIC cxx_std_23)
-ctbrowser_target(ctbrowser-layout)
-target_link_libraries(ctbrowser-layout PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style)
-set_target_properties(ctbrowser-layout PROPERTIES CXX_SCAN_FOR_MODULES ON)
+  INTERFACE
+    FILE_SET HEADERS
+      BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
+      FILES
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/layout/layout.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/layout/values.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/layout/box.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/layout/fragment.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/layout/algorithm.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/layout/engine.hpp")
+target_compile_features(ctbrowser-layout INTERFACE cxx_std_23)
+target_link_libraries(ctbrowser-layout INTERFACE ctbrowser-core ctbrowser-dom ctbrowser-style)
 
 add_library(ctbrowser::layout ALIAS ctbrowser-layout)
 
@@ -217,19 +219,19 @@ add_library(ctbrowser::layout ALIAS ctbrowser-layout)
 # Records a display list from the fragment tree. Nothing downstream of layout
 # knows paint exists; paint knows nothing about how the list is drawn, which
 # is what allows a software and a GPU backend to consume the same recording.
-add_library(ctbrowser-paint)
+add_library(ctbrowser-paint INTERFACE)
 target_sources(ctbrowser-paint
-  PUBLIC
-    FILE_SET CXX_MODULES FILES
-      paint/paint.cppm
-      paint/values.cppm
-      paint/command.cppm
-      paint/layer.cppm
-      paint/record.cppm)
-target_compile_features(ctbrowser-paint PUBLIC cxx_std_23)
-ctbrowser_target(ctbrowser-paint)
-target_link_libraries(ctbrowser-paint PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style ctbrowser-layout)
-set_target_properties(ctbrowser-paint PROPERTIES CXX_SCAN_FOR_MODULES ON)
+  INTERFACE
+    FILE_SET HEADERS
+      BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
+      FILES
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/paint/paint.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/paint/values.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/paint/command.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/paint/layer.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/paint/record.hpp")
+target_compile_features(ctbrowser-paint INTERFACE cxx_std_23)
+target_link_libraries(ctbrowser-paint INTERFACE ctbrowser-core ctbrowser-dom ctbrowser-style ctbrowser-layout)
 
 add_library(ctbrowser::paint ALIAS ctbrowser-paint)
 
@@ -237,24 +239,25 @@ add_library(ctbrowser::paint ALIAS ctbrowser-paint)
 # Turns display lists into pixels. Knows nothing about the DOM, style or
 # layout - only about paint's recorded commands, which is what lets a second
 # backend (SDL3 GPU, stage 6) drop in beside the software one.
-add_library(ctbrowser-raster)
+add_library(ctbrowser-raster INTERFACE)
 target_sources(ctbrowser-raster
-  PUBLIC
-    FILE_SET CXX_MODULES FILES
-      raster/raster.cppm
-      raster/surface.cppm
-      raster/draw.cppm
-      raster/ttf.cppm
-      raster/tile.cppm
-      raster/backend.cppm
-      raster/software.cppm
-      raster/renderer.cppm
-      raster/compositor.cppm
-      raster/pipeline.cppm)
-target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
-ctbrowser_target(ctbrowser-raster)
-target_include_directories(ctbrowser-raster PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/raster")
-target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)
+  INTERFACE
+    FILE_SET HEADERS
+      BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
+      FILES
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/raster.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/surface.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/draw.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/ttf.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/tile.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/software.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/renderer.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/compositor.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/pipeline.hpp")
+target_compile_features(ctbrowser-raster INTERFACE cxx_std_23)
+target_include_directories(ctbrowser-raster INTERFACE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/raster>")
+target_link_libraries(ctbrowser-raster INTERFACE ctbrowser-core ctbrowser-paint)
 # Real fonts, through SDL3_ttf. THE ONE PLACE THE ENGINE LINKS SDL, and a
 # deliberate exception rather than an oversight - see the header of
 # raster/ttf.cppm and the note in tests/api_surface. TTF_Init needs no video
@@ -267,15 +270,14 @@ target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)
 if(SDL3_FOUND AND SDL3_ttf_FOUND)
   ctbrowser_pick_sdl_target(ttf_target ttf_static SDL3_ttf::SDL3_ttf)
   ctbrowser_pick_sdl_target(sdl_target sdl_static SDL3::SDL3)
-  target_link_libraries(ctbrowser-raster PUBLIC ${ttf_target} ${sdl_target})
-  target_compile_definitions(ctbrowser-raster PUBLIC CTBROWSER_WITH_TTF=1)
+  target_link_libraries(ctbrowser-raster INTERFACE ${ttf_target} ${sdl_target})
+  target_compile_definitions(ctbrowser-raster INTERFACE CTBROWSER_WITH_TTF=1)
   message(STATUS "ctbrowser: SDL3_ttf - real fonts available")
 else()
-  target_compile_definitions(ctbrowser-raster PUBLIC CTBROWSER_WITH_TTF=0)
+  target_compile_definitions(ctbrowser-raster INTERFACE CTBROWSER_WITH_TTF=0)
   message(STATUS "ctbrowser: no SDL3_ttf - text renders with font8x8 only")
 endif()
 
-set_target_properties(ctbrowser-raster PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
 add_library(ctbrowser::raster ALIAS ctbrowser-raster)
 
@@ -439,19 +441,19 @@ endif()
 # runtime seam rather than a compile-time one. That is the same reason a
 # machine with no GPU still gets a browser.
 if(SDL3_FOUND)
-  add_library(ctbrowser-gpu)
+  add_library(ctbrowser-gpu INTERFACE)
   target_sources(ctbrowser-gpu
-    PUBLIC
-      FILE_SET CXX_MODULES FILES
-        gpu/gpu.cppm
-        gpu/device.cppm
-        gpu/select.cppm)
-  target_compile_features(ctbrowser-gpu PUBLIC cxx_std_23)
-  ctbrowser_target(ctbrowser-gpu)
-  target_include_directories(ctbrowser-gpu PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/gpu")
-  target_link_libraries(ctbrowser-gpu PUBLIC ctbrowser-core ctbrowser-paint ctbrowser-raster
+    INTERFACE
+      FILE_SET HEADERS
+        BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
+        FILES
+          "${CTBROWSER_INCLUDE_DIR}/ctbrowser/gpu/gpu.hpp"
+          "${CTBROWSER_INCLUDE_DIR}/ctbrowser/gpu/device.hpp"
+          "${CTBROWSER_INCLUDE_DIR}/ctbrowser/gpu/select.hpp")
+  target_compile_features(ctbrowser-gpu INTERFACE cxx_std_23)
+  target_include_directories(ctbrowser-gpu INTERFACE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/gpu>")
+  target_link_libraries(ctbrowser-gpu INTERFACE ctbrowser-core ctbrowser-paint ctbrowser-raster
                                              ${CTBROWSER_SDL3_TARGET})
-  set_target_properties(ctbrowser-gpu PROPERTIES CXX_SCAN_FOR_MODULES ON)
   add_library(ctbrowser::gpu ALIAS ctbrowser-gpu)
 endif()
 

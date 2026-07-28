@@ -16,8 +16,8 @@
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
-import ctbrowser.style;
-import ctbrowser.layout;
+#include <ctbrowser/layout/layout.hpp>
+#include <ctbrowser/style/style.hpp>
 
 #include "check.hpp"
 #include <cmath>

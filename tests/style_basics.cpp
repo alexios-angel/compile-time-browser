@@ -8,7 +8,7 @@
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
-import ctbrowser.style;
+#include <ctbrowser/style/style.hpp>
 
 #include "check.hpp"
 #include <string>

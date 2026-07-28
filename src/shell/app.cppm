@@ -15,12 +15,12 @@ module;
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/paint/paint.hpp>
+#include <ctbrowser/raster/raster.hpp>
 #include <ctbrowser/script/script.hpp>
 
 export module ctbrowser.app;
 
-import ctbrowser.paint;
-import ctbrowser.raster;
 import ctbrowser.shell;
 
 // The application shell: a window, an event loop, and one function to call.

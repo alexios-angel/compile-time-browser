@@ -11,11 +11,10 @@ module;
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
+#include <ctbrowser/paint/paint.hpp>
+#include <ctbrowser/raster/raster.hpp>
 
 export module ctbrowser.shell:canvas;
-
-import ctbrowser.paint;
-import ctbrowser.raster;
 
 // The 2D canvas.
 //

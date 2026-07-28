@@ -17,14 +17,14 @@ module;
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
+#include <ctbrowser/layout/layout.hpp>
+#include <ctbrowser/paint/paint.hpp>
+#include <ctbrowser/raster/raster.hpp>
 #include <ctbrowser/script/script.hpp>
+#include <ctbrowser/style/style.hpp>
 
 export module ctbrowser.shell:browser;
 
-import ctbrowser.style;
-import ctbrowser.layout;
-import ctbrowser.paint;
-import ctbrowser.raster;
 import :input;
 import :metrics;
 import :assets;

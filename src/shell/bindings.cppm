@@ -13,12 +13,13 @@ module;
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
+#include <ctbrowser/layout/layout.hpp>
+#include <ctbrowser/paint/paint.hpp>
+#include <ctbrowser/raster/raster.hpp>
 #include <ctbrowser/script/script.hpp>
 
 export module ctbrowser.shell:bindings;
 
-import ctbrowser.layout;
-import ctbrowser.paint;
 import :input;
 import :assets;
 import :canvas;

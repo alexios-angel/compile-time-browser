@@ -11,10 +11,10 @@ module;
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/paint/paint.hpp>
 
 export module ctbrowser.shell:images;
 
-import ctbrowser.paint;
 import :assets;
 
 // Decoding images into the bitmap the display list already carries.

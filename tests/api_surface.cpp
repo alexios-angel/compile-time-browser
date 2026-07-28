@@ -102,28 +102,34 @@ int main() {
     // "the engine is SDL-free" - the claim that makes headless rendering and
     // this whole test suite possible - has broken.
     //
-    // A SWEEP of src/, not a hand-written list. The list version could not
-    // catch a NEW file that used SDL, and it did not: raster/ttf.cppm was added
+    // A SWEEP of the engine, not a hand-written list. The list version could
+    // not catch a NEW file that used SDL, and it did not: raster/ttf was added
     // and this test stayed green because nobody had added it to the list.
+    //
+    // Both trees, since the engine is headers in include/ and implementations
+    // in src/: sweeping one of them would leave the other unwatched.
     const std::set<std::string> allowed = {
-        "src/shell/app.cppm",  // the window, the event loop, audio, image decode
-        "src/shell/app.cpp",   //   and its implementation
-        "src/raster/ttf.cppm", // real fonts, through SDL3_ttf - see its header
-        "src/gpu/device.cppm", // the SDL_GPUDevice backend
-        "src/gpu/select.cppm", "src/gpu/gpu.cppm",
+        "src/shell/app.cppm",               // the window, the event loop, audio, image decode
+        "src/shell/app.cpp",                //   and its implementation
+        "include/ctbrowser/raster/ttf.hpp", // real fonts, through SDL3_ttf - see its header
+        "include/ctbrowser/gpu/device.hpp", // the SDL_GPUDevice backend
+        "include/ctbrowser/gpu/select.hpp",
+        "include/ctbrowser/gpu/gpu.hpp",
     };
     std::size_t swept = 0;
-    for (const auto & entry : std::filesystem::recursive_directory_iterator{"src"}) {
-        if (!entry.is_regular_file()) { continue; }
-        const std::string ext = entry.path().extension().string();
-        if (ext != ".cppm" && ext != ".cpp" && ext != ".hpp") { continue; }
-        std::string path = entry.path().generic_string();
-        if (allowed.contains(path)) { continue; }
-        ++swept;
-        const std::string raw = read(path);
-        check(!raw.empty(), path + ": readable");
-        check(strip_comments(raw).find("SDL") == std::string::npos,
-              path + ": engine module is SDL-free");
+    for (const std::string & tree : {"include", "src"}) {
+        for (const auto & entry : std::filesystem::recursive_directory_iterator{tree}) {
+            if (!entry.is_regular_file()) { continue; }
+            const std::string ext = entry.path().extension().string();
+            if (ext != ".cppm" && ext != ".cpp" && ext != ".hpp") { continue; }
+            std::string path = entry.path().generic_string();
+            if (allowed.contains(path)) { continue; }
+            ++swept;
+            const std::string raw = read(path);
+            check(!raw.empty(), path + ": readable");
+            check(strip_comments(raw).find("SDL") == std::string::npos,
+                  path + ": engine source is SDL-free");
+        }
     }
     // If the sweep found nothing it is not passing, it is not looking.
     check(swept > 20, "the sweep actually visited the engine");

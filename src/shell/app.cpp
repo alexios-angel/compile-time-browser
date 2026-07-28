@@ -24,6 +24,8 @@ module;
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/paint/paint.hpp>
+#include <ctbrowser/raster/raster.hpp>
 #include <ctbrowser/script/script.hpp>
 
 module ctbrowser.app;

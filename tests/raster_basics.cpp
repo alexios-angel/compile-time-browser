@@ -14,10 +14,10 @@
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
-import ctbrowser.style;
-import ctbrowser.layout;
-import ctbrowser.paint;
-import ctbrowser.raster;
+#include <ctbrowser/layout/layout.hpp>
+#include <ctbrowser/paint/paint.hpp>
+#include <ctbrowser/raster/raster.hpp>
+#include <ctbrowser/style/style.hpp>
 import ctbrowser.shell; // shell::font8x8_metrics - see shell/metrics.cppm
 
 #include "check.hpp"

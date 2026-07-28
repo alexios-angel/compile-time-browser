@@ -1,10 +1,9 @@
 module;
+#include <ctbrowser/layout/layout.hpp>
+#include <ctbrowser/raster/raster.hpp>
 #include <string_view>
 
 export module ctbrowser.shell:metrics;
-
-import ctbrowser.layout;
-import ctbrowser.raster;
 
 // The one place layout's idea of a font and raster's meet.
 //

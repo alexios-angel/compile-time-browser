@@ -10,9 +10,9 @@
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
-import ctbrowser.style;
-import ctbrowser.layout;
-import ctbrowser.paint;
+#include <ctbrowser/layout/layout.hpp>
+#include <ctbrowser/paint/paint.hpp>
+#include <ctbrowser/style/style.hpp>
 
 #include "check.hpp"
 #include <cstdint>
