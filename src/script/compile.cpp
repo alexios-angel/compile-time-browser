@@ -35,8 +35,14 @@ public:
         std::vector<std::string> upvalue_names; // parallel to proto().upvalues
         std::vector<std::string> predeclared;   // hoisted at body entry; see predeclare_locals
         std::vector<std::size_t> scope_marks;   // locals.size() at each scope entry
-        std::uint8_t next_reg = 0;
-        std::uint8_t high_water = 0;
+        // WIDER THAN THE OPERAND THEY FEED, on purpose. A register index is a
+        // uint8 in an instruction, and these used to be uint8 too - so a
+        // function wanting more than 256 registers wrapped to r0 in silence and
+        // its locals aliased each other. Counting in a wider type does not make
+        // the bytecode hold more; it makes the compiler able to SAY how many
+        // were wanted, which is the difference between a diagnostic and a bug.
+        std::uint32_t next_reg = 0;
+        std::uint32_t high_water = 0;
         bool is_async = false; // `return v` hands back a settled promise of v
     };
 
@@ -95,13 +101,17 @@ public:
     [[nodiscard]] frame & fn() { return frames_.back(); }
     [[nodiscard]] function_proto & proto() { return out_.functions[fn().proto]; }
 
+    // Truncating is correct here and the overflow is caught once, at
+    // finish_frame, where high_water knows the REAL total. Failing on the first
+    // register past the limit would report 256 every time; what a person needs
+    // to hear is that the function wanted 1,452.
     [[nodiscard]] std::uint8_t alloc_reg() {
-        const std::uint8_t r = fn().next_reg++;
+        const std::uint32_t r = fn().next_reg++;
         if (fn().next_reg > fn().high_water) { fn().high_water = fn().next_reg; }
-        return r;
+        return static_cast<std::uint8_t>(r);
     }
-    void release_to(std::uint8_t mark) { fn().next_reg = mark; }
-    [[nodiscard]] std::uint8_t reg_mark() const { return frames_.back().next_reg; }
+    void release_to(std::uint32_t mark) { fn().next_reg = mark; }
+    [[nodiscard]] std::uint32_t reg_mark() const { return frames_.back().next_reg; }
 
     void push_scope() { fn().scope_marks.push_back(fn().locals.size()); }
     void pop_scope() {
@@ -285,6 +295,76 @@ public:
         }
     }
 
+    // What a node kind is CALLED. Only the kinds the compiler can refuse need
+    // a name; anything else falls back to the number, which is still better
+    // than nothing when a new kind appears in the parser.
+    [[nodiscard]] static std::string kind_name(vp::nk kind) {
+        switch (kind) {
+        case vp::nk::spread: return "spread in a call, `f(...args)`";
+        case vp::nk::seq: return "the comma operator";
+        case vp::nk::regex: return "a regular expression literal";
+        case vp::nk::yield_expr: return "`yield`";
+        case vp::nk::tagged: return "a tagged template literal";
+        case vp::nk::arrow: return "an arrow function";
+        case vp::nk::class_decl: return "a class declaration";
+        case vp::nk::func_expr: return "a function expression";
+        default: return "AST kind " + std::to_string(static_cast<int>(kind));
+        }
+    }
+
+    // --- the operand limits, said out loud ----------------------------------
+    //
+    // Every one of these used to be a silent truncation. An instruction is four
+    // bytes - `op` and three uint8s - so a register index, a property-name
+    // index and a jump displacement all have to fit fields far smaller than a
+    // real script needs, and the casts that made them fit were unchecked. The
+    // 257th distinct property name in a function read a DIFFERENT property,
+    // with no diagnostic anywhere; a function wanting more registers than a
+    // byte holds aliased its own locals.
+    //
+    // These do not raise any limit. They make the compiler say which one it hit
+    // and what it wanted, so a program that does not fit is a message rather
+    // than a wrong answer. Widening the instruction is the next commit; this is
+    // what makes it possible to tell whether the widening worked.
+    static constexpr std::size_t operand_limit = 255; // a uint8 field
+    static constexpr std::int32_t jump_limit = 32767; // the signed bx half
+
+    [[nodiscard]] std::string frame_name(std::size_t index) const {
+        const std::string & name = out_.functions[index].name;
+        return "`" + (name.empty() ? std::string{"<anonymous>"} : name) + "`";
+    }
+
+    // The seam every property-name operand goes through. One place to check,
+    // and one place for the next commit to widen.
+    [[nodiscard]] std::uint8_t name_operand(std::string text) {
+        const std::uint16_t index = proto().add_name(std::move(text));
+        if (index > operand_limit) {
+            fail(frame_name(fn().proto) + " mentions more than " +
+                 std::to_string(operand_limit + 1) +
+                 " distinct property names; the operand that selects one holds " +
+                 std::to_string(operand_limit + 1) + ". Past that it reads a DIFFERENT property.");
+        }
+        return static_cast<std::uint8_t>(index);
+    }
+
+    // Called where a frame's size is finally written, because that is the only
+    // point at which high_water is the truth rather than a running total.
+    void finish_frame(std::size_t index, std::size_t params) {
+        function_proto & fp = out_.functions[index];
+        const std::uint32_t wanted = fn().high_water;
+        fp.frame_size = static_cast<std::uint8_t>(wanted);
+        fp.param_count = static_cast<std::uint8_t>(params);
+        if (wanted > operand_limit) {
+            fail(frame_name(index) + " needs " + std::to_string(wanted) +
+                 " registers; a frame holds " + std::to_string(operand_limit + 1) +
+                 ". Past that its locals alias each other.");
+        }
+        if (params > operand_limit) {
+            fail(frame_name(index) + " takes " + std::to_string(params) +
+                 " parameters; the limit is " + std::to_string(operand_limit) + ".");
+        }
+    }
+
     // --- entry --------------------------------------------------------------
     void compile_program() {
         out_.functions.emplace_back();
@@ -304,7 +384,7 @@ public:
             if (at(s).kind != vp::nk::func_decl) { compile_stmt(s); }
         }
         proto().emit(instruction{op::ret_undef});
-        proto().frame_size = fn().high_water;
+        finish_frame(fn().proto, 0);
         pop_scope();
         frames_.pop_back();
     }
@@ -313,7 +393,7 @@ public:
     void compile_stmt(std::int32_t idx) {
         if (idx < 0 || !out_.ok) { return; }
         const vp::node & n = at(idx);
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         switch (n.kind) {
         case vp::nk::expr_stmt: {
             const std::uint8_t r = alloc_reg();
@@ -330,14 +410,14 @@ public:
             if (frames_.size() == 1) {
                 for (const std::int32_t d : kids(n)) {
                     const vp::node & decl = at(d);
-                    const std::uint8_t mark = reg_mark();
+                    const std::uint32_t mark = reg_mark();
                     const std::uint8_t r = alloc_reg();
                     if (decl.a >= 0) {
                         compile_expr(decl.a, r);
                     } else {
                         proto().emit(instruction{op::load_undef, r});
                     }
-                    const std::uint16_t name = proto().add_name(std::string{decl.text});
+                    const std::uint8_t name = name_operand(std::string{decl.text});
                     proto().emit(instruction::with_bx(op::set_global, r, name));
                     release_to(mark);
                 }
@@ -349,7 +429,7 @@ public:
                     // hoisted above: this statement is only the initializer,
                     // and emit_write knows whether it goes through a cell
                     if (decl.a >= 0) {
-                        const std::uint8_t mark = reg_mark();
+                        const std::uint32_t mark = reg_mark();
                         const std::uint8_t tmp = alloc_reg();
                         compile_expr(decl.a, tmp);
                         emit_write(decl.text, tmp);
@@ -418,7 +498,7 @@ public:
     }
 
     void compile_if(const vp::node & n) {
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         const std::uint8_t cond = alloc_reg();
         compile_expr(n.a, cond);
         const std::size_t to_else = proto().emit(instruction{op::jump_if_false, cond});
@@ -504,7 +584,7 @@ public:
     void compile_while(const vp::node & n) {
         const std::size_t top = proto().code.size();
         loops_.push_back(loop_context{take_label(), {}, {}, handler_depth_});
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         const std::uint8_t cond = alloc_reg();
         compile_expr(n.a, cond);
         const std::size_t exit = proto().emit(instruction{op::jump_if_false, cond});
@@ -525,7 +605,7 @@ public:
         compile_stmt(n.a);
         const std::size_t test = proto().code.size();
         patch_continues(loops_.back(), test);
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         const std::uint8_t cond = alloc_reg();
         compile_expr(n.b, cond);
         const std::size_t exit = proto().emit(instruction{op::jump_if_false, cond});
@@ -545,7 +625,7 @@ public:
         std::size_t exit = 0;
         bool has_cond = false;
         if (n.b >= 0) {
-            const std::uint8_t mark = reg_mark();
+            const std::uint32_t mark = reg_mark();
             const std::uint8_t cond = alloc_reg();
             compile_expr(n.b, cond);
             exit = proto().emit(instruction{op::jump_if_false, cond});
@@ -558,7 +638,7 @@ public:
         // `for (...; i++) { ... continue; }` into an infinite loop.
         patch_continues(loops_.back(), proto().code.size());
         if (n.c >= 0) {
-            const std::uint8_t mark = reg_mark();
+            const std::uint32_t mark = reg_mark();
             const std::uint8_t tmp = alloc_reg();
             compile_expr(n.c, tmp);
             release_to(mark);
@@ -584,16 +664,15 @@ public:
     void compile_for_of(const vp::node & n) {
         push_scope();
         const std::string label = take_label();
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
 
         const std::uint8_t source = alloc_reg();
         compile_expr(n.b, source);
         if (n.text == "in") { proto().emit(instruction{op::own_keys, source, source}); }
 
         const std::uint8_t length = alloc_reg();
-        const std::uint16_t length_name = proto().add_name("length");
-        proto().emit(
-            instruction{op::get_prop, length, source, static_cast<std::uint8_t>(length_name)});
+        const std::uint8_t length_name = name_operand("length");
+        proto().emit(instruction{op::get_prop, length, source, length_name});
         const std::uint8_t index = alloc_reg();
         emit_const(index, value::number(0));
         const std::uint8_t one = alloc_reg();
@@ -636,7 +715,7 @@ public:
     // does run the next one, and code relies on that.
     void compile_switch(const vp::node & n) {
         push_scope();
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         const std::uint8_t subject = alloc_reg();
         compile_expr(n.a, subject);
 
@@ -727,7 +806,7 @@ public:
     }
 
     void compile_throw(const vp::node & n) {
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         const std::uint8_t r = alloc_reg();
         compile_expr(n.a, r);
         proto().emit(instruction{op::throw_value, r});
@@ -757,7 +836,7 @@ public:
         const std::uint32_t index = compile_function_body(idx, std::string{n.text});
         const std::uint8_t r = alloc_reg();
         proto().emit(instruction::with_bx(op::closure, r, static_cast<std::uint16_t>(index)));
-        const std::uint16_t name = proto().add_name(std::string{n.text});
+        const std::uint8_t name = name_operand(std::string{n.text});
         proto().emit(instruction::with_bx(op::set_global, r, name));
         release_to(static_cast<std::uint8_t>(r));
     }
@@ -777,7 +856,6 @@ public:
         collect_captured_names(n.a, false, fn().captured);
         const std::vector<std::int32_t> params = kids(n);
         for (const std::int32_t p : params) { (void)declare_local(std::string{at(p).text}); }
-        out_.functions[index].param_count = static_cast<std::uint8_t>(params.size());
         // A captured PARAMETER needs boxing too, and it arrives already
         // holding its value - so box in place, after the arguments land.
         for (const local & l : fn().locals) {
@@ -812,7 +890,7 @@ public:
         } else {
             emit_implicit_return();
         }
-        out_.functions[index].frame_size = fn().high_water;
+        finish_frame(index, params.size());
         pop_scope();
         frames_.pop_back();
         return index;
@@ -862,8 +940,8 @@ public:
             } else {
                 compile_expr(n.a, dst);
             }
-            const std::uint16_t name = proto().add_name(std::string{n.text});
-            proto().emit(instruction{op::get_prop, dst, dst, static_cast<std::uint8_t>(name)});
+            const std::uint8_t name = name_operand(std::string{n.text});
+            proto().emit(instruction{op::get_prop, dst, dst, name});
             break;
         }
         case vp::nk::super_lit:
@@ -872,7 +950,7 @@ public:
             fail("`super` is only valid as `super(...)` or `super.member`");
             break;
         case vp::nk::index: {
-            const std::uint8_t mark = reg_mark();
+            const std::uint32_t mark = reg_mark();
             compile_expr(n.a, dst);
             const std::uint8_t key = alloc_reg();
             compile_expr(n.b, key);
@@ -909,8 +987,11 @@ public:
             proto().emit(instruction{op::load_undef, dst});
             break;
         default:
-            fail("unsupported syntax in this VM subset (AST kind " +
-                 std::to_string(static_cast<int>(n.kind)) + ")");
+            // "AST kind 13" is a number, not a diagnostic. Naming the construct
+            // is the difference between a report you can act on and one you
+            // have to go and decode: kind 13 is `f(...args)`, and it stops
+            // thirteen of p5.js's seventy-one modules on its own.
+            fail(std::string{"unsupported syntax in this VM subset: "} + kind_name(n.kind));
             proto().emit(instruction{op::load_undef, dst});
             break;
         }
@@ -968,7 +1049,7 @@ public:
             proto().emit(instruction{op::get_upvalue, dst, static_cast<std::uint8_t>(up)});
             return;
         }
-        const std::uint16_t name = proto().add_name(std::string{n.text});
+        const std::uint8_t name = name_operand(std::string{n.text});
         proto().emit(instruction::with_bx(op::get_global, dst, name));
     }
 
@@ -976,14 +1057,13 @@ public:
     // variable - is a no-op that yields false, which is what non-strict
     // JavaScript does with an undeletable binding.
     void compile_delete(const vp::node & n, std::uint8_t dst) {
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         const vp::node & target = at(n.a);
         if (target.kind == vp::nk::member) {
             const std::uint8_t object = alloc_reg();
             compile_expr(target.a, object);
             proto().emit(
-                instruction{op::delete_prop, object,
-                            static_cast<std::uint8_t>(proto().add_name(std::string{target.text}))});
+                instruction{op::delete_prop, object, name_operand(std::string{target.text})});
             emit_const(dst, value::boolean(true));
         } else if (target.kind == vp::nk::index) {
             const std::uint8_t object = alloc_reg();
@@ -999,7 +1079,7 @@ public:
     }
 
     void compile_binary(const vp::node & n, std::uint8_t dst) {
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         const std::uint8_t lhs = alloc_reg();
         const std::uint8_t rhs = alloc_reg();
         compile_expr(n.a, lhs);
@@ -1078,7 +1158,7 @@ public:
             compile_delete(n, dst);
             return;
         }
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         const std::uint8_t operand = alloc_reg();
         compile_expr(n.a, operand);
         if (n.text == "-") {
@@ -1224,7 +1304,7 @@ public:
 
     void compile_assign(const vp::node & n, std::uint8_t dst) {
         const vp::node & target = at(n.a);
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         const reference ref = prepare_reference(target);
 
         if (n.text == "=") {
@@ -1264,7 +1344,7 @@ public:
 
     void compile_update(const vp::node & n, std::uint8_t dst) {
         const vp::node & target = at(n.a);
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         // Through the same reference machinery as compound assignment, so
         // `obj.n++` and `a[i]++` work and evaluate their target exactly once.
         const reference ref = prepare_reference(target);
@@ -1281,7 +1361,7 @@ public:
     }
 
     void compile_ternary(const vp::node & n, std::uint8_t dst) {
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         const std::uint8_t cond = alloc_reg();
         compile_expr(n.a, cond);
         const std::size_t to_alt = proto().emit(instruction{op::jump_if_false, cond});
@@ -1304,7 +1384,7 @@ public:
         if (raw.size() >= 2 && raw.front() == '`' && raw.back() == '`') {
             raw = raw.substr(1, raw.size() - 2);
         }
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         const std::uint8_t piece = alloc_reg();
         bool started = false;
 
@@ -1368,7 +1448,7 @@ public:
     void compile_call(const vp::node & n, std::uint8_t dst) {
         const std::vector<std::int32_t> args = kids(n);
         const vp::node & callee = at(n.a);
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         const std::uint8_t base = alloc_reg();
 
         const bool super_method = callee.kind == vp::nk::member && callee.a >= 0 &&
@@ -1379,8 +1459,7 @@ public:
             // in both forms.
             emit_super_base(base);
             const std::string name = super_method ? std::string{callee.text} : "constructor";
-            proto().emit(instruction{op::get_prop, base, base,
-                                     static_cast<std::uint8_t>(proto().add_name(name))});
+            proto().emit(instruction{op::get_prop, base, base, name_operand(name)});
             for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
             const std::uint8_t self = alloc_reg();
             proto().emit(instruction{op::load_this, self});
@@ -1394,9 +1473,9 @@ public:
         if (callee.kind == vp::nk::member) {
             compile_expr(callee.a, base); // the receiver
             for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
-            const std::uint16_t name = proto().add_name(std::string{callee.text});
-            proto().emit(instruction{op::call_method, base, static_cast<std::uint8_t>(args.size()),
-                                     static_cast<std::uint8_t>(name)});
+            const std::uint8_t name = name_operand(std::string{callee.text});
+            proto().emit(
+                instruction{op::call_method, base, static_cast<std::uint8_t>(args.size()), name});
         } else if (callee.kind == vp::nk::index) {
             // `obj[name](...)` is a METHOD call: the receiver is obj. Compiling
             // it as a plain call leaves `this` undefined inside the method.
@@ -1420,7 +1499,7 @@ public:
     // returned one of its own.
     void compile_new(const vp::node & n, std::uint8_t dst) {
         const std::vector<std::int32_t> args = kids(n);
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         const std::uint8_t base = alloc_reg();
         compile_expr(n.a, base);
         for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
@@ -1433,7 +1512,7 @@ public:
     // undefined without evaluating `.c` when a is null-ish, so writing it as an
     // ordinary member access with a test afterwards would still crash.
     void compile_optional(const vp::node & n, std::uint8_t dst) {
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         const std::uint8_t object = alloc_reg();
         compile_expr(n.a, object);
 
@@ -1445,9 +1524,7 @@ public:
         const std::size_t skip = proto().emit(instruction{op::jump_if_true, test});
 
         if (n.kind == vp::nk::opt_member) {
-            proto().emit(
-                instruction{op::get_prop, dst, object,
-                            static_cast<std::uint8_t>(proto().add_name(std::string{n.text}))});
+            proto().emit(instruction{op::get_prop, dst, object, name_operand(std::string{n.text})});
         } else if (n.kind == vp::nk::opt_index) {
             const std::uint8_t key = alloc_reg();
             compile_expr(n.b, key);
@@ -1490,7 +1567,7 @@ public:
     // silently does nothing.
     void compile_class(const vp::node & n, std::uint8_t dst) {
         const std::vector<std::int32_t> members = kids(n);
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         const std::uint8_t prototype_reg = alloc_reg();
         proto().emit(instruction{op::new_object, prototype_reg});
 
@@ -1500,8 +1577,8 @@ public:
             const std::uint8_t parent = alloc_reg();
             compile_expr(n.a, parent);
             const std::uint8_t parent_proto = alloc_reg();
-            proto().emit(instruction{op::get_prop, parent_proto, parent,
-                                     static_cast<std::uint8_t>(proto().add_name("prototype"))});
+            proto().emit(
+                instruction{op::get_prop, parent_proto, parent, name_operand("prototype")});
             proto().emit(instruction{op::set_proto, prototype_reg, parent_proto});
         }
 
@@ -1518,18 +1595,13 @@ public:
             // nothing to invoke.
             compile_foreign_expr("(function () {})", dst);
         }
-        proto().emit(instruction{op::set_prop, dst,
-                                 static_cast<std::uint8_t>(proto().add_name("prototype")),
-                                 prototype_reg});
+        proto().emit(instruction{op::set_prop, dst, name_operand("prototype"), prototype_reg});
         // `C.prototype.constructor === C`, which is both what pages expect and
         // how `super(...)` finds the parent constructor to call.
-        proto().emit(instruction{op::set_prop, prototype_reg,
-                                 static_cast<std::uint8_t>(proto().add_name("constructor")), dst});
+        proto().emit(instruction{op::set_prop, prototype_reg, name_operand("constructor"), dst});
         // The constructor's home is this class's prototype, so `super(...)`
         // inside it starts one level up.
-        proto().emit(instruction{op::set_prop, dst,
-                                 static_cast<std::uint8_t>(proto().add_name("__home")),
-                                 prototype_reg});
+        proto().emit(instruction{op::set_prop, dst, name_operand("__home"), prototype_reg});
 
         const std::uint8_t slot = alloc_reg();
         for (const std::int32_t member : members) {
@@ -1537,19 +1609,17 @@ public:
             if (m.text == "constructor" && m.c == 1) { continue; }
             if (m.b < 0) { continue; }
             compile_expr(m.b, slot);
-            const std::uint16_t name = proto().add_name(std::string{m.text});
+            const std::uint8_t name = name_operand(std::string{m.text});
             // A static member goes on the constructor; everything else on the
             // prototype, where instances find it.
             const std::uint8_t target = (m.d & 1) != 0 ? dst : prototype_reg;
-            proto().emit(instruction{op::set_prop, target, static_cast<std::uint8_t>(name), slot});
+            proto().emit(instruction{op::set_prop, target, name, slot});
             // Each method remembers where it was WRITTEN. `super.m()` resolves
             // against that, not against `this` - in a three-deep hierarchy the
             // two differ and resolving against `this` calls the same method
             // forever.
             if (m.c == 1) {
-                proto().emit(instruction{op::set_prop, slot,
-                                         static_cast<std::uint8_t>(proto().add_name("__home")),
-                                         target});
+                proto().emit(instruction{op::set_prop, slot, name_operand("__home"), target});
             }
         }
         release_to(mark);
@@ -1557,7 +1627,7 @@ public:
 
     void compile_array(const vp::node & n, std::uint8_t dst) {
         proto().emit(instruction{op::new_array, dst});
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         for (const std::int32_t element : kids(n)) {
             const std::uint8_t v = alloc_reg();
             if (at(element).kind == vp::nk::spread) {
@@ -1575,10 +1645,9 @@ public:
 
     // Append every element of `source` to the array in `target`.
     void emit_append_all(std::uint8_t target, std::uint8_t source) {
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         const std::uint8_t length = alloc_reg();
-        proto().emit(instruction{op::get_prop, length, source,
-                                 static_cast<std::uint8_t>(proto().add_name("length"))});
+        proto().emit(instruction{op::get_prop, length, source, name_operand("length")});
         const std::uint8_t index = alloc_reg();
         emit_const(index, value::number(0));
         const std::uint8_t one = alloc_reg();
@@ -1598,7 +1667,7 @@ public:
 
     void compile_object(const vp::node & n, std::uint8_t dst) {
         proto().emit(instruction{op::new_object, dst});
-        const std::uint8_t mark = reg_mark();
+        const std::uint32_t mark = reg_mark();
         for (const std::int32_t p : kids(n)) {
             const vp::node & prop = at(p);
             if (prop.kind == vp::nk::spread) {
@@ -1635,8 +1704,8 @@ public:
                 compile_expr(prop.a, key);
                 proto().emit(instruction{op::set_index, dst, key, v});
             } else {
-                const std::uint16_t name = proto().add_name(decode_string_literal(prop.text));
-                proto().emit(instruction{op::set_prop, dst, static_cast<std::uint8_t>(name), v});
+                const std::uint8_t name = name_operand(decode_string_literal(prop.text));
+                proto().emit(instruction{op::set_prop, dst, name, v});
             }
             release_to(mark);
         }
@@ -1655,6 +1724,11 @@ public:
     void patch_jump(std::size_t at_index, std::size_t target) {
         const auto offset =
             static_cast<std::int32_t>(target) - static_cast<std::int32_t>(at_index) - 1;
+        if (offset > jump_limit || offset < -jump_limit - 1) {
+            fail(frame_name(fn().proto) + " needs a jump of " + std::to_string(offset) +
+                 " instructions; the displacement holds " + std::to_string(jump_limit) +
+                 ". Past that it branches to the WRONG address.");
+        }
         instruction & jump = proto().code[at_index];
         const auto narrow = static_cast<std::uint16_t>(static_cast<std::int16_t>(offset));
         jump.b = static_cast<std::uint8_t>(narrow >> 8);

@@ -80,6 +80,36 @@ void must_stop_at_source(const std::string & source, std::string_view blocker) {
     }
 }
 
+// The same assertion for a source too big to echo. A generated program is not
+// anybody's page, so printing it on failure helps nobody; what matters is the
+// label and which limit it hit.
+void must_stop_at(std::string_view label, const std::string & source, std::string_view blocker) {
+    const ctbrowser::script::program compiled = ctbrowser::script::compiler::compile(source);
+    if (compiled.ok) {
+        std::printf("FAIL %s COMPILES - promote it\n", std::string{label}.c_str());
+        ++ctbrowser_test_failures;
+        return;
+    }
+    if (compiled.error.find(blocker) == std::string::npos) {
+        std::printf("FAIL %s stops at \"%s\", not at \"%s\"\n", std::string{label}.c_str(),
+                    compiled.error.c_str(), std::string{blocker}.c_str());
+        ++ctbrowser_test_failures;
+        return;
+    }
+    std::printf("     %s: %s\n", std::string{label}.c_str(), compiled.error.c_str());
+}
+
+// head, then `before<i>after` for i in [0, times), then tail. Enough to build a
+// program that is over one of the compiler's limits without writing it out.
+[[nodiscard]] std::string repeated(std::string_view head, std::string_view before,
+                                   std::string_view after, int times, std::string_view tail) {
+    std::string out{head};
+    for (int i = 0; i < times; ++i) {
+        out += std::string{before} + std::to_string(i) + std::string{after};
+    }
+    return out + std::string{tail};
+}
+
 } // namespace
 
 int main() {
@@ -102,6 +132,31 @@ int main() {
     // take.
     must_stop_at_source("var mobile = /iphone|android/i.test(navigator.userAgent);",
                         "regular expression literals");
+
+    // And the construct is NAMED, not numbered. "AST kind 13" is a fact about
+    // the parser's enum, not about anybody's program.
+    must_stop_at_source("Math.max(...[1, 2, 3]);", "spread in a call");
+
+    // THE STRUCTURAL LIMITS SAY WHAT THEY WANTED.
+    //
+    // Each of these used to be a silent truncation - the program compiled, and
+    // then read the wrong property, or aliased two locals onto one register, or
+    // branched to an address that was never a jump target. A wrong answer with
+    // no diagnostic is the worst thing a compiler can produce, and these are the
+    // three the engine could produce until now.
+    //
+    // They are asserted with the NUMBER in them, because "too many names" and
+    // "wanted 1452 registers" are different amounts of help when the program in
+    // front of you is 4.5 MB.
+    must_stop_at("300 distinct property names",
+                 repeated("function f(o){ return 0", " + o.p", "", 300, "; }"),
+                 "mentions more than 256 distinct property names");
+    must_stop_at("300 locals", repeated("function g(){ ", "let v", " = 1; ", 300, "return v0; }"),
+                 " registers; a frame holds 256");
+    // A body long enough that a jump over it does not reach.
+    must_stop_at("a 40,000-instruction if",
+                 repeated("function h(o){ if (o) { ", "o.m(", ");", 40000, "} return 1; }"),
+                 " instructions; the displacement holds 32767");
 
     REPORT("page_scripts");
 }

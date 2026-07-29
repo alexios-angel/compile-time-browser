@@ -168,10 +168,14 @@ def do_survey():
     print(f"\n  {len(found)} modules, {len(blocked)} of them below level {ceiling}\n")
 
     # Group by the SHAPE of the blocker, not its text: a position makes every
-    # one unique, and the count is the whole point.
+    # one unique, and the count is the whole point. Only the parenthetical that
+    # quotes SOURCE varies between modules - `(/void\s+main/)` and the like - so
+    # that is the only one collapsed. Blanking every parenthetical would turn
+    # "spread in a call, `f(...args)`" into "`f(...)`", which reads as a
+    # different construct entirely.
     def shape(blocker):
         s = re.sub(r"[\w.$-]+:\d+:\d+", "<position>", blocker)
-        return re.sub(r"\(.*\)", "(...)", s).strip()
+        return re.sub(r"\((/|['\"])[^)]*\)\s*$", "(<source>)", s).strip()
 
     tally = {}
     for name, line, level, blocker in blocked:
