@@ -20,15 +20,29 @@
 // every browser does" is the only definition of correct that matters, because
 // pages were written against it.
 //
-// This is the tokenizer half: bytes to tokens. It implements the states a
-// document without foreign content (SVG, MathML) can reach. That boundary is
-// deliberate and named rather than silently absent - see treebuilder for the
-// same line drawn on the other side.
+// This is the tokenizer half: bytes to tokens.
 //
-// The states it does NOT have: the foreign-content ones, the script-data
-// escaped/double-escaped ladder (a <script> containing the literal text
-// "<!--<script>" is tokenized as plain script data here, which ends the script
-// at the first </script> rather than the second), and CDATA sections.
+// FOREIGN CONTENT (SVG) differs from the spec in one deliberate way, and it is
+// worth understanding before changing anything here.
+//
+// The spec lowercases every tag and attribute name unconditionally, then
+// carries ~95 pairs of adjustment tables to turn `viewbox` back into `viewBox`,
+// `preserveaspectratio` back into `preserveAspectRatio`, and so on. Those tables
+// exist ONLY to undo damage the spec's own tokenizer did. This tokenizer does
+// not do the damage: `set_preserve_case` keeps names as written while the tree
+// builder is inside an SVG, which is exact for every correctly-cased document
+// and needs no tables. `<svg VIEWBOX="...">` is the single divergence.
+//
+// SEPARATELY, and not as a substitute for the above, every token records the
+// SOURCE SPAN it came from. The SVG subtree is fully parsed into namespaced
+// elements - script can reach it, CSS can match it - but what reaches the
+// RASTERISER is the original bytes, sliced out of the input. Re-serialising the
+// tree would be a second place for the markup to be wrong.
+//
+// The states it does NOT have: MathML, and the script-data escaped/
+// double-escaped ladder (a <script> containing the literal text "<!--<script>"
+// is tokenized as plain script data here, which ends the script at the first
+// </script> rather than the second).
 
 namespace ctbrowser::html {
 
@@ -53,6 +67,19 @@ struct token {
     std::vector<token_attribute> attributes;
     bool self_closing = false;
     bool force_quirks = false;
+
+    // Where this token came from, as offsets into the tokenizer's input.
+    // `source_end` is one past the last byte, so [begin, end) is the span.
+    //
+    // These exist for FOREIGN CONTENT and are worth the two fields. An <svg>
+    // subtree has to reach a real SVG parser as the bytes the author wrote:
+    // this tokenizer lowercases tag and attribute names, and `viewBox`
+    // lowercased is a `viewbox` that no SVG parser reads. Re-serialising the
+    // DOM would need the spec's case-adjustment tables to undo damage that was
+    // never necessary; slicing the original input needs neither, and costs two
+    // integers on a struct that is already a string and a vector.
+    std::size_t source_begin = 0;
+    std::size_t source_end = 0;
 };
 
 // What the tree builder tells the tokenizer about the element it just opened.
@@ -73,11 +100,30 @@ public:
     // The tree builder switches this after emitting a start tag, per the spec.
     void set_content_model(content_model model, std::string_view for_tag);
 
-    [[nodiscard]] bool at_end() const noexcept { return at_ >= input_.size() && pending_.empty(); }
+    // FOREIGN CONTENT: keep tag and attribute names exactly as written, and
+    // read <![CDATA[...]]> as text.
+    //
+    // The spec lowercases unconditionally and then has ~95 pairs of adjustment
+    // tables to put `viewBox`, `preserveAspectRatio` and the rest back. Those
+    // tables exist ONLY to undo damage the spec's own tokenizer did; not doing
+    // the damage is exact for every correctly-cased document, which is all real
+    // SVG, and costs one bool instead of a table.
+    //
+    // The one divergence, worth knowing rather than discovering: `<svg
+    // VIEWBOX="...">` gives `VIEWBOX` here where the spec gives `viewBox`. A
+    // case-insensitive normalisation pass would close it if it ever matters.
+    void set_preserve_case(bool preserve) noexcept { preserve_case_ = preserve; }
+
+    [[nodiscard]] bool at_end() const noexcept { return at_ >= input_.size(); }
 
     [[nodiscard]] token next();
 
 private:
+    // next() without the source-span bookkeeping, which it wraps. Split so the
+    // states can recurse (an empty text run asks for the next token) without
+    // each recursion widening the span it eventually reports.
+    [[nodiscard]] token next_token();
+
     [[nodiscard]] char peek(std::size_t ahead = 0) const;
     [[nodiscard]] bool looking_at(std::string_view what) const;
     [[nodiscard]] static bool is_space(char c);
@@ -103,7 +149,10 @@ private:
 
     [[nodiscard]] token tag_open();
 
-    void read_attributes(token & out);
+    // `preserve_case` is passed rather than read from the member because the
+    // root <svg>'s own attributes have to survive, and at that moment the tree
+    // builder has not entered foreign content yet. See tag_open.
+    void read_attributes(token & out, bool preserve_case);
 
     [[nodiscard]] std::string read_attribute_value();
 
@@ -115,6 +164,10 @@ private:
     // spec turns these into comments rather than dropping them, so a stray
     // processing instruction does not swallow the rest of the document.
     [[nodiscard]] token bogus_comment();
+
+    // `<![CDATA[ ... ]]>` as one text run, undecoded. Foreign content only -
+    // in HTML the same bytes are a bogus comment.
+    [[nodiscard]] token cdata();
 
     [[nodiscard]] token doctype();
 
@@ -136,7 +189,7 @@ private:
     std::size_t at_ = 0;
     content_model model_ = content_model::data;
     std::string close_tag_;
-    std::vector<token> pending_;
+    bool preserve_case_ = false;
 };
 
 } // namespace ctbrowser::html

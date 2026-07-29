@@ -58,6 +58,16 @@ satellite libraries SDL3_image, SDL3_mixer and SDL3_ttf are used as
 external dependencies and are NOT bundled; all are distributed under
 the zlib license.
 
+plutosvg 0.0.8 (https://github.com/sammycage/plutosvg) and plutovg 1.3.3
+(https://github.com/sammycage/plutovg), by Samuel Ugochukwu, are used as
+external dependencies and are NOT bundled; both are distributed under
+the MIT license. They render SVG - see include/ctbrowser/raster/svg.hpp -
+and are optional: without them the engine builds and pages lay out
+identically, they simply draw no vector graphics. The versions are
+PINNED to the ones in the Windows cross-build sysroot, where SDL3_ttf
+already links plutosvg for colour glyphs, so that one golden image
+compares byte-for-byte on both platforms.
+
 --- the engine (src/) ---
 
 The engine uses Boost, HEADER-ONLY LIBRARIES ONLY (Boost Software

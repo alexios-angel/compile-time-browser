@@ -11,11 +11,18 @@ void tokenizer::set_content_model(content_model model, std::string_view for_tag)
 }
 
 token tokenizer::next() {
-    if (!pending_.empty()) {
-        token out = std::move(pending_.front());
-        pending_.erase(pending_.begin());
-        return out;
-    }
+    // Stamped here rather than in each state, so every token carries its span
+    // whatever produced it. `at_` only moves forward - the one rewind, inside
+    // decode_reference, never crosses a token boundary - so [begin, at_) is
+    // exactly the bytes this token was made from.
+    const std::size_t begin = at_;
+    token out = next_token();
+    out.source_begin = begin;
+    out.source_end = at_;
+    return out;
+}
+
+token tokenizer::next_token() {
     if (at_ >= input_.size()) { return token{token_kind::end_of_file, {}, {}, {}, false, false}; }
     switch (model_) {
     case content_model::data: return in_data();
@@ -52,6 +59,10 @@ token tokenizer::in_data() {
         if (is_alpha(peek(1))) { return tag_open(); }
         if (peek(1) == '/' && is_alpha(peek(2))) { return tag_open(); }
         if (looking_at("<!--")) { return comment(); }
+        // CDATA is legal in foreign content and nowhere else - in HTML the same
+        // bytes are a bogus comment, which is what the branch below makes of
+        // them. `<![CDATA[<b>]]>` inside an SVG is the TEXT "<b>", not markup.
+        if (preserve_case_ && looking_at("<![CDATA[")) { return cdata(); }
         if (input_.size() - at_ >= 9 && ascii_iequals(input_.substr(at_, 9), "<!doctype")) {
             return doctype();
         }
@@ -123,6 +134,22 @@ token tokenizer::in_text_until_close(bool decode_entities) {
     return out;
 }
 
+token tokenizer::cdata() {
+    token out;
+    out.kind = token_kind::character;
+    at_ += 9; // "<![CDATA["
+    const std::size_t begin = at_;
+    const std::size_t end = input_.find("]]>", at_);
+    // Unterminated: the rest of the document is the section. The spec says the
+    // same, and it beats dropping the content of a graphic over a missing `]]>`.
+    at_ = end == std::string_view::npos ? input_.size() : end;
+    out.data = input_.substr(begin, at_ - begin);
+    if (end != std::string_view::npos) { at_ = end + 3; }
+    // NOT decoded: inside CDATA an `&amp;` is five characters, which is the
+    // entire point of writing one.
+    return out;
+}
+
 token tokenizer::tag_open() {
     token out;
     ++at_; // '<'
@@ -132,13 +159,23 @@ token tokenizer::tag_open() {
         ++at_;
     }
     while (at_ < input_.size() && !is_space(peek()) && peek() != '>' && peek() != '/') {
-        out.name += lower(input_[at_++]);
+        // Case survives in foreign content and nowhere else. HTML is
+        // case-insensitive and everything downstream expects a lowercase atom;
+        // SVG is case-SENSITIVE, and `linearGradient` folded is a tag no
+        // renderer recognises.
+        out.name += preserve_case_ ? input_[at_++] : lower(input_[at_++]);
     }
-    read_attributes(out);
+    // THE ROOT <svg> IS THE AWKWARD ONE. Its start tag is read while the tree
+    // builder is still in HTML - foreign content does not begin until the
+    // element is on the stack - so `preserve_case_` is false here and the
+    // element that actually carries `viewBox` would be the one element whose
+    // attributes get folded. The name has just been read, so the decision can
+    // be made from it: `<svg`, whatever the tree builder currently thinks.
+    read_attributes(out, preserve_case_ || ascii_iequals(out.name, "svg"));
     return out;
 }
 
-void tokenizer::read_attributes(token & out) {
+void tokenizer::read_attributes(token & out, bool preserve_case) {
     while (at_ < input_.size()) {
         while (at_ < input_.size() && is_space(peek())) { ++at_; }
         if (peek() == '>') {
@@ -159,7 +196,12 @@ void tokenizer::read_attributes(token & out) {
         token_attribute attribute;
         while (at_ < input_.size() && !is_space(peek()) && peek() != '=' && peek() != '>' &&
                peek() != '/') {
-            attribute.name += lower(input_[at_++]);
+            // Case survives here too, and MISSING THIS ONE is the obvious way
+            // to half-implement it: the element name comes through as
+            // `linearGradient` while every attribute on it is still flattened,
+            // so `gradientUnits` and `viewBox` are gone and the graphic is
+            // subtly wrong rather than obviously broken.
+            attribute.name += preserve_case ? input_[at_++] : lower(input_[at_++]);
         }
         while (at_ < input_.size() && is_space(peek())) { ++at_; }
         if (peek() == '=') {

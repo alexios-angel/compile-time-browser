@@ -184,9 +184,13 @@ struct side_lengths {
 // The tag list HTML renders inline by default, when the sheet says nothing.
 [[nodiscard]] inline bool is_inline_by_default(std::string_view tag) {
     constexpr std::string_view inline_tags[] = {
-        "a",    "span", "b",   "i",   "u",  "s",    "em",     "strong", "code", "small",
-        "big",  "mark", "sub", "sup", "tt", "kbd",  "samp",   "cite",   "var",  "dfn",
-        "abbr", "ins",  "del", "img", "q",  "time", "output", "label",  "br"};
+        "a", "span", "b", "i", "u", "s", "em", "strong", "code", "small", "big", "mark", "sub",
+        "sup", "tt", "kbd", "samp", "cite", "var", "dfn", "abbr", "ins", "del", "img", "q", "time",
+        "output", "label", "br",
+        // An icon in a sentence shares the line with it, the same as an <img>.
+        // Left to the unknown-element default this would be block-level, and a
+        // graphic mid-paragraph would break the line before and after itself.
+        "svg"};
     for (const std::string_view t : inline_tags) {
         if (t == tag) { return true; }
     }
@@ -198,8 +202,13 @@ struct side_lengths {
 // either out from its children gives a box of zero height, which is what
 // happens to every parser that does not know about replaced elements.
 [[nodiscard]] inline bool is_replaced_tag(std::string_view tag) {
-    constexpr std::string_view names[] = {"canvas", "img",   "input",  "select", "textarea",
-                                          "button", "video", "iframe", "embed",  "object"};
+    // <svg> is replaced for the SAME reason as the rest, plus one more: being
+    // replaced is what stops build_children descending into it, so the shapes
+    // inside a graphic stop generating boxes. Before that, an <svg><text> put
+    // its words in the document flow at body font size.
+    constexpr std::string_view names[] = {"canvas",   "img",    "input", "select",
+                                          "textarea", "button", "video", "iframe",
+                                          "embed",    "object", "svg"};
     for (const std::string_view t : names) {
         if (t == tag) { return true; }
     }

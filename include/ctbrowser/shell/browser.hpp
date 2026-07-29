@@ -31,6 +31,7 @@
 #include <ctbrowser/shell/images.hpp>
 #include <ctbrowser/shell/input.hpp>
 #include <ctbrowser/shell/metrics.hpp>
+#include <ctbrowser/shell/svg.hpp>
 
 // The engine, assembled.
 //
@@ -476,6 +477,24 @@ private:
     // aside 4.
     static constexpr float control_padding = ctbrowser::layout::control_text_inset;
 
+    // A vector graphic, rasterised for THIS box rather than scaled into it.
+    //
+    // The rect handed to draw_image is the SNAPPED size, not `box`. That is the
+    // point of the whole size-aware path: draw_image scales nearest-neighbour,
+    // so passing the unsnapped box would have it resample a bitmap that is
+    // already the right size to within a fraction of a pixel - reintroducing
+    // exactly the stair-stepping this exists to remove. Snapped, it is a 1:1
+    // blit.
+    bool paint_svg(node_id id, const rect & box, ctbrowser::paint::display_list & into) {
+        const int width = std::max(1, static_cast<int>(std::lround(box.width)));
+        const int height = std::max(1, static_cast<int>(std::lround(box.height)));
+        auto pixels = svg_.pixels_for(id, width, height);
+        if (!pixels) { return false; }
+        into.draw_image(rect{box.x, box.y, static_cast<float>(width), static_cast<float>(height)},
+                        std::move(pixels), id);
+        return true;
+    }
+
     void paint_replaced(node_id id, const rect & box,
                         const ctbrowser::style::computed_style_ptr & style,
                         ctbrowser::paint::display_list & into) {
@@ -492,7 +511,19 @@ private:
             // A missing image draws NOTHING - not a broken-image icon, which is
             // chrome this browser does not have yet, and not a filled box,
             // which would look like a rendering bug.
-            if (auto pixels = image_of(id)) { into.draw_image(box, std::move(pixels), id); }
+            if (auto pixels = image_of(id)) {
+                into.draw_image(box, std::move(pixels), id);
+            } else {
+                paint_svg(id, box, into);
+            }
+            return;
+        }
+        if (tag == "svg") {
+            // Same route as an <img> pointing at an .svg, and deliberately so:
+            // the source got here differently - sliced out of the document
+            // rather than loaded from a file - but from `svg_store` on it is
+            // the same graphic rasterised the same way at the same size.
+            paint_svg(id, box, into);
             return;
         }
         const std::string_view type = txn.attribute_value(id, atoms_.intern("type"));
@@ -1385,6 +1416,10 @@ private:
     std::vector<std::pair<node_id, std::shared_ptr<const ctbrowser::paint::bitmap>>>
         images_by_node_;
     bool network_allowed_ = true;
+    // SVG sources and the rasters made from them. Beside images_ rather than
+    // inside it: see shell/svg.hpp for why a vector graphic cannot share a
+    // decode-once-by-name cache.
+    svg_store svg_;
     canvas_store canvases_;
     form_store forms_;
     node_id focused_;

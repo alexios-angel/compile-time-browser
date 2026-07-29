@@ -124,4 +124,18 @@ if(SDL3_FOUND)
   message(STATUS "ctbrowser: SDL3 found (${CTBROWSER_SDL3_TARGET}); satellites: ${CTBROWSER_SAT_DEFS}")
 endif()
 
+# SVG, through plutosvg (which brings plutovg with it). NOT an SDL satellite,
+# despite arriving beside them: it is a plain C rasteriser the engine calls
+# directly, and it is the SAME library SDL3_ttf already links for colour glyphs
+# on the Windows cross-build - so on that side it is already in the sysroot.
+#
+# Optional like the rest. Without it `<img src=x.svg>` and inline `<svg>` lay
+# out identically and draw nothing; see include/ctbrowser/raster/svg.hpp.
+find_package(plutosvg CONFIG QUIET)
+if(plutosvg_FOUND)
+  message(STATUS "ctbrowser: plutosvg found - SVG renders")
+else()
+  message(STATUS "ctbrowser: no plutosvg - <svg> and .svg images do not draw")
+endif()
+
 add_subdirectory(src)

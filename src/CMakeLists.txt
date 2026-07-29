@@ -253,6 +253,7 @@ target_sources(ctbrowser-raster
   PRIVATE
     raster/draw.cpp
     raster/ttf.cpp
+    raster/svg.cpp
     raster/software.cpp
     raster/renderer.cpp
   PUBLIC
@@ -263,6 +264,7 @@ target_sources(ctbrowser-raster
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/surface.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/draw.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/ttf.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/svg.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/font8x8.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/tile.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend.hpp"
@@ -293,6 +295,32 @@ else()
   message(STATUS "ctbrowser: no SDL3_ttf - text renders with font8x8 only")
 endif()
 
+# SVG, through plutosvg. PRIVATE link and PUBLIC definition, deliberately split:
+# only raster/svg.cpp includes a plutosvg header, so no consumer needs the
+# include path, but raster/svg.hpp's svg_available() is constexpr and every
+# caller has to agree with it about what this build can do.
+if(plutosvg_FOUND)
+  target_link_libraries(ctbrowser-raster PRIVATE plutosvg::plutosvg)
+  target_compile_definitions(ctbrowser-raster PUBLIC CTBROWSER_WITH_SVG=1)
+  message(STATUS "ctbrowser: plutosvg ${plutosvg_VERSION} - SVG renders")
+
+  # VERSION PARITY IS LOAD-BEARING, so it is checked rather than hoped for.
+  # tests/golden/svg.ppm is ONE image compared byte-for-byte on both Linux and
+  # Windows, and the Windows sysroot pins whatever ../llvm-mingw/build-sdl3.sh
+  # fetched. If a host's plutosvg drifts ahead of that, the golden moves on one
+  # platform and not the other - which is exactly how the renders diverged over
+  # a HarfBuzz version once already (docs/raster.md).
+  set(CTBROWSER_PLUTOSVG_PINNED 0.0.8)
+  if(NOT plutosvg_VERSION VERSION_EQUAL CTBROWSER_PLUTOSVG_PINNED)
+    message(WARNING
+      "ctbrowser: plutosvg ${plutosvg_VERSION}, expected ${CTBROWSER_PLUTOSVG_PINNED}. "
+      "The SVG golden may not compare across platforms; regenerate with REGOLDEN=1 "
+      "and check the Windows render still matches.")
+  endif()
+else()
+  target_compile_definitions(ctbrowser-raster PUBLIC CTBROWSER_WITH_SVG=0)
+  message(STATUS "ctbrowser: no plutosvg - <svg> and .svg images do not draw")
+endif()
 
 add_library(ctbrowser::raster ALIAS ctbrowser-raster)
 
@@ -305,6 +333,7 @@ target_sources(ctbrowser-shell
     shell/browser.cpp
     shell/bindings.cpp
     shell/canvas.cpp
+    shell/svg.cpp
     shell/forms.cpp
     shell/net.cpp
     shell/embedded_fonts.cpp
@@ -320,6 +349,7 @@ target_sources(ctbrowser-shell
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/images.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/net.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/canvas.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/svg.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/forms.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/bindings.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/browser.hpp")
@@ -570,6 +600,13 @@ if(SDL3_image_FOUND)
 endif()
 if(SDL3_ttf_FOUND)
   string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(SDL3_ttf CONFIG)")
+endif()
+# PRIVATE-linked, so it is not in the exported link interface and a consumer
+# never resolves it - but a STATIC ctbrowser-raster carries the dependency into
+# the consumer's link line anyway, and check-package.sh is what proves whether
+# that matters here rather than reasoning about it.
+if(plutosvg_FOUND)
+  string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(plutosvg CONFIG)")
 endif()
 file(WRITE "${PROJECT_BINARY_DIR}/ctbrowser-config.cmake"
 "include(CMakeFindDependencyMacro)

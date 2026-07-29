@@ -24,6 +24,13 @@ std::expected<atom, dom_error> read_txn::tag(node_id id) const noexcept {
     return n->tag;
 }
 
+node_ns read_txn::element_ns(node_id id) const noexcept {
+    const node * n = doc_->find(id);
+    // A missing node and a text node are both HTML as far as anyone asking
+    // this can tell - there is no third answer that a caller could use.
+    return n != nullptr ? n->ns : node_ns::html;
+}
+
 node_id read_txn::parent(node_id id) const noexcept {
     const node * n = doc_->find(id);
     return n != nullptr ? n->parent.load(std::memory_order_acquire) : node_id{};
@@ -82,8 +89,8 @@ document::document(atom_table & atoms) : atoms_(&atoms) {
 
 document::~document() = default;
 
-node_id document::create_element(atom tag) {
-    return nodes_.insert(node_kind::element, tag);
+node_id document::create_element(atom tag, node_ns ns) {
+    return nodes_.insert(node_kind::element, tag, ns);
 }
 
 node_id document::create_text(std::string_view value) {

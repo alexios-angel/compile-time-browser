@@ -53,6 +53,14 @@ Degrades as designed: no OpenSSL for mingw → `fetch` does http:// only and say
 so; no SDL3_image → `<img>` reads BMP only. Asio needs `ws2_32`/`mswsock`, which
 nothing links implicitly.
 
+**SVG is the exception to that BMP-only line**, and it is not decoded through
+SDL3_image on either platform. `browser::load_images` sniffs the bytes and sends
+SVG to plutosvg before `image_store` sees them, so `<img src=x.svg>` works on
+Windows *despite* there being no SDL3_image there — plutosvg is already in the
+sysroot, put there by `build-sdl3.sh` for SDL3_ttf's colour glyphs. It also means
+both platforms rasterise through the same code at the same version, which is what
+lets `tests/golden/svg.ppm` compare across them.
+
 **Verified**: all 19 the engine tests pass as Windows binaries WITH NO DLL BESIDE THEM
 (gpu_basics.exe failed that way before), the five renderable examples produce
 screenshots BYTE-IDENTICAL to the Linux ones, and counter.exe runs alone in an

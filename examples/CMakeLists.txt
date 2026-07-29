@@ -66,7 +66,21 @@ foreach(source ${example-sources})
     #
     # Only these two: the others animate or fetch, so a byte-comparison would
     # be pinning a clock rather than a layout.
-    if(example STREQUAL "widgets" OR example STREQUAL "elements")
+    # svg joins these two, and it is goldenable for a reason worth stating:
+    # plutosvg 0.0.8 has NO text support at all, so nothing it draws depends on
+    # a font, a font backend or CTBROWSER_FONTS. The page is static and
+    # scriptless, and plutovg is a pure software rasteriser pinned to the same
+    # version on both platforms - so one image compares byte-for-byte on Linux
+    # and Windows. Gated on the dependency: without plutosvg the graphics are
+    # simply absent, and the comparison would fail for a reason that is not a
+    # regression.
+    set(golden-examples widgets elements)
+    # plutosvg_FOUND, not CTBROWSER_WITH_SVG: the latter is a compile
+    # definition on a target and is not a variable this scope can test.
+    if(plutosvg_FOUND)
+      list(APPEND golden-examples svg)
+    endif()
+    if(example IN_LIST golden-examples)
       add_test(NAME render-${example} COMMAND ${CMAKE_COMMAND}
                -DEXE=$<TARGET_FILE:ctbrowser-example-${example}>
                -DOUT=${CMAKE_BINARY_DIR}/render-${example}.ppm
@@ -126,6 +140,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${PROJECT_SOURCE_DIR}/examples/assets/sprites.bmp"
             "${PROJECT_SOURCE_DIR}/examples/assets/blip.wav"
+            "${PROJECT_SOURCE_DIR}/examples/assets/chart.svg"
             "${dist-dir}/examples/assets"
     # PressStart2P is a PAGE's font, fetched by @font-face through a URL
     # (elements.html), so it travels whatever the build did with the UA faces -

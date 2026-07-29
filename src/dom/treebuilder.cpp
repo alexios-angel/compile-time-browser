@@ -8,6 +8,9 @@ namespace ctbrowser::html {
 node_id tree_builder::parse(std::string_view input) {
     document::builder builder = doc_->build();
     builder_ = &builder;
+    input_ = input;
+    foreign_sources_.clear();
+    foreign_node_ = node_id{};
 
     root_ = builder.create_element(atoms_->intern_lower("html"));
     builder.set_root(root_);
@@ -19,8 +22,52 @@ node_id tree_builder::parse(std::string_view input) {
         if (t.kind == token_kind::end_of_file) { break; }
         handle(t, lexer);
     }
+    // An <svg> the document never closed. Captured to the end of the input
+    // rather than dropped: plutosvg draws what it can parse, and a truncated
+    // graphic is a better answer than a blank box for a page that is merely
+    // missing a close tag.
+    close_foreign(input.size());
     builder_ = nullptr;
     return root_;
+}
+
+void tree_builder::open_foreign(const token & t) {
+    // Only the OUTERMOST <svg> is captured; an inner one is part of the same
+    // graphic and travels with it. The depth counter is what distinguishes
+    // them, and it is why a nested <svg> does not truncate the capture at the
+    // first close tag.
+    if (foreign_depth_++ == 0 && !open_.empty()) {
+        foreign_node_ = open_.back().id;
+        foreign_begin_ = t.source_begin;
+    }
+}
+
+void tree_builder::close_foreign(std::size_t source_end) {
+    if (foreign_depth_ == 0) { return; }
+    if (--foreign_depth_ > 0) { return; }
+    if (!foreign_node_) { return; }
+    if (source_end > foreign_begin_ && source_end <= input_.size()) {
+        std::string source{input_.substr(foreign_begin_, source_end - foreign_begin_)};
+        // TERMINATE IT IF THE DOCUMENT DID NOT. This span can end at a breakout
+        // tag or at EOF rather than at a </svg>, and plutosvg parses strictly:
+        // measured, an unclosed <svg> renders NOTHING AT ALL, not a partial
+        // graphic. One synthetic close tag is the difference between a page
+        // that forgot </svg> drawing what it has and drawing a blank box.
+        if (!source.ends_with("</svg>")) { source += "</svg>"; }
+        foreign_sources_.emplace_back(foreign_node_, std::move(source));
+    }
+    foreign_node_ = node_id{};
+}
+
+bool tree_builder::in_foreign_content() const {
+    if (open_.empty() || open_.back().ns != node_ns::svg) { return false; }
+    // An integration point is an SVG element whose CHILDREN are HTML, so the
+    // context inside one is HTML even though the element itself is not.
+    return !is_html_integration_point(open_.back().tag);
+}
+
+void tree_builder::sync_foreign(tokenizer & lexer) const {
+    lexer.set_preserve_case(in_foreign_content());
 }
 
 void tree_builder::handle(const token & t, tokenizer & lexer) {
@@ -29,7 +76,7 @@ void tree_builder::handle(const token & t, tokenizer & lexer) {
     case token_kind::comment: return; // dropped: nothing reads comments yet
     case token_kind::character: return insert_text(t.data);
     case token_kind::start_tag: return start(t, lexer);
-    case token_kind::end_tag: return end(t.name);
+    case token_kind::end_tag: return end(t, lexer);
     case token_kind::end_of_file: return;
     }
 }
@@ -94,6 +141,31 @@ bool tree_builder::is_table_structure(std::string_view tag) {
 void tree_builder::start(const token & t, tokenizer & lexer) {
     const std::string & tag = t.name;
 
+    if (in_foreign_content()) {
+        // BREAKING OUT. Pages forget </svg>, and without this rule a paragraph
+        // written after an unclosed graphic would be swallowed by it and never
+        // render. The spec's answer is to pop the foreign elements and handle
+        // the tag as HTML, which is what falls through below.
+        if (breaks_out_of_foreign_content(tag)) {
+            while (!open_.empty() && open_.back().ns == node_ns::svg) {
+                close_foreign(t.source_begin);
+                pop();
+            }
+            sync_foreign(lexer);
+        } else {
+            // Ordinary foreign element. None of the HTML repair rules below
+            // apply: <a> is not a formatting element here, <p> closes nothing,
+            // and a heading may absolutely nest.
+            const node_id element = insert_element(tag, t.attributes, node_ns::svg);
+            if (!t.self_closing) {
+                open_.push_back(entry{element, tag, node_ns::svg});
+                if (tag == "svg") { open_foreign(t); }
+            }
+            sync_foreign(lexer);
+            return;
+        }
+    }
+
     if (tag == "html") { return; } // already open; attributes merge in the spec
     if (tag == "head") {
         if (head_) { return; }
@@ -132,10 +204,18 @@ void tree_builder::start(const token & t, tokenizer & lexer) {
 
     if (is_formatting_element(tag)) { reconstruct_formatting(); }
 
-    const node_id element = insert_element(tag, t.attributes);
+    // <svg> ENTERS foreign content: the element itself is SVG, and so is
+    // everything under it until the matching close tag.
+    const node_ns ns = tag == "svg" ? node_ns::svg : node_ns::html;
+    const node_id element = insert_element(tag, t.attributes, ns);
 
     if (is_void_element(tag) || t.self_closing) { return; } // no children, nothing to push
-    open_.push_back(entry{element, tag});
+    open_.push_back(entry{element, tag, ns});
+    if (ns == node_ns::svg) {
+        open_foreign(t);
+        sync_foreign(lexer);
+        return; // no formatting list, no content model - SVG has neither
+    }
     if (is_formatting_element(tag)) {
         active_.push_back(formatting{element, tag, t.attributes, false});
     }
@@ -186,7 +266,28 @@ void tree_builder::implicit(const std::string & tag) {
     open_.push_back(entry{element, tag});
 }
 
-void tree_builder::end(const std::string & tag) {
+void tree_builder::end(const token & t, tokenizer & lexer) {
+    const std::string & tag = t.name;
+
+    // A close tag anywhere inside foreign content is handled by the foreign
+    // rules, not the HTML ones - no adoption agency, no </p> that creates a
+    // paragraph. Matched case-sensitively, like everything else in SVG.
+    if (!open_.empty() && open_.back().ns == node_ns::svg) {
+        for (std::size_t i = open_.size(); i-- > 0;) {
+            if (open_[i].ns != node_ns::svg) { break; }
+            if (open_[i].tag != tag) { continue; }
+            // The capture closes BEFORE the pop, and with the end tag's own
+            // source_end, so the span covers `</svg>` itself.
+            if (tag == "svg") { close_foreign(t.source_end); }
+            while (open_.size() > i) { pop(); }
+            sync_foreign(lexer);
+            return;
+        }
+        // No match in the SVG: ignored, per the spec. A stray </div> inside a
+        // graphic must not unwind out of it.
+        return;
+    }
+
     if (tag == "body" || tag == "html") {
         // Ignored: content after them is still content, which is what a
         // browser does with a stray </body> halfway down a page.

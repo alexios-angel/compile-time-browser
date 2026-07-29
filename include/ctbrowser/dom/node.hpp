@@ -43,6 +43,20 @@ enum class node_kind : std::uint8_t {
     comment
 };
 
+// Which language an element is written in. HTML and SVG share a document but
+// not a vocabulary: an SVG <title> is a tooltip and an HTML one is the window
+// title, an SVG <a> is not a link element, and `<text>` means nothing in HTML
+// at all. Without this they are the same atom and the difference is
+// unrecoverable.
+//
+// FREE, in the literal sense: `node` is kind(1) + tag(4) with three bytes of
+// padding between them, so this occupies padding that already existed.
+// tests/dom_basics asserts sizeof(node) did not move.
+enum class node_ns : std::uint8_t {
+    html,
+    svg
+};
+
 struct attribute {
     atom name;
     std::string value; // "" for a boolean attribute, per HTML
@@ -69,7 +83,8 @@ inline const text_block empty_text{};
 
 struct node {
     node_kind kind = node_kind::element;
-    atom tag; // elements only
+    node_ns ns = node_ns::html; // elements only; see node_ns - this is free
+    atom tag;                   // elements only
 
     // 8 bytes and lock-free on every target we care about; a reader that
     // races a reparent sees the old parent or the new one, never a mix.
@@ -80,11 +95,20 @@ struct node {
     std::atomic<const text_block *> text{&empty_text};
 
     node() = default;
-    explicit node(node_kind k, atom t = {}) noexcept : kind(k), tag(t) {}
+    explicit node(node_kind k, atom t = {}, node_ns n = node_ns::html) noexcept
+        : kind(k), ns(n), tag(t) {}
 
     // The slab stores these in place; atomics make them immovable anyway.
     node(const node &) = delete;
     node & operator=(const node &) = delete;
+
+    // The namespace field claimed padding that was already there - measured, on
+    // this target, before and after adding it. A node is the single most
+    // replicated object in the engine, so "free" is worth asserting rather than
+    // believing: if a future field pushes this over, that is a real cost and
+    // should be a decision rather than a surprise.
+    static_assert(sizeof(node_kind) + sizeof(node_ns) <= alignof(atom) + sizeof(atom),
+                  "kind and ns must share the padding ahead of `tag`");
 
     ~node() {
         // Only the shared empties survive a document teardown untouched;

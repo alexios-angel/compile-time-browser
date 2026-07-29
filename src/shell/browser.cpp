@@ -20,7 +20,7 @@ void browser::load_html(std::string_view html) {
     // engine would accumulate every page's <style> rules across navigations,
     // which shows up as the previous page bleeding into the next one.
     reset_document();
-    (void)parse_html(*doc_, html);
+    const parse_result parsed = parse_html(*doc_, html);
     title_ = extract_title();
     scroll_y_ = 0;
     author_sheet_loaded_ = false;
@@ -30,6 +30,11 @@ void browser::load_html(std::string_view html) {
     // way to ask. The page's @font-face files, for the same reason: layout
     // measures with them.
     load_images();
+    // AFTER load_images, which clears the store before walking for <img>. An
+    // inline <svg>'s source came from the parse rather than from a file, but
+    // from here on the two are the same thing: a graphic to rasterise at
+    // whatever size its box turns out to be.
+    for (const auto & [id, source] : parsed.svg_sources) { svg_.set_source(id, source); }
     load_page_fonts();
     mark(dirty::everything);
     run_scripts();
@@ -557,7 +562,12 @@ void browser::load_inline_styles() {
     const atom style_tag = atoms_.intern_lower("style");
     std::string css;
     const auto walk = [&](auto && self, node_id at) -> void {
-        if (txn.tag(at).value_or(atom{}) == style_tag) {
+        // HTML <style> ONLY. An SVG carries its own <style>, scoped to the
+        // graphic, and it interns to the same atom - so without the namespace
+        // check an `<svg><style>p { color: red }</style>` restyles every
+        // paragraph on the page.
+        if (txn.tag(at).value_or(atom{}) == style_tag &&
+            txn.element_ns(at) == ctbrowser::node_ns::html) {
             for (const node_id child : txn.children(at)) { css += txn.text(child); }
             css += '\n';
         }
@@ -574,7 +584,12 @@ std::string browser::extract_title() {
     std::string found;
     const auto walk = [&](auto && self, node_id at) -> void {
         if (!found.empty()) { return; }
-        if (txn.tag(at).value_or(atom{}) == title_tag) {
+        // HTML <title> ONLY. In SVG a <title> is the graphic's accessible name
+        // - a tooltip - and it is extremely common; interning to the same atom,
+        // it would otherwise become the WINDOW title of any page whose own
+        // <title> is missing or comes later.
+        if (txn.tag(at).value_or(atom{}) == title_tag &&
+            txn.element_ns(at) == ctbrowser::node_ns::html) {
             for (const node_id child : txn.children(at)) { found += txn.text(child); }
         }
         for (const node_id child : txn.children(at)) { self(self, child); }
@@ -627,7 +642,11 @@ void browser::run_scripts() {
         const auto txn = doc_->read();
         const atom script_tag = atoms_.intern_lower("script");
         const auto walk = [&](auto && self, node_id at) -> void {
-            if (txn.tag(at).value_or(atom{}) == script_tag) {
+            // HTML <script> ONLY, for the same reason as <style> and <title>
+            // above: SVG has a <script> of its own and it interns to the same
+            // atom, so without this a graphic's script would run as the page's.
+            if (txn.tag(at).value_or(atom{}) == script_tag &&
+                txn.element_ns(at) == ctbrowser::node_ns::html) {
                 for (const node_id child : txn.children(at)) { source += txn.text(child); }
                 source += '\n';
             }
@@ -660,8 +679,38 @@ void browser::load_page_fonts() {
 #endif
 }
 
+// Whether these bytes are SVG. Content first, name second, because a file
+// served as `chart` is still an SVG and a `.svg` that turns out to be a PNG is
+// not - and because this decides which of two rasterisers sees the bytes, which
+// is not a decision to make on a file extension alone.
+namespace {
+
+[[nodiscard]] bool looks_like_svg(std::string_view bytes) {
+    std::size_t at = 0;
+    // A BOM, then whitespace. An SVG written by a tool that emits UTF-8 BOMs is
+    // otherwise not recognised, and the failure - a blank box - says nothing.
+    if (bytes.size() >= 3 && bytes.compare(0, 3, "\xEF\xBB\xBF") == 0) { at = 3; }
+    while (at < bytes.size() &&
+           (bytes[at] == ' ' || bytes[at] == '\t' || bytes[at] == '\n' || bytes[at] == '\r')) {
+        ++at;
+    }
+    const std::string_view rest = bytes.substr(at);
+    // `<?xml` counts: the root <svg> is then a line or two further in, past a
+    // declaration and possibly a DOCTYPE, and plutosvg reads all of it.
+    return rest.starts_with("<svg") || rest.starts_with("<?xml") ||
+           rest.starts_with("<!DOCTYPE svg");
+}
+
+} // namespace
+
 void browser::load_images() {
     images_by_node_.clear();
+    // HERE, not beside canvases_.clear() in run_scripts. A canvas is created BY
+    // a script, so clearing before scripts run is right for one; an SVG source
+    // is found by this walk, which happens BEFORE scripts, so clearing there
+    // deletes what was just loaded. Both are per-document - they just have
+    // different producers, and this is the one that resets with its own writer.
+    svg_.clear();
     const auto txn = doc_->read();
     const atom img_tag = atoms_.intern_lower("img");
     const atom src_attribute = atoms_.intern("src");
@@ -669,7 +718,18 @@ void browser::load_images() {
         if (txn.tag(at).value_or(atom{}) == img_tag) {
             const std::string_view src = txn.attribute_value(at, src_attribute);
             if (!src.empty()) {
-                if (auto pixels = images_.load(assets_, src)) {
+                // SVG IS INTERCEPTED BEFORE image_store EVER SEES IT. Not a
+                // decoder plugged into image_store: its cache is keyed by name
+                // and decodes once, which cannot produce a raster at the size
+                // the box turns out to be. It also means SDL3_image's own SVG
+                // loader is never reached, so both platforms rasterise through
+                // plutosvg and one golden serves both.
+                const std::vector<std::byte> bytes = assets_.load(src);
+                const std::string_view text{reinterpret_cast<const char *>(bytes.data()),
+                                            bytes.size()};
+                if (!bytes.empty() && looks_like_svg(text)) {
+                    svg_.set_source(at, std::string{text});
+                } else if (auto pixels = images_.load(assets_, src)) {
                     images_by_node_.emplace_back(at, std::move(pixels));
                 }
             }
@@ -699,11 +759,18 @@ void browser::run_layout() {
     // learn how.
     builder.intrinsic_image = [this](node_id id) {
         const auto pixels = image_of(id);
-        return pixels ? ctbrowser::layout::box_builder::intrinsic_size{static_cast<float>(
-                                                                           pixels->width),
-                                                                       static_cast<float>(
-                                                                           pixels->height)}
-                      : ctbrowser::layout::box_builder::intrinsic_size{};
+        if (pixels) {
+            return ctbrowser::layout::box_builder::intrinsic_size{
+                static_cast<float>(pixels->width), static_cast<float>(pixels->height)};
+        }
+        // An SVG has no decoded bitmap to measure, and must not need one: its
+        // size comes from an in-engine scan of the markup, so a build with no
+        // plutosvg lays the page out identically and just draws nothing.
+        const svg_natural natural = svg_.natural_of(id);
+        if (natural.known()) {
+            return ctbrowser::layout::box_builder::intrinsic_size{natural.width, natural.height};
+        }
+        return ctbrowser::layout::box_builder::intrinsic_size{};
     };
     boxes_ = builder.build(txn, txn.root());
     const ctbrowser::layout::engine eng{measure()};
@@ -729,6 +796,13 @@ void browser::run_layout() {
 }
 
 void browser::record() {
+    // Bracket the SVG cache around the recording, and ONLY around a recording.
+    // Every graphic still on the page is asked for during record_layers below,
+    // so anything left unasked-for afterwards belongs to a size that no longer
+    // exists - which is what dragging a window edge produces, one full raster
+    // per pixel dragged, until something drops them.
+    svg_.begin_frame();
+
     // The selection's highlight. Computed here rather than stored on the
     // fragment, and looked up by the fragment the recorder is drawing.
     recorder_.selection_of = [this](const ctbrowser::layout::fragment & f) {
@@ -741,6 +815,7 @@ void browser::record() {
     layers_.scroll_to(0, scroll_y_);
     page_layers_ = layers_.layers.size(); // everything after this is chrome
     record_chrome();
+    svg_.end_frame();
 }
 
 void browser::refresh_chrome() {

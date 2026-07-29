@@ -13,8 +13,46 @@ text is still TESTABLE with no display, which is what makes the exception safe.
 `tests/api_surface` SWEEPS `src/` and names the exceptions; the old
 hand-written list could not catch a new file that used SDL, and did not.
 
+## SVG
+
+`raster/svg.hpp` is two declarations — `svg_available()` and `render_svg(source,
+w, h)` — and `src/raster/svg.cpp` is the only file in the tree that includes a
+**plutosvg** header. Stricter than `raster/ttf.hpp`, which puts `<SDL_ttf.h>` in
+a public header and pays with an `api_surface` allow-list entry; plutosvg hides
+completely and needs no exception.
+
+**It rasterises at the size asked for**, and that is the whole point.
+`draw_image` scales nearest-neighbour, so a vector graphic decoded once at its
+natural size and then enlarged looks WORSE than a PNG — stair-stepped along every
+diagonal. `shell/svg.hpp` caches by `(content, width, height)` and the painter
+passes the *snapped* box, so the blit is 1:1.
+
+The bitmap is **unpremultiplied** on the way in: plutovg stores premultiplied
+ARGB, `paint::bitmap` is straight, and copying one to the other looks *almost*
+right — just dark wherever alpha is partial, which is every antialiased edge.
+
+**What plutosvg 0.0.8 does NOT do**, measured rather than assumed: no `<text>` or
+`<tspan>` AT ALL, and `clip-path`, `mask`, filters, patterns and markers are
+parsed and silently ignored. `opacity` and `transform` work. `examples/pages/svg.html`
+shows the unsupported ones beside a plain shape so the gap is visible.
+
+That no-text limitation has a useful consequence: SVG rasterisation touches no
+font, no FreeType, no HarfBuzz and no `CTBROWSER_FONTS`, so it is **deterministic
+and goldenable**. `tests/golden/svg.ppm` is one image compared on both platforms.
+That only holds while the versions match — plutosvg 0.0.8 / plutovg 1.3.3 are
+PINNED to the Windows sysroot's, `tools/Brewfile` names them, and
+`src/CMakeLists.txt` warns on a mismatch.
+
+Optional, like SDL3_ttf: without plutosvg a page lays out IDENTICALLY (the
+natural-size scan in `shell/svg.hpp` is in-engine and never asks plutosvg) and
+simply draws no graphics.
+
+## Fonts on Windows
+
 The Windows cross-build links a **static** SDL3_ttf with the **full stack** —
-FreeType, HarfBuzz and plutosvg — built by `../llvm-mingw/build-sdl3.sh`. That
+FreeType, HarfBuzz and plutosvg — built by `../llvm-mingw/build-sdl3.sh`. The
+engine now links plutosvg **directly** as well, for the above; on Windows it was
+already in the sysroot for SDL3_ttf's colour glyphs. That
 matters beyond features: without HarfBuzz the same page KERNS DIFFERENTLY, so
 the Windows renders stopped matching the Linux ones until HarfBuzz 14.2.1 (the
 version a linuxbrew host has) was on both sides. All six examples are

@@ -77,6 +77,10 @@ public:
     [[nodiscard]] bool contains(node_id id) const noexcept;
     [[nodiscard]] std::expected<node_kind, dom_error> kind(node_id) const noexcept;
     [[nodiscard]] std::expected<atom, dom_error> tag(node_id) const noexcept;
+    // Which vocabulary the tag belongs to. An SVG <title> and an HTML <title>
+    // intern to the SAME atom, so this is the only way to tell a tooltip from
+    // the window title.
+    [[nodiscard]] node_ns element_ns(node_id) const noexcept;
     [[nodiscard]] node_id parent(node_id) const noexcept;
 
     // The returned span points into an IMMUTABLE block held alive by this
@@ -117,7 +121,7 @@ public:
     [[nodiscard]] std::size_t node_count() const noexcept { return nodes_.size(); }
 
     // --- creation: the new node is DETACHED until it is appended ----------
-    [[nodiscard]] node_id create_element(atom tag);
+    [[nodiscard]] node_id create_element(atom tag, node_ns ns = node_ns::html);
     [[nodiscard]] node_id create_text(std::string_view value);
     [[nodiscard]] node_id create_comment(std::string_view value);
 
@@ -145,7 +149,9 @@ public:
     class builder {
     public:
         explicit builder(document & doc) noexcept : doc_(&doc) {}
-        [[nodiscard]] node_id create_element(atom tag) { return doc_->create_element(tag); }
+        [[nodiscard]] node_id create_element(atom tag, node_ns ns = node_ns::html) {
+            return doc_->create_element(tag, ns);
+        }
         [[nodiscard]] node_id create_text(std::string_view v) { return doc_->create_text(v); }
         [[nodiscard]] node_id create_comment(std::string_view v) { return doc_->create_comment(v); }
         void append(node_id parent, node_id child);

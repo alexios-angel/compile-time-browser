@@ -333,11 +333,17 @@ private:
             into.intrinsic_height = attribute_number("height", 150);
             return;
         }
-        if (tag == "img") {
-            // The attributes WIN over the bitmap - that is how a page scales an
-            // image - and ONE of them scales the other through the aspect ratio,
-            // which is why this asks whether each was specified rather than
-            // defaulting each to the natural size independently.
+        if (tag == "img" || tag == "svg") {
+            // The attributes WIN over the natural size - that is how a page
+            // scales a graphic - and ONE of them scales the other through the
+            // aspect ratio, which is why this asks whether each was specified
+            // rather than defaulting each to the natural size independently.
+            //
+            // Shared by <img> and <svg> because the rule is the same rule; what
+            // differs is only where the natural size comes from, and both
+            // arrive through the same injected callback. For an SVG that is a
+            // scan of the markup rather than a decoded bitmap, so this stays
+            // true of a build with no SVG rasteriser at all.
             const intrinsic_size natural = intrinsic_image ? intrinsic_image(id) : intrinsic_size{};
             const bool has_width = !txn.attribute_value(id, atoms_->intern("width")).empty();
             const bool has_height = !txn.attribute_value(id, atoms_->intern("height")).empty();
@@ -351,6 +357,15 @@ private:
                 } else if (has_height && !has_width) {
                     into.intrinsic_width = height * natural.width / natural.height;
                 }
+            }
+            // CSS's default size for a replaced element with no intrinsic size
+            // of its own. An <img> uses 0 (a missing image takes no room, which
+            // is what a browser does with a broken src); an <svg> that says
+            // nothing about its size is still a graphic and gets the standard
+            // box, the same as a <canvas> does.
+            if (tag == "svg" && into.intrinsic_width <= 0 && into.intrinsic_height <= 0) {
+                into.intrinsic_width = 300;
+                into.intrinsic_height = 150;
             }
             return;
         }

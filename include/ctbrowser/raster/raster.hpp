@@ -16,6 +16,9 @@
 //   compositor  draw() for a full frame, recomposite() for a scroll
 //   pipeline    the compositor THREAD - one thread owns the device, raster
 //               workers reach it over per-worker lock-free channels
+//   svg         vector graphics -> a bitmap AT THE SIZE ASKED FOR, through
+//               plutosvg; optional, and the only third-party rasteriser the
+//               engine calls that is not SDL
 
 #include <ctbrowser/raster/backend.hpp>
 #include <ctbrowser/raster/compositor.hpp>
@@ -24,5 +27,6 @@
 #include <ctbrowser/raster/renderer.hpp>
 #include <ctbrowser/raster/software.hpp>
 #include <ctbrowser/raster/surface.hpp>
+#include <ctbrowser/raster/svg.hpp>
 #include <ctbrowser/raster/tile.hpp>
 #include <ctbrowser/raster/ttf.hpp>

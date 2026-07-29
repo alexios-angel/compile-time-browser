@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>svg gallery</title>
+<style>
+    body { font-family: sans-serif }
+    .row { margin: 8px 0 }
+    .note { font-size: 13px; color: #555 }
+    code { font-family: monospace; font-size: 13px }
+</style>
+</head>
+<body>
+<h1>SVG</h1>
+
+<h3>The same graphic at three sizes</h3>
+<p class="note">One <code>viewBox="0 0 24 24"</code>, drawn at 48, 96 and 192
+pixels. Each is rasterised for the box it got, so the big one is as clean as the
+small one. If they were decoded once and scaled, the 192 would be visibly
+stair-stepped along the diagonal.</p>
+<div class="row">
+<svg viewBox="0 0 24 24" width="48" height="48">
+  <circle cx="12" cy="12" r="11" fill="#eef" stroke="#2c5aa0" stroke-width="1.5"/>
+  <path d="M6 13 L10 17 L18 8" fill="none" stroke="#2c5aa0" stroke-width="2.5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+<svg viewBox="0 0 24 24" width="96" height="96">
+  <circle cx="12" cy="12" r="11" fill="#eef" stroke="#2c5aa0" stroke-width="1.5"/>
+  <path d="M6 13 L10 17 L18 8" fill="none" stroke="#2c5aa0" stroke-width="2.5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+<svg viewBox="0 0 24 24" width="192" height="192">
+  <circle cx="12" cy="12" r="11" fill="#eef" stroke="#2c5aa0" stroke-width="1.5"/>
+  <path d="M6 13 L10 17 L18 8" fill="none" stroke="#2c5aa0" stroke-width="2.5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+</div>
+
+<h3>Shapes</h3>
+<div class="row">
+<svg viewBox="0 0 60 60" width="90" height="90">
+  <rect x="5" y="5" width="50" height="50" rx="8" fill="#6ba3e8"/>
+</svg>
+<svg viewBox="0 0 60 60" width="90" height="90">
+  <ellipse cx="30" cy="30" rx="27" ry="16" fill="#8e44ad"/>
+</svg>
+<svg viewBox="0 0 60 60" width="90" height="90">
+  <polygon points="30,4 56,52 4,52" fill="#e67e22"/>
+</svg>
+<svg viewBox="0 0 60 60" width="90" height="90">
+  <path d="M8 44 C 8 8, 52 8, 52 44 S 20 60, 8 44 Z" fill="#16a085"/>
+</svg>
+<svg viewBox="0 0 60 60" width="90" height="90">
+  <polyline points="6,50 20,20 34,38 54,8" fill="none" stroke="#c0392b" stroke-width="4"
+            stroke-linejoin="round" stroke-linecap="round"/>
+</svg>
+</div>
+
+<h3>Gradients, groups and transforms</h3>
+<div class="row">
+<svg viewBox="0 0 60 60" width="90" height="90">
+  <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#ff9a44"/>
+    <stop offset="1" stop-color="#c0392b"/>
+  </linearGradient>
+  <rect x="4" y="4" width="52" height="52" fill="url(#lg)"/>
+</svg>
+<svg viewBox="0 0 60 60" width="90" height="90">
+  <radialGradient id="rg" cx="0.4" cy="0.35" r="0.7">
+    <stop offset="0" stop-color="#ffffff"/>
+    <stop offset="1" stop-color="#2c5aa0"/>
+  </radialGradient>
+  <circle cx="30" cy="30" r="26" fill="url(#rg)"/>
+</svg>
+<svg viewBox="0 0 60 60" width="90" height="90">
+  <g transform="rotate(20 30 30)" opacity="0.65">
+    <rect x="10" y="24" width="40" height="12" fill="#2c3e50"/>
+    <rect x="24" y="10" width="12" height="40" fill="#2c3e50"/>
+  </g>
+</svg>
+<svg viewBox="0 0 60 60" width="90" height="90">
+  <g transform="translate(30 30) scale(0.8)" opacity="0.85">
+    <circle cx="0" cy="0" r="26" fill="#27ae60"/>
+    <rect x="-26" y="-6" width="52" height="12" fill="#ffffff"/>
+  </g>
+</svg>
+</div>
+
+<h3>What the rasteriser does NOT do</h3>
+<p class="note">plutosvg 0.0.8 draws no <code>&lt;text&gt;</code> at all, and
+silently ignores <code>clip-path</code>, <code>mask</code>, filters, patterns and
+markers. Each pair below should differ and does not &mdash; the left is plain,
+the right asks for the feature. They are in the gallery so the gap is visible
+rather than buried in a document nobody opens.</p>
+<div class="row">
+<svg viewBox="0 0 60 60" width="90" height="90">
+  <rect x="0" y="0" width="60" height="60" fill="#95a5a6"/>
+</svg>
+<svg viewBox="0 0 60 60" width="90" height="90">
+  <clipPath id="cp"><circle cx="30" cy="30" r="22"/></clipPath>
+  <rect x="0" y="0" width="60" height="60" fill="#95a5a6" clip-path="url(#cp)"/>
+</svg>
+<svg viewBox="0 0 60 60" width="90" height="90">
+  <mask id="mk"><circle cx="30" cy="30" r="22" fill="white"/></mask>
+  <rect x="0" y="0" width="60" height="60" fill="#95a5a6" mask="url(#mk)"/>
+</svg>
+</div>
+
+<h3>An SVG file through &lt;img&gt;</h3>
+<p class="note">The same <code>chart.svg</code> at three widths. Only the width
+is given, so the height comes from the file's own aspect ratio.</p>
+<div class="row">
+<img src="examples/assets/chart.svg" width="120">
+<img src="examples/assets/chart.svg" width="200">
+<img src="examples/assets/chart.svg" width="280">
+</div>
+
+<h3>Inline in a sentence</h3>
+<p>An icon <svg viewBox="0 0 16 16" width="16" height="16"><circle cx="8" cy="8" r="7"
+fill="#27ae60"/></svg> sits on the line with the words around it, the same way an
+image does, rather than breaking the paragraph in two.</p>
+
+<h3>What must NOT leak out of a graphic</h3>
+<p class="note">The SVG below contains a <code>&lt;title&gt;</code>, a
+<code>&lt;style&gt;</code> and a <code>&lt;text&gt;</code>. The window title must
+stay "svg gallery", the paragraph after it must stay black, and the word inside
+<code>&lt;text&gt;</code> must not appear as page text. (plutosvg has no text
+support, so it does not draw inside the graphic either.)</p>
+<div class="row">
+<svg viewBox="0 0 60 60" width="90" height="90">
+  <title>Not the page title</title>
+  <style>p { color: red } .note { color: red }</style>
+  <rect x="6" y="6" width="48" height="48" fill="#95a5a6"/>
+  <text x="8" y="34">LEAKED</text>
+</svg>
+</div>
+<p>This paragraph is black.</p>
+
+<h3>Foreign content, parsed for real</h3>
+<p class="note">Inside the graphic below, <code>viewBox</code> and
+<code>linearGradient</code> keep their capitals in the DOM, a
+<code>&lt;![CDATA[...]]&gt;</code> section is text rather than markup, and
+<code>&lt;foreignObject&gt;</code> holds a real HTML element.</p>
+<div class="row">
+<svg viewBox="0 0 120 40" width="240" height="80">
+  <desc><![CDATA[<b>this is text, not bold</b>]]></desc>
+  <linearGradient id="fg" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#16a085"/>
+    <stop offset="1" stop-color="#f39c12"/>
+  </linearGradient>
+  <rect x="0" y="0" width="120" height="40" fill="url(#fg)"/>
+</svg>
+</div>
+
+<h3>A malformed graphic</h3>
+<p class="note">The next <code>&lt;svg&gt;</code> is never closed. The page must
+keep rendering afterwards rather than swallowing the rest of itself.</p>
+<div class="row">
+<svg viewBox="0 0 60 60" width="90" height="90"><rect x="6" y="6" width="48" height="48" fill="#34495e"/>
+<p>This paragraph comes after the unclosed graphic, and proves the parser broke
+back out to HTML.</p>
+
+</body>
+</html>

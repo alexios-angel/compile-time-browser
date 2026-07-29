@@ -24,6 +24,9 @@ git submodule update --init --recursive    # ctcss + ctjs (+ nested ctc)
 cmake --preset default && cmake --build --preset default && ctest --preset default
 cmake --preset tsan && ctest --preset tsan     # and asan
 # examples build when SDL3 is found; tests are always headless
+# SVG needs plutosvg: `brew bundle --file tools/Brewfile` (PINNED versions -
+# the golden compares across Linux and Windows). Without it everything still
+# builds and passes; svg_basics skips its pixel assertions, as CI does.
 ```
 Flags: `-O2 -pedantic -Wall -Wextra -Werror -Wconversion`. Tests are
 EXECUTABLES, SDL-free, headless. `tools/format.sh --check` is the formatting
@@ -53,9 +56,12 @@ gate and CI runs it.
   `<windows.h>` or `<boost/asio.hpp>` in one is a cost paid by everyone who
   touches the engine. `core/cpu_time.hpp` is the pattern - it declares one
   function and its `.cpp` owns the platform headers. See `docs/build.md`.
-- **`Math.random` is seeded and DETERMINISTIC** by default. Two example pages
-  byte-compare their render against `tests/golden/*.ppm`; a page drawing with
-  random cannot have a golden otherwise. `REGOLDEN=1` regenerates.
+- **`Math.random` is seeded and DETERMINISTIC** by default. Three example pages
+  (widgets, elements, svg) byte-compare their render against
+  `tests/golden/*.ppm`; a page drawing with random cannot have a golden
+  otherwise. `REGOLDEN=1` regenerates — then OPEN THE IMAGE AND LOOK AT IT. A
+  golden accepted without being seen is how the empty-button and missing-caret
+  renders shipped.
 - **Goldens are test data, not build output.** Render output goes to
   `build*/render-*.ppm`. The ignore files are per-directory and the root's
   patterns are anchored (`/*.ppm`), so nothing reaches into `tests/golden/`.
@@ -69,6 +75,18 @@ gate and CI runs it.
 - **A frame runs only what changed** — a scroll re-composites, a canvas draw
   re-rasters without re-recording, an idle page blocks on the event queue.
   Reaching for a full relayout is almost always the wrong fix.
+- **An SVG is rasterised at the size its box got**, never decoded once and
+  scaled — `draw_image` is nearest-neighbour, so the scaled version looks worse
+  than a PNG. `shell/svg.hpp` caches by `(content, width, height)` and the
+  painter passes the *snapped* rect. Optional: with no plutosvg a page lays out
+  IDENTICALLY and simply draws no graphics.
+- **`<svg>` keeps its capitals.** The tokenizer preserves case inside foreign
+  content, so `viewBox` never becomes `viewbox` and the spec's ~95 adjustment
+  tables are unnecessary. Separately, every token carries its source span, so
+  the RASTERISER gets the author's bytes while the DOM gets a real parsed,
+  namespaced subtree. Anything walking the DOM for `<title>`, `<style>` or
+  `<script>` must check `element_ns` — SVG has all three and they intern to the
+  same atoms.
 
 ## The tree
 
@@ -78,16 +96,17 @@ include/ctbrowser/<sub>/   the engine's headers, one directory per subsystem
 src/<sub>/                 its implementations, where a subsystem has any
 
 core         slab, generation-tagged handles, epochs, atoms, thread pool, geometry
-dom          WHATWG tokenizer + tree builder, the document
+dom          WHATWG tokenizer + tree builder (incl. SVG foreign content), the document
 style        selector matching, the cascade, computed values, UA sheet
 layout       block, inline and table formatting contexts -> placed geometry
 paint        the display list, in layers
-raster       tiles across the pool; software always, SDL3_ttf for real fonts
+raster       tiles across the pool; software always, SDL3_ttf for real fonts,
+             plutosvg for SVG
 gpu          SDL_GPUDevice composition, and the fallback when there is none
 script       JS -> bytecode -> register VM over NaN-boxed values, + stdlib
 shell        the assembly: browser, page bindings, forms, canvas, input, net
 tests/       one executable per file; golden/ is test data
-examples/    counter, pong, invaders, widgets, elements, fetchboard, ctbrowse
+examples/    counter, pong, invaders, widgets, elements, svg, fetchboard, ctbrowse
 external/    ctcss + ctjs submodules (runtime parsing)
 ```
 
@@ -104,7 +123,7 @@ Read the one that matches what you are touching — not all of them.
 | `docs/script.md` | the JS compiler, the VM, the standard library — what the language supports and what it rejects by name |
 | `docs/shell.md` | the application API, form controls, editing, input, navigation, resources — anything a page can do |
 | `docs/style-layout.md` | the cascade and the `style` attribute; tables, generated content, whitespace collapsing |
-| `docs/raster.md` | fonts, glyph rasterisation, the font8x8 fallback |
+| `docs/raster.md` | fonts, glyph rasterisation, the font8x8 fallback, **SVG** — what plutosvg does and does not draw |
 | `docs/build.md` | why the build takes as long as it does, the formatting gate, the runtime profiler |
 | `docs/platform.md` | **the GPU here reports no adapter** (WSL2), the Windows cross-build, the devbox. Read before drawing conclusions from a Linux run. |
 | `docs/v1-retirement.md` | what the deleted compile-time engine had that this does not |

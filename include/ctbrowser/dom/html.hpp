@@ -30,12 +30,18 @@ namespace ctbrowser {
 struct parse_result {
     node_id root;
     bool wellformed = true; // the tree builder recovers from everything; kept for callers
+    // Each <svg> element and the EXACT bytes it was written as. The tree has
+    // the element but not its children: an SVG subtree is captured rather than
+    // parsed, so that a real SVG parser downstream sees `viewBox` and not the
+    // `viewbox` this tokenizer would have made of it. See dom/tokenizer.hpp.
+    std::vector<std::pair<node_id, std::string>> svg_sources;
 };
 
 [[nodiscard]] inline parse_result parse_html(document & doc, std::string_view source) {
     html::tree_builder builder{doc, doc.atoms()};
     parse_result out;
     out.root = builder.parse(source);
+    out.svg_sources = builder.foreign_sources();
     return out;
 }
 
