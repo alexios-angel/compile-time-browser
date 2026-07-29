@@ -676,11 +676,17 @@ void context::run_field_initialisers(value constructor, value self) {
 }
 
 value context::run_loop(std::size_t stop_depth) {
-    const program & prog = *program_;
     auto & string_cache = string_cache_;
 
     while (frames_.size() > stop_depth && !failed_) {
         call_frame & frame = frames_.back();
+        // PER FRAME, not per loop: a context can be running functions from more
+        // than one program at a time - a page's script calling something the
+        // previous script defined - and a function index means nothing outside
+        // the program it was compiled in.
+        const program & prog = frame.closure != nullptr && frame.closure->owner != nullptr
+                                   ? *frame.closure->owner
+                                   : *program_;
         const function_proto & fn = *frame.proto;
         if (frame.ip >= fn.code.size()) { break; }
         const instruction in = fn.code[frame.ip++];
@@ -1017,6 +1023,7 @@ value context::run_loop(std::size_t stop_depth) {
         case op::closure: {
             const function_proto & target = prog.functions[in.bx()];
             auto * made = allocate<closure_object>(&target);
+            made->owner = &prog;
             // Walk the descriptors the compiler resolved: each upvalue is
             // either a cell sitting in THIS frame's register, or one this
             // frame's own closure already holds. The second case is what

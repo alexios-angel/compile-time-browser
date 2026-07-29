@@ -1426,6 +1426,11 @@ private:
     std::uint64_t canvas_revision_ = 0;
 
     std::unique_ptr<script::program> script_program_;
+    // Every program run by run_script AFTER the page's own. They accumulate for
+    // the life of the page because a closure from any of them may still be
+    // reachable - a listener, a timer, a rAF callback - and a program that
+    // outlives nothing is a use-after-free waiting for the first callback.
+    std::vector<std::unique_ptr<script::program>> extra_programs_;
     std::unique_ptr<script::context> script_;
     std::unique_ptr<dom_bindings> bindings_;
     std::string script_error_;

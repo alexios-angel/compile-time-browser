@@ -61,11 +61,11 @@ enum : int {
     level_ran = 6,        // the top-level IIFE executes without a fault
     level_defines_p5 = 7, // and leaves a callable `p5` behind
     level_page = 8,       // it loads AS A PAGE, with a DOM under it
-    // 9  new p5(sketch) constructs
-    // 10 setup() runs
-    // 11 draw() runs 30 times
+    level_constructs = 9, // `new p5(sketch)` builds a sketch
+    level_setup = 10,     // and calls its setup()
+    level_draws = 11,     // and keeps calling draw()
     // 12 the render byte-matches a golden
-    level_ceiling = level_page,
+    level_ceiling = level_draws,
 };
 
 const char * level_name(int level) {
@@ -79,6 +79,9 @@ const char * level_name(int level) {
     case level_ran: return "top level ran";
     case level_defines_p5: return "defines p5";
     case level_page: return "loads as a page";
+    case level_constructs: return "constructs a sketch";
+    case level_setup: return "runs setup";
+    case level_draws: return "runs draw";
     default: return "?";
     }
 }
@@ -347,6 +350,59 @@ private:
     }
     m.reached(level_defines_p5);
     m.reached(level_page);
+
+    // --- and does a SKETCH run? --------------------------------------------
+    //
+    // Instance mode rather than global: a sketch function gets its own p5, so
+    // the test says exactly what it is asking for instead of relying on p5
+    // having installed 200 names as globals.
+    //
+    // Progress is recorded in a global string rather than returned, because
+    // setup and draw are called BY p5, from inside its own machinery - there is
+    // nothing for the test to take a return value from.
+    (void)page.run_script(R"(
+        var __ran = '';
+        var __err = '';
+        try {
+          new p5(function (s) {
+            s.setup = function () { s.createCanvas(100, 100); __ran += 'setup;'; };
+            s.draw = function () { __ran += 'draw;'; };
+          });
+        } catch (e) { __err = '' + (e && e.message ? e.message : e); }
+    )");
+    if (!page.script_error().empty()) {
+        std::printf("     !! %s\n", page.script_error().c_str());
+        m.fail_at(level_constructs, page.script_error());
+        return m;
+    }
+    page.set_alert_hook([&m](const std::string & said) { m.said = said; });
+    (void)page.run_script("alert(__err || 'ok');");
+    if (m.said != "ok") {
+        const std::string why = "new p5(sketch) threw: " + m.said;
+        std::printf("     !! %s\n", why.c_str());
+        m.fail_at(level_constructs, why);
+        return m;
+    }
+    m.reached(level_constructs);
+
+    // A frame has to actually RUN for draw to be called: setup and draw are
+    // driven by requestAnimationFrame, which is the page's own loop.
+    for (int frame = 0; frame < 5; ++frame) { page.tick(16); }
+    (void)page.run_script("alert(__ran);");
+    if (m.said.find("setup;") == std::string::npos) {
+        const std::string why = "setup() did not run (saw \"" + m.said + "\")";
+        std::printf("     !! %s\n", why.c_str());
+        m.fail_at(level_setup, why);
+        return m;
+    }
+    m.reached(level_setup);
+    if (m.said.find("draw;") == std::string::npos) {
+        const std::string why = "draw() did not run (saw \"" + m.said + "\")";
+        std::printf("     !! %s\n", why.c_str());
+        m.fail_at(level_draws, why);
+        return m;
+    }
+    m.reached(level_draws);
     return m;
 }
 
@@ -384,6 +440,30 @@ int main(int argc, char ** argv) {
     // With a path, measure THAT and report - no pawl, no recorded file. This is
     // what tools/p5-ratchet.py --bisect drives: one rollup module carved out of
     // the bundle is a 3,000-line reproducer instead of a needle in 4.5 MB.
+    // `--sketch FILE`: load p5 as a page, then run FILE against it and print
+    // whatever it alerts. The ladder answers one question; this answers any of
+    // them, which is what an inner loop needs.
+    if (argc > 2 && std::string{argv[1]} == "--sketch") {
+        const std::string bundle = read_file("examples/assets/p5.js");
+        ctbrowser::shell::browser page{ctbrowser::shell::browser_options{400, 400}};
+        page.assets().add("p5.js",
+                          std::vector<std::byte>{
+                              reinterpret_cast<const std::byte *>(bundle.data()),
+                              reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
+        page.load_html(R"(<html><head><script>var IS_MINIFIED = true;</script>)"
+                       R"(<script src="p5.js"></script></head><body></body></html>)");
+        if (!page.script_error().empty()) {
+            std::printf("load error: %s\n", page.script_error().c_str());
+            return 1;
+        }
+        page.set_alert_hook(
+            [](const std::string & said) { std::printf("alert: %s\n", said.c_str()); });
+        const bool ok = page.run_script(read_file(argv[2]));
+        for (int frame = 0; frame < 5; ++frame) { page.tick(16); }
+        std::printf("ran=%d error=%s\n", int(ok), page.script_error().c_str());
+        return 0;
+    }
+
     const bool bisecting = argc > 1;
     const std::string path = bisecting ? argv[1] : "examples/assets/p5.js";
 

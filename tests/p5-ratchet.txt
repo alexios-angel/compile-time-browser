@@ -10,7 +10,7 @@
 # draw, golden) arrive with the work that makes them reachable.
 
 level=8
-blocker=
+blocker=`call` is undefined, not a function - in <anonymous>, on undefined (undefined)
 
 # Wall-clock ceiling for lex + parse + compile + run, in milliseconds.
 # Generous on purpose: it is here to catch the compiler's quadratic scans

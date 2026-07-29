@@ -58,7 +58,10 @@ void dom_bindings::observe_viewport(int width, int height) {
 
 void dom_bindings::register_roots(context & cx) {
     cx.set_external_roots([this](const context::root_visitor & mark) {
-        for (const listener & l : listeners_) { mark(l.callback); }
+        for (const listener & l : listeners_) {
+            mark(l.callback);
+            mark(l.abort_signal);
+        }
         for (const timer & t : timers_) { mark(t.callback); }
         for (const value & callback : animation_callbacks_) { mark(callback); }
         for (const auto & [packed, obj] : wrappers_) {
@@ -756,6 +759,20 @@ void dom_bindings::install_document(context & cx) {
         return value::object(list);
     });
 
+    method("querySelector", [this](context & c, std::span<value> args) {
+        const std::vector<node_id> found = query(arg_string(c, args, 0));
+        return found.empty() ? value::null() : wrap(c, found.front());
+    });
+    method("querySelectorAll", [this](context & c, std::span<value> args) {
+        const std::vector<node_id> found = query(arg_string(c, args, 0));
+        // An ARRAY, not a NodeList: everything a page does with one - index it,
+        // read length, walk it - an array already does, and p5 spreads the
+        // result into an array anyway.
+        value out = c.make_array();
+        auto * items = static_cast<script::array_object *>(out.as_heap());
+        for (const node_id node : found) { items->items.push_back(wrap(c, node)); }
+        return out;
+    });
     method("hasFocus", [](context &, std::span<value>) {
         // There is one window and a page in it is the thing being looked at.
         // A page asks this to decide whether to keep animating; answering
@@ -834,8 +851,27 @@ void dom_bindings::install_window(context & cx) {
     window->set("addEventListener",
                 value::object(cx.allocate<script::native_object>(
                     "addEventListener", [this](context & c, std::span<value> args) {
+                        // The third argument is options or a capture flag. Only
+                        // `signal` is honoured; `capture`, `once` and `passive`
+                        // are accepted and ignored, which is visible in that a
+                        // `once` listener fires more than once.
+                        value signal = value::undefined();
+                        if (arg(args, 2).is_object()) {
+                            signal = c.lookup_property(arg(args, 2), "signal");
+                        }
                         listeners_.push_back(
-                            listener{node_id{}, arg_string(c, args, 0), arg(args, 1)});
+                            listener{node_id{}, arg_string(c, args, 0), arg(args, 1), signal});
+                        return value::undefined();
+                    })));
+    window->set("removeEventListener",
+                value::object(cx.allocate<script::native_object>(
+                    "removeEventListener", [this](context & c, std::span<value> args) {
+                        const std::string type = arg_string(c, args, 0);
+                        const value callback = arg(args, 1);
+                        std::erase_if(listeners_, [&](const listener & l) {
+                            return !l.target && l.type == type &&
+                                   l.callback.bits() == callback.bits();
+                        });
                         return value::undefined();
                     })));
     // `localStorage`, IN MEMORY AND FOR THIS PAGE ONLY. 38 uses in p5.js, which
@@ -891,6 +927,39 @@ void dom_bindings::install_window(context & cx) {
     };
     storage("localStorage");
     storage("sessionStorage");
+
+    // `new AbortController()`. p5.js makes one in its constructor and passes
+    // its signal to every listener it installs, so that removing a sketch can
+    // remove them all at once.
+    //
+    // The signal is carried and honoured by removeEventListener via `abort`;
+    // what is NOT modelled is aborting an in-flight fetch, because a fetch here
+    // does not overlap with anything. A page that aborts one gets a request
+    // that already finished, which is a difference worth knowing about.
+    cx.define_native("AbortController", [this](context & c, std::span<value>) {
+        auto * controller = static_cast<script::object_object *>(c.make_object().as_heap());
+        auto * signal = static_cast<script::object_object *>(c.make_object().as_heap());
+        signal->set("aborted", value::boolean(false));
+        signal->set("reason", value::undefined());
+        const value signal_value = value::object(signal);
+        controller->set("signal", signal_value);
+        controller->set("abort",
+                        value::object(c.allocate<script::native_object>(
+                            "abort", [this, signal_value](context & inner, std::span<value> args) {
+                                auto * s =
+                                    static_cast<script::object_object *>(signal_value.as_heap());
+                                s->set("aborted", value::boolean(true));
+                                s->set("reason", arg(args, 0));
+                                // Every listener registered with this signal goes.
+                                std::erase_if(listeners_, [&](const listener & l) {
+                                    return l.abort_signal.is_heap() &&
+                                           l.abort_signal.as_heap() == signal_value.as_heap();
+                                });
+                                (void)inner;
+                                return value::undefined();
+                            })));
+        return value::object(controller);
+    });
 
     // `new Event(type)` and `window.dispatchEvent(event)`.
     //
@@ -1153,6 +1222,102 @@ node_id dom_bindings::find_by_id(const std::string & want) {
         for (const node_id child : txn.children(at)) { self(self, child); }
     };
     walk(walk, txn.root());
+    return found;
+}
+
+// `querySelector` / `querySelectorAll`, for COMPOUND selectors.
+//
+// A compound selector is a tag and any number of `#id` and `.class` parts -
+// `canvas`, `#sketch`, `.row.selected`, `div#main` - and a comma-separated
+// list of them. That covers what p5.js needs on its load path
+// (`document.querySelectorAll('script')`) and what `select()` is used for in
+// practice.
+//
+// COMBINATORS ARE NOT SUPPORTED: `div p`, `ul > li`, `a + b` all match
+// nothing. The style engine has a real matcher for those, but it is built
+// around the cascade - element facts, an ancestor bloom filter, a rule index -
+// and reaching it from here would mean exposing all of that. Saying so is
+// better than a half-matcher that silently gets descendants wrong.
+std::vector<node_id> dom_bindings::query(std::string_view selector, node_id within) {
+    struct compound {
+        std::string tag;
+        std::string id;
+        std::vector<std::string> classes;
+    };
+    std::vector<compound> wanted;
+    for (std::size_t at = 0; at <= selector.size();) {
+        const std::size_t comma = selector.find(',', at);
+        std::string_view one = selector.substr(
+            at, comma == std::string_view::npos ? std::string_view::npos : comma - at);
+        at = comma == std::string_view::npos ? selector.size() + 1 : comma + 1;
+        while (!one.empty() && one.front() == ' ') { one.remove_prefix(1); }
+        while (!one.empty() && one.back() == ' ') { one.remove_suffix(1); }
+        if (one.empty() || one.find(' ') != std::string_view::npos ||
+            one.find('>') != std::string_view::npos) {
+            continue; // a combinator: not supported, matches nothing
+        }
+        compound part;
+        std::size_t i = 0;
+        while (i < one.size() && one[i] != '#' && one[i] != '.') { ++i; }
+        part.tag = std::string{one.substr(0, i)};
+        while (i < one.size()) {
+            const char kind = one[i++];
+            const std::size_t start = i;
+            while (i < one.size() && one[i] != '#' && one[i] != '.') { ++i; }
+            std::string name{one.substr(start, i - start)};
+            if (kind == '#') {
+                part.id = std::move(name);
+            } else {
+                part.classes.push_back(std::move(name));
+            }
+        }
+        wanted.push_back(std::move(part));
+    }
+    if (wanted.empty()) { return {}; }
+
+    const auto txn = doc_->read();
+    const atom id_attribute = atoms_->intern("id");
+    const atom class_attribute = atoms_->intern("class");
+    std::vector<node_id> found;
+    const auto fits = [&](node_id node, const compound & part) {
+        const auto tagged = txn.tag(node);
+        if (!tagged) { return false; }
+        if (!part.tag.empty() && part.tag != "*" && *tagged != atoms_->intern_lower(part.tag)) {
+            return false;
+        }
+        if (!part.id.empty() && txn.attribute_value(node, id_attribute) != part.id) {
+            return false;
+        }
+        if (!part.classes.empty()) {
+            const std::string_view list = txn.attribute_value(node, class_attribute);
+            for (const std::string & want : part.classes) {
+                bool present = false;
+                for (std::size_t from = 0; from < list.size();) {
+                    const std::size_t end = list.find(' ', from);
+                    const std::string_view one =
+                        list.substr(from, end == std::string_view::npos ? end : end - from);
+                    if (one == want) { present = true; }
+                    if (end == std::string_view::npos) { break; }
+                    from = end + 1;
+                }
+                if (!present) { return false; }
+            }
+        }
+        return true;
+    };
+    const auto walk = [&](auto && self, node_id at, bool include) -> void {
+        if (include) {
+            for (const compound & part : wanted) {
+                if (fits(at, part)) {
+                    found.push_back(at);
+                    break;
+                }
+            }
+        }
+        for (const node_id child : txn.children(at)) { self(self, child, true); }
+    };
+    // A search rooted at an ELEMENT looks at its descendants, not itself.
+    walk(walk, within ? within : txn.root(), false);
     return found;
 }
 

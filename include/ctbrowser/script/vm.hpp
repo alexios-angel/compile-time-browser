@@ -116,6 +116,15 @@ struct closure_object final : heap_object {
     value proto_link = value::null();
 
     const function_proto * proto = nullptr;
+    // WHICH PROGRAM ITS NESTED FUNCTIONS LIVE IN.
+    //
+    // `op::closure` names a function by INDEX, and the index only means
+    // anything in the program it was compiled against. One `program_` for the
+    // whole context was fine while there was one program - and stopped being
+    // fine the moment a page could run a second script, because a closure from
+    // the first would then index the second program's function table and read
+    // off the end of it.
+    const program * owner = nullptr;
     std::vector<value> upvalues; // each one is a cell_object
     // Only meaningful when proto->is_arrow: the `this` in scope where the arrow
     // was written, captured when the closure was made. An arrow has no receiver
@@ -140,7 +149,23 @@ public:
     context & operator=(const context &) = delete;
 
     // --- allocation -------------------------------------------------------
+    // A RUNAWAY PAGE IS REFUSED, not left to exhaust the machine.
+    //
+    // std::bad_alloc from inside a script is the worst failure this engine can
+    // have: it takes the process down with no line, no stack and nothing to act
+    // on, and on a small machine it takes the machine with it. A cap turns that
+    // into an ordinary fault with the JS stack attached, which is a bug report.
+    //
+    // The number is deliberately far above any real page - p5.js loading
+    // allocates a few hundred thousand - so reaching it means a loop that does
+    // not terminate rather than a page that is merely large.
+    static constexpr std::size_t allocation_ceiling = 40'000'000;
+
     template <typename T, typename... Args> [[nodiscard]] T * allocate(Args &&... args) {
+        if (++allocations_ > allocation_ceiling && !failed_) {
+            raise("allocation ceiling reached (" + std::to_string(allocation_ceiling) +
+                  " objects) - a loop is not terminating");
+        }
         auto * p = new T(std::forward<Args>(args)...);
         p->next = heap_;
         heap_ = p;
@@ -393,9 +418,13 @@ private:
             // functions are anonymous, and the index is what lets a
             // disassembler be pointed straight at the failing instruction.
             std::size_t which = 0;
-            if (program_ != nullptr) {
-                for (std::size_t k = 0; k < program_->functions.size(); ++k) {
-                    if (&program_->functions[k] == fp) {
+            const program * owner =
+                frames_[i].closure != nullptr && frames_[i].closure->owner != nullptr
+                    ? frames_[i].closure->owner
+                    : program_;
+            if (owner != nullptr) {
+                for (std::size_t k = 0; k < owner->functions.size(); ++k) {
+                    if (&owner->functions[k] == fp) {
                         which = k;
                         break;
                     }
@@ -461,6 +490,10 @@ private:
     std::vector<call_frame> frames_;
     heap_object * heap_ = nullptr;
     std::size_t live_objects_ = 0;
+    // TOTAL allocations, never reset: the cap is about a loop that does not
+    // terminate, and a collector that keeps the live set small hides exactly
+    // that if the count is reset.
+    std::size_t allocations_ = 0;
     static constexpr std::size_t minimum_collect_threshold = 4096;
     std::size_t collect_threshold_ = minimum_collect_threshold;
     std::function<void(const root_visitor &)> external_roots_;

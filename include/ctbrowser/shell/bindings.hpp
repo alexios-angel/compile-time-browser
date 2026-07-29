@@ -167,6 +167,10 @@ private:
         node_id target; // empty = document/window
         std::string type;
         value callback;
+        // The AbortSignal this listener was registered with, if any. Aborting
+        // it removes every listener that carries it - which is how a library
+        // takes down a whole sketch's listeners in one call.
+        value abort_signal = value::undefined();
     };
 
     // --- element wrappers -------------------------------------------------
@@ -364,6 +368,8 @@ private:
     [[nodiscard]] node_id find_by_tag(std::string_view tag);
     // Every element with this tag, in document order; "*" means all of them.
     [[nodiscard]] std::vector<node_id> all_by_tag(std::string_view tag);
+    // Compound selectors only - see the definition.
+    [[nodiscard]] std::vector<node_id> query(std::string_view selector, node_id within = node_id{});
     // The document's own live properties - title and activeElement.
     void refresh_document();
 

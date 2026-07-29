@@ -187,12 +187,19 @@ bool browser::text_input(std::string_view text) {
 
 bool browser::run_script(std::string_view source) {
     if (!script_) { return false; }
-    script::program compiled = script::compiler::compile(std::string{source});
-    if (!compiled.ok) {
-        script_error_ = compiled.error;
+    auto compiled =
+        std::make_unique<script::program>(script::compiler::compile(std::string{source}));
+    if (!compiled->ok) {
+        script_error_ = compiled->error;
         return false;
     }
-    const script::run_result result = script_->run(compiled);
+    // KEPT, not scoped. A closure holds a `const function_proto *` into its
+    // program, and anything that calls back later - a timer, a listener,
+    // requestAnimationFrame - dereferences it long after this returned. A
+    // temporary works exactly until the first callback.
+    const script::program & kept = *compiled;
+    extra_programs_.push_back(std::move(compiled));
+    const script::run_result result = script_->run(kept);
     // CLEARED ON SUCCESS, not only set on failure. It was only ever assigned,
     // so one broken script made every later good one report that same error for
     // the rest of the page's life - and callers use this to decide whether the
