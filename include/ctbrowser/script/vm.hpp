@@ -380,8 +380,20 @@ private:
         for (std::size_t i = frames_.size(); i-- > 0 && shown < 12; ++shown) {
             const function_proto * fp = frames_[i].proto;
             if (fp == nullptr) { continue; }
+            // The function's INDEX as well as its name: most of a bundle's
+            // functions are anonymous, and the index is what lets a
+            // disassembler be pointed straight at the failing instruction.
+            std::size_t which = 0;
+            if (program_ != nullptr) {
+                for (std::size_t k = 0; k < program_->functions.size(); ++k) {
+                    if (&program_->functions[k] == fp) {
+                        which = k;
+                        break;
+                    }
+                }
+            }
             trace += "\n        at " + (fp->name.empty() ? std::string{"<anonymous>"} : fp->name) +
-                     " (+" + std::to_string(frames_[i].ip) + ")";
+                     " (fn#" + std::to_string(which) + " +" + std::to_string(frames_[i].ip) + ")";
         }
         if (frames_.size() > 12) {
             trace += "\n        ... " + std::to_string(frames_.size() - 12) + " more";

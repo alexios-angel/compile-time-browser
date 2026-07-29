@@ -892,6 +892,46 @@ void dom_bindings::install_window(context & cx) {
     storage("localStorage");
     storage("sessionStorage");
 
+    // `navigator`. A page reads it to decide what it is running in, and
+    // `navigator.userAgent.replace(...)` on an absent navigator is undefined
+    // twice over before anything notices.
+    //
+    // The string names this engine rather than imitating a browser. A page that
+    // sniffs for Chrome will not find it, which is correct: this is not Chrome,
+    // and a page taking a Chrome-only path here would be worse served by a lie.
+    {
+        auto * navigator = static_cast<script::object_object *>(cx.make_object().as_heap());
+        navigator->set("userAgent", cx.string("Mozilla/5.0 (compatible; ctbrowser)"));
+        navigator->set("appVersion", cx.string("5.0 (compatible; ctbrowser)"));
+        navigator->set("platform", cx.string("ctbrowser"));
+        navigator->set("vendor", cx.string(""));
+        navigator->set("language", cx.string("en-US"));
+        navigator->set("onLine", value::boolean(network_allowed_));
+        navigator->set("maxTouchPoints", value::number(0));
+        navigator->set("hardwareConcurrency", value::number(1));
+        auto * languages = static_cast<script::array_object *>(cx.make_array().as_heap());
+        languages->items.push_back(cx.string("en-US"));
+        navigator->set("languages", value::object(languages));
+        // mediaDevices and getUserMedia are ABSENT rather than stubbed: a page
+        // feature-detects them, and a stub that exists but cannot deliver a
+        // stream fails later and worse than one that was never there.
+        window->set("navigator", value::object(navigator));
+        cx.define_global("navigator", value::object(navigator));
+    }
+
+    // `screen`. One window, and it is the viewport.
+    {
+        auto * screen = static_cast<script::object_object *>(cx.make_object().as_heap());
+        screen->set("width", value::number(viewport_width_));
+        screen->set("height", value::number(viewport_height_));
+        screen->set("availWidth", value::number(viewport_width_));
+        screen->set("availHeight", value::number(viewport_height_));
+        screen->set("colorDepth", value::number(24));
+        screen->set("pixelDepth", value::number(24));
+        window->set("screen", value::object(screen));
+        cx.define_global("screen", value::object(screen));
+    }
+
     auto * performance = static_cast<script::object_object *>(cx.make_object().as_heap());
     performance->set(
         "now", value::object(cx.allocate<script::native_object>(

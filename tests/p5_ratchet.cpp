@@ -304,7 +304,23 @@ private:
         "p5.js",
         std::vector<std::byte>{reinterpret_cast<const std::byte *>(source.data()),
                                reinterpret_cast<const std::byte *>(source.data() + source.size())});
-    page.load_html(R"(<html><head><script src="p5.js"></script></head><body></body></html>)");
+    // `IS_MINIFIED` IS A MODE, not a trick.
+    //
+    // p5.js branches on it in seven places, and it is what p5's OWN minified
+    // build defines. Undefined, the bundle calls i18next's `initialize()` -
+    // which fetches a translation catalogue from cdn.jsdelivr.net - and
+    // installs the Friendly Error System, whose stack parsing and error
+    // listeners are a large surface of their own. Defined, both collapse: the
+    // translator promise becomes `Promise.resolve()` and the FES never
+    // installs.
+    //
+    // So this is the `p5-min` rung. Running the full build - fetch, FES and all
+    // - is a later one, and it is a different question from whether the engine
+    // can run p5 at all. A test that reaches the network fails for reasons that
+    // have nothing to do with this code, which is why CTBROWSER_NETWORK=0
+    // exists everywhere else in this tree.
+    page.load_html(R"(<html><head><script>var IS_MINIFIED = true;</script>)"
+                   R"(<script src="p5.js"></script></head><body></body></html>)");
     m.run_ms = clock.lap();
     std::printf("     page    %7.1f ms\n", m.run_ms);
     if (!page.script_error().empty()) {

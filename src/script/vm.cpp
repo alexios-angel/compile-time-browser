@@ -1078,12 +1078,23 @@ value context::run_loop(std::size_t stop_depth) {
                 break;
             }
             if (!callee.is_kind(heap_kind::function)) {
-                raise(describe_callee(fn,
-                                      in.code == op::call_method ? fn.names[in.c]
-                                      : in.code == op::call_computed
-                                          ? to_string(reg(in.c))
-                                          : callee_origin(fn, frame.ip - 1, in.a),
-                                      callee));
+                {
+                    std::string what = describe_callee(fn,
+                                                       in.code == op::call_method ? fn.names[in.c]
+                                                       : in.code == op::call_computed
+                                                           ? to_string(reg(in.c))
+                                                           : callee_origin(fn, frame.ip - 1, in.a),
+                                                       callee);
+                    // WHAT IT WAS CALLED ON. "`replace` is undefined" reads the
+                    // same whether the method is missing from a real object or
+                    // the object itself is undefined, and those are different
+                    // bugs in different places.
+                    if (in.code == op::call_method || in.code == op::call_computed) {
+                        what += ", on " + std::string{type_of(receiver)};
+                        if (receiver.is_nullish()) { what += " (" + to_string(receiver) + ")"; }
+                    }
+                    raise(std::move(what));
+                }
                 break;
             }
             auto * fnobj = static_cast<closure_object *>(callee.as_heap());
