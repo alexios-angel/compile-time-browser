@@ -1250,6 +1250,26 @@ void install_object(context & cx) {
         }
         return out;
     });
+    method(cx, object_ctor, "getOwnPropertyDescriptors", [](context & c, std::span<value> a) {
+        object_object * out = new_table(c);
+        if (arg_at(a, 0).is_object()) {
+            auto * from = static_cast<object_object *>(a[0].as_heap());
+            from->each_own_key([&](const std::string & key) {
+                object_object * d = new_table(c);
+                if (accessor_entry * entry = from->find_accessor(key)) {
+                    d->set("get", entry->getter);
+                    d->set("set", entry->setter);
+                } else if (value * held = from->find(key)) {
+                    d->set("value", *held);
+                    d->set("writable", value::boolean(true));
+                }
+                d->set("enumerable", value::boolean(true));
+                d->set("configurable", value::boolean(true));
+                out->set(key, value::object(d));
+            });
+        }
+        return value::object(out);
+    });
     method(cx, object_ctor, "fromEntries", [](context & c, std::span<value> a) {
         object_object * out = new_table(c);
         if (arg_at(a, 0).is_array()) {

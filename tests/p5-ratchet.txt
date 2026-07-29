@@ -10,7 +10,7 @@
 # draw, golden) arrive with the work that makes them reachable.
 
 level=5
-blocker=`a captured variable` is boolean (true), not a function - in `validateParams`
+blocker=`new` on `Function` is undefined, not a function - in <anonymous>
 
 # Wall-clock ceiling for lex + parse + compile + run, in milliseconds.
 # Generous on purpose: it is here to catch the compiler's quadratic scans

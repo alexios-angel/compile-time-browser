@@ -865,6 +865,43 @@ void test_string_statics() {
     expect("return String.fromCharCode(233).length;", "2");
 }
 
+// A DECLARATION SHADOWS, IT DOES NOT WRITE THROUGH.
+//
+// Deciding whether a new binding needs a slot asked whether the name existed
+// ANYWHERE in the frame - and a hoisted name is function-scoped, so a `const`
+// inside a block reused the outer slot and assigned through to it.
+//
+// p5.js has a top-level `function boolean(...)` and, in a block,
+// `for (const { arity, boolean } of OperatorTable)`. Both wrote to one cell, so
+// zod's builder became the boolean `true` - and the failure surfaced 25,000
+// instructions later, in a different function, as "a captured variable is
+// boolean (true), not a function".
+void test_a_declaration_shadows() {
+    // a block-scoped const over a hoisted function of the same name
+    expect("function f() { function v() { return 'fn'; } "
+           "{ const v = 'shadow'; } return v(); } return f();",
+           "fn");
+    // ...and the shadow is visible inside the block
+    expect("function f() { function v() { return 'fn'; } "
+           "{ const v = 'shadow'; return v; } } return f();",
+           "shadow");
+    // the same through a DESTRUCTURING, which is the shape p5 has
+    expect("function f() { function boolean(x) { return 'fn:' + x; } "
+           "for (const { boolean } of [{ boolean: true }]) { } "
+           "return boolean(1); } return f();",
+           "fn:1");
+    expect("function f() { function boolean() { return 'fn'; } let seen; "
+           "for (const { boolean } of [{ boolean: true }]) { seen = boolean; } "
+           "return seen + '|' + boolean(); } return f();",
+           "true|fn");
+    // a captured binding survives a shadow in a sibling block
+    expect("function f() { function v() { return 'fn'; } const get = () => v(); "
+           "{ const v = 1; } return get(); } return f();",
+           "fn");
+    // and a var of the same name at function scope still REUSES its slot
+    expect("function f() { var x = 1; var x = 2; return x; } return f();", "2");
+}
+
 void test_typeof() {
     diff_vs_v1("typeof 1", "number");
     diff_vs_v1("typeof 'x'", "string");
@@ -1605,6 +1642,7 @@ int main() {
     test_typed_arrays();
     test_object_prototype();
     test_string_statics();
+    test_a_declaration_shadows();
     test_typeof();
     test_variables_and_control_flow();
     test_increment_semantics();

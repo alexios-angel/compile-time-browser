@@ -153,6 +153,28 @@ public:
         }
         return -1;
     }
+    // A local of the CURRENT SCOPE ONLY.
+    //
+    // find_local_entry searches the whole frame, which is right for a READ - an
+    // inner scope sees an outer binding - and wrong for deciding whether a
+    // DECLARATION needs a slot of its own. A `const` in a block that shares a
+    // name with an outer binding must SHADOW it; treating the outer one as
+    // "already declared" makes the inner declaration write THROUGH to it.
+    //
+    // p5.js has a top-level `function boolean(...)` and, inside a block, a
+    // `const { boolean } = ...`. Both wrote to one cell, so zod's builder was
+    // replaced by a boolean `true` - and the failure surfaced 25,000
+    // instructions later as "a captured variable is boolean (true), not a
+    // function".
+    [[nodiscard]] local * find_local_in_current_scope(std::string_view name) {
+        frame & f = frames_.back();
+        const std::size_t from = f.scope_marks.empty() ? 0 : f.scope_marks.back();
+        for (std::size_t i = f.locals.size(); i-- > from;) {
+            if (f.locals[i].name == name) { return &f.locals[i]; }
+        }
+        return nullptr;
+    }
+
     [[nodiscard]] local * find_local_entry(frame & f, std::string_view name) {
         for (std::size_t i = f.locals.size(); i-- > 0;) {
             if (f.locals[i].name == name) { return &f.locals[i]; }
@@ -604,7 +626,14 @@ public:
             std::vector<std::string> names;
             pattern_names(pat, names);
             for (std::string & name : names) {
-                if (was_predeclared(name) || find_local_entry(fn(), name) != nullptr) { continue; }
+                // ONLY the current scope decides this. was_predeclared is
+                // function-scoped - it is how `var` and function declarations
+                // hoist - and asking it here made a `const {x}` inside a block
+                // reuse a slot hoisted at the top of the function, writing
+                // through to it instead of shadowing it. A hoisted name IS a
+                // local of the function's top scope, so when we are in that
+                // scope this finds it anyway.
+                if (find_local_in_current_scope(name) != nullptr) { continue; }
                 const std::uint16_t reg = declare_local(name);
                 proto().emit(instruction{op::load_undef, reg});
                 if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, reg}); }
@@ -852,7 +881,13 @@ public:
                     release_to(mark);
                     continue;
                 }
-                if (was_predeclared(decl.text)) {
+                // The hoisted slot is reused only when it is in THIS scope.
+                // was_predeclared is function-scoped - that is what hoisting
+                // means - so asking it alone made a `const` inside a block
+                // assign through to a binding declared at the top of the
+                // function instead of shadowing it.
+                if (was_predeclared(decl.text) &&
+                    find_local_in_current_scope(decl.text) != nullptr) {
                     // hoisted above: this statement is only the initializer,
                     // and emit_write knows whether it goes through a cell
                     if (decl.a >= 0) {
@@ -2298,7 +2333,7 @@ public:
     // same value again a moment later.
     void declare_class_name(std::string name) {
         if (frames_.size() > 1 && !was_predeclared(name) &&
-            find_local_entry(fn(), name) == nullptr) {
+            find_local_in_current_scope(name) == nullptr) {
             const std::uint16_t reg = declare_local(name);
             proto().emit(instruction{op::load_undef, reg});
             if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, reg}); }
