@@ -127,3 +127,34 @@ Rendering turned out to be byte-identical between FreeType 2.14.3 (linux) and
 platforms. That is not guaranteed in general, which is what `CTBROWSER_FONTS`
 is for.
 
+## PNG AND JPEG (2026-07-29)
+
+The engine decodes **BMP** on its own. Everything else arrives through the
+optional **SDL3_image**, installed by `install_image_decoder` in
+`src/shell/app.cpp` — the one place in the tree where SDL and image decoding
+meet, because the shell must not learn that SDL exists. `IMG_Load_IO` handles
+PNG and JPEG (and whatever else that build of SDL3_image was compiled with);
+the surface is converted to ARGB8888 and copied into a `paint::bitmap`.
+
+That path had **never been exercised by a test**. `<img src=x.png>` could have
+been blank on every build and nothing would have said so, which is the same
+shape of gap the p5 API probe exists to close. `examples/pages/image-formats.html`
+now draws a generated 16x16 PNG at three sizes against a golden, and
+`tools/gen-assets.py` writes that PNG — by hand, from `zlib` and `struct`, so the
+script stays dependency-free and no foreign binary is committed.
+
+**PNG is goldened and JPEG is not**, and the reason is byte-exactness rather
+than confidence: PNG is lossless, so two platforms decode it identically, while
+two libjpeg builds may differ in the last bit and would make the golden
+platform-dependent for a reason that is not a regression. JPEG is verified by
+hand through `ctbrowse` and works.
+
+**A headless `shell::browser` has no decoder.** `install_image_decoder` is
+called by `run_app`, so a unit test - which `tests/api_surface` requires to be
+SDL-free - reads BMP only. That is why the coverage here is an EXAMPLE with a
+golden rather than a test in `tests/`.
+
+The golden is gated on `CTBROWSER_WITH_IMAGE` in `examples/CMakeLists.txt`,
+exactly as the SVG one is gated on plutosvg: without the dependency the page
+lays out identically and draws nothing, and comparing then fails for the wrong
+reason.

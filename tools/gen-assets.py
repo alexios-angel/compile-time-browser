@@ -105,11 +105,58 @@ def blip():
     (ASSETS / "blip.wav").write_bytes(hdr + samples)
 
 
+# --- a PNG, so something in the tree exercises the real image decoder.
+#
+# BMP is what the engine decodes on its own; PNG and JPEG come from SDL3_image,
+# and until this existed nothing in the repository proved that path worked. A
+# PNG is LOSSLESS, so a page that draws it can have a byte-exact golden on both
+# platforms - which a JPEG could not, because two libjpeg builds may differ in
+# the last bit and the golden would become platform-dependent.
+#
+# Written by hand rather than through a library: zlib is in the standard
+# library, and the rest of PNG for a truecolour image is a header, one IDAT and
+# a CRC. That keeps this script dependency-free, which is the reason it exists.
+def png(path, w, h, rows):
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        return (struct.pack(">I", len(data)) + kind + data +
+                struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+
+    # Filter type 0 (none) in front of every scanline. Filtering exists to make
+    # the deflate smaller and buys nothing on an image this size.
+    raw = b"".join(b"\x00" + bytes(row) for row in rows)
+    header = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)  # 8-bit truecolour
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) +
+                     chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+
+def badge():
+    """A 16x16 PNG: four quadrants, so a decode that flips or swaps shows up."""
+    rows = []
+    for y in range(16):
+        row = []
+        for x in range(16):
+            top, left = y < 8, x < 8
+            if top and left:
+                row += [220, 60, 60]      # red
+            elif top:
+                row += [60, 170, 90]      # green
+            elif left:
+                row += [70, 110, 210]     # blue
+            else:
+                row += [240, 200, 70]     # yellow
+        rows.append(row)
+    png(ASSETS / "badge.png", 16, 16, rows)
+
+
 def main():
     ASSETS.mkdir(parents=True, exist_ok=True)
     sheet()
     blip()
-    print(f"wrote {ASSETS}/sprites.bmp and blip.wav")
+    badge()
+    print(f"wrote {ASSETS}/sprites.bmp, blip.wav and badge.png")
 
 
 if __name__ == "__main__":

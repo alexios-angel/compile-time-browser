@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- PNG through the real image decoder.
+     BMP is what the engine decodes on its own; PNG and JPEG come from
+     SDL3_image, and until this page existed nothing in the tree proved that
+     path worked at all - `<img src=x.png>` could have been silently blank on
+     every build and no test would have said so.
+     The badge has four differently-coloured quadrants, so a decode that flips
+     the image vertically (the classic BMP-vs-PNG row-order mistake), swaps red
+     and blue, or loses the alpha channel shows up as a wrong quadrant rather
+     than as something subtly off.
+     Drawn three times at three sizes because scaling is nearest-neighbour and
+     an <img> is rasterised at the size its box got - so this also pins that. -->
+<html>
+  <head>
+    <meta charset="utf-8">
+    <style>
+      body { margin: 0; background: #ffffff }
+      img { display: block; image-rendering: pixelated }
+      .row { padding: 8px }
+    </style>
+  </head>
+  <body>
+    <div class="row">
+      <img src="examples/assets/badge.png" width="16" height="16">
+    </div>
+    <div class="row">
+      <img src="examples/assets/badge.png" width="64" height="64">
+    </div>
+    <div class="row">
+      <img src="examples/assets/badge.png" width="32" height="64">
+    </div>
+  </body>
+</html>

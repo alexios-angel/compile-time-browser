@@ -84,6 +84,13 @@ foreach(source ${example-sources})
     if(plutosvg_FOUND)
       list(APPEND golden-examples svg)
     endif()
+    # PNG arrives through SDL3_image, so the golden only means anything when it
+    # is there. Same gate and same reasoning as the SVG one above: without the
+    # dependency the page lays out identically and draws no image, and comparing
+    # then fails for a reason that is not a regression.
+    if(SDL3_image_FOUND OR CTBROWSER_WITH_IMAGE)
+      list(APPEND golden-examples imageformats)
+    endif()
     if(example IN_LIST golden-examples)
       add_test(NAME render-${example} COMMAND ${CMAKE_COMMAND}
                -DEXE=$<TARGET_FILE:ctbrowser-example-${example}>
@@ -150,6 +157,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
             "${PROJECT_SOURCE_DIR}/examples/assets/sprites.bmp"
             "${PROJECT_SOURCE_DIR}/examples/assets/blip.wav"
             "${PROJECT_SOURCE_DIR}/examples/assets/chart.svg"
+            "${PROJECT_SOURCE_DIR}/examples/assets/badge.png"
             "${PROJECT_SOURCE_DIR}/examples/assets/p5.js"
             "${dist-dir}/examples/assets"
     # PressStart2P is a PAGE's font, fetched by @font-face through a URL
