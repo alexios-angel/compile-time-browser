@@ -1565,6 +1565,53 @@ void install_string(context & cx) {
 // node - is not clonable. Cycles are preserved through a seen-list, because a
 // structure that points back at itself is exactly what a naive recursive copy
 // cannot survive.
+// `btoa` and `atob` - base64, which is how bytes travel inside a string.
+//
+// A data: URL is base64, `canvas.toDataURL()` produces one, and a page that
+// hand-rolls a download encodes with btoa. Byte-oriented, which is what these
+// two actually are: btoa's argument is a "binary string" of bytes 0-255 and not
+// text, and treating it as text is how a page's image comes out corrupted.
+void install_base64(context & cx) {
+    static constexpr std::string_view alphabet =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    cx.define_native("btoa", [](context & c, std::span<value> a) {
+        const std::string in = a.empty() ? std::string{} : c.to_string(a[0]);
+        std::string out;
+        out.reserve((in.size() + 2) / 3 * 4);
+        for (std::size_t i = 0; i < in.size(); i += 3) {
+            const unsigned b0 = static_cast<unsigned char>(in[i]);
+            const unsigned b1 = i + 1 < in.size() ? static_cast<unsigned char>(in[i + 1]) : 0;
+            const unsigned b2 = i + 2 < in.size() ? static_cast<unsigned char>(in[i + 2]) : 0;
+            const unsigned triple = (b0 << 16) | (b1 << 8) | b2;
+            out += alphabet[(triple >> 18) & 0x3F];
+            out += alphabet[(triple >> 12) & 0x3F];
+            // The padding is what says how many of the last three bytes were
+            // real, so it is not optional.
+            out += i + 1 < in.size() ? alphabet[(triple >> 6) & 0x3F] : '=';
+            out += i + 2 < in.size() ? alphabet[triple & 0x3F] : '=';
+        }
+        return c.string(out);
+    });
+    cx.define_native("atob", [](context & c, std::span<value> a) {
+        const std::string in = a.empty() ? std::string{} : c.to_string(a[0]);
+        std::string out;
+        unsigned accumulator = 0;
+        int bits = 0;
+        for (const char ch : in) {
+            if (ch == '=' || ch == '\n' || ch == '\r' || ch == ' ') { continue; }
+            const std::size_t at = alphabet.find(ch);
+            if (at == std::string_view::npos) { continue; }
+            accumulator = (accumulator << 6) | static_cast<unsigned>(at);
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                out += static_cast<char>((accumulator >> bits) & 0xFF);
+            }
+        }
+        return c.string(out);
+    });
+}
+
 void install_structured_clone(context & cx) {
     cx.define_native("structuredClone", [](context & c, std::span<value> a) {
         std::vector<std::pair<heap_object *, value>> seen;
@@ -3346,6 +3393,7 @@ void install_builtins(context & cx, std::uint64_t seed) {
     install_number(cx);
     install_boolean(cx);
     install_structured_clone(cx);
+    install_base64(cx);
     install_object(cx);
     install_json(cx);
     install_date(cx);

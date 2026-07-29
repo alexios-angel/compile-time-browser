@@ -530,6 +530,10 @@ private:
     // thousand, and the first message is the one that names it.
     // `document.cookie`, in insertion order so reading it back is stable.
     std::vector<std::pair<std::string, std::string>> cookies_;
+    // Counts the object URLs handed out, so each is distinct. Counted rather
+    // than random for the same reason Math.random is seeded: a page that prints
+    // one could not otherwise have a golden.
+    std::uint32_t next_object_url_ = 0;
     std::string callback_error_;
     std::size_t callback_faults_ = 0;
     bool reload_requested_ = false;

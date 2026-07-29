@@ -384,6 +384,49 @@ public:
     // three characters. Without this, every string literal in the program is
     // wrong by two characters, which shows up as 'a' + 'b' === "'a''b'" and
     // as o['a'] failing to find the property named a.
+    [[nodiscard]] static int hex_digit(char c) {
+        if (c >= '0' && c <= '9') { return c - '0'; }
+        if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
+        if (c >= 'A' && c <= 'F') { return c - 'A' + 10; }
+        return -1;
+    }
+
+    // Read up to `count` hex digits after position `at`, leaving `at` on the
+    // last one consumed so the caller's ++i lands past it. Lenient: a truncated
+    // escape yields what digits there were, matching the parser's leniency
+    // contract rather than throwing during compilation.
+    [[nodiscard]] static std::uint32_t read_hex(std::string_view s, std::size_t & at,
+                                                std::size_t count) {
+        std::uint32_t value = 0;
+        for (std::size_t n = 0; n < count && at + 1 < s.size(); ++n) {
+            const int digit = hex_digit(s[at + 1]);
+            if (digit < 0) { break; }
+            value = value * 16 + static_cast<std::uint32_t>(digit);
+            ++at;
+        }
+        return value;
+    }
+
+    [[nodiscard]] static std::string encode_code_point(std::uint32_t code) {
+        std::string out;
+        if (code < 0x80) {
+            out += static_cast<char>(code);
+        } else if (code < 0x800) {
+            out += static_cast<char>(0xC0 | (code >> 6));
+            out += static_cast<char>(0x80 | (code & 0x3F));
+        } else if (code < 0x10000) {
+            out += static_cast<char>(0xE0 | (code >> 12));
+            out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+            out += static_cast<char>(0x80 | (code & 0x3F));
+        } else {
+            out += static_cast<char>(0xF0 | (code >> 18));
+            out += static_cast<char>(0x80 | ((code >> 12) & 0x3F));
+            out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+            out += static_cast<char>(0x80 | (code & 0x3F));
+        }
+        return out;
+    }
+
     [[nodiscard]] static std::string decode_string_literal(std::string_view lexeme) {
         if (lexeme.size() >= 2 &&
             (lexeme.front() == '\'' || lexeme.front() == '"' || lexeme.front() == '`')) {
@@ -404,6 +447,45 @@ public:
             case 'b': out.push_back('\b'); break;
             case 'f': out.push_back('\f'); break;
             case 'v': out.push_back('\v'); break;
+            // \xHH, \uHHHH, \u{H..} - the escapes that carry a code point.
+            // Missing them was not a missing feature but a WRONG ANSWER:
+            // '\x41' came out as the three characters x41, so btoa('\x00')
+            // encoded the letter x. Strings here are bytes, so a code point
+            // becomes its UTF-8 - the same choice String.fromCharCode makes,
+            // which is what keeps a round trip through String.prototype honest.
+            case 'x': out += encode_code_point(read_hex(lexeme, i, 2)); break;
+            case 'u': {
+                std::uint32_t code = 0;
+                if (i + 1 < lexeme.size() && lexeme[i + 1] == '{') {
+                    i += 2; // past the u and the {
+                    for (; i < lexeme.size() && lexeme[i] != '}'; ++i) {
+                        code = code * 16 + static_cast<std::uint32_t>(hex_digit(lexeme[i]));
+                    }
+                } else {
+                    code = read_hex(lexeme, i, 4);
+                    // A high surrogate followed by a low one is ONE code point.
+                    // Encoding the halves separately would give WTF-8, and an
+                    // emoji written as an escape would not equal the same emoji
+                    // written literally in the source.
+                    if (code >= 0xD800 && code <= 0xDBFF && i + 6 < lexeme.size() &&
+                        lexeme[i + 1] == '\\' && lexeme[i + 2] == 'u') {
+                        std::size_t peek = i + 2;
+                        const std::uint32_t low = read_hex(lexeme, peek, 4);
+                        if (low >= 0xDC00 && low <= 0xDFFF) {
+                            code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+                            i = peek;
+                        }
+                    }
+                }
+                out += encode_code_point(code);
+                break;
+            }
+            // A backslash before a real newline is a line continuation and
+            // contributes nothing - not even the newline.
+            case '\n': break;
+            case '\r':
+                if (i + 1 < lexeme.size() && lexeme[i + 1] == '\n') { ++i; }
+                break;
             default: out.push_back(lexeme[i]); break; // \\ \' \" and anything else
             }
         }

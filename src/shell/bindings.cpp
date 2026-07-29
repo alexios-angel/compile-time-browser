@@ -2023,6 +2023,91 @@ void dom_bindings::install_window(context & cx) {
     // Dispatch here is FLAT: a window event runs the window's listeners for
     // that type, in registration order. There is no capture phase and no
     // bubbling, because a window event has nowhere to bubble from.
+    // `Blob`, `URL.createObjectURL` and base64.
+    //
+    // ONE PIECE OF MACHINERY SERVING TWO FEATURES. `loadImage` fetches bytes,
+    // wraps them in a Blob, makes an object URL and points an Image at it; and
+    // `save()` wraps bytes in a Blob, makes an object URL and clicks an
+    // `<a download>`. Neither works without this and both work with it.
+    //
+    // AN OBJECT URL IS AN ASSET. Rather than a private table that only images
+    // consult, `createObjectURL` registers the bytes in the asset registry under
+    // a synthetic `blob:` name - so every path that already resolves a URL
+    // resolves this one: `<img src>`, `fetch()`, and p5's loaders. One mechanism
+    // instead of three, and nothing had to learn a new kind of URL.
+    cx.define_native("Blob", [](context & c, std::span<value> a) {
+        auto * blob = static_cast<script::object_object *>(c.make_object().as_heap());
+        // `new Blob([parts], { type })`. A part is a string or something with
+        // bytes - a typed array, another Blob - which is what a page actually
+        // passes: `new Blob([data], { type: contentType })`.
+        value bytes = c.make_array();
+        auto * out = static_cast<script::array_object *>(bytes.as_heap());
+        out->elements = script::element_kind::u8;
+        if (!a.empty() && a[0].is_array()) {
+            for (const value & part : static_cast<script::array_object *>(a[0].as_heap())->items) {
+                if (part.is_string()) {
+                    for (const char ch : c.to_string(part)) {
+                        out->items.push_back(
+                            value::number(static_cast<double>(static_cast<unsigned char>(ch))));
+                    }
+                    continue;
+                }
+                // A typed array is bytes already; a Blob carries them in the
+                // same slot this one does.
+                value inner = part;
+                if (part.is_object()) { inner = c.lookup_property(part, "__bytes"); }
+                if (inner.is_array()) {
+                    for (const value & b :
+                         static_cast<script::array_object *>(inner.as_heap())->items) {
+                        out->items.push_back(b);
+                    }
+                }
+            }
+        }
+        std::string type;
+        if (a.size() > 1 && a[1].is_object()) {
+            const value given = c.lookup_property(a[1], "type");
+            if (!given.is_undefined()) { type = c.to_string(given); }
+        }
+        blob->set("size", value::number(static_cast<double>(out->items.size())));
+        blob->set("type", c.string(type));
+        blob->set("__bytes", bytes);
+        return value::object(blob);
+    });
+
+    {
+        auto * url = static_cast<script::object_object *>(cx.make_object().as_heap());
+        const auto url_method = [&](std::string name, script::native_fn fn) {
+            url->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+        };
+        url_method("createObjectURL", [this](context & c, std::span<value> a) {
+            if (assets_ == nullptr || a.empty() || !a[0].is_object()) { return c.string(""); }
+            const value held = c.lookup_property(a[0], "__bytes");
+            std::vector<std::byte> bytes;
+            if (held.is_array()) {
+                for (const value & b : static_cast<script::array_object *>(held.as_heap())->items) {
+                    bytes.push_back(static_cast<std::byte>(
+                        static_cast<unsigned char>(std::clamp(context::to_number(b), 0.0, 255.0))));
+                }
+            }
+            // Counted rather than random: `Math.random` is seeded here so a
+            // golden can exist, and a URL that changed between runs would defeat
+            // that for any page that prints one.
+            const std::string name = "blob:ctbrowser/" + std::to_string(++next_object_url_);
+            assets_->add(name, std::move(bytes));
+            return c.string(name);
+        });
+        url_method("revokeObjectURL", [this](context & c, std::span<value> a) {
+            // Replaced with nothing rather than erased: the registry has no
+            // remove, and an empty entry is indistinguishable from a missing one
+            // to every reader. A page that revokes and then loads gets the 404
+            // it should.
+            if (assets_ != nullptr) { assets_->add(arg_string(c, a, 0), {}); }
+            return value::undefined();
+        });
+        cx.define_global("URL", value::object(url));
+    }
+
     // `new Path2D()` - a path recorded now and drawn later.
     //
     // Every 2D shape p5.js draws goes through one: a visitor walks the shape

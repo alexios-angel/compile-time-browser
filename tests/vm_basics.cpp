@@ -889,6 +889,51 @@ void test_string_statics() {
     expect("return String.fromCharCode(233).length;", "2");
 }
 
+// A CODE-POINT ESCAPE IS NOT ITS OWN TEXT.
+//
+// `\\xHH` and `\\uHHHH` fell through the escape decoder's default case, which
+// pushes the character after the backslash - so '\\x41' was the three-character
+// string x41 rather than "A", silently. It surfaced through base64: btoa('\\x00')
+// encoded the letter x, and a page hand-writing binary got a corrupt image with
+// nothing anywhere reporting a problem.
+//
+// A code point becomes its UTF-8 here, the same choice String.fromCharCode
+// makes, because strings are bytes.
+void test_string_escapes() {
+    expect_result("return '\\x41'.length;", "1");
+    expect("return '\\x41';", "A");
+    expect_result("return '\\x00'.charCodeAt(0);", "0");
+    expect_result("return '\\xff'.length;", "2"); // U+00FF is two bytes of UTF-8
+    expect("return '\\u0041';", "A");
+    expect("return '\\u{41}';", "A");
+    expect_result("return '\\u00e9'.length;", "2");
+    // A surrogate PAIR is one code point: an escaped emoji must equal the same
+    // emoji written literally, which encoding the halves separately would break.
+    expect_result("return '\\ud83d\\ude00'.length;", "4");
+    expect_result("return '\\ud83d\\ude00' === '\\u{1f600}';", "true");
+    expect_result("return '\\u4e2d'.length;", "3");
+    expect("return '\\q';", "q");     // an unknown escape is the character itself
+    expect("return 'a\\\nb';", "ab"); // a backslash before a real newline joins the lines
+    expect_result("return '\\0'.charCodeAt(0);", "0");
+}
+
+// btoa and atob are BYTE oriented: btoa's argument is a binary string of values
+// 0-255, not text. Treating it as text is how a page's exported image arrives
+// truncated at the first byte that is not valid UTF-8.
+void test_base64() {
+    expect("return btoa('hello');", "aGVsbG8=");
+    expect("return btoa('hi');", "aGk="); // the padding says how many bytes were real
+    expect("return btoa('abc');", "YWJj");
+    expect("return btoa('');", "");
+    expect("return atob('aGVsbG8=');", "hello");
+    expect("return atob('aGk=');", "hi");
+    expect("return atob(btoa('the quick brown fox'));", "the quick brown fox");
+    expect_result("return atob(btoa('\\x00\\x01\\x7f')).length;", "3");
+    expect_result("return atob(btoa('\\x00\\x00\\x00')).charCodeAt(1);", "0");
+    // Whitespace in the encoded text is ignored rather than decoded.
+    expect("return atob('aGVs\\nbG8=');", "hello");
+}
+
 // A DECLARATION SHADOWS, IT DOES NOT WRITE THROUGH.
 //
 // Deciding whether a new binding needs a slot asked whether the name existed
@@ -2291,6 +2336,8 @@ int main() {
     test_typed_arrays();
     test_object_prototype();
     test_string_statics();
+    test_string_escapes();
+    test_base64();
     test_a_declaration_shadows();
     test_pending_promises();
     test_function_to_string();
