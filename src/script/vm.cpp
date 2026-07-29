@@ -130,6 +130,8 @@ void context::mark_object(heap_object * o) {
         // ...and its own properties, which is where a class keeps its statics
         // and its prototype.
         for (const auto & [name, v] : closure->props) { mark(v); }
+        // ...and an arrow's captured `this`, which nothing else can reach.
+        mark(closure->captured_this);
         break;
     }
     default: break; // strings and natives own no values
@@ -619,6 +621,11 @@ value context::run_loop(std::size_t stop_depth) {
                     made->upvalues.push_back(value::undefined());
                 }
             }
+            // An arrow's `this` is decided HERE, where it is written, not where
+            // it is called. Reading the effective receiver rather than the raw
+            // one is what makes an arrow inside an arrow inside a method still
+            // see the method's object.
+            if (target.is_arrow) { made->captured_this = effective_this(frame); }
             reg(in.a) = value::object(made);
             break;
         }
@@ -699,7 +706,7 @@ value context::run_loop(std::size_t stop_depth) {
 
         case op::type_of: reg(in.a) = string(std::string{type_of(reg(in.b))}); break;
 
-        case op::load_this: reg(in.a) = frame.receiver; break;
+        case op::load_this: reg(in.a) = effective_this(frame); break;
 
         case op::own_keys: {
             // The own property names of an object, as an array. `for (k in o)`

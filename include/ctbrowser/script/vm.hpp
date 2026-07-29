@@ -77,6 +77,10 @@ struct closure_object final : heap_object {
 
     const function_proto * proto = nullptr;
     std::vector<value> upvalues; // each one is a cell_object
+    // Only meaningful when proto->is_arrow: the `this` in scope where the arrow
+    // was written, captured when the closure was made. An arrow has no receiver
+    // of its own, so this is the only place its `this` can come from.
+    value captured_this = value::undefined();
     explicit closure_object(const function_proto * p)
         : heap_object(heap_kind::function), proto(p) {}
 };
@@ -255,11 +259,24 @@ private:
         // How many exception handlers this frame had on entry. Unwinding pops
         // back to it, so a handler in a caller cannot be caught by a callee.
         std::size_t handler_base = 0;
+
         // `new C()` evaluates to the new object, NOT to whatever the
         // constructor body happens to return - unless it returns an object,
         // which is the one case the spec lets override it.
         bool constructing = false;
     };
+
+    // The `this` a frame actually sees. For an ordinary function that is its
+    // own receiver; for an arrow it is the one captured where the arrow was
+    // written, because an arrow never gets a receiver of its own. Both
+    // `load_this` and the closure builder go through here, which is what makes
+    // an arrow nested inside an arrow inside a method still resolve correctly.
+    [[nodiscard]] static value effective_this(const call_frame & f) {
+        if (f.closure != nullptr && f.closure->proto != nullptr && f.closure->proto->is_arrow) {
+            return f.closure->captured_this;
+        }
+        return f.receiver;
+    }
 
     // A live try block: where to jump, and where the state was when it started.
     struct handler {

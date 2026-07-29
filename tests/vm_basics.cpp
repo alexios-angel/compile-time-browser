@@ -213,6 +213,66 @@ void test_rest_parameters() {
            "8,9|15");
 }
 
+// A NESTED FUNCTION DECLARATION IS A BINDING IN ITS SCOPE, and this used to
+// emit set_global at every depth. Two helpers with the same name in two
+// different closures collided in one table, and a nested function meant to
+// capture an enclosing local read a global instead - which is the point of an
+// IIFE, silently undone, in a tree where every bundle is one.
+void test_nested_function_declarations_are_local() {
+    // the inner name does not escape
+    expect("function outer() { function helper() { return 1; } return helper(); } "
+           "outer(); return typeof helper;",
+           "undefined");
+    // two scopes, same name, no collision
+    expect("function a() { function h() { return 'a'; } return h(); } "
+           "function b() { function h() { return 'b'; } return h(); } "
+           "return a() + b();",
+           "ab");
+    // and it still captures the enclosing local rather than a global
+    expect("var n = 'global'; "
+           "function outer() { let n = 'local'; function read() { return n; } return read(); } "
+           "return outer();",
+           "local");
+    // recursion resolves to itself, not to a global of the same name
+    expect("function outer() { function fact(k) { return k <= 1 ? 1 : k * fact(k - 1); } "
+           "return fact(5); } return outer();",
+           "120");
+    // a top-level declaration is STILL a global - pages define functions the
+    // host calls by name, and that is deliberate
+    expect("function top() { return 7; } return typeof top;", "function");
+}
+
+// AN ARROW SEES THE `this` WHERE IT WAS WRITTEN. It used to get its own frame
+// with an undefined receiver, so `this` inside an arrow inside a method - which
+// is where arrows are usually written - was undefined.
+void test_arrow_this_is_lexical() {
+    expect("const o = { n: 5, get() { const f = () => this.n; return f(); } }; return o.get();",
+           "5");
+    // through two levels of arrow
+    expect("const o = { n: 6, get() { const f = () => () => this.n; return f()(); } }; "
+           "return o.get();",
+           "6");
+    // an arrow inside a callback still sees the method's object
+    expect("const o = { n: 3, sum() { return [1, 2].map(x => x * this.n).join(','); } }; "
+           "return o.sum();",
+           "3,6");
+    // an ordinary function still gets its OWN receiver
+    expect("const o = { n: 1, get() { return this.n; } }; return o.get();", "1");
+    // and a class method's arrow sees the instance
+    expect("class C { constructor() { this.v = 9; } read() { const f = () => this.v; "
+           "return f(); } } return new C().read();",
+           "9");
+}
+
+void test_bitwise_compound_assignment() {
+    expect("let x = 1; x <<= 3; return x;", "8");
+    expect("let x = 16; x >>= 2; return x;", "4");
+    expect("let x = -1; x >>>= 28; return x;", "15");
+    expect("let x = 0xF0; x &= 0x3C; return x;", "48");
+    expect("let x = 0xF0; x |= 0x0F; return x;", "255");
+    expect("let x = 0xFF; x ^= 0x0F; return x;", "240");
+}
+
 void test_typeof() {
     diff_vs_v1("typeof 1", "number");
     diff_vs_v1("typeof 'x'", "string");
@@ -906,6 +966,9 @@ int main() {
     test_radix_literals();
     test_default_parameters();
     test_rest_parameters();
+    test_nested_function_declarations_are_local();
+    test_arrow_this_is_lexical();
+    test_bitwise_compound_assignment();
     test_typeof();
     test_variables_and_control_flow();
     test_increment_semantics();

@@ -297,15 +297,21 @@ public:
     // compiled first, so the locals they capture have to exist by then.
     void predeclare_locals(std::int32_t body) {
         if (body < 0 || at(body).kind != vp::nk::block) { return; }
+        const auto hoist = [this](std::string name) {
+            if (name.empty() || find_local_entry(fn(), name) != nullptr) { return; }
+            const std::uint8_t r = declare_local(name);
+            proto().emit(instruction{op::load_undef, r});
+            if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
+            fn().predeclared.push_back(std::move(name));
+        };
         for (const std::int32_t stmt : kids(at(body))) {
-            if (at(stmt).kind != vp::nk::var_decl) { continue; }
-            for (const std::int32_t d : kids(at(stmt))) {
-                std::string name{at(d).text};
-                if (find_local_entry(fn(), name) != nullptr) { continue; }
-                const std::uint8_t r = declare_local(name);
-                proto().emit(instruction{op::load_undef, r});
-                if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
-                fn().predeclared.push_back(std::move(name));
+            if (at(stmt).kind == vp::nk::var_decl) {
+                for (const std::int32_t d : kids(at(stmt))) { hoist(std::string{at(d).text}); }
+            } else if (at(stmt).kind == vp::nk::func_decl) {
+                // A nested function declaration is a BINDING IN ITS SCOPE, and
+                // it has to exist before its own body compiles or a recursive
+                // call inside it resolves to a global instead of to itself.
+                hoist(std::string{at(stmt).text});
             }
         }
     }
@@ -937,11 +943,26 @@ public:
     void compile_function_decl(std::int32_t idx) {
         const vp::node & n = at(idx);
         const std::uint32_t index = compile_function_body(idx, std::string{n.text});
+        const std::uint32_t mark = reg_mark();
         const std::uint8_t r = alloc_reg();
         proto().emit(instruction::with_bx(op::closure, r, static_cast<std::uint16_t>(index)));
-        const std::uint8_t name = name_operand(std::string{n.text});
-        proto().emit(instruction::with_bx(op::set_global, r, name));
-        release_to(static_cast<std::uint8_t>(r));
+        // AT THE TOP LEVEL a function declaration is a global, by design: a page
+        // defines functions the host calls by name, and script scope is what
+        // sibling declarations close over.
+        //
+        // ANYWHERE ELSE it is a local, and this used to emit set_global at every
+        // depth. Two helpers named `handler` in two different closures collided
+        // in one table, and a nested function meant to capture an enclosing
+        // local read a global instead. In a bundle where every module is an
+        // IIFE - which is every bundle - that is the whole point of the IIFE
+        // silently undone.
+        if (frames_.size() == 1) {
+            proto().emit(
+                instruction::with_bx(op::set_global, r, name_operand(std::string{n.text})));
+        } else {
+            emit_write(n.text, r);
+        }
+        release_to(mark);
     }
 
     [[nodiscard]] std::uint32_t compile_function_body(std::int32_t idx, std::string name) {
@@ -949,6 +970,9 @@ public:
         const auto index = static_cast<std::uint32_t>(out_.functions.size());
         out_.functions.emplace_back();
         out_.functions[index].name = std::move(name);
+        // The VM cannot tell an arrow from a function once it is bytecode, and
+        // it has to: an arrow sees the `this` where it was written.
+        out_.functions[index].is_arrow = n.kind == vp::nk::arrow;
 
         frames_.emplace_back();
         frames_.back().proto = index;
@@ -1403,6 +1427,16 @@ public:
         if (text == "/=") { return op::div; }
         if (text == "%=") { return op::mod; }
         if (text == "**=") { return op::pow; }
+        // The bitwise compounds. Every one of these opcodes already existed for
+        // the plain operator; only the assignment form was missing, so `x <<= 1`
+        // was refused while `x = x << 1` compiled. p5.js's noise module is
+        // stopped by exactly that.
+        if (text == "&=") { return op::bit_and; }
+        if (text == "|=") { return op::bit_or; }
+        if (text == "^=") { return op::bit_xor; }
+        if (text == "<<=") { return op::shl; }
+        if (text == ">>=") { return op::shr; }
+        if (text == ">>>=") { return op::ushr; }
         ok = false;
         return op::add;
     }

@@ -184,6 +184,11 @@ struct function_proto {
     std::string name;
     std::uint8_t param_count = 0;
     std::uint8_t frame_size = 1; // registers this body needs
+    // An arrow does not get its own `this`; it sees the one where it was
+    // WRITTEN. The VM cannot tell an arrow from a function at run time, and
+    // reading the frame's own receiver made `this` undefined inside every arrow
+    // inside a method - which is exactly where arrows are usually written.
+    bool is_arrow = false;
     std::vector<instruction> code;
     // Immediates only. A string literal cannot live here: `value` for a string
     // is a pointer into a VM heap that does not exist at compile time, so the
