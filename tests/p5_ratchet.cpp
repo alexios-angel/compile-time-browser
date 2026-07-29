@@ -92,12 +92,21 @@ struct measurement {
     // not stop the parser, so reporting only them would hide the destructuring
     // that does - and a developer wants both in one run.
     bool stopped = false;
+    // The stack a failure happened on is CONTEXT, not identity: it moves with
+    // edits that have nothing to do with the blocker. So the recorded string is
+    // the first line - the message - and the rest is printed but not compared.
+    std::string trace;
     void fail_at(int rung, std::string why) {
-        if (!stopped) {
-            level = rung - 1;
+        if (stopped) { return; }
+        level = rung - 1;
+        const std::size_t newline = why.find('\n');
+        if (newline == std::string::npos) {
             blocker = std::move(why);
-            stopped = true;
+        } else {
+            blocker = why.substr(0, newline);
+            trace = why.substr(newline + 1);
         }
+        stopped = true;
     }
     void reached(int rung) {
         if (!stopped) { level = rung; }
@@ -348,6 +357,7 @@ int main(int argc, char ** argv) {
     if (bisecting) {
         std::printf("\n     LEVEL %d/%d (%s)\n", m.level, level_ceiling, level_name(m.level));
         if (!m.blocker.empty()) { std::printf("     BLOCKER %s\n", m.blocker.c_str()); }
+        if (!m.trace.empty()) { std::printf("%s\n", m.trace.c_str()); }
         return 0; // a reproducer reports; it does not judge
     }
 
@@ -355,6 +365,7 @@ int main(int argc, char ** argv) {
 
     std::printf("\n     LEVEL %d/%d (%s)\n", m.level, level_ceiling, level_name(m.level));
     if (!m.blocker.empty()) { std::printf("     BLOCKER %s\n", m.blocker.c_str()); }
+    if (!m.trace.empty()) { std::printf("%s\n", m.trace.c_str()); }
     std::printf("\n");
 
     if (!r.found) {
