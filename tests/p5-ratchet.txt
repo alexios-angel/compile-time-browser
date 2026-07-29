@@ -10,7 +10,7 @@
 # draw, golden) arrive with the work that makes them reachable.
 
 level=3
-blocker=regular expression literals are not in this VM subset - there is no regex engine (/\.(cur|jpg|jpeg|gif|png|CUR|JPG|JPEG|GIF|PNG)$/)
+blocker=object literal get/set accessors are not in this VM subset
 
 # Wall-clock ceiling for lex + parse + compile + run, in milliseconds.
 # Generous on purpose: it is here to catch the compiler's quadratic scans

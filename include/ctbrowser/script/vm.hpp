@@ -183,6 +183,7 @@ public:
         array,
         string,
         number,
+        regexp,
         count_
     };
 

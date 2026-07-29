@@ -434,6 +434,38 @@ void test_destructuring_in_for_of() {
     expect("let k, seen = ''; for (k in {a: 1, b: 2}) { seen += k; } return seen;", "ab");
 }
 
+// A REGEX ENGINE. Literals were rejected by name; there was none. Ported from
+// ctjs's backtracking matcher, which was already self-contained and coupled to
+// its host by exactly two calls, then extended with what p5.js actually uses:
+// lookahead, the sticky flag and named groups. Lookbehind and backreferences
+// are REFUSED rather than mis-matched - neither appears in p5.js, and a
+// matcher that silently ignores an assertion is worse than one that says no.
+void test_regex() {
+    expect("return /a(b+)c/.exec('xxabbbcyy')[0];", "abbbc");
+    expect("return /a(b+)c/.exec('xxabbbcyy')[1];", "bbb");
+    // .index is the most-used feature of all, at 143 sites in p5.js
+    expect("return /a(b+)c/.exec('xxabbbcyy').index;", "2");
+    expect("return /nope/.exec('abc') === null;", "true");
+    expect("return /^\\d+$/.test('4711');", "true");
+    expect("return /^\\d+$/.test('47a1');", "false");
+    expect("return /x/i.test('X');", "true");
+    expect("return /[a-f0-9]{2}/i.exec('zz A9 zz')[0];", "A9");
+    // the constructor and the literal build the same thing
+    expect("return new RegExp('b+', '').exec('abbbc')[0];", "bbb");
+    expect("return /ab/g.source + '|' + /ab/gi.flags;", "ab|gi");
+    // lookahead, positive and negative
+    expect("return /foo(?=bar)/.test('foobar');", "true");
+    expect("return /foo(?=bar)/.test('foobaz');", "false");
+    expect("return /foo(?!bar)/.test('foobaz');", "true");
+    // a named group is an ordinary capture that also answers to a name
+    expect("return /(?<n>\\d+)/.exec('x42').groups.n;", "42");
+    // `g` resumes from lastIndex and writes it back
+    expect("const re = /\\d/g; const s = 'a1b2'; re.exec(s); return re.exec(s)[0];", "2");
+    expect("const re = /\\d/g; re.exec('a1'); re.exec('a1'); return re.lastIndex;", "0");
+    // and a pattern that cannot compile does not match rather than crashing
+    expect("return /(?<=x)y/.test('xy');", "false");
+}
+
 void test_typeof() {
     diff_vs_v1("typeof 1", "number");
     diff_vs_v1("typeof 'x'", "string");
@@ -1137,6 +1169,7 @@ int main() {
     test_destructuring_parameters();
     test_destructuring_assignment();
     test_destructuring_in_for_of();
+    test_regex();
     test_typeof();
     test_variables_and_control_flow();
     test_increment_semantics();

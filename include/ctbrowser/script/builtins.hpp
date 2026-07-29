@@ -32,6 +32,10 @@
 
 namespace ctbrowser::script {
 
+// What a regex LITERAL compiles to. A reserved name rather than `RegExp` so a
+// page that shadows the constructor cannot change what its own literals mean.
+inline constexpr std::string_view regexp_factory_name = "__ctbrowser_regexp";
+
 // Install the standard library into a context.
 //
 // DECLARED here and DEFINED in builtins.cpp, which is the whole point: the

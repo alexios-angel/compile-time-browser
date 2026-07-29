@@ -135,14 +135,15 @@ int main() {
     must_compile("examples/pages/widgets.html");
     must_compile("examples/pages/invaders.html");
 
-    // REGEX IS REJECTED BY NAME rather than mis-compiled. This used to be
-    // checked against a 66 KB bundled page whose only blocker was one regex
-    // literal - a mobile user-agent sniff. That page went with the engine it
-    // was bundled for, so the claim is made directly: what mattered was never
-    // the page, it was that the compiler says which construct it will not
-    // take.
-    must_stop_at_source("var mobile = /iphone|android/i.test(navigator.userAgent);",
-                        "regular expression literals");
+    // REGEX WAS REJECTED BY NAME rather than mis-compiled, and this line
+    // asserted the refusal. It compiles now: the user-agent sniff that used to
+    // be the standing example of what this engine would not take is an
+    // ordinary expression. The refusal it replaced is worth remembering - the
+    // point was never the page, it was that the compiler said which construct
+    // it would not take, and so could say when it started taking it.
+    must_compile_source("var mobile = /iphone|android/i.test(navigator.userAgent);");
+    must_compile_source("var named = /(?<k>\\d+)/.exec('42');");
+    must_compile_source("var ahead = /\\B(?=(\\d{3})+(?!\\d))/g;");
 
     // Spread in a call was refused here one commit ago, by name rather than by
     // number - "AST kind 13" is a fact about the parser's enum, not about
@@ -151,6 +152,14 @@ int main() {
     // supposed to look like: the test failed the moment it started working.
     must_compile_source("Math.max(...[1, 2, 3]);");
     must_compile_source("function f(a, ...rest) { return f(a, ...rest); }");
+
+    // WHAT IS STILL REFUSED, by name. This list has been every entry on it at
+    // some point and is down to the accessors: an object model with no
+    // descriptors has nowhere to put a getter, so `get`/`set` are turned away
+    // rather than quietly installed as data properties. It is what p5.js stops
+    // at today.
+    must_stop_at_source("var o = { get v() { return 1; } };", "object literal get/set accessors");
+    must_stop_at_source("class C { get v() { return 1; } }", "class get/set accessors");
 
     // THE STRUCTURAL LIMITS SAY WHAT THEY WANTED.
     //

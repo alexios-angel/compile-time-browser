@@ -112,9 +112,14 @@ void context::mark_object(heap_object * o) {
     if (o == nullptr || o->marked) { return; }
     o->marked = true;
     switch (o->kind) {
-    case heap_kind::array:
-        for (const value & v : static_cast<array_object *>(o)->items) { mark(v); }
+    case heap_kind::array: {
+        auto * arr = static_cast<array_object *>(o);
+        for (const value & v : arr->items) { mark(v); }
+        mark(arr->index);
+        mark(arr->input);
+        mark(arr->groups);
         break;
+    }
     case heap_kind::object: {
         auto * obj = static_cast<object_object *>(o);
         for (const auto & [name, v] : obj->props) { mark(v); }
@@ -182,6 +187,11 @@ value context::lookup_property(value target, const std::string & name) const {
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
         if (name == "length") { return value::number(static_cast<double>(arr->items.size())); }
+        if (arr->is_match) { // an exec() result carries index/input/groups
+            if (name == "index") { return arr->index; }
+            if (name == "input") { return arr->input; }
+            if (name == "groups") { return arr->groups; }
+        }
         if (object_object * table = prototype(proto_kind::array)) {
             if (value * found = table->find(name)) { return *found; }
         }

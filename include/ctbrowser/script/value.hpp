@@ -175,6 +175,14 @@ struct string_object final : heap_object {
 
 struct array_object final : heap_object {
     std::vector<value> items;
+    // What `RegExp.prototype.exec` hangs off its result. The spec puts these on
+    // the array as ordinary properties; an array here has no property table, so
+    // they live in named slots and property lookup checks them first. p5.js
+    // reads `.index` 143 times, which is why they are not simply dropped.
+    bool is_match = false;
+    value index;
+    value input;
+    value groups;
     array_object() : heap_object(heap_kind::array) {}
 };
 

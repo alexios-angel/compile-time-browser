@@ -14,3 +14,7 @@ include/ctbrowser/gpu/shaders/tile_spv.hpp
 external/*
 tools/llvm-mingw/*
 tools/clang-std-embed/*
+
+# A port of ctjs's backtracking matcher. Reformatting it would make "the
+# port changed" and "the formatter ran" indistinguishable in the diff.
+include/ctbrowser/script/regex.hpp

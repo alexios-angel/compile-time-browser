@@ -1,3 +1,4 @@
+#include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
 
 #include <array>
@@ -1409,12 +1410,7 @@ public:
         // engine, and the standard library says the same about String.match and
         // the RegExp forms of replace/split. Rejecting one by name beats
         // mis-compiling it into something that silently does nothing.
-        case vp::nk::regex:
-            fail("regular expression literals are not in this VM subset - "
-                 "there is no regex engine (" +
-                 std::string{n.text} + ")");
-            proto().emit(instruction{op::load_undef, dst});
-            break;
+        case vp::nk::regex: compile_regex_literal(n, dst); break;
         case vp::nk::yield_expr:
             fail("`yield` is not in this VM subset - there are no generators");
             proto().emit(instruction{op::load_undef, dst});
@@ -2229,6 +2225,20 @@ public:
             const vp::node & m = at(member);
             if (m.text == "constructor" && m.c == 1) { continue; }
             if (m.c == 0 && (m.d & 1) == 0) { continue; } // an instance field; handled above
+            if (m.c == 2) {
+                // A GETTER IS NOT A DATA PROPERTY, and installing it as one is
+                // the last silent mis-compilation in the compiler: `get v()`
+                // made `obj.v` BE the function rather than call it, and a `set`
+                // of the same name overwrote the getter outright. Object
+                // literals already refused this; a class body did not, only
+                // because nothing checked m.c here.
+                //
+                // Refused until the object model has descriptors to put one in.
+                fail("class get/set accessors are not in this VM subset - the object model has "
+                     "no accessors (" +
+                     std::string{m.text} + ")");
+                continue;
+            }
             if (m.b < 0) { continue; }
             compile_expr(m.b, slot);
             const std::uint8_t name = name_operand(std::string{m.text});
@@ -2244,6 +2254,36 @@ public:
                 proto().emit(instruction{op::set_prop, slot, name_operand("__home"), target});
             }
         }
+        release_to(mark);
+    }
+
+    // `/ab+c/gi`. The lexer hands the literal over whole, delimiters and all,
+    // so the source is between the first `/` and the last one and the flags are
+    // what follows.
+    //
+    // It compiles to a CALL of the reserved factory rather than to an opcode:
+    // a regex is an ordinary object here, and the standard library is the only
+    // thing that needs to know how one is built. Reserved rather than `RegExp`
+    // so a page that shadows the constructor cannot change what its own
+    // literals mean.
+    void compile_regex_literal(const vp::node & n, std::uint8_t dst) {
+        const std::string_view literal = n.text;
+        const std::size_t close = literal.rfind('/');
+        if (literal.size() < 2 || literal.front() != '/' || close == 0) {
+            fail("malformed regular expression literal (" + std::string{literal} + ")");
+            proto().emit(instruction{op::load_undef, dst});
+            return;
+        }
+        const std::uint32_t mark = reg_mark();
+        const std::uint8_t callee = alloc_reg();
+        proto().emit(instruction::with_bx(op::get_global, callee,
+                                          proto().add_name(std::string{regexp_factory_name})));
+        const std::uint8_t source = alloc_reg();
+        emit_string(source, std::string{literal.substr(1, close - 1)});
+        const std::uint8_t flags = alloc_reg();
+        emit_string(flags, std::string{literal.substr(close + 1)});
+        proto().emit(instruction{op::call, callee, 2});
+        proto().emit(instruction{op::move, dst, callee});
         release_to(mark);
     }
 
