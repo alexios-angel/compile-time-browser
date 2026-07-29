@@ -34,6 +34,14 @@ cmake_dependent_option(CTBROWSER_BUILD_TESTS "Build ctbrowser tests" ON
 cmake_dependent_option(CTBROWSER_BUILD_EXAMPLES "Build ctbrowser examples (need SDL3)" ON
   "CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR" OFF)
 
+# A Windows exe is a CONSOLE application unless told otherwise, so double
+# clicking one opens a terminal beside its window. ON keeps that - it is where
+# a script error or a --shot path goes, and you want it while developing. OFF
+# gives the graphical examples the Windows subsystem and no terminal at all,
+# which is what shipping one looks like; ctbrowse and ctdrive keep their console
+# either way, being CLIs whose output is the whole point. Windows only.
+option(CTBROWSER_WINDOWS_CONSOLE "Keep the console window behind a Windows exe" ON)
+
 # The strict flags every test and example builds with, kept off the exported
 # interface: a consumer's warnings are their own business.
 set(CTBROWSER_WARNING_OPTIONS

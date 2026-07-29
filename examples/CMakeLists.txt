@@ -22,6 +22,26 @@ foreach(source ${example-sources})
   # because `ctbrowse page.html` is what someone types.
   set_target_properties(ctbrowser-example-${example} PROPERTIES OUTPUT_NAME ${example})
 
+  # NO CONSOLE BEHIND THE WINDOW. A Windows exe is a console application by
+  # default, so double-clicking one of these opened a terminal beside the page
+  # - which is right for a tool and wrong for something that only ever draws in
+  # a window.
+  #
+  # NOT for ctbrowse and ctdrive, whatever the option says. Both are CLIs whose
+  # output is the product: ctbrowse prints its usage and a page's script errors,
+  # and ctdrive prints the PORT IT IS LISTENING ON, which is the only way its
+  # client learns it. Give those the GUI subsystem and the harness hangs waiting
+  # for a line that can no longer be written.
+  #
+  # -mwindows is all it takes; mingw-w64's startup provides the WinMain that
+  # calls main, so nothing in the sources changes. Anything printed still
+  # arrives when a console is attached deliberately (running it from a shell),
+  # and goes nowhere when one is not - which is what a GUI application does.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND NOT CTBROWSER_WINDOWS_CONSOLE
+     AND NOT example STREQUAL "ctbrowse" AND NOT example STREQUAL "ctdrive")
+    target_link_options(ctbrowser-example-${example} PRIVATE -mwindows)
+  endif()
+
   # Every example is also a test: a bounded, fixed-timestep run that writes a
   # screenshot. `run_app` reads these env vars itself, so the example source
   # contains no test scaffolding at all.

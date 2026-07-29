@@ -96,4 +96,20 @@ in the toolchain's own sysroot, an isolated Boost include dir; env
 LLVM_MINGW / SDL3_MINGW override the `~/projects/*` defaults).
 `windows-dist` collects the exes and the pages they load into
 `examples-windows/`. `./tools/remote-build.sh windows` runs it on the devbox
-and rsyncs the exes back. The exes are SELF-CONTAINED - no DLL beside them.
+and rsyncs the exes back. The exes are SELF-CONTAINED - no DLL beside them,
+and since 2026-07-28 no `fonts/` either: the preset sets
+`CTBROWSER_EMBED_FONTS`, so the three UA families are inside each exe.
+
+**AND NO CONSOLE.** A Windows exe is a console application unless told
+otherwise, so double-clicking one opened a terminal beside the page. The preset
+sets `CTBROWSER_WINDOWS_CONSOLE=OFF`, which links the graphical examples with
+`-mwindows` - the Windows subsystem, no terminal. Nothing in the sources
+changes: mingw-w64's startup provides the `WinMain` that calls `main`, and
+anything printed still arrives when a console is attached on purpose.
+
+`ctbrowse` and `ctdrive` keep their console whatever the option says, and that
+is not an oversight - both are CLIs whose output IS the product. `ctbrowse`
+prints its usage and a page's script errors, and `ctdrive` prints the port it is
+listening on, which is the only way its client ever learns it. Give those two
+the GUI subsystem and the comparison rig hangs waiting for a line that can no
+longer be written.

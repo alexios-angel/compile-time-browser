@@ -45,7 +45,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CTBROWSER_BUILD_TESTS": "ON",
-        "CTBROWSER_EMBED_FONTS": "ON"
+        "CTBROWSER_EMBED_FONTS": "ON",
+        "CTBROWSER_WINDOWS_CONSOLE": "OFF"
       }
     }
   ],
