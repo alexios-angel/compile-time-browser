@@ -517,6 +517,16 @@ private:
         // which is the one case the spec lets override it.
         bool constructing = false;
 
+        // The `arguments` object, when this body built one.
+        //
+        // Kept on the FRAME as well as in a register because it is built before
+        // the parameter prologue - it has to be, or a default or a destructured
+        // pattern has already overwritten the register it would read - and
+        // building it claims a register that an EXTRA argument may be sitting
+        // in. Anything after that point which still needs the raw arguments,
+        // which is the rest parameter, reads them from here instead.
+        value arguments_object = value::undefined();
+
         // The promise this frame's eventual return settles, once it has
         // suspended at least once. Undefined on a frame that has not - a
         // function that never awaits anything pending returns normally and
@@ -554,6 +564,12 @@ private:
     // The handler's trap of this name, or undefined when it has none.
     [[nodiscard]] value proxy_trap(value proxy, const std::string & name);
     [[nodiscard]] std::string describe_thrown(value thrown);
+    // ToPrimitive for the string case: an object's own toString, then valueOf.
+    [[nodiscard]] std::string to_primitive_string(value v);
+    // ToPrimitive for the numeric case: an object's own valueOf, then toString.
+    [[nodiscard]] double to_number_value(value v);
+    // ToPrimitive with the default hint, for `+`.
+    [[nodiscard]] value to_primitive(value v);
     // A function's `prototype`, made on first use. See the definition.
     [[nodiscard]] value ensure_prototype(value fn);
     [[nodiscard]] value make_instance(value callee);

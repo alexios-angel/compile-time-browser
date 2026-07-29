@@ -1480,33 +1480,61 @@ public:
         collect_captured_names(n.a, false, fn().captured);
         const std::vector<std::int32_t> params = kids(n);
         for (const std::int32_t p : params) { (void)declare_local(std::string{at(p).text}); }
-        compile_parameter_prologue(params);
-        // A captured PARAMETER needs boxing too, and it arrives already
-        // holding its value - so box in place, after the arguments land.
-        for (const local & l : fn().locals) {
-            if (l.boxed) { proto().emit(instruction{op::new_cell, l.reg}); }
-        }
-        // `arguments` IS MATERIALISED ONCE, HERE, AND IS A REAL LOCAL.
+        // WHICH LOCALS THE BOXING LOOP BELOW OWNS: the parameters, and only
+        // them. The prologue declares more - every name inside a destructuring
+        // pattern - and boxes those itself as it binds them. Boxing them a
+        // second time here wrapped a cell in a cell, so reading the variable
+        // gave the inner CELL rather than the value: a captured `{ space }`
+        // parameter came out as an object with no properties, which is exactly
+        // what colorjs then failed to use as a colour space.
+        const std::size_t declared_parameters = fn().locals.size();
+        // `arguments` IS MATERIALISED ONCE, BEFORE THE PROLOGUE, AND IS A REAL
+        // LOCAL.
         //
-        // Building it where the name is mentioned reads the frame's registers
-        // as they are AT THAT MOMENT, and by then the expression around it has
-        // reused the ones holding arguments past the last declared parameter -
-        // so `function g() { return arguments[0] + ',' + arguments[1]; }`
-        // returned the half-built string as its own second argument. Entry is
-        // the only point where those registers still hold what the caller put
-        // there.
+        // Before, because the prologue REWRITES the parameter registers: a
+        // destructured parameter unpacks into its own slot, a default overwrites
+        // an undefined one. Building `arguments` after that read the unpacked
+        // values rather than the arguments, so `function f(a, {b} = {})` had
+        // `arguments[1]` holding whatever the pattern left there - which is how
+        // colorjs's `isString(arguments[1])` was handed an options object it
+        // then tried to use as a colour space.
+        //
+        // After the parameters are DECLARED, though: the calling convention puts
+        // argument i in register i, so taking a register ahead of them would
+        // shift every one.
+        //
+        // Building it where the name is MENTIONED is wrong for the same reason
+        // one step further on - by then the surrounding expression has reused
+        // the registers holding arguments past the last declared parameter.
         //
         // A local also gives it the right identity - one object per call, not a
         // fresh array per mention - and lets an arrow capture the enclosing
-        // function's, which is the arrow rule, for free.
-        //
-        // Arrows do not make their own: `mentions_arguments` descends into them
-        // so the enclosing function makes one they can capture.
-        if (!out_.functions[index].is_arrow && mentions_arguments(n.a) &&
-            find_local_in_current_scope("arguments") == nullptr) {
-            const std::uint16_t slot = declare_local("arguments");
-            proto().emit(instruction{op::make_arguments, slot});
-            if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, slot}); }
+        // function's, which is the arrow rule, for free. Arrows do not make
+        // their own: `mentions_arguments` descends into them so the enclosing
+        // function makes one they can capture.
+        std::uint16_t arguments_slot = 0;
+        bool arguments_boxed = false;
+        const bool wants_arguments = !out_.functions[index].is_arrow && mentions_arguments(n.a) &&
+                                     find_local_in_current_scope("arguments") == nullptr;
+        if (wants_arguments) {
+            arguments_slot = declare_local("arguments");
+            proto().emit(instruction{op::make_arguments, arguments_slot});
+            arguments_boxed = fn().locals.back().boxed;
+        }
+        compile_parameter_prologue(params);
+        // A captured PARAMETER needs boxing too, and it arrives already
+        // holding its value - so box in place, after the arguments land.
+        for (std::size_t i = 0; i < declared_parameters && i < fn().locals.size(); ++i) {
+            const local & l = fn().locals[i];
+            // `arguments` was built above and boxes itself; a pattern name is
+            // declared and boxed by the prologue. Neither is a parameter, and
+            // neither belongs here.
+            if (l.boxed && !(wants_arguments && l.reg == arguments_slot)) {
+                proto().emit(instruction{op::new_cell, l.reg});
+            }
+        }
+        if (wants_arguments && arguments_boxed) {
+            proto().emit(instruction{op::new_cell, arguments_slot});
         }
         // A NAMED FUNCTION EXPRESSION BINDS ITS OWN NAME, in its own body and
         // nowhere else. `var f = function me(n) { return me(n - 1); }` is how

@@ -85,6 +85,60 @@ std::string context::to_string(value v) {
         return out;
     }
     if (v.is_callable()) { return "function"; }
+    // AN OBJECT CONVERTS THROUGH ITS OWN `toString`, then `valueOf`.
+    //
+    // That is ToPrimitive, and it is not a nicety: a class that defines
+    // toString does so precisely because it expects `'' + x`, a template hole
+    // and String(x) to use it. Returning the tag regardless turned every such
+    // object into "[object Object]" - which for colorjs, whose colour spaces
+    // print as "HSB (hsb)", made an error message name the wrong thing and a
+    // page's own labels come out as tags.
+    return to_primitive_string(v);
+}
+
+// `toString` then `valueOf`, either of which may be inherited. Bounded: a
+// method that hands back another object falls through to the tag rather than
+// recursing, which is what the spec does after trying both.
+// ToPrimitive with the DEFAULT hint: `valueOf`, then `toString`, and whatever
+// comes back is a primitive the operator can work on. `+` needs this before it
+// can even decide what it means - `{valueOf: () => 42} + 1` is 43 and
+// `{toString: () => 'x'} + 1` is "x1", and which one it is depends on what the
+// object hands back rather than on the object being an object.
+value context::to_primitive(value v) {
+    if (!v.is_heap() || v.is_string()) { return v; }
+    for (const char * name : {"valueOf", "toString"}) {
+        const value fn = lookup_property(v, name);
+        if (!fn.is_callable()) { continue; }
+        const value produced = call(fn, std::span<const value>{}, v);
+        if (produced.is_heap() && !produced.is_string()) { continue; }
+        return produced;
+    }
+    return v;
+}
+
+// The numeric half of the same rule: `valueOf` then `toString`. An object that
+// defines valueOf means it to be used in arithmetic - that is the only reason to
+// define one - and without this every such object was NaN.
+double context::to_number_value(value v) {
+    if (!v.is_heap() || v.is_string()) { return to_number(v); }
+    for (const char * name : {"valueOf", "toString"}) {
+        const value fn = lookup_property(v, name);
+        if (!fn.is_callable()) { continue; }
+        const value produced = call(fn, std::span<const value>{}, v);
+        if (produced.is_heap() && !produced.is_string()) { continue; }
+        return to_number(produced);
+    }
+    return to_number(v);
+}
+
+std::string context::to_primitive_string(value v) {
+    for (const char * name : {"toString", "valueOf"}) {
+        const value fn = lookup_property(v, name);
+        if (!fn.is_callable()) { continue; }
+        const value produced = call(fn, std::span<const value>{}, v);
+        if (produced.is_heap() && !produced.is_string()) { continue; }
+        return to_string(produced);
+    }
     return "[object Object]";
 }
 
@@ -433,6 +487,8 @@ std::size_t context::collect() {
     for (const call_frame & f : frames_) {
         if (f.closure != nullptr) { mark_object(f.closure); }
         mark(f.receiver);
+        mark(f.arguments_object);
+        mark(f.async_promise);
     }
     // A QUEUED JOB AND ITS ARGUMENTS. Nothing else refers to them between the
     // moment they are queued and the moment they run, which is precisely the
@@ -889,21 +945,33 @@ value context::run_loop(std::size_t stop_depth) {
         case op::set_global: globals_[fn.names[in.bx()]] = reg(in.a); break;
 
         case op::add: reg(in.a) = value::number(to_number(reg(in.b)) + to_number(reg(in.c))); break;
-        case op::sub: reg(in.a) = value::number(to_number(reg(in.b)) - to_number(reg(in.c))); break;
-        case op::mul: reg(in.a) = value::number(to_number(reg(in.b)) * to_number(reg(in.c))); break;
-        case op::div: reg(in.a) = value::number(to_number(reg(in.b)) / to_number(reg(in.c))); break;
+        case op::sub:
+            reg(in.a) = value::number(to_number_value(reg(in.b)) - to_number_value(reg(in.c)));
+            break;
+        case op::mul:
+            reg(in.a) = value::number(to_number_value(reg(in.b)) * to_number_value(reg(in.c)));
+            break;
+        case op::div:
+            reg(in.a) = value::number(to_number_value(reg(in.b)) / to_number_value(reg(in.c)));
+            break;
         case op::mod:
-            reg(in.a) = value::number(std::fmod(to_number(reg(in.b)), to_number(reg(in.c))));
+            reg(in.a) =
+                value::number(std::fmod(to_number_value(reg(in.b)), to_number_value(reg(in.c))));
             break;
         case op::pow:
-            reg(in.a) = value::number(std::pow(to_number(reg(in.b)), to_number(reg(in.c))));
+            reg(in.a) =
+                value::number(std::pow(to_number_value(reg(in.b)), to_number_value(reg(in.c))));
             break;
         case op::add_generic: {
             // JS `+`: string concatenation if EITHER side is a string, numeric
             // addition otherwise. The one operator whose meaning is decided by
             // its operands, which is why it is not folded into `add`.
-            const value l = reg(in.b);
-            const value r = reg(in.c);
+            // BOTH SIDES ARE MADE PRIMITIVE FIRST, and only then does the
+            // operator decide what it is. An object's own valueOf or toString
+            // is what settles it, so `{valueOf: () => 42} + 1` is 43 while
+            // `{toString: () => 'x'} + 1` is "x1".
+            const value l = to_primitive(reg(in.b));
+            const value r = to_primitive(reg(in.c));
             if (l.is_string() || r.is_string()) {
                 reg(in.a) = string(to_string(l) + to_string(r));
             } else {
@@ -1118,10 +1186,20 @@ value context::run_loop(std::size_t stop_depth) {
             // The arguments past the declared parameters. They are still in
             // this frame's registers - the caller wrote them there and the
             // callee's base IS the argument base - so this reads them in place.
+            //
+            // UNLESS the body also built an `arguments` object, which happens
+            // before this and claims a register an extra argument may be in.
+            // Then the frame's copy is the one that still has them.
             value out = make_array();
             auto * rest = static_cast<array_object *>(out.as_heap());
-            for (std::size_t i = in.b; i < frame.argc; ++i) {
-                rest->items.push_back(registers_[base + i]);
+            if (frame.arguments_object.is_array()) {
+                const auto & held =
+                    static_cast<array_object *>(frame.arguments_object.as_heap())->items;
+                for (std::size_t i = in.b; i < held.size(); ++i) { rest->items.push_back(held[i]); }
+            } else {
+                for (std::size_t i = in.b; i < frame.argc; ++i) {
+                    rest->items.push_back(registers_[base + i]);
+                }
             }
             reg(in.a) = out;
             break;
@@ -1298,6 +1376,9 @@ value context::run_loop(std::size_t stop_depth) {
             auto * items = static_cast<array_object *>(list.as_heap());
             items->items.reserve(frame.argc);
             for (std::uint16_t i = 0; i < frame.argc; ++i) { items->items.push_back(reg(i)); }
+            // On the frame too: this claims a register that an extra argument
+            // may be in, so whatever still needs the raw ones reads them here.
+            frame.arguments_object = list;
             reg(in.a) = list;
             break;
         }

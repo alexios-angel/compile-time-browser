@@ -755,6 +755,32 @@ void test_a_suspended_frame_survives_collection() {
           "a suspended frame's locals survive a collection: " + log_of(page).back());
 }
 
+// `querySelector` ON AN ELEMENT, searching its own subtree rather than the
+// document. The document had both and an element had neither, so "find
+// something inside this" - what a library does with a container it owns -
+// threw. p5.js's describe() builds an offscreen tree and queries it.
+void test_element_query_selector() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body>
+        <div id=box><span class=hit>a</span><span class=hit>b</span></div>
+        <span class=hit>outside</span>
+        <script>
+          const box = document.getElementById('box');
+          console.log('one=' + box.querySelector('.hit').getText());
+          console.log('all=' + box.querySelectorAll('.hit').length);
+          // The document's own search still sees everything, including the one
+          // outside the box - that is what makes the scoping meaningful.
+          console.log('doc=' + document.querySelectorAll('.hit').length);
+          console.log('miss=' + (box.querySelector('.nothing') === null));
+        </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log[0] == "one=a", "an element finds the first match inside itself: " + log[0]);
+    check(log[1] == "all=2", "...and only the ones inside it: " + log[1]);
+    check(log[2] == "doc=3", "while the document still sees them all: " + log[2]);
+    check(log[3] == "miss=true", "no match is null: " + log[3]);
+}
+
 // --- the document API -----------------------------------------------------
 
 void test_script_mutates_what_is_drawn() {
@@ -1670,6 +1696,7 @@ int main() {
     test_the_invaders_page_shoots();
     test_a_letterboxed_page_keeps_its_size();
 
+    test_element_query_selector();
     test_await_suspends_and_resumes();
     test_a_suspended_frame_survives_collection();
     test_location_parts_and_cookies();

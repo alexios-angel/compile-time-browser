@@ -857,6 +857,21 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
     // every mouse listener throws on its first event. The listeners were
     // installed and the events were dispatched; the conversion in between is
     // what was missing, and it made the whole input surface look absent.
+    // `querySelector` ON AN ELEMENT, searching its own subtree. The document
+    // had both and an element had neither, so the ordinary "find something
+    // inside this" - which is what a library does with a container it owns -
+    // threw. p5.js's describe() builds an offscreen tree and queries it.
+    method("querySelector", [this](context & c, std::span<value> args) {
+        const std::vector<node_id> found = query(arg_string(c, args, 0), receiver(c));
+        return found.empty() ? value::null() : wrap(c, found.front());
+    });
+    method("querySelectorAll", [this](context & c, std::span<value> args) {
+        const std::vector<node_id> found = query(arg_string(c, args, 0), receiver(c));
+        value out = c.make_array();
+        auto * items = static_cast<script::array_object *>(out.as_heap());
+        for (const node_id node : found) { items->items.push_back(wrap(c, node)); }
+        return out;
+    });
     method("getBoundingClientRect", [this](context & c, std::span<value>) {
         const rect box = box_of(receiver(c));
         auto * out = static_cast<script::object_object *>(c.make_object().as_heap());

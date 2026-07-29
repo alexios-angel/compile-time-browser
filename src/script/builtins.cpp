@@ -1030,6 +1030,20 @@ void install_array(context & cx) {
         return c.current_this();
     });
     array_ctor->set("prototype", value::object(array_proto));
+    // `Array.prototype.toString` IS join(','). The C++ conversion always knew
+    // that; the prototype did not, so once conversion started going through an
+    // object's own toString an array fell back to Object.prototype's and
+    // stringified as "[object Array]".
+    method(cx, array_proto, "toString", [](context & c, std::span<value>) {
+        auto * self = detail::this_array(c);
+        if (self == nullptr) { return c.string(""); }
+        std::string out;
+        for (std::size_t i = 0; i < self->items.size(); ++i) {
+            if (i != 0) { out += ','; }
+            if (!self->items[i].is_nullish()) { out += c.to_string(self->items[i]); }
+        }
+        return c.string(out);
+    });
     link_constructor(cx, array_proto, "Array", value::object(array_ctor));
     cx.set_prototype(context::proto_kind::array, array_proto);
 }

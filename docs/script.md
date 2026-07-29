@@ -124,6 +124,15 @@ lookup.
 - `arguments` did not exist, and when first added was materialised where the
   name was MENTIONED - by then the surrounding expression had reused the
   registers holding the arguments past the last declared parameter.
+- A destructured parameter that a nested function CAPTURED was bound to a cell
+  inside a cell, so reading it gave the inner cell - an object with no
+  properties. Two things boxed it: the pattern binding, which boxes the names it
+  declares, and the parameter loop, which boxed everything the frame had
+  declared by then. Only visible when the name was captured, because an
+  uncaptured local is never boxed at all.
+- An object converted through the TAG rather than through its own `toString`
+  and `valueOf`. A class defines them precisely because it expects `'' + x` and
+  `${x}` to use them.
 - A name used ONLY inside a template substitution was never captured. A
   template is one node carrying its whole source, so every walk over the tree
   was blind to the holes - including the two that decide whether a local is

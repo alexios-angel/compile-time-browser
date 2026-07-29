@@ -1592,6 +1592,72 @@ void test_spread() {
 // only in a hole was invisible to both: the enclosing frame never boxed it, the
 // nested function resolved it as a global, and it read undefined. p5.js builds
 // its CDN url that way, with the version number in a hole.
+// A DESTRUCTURED PARAMETER THAT A NESTED FUNCTION CAPTURES.
+//
+// Two things box a local, and both were running: the pattern binding boxes the
+// names it declares as it binds them, and the parameter loop boxed everything
+// the frame had declared - which by then included those names. The result was a
+// cell inside a cell, so reading the variable gave the inner CELL rather than
+// the value: an object with no properties, and no error anywhere.
+//
+// It only showed when the name was CAPTURED, because an uncaptured local is
+// never boxed at all - which is why every simpler test of destructured
+// parameters passed. colorjs's `toGamutCSS(origin, { space } = {})` is exactly
+// this shape, and got a cell where it wanted a colour space.
+void test_captured_destructured_parameters() {
+    expect_result("const o = { id: 'x' };"
+                  "function f(n, { space } = {}) { const read = () => space; return read().id; }"
+                  "return f(1, { space: o });",
+                  "x");
+    // The inner and outer reads must be the SAME binding.
+    expect_result("const o = { id: 'y' };"
+                  "function f(n, { space } = {}) { const read = function () { return space; };"
+                  "  return space === read() ? 'same' : 'different'; }"
+                  "return f(1, { space: o });",
+                  "same");
+    // ...and a write through the closure reaches it.
+    expect_result("function f({ v } = {}) { const set = () => { v = v + 1; }; set(); return v; }"
+                  "return f({ v: 1 });",
+                  "2");
+    expect_result("function h([a] = []) { const r = () => a; return r(); } return h([5]);", "5");
+    // A default still applies when the argument is absent.
+    expect_result(
+        "function f(n, { space = 'fallback' } = {}) { const r = () => space; return r(); }"
+        "return f(1);",
+        "fallback");
+}
+
+// AN OBJECT CONVERTS THROUGH ITS OWN `toString` AND `valueOf`.
+//
+// That is ToPrimitive, and a class defines them precisely because it expects
+// `'' + x`, a template hole and String(x) to use them. Returning the tag
+// regardless turned every such object into "[object Object]" - which made an
+// error message from colorjs name the wrong thing and sent a whole diagnosis
+// down the wrong path.
+void test_to_primitive() {
+    expect_result("class P { constructor(n) { this.n = n; } toString() { return 'P' + this.n; } }"
+                  "return '' + new P(5);",
+                  "P5");
+    expect_result("class P { toString() { return 'tmpl'; } } return `${new P()}`;", "tmpl");
+    expect_result("class P { toString() { return 'str'; } } return String(new P());", "str");
+    expect_result("const o = { toString: function () { return 'plain'; } }; return '' + o;",
+                  "plain");
+    // The numeric hint takes valueOf FIRST, so `+` decides what it means from
+    // what the object hands back.
+    expect_result("const v = { valueOf: function () { return 42; } }; return v + 1;", "43");
+    expect_result("const v = { valueOf: function () { return 6; } }; return v * 7;", "42");
+    expect_result("const s = { toString: function () { return 'x'; } }; return s + 1;", "x1");
+    // An array still stringifies as its elements, which is Array.prototype's
+    // own toString rather than the object tag.
+    expect_result("return [1, 2] + '';", "1,2");
+    expect_result("return String([1, [2, 3]]);", "1,2,3");
+    // A method that hands back another object falls through rather than
+    // recursing.
+    expect_result("const bad = { toString: function () { return {}; },"
+                  "              valueOf: function () { return {}; } }; return '' + bad;",
+                  "[object Object]");
+}
+
 void test_template_holes_capture() {
     expect_result("const V = '1.2.3'; const f = function () { return `v=${V}`; }; return f();",
                   "v=1.2.3");
@@ -2068,6 +2134,8 @@ int main() {
     test_bitwise_and_friends();
     test_delete_in_instanceof();
     test_object_literal_keys();
+    test_captured_destructured_parameters();
+    test_to_primitive();
     test_template_holes_capture();
     test_type_identification();
     test_type_tags();
