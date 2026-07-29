@@ -257,6 +257,10 @@ bool dom_bindings::dispatch_event(std::string_view type, node_id target, value e
     // left the VM's failure flag set for the life of the page: every later
     // callback of any kind was refused, so the page stopped responding to
     // everything, and nothing anywhere said why.
+    // ...and after an event, which is the other checkpoint a browser has: a
+    // listener that resolves a promise has its handlers run before the next
+    // event is dispatched, not at some later frame.
+    if (cx_ != nullptr) { cx_->drain_microtasks(); }
     note_callback_fault(type);
     return prevented(event);
 }
@@ -285,6 +289,11 @@ std::size_t dom_bindings::run_due_callbacks() {
         ++ran;
     }
     std::erase_if(timers_, [](const timer & t) { return t.cancelled; });
+    // AFTER THE TIMERS, BEFORE THE ANIMATION FRAMES. That is where a browser
+    // puts its microtask checkpoint, and the ordering is observable: a promise
+    // resolved by a timer must have run its handlers before the frame that
+    // follows draws.
+    cx_->drain_microtasks();
 
     std::vector<value> frame_callbacks;
     frame_callbacks.swap(animation_callbacks_);
@@ -294,6 +303,8 @@ std::size_t dom_bindings::run_due_callbacks() {
         note_callback_fault("requestAnimationFrame");
         ++ran;
     }
+    cx_->drain_microtasks();
+    note_callback_fault("microtask");
     return ran;
 }
 

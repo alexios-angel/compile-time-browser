@@ -133,6 +133,17 @@ inline void deliver(context & cx, value handler_record, value settled, bool reje
     const value handler = rejected ? (on_err == nullptr ? value::undefined() : *on_err)
                                    : (on_ok == nullptr ? value::undefined() : *on_ok);
     if (next == nullptr) { return; }
+    // `finally` RUNS EITHER WAY AND CHANGES NOTHING. Its callback takes no
+    // argument, its return value is ignored, and the outcome - value or
+    // rejection - passes straight through to the next promise. It used to call
+    // its callback the moment it was registered and hand back the SAME promise,
+    // so it ran before the rejection it was supposed to follow and a chain
+    // after it saw the wrong link.
+    if (value * on_finally = record->find("fin"); on_finally != nullptr) {
+        if (on_finally->is_callable()) { (void)cx.call(*on_finally, std::span<const value>{}); }
+        settle(cx, *next, settled, rejected);
+        return;
+    }
     if (!handler.is_callable()) {
         // No handler for how this settled: it passes straight through, so a
         // rejection survives a bare `.then(f)` and a later `.catch` sees it.
@@ -168,6 +179,29 @@ inline void deliver(context & cx, value handler_record, value settled, bool reje
     settle(cx, *next, produced, false);
 }
 
+// THE JOB. Delivery is queued rather than run, and a job is a callable plus
+// values so the collector traces it - so the C++ work has to be reachable
+// through a value, which is what this native is. One per context, made on
+// demand and remembered.
+[[nodiscard]] inline value delivery_job(context & cx) {
+    static const std::string slot = "__deliverJob";
+    if (const value existing = cx.global(slot); existing.is_callable()) { return existing; }
+    value made =
+        value::object(cx.allocate<native_object>(slot, [](context & c, std::span<value> a) {
+            if (a.size() >= 3 && a[0].is_object()) {
+                deliver(c, a[0], a[1], context::truthy(a[2]));
+            }
+            return value::undefined();
+        }));
+    cx.define_global(slot, made);
+    return made;
+}
+
+// Queue one delivery for the end of the turn.
+inline void enqueue_delivery(context & cx, value record, value settled, bool rejected) {
+    cx.queue_microtask(delivery_job(cx), {record, settled, value::boolean(rejected)});
+}
+
 inline void settle(context & cx, value promise, value with, bool rejected) {
     if (!promise.is_object()) { return; }
     auto * p = static_cast<object_object *>(promise.as_heap());
@@ -182,12 +216,21 @@ inline void settle(context & cx, value promise, value with, bool rejected) {
     // promise, and appending to the vector being walked invalidates it.
     const std::vector<value> pending = static_cast<array_object *>(handlers->as_heap())->items;
     static_cast<array_object *>(handlers->as_heap())->items.clear();
-    for (const value & record : pending) { deliver(cx, record, with, rejected); }
+    // QUEUED, not called. `p.then(f); after();` must run `after` first, and a
+    // handler that runs the instant a promise settles can also reenter code
+    // that is halfway through its own work.
+    for (const value & record : pending) { enqueue_delivery(cx, record, with, rejected); }
 }
 
 // `then`/`catch`/`finally` all reduce to: remember what to do for each way this
 // can settle, and either do it now or when it settles.
-inline value settle_with(context & cx, value on_ok, value on_err) {
+//
+// `on_finally` is the third form: one callback for BOTH outcomes, with no say
+// in either - its return value is ignored and the outcome passes through. It
+// goes in the same record so it queues and orders like everything else, rather
+// than being a special case at the call site.
+inline value settle_with(context & cx, value on_ok, value on_err,
+                         value on_finally = value::undefined()) {
     const value self = cx.current_this();
     if (!self.is_object()) { return self; }
     auto * promise = static_cast<object_object *>(self.as_heap());
@@ -198,13 +241,18 @@ inline value settle_with(context & cx, value on_ok, value on_err) {
     record->set("ok", on_ok);
     record->set("err", on_err);
     record->set("next", next);
+    if (!on_finally.is_undefined()) { record->set("fin", on_finally); }
 
     value * settled = promise->find("__settled");
     if (settled != nullptr && context::truthy(*settled)) {
         value * held = promise->find("__value");
         value * state = promise->find("__rejected");
-        deliver(cx, value::object(record), held == nullptr ? value::undefined() : *held,
-                state != nullptr && context::truthy(*state));
+        // Already settled, so there is nothing to wait FOR - but the handler
+        // still runs at the end of the turn rather than here. `Promise
+        // .resolve(1).then(f); after();` orders them the same way as the
+        // pending case, which is the whole point of a queue.
+        enqueue_delivery(cx, value::object(record), held == nullptr ? value::undefined() : *held,
+                         state != nullptr && context::truthy(*state));
         return next;
     }
     value * handlers = promise->find("__handlers");
@@ -228,8 +276,7 @@ inline value settle_with(context & cx, value on_ok, value on_err) {
         return settle_with(c, value::undefined(), a.empty() ? value::undefined() : a[0]);
     });
     method(cx, promise, "finally", [](context & c, std::span<value> a) {
-        if (!a.empty() && a[0].is_callable()) { (void)c.call(a[0], std::span<const value>{}); }
-        return c.current_this();
+        return settle_with(c, value::undefined(), value::undefined(), arg_at(a, 0));
     });
     return value::object(promise);
 }

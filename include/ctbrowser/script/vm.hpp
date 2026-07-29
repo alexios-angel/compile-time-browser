@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <span>
 #include <string>
@@ -261,6 +262,30 @@ public:
     // animation frame, an event - must ask. Without this a fault in the FIRST
     // rAF callback set `failed_` for good: every later callback was refused and
     // the page simply stopped, with nothing anywhere saying why.
+    // Queue a job for the end of the turn. FIFO, and a job queued BY a job runs
+    // in the same drain - that is what makes a promise chain complete before
+    // the turn ends rather than one link per turn.
+    void queue_microtask(value fn, std::vector<value> args = {}) {
+        if (fn.is_callable()) { microtasks_.push_back(microtask{fn, std::move(args)}); }
+    }
+    // Run the queue to exhaustion. Called after the top-level script and from
+    // the event loop - after timers, before animation frames, and again after
+    // each event dispatch, which is where a browser puts its checkpoints.
+    void drain_microtasks() {
+        // Bounded: a job that queues a job that queues a job forever is a
+        // runaway page, and the alternative to a cap is a hang with no message.
+        for (std::size_t ran = 0; !microtasks_.empty() && ran < 1'000'000 && !failed_; ++ran) {
+            const microtask job = std::move(microtasks_.front());
+            microtasks_.pop_front();
+            (void)call(job.fn, job.args);
+        }
+        if (!microtasks_.empty() && !failed_) {
+            microtasks_.clear();
+            raise("the microtask queue did not drain - a promise chain is not terminating");
+        }
+    }
+    [[nodiscard]] std::size_t pending_microtasks() const noexcept { return microtasks_.size(); }
+
     [[nodiscard]] bool failed() const noexcept { return failed_; }
     [[nodiscard]] const std::string & error() const noexcept { return error_; }
     // Report it and carry on, which is what a browser does: an exception in one
@@ -543,6 +568,23 @@ private:
     std::vector<handler> handlers_;
     std::array<object_object *, static_cast<std::size_t>(proto_kind::count_)> prototypes_{};
     std::function<value(context &, value, bool)> promise_factory_;
+    // The MICROTASK QUEUE. A promise handler runs at the end of the turn, not
+    // the moment the promise settles.
+    //
+    // The difference is observable and pages are written against it:
+    // `p.then(f); after();` must run `after` FIRST. Running the handler on
+    // settle also lets a chain reenter code that is halfway through its own
+    // work, which is the class of bug the queue exists to prevent.
+    //
+    // A job is a callable plus its arguments, held as values so the collector
+    // traces them - a std::function capturing a value would be a root nothing
+    // knows about, which is how a queued handler's argument gets freed before
+    // it runs.
+    struct microtask {
+        value fn;
+        std::vector<value> args;
+    };
+    std::deque<microtask> microtasks_;
     value thrown_ = value::undefined();
 
     flat_map<std::string, value> globals_;

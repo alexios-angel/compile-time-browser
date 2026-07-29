@@ -421,6 +421,13 @@ std::size_t context::collect() {
         if (f.closure != nullptr) { mark_object(f.closure); }
         mark(f.receiver);
     }
+    // A QUEUED JOB AND ITS ARGUMENTS. Nothing else refers to them between the
+    // moment they are queued and the moment they run, which is precisely the
+    // window a collection can fall in.
+    for (const microtask & job : microtasks_) {
+        mark(job.fn);
+        for (const value & arg : job.args) { mark(arg); }
+    }
     // A thrown value in flight is reachable from nothing else.
     mark(thrown_);
     // The prototype tables hold every builtin method. Nothing else references
@@ -529,6 +536,10 @@ run_result context::run(const program & prog) {
     failed_ = false;
     error_.clear();
     result.returned = execute(prog, prog.functions[0]);
+    // THE END OF THE TURN. A script's promise handlers run after its last
+    // statement, not between two of them - so the checkpoint is here, once the
+    // top level has finished.
+    drain_microtasks();
     result.ok = !failed_;
     result.error = error_;
     return result;
