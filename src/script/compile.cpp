@@ -1324,6 +1324,16 @@ public:
         frames_.emplace_back();
         frames_.back().proto = index;
         push_scope();
+        // A FUNCTION BODY IS NOT PART OF THE CHAIN THAT ENCLOSES IT.
+        //
+        // `a?.b(() => c?.d)` compiles the arrow while the outer chain is open,
+        // so without this the arrow's own short-circuit would be recorded on
+        // the outer chain's exit list - and patched into the ENCLOSING proto's
+        // code array, at an index that means something else entirely there.
+        const bool saved_in_chain = in_chain_;
+        std::vector<std::size_t> saved_exits;
+        saved_exits.swap(optional_exits_);
+        in_chain_ = false;
         // Which of this body's names some nested function mentions has to be
         // known BEFORE any local is declared - that is what decides whether a
         // local gets a register or a cell.
@@ -1368,6 +1378,8 @@ public:
         finish_frame(index, params.size());
         pop_scope();
         frames_.pop_back();
+        in_chain_ = saved_in_chain;
+        optional_exits_.swap(saved_exits);
         return index;
     }
 
@@ -2224,6 +2236,16 @@ public:
         frames_.emplace_back();
         frames_.back().proto = index;
         push_scope();
+        // A FUNCTION BODY IS NOT PART OF THE CHAIN THAT ENCLOSES IT.
+        //
+        // `a?.b(() => c?.d)` compiles the arrow while the outer chain is open,
+        // so without this the arrow's own short-circuit would be recorded on
+        // the outer chain's exit list - and patched into the ENCLOSING proto's
+        // code array, at an index that means something else entirely there.
+        const bool saved_in_chain = in_chain_;
+        std::vector<std::size_t> saved_exits;
+        saved_exits.swap(optional_exits_);
+        in_chain_ = false;
         for (const std::int32_t member : fields) {
             const vp::node & m = at(member);
             const std::uint32_t mark = reg_mark();
@@ -2250,10 +2272,30 @@ public:
         finish_frame(index, 0);
         pop_scope();
         frames_.pop_back();
+        in_chain_ = saved_in_chain;
+        optional_exits_.swap(saved_exits);
         return index;
     }
 
+    // Bind a class's own name to the class value, by whichever route this
+    // frame uses. Harmless for a `class Foo {}` DECLARATION, which binds the
+    // same value again a moment later.
+    void declare_class_name(std::string name) {
+        if (frames_.size() > 1 && !was_predeclared(name) &&
+            find_local_entry(fn(), name) == nullptr) {
+            const std::uint16_t reg = declare_local(name);
+            proto().emit(instruction{op::load_undef, reg});
+            if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, reg}); }
+        }
+    }
+
     void compile_class(const vp::node & n, std::uint16_t dst) {
+        // The name is DECLARED first, before any method body is compiled, so a
+        // method that mentions it resolves to this binding rather than to an
+        // outer one - capture is decided when the nested function is compiled,
+        // not when it runs. The value is written further down, as soon as the
+        // class exists.
+        if (!n.text.empty()) { declare_class_name(std::string{n.text}); }
         const std::vector<std::int32_t> members = kids(n);
         const std::uint32_t mark = reg_mark();
         const std::uint16_t prototype_reg = alloc_reg();
@@ -2325,6 +2367,18 @@ public:
                 instruction::with_bx(op::closure, init, static_cast<std::uint16_t>(fields)));
             proto().emit(instruction{op::set_prop, dst, name_operand("__fields"), init});
         }
+
+        // A NAMED CLASS EXPRESSION BINDS ITS OWN NAME, and its methods see it.
+        //
+        // `let p5$2 = class p5 { static register(a) { p5._seen.has(a); } }` is
+        // how p5.js declares itself, and `p5` inside those methods is the class
+        // - not any outer binding. Without this the methods read an undefined
+        // global and failed at the first property they touched, three frames
+        // deep and nowhere near the class.
+        //
+        // The binding is made before the methods are COMPILED so they capture
+        // it, and written as soon as the class value exists.
+        if (!n.text.empty()) { emit_write(n.text, dst); }
 
         const std::uint16_t slot = alloc_reg();
         for (const std::int32_t member : members) {

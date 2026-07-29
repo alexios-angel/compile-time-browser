@@ -644,6 +644,46 @@ void test_stdlib_additions() {
     expect("return Number.MAX_SAFE_INTEGER;", "9007199254740991");
 }
 
+// A NAMED CLASS EXPRESSION BINDS ITS OWN NAME, and its methods see it.
+// `let X = class Inner { static m() { return Inner; } }` - `Inner` inside those
+// methods is the class, not any outer binding. It is how p5.js declares itself
+// (`let p5$2 = class p5 {...}`), and without it every static method that named
+// the class read an undefined global.
+void test_named_class_expression_binds_itself() {
+    expect("let X = class Inner { static who() { return typeof Inner; } }; return X.who();",
+           "function");
+    expect("let X = class Inner { static tag = 'i'; static get() { return Inner.tag; } }; "
+           "return X.get();",
+           "i");
+    expect("let X = class Inner { constructor() { this.self = Inner; } }; "
+           "return new X().self === X;",
+           "true");
+    // APPROXIMATION, and worth knowing: the inner name is bound in the
+    // ENCLOSING scope rather than only inside the class body, because that is
+    // the only scope this compiler has to put it in. Real JavaScript would
+    // leave `Inner` undefined out here. Nothing in p5.js depends on the
+    // difference, and a leaked binding is visible rather than wrong.
+    expect("let Outer = class Inner { static who() { return 'inner'; } }; "
+           "return Outer.who() + '|' + typeof Inner;",
+           "inner|function");
+}
+
+// A function body is not part of the optional chain that encloses it.
+// `a?.b(() => c?.d)` compiles the arrow while the outer chain is open, and the
+// arrow's own short-circuit must not be patched into the enclosing function's
+// code - where that index means something else entirely.
+void test_chain_state_does_not_leak_into_a_nested_function() {
+    expect("const o = { m(f) { return f(); } }; const inner = null; "
+           "return typeof o?.m(() => inner?.x);",
+           "undefined");
+    expect("const o = { m(f) { return f(); } }; const inner = { x: 3 }; "
+           "return o?.m(() => inner?.x);",
+           "3");
+    expect("const a = { b: { c(f) { return f(); } } }; const n = null; "
+           "return a?.b.c(() => (n?.p.q ? 'yes' : 'no'));",
+           "no");
+}
+
 void test_typeof() {
     diff_vs_v1("typeof 1", "number");
     diff_vs_v1("typeof 'x'", "string");
@@ -1371,6 +1411,8 @@ int main() {
     test_errors();
     test_implicit_super();
     test_class_expressions();
+    test_named_class_expression_binds_itself();
+    test_chain_state_does_not_leak_into_a_nested_function();
     test_stdlib_additions();
     test_typeof();
     test_variables_and_control_flow();
