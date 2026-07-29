@@ -120,7 +120,7 @@ Read the one that matches what you are touching — not all of them.
 | | |
 |---|---|
 | `docs/architecture.md` | where everything lives, and how to add a file to a subsystem. **Start here if you do not know where something lives.** |
-| `docs/script.md` | the JS compiler, the VM, the standard library — what the language supports and what it rejects by name |
+| `docs/script.md` | the JS compiler, the VM, the standard library — what the language supports and what it rejects by name. **p5.js v2.3.1 runs**; `tests/p5_ratchet.cpp` is a pawl that records how far, `tools/p5-ratchet.py` drives the loop |
 | `docs/shell.md` | the application API, form controls, editing, input, navigation, resources — anything a page can do |
 | `docs/style-layout.md` | the cascade and the `style` attribute; tables, generated content, whitespace collapsing |
 | `docs/raster.md` | fonts, glyph rasterisation, the font8x8 fallback, **SVG** — what plutosvg does and does not draw |
