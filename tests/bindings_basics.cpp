@@ -645,6 +645,116 @@ void test_location_parts_and_cookies() {
     check(log[3] == "replaced=a=9; b=2", "...and writing the same name replaces it: " + log[3]);
 }
 
+// `await` ON A PENDING PROMISE SUSPENDS THE FRAME.
+//
+// There is one stack and the event loop is above it, so await cannot block: the
+// frame is lifted out of the register stack, the caller is handed a promise,
+// and the frame goes back when the awaited promise settles. It used to read
+// `__value` off a promise that had none - so await on anything genuinely
+// asynchronous evaluated to UNDEFINED and ran the rest of the function
+// immediately, which is the largest silent wrong answer this engine had left.
+//
+// Here rather than in vm_basics because it needs an event loop: nothing
+// suspends without something to resume it.
+void test_await_suspends_and_resumes() {
+    browser page{browser_options{200, 200}};
+    page.load_html(R"(<html><body><script>
+        var log = '';
+        function gate() {
+          const g = {};
+          g.p = new Promise(function (ok, no) { g.go = ok; g.fail = no; });
+          return g;
+        }
+
+        // Several awaits in one function, with LOCALS that have to survive each
+        // suspension - they live in the register window, which is copied out and
+        // back.
+        const a = gate(), b = gate();
+        async function many() {
+          let total = 100;
+          const first = await a.p;
+          total += first;
+          const second = await b.p;
+          return total + second;
+        }
+        many().then(function (v) { log += 'many(' + v + ');'; });
+
+        // A rejection across a suspension reaches a catch INSIDE the function.
+        const c = gate();
+        async function caught() {
+          try { await c.p; return 'no throw'; } catch (e) { return 'caught:' + e; }
+        }
+        caught().then(function (v) { log += v + ';'; });
+
+        // ...and an uncaught one rejects the function's own promise rather than
+        // ending the run.
+        const d = gate();
+        async function uncaught() { await d.p; return 'unreached'; }
+        uncaught().then(function () { log += 'wrong;'; },
+                       function (e) { log += 'rejected:' + e + ';'; });
+
+        // An async function awaiting another that suspends - the outer one
+        // suspends too, and both come back in order.
+        const e = gate();
+        async function inner() { return await e.p; }
+        async function outer() { return 'outer(' + (await inner()) + ')'; }
+        outer().then(function (v) { log += v + ';'; });
+
+        // Nothing has run past its first await yet: that is the point.
+        console.log('atLoad=[' + log + ']');
+        setTimeout(function () { a.go(1); b.go(2); c.fail('boom'); d.fail('bang'); e.go(9); }, 0);
+        function report() { console.log('after=[' + log + ']'); }
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    // Enough ticks that the timer fires and every resumption drains. Each await
+    // costs a turn, and the nested pair costs two.
+    for (int frame = 0; frame < 12; ++frame) { page.tick(16); }
+    (void)page.run_script("report();");
+
+    const auto & log = log_of(page);
+    check(log[0] == "atLoad=[]", "no function ran past its first await at load: " + log[0]);
+    const std::string & after = log.back();
+    // 100 + 1 + 2: the locals were still there after two suspensions.
+    check(after.find("many(103);") != std::string::npos,
+          "locals survive several suspensions: " + after);
+    check(after.find("caught:boom;") != std::string::npos,
+          "a rejection throws AT the await, so try/catch spans it: " + after);
+    check(after.find("rejected:bang;") != std::string::npos,
+          "an uncaught rejection rejects the function's own promise: " + after);
+    check(after.find("outer(9);") != std::string::npos,
+          "an async function awaiting one that suspends suspends too: " + after);
+}
+
+// A SUSPENDED FRAME IS A GC ROOT. Its register window is copied out of the
+// register stack, which is what the collector normally walks - so without
+// tracing it, everything a waiting function was holding is freed and comes back
+// as garbage. The churn here is what makes the test mean something: a
+// collection has to actually happen while the frame is away.
+void test_a_suspended_frame_survives_collection() {
+    browser page{browser_options{200, 200}};
+    page.load_html(R"(<html><body><script>
+        var log = '';
+        const g = {};
+        const p = new Promise(function (ok) { g.go = ok; });
+        async function holds() {
+          const mine = { tag: 'kept', list: [1, 2, 3], deep: { s: 'still here' } };
+          const v = await p;
+          return mine.tag + '/' + mine.list.join('') + '/' + mine.deep.s + '/' + v;
+        }
+        holds().then(function (r) { log += r; });
+        setTimeout(function () {
+          for (let i = 0; i < 60000; i++) { const junk = { i: i, s: 'x' + i, a: [i, i, i] }; }
+          g.go('resumed');
+        }, 0);
+        function report() { console.log(log); }
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    for (int frame = 0; frame < 12; ++frame) { page.tick(16); }
+    (void)page.run_script("report();");
+    check(log_of(page).back() == "kept/123/still here/resumed",
+          "a suspended frame's locals survive a collection: " + log_of(page).back());
+}
+
 // --- the document API -----------------------------------------------------
 
 void test_script_mutates_what_is_drawn() {
@@ -1560,6 +1670,8 @@ int main() {
     test_the_invaders_page_shoots();
     test_a_letterboxed_page_keeps_its_size();
 
+    test_await_suspends_and_resumes();
+    test_a_suspended_frame_survives_collection();
     test_location_parts_and_cookies();
     test_p5_receives_input();
     test_webgl_is_constructible_and_refuses();

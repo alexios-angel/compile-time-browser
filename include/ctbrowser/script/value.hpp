@@ -55,7 +55,13 @@ enum class heap_kind : std::uint8_t {
     native,
     cell,
     symbol,
-    proxy
+    proxy,
+    // A SUSPENDED FUNCTION BODY. `await` on a promise that has not settled has
+    // to put the frame somewhere and give the caller a promise back; this is
+    // where the frame goes. Its definition is in vm.hpp, with the frame and
+    // handler types it saves - value.hpp knows only that it is a heap kind the
+    // collector must trace.
+    coroutine
 };
 
 struct heap_object; // every heap value starts with one

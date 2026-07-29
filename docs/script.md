@@ -126,11 +126,36 @@ nothing, so a probe wrapped in try/catch reports no error at all and the failure
 appears to come from wherever the run happened to stop. That one property is
 what made the bugs above findable.
 
-**Still missing, by name.** `await` on a PENDING promise does not suspend: it
-returns undefined and runs the tail immediately, so ordering between a `then`
-and the statements around it is still wrong (`op::await_value` is settled-only;
-real suspension is a frame-capture change in the VM). No generators, so no
-`yield`. `new Function(body)` exists as a global and refuses when called - the
+**`await` SUSPENDS, and handlers are microtasks (2026-07-29).** Both were listed
+here as missing and both are done.
+
+A promise handler runs at the end of the turn, not when the promise settles:
+jobs are queued on `context::microtasks_` and drained after the top-level
+script, and in the event loop after timers, before animation frames, and again
+after each event dispatch. Ordering matches V8, including that every
+first-round handler runs before any second-round one.
+
+`await` on a PENDING promise lifts the frame out of the register stack into a
+`coroutine_object` - registers, ip, receiver, closure and its own handler
+entries, with `reg_top` made relative because the frame comes back somewhere
+else - hands the caller a promise, and registers the coroutine on the awaited
+promise's own handler list. A resumption IS a promise handler, so it queues and
+orders with every `then` rather than being a second mechanism racing them. Only
+the TOP frame can suspend, which is sufficient: every frame below is either
+already suspended or a synchronous caller that must itself unwind. A rejection
+throws AT the await, so `try { await p } catch` spans a real suspension, and an
+uncaught one rejects the function's own promise rather than ending the run. The
+saved window is a GC ROOT - it is out of the stack the collector walks, so
+without tracing it everything a waiting function held is freed.
+
+What is still a deviation: `await` on an ALREADY-SETTLED promise, or on a plain
+value, reads it straight out instead of yielding a turn. The spec queues a job
+either way, so `async function f(){ log+='1'; await 1; log+='2'; } f(); log+='|'`
+gives `12|` here and `1|2` in a browser. Suspending unconditionally would also
+suspend TOP-LEVEL await, which this engine allows in a classic script and whose
+value `context::run` returns.
+
+**Still missing, by name.** No generators, so no `yield`. `new Function(body)` exists as a global and refuses when called - the
 VM must own programs compiled at run time. `arguments` is a real Array rather
 than the spec's array-like, so `Array.isArray(arguments)` is true here and false
 in a browser. `structuredClone` covers data only. Regex has no lookbehind and no

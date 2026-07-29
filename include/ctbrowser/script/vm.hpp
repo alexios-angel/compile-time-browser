@@ -362,6 +362,12 @@ public:
     // finally natives, and those live in the standard library - so builtins
     // installs this hook. Without it (a VM with no builtins) an async function
     // returns its plain value, which `await` still handles.
+    void set_pending_promise_factory(std::function<value(context &)> make) {
+        pending_promise_factory_ = std::move(make);
+    }
+    void set_promise_settler(std::function<void(context &, value, value, bool)> settle) {
+        promise_settler_ = std::move(settle);
+    }
     void set_promise_factory(std::function<value(context &, value, bool)> make) {
         promise_factory_ = std::move(make);
     }
@@ -417,6 +423,76 @@ public:
     }
     [[nodiscard]] std::size_t live_objects() const noexcept { return live_objects_; }
 
+    // WHERE A THROW LANDS. One entry per open `try`, so unwinding can pop back
+    // to the frame that installed it - a handler in a caller must not be caught
+    // by a callee.
+    struct handler {
+        std::size_t frame = 0;   // index into frames_
+        std::size_t address = 0; // the catch block
+        std::size_t reg_top = 0; // registers_ size on entry
+        std::uint16_t slot = 0;  // where to put the thrown value
+    };
+
+    // A SUSPENDED FRAME, saved whole.
+    //
+    // `await` on a pending promise cannot block - there is one stack and the
+    // event loop is above it - so the frame is lifted out of the register stack
+    // and put here, the caller is handed a promise, and the frame goes back when
+    // the awaited promise settles.
+    //
+    // Only the TOP frame can suspend, which is sufficient: `registers_` is one
+    // flat vector indexed by base, so lifting a frame out from the middle would
+    // move every frame above it. And there is never a reason to - every frame
+    // below is either already suspended or a synchronous caller that must
+    // itself unwind before it can wait for anything.
+    //
+    // The register window is COPIED rather than referenced. It has to be: the
+    // stack is truncated the moment the frame leaves, and whatever runs next
+    // reuses those slots.
+    struct coroutine_object final : heap_object {
+        const function_proto * proto = nullptr;
+        std::size_t ip = 0;
+        // Where the awaited value lands when the frame comes back - the
+        // destination register of the `await` that suspended it.
+        std::uint16_t await_reg = 0;
+        std::uint16_t argc = 0;
+        closure_object * closure = nullptr;
+        value receiver = value::undefined();
+        bool constructing = false;
+        std::vector<value> window;
+        // This frame's own handlers, with `reg_top` made RELATIVE to the frame's
+        // base: the frame comes back at a different place in the register stack,
+        // and an absolute mark would point into whatever is there now.
+        std::vector<handler> handlers;
+        // The promise the caller was given, settled when the body finally
+        // returns. One per suspended function however many times it awaits.
+        value promise;
+        coroutine_object() : heap_object(heap_kind::coroutine) {}
+    };
+
+    // Put a suspended frame back and run it. `with` is what the await
+    // evaluates to; `rejected` throws it at the await instead.
+    void resume(value coroutine, value with, bool rejected);
+    // Whether this value is a promise that has NOT settled - the one case
+    // `await` cannot answer by reading. The shape is the standard library's:
+    // `__settled` present and false.
+    [[nodiscard]] static bool is_pending_promise(value v) {
+        if (!v.is_object()) { return false; }
+        value * settled = static_cast<object_object *>(v.as_heap())->find("__settled");
+        return settled != nullptr && !truthy(*settled);
+    }
+    // Ask a pending promise to put this coroutine back when it settles. The
+    // record goes on the promise's own handler list, so a resumption is queued
+    // and ordered exactly like a `then` - because that is what it is.
+    void attach_resume(value promise, value coroutine) {
+        if (!promise.is_object()) { return; }
+        value * handlers = static_cast<object_object *>(promise.as_heap())->find("__handlers");
+        if (handlers == nullptr || !handlers->is_array()) { return; }
+        auto * record = allocate<object_object>();
+        record->set("co", coroutine);
+        static_cast<array_object *>(handlers->as_heap())->items.push_back(value::object(record));
+    }
+
 private:
     struct call_frame {
         const function_proto * proto = nullptr;
@@ -440,6 +516,12 @@ private:
         // constructor body happens to return - unless it returns an object,
         // which is the one case the spec lets override it.
         bool constructing = false;
+
+        // The promise this frame's eventual return settles, once it has
+        // suspended at least once. Undefined on a frame that has not - a
+        // function that never awaits anything pending returns normally and
+        // needs no promise of its own beyond the one `wrap_promise` makes.
+        value async_promise = value::undefined();
     };
 
     // The `this` a frame actually sees. For an ordinary function that is its
@@ -455,12 +537,6 @@ private:
     }
 
     // A live try block: where to jump, and where the state was when it started.
-    struct handler {
-        std::size_t frame = 0;   // index into frames_
-        std::size_t address = 0; // the catch block
-        std::size_t reg_top = 0; // registers_ size on entry
-        std::uint16_t slot = 0;  // where to put the thrown value
-    };
 
     // Run the `__fields` initialiser of `constructor` and of every class it
     // extends, BASE FIRST, against a freshly made instance. The chain is walked
@@ -568,6 +644,16 @@ private:
     std::vector<handler> handlers_;
     std::array<object_object *, static_cast<std::size_t>(proto_kind::count_)> prototypes_{};
     std::function<value(context &, value, bool)> promise_factory_;
+    // Making a PENDING promise and settling one. The VM can read a promise's
+    // state - `await` already did - but creating and settling run the standard
+    // library's own logic, including queueing the handlers. Two hooks rather
+    // than reaching into the object's properties, so there is one definition of
+    // what settling means.
+    std::function<value(context &)> pending_promise_factory_;
+    std::function<void(context &, value, value, bool)> promise_settler_;
+    // Set by a frame that suspended, so `resume` can tell "awaited again" from
+    // "returned" - both leave run_loop the same way.
+    bool suspended_ = false;
     // The MICROTASK QUEUE. A promise handler runs at the end of the turn, not
     // the moment the promise settles.
     //

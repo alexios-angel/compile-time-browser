@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <functional>
 #include <span>
 #include <string>
@@ -159,6 +160,18 @@ void context::mark_object(heap_object * o) {
         auto * proxy = static_cast<proxy_object *>(o);
         mark(proxy->target);
         mark(proxy->handler);
+        break;
+    }
+    case heap_kind::coroutine: {
+        // A SUSPENDED FRAME IS A ROOT LIKE ANY OTHER. Its registers are the
+        // only reference to everything the function had in hand, and they are
+        // out of the register stack the collector normally walks - so without
+        // this every local of every waiting function is freed.
+        auto * saved = static_cast<coroutine_object *>(o);
+        for (const value & v : saved->window) { mark(v); }
+        mark(saved->receiver);
+        mark(saved->promise);
+        if (saved->closure != nullptr) { mark_object(saved->closure); }
         break;
     }
     default: break; // strings and symbols own no values
@@ -746,6 +759,90 @@ void context::run_field_initialisers(value constructor, value self) {
     }
 }
 
+// PUT A SUSPENDED FRAME BACK AND RUN IT.
+//
+// The mirror of the suspension in `op::await_value`: the saved window goes on
+// top of the register stack, the frame is rebuilt around it, the awaited value
+// lands in the register the await was writing to, and the body carries on from
+// the instruction after it.
+//
+// Called from a microtask, because a resumption IS a promise handler - it was
+// registered on the awaited promise's own handler list, so it queues and orders
+// with every other `then`.
+void context::resume(value coroutine, value with, bool rejected) {
+    if (!coroutine.is_kind(heap_kind::coroutine) || failed_) { return; }
+    auto * saved = static_cast<coroutine_object *>(coroutine.as_heap());
+
+    const std::size_t base = registers_.size();
+    registers_.insert(registers_.end(), saved->window.begin(), saved->window.end());
+    // Slack above the window, for the same reason a call reserves it: an
+    // expression allocates scratch registers past the frame's declared size.
+    registers_.resize(registers_.size() + 8u, value::undefined());
+
+    call_frame frame;
+    frame.proto = saved->proto;
+    frame.ip = saved->ip;
+    frame.base = base;
+    frame.result_reg = 0;
+    frame.argc = saved->argc;
+    frame.closure = saved->closure;
+    frame.receiver = saved->receiver;
+    frame.constructing = saved->constructing;
+    frame.handler_base = handlers_.size();
+    frame.async_promise = saved->promise;
+    frames_.push_back(frame);
+    const std::size_t index = frames_.size() - 1;
+    for (handler restored : saved->handlers) {
+        restored.frame = index;
+        restored.reg_top += base; // relative while saved; absolute again here
+        handlers_.push_back(restored);
+    }
+
+    registers_[base + saved->await_reg] = with;
+    const std::size_t stop = frames_.size() - 1;
+    suspended_ = false;
+
+    // A REJECTED await THROWS AT THE AWAIT, so `try { await p } catch` works
+    // across a real suspension and not only across a settled one.
+    if (rejected) {
+        thrown_ = with;
+        if (!unwind_to_handler()) {
+            // Nothing in this frame catches it: the function's own promise
+            // rejects, which is what an async function does with an exception
+            // it does not handle. The frame is already gone - unwind_to_handler
+            // pops what it cannot satisfy - so there is nothing left to run.
+            while (frames_.size() > stop) { frames_.pop_back(); }
+            registers_.resize(base);
+            thrown_ = value::undefined();
+            promise_settler_(*this, saved->promise, with, true);
+            drain_microtasks();
+            return;
+        }
+    }
+
+    const value returned = run_loop(stop);
+    if (suspended_) {
+        suspended_ = false;
+        return; // it awaited again; its promise settles on some later resume
+    }
+    if (failed_) { return; }
+    // The body finished. What it returns is already a settled promise, because
+    // an async function's last act is `wrap_promise` - so its outcome is
+    // ADOPTED rather than wrapped a second time.
+    value outcome = returned;
+    bool failed_outcome = false;
+    if (returned.is_object()) {
+        auto * obj = static_cast<object_object *>(returned.as_heap());
+        if (obj->find("__settled") != nullptr) {
+            value * held = obj->find("__value");
+            value * state = obj->find("__rejected");
+            outcome = held == nullptr ? value::undefined() : *held;
+            failed_outcome = state != nullptr && truthy(*state);
+        }
+    }
+    promise_settler_(*this, saved->promise, outcome, failed_outcome);
+}
+
 value context::run_loop(std::size_t stop_depth) {
     auto & string_cache = string_cache_;
 
@@ -1245,6 +1342,50 @@ value context::run_loop(std::size_t stop_depth) {
             // awaits to itself. A REJECTED promise throws, which is what makes
             // `try { await f() } catch` work.
             const value awaited = reg(in.b);
+            // A PENDING PROMISE SUSPENDS THE FRAME.
+            //
+            // There is one stack and the event loop is above it, so `await`
+            // cannot block: the frame is lifted out, the caller is handed a
+            // promise, and the frame comes back when the awaited one settles.
+            //
+            // It used to read `__value` off a promise that had none, so `await`
+            // on anything genuinely asynchronous evaluated to UNDEFINED and ran
+            // the rest of the function immediately - the single largest wrong
+            // answer left in this engine, and silent.
+            if (is_pending_promise(awaited) && pending_promise_factory_ && promise_settler_) {
+                if (frame.async_promise.is_undefined()) {
+                    frame.async_promise = pending_promise_factory_(*this);
+                }
+                const value promise = frame.async_promise;
+                auto * saved = allocate<coroutine_object>();
+                saved->proto = frame.proto;
+                saved->ip = frame.ip;
+                saved->await_reg = in.a;
+                saved->argc = frame.argc;
+                saved->closure = frame.closure;
+                saved->receiver = frame.receiver;
+                saved->constructing = frame.constructing;
+                saved->promise = promise;
+                saved->window.assign(registers_.begin() + static_cast<std::ptrdiff_t>(base),
+                                     registers_.end());
+                // This frame's handlers travel with it, with reg_top made
+                // RELATIVE - the frame comes back somewhere else in the stack,
+                // and an absolute mark would point at whatever is there then.
+                for (std::size_t i = frame.handler_base; i < handlers_.size(); ++i) {
+                    handler moved = handlers_[i];
+                    moved.reg_top -= base;
+                    saved->handlers.push_back(moved);
+                }
+                handlers_.resize(frame.handler_base);
+                const std::uint16_t slot = frame.result_reg;
+                registers_.resize(base);
+                frames_.pop_back();
+                attach_resume(awaited, value::object(saved));
+                suspended_ = true;
+                if (frames_.size() <= stop_depth) { return promise; }
+                registers_[frames_.back().base + slot] = promise;
+                break;
+            }
             reg(in.a) = awaited;
             if (awaited.is_object()) {
                 auto * obj = static_cast<object_object *>(awaited.as_heap());

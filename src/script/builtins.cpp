@@ -132,6 +132,13 @@ inline void deliver(context & cx, value handler_record, value settled, bool reje
     value * next = record->find("next");
     const value handler = rejected ? (on_err == nullptr ? value::undefined() : *on_err)
                                    : (on_ok == nullptr ? value::undefined() : *on_ok);
+    // A RESUMPTION IS A PROMISE HANDLER. `await` registers the suspended frame
+    // on the awaited promise's own handler list, so it queues and orders with
+    // every `then` rather than being a second mechanism that races them.
+    if (value * waiting = record->find("co"); waiting != nullptr) {
+        cx.resume(*waiting, settled, rejected);
+        return;
+    }
     if (next == nullptr) { return; }
     // `finally` RUNS EITHER WAY AND CHANGES NOTHING. Its callback takes no
     // argument, its return value is ignored, and the outcome - value or
@@ -1970,6 +1977,17 @@ void install_promise(context & cx) {
     using detail::new_table;
     cx.set_promise_factory(
         [](context & c, value v, bool rejected) { return detail::make_promise(c, v, rejected); });
+    // What `await` needs to suspend: a promise that has not settled, and a way
+    // to settle one. The VM can READ a promise - it always could - but making
+    // and settling run this library's own logic, queue included.
+    cx.set_pending_promise_factory([](context & c) {
+        const value made = detail::make_promise(c, value::undefined(), false);
+        static_cast<object_object *>(made.as_heap())->set("__settled", value::boolean(false));
+        return made;
+    });
+    cx.set_promise_settler([](context & c, value promise, value with, bool rejected) {
+        detail::settle(c, promise, with, rejected);
+    });
     object_object * promise_ctor = new_table(cx);
     method(cx, promise_ctor, "resolve", [](context & c, std::span<value> a) {
         return detail::make_promise(c, a.empty() ? value::undefined() : a[0], false);
