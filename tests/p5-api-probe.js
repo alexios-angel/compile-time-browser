@@ -563,6 +563,36 @@ globalThis.__probes = [
   }],
   ['load', 'loadFont', function (s) { return typeof s.loadFont === 'function' ? 'SKIP' : 'absent'; }],
 
+  // KNOWN FAILING, and here so it is measured rather than remembered.
+  //
+  // `tint()` needs globalCompositeOperation, which this engine ignores. p5
+  // builds a tinted copy through five composited draws - luminosity, color,
+  // multiply, destination-in - and with every mode treated as source-over the
+  // `multiply` fillRect covers the whole canvas and the `destination-in` that
+  // would restore the alpha does nothing. So a tinted image comes out as a solid
+  // rectangle of the tint colour with the sprite on top of it.
+  //
+  // Found by comparing examples/pages/p5-image.html against Chrome pixel by
+  // pixel: every other stage of that page agreed exactly, and this one differed
+  // wherever the source was transparent.
+  ['image', 'tint preserves transparency', function (s) {
+    s.background(255);
+    const g = s.createGraphics(8, 8);
+    g.clear();
+    g.noStroke();
+    g.fill(255);
+    g.rect(0, 0, 4, 8); // the left half opaque, the right half transparent
+    s.tint(255, 0, 0);
+    s.image(g, 0, 0);
+    s.noTint();
+    s.loadPixels();
+    // (6, 4) is under the transparent half, so it must still be the background.
+    const at = 4 * (4 * s.width + 6);
+    const there = [s.pixels[at], s.pixels[at + 1], s.pixels[at + 2]].join(',');
+    if (there !== '255,255,255') { throw 'tint painted over transparency: ' + there; }
+    return 'ok';
+  }],
+
   // --- saving -------------------------------------------------------------
   //
   // Every p5 save() ends in downloadFile: a Blob, an object URL, an <a href
