@@ -7,7 +7,34 @@ namespace ctbrowser::shell {
 
 control_state & form_store::state_of(const read_txn & txn, atom_table & atoms, node_id id) {
     auto it = states_.find(id.key());
-    if (it != states_.end()) { return it->second; }
+    if (it != states_.end()) {
+        // THE ATTRIBUTE IS STILL THE ANSWER UNTIL SOMETHING EDITS THE CONTROL.
+        //
+        // The state used to be seeded once, when the control was first asked
+        // about, and never looked at the attribute again. A control created by
+        // script and given its `value` afterwards therefore kept the empty seed
+        // - and `createInput('hello')`, which p5 writes as createElement then
+        // setAttribute('value', ...), came back empty.
+        //
+        // `value_edited` is the spec's rule stated as a flag: once the user has
+        // typed or a script has assigned `.value`, the content attribute stops
+        // being the answer and re-reading it would undo their work. A textarea
+        // takes its value from its children and a select from its options, so
+        // neither has an attribute to re-read.
+        control_state & held = it->second;
+        if (!held.value_edited) {
+            const std::string_view tag = atoms.text(txn.tag(id).value_or(atom{}));
+            if (tag != "textarea" && tag != "select") {
+                const std::string_view attribute = txn.attribute_value(id, atoms.intern("value"));
+                if (attribute != held.value) {
+                    held.value = std::string{attribute};
+                    held.caret = held.value.size();
+                    held.selection = held.caret;
+                }
+            }
+        }
+        return held;
+    }
     control_state seeded;
     const std::string_view tag = atoms.text(txn.tag(id).value_or(atom{}));
     if (tag == "textarea") {
@@ -116,6 +143,11 @@ bool form_store::delete_selection(control_state & control) {
     control.value.erase(from, to - from);
     control.caret = from;
     control.selection = from;
+    // EDITED, like every other mutator here. It was the one that did not say
+    // so, which did not matter while the `value` attribute was read once and
+    // never again - and the moment the attribute became live, a Cut put the
+    // original text straight back.
+    control.value_edited = true;
     return true;
 }
 

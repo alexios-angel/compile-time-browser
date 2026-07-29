@@ -7,6 +7,7 @@
 # passed is simply absent, and the test prints it every run: that list is the
 # work queue.
 a11y/describe
+a11y/describeElement
 color/background
 color/clear
 color/color
@@ -27,6 +28,7 @@ dom/createButton
 dom/createCheckbox
 dom/createDiv
 dom/createElement
+dom/createInput
 dom/createP/createSpan
 dom/createRadio
 dom/createSelect
@@ -60,6 +62,7 @@ math/trig
 pixels/copy
 pixels/createImage
 pixels/get
+pixels/image
 pixels/imageMode/tint/noTint
 pixels/loadPixels/updatePixels
 pixels/pixelDensity

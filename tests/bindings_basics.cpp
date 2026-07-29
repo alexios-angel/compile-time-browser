@@ -903,6 +903,93 @@ console.log('src=' + document.getElementById('t').textContent.split('\n').join('
 // `clip()` CONFINES what is drawn after it, and `restore()` is the only way
 // back. The region is an INTERSECTION of paths, so two clips leave what they
 // have in common - which is what makes nesting them work.
+// A CONTROL'S `value` IS LIVE, and a canvas is an image source.
+//
+// Both were the same shape of bug: a property written on whatever tick a sync
+// next ran, read by a page in the statement that created it.
+void test_control_value_is_live() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body><input id=static value="s"><script>
+        console.log('static=' + document.getElementById('static').value);
+        // The order p5's createInput uses: create, set the ATTRIBUTE, append.
+        // The value has to be visible immediately, not after the next refresh.
+        const made = document.createElement('input');
+        made.setAttribute('type', 'text');
+        made.setAttribute('value', 'from-attribute');
+        document.body.appendChild(made);
+        console.log('created=' + made.value);
+        // An assignment wins over the attribute from then on - including an
+        // assignment of the empty string, which is how a page clears a field.
+        made.value = 'assigned';
+        console.log('assigned=' + made.value);
+        made.value = '';
+        console.log('cleared=[' + made.value + ']');
+        const box = document.createElement('input');
+        box.setAttribute('type', 'checkbox');
+        document.body.appendChild(box);
+        box.checked = true;
+        console.log('checked=' + box.checked);
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log[0] == "static=s", "a control in the markup reads its attribute: " + log[0]);
+    check(log[1] == "created=from-attribute",
+          "a control created by script reads it immediately: " + log[1]);
+    check(log[2] == "assigned=assigned", "an assignment is read back: " + log[2]);
+    // The attribute must NOT come back and undo it.
+    check(log[3] == "cleared=[]", "assigning the empty string clears the field: " + log[3]);
+    check(log[4] == "checked=true", "checked round-trips: " + log[4]);
+}
+
+// A CANVAS IS AN IMAGE SOURCE. `drawImage(otherCanvas, ...)` is how a page
+// composites one surface onto another - and it is what p5's `image(g, ...)` does
+// with a createGraphics, so an offscreen buffer drew nothing at all.
+void test_canvas_as_image_source() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body>
+        <canvas id=src width=20 height=20></canvas>
+        <canvas id=dst width=40 height=40></canvas><script>
+        const a = document.getElementById('src').getContext('2d');
+        a.fillStyle = '#ff0000'; a.fillRect(0, 0, 20, 20);
+        const b = document.getElementById('dst').getContext('2d');
+        b.fillStyle = '#000000'; b.fillRect(0, 0, 40, 40);
+        b.drawImage(document.getElementById('src'), 10, 10);
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    if (const auto pixels = page.canvases().pixels_of(find_id(page, "dst"))) {
+        const auto at = [&](int x, int y) { return color{pixels->at(x, y)}; };
+        check(at(15, 15) == color::rgba(255, 0, 0), "the source canvas was drawn");
+        check(at(5, 5) == color::rgba(0, 0, 0), "and only where it was placed");
+    } else {
+        check(false, "the destination canvas has pixels");
+    }
+}
+
+// `insertAdjacentHTML` - a fragment parse at one of four places relative to the
+// element. Same parser and same copy as innerHTML; only where the nodes land
+// differs.
+void test_insert_adjacent_html() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body><div id=box><span id=mid>mid</span></div><script>
+        const mid = document.getElementById('mid');
+        mid.insertAdjacentHTML('beforebegin', '<i id=before>b</i>');
+        mid.insertAdjacentHTML('afterend', '<i id=after>a</i>');
+        mid.insertAdjacentHTML('afterbegin', '<b id=in-first>1</b>');
+        mid.insertAdjacentHTML('beforeend', '<b id=in-last>2</b>');
+        const box = document.getElementById('box');
+        let order = '';
+        for (const kid of box.children) { order += kid.id + ' '; }
+        let inner = '';
+        for (const kid of mid.children) { inner += kid.id + ' '; }
+        console.log('outer=' + order.trim());
+        console.log('inner=' + inner.trim());
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log[0] == "outer=before mid after", "beforebegin and afterend place siblings: " + log[0]);
+    check(log[1] == "inner=in-first in-last", "afterbegin and beforeend place children: " + log[1]);
+}
+
 void test_clip() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body><canvas id=c width=100 height=100></canvas><script>
@@ -1879,6 +1966,9 @@ int main() {
     test_the_invaders_page_shoots();
     test_a_letterboxed_page_keeps_its_size();
 
+    test_control_value_is_live();
+    test_canvas_as_image_source();
+    test_insert_adjacent_html();
     test_clip();
     test_inner_html();
     test_listener_options();

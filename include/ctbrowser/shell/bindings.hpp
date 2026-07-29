@@ -225,37 +225,24 @@ private:
     // which is what `element.offsetWidth` actually needs to be useful.
     void refresh_element(context & cx, script::object_object & obj, node_id id);
 
-    // `value` and `checked` on a form control, in BOTH directions. The VM has
-    // no property accessors, so a live property is a sync rather than a getter:
-    // what the page wrote wins (it wrote it after we last set it), otherwise
-    // the control's own state does. Without the write-back `input.value = ""`
-    // would set a property nothing reads and the field would not clear.
+    // `value` and `checked` USED TO BE SYNCED HERE, as data properties written
+    // on whatever tick this next ran. They are accessors now
+    // (install_element_views), which is what makes a read LIVE: a page that
+    // creates a control and reads it back in the same statement -
+    // `createInput('hello').value()`, which is p5's own DOM library - saw the
+    // property as it was before the value existed.
+    //
+    // The sync could not simply be left in place beside them: an own DATA
+    // property shadows an accessor, so it won every read and the accessor was
+    // dead code. What is left of this function is the control-kind check, which
+    // the wrapper still needs.
     void refresh_control(context & cx, script::object_object & obj, const read_txn & txn,
                          node_id id, std::string_view tag_text) {
-        if (forms_ == nullptr) { return; }
-        const std::string_view type = txn.attribute_value(id, atoms_->intern("type"));
-        const control_kind kind = control_kind_of(tag_text, type);
-        if (kind == control_kind::none) { return; }
-        control_state & control = forms_->state_of(txn, *atoms_, id);
-        auto & mirror = mirrors_[pack(id)];
-
-        if (const value * written = obj.find("value");
-            written != nullptr && cx.to_string(*written) != mirror.value) {
-            form_store::set_value(control, cx.to_string(*written));
-            wrote_to_control_ = true;
-        }
-        mirror.value = control.value;
-        obj.set("value", cx.string(control.value));
-
-        if (kind == control_kind::checkbox || kind == control_kind::radio) {
-            if (const value * written = obj.find("checked");
-                written != nullptr && context::truthy(*written) != mirror.checked) {
-                control.checked = context::truthy(*written);
-                wrote_to_control_ = true;
-            }
-            mirror.checked = control.checked;
-            obj.set("checked", value::boolean(control.checked));
-        }
+        (void)cx;
+        (void)obj;
+        (void)txn;
+        (void)id;
+        (void)tag_text;
     }
 
     [[nodiscard]] rect box_of(node_id id) const;

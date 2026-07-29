@@ -624,6 +624,68 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             return value::undefined();
         });
 
+    // `value` and `checked` ARE ACCESSORS, on a control.
+    //
+    // They were data properties written by refresh_control on whatever tick it
+    // next ran. A page that creates a control and reads it back in the same
+    // statement - `createInput('hello').value()`, which is p5's own DOM library
+    // - therefore read the property as it was before the value existed. The
+    // header's note that "the VM has no property accessors" was true when it
+    // was written and is not any more.
+    //
+    // refresh_control still runs: it writes BACK a property assignment into the
+    // control, which is how `input.value = ''` clears a field. These make the
+    // READ live, which is the half that could not be done before.
+    {
+        const auto txn = doc_->read();
+        const std::string_view tag = atoms_->text(txn.tag(id).value_or(atom{}));
+        const std::string_view type = txn.attribute_value(id, atoms_->intern("type"));
+        if (control_kind_of(tag, type) != control_kind::none) {
+            obj.define_accessor("value",
+                                value::object(cx.allocate<script::native_object>(
+                                    "value",
+                                    [this, id](context & c, std::span<value>) {
+                                        const auto read = doc_->read();
+                                        return c.string(forms_->state_of(read, *atoms_, id).value);
+                                    })),
+                                value::object(cx.allocate<script::native_object>(
+                                    "value", [this, id](context & c, std::span<value> a) {
+                                        const auto read = doc_->read();
+                                        control_state & control =
+                                            forms_->state_of(read, *atoms_, id);
+                                        control.value = arg_string(c, a, 0);
+                                        control.caret = control.value.size();
+                                        control.selection = control.caret;
+                                        // An assignment DIRTIES the control, so the `value`
+                                        // attribute stops being the answer - otherwise setting
+                                        // it to "" would be undone by the next read.
+                                        control.value_edited = true;
+                                        // The browser has to learn a control changed, or the
+                                        // paint is stale until something else marks it.
+                                        wrote_to_control_ = true;
+                                        mutated();
+                                        return value::undefined();
+                                    })));
+            obj.define_accessor("checked",
+                                value::object(cx.allocate<script::native_object>(
+                                    "checked",
+                                    [this, id](context &, std::span<value>) {
+                                        const auto read = doc_->read();
+                                        return value::boolean(
+                                            forms_->state_of(read, *atoms_, id).checked);
+                                    })),
+                                value::object(cx.allocate<script::native_object>(
+                                    "checked", [this, id](context &, std::span<value> a) {
+                                        const auto read = doc_->read();
+                                        forms_->state_of(read, *atoms_, id).checked =
+                                            !a.empty() && context::truthy(a[0]);
+                                        wrote_to_control_ = true;
+                                        mutated();
+                                        return value::undefined();
+                                    })));
+        }
+    }
+
     // `parentNode` and `children` are ACCESSORS because the tree moves. A
     // wrapper built when an element was detached and refreshed later would hand
     // back the parent it had at wrapping time, which for an element p5 creates
@@ -869,6 +931,58 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         }
         return value::boolean(false);
     });
+    // `insertAdjacentHTML(position, markup)` - a fragment parse at one of four
+    // places relative to this element. The parser and the copy are the same
+    // ones innerHTML uses; only where the nodes land differs.
+    method("insertAdjacentHTML", [this](context & c, std::span<value> args) {
+        const node_id self = receiver(c);
+        if (!self || atoms_ == nullptr) { return value::undefined(); }
+        std::string where = arg_string(c, args, 0);
+        for (char & ch : where) { ch = static_cast<char>(std::tolower(ch)); }
+        const std::string markup = arg_string(c, args, 1);
+
+        // Parsed into a scratch document, as innerHTML does and for the same
+        // reason: tree_builder::parse replaces the root it is handed.
+        document scratch{*atoms_};
+        (void)parse_html(scratch, markup);
+        const auto from = scratch.read();
+        node_id body{};
+        const auto find_body = [&](auto && walk, node_id at) -> void {
+            if (!body && from.tag(at).value_or(atom{}) == atoms_->intern_lower("body")) {
+                body = at;
+            }
+            for (const node_id child : from.children(at)) { walk(walk, child); }
+        };
+        find_body(find_body, from.root());
+        if (!body) { return value::undefined(); }
+
+        const auto txn = doc_->read();
+        const node_id parent = txn.parent(self);
+        // `beforebegin` and `afterend` need a PARENT to be inserted into, and an
+        // element that has none simply ignores them - which is what a browser
+        // does rather than throwing.
+        for (const node_id child : from.children(body)) {
+            if (where == "afterbegin") {
+                // Reversed, because each new node goes in front of the last -
+                // otherwise a two-node fragment arrives back to front.
+                const std::span<const node_id> existing = txn.children(self);
+                const node_id first = existing.empty() ? node_id{} : existing.front();
+                const node_id made = copy_subtree(from, child, self);
+                if (first) { (void)doc_->insert_before(self, made, first); }
+            } else if (where == "beforebegin" && parent) {
+                const node_id made = copy_subtree(from, child, parent);
+                (void)doc_->insert_before(parent, made, self);
+            } else if (where == "afterend" && parent) {
+                (void)copy_subtree(from, child, parent);
+            } else {
+                // beforeend, and the fallback: append inside.
+                (void)copy_subtree(from, child, self);
+            }
+        }
+        mutated();
+        return value::undefined();
+    });
+
     // TREE NAVIGATION. appendChild and removeChild could already change the
     // tree; nothing could WALK it, so an element could not reach its own
     // parent. `this.elt.parentNode.removeChild(this.elt)` is the ordinary way
@@ -1036,6 +1150,13 @@ std::shared_ptr<const paint::bitmap> dom_bindings::image_argument(value v) {
     if (handle == nullptr || assets_ == nullptr) { return nullptr; }
     const node_id id = unpack(static_cast<std::uint64_t>(context::to_number(*handle)));
     const auto txn = doc_->read();
+    // A CANVAS IS AN IMAGE SOURCE. `drawImage(otherCanvas, ...)` is how a page
+    // composites one surface onto another, and it is what p5's `image(g, ...)`
+    // does with a createGraphics - so an offscreen buffer drew nothing at all,
+    // silently, because a canvas has no `src` to load and this returned null.
+    if (canvases_ != nullptr && atoms_->text(txn.tag(id).value_or(atom{})) == "canvas") {
+        return canvases_->pixels_of(id);
+    }
     const std::string_view src = txn.attribute_value(id, atoms_->intern("src"));
     return src.empty() ? nullptr : images_->load(*assets_, src);
 }
