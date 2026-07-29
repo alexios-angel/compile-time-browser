@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -218,6 +219,39 @@ public:
     // returning undefined, which reappears later as a different error
     // somewhere else. Not catchable from script yet; a native that needs to be
     // caught wants a real thrown Error, which is a larger change.
+    // Compile a program and KEEP it, returning a reference that stays valid
+    // for the life of the context. The compiler is passed in by the caller
+    // because the VM does not depend on it - `compile.hpp` includes `vm.hpp`,
+    // not the other way round.
+    // Run a program NESTED inside another - `new Function(...)` evaluating its
+    // own body while a script is halfway through a statement.
+    //
+    // Not `run()`, which clears the failure flag and drains the microtask
+    // queue - both belong to the TURN rather than to the program, and draining
+    // here would run a page's pending promise handlers in the middle of the
+    // statement that happened to build a function.
+    //
+    // And not `execute()`, which is the TOP-LEVEL entry: it clears `frames_`
+    // and `registers_` and points `program_` at its argument. Called nested,
+    // that throws away the stack of whoever was running and leaves the outer
+    // program's top-level frame - which has no closure, so it falls back to
+    // `program_` - reading a function table that is not its own.
+    //
+    // A closure over the program's entry function, called normally. Its `owner`
+    // is what makes every `op::closure` inside it index the right table, which
+    // is the whole reason that field exists.
+    [[nodiscard]] value run_nested(const program & prog) {
+        if (!prog.ok || prog.functions.empty()) { return value::undefined(); }
+        auto * entry = allocate<closure_object>(&prog.functions[0]);
+        entry->owner = &prog;
+        return call(value::object(entry), std::span<const value>{});
+    }
+
+    const program & own_program(program compiled) {
+        owned_programs_.push_back(std::make_unique<program>(std::move(compiled)));
+        return *owned_programs_.back();
+    }
+
     void refuse(std::string_view what, std::string why) {
         raise(std::string{what} + ": " + std::move(why));
     }
@@ -661,6 +695,14 @@ private:
     // The program being executed, so a call from C++ can find the string
     // tables a nested frame needs.
     const program * program_ = nullptr;
+    // PROGRAMS THE CONTEXT COMPILED ITSELF, for `new Function(body)`.
+    //
+    // A closure holds a `const function_proto *` into the program it came from
+    // and `closure_object::owner` records which program that is, so a function
+    // compiled at run time works everywhere - as long as the program OUTLIVES
+    // it. Nothing else owns one, so the context does. Same reasoning as
+    // browser::run_script keeping its own.
+    std::vector<std::unique_ptr<program>> owned_programs_;
     // Keyed by the FUNCTION rather than by its index in the current program.
     // An index is only meaningful within one program, and a context can run
     // more than one: a devtools-style eval calls a function the page defined,

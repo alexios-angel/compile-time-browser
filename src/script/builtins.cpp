@@ -13,6 +13,7 @@
 #include <vector>
 
 #include <ctbrowser/script/builtins.hpp>
+#include <ctbrowser/script/compile.hpp>
 #include <ctbrowser/script/regex.hpp>
 
 #include <map>
@@ -3025,32 +3026,45 @@ void install_typed_arrays(context & cx) {
     });
 }
 
-// `new Function(body)` - a compiler at run time.
+// `new Function(body)` - A COMPILER AT RUN TIME.
 //
-// TODO: this can be implemented NOW. The blocker cited below - that run_loop
-// read nested protos out of a single `program_` - was fixed when a closure
-// gained an `owner`. What remains is for the context to OWN the programs it
-// compiles at run time, the way browser::run_script now keeps its own.
-// It EXISTS, because p5.js builds one while loading and a missing global stops
-// the bundle outright; and it REFUSES when called, because compiling one here
-// properly is a VM change rather than a library one. A closure holds a
-// `const function_proto *` into the program it came from, and `run_loop` reads
-// nested function protos out of a single `program_` - so a program compiled at
-// run time needs the VM to know which program each frame belongs to. That is
-// worth doing and it is not this.
+// It existed and refused, because a closure holds a `const function_proto *`
+// into the program it came from and nothing owned a program compiled here. Two
+// things closed that: `closure_object::owner` records which program a closure's
+// nested functions live in, so a frame from one program can call into another;
+// and the context now OWNS the programs it compiles, so they outlive the
+// closures that point into them.
 //
-// The refusal is the same shape as WEBGL's: the page loads, and only a page
-// that actually reaches the feature is told. All three uses in p5.js generate
-// shader source, which a 2D sketch never touches.
+// The body is wrapped in a function expression and returned, so the parameters
+// and the body go through exactly the path a written-out function does. p5.js
+// builds three of these for shader source; a bundle may build any number.
 void install_dynamic_function(context & cx) {
-    cx.define_native("Function", [](context & c, std::span<value>) {
-        return value::object(
-            c.allocate<native_object>("anonymous", [](context & inner, std::span<value>) {
-                inner.refuse("TypeError", "`new Function(...)` is not implemented - compiling a "
-                                          "body at run time needs the VM to track which program "
-                                          "each frame belongs to");
-                return value::undefined();
-            }));
+    cx.define_native("Function", [](context & c, std::span<value> a) {
+        // `new Function(a, b, 'return a + b')` - every argument but the last
+        // names a parameter, and the last is the body. `new Function()` is a
+        // function that does nothing, which is what the spec says.
+        std::string params;
+        for (std::size_t i = 0; i + 1 < a.size(); ++i) {
+            if (!params.empty()) { params += ","; }
+            params += c.to_string(a[i]);
+        }
+        const std::string body = a.empty() ? std::string{} : c.to_string(a[a.size() - 1]);
+        // RETURNED, not left as an expression statement: the program's value is
+        // what its top level returns, and a bare expression yields nothing.
+        // The newlines are the spec's own formatting, and they matter - they
+        // keep a `//` comment at the end of the body from swallowing the brace.
+        const std::string source =
+            "return (function anonymous(" + params + "\n) {\n" + body + "\n});";
+
+        program compiled = compiler::compile(source);
+        if (!compiled.ok) {
+            // A SyntaxError a page can catch, because `new Function` on
+            // user-supplied text is exactly where one is expected.
+            c.throw_error("SyntaxError", compiled.error);
+            return value::undefined();
+        }
+        const program & kept = c.own_program(std::move(compiled));
+        return c.run_nested(kept);
     });
     // `Function.prototype`, reachable from script rather than only consulted by
     // lookup. `Function.prototype.call.bind(...)` and

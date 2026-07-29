@@ -1623,6 +1623,49 @@ void test_spread() {
 // `new RegExp('^(?:' + words.replace(/ /g, '|') + ')$')`, so every keyword
 // matcher inside the parser p5 bundles was a pattern that could never match -
 // and p5's error system reported a SyntaxError on ordinary code because of it.
+// `new Function(body)` - A COMPILER AT RUN TIME.
+//
+// It existed and refused. Two things had to be true first, and both now are: a
+// closure records which PROGRAM its nested functions live in
+// (`closure_object::owner`), so a frame from one program can call into another;
+// and the context OWNS the programs it compiles, so they outlive the closures
+// holding pointers into them.
+void test_new_function() {
+    expect_result("return typeof new Function();", "function");
+    expect_result("return new Function('return 41 + 1;')();", "42");
+    expect_result("return new Function('a', 'return a * 2;')(21);", "42");
+    expect_result("return new Function('a', 'b', 'return a + b;')(1, 2);", "3");
+    // Every argument but the last names a parameter, and one argument may name
+    // several - `new Function('a,b', ...)` is the form a minifier emits.
+    expect_result("return new Function('a,b', 'return a - b;')(5, 2);", "3");
+    // Called without `new`, which is the same thing.
+    expect_result("return Function('return 3;')();", "3");
+    // The body sees the globals, which is the only scope it has - a function
+    // built from text closes over nothing else.
+    // A top-level `var` IS a global here by design (see above), which is the
+    // only scope a function built from text can see.
+    expect_result("var g = 7; return new Function('return g;')();", "7");
+    expect_result("var f = function (x) { return x + 1; };"
+                  "return new Function('return f(1);')();",
+                  "2");
+    // ...and it is a real compile, so a function inside the body works.
+    expect_result("return new Function('var f = function () { return 5; }; return f();')();", "5");
+    expect_result("return new Function('a', 'b', 'return 1;').length;", "2");
+    expect_result("return new Function('return 1;').name;", "anonymous");
+    // A bad body is a SyntaxError a page can CATCH, because building a
+    // function from user-supplied text is exactly where one is expected.
+    expect_result("try { new Function('this is not javascript ((('); } catch (e) { return e.name; }"
+                  "return 'not thrown';",
+                  "SyntaxError");
+    // It runs NESTED, so it must not drain the microtask queue: that belongs to
+    // the turn, not to the program that happened to build a function.
+    expect_after_turn(
+        "var result = ''; Promise.resolve(1).then(function () { result += 'then;'; });"
+        "const f = new Function('return 1;');"
+        "result += 'built(' + f() + ');';",
+        "built(1);then;");
+}
+
 void test_string_replace() {
     // The whole reason the bug was invisible: with a STRING pattern it was right.
     expect_result("return 'a b c'.replace(' ', '|');", "a|b c");
@@ -2206,6 +2249,7 @@ int main() {
     test_bitwise_and_friends();
     test_delete_in_instanceof();
     test_object_literal_keys();
+    test_new_function();
     test_string_replace();
     test_error_stacks();
     test_captured_destructured_parameters();
