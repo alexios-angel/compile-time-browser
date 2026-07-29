@@ -98,6 +98,11 @@ int main() {
     }
 
     ctbrowser::shell::browser page{ctbrowser::shell::browser_options{400, 400}};
+    // The save probes really do write files - that is the point of them - so they
+    // write into the build tree rather than into the checkout. Without this, `p5
+    // API` leaves probe-out.png beside the source and the next `git status` is a
+    // surprise.
+    page.set_download_directory("build/downloads");
     const auto add = [&](const char * name, const std::string & text) {
         page.assets().add(
             name,

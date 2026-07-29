@@ -679,5 +679,112 @@ exists, so there is nothing to wait for. It is the fetch that is asynchronous.
 
 **p5's data loaders work as a result** - `loadJSON`, `loadStrings` and
 `loadTable` are p5's own code over `fetch`, and `tests/p5_api.cpp` bakes three
-assets so the probes exercise the whole path hermetically. `loadImage` still
-needs `Image` and `URL.createObjectURL`.
+assets so the probes exercise the whole path hermetically.
+
+
+## IMAGES IN AND FILES OUT (2026-07-29)
+
+`loadImage` and `save()` are the same machinery seen from two ends, which is why
+they landed together.
+
+    loadImage:  fetch -> Blob -> createObjectURL -> Image.src -> onload -> draw
+    save():     canvas.toBlob -> Blob -> createObjectURL -> <a download>.click()
+
+**An object URL is an ASSET.** `URL.createObjectURL` registers the bytes in the
+asset registry under a synthetic `blob:ctbrowser/N` name rather than in a private
+table only images consult - so every path that already resolves a URL resolves
+this one: `<img src>`, `fetch()`, and p5's loaders. One mechanism instead of
+three, and nothing had to learn a new kind of URL. The names are COUNTED and not
+random, because `Math.random` is seeded here so a golden can exist and a URL that
+changed between runs would defeat that for any page printing one.
+
+`revokeObjectURL` replaces the entry with no bytes. **A bitmap already decoded
+from that URL survives**, because `image_store` caches by name - and that is
+load-bearing rather than incidental: p5's `loadImage` revokes inside `onload` and
+draws the image on the next line. It is also the browser's own rule, that
+revoking frees the bytes and not the decoded image.
+
+**`new Image()` is a real detached `<img>`.** That decision is why the rest is
+small: `src` reflection, `image_argument`, `drawImage`, `appendChild` and the CSS
+box all already handle an `<img>`. A parallel Image type would have needed every
+one of them taught about it. What an `<img>` gains beyond a plain element is the
+loading surface - a `src` whose assignment starts work, `width`/`height` that
+fall back to the decoded pixels, `naturalWidth`/`naturalHeight`, `complete`, and
+`decode()`.
+
+The load is ASYNCHRONOUS, queued and settled by the event loop beside the
+fetches. Firing from the setter would work for the way p5 writes it - handlers
+assigned before `src` - and break `img.src = url; img.onload = f`, which would
+fire nothing at all.
+
+**An `<img>` whose src a script sets now has a bitmap.** `load_images` ran once
+per document, before scripts, so `img.src = url` and a constructed Image laid out
+at 0x0 forever - the attribute was right, the decode was cached, and layout had
+nothing to measure. `refresh_images` runs before each layout instead, which costs
+a tree walk and not a decode.
+
+### PNG with no compression library
+
+`canvas.toDataURL()` and `canvas.toBlob()` mean PNG. `encode_png`
+(`shell/images.hpp`) writes one with no zlib: a PNG's pixel data is a zlib
+stream, and a zlib stream may be made entirely of STORED deflate blocks - five
+bytes of header and the bytes verbatim. Valid deflate, so every decoder reads it,
+and the file is about 1.05x the raw pixels. That is the whole cost, and it buys
+one fewer dependency in a header belonging to the SDL-free core.
+
+`tools/check-png.py` decodes what the engine wrote with Python's own zlib. "It
+has the right chunk names" is not evidence: the CRCs, the Adler-32 and the block
+headers are all silent when wrong.
+
+### `<a download>` WRITES A FILE - the one invented behaviour
+
+This is the single place this engine invents a behaviour rather than copying one,
+so it is written down rather than left to be discovered.
+
+A browser shows a save dialog for an `<a download>`. There is nobody here to
+show one to, and the alternative - doing nothing - makes every export silently
+fail. p5's `save()`, `saveCanvas()`, `saveJSON()`, `saveStrings()` and
+`saveTable()` all end in `downloadFile`: a Blob, an object URL, an `<a href
+download>` built entirely from script, `click()`, revoke. So the choice was
+between a file appearing and the whole export API being a no-op with no message.
+
+    page.set_download_directory("build/downloads");  // empty means the CWD
+    page.downloads();                                // every export, recorded
+    page.set_download_hook(...);                     // told as it happens
+
+The bytes come from the asset registry, which is where `createObjectURL` put
+them, so this needs no knowledge of blobs. A `download` attribute is a NAME and
+not a path: `/`, `\` and `:` are replaced, because a page does not get to choose
+where on the host it writes. Every export is recorded whether or not the write
+succeeded, so a test can assert on it without reading the disk.
+
+### The smaller gaps this needed
+
+  - **`element.click()` did not exist.** It is how `downloadFile` reaches the
+    outside world, so the entire export path was one missing method wide. It
+    dispatches through the ordinary capture-and-bubble path and then performs the
+    DEFAULT ACTION unless a listener called `preventDefault`.
+  - **`el.onclick = fn` did nothing.** Handler properties were absent - the other
+    half of the event API. They run after the `addEventListener` ones, in the
+    bubble phase, with the element as `this`. The deviation: the spec registers an
+    on-handler as a listener at ASSIGNMENT time, so a page mixing both for one
+    type sees them interleaved rather than handlers-last.
+  - **`href` and `download` were not reflected.** Only `id` and `className` were,
+    so `link.href = url` set a property on the wrapper that no attribute, no
+    layout and no default action ever read. Now: `href`, `download`, `target`,
+    `rel`, `alt`, `title`, `name`, `placeholder`, `htmlFor`. Named rather than
+    generic, because reflection is per element in the spec and `el.foo = 1` must
+    not become an attribute.
+  - **`tagName` was lowercase.** p5 compares it to `'INPUT'` and, in its XML
+    module, to a tag name - so those branches were dead. HTML uppercases; SVG
+    keeps its own case.
+  - **`console.debug` was absent, and p5's error REPORTER calls it.** A library
+    with something to say about a failed load threw on top of the first failure
+    and the real message was never printed. A page's diagnostics must not be able
+    to fail; `console` now answers to every name a page calls.
+  - **`new Request(url, init)`** was absent, and no p5 loader calls `fetch` with a
+    string - every one builds a Request first. `fetch` accepts either. `method`
+    and `mode` are recorded rather than honoured: there is one transport and it
+    does a GET.
+  - **`Blob` has a prototype**, so `x instanceof Blob` is true. p5's
+    `downloadFile` branches on exactly that.

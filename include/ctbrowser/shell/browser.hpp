@@ -277,6 +277,29 @@ public:
     // reloads in the same breath.
     [[nodiscard]] const std::vector<std::string> & alerts() const noexcept { return alerts_; }
 
+    // WHAT A PAGE EXPORTED, and the one behaviour this engine invents rather than
+    // copies. A browser shows a save dialog for an `<a download>`; there is
+    // nobody here to show one to, so the bytes are written out. See
+    // browser::save_download for why the alternative was not "do nothing".
+    struct download_record {
+        std::string name;  // what the page asked it be called, sanitised
+        std::string path;  // where it actually went
+        std::size_t bytes; // how big it was; 0 means the href resolved to nothing
+        bool written;      // whether the write itself succeeded
+    };
+    // Where exports land. Empty means the process's working directory, which is
+    // where a command-line tool writes. A test points this at its build dir.
+    void set_download_directory(std::filesystem::path where) {
+        download_directory_ = std::move(where);
+    }
+    [[nodiscard]] const std::vector<download_record> & downloads() const noexcept {
+        return downloads_;
+    }
+    // Told as it happens, for an embedder that wants to report or redirect one.
+    void set_download_hook(std::function<void(const download_record &)> hook) {
+        download_hook_ = std::move(hook);
+    }
+
     // Where a link that leaves this page goes. the engine does not navigate, so the
     // embedder decides - `ctbrowse` opens a local .html, the SDL app hands an
     // http(s) URL to the system browser, and a program with no hook does
@@ -1334,6 +1357,14 @@ private:
     // Nearest <a> ANCESTOR, not the clicked node: a link's text, and anything
     // else inside it, is what actually gets clicked.
     bool follow_link(node_id target);
+
+    // An `<a download>` writes its bytes out instead of navigating. See the
+    // definition: this is the one behaviour this engine invents.
+    bool save_download(const std::string & href, const std::string & suggested);
+
+    std::filesystem::path download_directory_;
+    std::vector<download_record> downloads_;
+    std::function<void(const download_record &)> download_hook_;
 
     // Put the element with that id at the top of the viewport, clamped the same
     // way a scroll is - an anchor near the end of a short page cannot scroll

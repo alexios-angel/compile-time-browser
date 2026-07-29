@@ -186,3 +186,62 @@ someone else's storage rather than own its elements. Regex has no lookbehind and
 no backreferences. Strings are BYTES, so `normalize` is the identity and
 `codePointAt` agrees with `charCodeAt` rather than pretending to a UTF-16 view
 nothing else here has.
+
+
+## TWO SILENT WRONG ANSWERS, FOUND CHASING loadImage (2026-07-29)
+
+Neither had anything to do with images. Both are the shape this codebase keeps
+finding: a plausible value where an error belonged.
+
+### A `value` captured by a native lambda is not a GC root
+
+`new Promise(fn)` handed its executor a `resolve` that held the promise in a C++
+lambda capture. The collector walks a native's PROPERTIES, not its captures, so a
+promise nothing else referenced was freed while the page still held the resolve
+that would settle it - and settling a recycled cell does nothing, silently,
+because `settle()` checks `is_object()` first.
+
+The cost was that **an async function could suspend exactly once.** The first
+await's promise was still in a live frame's registers; a promise created DURING
+the resumption existed only in those captures and in its own handler list, a
+cycle with no root, so the second await never came back. Every real loader awaits
+twice - `await fetch(u)` then `await response.bytes()`.
+
+`test_await_suspends_and_resumes` has two awaits and passed throughout, because
+its gates are top-level consts and therefore rooted. Only a promise created during
+a resumption shows it; `test_a_promise_made_during_a_resumption_survives` is that
+test.
+
+The fix is a property the page never reads, because a native's props ARE traced.
+**Anything else that captures a `value` in a native lambda needs the same
+treatment** - the style proxy's target and an AbortController's signal are safe
+only because they are reachable through an object the page holds.
+
+### A destructured name is a local, not a temporary
+
+`const { data } = f()` allocated `data`'s register INSIDE the `reg_mark` that
+exists to free the temporary holding `f()`'s result, so `release_to` handed the
+local's slot back and the next temporary in the same scope wrote over it. Inside
+a `try` block, `const { data } = f(); return 'len=' + data.length` read `data` as
+the string `"len="`.
+
+It only bit inside a BLOCK. In a function's top scope the name is hoisted, so
+`find_local_in_current_scope` finds it and nothing is allocated - which is why
+every destructuring test until now passed. `declare_pattern_names` is now called
+before the mark.
+
+This is what stopped p5 loading an image: `loadImage` destructures its fetch
+result inside a try, so the image bytes were a fragment of an error message.
+
+### Escapes that carry a code point
+
+`'\x41'` was the three-character string `x41`. The escape decoder had cases for
+`\n \t \r \0 \b \f \v` and a default that pushes whatever followed the
+backslash. It surfaced through `btoa`, whose argument is a binary string of bytes
+and not text: `btoa('\x00')` encoded the letter x, so a page hand-writing an
+image got a corrupt one.
+
+A code point becomes its UTF-8, the same choice `String.fromCharCode` makes,
+because strings here are bytes. A surrogate PAIR decodes as one code point, so an
+escaped emoji equals the same emoji written literally. `\u{...}` and the line
+continuation came with it.

@@ -563,6 +563,30 @@ globalThis.__probes = [
   }],
   ['load', 'loadFont', function (s) { return typeof s.loadFont === 'function' ? 'SKIP' : 'absent'; }],
 
+  // --- saving -------------------------------------------------------------
+  //
+  // Every p5 save() ends in downloadFile: a Blob, an object URL, an <a href
+  // download> built entirely from script, and click(). A probe can only see that
+  // it did not throw - whether a file appeared is tests/image_basics.cpp's
+  // question, because only the embedder can see the disk.
+  ['save', 'saveCanvas', function (s) {
+    s.saveCanvas('probe-out', 'png');
+    return 'ok';
+  }],
+  ['save', 'saveJSON', function (s) { s.saveJSON({ a: 1 }, 'probe.json'); return 'ok'; }],
+  ['save', 'saveStrings', function (s) { s.saveStrings(['a', 'b'], 'probe.txt'); return 'ok'; }],
+  ['save', 'downloadFile', function (s) {
+    if (typeof s.downloadFile !== 'function') { throw 'absent'; }
+    s.downloadFile('some text', 'probe-direct', 'txt');
+    return 'ok';
+  }],
+  ['save', 'canvas.toDataURL', function (s) {
+    var url = s.canvas.toDataURL();
+    if (url.indexOf('data:image/png;base64,') !== 0) { throw 'url=' + url.slice(0, 40); }
+    if (url.length < 100) { throw 'too short: ' + url.length; }
+    return 'ok';
+  }],
+
   // --- 3D (out of scope; the constructors must still exist) ---------------
   ['webgl', 'WEBGL renderer is constructible', function (s) {
     if (typeof s.constructor.renderers['webgl'] !== 'function') { throw 'not a function'; }

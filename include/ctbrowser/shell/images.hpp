@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -69,6 +70,136 @@ namespace ctbrowser::shell {
         }
     }
     return out;
+}
+
+// Encode a bitmap as a PNG, with NO COMPRESSION LIBRARY.
+//
+// `canvas.toBlob()` and `canvas.toDataURL()` mean PNG - that is what p5's
+// save() asks for and what a page expects to get - so an engine that cannot
+// write one cannot export anything.
+//
+// A PNG's pixel data is a zlib stream, and a zlib stream may be made entirely of
+// STORED blocks: a five-byte header per block and the bytes verbatim. That is
+// valid deflate, so every decoder in the world reads this, and it needs no zlib.
+// The file is bigger than a compressed one - about 1.05x the raw pixels - which
+// is the whole cost, and it buys the engine one fewer dependency in a header
+// that is part of the SDL-free core.
+//
+// RGBA, 8 bits per channel, filter 0 on every row: the encoding a decoder needs
+// no options for.
+[[nodiscard]] inline std::vector<std::byte> encode_png(const paint::bitmap & image) {
+    if (image.empty()) { return {}; }
+    const auto width = static_cast<std::uint32_t>(image.width);
+    const auto height = static_cast<std::uint32_t>(image.height);
+
+    static constexpr auto crc_of = [](std::span<const unsigned char> bytes) {
+        // The table is built on the fly: 256 entries computed once per call is
+        // nothing beside the pixels, and it keeps this a header with no state.
+        std::uint32_t table[256];
+        for (std::uint32_t i = 0; i < 256; ++i) {
+            std::uint32_t c = i;
+            for (int bit = 0; bit < 8; ++bit) {
+                c = (c & 1) != 0 ? 0xEDB88320U ^ (c >> 1) : c >> 1;
+            }
+            table[i] = c;
+        }
+        std::uint32_t crc = 0xFFFFFFFFU;
+        for (const unsigned char byte : bytes) { crc = table[(crc ^ byte) & 0xFF] ^ (crc >> 8); }
+        return crc ^ 0xFFFFFFFFU;
+    };
+
+    std::vector<unsigned char> out;
+    const auto put = [&out](std::initializer_list<unsigned char> bytes) {
+        out.insert(out.end(), bytes.begin(), bytes.end());
+    };
+    const auto put_be32 = [&out](std::uint32_t v) {
+        out.push_back(static_cast<unsigned char>((v >> 24) & 0xFF));
+        out.push_back(static_cast<unsigned char>((v >> 16) & 0xFF));
+        out.push_back(static_cast<unsigned char>((v >> 8) & 0xFF));
+        out.push_back(static_cast<unsigned char>(v & 0xFF));
+    };
+    // A chunk is length, type, data, then a CRC over the TYPE AND DATA - not
+    // over the length, which is the mistake that makes a file no decoder opens.
+    const auto chunk = [&](const char (&type)[5], const std::vector<unsigned char> & data) {
+        put_be32(static_cast<std::uint32_t>(data.size()));
+        const std::size_t crc_from = out.size();
+        for (int i = 0; i < 4; ++i) { out.push_back(static_cast<unsigned char>(type[i])); }
+        out.insert(out.end(), data.begin(), data.end());
+        put_be32(
+            crc_of(std::span<const unsigned char>{out.data() + crc_from, out.size() - crc_from}));
+    };
+
+    put({0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A});
+    {
+        std::vector<unsigned char> header;
+        const auto be32 = [&header](std::uint32_t v) {
+            header.push_back(static_cast<unsigned char>((v >> 24) & 0xFF));
+            header.push_back(static_cast<unsigned char>((v >> 16) & 0xFF));
+            header.push_back(static_cast<unsigned char>((v >> 8) & 0xFF));
+            header.push_back(static_cast<unsigned char>(v & 0xFF));
+        };
+        be32(width);
+        be32(height);
+        header.push_back(8); // bits per channel
+        header.push_back(6); // colour type 6 = RGBA
+        header.push_back(0); // deflate
+        header.push_back(0); // filter method 0
+        header.push_back(0); // not interlaced
+        chunk("IHDR", header);
+    }
+
+    // The raw scanlines: a filter byte then RGBA, in that order. bitmap::at is
+    // 0xAARRGGBB, so the channels are pulled out rather than memcpy'd.
+    std::vector<unsigned char> raw;
+    raw.reserve((static_cast<std::size_t>(width) * 4U + 1U) * height);
+    for (std::uint32_t y = 0; y < height; ++y) {
+        raw.push_back(0); // filter: none
+        for (std::uint32_t x = 0; x < width; ++x) {
+            const std::uint32_t pixel = image.at(static_cast<int>(x), static_cast<int>(y));
+            raw.push_back(static_cast<unsigned char>((pixel >> 16) & 0xFF));
+            raw.push_back(static_cast<unsigned char>((pixel >> 8) & 0xFF));
+            raw.push_back(static_cast<unsigned char>(pixel & 0xFF));
+            raw.push_back(static_cast<unsigned char>((pixel >> 24) & 0xFF));
+        }
+    }
+
+    {
+        std::vector<unsigned char> zlib;
+        zlib.push_back(0x78); // deflate, 32K window
+        zlib.push_back(0x01); // no preset dictionary, fastest
+        // Stored blocks, 65535 bytes at a time: LEN then its one's complement,
+        // which is what tells a decoder the block really is uncompressed.
+        for (std::size_t at = 0; at < raw.size(); at += 65535U) {
+            const auto len =
+                static_cast<std::uint16_t>(std::min<std::size_t>(65535U, raw.size() - at));
+            const bool last = at + len >= raw.size();
+            zlib.push_back(last ? 1 : 0);
+            zlib.push_back(static_cast<unsigned char>(len & 0xFF));
+            zlib.push_back(static_cast<unsigned char>((len >> 8) & 0xFF));
+            zlib.push_back(static_cast<unsigned char>(~len & 0xFF));
+            zlib.push_back(static_cast<unsigned char>((~len >> 8) & 0xFF));
+            zlib.insert(zlib.end(), raw.begin() + static_cast<std::ptrdiff_t>(at),
+                        raw.begin() + static_cast<std::ptrdiff_t>(at + len));
+        }
+        // ADLER-32 over the UNCOMPRESSED bytes, big-endian, and it is what a
+        // decoder checks to decide the stream was not corrupted.
+        std::uint32_t a = 1;
+        std::uint32_t b = 0;
+        for (const unsigned char byte : raw) {
+            a = (a + byte) % 65521U;
+            b = (b + a) % 65521U;
+        }
+        zlib.push_back(static_cast<unsigned char>((b >> 8) & 0xFF));
+        zlib.push_back(static_cast<unsigned char>(b & 0xFF));
+        zlib.push_back(static_cast<unsigned char>((a >> 8) & 0xFF));
+        zlib.push_back(static_cast<unsigned char>(a & 0xFF));
+        chunk("IDAT", zlib);
+    }
+    chunk("IEND", {});
+
+    std::vector<std::byte> bytes(out.size());
+    for (std::size_t i = 0; i < out.size(); ++i) { bytes[i] = static_cast<std::byte>(out[i]); }
+    return bytes;
 }
 
 // What a script's image handle refers to, and what an <img> element resolves

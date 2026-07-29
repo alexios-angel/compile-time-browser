@@ -72,6 +72,11 @@ pixels/imageMode/tint/noTint
 pixels/loadPixels/updatePixels
 pixels/pixelDensity
 pixels/set
+save/canvas.toDataURL
+save/downloadFile
+save/saveCanvas
+save/saveJSON
+save/saveStrings
 shape/arc
 shape/beginShape/vertex/endShape
 shape/bezier

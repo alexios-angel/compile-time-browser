@@ -111,6 +111,13 @@ public:
     // these bindings and the alert that caused it must survive that.
     void set_alert_hook(std::function<void(const std::string &)> hook);
 
+    // `element.click()` does two things: it dispatches a click event, and - if
+    // nothing called preventDefault - it performs the element's DEFAULT ACTION.
+    // The second half belongs to the browser (following a link, toggling a
+    // checkbox, submitting a form), so it comes in as a hook for the same reason
+    // on_mutation does: the dependency points one way.
+    void set_activate_hook(std::function<void(node_id)> hook) { on_activate_ = std::move(hook); }
+
     // Returns whether a page write reached a control, so the browser knows the
     // paint is stale without having to diff the form store.
     bool refresh_wrappers();
@@ -537,6 +544,7 @@ private:
     std::function<void()> on_mutation_;
     std::function<void(node_id)> on_focus_;
     std::function<void(const std::string &)> on_alert_;
+    std::function<void(node_id)> on_activate_;
     // What we last wrote into a wrapper, so a differing value means the PAGE
     // wrote it. See refresh_control.
     struct property_mirror {
@@ -562,6 +570,9 @@ private:
     // than random for the same reason Math.random is seeded: a page that prints
     // one could not otherwise have a golden.
     std::uint32_t next_object_url_ = 0;
+    // Blob.prototype, kept so canvas.toBlob's Blob is one too - `x instanceof
+    // Blob` has to be true whoever made it.
+    value blob_prototype_;
     std::string callback_error_;
     std::size_t callback_faults_ = 0;
     bool reload_requested_ = false;

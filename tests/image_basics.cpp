@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -330,6 +331,126 @@ void test_a_constructed_image_is_an_element() {
     CHECK(box_of_tag(page, "img").height == 10.0f);
 }
 
+// The PNG this engine writes must be readable by things that are not this
+// engine, so the check is structural AND independent: the file is written out
+// and tools/check-png.py decodes it with Python's own zlib.
+void test_encode_png() {
+    const auto image = decode_bmp(make_bmp(4, 3, 0xFF3366CCU));
+    const std::vector<std::byte> png = ctbrowser::shell::encode_png(image);
+    CHECK(png.size() > 60);
+    const auto byte = [&png](std::size_t i) { return static_cast<unsigned char>(png[i]); };
+    // The signature, and IHDR/IDAT/IEND in order.
+    CHECK(byte(0) == 0x89 && byte(1) == 'P' && byte(2) == 'N' && byte(3) == 'G');
+    const std::string text{reinterpret_cast<const char *>(png.data()), png.size()};
+    CHECK(text.find("IHDR") == 12);
+    CHECK(text.find("IDAT") != std::string::npos);
+    CHECK(text.rfind("IEND") == png.size() - 8);
+    // The dimensions are big-endian in IHDR, at offset 16.
+    CHECK(byte(16) == 0 && byte(17) == 0 && byte(18) == 0 && byte(19) == 4);
+    CHECK(byte(20) == 0 && byte(21) == 0 && byte(22) == 0 && byte(23) == 3);
+    CHECK(byte(24) == 8 && byte(25) == 6); // 8 bits, RGBA
+    // Empty in, empty out - not a header with no pixels, which a decoder would
+    // reject and which would look like a corrupt file rather than no file.
+    CHECK(ctbrowser::shell::encode_png(ctbrowser::paint::bitmap{}).empty());
+
+    // Written for tools/check-png.py, which is what proves the deflate stream
+    // and both checksums are right rather than merely well-shaped.
+    std::ofstream out{"build/render-encode.png", std::ios::binary};
+    out.write(reinterpret_cast<const char *>(png.data()), static_cast<std::streamsize>(png.size()));
+}
+
+// EXPORT, END TO END - the path p5's save() takes, and the one place this engine
+// invents a behaviour: an `<a download>` writes a file instead of raising a save
+// dialog nobody is there to see.
+//
+//   canvas.toBlob(cb) -> new Blob -> URL.createObjectURL -> <a href download>
+//   -> link.click() -> the bytes land on disk -> URL.revokeObjectURL
+//
+// Every link in that chain was missing at the start of this: click() did not
+// exist, so p5's entire export API was a silent no-op.
+void test_export_writes_a_file() {
+    ctbrowser::browser page{{.width = 80, .height = 60}};
+    page.set_download_directory("build/downloads");
+    page.load_html(R"(<body>
+      <canvas id='c' width='8' height='8'></canvas>
+      <script>
+        var ctx = document.getElementById('c').getContext('2d');
+        ctx.fillStyle = '#3366cc';
+        ctx.fillRect(0, 0, 8, 8);
+        document.getElementById('c').toBlob(function (blob) {
+          console.log('blob ' + blob.size + ' ' + blob.type + ' ' +
+                      (blob instanceof Blob));
+          var url = URL.createObjectURL(blob);
+          var link = document.createElement('a');
+          link.href = url;
+          link.download = 'sketch.png';
+          link.click();
+          URL.revokeObjectURL(url);
+        });
+      </script>
+    </body>)");
+    CHECK(page.script_error().empty());
+    // toBlob is asynchronous - a page that wraps it in a promise depends on the
+    // callback landing after the call returns - so the loop has to run.
+    for (int frame = 0; frame < 4; ++frame) { page.tick(16); }
+
+    const std::string blob_line = logged(page);
+    CHECK(blob_line.find("image/png true") != std::string::npos);
+    CHECK(page.downloads().size() == 1);
+    if (page.downloads().size() == 1) {
+        const auto & saved = page.downloads().front();
+        CHECK(saved.name == "sketch.png");
+        CHECK(saved.written);
+        // A real PNG of a real 8x8 canvas: the header alone is 8 + 25 bytes, and
+        // 64 RGBA pixels plus filter bytes cannot be smaller than 264.
+        CHECK(saved.bytes > 300);
+        // And it is on the disk where it said it was, at the size it said.
+        std::ifstream from_disk{saved.path, std::ios::binary | std::ios::ate};
+        CHECK(from_disk.good());
+        if (from_disk) { CHECK(static_cast<std::size_t>(from_disk.tellg()) == saved.bytes); }
+    }
+}
+
+// A DOWNLOAD NAME IS A NAME, NOT A PATH. `download="../../x"` is a page choosing
+// where to write on the host, and it does not get to.
+void test_a_download_cannot_escape_its_directory() {
+    ctbrowser::browser page{{.width = 60, .height = 40}};
+    page.set_download_directory("build/downloads");
+    page.load_html(R"(<body><script>
+      var url = URL.createObjectURL(new Blob(['x']));
+      var link = document.createElement('a');
+      link.href = url;
+      link.download = '../../escaped.txt';
+      link.click();
+    </script></body>)");
+    CHECK(page.script_error().empty());
+    CHECK(page.downloads().size() == 1);
+    if (!page.downloads().empty()) {
+        CHECK(page.downloads().front().name == ".._.._escaped.txt");
+        CHECK(page.downloads().front().path.find("build/downloads") != std::string::npos);
+    }
+}
+
+// `toDataURL` is the other way out, and the one a page puts in an <img src>.
+void test_to_data_url() {
+    ctbrowser::browser page{{.width = 60, .height = 40}};
+    page.load_html(R"(<body>
+      <canvas id='c' width='4' height='4'></canvas>
+      <script>
+        var url = document.getElementById('c').toDataURL();
+        console.log(url.slice(0, 22) + '|len=' + (url.length > 60));
+        // A round trip: the base64 in the URL decodes to a PNG signature.
+        var raw = atob(url.slice('data:image/png;base64,'.length));
+        console.log('sig=' + raw.charCodeAt(0) + ',' + raw.charCodeAt(1) +
+                    raw.charCodeAt(2) + raw.charCodeAt(3));
+      </script>
+    </body>)");
+    CHECK(page.script_error().empty());
+    // 137 80 78 71 is the PNG signature, and reading it back through atob
+    // proves the base64 is bytes rather than text.
+    CHECK(logged(page) == "data:image/png;base64,|len=true|sig=137,807871");
+}
+
 void test_fetch_from_registry() {
     ctbrowser::browser page{{.width = 100, .height = 60}};
     page.assets().add("https://example.invalid/data.json",
@@ -389,6 +510,10 @@ int main() {
     test_img_sizing_rules();
     test_script_images();
     test_img_in_canvas_from_element();
+    test_encode_png();
+    test_export_writes_a_file();
+    test_a_download_cannot_escape_its_directory();
+    test_to_data_url();
     test_blob_object_url_and_image();
     test_image_load_failure_is_reported();
     test_a_constructed_image_is_an_element();

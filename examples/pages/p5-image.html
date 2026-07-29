@@ -1,0 +1,98 @@
+<!doctype html>
+<!-- p5.js images: the loading chain, end to end and on screen.
+
+     `loadImage` is not one feature. It fetches bytes, wraps them in a Blob,
+     makes an object URL, points an `Image` at it, waits for onload, revokes the
+     URL and only then draws the image into its own canvas. Every one of those
+     has to work, and a failure in any of them produces the same thing on screen:
+     nothing, with no error.
+
+     So this page is deliberately not just "draw the sprite". It draws it at its
+     natural size, scaled, and through a source rectangle; it reads pixels back
+     out of the loaded image with get(); and it composites the image onto an
+     offscreen buffer and draws THAT. If the bytes were empty, if the decode gave
+     the wrong dimensions, or if the object URL was revoked before the decode was
+     cached, this page is blank where it should not be.
+
+     BMP, not PNG. sprites.bmp decodes in the engine itself, so this golden means
+     the same thing on a build with SDL3_image and one without - which
+     examples/pages/image-formats.html is the page for. -->
+<html>
+  <head>
+    <!-- p5.js has identifiers written in Greek - `const π = Math.PI` - so the
+         file is UTF-8 and the page has to say so. Without this a browser
+         guesses, and one that guesses Latin-1 splits that identifier in two
+         and rejects the whole bundle with a syntax error 7,000 lines in. -->
+    <meta charset="utf-8">
+    <script>var IS_MINIFIED = true;</script>
+    <script src="examples/assets/p5.js"></script>
+  </head>
+  <body style="margin:0;background:#ffffff">
+    <script>
+      new p5(function (s) {
+        let sprites = null;
+
+        // `setup` is async and p5 awaits it, which is how a 2.x sketch loads
+        // anything: there is no preload() any more.
+        s.setup = async function () {
+          s.createCanvas(300, 200);
+          s.pixelDensity(1);
+          s.noLoop();
+          sprites = await s.loadImage('examples/assets/sprites.bmp');
+          // The load has to have produced real dimensions, or everything below
+          // draws nothing at a plausible-looking position.
+          s.redraw();
+        };
+
+        s.draw = function () {
+          s.background(238);
+          if (!sprites) { return; }
+
+          s.noSmooth();
+
+          // 1. Natural size, top left. 24x8, so it is small on purpose - a
+          //    scaled draw that happened to work would hide a wrong decode.
+          s.image(sprites, 10, 10);
+
+          // 2. Scaled up 6x, so every pixel of the source is visible and a
+          //    channel swap or a row flip is obvious rather than subtle.
+          s.image(sprites, 10, 30, sprites.width * 6, sprites.height * 6);
+
+          // 3. Through a SOURCE RECTANGLE: the middle third only, scaled.
+          s.image(sprites, 170, 30, 48, 48, 8, 0, 8, 8);
+
+          // 4. The pixels read back out of the loaded image, drawn as swatches.
+          //    get() on a p5.Image goes through its own canvas rather than the
+          //    sketch's, which is a different path from p5-pixels.html.
+          for (let i = 0; i < 6; i++) {
+            const c = sprites.get(i * 4 + 1, 4);
+            s.fill(c);
+            s.stroke(40);
+            s.strokeWeight(1);
+            s.rect(10 + i * 30, 96, 24, 24);
+          }
+
+          // 5. Composited into an OFFSCREEN buffer and drawn from there, which
+          //    is drawImage from one surface to another with the image in the
+          //    middle.
+          const buffer = s.createGraphics(120, 40);
+          buffer.background(20, 30, 60);
+          buffer.image(sprites, 4, 4, 112, 32);
+          s.image(buffer, 10, 136);
+
+          // 6. tint(), which multiplies the image as it is drawn - so this is
+          //    the same bytes through a different blend.
+          s.tint(255, 120, 120);
+          s.image(sprites, 150, 136, 120, 40);
+          s.noTint();
+
+          // A frame, so a page that drew nothing at all is still distinguishable
+          // from a page that failed to render.
+          s.noFill();
+          s.stroke(120);
+          s.rect(0.5, 0.5, s.width - 1, s.height - 1);
+        };
+      });
+    </script>
+  </body>
+</html>

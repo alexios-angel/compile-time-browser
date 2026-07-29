@@ -648,6 +648,8 @@ void browser::run_scripts() {
     bindings_->observe_viewport(options_.width, options_.height);
     bindings_->observe_resources(assets_, images_);
     bindings_->allow_network(network_allowed_);
+    // `element.click()` performs the default action, which is the browser's half.
+    bindings_->set_activate_hook([this](node_id id) { activate(id); });
     bindings_->set_alert_hook([this](const std::string & message) {
         alerts_.push_back(message);
         if (alert_hook_) { alert_hook_(message); }
@@ -1905,16 +1907,22 @@ bool browser::toggle_details(node_id target) {
 
 bool browser::follow_link(node_id target) {
     std::string href;
+    std::string download;
+    bool has_download = false;
     {
         const auto txn = doc_->read();
         const atom anchor = atoms_.intern_lower("a");
         const atom attribute = atoms_.intern("href");
+        const atom download_attribute = atoms_.intern("download");
         for (node_id at = target; at; at = txn.parent(at)) {
             if (txn.tag(at).value_or(atom{}) != anchor) { continue; }
             href = txn.attribute_value(at, attribute);
+            has_download = txn.has_attribute(at, download_attribute);
+            download = txn.attribute_value(at, download_attribute);
             break;
         }
     }
+    if (has_download && save_download(href, download)) { return true; }
     if (href.empty()) { return false; }
     location_href_ = href;
     if (href.front() == '#') {
@@ -1928,6 +1936,60 @@ bool browser::follow_link(node_id target) {
     location_hash_.clear();
     bindings_->observe_location(location_href_, location_hash_);
     if (navigate_hook_) { navigate_hook_(href); }
+    return true;
+}
+
+// AN `<a download>` WRITES A FILE. THIS IS A DELIBERATE DEVIATION, and it is the
+// one place this engine invents a behaviour rather than copying one.
+//
+// A browser would show a save dialog. There is nobody to show one to here, and
+// the alternative - doing nothing - makes every export silently fail, which is
+// exactly the failure this codebase keeps finding and refusing to ship. p5's
+// save(), saveCanvas(), saveJSON(), saveStrings() and saveTable() all end in
+// downloadFile: a Blob, an object URL, an <a href download>, click(), revoke.
+// So the choice is between a file appearing and the whole export API being a
+// no-op with no message.
+//
+// The bytes come from the asset registry, which is where createObjectURL put
+// them - so this needs no knowledge of blobs and works for any href the registry
+// resolves. It is called BEFORE the navigation, because a download is not one.
+//
+// The directory is set by the embedder (set_download_directory). The default is
+// the process's working directory, the same place a command-line tool writes.
+// Every download is recorded in downloads() whether or not the write succeeds,
+// so a test can assert on it without reading the disk and a page's export is
+// visible even in a sandbox.
+bool browser::save_download(const std::string & href, const std::string & suggested) {
+    if (href.empty()) { return false; }
+    std::vector<std::byte> bytes = assets_.load(href);
+    // A name the page asked for, else the last path segment, else something.
+    std::string name = suggested;
+    if (name.empty()) {
+        const std::size_t slash = href.find_last_of("/\\");
+        name = slash == std::string::npos ? href : href.substr(slash + 1);
+    }
+    // A NAME AND NOT A PATH. `download="../../etc/passwd"` is a page choosing
+    // where to write on the host, which it does not get to do.
+    for (char & c : name) {
+        if (c == '/' || c == '\\' || c == ':') { c = '_'; }
+    }
+    if (name.empty() || name == "." || name == "..") { name = "download"; }
+
+    const std::filesystem::path where =
+        (download_directory_.empty() ? std::filesystem::path{"."} : download_directory_) / name;
+    bool written = false;
+    if (!bytes.empty()) {
+        std::error_code ignored;
+        std::filesystem::create_directories(where.parent_path(), ignored);
+        std::ofstream out{where, std::ios::binary};
+        if (out) {
+            out.write(reinterpret_cast<const char *>(bytes.data()),
+                      static_cast<std::streamsize>(bytes.size()));
+            written = out.good();
+        }
+    }
+    downloads_.push_back(download_record{name, where.string(), bytes.size(), written});
+    if (download_hook_) { download_hook_(downloads_.back()); }
     return true;
 }
 

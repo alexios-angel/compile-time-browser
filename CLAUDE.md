@@ -40,6 +40,10 @@ gate and CI runs it.
   clicks and keystrokes, live, so parity can be seen rather than guessed.
   `--headed --delay` makes it watchable; `examples/ctdrive.cpp` is the
   ctbrowser half. See `docs/build.md`.
+- `tools/check-png.py` — decodes a PNG this engine wrote using Python's own
+  zlib. `encode_png` uses STORED deflate blocks and no compression library, so
+  "the chunk names look right" is not evidence; the CRCs and the Adler-32 are
+  silent when wrong.
 - `tools/format.sh`, `tools/check-package.sh`, `tools/check-render.cmake`,
   `tools/remote-build.sh`.
 

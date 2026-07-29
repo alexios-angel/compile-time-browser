@@ -159,6 +159,10 @@ void dom_bindings::register_roots(context & cx) {
         for (const auto & [packed, obj] : wrappers_) {
             if (obj != nullptr) { mark(value::object(obj)); }
         }
+        // Blob.prototype is held here as well as on the global, and the global
+        // is what keeps it alive - but a page can delete a global, and a Blob
+        // whose prototype was collected stops being `instanceof Blob`.
+        mark(blob_prototype_);
         mark(location_);
         mark(document_);
         mark(window_);
@@ -647,6 +651,31 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     };
     reflect_string("id", "id");
     reflect_string("className", "class");
+    // THE REST OF THE ORDINARY IDL ATTRIBUTES, and leaving them out was the same
+    // one-way bug as `id` used to be: `link.href = url` set a property on the
+    // wrapper that no attribute, no layout and no default action ever read.
+    //
+    // That is what made p5's export do nothing. downloadFile builds `<a href
+    // download>` entirely from script, so BOTH attributes were invisible - the
+    // click found an anchor with no href and no download and treated it as a
+    // click on nothing.
+    //
+    // Named rather than generic, because reflection is per element in the spec
+    // and a made-up `el.foo = 1` must NOT become an attribute. These are the ones
+    // a page assigns.
+    for (const auto & [property, attribute] :
+         std::initializer_list<std::pair<const char *, const char *>>{
+             {"href", "href"},
+             {"download", "download"},
+             {"target", "target"},
+             {"rel", "rel"},
+             {"alt", "alt"},
+             {"title", "title"},
+             {"name", "name"},
+             {"placeholder", "placeholder"},
+             {"htmlFor", "for"}}) {
+        reflect_string(property, attribute);
+    }
 
     // `innerHTML` and `textContent` are ACCESSORS over the tree, not properties
     // on the wrapper. As properties, assigning markup stored a string, built no
@@ -937,6 +966,27 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         obj.set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
     };
 
+    // `element.click()` - CLICKING WITHOUT A MOUSE.
+    //
+    // It was absent, and that is how p5's save() reaches the outside world:
+    // downloadFile makes an <a href download>, calls click() on it, and revokes
+    // the URL on the next line. So the whole export path was one missing method
+    // wide, and the failure was that nothing happened - no error, no file.
+    //
+    // Both halves, in the right order: the event first, through the ordinary
+    // capture-and-bubble dispatch, and the DEFAULT ACTION after it unless a
+    // listener called preventDefault. A click() that only dispatched would leave
+    // `link.click()` doing nothing and `checkbox.click()` not checking anything.
+    method("click", [this](context & c, std::span<value> args) {
+        (void)args;
+        const node_id id = receiver(c);
+        if (!id) { return value::undefined(); }
+        if (!dispatch_event("click", id, make_event(c, "click", id)) && on_activate_) {
+            on_activate_(id);
+        }
+        return value::undefined();
+    });
+
     method("setAttribute", [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         if (!id) { return value::undefined(); }
@@ -1191,6 +1241,74 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         // this call and would take the WebGL path into a dead end.
         if (!id || arg_string(c, args, 0) != "2d") { return value::null(); }
         return canvas_context_object(c, id);
+    });
+
+    // `canvas.toDataURL()` and `canvas.toBlob()` - READING A CANVAS BACK OUT.
+    //
+    // Both mean PNG: that is what p5's save() asks for, and encode_png writes one
+    // with no compression library (see shell/images.hpp). A `type` argument
+    // naming anything else still gets PNG rather than a lie about the format -
+    // the data URL says image/png, so a page that reads it back is not misled.
+    const auto canvas_bytes = [this](context & c) -> std::vector<std::byte> {
+        const node_id id = receiver(c);
+        if (!id || canvases_ == nullptr) { return {}; }
+        // context_for, not pixels_of: a canvas nobody asked getContext of has no
+        // surface yet, and a browser still gives you a transparent PNG of the
+        // right size rather than nothing. An empty answer here would look like a
+        // broken encoder.
+        const auto number = [&](std::string_view name, int fallback) {
+            const auto txn = doc_->read();
+            const std::string_view text = txn.attribute_value(id, atoms_->intern(name));
+            int out = 0;
+            bool any = false;
+            for (const char digit : text) {
+                if (digit < '0' || digit > '9') { break; }
+                out = out * 10 + (digit - '0');
+                any = true;
+            }
+            return any ? out : fallback;
+        };
+        (void)canvases_->context_for(id, number("width", 300), number("height", 150));
+        const std::shared_ptr<const paint::bitmap> pixels = canvases_->pixels_of(id);
+        return pixels ? encode_png(*pixels) : std::vector<std::byte>{};
+    };
+    method("toDataURL", [canvas_bytes](context & c, std::span<value>) {
+        const std::vector<std::byte> png = canvas_bytes(c);
+        std::string binary;
+        binary.reserve(png.size());
+        for (const std::byte b : png) { binary += static_cast<char>(b); }
+        // Through the standard library's own btoa, so ONE base64 encoder decides
+        // what this means here.
+        const value encoder = c.global("btoa");
+        if (!encoder.is_callable()) { return c.string("data:image/png;base64,"); }
+        const value text = c.string(binary);
+        const value args[1] = {text};
+        return c.string("data:image/png;base64," + c.to_string(c.call(encoder, args)));
+    });
+    method("toBlob", [this, canvas_bytes](context & c, std::span<value> args) {
+        const value callback = arg(args, 0);
+        if (!callback.is_callable()) { return value::undefined(); }
+        std::vector<std::byte> png = canvas_bytes(c);
+        auto * blob = static_cast<script::object_object *>(c.make_object().as_heap());
+        value bytes = c.make_array();
+        auto * out = static_cast<script::array_object *>(bytes.as_heap());
+        out->elements = script::element_kind::u8;
+        out->items.reserve(png.size());
+        for (const std::byte b : png) {
+            out->items.push_back(value::number(static_cast<double>(static_cast<unsigned char>(b))));
+        }
+        blob->set("size", value::number(static_cast<double>(png.size())));
+        blob->set("type", c.string("image/png"));
+        blob->set("__bytes", bytes);
+        if (blob_prototype_.is_object()) {
+            blob->prototype = blob_prototype_; // so `x instanceof Blob` is true
+        }
+        // QUEUED, not called: toBlob is asynchronous, and a page that wraps it in
+        // a promise - which is what p5's p5.Image.toBlob does - depends on the
+        // callback landing after the call returns.
+        const value blob_value = value::object(blob);
+        c.queue_microtask(callback, std::vector<value>{blob_value});
+        return value::undefined();
     });
 }
 
@@ -2236,45 +2354,57 @@ void dom_bindings::install_window(context & cx) {
     // a synthetic `blob:` name - so every path that already resolves a URL
     // resolves this one: `<img src>`, `fetch()`, and p5's loaders. One mechanism
     // instead of three, and nothing had to learn a new kind of URL.
-    cx.define_native("Blob", [](context & c, std::span<value> a) {
-        auto * blob = static_cast<script::object_object *>(c.make_object().as_heap());
-        // `new Blob([parts], { type })`. A part is a string or something with
-        // bytes - a typed array, another Blob - which is what a page actually
-        // passes: `new Blob([data], { type: contentType })`.
-        value bytes = c.make_array();
-        auto * out = static_cast<script::array_object *>(bytes.as_heap());
-        out->elements = script::element_kind::u8;
-        if (!a.empty() && a[0].is_array()) {
-            for (const value & part : static_cast<script::array_object *>(a[0].as_heap())->items) {
-                if (part.is_string()) {
-                    for (const char ch : c.to_string(part)) {
-                        out->items.push_back(
-                            value::number(static_cast<double>(static_cast<unsigned char>(ch))));
+    // A PROTOTYPE, so `x instanceof Blob` is true. p5's downloadFile branches on
+    // exactly that - `if (!(saveData instanceof Blob)) saveData = new Blob([data])`
+    // - and got the wrong branch, wrapping a Blob in another Blob and copying
+    // every byte of an exported image for nothing.
+    auto * blob_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    blob_prototype_ = value::object(blob_proto);
+    const value blob_prototype = blob_prototype_;
+    auto * blob_ctor = cx.allocate<script::native_object>(
+        "Blob", [blob_prototype](context & c, std::span<value> a) {
+            auto * blob = static_cast<script::object_object *>(c.make_object().as_heap());
+            blob->prototype = blob_prototype;
+            // `new Blob([parts], { type })`. A part is a string or something with
+            // bytes - a typed array, another Blob - which is what a page actually
+            // passes: `new Blob([data], { type: contentType })`.
+            value bytes = c.make_array();
+            auto * out = static_cast<script::array_object *>(bytes.as_heap());
+            out->elements = script::element_kind::u8;
+            if (!a.empty() && a[0].is_array()) {
+                for (const value & part :
+                     static_cast<script::array_object *>(a[0].as_heap())->items) {
+                    if (part.is_string()) {
+                        for (const char ch : c.to_string(part)) {
+                            out->items.push_back(
+                                value::number(static_cast<double>(static_cast<unsigned char>(ch))));
+                        }
+                        continue;
                     }
-                    continue;
-                }
-                // A typed array is bytes already; a Blob carries them in the
-                // same slot this one does.
-                value inner = part;
-                if (part.is_object()) { inner = c.lookup_property(part, "__bytes"); }
-                if (inner.is_array()) {
-                    for (const value & b :
-                         static_cast<script::array_object *>(inner.as_heap())->items) {
-                        out->items.push_back(b);
+                    // A typed array is bytes already; a Blob carries them in the
+                    // same slot this one does.
+                    value inner = part;
+                    if (part.is_object()) { inner = c.lookup_property(part, "__bytes"); }
+                    if (inner.is_array()) {
+                        for (const value & b :
+                             static_cast<script::array_object *>(inner.as_heap())->items) {
+                            out->items.push_back(b);
+                        }
                     }
                 }
             }
-        }
-        std::string type;
-        if (a.size() > 1 && a[1].is_object()) {
-            const value given = c.lookup_property(a[1], "type");
-            if (!given.is_undefined()) { type = c.to_string(given); }
-        }
-        blob->set("size", value::number(static_cast<double>(out->items.size())));
-        blob->set("type", c.string(type));
-        blob->set("__bytes", bytes);
-        return value::object(blob);
-    });
+            std::string type;
+            if (a.size() > 1 && a[1].is_object()) {
+                const value given = c.lookup_property(a[1], "type");
+                if (!given.is_undefined()) { type = c.to_string(given); }
+            }
+            blob->set("size", value::number(static_cast<double>(out->items.size())));
+            blob->set("type", c.string(type));
+            blob->set("__bytes", bytes);
+            return value::object(blob);
+        });
+    blob_ctor->set("prototype", blob_prototype_);
+    cx.define_global("Blob", value::object(blob_ctor));
 
     {
         auto * url = static_cast<script::object_object *>(cx.make_object().as_heap());
