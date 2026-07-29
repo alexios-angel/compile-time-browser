@@ -69,12 +69,18 @@ one does; `tests/vm_basics` has a test per language feature.
 
 ## WHAT p5.js NEEDED (2026-07-29)
 
-**p5.js v2.3.1 runs** — 4.5 MB and 138,938 lines that nobody wrote for this
-engine. It lexes, parses (282,028 nodes), compiles (4,754 functions), executes
+**p5.js v2.3.1 runs, in BOTH builds** — 4.5 MB and 138,938 lines that nobody
+wrote for this engine. It lexes, parses (282,028 nodes), compiles (4,754 functions), executes
 its whole top-level IIFE, builds a sketch, runs `setup()`, drives `draw()` from
 `requestAnimationFrame`, and paints. `tests/p5_ratchet.cpp` measures how far it
 gets on a ladder of 12 rungs and `tests/p5-ratchet.txt` records the high-water
-mark; the level may not go down. `tools/p5-ratchet.py --survey` measures each of
+mark; the level may not go down. TWO numbers are recorded, each with its own
+pawl: `level` is p5-min, where the page defines `IS_MINIFIED` as p5's own
+minified build does, and `full-level` is the same ladder with the flag left
+undefined - the Friendly Error System and i18next's setup both in play. Both
+read 12, and neither reaches the network. "p5 runs" is a different claim when
+half of p5 is switched off, which is why the second one is measured rather than
+assumed. `tools/p5-ratchet.py --survey` measures each of
 the bundle's 71 rollup modules independently, `--bisect NAME` carves one out as
 a reproducer, and `--source N` prints the text of compiled function N - a stack
 trace names functions as `fn#3778`, and most of a bundle's functions are
@@ -118,6 +124,12 @@ lookup.
 - `arguments` did not exist, and when first added was materialised where the
   name was MENTIONED - by then the surrounding expression had reused the
   registers holding the arguments past the last declared parameter.
+- A name used ONLY inside a template substitution was never captured. A
+  template is one node carrying its whole source, so every walk over the tree
+  was blind to the holes - including the two that decide whether a local is
+  boxed. The nested function resolved the name as a global and read undefined.
+  And a hole was parsed in STATEMENT context, so `${ {v: 1}.v }` read its object
+  literal as a block.
 
 **Calling a non-function is a catchable `TypeError`** rather than the end of the
 run. Pages catch it — feature detection is written as `try { thing() } catch {}`

@@ -57,14 +57,26 @@ def run(args=()):
 
 
 def parse_output(out):
-    level, blocker = None, None
+    """The measured level and blocker, for each of the two modes.
+
+    p5-min is the ladder the bundle is normally measured on; p5-full runs the
+    same ladder with IS_MINIFIED left undefined, so the Friendly Error System
+    and i18next's setup are in play. Returns (level, blocker, full, full_blocker)
+    with the full pair None when only one mode was run - --bisect and --survey
+    measure a fragment, which has no modes.
+    """
+    level, blocker, full, full_blocker = None, None, None, None
     for line in out.splitlines():
         line = line.strip()
-        if line.startswith("LEVEL "):
+        if line.startswith("FULL LEVEL "):
+            full = int(line.split()[2].split("/")[0])
+        elif line.startswith("FULL BLOCKER "):
+            full_blocker = line[len("FULL BLOCKER "):]
+        elif line.startswith("LEVEL "):
             level = int(line.split()[1].split("/")[0])
         elif line.startswith("BLOCKER "):
             blocker = line[len("BLOCKER "):]
-    return level, blocker
+    return level, blocker, full, full_blocker
 
 
 def show_context(blocker, path=BUNDLE, span=10):
@@ -134,7 +146,7 @@ def do_bisect(name):
     build()
     out, _ = run([str(fragment)])
     print(out)
-    _, blocker = parse_output(out)
+    _, blocker, _, _ = parse_output(out)
     show_context(blocker)
 
 
@@ -161,7 +173,7 @@ def do_survey():
     results = []
     for name, where in sorted(found.items(), key=lambda kv: kv[1][2]):
         out, _ = run([str(carve(text, name, where))])
-        level, blocker = parse_output(out)
+        level, blocker, _, _ = parse_output(out)
         results.append((name, where[2], level, blocker or ""))
 
     ceiling = max((lvl for _, _, lvl, _ in results if lvl is not None), default=0)
@@ -193,23 +205,44 @@ def do_survey():
 
 def do_advance():
     out, _ = run()
-    level, blocker = parse_output(out)
+    level, blocker, full, full_blocker = parse_output(out)
     if level is None:
         sys.exit("p5-ratchet: could not read a level from the test:\n" + out)
 
     old = RECORD.read_text() if RECORD.exists() else ""
-    was = re.search(r"^level=(\d+)$", old, re.M)
-    if was and int(was.group(1)) > level:
-        sys.exit(f"p5-ratchet: refusing to advance BACKWARDS, {was.group(1)} -> {level}.\n"
-                 f"The pawl only turns one way. Fix the regression.")
+
+    def forward(key, measured):
+        """Refuse to move a recorded number backwards. The pawl turns one way."""
+        was = re.search(rf"^{key}=(\d+)$", old, re.M)
+        if was and measured is not None and int(was.group(1)) > measured:
+            sys.exit(f"p5-ratchet: refusing to advance {key} BACKWARDS, "
+                     f"{was.group(1)} -> {measured}.\nThe pawl only turns one way. "
+                     f"Fix the regression.")
+
+    forward("level", level)
+    forward("full-level", full)
 
     text = re.sub(r"^level=.*$", f"level={level}", old, flags=re.M)
     text = re.sub(r"^blocker=.*$", f"blocker={blocker or ''}", text, flags=re.M)
+    if full is not None:
+        # Added rather than replaced when the file predates the second mode, so
+        # an older record is upgraded instead of silently losing the number.
+        if re.search(r"^full-level=", text, re.M):
+            text = re.sub(r"^full-level=.*$", f"full-level={full}", text, flags=re.M)
+            text = re.sub(r"^full-blocker=.*$", f"full-blocker={full_blocker or ''}", text,
+                          flags=re.M)
+        else:
+            text = text.rstrip() + f"\nfull-level={full}\nfull-blocker={full_blocker or ''}\n"
     RECORD.write_text(text)
     name = LEVELS[level] if level < len(LEVELS) else "?"
     print(f"p5-ratchet: recorded level={level} ({name})")
     if blocker:
         print(f"            blocker={blocker}")
+    if full is not None:
+        full_name = LEVELS[full] if full < len(LEVELS) else "?"
+        print(f"            full-level={full} ({full_name})")
+        if full_blocker:
+            print(f"            full-blocker={full_blocker}")
 
 
 def main():
@@ -239,7 +272,7 @@ def main():
 
     out, code = run()
     print(out)
-    _, blocker = parse_output(out)
+    _, blocker, _, _ = parse_output(out)
     show_context(blocker)
     if code != 0:
         print("The ratchet is not satisfied. If this is progress, "

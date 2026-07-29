@@ -18,14 +18,18 @@ blocker=
 # Ratchet it down as those are fixed.
 budget-ms=120000
 
-# MODE: p5-min. The page defines `IS_MINIFIED`, which is what p5's own
-# minified build defines - it collapses the Friendly Error System and an
-# i18next initialize() that fetches from cdn.jsdelivr.net, and a page in this
-# tree has to render identically with the network off.
+# TWO MODES, each with its own pawl.
 #
-# p5-full is NOT at 12 and is not measured here yet. Without IS_MINIFIED the
-# bundle reaches i18next's setup and stops inside it; `location`'s URL parts
-# and `document.cookie` were two of the things it wanted and now exist, and
-# what remains is a stack of its own. Recording the gap rather than the
-# number, because a mode that is not measured should not look like one that
-# passes.
+# `level` is p5-min: the page defines `IS_MINIFIED`, which is what p5's own
+# minified build defines. It collapses the Friendly Error System and an
+# i18next initialize() that fetches a catalogue from cdn.jsdelivr.net.
+#
+# `full-level` is the SAME ladder with the flag left undefined, so the error
+# system and the translator setup are both in play. Neither mode reaches the
+# network - the fetch is guarded, and a test that reached out would fail for
+# reasons that have nothing to do with this code.
+#
+# Both read 12. "p5 runs" is a different claim when half of p5 is switched
+# off, which is why the second number is measured rather than assumed.
+full-level=12
+full-blocker=

@@ -222,7 +222,7 @@ private:
     return {};
 }
 
-[[nodiscard]] measurement measure(const std::string & source) {
+[[nodiscard]] measurement measure(const std::string & source, bool minified = true) {
     measurement m;
     stopwatch clock;
 
@@ -319,12 +319,15 @@ private:
     // translator promise becomes `Promise.resolve()` and the FES never
     // installs.
     //
-    // So this is the `p5-min` rung. Running the full build - fetch, FES and all
-    // - is a later one, and it is a different question from whether the engine
-    // can run p5 at all. A test that reaches the network fails for reasons that
-    // have nothing to do with this code, which is why CTBROWSER_NETWORK=0
-    // exists everywhere else in this tree.
-    page.load_html(R"(<html><head><script>var IS_MINIFIED = true;</script>)"
+    // So `minified` picks the RUNG. p5-min is the one the ladder is recorded
+    // against; p5-full runs the same ladder with the flag left undefined, which
+    // takes the bundle through the Friendly Error System and i18next's setup.
+    // Neither reaches the network: the fetch is guarded, and a test that
+    // reached out would fail for reasons that have nothing to do with this
+    // code, which is why CTBROWSER_NETWORK=0 exists everywhere else here.
+    const std::string prelude =
+        minified ? R"(<script>var IS_MINIFIED = true;</script>)" : std::string{};
+    page.load_html("<html><head>" + prelude +
                    R"(<script src="p5.js"></script></head><body></body></html>)");
     m.run_ms = clock.lap();
     std::printf("     page    %7.1f ms\n", m.run_ms);
@@ -468,6 +471,12 @@ private:
 struct recorded {
     int level = level_unread;
     std::string blocker;
+    // The SAME ladder with IS_MINIFIED left undefined, which takes the bundle
+    // through the Friendly Error System and i18next's setup. A second number
+    // rather than a second file: it is the same measurement of the same bundle,
+    // and one of them being behind is exactly what wants to be visible.
+    int full_level = level_unread;
+    std::string full_blocker;
     double budget_ms = 0;
     bool found = false;
 };
@@ -486,6 +495,8 @@ struct recorded {
         const std::string val = line.substr(equals + 1);
         if (key == "level") { r.level = std::atoi(val.c_str()); }
         if (key == "blocker") { r.blocker = val; }
+        if (key == "full-level") { r.full_level = std::atoi(val.c_str()); }
+        if (key == "full-blocker") { r.full_blocker = val; }
         if (key == "budget-ms") { r.budget_ms = std::atof(val.c_str()); }
     }
     return r;
@@ -572,11 +583,21 @@ int main(int argc, char ** argv) {
         return 0; // a reproducer reports; it does not judge
     }
 
+    // AND AGAIN WITHOUT `IS_MINIFIED`. Same bundle, same ladder, the full
+    // build - the error system and the translator setup included. Measured
+    // second because it is the slower of the two and the one more likely to
+    // stop early; measured at all because "p5 runs" is a different claim when
+    // half of p5 is switched off.
+    std::printf("\n     --- p5-full (IS_MINIFIED undefined) ---\n");
+    const measurement full = measure(source, false);
+
     const recorded r = read_ratchet("tests/p5-ratchet.txt");
 
     std::printf("\n     LEVEL %d/%d (%s)\n", m.level, level_ceiling, level_name(m.level));
     if (!m.blocker.empty()) { std::printf("     BLOCKER %s\n", m.blocker.c_str()); }
     if (!m.trace.empty()) { std::printf("%s\n", m.trace.c_str()); }
+    std::printf("     FULL LEVEL %d/%d (%s)\n", full.level, level_ceiling, level_name(full.level));
+    if (!full.blocker.empty()) { std::printf("     FULL BLOCKER %s\n", full.blocker.c_str()); }
     std::printf("\n");
 
     if (!r.found) {
@@ -600,6 +621,23 @@ int main(int argc, char ** argv) {
         std::printf("     now:      %s\n", m.blocker.c_str());
         std::printf("     recorded: %s\n", r.blocker.c_str());
         std::printf("     If this is progress, run tools/p5-ratchet.py --advance\n");
+        ++ctbrowser_test_failures;
+    }
+
+    // The full build gets its own pawl, on the same terms.
+    if (full.level < r.full_level) {
+        std::printf("FAIL p5-full REGRESSED: level %d (%s), was %d (%s)\n", full.level,
+                    level_name(full.level), r.full_level, level_name(r.full_level));
+        std::printf("     now stops at: %s\n", full.blocker.c_str());
+        ++ctbrowser_test_failures;
+    } else if (full.level > r.full_level) {
+        std::printf("     ADVANCE: p5-full level %d -> %d (%s). Run tools/p5-ratchet.py "
+                    "--advance\n",
+                    r.full_level, full.level, level_name(full.level));
+    } else if (full.blocker != r.full_blocker) {
+        std::printf("FAIL p5-full at the same level %d with a different blocker\n", full.level);
+        std::printf("     now:      %s\n", full.blocker.c_str());
+        std::printf("     recorded: %s\n", r.full_blocker.c_str());
         ++ctbrowser_test_failures;
     }
 

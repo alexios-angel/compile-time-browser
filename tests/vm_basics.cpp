@@ -1583,6 +1583,35 @@ void test_spread() {
 // undefined compares equal to the other undefined it is being tested against -
 // so a plain string reported itself as an instance of a colour space, and every
 // conversion through it silently handed the string straight back.
+// A NAME USED ONLY INSIDE A TEMPLATE HOLE IS STILL CAPTURED.
+//
+// A template literal is ONE node carrying its whole source, substitutions
+// included - the parser does not break them out into children - so every walk
+// over the tree was blind to them. The two that matter decide whether a local
+// is BOXED and whether `arguments` is materialised, and a name that appeared
+// only in a hole was invisible to both: the enclosing frame never boxed it, the
+// nested function resolved it as a global, and it read undefined. p5.js builds
+// its CDN url that way, with the version number in a hole.
+void test_template_holes_capture() {
+    expect_result("const V = '1.2.3'; const f = function () { return `v=${V}`; }; return f();",
+                  "v=1.2.3");
+    expect_result("const n = 7; const f = () => `n=${n * 2}`; return f();", "n=14");
+    // ...and the capture is a real one, so a mutation through the hole reaches
+    // the enclosing local rather than a copy.
+    expect_result("let c = 0; const bump = function () { return `c=${++c}`; };"
+                  "bump(); bump(); return c;",
+                  "2");
+    // Nested braces inside a hole must not end it early.
+    expect_result("const o = { a: 1 }; const f = function () { return `x=${ {v: o.a}.v }`; };"
+                  "return f();",
+                  "x=1");
+    // `arguments` only inside a hole still materialises it.
+    expect_result(
+        "function f() { const g = function () { return 1; }; return `n=${arguments.length}`; }"
+        "return f(1, 2, 3);",
+        "n=3");
+}
+
 void test_type_identification() {
     expect_result("return Object.getPrototypeOf('x') === String.prototype;", "true");
     expect_result("return Object.getPrototypeOf(1) === Number.prototype;", "true");
@@ -2039,6 +2068,7 @@ int main() {
     test_bitwise_and_friends();
     test_delete_in_instanceof();
     test_object_literal_keys();
+    test_template_holes_capture();
     test_type_identification();
     test_type_tags();
     test_calling_a_non_function_throws();

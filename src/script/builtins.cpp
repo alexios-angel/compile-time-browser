@@ -83,6 +83,12 @@ namespace detail {
 inline void method(context & cx, object_object * table, std::string name, native_fn fn) {
     table->set(name, value::object(cx.allocate<native_object>(name, std::move(fn))));
 }
+// The same, on a NATIVE. A built-in that is both callable and a namespace -
+// `Object(x)` coerces and `Object.keys` is a static - has to be a native
+// carrying properties, and its statics are installed exactly like a table's.
+inline void method(context & cx, native_object * table, std::string name, native_fn fn) {
+    table->set(name, value::object(cx.allocate<native_object>(name, std::move(fn))));
+}
 
 // --- promises ---------------------------------------------------------------
 //
@@ -1696,7 +1702,20 @@ void install_object(context & cx) {
     });
     cx.set_prototype(context::proto_kind::object, object_proto);
 
-    object_object * object_ctor = new_table(cx);
+    // `Object` IS CALLABLE. `Object(x)` coerces to an object and is what a
+    // spread helper reaches for - Babel's `_objectSpread` opens with
+    // `Object(source)` - so a plain namespace table is not enough: it has the
+    // statics and cannot be called, which fails as "Object is not a function"
+    // from inside a helper that has nothing to do with Object.
+    auto * object_ctor = cx.allocate<native_object>("Object", [](context & c, std::span<value> a) {
+        // An object passes through; a primitive is boxed, which here means the
+        // nearest thing this engine has - an empty object - because there are
+        // no wrapper types. Nothing but identity is observable either way for
+        // the uses that matter, and `Object(x) === x` for an object is the
+        // property helpers actually depend on.
+        const value v = arg_at(a, 0);
+        return v.is_object_like() ? v : c.make_object();
+    });
     // `Object.prototype` REACHABLE FROM SCRIPT, not just consulted by lookup.
     //
     // The tables existed and property lookup fell back to them, but nothing

@@ -71,6 +71,13 @@ public:
     // inside one token, so the interpolations have to be parsed separately.
     // Node indices are per-AST, so the active one is swapped for the duration
     // and every `at()` follows it.
+    // The same, for source the compiler BUILT rather than one pointing into the
+    // program. The text is kept because the AST borrows it.
+    void compile_owned_expr(std::string source, std::uint16_t dst) {
+        owned_sources_.push_back(std::make_unique<std::string>(std::move(source)));
+        compile_foreign_expr(*owned_sources_.back(), dst);
+    }
+
     void compile_foreign_expr(std::string_view source, std::uint16_t dst) {
         auto tree = std::make_unique<vp::ast>(vp::parse(source));
         if (!tree->ok || tree->root < 0) {
@@ -258,6 +265,60 @@ public:
         }
     }
 
+    // The `${...}` HOLES of a template literal, as raw text.
+    //
+    // A template is ONE node carrying its whole source, holes included - the
+    // parser does not break the substitutions out into child nodes. So every
+    // walk over the tree is blind to them, and the two walks that matter are
+    // the ones that decide whether a local is BOXED and whether `arguments` is
+    // materialised. A name used only inside a hole was invisible to both: the
+    // enclosing frame never boxed it, the nested function resolved it as a
+    // global, and it read undefined.
+    //
+    // Nesting is counted so an object literal or a nested template inside a
+    // hole does not end it early.
+    template <typename Fn> static void for_each_template_hole(std::string_view raw, Fn && fn) {
+        for (std::size_t i = 0; i + 1 < raw.size(); ++i) {
+            if (raw[i] != '$' || raw[i + 1] != '{') { continue; }
+            if (i > 0 && raw[i - 1] == '\\') { continue; }
+            std::size_t depth = 1;
+            std::size_t at_char = i + 2;
+            const std::size_t start = at_char;
+            while (at_char < raw.size() && depth > 0) {
+                if (raw[at_char] == '{') { ++depth; }
+                if (raw[at_char] == '}') { --depth; }
+                if (depth > 0) { ++at_char; }
+            }
+            fn(raw.substr(start, at_char - start));
+            i = at_char;
+        }
+    }
+
+    // Every identifier-shaped token in a hole.
+    //
+    // Lexical rather than parsed, and deliberately OVER-approximate: it counts
+    // property names and reserved words as well as variables. Naming something
+    // that is not really captured only boxes a local that did not need boxing,
+    // which is correct and slightly slower; MISSING one reads undefined at run
+    // time with nothing to say so.
+    static void names_in_template(std::string_view raw, std::vector<std::string> & out) {
+        for_each_template_hole(raw, [&](std::string_view hole) {
+            for (std::size_t i = 0; i < hole.size();) {
+                const auto begins = [](char c) {
+                    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$';
+                };
+                const auto continues = [&](char c) { return begins(c) || (c >= '0' && c <= '9'); };
+                if (!begins(hole[i])) {
+                    ++i;
+                    continue;
+                }
+                const std::size_t start = i;
+                while (i < hole.size() && continues(hole[i])) { ++i; }
+                out.emplace_back(hole.substr(start, i - start));
+            }
+        });
+    }
+
     void collect_captured_names(std::int32_t idx, bool inside_nested,
                                 std::vector<std::string> & out) {
         if (idx < 0) { return; }
@@ -265,6 +326,9 @@ public:
         const bool nested = inside_nested || n.kind == vp::nk::func_decl ||
                             n.kind == vp::nk::func_expr || n.kind == vp::nk::arrow;
         if (inside_nested && n.kind == vp::nk::ident) { out.emplace_back(n.text); }
+        // A template's substitutions are text on the node, not children, so
+        // nothing below this reaches them.
+        if (inside_nested && n.kind == vp::nk::tmpl) { names_in_template(n.text, out); }
         // An instance field's initialiser now compiles into its OWN function -
         // that is what makes each instance get its own value - so anything it
         // mentions is captured exactly as if it had been written inside one.
@@ -293,6 +357,13 @@ public:
         const vp::node & n = at(idx);
         if (n.kind == vp::nk::func_decl || n.kind == vp::nk::func_expr) { return false; }
         if (n.kind == vp::nk::ident && n.text == "arguments") { return true; }
+        if (n.kind == vp::nk::tmpl) {
+            std::vector<std::string> named;
+            names_in_template(n.text, named);
+            for (const std::string & name : named) {
+                if (name == "arguments") { return true; }
+            }
+        }
         for (const std::int32_t slot : child_slots(n)) {
             if (mentions_arguments(slot)) { return true; }
         }
@@ -2057,7 +2128,13 @@ public:
                     if (raw[at_char] == '}') { --depth; }
                     if (depth > 0) { ++at_char; }
                 }
-                compile_foreign_expr(raw.substr(start, at_char - start), piece);
+                // PARENTHESISED, so the hole is parsed as an EXPRESSION.
+                // `${ {v: 1}.v }` parses as a program otherwise, and a leading
+                // brace at statement position is a BLOCK - so the object
+                // literal became a labelled statement and the whole hole
+                // evaluated to undefined, silently.
+                compile_owned_expr("(" + std::string{raw.substr(start, at_char - start)} + ")",
+                                   piece);
                 // Concatenation is what stringifies the value, which is exactly
                 // the coercion a template literal performs.
                 append(piece);
@@ -2720,6 +2797,11 @@ public:
     const vp::ast & ast_;
     const vp::ast * current_ast_ = &ast_;
     std::vector<std::unique_ptr<vp::ast>> owned_asts_;
+    // SOURCE TEXT THE COMPILER MADE UP, kept alive for as long as the ASTs that
+    // borrow it. A parse holds string_views into its input, so a snippet built
+    // here - a parenthesised template hole, a synthesised constructor - cannot
+    // be a temporary.
+    std::vector<std::unique_ptr<std::string>> owned_sources_;
     program & out_;
     std::vector<frame> frames_;
     std::vector<loop_context> loops_;
