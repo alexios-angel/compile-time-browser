@@ -1074,6 +1074,100 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
     // and it did not. It is the one method that read the canvas's font state
     // without refreshing it first, so `ctx.font = '20px X'; ctx.measureText(s)`
     // measured in whatever font the last DRAWING call happened to leave behind.
+    // --- the pixels, as bytes
+    //
+    // getImageData/putImageData are how a page reads what it drew and writes
+    // back something it computed - every filter, every colour pick, every
+    // `pixels[]` loop in p5.js. The buffer is RGBA bytes in that order, which
+    // is NOT the engine's packed ARGB, so both directions unpack rather than
+    // memcpy: getting that wrong swaps red and blue and looks almost right.
+    const auto image_data = [](context & c, int width, int height) {
+        auto * out = static_cast<script::object_object *>(c.make_object().as_heap());
+        out->set("width", value::number(width));
+        out->set("height", value::number(height));
+        value bytes = c.make_array();
+        auto * store = static_cast<script::array_object *>(bytes.as_heap());
+        // A REAL Uint8ClampedArray, so a page's `data[i] = 300` clamps to 255
+        // the way it does in a browser rather than storing 300.
+        store->elements = script::element_kind::u8_clamped;
+        store->items.assign(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4,
+                            value::number(0));
+        out->set("data", bytes);
+        return std::pair{out, store};
+    };
+    method("createImageData", [image_data](context & c, std::span<value> a) {
+        // `createImageData(other)` takes its SIZE from the other one and is
+        // still blank, which is what makes it the way to get a scratch buffer.
+        int width = static_cast<int>(arg_number(a, 0));
+        int height = static_cast<int>(arg_number(a, 1));
+        if (!a.empty() && a[0].is_object()) {
+            width = static_cast<int>(context::to_number(c.lookup_property(a[0], "width")));
+            height = static_cast<int>(context::to_number(c.lookup_property(a[0], "height")));
+        }
+        return value::object(image_data(c, std::max(0, width), std::max(0, height)).first);
+    });
+    method("getImageData", [canvas, image_data](context & c, std::span<value> a) {
+        const int x = static_cast<int>(arg_number(a, 0));
+        const int y = static_cast<int>(arg_number(a, 1));
+        const int width = std::max(0, static_cast<int>(arg_number(a, 2)));
+        const int height = std::max(0, static_cast<int>(arg_number(a, 3)));
+        auto [out, store] = image_data(c, width, height);
+        const auto & surface = canvas->surface();
+        if (!surface) { return value::object(out); }
+        for (int row = 0; row < height; ++row) {
+            for (int column = 0; column < width; ++column) {
+                const color pixel{surface->at(x + column, y + row)};
+                const auto at = (static_cast<std::size_t>(row) * static_cast<std::size_t>(width) +
+                                 static_cast<std::size_t>(column)) *
+                                4;
+                store->items[at] = value::number(pixel.red());
+                store->items[at + 1] = value::number(pixel.green());
+                store->items[at + 2] = value::number(pixel.blue());
+                store->items[at + 3] = value::number(pixel.alpha());
+            }
+        }
+        return value::object(out);
+    });
+    method("putImageData", draws([canvas](context & c, std::span<value> a) {
+               if (a.empty() || !a[0].is_object()) { return; }
+               const value source = c.lookup_property(a[0], "data");
+               if (!source.is_array()) { return; }
+               const auto & bytes = static_cast<script::array_object *>(source.as_heap())->items;
+               const int width =
+                   static_cast<int>(context::to_number(c.lookup_property(a[0], "width")));
+               const int height =
+                   static_cast<int>(context::to_number(c.lookup_property(a[0], "height")));
+               const int dx = static_cast<int>(arg_number(a, 1));
+               const int dy = static_cast<int>(arg_number(a, 2));
+               // Written straight into the surface: putImageData is NOT
+               // affected by the transform, the clip or globalAlpha. That is
+               // the spec and it is the reason it exists - a page computing
+               // pixels wants those pixels, not those pixels composited.
+               const auto & surface = canvas->surface();
+               if (!surface) { return; }
+               for (int row = 0; row < height; ++row) {
+                   for (int column = 0; column < width; ++column) {
+                       const auto at =
+                           (static_cast<std::size_t>(row) * static_cast<std::size_t>(width) +
+                            static_cast<std::size_t>(column)) *
+                           4;
+                       if (at + 3 >= bytes.size()) { continue; }
+                       const auto channel = [&](std::size_t offset) {
+                           return static_cast<std::uint8_t>(
+                               std::clamp(context::to_number(bytes[at + offset]), 0.0, 255.0));
+                       };
+                       const int px = dx + column;
+                       const int py = dy + row;
+                       if (px < 0 || py < 0 || px >= surface->width || py >= surface->height) {
+                           continue;
+                       }
+                       surface->pixels[static_cast<std::size_t>(py) *
+                                           static_cast<std::size_t>(surface->width) +
+                                       static_cast<std::size_t>(px)] =
+                           color::rgba(channel(0), channel(1), channel(2), channel(3)).argb;
+                   }
+               }
+           }));
     method("measureText", [canvas, sync](context & c, std::span<value> a) {
         sync(c);
         auto * metrics = static_cast<script::object_object *>(c.make_object().as_heap());
@@ -1562,6 +1656,38 @@ void dom_bindings::install_window(context & cx) {
                           return value::undefined();
                       })));
         return value::object(path);
+    });
+
+    // `new ImageData(w, h)` or `new ImageData(data, w, h)`. A page builds one
+    // to hand to putImageData, and a filter that returns a fresh ImageData
+    // rather than mutating in place - which is p5.js's own convention - needs
+    // to be able to make one.
+    cx.define_native("ImageData", [](context & c, std::span<value> args) {
+        auto * out = static_cast<script::object_object *>(c.make_object().as_heap());
+        // The array form comes FIRST, and the size arguments shift along - the
+        // two overloads are told apart by whether argument 0 is a buffer.
+        const bool given = !args.empty() && args[0].is_array();
+        const int width = static_cast<int>(arg_number(args, given ? 1 : 0));
+        int height = static_cast<int>(arg_number(args, given ? 2 : 1));
+        value bytes = given ? args[0] : c.make_array();
+        auto * store = static_cast<script::array_object *>(bytes.as_heap());
+        if (given) {
+            // Height is optional when the data is given: it follows from the
+            // length, because the buffer is four bytes a pixel by definition.
+            if (height <= 0 && width > 0) {
+                height =
+                    static_cast<int>(store->items.size() / (static_cast<std::size_t>(width) * 4));
+            }
+        } else {
+            store->elements = script::element_kind::u8_clamped;
+            store->items.assign(static_cast<std::size_t>(std::max(0, width)) *
+                                    static_cast<std::size_t>(std::max(0, height)) * 4,
+                                value::number(0));
+        }
+        out->set("width", value::number(std::max(0, width)));
+        out->set("height", value::number(std::max(0, height)));
+        out->set("data", bytes);
+        return value::object(out);
     });
 
     cx.define_native("Event", [](context & c, std::span<value> args) {

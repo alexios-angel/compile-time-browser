@@ -360,6 +360,19 @@ value context::lookup_property(value target, const std::string & name) {
         auto * closure = static_cast<closure_object *>(target.as_heap());
         if (value * found = closure->find(name)) { return *found; }
         if (name == "prototype") { return ensure_prototype(target); }
+        // `f.name` and `f.length`, read off the compiled function rather than
+        // stored on every closure - most functions are never asked and an extra
+        // two properties each is a real cost on a 4,754-function bundle.
+        //
+        // `name` is not cosmetic: identifying a value by
+        // `Object.getPrototypeOf(x).constructor.name` is the standard walk that
+        // works where instanceof does not, and an undefined name compares equal
+        // to the other undefined it is being tested against - so a nameless
+        // class reported a MATCH against anything else with no name.
+        if (closure->proto != nullptr) {
+            if (name == "name") { return string(closure->proto->name); }
+            if (name == "length") { return value::number(closure->proto->param_count); }
+        }
         // `static get w()` on a class - the constructor IS the closure, so its
         // accessors live here rather than on any object.
         if (accessor_entry * entry = closure->find_accessor(name)) {
@@ -1129,7 +1142,7 @@ value context::run_loop(std::size_t stop_depth) {
                         what += ", on " + std::string{type_of(receiver)};
                         if (receiver.is_nullish()) { what += " (" + to_string(receiver) + ")"; }
                     }
-                    raise(std::move(what));
+                    throw_error("TypeError", std::move(what));
                 }
                 break;
             }
@@ -1302,8 +1315,9 @@ value context::run_loop(std::size_t stop_depth) {
                 break;
             }
             if (!callee.is_kind(heap_kind::function)) {
-                raise("`new` on " +
-                      describe_callee(fn, callee_origin(fn, frame.ip - 1, in.a), callee));
+                throw_error("TypeError",
+                            "`new` on " +
+                                describe_callee(fn, callee_origin(fn, frame.ip - 1, in.a), callee));
                 break;
             }
             auto * fnobj = static_cast<closure_object *>(callee.as_heap());

@@ -1,0 +1,60 @@
+<!doctype html>
+<!-- p5.js pixels: reading back what was drawn, and writing back what was
+     computed.
+     This is the round trip - loadPixels() pulls the canvas into a byte buffer,
+     the sketch edits the bytes, updatePixels() pushes them back - which is a
+     different path from every other page here: it does not go through the
+     drawing API at all, and it is four bytes a pixel in RGBA order rather than
+     the engine's packed ARGB, so a channel swap looks almost right.
+     The left half is drawn normally. The right half is the left half with its
+     channels rotated, computed byte by byte - so the two halves can only
+     disagree in the way the sketch asked for. -->
+<html>
+  <head>
+    <script>var IS_MINIFIED = true;</script>
+    <script src="examples/assets/p5.js"></script>
+  </head>
+  <body style="margin:0;background:#ffffff">
+    <script>
+      new p5(function (s) {
+        s.setup = function () {
+          s.createCanvas(300, 160);
+          s.noLoop();
+        };
+        s.draw = function () {
+          s.background(245);
+
+          // Drawn normally, on the left half only.
+          s.noStroke();
+          s.fill(210, 70, 60);  s.rect(20, 20, 50, 50);
+          s.fill(60, 150, 90);  s.rect(80, 20, 50, 50);
+          s.fill(70, 90, 200);  s.rect(20, 85, 50, 50);
+          s.fill(230, 190, 60); s.rect(80, 85, 50, 50);
+
+          // The same pixels again on the right, with r/g/b rotated - computed
+          // from the buffer rather than drawn.
+          s.loadPixels();
+          const d = s.pixelDensity();
+          const w = s.width * d;
+          const shift = 160 * d;
+          for (let y = 0; y < s.height * d; y++) {
+            for (let x = 0; x < 150 * d; x++) {
+              const from = 4 * (y * w + x);
+              const to = 4 * (y * w + x + shift);
+              s.pixels[to] = s.pixels[from + 2];
+              s.pixels[to + 1] = s.pixels[from];
+              s.pixels[to + 2] = s.pixels[from + 1];
+              s.pixels[to + 3] = s.pixels[from + 3];
+            }
+          }
+          s.updatePixels();
+
+          // set() and get() on single pixels, which go through the same buffer:
+          // a dotted line between the halves.
+          for (let y = 10; y < 150; y += 6) { s.set(155, y, s.color(20, 20, 20)); }
+          s.updatePixels();
+        };
+      });
+    </script>
+  </body>
+</html>

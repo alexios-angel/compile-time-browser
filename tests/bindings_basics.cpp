@@ -453,6 +453,50 @@ void test_fill_rule() {
     check(at(150, 50) == color::rgba(255, 255, 255), "even-odd leaves it hollow");
 }
 
+// getImageData / putImageData / createImageData - reading back what was
+// drawn and writing back what was computed. Every filter, every colour pick
+// and every `pixels[]` loop goes through them.
+void test_image_data() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body><canvas id=c width=40 height=20></canvas><script>
+        const ctx = document.getElementById('c').getContext('2d');
+        ctx.fillStyle = '#204080'; ctx.fillRect(0, 0, 40, 20);
+        const d = ctx.getImageData(0, 0, 40, 20);
+        console.log('size=' + d.width + 'x' + d.height + ',' + d.data.length);
+        console.log('rgba=' + d.data[0] + ',' + d.data[1] + ',' + d.data[2] + ',' + d.data[3]);
+        for (let i = 0; i < d.data.length; i += 4) {
+          d.data[i] = 255 - d.data[i];
+          d.data[i + 1] = 255 - d.data[i + 1];
+          d.data[i + 2] = 255 - d.data[i + 2];
+        }
+        ctx.putImageData(d, 0, 0);
+        const back = ctx.getImageData(0, 0, 1, 1);
+        console.log('inverted=' + back.data[0] + ',' + back.data[1] + ',' + back.data[2]);
+        const blank = ctx.createImageData(4, 4);
+        console.log('blank=' + blank.width + ',' + blank.data.length + ',' + blank.data[0]);
+        const made = new ImageData(new Uint8ClampedArray(3 * 2 * 4), 3, 2);
+        console.log('made=' + made.width + 'x' + made.height + ',' + made.data.length);
+        // A real Uint8ClampedArray, so a page's out-of-range write clamps.
+        d.data[0] = 400;
+        console.log('clamps=' + d.data[0]);
+        // Only part of the canvas, at an offset.
+        ctx.fillStyle = '#00ff00'; ctx.fillRect(10, 5, 4, 4);
+        const patch = ctx.getImageData(10, 5, 2, 2);
+        console.log('patch=' + patch.data[0] + ',' + patch.data[1] + ',' + patch.data[2]);
+    </script></body></html>)");
+    check(page.script_error().empty(), "the image-data script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log[0] == "size=40x20,3200", "the buffer is four bytes a pixel: " + log[0]);
+    // RGBA in that order, which is NOT the engine's packed ARGB - getting it
+    // wrong swaps red and blue and looks almost right.
+    check(log[1] == "rgba=32,64,128,255", "getImageData reads RGBA in order: " + log[1]);
+    check(log[2] == "inverted=223,191,127", "putImageData writes them back: " + log[2]);
+    check(log[3] == "blank=4,64,0", "createImageData is blank and the right size: " + log[3]);
+    check(log[4] == "made=3x2,24", "new ImageData(data, w, h): " + log[4]);
+    check(log[5] == "clamps=255", "the buffer is a real clamped array: " + log[5]);
+    check(log[6] == "patch=0,255,0", "getImageData reads from the offset given: " + log[6]);
+}
+
 // --- the document API -----------------------------------------------------
 
 void test_script_mutates_what_is_drawn() {
@@ -1368,6 +1412,7 @@ int main() {
     test_the_invaders_page_shoots();
     test_a_letterboxed_page_keeps_its_size();
 
+    test_image_data();
     test_fill_rule();
     test_text_alignment();
     test_reflected_attributes();

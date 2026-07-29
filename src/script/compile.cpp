@@ -2471,6 +2471,14 @@ public:
             // has nothing to invoke.
             compile_foreign_expr("(function () {})", dst);
         }
+        // A SYNTHESISED CONSTRUCTOR IS STILL NAMED AFTER ITS CLASS. Both
+        // branches above build one from source text, so it arrives anonymous -
+        // and `Object.getPrototypeOf(x).constructor.name` is a standard way to
+        // identify a value, where an undefined name compares equal to the other
+        // undefined it is being tested against and reports a false match.
+        if (!proto().code.empty() && proto().code.back().code == op::closure) {
+            out_.functions[proto().code.back().bx()].name = std::string{n.text};
+        }
         proto().emit(instruction{op::set_prop, dst, name_operand("prototype"), prototype_reg});
         // `C.prototype.constructor === C`, which is both what pages expect and
         // how `super(...)` finds the parent constructor to call.

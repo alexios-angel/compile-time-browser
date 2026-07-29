@@ -459,6 +459,23 @@ namespace {
 // banners already marked - each builds one table and defines one global, and
 // none of them reads anything the others wrote.
 
+// `Type.prototype.constructor === Type`, and `Type.name` is its name.
+//
+// Both are how code identifies a value without trusting `instanceof` - which a
+// page can defeat, and which does not work across realms.
+// `Object.getPrototypeOf(x).constructor.name` is the standard walk, and with
+// either half missing it yields undefined, which compares equal to the other
+// undefined it is being tested against and reports a false match.
+void link_constructor(context & cx, object_object * table, const char * name, value ctor) {
+    if (table == nullptr) { return; }
+    table->set("constructor", ctor);
+    if (ctor.is_kind(heap_kind::native)) {
+        static_cast<native_object *>(ctor.as_heap())->set("name", cx.string(name));
+    } else if (ctor.is_object()) {
+        static_cast<object_object *>(ctor.as_heap())->set("name", cx.string(name));
+    }
+}
+
 // Math
 void install_math(context & cx, std::uint64_t seed) {
     using detail::method;
@@ -953,6 +970,7 @@ void install_array(context & cx) {
         return c.current_this();
     });
     array_ctor->set("prototype", value::object(array_proto));
+    link_constructor(cx, array_proto, "Array", value::object(array_ctor));
     cx.set_prototype(context::proto_kind::array, array_proto);
 }
 
@@ -1121,6 +1139,44 @@ void install_string(context & cx) {
         }
         return c.string(s);
     });
+    // `match` - the single commonest thing done with a regular expression, and
+    // it simply was not here. A page calling it got "undefined is not a
+    // function" from inside whatever library it was using.
+    //
+    // The two forms return DIFFERENT SHAPES, which is the part that is easy to
+    // get wrong: with `g` it is a flat list of the matched strings and nothing
+    // else, and without it a single exec result carrying index, input and the
+    // capture groups. Code branches on that difference.
+    method(cx, string_proto, "match", [](context & c, std::span<value> a) {
+        if (a.empty() || !a[0].is_object()) { return value::null(); }
+        const value pattern = a[0];
+        const value exec = c.lookup_property(pattern, "exec");
+        if (!exec.is_callable()) { return value::null(); }
+        const std::string self = detail::this_string(c);
+        const value subject = c.string(self);
+        const bool all = context::truthy(c.lookup_property(pattern, "global"));
+        c.store_property(pattern, "lastIndex", value::number(0));
+        if (!all) {
+            const value found = c.call(exec, std::span<const value>{&subject, 1}, pattern);
+            return found.is_nullish() ? value::null() : found;
+        }
+        value list = c.make_array();
+        auto * items = static_cast<array_object *>(list.as_heap());
+        double previous = -1;
+        for (std::size_t guard = 0; guard <= self.size() + 1; ++guard) {
+            const value found = c.call(exec, std::span<const value>{&subject, 1}, pattern);
+            if (!found.is_array()) { break; }
+            auto * parts = static_cast<array_object *>(found.as_heap());
+            if (parts->items.empty()) { break; }
+            items->items.push_back(parts->items[0]);
+            const double now = context::to_number(c.lookup_property(pattern, "lastIndex"));
+            if (!(now > previous)) { break; }
+            previous = now;
+        }
+        // A global match that found nothing is NULL, not an empty array - the
+        // usual guard is `if (m)`, and an empty array is truthy.
+        return items->items.empty() ? value::null() : list;
+    });
     // `matchAll` is exec RUN TO EXHAUSTION, which is exactly what it means -
     // so it is built on exec rather than on a second copy of the regex
     // plumbing, and it cannot disagree with `match` about what matched.
@@ -1259,6 +1315,55 @@ void install_string(context & cx) {
 // Small, and it closes a hole rather than adding a feature: `true.toString()`
 // found nothing, so generic code that converts "any value" by calling toString
 // on it failed on exactly one of the primitive types.
+// `structuredClone` - a DEEP copy of plain data.
+//
+// A page uses it to take a snapshot it can then mutate without disturbing the
+// original; p5.js clones a colour's coordinate array before scaling it, so
+// without this every conversion mutated the colour it was reading.
+//
+// Data only, which is what the algorithm covers: objects, arrays, typed arrays
+// and primitives are copied, and anything with behaviour - a function, a DOM
+// node - is not clonable. Cycles are preserved through a seen-list, because a
+// structure that points back at itself is exactly what a naive recursive copy
+// cannot survive.
+void install_structured_clone(context & cx) {
+    cx.define_native("structuredClone", [](context & c, std::span<value> a) {
+        std::vector<std::pair<heap_object *, value>> seen;
+        const auto copy = [&](auto && self, value v) -> value {
+            if (!v.is_heap()) { return v; }
+            for (const auto & [from, to] : seen) {
+                if (from == v.as_heap()) { return to; }
+            }
+            if (v.is_array()) {
+                auto * source = static_cast<array_object *>(v.as_heap());
+                value made = c.make_array();
+                auto * out = static_cast<array_object *>(made.as_heap());
+                out->elements = source->elements;
+                seen.emplace_back(v.as_heap(), made);
+                out->items.reserve(source->items.size());
+                for (const value & item : source->items) { out->items.push_back(self(self, item)); }
+                return made;
+            }
+            if (v.is_object()) {
+                auto * source = static_cast<object_object *>(v.as_heap());
+                value made = c.make_object();
+                auto * out = static_cast<object_object *>(made.as_heap());
+                seen.emplace_back(v.as_heap(), made);
+                for (const auto & [key, item] : source->props) { out->set(key, self(self, item)); }
+                return made;
+            }
+            // A string is immutable, so sharing it IS a copy. Everything else -
+            // a function, a symbol - is not clonable, and a browser throws
+            // DataCloneError rather than quietly handing back the original.
+            if (v.is_string()) { return v; }
+            c.throw_error("DataCloneError", std::string{"structuredClone cannot copy a "} +
+                                                std::string{context::type_of(v)});
+            return value::undefined();
+        };
+        return copy(copy, a.empty() ? value::undefined() : a[0]);
+    });
+}
+
 void install_boolean(context & cx) {
     using detail::method;
     using detail::new_table;
@@ -1274,6 +1379,7 @@ void install_boolean(context & cx) {
         return value::boolean(!a.empty() && context::truthy(a[0]));
     });
     boolean_ctor->set("prototype", value::object(boolean_proto));
+    link_constructor(cx, boolean_proto, "Boolean", value::object(boolean_ctor));
     cx.define_global("Boolean", value::object(boolean_ctor));
 }
 
@@ -1401,6 +1507,7 @@ void install_number(context & cx) {
         return c.string(std::string{out.data(), static_cast<std::size_t>(std::max(0, written))});
     });
     number_ctor->set("prototype", value::object(number_proto));
+    link_constructor(cx, number_proto, "Number", value::object(number_ctor));
     cx.set_prototype(context::proto_kind::number, number_proto);
 }
 
@@ -1482,8 +1589,38 @@ void install_object(context & cx) {
         }
         return value::boolean(false);
     });
-    method(cx, object_proto, "toString",
-           [](context & c, std::span<value>) { return c.string("[object Object]"); });
+    // `[object Type]`, for whatever the receiver actually is.
+    //
+    // Returning "[object Object]" unconditionally is right for a plain object
+    // and wrong for every other receiver, and the reason this matters is that
+    // `Object.prototype.toString.call(x)` is THE type-detection idiom - the one
+    // way to tell an array from a plain object from a null from a string
+    // without trusting a constructor a page may have replaced. Libraries then
+    // parse the result: colorjs, bundled inside p5.js, does
+    // `str.match(/^\[object\s+(.*?)\]$/)[1].toLowerCase()`, which against a
+    // string that is not in that shape indexes null.
+    method(cx, object_proto, "toString", [](context & c, std::span<value>) {
+        const value self = c.current_this();
+        std::string_view tag = "Object";
+        if (self.is_undefined()) {
+            tag = "Undefined";
+        } else if (self.is_null()) {
+            tag = "Null";
+        } else if (self.is_array()) {
+            tag = "Array";
+        } else if (self.is_string()) {
+            tag = "String";
+        } else if (self.is_number()) {
+            tag = "Number";
+        } else if (self.is_boolean()) {
+            tag = "Boolean";
+        } else if (self.is_callable()) {
+            tag = "Function";
+        } else if (self.is_kind(heap_kind::symbol)) {
+            tag = "Symbol";
+        }
+        return c.string("[object " + std::string{tag} + "]");
+    });
     method(cx, object_proto, "valueOf",
            [](context & c, std::span<value>) { return c.current_this(); });
     method(cx, object_proto, "isPrototypeOf", [](context & c, std::span<value> a) {
@@ -1517,6 +1654,7 @@ void install_object(context & cx) {
     // It is the same object lookup uses, so a page that adds to it is seen by
     // every object, which is what a page doing that expects.
     object_ctor->set("prototype", value::object(object_proto));
+    link_constructor(cx, object_proto, "Object", value::object(object_ctor));
     method(cx, object_ctor, "hasOwn", [](context & c, std::span<value> a) {
         const value target = arg_at(a, 0);
         const std::string key = str_at(c, a, 1);
@@ -1575,12 +1713,33 @@ void install_object(context & cx) {
     // property. Babel's `_inherits` sets both - the subclass's prototype
     // property for instance methods, the subclass FUNCTION for static ones -
     // and answering null for a function broke every transpiled `extends`.
-    method(cx, object_ctor, "getPrototypeOf", [](context &, std::span<value> a) {
+    // A PRIMITIVE HAS A PROTOTYPE TOO. `Object.getPrototypeOf('x')` is
+    // String.prototype, not null - the primitive is boxed for the lookup, which
+    // is the same reason `'x'.toUpperCase()` works at all.
+    //
+    // Returning null made an ordinary type-detection loop draw the wrong
+    // conclusion rather than none: colorjs walks
+    // `Object.getPrototypeOf(arg)?.constructor?.name` and compares it to the
+    // constructor's name. With null on one side and a nameless class on the
+    // other, undefined === undefined reported a MATCH - so a plain string
+    // passed as an instance of a colour space, and every conversion through it
+    // silently handed the string straight back.
+    method(cx, object_ctor, "getPrototypeOf", [](context & c, std::span<value> a) {
         const value of = arg_at(a, 0);
         if (of.is_object()) { return static_cast<object_object *>(of.as_heap())->prototype; }
         if (of.is_kind(heap_kind::function)) {
             return static_cast<closure_object *>(of.as_heap())->proto_link;
         }
+        const auto table = [&](context::proto_kind kind) {
+            object_object * found = c.prototype(kind);
+            return found == nullptr ? value::null() : value::object(found);
+        };
+        if (of.is_string()) { return table(context::proto_kind::string); }
+        if (of.is_number()) { return table(context::proto_kind::number); }
+        if (of.is_boolean()) { return table(context::proto_kind::boolean); }
+        if (of.is_array()) { return table(context::proto_kind::array); }
+        if (of.is_kind(heap_kind::native)) { return table(context::proto_kind::function); }
+        if (of.is_kind(heap_kind::symbol)) { return table(context::proto_kind::symbol); }
         return value::null();
     });
     method(cx, object_ctor, "setPrototypeOf", [](context &, std::span<value> a) {
@@ -1878,6 +2037,7 @@ void install_promise(context & cx) {
         });
         if (object_object * table = cx.prototype(context::proto_kind::string)) {
             string_ctor->set("prototype", value::object(table));
+            link_constructor(cx, table, "String", value::object(string_ctor));
         }
         cx.define_global("String", value::object(string_ctor));
     }
@@ -1885,9 +2045,11 @@ void install_promise(context & cx) {
     // well as the coercion. Defining it again here would replace the whole
     // thing with a bare function and silently drop Number.isFinite and its
     // siblings - which is exactly what it used to do.
-    cx.define_native("Boolean", [](context &, std::span<value> a) {
-        return value::boolean(!a.empty() && context::truthy(a[0]));
-    });
+    //
+    // `Boolean` is the same, and it WAS being redefined here, one line under
+    // that warning: install_boolean gives it a prototype and this replaced it
+    // with a bare coercion, so `Object.getPrototypeOf(true) === Boolean.prototype`
+    // was false and `true.toString()` found nothing.
 }
 
 } // namespace
@@ -2666,6 +2828,7 @@ void install_dynamic_function(context & cx) {
     if (object_object * table = cx.prototype(context::proto_kind::function)) {
         static_cast<native_object *>(cx.global("Function").as_heap())
             ->set("prototype", value::object(table));
+        link_constructor(cx, table, "Function", cx.global("Function"));
     }
 }
 
@@ -2683,6 +2846,7 @@ void install_builtins(context & cx, std::uint64_t seed) {
     install_string(cx);
     install_number(cx);
     install_boolean(cx);
+    install_structured_clone(cx);
     install_object(cx);
     install_json(cx);
     install_date(cx);

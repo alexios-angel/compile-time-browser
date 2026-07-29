@@ -221,6 +221,31 @@ public:
         raise(std::string{what} + ": " + std::move(why));
     }
 
+    // THROW A CATCHABLE ERROR, and only end the run if nothing catches it.
+    //
+    // Different from raise(), which ends the run outright. Calling a
+    // non-function is a TypeError in JavaScript and pages CATCH it - feature
+    // detection is written as `try { thing() } catch (e) {}` more often than as
+    // a typeof test, and a library that probes for an optional method that way
+    // took the whole page down here.
+    //
+    // It also makes a diagnosis possible: an uncatchable fault unwinds nothing,
+    // so a probe wrapped in try/catch reported no error at all and the failure
+    // appeared to come from wherever the run happened to stop.
+    void throw_error(std::string_view kind, std::string message) {
+        value made = make_object();
+        auto * o = static_cast<object_object *>(made.as_heap());
+        o->set("name", string(std::string{kind}));
+        o->set("message", string(message));
+        // On the Error prototype, so `e instanceof Error` and `e.toString()`
+        // work on a thrown one exactly as on `new TypeError(...)`.
+        if (object_object * table = prototype(proto_kind::error)) {
+            o->prototype = value::object(table);
+        }
+        thrown_ = made;
+        if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
+    }
+
     // Call a JS function FROM C++. This is what an event listener, a timer and
     // a requestAnimationFrame callback all need, and without it script can only
     // ever be entered at the top.

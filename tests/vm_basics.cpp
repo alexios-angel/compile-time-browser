@@ -1545,6 +1545,121 @@ void test_spread() {
 // arguments arrived shifted by one, with the KEY as argument 0 and the last
 // argument dropped. Silent, and only in the form with arguments, which is why
 // `xs[0]()` looked fine.
+// IDENTIFYING A VALUE WITHOUT `instanceof`.
+//
+// `Object.getPrototypeOf(x).constructor.name` is the standard walk - it works
+// where instanceof does not, and a page cannot defeat it by reassigning a
+// constructor. Three separate pieces were missing, and the way they failed is
+// the point: getPrototypeOf returned null for a primitive, a prototype had no
+// `constructor`, and a class had no `name`. Each hole yields UNDEFINED, and
+// undefined compares equal to the other undefined it is being tested against -
+// so a plain string reported itself as an instance of a colour space, and every
+// conversion through it silently handed the string straight back.
+void test_type_identification() {
+    expect_result("return Object.getPrototypeOf('x') === String.prototype;", "true");
+    expect_result("return Object.getPrototypeOf(1) === Number.prototype;", "true");
+    expect_result("return Object.getPrototypeOf(true) === Boolean.prototype;", "true");
+    expect_result("return Object.getPrototypeOf([]) === Array.prototype;", "true");
+    expect_result("return String.prototype.constructor.name;", "String");
+    expect_result("return Object.getPrototypeOf(1).constructor.name;", "Number");
+    expect_result("return [].constructor.name + ',' + ({}).constructor.name;", "Array,Object");
+    // A class's name, including one with no constructor of its own - that gets
+    // a synthesised one, which used to arrive anonymous.
+    expect_result("class K { constructor() {} } return K.name;", "K");
+    expect_result("class K {} return K.name;", "K");
+    expect_result("class B {} class D extends B {} return D.name + ',' + B.name;", "D,B");
+    expect_result("function f(a, b) {} return f.name + ',' + f.length;", "f,2");
+    // The whole reason the above matters: this walk must NOT match.
+    expect_result("class Space {}"
+                  "function looksLike(v, k) {"
+                  "  const p = Object.getPrototypeOf(v);"
+                  "  return (p && p.constructor && p.constructor.name) === k.name;"
+                  "}"
+                  "return looksLike('srgb', Space);",
+                  "false");
+}
+
+// `Object.prototype.toString.call(x)` is THE type tag - the one way to tell an
+// array from a plain object from a null without trusting a constructor. It
+// returned "[object Object]" for everything, and libraries PARSE the result:
+// colorjs does `str.match(/^\[object\s+(.*?)\]$/)[1]`, which against a
+// string not in that shape indexes null.
+void test_type_tags() {
+    expect_result("return Object.prototype.toString.call('x');", "[object String]");
+    expect_result("return Object.prototype.toString.call(1);", "[object Number]");
+    expect_result("return Object.prototype.toString.call(true);", "[object Boolean]");
+    expect_result("return Object.prototype.toString.call([]);", "[object Array]");
+    expect_result("return Object.prototype.toString.call({});", "[object Object]");
+    expect_result("return Object.prototype.toString.call(null);", "[object Null]");
+    expect_result("return Object.prototype.toString.call(undefined);", "[object Undefined]");
+    expect_result("return Object.prototype.toString.call(function () {});", "[object Function]");
+}
+
+// CALLING A NON-FUNCTION IS A CATCHABLE TypeError.
+//
+// It used to end the run outright. Pages catch it - feature detection is
+// written as `try { thing() } catch (e) {}` at least as often as a typeof test -
+// and an uncatchable fault also unwinds nothing, so a probe wrapped in
+// try/catch reported no error and the failure appeared to come from wherever
+// the run happened to stop.
+void test_calling_a_non_function_throws() {
+    expect_result("try { undefined(); } catch (e) { return e.name; } return 'not thrown';",
+                  "TypeError");
+    expect_result("try { ({}).nope(); } catch (e) { return e.name; } return 'not thrown';",
+                  "TypeError");
+    expect_result("try { new (undefined)(); } catch (e) { return e.name; } return 'not thrown';",
+                  "TypeError");
+    expect_result("try { undefined(); } catch (e) { return e instanceof Error; } return false;",
+                  "true");
+    // ...and it names what was called, which is the whole diagnostic.
+    expect_result("try { ({}).missing(); } catch (e) {"
+                  "  return e.message.indexOf('missing') >= 0; } return false;",
+                  "true");
+    // The run CONTINUES afterwards, which is what "catchable" means.
+    expect_result("let n = 0; try { undefined(); } catch (e) { n = 1; } n += 1; return n;", "2");
+}
+
+// `String.prototype.match` - the commonest thing done with a regular
+// expression, and it simply was not here. The two forms return DIFFERENT
+// SHAPES, which is what code branches on.
+void test_string_match() {
+    expect_result("const m = 'a1b22'.match(/([a-z])(\\d+)/);"
+                  "return m[0] + ',' + m[1] + ',' + m[2] + ',' + m.index;",
+                  "a1,a,1,0");
+    // With `g` it is a flat list of matched strings and nothing else.
+    expect_result("return 'a1b22'.match(/\\d+/g).join('|');", "1|22");
+    // No match is NULL in both forms - the usual guard is `if (m)`, and an
+    // empty array is truthy.
+    expect_result("return 'xyz'.match(/\\d/) === null;", "true");
+    expect_result("return 'xyz'.match(/\\d/g) === null;", "true");
+}
+
+// `structuredClone` - a deep copy of plain data, including through a cycle.
+void test_structured_clone() {
+    expect_result("const a = { n: 1, deep: { list: [1, 2] } };"
+                  "const b = structuredClone(a);"
+                  "b.deep.list[0] = 9;"
+                  "return a.deep.list[0] + ',' + b.deep.list[0];",
+                  "1,9");
+    expect_result("const a = [1, [2, 3]]; const b = structuredClone(a);"
+                  "return (a[1] === b[1]) + ',' + b[1][1];",
+                  "false,3");
+    // A structure that points back at itself is exactly what a naive recursive
+    // copy cannot survive.
+    expect_result("const a = { n: 1 }; a.self = a; const b = structuredClone(a);"
+                  "return (b.self === b) + ',' + (b.self === a);",
+                  "true,false");
+    // A typed array keeps being one, so a clone of a pixel buffer still clamps.
+    expect_result("const a = new Uint8ClampedArray([1, 2]); const b = structuredClone(a);"
+                  "b[0] = 400; return b[0] + ',' + a[0];",
+                  "255,1");
+    // Data only: a function is not clonable, and that is a throw rather than a
+    // silent share of the original.
+    expect_result("try { structuredClone({ f: function () {} }); } catch (e) { return e.name; }"
+                  "return 'not thrown';",
+                  "DataCloneError");
+}
+
 void test_computed_calls_pass_their_arguments() {
     expect_result("var t = { k: function (a, b, c) { return a + '|' + b + '|' + c; } };"
                   "return t['k'](1, 2, 3);",
@@ -1851,6 +1966,11 @@ int main() {
     test_bitwise_and_friends();
     test_delete_in_instanceof();
     test_object_literal_keys();
+    test_type_identification();
+    test_type_tags();
+    test_calling_a_non_function_throws();
+    test_string_match();
+    test_structured_clone();
     test_computed_calls_pass_their_arguments();
     test_arguments();
     test_number_and_string_conversions();
