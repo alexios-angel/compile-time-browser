@@ -22,6 +22,14 @@
 //
 // tools/p5-api.py lists which `fn.*` in the bundle no probe here mentions -
 // that list is the work queue, and it is why probe names match p5's own.
+//
+// A CORRECTION worth keeping, because it is the failure mode of a harness. An
+// earlier commit message here claimed five failures were contamination from a
+// throwing probe unwinding p5's state stack. The contamination was real and is
+// fixed (see the try/finally in the runner), but those five were NOT it: they
+// were real failures that a mis-applied edit had briefly deleted the probes
+// for. Checked one at a time afterwards, every one reproduced on its own.
+// Never conclude a failure was noise without reproducing it in isolation.
 
 globalThis.__probes = [
   // --- colour -------------------------------------------------------------
@@ -464,11 +472,17 @@ globalThis.__probes = [
     return 'ok';
   }],
   ['dom', 'element.parent/child', function (s) {
+    // p5's child() is `elt.childNodes`, which includes TEXT nodes - the div's
+    // own label is one of them - so this looks for the element rather than
+    // counting.
     const parent = s.createDiv('p');
     const kid = s.createDiv('k');
     kid.parent(parent);
-    if (parent.child().length !== 1) { throw 'child() count=' + parent.child().length; }
+    const kids = parent.child();
+    let found = false;
+    for (const node of kids) { if (node === kid.elt) { found = true; } }
     parent.remove();
+    if (!found) { throw 'the child is not among ' + kids.length + ' childNodes'; }
     return 'ok';
   }],
 

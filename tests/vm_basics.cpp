@@ -1637,6 +1637,41 @@ void test_spread() {
 // other got zeroes. A view over the WHOLE of a buffer is now that storage
 // rather than a copy of it, which is the entire reason a page wraps
 // `await res.arrayBuffer()` in one.
+// `Date` IS CONSTRUCTIBLE, and reads a calendar out of a millisecond count.
+//
+// It was a namespace with `now()` on it, so `new Date()` was "Date is not a
+// function". p5 exposes day()/month()/year()/hour() and every one builds a
+// Date, so a sketch showing a clock failed on its first line.
+//
+// UTC only and no string parsing - that is a timezone database and a different
+// project. `new Date()` with no argument is the epoch, deliberately: the clock
+// is fixed here for the same reason Math.random is seeded, so a page that draws
+// from either can have a golden.
+void test_date() {
+    expect_result("const d = new Date(0);"
+                  "return [d.getFullYear(), d.getMonth(), d.getDate(), d.getDay()].join(',');",
+                  "1970,0,1,4");
+    expect_result("return new Date(0).toISOString();", "1970-01-01T00:00:00.000Z");
+    // (year, monthIndex, day, h, m, s) - the month is ZERO-BASED, which is the
+    // wart every calendar bug starts with.
+    expect_result("const d = new Date(2026, 6, 29, 13, 45, 30);"
+                  "return [d.getFullYear(), d.getMonth(), d.getDate(),"
+                  "        d.getHours(), d.getMinutes(), d.getSeconds()].join(',');",
+                  "2026,6,29,13,45,30");
+    // A round trip through the millisecond count is the arithmetic working
+    // both ways, which is what the civil-date algorithms are for.
+    expect_result("const d = new Date(2026, 6, 29, 13, 45, 30);"
+                  "return new Date(d.getTime()).toISOString() === d.toISOString();",
+                  "true");
+    expect_result("return new Date(1234567890123).getFullYear();", "2009");
+    expect_result("return Date.UTC(1970, 0, 2);", "86400000");
+    expect_result("return new Date(0) instanceof Date;", "true");
+    // valueOf, so a Date works in arithmetic - `end - start` is the reason it
+    // exists.
+    expect_result("return typeof (new Date(5000) - new Date(2000));", "number");
+    expect_result("return new Date(5000) - new Date(2000);", "3000");
+}
+
 void test_array_buffer_is_shared() {
     expect_result("return new ArrayBuffer(4).byteLength;", "4");
     expect_result("const buf = new ArrayBuffer(4);"
@@ -2280,6 +2315,7 @@ int main() {
     test_bitwise_and_friends();
     test_delete_in_instanceof();
     test_object_literal_keys();
+    test_date();
     test_array_buffer_is_shared();
     test_new_function();
     test_string_replace();

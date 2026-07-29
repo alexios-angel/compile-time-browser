@@ -641,6 +641,16 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         const auto txn = doc_->read();
         return wrap(c, txn.parent(id));
     });
+    // `childNodes` is EVERY child, text nodes included; `children` is the
+    // elements only. Both exist because they answer different questions, and a
+    // page that wants the text nodes has no other way to reach them.
+    navigate("childNodes", [this, id](context & c, std::span<value>) {
+        value list = c.make_array();
+        auto * items = static_cast<script::array_object *>(list.as_heap());
+        const auto txn = doc_->read();
+        for (const node_id child : txn.children(id)) { items->items.push_back(wrap(c, child)); }
+        return list;
+    });
     navigate("children", [this, id](context & c, std::span<value>) {
         value list = c.make_array();
         auto * items = static_cast<script::array_object *>(list.as_heap());
@@ -949,6 +959,18 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
     method("addEventListener", [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         if (id) { listeners_.push_back(make_listener(c, id, args)); }
+        return value::undefined();
+    });
+    // The other half. The window and the document could both remove a listener
+    // and an element could not, so a page that tidied up after itself - which
+    // p5's Element does when it is removed - threw instead.
+    method("removeEventListener", [this](context & c, std::span<value> args) {
+        const node_id id = receiver(c);
+        const std::string type = arg_string(c, args, 0);
+        const value callback = arg(args, 1);
+        std::erase_if(listeners_, [&](const listener & l) {
+            return l.target == id && l.type == type && l.callback.bits() == callback.bits();
+        });
         return value::undefined();
     });
 

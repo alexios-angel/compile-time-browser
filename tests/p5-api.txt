@@ -20,6 +20,7 @@ data/hex/unhex
 data/int/float/str/boolean
 data/nf/nfc/nfp/nfs
 data/shuffle
+data/splitTokens
 data/storeItem/getItem/removeItem
 dom/createA
 dom/createButton
@@ -31,11 +32,13 @@ dom/createRadio
 dom/createSelect
 dom/createSlider
 dom/element.html/attribute
+dom/element.parent/child
 dom/element.position/size
 dom/element.show/hide
 dom/element.style/class
 dom/select/selectAll
 events/cursor/noCursor
+events/element.mousePressed
 events/keyIsDown
 events/mouseIsPressed/keyIsPressed
 events/mouseX/mouseY
@@ -79,6 +82,7 @@ shape/strokeCap/strokeJoin
 shape/triangle
 structure/createCanvas/resizeCanvas
 structure/createGraphics
+structure/day/month/year/hour
 structure/frameRate/frameCount
 structure/millis
 structure/noLoop/loop/isLooping

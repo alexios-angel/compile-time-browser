@@ -1163,9 +1163,14 @@ void install_string(context & cx) {
         // a non-global pattern works too, which is the form this is written in.
         if (a[0].is_object() && c.lookup_property(a[0], "exec").is_callable()) {
             const value exec = c.lookup_property(a[0], "exec");
-            c.store_property(a[0], "lastIndex", value::number(0));
             std::string rest = s;
             while (!rest.empty()) {
+                // RESET EVERY ROUND, because the subject shrinks. A global
+                // pattern's exec resumes from `lastIndex`, and this hands it a
+                // fresh remainder each time - so a stale index points past the
+                // start of the new string and finds nothing. `'a b,c'
+                // .split(/[ ,]/g)` split once and stopped.
+                c.store_property(a[0], "lastIndex", value::number(0));
                 const value args[1] = {c.string(rest)};
                 const value m = c.call(exec, args, a[0]);
                 if (!m.is_array()) { break; }
@@ -2084,14 +2089,174 @@ void install_json(context & cx) {
 }
 
 // Date
+// `Date` - CONSTRUCTIBLE, and reading a calendar out of a millisecond count.
+//
+// It was a namespace with `now()` on it and nothing else, so `new Date()` was
+// "Date is not a function". p5 exposes day()/month()/year()/hour() and every
+// one of them builds a Date, so a sketch showing a clock - which is most
+// beginners' second sketch - failed on its first line.
+//
+// UTC only, and no parsing: `new Date(string)` is a calendar and a timezone
+// database, which is a different project. What is here is the civil date
+// arithmetic that turns a millisecond count into fields and back, which is what
+// a page reading the clock actually needs.
 void install_date(context & cx) {
     using detail::method;
     using detail::new_table;
-    // Only what a frame clock needs. A full Date is calendars, time zones and
-    // parsing, and no page in this tree asks for one.
-    object_object * date = new_table(cx);
-    method(cx, date, "now", [](context &, std::span<value>) { return value::number(0); });
-    cx.define_global("Date", value::object(date));
+
+    object_object * date_proto = new_table(cx);
+
+    // Days since the epoch to y/m/d, by Howard Hinnant's civil_from_days - the
+    // standard branch-free algorithm, valid for any year a double can hold.
+    // Written out rather than reached for through <chrono>'s calendar types
+    // because those are C++20 library, and this file is the standard library
+    // for a different language.
+    const auto civil_from_days = [](long long z, int & y, unsigned & m, unsigned & d) {
+        z += 719468;
+        const long long era = (z >= 0 ? z : z - 146096) / 146097;
+        const auto doe = static_cast<unsigned long long>(z - era * 146097);
+        const unsigned long long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        const long long yr = static_cast<long long>(yoe) + era * 400;
+        const unsigned long long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        const unsigned long long mp = (5 * doy + 2) / 153;
+        d = static_cast<unsigned>(doy - (153 * mp + 2) / 5 + 1);
+        m = static_cast<unsigned>(mp < 10 ? mp + 3 : mp - 9);
+        y = static_cast<int>(yr + (m <= 2 ? 1 : 0));
+    };
+    const auto days_from_civil = [](int y, unsigned m, unsigned d) -> long long {
+        y -= m <= 2 ? 1 : 0;
+        const long long era = (y >= 0 ? y : y - 399) / 400;
+        const auto yoe = static_cast<unsigned long long>(y - era * 400);
+        const unsigned long long doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
+        const unsigned long long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        return era * 146097 + static_cast<long long>(doe) - 719468;
+    };
+
+    // The instant this Date holds, in milliseconds. Kept as an ordinary
+    // property so the object is inspectable and the collector needs to know
+    // nothing new about it.
+    const auto epoch_ms = [](context & c) {
+        const value self = c.current_this();
+        if (!self.is_object()) { return 0.0; }
+        const value * held = static_cast<object_object *>(self.as_heap())->find("__ms");
+        return held == nullptr ? 0.0 : context::to_number(*held);
+    };
+    // The civil fields of that instant.
+    struct fields {
+        int year;
+        unsigned month; // 1-12
+        unsigned day;
+        int hour;
+        int minute;
+        int second;
+        int weekday; // 0 = Sunday
+    };
+    const auto split = [civil_from_days](double ms) {
+        fields out{};
+        const auto total = static_cast<long long>(std::floor(ms));
+        long long days = total / 86400000;
+        long long rest = total % 86400000;
+        if (rest < 0) {
+            rest += 86400000;
+            --days;
+        }
+        civil_from_days(days, out.year, out.month, out.day);
+        out.hour = static_cast<int>(rest / 3600000);
+        out.minute = static_cast<int>(rest / 60000 % 60);
+        out.second = static_cast<int>(rest / 1000 % 60);
+        // 1970-01-01 was a Thursday, which is what anchors the cycle.
+        out.weekday = static_cast<int>(((days % 7) + 11) % 7);
+        return out;
+    };
+    const auto field_method = [&](const char * name, int fields::* which) {
+        method(cx, date_proto, name, [epoch_ms, split, which](context & c, std::span<value>) {
+            return value::number(split(epoch_ms(c)).*which);
+        });
+    };
+    field_method("getHours", &fields::hour);
+    field_method("getMinutes", &fields::minute);
+    field_method("getSeconds", &fields::second);
+    field_method("getDay", &fields::weekday);
+    field_method("getFullYear", &fields::year);
+    method(cx, date_proto, "getMonth", [epoch_ms, split](context & c, std::span<value>) {
+        // ZERO-BASED, which is the wart every calendar bug starts with and
+        // which a page's arithmetic is written against.
+        return value::number(static_cast<double>(split(epoch_ms(c)).month) - 1);
+    });
+    method(cx, date_proto, "getDate", [epoch_ms, split](context & c, std::span<value>) {
+        return value::number(static_cast<double>(split(epoch_ms(c)).day));
+    });
+    method(cx, date_proto, "getMilliseconds", [epoch_ms](context & c, std::span<value>) {
+        const double ms = epoch_ms(c);
+        return value::number(std::fmod(std::fmod(ms, 1000.0) + 1000.0, 1000.0));
+    });
+    method(cx, date_proto, "getTime",
+           [epoch_ms](context & c, std::span<value>) { return value::number(epoch_ms(c)); });
+    method(cx, date_proto, "valueOf",
+           [epoch_ms](context & c, std::span<value>) { return value::number(epoch_ms(c)); });
+    // No timezone here, so the local getters ARE the UTC ones and say so rather
+    // than pretending to a zone this engine does not have.
+    method(cx, date_proto, "getTimezoneOffset",
+           [](context &, std::span<value>) { return value::number(0); });
+    method(cx, date_proto, "toISOString", [epoch_ms, split](context & c, std::span<value>) {
+        const fields f = split(epoch_ms(c));
+        std::array<char, 40> out{};
+        const int written = std::snprintf(
+            out.data(), out.size(), "%04d-%02u-%02uT%02d:%02d:%02d.%03dZ", f.year, f.month, f.day,
+            f.hour, f.minute, f.second,
+            static_cast<int>(std::fmod(std::fmod(epoch_ms(c), 1000.0) + 1000.0, 1000.0)));
+        return c.string(std::string{out.data(), static_cast<std::size_t>(std::max(0, written))});
+    });
+    method(cx, date_proto, "toString", [epoch_ms, split](context & c, std::span<value>) {
+        const fields f = split(epoch_ms(c));
+        std::array<char, 48> out{};
+        const int written = std::snprintf(out.data(), out.size(), "%04d-%02u-%02u %02d:%02d:%02d",
+                                          f.year, f.month, f.day, f.hour, f.minute, f.second);
+        return c.string(std::string{out.data(), static_cast<std::size_t>(std::max(0, written))});
+    });
+
+    auto * ctor = cx.allocate<native_object>(
+        "Date", [date_proto, days_from_civil](context & c, std::span<value> a) {
+            value self = c.current_this();
+            if (!self.is_object()) { self = c.make_object(); }
+            auto * made = static_cast<object_object *>(self.as_heap());
+            made->prototype = value::object(date_proto);
+            double ms = 0;
+            if (a.size() == 1 && a[0].is_number()) {
+                ms = a[0].as_number();
+            } else if (a.size() >= 2) {
+                // (year, monthIndex, day, hours, minutes, seconds, ms)
+                const auto part = [&](std::size_t i, double fallback) {
+                    return i < a.size() ? context::to_number(a[i]) : fallback;
+                };
+                const long long days = days_from_civil(static_cast<int>(part(0, 1970)),
+                                                       static_cast<unsigned>(part(1, 0)) + 1,
+                                                       static_cast<unsigned>(part(2, 1)));
+                ms = static_cast<double>(days) * 86400000.0 + part(3, 0) * 3600000.0 +
+                     part(4, 0) * 60000.0 + part(5, 0) * 1000.0 + part(6, 0);
+            }
+            // `new Date()` with no argument is NOW, which here is the epoch:
+            // Math.random is seeded and the clock is fixed so a page that draws
+            // from either can have a golden. docs/architecture says the same
+            // about randomness, and for the same reason.
+            made->set("__ms", value::number(ms));
+            return self;
+        });
+    ctor->set("prototype", value::object(date_proto));
+    date_proto->set("constructor", value::object(ctor));
+    method(cx, ctor, "now", [](context &, std::span<value>) { return value::number(0); });
+    method(cx, ctor, "UTC", [days_from_civil](context & c, std::span<value> a) {
+        const auto part = [&](std::size_t i, double fallback) {
+            return i < a.size() ? context::to_number(a[i]) : fallback;
+        };
+        const long long days =
+            days_from_civil(static_cast<int>(part(0, 1970)), static_cast<unsigned>(part(1, 0)) + 1,
+                            static_cast<unsigned>(part(2, 1)));
+        (void)c;
+        return value::number(static_cast<double>(days) * 86400000.0 + part(3, 0) * 3600000.0 +
+                             part(4, 0) * 60000.0 + part(5, 0) * 1000.0 + part(6, 0));
+    });
+    cx.define_global("Date", value::object(ctor));
 }
 
 // global functions
