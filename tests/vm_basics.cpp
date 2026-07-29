@@ -134,6 +134,85 @@ void test_comparison_and_logic() {
            "0");
 }
 
+// `??` ASKS A DIFFERENT QUESTION FROM `||`, and it used to be compiled as one.
+//
+// Every case below where the left side is falsy-but-present returned the RIGHT
+// side, silently: `0 ?? 5` was 5 and `"" ?? "x"` was "x". p5.js has 168 of
+// these, and a default that overrides a real 0 is the kind of wrong that
+// surfaces as a drawing being in the wrong place rather than as an error.
+void test_nullish_is_not_falsy() {
+    diff_vs_v1("0 ?\? 5", "0");
+    diff_vs_v1("'' ?\? 'x'", "");
+    diff_vs_v1("false ?\? true", "false");
+    diff_vs_v1("NaN ?\? 1", "NaN");
+    diff_vs_v1("null ?\? 5", "5");
+    diff_vs_v1("undefined ?\? 5", "5");
+    // and it still short-circuits: the right side is not evaluated at all
+    expect("let hit = 0; function bump() { hit = 1; return 9; } "
+           "let r = 0 ?\? bump(); return hit;",
+           "0");
+    // the assignment form asks the same question
+    expect("let a = 0; a ?\?= 5; return a;", "0");
+    expect("let b = null; b ?\?= 5; return b;", "5");
+    expect("let c = ''; c ?\?= 'x'; return c;", "");
+}
+
+// A RADIX PREFIX USED TO EVALUATE TO ZERO.
+//
+// std::from_chars in `general` format stops at the `x`, so `0xFF` parsed as 0
+// and the rest was discarded - with no error at any stage. There are 734 hex
+// literals in p5.js, in colour maths, bit masks and font tables.
+void test_radix_literals() {
+    diff_vs_v1("0xFF", "255");
+    diff_vs_v1("0x0", "0");
+    diff_vs_v1("0xdeadbeef", "3735928559");
+    diff_vs_v1("0XAB", "171");
+    diff_vs_v1("0xff & 0x0f", "15");
+    // and the ordinary forms still work
+    diff_vs_v1("255", "255");
+    diff_vs_v1("1.5e3", "1500");
+    diff_vs_v1("0.5", "0.5");
+}
+
+// HALF OF A SIGNATURE USED TO BE DROPPED.
+//
+// The parser has always carried both - a default is the parameter node's `a`
+// child and a rest is `d == 1` - and the compiler read neither. So an omitted
+// argument stayed undefined instead of taking its default, and `...rest` bound
+// the one positional argument in that slot rather than an array of what was
+// left. Silent in both directions.
+void test_default_parameters() {
+    expect("function f(a, b = 2) { return a + b; } return f(1);", "3");
+    expect("function f(a, b = 2) { return a + b; } return f(1, 10);", "11");
+    // undefined takes the default; null does NOT - they are different questions
+    expect("function f(a = 5) { return a; } return f(undefined);", "5");
+    expect("function f(a = 5) { return a; } return f(null);", "null");
+    // a default may be an expression, and may see earlier parameters
+    expect("function f(a, b = a * 2) { return b; } return f(4);", "8");
+    // and it is only evaluated when it is needed
+    expect("let hit = 0; function d() { hit = 1; return 1; } "
+           "function f(a = d()) { return a; } f(9); return hit;",
+           "0");
+    // arrow functions take the same path
+    expect("const f = (a, b = 3) => a + b; return f(1);", "4");
+}
+
+void test_rest_parameters() {
+    expect("function f(...rest) { return rest.length; } return f(1, 2, 3);", "3");
+    expect("function f(...rest) { return rest[1]; } return f('a', 'b');", "b");
+    expect("function f(a, ...rest) { return rest.join('-'); } return f(1, 2, 3, 4);", "2-3-4");
+    // no extra arguments is an EMPTY array, not undefined
+    expect("function f(a, ...rest) { return rest.length; } return f(1);", "0");
+    expect("function f(...rest) { return Array.isArray ? 1 : rest.length; } return f();", "0");
+    // the rest array is a real array and the locals after it are undisturbed
+    expect("function f(a, ...rest) { let x = 7; return a + rest.length + x; } return f(1, 2, 3);",
+           "10");
+    // and a body long enough to reuse the registers the arguments arrived in
+    expect("function f(a, ...rest) { let p = 1, q = 2, r = 3, s = 4, t = 5; "
+           "return rest.join(',') + '|' + (p + q + r + s + t); } return f(0, 8, 9);",
+           "8,9|15");
+}
+
 void test_typeof() {
     diff_vs_v1("typeof 1", "number");
     diff_vs_v1("typeof 'x'", "string");
@@ -823,6 +902,10 @@ int main() {
     test_arithmetic();
     test_plus_is_overloaded();
     test_comparison_and_logic();
+    test_nullish_is_not_falsy();
+    test_radix_literals();
+    test_default_parameters();
+    test_rest_parameters();
     test_typeof();
     test_variables_and_control_flow();
     test_increment_semantics();

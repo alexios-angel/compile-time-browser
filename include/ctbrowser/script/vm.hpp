@@ -243,6 +243,10 @@ private:
         std::size_t ip = 0;
         std::size_t base = 0; // index into registers_ of this frame's r0
         std::uint8_t result_reg = 0;
+        // How many arguments ACTUALLY arrived, which is not param_count: a rest
+        // parameter binds the ones past the declared list, and nothing else in
+        // the frame records that they were passed.
+        std::uint8_t argc = 0;
         closure_object * closure = nullptr; // whose upvalues this body sees
         // The receiver. A JS body reads it through `this`; before this existed
         // `this` compiled to undefined unconditionally, so no method could see

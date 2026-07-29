@@ -1,5 +1,6 @@
 #include <ctbrowser/script/compile.hpp>
 
+#include <array>
 #include <charconv>
 #include <cstdint>
 #include <memory>
@@ -188,6 +189,33 @@ public:
 
     // Names that any nested function inside `body` mentions. Over-approximate
     // on purpose - see the note at the top of this file.
+    // WHICH OF A NODE'S FOUR FIXED SLOTS ARE ACTUALLY CHILDREN.
+    //
+    // The parser reuses `c` and `d` as BITFIELDS on the kinds that need flags:
+    // a rest parameter is `d == 1`, an async function is `c & 1`, a static class
+    // member is `d & 1`, an object-literal accessor is `c == 3`. Nothing on a
+    // node says which reading applies, so a generic walk over {a, b, c, d}
+    // treats those flags as node indices - and index 1 is a real node, so the
+    // walk goes back round the tree and never terminates.
+    //
+    // `function f(...rest) {}` overflowed the stack on the first one of these
+    // the tests ever contained. The flags were always there; nothing had asked
+    // a walker to look at a parameter node before.
+    [[nodiscard]] static std::array<std::int32_t, 4> child_slots(const vp::node & n) {
+        switch (n.kind) {
+        // a = the default expression; d = the rest flag
+        case vp::nk::param: return {n.a, -1, -1, -1};
+        // a = the body; c = async/generator bits
+        case vp::nk::func_decl:
+        case vp::nk::func_expr:
+        case vp::nk::arrow: return {n.a, -1, -1, -1};
+        // a = a computed key, b = the value or method; c and d are both flags
+        case vp::nk::class_member:
+        case vp::nk::prop: return {n.a, n.b, -1, -1};
+        default: return {n.a, n.b, n.c, n.d};
+        }
+    }
+
     void collect_captured_names(std::int32_t idx, bool inside_nested,
                                 std::vector<std::string> & out) {
         if (idx < 0) { return; }
@@ -195,7 +223,7 @@ public:
         const bool nested = inside_nested || n.kind == vp::nk::func_decl ||
                             n.kind == vp::nk::func_expr || n.kind == vp::nk::arrow;
         if (inside_nested && n.kind == vp::nk::ident) { out.emplace_back(n.text); }
-        for (const std::int32_t slot : {n.a, n.b, n.c, n.d}) {
+        for (const std::int32_t slot : child_slots(n)) {
             collect_captured_names(slot, nested, out);
         }
         for (const std::int32_t k : kids(n)) { collect_captured_names(k, nested, out); }
@@ -256,7 +284,7 @@ public:
             return;
         }
         // loops and conditionals can declare too
-        for (const std::int32_t slot : {n.a, n.b, n.c, n.d}) {
+        for (const std::int32_t slot : child_slots(n)) {
             if (slot >= 0 && at(slot).kind != vp::nk::func_decl &&
                 at(slot).kind != vp::nk::func_expr && at(slot).kind != vp::nk::arrow) {
                 collect_declared_names(slot);
@@ -293,6 +321,81 @@ public:
             out_.ok = false;
             out_.error = std::move(message);
         }
+    }
+
+    // `function f(a, b = 1, ...rest)` - the two parts of that signature the
+    // compiler used to DROP.
+    //
+    // The parser has carried both all along: a default is the param node's `a`
+    // child and a rest is `d == 1`. Nothing read either, so an omitted argument
+    // stayed undefined instead of taking its default, and `rest` bound the
+    // single positional argument in that slot rather than an array of the
+    // remainder. Neither was an error; both were wrong answers. p5.js has 47
+    // signatures with a rest parameter alone.
+    //
+    // ORDER IS LOAD-BEARING here, and all three of these are the same hazard -
+    // the arguments are in registers this frame is about to reuse:
+    //
+    //   1. gather_rest first. The extra arguments live in the registers just
+    //      past the declared parameters, which is exactly where the body's
+    //      locals and temporaries get allocated. Anything emitted before this
+    //      reads them has already overwritten them.
+    //   2. defaults next, and BEFORE boxing. A captured parameter is wrapped in
+    //      a heap cell in place; a plain register write afterwards would drop
+    //      the cell on the floor and the closure would see the wrong variable.
+    //   3. a temporary allocated for a default expression must be released, or
+    //      every default permanently widens the frame.
+    void compile_parameter_prologue(const std::vector<std::int32_t> & params) {
+        for (std::size_t i = 0; i < params.size(); ++i) {
+            const vp::node & p = at(params[i]);
+            if (p.d == 1) {
+                proto().emit(instruction{op::gather_rest, static_cast<std::uint8_t>(i),
+                                         static_cast<std::uint8_t>(i)});
+            }
+        }
+        for (std::size_t i = 0; i < params.size(); ++i) {
+            const vp::node & p = at(params[i]);
+            if (p.d == 1 || p.a < 0) { continue; }
+            const auto slot = static_cast<std::uint8_t>(i);
+            const std::size_t skip = proto().emit(instruction{op::jump_if_defined, slot});
+            const std::uint32_t mark = reg_mark();
+            compile_expr(p.a, slot);
+            release_to(mark);
+            patch_here(skip);
+        }
+    }
+
+    // A numeric literal's value.
+    //
+    // This was one call to std::from_chars in `general` format, which stops at
+    // the `x` - so every `0xFF` in the program was the number ZERO, silently.
+    // p5.js has 734 of them, spread through colour maths, bit masks and font
+    // tables, and not one would have produced an error.
+    //
+    // The radix prefixes take the integer overload and then widen; a double is
+    // exact up to 2^53, which is further than any of these literals reach.
+    [[nodiscard]] static double number_literal(std::string_view text) {
+        const std::string lex{text};
+        const auto radix_of = [](char c) -> int {
+            if (c == 'x' || c == 'X') { return 16; }
+            if (c == 'o' || c == 'O') { return 8; }
+            if (c == 'b' || c == 'B') { return 2; }
+            return 0;
+        };
+        if (lex.size() > 2 && lex[0] == '0') {
+            if (const int radix = radix_of(lex[1]); radix != 0) {
+                std::uint64_t bits = 0;
+                const char * const begin = lex.data() + 2;
+                const char * const end = lex.data() + lex.size();
+                if (std::from_chars(begin, end, bits, radix).ec == std::errc{}) {
+                    return static_cast<double>(bits);
+                }
+                return 0;
+            }
+        }
+        double d = 0;
+        std::from_chars(lex.data(), lex.data() + lex.size(), d);
+        return d;
     }
 
     // What a node kind is CALLED. Only the kinds the compiler can refuse need
@@ -856,6 +959,7 @@ public:
         collect_captured_names(n.a, false, fn().captured);
         const std::vector<std::int32_t> params = kids(n);
         for (const std::int32_t p : params) { (void)declare_local(std::string{at(p).text}); }
+        compile_parameter_prologue(params);
         // A captured PARAMETER needs boxing too, and it arrives already
         // holding its value - so box in place, after the arguments land.
         for (const local & l : fn().locals) {
@@ -905,10 +1009,7 @@ public:
         const vp::node & n = at(idx);
         switch (n.kind) {
         case vp::nk::num: {
-            double d = 0;
-            const std::string lex{n.text};
-            std::from_chars(lex.data(), lex.data() + lex.size(), d);
-            emit_const(dst, value::number(d));
+            emit_const(dst, value::number(number_literal(n.text)));
             break;
         }
         case vp::nk::str:
@@ -1144,9 +1245,13 @@ public:
     // are control flow rather than an opcode.
     void compile_logical(const vp::node & n, std::uint8_t dst) {
         compile_expr(n.a, dst);
-        const bool is_and = n.text == "&&";
-        const std::size_t skip =
-            proto().emit(instruction{is_and ? op::jump_if_false : op::jump_if_true, dst});
+        // `??` is not `||`. It asks whether the left side is null or undefined,
+        // so `0 ?? 5` is 0 and `"" ?? "x"` is "" - which is why anyone reaches
+        // for it over `||` in the first place.
+        const op test = n.text == "&&"    ? op::jump_if_false
+                        : n.text == "?\?" ? op::jump_if_not_nullish
+                                          : op::jump_if_true;
+        const std::size_t skip = proto().emit(instruction{test, dst});
         compile_expr(n.b, dst);
         patch_here(skip);
     }
@@ -1318,7 +1423,9 @@ public:
         // a is already truthy, which is the whole reason it exists.
         if (n.text == "||=" || n.text == "&&=" || n.text == "?\?=") {
             emit_load(ref, dst);
-            const op test = n.text == "&&=" ? op::jump_if_false : op::jump_if_true;
+            const op test = n.text == "&&="    ? op::jump_if_false
+                            : n.text == "?\?=" ? op::jump_if_not_nullish
+                                               : op::jump_if_true;
             const std::size_t skip = proto().emit(instruction{test, dst});
             compile_expr(n.b, dst);
             emit_store(ref, dst);

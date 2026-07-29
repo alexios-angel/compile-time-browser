@@ -304,7 +304,8 @@ value context::call(value callable, std::span<const value> args, value this_valu
     const std::size_t depth = frames_.size();
     const value saved = current_this_;
     current_this_ = this_value;
-    frames_.push_back(call_frame{&target, 0, new_base, 0, fnobj, this_value, handlers_.size()});
+    frames_.push_back(call_frame{&target, 0, new_base, 0, static_cast<std::uint8_t>(args.size()),
+                                 fnobj, this_value, handlers_.size()});
     const value out = run_loop(depth);
     current_this_ = saved;
     // Only shrink back if nothing below is still using the space - a nested
@@ -331,7 +332,7 @@ run_result context::run(const program & prog) {
 value context::execute(const program & prog, const function_proto & entry) {
     registers_.assign(entry.frame_size + 8u, value::undefined());
     frames_.clear();
-    frames_.push_back(call_frame{&entry, 0, 0, 0, nullptr, value::undefined(), 0});
+    frames_.push_back(call_frame{&entry, 0, 0, 0, 0, nullptr, value::undefined(), 0});
     program_ = &prog;
     // Per-frame string interning: a literal in a loop should allocate once,
     // not once per iteration.
@@ -543,6 +544,29 @@ value context::run_loop(std::size_t stop_depth) {
                 frame.ip = static_cast<std::size_t>(static_cast<std::int64_t>(frame.ip) + in.sbx());
             }
             break;
+        case op::jump_if_not_nullish:
+            if (!reg(in.a).is_nullish()) {
+                frame.ip = static_cast<std::size_t>(static_cast<std::int64_t>(frame.ip) + in.sbx());
+            }
+            break;
+        case op::jump_if_defined:
+            if (!reg(in.a).is_undefined()) {
+                frame.ip = static_cast<std::size_t>(static_cast<std::int64_t>(frame.ip) + in.sbx());
+            }
+            break;
+
+        case op::gather_rest: {
+            // The arguments past the declared parameters. They are still in
+            // this frame's registers - the caller wrote them there and the
+            // callee's base IS the argument base - so this reads them in place.
+            value out = make_array();
+            auto * rest = static_cast<array_object *>(out.as_heap());
+            for (std::size_t i = in.b; i < frame.argc; ++i) {
+                rest->items.push_back(registers_[base + i]);
+            }
+            reg(in.a) = out;
+            break;
+        }
 
         case op::new_object: reg(in.a) = make_object(); break;
         case op::new_array: reg(in.a) = make_array(); break;
@@ -655,7 +679,7 @@ value context::run_loop(std::size_t stop_depth) {
                 break;
             }
             frames_.push_back(
-                call_frame{&target, 0, new_base, in.a, fnobj, receiver, handlers_.size()});
+                call_frame{&target, 0, new_base, in.a, in.b, fnobj, receiver, handlers_.size()});
             break;
         }
 
@@ -799,7 +823,7 @@ value context::run_loop(std::size_t stop_depth) {
                 raise("call stack exhausted");
                 break;
             }
-            call_frame fresh{&target, 0, new_base, in.a, fnobj, self, handlers_.size()};
+            call_frame fresh{&target, 0, new_base, in.a, in.b, fnobj, self, handlers_.size()};
             fresh.constructing = true;
             frames_.push_back(fresh);
             break;

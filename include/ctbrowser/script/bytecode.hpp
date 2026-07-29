@@ -92,6 +92,19 @@ enum class op : std::uint8_t {
     jump,          // ip += sbx
     jump_if_false, // if (!truthy(a)) ip += sbx
     jump_if_true,  // if (truthy(a)) ip += sbx
+    // `??` and `??=` ask whether a is null or undefined - NOT whether it is
+    // falsy. They are different questions and the difference is the entire
+    // point of the operator: `0 ?? 5` is 0, and `"" ?? "x"` is "". Compiling
+    // them as `||` gets both wrong, silently.
+    jump_if_not_nullish, // if (!nullish(a)) ip += sbx
+    // A default parameter applies when the argument is UNDEFINED and only
+    // then - `f(null)` against `function f(a = 1)` leaves a null. So this is
+    // not the nullish test, and it is not the truthy one either.
+    jump_if_defined, // if (a is not undefined) ip += sbx
+    // b..argc, as an array: the tail a rest parameter binds. The frame knows
+    // how many arguments actually arrived; the proto only knows how many were
+    // declared, which is the wrong number here.
+    gather_rest, // a = [...arguments].slice(b)
 
     // --- objects and arrays
     new_object, // a = {}
