@@ -9,7 +9,7 @@
 # 6 top level ran, 7 defines p5. Rungs 8-12 (loads as a page, new p5(), setup,
 # draw, golden) arrive with the work that makes them reachable.
 
-level=11
+level=12
 blocker=
 
 # Wall-clock ceiling for lex + parse + compile + run, in milliseconds.

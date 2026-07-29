@@ -74,7 +74,11 @@ foreach(source ${example-sources})
     # and Windows. Gated on the dependency: without plutosvg the graphics are
     # simply absent, and the comparison would fail for a reason that is not a
     # regression.
-    set(golden-examples widgets elements)
+    # p5basic joins them: the page is scriptless in the sense that matters -
+    # noLoop, no random, no text and no image - so the frame it draws is the
+    # same on every platform, and the golden is the only proof that the bundle
+    # actually PAINTS rather than merely running.
+    set(golden-examples widgets elements p5basic)
     # plutosvg_FOUND, not CTBROWSER_WITH_SVG: the latter is a compile
     # definition on a target and is not a variable this scope can test.
     if(plutosvg_FOUND)

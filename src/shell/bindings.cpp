@@ -246,37 +246,13 @@ node_id dom_bindings::receiver(context & cx) {
 void dom_bindings::refresh_element(context & cx, script::object_object & obj, node_id id) {
     const auto txn = doc_->read();
     obj.set("tagName", cx.string(std::string{atoms_->text(txn.tag(id).value_or(atom{}))}));
-    obj.set("id", cx.string(std::string{txn.attribute_value(id, atoms_->intern("id"))}));
-    obj.set("className", cx.string(std::string{txn.attribute_value(id, atoms_->intern("class"))}));
-    // `width` and `height` are the ATTRIBUTES, not the laid-out box. For a
-    // <canvas> they are its pixel buffer's size, and essentially every
-    // canvas page computes with them - `canvas.width/2` is the first line
-    // of most of them. Without these they read as undefined and every
-    // coordinate derived from them becomes NaN, which draws nothing at all
-    // and reports no error.
-    const auto attribute_number = [&](std::string_view name) {
-        const std::string_view text = txn.attribute_value(id, atoms_->intern(name));
-        double parsed = 0;
-        bool any = false;
-        for (const char c : text) {
-            if (c < '0' || c > '9') { break; }
-            parsed = parsed * 10 + (c - '0');
-            any = true;
-        }
-        return any ? parsed : 0.0;
-    };
+    // `id`, `className`, `width` and `height` are NOT set here: they are
+    // accessors over the attributes, installed once in install_element_views.
+    // As data properties they were write-only in the wrong direction - a page
+    // assigning `el.id = 'x'` changed the wrapper and nothing else, and the
+    // next refresh put the old value back. p5.js names its canvas and sizes it
+    // that way, so both writes vanished.
     const std::string_view tag_text = atoms_->text(txn.tag(id).value_or(atom{}));
-    if (tag_text == "canvas") {
-        // The HTML defaults, which a page that omits the attributes relies on.
-        const double w = attribute_number("width");
-        const double h = attribute_number("height");
-        obj.set("width", value::number(w > 0 ? w : 300));
-        obj.set("height", value::number(h > 0 ? h : 150));
-    } else if (txn.has_attribute(id, atoms_->intern("width")) ||
-               txn.has_attribute(id, atoms_->intern("height"))) {
-        obj.set("width", value::number(attribute_number("width")));
-        obj.set("height", value::number(attribute_number("height")));
-    }
 
     refresh_control(cx, obj, txn, id, tag_text);
 
@@ -438,6 +414,126 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     });
     obj.set("style", style_view);
 
+    // --- the reflected attributes
+    //
+    // `id`, `className`, `width` and `height` are IDL attributes that REFLECT
+    // content attributes: reading one reads the attribute and writing one
+    // writes it. As plain data properties they only ever went one way - the
+    // refresh copied the attribute onto the wrapper, and a page's assignment
+    // changed the wrapper alone and was overwritten by the next refresh.
+    //
+    // Nothing said so. p5.js gives its canvas an id and a size that way and
+    // both writes disappeared, leaving a nameless 300x150 canvas that no
+    // amount of drawing could make the right size.
+    const auto reflect_string = [&](std::string property, std::string attribute) {
+        obj.define_accessor(
+            property,
+            value::object(cx.allocate<script::native_object>(
+                property,
+                [this, id, attribute](context & c, std::span<value>) {
+                    const auto txn = doc_->read();
+                    return c.string(
+                        std::string{txn.attribute_value(id, atoms_->intern(attribute))});
+                })),
+            value::object(cx.allocate<script::native_object>(
+                property, [this, id, attribute](context & c, std::span<value> a) {
+                    (void)doc_->set_attribute(id, atoms_->intern(attribute), arg_string(c, a, 0));
+                    mutated();
+                    return value::undefined();
+                })));
+    };
+    reflect_string("id", "id");
+    reflect_string("className", "class");
+
+    // `parentNode` and `children` are ACCESSORS because the tree moves. A
+    // wrapper built when an element was detached and refreshed later would hand
+    // back the parent it had at wrapping time, which for an element p5 creates
+    // and then appends is null forever.
+    const auto navigate = [&](std::string property, script::native_fn fn) {
+        obj.define_accessor(
+            property, value::object(cx.allocate<script::native_object>(property, std::move(fn))),
+            value::undefined());
+    };
+    navigate("parentNode", [this, id](context & c, std::span<value>) {
+        const auto txn = doc_->read();
+        return wrap(c, txn.parent(id));
+    });
+    navigate("parentElement", [this, id](context & c, std::span<value>) {
+        const auto txn = doc_->read();
+        return wrap(c, txn.parent(id));
+    });
+    navigate("children", [this, id](context & c, std::span<value>) {
+        value list = c.make_array();
+        auto * items = static_cast<script::array_object *>(list.as_heap());
+        const auto txn = doc_->read();
+        for (const node_id child : txn.children(id)) {
+            if (txn.tag(child).has_value()) { items->items.push_back(wrap(c, child)); }
+        }
+        return list;
+    });
+
+    // `width` and `height` are numbers, and on a <canvas> they are the size of
+    // its PIXEL BUFFER rather than of its laid-out box - `canvas.width / 2` is
+    // the first line of most canvas pages. Assigning one resizes the surface,
+    // which is what the spec means by a canvas being reset by the assignment.
+    const auto reflect_size = [&](std::string property, double fallback) {
+        obj.define_accessor(
+            property,
+            value::object(cx.allocate<script::native_object>(
+                property,
+                [this, id, property, fallback](context &, std::span<value>) {
+                    const auto txn = doc_->read();
+                    const std::string_view text = txn.attribute_value(id, atoms_->intern(property));
+                    double parsed = 0;
+                    bool any = false;
+                    for (const char c : text) {
+                        if (c < '0' || c > '9') { break; }
+                        parsed = parsed * 10 + (c - '0');
+                        any = true;
+                    }
+                    return value::number(any ? parsed : fallback);
+                })),
+            value::object(cx.allocate<script::native_object>(
+                property, [this, id, property](context &, std::span<value> a) {
+                    const double want = arg_number(a, 0);
+                    (void)doc_->set_attribute(id, atoms_->intern(property),
+                                              std::to_string(static_cast<long long>(want)));
+                    // The SURFACE follows, or the canvas keeps drawing into a
+                    // buffer of the size it was created at and everything past
+                    // that edge is silently discarded.
+                    if (canvases_ != nullptr) {
+                        const auto txn = doc_->read();
+                        const auto number = [&](std::string_view name, int missing) {
+                            const std::string_view text =
+                                txn.attribute_value(id, atoms_->intern(name));
+                            int out = 0;
+                            bool any = false;
+                            for (const char c : text) {
+                                if (c < '0' || c > '9') { break; }
+                                out = out * 10 + (c - '0');
+                                any = true;
+                            }
+                            return any ? out : missing;
+                        };
+                        canvases_->resize(id, number("width", 300), number("height", 150));
+                    }
+                    mutated();
+                    return value::undefined();
+                })));
+    };
+    {
+        const auto txn = doc_->read();
+        if (atoms_->text(txn.tag(id).value_or(atom{})) == "canvas") {
+            // The HTML defaults, which a page that omits the attributes relies on.
+            reflect_size("width", 300);
+            reflect_size("height", 150);
+        } else if (txn.has_attribute(id, atoms_->intern("width")) ||
+                   txn.has_attribute(id, atoms_->intern("height"))) {
+            reflect_size("width", 0);
+            reflect_size("height", 0);
+        }
+    }
+
     // --- element.classList
     //
     // Every operation reads the attribute, edits the token list and writes it
@@ -583,6 +679,37 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
             if (cls == want) { return value::boolean(true); }
         }
         return value::boolean(false);
+    });
+    // TREE NAVIGATION. appendChild and removeChild could already change the
+    // tree; nothing could WALK it, so an element could not reach its own
+    // parent. `this.elt.parentNode.removeChild(this.elt)` is the ordinary way
+    // to take an element out of the page - it is how p5.js discards the default
+    // canvas when a sketch calls createCanvas - and with parentNode undefined
+    // the removal threw inside a callback and the discarded canvas stayed in
+    // the document, laid out and painted, underneath the real one.
+    method("remove", [this](context & c, std::span<value>) {
+        const node_id self = receiver(c);
+        if (self) {
+            (void)doc_->remove_child(self);
+            mutated();
+        }
+        return value::undefined();
+    });
+    method("insertBefore", [this](context & c, std::span<value> args) {
+        const node_id parent = receiver(c);
+        const node_id child = handle_of(arg(args, 0));
+        const node_id before = handle_of(arg(args, 1));
+        if (parent && child) {
+            // A null reference node means "at the end", which is what makes
+            // `insertBefore(node, null)` a documented spelling of appendChild.
+            if (before) {
+                (void)doc_->insert_before(parent, child, before);
+            } else {
+                (void)doc_->append_child(parent, child);
+            }
+            mutated();
+        }
+        return arg(args, 0);
     });
     method("appendChild", [this](context & c, std::span<value> args) {
         const node_id parent = receiver(c);
@@ -797,8 +924,55 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
                const float h = a.size() >= 5 ? number(a, 4) : natural_h;
                canvas->draw_image(*source, number(a, 1), number(a, 2), w, h);
            }));
-    method("fill", draws([canvas](context &, std::span<value>) { canvas->fill(); }));
-    method("stroke", draws([canvas](context &, std::span<value>) { canvas->stroke(); }));
+    // `fill(path)` and `stroke(path)` REPLAY a Path2D rather than using the
+    // context's own current path. p5.js draws every shape that way: it builds
+    // one Path2D per shape with a visitor and hands it to the context, so a
+    // fill() that ignored its argument drew whatever happened to be left in the
+    // context - usually nothing.
+    //
+    // Replaying replaces the current path, which is what the spec's "these
+    // methods do not affect the current default path" amounts to here: nothing
+    // in this engine reads the path back afterwards.
+    const auto replay = [canvas](context & c, std::span<value> a) {
+        if (a.empty() || !a[0].is_object()) { return; }
+        const value commands = c.lookup_property(a[0], std::string{path_commands_property});
+        if (!commands.is_array()) { return; }
+        canvas->begin_path();
+        for (const value & step : static_cast<script::array_object *>(commands.as_heap())->items) {
+            if (!step.is_array()) { continue; }
+            const auto & parts = static_cast<script::array_object *>(step.as_heap())->items;
+            if (parts.empty()) { continue; }
+            const std::string verb = c.to_string(parts[0]);
+            const auto n = [&](std::size_t i) {
+                return i < parts.size() ? static_cast<float>(context::to_number(parts[i])) : 0.0f;
+            };
+            if (verb == "M") {
+                canvas->move_to(n(1), n(2));
+            } else if (verb == "L") {
+                canvas->line_to(n(1), n(2));
+            } else if (verb == "Q") {
+                canvas->quadratic_curve_to(n(1), n(2), n(3), n(4));
+            } else if (verb == "C") {
+                canvas->bezier_curve_to(n(1), n(2), n(3), n(4), n(5), n(6));
+            } else if (verb == "R") {
+                canvas->rect_path(n(1), n(2), n(3), n(4));
+            } else if (verb == "A") {
+                canvas->arc(n(1), n(2), n(3), n(4), n(5), n(6) != 0);
+            } else if (verb == "E") {
+                canvas->ellipse(n(1), n(2), n(3), n(4), n(5), n(6), n(7), n(8) != 0);
+            } else if (verb == "Z") {
+                canvas->close_path();
+            }
+        }
+    };
+    method("fill", draws([canvas, replay](context & c, std::span<value> a) {
+               replay(c, a);
+               canvas->fill();
+           }));
+    method("stroke", draws([canvas, replay](context & c, std::span<value> a) {
+               replay(c, a);
+               canvas->stroke();
+           }));
     method("save", draws([canvas](context &, std::span<value>) { canvas->save(); }));
     // restore() has to write the state BACK TO THE JAVASCRIPT OBJECT, not just
     // pop the C++ stack. Everything on that stack except the transform is also
@@ -832,6 +1006,10 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
            }));
     method("rotate",
            draws([canvas](context &, std::span<value> a) { canvas->rotate(number(a, 0)); }));
+    method("ellipse", draws([canvas](context &, std::span<value> a) {
+               canvas->ellipse(number(a, 0), number(a, 1), number(a, 2), number(a, 3), number(a, 4),
+                               number(a, 5), number(a, 6), a.size() > 7 && context::truthy(a[7]));
+           }));
     method("resetTransform",
            draws([canvas](context &, std::span<value>) { canvas->reset_transform(); }));
     // `setTransform` REPLACES the matrix and `transform` composes with it. The
@@ -1269,6 +1447,73 @@ void dom_bindings::install_window(context & cx) {
     // Dispatch here is FLAT: a window event runs the window's listeners for
     // that type, in registration order. There is no capture phase and no
     // bubbling, because a window event has nowhere to bubble from.
+    // `new Path2D()` - a path recorded now and drawn later.
+    //
+    // Every 2D shape p5.js draws goes through one: a visitor walks the shape
+    // and emits path verbs, and the renderer hands the result to fill() or
+    // stroke(). So this is not an optional corner of the canvas API here, it is
+    // the whole 2D drawing path.
+    //
+    // The verbs are kept in a script array (see path_commands_property) rather
+    // than a C++ type: nothing but the canvas replay reads them, the GC already
+    // traces arrays, and `new Path2D(other)` is then a copy of one vector.
+    cx.define_native("Path2D", [](context & c, std::span<value> args) {
+        auto * path = static_cast<script::object_object *>(c.make_object().as_heap());
+        value commands = c.make_array();
+        auto * steps = static_cast<script::array_object *>(commands.as_heap());
+        // `new Path2D(other)` starts as a copy. p5 makes separate fill and
+        // stroke paths from one built path exactly this way.
+        if (!args.empty() && args[0].is_object()) {
+            const value source = c.lookup_property(args[0], std::string{path_commands_property});
+            if (source.is_array()) {
+                steps->items = static_cast<script::array_object *>(source.as_heap())->items;
+            }
+        }
+        path->set(std::string{path_commands_property}, commands);
+        // Each verb records the letter and its numbers, which is the same shape
+        // the canvas replay reads back.
+        const auto record = [&](std::string name, std::string letter, std::size_t count) {
+            path->set(name, value::object(c.allocate<script::native_object>(
+                                name, [steps, letter, count](context & inner, std::span<value> a) {
+                                    value step = inner.make_array();
+                                    auto * parts =
+                                        static_cast<script::array_object *>(step.as_heap());
+                                    parts->items.push_back(inner.string(letter));
+                                    for (std::size_t i = 0; i < count; ++i) {
+                                        parts->items.push_back(value::number(arg_number(a, i)));
+                                    }
+                                    steps->items.push_back(step);
+                                    return value::undefined();
+                                })));
+        };
+        record("moveTo", "M", 2);
+        record("lineTo", "L", 2);
+        record("quadraticCurveTo", "Q", 4);
+        record("bezierCurveTo", "C", 6);
+        record("rect", "R", 4);
+        record("arc", "A", 6);
+        record("ellipse", "E", 8);
+        record("closePath", "Z", 0);
+        // TODO: honour addPath's optional transform. p5 passes one only when
+        // clipping, and clip() is not implemented either, so the matrix has
+        // nothing to change yet - but a page that transforms an added path and
+        // then draws it will get the untransformed one, silently.
+        path->set("addPath",
+                  value::object(c.allocate<script::native_object>(
+                      "addPath", [steps](context & inner, std::span<value> a) {
+                          if (a.empty() || !a[0].is_object()) { return value::undefined(); }
+                          const value source =
+                              inner.lookup_property(a[0], std::string{path_commands_property});
+                          if (source.is_array()) {
+                              const auto & from =
+                                  static_cast<script::array_object *>(source.as_heap())->items;
+                              steps->items.insert(steps->items.end(), from.begin(), from.end());
+                          }
+                          return value::undefined();
+                      })));
+        return value::object(path);
+    });
+
     cx.define_native("Event", [](context & c, std::span<value> args) {
         auto * event = static_cast<script::object_object *>(c.make_object().as_heap());
         event->set("type", c.string(arg_string(c, args, 0)));

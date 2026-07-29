@@ -966,6 +966,16 @@ void install_string(context & cx) {
         const auto i = static_cast<std::size_t>(std::max(0.0, num_at(a, 0)));
         return c.string(i < s.size() ? std::string{s[i]} : std::string{});
     });
+    // `at` is charAt that counts from the END for a negative index, which is
+    // the whole reason to reach for it - `s.at(-1)` is the last character.
+    // Arrays had it and strings did not, and the two are meant to match.
+    method(cx, string_proto, "at", [](context & c, std::span<value> a) {
+        const std::string s = detail::this_string(c);
+        double i = num_at(a, 0);
+        if (i < 0) { i += static_cast<double>(s.size()); }
+        if (i < 0 || i >= static_cast<double>(s.size())) { return value::undefined(); }
+        return c.string(std::string{s[static_cast<std::size_t>(i)]});
+    });
     method(cx, string_proto, "charCodeAt", [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
         const auto i = static_cast<std::size_t>(std::max(0.0, num_at(a, 0)));
@@ -1165,8 +1175,47 @@ void install_number(context & cx) {
         out.resize(written > 0 ? static_cast<std::size_t>(written) : 0);
         return c.string(out);
     });
-    method(cx, number_proto, "toString",
-           [](context & c, std::span<value>) { return c.string(c.to_string(c.current_this())); });
+    // `toString(radix)` HONOURS ITS RADIX. Ignoring it is not a small gap:
+    // `n.toString(16)` is how essentially every program turns a colour channel
+    // into hex, and dropping the argument returned the DECIMAL digits - so
+    // `'#' + (220).toString(16)` came out as "#220" rather than "#dc". That is
+    // a string a colour parser can neither reject nor read correctly, which is
+    // how p5.js ended up filling a sketch's background with white.
+    method(cx, number_proto, "toString", [](context & c, std::span<value> a) {
+        const double v = context::to_number(c.current_this());
+        const int radix = a.empty() ? 10 : static_cast<int>(context::to_number(a[0]));
+        if (radix == 10 || radix < 2 || radix > 36 || std::isnan(v) || std::isinf(v)) {
+            return c.string(c.to_string(c.current_this()));
+        }
+        const bool negative = v < 0;
+        double magnitude = std::fabs(v);
+        constexpr std::string_view digits = "0123456789abcdefghijklmnopqrstuvwxyz";
+        double whole = std::floor(magnitude);
+        std::string out;
+        if (whole == 0) {
+            out = "0";
+        } else {
+            while (whole >= 1) {
+                const auto digit =
+                    static_cast<std::size_t>(std::fmod(whole, static_cast<double>(radix)));
+                out.insert(out.begin(), digits[digit]);
+                whole = std::floor(whole / radix);
+            }
+        }
+        // The fraction, to as many places as a double can distinguish. A
+        // fixed count would print 0.1 in binary as 0.0999... or drop it.
+        double fraction = magnitude - std::floor(magnitude);
+        if (fraction > 0) {
+            out += '.';
+            for (int place = 0; place < 52 && fraction > 0; ++place) {
+                fraction *= radix;
+                const auto digit = static_cast<std::size_t>(std::floor(fraction));
+                out += digits[std::min<std::size_t>(digit, 35)];
+                fraction -= std::floor(fraction);
+            }
+        }
+        return c.string(negative ? "-" + out : out);
+    });
     number_ctor->set("prototype", value::object(number_proto));
     cx.set_prototype(context::proto_kind::number, number_proto);
 }

@@ -5,6 +5,17 @@
 
 namespace ctbrowser::shell {
 
+void canvas_context::reset_surface(int width, int height) {
+    pixels_ = std::make_shared<bitmap>(width, height);
+    // A resize RESETS the canvas: the pixels are cleared and the drawing state
+    // goes back to its defaults, which includes an empty save stack and an
+    // identity transform.
+    subpaths_.clear();
+    stack_.clear();
+    transform_ = ctbrowser::shell::transform{};
+    ++revision_;
+}
+
 void canvas_context::save() {
     stack_.push_back(state{transform_, fill_style, stroke_style, line_width, global_alpha,
                            font_size, font_family, font_bold, font_italic, font_spec, fill_spec,
@@ -83,6 +94,79 @@ void canvas_context::arc(float x, float y, float radius, float from, float to, b
         } else {
             line_to_device(transform_.apply(px, py));
         }
+    }
+}
+
+void canvas_context::ellipse(float x, float y, float rx, float ry, float rotation, float from,
+                             float to, bool anticlockwise) {
+    if (rx <= 0 || ry <= 0) { return; }
+    constexpr float tau = 6.28318530718f;
+    // Segment count from the LARGER radius, so a long thin ellipse is as smooth
+    // along its long axis as a circle of that size would be.
+    const int segments_per_turn =
+        std::clamp(static_cast<int>(std::max(rx, ry) * 1.5f) + 8, 16, 256);
+    float sweep = to - from;
+    if (anticlockwise && sweep > 0) { sweep -= tau; }
+    if (!anticlockwise && sweep < 0) { sweep += tau; }
+    const int steps = std::max(
+        2, static_cast<int>(std::fabs(sweep) / tau * static_cast<float>(segments_per_turn)) + 1);
+    const float cos_r = std::cos(rotation);
+    const float sin_r = std::sin(rotation);
+    for (int i = 0; i <= steps; ++i) {
+        const float t = from + sweep * static_cast<float>(i) / static_cast<float>(steps);
+        const float ex = rx * std::cos(t);
+        const float ey = ry * std::sin(t);
+        const point p = transform_.apply(x + ex * cos_r - ey * sin_r, y + ex * sin_r + ey * cos_r);
+        if (i == 0 && subpaths_.empty()) {
+            move_to_device(p);
+        } else {
+            line_to_device(p);
+        }
+    }
+}
+
+namespace {
+
+// How many segments a curve of this on-screen size needs. Enough that the
+// straight-line error is under about a third of a pixel, and capped so a curve
+// stretched across a huge transform cannot cost unbounded time.
+int curve_steps(point a, point b) {
+    const float dx = b.x - a.x;
+    const float dy = b.y - a.y;
+    const float extent = std::sqrt(dx * dx + dy * dy);
+    return std::clamp(static_cast<int>(extent / 3.0f) + 4, 4, 128);
+}
+
+} // namespace
+
+void canvas_context::quadratic_curve_to(float cx, float cy, float x, float y) {
+    const point control = transform_.apply(cx, cy);
+    const point end = transform_.apply(x, y);
+    if (subpaths_.empty()) { move_to_device(control); }
+    const point start = subpaths_.back().points.back();
+    const int steps = curve_steps(start, end);
+    for (int i = 1; i <= steps; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(steps);
+        const float u = 1 - t;
+        line_to_device(point{u * u * start.x + 2 * u * t * control.x + t * t * end.x,
+                             u * u * start.y + 2 * u * t * control.y + t * t * end.y});
+    }
+}
+
+void canvas_context::bezier_curve_to(float c1x, float c1y, float c2x, float c2y, float x, float y) {
+    const point one = transform_.apply(c1x, c1y);
+    const point two = transform_.apply(c2x, c2y);
+    const point end = transform_.apply(x, y);
+    if (subpaths_.empty()) { move_to_device(one); }
+    const point start = subpaths_.back().points.back();
+    const int steps = curve_steps(start, end);
+    for (int i = 1; i <= steps; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(steps);
+        const float u = 1 - t;
+        line_to_device(point{u * u * u * start.x + 3 * u * u * t * one.x + 3 * u * t * t * two.x +
+                                 t * t * t * end.x,
+                             u * u * u * start.y + 3 * u * u * t * one.y + 3 * u * t * t * two.y +
+                                 t * t * t * end.y});
     }
 }
 
@@ -300,21 +384,33 @@ void canvas_context::line(point a, point b, float thickness) {
 
 void canvas_store::set_fonts(const raster::font_backend * fonts) {
     fonts_ = fonts;
-    for (auto & [key, canvas] : canvases_) { canvas.set_fonts(fonts); }
+    for (auto & [key, canvas] : canvases_) { canvas->set_fonts(fonts); }
 }
 
 canvas_context * canvas_store::context_for(node_id id, int width, int height) {
     auto it = canvases_.find(id.key());
     if (it == canvases_.end()) {
         auto pixels = std::make_shared<bitmap>(width, height);
-        it = canvases_.emplace(id.key(), canvas_context{std::move(pixels), fonts_}).first;
+        it =
+            canvases_.emplace(id.key(), std::make_unique<canvas_context>(std::move(pixels), fonts_))
+                .first;
     }
-    return &it->second;
+    return it->second.get();
+}
+
+void canvas_store::resize(node_id id, int width, int height) {
+    if (width <= 0 || height <= 0) { return; }
+    const auto it = canvases_.find(id.key());
+    if (it == canvases_.end()) { return; }
+    if (it->second->width() == width && it->second->height() == height) { return; }
+    // In place: script is holding a context whose methods captured this
+    // address, so the object must be the same one afterwards.
+    it->second->reset_surface(width, height);
 }
 
 const canvas_context * canvas_store::find(node_id id) const {
     const auto it = canvases_.find(id.key());
-    return it == canvases_.end() ? nullptr : &it->second;
+    return it == canvases_.end() ? nullptr : it->second.get();
 }
 
 std::shared_ptr<const bitmap> canvas_store::pixels_of(node_id id) const {
@@ -324,7 +420,7 @@ std::shared_ptr<const bitmap> canvas_store::pixels_of(node_id id) const {
 
 std::uint64_t canvas_store::total_revision() const {
     std::uint64_t sum = 0;
-    for (const auto & [key, canvas] : canvases_) { sum += canvas.revision(); }
+    for (const auto & [key, canvas] : canvases_) { sum += canvas->revision(); }
     return sum;
 }
 

@@ -36,7 +36,7 @@ MODULE = re.compile(r"^  function ([A-Za-z_$][\w$]*)\(p5, fn[^)]*\)\s*\{", re.M)
 
 LEVELS = ["unread", "read", "lexed", "parsed", "compiled",
           "fits the bytecode", "top level ran", "defines p5", "loads as a page",
-          "constructs", "setup ran", "draw ran", "matches a golden"]
+          "constructs", "setup ran", "draw ran", "paints what the sketch drew"]
 
 
 def build():

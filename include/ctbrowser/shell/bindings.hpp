@@ -67,6 +67,13 @@ using ctbrowser::script::value;
 // resolve to the same node.
 inline constexpr std::string_view handle_property = "__node";
 
+// Where a Path2D keeps the verbs it recorded. A Path2D is a RECORDING, not a
+// drawing: it is built once and replayed into a canvas by fill(path) or
+// stroke(path), possibly under a different transform than the one in force
+// when it was built. Keeping the verbs in an ordinary script array means the
+// GC traces them with no new heap kind, and a page can be shown what it built.
+inline constexpr std::string_view path_commands_property = "__cmds";
+
 class dom_bindings {
 public:
     // `on_mutation` is how the browser learns it has to re-run the pipeline.

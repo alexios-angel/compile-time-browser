@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- p5.js, running on this engine.
+     A sketch in INSTANCE mode: the sketch function gets its own p5, so the
+     page says exactly which drawing calls it is making instead of relying on
+     p5 having installed 200 names as globals.
+     IS_MINIFIED is what p5's own minified build defines. It gates the Friendly
+     Error System and an i18next initialize() that fetches from a CDN - and a
+     page in this tree must render identically with the network off. -->
+<html>
+  <head>
+    <script>var IS_MINIFIED = true;</script>
+    <script src="examples/assets/p5.js"></script>
+  </head>
+  <body style="margin:0;background:#ffffff">
+    <script>
+      new p5(function (s) {
+        s.setup = function () {
+          s.createCanvas(300, 200);
+          s.noLoop();
+        };
+        s.draw = function () {
+          s.background(220);
+          s.noStroke();
+          s.fill(220, 50, 50);
+          s.rect(20, 20, 80, 60);
+          s.fill(50, 80, 220);
+          s.ellipse(200, 60, 90, 70);
+          s.stroke(20, 120, 60);
+          s.strokeWeight(6);
+          s.line(20, 150, 280, 150);
+        };
+      });
+    </script>
+  </body>
+</html>

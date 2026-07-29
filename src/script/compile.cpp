@@ -278,6 +278,29 @@ public:
         }
         for (const std::int32_t k : kids(n)) { collect_captured_names(k, nested, out); }
     }
+    // Does this body read `arguments`?
+    //
+    // Materialising it costs a register and an array per call, so it is only
+    // done where the name is actually mentioned - a bundle this size runs far
+    // too many calls a frame to pay for it everywhere.
+    //
+    // Arrows ARE descended into, and other functions are not: an arrow has no
+    // `arguments` of its own and sees the enclosing function's, so a mention
+    // inside one is a mention here. Making it a real local is what lets the
+    // arrow reach it, as an ordinary captured variable.
+    [[nodiscard]] bool mentions_arguments(std::int32_t idx) const {
+        if (idx < 0) { return false; }
+        const vp::node & n = at(idx);
+        if (n.kind == vp::nk::func_decl || n.kind == vp::nk::func_expr) { return false; }
+        if (n.kind == vp::nk::ident && n.text == "arguments") { return true; }
+        for (const std::int32_t slot : child_slots(n)) {
+            if (mentions_arguments(slot)) { return true; }
+        }
+        for (const std::int32_t k : kids(n)) {
+            if (mentions_arguments(k)) { return true; }
+        }
+        return false;
+    }
     [[nodiscard]] bool is_captured(std::string_view name) const {
         const frame & f = frames_.back();
         for (const std::string & c : f.captured) {
@@ -1392,6 +1415,28 @@ public:
         for (const local & l : fn().locals) {
             if (l.boxed) { proto().emit(instruction{op::new_cell, l.reg}); }
         }
+        // `arguments` IS MATERIALISED ONCE, HERE, AND IS A REAL LOCAL.
+        //
+        // Building it where the name is mentioned reads the frame's registers
+        // as they are AT THAT MOMENT, and by then the expression around it has
+        // reused the ones holding arguments past the last declared parameter -
+        // so `function g() { return arguments[0] + ',' + arguments[1]; }`
+        // returned the half-built string as its own second argument. Entry is
+        // the only point where those registers still hold what the caller put
+        // there.
+        //
+        // A local also gives it the right identity - one object per call, not a
+        // fresh array per mention - and lets an arrow capture the enclosing
+        // function's, which is the arrow rule, for free.
+        //
+        // Arrows do not make their own: `mentions_arguments` descends into them
+        // so the enclosing function makes one they can capture.
+        if (!out_.functions[index].is_arrow && mentions_arguments(n.a) &&
+            find_local_in_current_scope("arguments") == nullptr) {
+            const std::uint16_t slot = declare_local("arguments");
+            proto().emit(instruction{op::make_arguments, slot});
+            if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, slot}); }
+        }
         // A NAMED FUNCTION EXPRESSION BINDS ITS OWN NAME, in its own body and
         // nowhere else. `var f = function me(n) { return me(n - 1); }` is how
         // an unnamed function recurses, and `(function pump() { raf(pump); })()`
@@ -1601,6 +1646,11 @@ public:
             proto().emit(instruction{op::get_upvalue, dst, static_cast<std::uint16_t>(up)});
             return;
         }
+        // `arguments` is not synthesised here: compile_function_body made it a
+        // real local at entry, so it resolved above as a local or an upvalue.
+        // Reaching this point means the mention is at TOP LEVEL, where a script
+        // has no arguments and reading the name is an ordinary global lookup -
+        // which is what a browser does too.
         const std::uint16_t name = name_operand(std::string{n.text});
         proto().emit(instruction::with_bx(op::get_global, dst, name));
     }
@@ -2138,9 +2188,23 @@ public:
             // `obj[name](...)` is a METHOD call: the receiver is obj. Compiling
             // it as a plain call leaves `this` undefined inside the method.
             compile_expr(callee.a, base); // the receiver
+            // THE ARGUMENT WINDOW IS RESERVED BEFORE THE KEY IS EVALUATED.
+            //
+            // call_computed reads its arguments from base+1 upwards, so base+1
+            // belongs to argument 0 and to nothing else. Evaluating the key into
+            // a register first took base+1, pushed the arguments up one, and the
+            // VM then read the KEY as argument 0 and dropped the last argument -
+            // `t['k'](1, 2, 3)` arrived as `('k', 1, 2)`.
+            //
+            // Reserving first and filling after keeps both rules: the arguments
+            // are contiguous from base+1, and the key is still evaluated BEFORE
+            // them, which is the order JavaScript specifies.
+            std::vector<std::uint16_t> arg_regs;
+            arg_regs.reserve(args.size());
+            for (std::size_t i = 0; i < args.size(); ++i) { arg_regs.push_back(alloc_reg()); }
             const std::uint16_t key = alloc_reg();
             compile_expr(callee.b, key);
-            for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
+            for (std::size_t i = 0; i < args.size(); ++i) { compile_expr(args[i], arg_regs[i]); }
             proto().emit(
                 instruction{op::call_computed, base, static_cast<std::uint16_t>(args.size()), key});
         } else {

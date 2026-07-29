@@ -167,6 +167,16 @@ enum class op : std::uint8_t {
     // function expression called an undefined `me` - which is silent when the
     // call is a callback, as `(function pump() { raf(pump); })()` is.
     load_callee,
+    // a = `arguments`: every value this call actually received, as an array.
+    //
+    // It is a real Array rather than the spec's array-LIKE object, which is a
+    // deliberate and visible deviation: `Array.isArray(arguments)` is true here
+    // and false in a browser. The alternative - a plain object with numeric
+    // keys - loses `Array.prototype.slice.call(arguments)`, which is the single
+    // commonest thing done with it, so this is the more useful of two wrong
+    // answers. `length` and indexing, which is what dispatch code reads, are
+    // right either way.
+    make_arguments,
 
     // --- exceptions. `try` pushes a handler with the address to jump to;
     // `throw` unwinds call frames until it finds one. Unwinding is what makes

@@ -111,6 +111,11 @@ public:
     // both go through this rather than each computing their own.
     [[nodiscard]] float measure_text(std::string_view text) const;
 
+    // New pixels at a new size, IN PLACE. Setting canvas.width resets the
+    // canvas, and the object has to survive that: script holds a context whose
+    // every method captured this address.
+    void reset_surface(int width, int height);
+
     void save();
     void restore();
     void translate(float x, float y) { transform_ = transform::translation(x, y).then(transform_); }
@@ -142,6 +147,22 @@ public:
     // curves needs a scanline converter with them; segments at this density are
     // indistinguishable at the sizes a canvas is drawn.
     void arc(float x, float y, float radius, float from, float to, bool anticlockwise);
+    // Beziers, FLATTENED into line segments the way arc() already is: the
+    // rasteriser takes polygons, so a curve has to become one somewhere.
+    //
+    // Flattened in DEVICE space, after the control points are transformed. The
+    // transform is affine, so the curve through the transformed control points
+    // is the transform of the curve - and choosing the segment count from the
+    // device-space extent means a scaled-up curve gets more segments rather
+    // than the same few, magnified into visible facets.
+    // An ellipse is an arc with two radii and a rotation. It is not a nicety:
+    // it is how a canvas draws a circle of a given width and height, which is
+    // p5.js's `ellipse()` and `circle()` and therefore most of what a sketch
+    // puts on screen.
+    void ellipse(float x, float y, float rx, float ry, float rotation, float from, float to,
+                 bool anticlockwise);
+    void quadratic_curve_to(float cx, float cy, float x, float y);
+    void bezier_curve_to(float c1x, float c1y, float c2x, float c2y, float x, float y);
 
     // Even-odd scanline fill. The spec's default is nonzero winding; even-odd
     // differs only for self-intersecting paths, which is a real limitation and
@@ -253,6 +274,13 @@ public:
     void set_fonts(const raster::font_backend * fonts);
 
     [[nodiscard]] canvas_context * context_for(node_id id, int width, int height);
+    // Setting a canvas's width or height RESETS it - new pixels, cleared, and
+    // the drawing state back to its defaults. That is the spec, and it is also
+    // the only way the surface can follow an element that is resized after its
+    // context was made. Does nothing when the size is unchanged, because
+    // `canvas.width = canvas.width` is a deliberate idiom for clearing and
+    // anything else assigning the same number is not asking for a clear.
+    void resize(node_id id, int width, int height);
     [[nodiscard]] const canvas_context * find(node_id id) const;
     [[nodiscard]] std::shared_ptr<const bitmap> pixels_of(node_id id) const;
     // Sum of every canvas's revision. The browser compares it between frames to
@@ -262,7 +290,15 @@ public:
     void clear() { canvases_.clear(); }
 
 private:
-    flat_map<std::uint64_t, canvas_context> canvases_;
+    // A CONTEXT'S ADDRESS IS STABLE FOR AS LONG AS ITS CANVAS EXISTS.
+    //
+    // Every method bound onto a script `CanvasRenderingContext2D` captures a
+    // `canvas_context *`, so the object cannot move. Holding them by value in
+    // the map meant that creating a SECOND canvas reallocated the storage and
+    // left the first page's context object pointing at freed memory - a page
+    // with two canvases was one insertion away from drawing into a dangling
+    // pointer, and p5.js makes two before it draws anything.
+    flat_map<std::uint64_t, std::unique_ptr<canvas_context>> canvases_;
     const raster::font_backend * fonts_ = nullptr;
 };
 

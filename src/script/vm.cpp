@@ -1160,6 +1160,17 @@ value context::run_loop(std::size_t stop_depth) {
         case op::type_of: reg(in.a) = string(std::string{type_of(reg(in.b))}); break;
 
         case op::load_this: reg(in.a) = effective_this(frame); break;
+        case op::make_arguments: {
+            // The frame knows how many arguments ARRIVED; the proto only knows
+            // how many were declared, and those are different numbers whenever
+            // `arguments` is worth reading at all.
+            value list = make_array();
+            auto * items = static_cast<array_object *>(list.as_heap());
+            items->items.reserve(frame.argc);
+            for (std::uint16_t i = 0; i < frame.argc; ++i) { items->items.push_back(reg(i)); }
+            reg(in.a) = list;
+            break;
+        }
         case op::load_callee:
             reg(in.a) =
                 frame.closure != nullptr ? value::object(frame.closure) : value::undefined();

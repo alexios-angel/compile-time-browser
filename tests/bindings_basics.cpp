@@ -204,6 +204,131 @@ void test_window_is_the_global_object() {
     check(log[5] == "same=true", "globalThis is the window: " + log[5]);
 }
 
+// The REFLECTED attributes: id, className, width, height.
+//
+// These are IDL attributes over content attributes - reading one reads the
+// attribute, writing one writes it. As data properties they only went one way:
+// a page's assignment changed the wrapper alone and the next refresh put the
+// old value back. p5.js names its canvas and sizes it exactly that way, so both
+// writes vanished and left a nameless 300x150 canvas.
+void test_reflected_attributes() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body><div id=d></div><canvas id=c></canvas><script>
+        const d = document.getElementById('d');
+        d.id = 'renamed';
+        console.log('id=' + d.getAttribute('id') + ',' + (document.getElementById('renamed') !== null));
+        d.className = 'a b';
+        console.log('class=' + d.getAttribute('class') + ',' + d.classList.length);
+        const c = document.getElementById('c');
+        // The HTML defaults, which a page that omits the attributes relies on.
+        console.log('default=' + c.width + 'x' + c.height);
+        c.width = 640; c.height = 480;
+        console.log('sized=' + c.width + 'x' + c.height +
+                    ' attr=' + c.getAttribute('width') + 'x' + c.getAttribute('height'));
+    </script></body></html>)");
+    check(page.script_error().empty(), "the reflection script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log[0] == "id=renamed,true", "a written id reaches the document: " + log[0]);
+    check(log[1] == "class=a b,2", "className and classList agree: " + log[1]);
+    check(log[2] == "default=300x150",
+          "a canvas without attributes has the HTML defaults: " + log[2]);
+    check(log[3] == "sized=640x480 attr=640x480",
+          "a written size reaches the attribute: " + log[3]);
+}
+
+// parentNode / remove / insertBefore - WALKING the tree, not just editing it.
+//
+// appendChild and removeChild already worked; nothing could find a parent. That
+// makes `this.elt.parentNode.removeChild(this.elt)` - the ordinary way to take
+// an element out of a page - throw, which is how p5.js's discarded default
+// canvas stayed in the document underneath the real one.
+void test_tree_navigation() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body><div id=box><span id=a></span><span id=b></span></div><script>
+        const box = document.getElementById('box');
+        const a = document.getElementById('a');
+        console.log('parent=' + a.parentNode.id + ',' + a.parentElement.id);
+        console.log('children=' + box.children.length);
+        // The idiom that needs both halves.
+        a.parentNode.removeChild(a);
+        console.log('removed=' + box.children.length + ',' + (document.getElementById('a') === null));
+        const c = document.createElement('span');
+        c.id = 'c';
+        box.insertBefore(c, document.getElementById('b'));
+        console.log('inserted=' + box.children[0].id + ',' + box.children[1].id);
+        document.getElementById('b').remove();
+        console.log('self=' + box.children.length);
+    </script></body></html>)");
+    check(page.script_error().empty(), "the navigation script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log[0] == "parent=box,box", "parentNode and parentElement: " + log[0]);
+    check(log[1] == "children=2", "children lists the element children: " + log[1]);
+    check(log[2] == "removed=1,true", "removeChild through parentNode: " + log[2]);
+    check(log[3] == "inserted=c,b", "insertBefore puts it before the reference: " + log[3]);
+    check(log[4] == "self=1", "remove() takes an element out itself: " + log[4]);
+}
+
+// The canvas additions p5.js draws through: the transform family, ellipse and
+// Path2D. A Path2D is a RECORDING - built once and replayed by fill(path) or
+// stroke(path), which is how p5 draws every 2D shape.
+void test_canvas_transform_and_paths() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body><canvas id=c width=100 height=100></canvas>
+        <canvas id=d width=100 height=100></canvas><script>
+        const ctx = document.getElementById('c').getContext('2d');
+        ctx.setTransform(2, 0, 0, 3, 4, 5);
+        let t = ctx.getTransform();
+        console.log('set=' + [t.a, t.b, t.c, t.d, t.e, t.f].join(','));
+        ctx.transform(1, 0, 0, 1, 10, 0);   // composes, rather than replacing
+        t = ctx.getTransform();
+        console.log('composed=' + t.a + ',' + t.d + ',' + t.e + ',' + t.f);
+        ctx.setTransform();                 // no arguments is the identity
+        t = ctx.getTransform();
+        console.log('identity=' + [t.a, t.b, t.c, t.d, t.e, t.f].join(','));
+        // A path built now, drawn later.
+        const p = new Path2D();
+        p.moveTo(10, 10); p.lineTo(60, 10); p.lineTo(60, 60); p.lineTo(10, 60); p.closePath();
+        ctx.fillStyle = '#ff0000';
+        ctx.fill(p);
+        // A copy carries the original's verbs, which p5 relies on when it makes
+        // separate fill and stroke paths - so it is drawn on its OWN canvas,
+        // where the square it inherited cannot be mistaken for the first fill.
+        const copy = new Path2D(p);
+        copy.moveTo(70, 70); copy.lineTo(90, 70); copy.lineTo(90, 90); copy.closePath();
+        const other = document.getElementById('d').getContext('2d');
+        other.fillStyle = '#0000ff';
+        other.fill(copy);
+        ctx.beginPath();
+        ctx.ellipse(50, 50, 20, 10, 0, 0, 6.2831853);
+        ctx.fillStyle = '#00ff00';
+        ctx.fill();
+    </script></body></html>)");
+    check(page.script_error().empty(), "the canvas script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log[0] == "set=2,0,0,3,4,5", "setTransform REPLACES the matrix: " + log[0]);
+    // translate(10, 0) under a 2x scale moves 20 device units, which is what
+    // makes this compose rather than replace.
+    check(log[1] == "composed=2,3,24,5", "transform composes with it: " + log[1]);
+    check(log[2] == "identity=1,0,0,1,0,0", "setTransform with no arguments: " + log[2]);
+    if (const auto pixels = page.canvases().pixels_of(find_id(page, "c"))) {
+        const auto at = [&](int x, int y) { return color{pixels->at(x, y)}; };
+        // The Path2D actually filled, and its copy filled somewhere else.
+        check(at(20, 20) == color::rgba(255, 0, 0), "fill(path) replayed the recording");
+        // ...and the ellipse is an ellipse: wide at the waist, empty above it.
+        check(at(66, 50) == color::rgba(0, 255, 0), "the ellipse reaches its x radius");
+        check(at(50, 34) != color::rgba(0, 255, 0), "and not past its y radius");
+    } else {
+        check(false, "the canvas has pixels");
+    }
+    if (const auto pixels = page.canvases().pixels_of(find_id(page, "d"))) {
+        const auto at = [&](int x, int y) { return color{pixels->at(x, y)}; };
+        check(at(20, 20) == color::rgba(0, 0, 255), "a copied Path2D carries the original verbs");
+        check(at(80, 80) == color::rgba(0, 0, 255), "...and the ones added after the copy");
+    } else {
+        check(false, "the second canvas has pixels");
+    }
+}
+
 // --- the document API -----------------------------------------------------
 
 void test_script_mutates_what_is_drawn() {
@@ -1119,6 +1244,9 @@ int main() {
     test_the_invaders_page_shoots();
     test_a_letterboxed_page_keeps_its_size();
 
+    test_reflected_attributes();
+    test_tree_navigation();
+    test_canvas_transform_and_paths();
     test_window_is_the_global_object();
     test_class_list_edits_the_attribute();
     test_class_list_reaches_the_cascade();

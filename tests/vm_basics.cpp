@@ -1538,6 +1538,75 @@ void test_spread() {
 // `(function pump() { requestAnimationFrame(pump); })()` never ran a second
 // time here, silently, because a callback that is undefined is not an error at
 // the point it is registered.
+// `obj[key](...)` PASSES ITS ARGUMENTS, not the key.
+//
+// call_computed reads its arguments from base+1 upwards, and the compiler was
+// evaluating the key into that same register - so every computed call with
+// arguments arrived shifted by one, with the KEY as argument 0 and the last
+// argument dropped. Silent, and only in the form with arguments, which is why
+// `xs[0]()` looked fine.
+void test_computed_calls_pass_their_arguments() {
+    expect_result("var t = { k: function (a, b, c) { return a + '|' + b + '|' + c; } };"
+                  "return t['k'](1, 2, 3);",
+                  "1|2|3");
+    // The key as an expression, which is the form a dispatch table takes.
+    expect_result("var t = { k: function (a, b) { return a + '|' + b; } }; var self = { m: 'k' };"
+                  "return t[self.m](1, 2);",
+                  "1|2");
+    // ...and the receiver is still the object, so `this` works.
+    expect_result("var t = { n: 7, k: function (a) { return this.n + a; } }; return t['k'](1);",
+                  "8");
+    expect_result("var o = { m: 'k', t: { k: function (a, b) { return a + b; } },"
+                  "          go: function () { return this.t[this.m](3, 4); } }; return o.go();",
+                  "7");
+}
+
+// `arguments` - every value a call actually received.
+//
+// It has to be materialised at ENTRY. Built where the name is mentioned, it
+// read the frame's registers as they were at that moment, and the expression
+// around it had already reused the ones holding arguments past the last
+// declared parameter.
+void test_arguments() {
+    expect_result("function f(a, b, c) { return arguments.length; } return f(1);", "1");
+    expect_result("function f(a, b, c) { return arguments.length; } return f(1, 2, 3, 4);", "4");
+    expect_result("function g() { return arguments[0] + ',' + arguments[1]; } return g('x', 'y');",
+                  "x,y");
+    // Array-like enough for the commonest thing done with it.
+    expect_result("function h() { return Array.prototype.slice.call(arguments).join('|'); }"
+                  "return h(1, 2, 3);",
+                  "1|2|3");
+    // ONE object per call, not one per mention.
+    expect_result("function s() { return arguments === arguments; } return s(1);", "true");
+    // An arrow has none of its own and sees the enclosing function's.
+    expect_result("function outer(a, b) { var f = () => arguments.length + ':' + arguments[1];"
+                  "return f(); } return outer(1, 2, 3);",
+                  "3:2");
+    // A nested function gets its own.
+    expect_result("function nest() { function inner(x) { return arguments.length; }"
+                  "return inner(1, 2, 3); } return nest();",
+                  "3");
+    // A parameter of that name shadows it, which is what makes this safe to add.
+    expect_result("function shadow(arguments) { return arguments; } return shadow(7);", "7");
+}
+
+// `toString(radix)`, and `at` on a string.
+void test_number_and_string_conversions() {
+    // Dropping the radix returned the DECIMAL digits, so `(220).toString(16)`
+    // was "220" - a string a colour parser can neither reject nor read.
+    expect_result("return (220).toString(16);", "dc");
+    expect_result("return (5).toString(2);", "101");
+    expect_result("return (35).toString(36);", "z");
+    expect_result("return (-10).toString(16);", "-a");
+    expect_result("return (0).toString(16);", "0");
+    expect_result("return (0.5).toString(2);", "0.1");
+    expect_result("return (220).toString();", "220"); // no radix is still decimal
+    // `at` counts from the end for a negative index; arrays had it, strings did not.
+    expect_result("return 'abc'.at(-1);", "c");
+    expect_result("return 'abc'.at(0);", "a");
+    expect_result("return typeof 'abc'.at(9);", "undefined");
+}
+
 void test_named_function_expressions() {
     expect_result("var f = function me(n) { return n <= 0 ? 'done' : me(n - 1); };"
                   "return f(3);",
@@ -1782,6 +1851,9 @@ int main() {
     test_bitwise_and_friends();
     test_delete_in_instanceof();
     test_object_literal_keys();
+    test_computed_calls_pass_their_arguments();
+    test_arguments();
+    test_number_and_string_conversions();
     test_named_function_expressions();
     test_async_and_promises();
 

@@ -30,6 +30,7 @@
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -64,8 +65,8 @@ enum : int {
     level_constructs = 9, // `new p5(sketch)` builds a sketch
     level_setup = 10,     // and calls its setup()
     level_draws = 11,     // and keeps calling draw()
-    // 12 the render byte-matches a golden
-    level_ceiling = level_draws,
+    level_paints = 12,    // and what draw() asked for is IN THE PIXELS
+    level_ceiling = level_paints,
 };
 
 const char * level_name(int level) {
@@ -82,6 +83,7 @@ const char * level_name(int level) {
     case level_constructs: return "constructs a sketch";
     case level_setup: return "runs setup";
     case level_draws: return "runs draw";
+    case level_paints: return "paints what the sketch drew";
     default: return "?";
     }
 }
@@ -366,7 +368,15 @@ private:
         try {
           new p5(function (s) {
             s.setup = function () { s.createCanvas(100, 100); __ran += 'setup;'; };
-            s.draw = function () { __ran += 'draw;'; };
+            s.draw = function () {
+              // Two colours nothing else in the pipeline produces, so finding
+              // them in the buffer cannot be a coincidence.
+              s.background(10, 20, 30);
+              s.noStroke();
+              s.fill(200, 100, 50);
+              s.rect(20, 20, 40, 40);
+              __ran += 'draw;';
+            };
           });
         } catch (e) { __err = '' + (e && e.message ? e.message : e); }
     )");
@@ -403,6 +413,53 @@ private:
         return m;
     }
     m.reached(level_draws);
+
+    // --- and does what it drew reach the PIXELS? -----------------------------
+    //
+    // A draw() that is called and paints nothing satisfies every rung above
+    // this one. The two questions are genuinely different, and for a long
+    // stretch the answer to them differed: p5 ran its whole draw loop while
+    // `(220).toString(16)` returned "220", so every colour it computed was a
+    // string the canvas could not read and every fill came out white.
+    //
+    // The canvas is found by walking the document for the element p5 made,
+    // rather than by id: `defaultCanvas0` is p5's name for it and not a promise.
+    const auto txn = page.doc().read();
+    ctbrowser::node_id canvas{};
+    const auto walk = [&](auto && self, ctbrowser::node_id at) -> void {
+        if (!canvas && page.atoms().text(txn.tag(at).value_or(ctbrowser::atom{})) == "canvas") {
+            canvas = at;
+        }
+        for (const ctbrowser::node_id child : txn.children(at)) { self(self, child); }
+    };
+    walk(walk, txn.root());
+    const auto pixels = page.canvases().pixels_of(canvas);
+    if (!canvas || pixels == nullptr) {
+        const std::string why = "the sketch's canvas has no pixel buffer";
+        std::printf("     !! %s\n", why.c_str());
+        m.fail_at(level_paints, why);
+        return m;
+    }
+    const ctbrowser::color background{pixels->at(5, 5)};
+    const ctbrowser::color inside{pixels->at(40, 40)};
+    if (background != ctbrowser::color::rgba(10, 20, 30)) {
+        const std::string why = "background(10, 20, 30) did not reach the pixels (corner is " +
+                                std::to_string(background.red()) + "," +
+                                std::to_string(background.green()) + "," +
+                                std::to_string(background.blue()) + ")";
+        std::printf("     !! %s\n", why.c_str());
+        m.fail_at(level_paints, why);
+        return m;
+    }
+    if (inside != ctbrowser::color::rgba(200, 100, 50)) {
+        const std::string why =
+            "rect() did not reach the pixels (centre is " + std::to_string(inside.red()) + "," +
+            std::to_string(inside.green()) + "," + std::to_string(inside.blue()) + ")";
+        std::printf("     !! %s\n", why.c_str());
+        m.fail_at(level_paints, why);
+        return m;
+    }
+    m.reached(level_paints);
     return m;
 }
 
@@ -443,6 +500,40 @@ int main(int argc, char ** argv) {
     // `--sketch FILE`: load p5 as a page, then run FILE against it and print
     // whatever it alerts. The ladder answers one question; this answers any of
     // them, which is what an inner loop needs.
+    // `--source N...`: print the source of compiled function N.
+    //
+    // A stack trace names functions as `fn#3778`, because most of a bundle's
+    // functions are anonymous and an index is the only thing that identifies
+    // one. The index is useless without this: it is a position in a table
+    // nothing outside the compiler can see. With it, a trace out of 4.5 MB of
+    // minified-ish JavaScript points at the exact lines to read.
+    if (argc > 2 && std::string{argv[1]} == "--source") {
+        const std::string source = read_file("examples/assets/p5.js");
+        const ctbrowser::script::program prog = ctbrowser::script::compiler::compile(source);
+        if (!prog.ok) {
+            std::printf("compile failed: %s\n", prog.error.c_str());
+            return 1;
+        }
+        for (int i = 2; i < argc; ++i) {
+            const auto which = static_cast<std::size_t>(std::atoi(argv[i]));
+            if (which >= prog.functions.size()) {
+                std::printf("fn#%zu: out of range, %zu functions\n", which, prog.functions.size());
+                continue;
+            }
+            const auto & fp = prog.functions[which];
+            // The line as well as the offset: the offset locates it in the
+            // program, the line locates it in the file you are about to open.
+            const std::size_t line =
+                1 + static_cast<std::size_t>(std::count(
+                        source.begin(),
+                        source.begin() + static_cast<std::ptrdiff_t>(fp.source_begin), '\n'));
+            std::printf("\n=== fn#%zu `%s`  p5.js:%zu ===\n", which, fp.name.c_str(), line);
+            std::printf("%s\n",
+                        source.substr(fp.source_begin, fp.source_end - fp.source_begin).c_str());
+        }
+        return 0;
+    }
+
     if (argc > 2 && std::string{argv[1]} == "--sketch") {
         const std::string bundle = read_file("examples/assets/p5.js");
         ctbrowser::shell::browser page{ctbrowser::shell::browser_options{400, 400}};

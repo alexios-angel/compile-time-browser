@@ -56,6 +56,21 @@ int main(int argc, char ** argv) {
             std::printf("script error: %s\n", page.script_error().c_str());
         }
     };
+    // AND EVERY FRAME, once each. A page's scripts can fail long after it
+    // loads - a timer or an animation frame that throws is a script error too,
+    // and on_ready has already run by the time the first frame is driven. A
+    // sketch that loaded cleanly and then died on its first draw showed a blank
+    // window and said nothing at all.
+    //
+    // From the frame hook rather than after run_app_file returns: the browser
+    // is destroyed with the app, so reading it afterwards is a use-after-free -
+    // one that printed a garbage string rather than crashing, which is worse.
+    std::string reported;
+    options.on_frame = [&reported](ctbrowser::browser & page) {
+        if (page.script_error().empty() || page.script_error() == reported) { return; }
+        reported = page.script_error();
+        std::printf("script error: %s\n", reported.c_str());
+    };
     // FOLLOW A LINK TO ANOTHER LOCAL PAGE. The engine hands out an href and
     // stops - it has no idea what a URL means. Deciding that a relative one
     // names a file next to the current page is a BROWSER's business, and this
