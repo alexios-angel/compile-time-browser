@@ -346,6 +346,26 @@ void test_spread_in_a_call() {
     expect("function f(a) { return typeof a; } return f(...[]);", "undefined");
 }
 
+// A PRIVATE NAME IS A DISTINCT NAME. The `#` used to be skipped as an unknown
+// byte, so `this.#count` became `this.count`: a private field silently aliased
+// a public one, and every later stage agreed with the wrong reading. p5.js
+// declares 174 of them. Real brand-check privacy is not modelled - what is
+// fixed is that the two names are no longer the same name.
+void test_private_names_are_distinct() {
+    expect("class C { #n = 1; n = 2; read() { return this.#n + ',' + this.n; } } "
+           "return new C().read();",
+           "1,2");
+    expect("class C { #v = 7; get() { return this.#v; } } return new C().get();", "7");
+    expect("class C { static #hidden = 3; static read() { return C.#hidden; } } return C.read();",
+           "3");
+    // a private method
+    expect("class C { #twice(x) { return x * 2; } run() { return this.#twice(4); } } "
+           "return new C().run();",
+           "8");
+    // and the public field of the same name is untouched from outside
+    expect("class C { #n = 1; n = 2; } const c = new C(); c.n = 9; return c.n;", "9");
+}
+
 void test_typeof() {
     diff_vs_v1("typeof 1", "number");
     diff_vs_v1("typeof 'x'", "string");
@@ -1044,6 +1064,7 @@ int main() {
     test_class_fields_are_per_instance();
     test_bitwise_compound_assignment();
     test_spread_in_a_call();
+    test_private_names_are_distinct();
     test_typeof();
     test_variables_and_control_flow();
     test_increment_semantics();
