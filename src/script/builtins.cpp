@@ -952,6 +952,7 @@ void install_array(context & cx) {
         }
         return c.current_this();
     });
+    array_ctor->set("prototype", value::object(array_proto));
     cx.set_prototype(context::proto_kind::array, array_proto);
 }
 
@@ -1166,6 +1167,7 @@ void install_number(context & cx) {
     });
     method(cx, number_proto, "toString",
            [](context & c, std::span<value>) { return c.string(c.to_string(c.current_this())); });
+    number_ctor->set("prototype", value::object(number_proto));
     cx.set_prototype(context::proto_kind::number, number_proto);
 }
 
@@ -1271,6 +1273,26 @@ void install_object(context & cx) {
     cx.set_prototype(context::proto_kind::object, object_proto);
 
     object_object * object_ctor = new_table(cx);
+    // `Object.prototype` REACHABLE FROM SCRIPT, not just consulted by lookup.
+    //
+    // The tables existed and property lookup fell back to them, but nothing
+    // exposed them - so `Object.prototype` was undefined, and the very common
+    // `var hasOwnProperty = Object.prototype.hasOwnProperty` read undefined and
+    // called it. acorn opens with exactly that, which is where p5's error
+    // system stopped.
+    //
+    // It is the same object lookup uses, so a page that adds to it is seen by
+    // every object, which is what a page doing that expects.
+    object_ctor->set("prototype", value::object(object_proto));
+    method(cx, object_ctor, "hasOwn", [](context & c, std::span<value> a) {
+        const value target = arg_at(a, 0);
+        const std::string key = str_at(c, a, 1);
+        if (target.is_object()) {
+            auto * obj = static_cast<object_object *>(target.as_heap());
+            return value::boolean(obj->find(key) != nullptr || obj->find_accessor(key) != nullptr);
+        }
+        return value::boolean(false);
+    });
 
     // `Object.defineProperty(o, key, descriptor)` - 51 uses in p5.js, and the
     // reason the object model grew accessors at all. A descriptor is either
@@ -1621,6 +1643,9 @@ void install_promise(context & cx) {
             for (std::size_t i = 0; i < a.size(); ++i) { encode(out, context::to_uint32(a[i])); }
             return c.string(out);
         });
+        if (object_object * table = cx.prototype(context::proto_kind::string)) {
+            string_ctor->set("prototype", value::object(table));
+        }
         cx.define_global("String", value::object(string_ctor));
     }
     // `Number` is installed by install_number, which gives it the statics as
@@ -2400,6 +2425,15 @@ void install_dynamic_function(context & cx) {
                 return value::undefined();
             }));
     });
+    // `Function.prototype`, reachable from script rather than only consulted by
+    // lookup. `Function.prototype.call.bind(...)` and
+    // `Function.prototype.hasOwnProperty` are ordinary idioms, and this is the
+    // same table lookup already walks - so a page that adds to it is seen by
+    // every function, which is what a page doing that expects.
+    if (object_object * table = cx.prototype(context::proto_kind::function)) {
+        static_cast<native_object *>(cx.global("Function").as_heap())
+            ->set("prototype", value::object(table));
+    }
 }
 
 void install_builtins(context & cx, std::uint64_t seed) {

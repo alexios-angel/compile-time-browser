@@ -152,6 +152,7 @@ std::size_t dom_bindings::run_due_callbacks() {
             still->cancelled = true;
         }
         (void)cx_->call(t.callback, {});
+        note_callback_fault("setTimeout");
         ++ran;
     }
     std::erase_if(timers_, [](const timer & t) { return t.cancelled; });
@@ -161,9 +162,31 @@ std::size_t dom_bindings::run_due_callbacks() {
     for (const value & cb : frame_callbacks) {
         const value ms = value::number(now_ms_);
         (void)cx_->call(cb, std::span<const value>{&ms, 1});
+        note_callback_fault("requestAnimationFrame");
         ++ran;
     }
     return ran;
+}
+
+// A FAULT IN A CALLBACK IS REPORTED AND CLEARED, not left set.
+//
+// `context::run` clears the failure flag on entry, so a fault in a <script> is
+// reported once and forgotten. `call` has no such entry point, so a fault in
+// the first animation frame stayed set for the life of the page: every later
+// callback was refused and the page silently stopped moving. p5.js drives its
+// entire draw loop through requestAnimationFrame, so that is one faulting frame
+// between a sketch that runs and a sketch that renders one frame and dies with
+// no message.
+//
+// Clearing matches a browser, where an exception in one callback cancels
+// neither the rest of the queue nor the next frame.
+void dom_bindings::note_callback_fault(std::string_view source) {
+    if (cx_ == nullptr || !cx_->failed()) { return; }
+    const std::string message = std::string{source} + " callback: " + cx_->take_error();
+    // The FIRST one is kept: a loop that faults every frame would otherwise
+    // replace the original diagnosis with the thousandth copy of it.
+    if (callback_error_.empty()) { callback_error_ = message; }
+    ++callback_faults_;
 }
 
 double dom_bindings::next_callback_ms() const {
@@ -194,6 +217,7 @@ value dom_bindings::wrap(context & cx, node_id id) {
     value wrapper = value::object(obj);
     obj->set(std::string{handle_property}, value::number(static_cast<double>(pack(id))));
     install_element_methods(cx, *obj);
+    install_element_views(cx, *obj, id);
     refresh_element(cx, *obj, id);
     wrappers_.emplace(pack(id), obj);
     return wrapper;
@@ -261,6 +285,238 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
     obj.set("offsetTop", value::number(static_cast<double>(box.y)));
     obj.set("offsetWidth", value::number(static_cast<double>(box.width)));
     obj.set("offsetHeight", value::number(static_cast<double>(box.height)));
+}
+
+namespace {
+
+// `backgroundColor` -> `background-color`. The IDL name and the CSS name are
+// different spellings of the same property, and the attribute the style engine
+// parses wants the CSS one.
+std::string css_property_name(std::string_view idl) {
+    std::string out;
+    for (const char c : idl) {
+        if (c >= 'A' && c <= 'Z') {
+            out += '-';
+            out += static_cast<char>(c - 'A' + 'a');
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
+// The declarations an object holds, as a `style` attribute. Serialising the
+// whole object on every write is what keeps the two representations from
+// drifting: there is one source of truth, the object, and the attribute is
+// derived from it.
+std::string style_attribute(script::object_object & held, context & cx) {
+    std::string out;
+    for (const auto & [name, v] : held.props) {
+        if (v.is_nullish()) { continue; }
+        // `setProperty` and friends live on the same object, and a CSS value is
+        // never a function - without this the methods serialise themselves into
+        // the attribute as `set-property: function;`.
+        if (v.is_callable()) { continue; }
+        const std::string text = cx.to_string(v);
+        // Assigning "" REMOVES a declaration, which is how a page turns one
+        // off - emitting `display: ;` instead would leave the old value in
+        // place as far as the parser is concerned.
+        if (text.empty()) { continue; }
+        out += css_property_name(name);
+        out += ": ";
+        out += text;
+        out += "; ";
+    }
+    return out;
+}
+
+// The declarations already in a `style` attribute, so a write through
+// `el.style` extends what the author wrote rather than replacing it. The whole
+// object is re-serialised on every write, so anything not read back here is
+// LOST on the first assignment - which silently deleted the width and height an
+// element was sized by.
+void seed_declarations(script::object_object & held, context & cx, std::string_view text) {
+    std::size_t i = 0;
+    while (i < text.size()) {
+        const std::size_t colon = text.find(':', i);
+        if (colon == std::string_view::npos) { break; }
+        std::size_t end = text.find(';', colon);
+        if (end == std::string_view::npos) { end = text.size(); }
+        const auto trim = [](std::string_view piece) {
+            const std::size_t first = piece.find_first_not_of(" \t\n\r\f");
+            if (first == std::string_view::npos) { return std::string_view{}; }
+            return piece.substr(first, piece.find_last_not_of(" \t\n\r\f") - first + 1);
+        };
+        const std::string_view name = trim(text.substr(i, colon - i));
+        const std::string_view v = trim(text.substr(colon + 1, end - colon - 1));
+        if (!name.empty()) { held.set(std::string{name}, cx.string(std::string{v})); }
+        i = end + 1;
+    }
+}
+
+// The tokens of a `class` attribute. Whitespace-separated, and a class list
+// operation is defined in terms of them rather than of the string.
+std::vector<std::string> class_tokens(std::string_view text) {
+    std::vector<std::string> out;
+    std::size_t i = 0;
+    while (i < text.size()) {
+        const std::size_t start = text.find_first_not_of(" \t\n\r\f", i);
+        if (start == std::string_view::npos) { break; }
+        const std::size_t end = text.find_first_of(" \t\n\r\f", start);
+        out.emplace_back(text.substr(start, end == std::string_view::npos ? end : end - start));
+        i = end == std::string_view::npos ? text.size() : end;
+    }
+    return out;
+}
+
+} // namespace
+
+void dom_bindings::install_element_views(context & cx, script::object_object & obj, node_id id) {
+    // --- element.style
+    //
+    // A PROXY, because a style object has no fixed set of properties: a page
+    // may write any CSS property and the write has to reach the document. The
+    // proxy's target holds the declarations and the `set` trap re-serialises it
+    // into the element's `style` attribute - which the style engine already
+    // parses, so there is no second representation to keep in step.
+    //
+    // BOTH traps canonicalise the name, because `backgroundColor` and
+    // `background-color` are two spellings of ONE property. Storing them as
+    // written put both in the attribute and made a read miss a write.
+    auto * held = static_cast<script::object_object *>(cx.make_object().as_heap());
+    {
+        const auto txn = doc_->read();
+        seed_declarations(*held, cx, txn.attribute_value(id, atoms_->intern("style")));
+    }
+    const value target = value::object(held);
+    auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+    const auto trap = [&](std::string name, script::native_fn fn) {
+        handler->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+    };
+    trap("get", [](context & c, std::span<value> args) {
+        if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
+        auto * store = static_cast<script::object_object *>(args[0].as_heap());
+        const std::string name = c.to_string(args[1]);
+        // The raw name first: that is where setProperty and getPropertyValue
+        // live, and canonicalising them turns them into `set-property`.
+        if (const value * found = store->find(name)) { return *found; }
+        const value * found = store->find(css_property_name(name));
+        return found == nullptr ? value::undefined() : *found;
+    });
+    trap("set", [this, id](context & c, std::span<value> args) {
+        if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
+        auto * store = static_cast<script::object_object *>(args[0].as_heap());
+        store->set(css_property_name(c.to_string(args[1])), args[2]);
+        (void)doc_->set_attribute(id, atoms_->intern("style"), style_attribute(*store, c));
+        mutated();
+        return value::boolean(true);
+    });
+    const value style_view =
+        value::object(cx.allocate<script::proxy_object>(target, value::object(handler)));
+
+    // `setProperty` / `getPropertyValue` / `removeProperty` take the CSS
+    // spelling rather than the IDL one, so they are the only way to reach a
+    // custom property (`--x`) - which no identifier can name.
+    const auto declaration_method = [&](std::string name, script::native_fn fn) {
+        held->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+    };
+    declaration_method("setProperty", [this, id, held](context & c, std::span<value> args) {
+        held->set(arg_string(c, args, 0), args.size() > 1 ? args[1] : value::undefined());
+        (void)doc_->set_attribute(id, atoms_->intern("style"), style_attribute(*held, c));
+        mutated();
+        return value::undefined();
+    });
+    declaration_method("removeProperty", [this, id, held](context & c, std::span<value> args) {
+        held->erase(arg_string(c, args, 0));
+        (void)doc_->set_attribute(id, atoms_->intern("style"), style_attribute(*held, c));
+        mutated();
+        return value::undefined();
+    });
+    declaration_method("getPropertyValue", [held](context & c, std::span<value> args) {
+        const value * found = held->find(arg_string(c, args, 0));
+        return found == nullptr ? c.string("") : c.string(c.to_string(*found));
+    });
+    obj.set("style", style_view);
+
+    // --- element.classList
+    //
+    // Every operation reads the attribute, edits the token list and writes it
+    // back, so nothing is cached and a class added by the parser, by
+    // setAttribute or by the style engine is seen by all of them.
+    auto * list = static_cast<script::object_object *>(cx.make_object().as_heap());
+    const auto tokens_now = [this, id] {
+        const auto txn = doc_->read();
+        return class_tokens(txn.attribute_value(id, atoms_->intern("class")));
+    };
+    const auto write_tokens = [this, id](const std::vector<std::string> & tokens) {
+        std::string text;
+        for (const std::string & token : tokens) {
+            if (!text.empty()) { text += ' '; }
+            text += token;
+        }
+        (void)doc_->set_attribute(id, atoms_->intern("class"), text);
+        mutated();
+    };
+    const auto list_method = [&](std::string name, script::native_fn fn) {
+        list->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+    };
+    list_method("add", [tokens_now, write_tokens](context & c, std::span<value> args) {
+        std::vector<std::string> tokens = tokens_now();
+        for (const value & v : args) {
+            const std::string token = c.to_string(v);
+            if (token.empty()) { continue; }
+            if (std::find(tokens.begin(), tokens.end(), token) == tokens.end()) {
+                tokens.push_back(token);
+            }
+        }
+        write_tokens(tokens);
+        return value::undefined();
+    });
+    list_method("remove", [tokens_now, write_tokens](context & c, std::span<value> args) {
+        std::vector<std::string> tokens = tokens_now();
+        for (const value & v : args) {
+            const std::string token = c.to_string(v);
+            std::erase(tokens, token);
+        }
+        write_tokens(tokens);
+        return value::undefined();
+    });
+    list_method("contains", [tokens_now](context & c, std::span<value> args) {
+        const std::vector<std::string> tokens = tokens_now();
+        return value::boolean(std::find(tokens.begin(), tokens.end(), arg_string(c, args, 0)) !=
+                              tokens.end());
+    });
+    list_method("toggle", [tokens_now, write_tokens](context & c, std::span<value> args) {
+        std::vector<std::string> tokens = tokens_now();
+        const std::string token = arg_string(c, args, 0);
+        // The two-argument form FORCES a state rather than flipping it -
+        // `classList.toggle("on", isOn)` is the idiom, and treating the second
+        // argument as absent turns it into a flip that is right half the time.
+        const bool present = std::find(tokens.begin(), tokens.end(), token) != tokens.end();
+        const bool want = args.size() > 1 ? context::truthy(args[1]) : !present;
+        if (want && !present) { tokens.push_back(token); }
+        if (!want && present) { std::erase(tokens, token); }
+        write_tokens(tokens);
+        return value::boolean(want);
+    });
+    list_method("item", [tokens_now](context & c, std::span<value> args) {
+        const std::vector<std::string> tokens = tokens_now();
+        const auto i = static_cast<std::ptrdiff_t>(
+            context::to_number(args.empty() ? value::undefined() : args[0]));
+        if (i < 0 || static_cast<std::size_t>(i) >= tokens.size()) { return value::null(); }
+        return c.string(tokens[static_cast<std::size_t>(i)]);
+    });
+    // An ACCESSOR, not a number: the count changes whenever the attribute does,
+    // and a data property would report whatever it was when the element was
+    // first wrapped.
+    list->define_accessor("length",
+                          value::object(cx.allocate<script::native_object>(
+                              "length",
+                              [tokens_now](context &, std::span<value>) {
+                                  return value::number(static_cast<double>(tokens_now().size()));
+                              })),
+                          value::undefined());
+    obj.set("classList", value::object(list));
 }
 
 rect dom_bindings::box_of(node_id id) const {
@@ -578,6 +834,43 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
            draws([canvas](context &, std::span<value> a) { canvas->rotate(number(a, 0)); }));
     method("resetTransform",
            draws([canvas](context &, std::span<value>) { canvas->reset_transform(); }));
+    // `setTransform` REPLACES the matrix and `transform` composes with it. The
+    // six numbers are the 2x3 in the spec's order - a, b, c, d, e, f - and a
+    // single argument is a matrix-like object, which is the form
+    // `ctx.setTransform(ctx.getTransform())` takes.
+    const auto matrix_argument = [](context & c, std::span<value> a) {
+        if (!a.empty() && a[0].is_object()) {
+            const auto component = [&](const char * name, float fallback) {
+                const value v = c.lookup_property(a[0], name);
+                return v.is_undefined() ? fallback : static_cast<float>(context::to_number(v));
+            };
+            return transform{component("a", 1), component("b", 0), component("c", 0),
+                             component("d", 1), component("e", 0), component("f", 0)};
+        }
+        return transform{number(a, 0), number(a, 1), number(a, 2),
+                         number(a, 3), number(a, 4), number(a, 5)};
+    };
+    method("setTransform", draws([canvas, matrix_argument](context & c, std::span<value> a) {
+               // No arguments is the identity, which is what resetTransform is.
+               canvas->set_transform(a.empty() ? transform{} : matrix_argument(c, a));
+           }));
+    method("transform", draws([canvas, matrix_argument](context & c, std::span<value> a) {
+               canvas->multiply_transform(matrix_argument(c, a));
+           }));
+    // Not wrapped in draws(): reading the matrix changes no pixels. It does
+    // still have to be the LIVE one, so a library that reads it back after its
+    // own translate() sees the translate.
+    method("getTransform", [canvas](context & c, std::span<value>) {
+        const transform & t = canvas->current_transform();
+        auto * out = static_cast<script::object_object *>(c.make_object().as_heap());
+        out->set("a", value::number(t.a));
+        out->set("b", value::number(t.b));
+        out->set("c", value::number(t.c));
+        out->set("d", value::number(t.d));
+        out->set("e", value::number(t.e));
+        out->set("f", value::number(t.f));
+        return value::object(out);
+    });
     method("fillText", draws([canvas](context & c, std::span<value> a) {
                canvas->fill_text(a.empty() ? std::string{} : c.to_string(a[0]), number(a, 1),
                                  number(a, 2));
@@ -1064,17 +1357,65 @@ void dom_bindings::install_window(context & cx) {
                    "now", [this](context &, std::span<value>) { return value::number(now_ms_); })));
     window->set("performance", value::object(performance));
     window_ = value::object(window);
-    cx.define_global("window", window_);
-    // `globalThis` IS `window` here, and that is an approximation rather than
-    // the truth: the real one is the global OBJECT, so `globalThis.foo = 1`
-    // ought to create a global named foo and does not. What it does do is make
-    // `globalThis.performance.now()` work, which is how p5.js reads the clock -
-    // 13 uses, and the first host object its top level reaches for.
+
+    // WINDOW IS THE GLOBAL OBJECT, through a proxy rather than a copy.
     //
-    // Making window the actual global table is a bigger change and wants
-    // globals_ to stay the single storage, with window proxying to it, so the
-    // two cannot drift.
-    cx.define_global("globalThis", window_);
+    // `globals_` stays the single storage and the window forwards to it, so the
+    // two cannot drift - which a second table synchronised at some cadence
+    // always eventually does. A miss on the window's own properties reads a
+    // global, and a write to a name the window does not already own DEFINES
+    // one.
+    //
+    // Both directions are load-bearing for p5.js. It calls
+    // `window.requestAnimationFrame(...)`, which is an ordinary global here; and
+    // in global mode it assigns `window.ellipse = ...` for every one of its
+    // ~200 drawing functions, which the sketch then calls as bare `ellipse(...)`
+    // - so a write that did not reach the globals would leave every one of them
+    // undefined at the call site.
+    //
+    // The other direction matters just as much: `_globalInit` reads
+    // `window.setup` to decide whether the sketch is in global mode, and a
+    // sketch writes `function setup() {}` at its top level, which is a global.
+    auto * window_handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+    const value window_target = window_;
+    const auto window_trap = [&](std::string name, script::native_fn fn) {
+        window_handler->set(name,
+                            value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+    };
+    window_trap("get", [](context & c, std::span<value> args) {
+        if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
+        auto * target = static_cast<script::object_object *>(args[0].as_heap());
+        const std::string name = c.to_string(args[1]);
+        if (target->find(name) != nullptr || target->find_accessor(name) != nullptr) {
+            return c.lookup_property(args[0], name);
+        }
+        return c.global(name);
+    });
+    window_trap("set", [](context & c, std::span<value> args) {
+        if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
+        auto * target = static_cast<script::object_object *>(args[0].as_heap());
+        const std::string name = c.to_string(args[1]);
+        // An own property of the window keeps its own storage - `innerWidth` is
+        // refreshed on the object every frame, and routing it to the globals
+        // would leave a read seeing the stale one.
+        if (target->find(name) != nullptr || target->find_accessor(name) != nullptr) {
+            c.store_property(args[0], name, args[2]);
+        } else {
+            c.define_global(name, args[2]);
+        }
+        return value::boolean(true);
+    });
+    window_trap("has", [](context & c, std::span<value> args) {
+        if (args.size() < 2 || !args[0].is_object()) { return value::boolean(false); }
+        auto * target = static_cast<script::object_object *>(args[0].as_heap());
+        const std::string name = c.to_string(args[1]);
+        return value::boolean(target->find(name) != nullptr ||
+                              target->find_accessor(name) != nullptr || c.has_global(name));
+    });
+    const value window_view = value::object(
+        cx.allocate<script::proxy_object>(window_target, value::object(window_handler)));
+    cx.define_global("window", window_view);
+    cx.define_global("globalThis", window_view);
     cx.define_global("performance", value::object(performance));
 }
 

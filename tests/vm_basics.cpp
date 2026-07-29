@@ -1530,6 +1530,33 @@ void test_spread() {
     expect_result("return [...'abc'].length;", "3");
 }
 
+// A NAMED FUNCTION EXPRESSION BINDS ITS OWN NAME.
+//
+// `function me() {}` as an EXPRESSION puts `me` in scope inside its own body
+// and nowhere else. It is the only way an otherwise-anonymous function can
+// reach itself, and every self-driving callback is written that way:
+// `(function pump() { requestAnimationFrame(pump); })()` never ran a second
+// time here, silently, because a callback that is undefined is not an error at
+// the point it is registered.
+void test_named_function_expressions() {
+    expect_result("var f = function me(n) { return n <= 0 ? 'done' : me(n - 1); };"
+                  "return f(3);",
+                  "done");
+    expect_result("var g = function named() { return typeof named; }; return g();", "function");
+    // ...and NOWHERE ELSE: the name is not a declaration in the enclosing scope.
+    expect_result("var g = function named() { return 1; }; return typeof named;", "undefined");
+    // A parameter of the same name shadows the binding, which is what makes it
+    // safe to add: it can only ever be read where nothing else defined the name.
+    expect_result("var f = function me(me) { return me; }; return f(7);", "7");
+    // The binding survives capture, so a nested function sees it too.
+    expect_result("var f = function me(n) { return (function () { return typeof me; })(); };"
+                  "return f(1);",
+                  "function");
+    // A declaration is unaffected - its name is in the enclosing scope as well.
+    expect_result("function d() { return typeof d; } return d() + ',' + typeof d;",
+                  "function,function");
+}
+
 void test_async_and_promises() {
     // Promises are SETTLED on creation - there is no job queue - so `await`
     // reads the value straight out and `then` runs at once. That is the subset,
@@ -1755,6 +1782,7 @@ int main() {
     test_bitwise_and_friends();
     test_delete_in_instanceof();
     test_object_literal_keys();
+    test_named_function_expressions();
     test_async_and_promises();
 
     REPORT("vm_basics");

@@ -272,6 +272,12 @@ std::size_t browser::tick(double elapsed_ms) {
     if (focused_ && caret_visible() != was_visible) { mark(dirty::paint); }
     bindings_->advance_clock(elapsed_ms);
     const std::size_t ran = bindings_->run_due_callbacks();
+    // A fault in a timer or an animation frame is a script error too. It was
+    // not reported anywhere before, so a page whose draw loop threw looked
+    // exactly like a page that had finished loading and had nothing to do.
+    if (script_error_.empty() && !bindings_->callback_error().empty()) {
+        script_error_ = bindings_->callback_error();
+    }
     // Collect between callbacks, never inside one - the same reason a
     // reload is drained here. Nothing was ever collected before: the GC had
     // no way to see the bindings' listeners, so running it would have freed

@@ -117,6 +117,13 @@ public:
     void scale(float x, float y) { transform_ = transform::scaling(x, y).then(transform_); }
     void rotate(float radians) { transform_ = transform::rotation(radians).then(transform_); }
     void reset_transform() { transform_ = transform{}; }
+    // REPLACE the matrix, rather than compose with it. A library that keeps its
+    // own transform stack - p5.js does, and calls this once per frame from
+    // resetMatrix() - needs to be able to say what the matrix IS, not only how
+    // to nudge it, or its stack and the canvas's drift apart within a frame.
+    void set_transform(const transform & t) { transform_ = t; }
+    void multiply_transform(const transform & t) { transform_ = t.then(transform_); }
+    [[nodiscard]] const transform & current_transform() const noexcept { return transform_; }
 
     // --- rectangles -------------------------------------------------------
 

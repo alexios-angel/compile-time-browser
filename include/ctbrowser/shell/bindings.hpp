@@ -152,6 +152,10 @@ public:
     [[nodiscard]] double next_callback_ms() const;
 
     [[nodiscard]] std::size_t pending_animation_frames() const noexcept;
+    // The first fault a timer or animation-frame callback raised, and how many
+    // there have been. Empty when the page's callbacks are running cleanly.
+    [[nodiscard]] const std::string & callback_error() const noexcept { return callback_error_; }
+    [[nodiscard]] std::size_t callback_faults() const noexcept { return callback_faults_; }
     [[nodiscard]] const std::vector<std::string> & console_output() const noexcept;
 
 private:
@@ -237,6 +241,17 @@ private:
     [[nodiscard]] rect box_of(node_id id) const;
 
     void install_element_methods(context & cx, script::object_object & obj);
+    void note_callback_fault(std::string_view source);
+    // `element.style` and `element.classList` - the two views onto an element
+    // that are OBJECTS rather than values, so unlike everything in
+    // refresh_element they are built once and keep their identity. A page holds
+    // on to `el.style` and writes through it later, which a fresh object every
+    // sync would silently discard.
+    //
+    // They take the id directly because their methods are not called with the
+    // element as `this`: `el.classList.add(...)` has the CLASS LIST as the
+    // receiver, so `receiver(cx)` finds no handle.
+    void install_element_views(context & cx, script::object_object & obj, node_id id);
 
     [[nodiscard]] node_id id_or_nothing(context & c) { return receiver(c); }
 
@@ -396,6 +411,11 @@ private:
     value location_;
     value document_;
     value window_;
+    // The first fault a timer or animation frame raised, and how many there
+    // were. A page whose draw loop throws every frame has ONE bug, not a
+    // thousand, and the first message is the one that names it.
+    std::string callback_error_;
+    std::size_t callback_faults_ = 0;
     bool reload_requested_ = false;
     asset_registry * assets_ = nullptr;
     image_store * images_ = nullptr;

@@ -160,6 +160,13 @@ enum class op : std::uint8_t {
     // --- misc
     type_of,   // a = typeof b
     load_this, // a = the receiver of the call that entered this frame
+    // a = the CLOSURE running this frame. `var f = function me() { ... me() }`
+    // binds `me` inside its own body and nowhere else, and there is no other
+    // way to reach it: the enclosing scope has no such name, and the closure
+    // does not exist yet when the body is compiled. Without it a recursive
+    // function expression called an undefined `me` - which is silent when the
+    // call is a callback, as `(function pump() { raf(pump); })()` is.
+    load_callee,
 
     // --- exceptions. `try` pushes a handler with the address to jump to;
     // `throw` unwinds call frames until it finds one. Unwinding is what makes

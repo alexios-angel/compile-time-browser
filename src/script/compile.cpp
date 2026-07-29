@@ -1392,6 +1392,23 @@ public:
         for (const local & l : fn().locals) {
             if (l.boxed) { proto().emit(instruction{op::new_cell, l.reg}); }
         }
+        // A NAMED FUNCTION EXPRESSION BINDS ITS OWN NAME, in its own body and
+        // nowhere else. `var f = function me(n) { return me(n - 1); }` is how
+        // an unnamed function recurses, and `(function pump() { raf(pump); })()`
+        // is how one drives an animation loop - both called an undefined name
+        // without this, silently in the second case because a callback that is
+        // undefined simply never runs.
+        //
+        // AFTER the parameters, because the calling convention puts argument i
+        // in register i: taking a register ahead of them would shift every
+        // argument by one. A parameter of the same name legitimately shadows
+        // this binding, so one is only made when no parameter claimed the name.
+        if (n.kind == vp::nk::func_expr && !out_.functions[index].name.empty() &&
+            find_local_in_current_scope(out_.functions[index].name) == nullptr) {
+            const std::uint16_t self = declare_local(out_.functions[index].name);
+            proto().emit(instruction{op::load_callee, self});
+            if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, self}); }
+        }
         collect_declared_names(n.a);
         // Declarations are hoisted to the top of the body BEFORE any nested
         // function is compiled. Without this, a nested function DECLARATION

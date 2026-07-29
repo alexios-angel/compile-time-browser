@@ -459,7 +459,9 @@ int main(int argc, char ** argv) {
         page.set_alert_hook(
             [](const std::string & said) { std::printf("alert: %s\n", said.c_str()); });
         const bool ok = page.run_script(read_file(argv[2]));
-        for (int frame = 0; frame < 5; ++frame) { page.tick(16); }
+        // More frames than the ladder runs: a probe usually wants to see what
+        // the loop settles into, not what it does on its first tick.
+        for (int frame = 0; frame < 30; ++frame) { page.tick(16); }
         std::printf("ran=%d error=%s\n", int(ok), page.script_error().c_str());
         return 0;
     }

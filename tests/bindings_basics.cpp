@@ -87,6 +87,123 @@ void check(bool ok, std::string_view what) {
     return page.bindings().console_output();
 }
 
+// --- element.classList and element.style ----------------------------------
+
+void test_class_list_edits_the_attribute() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body><div id=d class="a b"></div><script>
+        const d = document.getElementById('d');
+        d.classList.add('c');
+        d.classList.add('c');
+        console.log('added=' + d.getAttribute('class'));
+        console.log('has=' + d.classList.contains('b') + ',' + d.classList.contains('zz'));
+        console.log('len=' + d.classList.length);
+        d.classList.remove('b');
+        console.log('removed=' + d.getAttribute('class'));
+        console.log('forced=' + d.classList.toggle('a', true) + ',' + d.getAttribute('class'));
+        d.classList.toggle('a');
+        console.log('flipped=' + d.getAttribute('class'));
+        console.log('item=' + d.classList.item(0) + ',' + d.classList.item(9));
+    </script></body></html>)");
+    check(page.script_error().empty(), "the class list script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    // add is a SET, not an append - twice is once.
+    check(log[0] == "added=a b c", "classList.add appends a token, once: " + log[0]);
+    check(log[1] == "has=true,false", "classList.contains: " + log[1]);
+    // The count is live, so it moves with the attribute rather than reporting
+    // whatever it was when the element was first wrapped.
+    check(log[2] == "len=3", "classList.length: " + log[2]);
+    check(log[3] == "removed=a c", "classList.remove: " + log[3]);
+    check(log[4] == "forced=true,a c", "toggle(name, true) forces rather than flips: " + log[4]);
+    check(log[5] == "flipped=c", "toggle(name) flips: " + log[5]);
+    check(log[6] == "item=c,null", "classList.item, past the end too: " + log[6]);
+}
+
+void test_class_list_reaches_the_cascade() {
+    browser page{browser_options{400, 200}};
+    // The point of writing the attribute rather than keeping a list beside it:
+    // the style engine matches on what the DOM says.
+    page.load_html(R"(<html><head><style>
+    .on { background-color: #008000 }
+    </style></head><body><div id=d>x</div>
+    <script>document.getElementById('d').classList.add('on');</script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    check(page.frame().has_value(), "the page renders");
+    check(count_fill(page, color::rgba(0, 128, 0)) == 1, "a class added from script cascades");
+}
+
+void test_style_writes_reach_the_document() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body><div id=d></div><script>
+        const d = document.getElementById('d');
+        d.style.display = 'none';
+        console.log('attr=' + d.getAttribute('style'));
+        console.log('read=' + d.style.display);
+        d.style.backgroundColor = 'red';
+        console.log('camel=' + d.getAttribute('style'));
+        d.style.display = '';
+        console.log('cleared=' + d.getAttribute('style'));
+        d.style.setProperty('--custom', '4px');
+        console.log('custom=' + d.style.getPropertyValue('--custom'));
+        d.style.removeProperty('--custom');
+        console.log('gone=' + d.getAttribute('style'));
+    </script></body></html>)");
+    check(page.script_error().empty(), "the style script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log[0] == "attr=display: none; ", "a style write serialises to the attribute: " + log[0]);
+    // The proxy's target holds the declarations, so a read needs no trap.
+    check(log[1] == "read=none", "a style property reads back: " + log[1]);
+    // The IDL name and the CSS name are different spellings of one property.
+    check(log[2].find("background-color: red") != std::string::npos,
+          "backgroundColor is background-color: " + log[2]);
+    // Assigning "" REMOVES a declaration. Emitting `display: ;` instead would
+    // leave the old value standing as far as the parser is concerned.
+    check(log[3].find("display") == std::string::npos,
+          "assigning the empty string removes it: " + log[3]);
+    check(log[4] == "custom=4px", "setProperty reaches a name no identifier can spell: " + log[4]);
+    check(log[5].find("custom") == std::string::npos, "removeProperty: " + log[5]);
+}
+
+void test_style_writes_reach_the_pixels() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body><div id=d>x</div><script>
+        document.getElementById('d').style.backgroundColor = '#0000ff';
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    check(page.frame().has_value(), "the page renders");
+    check(count_fill(page, color::rgba(0, 0, 255)) == 1, "a style write repaints");
+}
+
+void test_window_is_the_global_object() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body><script>
+        // A global reached through the window, which is how a library calls a
+        // host function it did not have to look up by bare name.
+        console.log('raf=' + (typeof window.requestAnimationFrame));
+        console.log('in=' + ('setTimeout' in window) + ',' + ('nosuch' in window));
+        // A top-level declaration IS a global, so the window can see it - this
+        // is how p5.js decides a sketch is in global mode.
+        console.log('decl=' + (typeof window.sketchSetup));
+        function sketchSetup() {}
+        // ...and a write through the window defines a global, which is how p5
+        // installs its ~200 drawing functions for a sketch to call bare.
+        window.installed = 7;
+        console.log('bare=' + installed);
+        // An own property of the window keeps its own storage rather than
+        // shadowing itself in the globals.
+        console.log('own=' + (window.innerWidth > 0));
+        console.log('same=' + (window === globalThis));
+    </script></body></html>)");
+    check(page.script_error().empty(), "the window script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log[0] == "raf=function", "a global is reachable through the window: " + log[0]);
+    check(log[1] == "in=true,false", "`in` asks the globals too: " + log[1]);
+    check(log[2] == "decl=function", "a hoisted declaration is on the window: " + log[2]);
+    check(log[3] == "bare=7", "a write through the window defines a global: " + log[3]);
+    check(log[4] == "own=true", "the window keeps its own properties: " + log[4]);
+    check(log[5] == "same=true", "globalThis is the window: " + log[5]);
+}
+
 // --- the document API -----------------------------------------------------
 
 void test_script_mutates_what_is_drawn() {
@@ -1001,6 +1118,12 @@ int main() {
     test_the_invaders_page_responds_to_input();
     test_the_invaders_page_shoots();
     test_a_letterboxed_page_keeps_its_size();
+
+    test_window_is_the_global_object();
+    test_class_list_edits_the_attribute();
+    test_class_list_reaches_the_cascade();
+    test_style_writes_reach_the_document();
+    test_style_writes_reach_the_pixels();
 
     REPORT("bindings_basics");
 }

@@ -187,6 +187,15 @@ public:
         const auto it = globals_.find(std::string{name});
         return it == globals_.end() ? value::undefined() : it->second;
     }
+    // Whether the name is DEFINED, which is not whether it is truthy or even
+    // defined-and-undefined: `window.foo` on a global explicitly set to
+    // undefined must still report the global as present, or `'foo' in window`
+    // and a window that proxies to the globals disagree with `typeof foo`.
+    [[nodiscard]] bool has_global(std::string_view name) const {
+        return globals_.find(std::string{name}) != globals_.end();
+    }
+    // Every global, for a window that enumerates itself.
+    [[nodiscard]] const flat_map<std::string, value> & globals() const noexcept { return globals_; }
 
     // --- execution ---------------------------------------------------------
     //
@@ -220,6 +229,23 @@ public:
     // stack rather than resetting it, so a listener may itself call back into
     // script.
     value call(value callable, std::span<const value> args, value this_value = value::undefined());
+    // Whether a fault is outstanding, and the message.
+    //
+    // `run` clears these on entry and reports them in its result; `call` has no
+    // result to report through, so a host that drives callbacks - a timer, an
+    // animation frame, an event - must ask. Without this a fault in the FIRST
+    // rAF callback set `failed_` for good: every later callback was refused and
+    // the page simply stopped, with nothing anywhere saying why.
+    [[nodiscard]] bool failed() const noexcept { return failed_; }
+    [[nodiscard]] const std::string & error() const noexcept { return error_; }
+    // Report it and carry on, which is what a browser does: an exception in one
+    // callback does not cancel the next one or end the page.
+    [[nodiscard]] std::string take_error() {
+        std::string out = std::move(error_);
+        error_.clear();
+        failed_ = false;
+        return out;
+    }
 
     // `new callee(...args)` where the argument count is only known at run time.
     // op::construct keeps its own inline path because it does not need a nested
@@ -300,6 +326,14 @@ public:
     // Assign through the chain, honouring a setter. Returns false when nothing
     // took the write, so the caller can fall back to defining an own property.
     bool assign_through_accessor(value target, const std::string & name, value v);
+    // `target.name = v`, the whole write path: a proxy's `set` trap, then a
+    // setter on the prototype chain, then an own data property.
+    //
+    // One function because set_prop and set_index are the same operation with
+    // the key arriving differently, and the two copies had already drifted -
+    // only one of them consulted a proxy. `element.style.width = "10px"` goes
+    // through a proxy and it can be written either way.
+    void store_property(value target, const std::string & name, value v);
     // `target[key]` for an arbitrary key value. Numeric keys index an array or
     // a string; anything else is a named lookup. Shared by get_index and by
     // computed method calls, because `a[0]()` and `a['push']()` must both work

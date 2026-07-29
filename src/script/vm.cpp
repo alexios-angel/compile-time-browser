@@ -186,6 +186,44 @@ value context::lookup_index(value target, value key) {
     return lookup_property(target, to_string(key));
 }
 
+void context::store_property(value target, const std::string & name, value v) {
+    // A proxy's `set` trap first: it is the only thing that can decide the
+    // write does not land on the target at all, which is the point of it.
+    if (target.is_kind(heap_kind::proxy)) {
+        auto * p = static_cast<proxy_object *>(target.as_heap());
+        const value trap = proxy_trap(target, "set");
+        if (trap.is_callable()) {
+            const value args[4] = {p->target, string(name), v, target};
+            (void)call(trap, args, p->handler);
+            return;
+        }
+        store_property(p->target, name, v);
+        return;
+    }
+    if (target.is_object()) {
+        if (!assign_through_accessor(target, name, v)) {
+            static_cast<object_object *>(target.as_heap())->set(name, v);
+        }
+        return;
+    }
+    if (target.is_kind(heap_kind::native)) {
+        static_cast<native_object *>(target.as_heap())->set(name, v);
+        return;
+    }
+    if (target.is_kind(heap_kind::function)) {
+        auto * closure = static_cast<closure_object *>(target.as_heap());
+        if (accessor_entry * entry = closure->find_accessor(name);
+            entry != nullptr && entry->setter.is_callable()) {
+            const value args[1] = {v};
+            (void)call(entry->setter, args, target);
+        } else {
+            closure->set(name, v);
+        }
+    }
+    // A write to a number, a string or undefined is silently dropped, which is
+    // what non-strict JavaScript does.
+}
+
 bool context::assign_through_accessor(value target, const std::string & name, value v) {
     if (!target.is_object()) { return false; }
     auto * obj = static_cast<object_object *>(target.as_heap());
@@ -967,29 +1005,11 @@ value context::run_loop(std::size_t stop_depth) {
             }
             break;
         case op::get_prop: reg(in.a) = lookup_property(reg(in.b), fn.names[in.c]); break;
-        case op::set_prop:
-            if (reg(in.a).is_object()) {
-                // A SETTER ON THE CHAIN TAKES THE WRITE, and only if none does
-                // is an own data property defined. Getting this backwards is
-                // how a setter silently stops running: the write lands on the
-                // instance and shadows the accessor from then on.
-                if (!assign_through_accessor(reg(in.a), fn.names[in.b], reg(in.c))) {
-                    static_cast<object_object *>(reg(in.a).as_heap())
-                        ->set(fn.names[in.b], reg(in.c));
-                }
-            } else if (reg(in.a).is_kind(heap_kind::native)) {
-                static_cast<native_object *>(reg(in.a).as_heap())->set(fn.names[in.b], reg(in.c));
-            } else if (reg(in.a).is_kind(heap_kind::function)) {
-                auto * closure = static_cast<closure_object *>(reg(in.a).as_heap());
-                if (accessor_entry * entry = closure->find_accessor(fn.names[in.b]);
-                    entry != nullptr && entry->setter.is_callable()) {
-                    const value args[1] = {reg(in.c)};
-                    (void)call(entry->setter, args, reg(in.a));
-                } else {
-                    closure->set(fn.names[in.b], reg(in.c));
-                }
-            }
-            break;
+        // A SETTER ON THE CHAIN TAKES THE WRITE, and only if none does is an
+        // own data property defined. Getting that backwards is how a setter
+        // silently stops running: the write lands on the instance and shadows
+        // the accessor from then on. store_property has the whole rule.
+        case op::set_prop: store_property(reg(in.a), fn.names[in.b], reg(in.c)); break;
         case op::get_index: reg(in.a) = lookup_index(reg(in.b), reg(in.c)); break;
         case op::set_index: {
             const value target = reg(in.a);
@@ -1014,8 +1034,8 @@ value context::run_loop(std::size_t stop_depth) {
                     }
                     arr->items[static_cast<std::size_t>(i)] = reg(in.c);
                 }
-            } else if (target.is_object()) {
-                static_cast<object_object *>(target.as_heap())->set(to_string(key), reg(in.c));
+            } else {
+                store_property(target, to_string(key), reg(in.c));
             }
             break;
         }
@@ -1140,6 +1160,10 @@ value context::run_loop(std::size_t stop_depth) {
         case op::type_of: reg(in.a) = string(std::string{type_of(reg(in.b))}); break;
 
         case op::load_this: reg(in.a) = effective_this(frame); break;
+        case op::load_callee:
+            reg(in.a) =
+                frame.closure != nullptr ? value::object(frame.closure) : value::undefined();
+            break;
 
         case op::own_keys: {
             // The own property names of an object, as an array. `for (k in o)`
