@@ -235,6 +235,7 @@ public:
         set,
         error,
         function,
+        typed_array,
         count_
     };
 

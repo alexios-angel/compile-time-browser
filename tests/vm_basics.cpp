@@ -821,6 +821,50 @@ void test_function_prototype_link() {
            "true");
 }
 
+// TYPED ARRAYS COERCE ON WRITE, which is the whole of what makes them typed.
+// Stored as ordinary arrays of values rather than packed bytes - that buys the
+// existing array machinery for nothing - but a shortcut on the coercion would
+// have been a silent wrong answer in exactly the place it matters most.
+void test_typed_arrays() {
+    expect("const a = new Uint8Array(3); return a.length + '|' + a[0];", "3|0");
+    expect("const a = new Uint8Array([1, 2, 3]); return a.join(',');", "1,2,3");
+    // wrapping, and the one type that CLAMPS instead - it is the pixel type
+    expect("const a = new Uint8Array(1); a[0] = 300; return a[0];", "44");
+    expect("const a = new Uint8ClampedArray(1); a[0] = 300; return a[0];", "255");
+    expect("const a = new Uint8ClampedArray(1); a[0] = -5; return a[0];", "0");
+    expect("const a = new Int8Array(1); a[0] = 200; return a[0];", "-56");
+    expect("const a = new Int32Array(1); a[0] = 2147483648; return a[0];", "-2147483648");
+    // a float32 loses precision a double would keep, which is observable
+    expect("const a = new Float32Array(1); a[0] = 0.1; return a[0] === 0.1;", "false");
+    expect("const a = new Float64Array(1); a[0] = 0.1; return a[0] === 0.1;", "true");
+    // and a typed array does NOT grow: a write past the end is dropped
+    expect("const a = new Uint8Array(2); a[5] = 1; return a.length;", "2");
+    expect("return Uint16Array.BYTES_PER_ELEMENT;", "2");
+    expect("const a = new Uint8Array(4); a.set([9, 8], 1); return a.join(',');", "0,9,8,0");
+    expect("const a = new Uint8Array([1, 2, 3, 4]); return a.subarray(1, 3).join(',');", "2,3");
+}
+
+void test_object_prototype() {
+    expect("const o = { a: 1 }; return o.hasOwnProperty('a') + '|' + o.hasOwnProperty('b');",
+           "true|false");
+    // an INHERITED property is not an own one, which is the whole question
+    expect("const base = { a: 1 }; const o = Object.create(base); "
+           "return o.a + '|' + o.hasOwnProperty('a');",
+           "1|false");
+    expect("const o = { get v() { return 1; } }; return o.hasOwnProperty('v');", "true");
+    expect("const base = {}; const o = Object.create(base); return base.isPrototypeOf(o);", "true");
+    expect("return ({}).toString();", "[object Object]");
+    expect("return [1, 2].hasOwnProperty('length');", "true");
+}
+
+void test_string_statics() {
+    expect("return String.fromCharCode(104, 105);", "hi");
+    expect("return String.fromCharCode.apply(null, [97, 98, 99]);", "abc");
+    expect("return String(42);", "42");
+    // above 0x7F encodes as UTF-8, because strings here are bytes
+    expect("return String.fromCharCode(233).length;", "2");
+}
+
 void test_typeof() {
     diff_vs_v1("typeof 1", "number");
     diff_vs_v1("typeof 'x'", "string");
@@ -1558,6 +1602,9 @@ int main() {
     test_define_property_attributes_only();
     test_function_prototype();
     test_function_prototype_link();
+    test_typed_arrays();
+    test_object_prototype();
+    test_string_statics();
     test_typeof();
     test_variables_and_control_flow();
     test_increment_semantics();

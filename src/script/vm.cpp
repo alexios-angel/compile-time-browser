@@ -261,7 +261,18 @@ value context::lookup_property(value target, const std::string & name) {
             if (name == "input") { return arr->input; }
             if (name == "groups") { return arr->groups; }
         }
+        // A TYPED array's own methods first, then every array's, then every
+        // object's - which is the chain JavaScript actually has, and the reason
+        // `[1,2].hasOwnProperty(...)` and `bytes.subarray(...)` both work.
+        if (arr->elements != element_kind::none) {
+            if (object_object * table = prototype(proto_kind::typed_array)) {
+                if (value * found = table->find(name)) { return *found; }
+            }
+        }
         if (object_object * table = prototype(proto_kind::array)) {
+            if (value * found = table->find(name)) { return *found; }
+        }
+        if (object_object * table = prototype(proto_kind::object)) {
             if (value * found = table->find(name)) { return *found; }
         }
         return value::undefined();
@@ -980,6 +991,17 @@ value context::run_loop(std::size_t stop_depth) {
             if (target.is_array() && key.is_number()) {
                 auto * arr = static_cast<array_object *>(target.as_heap());
                 const auto i = static_cast<std::ptrdiff_t>(key.as_number());
+                // A TYPED ARRAY COERCES ON WRITE AND DOES NOT GROW. Both are
+                // what makes it typed: `pixels[i] = 300` is 255 in a clamped
+                // byte array, and a write past the end is DROPPED rather than
+                // extending it.
+                if (arr->elements != element_kind::none) {
+                    if (i >= 0 && static_cast<std::size_t>(i) < arr->items.size()) {
+                        arr->items[static_cast<std::size_t>(i)] =
+                            value::number(coerce_element(arr->elements, to_number(reg(in.c))));
+                    }
+                    break;
+                }
                 if (i >= 0) {
                     if (static_cast<std::size_t>(i) >= arr->items.size()) {
                         arr->items.resize(static_cast<std::size_t>(i) + 1, value::undefined());

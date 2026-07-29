@@ -1123,6 +1123,56 @@ void define_one(context & cx, value target, const std::string & key, object_obje
 void install_object(context & cx) {
     using detail::method;
     using detail::new_table;
+
+    // `Object.prototype`. There was NO table for it, so every object in the
+    // engine was missing hasOwnProperty, toString and valueOf - and
+    // `hasOwnProperty` in particular is how half the library code in existence
+    // asks whether a key is really there rather than inherited.
+    object_object * object_proto = new_table(cx);
+    method(cx, object_proto, "hasOwnProperty", [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        const std::string key = str_at(c, a, 0);
+        if (self.is_object()) {
+            auto * obj = static_cast<object_object *>(self.as_heap());
+            return value::boolean(obj->find(key) != nullptr || obj->find_accessor(key) != nullptr);
+        }
+        if (self.is_array()) {
+            auto * arr = static_cast<array_object *>(self.as_heap());
+            if (key == "length") { return value::boolean(true); }
+            char * end = nullptr;
+            const double at = std::strtod(key.c_str(), &end);
+            return value::boolean(end != nullptr && *end == '\0' && at >= 0 &&
+                                  at < static_cast<double>(arr->items.size()));
+        }
+        if (self.is_kind(heap_kind::function)) {
+            return value::boolean(static_cast<closure_object *>(self.as_heap())->find(key) !=
+                                  nullptr);
+        }
+        return value::boolean(false);
+    });
+    method(cx, object_proto, "toString",
+           [](context & c, std::span<value>) { return c.string("[object Object]"); });
+    method(cx, object_proto, "valueOf",
+           [](context & c, std::span<value>) { return c.current_this(); });
+    method(cx, object_proto, "isPrototypeOf", [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        value walk = arg_at(a, 0);
+        for (int depth = 0; depth < 64 && walk.is_object(); ++depth) {
+            walk = static_cast<object_object *>(walk.as_heap())->prototype;
+            if (walk.is_heap() && self.is_heap() && walk.as_heap() == self.as_heap()) {
+                return value::boolean(true);
+            }
+        }
+        return value::boolean(false);
+    });
+    method(cx, object_proto, "propertyIsEnumerable", [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!self.is_object()) { return value::boolean(false); }
+        return value::boolean(static_cast<object_object *>(self.as_heap())->find(str_at(c, a, 0)) !=
+                              nullptr);
+    });
+    cx.set_prototype(context::proto_kind::object, object_proto);
+
     object_object * object_ctor = new_table(cx);
 
     // `Object.defineProperty(o, key, descriptor)` - 51 uses in p5.js, and the
@@ -1380,9 +1430,51 @@ void install_promise(context & cx) {
     cx.define_native("isFinite", [](context &, std::span<value> a) {
         return value::boolean(std::isfinite(num_at(a, 0)));
     });
-    cx.define_native("String", [](context & c, std::span<value> a) {
-        return c.string(a.empty() ? std::string{} : c.to_string(a[0]));
-    });
+    // `String` is a NAMESPACE as well as a coercion, the same way Number is.
+    // `String.fromCharCode.apply(null, bytes)` is how a page turns a byte array
+    // into text - 27 uses in p5.js - and it read undefined and applied it.
+    {
+        auto * string_ctor =
+            cx.allocate<native_object>("String", [](context & c, std::span<value> a) {
+                return c.string(a.empty() ? std::string{} : c.to_string(a[0]));
+            });
+        const auto stat = [&](const char * name, native_fn fn) {
+            string_ctor->set(name, value::object(cx.allocate<native_object>(name, std::move(fn))));
+        };
+        // UTF-8 out, because strings here are bytes: a code point above 0x7F
+        // becomes its encoding rather than one char, which is what makes the
+        // round trip through String.prototype work.
+        const auto encode = [](std::string & out, std::uint32_t code) {
+            if (code < 0x80) {
+                out += static_cast<char>(code);
+            } else if (code < 0x800) {
+                out += static_cast<char>(0xC0 | (code >> 6));
+                out += static_cast<char>(0x80 | (code & 0x3F));
+            } else if (code < 0x10000) {
+                out += static_cast<char>(0xE0 | (code >> 12));
+                out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+                out += static_cast<char>(0x80 | (code & 0x3F));
+            } else {
+                out += static_cast<char>(0xF0 | (code >> 18));
+                out += static_cast<char>(0x80 | ((code >> 12) & 0x3F));
+                out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+                out += static_cast<char>(0x80 | (code & 0x3F));
+            }
+        };
+        stat("fromCharCode", [encode](context & c, std::span<value> a) {
+            std::string out;
+            for (std::size_t i = 0; i < a.size(); ++i) {
+                encode(out, static_cast<std::uint32_t>(context::to_uint32(a[i]) & 0xFFFFu));
+            }
+            return c.string(out);
+        });
+        stat("fromCodePoint", [encode](context & c, std::span<value> a) {
+            std::string out;
+            for (std::size_t i = 0; i < a.size(); ++i) { encode(out, context::to_uint32(a[i])); }
+            return c.string(out);
+        });
+        cx.define_global("String", value::object(string_ctor));
+    }
     // `Number` is installed by install_number, which gives it the statics as
     // well as the coercion. Defining it again here would replace the whole
     // thing with a bare function and silently drop Number.isFinite and its
@@ -1999,6 +2091,109 @@ void install_function(context & cx) {
     cx.set_prototype(context::proto_kind::function, function_proto);
 }
 
+// TYPED ARRAYS. 123 uses in p5.js - Uint8Array for pixels, Float32Array for
+// matrices - and `new Uint32Array(n)` is what stopped the bundle once
+// localStorage was there.
+//
+// Stored as ordinary arrays of values rather than packed bytes: that costs
+// memory and buys the whole existing array machinery - indexing, length,
+// iteration, every prototype method - for nothing. What it does NOT cost is
+// correctness on write, which is where a shortcut would have hurt: the element
+// coercion is real, so a Uint8ClampedArray clamps and a Uint8Array wraps.
+//
+// The gap that remains, and it is a real one: an ArrayBuffer here is not
+// shared storage. Two views over the same buffer do not see each other's
+// writes, because each view owns its elements. p5 uses views over their own
+// buffers, and a page that aliases two would get wrong answers - so that is
+// said here rather than discovered.
+void install_typed_arrays(context & cx) {
+    using detail::method;
+    using detail::new_table;
+
+    struct spec {
+        const char * name;
+        element_kind kind;
+        int bytes;
+    };
+    static constexpr spec kinds[] = {
+        {"Int8Array", element_kind::i8, 1},
+        {"Uint8Array", element_kind::u8, 1},
+        {"Uint8ClampedArray", element_kind::u8_clamped, 1},
+        {"Int16Array", element_kind::i16, 2},
+        {"Uint16Array", element_kind::u16, 2},
+        {"Int32Array", element_kind::i32, 4},
+        {"Uint32Array", element_kind::u32, 4},
+        {"Float32Array", element_kind::f32, 4},
+        {"Float64Array", element_kind::f64, 8},
+    };
+
+    object_object * typed_proto = new_table(cx);
+    method(cx, typed_proto, "set", [](context & c, std::span<value> a) {
+        auto * self = detail::this_array(c);
+        if (self == nullptr || !arg_at(a, 0).is_array()) { return value::undefined(); }
+        const auto & from = static_cast<array_object *>(a[0].as_heap())->items;
+        const auto at = static_cast<std::size_t>(std::max(0.0, num_at(a, 1)));
+        for (std::size_t i = 0; i < from.size() && at + i < self->items.size(); ++i) {
+            self->items[at + i] =
+                value::number(coerce_element(self->elements, context::to_number(from[i])));
+        }
+        return value::undefined();
+    });
+    method(cx, typed_proto, "subarray", [](context & c, std::span<value> a) {
+        auto * self = detail::this_array(c);
+        value out = c.make_array();
+        if (self == nullptr) { return out; }
+        auto * made = static_cast<array_object *>(out.as_heap());
+        made->elements = self->elements;
+        const std::size_t n = self->items.size();
+        const std::size_t from = a.empty() ? 0 : clamp_index(num_at(a, 0), n);
+        const std::size_t to = a.size() > 1 ? clamp_index(num_at(a, 1), n) : n;
+        for (std::size_t i = from; i < to; ++i) { made->items.push_back(self->items[i]); }
+        return out;
+    });
+    cx.set_prototype(context::proto_kind::typed_array, typed_proto);
+
+    for (const spec & each : kinds) {
+        const element_kind kind = each.kind;
+        auto * ctor = cx.allocate<native_object>(each.name, [kind](context & c,
+                                                                   std::span<value> a) {
+            value out = c.make_array();
+            auto * made = static_cast<array_object *>(out.as_heap());
+            made->elements = kind;
+            const value from = arg_at(a, 0);
+            if (from.is_array()) {
+                // from another array, coerced element by element
+                for (const value & v : static_cast<array_object *>(from.as_heap())->items) {
+                    made->items.push_back(
+                        value::number(coerce_element(kind, context::to_number(v))));
+                }
+            } else if (from.is_object()) {
+                // an ArrayBuffer, or anything else with a byteLength/length
+                const double length = context::to_number(c.lookup_property(from, "length"));
+                const double n = std::isnan(length)
+                                     ? context::to_number(c.lookup_property(from, "byteLength"))
+                                     : length;
+                made->items.assign(static_cast<std::size_t>(std::max(0.0, n)), value::number(0));
+            } else {
+                made->items.assign(static_cast<std::size_t>(std::max(0.0, num_at(a, 0))),
+                                   value::number(0));
+            }
+            return out;
+        });
+        ctor->set("BYTES_PER_ELEMENT", value::number(each.bytes));
+        cx.define_global(each.name, value::object(ctor));
+    }
+
+    // An ArrayBuffer is a LENGTH here, not storage - see the note above.
+    cx.define_native("ArrayBuffer", [](context & c, std::span<value> a) {
+        value out = c.make_object();
+        auto * made = static_cast<object_object *>(out.as_heap());
+        made->set("byteLength", value::number(std::max(0.0, num_at(a, 0))));
+        made->set("length", value::number(std::max(0.0, num_at(a, 0))));
+        return out;
+    });
+}
+
 void install_builtins(context & cx, std::uint64_t seed) {
     install_math(cx, seed);
     install_regexp(cx);
@@ -2007,6 +2202,7 @@ void install_builtins(context & cx, std::uint64_t seed) {
     install_errors(cx);
     install_proxy(cx);
     install_function(cx);
+    install_typed_arrays(cx);
     install_array(cx);
     install_string(cx);
     install_number(cx);

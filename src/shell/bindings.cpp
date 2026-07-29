@@ -838,6 +838,60 @@ void dom_bindings::install_window(context & cx) {
                             listener{node_id{}, arg_string(c, args, 0), arg(args, 1)});
                         return value::undefined();
                     })));
+    // `localStorage`, IN MEMORY AND FOR THIS PAGE ONLY. 38 uses in p5.js, which
+    // reads it before it draws anything.
+    //
+    // Not persisted, deliberately: a test that leaves state behind fails the
+    // next run for reasons that have nothing to do with the code, and this
+    // engine has no origin to scope a store to anyway. A page gets a working
+    // store that starts empty every time, which is what the API promises minus
+    // the durability.
+    const auto storage = [&](const char * name) {
+        auto * store = static_cast<script::object_object *>(cx.make_object().as_heap());
+        auto * items = static_cast<script::object_object *>(cx.make_object().as_heap());
+        const value backing = value::object(items);
+        store->set("__items", backing);
+        const auto method = [&](std::string method_name, script::native_fn fn) {
+            store->set(method_name, value::object(cx.allocate<script::native_object>(
+                                        method_name, std::move(fn))));
+        };
+        method("getItem", [items](context & c, std::span<value> args) {
+            value * held = items->find(arg_string(c, args, 0));
+            // A MISS IS null, not undefined - pages branch on `=== null`.
+            return held == nullptr ? value::null() : *held;
+        });
+        method("setItem", [items](context & c, std::span<value> args) {
+            items->set(arg_string(c, args, 0), c.string(arg_string(c, args, 1)));
+            return value::undefined();
+        });
+        method("removeItem", [items](context & c, std::span<value> args) {
+            (void)items->erase(arg_string(c, args, 0));
+            return value::undefined();
+        });
+        method("clear", [items](context &, std::span<value>) {
+            items->props.clear();
+            items->index.clear();
+            return value::undefined();
+        });
+        method("key", [items](context & c, std::span<value> args) {
+            const auto at =
+                static_cast<std::size_t>(std::max(0.0, script::context::to_number(arg(args, 0))));
+            return at < items->props.size() ? c.string(items->props[at].first) : value::null();
+        });
+        store->define_accessor("length",
+                               value::object(cx.allocate<script::native_object>(
+                                   "length",
+                                   [items](context &, std::span<value>) {
+                                       return value::number(
+                                           static_cast<double>(items->props.size()));
+                                   })),
+                               value::undefined());
+        window->set(name, value::object(store));
+        cx.define_global(name, value::object(store));
+    };
+    storage("localStorage");
+    storage("sessionStorage");
+
     auto * performance = static_cast<script::object_object *>(cx.make_object().as_heap());
     performance->set(
         "now", value::object(cx.allocate<script::native_object>(

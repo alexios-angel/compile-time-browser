@@ -10,7 +10,7 @@
 # draw, golden) arrive with the work that makes them reachable.
 
 level=5
-blocker=`setItem` is undefined, not a function - in <anonymous>
+blocker=`replace` is undefined, not a function - in <anonymous>
 
 # Wall-clock ceiling for lex + parse + compile + run, in milliseconds.
 # Generous on purpose: it is here to catch the compiler's quadratic scans

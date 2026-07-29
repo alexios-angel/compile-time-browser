@@ -1,5 +1,6 @@
 #pragma once
 #include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -221,8 +222,68 @@ inline bool value::is_callable() const noexcept {
     return false;
 }
 
+// WHICH TYPED ARRAY THIS IS, or `none` for an ordinary one.
+//
+// A typed array is stored as an ordinary array of values rather than as packed
+// bytes, which costs memory and buys the whole existing array machinery -
+// indexing, length, iteration, the prototype methods. What it must NOT cost is
+// correctness on write: `pixels[i] = 300` in a Uint8ClampedArray is 255, and
+// silently storing 300 would be exactly the kind of wrong answer that hides
+// until an image looks strange.
+enum class element_kind : std::uint8_t {
+    none,
+    i8,
+    u8,
+    u8_clamped,
+    i16,
+    u16,
+    i32,
+    u32,
+    f32,
+    f64
+};
+
+// Coerce a number the way a store into that element type does.
+[[nodiscard]] inline double coerce_element(element_kind kind, double v) {
+    const auto wrap = [](double x, double modulus) {
+        if (!std::isfinite(x)) { return 0.0; }
+        double r = std::fmod(std::trunc(x), modulus);
+        if (r < 0) { r += modulus; }
+        return r;
+    };
+    switch (kind) {
+    case element_kind::none: return v;
+    case element_kind::f32: return static_cast<double>(static_cast<float>(v));
+    case element_kind::f64: return v;
+    case element_kind::u8_clamped:
+        // The ONE that clamps rather than wrapping, which is why it exists:
+        // it is the pixel type, and 300 must be 255 rather than 44.
+        if (std::isnan(v)) { return 0; }
+        return v <= 0 ? 0 : (v >= 255 ? 255 : std::nearbyint(v));
+    case element_kind::u8: return wrap(v, 256.0);
+    case element_kind::i8: {
+        const double u = wrap(v, 256.0);
+        return u >= 128 ? u - 256 : u;
+    }
+    case element_kind::u16: return wrap(v, 65536.0);
+    case element_kind::i16: {
+        const double u = wrap(v, 65536.0);
+        return u >= 32768 ? u - 65536 : u;
+    }
+    case element_kind::u32: return wrap(v, 4294967296.0);
+    case element_kind::i32: {
+        const double u = wrap(v, 4294967296.0);
+        return u >= 2147483648.0 ? u - 4294967296.0 : u;
+    }
+    }
+    return v;
+}
+
 struct array_object final : heap_object {
     std::vector<value> items;
+    // `none` for an ordinary array. A typed one coerces on every write and
+    // cannot grow past its length.
+    element_kind elements = element_kind::none;
     // What `RegExp.prototype.exec` hangs off its result. The spec puts these on
     // the array as ordinary properties; an array here has no property table, so
     // they live in named slots and property lookup checks them first. p5.js
