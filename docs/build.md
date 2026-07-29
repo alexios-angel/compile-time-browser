@@ -232,3 +232,38 @@ substitution buries everything else. `--system-fonts` opts out.
 
 Not a ctest and not in CI, for the reason the benchmarks are not: a
 browser-versus-browser diff should be read, not silently failed.
+
+## FONTS IN THE BINARY (2026-07-28)
+
+`-DCTBROWSER_EMBED_FONTS=ON` bakes the twelve vendored OFL faces into the
+executable with `#embed`, so it runs from anywhere with no `fonts/` beside it.
+Off by default.
+
+The registry-before-filesystem order was always designed for this — *"a binary
+that baked them in never touches the disk"* — and nothing had ever baked them
+in. `register_embedded_fonts` puts them in the registry under the same names
+`use_real_fonts` asks for, so nothing downstream knows which side they came
+from.
+
+**OPPORTUNISTIC, by probe rather than by version check.** `#embed` is C23 and
+C++26: clang has had it since 19 and the llvm-mingw cross toolchain has it, but
+GCC 13 — which builds this tree perfectly well — does not. CMake compiles the
+directive and looks; when it is not there the function registers nothing, says
+so through `have_embedded_fonts()`, and the loader reads the directory exactly
+as before.
+
+Three things that cost time if you assume otherwise:
+
+- **`#embed <name>` with `--embed-dir`, not `#embed "name"` with `-I`.** The
+  quoted form searches beside the source file and ignores `--embed-dir`, and
+  `-I` does not feed the embed search path at all. They are separate paths.
+- **`-pedantic -Werror` rejects it.** In C++23 mode clang calls `#embed` a C23
+  extension and the repo's flags turn that into an error, so the one file that
+  uses it silences `-Wc23-extensions` locally — and nowhere else.
+- **It is 5.2 MB, per binary.** That is why it is off by default: every test
+  executable links the shell, so turning it on unconditionally would put about
+  160 MB of fonts into `build/` for something only a distributable build wants.
+
+Verified end to end by running two builds of `ctdrive` from a directory with no
+`fonts/` in it: the ordinary one falls back to font8x8 and draws blocky
+bitmaps, the embedded one renders Tinos.

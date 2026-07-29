@@ -224,6 +224,107 @@ void test_font8x8_quantises_and_says_so() {
           "20px is the next bucket up");
 }
 
+// font8x8 SYNTHESISES bold and italic - a smear and a shear over the one set of
+// bitmaps it has. Before this it had a single face, so `<b>` and `<h1>` drew
+// identically to body text and the goldens could not see a font-weight bug at
+// all.
+//
+// Counted in INK rather than compared to a reference image: the point is that
+// the four styles are four different things, and that bold is heavier and
+// italic is not.
+void test_font8x8_has_bold_and_italic() {
+    // How much ink, and WHERE. Both are needed: bold adds pixels, but a shear
+    // only MOVES them - italic draws exactly as much ink as regular does, so a
+    // count alone cannot tell them apart and the positions have to be hashed.
+    struct drawn {
+        std::size_t ink = 0;
+        std::size_t shape = 0;
+    };
+    const auto render = [](bool bold, bool italic) {
+        browser page{browser_options{300, 120}};
+        const char * style = bold && italic ? "font-weight: bold; font-style: italic"
+                             : bold         ? "font-weight: bold"
+                             : italic       ? "font-style: italic"
+                                            : "";
+        page.load_html(std::string{"<body style='font-size: 32px'><p style='"} + style +
+                       "'>Hamburg</p></body>");
+        (void)page.frame();
+        const auto image = page.read_pixels();
+        drawn out;
+        if (image) {
+            for (int y = 0; y < image->height(); ++y) {
+                const auto row = image->row(y);
+                for (int x = 0; x < image->width(); ++x) {
+                    if ((row[static_cast<std::size_t>(x)] & 0x00FFFFFFU) == 0x00FFFFFFU) {
+                        continue;
+                    }
+                    ++out.ink;
+                    out.shape = out.shape * 1000003u + static_cast<std::size_t>(y * 4096 + x);
+                }
+            }
+        }
+        return out;
+    };
+
+    const drawn plain = render(false, false);
+    const drawn bold = render(true, false);
+    const drawn italic = render(false, true);
+    const drawn both = render(true, true);
+
+    check(plain.ink > 0, "regular text draws");
+    // The smear roughly doubles a one-pixel stroke, so bold is markedly darker.
+    check(bold.ink > plain.ink, "bold draws more ink than regular");
+    // Italic is the same amount of ink in DIFFERENT PLACES.
+    check(italic.shape != plain.shape, "italic puts its pixels somewhere else");
+    check(both.ink > italic.ink, "and bold italic is heavier than italic alone");
+    check(both.shape != bold.shape, "and slanted, unlike bold alone");
+
+    // THE ADVANCE DOES NOT MOVE. Layout measures with font8x8_advance and the
+    // rasterizer draws with the above; a style that advanced differently from
+    // how it draws would put every caret and every wrap in the wrong place.
+    // The styles overhang their cell instead, which is what italics do anyway.
+    check(raster::font8x8_fonts().advance("Hamburg", 32, "", true, false) ==
+              raster::font8x8_fonts().advance("Hamburg", 32, "", false, false),
+          "bold advances exactly as regular does");
+    check(raster::font8x8_fonts().advance("Hamburg", 32, "", false, true) ==
+              raster::font8x8_fonts().advance("Hamburg", 32, "", false, false),
+          "and so does italic");
+}
+
+// The faces baked into the binary, where a build asked for them.
+//
+// Asserted as a CONTRACT rather than a fact, because it is a build option and
+// this test has to mean something either way: if the build embedded them there
+// are twelve, each loadable by the name use_real_fonts asks for; if it did not,
+// there are none and the loader reads the directory. What must never happen is
+// the in-between - `have_embedded_fonts()` saying yes while nothing registers,
+// which is how a font path silently falls back and nobody notices.
+void test_embedded_fonts_match_what_the_build_promised() {
+    // A directory that CANNOT exist. asset_registry::load falls back to the
+    // filesystem when the registry misses, and this test runs from the source
+    // root where a real fonts/ sits - so asking for "fonts/..." would find the
+    // file on disk and prove nothing about what was embedded.
+    shell::asset_registry registry;
+    const std::size_t registered = shell::register_embedded_fonts(registry, "not-a-real-directory");
+
+    if (shell::have_embedded_fonts()) {
+        check(registered == 12, "an embedding build registers all twelve faces");
+        // Under the names the loader builds - stem, style, .ttf - or they are
+        // registered somewhere nothing will look for them.
+        check(!registry.load("not-a-real-directory/Tinos-Regular.ttf").empty(),
+              "the serif regular is there");
+        check(!registry.load("not-a-real-directory/Cousine-BoldItalic.ttf").empty(),
+              "and the mono bold italic");
+        const std::vector<std::byte> bytes =
+            registry.load("not-a-real-directory/FiraSans-Bold.ttf");
+        check(bytes.size() > 1000, "a face is a real file, not an empty placeholder");
+    } else {
+        check(registered == 0, "a build without #embed registers nothing");
+        check(registry.load("not-a-real-directory/Tinos-Regular.ttf").empty(),
+              "and nothing is findable");
+    }
+}
+
 // --- the real font backend ------------------------------------------------
 //
 // Skipped, loudly, where SDL3_ttf is absent - the same shape the GPU
@@ -508,6 +609,8 @@ int main() {
     test_the_underline_is_actually_drawn();
     test_layout_measures_with_the_drawing_font();
     test_font8x8_quantises_and_says_so();
+    test_font8x8_has_bold_and_italic();
+    test_embedded_fonts_match_what_the_build_promised();
 
     test_real_fonts();
     test_real_fonts_distinguish_faces();

@@ -78,11 +78,43 @@ void fill_band(float x, float y, float width, float thickness, color c, const pi
     fill_rect(rect{x, y, width, thickness < 1 ? 1.0f : thickness}, c, clip, into);
 }
 
+namespace {
+
+// How far row `gy` of an italic glyph leans right. Two pixels over the cell,
+// top-heavy: one is not visibly slanted at 8x8 and three shears the glyph into
+// its neighbour.
+[[nodiscard]] constexpr int italic_shift(int gy) noexcept {
+    return (7 - gy) / 3;
+}
+
+// Is this pixel of the OUTPUT inked, given the style?
+//
+// BOLD is the glyph OR'd with itself one pixel right - the way bitmap fonts
+// have always been emboldened, and the only way here: there is no second set
+// of bitmaps and no outline to thicken. ITALIC shears the rows.
+//
+// Both read from the same 8x8 source, so neither needs a table of its own.
+[[nodiscard]] bool inked(char32_t cp, int gy, int gx, bool bold, bool italic) {
+    const int sx = gx - (italic ? italic_shift(gy) : 0);
+    const auto at = [&](int x) { return x >= 0 && x < 8 && font8x8_data::glyph_pixel(cp, gy, x); };
+    return at(sx) || (bold && at(sx - 1));
+}
+
+} // namespace
+
 void draw_text(const rect & where, const paint_command & c, const pixel_rect & clip,
                surface & into) {
     const int scale = font8x8_scale(c.font_size);
     const int origin_x = round_to_pixel(where.x);
     const int origin_y = round_to_pixel(where.y);
+    const bool bold = c.face.bold;
+    const bool italic = c.face.italic;
+    // A styled glyph reaches past its 8-wide cell - one column for the bold
+    // smear, two for the italic lean. It is allowed to: an italic that stops
+    // dead at the cell edge is a clipped italic, and the OVERHANG is what makes
+    // the slant read. The advance is unchanged, which is what keeps layout and
+    // this function agreeing about where text goes.
+    const int overhang = (bold ? 1 : 0) + (italic ? 2 : 0);
     int cell = 0;
     for (std::size_t i = 0; i < c.text.size();) {
         const auto byte = static_cast<unsigned char>(c.text[i]);
@@ -103,8 +135,8 @@ void draw_text(const rect & where, const paint_command & c, const pixel_rect & c
         ++cell;
         if (cp > 0x7F) { continue; } // outside font8x8; the cell is still advanced
         for (int gy = 0; gy < 8; ++gy) {
-            for (int gx = 0; gx < 8; ++gx) {
-                if (!font8x8_data::glyph_pixel(cp, gy, gx)) { continue; }
+            for (int gx = 0; gx < 8 + overhang; ++gx) {
+                if (!inked(cp, gy, gx, bold, italic)) { continue; }
                 const int px = left + gx * scale;
                 const int py = origin_y + gy * scale;
                 for (int sy = 0; sy < scale; ++sy) {

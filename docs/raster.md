@@ -34,6 +34,32 @@ thought only if ONE object answers both (`browser::fonts()` / `measure()`).
 implementation of the same interface and still the default, so **the goldens do
 not move**.
 
+## FONT8X8 HAS FOUR STYLES NOW (2026-07-28)
+
+It had one face, so `<b>` and `<h1>` drew identically to body text — and since
+the goldens render with `CTBROWSER_FONTS=font8x8`, they could not see a
+font-weight bug **at all**. That is how a UA sheet with no `font-weight` in it
+survived: the one test that byte-compares pixels was blind to weight by
+construction.
+
+Bold and italic are **synthesised from the one set of bitmaps**, which is what
+bitmap fonts have always done and the only option here — there is no second
+table and no outline to thicken. Bold is the glyph OR'd with itself one pixel
+right; italic shears the rows, two pixels of lean over the cell, top-heavy.
+Neither needs data of its own.
+
+**The advance does not change.** A styled glyph OVERHANGS its 8-wide cell
+rather than widening it — one column for the smear, two for the lean. Layout
+measures with `font8x8_advance` and the rasterizer draws with `draw_text`; a
+style that advanced differently from the way it is drawn would put every caret
+and every wrap in the wrong place, which is worse than a bold occupying the same
+cells as its regular. An italic overhanging slightly is what italics do anyway.
+
+The comment this replaces said bold and italic were *deliberately* not
+synthesised, "because a fake that is wrong by a pixel is worse than an honest
+sameness". That reasoning was about the ADVANCE, and it still holds — the
+advance is unchanged. It did not follow that the glyphs had to be identical too.
+
 Font identity now runs the length of the pipeline: layout resolves
 `font-family` (first name of the list, unquoted), `font-weight` (≥600 is bold),
 `font-style` and `text-decoration` with the inherited-resolver pattern;

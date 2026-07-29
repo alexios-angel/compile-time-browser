@@ -104,9 +104,16 @@ class font8x8_backend final : public font_backend {
 public:
     [[nodiscard]] float advance(std::string_view text, float font_size, std::string_view, bool,
                                 bool) const override {
-        // font8x8 has ONE face. Bold and italic are not synthesised: a fake
-        // that is wrong by a pixel is worse here than an honest sameness,
-        // because layout measured with this exact function.
+        // The SAME WIDTH whatever the style. font8x8 has one set of bitmaps and
+        // synthesises bold and italic from it (see draw_text) - a smear and a
+        // shear, both of which overhang the cell rather than widening it.
+        //
+        // Deliberately not wider for bold. Layout measures with this exact
+        // function and the rasterizer draws with the other; a style that
+        // advanced differently from the way it is drawn would put every caret
+        // and every wrap in the wrong place, which is worse than a bold that
+        // occupies the same cells as its regular. Monospace bitmap faces have
+        // always done it this way.
         return font8x8_advance(text, font_size);
     }
     void draw_run(const rect & where, const paint_command & c, const pixel_rect & clip,

@@ -307,10 +307,12 @@ target_sources(ctbrowser-shell
     shell/canvas.cpp
     shell/forms.cpp
     shell/net.cpp
+    shell/embedded_fonts.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
       FILES
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/embedded_fonts.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/shell.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/input.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/metrics.hpp"
@@ -323,6 +325,45 @@ target_sources(ctbrowser-shell
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/browser.hpp")
 target_compile_features(ctbrowser-shell PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-shell)
+
+# --- the fonts, in the binary --------------------------------------------
+#
+# `#embed` is C23 and C++26. Clang has had it since 19 and the llvm-mingw cross
+# toolchain has it; GCC gained it in 15, so GCC 13 - which builds this tree
+# perfectly well otherwise - does not. Hence a PROBE rather than a version
+# check: compile the directive and see.
+#
+# --embed-dir rather than -I. `#embed` has its own search path and the quoted
+# form looks beside the source file, so the angle-bracket form plus this flag is
+# the only combination that finds a file in another directory.
+#
+# OFF by default and deliberately: the twelve faces are 5.2 MB, and they would
+# be linked into every test binary as well as every example - about 160 MB of
+# build output for something only a DISTRIBUTABLE build needs. Turn it on for
+# one (`-DCTBROWSER_EMBED_FONTS=ON`) and the exe runs anywhere with no fonts/
+# beside it; leave it off and it reads the directory, as it always has.
+option(CTBROWSER_EMBED_FONTS "Bake the vendored OFL faces into the binary" OFF)
+if(CTBROWSER_EMBED_FONTS)
+  include(CheckCXXSourceCompiles)
+  set(CMAKE_REQUIRED_FLAGS "--embed-dir=${PROJECT_SOURCE_DIR}/fonts")
+  check_cxx_source_compiles("
+    #ifndef __has_embed
+    #error no __has_embed
+    #endif
+    #if __has_embed(<Tinos-Regular.ttf>) != 1
+    #error not on the embed path
+    #endif
+    int main() {}
+  " CTBROWSER_COMPILER_HAS_EMBED)
+  unset(CMAKE_REQUIRED_FLAGS)
+  if(CTBROWSER_COMPILER_HAS_EMBED)
+    set_source_files_properties(shell/embedded_fonts.cpp PROPERTIES COMPILE_OPTIONS
+      "--embed-dir=${PROJECT_SOURCE_DIR}/fonts")
+    message(STATUS "ctbrowser: fonts embedded in the binary (+5.2 MB)")
+  else()
+    message(STATUS "ctbrowser: no #embed here; fonts load from fonts/ at runtime")
+  endif()
+endif()
 target_link_libraries(ctbrowser-shell PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style
                                              ctbrowser-layout ctbrowser-paint ctbrowser-raster
                                              ctbrowser-script Boost::headers)

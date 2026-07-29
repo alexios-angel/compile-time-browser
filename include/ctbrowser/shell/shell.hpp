@@ -22,6 +22,7 @@
 #include <ctbrowser/shell/bindings.hpp>
 #include <ctbrowser/shell/browser.hpp>
 #include <ctbrowser/shell/canvas.hpp>
+#include <ctbrowser/shell/embedded_fonts.hpp>
 #include <ctbrowser/shell/forms.hpp>
 #include <ctbrowser/shell/images.hpp>
 #include <ctbrowser/shell/input.hpp>

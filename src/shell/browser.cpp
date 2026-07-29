@@ -99,6 +99,13 @@ bool browser::use_real_fonts(std::string_view directory) {
 #if CTBROWSER_WITH_TTF
     auto backend = std::make_unique<ctbrowser::raster::ttf_backend>();
     if (!backend->ok()) { return false; }
+    // The baked-in faces first, if this build has any. They go into the same
+    // registry the loop below reads, under the same names, so nothing after
+    // this point knows or cares whether a face came from the binary or the
+    // disk - which is what the registry-before-filesystem order was always
+    // for. A build without them registers nothing and the loop reads the
+    // directory, exactly as before.
+    (void)register_embedded_fonts(assets_, directory);
     // family, then the four (bold, italic) files that make it up.
     struct vendored {
         std::string_view family;
