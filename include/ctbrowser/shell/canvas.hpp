@@ -177,10 +177,17 @@ public:
     void quadratic_curve_to(float cx, float cy, float x, float y);
     void bezier_curve_to(float c1x, float c1y, float c2x, float c2y, float x, float y);
 
-    // Even-odd scanline fill. The spec's default is nonzero winding; even-odd
-    // differs only for self-intersecting paths, which is a real limitation and
-    // is written down rather than hidden.
-    void fill();
+    // WHICH POINTS ARE INSIDE a path that overlaps itself. The spec's default
+    // is nonzero, and it is not a nicety: a star, a figure-of-eight and any
+    // shape drawn as one continuous self-crossing path are solid under nonzero
+    // and holed under even-odd. `ctx.fill('evenodd')` asks for the other one.
+    enum class fill_rule {
+        nonzero,
+        even_odd
+    };
+
+    // Scanline fill under either rule. Nonzero by default, as the spec says.
+    void fill(fill_rule rule = fill_rule::nonzero);
 
     void stroke();
 

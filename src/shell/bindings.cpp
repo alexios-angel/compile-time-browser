@@ -974,7 +974,15 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
     };
     method("fill", draws([canvas, replay](context & c, std::span<value> a) {
                replay(c, a);
-               canvas->fill();
+               // The rule is the last argument in both forms - `fill(rule)` and
+               // `fill(path, rule)` - so it is looked for rather than counted.
+               auto rule = canvas_context::fill_rule::nonzero;
+               for (const value & v : a) {
+                   if (v.is_string() && c.to_string(v) == "evenodd") {
+                       rule = canvas_context::fill_rule::even_odd;
+                   }
+               }
+               canvas->fill(rule);
            }));
     method("stroke", draws([canvas, replay](context & c, std::span<value> a) {
                replay(c, a);

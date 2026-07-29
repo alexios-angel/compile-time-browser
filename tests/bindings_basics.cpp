@@ -417,6 +417,42 @@ void test_text_alignment() {
     check(base_lo < 250 && base_hi <= 256, "textBaseline alphabetic sits on the anchor");
 }
 
+// WHICH POINTS ARE INSIDE a path that crosses itself.
+//
+// The spec's default is nonzero winding and this filled even-odd, so a star -
+// or anything else drawn as one continuous self-crossing path, which is most
+// of what beginShape/vertex is used for - came out with a hole in the middle
+// and nothing said so.
+void test_fill_rule() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body><canvas id=c width=200 height=100></canvas><script>
+        const ctx = document.getElementById('c').getContext('2d');
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, 200, 100);
+        function star(cx) {
+          ctx.beginPath();
+          for (let i = 0; i < 5; i++) {
+            const a = -Math.PI / 2 + i * 4 * Math.PI / 5;
+            const x = cx + 40 * Math.cos(a), y = 50 + 40 * Math.sin(a);
+            if (i === 0) { ctx.moveTo(x, y); } else { ctx.lineTo(x, y); }
+          }
+          ctx.closePath();
+        }
+        ctx.fillStyle = '#ff0000'; star(50);  ctx.fill();            // the default
+        ctx.fillStyle = '#0000ff'; star(150); ctx.fill('evenodd');
+    </script></body></html>)");
+    check(page.script_error().empty(), "the fill-rule script ran: " + page.script_error());
+    const auto pixels = page.canvases().pixels_of(find_id(page, "c"));
+    check(pixels != nullptr, "the canvas has pixels");
+    if (pixels == nullptr) { return; }
+    const auto at = [&](int x, int y) { return color{pixels->at(x, y)}; };
+    // A star's arms are inside under BOTH rules; only its middle differs.
+    check(at(50, 20) == color::rgba(255, 0, 0), "the default fills the star's arm");
+    check(at(150, 20) == color::rgba(0, 0, 255), "so does even-odd");
+    // The centre is the whole difference: nonzero solid, even-odd hollow.
+    check(at(50, 50) == color::rgba(255, 0, 0), "nonzero fills the middle of a star");
+    check(at(150, 50) == color::rgba(255, 255, 255), "even-odd leaves it hollow");
+}
+
 // --- the document API -----------------------------------------------------
 
 void test_script_mutates_what_is_drawn() {
@@ -1332,6 +1368,7 @@ int main() {
     test_the_invaders_page_shoots();
     test_a_letterboxed_page_keeps_its_size();
 
+    test_fill_rule();
     test_text_alignment();
     test_reflected_attributes();
     test_tree_navigation();

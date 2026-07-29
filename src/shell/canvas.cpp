@@ -172,7 +172,7 @@ void canvas_context::bezier_curve_to(float c1x, float c1y, float c2x, float c2y,
     }
 }
 
-void canvas_context::fill() {
+void canvas_context::fill(fill_rule rule) {
     if (!pixels_) { return; }
     float min_y = 1e30f, max_y = -1e30f;
     for (const subpath & s : subpaths_) {
@@ -185,7 +185,21 @@ void canvas_context::fill() {
     const int top = std::max(0, static_cast<int>(std::floor(min_y)));
     const int bottom = std::min(pixels_->height - 1, static_cast<int>(std::ceil(max_y)));
 
-    std::vector<float> crossings;
+    // A crossing carries its DIRECTION, which is what the two fill rules
+    // disagree about.
+    //
+    // Even-odd fills between alternate crossings; nonzero adds +1 for an edge
+    // crossing downwards and -1 for one crossing upwards, and fills wherever
+    // the running total is not zero. They differ exactly where a path overlaps
+    // itself: a five-pointed star drawn as one continuous path is solid under
+    // nonzero and has a pentagonal HOLE under even-odd. The spec's default is
+    // nonzero, and this drew even-odd - so every self-overlapping shape, which
+    // is most of what beginShape/vertex is used for, came out hollow.
+    struct crossing {
+        float x;
+        int direction;
+    };
+    std::vector<crossing> crossings;
     for (int y = top; y <= bottom; ++y) {
         crossings.clear();
         const float scan = static_cast<float>(y) + 0.5f;
@@ -195,15 +209,26 @@ void canvas_context::fill() {
             for (std::size_t i = 0; i < n; ++i) {
                 const point & a = s.points[i];
                 const point & b = s.points[(i + 1) % n];
-                if (i + 1 == n && !s.closed) { continue; } // open subpaths do not wrap
+                // An unclosed subpath is still CLOSED FOR FILLING - that is
+                // what the spec means by an implicit close - so the wrap edge
+                // is included here, unlike in stroke().
                 if ((a.y <= scan && b.y > scan) || (b.y <= scan && a.y > scan)) {
-                    crossings.push_back(a.x + (scan - a.y) / (b.y - a.y) * (b.x - a.x));
+                    crossings.push_back(crossing{a.x + (scan - a.y) / (b.y - a.y) * (b.x - a.x),
+                                                 b.y > a.y ? 1 : -1});
                 }
             }
         }
-        std::ranges::sort(crossings);
-        for (std::size_t i = 0; i + 1 < crossings.size(); i += 2) {
-            span_row(y, crossings[i], crossings[i + 1], fill_style);
+        std::ranges::sort(crossings, {}, &crossing::x);
+        if (rule == fill_rule::even_odd) {
+            for (std::size_t i = 0; i + 1 < crossings.size(); i += 2) {
+                span_row(y, crossings[i].x, crossings[i + 1].x, fill_style);
+            }
+            continue;
+        }
+        int winding = 0;
+        for (std::size_t i = 0; i + 1 < crossings.size(); ++i) {
+            winding += crossings[i].direction;
+            if (winding != 0) { span_row(y, crossings[i].x, crossings[i + 1].x, fill_style); }
         }
     }
     touch();

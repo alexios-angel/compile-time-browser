@@ -1,0 +1,65 @@
+<!doctype html>
+<!-- p5.js shapes: beginShape/vertex, curves, and the fill rule.
+     The star on the left is one continuous self-crossing path, which is where
+     the two fill rules disagree: nonzero - the spec's default - fills it
+     solid, even-odd leaves a pentagonal hole. Most of what beginShape is used
+     for overlaps itself somewhere, so getting that wrong hollows out shapes
+     with no error anywhere.
+     The middle shape mixes straight and bezier vertices in one path; the right
+     one is an open path that is closed for FILLING but not for stroking, which
+     is the other rule that is easy to get backwards. -->
+<html>
+  <head>
+    <script>var IS_MINIFIED = true;</script>
+    <script src="examples/assets/p5.js"></script>
+  </head>
+  <body style="margin:0;background:#ffffff">
+    <script>
+      new p5(function (s) {
+        s.setup = function () {
+          s.createCanvas(340, 200);
+          s.noLoop();
+        };
+        s.draw = function () {
+          s.background(250);
+
+          // One continuous path that crosses itself five times.
+          s.fill(210, 60, 60);
+          s.noStroke();
+          s.beginShape();
+          for (let i = 0; i < 5; i++) {
+            const a = -s.PI / 2 + (i * 4 * s.PI) / 5;
+            s.vertex(70 + 55 * s.cos(a), 100 + 55 * s.sin(a));
+          }
+          s.endShape(s.CLOSE);
+
+          // Straight and curved vertices in one path. p5 2.x takes ONE control
+          // point per bezierVertex call - a cubic is three of them after the
+          // starting vertex - rather than the whole curve in one call.
+          s.fill(70, 130, 210);
+          s.stroke(30, 60, 110);
+          s.strokeWeight(3);
+          s.beginShape();
+          s.vertex(160, 150);
+          s.bezierOrder(3);
+          s.bezierVertex(160, 50);
+          s.bezierVertex(245, 50);
+          s.bezierVertex(245, 150);
+          s.vertex(200, 178);
+          s.endShape(s.CLOSE);
+
+          // OPEN: closed for filling, not for stroking - the top edge between
+          // the last vertex and the first is filled but has no line on it.
+          s.fill(240, 190, 70);
+          s.stroke(150, 100, 20);
+          s.beginShape();
+          s.vertex(270, 60);
+          s.vertex(325, 60);
+          s.vertex(325, 140);
+          s.vertex(270, 140);
+          s.endShape();
+        };
+      });
+    </script>
+  </body>
+</html>

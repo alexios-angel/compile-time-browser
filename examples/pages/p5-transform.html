@@ -1,0 +1,75 @@
+<!doctype html>
+<!-- p5.js transforms: push/pop, translate, rotate, scale.
+     Every square here is the SAME rect() call - `rect(-20, -20, 40, 40)` -
+     under a different matrix, so the drawing is a control and the transform is
+     the only variable. The nesting matters as much as the maths: p5 keeps its
+     own transform stack and pushes it onto the canvas with setTransform, so a
+     pop() that does not restore leaves every later shape somewhere wrong.
+     The grey square is drawn OUTSIDE every push, last, at the origin - it is
+     the proof the stack came back to where it started. -->
+<html>
+  <head>
+    <script>var IS_MINIFIED = true;</script>
+    <script src="examples/assets/p5.js"></script>
+  </head>
+  <body style="margin:0;background:#ffffff">
+    <script>
+      new p5(function (s) {
+        s.setup = function () {
+          s.createCanvas(320, 240);
+          s.noLoop();
+        };
+        s.draw = function () {
+          s.background(250);
+          s.noStroke();
+
+          const square = function () { s.rect(-20, -20, 40, 40); };
+
+          // translate
+          s.push();
+          s.translate(60, 50);
+          s.fill(220, 60, 60);
+          square();
+          s.pop();
+
+          // translate + rotate
+          s.push();
+          s.translate(160, 50);
+          s.rotate(s.PI / 4);
+          s.fill(60, 140, 220);
+          square();
+          s.pop();
+
+          // translate + scale, non-uniform so the two axes are distinguishable
+          s.push();
+          s.translate(260, 50);
+          s.scale(1.6, 0.8);
+          s.fill(60, 170, 90);
+          square();
+          s.pop();
+
+          // NESTED: the inner shape is placed relative to the outer, and the
+          // outer pop has to undo both.
+          s.push();
+          s.translate(60, 150);
+          s.fill(230, 160, 40);
+          square();
+          s.push();
+          s.translate(60, 0);
+          s.rotate(s.PI / 6);
+          s.scale(0.6);
+          s.fill(150, 70, 200);
+          square();
+          s.pop();
+          s.fill(230, 160, 40);
+          s.rect(30, 30, 12, 12);   // still in the OUTER frame after the inner pop
+          s.pop();
+
+          // Outside every push: at the origin if the stack unwound correctly.
+          s.fill(120);
+          s.rect(0, 0, 24, 24);
+        };
+      });
+    </script>
+  </body>
+</html>
