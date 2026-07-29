@@ -273,6 +273,41 @@ void test_bitwise_compound_assignment() {
     expect("let x = 0xFF; x ^= 0x0F; return x;", "240");
 }
 
+// AN INSTANCE FIELD BELONGS TO THE INSTANCE.
+//
+// Field initialisers used to be evaluated ONCE, at class-definition time, and
+// stored on the prototype - so every instance of `class A { items = [] }`
+// shared one array. Push to one and it appeared in all of them, with nothing
+// wrong at any stage. It is the nastiest shape in this batch, because the
+// symptom shows up arbitrarily far from the cause.
+void test_class_fields_are_per_instance() {
+    expect("class A { n = 1; } const x = new A(); const y = new A(); x.n = 99; return y.n;", "1");
+    // the case that actually bites: a mutable field
+    expect("class A { items = []; } const x = new A(); const y = new A(); "
+           "x.items.push(1); return y.items.length;",
+           "0");
+    // a field with no initialiser is still a field
+    expect("class A { x; } const a = new A(); return typeof a.x;", "undefined");
+    // an initialiser is an expression, evaluated per instance
+    expect("let made = 0; class A { id = ++made; } new A(); new A(); return new A().id;", "3");
+    // it may capture an enclosing local
+    expect("function build(v) { class A { val = v; } return new A().val; } return build(42);",
+           "42");
+    // fields arrive before the constructor body, which may then use them
+    expect("class A { n = 2; constructor() { this.n = this.n * 5; } } return new A().n;", "10");
+    // INHERITED fields are initialised too, base first
+    expect("class B { b = 'base'; } class D extends B { d = 'derived'; } "
+           "const o = new D(); return o.b + '/' + o.d;",
+           "base/derived");
+    // and a STATIC field is the opposite case - one value on the class, which
+    // is what it should always have been
+    expect("class A { static count = 0; } A.count = 5; return A.count;", "5");
+    // methods still live on the prototype and are shared
+    expect("class A { n = 1; get2() { return 2; } } "
+           "return new A().get2() + new A().get2();",
+           "4");
+}
+
 void test_typeof() {
     diff_vs_v1("typeof 1", "number");
     diff_vs_v1("typeof 'x'", "string");
@@ -968,6 +1003,7 @@ int main() {
     test_rest_parameters();
     test_nested_function_declarations_are_local();
     test_arrow_this_is_lexical();
+    test_class_fields_are_per_instance();
     test_bitwise_compound_assignment();
     test_typeof();
     test_variables_and_control_flow();

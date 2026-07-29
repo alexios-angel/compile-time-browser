@@ -223,8 +223,16 @@ public:
         const bool nested = inside_nested || n.kind == vp::nk::func_decl ||
                             n.kind == vp::nk::func_expr || n.kind == vp::nk::arrow;
         if (inside_nested && n.kind == vp::nk::ident) { out.emplace_back(n.text); }
-        for (const std::int32_t slot : child_slots(n)) {
-            collect_captured_names(slot, nested, out);
+        // An instance field's initialiser now compiles into its OWN function -
+        // that is what makes each instance get its own value - so anything it
+        // mentions is captured exactly as if it had been written inside one.
+        // Without this the initialiser reads an unboxed enclosing local and
+        // finds undefined.
+        const bool field_init = n.kind == vp::nk::class_member && n.c == 0 && (n.d & 1) == 0;
+        const std::array<std::int32_t, 4> slots = child_slots(n);
+        for (std::size_t i = 0; i < slots.size(); ++i) {
+            // slot 1 is `b`, which for a field is the initialiser
+            collect_captured_names(slots[i], nested || (field_init && i == 1), out);
         }
         for (const std::int32_t k : kids(n)) { collect_captured_names(k, nested, out); }
     }
@@ -1706,6 +1714,52 @@ public:
     // call its parent's, so a class with `extends` inherits METHODS but not
     // construction. That is a real gap, and calling it out beats a `super` that
     // silently does nothing.
+    // A function whose whole body is `this.x = <init>` for each instance field,
+    // in declaration order. `new` runs it against the fresh object before the
+    // constructor body, so every instance gets its OWN value - which is the
+    // difference between `items = []` meaning an empty array per instance and
+    // meaning one array shared by all of them.
+    //
+    // It is compiled as an ordinary nested function, so an initialiser that
+    // mentions an enclosing local captures it as an upvalue like anything else.
+    [[nodiscard]] std::uint32_t compile_field_initialiser(
+        const std::vector<std::int32_t> & fields) {
+        const auto index = static_cast<std::uint32_t>(out_.functions.size());
+        out_.functions.emplace_back();
+        out_.functions[index].name = "<fields>";
+
+        frames_.emplace_back();
+        frames_.back().proto = index;
+        push_scope();
+        for (const std::int32_t member : fields) {
+            const vp::node & m = at(member);
+            const std::uint32_t mark = reg_mark();
+            const std::uint8_t self = alloc_reg();
+            proto().emit(instruction{op::load_this, self});
+            const std::uint8_t v = alloc_reg();
+            // `class A { x; }` declares x and gives it undefined - a field
+            // without an initialiser is still a field.
+            if (m.b >= 0) {
+                compile_expr(m.b, v);
+            } else {
+                proto().emit(instruction{op::load_undef, v});
+            }
+            if ((m.d & 2) != 0 && m.a >= 0) { // a computed key: `[expr] = init`
+                const std::uint8_t key = alloc_reg();
+                compile_expr(m.a, key);
+                proto().emit(instruction{op::set_index, self, key, v});
+            } else {
+                proto().emit(instruction{op::set_prop, self, name_operand(std::string{m.text}), v});
+            }
+            release_to(mark);
+        }
+        proto().emit(instruction{op::ret_undef});
+        finish_frame(index, 0);
+        pop_scope();
+        frames_.pop_back();
+        return index;
+    }
+
     void compile_class(const vp::node & n, std::uint8_t dst) {
         const std::vector<std::int32_t> members = kids(n);
         const std::uint32_t mark = reg_mark();
@@ -1744,10 +1798,34 @@ public:
         // inside it starts one level up.
         proto().emit(instruction{op::set_prop, dst, name_operand("__home"), prototype_reg});
 
+        // INSTANCE FIELDS ARE PER INSTANCE, and they used to be evaluated once
+        // at class-definition time and stored on the PROTOTYPE. So every
+        // instance of `class A { items = [] }` shared one array: push to one and
+        // it appeared in all of them. Nothing about that was an error, and it is
+        // the nastiest shape of bug in this whole batch.
+        //
+        // They are compiled into a hidden initialiser instead, which `new` runs
+        // against the fresh object before the constructor body. Static fields
+        // are NOT this - evaluating those once and putting them on the
+        // constructor is exactly right, and that is what still happens below.
+        std::vector<std::int32_t> instance_fields;
+        for (const std::int32_t member : members) {
+            const vp::node & m = at(member);
+            if (m.c == 0 && (m.d & 1) == 0) { instance_fields.push_back(member); }
+        }
+        if (!instance_fields.empty()) {
+            const std::uint32_t fields = compile_field_initialiser(instance_fields);
+            const std::uint8_t init = alloc_reg();
+            proto().emit(
+                instruction::with_bx(op::closure, init, static_cast<std::uint16_t>(fields)));
+            proto().emit(instruction{op::set_prop, dst, name_operand("__fields"), init});
+        }
+
         const std::uint8_t slot = alloc_reg();
         for (const std::int32_t member : members) {
             const vp::node & m = at(member);
             if (m.text == "constructor" && m.c == 1) { continue; }
+            if (m.c == 0 && (m.d & 1) == 0) { continue; } // an instance field; handled above
             if (m.b < 0) { continue; }
             compile_expr(m.b, slot);
             const std::uint8_t name = name_operand(std::string{m.text});

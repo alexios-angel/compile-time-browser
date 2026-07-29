@@ -286,6 +286,12 @@ private:
         std::uint8_t slot = 0;   // where to put the thrown value
     };
 
+    // Run the `__fields` initialiser of `constructor` and of every class it
+    // extends, BASE FIRST, against a freshly made instance. The chain is walked
+    // here rather than threaded through the compiler because the compiler does
+    // not know what `extends` will evaluate to.
+    void run_field_initialisers(value constructor, value self);
+
     [[nodiscard]] value execute(const program & prog, const function_proto & entry);
     [[nodiscard]] value run_loop(std::size_t stop_depth);
     void raise(std::string message) {

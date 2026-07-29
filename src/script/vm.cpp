@@ -346,6 +346,37 @@ value context::execute(const program & prog, const function_proto & entry) {
 // back to it. `stop_depth` is 0 for the top-level program and the caller's
 // depth for a call from C++ - which is what makes call() re-entrant instead of
 // a second interpreter.
+void context::run_field_initialisers(value constructor, value self) {
+    // Most-derived first, walking `C.prototype`'s own prototype back to the
+    // parent's `constructor`. Depth-capped for the same reason every other
+    // chain walk here is: a page can make the chain cyclic.
+    std::vector<value> chain;
+    value current = constructor;
+    for (int depth = 0; depth < 64 && current.is_kind(heap_kind::function); ++depth) {
+        chain.push_back(current);
+        value * prototype = static_cast<closure_object *>(current.as_heap())->find("prototype");
+        if (prototype == nullptr || !prototype->is_object()) { break; }
+        const value parent_prototype =
+            static_cast<object_object *>(prototype->as_heap())->prototype;
+        if (!parent_prototype.is_object()) { break; }
+        value * parent =
+            static_cast<object_object *>(parent_prototype.as_heap())->find("constructor");
+        if (parent == nullptr) { break; }
+        current = *parent;
+    }
+    // ...then run them BASE FIRST, so a derived field that reads one the base
+    // set finds it there. The spec runs a derived class's fields after its
+    // super() call returns; this runs the whole chain before the constructor
+    // body instead, which agrees wherever a constructor does not overwrite a
+    // field it also declares.
+    for (std::size_t i = chain.size(); i-- > 0;) {
+        auto * klass = static_cast<closure_object *>(chain[i].as_heap());
+        if (value * fields = klass->find("__fields"); fields != nullptr && fields->is_callable()) {
+            call(*fields, {}, self);
+        }
+    }
+}
+
 value context::run_loop(std::size_t stop_depth) {
     const program & prog = *program_;
     auto & string_cache = string_cache_;
@@ -800,6 +831,7 @@ value context::run_loop(std::size_t stop_depth) {
                 }
             }
             const value self = value::object(instance);
+            run_field_initialisers(callee, self);
             const std::size_t arg_base = base + in.a + 1;
 
             if (callee.is_kind(heap_kind::native)) {
