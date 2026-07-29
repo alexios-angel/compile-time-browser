@@ -604,13 +604,23 @@ void test_webgl_is_constructible_and_refuses() {
         console.log('asking=' + outcome);
     </script></body></html>)");
     check(page.script_error().empty(), "the page loaded: " + page.script_error());
-    const auto & log = log_of(page);
-    check(log[0] == "registered=function",
-          "the WebGL renderer is still a constructible function: " + log[0]);
+    // FOUND, not indexed: p5 logs its own diagnostics too, and a test that
+    // counts console lines breaks whenever the library says something new -
+    // which is a fact about p5, not about the thing under test.
+    const auto said = [&](std::string_view prefix) {
+        for (const std::string & line : log_of(page)) {
+            if (line.starts_with(prefix)) { return line; }
+        }
+        return std::string{"<not logged>"};
+    };
+    const std::string registered = said("registered=");
+    check(registered == "registered=function",
+          "the WebGL renderer is still a constructible function: " + registered);
     // Catchable, and it SAYS webgl - a refusal a page cannot read is a crash
     // with extra steps.
-    check(log[1].find("Error") != std::string::npos && log[1].find("webgl") != std::string::npos,
-          "asking for it throws a catchable Error naming WebGL: " + log[1]);
+    const std::string asking = said("asking=");
+    check(asking.find("Error") != std::string::npos && asking.find("webgl") != std::string::npos,
+          "asking for it throws a catchable Error naming WebGL: " + asking);
 }
 
 // `location`'s parts, and `document.cookie`.
@@ -830,6 +840,64 @@ void test_listener_options() {
     // Three clicks, one call.
     check(line.find("counted=1") != std::string::npos,
           "a `once` listener fires exactly once: " + line);
+}
+
+// `innerHTML` PARSES, and `textContent` does not.
+//
+// innerHTML was a plain property on the wrapper: assigning markup stored a
+// string, built no nodes, rendered nothing and reported nothing - and reading
+// it back gave whatever the page last wrote rather than what the DOM holds. It
+// goes through the same WHATWG tokenizer and tree builder the page did, because
+// the alternative is a second and worse parser for the commonest way a page
+// builds content.
+void test_inner_html() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><head><style>.k { background-color: #008000 }</style></head>
+        <body><div id=d></div><script>
+        const d = document.getElementById('d');
+        d.innerHTML = '<b id="ib" class="k">hi</b><span>there</span>';
+        console.log('nodes=' + d.children.length + ',' + (document.getElementById('ib') !== null));
+        console.log('read=' + d.innerHTML);
+        console.log('text=' + d.textContent);
+        // Replacing wipes what was there rather than appending.
+        d.innerHTML = '<i>only</i>';
+        console.log('replaced=' + d.children.length + ',' + d.textContent);
+        // textContent is TEXT, never markup - that is why a page reaches for it.
+        d.textContent = '<not markup>';
+        console.log('asText=' + d.children.length + ',' + d.textContent);
+        </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log[0] == "nodes=2,true", "the markup became real nodes, findable by id: " + log[0]);
+    // Serialised from the tree rather than echoed back, so a node appended
+    // afterwards would show up too.
+    check(log[1] == R"(read=<b id="ib" class="k">hi</b><span>there</span>)",
+          "reading serialises the children: " + log[1]);
+    check(log[2] == "text=hithere", "textContent is every text node under it: " + log[2]);
+    check(log[3] == "replaced=1,only", "assigning again replaces: " + log[3]);
+    check(log[4] == "asText=0,<not markup>", "textContent stores text, not markup: " + log[4]);
+    // And the parsed nodes are in the CASCADE, which is what says they are
+    // really in the document rather than in a side table.
+    check(page.frame().has_value(), "the page renders");
+
+    // A <script>'s textContent is its SOURCE, unmangled. p5's error system
+    // reads it back and parses it, so anything lost here becomes a syntax
+    // error in a file the page never wrote.
+    browser scripts{browser_options{200, 200}};
+    scripts.load_html(R"(<html><body>
+<script id=t>
+var a = 1;
+if (a < 2 && a > 0) { a++; }
+</script>
+<script>
+console.log('src=' + document.getElementById('t').textContent.split('\n').join('|'));
+</script></body></html>)");
+    check(scripts.script_error().empty(), "the script ran: " + scripts.script_error());
+    check(!log_of(scripts).empty(), "the script reported");
+    if (!log_of(scripts).empty()) {
+        check(log_of(scripts).back() == "src=|var a = 1;|if (a < 2 && a > 0) { a++; }|",
+              "a script's text survives the round trip: " + log_of(scripts).back());
+    }
 }
 
 // --- the document API -----------------------------------------------------
@@ -1747,6 +1815,7 @@ int main() {
     test_the_invaders_page_shoots();
     test_a_letterboxed_page_keeps_its_size();
 
+    test_inner_html();
     test_listener_options();
     test_element_query_selector();
     test_await_suspends_and_resumes();

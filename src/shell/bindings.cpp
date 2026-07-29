@@ -598,6 +598,32 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     reflect_string("id", "id");
     reflect_string("className", "class");
 
+    // `innerHTML` and `textContent` are ACCESSORS over the tree, not properties
+    // on the wrapper. As properties, assigning markup stored a string, built no
+    // nodes, rendered nothing and reported nothing - and reading one back gave
+    // whatever the page last wrote rather than what the DOM actually holds.
+    const auto tree_property = [&](std::string property, script::native_fn read,
+                                   script::native_fn write) {
+        obj.define_accessor(
+            property, value::object(cx.allocate<script::native_object>(property, std::move(read))),
+            value::object(cx.allocate<script::native_object>(property, std::move(write))));
+    };
+    tree_property(
+        "innerHTML", [this, id](context & c, std::span<value>) { return c.string(inner_html(id)); },
+        [this, id](context & c, std::span<value> a) {
+            set_inner_html(id, arg_string(c, a, 0));
+            return value::undefined();
+        });
+    tree_property(
+        "textContent",
+        [this, id](context & c, std::span<value>) { return c.string(text_content(id)); },
+        [this, id](context & c, std::span<value> a) {
+            // Text, never markup: that is the whole point of the property, and
+            // the reason a page reaches for it instead of innerHTML.
+            set_text(id, arg_string(c, a, 0));
+            return value::undefined();
+        });
+
     // `parentNode` and `children` are ACCESSORS because the tree moves. A
     // wrapper built when an element was detached and refreshed later would hand
     // back the parent it had at wrapping time, which for an element p5 creates
@@ -2218,6 +2244,100 @@ dom_bindings::listener dom_bindings::make_listener(context & cx, node_id target,
         made.capture = context::truthy(options);
     }
     return made;
+}
+
+node_id dom_bindings::copy_subtree(const read_txn & from, node_id node, node_id parent) {
+    node_id made;
+    if (from.kind(node).value_or(node_kind::element) == node_kind::text) {
+        made = doc_->create_text(from.text(node));
+    } else {
+        made = doc_->create_element(from.tag(node).value_or(atom{}), from.element_ns(node));
+        for (const attribute & a : from.attributes(node)) {
+            (void)doc_->set_attribute(made, a.name, a.value);
+        }
+    }
+    (void)doc_->append_child(parent, made);
+    for (const node_id child : from.children(node)) { copy_subtree(from, child, made); }
+    return made;
+}
+
+// PARSE THE MARKUP, do not store it.
+//
+// A fragment goes through the same WHATWG tokenizer and tree builder the page
+// did - the alternative is a second, worse parser for the commonest way a page
+// builds content. `tree_builder::parse` replaces the document's root, so it
+// runs against a SCRATCH document; that document shares this one's atom table,
+// so copying across needs no name remapping.
+void dom_bindings::set_inner_html(node_id target, std::string_view markup) {
+    if (!target || atoms_ == nullptr) { return; }
+    {
+        const auto txn = doc_->read();
+        const std::span<const node_id> kids = txn.children(target);
+        const std::vector<node_id> existing{kids.begin(), kids.end()};
+        for (const node_id child : existing) { (void)doc_->remove_child(child); }
+    }
+    document scratch{*atoms_};
+    (void)parse_html(scratch, markup);
+    const auto from = scratch.read();
+    // The builder always makes html/body; the fragment's nodes are body's
+    // children. Anything that landed in head - a <style>, a <title> - is not
+    // what `el.innerHTML = ...` means and is left behind.
+    node_id body{};
+    const auto find_body = [&](auto && self, node_id at) -> void {
+        if (!body && from.tag(at).value_or(atom{}) == atoms_->intern_lower("body")) { body = at; }
+        for (const node_id child : from.children(at)) { self(self, child); }
+    };
+    find_body(find_body, from.root());
+    if (!body) { return; }
+    for (const node_id child : from.children(body)) { copy_subtree(from, child, target); }
+    mutated();
+}
+
+// Read back as markup. A serialiser rather than the original text: the DOM is
+// the truth, and a page that appended a node after setting innerHTML expects to
+// see it.
+std::string dom_bindings::inner_html(node_id target) const {
+    const auto txn = doc_->read();
+    std::string out;
+    const auto write = [&](auto && self, node_id node) -> void {
+        if (txn.kind(node).value_or(node_kind::element) == node_kind::text) {
+            out += txn.text(node);
+            return;
+        }
+        const std::string_view tag = atoms_->text(txn.tag(node).value_or(atom{}));
+        out += "<";
+        out += tag;
+        for (const attribute & a : txn.attributes(node)) {
+            out += " ";
+            out += atoms_->text(a.name);
+            out += "=\"";
+            out += a.value;
+            out += "\"";
+        }
+        out += ">";
+        if (ctbrowser::html::is_void_element(tag)) { return; }
+        for (const node_id child : txn.children(node)) { self(self, child); }
+        out += "</";
+        out += tag;
+        out += ">";
+    };
+    for (const node_id child : txn.children(target)) { write(write, child); }
+    return out;
+}
+
+// Every text node under the element, concatenated - which is what
+// `textContent` is, and what makes it the safe way to read a label.
+std::string dom_bindings::text_content(node_id target) const {
+    const auto txn = doc_->read();
+    std::string out;
+    const auto walk = [&](auto && self, node_id node) -> void {
+        if (txn.kind(node).value_or(node_kind::element) == node_kind::text) {
+            out += txn.text(node);
+        }
+        for (const node_id child : txn.children(node)) { self(self, child); }
+    };
+    for (const node_id child : txn.children(target)) { walk(walk, child); }
+    return out;
 }
 
 void dom_bindings::fire_at(node_id target, std::string_view type, value event, bool capturing) {

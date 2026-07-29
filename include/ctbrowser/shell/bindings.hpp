@@ -266,6 +266,17 @@ private:
     // document and window registrations - three copies is three chances for
     // `once` to work on one of them and not the others.
     [[nodiscard]] listener make_listener(context & cx, node_id target, std::span<value> args);
+    // `innerHTML`. Setting one PARSES: the markup becomes real nodes under the
+    // element, replacing whatever was there. It used to be a plain property on
+    // the wrapper, so assigning markup stored a string, rendered nothing, and
+    // said nothing.
+    void set_inner_html(node_id target, std::string_view markup);
+    [[nodiscard]] std::string inner_html(node_id target) const;
+    // One node and its subtree, copied from another document into this one.
+    // The scratch document a fragment is parsed into shares this atom table, so
+    // a tag or attribute name needs no remapping.
+    node_id copy_subtree(const read_txn & from, node_id node, node_id parent);
+    [[nodiscard]] std::string text_content(node_id target) const;
     void write_location_parts(context & cx, script::object_object & loc);
     // `element.style` and `element.classList` - the two views onto an element
     // that are OBJECTS rather than values, so unlike everything in
