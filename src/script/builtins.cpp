@@ -99,30 +99,124 @@ inline void method(context & cx, object_object * table, std::string name, native
 // against a real event loop can observe the difference.
 [[nodiscard]] inline value make_promise(context & cx, value v, bool rejected);
 
-// `then`/`catch`/`finally` all reduce to: pick the callback matching how this
-// promise settled, run it, and settle the result the same way. One function, so
-// `then(f, g)` and `catch(g)` cannot disagree about what "rejected" means.
+// A promise can be PENDING now.
+//
+// It was settled-only: created already resolved, `then` running its callback
+// immediately, `new Promise(executor)` absent entirely because an executor
+// implies pending state. That was enough for `await fetch(url)` and not enough
+// for anything that waits - and p5.js starts with
+// `Promise.all([waitForDocumentReady(), waitingForTranslator]).then(_globalInit)`,
+// so the library could not begin without it.
+//
+// What is still missing, and it is a real difference: there is no MICROTASK
+// QUEUE. A handler runs the moment the promise settles rather than at the end
+// of the turn, so code that depends on ordering between a `then` and the
+// statements after it sees them in the wrong order. Every promise here settles
+// either synchronously or from the event loop, where the distinction does not
+// arise; a page written against a real queue can observe it.
+//
+// State lives on the object: `__value` and `__rejected` as before, plus
+// `__settled` and `__handlers`. Keeping the old two means everything that read
+// them still works.
+[[nodiscard]] inline value make_promise(context & cx, value v, bool rejected);
+inline void settle(context & cx, value promise, value with, bool rejected);
+
+// Run one registered handler and settle the promise it produced.
+inline void deliver(context & cx, value handler_record, value settled, bool rejected) {
+    auto * record = static_cast<object_object *>(handler_record.as_heap());
+    value * on_ok = record->find("ok");
+    value * on_err = record->find("err");
+    value * next = record->find("next");
+    const value handler = rejected ? (on_err == nullptr ? value::undefined() : *on_err)
+                                   : (on_ok == nullptr ? value::undefined() : *on_ok);
+    if (next == nullptr) { return; }
+    if (!handler.is_callable()) {
+        // No handler for how this settled: it passes straight through, so a
+        // rejection survives a bare `.then(f)` and a later `.catch` sees it.
+        settle(cx, *next, settled, rejected);
+        return;
+    }
+    const value args[1] = {settled};
+    const value produced = cx.call(handler, args);
+    // A handler returning a promise ADOPTS it, which is what makes a chain of
+    // `then`s that each do async work run in order rather than all at once.
+    if (produced.is_object()) {
+        auto * inner = static_cast<object_object *>(produced.as_heap());
+        if (inner->find("__settled") != nullptr) {
+            value * inner_settled = inner->find("__settled");
+            value * inner_value = inner->find("__value");
+            value * inner_rejected = inner->find("__rejected");
+            if (context::truthy(*inner_settled)) {
+                settle(cx, *next, inner_value == nullptr ? value::undefined() : *inner_value,
+                       inner_rejected != nullptr && context::truthy(*inner_rejected));
+            } else {
+                // still pending: chain onto it
+                value * handlers = inner->find("__handlers");
+                if (handlers != nullptr && handlers->is_array()) {
+                    object_object * record2 = new_table(cx);
+                    record2->set("next", *next);
+                    static_cast<array_object *>(handlers->as_heap())
+                        ->items.push_back(value::object(record2));
+                }
+            }
+            return;
+        }
+    }
+    settle(cx, *next, produced, false);
+}
+
+inline void settle(context & cx, value promise, value with, bool rejected) {
+    if (!promise.is_object()) { return; }
+    auto * p = static_cast<object_object *>(promise.as_heap());
+    value * already = p->find("__settled");
+    if (already != nullptr && context::truthy(*already)) { return; } // settle once
+    p->set("__value", with);
+    p->set("__rejected", value::boolean(rejected));
+    p->set("__settled", value::boolean(true));
+    value * handlers = p->find("__handlers");
+    if (handlers == nullptr || !handlers->is_array()) { return; }
+    // COPIED before draining: a handler may register another on this same
+    // promise, and appending to the vector being walked invalidates it.
+    const std::vector<value> pending = static_cast<array_object *>(handlers->as_heap())->items;
+    static_cast<array_object *>(handlers->as_heap())->items.clear();
+    for (const value & record : pending) { deliver(cx, record, with, rejected); }
+}
+
+// `then`/`catch`/`finally` all reduce to: remember what to do for each way this
+// can settle, and either do it now or when it settles.
 inline value settle_with(context & cx, value on_ok, value on_err) {
     const value self = cx.current_this();
     if (!self.is_object()) { return self; }
     auto * promise = static_cast<object_object *>(self.as_heap());
-    value * held = promise->find("__value");
-    value * state = promise->find("__rejected");
-    const value settled = held != nullptr ? *held : value::undefined();
-    const bool rejected = state != nullptr && context::truthy(*state);
 
-    const value handler = rejected ? on_err : on_ok;
-    // No handler for how this settled: the promise passes straight through, so
-    // `p.then(f)` on a rejected p stays rejected and a later `.catch` sees it.
-    if (!handler.is_callable()) { return self; }
-    const value args[1] = {settled};
-    return make_promise(cx, cx.call(handler, args), false);
+    const value next = make_promise(cx, value::undefined(), false);
+    static_cast<object_object *>(next.as_heap())->set("__settled", value::boolean(false));
+    object_object * record = new_table(cx);
+    record->set("ok", on_ok);
+    record->set("err", on_err);
+    record->set("next", next);
+
+    value * settled = promise->find("__settled");
+    if (settled != nullptr && context::truthy(*settled)) {
+        value * held = promise->find("__value");
+        value * state = promise->find("__rejected");
+        deliver(cx, value::object(record), held == nullptr ? value::undefined() : *held,
+                state != nullptr && context::truthy(*state));
+        return next;
+    }
+    value * handlers = promise->find("__handlers");
+    if (handlers != nullptr && handlers->is_array()) {
+        static_cast<array_object *>(handlers->as_heap())->items.push_back(value::object(record));
+    }
+    return next;
 }
 
 [[nodiscard]] inline value make_promise(context & cx, value v, bool rejected) {
     object_object * promise = new_table(cx);
     promise->set("__value", v);
     promise->set("__rejected", value::boolean(rejected));
+    promise->set("__settled", value::boolean(true));
+    promise->set("__handlers", cx.make_array());
     method(cx, promise, "then", [](context & c, std::span<value> a) {
         return settle_with(c, a.empty() ? value::undefined() : a[0],
                            a.size() > 1 ? a[1] : value::undefined());
@@ -1442,7 +1536,38 @@ void install_promise(context & cx) {
         }
         return detail::make_promise(c, out, false);
     });
-    cx.define_global("Promise", value::object(promise_ctor));
+    // `new Promise(executor)`. The executor runs IMMEDIATELY and is handed
+    // resolve and reject; a promise it does not settle stays pending until
+    // something later calls one of them. That is the whole of what was missing,
+    // and p5.js opens with it:
+    //
+    //   new Promise((resolve) => {
+    //     if (document.readyState === 'complete') { resolve(); }
+    //     else { window.addEventListener('load', resolve, false); }
+    //   })
+    //
+    // Callable AND a namespace, so `Promise.resolve` still reads off it.
+    auto * promise_new = cx.allocate<native_object>("Promise", [](context & c, std::span<value> a) {
+        const value promise = detail::make_promise(c, value::undefined(), false);
+        auto * made = static_cast<object_object *>(promise.as_heap());
+        made->set("__settled", value::boolean(false)); // pending until told otherwise
+        if (a.empty() || !a[0].is_callable()) { return promise; }
+        const value resolve = value::object(
+            c.allocate<native_object>("resolve", [promise](context & inner, std::span<value> args) {
+                detail::settle(inner, promise, args.empty() ? value::undefined() : args[0], false);
+                return value::undefined();
+            }));
+        const value reject = value::object(
+            c.allocate<native_object>("reject", [promise](context & inner, std::span<value> args) {
+                detail::settle(inner, promise, args.empty() ? value::undefined() : args[0], true);
+                return value::undefined();
+            }));
+        const value args[2] = {resolve, reject};
+        (void)c.call(a[0], args);
+        return promise;
+    });
+    for (const auto & [key, item] : promise_ctor->props) { promise_new->set(key, item); }
+    cx.define_global("Promise", value::object(promise_new));
 
     cx.define_native("isNaN", [](context &, std::span<value> a) {
         return value::boolean(std::isnan(num_at(a, 0)));
@@ -2214,6 +2339,31 @@ void install_typed_arrays(context & cx) {
     });
 }
 
+// `new Function(body)` - a compiler at run time.
+//
+// It EXISTS, because p5.js builds one while loading and a missing global stops
+// the bundle outright; and it REFUSES when called, because compiling one here
+// properly is a VM change rather than a library one. A closure holds a
+// `const function_proto *` into the program it came from, and `run_loop` reads
+// nested function protos out of a single `program_` - so a program compiled at
+// run time needs the VM to know which program each frame belongs to. That is
+// worth doing and it is not this.
+//
+// The refusal is the same shape as WEBGL's: the page loads, and only a page
+// that actually reaches the feature is told. All three uses in p5.js generate
+// shader source, which a 2D sketch never touches.
+void install_dynamic_function(context & cx) {
+    cx.define_native("Function", [](context & c, std::span<value>) {
+        return value::object(
+            c.allocate<native_object>("anonymous", [](context & inner, std::span<value>) {
+                inner.refuse("TypeError", "`new Function(...)` is not implemented - compiling a "
+                                          "body at run time needs the VM to track which program "
+                                          "each frame belongs to");
+                return value::undefined();
+            }));
+    });
+}
+
 void install_builtins(context & cx, std::uint64_t seed) {
     install_math(cx, seed);
     install_regexp(cx);
@@ -2223,6 +2373,7 @@ void install_builtins(context & cx, std::uint64_t seed) {
     install_proxy(cx);
     install_function(cx);
     install_typed_arrays(cx);
+    install_dynamic_function(cx);
     install_array(cx);
     install_string(cx);
     install_number(cx);

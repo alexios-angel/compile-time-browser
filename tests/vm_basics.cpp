@@ -902,6 +902,47 @@ void test_a_declaration_shadows() {
     expect("function f() { var x = 1; var x = 2; return x; } return f();", "2");
 }
 
+// A PROMISE CAN BE PENDING. It was settled-only - created already resolved,
+// `then` running immediately, `new Promise(executor)` absent because an
+// executor implies pending state. p5.js opens with
+// `Promise.all([waitForDocumentReady(), ...]).then(_globalInit)`, so the
+// library could not begin without it.
+//
+// Still missing, and a real difference: there is no MICROTASK QUEUE. A handler
+// runs the moment the promise settles rather than at the end of the turn.
+void test_pending_promises() {
+    expect("let seen = 0; new Promise(r => r(5)).then(v => { seen = v; }); return seen;", "5");
+    // pending until something resolves it, and the handler runs then
+    expect("let seen = 0; let go; const p = new Promise(r => { go = r; }); "
+           "p.then(v => { seen = v; }); const before = seen; go(7); return before + '|' + seen;",
+           "0|7");
+    // reject reaches catch, not then
+    expect("let ok = '', bad = ''; new Promise((r, j) => j('no')).then(v => { ok = v; }, "
+           "e => { bad = e; }); return ok + '|' + bad;",
+           "|no");
+    expect("let bad = ''; new Promise((r, j) => j('x')).catch(e => { bad = e; }); return bad;",
+           "x");
+    // a rejection passes THROUGH a bare then to a later catch
+    expect("let bad = ''; new Promise((r, j) => j('y')).then(v => v).catch(e => { bad = e; }); "
+           "return bad;",
+           "y");
+    // then CHAINS: the next promise gets what the handler returned
+    expect("let seen = 0; new Promise(r => r(1)).then(v => v + 1).then(v => { seen = v; }); "
+           "return seen;",
+           "2");
+    // a handler returning a promise is adopted rather than nested
+    expect("let seen = 0; new Promise(r => r(1)).then(v => new Promise(r2 => r2(v + 10)))"
+           ".then(v => { seen = v; }); return seen;",
+           "11");
+    // settle once: a second resolve is ignored
+    expect("let seen = 0; new Promise(r => { r(1); r(2); }).then(v => { seen = v; }); return seen;",
+           "1");
+    // Promise.all over already-settled promises
+    expect("let seen = ''; Promise.all([Promise.resolve(1), Promise.resolve(2)])"
+           ".then(v => { seen = v.join(','); }); return seen;",
+           "1,2");
+}
+
 void test_typeof() {
     diff_vs_v1("typeof 1", "number");
     diff_vs_v1("typeof 'x'", "string");
@@ -1643,6 +1684,7 @@ int main() {
     test_object_prototype();
     test_string_statics();
     test_a_declaration_shadows();
+    test_pending_promises();
     test_typeof();
     test_variables_and_control_flow();
     test_increment_semantics();

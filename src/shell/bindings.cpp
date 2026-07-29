@@ -892,6 +892,58 @@ void dom_bindings::install_window(context & cx) {
     storage("localStorage");
     storage("sessionStorage");
 
+    // `new Event(type)` and `window.dispatchEvent(event)`.
+    //
+    // p5.js finishes starting by announcing itself - `window.dispatchEvent(new
+    // Event('p5Ready'))` - and a page that listens for that is how anything
+    // else on the page knows p5 is ready. Both were absent, so the library
+    // could not complete its own bootstrap.
+    //
+    // Dispatch here is FLAT: a window event runs the window's listeners for
+    // that type, in registration order. There is no capture phase and no
+    // bubbling, because a window event has nowhere to bubble from.
+    cx.define_native("Event", [](context & c, std::span<value> args) {
+        auto * event = static_cast<script::object_object *>(c.make_object().as_heap());
+        event->set("type", c.string(arg_string(c, args, 0)));
+        event->set("bubbles", value::boolean(false));
+        event->set("cancelable", value::boolean(false));
+        event->set("defaultPrevented", value::boolean(false));
+        event->set("target", value::null());
+        const auto no_op = [&](const char * name) {
+            event->set(name,
+                       value::object(c.allocate<script::native_object>(
+                           name, [](context &, std::span<value>) { return value::undefined(); })));
+        };
+        no_op("preventDefault");
+        no_op("stopPropagation");
+        no_op("stopImmediatePropagation");
+        return value::object(event);
+    });
+    window->set("dispatchEvent", value::object(cx.allocate<script::native_object>(
+                                     "dispatchEvent", [this](context & c, std::span<value> args) {
+                                         const value event = arg(args, 0);
+                                         const std::string type =
+                                             event.is_object()
+                                                 ? c.to_string(c.lookup_property(event, "type"))
+                                                 : c.to_string(event);
+                                         // COPIED before dispatch: a listener may add or remove
+                                         // one, and appending to the vector being walked
+                                         // invalidates it.
+                                         std::vector<value> callbacks;
+                                         for (const listener & l : listeners_) {
+                                             if (!l.target && l.type == type) {
+                                                 callbacks.push_back(l.callback);
+                                             }
+                                         }
+                                         const value one[1] = {event};
+                                         for (const value & callback : callbacks) {
+                                             if (callback.is_callable()) {
+                                                 (void)c.call(callback, one);
+                                             }
+                                         }
+                                         return value::boolean(true);
+                                     })));
+
     // `navigator`. A page reads it to decide what it is running in, and
     // `navigator.userAgent.replace(...)` on an absent navigator is undefined
     // twice over before anything notices.

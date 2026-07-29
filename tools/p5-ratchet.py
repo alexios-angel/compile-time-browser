@@ -35,7 +35,8 @@ TEST = ROOT / "build/src/tests/ctbrowser-test-p5_ratchet"
 MODULE = re.compile(r"^  function ([A-Za-z_$][\w$]*)\(p5, fn[^)]*\)\s*\{", re.M)
 
 LEVELS = ["unread", "read", "lexed", "parsed", "compiled",
-          "fits the bytecode", "top level ran", "defines p5"]
+          "fits the bytecode", "top level ran", "defines p5", "loads as a page",
+          "constructs", "setup ran", "draw ran", "matches a golden"]
 
 
 def build():
@@ -205,7 +206,8 @@ def do_advance():
     text = re.sub(r"^level=.*$", f"level={level}", old, flags=re.M)
     text = re.sub(r"^blocker=.*$", f"blocker={blocker or ''}", text, flags=re.M)
     RECORD.write_text(text)
-    print(f"p5-ratchet: recorded level={level} ({LEVELS[level]})")
+    name = LEVELS[level] if level < len(LEVELS) else "?"
+    print(f"p5-ratchet: recorded level={level} ({name})")
     if blocker:
         print(f"            blocker={blocker}")
 

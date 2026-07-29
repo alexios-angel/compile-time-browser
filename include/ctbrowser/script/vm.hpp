@@ -178,6 +178,15 @@ public:
     // `other.setText(...)` are the same native.
     [[nodiscard]] value current_this() const noexcept { return current_this_; }
 
+    // A NATIVE REFUSING. Ends the run with a named message, the way any other
+    // fault does - natives had no way to say "this cannot work" and were
+    // returning undefined, which reappears later as a different error
+    // somewhere else. Not catchable from script yet; a native that needs to be
+    // caught wants a real thrown Error, which is a larger change.
+    void refuse(std::string_view what, std::string why) {
+        raise(std::string{what} + ": " + std::move(why));
+    }
+
     // Call a JS function FROM C++. This is what an event listener, a timer and
     // a requestAnimationFrame callback all need, and without it script can only
     // ever be entered at the top.
