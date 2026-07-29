@@ -2245,8 +2245,26 @@ void install_function(context & cx) {
     // a string_view INTO the source, so the offset is a subtraction - plus the
     // program keeping its source string. Error.stack wants the same thing, and
     // would get real line numbers from it.
-    method(cx, function_proto, "toString",
-           [](context & c, std::span<value>) { return c.string("function () { [native code] }"); });
+    method(cx, function_proto, "toString", [](context & c, std::span<value>) {
+        // THE REAL SOURCE, when there is any. A closure knows which program its
+        // protos came from, and the program kept the text - so this is a
+        // substring, not a reconstruction, and what comes back is exactly what
+        // was written.
+        const value self = c.current_this();
+        if (self.is_kind(heap_kind::function)) {
+            auto * closure = static_cast<closure_object *>(self.as_heap());
+            if (closure->owner != nullptr && closure->proto != nullptr) {
+                const struct function_proto & fp = *closure->proto;
+                const std::string & text = closure->owner->source;
+                if (fp.source_end > fp.source_begin && fp.source_end <= text.size()) {
+                    return c.string(text.substr(fp.source_begin, fp.source_end - fp.source_begin));
+                }
+            }
+        }
+        // A native has no source; saying so the way every engine does keeps a
+        // caller that concatenates the result from producing something strange.
+        return c.string("function () { [native code] }");
+    });
     cx.set_prototype(context::proto_kind::function, function_proto);
 }
 

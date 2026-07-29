@@ -1364,6 +1364,8 @@ public:
         // The VM cannot tell an arrow from a function once it is bytecode, and
         // it has to: an arrow sees the `this` where it was written.
         out_.functions[index].is_arrow = n.kind == vp::nk::arrow;
+        out_.functions[index].source_begin = n.begin;
+        out_.functions[index].source_end = n.end;
 
         frames_.emplace_back();
         frames_.back().proto = index;
@@ -2650,6 +2652,7 @@ program compiler::compile(std::string_view source) {
         out.error = "parse error: " + std::string{tree.error};
         return out;
     }
+    out.source = std::string{source};
     compiler_impl c{tree, out};
     c.compile_program();
     return out;

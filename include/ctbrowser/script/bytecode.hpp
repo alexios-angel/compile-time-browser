@@ -211,6 +211,12 @@ struct function_proto {
     // reading the frame's own receiver made `this` undefined inside every arrow
     // inside a method - which is exactly where arrows are usually written.
     bool is_arrow = false;
+    // WHERE IT WAS WRITTEN, as byte offsets into the program's source.
+    //
+    // `f.toString()` has to hand back the text, and an engine with no answer
+    // cannot run a library that reads its own source - which p5.js's error
+    // system does. Two integers, and the parser already knew both.
+    std::uint32_t source_begin = 0, source_end = 0;
     std::vector<instruction> code;
     // Immediates only. A string literal cannot live here: `value` for a string
     // is a pointer into a VM heap that does not exist at compile time, so the
@@ -248,6 +254,9 @@ struct function_proto {
 };
 
 struct program {
+    // THE SOURCE THIS WAS COMPILED FROM, kept so a function can be printed.
+    // A 4.5 MB bundle costs 4.5 MB, which it already cost to compile.
+    std::string source;
     std::vector<function_proto> functions; // [0] is the top-level script
     bool ok = true;
     std::string error;

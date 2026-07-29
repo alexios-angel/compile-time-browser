@@ -946,6 +946,26 @@ void test_pending_promises() {
            "1,2");
 }
 
+// `f.toString()` RETURNS THE SOURCE. An engine with no answer here cannot run
+// a library that reads its own code, and p5.js's error system parses the
+// sketch it was handed. A closure knows which program its protos came from and
+// the program keeps its text, so this is a substring rather than a
+// reconstruction.
+void test_function_to_string() {
+    expect("function hi(x) { return x + 1; } return hi.toString();",
+           "function hi(x) { return x + 1; }");
+    expect("const f = (a, b) => a + b; return f.toString();", "(a, b) => a + b");
+    expect("const g = z => z * 2; return g.toString();", "z => z * 2");
+    // an expression keeps its own name and body
+    expect("const h = function named() { return 1; }; return h.toString();",
+           "function named() { return 1; }");
+    // a method's span starts at its NAME, which is what a browser returns
+    expect("class C { m(a) { return a; } } return C.prototype.m.toString();", "m(a) { return a; }");
+    expect("const o = { go(n) { return n; } }; return o.go.toString();", "go(n) { return n; }");
+    // a native says so rather than returning something a parser would accept
+    expect("return Math.max.toString().indexOf('native code') >= 0;", "true");
+}
+
 void test_typeof() {
     diff_vs_v1("typeof 1", "number");
     diff_vs_v1("typeof 'x'", "string");
@@ -1688,6 +1708,7 @@ int main() {
     test_string_statics();
     test_a_declaration_shadows();
     test_pending_promises();
+    test_function_to_string();
     test_typeof();
     test_variables_and_control_flow();
     test_increment_semantics();
