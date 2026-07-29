@@ -107,19 +107,63 @@ bool dom_bindings::dispatch_key(std::string_view type, node_id target, const inp
 bool dom_bindings::dispatch_mouse(std::string_view type, node_id target,
                                   const input_event & input) {
     if (cx_ == nullptr) { return false; }
-    value event = make_event(*cx_, type, target);
-    auto * object = static_cast<script::object_object *>(event.as_heap());
-    object->set("clientX", value::number(input.x));
-    object->set("clientY", value::number(input.y));
-    object->set("pageX", value::number(input.x));
-    object->set("pageY", value::number(input.y));
-    // SDL numbers buttons from 1; the DOM numbers them from 0, with 2 for
-    // the right button rather than 3.
-    const int dom_button = input.button == 3 ? 2 : (input.button > 0 ? input.button - 1 : 0);
-    object->set("button", value::number(dom_button));
-    object->set("shiftKey", value::boolean(input.shift));
-    object->set("ctrlKey", value::boolean(input.ctrl));
-    return dispatch_event(type, target, event);
+    // A POINTER EVENT FIRES TOO, and first.
+    //
+    // pointerdown/move/up are what a modern library listens for - they are the
+    // one set that covers a mouse, a pen and a touch, so there is no reason to
+    // register for anything else. p5.js 2.x registers ONLY for them, so a page
+    // that rendered perfectly never responded to a single click, and nothing
+    // anywhere said so: the listeners were installed, the events were
+    // dispatched, and the two sets simply had different names.
+    //
+    // Both are fired, pointer first, which is the order a browser uses - a page
+    // written against either one works, and one written against both sees them
+    // in the right sequence.
+    const auto build = [&](std::string_view kind, bool pointer) {
+        value event = make_event(*cx_, kind, target);
+        auto * object = static_cast<script::object_object *>(event.as_heap());
+        object->set("clientX", value::number(input.x));
+        object->set("clientY", value::number(input.y));
+        object->set("pageX", value::number(input.x));
+        object->set("pageY", value::number(input.y));
+        object->set("offsetX", value::number(input.x));
+        object->set("offsetY", value::number(input.y));
+        // SDL numbers buttons from 1; the DOM numbers them from 0, with 2 for
+        // the right button rather than 3.
+        const int dom_button = input.button == 3 ? 2 : (input.button > 0 ? input.button - 1 : 0);
+        object->set("button", value::number(dom_button));
+        // `buttons` is a MASK of what is held, and it is not the same question
+        // as `button`, which names the one that changed. p5 reads it to notice
+        // a release it missed - `mouseIsPressed && e.buttons === 0` - so a
+        // missing one leaves the flag stuck on forever.
+        const bool down = kind == "mousedown" || kind == "pointerdown";
+        object->set("buttons", value::number(down ? 1 << dom_button : 0));
+        object->set("shiftKey", value::boolean(input.shift));
+        object->set("ctrlKey", value::boolean(input.ctrl));
+        if (pointer) {
+            // One pointer, because there is one mouse. A page keyed on
+            // pointerId - p5 keeps a map of active ones - needs it to be
+            // stable, and needs the same id on down and up or the entry leaks.
+            object->set("pointerId", value::number(1));
+            object->set("pointerType", cx_->string("mouse"));
+            object->set("isPrimary", value::boolean(true));
+            object->set("pressure", value::number(down ? 0.5 : 0));
+        }
+        return event;
+    };
+    std::string_view pointer_type;
+    if (type == "mousedown") {
+        pointer_type = "pointerdown";
+    } else if (type == "mouseup") {
+        pointer_type = "pointerup";
+    } else if (type == "mousemove") {
+        pointer_type = "pointermove";
+    }
+    bool stopped = false;
+    if (!pointer_type.empty()) {
+        stopped = dispatch_event(pointer_type, target, build(pointer_type, true));
+    }
+    return dispatch_event(type, target, build(type, false)) || stopped;
 }
 
 bool dom_bindings::dispatch_event(std::string_view type, node_id target, value event) {
@@ -129,6 +173,12 @@ bool dom_bindings::dispatch_event(std::string_view type, node_id target, value e
     const auto txn = doc_->read();
     for (node_id at = target; at; at = txn.parent(at)) { fire_at(at, type, event); }
     fire_global(type, event);
+    // A LISTENER THAT FAULTS IS REPORTED AND THE FAULT CLEARED, exactly as for
+    // a timer or an animation frame. Without this the first listener to fault
+    // left the VM's failure flag set for the life of the page: every later
+    // callback of any kind was refused, so the page stopped responding to
+    // everything, and nothing anywhere said why.
+    note_callback_fault(type);
     return prevented(event);
 }
 
@@ -710,6 +760,30 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
             mutated();
         }
         return arg(args, 0);
+    });
+    // WHERE THE ELEMENT IS ON SCREEN. A page turns a pointer event's viewport
+    // coordinates into coordinates within an element by subtracting this - p5's
+    // getMouseInfo does exactly that to compute mouseX/mouseY - so without it
+    // every mouse listener throws on its first event. The listeners were
+    // installed and the events were dispatched; the conversion in between is
+    // what was missing, and it made the whole input surface look absent.
+    method("getBoundingClientRect", [this](context & c, std::span<value>) {
+        const rect box = box_of(receiver(c));
+        auto * out = static_cast<script::object_object *>(c.make_object().as_heap());
+        const auto set = [&](const char * name, float v) {
+            out->set(name, value::number(static_cast<double>(v)));
+        };
+        set("x", box.x);
+        set("y", box.y);
+        set("left", box.x);
+        set("top", box.y);
+        set("width", box.width);
+        set("height", box.height);
+        // right and bottom are DERIVED, and pages read them directly rather
+        // than adding the width themselves.
+        set("right", box.x + box.width);
+        set("bottom", box.y + box.height);
+        return value::object(out);
     });
     method("appendChild", [this](context & c, std::span<value> args) {
         const node_id parent = receiver(c);

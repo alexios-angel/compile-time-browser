@@ -1,0 +1,77 @@
+<!doctype html>
+<!-- p5.js input: the sketch reacting to a pointer and a keyboard.
+     p5 2.x listens for POINTER events - pointerdown, pointermove, pointerup -
+     and turns each one's viewport coordinates into mouseX/mouseY by
+     subtracting the canvas's own getBoundingClientRect(). Every step of that
+     chain has to work or the sketch renders perfectly and never responds,
+     which looks identical to a sketch with no interaction in it.
+     Everything drawn here is a function of that state, so a screenshot after a
+     scripted sequence of clicks says exactly which parts of the chain worked.
+     Driven by tools/compare.py, which puts the same clicks and keystrokes
+     through this and through Chrome side by side. -->
+<html>
+  <head>
+    <!-- p5.js has identifiers written in Greek - `const π = Math.PI` - so the
+         file is UTF-8 and the page has to say so. Without this a browser
+         guesses, and one that guesses Latin-1 splits that identifier in two
+         and rejects the whole bundle with a syntax error 7,000 lines in. -->
+    <meta charset="utf-8">
+    <script>var IS_MINIFIED = true;</script>
+    <script src="../assets/p5.js"></script>
+  </head>
+  <body style="margin:0;background:#ffffff">
+    <script>
+      new p5(function (s) {
+        let marks = [];
+        let lastKey = '-';
+
+        s.setup = function () {
+          s.createCanvas(320, 240);
+          s.textSize(16);
+        };
+
+        s.mousePressed = function () {
+          marks.push({ x: s.mouseX, y: s.mouseY });
+          if (marks.length > 8) { marks.shift(); }
+        };
+        s.keyPressed = function () {
+          lastKey = s.key;
+          if (s.key === 'c') { marks = []; }
+        };
+
+        s.draw = function () {
+          s.background(250);
+
+          // Where every click landed, oldest faintest.
+          s.noStroke();
+          for (let i = 0; i < marks.length; i++) {
+            const age = (i + 1) / marks.length;
+            s.fill(210, 70, 60, 255 * age);
+            s.circle(marks[i].x, marks[i].y, 18);
+          }
+
+          // The pointer itself: a crosshair, and a disc that fills while held.
+          s.stroke(60, 120, 200);
+          s.strokeWeight(1);
+          s.line(s.mouseX - 12, s.mouseY, s.mouseX + 12, s.mouseY);
+          s.line(s.mouseX, s.mouseY - 12, s.mouseX, s.mouseY + 12);
+          s.strokeWeight(2);
+          if (s.mouseIsPressed) {
+            s.fill(60, 170, 90);
+          } else {
+            s.noFill();
+          }
+          s.circle(s.mouseX, s.mouseY, 26);
+
+          // ...and the state as text, so a screenshot is readable.
+          s.noStroke();
+          s.fill(40);
+          s.textAlign(s.LEFT, s.TOP);
+          s.text('x ' + s.mouseX + '  y ' + s.mouseY, 8, 8);
+          s.text('key ' + lastKey + '   marks ' + marks.length, 8, 30);
+          s.text(s.mouseIsPressed ? 'pressed' : 'released', 8, 52);
+        };
+      });
+    </script>
+  </body>
+</html>

@@ -208,6 +208,64 @@ void test_attribute_syntax() {
     check(txn.has_attribute(div, p.atoms.intern("checked")), "valueless attributes");
 }
 
+// <html>, <head> AND <body> KEEP THEIR ATTRIBUTES.
+//
+// All three elements are created implicitly - the tree builder needs somewhere
+// to put content before it has seen the tag that names it - so by the time the
+// start tag arrives the element is already in the tree. The handler returned
+// early, and everything the author wrote on it was dropped: `<body class=dark>`
+// and `<body style="margin:0">` are as ordinary as markup gets, and neither
+// applied. Nothing looked broken, because the element was there and the cascade
+// ran - it simply never saw the attributes it should have matched on.
+void test_root_elements_keep_their_attributes() {
+    parsed p;
+    (void)parse_html(p.doc, R"(<html lang=en><head data-h=1></head>)"
+                            R"(<body id=b class=dark style="margin:0">x</body></html>)");
+    const auto txn = p.doc.read();
+    const auto find = [&](const char * tag) {
+        node_id found{};
+        const auto walk = [&](auto && self, node_id at) -> void {
+            if (!found && txn.tag(at).value_or(atom{}) == p.atoms.intern_lower(tag)) { found = at; }
+            for (const node_id c : txn.children(at)) { self(self, c); }
+        };
+        walk(walk, txn.root());
+        return found;
+    };
+    const node_id body = find("body");
+    check(static_cast<bool>(body), "the body is in the tree");
+    if (body) {
+        check(txn.attribute_value(body, p.atoms.intern("id")) == "b", "<body> keeps its id");
+        check(txn.attribute_value(body, p.atoms.intern("class")) == "dark", "...and its class");
+        check(txn.attribute_value(body, p.atoms.intern("style")) == "margin:0",
+              "...and its style, which is what a page zeroes its margin with");
+    }
+    check(txn.attribute_value(txn.root(), p.atoms.intern("lang")) == "en", "<html> keeps its lang");
+    const node_id head = find("head");
+    if (head) {
+        check(txn.attribute_value(head, p.atoms.intern("data-h")) == "1", "<head> keeps its own");
+    }
+}
+
+// A SECOND <body> CHANGES NOTHING. The spec adds only attributes that are not
+// already present, so the first tag supplies them - which is what stops stray
+// markup halfway down a page from restyling everything above it.
+void test_a_second_body_tag_does_not_overwrite() {
+    parsed p;
+    (void)parse_html(p.doc, R"(<body class=first>a<body class=second>b)");
+    const auto txn = p.doc.read();
+    node_id body{};
+    const auto walk = [&](auto && self, node_id at) -> void {
+        if (!body && txn.tag(at).value_or(atom{}) == p.atoms.intern_lower("body")) { body = at; }
+        for (const node_id c : txn.children(at)) { self(self, c); }
+    };
+    walk(walk, txn.root());
+    check(static_cast<bool>(body), "the body is in the tree");
+    if (body) {
+        check(txn.attribute_value(body, p.atoms.intern("class")) == "first",
+              "the first <body> tag supplies the attributes");
+    }
+}
+
 void test_duplicate_attributes_keep_the_first() {
     parsed p;
     (void)parse_html(p.doc, R"(<div id=first id=second>x</div>)");
@@ -327,6 +385,8 @@ int main() {
     test_overlapping_formatting();
 
     test_attribute_syntax();
+    test_root_elements_keep_their_attributes();
+    test_a_second_body_tag_does_not_overwrite();
     test_duplicate_attributes_keep_the_first();
     test_tag_and_attribute_names_fold_case();
 

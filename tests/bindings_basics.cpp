@@ -83,6 +83,16 @@ void check(bool ok, std::string_view what) {
     return n;
 }
 
+// A file as bytes, for the asset registry. p5.js is 4.4 MB on disk and the
+// registry is what a `<script src>` resolves against, so the test loads it the
+// same way a page would rather than inlining it.
+[[nodiscard]] std::vector<std::byte> read_bytes(const std::string & path) {
+    std::ifstream in{path, std::ios::binary};
+    const std::string text{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
+    return std::vector<std::byte>{reinterpret_cast<const std::byte *>(text.data()),
+                                  reinterpret_cast<const std::byte *>(text.data() + text.size())};
+}
+
 [[nodiscard]] const std::vector<std::string> & log_of(browser & page) {
     return page.bindings().console_output();
 }
@@ -495,6 +505,78 @@ void test_image_data() {
     check(log[4] == "made=3x2,24", "new ImageData(data, w, h): " + log[4]);
     check(log[5] == "clamps=255", "the buffer is a real clamped array: " + log[5]);
     check(log[6] == "patch=0,255,0", "getImageData reads from the offset given: " + log[6]);
+}
+
+// p5.js INPUT: the bundle's own event system, driven by real events.
+//
+// The other p5 pages here draw; this one asks whether p5 hears the browser.
+// p5 registers its listeners on the window with `{passive, signal}` options
+// and reads `event.clientX`, `event.key` and the rest off the event object, so
+// a gap anywhere along that path leaves a sketch that renders correctly and
+// never responds - which is exactly how it looks to a user, with no error.
+//
+// Instance mode, so the assertions name what they mean rather than relying on
+// p5 having installed 200 globals.
+void test_p5_receives_input() {
+    browser page{browser_options{300, 300}};
+    page.assets().add("p5.js", read_bytes("examples/assets/p5.js"));
+    page.load_html(R"(<html><head><script>var IS_MINIFIED = true;</script>
+        <script src="p5.js"></script></head><body style="margin:0"><script>
+        var log = '';
+        var sketch = null;
+        new p5(function (s) {
+          sketch = s;
+          s.setup = function () { s.createCanvas(200, 200); s.noLoop(); };
+          s.draw = function () {};
+          s.mousePressed = function () { log += 'down@' + s.mouseX + ',' + s.mouseY + ';'; };
+          s.mouseReleased = function () { log += 'up;'; };
+          s.mouseMoved = function () { log += 'move@' + s.mouseX + ',' + s.mouseY + ';'; };
+          s.keyPressed = function () { log += 'key(' + s.key + ');'; };
+        });
+        // p5 computes mouseX by subtracting the canvas's own box from the
+        // event's viewport coordinates, so the check is that the two AGREE -
+        // not that the canvas sits at any particular place on the page.
+        function report() {
+          const box = sketch._renderer.canvas.getBoundingClientRect();
+          console.log(log + ' | offset=' + (40 - box.left) + ',' + (60 - box.top) +
+                      ' | pressed=' + sketch.mouseIsPressed);
+        }
+    </script></body></html>)");
+    check(page.script_error().empty(), "p5 loaded: " + page.script_error());
+    // A frame first, so p5 has finished starting up and attached its listeners.
+    (void)page.frame();
+    page.tick(16);
+
+    (void)page.handle(input_event::mouse_move_to(40, 60));
+    (void)page.handle(input_event::mouse_down_at(40, 60));
+    (void)page.handle(input_event::mouse_up_at(40, 60));
+    (void)page.handle(input_event::key_press("KeyQ"));
+    page.tick(16);
+    (void)page.run_script("report();");
+
+    const auto & log = log_of(page);
+    check(!log.empty(), "the sketch reported");
+    if (log.empty()) { return; }
+    const std::string & line = log.back();
+    // The COORDINATES matter as much as the event: p5 computes mouseX from the
+    // event's clientX against the canvas's box, so a listener that fires with
+    // no position leaves every sketch drawing at 0,0.
+    // The COORDINATES matter as much as the event: p5 turns the event's
+    // clientX into mouseX by subtracting the canvas's box, which is what
+    // getBoundingClientRect is for. Compared against that box rather than
+    // against a fixed number, so the test says "p5 and the DOM agree" instead
+    // of pinning where p5 happens to put its canvas.
+    const std::string offset = line.substr(line.find("offset=") + 7);
+    const std::string want = offset.substr(0, offset.find(' '));
+    check(line.find("move@" + want + ";") != std::string::npos,
+          "mouseMoved at the canvas-relative position: " + line);
+    check(line.find("down@" + want + ";") != std::string::npos,
+          "mousePressed at the canvas-relative position: " + line);
+    check(line.find("up;") != std::string::npos, "mouseReleased: " + line);
+    check(line.find("key(q);") != std::string::npos, "keyPressed with the key: " + line);
+    // ...and released, so the flag is not simply stuck on.
+    check(line.find("pressed=false") != std::string::npos,
+          "mouseIsPressed went back down: " + line);
 }
 
 // --- the document API -----------------------------------------------------
@@ -1412,6 +1494,7 @@ int main() {
     test_the_invaders_page_shoots();
     test_a_letterboxed_page_keeps_its_size();
 
+    test_p5_receives_input();
     test_image_data();
     test_fill_rule();
     test_text_alignment();

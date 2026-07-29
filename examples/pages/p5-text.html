@@ -11,6 +11,11 @@
      underline beneath the last row. -->
 <html>
   <head>
+    <!-- p5.js has identifiers written in Greek - `const π = Math.PI` - so the
+         file is UTF-8 and the page has to say so. Without this a browser
+         guesses, and one that guesses Latin-1 splits that identifier in two
+         and rejects the whole bundle with a syntax error 7,000 lines in. -->
+    <meta charset="utf-8">
     <script>var IS_MINIFIED = true;</script>
     <script src="examples/assets/p5.js"></script>
   </head>

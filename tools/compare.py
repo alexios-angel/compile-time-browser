@@ -254,15 +254,60 @@ class Ctbrowse:
         self.proc.terminate()
 
 
+def serve_repo() -> str:
+    """A local HTTP server rooted at the repository. Returns its base URL.
+
+    THE PAGE IS SERVED, NOT OPENED. Chrome treats every file:// URL as its own
+    origin, so a page's `<script src="../assets/p5.js">` is a cross-origin
+    request and is blocked - the window comes up blank with nothing in the
+    console, which reads as "ctbrowser renders and Chrome does not" when the
+    truth is that Chrome never loaded the script. `--allow-file-access-from-files`
+    does not cover it.
+
+    Serving also makes the comparison fairer: a real page is fetched over HTTP,
+    and that is the resolution behaviour both engines should be judged against.
+    Loopback, an ephemeral port, and a daemon thread that dies with the process.
+    """
+    import functools
+    import http.server
+    import threading
+
+    # UTF-8, EXPLICITLY. SimpleHTTPRequestHandler sends `text/javascript` with
+    # no charset, and a browser then decodes the script as whatever it guesses -
+    # which for p5.js, whose source contains `const π = Math.PI`, splits that
+    # identifier into two Latin-1 bytes and rejects the bundle with a syntax
+    # error 7,000 lines in. The page that loads it should declare its own
+    # encoding as well; this makes the server right regardless.
+    http.server.SimpleHTTPRequestHandler.extensions_map = dict(
+        http.server.SimpleHTTPRequestHandler.extensions_map,
+        **{".js": "text/javascript; charset=utf-8",
+           ".html": "text/html; charset=utf-8",
+           ".css": "text/css; charset=utf-8",
+           ".json": "application/json; charset=utf-8"},
+    )
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(ROOT))
+    # Quiet: one request line per asset is noise in a tool whose whole output is
+    # meant to be read.
+    handler.log_message = lambda *a, **k: None
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{server.server_port}"
+
+
 class Reference:
     """Chromium or Firefox, through Playwright."""
+
+    served: str | None = None
 
     def __init__(self, name: str, pw, page_path: Path, size, headed: bool):
         self.name = name
         kind = pw.chromium if name == "chrome" else pw.firefox
         self.browser = kind.launch(headless=not headed)
         self.page = self.browser.new_page(viewport={"width": size[0], "height": size[1]})
-        self.page.goto(page_path.resolve().as_uri())
+        if Reference.served is None:
+            Reference.served = serve_repo()
+        relative = page_path.resolve().relative_to(ROOT).as_posix()
+        self.page.goto(f"{Reference.served}/{relative}")
 
     def click(self, x, y, button=0):
         names = {0: "left", 1: "middle", 2: "right"}

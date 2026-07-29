@@ -205,6 +205,13 @@ bool browser::run_script(std::string_view source) {
     // the rest of the page's life - and callers use this to decide whether the
     // script ran at all.
     script_error_ = result.ok ? std::string{} : result.error;
+    // A SUCCESSFUL RUN DOES NOT ERASE A FAULT IT DID NOT CAUSE. Callbacks
+    // report through the same field, and running any script afterwards - a
+    // test's probe, a devtools eval - would otherwise clear the one message
+    // saying why the page stopped responding.
+    if (script_error_.empty() && bindings_ && !bindings_->callback_error().empty()) {
+        script_error_ = bindings_->callback_error();
+    }
     return result.ok;
 }
 

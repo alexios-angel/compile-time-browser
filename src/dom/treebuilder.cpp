@@ -166,14 +166,40 @@ void tree_builder::start(const token & t, tokenizer & lexer) {
         }
     }
 
-    if (tag == "html") { return; } // already open; attributes merge in the spec
+    // <html> AND <body> MERGE THEIR ATTRIBUTES onto the element that already
+    // exists, rather than being ignored outright.
+    //
+    // Both elements are created implicitly - the tree builder needs somewhere
+    // to put content before it has seen the tag - so by the time the start tag
+    // arrives the element is already in the tree, and returning here dropped
+    // everything the author wrote on it. `<body class="dark">` and
+    // `<body style="margin:0">` are as ordinary as markup gets, and both simply
+    // did not apply: the element was there, the cascade ran, and the attributes
+    // it should have matched on had never been recorded.
+    //
+    // The FIRST tag wins, which is the spec's rule stated the other way round:
+    // it says to add only attributes not already present, and the only way one
+    // can be present on an implicitly-created element is that an earlier tag
+    // put it there. A second <body> in a malformed page changes nothing.
+    const auto merge_attributes = [&](node_id target, bool & already) {
+        if (!target || already) { return; }
+        already = true;
+        for (const token_attribute & a : t.attributes) {
+            builder_->set_attribute(target, atoms_->intern_lower(a.name), a.value);
+        }
+    };
+    if (tag == "html") {
+        merge_attributes(root_, html_attributes_seen_);
+        return;
+    }
     if (tag == "head") {
-        if (head_) { return; }
-        ensure_head();
+        if (!head_) { ensure_head(); }
+        merge_attributes(head_, head_attributes_seen_);
         return;
     }
     if (tag == "body") {
         ensure_body();
+        merge_attributes(body_, body_attributes_seen_);
         return;
     }
 

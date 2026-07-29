@@ -189,6 +189,13 @@ private:
     // Table structure belongs INSIDE the table; everything else that turns up
     // there is fostered out. Fostering the sections too is what produced a flat
     // row of table/tbody/tr/td siblings instead of a table.
+    // Whether <html>, <head> or <body>'s attributes have already been taken.
+    // All three elements are created implicitly, so the tag that names them
+    // arrives after they exist; the first one to arrive supplies them.
+    bool html_attributes_seen_ = false;
+    bool head_attributes_seen_ = false;
+    bool body_attributes_seen_ = false;
+
     [[nodiscard]] static bool is_table_structure(std::string_view tag);
 
     [[nodiscard]] node_id insert_element(const std::string & tag,
