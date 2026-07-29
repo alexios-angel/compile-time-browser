@@ -831,6 +831,8 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
     obj->set("lineWidth", value::number(1));
     obj->set("globalAlpha", value::number(1));
     obj->set("font", cx.string("10px sans-serif"));
+    obj->set("textAlign", cx.string("start"));
+    obj->set("textBaseline", cx.string("alphabetic"));
 
     const auto sync = [canvas](context & c) {
         const value self_value = c.current_this();
@@ -865,6 +867,11 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
             font_face_from(font, canvas->font_family, canvas->font_bold, canvas->font_italic);
             canvas->font_spec = std::move(font);
         }
+        // Kept as the spec's strings rather than parsed here: an unknown value
+        // has to behave as the default, and the drawing code is the one place
+        // that knows what the default means for each of them.
+        if (const value * v = o->find("textAlign")) { canvas->text_align = c.to_string(*v); }
+        if (const value * v = o->find("textBaseline")) { canvas->text_baseline = c.to_string(*v); }
     };
 
     // A drawing call does NOT report a document mutation. The canvas's
@@ -995,6 +1002,8 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
                o->set("fillStyle", c.string(canvas->fill_spec));
                o->set("strokeStyle", c.string(canvas->stroke_spec));
                o->set("font", c.string(canvas->font_spec));
+               o->set("textAlign", c.string(canvas->text_align));
+               o->set("textBaseline", c.string(canvas->text_baseline));
                o->set("lineWidth", value::number(canvas->line_width));
                o->set("globalAlpha", value::number(canvas->global_alpha));
            }));
@@ -1064,7 +1073,40 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
         // Through the canvas, so the object that measures is the object that
         // draws - see docs/raster.md. Measuring with font8x8 while fillText
         // drew with a real face is exactly how text ends up where it was not.
-        metrics->set("width", value::number(static_cast<double>(canvas->measure_text(text))));
+        const double width = static_cast<double>(canvas->measure_text(text));
+        metrics->set("width", value::number(width));
+        // THE BOUNDING BOX, not just the advance. A `width` on its own is not
+        // enough for a library that positions text itself: p5.js measures a
+        // line as `actualBoundingBoxLeft + actualBoundingBoxRight`, which was
+        // undefined + undefined = NaN, and every width it derived from that -
+        // textWidth, line wrapping, text bounds - was NaN too.
+        //
+        // The box is measured from the ALIGNMENT POINT, so which side of it the
+        // run falls on depends on textAlign. That is what keeps left+right
+        // equal to the width whatever the alignment is.
+        double left = 0;
+        if (canvas->text_align == "center") {
+            left = width / 2;
+        } else if (canvas->text_align == "right" || canvas->text_align == "end") {
+            left = width;
+        }
+        metrics->set("actualBoundingBoxLeft", value::number(left));
+        metrics->set("actualBoundingBoxRight", value::number(width - left));
+        // The font's metrics stand in for the glyphs' own extents. They are an
+        // over-estimate for a run with no ascenders or descenders, which is the
+        // safe direction: text laid out to these bounds never overlaps.
+        const auto & backend = canvas->fonts();
+        const double ascent = static_cast<double>(backend.ascent(
+            canvas->font_size, canvas->font_family, canvas->font_bold, canvas->font_italic));
+        const double descent = static_cast<double>(backend.descent(
+            canvas->font_size, canvas->font_family, canvas->font_bold, canvas->font_italic));
+        metrics->set("actualBoundingBoxAscent", value::number(ascent));
+        metrics->set("actualBoundingBoxDescent", value::number(descent));
+        metrics->set("fontBoundingBoxAscent", value::number(ascent));
+        metrics->set("fontBoundingBoxDescent", value::number(descent));
+        metrics->set("emHeightAscent", value::number(ascent));
+        metrics->set("emHeightDescent", value::number(descent));
+        metrics->set("alphabeticBaseline", value::number(0));
         return value::object(metrics);
     });
     return self;

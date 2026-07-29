@@ -289,6 +289,7 @@ public:
         array,
         string,
         number,
+        boolean,
         regexp,
         symbol,
         map,

@@ -329,6 +329,94 @@ void test_canvas_transform_and_paths() {
     }
 }
 
+// textAlign and textBaseline - where text sits relative to the point it was
+// given. The most-used canvas properties this engine did not have: p5.js sets
+// textAlign 229 times, and without them every label started at x on the
+// alphabetic baseline, so a right-aligned one ran off the edge it was aligned
+// to and a centred one was centred nowhere.
+void test_text_alignment() {
+    browser page{browser_options{400, 400}};
+    page.load_html(R"(<html><body><canvas id=c width=300 height=360></canvas><script>
+        const ctx = document.getElementById('c').getContext('2d');
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, 300, 360);
+        ctx.fillStyle = '#000000';
+        ctx.font = '20px sans-serif';
+        // Three rows at the same x, one per alignment.
+        ctx.textBaseline = 'alphabetic';
+        ctx.textAlign = 'left';   ctx.fillText('MM', 150, 30);
+        ctx.textAlign = 'center'; ctx.fillText('MM', 150, 70);
+        ctx.textAlign = 'right';  ctx.fillText('MM', 150, 110);
+        // ...and three well-separated rows, one per baseline.
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';        ctx.fillText('MM', 10, 170);
+        ctx.textBaseline = 'alphabetic'; ctx.fillText('MM', 10, 250);
+        ctx.textBaseline = 'bottom';     ctx.fillText('MM', 10, 330);
+        // The metrics a library positions text from - p5 measures a line as
+        // left + right and got NaN + NaN while only `width` existed.
+        const m = ctx.measureText('MM');
+        console.log('box=' + (m.actualBoundingBoxLeft + m.actualBoundingBoxRight === m.width) +
+                    ',' + (m.actualBoundingBoxAscent > 0) +
+                    // The fallback bitmap font has no descent at all, so this
+                    // asks that the number EXISTS rather than that it is
+                    // positive - `undefined >= 0` is false, which is the case
+                    // this is here to catch.
+                    ',' + (m.fontBoundingBoxDescent >= 0));
+    </script></body></html>)");
+    check(page.script_error().empty(), "the text script ran: " + page.script_error());
+    check(log_of(page)[0] == "box=true,true,true",
+          "measureText reports a bounding box, not just a width: " + log_of(page)[0]);
+
+    const auto pixels = page.canvases().pixels_of(find_id(page, "c"));
+    check(pixels != nullptr, "the canvas has pixels");
+    if (pixels == nullptr) { return; }
+    // The horizontal extent of the ink in a band of rows.
+    const auto ink_x = [&](int from_y, int to_y) {
+        int lo = pixels->width, hi = -1;
+        for (int y = from_y; y < to_y; ++y) {
+            for (int x = 0; x < pixels->width; ++x) {
+                if (color{pixels->at(x, y)}.red() < 128) {
+                    lo = std::min(lo, x);
+                    hi = std::max(hi, x);
+                }
+            }
+        }
+        return std::pair{lo, hi};
+    };
+    const auto ink_y = [&](int from_y, int to_y) {
+        int lo = pixels->height, hi = -1;
+        for (int y = from_y; y < to_y; ++y) {
+            for (int x = 0; x < pixels->width; ++x) {
+                if (color{pixels->at(x, y)}.red() < 128) {
+                    lo = std::min(lo, y);
+                    hi = std::max(hi, y);
+                }
+            }
+        }
+        return std::pair{lo, hi};
+    };
+    const auto [left_lo, left_hi] = ink_x(10, 35);
+    const auto [mid_lo, mid_hi] = ink_x(50, 75);
+    const auto [right_lo, right_hi] = ink_x(90, 115);
+    check(left_hi > left_lo, "the left-aligned run drew something");
+    // Left STARTS at the anchor, right ENDS at it, centre straddles it. Stated
+    // as inequalities against the anchor rather than exact columns, because the
+    // glyphs' own side bearings are the font's business and not this test's.
+    check(left_lo >= 149 && left_hi > 150, "textAlign left starts at the anchor");
+    check(right_hi <= 151 && right_lo < 150, "textAlign right ends at the anchor");
+    check(mid_lo < 150 && mid_hi > 150 && std::abs((mid_lo + mid_hi) / 2 - 150) <= 2,
+          "textAlign center straddles the anchor");
+
+    const auto [top_lo, top_hi] = ink_y(140, 210);
+    const auto [base_lo, base_hi] = ink_y(220, 290);
+    const auto [bottom_lo, bottom_hi] = ink_y(300, 360);
+    check(top_hi > top_lo, "the top-baseline run drew something");
+    // `top` hangs BELOW its anchor, `bottom` sits entirely above it, and
+    // `alphabetic` sits on it with only descenders below.
+    check(top_lo >= 170, "textBaseline top puts the text below the anchor");
+    check(bottom_hi <= 331, "textBaseline bottom puts it above the anchor");
+    check(base_lo < 250 && base_hi <= 256, "textBaseline alphabetic sits on the anchor");
+}
+
 // --- the document API -----------------------------------------------------
 
 void test_script_mutates_what_is_drawn() {
@@ -1244,6 +1332,7 @@ int main() {
     test_the_invaders_page_shoots();
     test_a_letterboxed_page_keeps_its_size();
 
+    test_text_alignment();
     test_reflected_attributes();
     test_tree_navigation();
     test_canvas_transform_and_paths();

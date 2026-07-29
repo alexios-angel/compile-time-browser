@@ -1,0 +1,67 @@
+<!doctype html>
+<!-- p5.js text: the alignment grid.
+     textAlign is the canvas property p5 reaches for most - 229 times in the
+     bundle - and it is what decides where a label sits relative to the point
+     it was given. Each row here draws the SAME string at the same x with a
+     different alignment, so the three of them can only line up if all three
+     are right. The tick marks are the reference: a label is aligned to its
+     tick or it is not.
+     textWidth() is p5's own measurement of the same run, which it computes
+     from the metrics' bounding box rather than from `width` - drawn as the
+     underline beneath the last row. -->
+<html>
+  <head>
+    <script>var IS_MINIFIED = true;</script>
+    <script src="examples/assets/p5.js"></script>
+  </head>
+  <body style="margin:0;background:#ffffff">
+    <script>
+      new p5(function (s) {
+        s.setup = function () {
+          s.createCanvas(320, 240);
+          s.noLoop();
+        };
+        s.draw = function () {
+          s.background(245);
+          s.textSize(26);
+
+          const x = 160;
+          // The reference each row is aligned to.
+          s.stroke(200, 60, 60);
+          s.strokeWeight(1);
+          s.line(x, 10, x, 190);
+          s.noStroke();
+          s.fill(30);
+
+          s.textAlign(s.LEFT);
+          s.text('LEFT', x, 45);
+          s.textAlign(s.CENTER);
+          s.text('CENTER', x, 90);
+          s.textAlign(s.RIGHT);
+          s.text('RIGHT', x, 135);
+
+          // The baselines, against a common line.
+          s.stroke(60, 120, 200);
+          s.line(20, 180, 300, 180);
+          s.noStroke();
+          s.textSize(18);
+          s.textAlign(s.LEFT, s.TOP);
+          s.text('TOP', 24, 180);
+          s.textAlign(s.LEFT, s.CENTER);
+          s.text('MID', 110, 180);
+          s.textAlign(s.LEFT, s.BOTTOM);
+          s.text('BOT', 200, 180);
+
+          // p5's own measurement of a run, drawn as the run's own underline.
+          s.textSize(22);
+          s.textAlign(s.LEFT, s.BASELINE);
+          const label = 'measured';
+          s.text(label, 24, 220);
+          s.stroke(40, 150, 80);
+          s.strokeWeight(2);
+          s.line(24, 226, 24 + s.textWidth(label), 226);
+        };
+      });
+    </script>
+  </body>
+</html>

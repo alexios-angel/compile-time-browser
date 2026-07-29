@@ -94,6 +94,19 @@ public:
     // a packed integer by then, and a font has been split into size, family and
     // two flags. Storing what was written is both simpler and lossless, and it
     // means `ctx.fillStyle` reads back what the page assigned.
+    // WHERE THE TEXT SITS RELATIVE TO THE POINT IT WAS GIVEN.
+    //
+    // The single most-used canvas property this engine did not have: p5.js
+    // alone sets textAlign 229 times, and every chart, label and HUD on the web
+    // positions text with it. Without them `fillText(s, x, y)` always started at
+    // x on the alphabetic baseline, so a right-aligned label ran off the edge it
+    // was aligned to and a centred one was centred nowhere.
+    //
+    // Stored as the spec's strings so save/restore and the property round-trip
+    // need no encoding, and an unknown value simply behaves as the default.
+    std::string text_align = "start";
+    std::string text_baseline = "alphabetic";
+
     std::string font_spec = "10px sans-serif";
     std::string fill_spec = "#000000";
     std::string stroke_spec = "#000000";
@@ -232,6 +245,8 @@ private:
         std::string font_spec;
         std::string fill_spec;
         std::string stroke_spec;
+        std::string text_align;
+        std::string text_baseline;
     };
 
     void touch() { ++revision_; }

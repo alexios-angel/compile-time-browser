@@ -976,6 +976,36 @@ void install_string(context & cx) {
         if (i < 0 || i >= static_cast<double>(s.size())) { return value::undefined(); }
         return c.string(std::string{s[static_cast<std::size_t>(i)]});
     });
+    // `toString` and `valueOf` on a primitive. Both exist so that generic code
+    // written against "any value" works on one: `String(x)`, `'' + x` and a
+    // template literal all reach for toString, and a library that calls it
+    // directly - p5.js does, on its own colour objects and on plain strings
+    // through the same path - got "undefined is not a function".
+    method(cx, string_proto, "toString",
+           [](context & c, std::span<value>) { return c.string(detail::this_string(c)); });
+    method(cx, string_proto, "valueOf",
+           [](context & c, std::span<value>) { return c.string(detail::this_string(c)); });
+    method(cx, string_proto, "codePointAt", [](context & c, std::span<value> a) {
+        const std::string str = detail::this_string(c);
+        const auto i = static_cast<std::size_t>(std::max(0.0, num_at(a, 0)));
+        if (i >= str.size()) { return value::undefined(); }
+        // BYTES, not code points - strings are bytes in this engine
+        // (docs/script.md), so this agrees with charCodeAt rather than
+        // pretending to a UTF-16 view that nothing else here has.
+        return value::number(static_cast<double>(static_cast<unsigned char>(str[i])));
+    });
+    // `normalize` is the IDENTITY here, and says so: strings are bytes, so
+    // there is no decomposition to compose. Returning the string unchanged is
+    // what a page that calls it defensively expects; refusing would break
+    // pages that only ever pass ASCII, which is all of them here.
+    method(cx, string_proto, "normalize",
+           [](context & c, std::span<value>) { return c.string(detail::this_string(c)); });
+    method(cx, string_proto, "localeCompare", [](context & c, std::span<value> a) {
+        // Byte order, which is the locale this engine has.
+        const std::string self = detail::this_string(c);
+        const std::string other = str_at(c, a, 0);
+        return value::number(self < other ? -1 : (self == other ? 0 : 1));
+    });
     method(cx, string_proto, "charCodeAt", [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
         const auto i = static_cast<std::size_t>(std::max(0.0, num_at(a, 0)));
@@ -1027,6 +1057,43 @@ void install_string(context & cx) {
             result->items.push_back(c.string(s));
             return out;
         }
+        // A REGEXP SEPARATOR. `str.split(/\r?\n/)` is how essentially every
+        // library splits lines, and coercing the pattern to a string made it a
+        // separator that never matched - so the whole input came back as one
+        // element and nothing said anything. p5.js splits text into lines that
+        // way, then takes Math.max over the widths, which for an unsplit line
+        // is fine and for an EMPTY list is -Infinity.
+        //
+        // Driven through the pattern's own `exec`, like matchAll, so there is
+        // one regex path and split cannot disagree with match about a boundary.
+        // Searching the remainder each round rather than moving lastIndex means
+        // a non-global pattern works too, which is the form this is written in.
+        if (a[0].is_object() && c.lookup_property(a[0], "exec").is_callable()) {
+            const value exec = c.lookup_property(a[0], "exec");
+            c.store_property(a[0], "lastIndex", value::number(0));
+            std::string rest = s;
+            while (!rest.empty()) {
+                const value args[1] = {c.string(rest)};
+                const value m = c.call(exec, args, a[0]);
+                if (!m.is_array()) { break; }
+                auto * parts = static_cast<array_object *>(m.as_heap());
+                if (parts->items.empty()) { break; }
+                const auto index =
+                    static_cast<std::size_t>(std::max(0.0, context::to_number(parts->index)));
+                const std::string whole = c.to_string(parts->items[0]);
+                if (index >= rest.size()) { break; }
+                result->items.push_back(c.string(rest.substr(0, index)));
+                // A CAPTURE IN THE SEPARATOR IS KEPT, which is the one reason to
+                // put a group in a split pattern at all.
+                for (std::size_t g = 1; g < parts->items.size(); ++g) {
+                    result->items.push_back(parts->items[g]);
+                }
+                // An empty match would otherwise never advance.
+                rest = rest.substr(index + std::max<std::size_t>(whole.size(), 1));
+            }
+            result->items.push_back(c.string(rest));
+            return out;
+        }
         const std::string sep = c.to_string(a[0]);
         if (sep.empty()) {
             for (const char ch : s) { result->items.push_back(c.string(std::string{ch})); }
@@ -1053,6 +1120,38 @@ void install_string(context & cx) {
             if (found != std::string::npos) { s.replace(found, from.size(), to); }
         }
         return c.string(s);
+    });
+    // `matchAll` is exec RUN TO EXHAUSTION, which is exactly what it means -
+    // so it is built on exec rather than on a second copy of the regex
+    // plumbing, and it cannot disagree with `match` about what matched.
+    //
+    // It hands back an ARRAY where the spec says an iterator. Both work with
+    // `for (const m of ...)` and with a spread, which is all anyone does with
+    // one; a real iterator would only differ for a caller that stops early on a
+    // pattern expensive enough to notice.
+    method(cx, string_proto, "matchAll", [](context & c, std::span<value> a) {
+        value list = c.make_array();
+        auto * items = static_cast<array_object *>(list.as_heap());
+        if (a.empty() || !a[0].is_object()) { return list; }
+        const value pattern = a[0];
+        const value exec = c.lookup_property(pattern, "exec");
+        if (!exec.is_callable()) { return list; }
+        const value subject = c.string(detail::this_string(c));
+        c.store_property(pattern, "lastIndex", value::number(0));
+        double previous = -1;
+        // Bounded by the subject: each round must advance lastIndex, and a
+        // pattern that matches empty - or one without `g`, whose exec always
+        // restarts at 0 - would otherwise spin forever.
+        for (std::size_t guard = 0; guard <= detail::this_string(c).size() + 1; ++guard) {
+            const value args[1] = {subject};
+            const value found = c.call(exec, args, pattern);
+            if (found.is_nullish()) { break; }
+            items->items.push_back(found);
+            const double now = context::to_number(c.lookup_property(pattern, "lastIndex"));
+            if (!(now > previous)) { break; }
+            previous = now;
+        }
+        return list;
     });
     method(cx, string_proto, "replaceAll", [](context & c, std::span<value> a) {
         std::string s = detail::this_string(c);
@@ -1113,6 +1212,39 @@ void install_string(context & cx) {
         prefix.resize(want > s.size() ? want - s.size() : 0);
         return c.string(prefix + s);
     });
+    method(cx, string_proto, "padEnd", [](context & c, std::span<value> a) {
+        std::string self = detail::this_string(c);
+        const auto want = static_cast<std::size_t>(std::clamp(num_at(a, 0), 0.0, 1000000.0));
+        const std::string pad = a.size() > 1 ? c.to_string(a[1]) : " ";
+        if (pad.empty() || self.size() >= want) { return c.string(self); }
+        while (self.size() < want) { self += pad; }
+        self.resize(want);
+        return c.string(self);
+    });
+    method(cx, string_proto, "trimStart", [](context & c, std::span<value>) {
+        const std::string self = detail::this_string(c);
+        const std::size_t from = self.find_first_not_of(" \t\n\r\f\v");
+        return c.string(from == std::string::npos ? std::string{} : self.substr(from));
+    });
+    method(cx, string_proto, "trimEnd", [](context & c, std::span<value>) {
+        const std::string self = detail::this_string(c);
+        const std::size_t to = self.find_last_not_of(" \t\n\r\f\v");
+        return c.string(to == std::string::npos ? std::string{} : self.substr(0, to + 1));
+    });
+    method(cx, string_proto, "toLocaleUpperCase", [](context & c, std::span<value>) {
+        std::string self = detail::this_string(c);
+        for (char & ch : self) {
+            ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        }
+        return c.string(self);
+    });
+    method(cx, string_proto, "toLocaleLowerCase", [](context & c, std::span<value>) {
+        std::string self = detail::this_string(c);
+        for (char & ch : self) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        return c.string(self);
+    });
     method(cx, string_proto, "concat", [](context & c, std::span<value> a) {
         std::string s = detail::this_string(c);
         for (std::size_t i = 0; i < a.size(); ++i) { s += c.to_string(a[i]); }
@@ -1122,6 +1254,29 @@ void install_string(context & cx) {
 }
 
 // Number.prototype
+// `Boolean`, and the two methods a boolean has.
+//
+// Small, and it closes a hole rather than adding a feature: `true.toString()`
+// found nothing, so generic code that converts "any value" by calling toString
+// on it failed on exactly one of the primitive types.
+void install_boolean(context & cx) {
+    using detail::method;
+    using detail::new_table;
+    object_object * boolean_proto = new_table(cx);
+    method(cx, boolean_proto, "toString", [](context & c, std::span<value>) {
+        return c.string(context::truthy(c.current_this()) ? "true" : "false");
+    });
+    method(cx, boolean_proto, "valueOf", [](context & c, std::span<value>) {
+        return value::boolean(context::truthy(c.current_this()));
+    });
+    cx.set_prototype(context::proto_kind::boolean, boolean_proto);
+    auto * boolean_ctor = cx.allocate<native_object>("Boolean", [](context &, std::span<value> a) {
+        return value::boolean(!a.empty() && context::truthy(a[0]));
+    });
+    boolean_ctor->set("prototype", value::object(boolean_proto));
+    cx.define_global("Boolean", value::object(boolean_ctor));
+}
+
 void install_number(context & cx) {
     using detail::method;
     using detail::new_table;
@@ -1215,6 +1370,35 @@ void install_number(context & cx) {
             }
         }
         return c.string(negative ? "-" + out : out);
+    });
+    method(cx, number_proto, "valueOf", [](context & c, std::span<value>) {
+        return value::number(context::to_number(c.current_this()));
+    });
+    method(cx, number_proto, "toExponential", [](context & c, std::span<value> a) {
+        const double v = context::to_number(c.current_this());
+        const int places = a.empty() || a[0].is_undefined()
+                               ? 6
+                               : std::clamp(static_cast<int>(context::to_number(a[0])), 0, 100);
+        std::array<char, 64> out{};
+        const int written = std::snprintf(out.data(), out.size(), "%.*e", places, v);
+        std::string text{out.data(), static_cast<std::size_t>(std::max(0, written))};
+        // C prints at least two exponent digits and JavaScript prints the
+        // fewest that suffice: 1e+2, not 1e+02.
+        const std::size_t e = text.find('e');
+        if (e != std::string::npos && e + 2 < text.size()) {
+            std::size_t digits = e + 2;
+            while (digits + 1 < text.size() && text[digits] == '0') { text.erase(digits, 1); }
+        }
+        return c.string(text);
+    });
+    method(cx, number_proto, "toPrecision", [](context & c, std::span<value> a) {
+        const double v = context::to_number(c.current_this());
+        // No argument at all is toString, not zero significant digits.
+        if (a.empty() || a[0].is_undefined()) { return c.string(c.to_string(c.current_this())); }
+        const int digits = std::clamp(static_cast<int>(context::to_number(a[0])), 1, 100);
+        std::array<char, 64> out{};
+        const int written = std::snprintf(out.data(), out.size(), "%.*g", digits, v);
+        return c.string(std::string{out.data(), static_cast<std::size_t>(std::max(0, written))});
     });
     number_ctor->set("prototype", value::object(number_proto));
     cx.set_prototype(context::proto_kind::number, number_proto);
@@ -2498,6 +2682,7 @@ void install_builtins(context & cx, std::uint64_t seed) {
     install_array(cx);
     install_string(cx);
     install_number(cx);
+    install_boolean(cx);
     install_object(cx);
     install_json(cx);
     install_date(cx);

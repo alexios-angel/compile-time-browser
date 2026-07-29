@@ -19,7 +19,7 @@ void canvas_context::reset_surface(int width, int height) {
 void canvas_context::save() {
     stack_.push_back(state{transform_, fill_style, stroke_style, line_width, global_alpha,
                            font_size, font_family, font_bold, font_italic, font_spec, fill_spec,
-                           stroke_spec});
+                           stroke_spec, text_align, text_baseline});
 }
 
 void canvas_context::restore() {
@@ -37,6 +37,8 @@ void canvas_context::restore() {
     font_spec = s.font_spec;
     fill_spec = s.fill_spec;
     stroke_spec = s.stroke_spec;
+    text_align = s.text_align;
+    text_baseline = s.text_baseline;
     stack_.pop_back();
 }
 
@@ -239,7 +241,28 @@ void canvas_context::fill_text(std::string_view text, float x, float y) {
     // blend_over would composite an antialiased glyph edge onto transparent
     // black and that premultiplied result would then be blended into the
     // canvas a second time - a dark halo around every glyph.
-    const point origin = transform_.apply(x, y); // the BASELINE, per spec
+    // textAlign shifts along x by a share of the run's width, and
+    // textBaseline shifts along y between the font's own metrics. Both are
+    // applied in USER space, before the transform: a rotated centred label must
+    // be centred on its own baseline, not on the screen's x axis.
+    float shift_x = 0;
+    if (text_align == "center") {
+        shift_x = -width / 2;
+    } else if (text_align == "right" || text_align == "end") {
+        shift_x = -width;
+    }
+    // `start` and `end` follow the text direction, which is always
+    // left-to-right here - there is no bidi in this engine, and saying so is
+    // better than implying an rtl case that would silently be wrong.
+    float shift_y = 0;
+    if (text_baseline == "top" || text_baseline == "hanging") {
+        shift_y = ascent;
+    } else if (text_baseline == "middle") {
+        shift_y = (ascent - descent) / 2;
+    } else if (text_baseline == "bottom" || text_baseline == "ideographic") {
+        shift_y = -descent;
+    }
+    const point origin = transform_.apply(x + shift_x, y + shift_y); // the BASELINE, per spec
     // A pixel of margin each side for antialiasing and any overhang, and an
     // integral left/top so the fraction stays in `where` and sub-pixel
     // positioning survives the round trip.

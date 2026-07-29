@@ -329,6 +329,15 @@ value context::lookup_property(value target, const std::string & name) {
         }
         return value::undefined();
     }
+    // A boolean is a value with methods too. `flag.toString()` is what a
+    // template literal and a string concatenation both do underneath, and code
+    // that calls it explicitly - to build a cache key, say - found nothing.
+    if (target.is_boolean()) {
+        if (object_object * table = prototype(proto_kind::boolean)) {
+            if (value * found = table->find(name)) { return *found; }
+        }
+        return value::undefined();
+    }
     if (target.is_kind(heap_kind::native)) {
         if (value * found = static_cast<native_object *>(target.as_heap())->find(name)) {
             return *found;
