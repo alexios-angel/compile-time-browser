@@ -366,6 +366,74 @@ void test_private_names_are_distinct() {
     expect("class C { #n = 1; n = 2; } const c = new C(); c.n = 9; return c.n;", "9");
 }
 
+// DESTRUCTURING. A binding position may hold a SHAPE, and every one of these
+// used to be a PARSE ERROR: the declarator read `{` as the variable's name and
+// the parser desynchronised from there. It stopped seventeen of p5.js's
+// seventy-one modules, each at the first destructuring in the file.
+void test_destructuring_declarations() {
+    expect("const {a, b} = {a: 1, b: 2}; return a + b;", "3");
+    expect("const [x, y] = [3, 4]; return x * y;", "12");
+    expect("const {a: renamed} = {a: 7}; return renamed;", "7");
+    // defaults, and only for undefined
+    expect("const {a = 5} = {}; return a;", "5");
+    expect("const {a = 5} = {a: 0}; return a;", "0");
+    expect("const [p = 1, q = 2] = [9]; return p + ',' + q;", "9,2");
+    // holes
+    expect("const [, second] = ['a', 'b']; return second;", "b");
+    // rest, in both shapes
+    expect("const [head, ...tail] = [1, 2, 3]; return head + '|' + tail.join(',');", "1|2,3");
+    expect("const {a, ...rest} = {a: 1, b: 2, c: 3}; "
+           "return a + '|' + Object.keys(rest).join(',');",
+           "1|b,c");
+    // nested
+    expect("const {a: {b}} = {a: {b: 'deep'}}; return b;", "deep");
+    expect("const [[m], [n]] = [[1], [2]]; return m + n;", "3");
+    expect("const {list: [first]} = {list: ['x']}; return first;", "x");
+    // a computed key
+    expect("const k = 'dyn'; const {[k]: got} = {dyn: 42}; return got;", "42");
+    // a missing property is undefined, not an error
+    expect("const {nope} = {}; return typeof nope;", "undefined");
+    // inside a function, so the binding is a local rather than a global
+    expect("function f(o) { const {a, b} = o; return a - b; } return f({a: 9, b: 4});", "5");
+    // and a nested function can capture a name a pattern bound
+    expect("function f(o) { const {v} = o; const get = () => v; return get(); } "
+           "return f({v: 'captured'});",
+           "captured");
+}
+
+void test_destructuring_parameters() {
+    expect("function f({x, y}) { return x + y; } return f({x: 1, y: 2});", "3");
+    expect("function f([a, b]) { return a * b; } return f([3, 4]);", "12");
+    expect("function f({x = 10}) { return x; } return f({});", "10");
+    expect("const f = ({n}) => n * 2; return f({n: 21});", "42");
+    // mixed with ordinary parameters and with a rest
+    expect("function f(a, {b}, ...rest) { return a + b + rest.length; } "
+           "return f(1, {b: 2}, 9, 9);",
+           "5");
+    // a whole-parameter default alongside a pattern
+    expect("function f({x} = {x: 'fallback'}) { return x; } return f();", "fallback");
+}
+
+void test_destructuring_assignment() {
+    expect("let a, b; [a, b] = [1, 2]; return a + b;", "3");
+    expect("let a = 1, b = 2; [a, b] = [b, a]; return a + ',' + b;", "2,1");
+    expect("let x; ({x} = {x: 'set'}); return x;", "set");
+    expect("let x, y; ({x, y: y} = {x: 1, y: 2}); return x + y;", "3");
+    // a hole skips a position - which is why array literals had to learn them
+    expect("let second; [, second] = ['a', 'b']; return second;", "b");
+    // a member expression is a legal target
+    expect("const o = {}; [o.first] = ['here']; return o.first;", "here");
+}
+
+void test_destructuring_in_for_of() {
+    expect("let sum = 0; for (const [a, b] of [[1, 2], [3, 4]]) { sum += a * b; } return sum;",
+           "14");
+    expect("let names = ''; for (const {n} of [{n: 'a'}, {n: 'b'}]) { names += n; } return names;",
+           "ab");
+    // for-in with no declaration keyword, assigning to an existing binding
+    expect("let k, seen = ''; for (k in {a: 1, b: 2}) { seen += k; } return seen;", "ab");
+}
+
 void test_typeof() {
     diff_vs_v1("typeof 1", "number");
     diff_vs_v1("typeof 'x'", "string");
@@ -1065,6 +1133,10 @@ int main() {
     test_bitwise_compound_assignment();
     test_spread_in_a_call();
     test_private_names_are_distinct();
+    test_destructuring_declarations();
+    test_destructuring_parameters();
+    test_destructuring_assignment();
+    test_destructuring_in_for_of();
     test_typeof();
     test_variables_and_control_flow();
     test_increment_semantics();

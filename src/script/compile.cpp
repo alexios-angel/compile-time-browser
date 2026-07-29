@@ -203,15 +203,25 @@ public:
     // a walker to look at a parameter node before.
     [[nodiscard]] static std::array<std::int32_t, 4> child_slots(const vp::node & n) {
         switch (n.kind) {
-        // a = the default expression; d = the rest flag
-        case vp::nk::param: return {n.a, -1, -1, -1};
+        // a = the default expression, b = a destructuring pattern; d = the rest
+        // flag
+        case vp::nk::param: return {n.a, n.b, -1, -1};
         // a = the body; c = async/generator bits
         case vp::nk::func_decl:
         case vp::nk::func_expr:
         case vp::nk::arrow: return {n.a, -1, -1, -1};
         // a = a computed key, b = the value or method; c and d are both flags
         case vp::nk::class_member:
-        case vp::nk::prop: return {n.a, n.b, -1, -1};
+        case vp::nk::prop:
+        case vp::nk::pattern_prop: return {n.a, n.b, -1, -1};
+        // a = the callee, the arguments are the list; d says whether there were
+        // parentheses at all
+        case vp::nk::new_expr: return {n.a, -1, -1, -1};
+        // a = the target, b = the iterable, c = the body; d carries `const` and
+        // whether there is anything to declare
+        case vp::nk::forof_stmt: return {n.a, n.b, n.c, -1};
+        // a = the test, the statements are the list; d marks `default:`
+        case vp::nk::case_clause: return {n.a, -1, -1, -1};
         default: return {n.a, n.b, n.c, n.d};
         }
     }
@@ -314,7 +324,15 @@ public:
         };
         for (const std::int32_t stmt : kids(at(body))) {
             if (at(stmt).kind == vp::nk::var_decl) {
-                for (const std::int32_t d : kids(at(stmt))) { hoist(std::string{at(d).text}); }
+                for (const std::int32_t d : kids(at(stmt))) {
+                    if (at(d).b >= 0) { // a shape: hoist every name inside it
+                        std::vector<std::string> names;
+                        pattern_names(at(d).b, names);
+                        for (std::string & name : names) { hoist(std::move(name)); }
+                    } else {
+                        hoist(std::string{at(d).text});
+                    }
+                }
             } else if (at(stmt).kind == vp::nk::func_decl) {
                 // A nested function declaration is a BINDING IN ITS SCOPE, and
                 // it has to exist before its own body compiles or a recursive
@@ -376,6 +394,13 @@ public:
             compile_expr(p.a, slot);
             release_to(mark);
             patch_here(skip);
+        }
+        // A parameter may be a SHAPE - `function f({x, y})`. Its register holds
+        // the argument; the names inside come out of it. Last, so a default has
+        // already been applied to the value being destructured.
+        for (std::size_t i = 0; i < params.size(); ++i) {
+            const vp::node & p = at(params[i]);
+            if (p.b >= 0) { compile_pattern_binding(p.b, static_cast<std::uint8_t>(i), true); }
         }
     }
 
@@ -506,6 +531,255 @@ public:
         frames_.pop_back();
     }
 
+    // --- destructuring -------------------------------------------------------
+    //
+    // A binding position may hold a SHAPE. `const {a, b} = o` and
+    // `function f([x, y])` are not one binding with a funny name; they are a
+    // read out of the value for each name inside. The parser now produces
+    // array_pattern / object_pattern / assign_pattern / rest_element, and this
+    // lowers them into the opcodes that already exist - get_prop, get_index and
+    // the ordinary binding paths - so nothing new is needed in the VM.
+    //
+    // `declaring` distinguishes `const {a} = o`, which introduces a binding,
+    // from `({a} = o)`, which writes to one that already exists.
+
+    // Is this node a pattern rather than a plain name?
+    [[nodiscard]] static bool is_pattern(vp::nk kind) {
+        return kind == vp::nk::array_pattern || kind == vp::nk::object_pattern ||
+               kind == vp::nk::assign_pattern || kind == vp::nk::rest_element;
+    }
+
+    // Every name a pattern binds, so declarations can be hoisted before the
+    // pattern is compiled - which is what makes a nested function able to
+    // capture one.
+    void pattern_names(std::int32_t pat, std::vector<std::string> & out) const {
+        if (pat < 0) { return; }
+        const vp::node & n = at(pat);
+        switch (n.kind) {
+        case vp::nk::ident: out.emplace_back(n.text); return;
+        case vp::nk::assign_pattern: pattern_names(n.a, out); return;
+        case vp::nk::rest_element: pattern_names(n.a, out); return;
+        case vp::nk::pattern_prop: pattern_names(n.b, out); return;
+        case vp::nk::array_pattern:
+        case vp::nk::object_pattern:
+            for (const std::int32_t k : kids(n)) { pattern_names(k, out); }
+            return;
+        default: return;
+        }
+    }
+
+    // DECLARE FIRST, THEN WRITE - and the order is not a style choice.
+    //
+    // Binding each name as the walk reached it meant declare_local allocated a
+    // register INSIDE the scope of the release_to() that frees the element
+    // temporary, so the next element's temporary reused the local's register
+    // and every name in the pattern ended up sharing one slot: `f({x, y})`
+    // returned x+x. Declaring the whole shape's names up front leaves the walk
+    // with nothing to allocate, so its temporaries are free to be released.
+    //
+    // At the top level there is nothing to declare: a declaration there is a
+    // global, and emit_write reaches one by falling through to set_global.
+    void compile_pattern_binding(std::int32_t pat, std::uint8_t src, bool declaring) {
+        if (declaring && frames_.size() > 1) {
+            std::vector<std::string> names;
+            pattern_names(pat, names);
+            for (std::string & name : names) {
+                if (was_predeclared(name) || find_local_entry(fn(), name) != nullptr) { continue; }
+                const std::uint8_t reg = declare_local(name);
+                proto().emit(instruction{op::load_undef, reg});
+                if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, reg}); }
+            }
+        }
+        compile_pattern(pat, src);
+    }
+
+    // Bind `pattern` to the value sitting in `src`. Every name it mentions
+    // already exists by the time this runs - see compile_pattern_binding.
+    void compile_pattern(std::int32_t pat, std::uint8_t src) {
+        if (pat < 0 || !out_.ok) { return; }
+        const vp::node & n = at(pat);
+        switch (n.kind) {
+        case vp::nk::ident: emit_write(n.text, src); return;
+
+        case vp::nk::member:
+        case vp::nk::index: {
+            // `[o.a, o.b] = pair` - a target that is not a name at all.
+            const reference ref = prepare_reference(n);
+            emit_store(ref, src);
+            return;
+        }
+
+        case vp::nk::assign_pattern: {
+            // The default applies when the value is UNDEFINED, so it is written
+            // into the source register before the target ever sees it.
+            const std::size_t skip = proto().emit(instruction{op::jump_if_defined, src});
+            const std::uint32_t mark = reg_mark();
+            compile_expr(n.b, src);
+            release_to(mark);
+            patch_here(skip);
+            compile_pattern(n.a, src);
+            return;
+        }
+
+        case vp::nk::array_pattern: {
+            const std::vector<std::int32_t> elements = kids(n);
+            for (std::size_t i = 0; i < elements.size(); ++i) {
+                if (elements[i] < 0) { continue; } // a hole binds nothing
+                const std::uint32_t mark = reg_mark();
+                const std::uint8_t item = alloc_reg();
+                if (at(elements[i]).kind == vp::nk::rest_element) {
+                    // everything from here on, as a new array
+                    emit_slice_from(item, src, i);
+                    compile_pattern(at(elements[i]).a, item);
+                } else {
+                    const std::uint8_t index = alloc_reg();
+                    emit_const(index, value::number(static_cast<double>(i)));
+                    proto().emit(instruction{op::get_index, item, src, index});
+                    compile_pattern(elements[i], item);
+                }
+                release_to(mark);
+            }
+            return;
+        }
+
+        case vp::nk::object_pattern: {
+            // The keys already taken, so an object rest knows what to leave out.
+            std::vector<std::string> taken;
+            for (const std::int32_t entry : kids(n)) {
+                const vp::node & e = at(entry);
+                const std::uint32_t mark = reg_mark();
+                const std::uint8_t item = alloc_reg();
+                if (e.kind == vp::nk::rest_element) {
+                    emit_rest_object(item, src, taken);
+                    compile_pattern(e.a, item);
+                } else if ((e.d & 2) != 0 && e.a >= 0) { // a computed key
+                    const std::uint8_t key = alloc_reg();
+                    compile_expr(e.a, key);
+                    proto().emit(instruction{op::get_index, item, src, key});
+                    compile_pattern(e.b, item);
+                } else {
+                    proto().emit(
+                        instruction{op::get_prop, item, src, name_operand(std::string{e.text})});
+                    taken.emplace_back(e.text);
+                    compile_pattern(e.b, item);
+                }
+                release_to(mark);
+            }
+            return;
+        }
+
+        default: fail("unsupported destructuring target: " + kind_name(n.kind)); return;
+        }
+    }
+
+    // Bind an array or object LITERAL, read in expression position, as if it
+    // had been parsed as a pattern. Assigning, never declaring - every name in
+    // it already exists.
+    void compile_literal_as_pattern(std::int32_t literal, std::uint8_t src) {
+        const vp::node & n = at(literal);
+        if (n.kind == vp::nk::array) {
+            const std::vector<std::int32_t> elements = kids(n);
+            for (std::size_t i = 0; i < elements.size(); ++i) {
+                if (elements[i] < 0) { continue; } // `[, x] = pair` skips one
+                const std::uint32_t mark = reg_mark();
+                const std::uint8_t item = alloc_reg();
+                if (at(elements[i]).kind == vp::nk::spread) {
+                    emit_slice_from(item, src, i);
+                    compile_literal_target(at(elements[i]).a, item);
+                } else {
+                    const std::uint8_t index = alloc_reg();
+                    emit_const(index, value::number(static_cast<double>(i)));
+                    proto().emit(instruction{op::get_index, item, src, index});
+                    compile_literal_target(elements[i], item);
+                }
+                release_to(mark);
+            }
+            return;
+        }
+        std::vector<std::string> taken;
+        for (const std::int32_t entry : kids(n)) {
+            const vp::node & e = at(entry);
+            const std::uint32_t mark = reg_mark();
+            const std::uint8_t item = alloc_reg();
+            if (e.kind == vp::nk::spread) {
+                emit_rest_object(item, src, taken);
+                compile_literal_target(e.a, item);
+            } else {
+                // `{a}` is shorthand (c == 2) and binds its own name; `{a: b}`
+                // binds `b`.
+                const std::int32_t value_node = e.c == 2 ? -1 : e.b;
+                proto().emit(
+                    instruction{op::get_prop, item, src, name_operand(std::string{e.text})});
+                taken.emplace_back(e.text);
+                if (value_node < 0) {
+                    emit_write(e.text, item);
+                } else {
+                    compile_literal_target(value_node, item);
+                }
+            }
+            release_to(mark);
+        }
+    }
+
+    // One target inside a literal-as-pattern: a name, a member, or a nested
+    // literal that is itself a pattern.
+    void compile_literal_target(std::int32_t target, std::uint8_t src) {
+        if (target < 0) { return; }
+        const vp::node & t = at(target);
+        if (t.kind == vp::nk::array || t.kind == vp::nk::object) {
+            compile_literal_as_pattern(target, src);
+            return;
+        }
+        if (t.kind == vp::nk::assign) { // `[a = 1] = xs`
+            const std::size_t skip = proto().emit(instruction{op::jump_if_defined, src});
+            const std::uint32_t mark = reg_mark();
+            compile_expr(t.b, src);
+            release_to(mark);
+            patch_here(skip);
+            compile_literal_target(t.a, src);
+            return;
+        }
+        if (t.kind == vp::nk::ident) {
+            emit_write(t.text, src);
+            return;
+        }
+        const reference ref = prepare_reference(t);
+        emit_store(ref, src);
+    }
+
+    // `[a, ...rest] = xs` - rest is everything from `from` onward.
+    void emit_slice_from(std::uint8_t dst, std::uint8_t source, std::size_t from) {
+        proto().emit(instruction{op::new_array, dst});
+        const std::uint32_t mark = reg_mark();
+        const std::uint8_t length = alloc_reg();
+        proto().emit(instruction{op::get_prop, length, source, name_operand("length")});
+        const std::uint8_t index = alloc_reg();
+        emit_const(index, value::number(static_cast<double>(from)));
+        const std::uint8_t one = alloc_reg();
+        emit_const(one, value::number(1));
+        const std::uint8_t test = alloc_reg();
+        const std::uint8_t item = alloc_reg();
+        const std::size_t top = proto().code.size();
+        proto().emit(instruction{op::less, test, index, length});
+        const std::size_t exit = proto().emit(instruction{op::jump_if_false, test});
+        proto().emit(instruction{op::get_index, item, source, index});
+        proto().emit(instruction{op::append, dst, item});
+        proto().emit(instruction{op::add, index, index, one});
+        patch_jump(proto().emit(instruction{op::jump}), top);
+        patch_here(exit);
+        release_to(mark);
+    }
+
+    // `{a, ...rest} = o` - every own property except the ones already named.
+    void emit_rest_object(std::uint8_t dst, std::uint8_t source,
+                          const std::vector<std::string> & taken) {
+        proto().emit(instruction{op::new_object, dst});
+        proto().emit(instruction{op::copy_props, dst, source});
+        for (const std::string & key : taken) {
+            proto().emit(instruction{op::delete_prop, dst, name_operand(key)});
+        }
+    }
+
     // --- statements ---------------------------------------------------------
     void compile_stmt(std::int32_t idx) {
         if (idx < 0 || !out_.ok) { return; }
@@ -534,14 +808,30 @@ public:
                     } else {
                         proto().emit(instruction{op::load_undef, r});
                     }
-                    const std::uint8_t name = name_operand(std::string{decl.text});
-                    proto().emit(instruction::with_bx(op::set_global, r, name));
+                    if (decl.b >= 0) { // a shape, not a name
+                        compile_pattern_binding(decl.b, r, true);
+                    } else {
+                        const std::uint8_t name = name_operand(std::string{decl.text});
+                        proto().emit(instruction::with_bx(op::set_global, r, name));
+                    }
                     release_to(mark);
                 }
                 return;
             }
             for (const std::int32_t d : kids(n)) {
                 const vp::node & decl = at(d);
+                if (decl.b >= 0) { // a shape, not a name
+                    const std::uint32_t mark = reg_mark();
+                    const std::uint8_t r = alloc_reg();
+                    if (decl.a >= 0) {
+                        compile_expr(decl.a, r);
+                    } else {
+                        proto().emit(instruction{op::load_undef, r});
+                    }
+                    compile_pattern_binding(decl.b, r, true);
+                    release_to(mark);
+                    continue;
+                }
                 if (was_predeclared(decl.text)) {
                     // hoisted above: this statement is only the initializer,
                     // and emit_write knows whether it goes through a cell
@@ -798,7 +1088,16 @@ public:
         // The loop variable is a real local, so a closure made inside the body
         // captures THIS iteration's value - which is the whole reason `let` in
         // a loop behaves differently from `var`.
-        const std::uint8_t item = declare_local(std::string{at(n.a).text});
+        //
+        // Two shapes are not a plain local: `for (const [k, v] of pairs)` binds
+        // a SHAPE, and `for (prop in obj)` with no declaration keyword assigns
+        // to a binding that already exists (d bit1). Both still need a register
+        // to read the element into.
+        const vp::node & target = at(n.a);
+        const bool declares = (n.d & 2) == 0;
+        const bool is_shape = target.b >= 0;
+        const std::uint8_t item =
+            (declares && !is_shape) ? declare_local(std::string{target.text}) : alloc_reg();
 
         const std::size_t top = proto().code.size();
         loops_.push_back(loop_context{label, {}, {}, handler_depth_});
@@ -807,7 +1106,12 @@ public:
         const std::size_t exit = proto().emit(instruction{op::jump_if_false, test});
 
         proto().emit(instruction{op::get_index, item, source, index});
-        if (const local * l = find_local_entry(fn(), at(n.a).text); l != nullptr && l->boxed) {
+        if (is_shape) {
+            compile_pattern_binding(target.b, item, declares);
+        } else if (!declares) {
+            emit_write(target.text, item);
+        } else if (const local * l = find_local_entry(fn(), target.text);
+                   l != nullptr && l->boxed) {
             // A captured loop variable lives in a cell, and a fresh cell per
             // iteration is what makes the capture see this element rather than
             // the last.
@@ -1452,6 +1756,21 @@ public:
     void compile_assign(const vp::node & n, std::uint8_t dst) {
         const vp::node & target = at(n.a);
         const std::uint32_t mark = reg_mark();
+
+        // DESTRUCTURING ASSIGNMENT: `[a, b] = pair` and `({x} = o)`.
+        //
+        // The left side is not a pattern node - the parser met it in expression
+        // position and read an array or object LITERAL, which is the only thing
+        // it could have been at the time. Re-reading it as a pattern here is
+        // what the grammar itself does, and it is why array literals had to
+        // learn about holes: `[, ref] = pair` skips the first element.
+        if (n.text == "=" && (target.kind == vp::nk::array || target.kind == vp::nk::object)) {
+            compile_expr(n.b, dst);
+            compile_literal_as_pattern(n.a, dst);
+            release_to(mark);
+            return;
+        }
+
         const reference ref = prepare_reference(target);
 
         if (n.text == "=") {
