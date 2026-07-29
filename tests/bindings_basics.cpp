@@ -579,6 +579,72 @@ void test_p5_receives_input() {
           "mouseIsPressed went back down: " + line);
 }
 
+// WEBGL COMPILES AND CONSTRUCTS, AND REFUSES CLEANLY.
+//
+// The scope for p5.js here is 2D. That is not the same as WebGL being absent:
+// `class RendererGL extends Renderer3D` has to produce a working constructor
+// at load or the bundle does not finish defining itself, and p5 registers it
+// in its renderer table whether or not a sketch asks for it. What a sketch
+// that DOES ask for it gets is a catchable Error naming WebGL - the same shape
+// of refusal `new Function` gives, and the opposite of a getContext('webgl')
+// that hands back an object with no drawing on it.
+void test_webgl_is_constructible_and_refuses() {
+    browser page{browser_options{300, 300}};
+    page.assets().add("p5.js", read_bytes("examples/assets/p5.js"));
+    page.load_html(R"(<html><head><script>var IS_MINIFIED = true;</script>
+        <script src="p5.js"></script></head><body><script>
+        console.log('registered=' + (typeof p5.renderers['webgl']));
+        var outcome = 'no error';
+        try {
+          new p5(function (s) {
+            s.setup = function () { s.createCanvas(100, 100, s.WEBGL); };
+            s.draw = function () {};
+          });
+        } catch (e) { outcome = e.name + ': ' + e.message; }
+        console.log('asking=' + outcome);
+    </script></body></html>)");
+    check(page.script_error().empty(), "the page loaded: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log[0] == "registered=function",
+          "the WebGL renderer is still a constructible function: " + log[0]);
+    // Catchable, and it SAYS webgl - a refusal a page cannot read is a crash
+    // with extra steps.
+    check(log[1].find("Error") != std::string::npos && log[1].find("webgl") != std::string::npos,
+          "asking for it throws a catchable Error naming WebGL: " + log[1]);
+}
+
+// `location`'s parts, and `document.cookie`.
+//
+// Neither is exotic and both are read WITHOUT a guard: the idiom is
+// `location.search.substring(1)` and `document.cookie.split(';')`, so an absent
+// one is not a missing feature but a TypeError on the first line of whatever
+// library reached for it.
+void test_location_parts_and_cookies() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body><script>
+        console.log('parts=' + [typeof location.protocol, typeof location.host,
+                                typeof location.hostname, typeof location.port,
+                                typeof location.pathname, typeof location.search,
+                                typeof location.origin].join(','));
+        // Reading gives every pair; writing sets ONE of them, so a page that
+        // stores two things has both.
+        console.log('empty=[' + document.cookie + ']');
+        document.cookie = 'a=1';
+        document.cookie = 'b=2; path=/; SameSite=Lax';
+        console.log('two=' + document.cookie);
+        document.cookie = 'a=9';
+        console.log('replaced=' + document.cookie);
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log[0] == "parts=string,string,string,string,string,string,string",
+          "location reports every part of its URL: " + log[0]);
+    check(log[1] == "empty=[]", "no cookies is the empty string, not undefined: " + log[1]);
+    // The attributes after the first `;` are not part of the value.
+    check(log[2] == "two=a=1; b=2", "a write ADDS a cookie rather than replacing them: " + log[2]);
+    check(log[3] == "replaced=a=9; b=2", "...and writing the same name replaces it: " + log[3]);
+}
+
 // --- the document API -----------------------------------------------------
 
 void test_script_mutates_what_is_drawn() {
@@ -1494,7 +1560,9 @@ int main() {
     test_the_invaders_page_shoots();
     test_a_letterboxed_page_keeps_its_size();
 
+    test_location_parts_and_cookies();
     test_p5_receives_input();
+    test_webgl_is_constructible_and_refuses();
     test_image_data();
     test_fill_rule();
     test_text_alignment();

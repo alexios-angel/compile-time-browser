@@ -11,6 +11,84 @@ void dom_bindings::observe_resources(asset_registry & assets, image_store & imag
     images_ = &images;
 }
 
+namespace {
+
+// The parts of a URL, as `location` reports them.
+//
+// href alone is not enough for a library: `location.search` is where a page
+// reads its own query string and `location.pathname` is what a router matches
+// on, and both are read WITHOUT a guard - the idiom is
+// `location.search.substring(1)`, so an absent one is not a missing feature but
+// a TypeError on the first line of the library's setup.
+//
+// Parsed rather than tracked, because href is the one thing the browser
+// actually knows and keeping seven fields in step with it by hand is how they
+// drift apart.
+struct url_parts {
+    std::string protocol; // "file:" - WITH the colon, as the DOM reports it
+    std::string host;     // hostname:port
+    std::string hostname;
+    std::string port;
+    std::string pathname;
+    std::string search; // "?a=1", empty when there is none - not "?"
+    std::string hash;   // "#x"
+    std::string origin;
+};
+
+[[nodiscard]] url_parts split_url(std::string_view href) {
+    url_parts out;
+    std::string_view rest = href;
+    if (const std::size_t scheme = rest.find("://"); scheme != std::string_view::npos) {
+        out.protocol = std::string{rest.substr(0, scheme)} + ":";
+        rest = rest.substr(scheme + 3);
+        const std::size_t authority = rest.find_first_of("/?#");
+        const std::string_view host = rest.substr(0, authority);
+        out.host = std::string{host};
+        if (const std::size_t colon = host.rfind(':'); colon != std::string_view::npos) {
+            out.hostname = std::string{host.substr(0, colon)};
+            out.port = std::string{host.substr(colon + 1)};
+        } else {
+            out.hostname = std::string{host};
+        }
+        out.origin = out.protocol + "//" + out.host;
+        rest = authority == std::string_view::npos ? std::string_view{} : rest.substr(authority);
+    } else if (const std::size_t colon = rest.find(':');
+               colon != std::string_view::npos && rest.substr(colon).starts_with(":/")) {
+        // `file:/path` - a scheme with no authority at all.
+        out.protocol = std::string{rest.substr(0, colon)} + ":";
+        out.origin = "null";
+        rest = rest.substr(colon + 1);
+    }
+    if (const std::size_t at = rest.find('#'); at != std::string_view::npos) {
+        out.hash = std::string{rest.substr(at)};
+        rest = rest.substr(0, at);
+    }
+    if (const std::size_t at = rest.find('?'); at != std::string_view::npos) {
+        out.search = std::string{rest.substr(at)};
+        rest = rest.substr(0, at);
+    }
+    out.pathname = std::string{rest};
+    // A URL with no path still HAS one, and a page joining onto it produces
+    // "//thing" rather than "/thing" when it is empty.
+    if (out.pathname.empty() && !out.host.empty()) { out.pathname = "/"; }
+    return out;
+}
+
+} // namespace
+
+// Every part of the URL, derived from href. Called wherever href is set, so
+// the two cannot disagree.
+void dom_bindings::write_location_parts(context & cx, script::object_object & loc) {
+    const url_parts parts = split_url(location_href_);
+    loc.set("protocol", cx.string(parts.protocol));
+    loc.set("host", cx.string(parts.host));
+    loc.set("hostname", cx.string(parts.hostname));
+    loc.set("port", cx.string(parts.port));
+    loc.set("pathname", cx.string(parts.pathname));
+    loc.set("search", cx.string(parts.search));
+    loc.set("origin", cx.string(parts.origin.empty() ? "null" : parts.origin));
+}
+
 void dom_bindings::observe_location(std::string href, std::string hash) {
     location_href_ = std::move(href);
     location_hash_ = std::move(hash);
@@ -21,6 +99,7 @@ void dom_bindings::observe_location(std::string href, std::string hash) {
         auto * loc = static_cast<script::object_object *>(location_.as_heap());
         loc->set("href", cx_->string(location_href_));
         loc->set("hash", cx_->string(location_hash_));
+        write_location_parts(*cx_, *loc);
     }
 }
 
@@ -1475,6 +1554,57 @@ void dom_bindings::install_document(context & cx) {
     // it reads 'complete' and waits for a `load` event otherwise - takes the
     // branch that matches what actually happened.
     doc->set("readyState", cx.string("complete"));
+    // `document.cookie`, IN MEMORY AND FOR THIS PAGE ONLY.
+    //
+    // An accessor rather than a string, because the API is not a string: READING
+    // gives every pair, and WRITING sets ONE of them - `document.cookie = "a=1"`
+    // adds to what is there rather than replacing it. A plain property gets that
+    // backwards, and a page that stores two things loses the first.
+    //
+    // Absent, it was worse than wrong: a library reads it unguarded, and
+    // `undefined.split(';')` is a TypeError on the first line of its setup.
+    //
+    // TODO: persist per origin once there IS an origin to scope a jar to - the
+    // same reasoning localStorage is written down with, and the same answer: a
+    // test that leaves state behind fails the next run for reasons that have
+    // nothing to do with the code.
+    doc->define_accessor(
+        "cookie",
+        value::object(cx.allocate<script::native_object>("cookie",
+                                                         [this](context & c, std::span<value>) {
+                                                             std::string out;
+                                                             for (const auto & [name, item] :
+                                                                  cookies_) {
+                                                                 if (!out.empty()) { out += "; "; }
+                                                                 out += name + "=" + item;
+                                                             }
+                                                             return c.string(out);
+                                                         })),
+        value::object(cx.allocate<script::native_object>("cookie", [this](context & c,
+                                                                          std::span<value> a) {
+            const std::string written = arg_string(c, a, 0);
+            // Everything after the first `;` is attributes - path, expires,
+            // SameSite - and none of them mean anything without an origin
+            // or a clock to expire against.
+            const std::string pair = written.substr(0, written.find(';'));
+            const std::size_t equals = pair.find('=');
+            if (equals == std::string::npos) { return value::undefined(); }
+            const auto trim = [](std::string_view piece) {
+                const std::size_t first = piece.find_first_not_of(" \t");
+                if (first == std::string_view::npos) { return std::string{}; }
+                return std::string{piece.substr(first, piece.find_last_not_of(" \t") - first + 1)};
+            };
+            const std::string name = trim(pair.substr(0, equals));
+            const std::string item = trim(pair.substr(equals + 1));
+            for (auto & [key, held] : cookies_) {
+                if (key == name) {
+                    held = item;
+                    return value::undefined();
+                }
+            }
+            cookies_.emplace_back(name, item);
+            return value::undefined();
+        })));
 
     doc->set("body", wrap(cx, find_by_tag("body")));
     doc->set("documentElement", wrap(cx, find_by_tag("html")));
@@ -1520,6 +1650,7 @@ value dom_bindings::make_location(context & cx) {
     method("toString", [this](context & c, std::span<value>) { return c.string(location_href_); });
     loc->set("href", cx.string(location_href_));
     loc->set("hash", cx.string(location_hash_));
+    write_location_parts(cx, *loc);
     return value::object(loc);
 }
 

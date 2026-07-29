@@ -67,3 +67,73 @@ close over each element at the top level.
 `tests/page_scripts` compiles the real example pages and asserts what each
 one does; `tests/vm_basics` has a test per language feature.
 
+## WHAT p5.js NEEDED (2026-07-29)
+
+**p5.js v2.3.1 runs** — 4.5 MB and 138,938 lines that nobody wrote for this
+engine. It lexes, parses (282,028 nodes), compiles (4,754 functions), executes
+its whole top-level IIFE, builds a sketch, runs `setup()`, drives `draw()` from
+`requestAnimationFrame`, and paints. `tests/p5_ratchet.cpp` measures how far it
+gets on a ladder of 12 rungs and `tests/p5-ratchet.txt` records the high-water
+mark; the level may not go down. `tools/p5-ratchet.py --survey` measures each of
+the bundle's 71 rollup modules independently, `--bisect NAME` carves one out as
+a reproducer, and `--source N` prints the text of compiled function N - a stack
+trace names functions as `fn#3778`, and most of a bundle's functions are
+anonymous.
+
+Several sections above are now out of date and are left as history: regex has an
+engine, promises have pending state, and object-literal accessors compile.
+
+**The language gained**: destructuring, `#private` fields, the comma operator,
+default and rest parameters, `??`/`??=`, class fields as per-instance
+initialisers, arrow `this`, spread calls, `arguments`, named function
+expressions binding their own name, `f.name`/`f.length`, and 8-byte
+instructions with 16-bit operands (a 4.5 MB bundle passes the 256-name and
+256-register marks in its first few hundred lines, and every one of those caps
+used to truncate silently).
+
+**The object model gained** accessors and descriptors, `Proxy` with get/set/has/
+construct traps, `Symbol`, `Map`/`Set`/`WeakMap`, typed arrays, real `Error`
+objects that unwind to a handler, and prototypes that are reachable as
+`Object.prototype`, `Array.prototype` and the rest rather than only consulted by
+lookup.
+
+**The bugs that mattered were silent, not loud.** Worth reading as a class:
+
+- `obj[key](...)` passed the KEY as argument 0, because the compiler evaluated
+  the key into the register the argument window starts at. Only the form WITH
+  arguments was wrong, so `xs[0]()` looked fine.
+- `(220).toString(16)` returned `"220"` — the radix was accepted and ignored, so
+  every colour p5 computed became an unreadable string and every fill came out
+  white.
+- `Object.getPrototypeOf` returned null for a primitive, a prototype had no
+  `constructor`, and a class had no `name`. `Object.getPrototypeOf(x)
+  .constructor.name` is the standard way to identify a value where `instanceof`
+  cannot; each hole yields `undefined`, and undefined compares EQUAL to the other
+  undefined it is being tested against — so a plain string reported itself as an
+  instance of a colour space.
+- `Object.prototype.toString` returned `"[object Object]"` for everything. That
+  is the type tag libraries parse.
+- `split(/re/)` coerced its pattern to a string, so it never matched and the
+  input came back as one element.
+- `arguments` did not exist, and when first added was materialised where the
+  name was MENTIONED - by then the surrounding expression had reused the
+  registers holding the arguments past the last declared parameter.
+
+**Calling a non-function is a catchable `TypeError`** rather than the end of the
+run. Pages catch it — feature detection is written as `try { thing() } catch {}`
+at least as often as a `typeof` test — and an uncatchable fault also unwinds
+nothing, so a probe wrapped in try/catch reports no error at all and the failure
+appears to come from wherever the run happened to stop. That one property is
+what made the bugs above findable.
+
+**Still missing, by name.** `await` on a PENDING promise does not suspend: it
+returns undefined and runs the tail immediately, so ordering between a `then`
+and the statements around it is still wrong (`op::await_value` is settled-only;
+real suspension is a frame-capture change in the VM). No generators, so no
+`yield`. `new Function(body)` exists as a global and refuses when called - the
+VM must own programs compiled at run time. `arguments` is a real Array rather
+than the spec's array-like, so `Array.isArray(arguments)` is true here and false
+in a browser. `structuredClone` covers data only. Regex has no lookbehind and no
+backreferences. Strings are BYTES, so `normalize` is the identity and
+`codePointAt` agrees with `charCodeAt` rather than pretending to a UTF-16 view
+nothing else here has.

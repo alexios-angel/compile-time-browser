@@ -551,3 +551,81 @@ keydown/keyup, `requestAnimationFrame`, sound) and `fetchboard` (a baked-in
 resource AND a live HTTP GET) are ported. Both pages were rewritten off the previous engine's
 `onFrame`/`isKeyDown`/`getContext(id)` shorthand onto the real web APIs.
 
+## WHAT p5.js NEEDED FROM THE PLATFORM (2026-07-29)
+
+The language half is in `docs/script.md`. This is the DOM and canvas half, and
+it is worth reading because almost none of it failed loudly.
+
+**`window` IS the global object**, through a proxy rather than a copy: `globals_`
+stays the single storage and the window forwards to it, so the two cannot drift.
+Both directions are load-bearing — p5 calls `window.requestAnimationFrame`, reads
+`window.setup` to decide whether a sketch is in global mode, and assigns its ~200
+drawing functions onto the window for a sketch to call bare.
+
+**`element.style` is a proxy** over the declarations it holds; a write
+re-serialises the whole object into the `style` attribute the style engine
+already parses, so there is no second representation to keep in step. Both traps
+canonicalise the property name, because `backgroundColor` and `background-color`
+are two spellings of one property. **`classList`** reads and writes the `class`
+attribute on every operation, so nothing can go stale.
+
+**`id`, `className`, `width` and `height` are accessors, not data properties.**
+They reflect content attributes, and as data properties they only went one way:
+a page's assignment changed the wrapper and the next refresh put the old value
+back. Setting a canvas's size resizes its surface, as the spec's reset requires.
+
+**Tree navigation**: `parentNode`, `parentElement`, `children`, `remove()`,
+`insertBefore` and `getBoundingClientRect`. appendChild and removeChild already
+worked; nothing could WALK the tree, so `this.elt.parentNode.removeChild(this.elt)`
+threw — and `getBoundingClientRect` is how a page turns an event's viewport
+coordinates into coordinates within an element, which is what every mouse
+handler does first.
+
+**Pointer events are dispatched alongside mouse events**, pointer first, with
+`pointerId`/`pointerType`/`isPrimary` and a `buttons` MASK. p5 2.x registers for
+`pointerdown`/`pointermove`/`pointerup` and nothing else, so a page that rendered
+perfectly never responded to a click: the listeners were installed, the events
+were dispatched, and the two sets simply had different names.
+
+**A CALLBACK THAT FAULTS IS REPORTED AND THE FAULT CLEARED.** `context::run`
+clears the VM's failure flag on entry; `context::call` has no such entry point,
+so a fault in the first animation frame, timer or listener stayed set for the
+life of the page — every later callback was refused, the page stopped responding
+to everything, and nothing anywhere said why. It is now surfaced through
+`browser::script_error()` and cleared, which is what a browser does; and
+`run_script` no longer erases a fault it did not cause. `dom_bindings::
+callback_error()` and `callback_faults()` are the direct read.
+
+**The canvas gained** `setTransform`/`transform`/`getTransform`, `ellipse`,
+`bezierCurveTo`/`quadraticCurveTo`, `Path2D` with `fill(path)`/`stroke(path)`,
+`textAlign`/`textBaseline`, a `measureText` that returns a bounding box rather
+than only a width, `getImageData`/`putImageData`/`createImageData` and
+`ImageData`, and **nonzero winding** — the fill was even-odd, so a star drawn as
+one continuous path came out with a hole in it. `fill('evenodd')` asks for the
+other rule. p5 builds one Path2D per shape and hands it to the context, so that
+is not a corner of the canvas API here, it is the whole 2D drawing path.
+
+**A canvas context's address is stable** for as long as its canvas exists: every
+method bound onto a script context captures a `canvas_context *`, and the store
+used to hold them by value, so making a SECOND canvas reallocated the map and
+left the first page's context pointing at freed memory. p5 makes two before it
+draws anything.
+
+**`<html>`, `<head>` and `<body>` keep their attributes** (dom, not shell, but it
+surfaced here). All three are created implicitly, so the tag naming them arrives
+after the element exists and the handler returned early — `<body style="margin:0">`
+simply did not apply. Found by comparing against Chrome: ctbrowser placed p5's
+canvas 8px off, and the 8px was the margin the page had asked to remove.
+
+**The corpus** is `examples/pages/p5-*.html`: basic, text, transform, shape and
+pixels each render against a committed golden, and `p5-events.html` has none
+because what it draws is a function of input — it is driven by `tools/compare.py`
+through ctbrowser and Chrome at once. Both engines agree on the same clicks.
+
+**Still missing, by name.** WEBGL constructs but refuses: `p5.renderers["webgl"]`
+is a real function and `createCanvas(w, h, WEBGL)` throws a catchable Error
+naming it, which is the scope that was chosen. `clip()` is not implemented, so
+`Path2D.addPath` ignores its optional transform (p5 passes one only when
+clipping). No gradients or patterns — p5 uses neither. `once` and `capture` on a
+listener are accepted and ignored. `localStorage` is in memory and starts empty
+every run, since there is no origin to scope a store to.

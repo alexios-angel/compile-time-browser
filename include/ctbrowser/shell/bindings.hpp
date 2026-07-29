@@ -249,6 +249,7 @@ private:
 
     void install_element_methods(context & cx, script::object_object & obj);
     void note_callback_fault(std::string_view source);
+    void write_location_parts(context & cx, script::object_object & loc);
     // `element.style` and `element.classList` - the two views onto an element
     // that are OBJECTS rather than values, so unlike everything in
     // refresh_element they are built once and keep their identity. A page holds
@@ -421,6 +422,8 @@ private:
     // The first fault a timer or animation frame raised, and how many there
     // were. A page whose draw loop throws every frame has ONE bug, not a
     // thousand, and the first message is the one that names it.
+    // `document.cookie`, in insertion order so reading it back is stable.
+    std::vector<std::pair<std::string, std::string>> cookies_;
     std::string callback_error_;
     std::size_t callback_faults_ = 0;
     bool reload_requested_ = false;
