@@ -348,6 +348,15 @@ public:
                 // it has to exist before its own body compiles or a recursive
                 // call inside it resolves to a global instead of to itself.
                 hoist(std::string{at(stmt).text});
+            } else if (at(stmt).kind == vp::nk::class_decl) {
+                // A CLASS DECLARATION IS A BINDING TOO, and it has to be
+                // hoisted for a reason worth stating: a local first declared
+                // while an EXPRESSION is being compiled sits above the
+                // statement's register mark, so the statement releases it and
+                // the next statement's temporaries reuse the slot. `class S {}`
+                // followed by two `new S()` therefore worked once and then
+                // found an object in the register the second time.
+                hoist(std::string{at(stmt).text});
             }
         }
     }

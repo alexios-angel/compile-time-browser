@@ -10,7 +10,7 @@
 # draw, golden) arrive with the work that makes them reachable.
 
 level=5
-blocker=`new` on `a boxed local` is undefined, not a function - in <anonymous>
+blocker=`now` is undefined, not a function - in `environment$1`
 
 # Wall-clock ceiling for lex + parse + compile + run, in milliseconds.
 # Generous on purpose: it is here to catch the compiler's quadratic scans

@@ -684,6 +684,30 @@ void test_chain_state_does_not_leak_into_a_nested_function() {
            "no");
 }
 
+// A CLASS DECLARATION IS A HOISTED BINDING, and the reason is register
+// allocation rather than semantics: a local first declared while an EXPRESSION
+// is being compiled sits above the statement's register mark, so the statement
+// releases it and the next statement's temporaries reuse the slot. `class S {}`
+// followed by two `new S()` therefore worked once and found an object the
+// second time.
+void test_class_declaration_survives_the_statement() {
+    expect("class S { constructor(x) { this.id = x; } } "
+           "const a = new S('a'); const b = new S('b'); return a.id + b.id;",
+           "ab");
+    expect("function f() { class S { constructor(x) { this.id = x; } } "
+           "const a = new S('a'); const b = new S('b'); const c = new S('c'); "
+           "return a.id + b.id + c.id; } return f();",
+           "abc");
+    // with a static field, which is what put a fresh object in the register
+    expect("function f() { class S { constructor(x) { this.id = x; } static r = new Map(); } "
+           "const a = new S('a'); const b = new S('b'); return a.id + b.id; } return f();",
+           "ab");
+    // and a class used before its declaration in the same scope still binds
+    expect("function f() { function make() { return new S(1); } class S { constructor(v) "
+           "{ this.v = v; } } return make().v; } return f();",
+           "1");
+}
+
 void test_typeof() {
     diff_vs_v1("typeof 1", "number");
     diff_vs_v1("typeof 'x'", "string");
@@ -1412,6 +1436,7 @@ int main() {
     test_implicit_super();
     test_class_expressions();
     test_named_class_expression_binds_itself();
+    test_class_declaration_survives_the_statement();
     test_chain_state_does_not_leak_into_a_nested_function();
     test_stdlib_additions();
     test_typeof();
