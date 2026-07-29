@@ -19,7 +19,7 @@ void canvas_context::reset_surface(int width, int height) {
 void canvas_context::save() {
     stack_.push_back(state{transform_, fill_style, stroke_style, line_width, global_alpha,
                            font_size, font_family, font_bold, font_italic, font_spec, fill_spec,
-                           stroke_spec, text_align, text_baseline});
+                           stroke_spec, text_align, text_baseline, clip_});
 }
 
 void canvas_context::restore() {
@@ -39,6 +39,9 @@ void canvas_context::restore() {
     stroke_spec = s.stroke_spec;
     text_align = s.text_align;
     text_baseline = s.text_baseline;
+    // A clip is undone by restore() and by nothing else, which is why it has to
+    // travel on this stack rather than being a field a page could reset.
+    clip_ = s.clip;
     stack_.pop_back();
 }
 
@@ -172,7 +175,8 @@ void canvas_context::bezier_curve_to(float c1x, float c1y, float c2x, float c2y,
     }
 }
 
-void canvas_context::fill(fill_rule rule) {
+void canvas_context::for_each_span(fill_rule rule,
+                                   const std::function<void(int, float, float)> & emit) {
     if (!pixels_) { return; }
     float min_y = 1e30f, max_y = -1e30f;
     for (const subpath & s : subpaths_) {
@@ -192,9 +196,7 @@ void canvas_context::fill(fill_rule rule) {
     // crossing downwards and -1 for one crossing upwards, and fills wherever
     // the running total is not zero. They differ exactly where a path overlaps
     // itself: a five-pointed star drawn as one continuous path is solid under
-    // nonzero and has a pentagonal HOLE under even-odd. The spec's default is
-    // nonzero, and this drew even-odd - so every self-overlapping shape, which
-    // is most of what beginShape/vertex is used for, came out hollow.
+    // nonzero and has a pentagonal HOLE under even-odd.
     struct crossing {
         float x;
         int direction;
@@ -221,17 +223,41 @@ void canvas_context::fill(fill_rule rule) {
         std::ranges::sort(crossings, {}, &crossing::x);
         if (rule == fill_rule::even_odd) {
             for (std::size_t i = 0; i + 1 < crossings.size(); i += 2) {
-                span_row(y, crossings[i].x, crossings[i + 1].x, fill_style);
+                emit(y, crossings[i].x, crossings[i + 1].x);
             }
             continue;
         }
         int winding = 0;
         for (std::size_t i = 0; i + 1 < crossings.size(); ++i) {
             winding += crossings[i].direction;
-            if (winding != 0) { span_row(y, crossings[i].x, crossings[i + 1].x, fill_style); }
+            if (winding != 0) { emit(y, crossings[i].x, crossings[i + 1].x); }
         }
     }
+}
+
+void canvas_context::fill(fill_rule rule) {
+    if (!pixels_) { return; }
+    for_each_span(rule, [&](int y, float from, float to) { span_row(y, from, to, fill_style); });
     touch();
+}
+
+// INTERSECT, never replace. Two clips in a row leave the region they have in
+// common, which is what makes nesting them work - and it is why the old mask is
+// read while the new one is built rather than being cleared first.
+void canvas_context::clip(fill_rule rule) {
+    if (!pixels_ || width() <= 0 || height() <= 0) { return; }
+    auto mask = std::make_shared<std::vector<std::uint8_t>>(
+        static_cast<std::size_t>(width()) * static_cast<std::size_t>(height()), 0);
+    for_each_span(rule, [&](int y, float from, float to) {
+        const int left = std::max(0, static_cast<int>(std::ceil(from - 0.5f)));
+        const int right = std::min(width() - 1, static_cast<int>(std::floor(to - 0.5f)));
+        for (int x = left; x <= right; ++x) {
+            if (clipped_out(x, y)) { continue; }
+            (*mask)[static_cast<std::size_t>(y) * static_cast<std::size_t>(width()) +
+                    static_cast<std::size_t>(x)] = 1;
+        }
+    });
+    clip_ = std::move(mask);
 }
 
 void canvas_context::stroke() {
@@ -331,6 +357,9 @@ void canvas_context::fill_text(std::string_view text, float x, float y) {
     for (int sy = from_y; sy < to_y; ++sy) {
         const std::span<const std::uint32_t> row = scratch.row(sy - top);
         for (int sx = from_x; sx < to_x; ++sx) {
+            // Text is clipped like everything else - a clip that let glyphs
+            // through would be visible on the first label drawn near an edge.
+            if (clipped_out(sx, sy)) { continue; }
             pixels_->put(sx, sy, row[static_cast<std::size_t>(sx - left)]);
         }
     }
@@ -369,7 +398,7 @@ color canvas_context::with_alpha(color c) const {
 }
 
 void canvas_context::blend(int x, int y, color c) {
-    if (!pixels_) { return; }
+    if (!pixels_ || clipped_out(x, y)) { return; }
     pixels_->put(x, y, raster::blend_over(pixels_->at(x, y), with_alpha(c)));
 }
 
@@ -409,6 +438,7 @@ void canvas_context::write_axis_rect(float x, float y, float w, float h, std::ui
     const float sh = h * transform_.d;
     for (int py = static_cast<int>(at.y); py < static_cast<int>(at.y + sh); ++py) {
         for (int px = static_cast<int>(at.x); px < static_cast<int>(at.x + sw); ++px) {
+            if (clipped_out(px, py)) { continue; }
             pixels_->put(px, py, argb);
         }
     }

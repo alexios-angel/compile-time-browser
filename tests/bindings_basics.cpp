@@ -900,6 +900,70 @@ console.log('src=' + document.getElementById('t').textContent.split('\n').join('
     }
 }
 
+// `clip()` CONFINES what is drawn after it, and `restore()` is the only way
+// back. The region is an INTERSECTION of paths, so two clips leave what they
+// have in common - which is what makes nesting them work.
+void test_clip() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body><canvas id=c width=100 height=100></canvas><script>
+        const ctx = document.getElementById('c').getContext('2d');
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, 100, 100);
+        ctx.save();
+        ctx.beginPath(); ctx.rect(20, 20, 40, 40); ctx.clip();
+        // Asks for the whole canvas; gets the clip.
+        ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 100, 100);
+        // A second clip intersects rather than replacing.
+        ctx.beginPath(); ctx.rect(40, 20, 40, 40); ctx.clip();
+        ctx.fillStyle = '#00ff00'; ctx.fillRect(0, 0, 100, 100);
+        ctx.restore();
+        // Outside every clip again: restore is the only way back.
+        ctx.fillStyle = '#0000ff'; ctx.fillRect(70, 70, 20, 20);
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    const auto pixels = page.canvases().pixels_of(find_id(page, "c"));
+    check(pixels != nullptr, "the canvas has pixels");
+    if (pixels == nullptr) { return; }
+    const auto at = [&](int x, int y) { return color{pixels->at(x, y)}; };
+    check(at(5, 5) == color::rgba(255, 255, 255), "a fill of the whole canvas is confined");
+    check(at(25, 30) == color::rgba(255, 0, 0), "...to the clip region");
+    // The intersection of x[20,60) and x[40,80) is x[40,60).
+    check(at(50, 30) == color::rgba(0, 255, 0), "a second clip intersects the first");
+    check(at(25, 30) == color::rgba(255, 0, 0), "and does not extend it leftwards");
+    check(at(70, 30) == color::rgba(255, 255, 255), "nor rightwards past the first");
+    check(at(75, 75) == color::rgba(0, 0, 255), "restore() puts the old region back");
+
+    // `addPath(other, matrix)` APPLIES the matrix. The verbs are copied with
+    // their coordinates already transformed, which is what makes a path built
+    // once reusable at several places.
+    browser moved{browser_options{300, 200}};
+    moved.load_html(R"(<html><body><canvas id=c width=100 height=100></canvas><script>
+        const ctx = document.getElementById('c').getContext('2d');
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, 100, 100);
+        const unit = new Path2D();
+        unit.rect(0, 0, 10, 10);
+        const placed = new Path2D();
+        placed.addPath(unit);                                  // no matrix: as written
+        placed.addPath(unit, { a: 1, b: 0, c: 0, d: 1, e: 50, f: 0 });   // translated
+        placed.addPath(unit, { a: 2, b: 0, c: 0, d: 2, e: 0, f: 50 });   // scaled and moved
+        ctx.fillStyle = '#ff0000';
+        ctx.fill(placed);
+    </script></body></html>)");
+    check(moved.script_error().empty(), "the addPath script ran: " + moved.script_error());
+    if (const auto out = moved.canvases().pixels_of(find_id(moved, "c"))) {
+        const auto hit = [&](int x, int y) {
+            return color{out->at(x, y)} == color::rgba(255, 0, 0);
+        };
+        check(hit(5, 5), "the untransformed copy is where it was written");
+        check(hit(55, 5), "a translated copy moves");
+        check(!hit(30, 5), "and does not stay behind");
+        // Scaled 2x from the origin and moved down 50: a 20x20 square at y 50.
+        check(hit(15, 65), "a scaled copy takes the matrix's scale");
+        check(!hit(25, 65), "and stops where the scaled edge is");
+    } else {
+        check(false, "the second canvas has pixels");
+    }
+}
+
 // --- the document API -----------------------------------------------------
 
 void test_script_mutates_what_is_drawn() {
@@ -1815,6 +1879,7 @@ int main() {
     test_the_invaders_page_shoots();
     test_a_letterboxed_page_keeps_its_size();
 
+    test_clip();
     test_inner_html();
     test_listener_options();
     test_element_query_selector();

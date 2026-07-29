@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -189,6 +190,18 @@ public:
     // Scanline fill under either rule. Nonzero by default, as the spec says.
     void fill(fill_rule rule = fill_rule::nonzero);
 
+    // INTERSECT the current path into the clip region. Everything drawn
+    // afterwards is confined to it, and `restore()` puts the old region back -
+    // which is the only way a page ever removes one.
+    //
+    // A per-pixel mask rather than a path list: the region is an INTERSECTION of
+    // arbitrary paths, and intersecting two scanline polygons exactly is a
+    // clipping-polygon algorithm, where a mask is one AND per pixel. Held
+    // through a shared_ptr so save() copies a pointer rather than the buffer -
+    // a page that saves and restores around every shape would otherwise pay for
+    // the whole canvas each time.
+    void clip(fill_rule rule = fill_rule::nonzero);
+
     void stroke();
 
     // --- text and images --------------------------------------------------
@@ -254,6 +267,9 @@ private:
         std::string stroke_spec;
         std::string text_align;
         std::string text_baseline;
+        // The clip region in force. A clip is undone by restore() and by
+        // nothing else, so it belongs on this stack like the rest of the state.
+        std::shared_ptr<const std::vector<std::uint8_t>> clip;
     };
 
     void touch() { ++revision_; }
@@ -265,6 +281,23 @@ private:
     void blend(int x, int y, color c);
 
     void span_row(int y, float from, float to, color c);
+
+    // Walk the current path a scanline at a time and hand each inside-span to
+    // `emit(y, from, to)`. Shared by fill() and clip() so the winding rule has
+    // ONE implementation - two copies is two chances for a clip to disagree
+    // with the fill it was derived from.
+    void for_each_span(fill_rule rule, const std::function<void(int, float, float)> & emit);
+
+    // Whether this pixel is outside the clip region. One test at every write
+    // site, and it is a single bool check when nothing has clipped.
+    [[nodiscard]] bool clipped_out(int x, int y) const noexcept {
+        if (!clip_) { return false; }
+        if (x < 0 || y < 0 || x >= width() || y >= height()) { return true; }
+        return (*clip_)[static_cast<std::size_t>(y) * static_cast<std::size_t>(width()) +
+                        static_cast<std::size_t>(x)] == 0;
+    }
+
+    std::shared_ptr<const std::vector<std::uint8_t>> clip_;
 
     // An axis-aligned rect through the CTM. Only translation and scale are
     // honoured for the fast path; a rotated fillRect goes through the path

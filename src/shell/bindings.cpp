@@ -1190,6 +1190,17 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
             }
         }
     };
+    // `clip()` takes the same two forms as fill: a Path2D and/or a rule.
+    method("clip", draws([canvas, replay](context & c, std::span<value> a) {
+               replay(c, a);
+               auto rule = canvas_context::fill_rule::nonzero;
+               for (const value & v : a) {
+                   if (v.is_string() && c.to_string(v) == "evenodd") {
+                       rule = canvas_context::fill_rule::even_odd;
+                   }
+               }
+               canvas->clip(rule);
+           }));
     method("fill", draws([canvas, replay](context & c, std::span<value> a) {
                replay(c, a);
                // The rule is the last argument in both forms - `fill(rule)` and
@@ -1897,20 +1908,91 @@ void dom_bindings::install_window(context & cx) {
         record("arc", "A", 6);
         record("ellipse", "E", 8);
         record("closePath", "Z", 0);
-        // TODO: honour addPath's optional transform. p5 passes one only when
-        // clipping, and clip() is not implemented either, so the matrix has
-        // nothing to change yet - but a page that transforms an added path and
-        // then draws it will get the untransformed one, silently.
+        // `addPath(other, matrix)` APPLIES THE MATRIX. The verbs are copied
+        // with their coordinates already transformed, which is what makes a
+        // path built once reusable at several places - p5 passes one when it
+        // clips, so this and clip() are the same feature arriving.
+        //
+        // A point-valued operand transforms exactly. An arc's or an ellipse's
+        // RADII do not: a matrix with a skew turns a circle into an ellipse at
+        // an angle, which these verbs cannot express. The centre is placed
+        // correctly and the radii take the matrix's scale, which is right for
+        // the translate/scale/rotate a page actually passes, and is written
+        // down here rather than discovered.
         path->set("addPath",
                   value::object(c.allocate<script::native_object>(
                       "addPath", [steps](context & inner, std::span<value> a) {
                           if (a.empty() || !a[0].is_object()) { return value::undefined(); }
                           const value source =
                               inner.lookup_property(a[0], std::string{path_commands_property});
-                          if (source.is_array()) {
-                              const auto & from =
-                                  static_cast<script::array_object *>(source.as_heap())->items;
+                          if (!source.is_array()) { return value::undefined(); }
+                          const auto & from =
+                              static_cast<script::array_object *>(source.as_heap())->items;
+                          if (a.size() < 2 || !a[1].is_object()) {
                               steps->items.insert(steps->items.end(), from.begin(), from.end());
+                              return value::undefined();
+                          }
+                          const auto part = [&](const char * name, double fallback) {
+                              const value v = inner.lookup_property(a[1], name);
+                              return v.is_undefined() ? fallback : context::to_number(v);
+                          };
+                          const double ma = part("a", 1), mb = part("b", 0);
+                          const double mc = part("c", 0), md = part("d", 1);
+                          const double me = part("e", 0), mf = part("f", 0);
+                          // The scale each axis picks up, for the
+                          // radius-valued operands.
+                          const double sx = std::sqrt(ma * ma + mb * mb);
+                          const double sy = std::sqrt(mc * mc + md * md);
+                          for (const value & step : from) {
+                              if (!step.is_array()) { continue; }
+                              const auto & parts =
+                                  static_cast<script::array_object *>(step.as_heap())->items;
+                              if (parts.empty()) { continue; }
+                              value moved = inner.make_array();
+                              auto * out = static_cast<script::array_object *>(moved.as_heap());
+                              const std::string verb = inner.to_string(parts[0]);
+                              out->items.push_back(parts[0]);
+                              const auto number = [&](std::size_t i) {
+                                  return i < parts.size() ? context::to_number(parts[i]) : 0.0;
+                              };
+                              const auto push_point = [&](std::size_t i) {
+                                  const double x = number(i);
+                                  const double y = number(i + 1);
+                                  out->items.push_back(value::number(ma * x + mc * y + me));
+                                  out->items.push_back(value::number(mb * x + md * y + mf));
+                              };
+                              if (verb == "M" || verb == "L") {
+                                  push_point(1);
+                              } else if (verb == "Q") {
+                                  push_point(1);
+                                  push_point(3);
+                              } else if (verb == "C") {
+                                  push_point(1);
+                                  push_point(3);
+                                  push_point(5);
+                              } else if (verb == "R") {
+                                  push_point(1);
+                                  out->items.push_back(value::number(number(3) * sx));
+                                  out->items.push_back(value::number(number(4) * sy));
+                              } else if (verb == "A") {
+                                  push_point(1);
+                                  out->items.push_back(value::number(number(3) * sx));
+                                  for (std::size_t i = 4; i < parts.size(); ++i) {
+                                      out->items.push_back(parts[i]);
+                                  }
+                              } else if (verb == "E") {
+                                  push_point(1);
+                                  out->items.push_back(value::number(number(3) * sx));
+                                  out->items.push_back(value::number(number(4) * sy));
+                                  for (std::size_t i = 5; i < parts.size(); ++i) {
+                                      out->items.push_back(parts[i]);
+                                  }
+                              } else {
+                                  for (std::size_t i = 1; i < parts.size(); ++i) {
+                                      out->items.push_back(parts[i]);
+                                  }
+                              }
+                              steps->items.push_back(moved);
                           }
                           return value::undefined();
                       })));

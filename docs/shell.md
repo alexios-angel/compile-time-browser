@@ -622,10 +622,26 @@ pixels each render against a committed golden, and `p5-events.html` has none
 because what it draws is a function of input — it is driven by `tools/compare.py`
 through ctbrowser and Chrome at once. Both engines agree on the same clicks.
 
+**`clip()` and `addPath`'s transform (2026-07-29).** The clip region is a
+per-pixel mask rather than a path list: it is an INTERSECTION of arbitrary
+paths, and intersecting two scanline polygons exactly is a clipping-polygon
+algorithm where a mask is one AND per pixel. Held through a `shared_ptr` so
+`save()` copies a pointer rather than the buffer, and carried on the state stack
+because `restore()` is the only thing that removes a clip. Every pixel write
+goes through the same test — fills, text and the axis-rect fast path. `fill()`
+and `clip()` share one scanline walk, so a clip cannot disagree with the fill it
+was derived from about the winding rule.
+
+`addPath(other, matrix)` transforms the verbs as it copies them. A point-valued
+operand transforms exactly; an arc's or an ellipse's RADII do not, because a
+matrix with a skew turns a circle into an ellipse at an angle and these verbs
+cannot express that. The centre is placed correctly and the radii take the
+matrix's scale, which is right for the translate/scale/rotate a page passes.
+
 **Still missing, by name.** WEBGL constructs but refuses: `p5.renderers["webgl"]`
 is a real function and `createCanvas(w, h, WEBGL)` throws a catchable Error
-naming it, which is the scope that was chosen. `clip()` is not implemented, so
-`Path2D.addPath` ignores its optional transform (p5 passes one only when
-clipping). No gradients or patterns — p5 uses neither. `once` and `capture` on a
-listener are accepted and ignored. `localStorage` is in memory and starts empty
-every run, since there is no origin to scope a store to.
+naming it, which is the scope that was chosen. No gradients or patterns — p5
+uses neither. `passive` on a listener is accepted and ignored, which changes
+nothing observable because nothing here optimises on the promise it makes.
+`localStorage` is in memory and starts empty every run, since there is no origin
+to scope a store to.
