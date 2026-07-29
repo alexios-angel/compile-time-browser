@@ -114,6 +114,13 @@ enum class op : std::uint8_t {
     apply,           // a = a.call(c, ...b)
     construct_apply, // a = new a(...b)
 
+    // `get x()` / `set x(v)`. A property that runs code when it is read or
+    // written, which is a different thing from a property that HOLDS a
+    // function - installing a getter as a data property made `obj.x` be the
+    // function rather than call it.
+    define_getter, // a.<b> gets the getter in c
+    define_setter, // a.<b> gets the setter in c
+
     // --- objects and arrays
     new_object, // a = {}
     new_array,  // a = []

@@ -75,6 +75,17 @@ struct closure_object final : heap_object {
         props.emplace_back(std::string{name}, v);
     }
 
+    // A CLASS IS A CLOSURE, so `static get w()` has nowhere else to go. Same
+    // table as an object's, and empty on every function that is not a class
+    // with a static accessor.
+    accessor_table accessors;
+    [[nodiscard]] accessor_entry * find_accessor(std::string_view name) {
+        return accessors.find(name);
+    }
+    void define_accessor(std::string_view name, value getter, value setter) {
+        accessors.define(name, getter, setter);
+    }
+
     const function_proto * proto = nullptr;
     std::vector<value> upvalues; // each one is a cell_object
     // Only meaningful when proto->is_arrow: the `this` in scope where the arrow
@@ -209,7 +220,11 @@ public:
     // One property lookup, shared by get_prop, get_index-with-a-string-key and
     // call_method. Three copies of this is three chances for `a.length` and
     // `a["length"]` to disagree.
-    [[nodiscard]] value lookup_property(value target, const std::string & name) const;
+    // NOT const: an accessor on the chain is called, and that re-enters the VM.
+    [[nodiscard]] value lookup_property(value target, const std::string & name);
+    // Assign through the chain, honouring a setter. Returns false when nothing
+    // took the write, so the caller can fall back to defining an own property.
+    bool assign_through_accessor(value target, const std::string & name, value v);
     // `target[key]` for an arbitrary key value. Numeric keys index an array or
     // a string; anything else is a named lookup. Shared by get_index and by
     // computed method calls, because `a[0]()` and `a['push']()` must both work

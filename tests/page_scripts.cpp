@@ -153,13 +153,14 @@ int main() {
     must_compile_source("Math.max(...[1, 2, 3]);");
     must_compile_source("function f(a, ...rest) { return f(a, ...rest); }");
 
-    // WHAT IS STILL REFUSED, by name. This list has been every entry on it at
-    // some point and is down to the accessors: an object model with no
-    // descriptors has nowhere to put a getter, so `get`/`set` are turned away
-    // rather than quietly installed as data properties. It is what p5.js stops
-    // at today.
-    must_stop_at_source("var o = { get v() { return 1; } };", "object literal get/set accessors");
-    must_stop_at_source("class C { get v() { return 1; } }", "class get/set accessors");
+    // Accessors were the last name on the refusal list, and the object model
+    // has somewhere to put one now. Both spellings compile.
+    must_compile_source("var o = { get v() { return 1; }, set v(x) { this.n = x; } };");
+    must_compile_source("class C { get v() { return 1; } static get w() { return 2; } }");
+    must_compile_source("Object.defineProperty({}, 'x', { get() { return 1; } });");
+    // A labelled BLOCK is not a loop, and `break lbl` out of one is legal.
+    must_compile_source("outer: { if (1) { break outer; } }");
+    must_stop_at_source("outer: { continue outer; }", "names a block, not a loop");
 
     // THE STRUCTURAL LIMITS SAY WHAT THEY WANTED.
     //

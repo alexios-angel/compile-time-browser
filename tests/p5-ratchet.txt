@@ -10,7 +10,7 @@
 # draw, golden) arrive with the work that makes them reachable.
 
 level=3
-blocker=object literal get/set accessors are not in this VM subset
+blocker=`<anonymous>` mentions more than 256 distinct property names; the operand that selects one holds 256. Past that it reads a DIFFERENT property.
 
 # Wall-clock ceiling for lex + parse + compile + run, in milliseconds.
 # Generous on purpose: it is here to catch the compiler's quadratic scans

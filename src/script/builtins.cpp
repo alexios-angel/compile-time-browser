@@ -860,13 +860,119 @@ void install_object(context & cx) {
     using detail::method;
     using detail::new_table;
     object_object * object_ctor = new_table(cx);
+
+    // `Object.defineProperty(o, key, descriptor)` - 51 uses in p5.js, and the
+    // reason the object model grew accessors at all. A descriptor is either
+    // data (`value`) or accessor (`get`/`set`); the two are the same property
+    // described two ways, so defining one removes the other.
+    method(cx, object_ctor, "defineProperty", [](context & c, std::span<value> a) {
+        if (!arg_at(a, 0).is_object() || !arg_at(a, 2).is_object()) { return arg_at(a, 0); }
+        auto * target = static_cast<object_object *>(a[0].as_heap());
+        const std::string key = c.to_string(arg_at(a, 1));
+        auto * descriptor = static_cast<object_object *>(a[2].as_heap());
+        value * getter = descriptor->find("get");
+        value * setter = descriptor->find("set");
+        if (getter != nullptr || setter != nullptr) {
+            target->define_accessor(key, getter == nullptr ? value::undefined() : *getter,
+                                    setter == nullptr ? value::undefined() : *setter);
+            return a[0];
+        }
+        target->erase_accessor(key);
+        value * held = descriptor->find("value");
+        target->set(key, held == nullptr ? value::undefined() : *held);
+        return a[0];
+    });
+    method(cx, object_ctor, "defineProperties", [](context &, std::span<value> a) {
+        if (!arg_at(a, 0).is_object() || !arg_at(a, 1).is_object()) { return arg_at(a, 0); }
+        auto * target = static_cast<object_object *>(a[0].as_heap());
+        auto * all = static_cast<object_object *>(a[1].as_heap());
+        for (const auto & [key, descriptor] : all->props) {
+            if (!descriptor.is_object()) { continue; }
+            auto * d = static_cast<object_object *>(descriptor.as_heap());
+            value * getter = d->find("get");
+            value * setter = d->find("set");
+            if (getter != nullptr || setter != nullptr) {
+                target->define_accessor(key, getter == nullptr ? value::undefined() : *getter,
+                                        setter == nullptr ? value::undefined() : *setter);
+                continue;
+            }
+            target->erase_accessor(key);
+            value * held = d->find("value");
+            target->set(key, held == nullptr ? value::undefined() : *held);
+        }
+        return a[0];
+    });
+    method(cx, object_ctor, "getOwnPropertyDescriptor", [](context & c, std::span<value> a) {
+        if (!arg_at(a, 0).is_object()) { return value::undefined(); }
+        auto * target = static_cast<object_object *>(a[0].as_heap());
+        const std::string key = c.to_string(arg_at(a, 1));
+        object_object * out = new_table(c);
+        if (accessor_entry * entry = target->find_accessor(key)) {
+            out->set("get", entry->getter);
+            out->set("set", entry->setter);
+        } else if (value * held = target->find(key)) {
+            out->set("value", *held);
+            out->set("writable", value::boolean(true));
+        } else {
+            return value::undefined();
+        }
+        out->set("enumerable", value::boolean(true));
+        out->set("configurable", value::boolean(true));
+        return value::object(out);
+    });
+    // `Object.create(proto)` and the two prototype accessors. A real chain has
+    // existed since `extends`; what was missing was any way for a page to reach
+    // it. p5.js uses create 19 times.
+    method(cx, object_ctor, "create", [](context & c, std::span<value> a) {
+        object_object * out = new_table(c);
+        if (arg_at(a, 0).is_object()) { out->prototype = a[0]; }
+        return value::object(out);
+    });
+    method(cx, object_ctor, "getPrototypeOf", [](context &, std::span<value> a) {
+        if (!arg_at(a, 0).is_object()) { return value::null(); }
+        return static_cast<object_object *>(a[0].as_heap())->prototype;
+    });
+    method(cx, object_ctor, "setPrototypeOf", [](context &, std::span<value> a) {
+        if (arg_at(a, 0).is_object()) {
+            static_cast<object_object *>(a[0].as_heap())->prototype = arg_at(a, 1);
+        }
+        return arg_at(a, 0);
+    });
+    method(cx, object_ctor, "getOwnPropertyNames", [](context & c, std::span<value> a) {
+        value out = c.make_array();
+        auto * result = static_cast<array_object *>(out.as_heap());
+        if (arg_at(a, 0).is_object()) {
+            static_cast<object_object *>(a[0].as_heap())->each_own_key([&](const std::string & k) {
+                result->items.push_back(c.string(k));
+            });
+        }
+        return out;
+    });
+    method(cx, object_ctor, "fromEntries", [](context & c, std::span<value> a) {
+        object_object * out = new_table(c);
+        if (arg_at(a, 0).is_array()) {
+            for (const value & pair : static_cast<array_object *>(a[0].as_heap())->items) {
+                if (!pair.is_array()) { continue; }
+                const auto & items = static_cast<array_object *>(pair.as_heap())->items;
+                if (items.size() >= 2) { out->set(c.to_string(items[0]), items[1]); }
+            }
+        }
+        return value::object(out);
+    });
+    // Not modelled: this engine has no writability, so a frozen object is not
+    // actually protected. Returning the object keeps the idiom working; saying
+    // so here is better than a page believing it did something.
+    method(cx, object_ctor, "freeze", [](context &, std::span<value> a) { return arg_at(a, 0); });
+    method(cx, object_ctor, "isFrozen",
+           [](context &, std::span<value>) { return value::boolean(false); });
     method(cx, object_ctor, "keys", [](context & c, std::span<value> a) {
         value out = c.make_array();
         auto * result = static_cast<array_object *>(out.as_heap());
         if (arg_at(a, 0).is_object()) {
-            for (const auto & [key, item] : static_cast<object_object *>(a[0].as_heap())->props) {
-                result->items.push_back(c.string(key));
-            }
+            // An accessor IS a property, and definition order is observable.
+            static_cast<object_object *>(a[0].as_heap())->each_own_key([&](const std::string & k) {
+                result->items.push_back(c.string(k));
+            });
         }
         return out;
     });

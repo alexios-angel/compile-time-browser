@@ -466,6 +466,69 @@ void test_regex() {
     expect("return /(?<=x)y/.test('xy');", "false");
 }
 
+// ACCESSORS. A property that runs code when it is read, which is a different
+// thing from a property that HOLDS a function - installing a getter as a data
+// property made `obj.v` be the function rather than call it, and a setter of
+// the same name overwrote the getter outright.
+//
+// They live in a table BESIDE the data properties rather than widening every
+// property into a descriptor, so the dozen places that iterate props - the DOM
+// bindings among them - were untouched, and an object with no accessors pays
+// one bool.
+void test_accessors() {
+    expect("const o = { get v() { return 42; } }; return o.v;", "42");
+    expect("const o = { n: 0, set v(x) { this.n = x * 2; } }; o.v = 21; return o.n;", "42");
+    expect("const o = { n: 1, get v() { return this.n; }, set v(x) { this.n = x; } }; "
+           "o.v = 9; return o.v;",
+           "9");
+    // a getter is CALLED, not returned
+    expect("const o = { get v() { return 1; } }; return typeof o.v;", "number");
+    // on a class, and on its prototype so every instance sees it
+    expect("class C { constructor() { this.n = 3; } get double() { return this.n * 2; } } "
+           "return new C().double;",
+           "6");
+    expect("class C { constructor() { this.n = 0; } set v(x) { this.n = x + 1; } } "
+           "const c = new C(); c.v = 4; return c.n;",
+           "5");
+    // a static accessor lives on the constructor
+    expect("class C { static get name2() { return 'C'; } } return C.name2;", "C");
+    // an accessor INHERITED through extends still reads the instance
+    expect("class B { get kind() { return 'b:' + this.n; } } "
+           "class D extends B { constructor() { super(); this.n = 7; } } "
+           "return new D().kind;",
+           "b:7");
+    // a write with no setter is discarded rather than shadowing the getter
+    expect("const o = { get v() { return 1; } }; o.v = 99; return o.v;", "1");
+    // an own DATA property wins over an inherited accessor
+    expect("class B { get v() { return 'proto'; } } class D extends B {} "
+           "const d = new D(); return d.v;",
+           "proto");
+    // and Object.keys sees an accessor, because it is a property
+    expect("const o = { a: 1, get b() { return 2; } }; return Object.keys(o).join(',');", "a,b");
+}
+
+void test_object_descriptors() {
+    expect("const o = {}; Object.defineProperty(o, 'x', { value: 5 }); return o.x;", "5");
+    expect("const o = { n: 2 }; Object.defineProperty(o, 'x', { get() { return this.n * 3; } }); "
+           "return o.x;",
+           "6");
+    expect("const o = {}; Object.defineProperty(o, 'x', { get() { return 1; } }); "
+           "const d = Object.getOwnPropertyDescriptor(o, 'x'); return typeof d.get;",
+           "function");
+    // create + getPrototypeOf round-trip
+    expect("const base = { greet() { return 'hi'; } }; const o = Object.create(base); "
+           "return o.greet();",
+           "hi");
+    expect("const base = {}; const o = Object.create(base); "
+           "return Object.getPrototypeOf(o) === base;",
+           "true");
+    expect("const o = {}; Object.setPrototypeOf(o, { v: 8 }); return o.v;", "8");
+    expect("const o = { a: 1, get b() { return 2; } }; "
+           "return Object.getOwnPropertyNames(o).join(',');",
+           "a,b");
+    expect("return Object.fromEntries([['a', 1], ['b', 2]]).b;", "2");
+}
+
 void test_typeof() {
     diff_vs_v1("typeof 1", "number");
     diff_vs_v1("typeof 'x'", "string");
@@ -1170,6 +1233,8 @@ int main() {
     test_destructuring_assignment();
     test_destructuring_in_for_of();
     test_regex();
+    test_accessors();
+    test_object_descriptors();
     test_typeof();
     test_variables_and_control_flow();
     test_increment_semantics();

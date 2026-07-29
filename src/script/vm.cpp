@@ -123,6 +123,10 @@ void context::mark_object(heap_object * o) {
     case heap_kind::object: {
         auto * obj = static_cast<object_object *>(o);
         for (const auto & [name, v] : obj->props) { mark(v); }
+        for (const accessor_entry & entry : obj->accessors.entries) {
+            mark(entry.getter);
+            mark(entry.setter);
+        }
         mark(obj->prototype);
         break;
     }
@@ -135,6 +139,10 @@ void context::mark_object(heap_object * o) {
         // ...and its own properties, which is where a class keeps its statics
         // and its prototype.
         for (const auto & [name, v] : closure->props) { mark(v); }
+        for (const accessor_entry & entry : closure->accessors.entries) {
+            mark(entry.getter);
+            mark(entry.setter);
+        }
         // ...and an arrow's captured `this`, which nothing else can reach.
         mark(closure->captured_this);
         break;
@@ -164,7 +172,31 @@ value context::lookup_index(value target, value key) {
     return lookup_property(target, to_string(key));
 }
 
-value context::lookup_property(value target, const std::string & name) const {
+bool context::assign_through_accessor(value target, const std::string & name, value v) {
+    if (!target.is_object()) { return false; }
+    auto * obj = static_cast<object_object *>(target.as_heap());
+    for (int depth = 0; obj != nullptr && depth < 64; ++depth) {
+        // An own DATA property wins outright: it is the same property, and it
+        // is not an accessor, so nothing on the prototype gets a say.
+        if (obj->find(name) != nullptr) { return false; }
+        if (accessor_entry * entry = obj->find_accessor(name)) {
+            if (entry->setter.is_callable()) {
+                const value args[1] = {v};
+                (void)call(entry->setter, args, target);
+                return true;
+            }
+            // Getter with no setter: the write is DISCARDED, as in strict-mode
+            // JavaScript minus the throw. Silently defining a data property
+            // over it would shadow the getter forever.
+            return true;
+        }
+        obj = obj->prototype.is_object() ? static_cast<object_object *>(obj->prototype.as_heap())
+                                         : nullptr;
+    }
+    return false;
+}
+
+value context::lookup_property(value target, const std::string & name) {
     // Own properties first: a page that writes `arr.length = 0` or shadows a
     // method on one object must not be overridden by the prototype.
     if (target.is_object()) {
@@ -175,6 +207,17 @@ value context::lookup_property(value target, const std::string & name) const {
         auto * obj = static_cast<object_object *>(target.as_heap());
         for (int depth = 0; obj != nullptr && depth < 64; ++depth) {
             if (value * found = obj->find(name)) { return *found; }
+            // An accessor found anywhere on the chain is CALLED, with the
+            // original target as its receiver - a getter defined on a prototype
+            // reads the instance, which is the entire point of putting one
+            // there. The has_accessors test is why this costs nothing on the
+            // objects that have none, which is nearly all of them.
+            if (accessor_entry * entry = obj->find_accessor(name)) {
+                if (entry->getter.is_callable()) {
+                    return call(entry->getter, std::span<const value>{}, target);
+                }
+                return value::undefined(); // set-only: reading gives undefined
+            }
             obj = obj->prototype.is_object()
                       ? static_cast<object_object *>(obj->prototype.as_heap())
                       : nullptr;
@@ -212,8 +255,15 @@ value context::lookup_property(value target, const std::string & name) const {
         return value::undefined();
     }
     if (target.is_kind(heap_kind::function)) {
-        if (value * found = static_cast<closure_object *>(target.as_heap())->find(name)) {
-            return *found;
+        auto * closure = static_cast<closure_object *>(target.as_heap());
+        if (value * found = closure->find(name)) { return *found; }
+        // `static get w()` on a class - the constructor IS the closure, so its
+        // accessors live here rather than on any object.
+        if (accessor_entry * entry = closure->find_accessor(name)) {
+            if (entry->getter.is_callable()) {
+                return call(entry->getter, std::span<const value>{}, target);
+            }
+            return value::undefined();
         }
     }
     return value::undefined();
@@ -640,6 +690,21 @@ value context::run_loop(std::size_t stop_depth) {
             }
             break;
 
+        case op::define_getter:
+        case op::define_setter: {
+            const bool getter = in.code == op::define_getter;
+            const value g = getter ? reg(in.c) : value::undefined();
+            const value st = getter ? value::undefined() : reg(in.c);
+            if (reg(in.a).is_object()) {
+                static_cast<object_object *>(reg(in.a).as_heap())
+                    ->define_accessor(fn.names[in.b], g, st);
+            } else if (reg(in.a).is_kind(heap_kind::function)) {
+                // a `static get` on a class, which IS the constructor closure
+                static_cast<closure_object *>(reg(in.a).as_heap())
+                    ->define_accessor(fn.names[in.b], g, st);
+            }
+        } break;
+
         case op::apply:
         case op::construct_apply: {
             // The arguments arrived as an ARRAY because their count was not
@@ -684,9 +749,23 @@ value context::run_loop(std::size_t stop_depth) {
         case op::get_prop: reg(in.a) = lookup_property(reg(in.b), fn.names[in.c]); break;
         case op::set_prop:
             if (reg(in.a).is_object()) {
-                static_cast<object_object *>(reg(in.a).as_heap())->set(fn.names[in.b], reg(in.c));
+                // A SETTER ON THE CHAIN TAKES THE WRITE, and only if none does
+                // is an own data property defined. Getting this backwards is
+                // how a setter silently stops running: the write lands on the
+                // instance and shadows the accessor from then on.
+                if (!assign_through_accessor(reg(in.a), fn.names[in.b], reg(in.c))) {
+                    static_cast<object_object *>(reg(in.a).as_heap())
+                        ->set(fn.names[in.b], reg(in.c));
+                }
             } else if (reg(in.a).is_kind(heap_kind::function)) {
-                static_cast<closure_object *>(reg(in.a).as_heap())->set(fn.names[in.b], reg(in.c));
+                auto * closure = static_cast<closure_object *>(reg(in.a).as_heap());
+                if (accessor_entry * entry = closure->find_accessor(fn.names[in.b]);
+                    entry != nullptr && entry->setter.is_callable()) {
+                    const value args[1] = {reg(in.c)};
+                    (void)call(entry->setter, args, reg(in.a));
+                } else {
+                    closure->set(fn.names[in.b], reg(in.c));
+                }
             }
             break;
         case op::get_index: reg(in.a) = lookup_index(reg(in.b), reg(in.c)); break;
@@ -819,10 +898,11 @@ value context::run_loop(std::size_t stop_depth) {
             value out = make_array();
             auto * keys = static_cast<array_object *>(out.as_heap());
             if (reg(in.b).is_object()) {
-                for (const auto & [name, item] :
-                     static_cast<object_object *>(reg(in.b).as_heap())->props) {
-                    keys->items.push_back(string(name));
-                }
+                // In DEFINITION ORDER, data and accessors interleaved - which
+                // is what a page sees from for-in and has to match Object.keys.
+                static_cast<object_object *>(reg(in.b).as_heap())
+                    ->each_own_key(
+                        [&](const std::string & name) { keys->items.push_back(string(name)); });
             } else if (reg(in.b).is_array()) {
                 const std::size_t n =
                     static_cast<array_object *>(reg(in.b).as_heap())->items.size();

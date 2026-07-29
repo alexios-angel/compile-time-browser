@@ -191,16 +191,101 @@ struct array_object final : heap_object {
 // property access, which is the single largest interpreter cost there is.
 // This is the slot a shape/inline-cache design replaces later; the map is
 // already the right shape for that, since it hands back a stable index.
+// One `get x()` / `set x(v)` pair, and the table they live in.
+//
+// A property is EITHER data or accessor, never both, which is what lets this
+// sit BESIDE the data properties instead of widening every one of them into a
+// descriptor. Widening would have touched every place that iterates `props` -
+// the DOM bindings among them, whose whole design is that a live property is a
+// periodic re-`set()` of a plain data property.
+//
+// Shared by objects and closures because a CLASS is a closure: `static get w()`
+// has to go somewhere, and that somewhere is the constructor.
+struct accessor_entry {
+    std::string key;
+    value getter;
+    value setter;
+    // How many DATA properties existed when this accessor was defined.
+    // Property order is observable in JavaScript - Object.keys and for-in both
+    // report insertion order across data and accessors alike - and two separate
+    // tables lose the interleaving. Recording the position restores it without
+    // giving every data property a sequence number it would otherwise not need.
+    std::uint32_t after = 0;
+};
+
+struct accessor_table {
+    std::vector<accessor_entry> entries;
+    // Empty on the overwhelming majority of objects, so this bool is what keeps
+    // property lookup as fast as it was.
+    bool any = false;
+
+    [[nodiscard]] accessor_entry * find(std::string_view name) {
+        if (!any) { return nullptr; }
+        for (accessor_entry & entry : entries) {
+            if (entry.key == name) { return &entry; }
+        }
+        return nullptr;
+    }
+    void define(std::string_view name, value getter, value setter, std::uint32_t after = 0) {
+        if (accessor_entry * existing = find(name)) {
+            if (!getter.is_undefined()) { existing->getter = getter; }
+            if (!setter.is_undefined()) { existing->setter = setter; }
+            return;
+        }
+        entries.push_back(accessor_entry{std::string{name}, getter, setter, after});
+        any = true;
+    }
+    bool erase(std::string_view name) {
+        for (std::size_t i = 0; i < entries.size(); ++i) {
+            if (entries[i].key == name) {
+                entries.erase(entries.begin() + static_cast<std::ptrdiff_t>(i));
+                any = !entries.empty();
+                return true;
+            }
+        }
+        return false;
+    }
+};
+
 struct object_object final : heap_object {
     std::vector<std::pair<std::string, value>> props;
     flat_map<std::string, std::uint32_t> index;
     value prototype = value::null();
+
+    accessor_table accessors;
 
     object_object() : heap_object(heap_kind::object) {}
 
     [[nodiscard]] value * find(std::string_view name) {
         const auto it = index.find(std::string{name});
         return it == index.end() ? nullptr : &props[it->second].second;
+    }
+    [[nodiscard]] accessor_entry * find_accessor(std::string_view name) {
+        return accessors.find(name);
+    }
+    // Defining an accessor removes any data property of the same name: they are
+    // the same property, described two ways.
+    void define_accessor(std::string_view name, value getter, value setter) {
+        (void)erase(name);
+        accessors.define(name, getter, setter, static_cast<std::uint32_t>(props.size()));
+    }
+    bool erase_accessor(std::string_view name) { return accessors.erase(name); }
+
+    // Every own property name, in the order they were defined. The one place
+    // that knows how the two tables interleave, so Object.keys, for-in and
+    // getOwnPropertyNames cannot disagree about it.
+    template <typename Fn> void each_own_key(Fn && visit) const {
+        std::size_t emitted = 0;
+        for (std::size_t i = 0; i <= props.size(); ++i) {
+            for (const accessor_entry & entry : accessors.entries) {
+                if (entry.after == i) {
+                    visit(entry.key);
+                    ++emitted;
+                }
+            }
+            if (i < props.size()) { visit(props[i].first); }
+        }
+        (void)emitted;
     }
     void set(std::string_view name, value v) {
         if (value * existing = find(name)) {

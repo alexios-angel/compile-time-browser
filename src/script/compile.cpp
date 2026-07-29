@@ -52,7 +52,16 @@ public:
         : ast_(tree), current_ast_(&tree), out_(out) {}
 
     // --- AST access -------------------------------------------------------
+    // A NEGATIVE INDEX IS "NOTHING", not an address.
+    //
+    // Every fixed child slot is -1 when absent, and an array literal's element
+    // list holds -1 for a hole - so `at(x).kind` on an unchecked index read
+    // past the end of the pool and segfaulted. Returning an empty node makes a
+    // missed check compile to nothing instead of crashing, which is the right
+    // failure for a compiler to have.
     [[nodiscard]] const vp::node & at(std::int32_t i) const {
+        static const vp::node nothing{vp::nk::empty, ""};
+        if (i < 0 || static_cast<std::size_t>(i) >= current_ast_->nodes.size()) { return nothing; }
         return current_ast_->nodes[static_cast<std::size_t>(i)];
     }
 
@@ -984,9 +993,33 @@ public:
     // anything else is legal JS but nothing can target it except `break`, and
     // `break` out of a plain block is vanishingly rare.
     void compile_labeled(const vp::node & n) {
-        pending_label_ = std::string{n.text};
+        // A label on a LOOP or a switch is picked up by that statement, which
+        // owns the break and continue targets. A label on anything else - most
+        // often a bare block - has no loop to hand it to, and `break lbl` out
+        // of one is legal JavaScript that used to be refused outright.
+        //
+        // The mechanism is already there: a loop_context is a label plus a list
+        // of jumps to patch. This pushes one with nothing to continue TO, so
+        // `continue lbl` still fails (correctly - there is no iteration), and
+        // `break lbl` lands after the block.
+        const vp::nk labelled = n.a >= 0 ? at(n.a).kind : vp::nk::empty;
+        const bool owns_its_label = labelled == vp::nk::while_stmt || labelled == vp::nk::do_stmt ||
+                                    labelled == vp::nk::for_stmt ||
+                                    labelled == vp::nk::forof_stmt ||
+                                    labelled == vp::nk::switch_stmt || labelled == vp::nk::labeled;
+        if (owns_its_label) {
+            pending_label_ = std::string{n.text};
+            compile_stmt(n.a);
+            pending_label_.clear();
+            return;
+        }
+        loops_.push_back(loop_context{std::string{n.text}, {}, {}, handler_depth_});
         compile_stmt(n.a);
-        pending_label_.clear();
+        patch_breaks(loops_.back());
+        if (!loops_.back().continues.empty()) {
+            fail("`continue " + std::string{n.text} + "` names a block, not a loop");
+        }
+        loops_.pop_back();
     }
 
     void compile_while(const vp::node & n) {
@@ -2226,17 +2259,16 @@ public:
             if (m.text == "constructor" && m.c == 1) { continue; }
             if (m.c == 0 && (m.d & 1) == 0) { continue; } // an instance field; handled above
             if (m.c == 2) {
-                // A GETTER IS NOT A DATA PROPERTY, and installing it as one is
-                // the last silent mis-compilation in the compiler: `get v()`
-                // made `obj.v` BE the function rather than call it, and a `set`
-                // of the same name overwrote the getter outright. Object
-                // literals already refused this; a class body did not, only
-                // because nothing checked m.c here.
-                //
-                // Refused until the object model has descriptors to put one in.
-                fail("class get/set accessors are not in this VM subset - the object model has "
-                     "no accessors (" +
-                     std::string{m.text} + ")");
+                // An accessor. It goes on the prototype like a method - or on
+                // the constructor when static - and `d` bit2 says which half.
+                // Installing it as a DATA property, which is what happened
+                // before, made `obj.v` be the function rather than call it, and
+                // a `set` of the same name overwrote the getter outright.
+                compile_expr(m.b, slot);
+                const std::uint8_t name = name_operand(std::string{m.text});
+                const std::uint8_t target = (m.d & 1) != 0 ? dst : prototype_reg;
+                proto().emit(instruction{(m.d & 4) != 0 ? op::define_setter : op::define_getter,
+                                         target, name, slot});
                 continue;
             }
             if (m.b < 0) { continue; }
@@ -2292,6 +2324,15 @@ public:
         const std::uint32_t mark = reg_mark();
         for (const std::int32_t element : kids(n)) {
             const std::uint8_t v = alloc_reg();
+            // A HOLE. `[, x]` and `[a, , b]` are legal, and an element list is
+            // the one place kids() yields -1 - which is why at() refuses a
+            // negative index rather than reading past the pool.
+            if (element < 0) {
+                proto().emit(instruction{op::load_undef, v});
+                proto().emit(instruction{op::append, dst, v});
+                release_to(mark);
+                continue;
+            }
             if (at(element).kind == vp::nk::spread) {
                 // `[...a]` appends a's ELEMENTS, not a itself. Compiled as an
                 // index loop rather than an opcode, because that is all it is.
@@ -2347,10 +2388,14 @@ public:
                 return;
             }
             if (prop.c == 3) {
-                // get/set accessors need a property that runs code on read,
-                // which this VM's objects do not have.
-                fail("object literal get/set accessors are not in this VM subset");
-                return;
+                // An accessor, not a data property. `d` bit2 says which half.
+                const std::uint8_t fnreg = alloc_reg();
+                compile_expr(prop.b, fnreg);
+                const std::uint8_t name = name_operand(decode_string_literal(prop.text));
+                proto().emit(instruction{(prop.d & 4) != 0 ? op::define_setter : op::define_getter,
+                                         dst, name, fnreg});
+                release_to(mark);
+                continue;
             }
             const std::uint8_t v = alloc_reg();
             if (prop.b >= 0) {
