@@ -238,6 +238,10 @@ public:
         auto * o = static_cast<object_object *>(made.as_heap());
         o->set("name", string(std::string{kind}));
         o->set("message", string(message));
+        // The frames it happened on, exactly as a constructed Error gets them -
+        // a page catching a TypeError the VM raised should be able to report
+        // where as easily as one it threw itself.
+        o->set("stack", string(std::string{kind} + ": " + message + current_stack()));
         // On the Error prototype, so `e instanceof Error` and `e.toString()`
         // work on a thrown one exactly as on `new TypeError(...)`.
         if (object_object * table = prototype(proto_kind::error)) {
@@ -285,6 +289,48 @@ public:
         }
     }
     [[nodiscard]] std::size_t pending_microtasks() const noexcept { return microtasks_.size(); }
+
+    // THE STACK AS IT IS RIGHT NOW.
+    //
+    // "the value is undefined, not a function" is a fact about one instruction;
+    // which functions were running when it happened is what says where to look.
+    // In a 4.5 MB bundle that is the difference between a diagnostic and a
+    // shrug.
+    //
+    // Split out of raise() because a CONSTRUCTED error wants it too: `new
+    // Error()` had an empty `stack`, so a library that reports where it went
+    // wrong - p5's Friendly Error System does, and so does any page catching an
+    // exception - had nothing to report. Costs nothing until something asks.
+    //
+    // The function's INDEX as well as its name: most of a bundle's functions
+    // are anonymous, and the index is what lets `p5-ratchet.py --source N` be
+    // pointed straight at the failing code.
+    [[nodiscard]] std::string current_stack(std::size_t skip = 0) const {
+        std::string trace;
+        int shown = 0;
+        const std::size_t depth = frames_.size() > skip ? frames_.size() - skip : 0;
+        for (std::size_t i = depth; i-- > 0 && shown < 12; ++shown) {
+            const function_proto * fp = frames_[i].proto;
+            if (fp == nullptr) { continue; }
+            std::size_t which = 0;
+            const program * owner =
+                frames_[i].closure != nullptr && frames_[i].closure->owner != nullptr
+                    ? frames_[i].closure->owner
+                    : program_;
+            if (owner != nullptr) {
+                for (std::size_t k = 0; k < owner->functions.size(); ++k) {
+                    if (&owner->functions[k] == fp) {
+                        which = k;
+                        break;
+                    }
+                }
+            }
+            trace += "\n        at " + (fp->name.empty() ? std::string{"<anonymous>"} : fp->name) +
+                     " (fn#" + std::to_string(which) + " +" + std::to_string(frames_[i].ip) + ")";
+        }
+        if (depth > 12) { trace += "\n        ... " + std::to_string(depth - 12) + " more"; }
+        return trace;
+    }
 
     [[nodiscard]] bool failed() const noexcept { return failed_; }
     [[nodiscard]] const std::string & error() const noexcept { return error_; }
@@ -577,43 +623,10 @@ private:
     [[nodiscard]] value execute(const program & prog, const function_proto & entry);
     [[nodiscard]] value run_loop(std::size_t stop_depth);
     // A FAILURE COMES WITH THE STACK IT HAPPENED ON.
-    //
-    // "the value is undefined, not a function" is a fact about one instruction;
-    // which functions were running when it happened is what says where to look.
-    // Costs nothing until something fails, and in a 4.5 MB bundle it is the
-    // difference between a diagnostic and a shrug.
     void raise(std::string message) {
         if (failed_) { return; }
         failed_ = true;
-        error_ = std::move(message);
-        std::string trace;
-        int shown = 0;
-        for (std::size_t i = frames_.size(); i-- > 0 && shown < 12; ++shown) {
-            const function_proto * fp = frames_[i].proto;
-            if (fp == nullptr) { continue; }
-            // The function's INDEX as well as its name: most of a bundle's
-            // functions are anonymous, and the index is what lets a
-            // disassembler be pointed straight at the failing instruction.
-            std::size_t which = 0;
-            const program * owner =
-                frames_[i].closure != nullptr && frames_[i].closure->owner != nullptr
-                    ? frames_[i].closure->owner
-                    : program_;
-            if (owner != nullptr) {
-                for (std::size_t k = 0; k < owner->functions.size(); ++k) {
-                    if (&owner->functions[k] == fp) {
-                        which = k;
-                        break;
-                    }
-                }
-            }
-            trace += "\n        at " + (fp->name.empty() ? std::string{"<anonymous>"} : fp->name) +
-                     " (fn#" + std::to_string(which) + " +" + std::to_string(frames_[i].ip) + ")";
-        }
-        if (frames_.size() > 12) {
-            trace += "\n        ... " + std::to_string(frames_.size() - 12) + " more";
-        }
-        error_ += trace;
+        error_ = std::move(message) + current_stack();
     }
 
     // Find the innermost live handler and jump to it, discarding every call

@@ -1604,6 +1604,37 @@ void test_spread() {
 // never boxed at all - which is why every simpler test of destructured
 // parameters passed. colorjs's `toGamutCSS(origin, { space } = {})` is exactly
 // this shape, and got a cell where it wanted a colour space.
+// `new Error().stack` CARRIES THE FRAMES.
+//
+// It said "TypeError: whatever" and stopped there - which reads as a stack to
+// code that only prints it, and is useless to code that wants to know WHERE.
+// Reporting the site of an error is the normal reason to look at one; p5's
+// Friendly Error System is exactly that, and so is any page logging what it
+// caught. The VM already built a trace when it raised a fault; a constructed
+// error simply never asked for one.
+void test_error_stacks() {
+    expect_result("function inner() { return new Error('boom'); }"
+                  "function outer() { return inner(); }"
+                  "return outer().stack.indexOf('Error: boom') === 0;",
+                  "true");
+    // The frame that WROTE `new Error` is named first - a native pushes no
+    // frame of its own, so the top of the stack is already the right one.
+    expect_result("function inner() { return new Error('boom'); }"
+                  "function outer() { return inner(); }"
+                  "const s = outer().stack;"
+                  "return (s.indexOf('at inner') > 0) + ',' + (s.indexOf('at outer') > 0);",
+                  "true,true");
+    expect_result("return new TypeError('t').stack.indexOf('TypeError: t') === 0;", "true");
+    // No message is the bare name, not "Error: undefined".
+    expect_result("return new Error().stack.indexOf('Error') === 0;", "true");
+    expect_result("return new Error().stack.indexOf('undefined') < 0;", "true");
+    // ...and an error the VM itself threw is no different, so a page can report
+    // where a TypeError came from whether it threw it or the engine did.
+    expect_result("try { undefined(); } catch (e) { return e.stack.indexOf('at ') > 0; }"
+                  "return false;",
+                  "true");
+}
+
 void test_captured_destructured_parameters() {
     expect_result("const o = { id: 'x' };"
                   "function f(n, { space } = {}) { const read = () => space; return read().id; }"
@@ -2134,6 +2165,7 @@ int main() {
     test_bitwise_and_friends();
     test_delete_in_instanceof();
     test_object_literal_keys();
+    test_error_stacks();
     test_captured_destructured_parameters();
     test_to_primitive();
     test_template_holes_capture();

@@ -2639,10 +2639,20 @@ void install_errors(context & cx) {
             auto * made = static_cast<object_object *>(self.as_heap());
             if (!made->prototype.is_object()) { made->prototype = value::object(proto); }
             if (!a.empty()) { made->set("message", c.string(c.to_string(a[0]))); }
-            // `stack` is a string a page prints, so it exists and says what it
-            // knows rather than being absent and read as undefined.
-            made->set("stack", c.string(c.to_string(c.lookup_property(self, "name")) + ": " +
-                                        (a.empty() ? std::string{} : c.to_string(a[0]))));
+            // `stack` CARRIES THE FRAMES, not just the message.
+            //
+            // It said "TypeError: whatever" and stopped there, which reads as a
+            // stack to code that only prints it and is useless to code that
+            // wants to know WHERE - and a library that reports the site of an
+            // error is the normal reason to look at one. p5's Friendly Error
+            // System is exactly that.
+            //
+            // No frame is skipped: a native pushes none of its own, so the top
+            // of the stack is already the JS function that wrote `new Error`,
+            // which is the line a reader wants named first.
+            made->set("stack", c.string(c.to_string(c.lookup_property(self, "name")) +
+                                        (a.empty() ? std::string{} : ": " + c.to_string(a[0])) +
+                                        c.current_stack()));
             return self;
         });
         proto->set("constructor", value::object(ctor));
