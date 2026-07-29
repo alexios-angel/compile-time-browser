@@ -2931,13 +2931,17 @@ void install_function(context & cx) {
 // correctness on write, which is where a shortcut would have hurt: the element
 // coercion is real, so a Uint8ClampedArray clamps and a Uint8Array wraps.
 //
-// TODO: an ArrayBuffer should be SHARED storage. Two views over one buffer do
-// not see each other's writes today, because each view owns its elements.
-// The gap that remains, and it is a real one: an ArrayBuffer here is not
-// shared storage. Two views over the same buffer do not see each other's
-// writes, because each view owns its elements. p5 uses views over their own
-// buffers, and a page that aliases two would get wrong answers - so that is
-// said here rather than discovered.
+// AN ARRAYBUFFER IS SHARED STORAGE. A view over the WHOLE of one is that
+// storage rather than a copy, so two views see each other's writes - which is
+// the entire reason a page wraps `await res.arrayBuffer()` in one.
+//
+// The gap that remains is a SUB-RANGE view: `new Uint8Array(buf, 4, 8)` cannot
+// be expressed while a view owns its own elements, and it REFUSES with a
+// RangeError rather than handing back a copy that would silently not alias.
+// Expressing it wants a view to address a span of someone else's storage, which
+// is a change to every one of the ~176 places that reach for `array_object
+// ::items` - worth doing when something needs it, and worth refusing rather
+// than faking until then.
 void install_typed_arrays(context & cx) {
     using detail::method;
     using detail::new_table;
@@ -3000,7 +3004,30 @@ void install_typed_arrays(context & cx) {
                         value::number(coerce_element(kind, context::to_number(v))));
                 }
             } else if (from.is_object()) {
-                // an ArrayBuffer, or anything else with a byteLength/length
+                // AN ARRAYBUFFER IS SHARED STORAGE, so a view over the whole of
+                // one IS that storage rather than a copy of it: two views over
+                // a buffer see each other's writes, which is the entire reason
+                // a page wraps `await res.arrayBuffer()` in one.
+                //
+                // A SUB-RANGE view - `new Uint8Array(buf, 4, 8)` - cannot be
+                // expressed while a view owns its own elements, so it REFUSES
+                // rather than handing back a silently independent copy. That is
+                // the same choice WEBGL and `new Function` were given: a page
+                // that reaches the gap is told.
+                const value bytes = c.lookup_property(from, "__bytes");
+                if (bytes.is_array()) {
+                    if (a.size() > 1) {
+                        c.throw_error("RangeError",
+                                      "a typed array over PART of an ArrayBuffer is not "
+                                      "implemented - a view owns its elements here, so an "
+                                      "offset view could not see writes through the buffer");
+                        return value::undefined();
+                    }
+                    auto * shared = static_cast<array_object *>(bytes.as_heap());
+                    shared->elements = kind;
+                    return bytes;
+                }
+                // Anything else with a length: a fresh zeroed view of that size.
                 const double length = context::to_number(c.lookup_property(from, "length"));
                 const double n = std::isnan(length)
                                      ? context::to_number(c.lookup_property(from, "byteLength"))
@@ -3017,11 +3044,21 @@ void install_typed_arrays(context & cx) {
     }
 
     // An ArrayBuffer is a LENGTH here, not storage - see the note above.
+    // AN ARRAYBUFFER OWNS BYTES, and hands the same storage to every view made
+    // over the whole of it. It used to be a length and nothing else, so two
+    // views were silently independent and a page that wrote through one and
+    // read through the other got zeroes.
     cx.define_native("ArrayBuffer", [](context & c, std::span<value> a) {
         value out = c.make_object();
         auto * made = static_cast<object_object *>(out.as_heap());
-        made->set("byteLength", value::number(std::max(0.0, num_at(a, 0))));
-        made->set("length", value::number(std::max(0.0, num_at(a, 0))));
+        const auto n = static_cast<std::size_t>(std::max(0.0, num_at(a, 0)));
+        made->set("byteLength", value::number(static_cast<double>(n)));
+        made->set("length", value::number(static_cast<double>(n)));
+        value bytes = c.make_array();
+        auto * store = static_cast<array_object *>(bytes.as_heap());
+        store->elements = element_kind::u8;
+        store->items.assign(n, value::number(0));
+        made->set("__bytes", bytes);
         return out;
     });
 }

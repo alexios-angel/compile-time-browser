@@ -1630,6 +1630,37 @@ void test_spread() {
 // (`closure_object::owner`), so a frame from one program can call into another;
 // and the context OWNS the programs it compiles, so they outlive the closures
 // holding pointers into them.
+// AN ARRAYBUFFER IS SHARED STORAGE.
+//
+// It used to be a length and nothing else, so two views over one buffer were
+// silently independent: a page that wrote through one and read through the
+// other got zeroes. A view over the WHOLE of a buffer is now that storage
+// rather than a copy of it, which is the entire reason a page wraps
+// `await res.arrayBuffer()` in one.
+void test_array_buffer_is_shared() {
+    expect_result("return new ArrayBuffer(4).byteLength;", "4");
+    expect_result("const buf = new ArrayBuffer(4);"
+                  "const a = new Uint8Array(buf), b = new Uint8Array(buf);"
+                  "a[0] = 42; return b[0];",
+                  "42");
+    expect_result("const buf = new ArrayBuffer(4);"
+                  "const a = new Uint8Array(buf), b = new Uint8Array(buf);"
+                  "b[1] = 7; return a[1];",
+                  "7");
+    expect_result("const buf = new ArrayBuffer(4); return new Uint8Array(buf).length;", "4");
+    // The view still coerces on write, so the element kind means something.
+    expect_result("const a = new Uint8Array(new ArrayBuffer(2)); a[0] = 300; return a[0];", "44");
+    // A view made WITHOUT a buffer owns its own elements, as before.
+    expect_result("const buf = new ArrayBuffer(2); const shared = new Uint8Array(buf);"
+                  "const own = new Uint8Array(2); own[0] = 9; shared[0] = 1; return own[0];",
+                  "9");
+    // A SUB-RANGE view cannot be expressed while a view owns its elements, so
+    // it refuses rather than handing back a silently independent copy.
+    expect_result("try { new Uint8Array(new ArrayBuffer(4), 1, 2); } catch (e) { return e.name; }"
+                  "return 'not thrown';",
+                  "RangeError");
+}
+
 void test_new_function() {
     expect_result("return typeof new Function();", "function");
     expect_result("return new Function('return 41 + 1;')();", "42");
@@ -2249,6 +2280,7 @@ int main() {
     test_bitwise_and_friends();
     test_delete_in_instanceof();
     test_object_literal_keys();
+    test_array_buffer_is_shared();
     test_new_function();
     test_string_replace();
     test_error_stacks();

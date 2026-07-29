@@ -179,7 +179,10 @@ value `context::run` returns.
 **Still missing, by name.** No generators, so no `yield`. `new Function(body)` exists as a global and refuses when called - the
 VM must own programs compiled at run time. `arguments` is a real Array rather
 than the spec's array-like, so `Array.isArray(arguments)` is true here and false
-in a browser. `structuredClone` covers data only. Regex has no lookbehind and no
-backreferences. Strings are BYTES, so `normalize` is the identity and
+in a browser. `structuredClone` covers data only. An ArrayBuffer is shared storage for a view
+over the WHOLE of it; a sub-range view (`new Uint8Array(buf, 4, 8)`) refuses
+with a RangeError, because expressing it wants a view to address a span of
+someone else's storage rather than own its elements. Regex has no lookbehind and
+no backreferences. Strings are BYTES, so `normalize` is the identity and
 `codePointAt` agrees with `charCodeAt` rather than pretending to a UTF-16 view
 nothing else here has.
