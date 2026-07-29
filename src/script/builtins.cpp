@@ -1203,16 +1203,157 @@ void install_string(context & cx) {
         }
         return out;
     });
-    method(cx, string_proto, "replace", [](context & c, std::span<value> a) {
-        std::string s = detail::this_string(c);
-        const std::string from = str_at(c, a, 0);
-        const std::string to = str_at(c, a, 1);
-        if (!from.empty()) {
-            const std::size_t found = s.find(from);
-            if (found != std::string::npos) { s.replace(found, from.size(), to); }
+    // ONE REPLACEMENT, shared by `replace` and `replaceAll`.
+    //
+    // The pattern may be a STRING or a REGEXP, and the replacement may be a
+    // string with `$` references or a FUNCTION - four combinations, and the
+    // only difference between the two methods is how many matches they take.
+    //
+    // Regexes did not work here at all: the pattern was coerced with to_string
+    // and looked for with std::string::find, so `s.replace(/ /g, '|')` searched
+    // for the literal text of the regex object and, finding none, returned the
+    // string unchanged. Silent, and it is the commonest use of the method -
+    // acorn builds its keyword tables with exactly that call, so every keyword
+    // matcher inside p5's own parser was a pattern that could never match.
+    const auto substitute = [](const std::string & replacement, const std::string & matched,
+                               const std::vector<std::string> & groups, std::size_t at,
+                               const std::string & subject) {
+        std::string out;
+        for (std::size_t i = 0; i < replacement.size(); ++i) {
+            if (replacement[i] != '$' || i + 1 >= replacement.size()) {
+                out += replacement[i];
+                continue;
+            }
+            const char next = replacement[i + 1];
+            if (next == '$') {
+                out += '$';
+            } else if (next == '&') {
+                out += matched;
+            } else if (next == '`') {
+                out += subject.substr(0, at);
+            } else if (next == '\'') {
+                out += subject.substr(std::min(subject.size(), at + matched.size()));
+            } else if (next >= '1' && next <= '9') {
+                // Two digits when there is a group to match them - `$12` is
+                // group 12 where one exists and group 1 followed by "2" where
+                // it does not.
+                std::size_t which = static_cast<std::size_t>(next - '0');
+                std::size_t used = 1;
+                if (i + 2 < replacement.size() && replacement[i + 2] >= '0' &&
+                    replacement[i + 2] <= '9') {
+                    const std::size_t wider =
+                        which * 10 + static_cast<std::size_t>(replacement[i + 2] - '0');
+                    if (wider <= groups.size()) {
+                        which = wider;
+                        used = 2;
+                    }
+                }
+                if (which <= groups.size()) { out += groups[which - 1]; }
+                i += used;
+                continue;
+            } else {
+                out += replacement[i];
+                continue;
+            }
+            ++i;
         }
-        return c.string(s);
-    });
+        return out;
+    };
+
+    const auto replace_with = [substitute](context & c, std::span<value> a, bool all) {
+        const std::string self = detail::this_string(c);
+        const value pattern = a.empty() ? value::undefined() : a[0];
+        const value replacement = a.size() > 1 ? a[1] : value::undefined();
+
+        // A REGEXP PATTERN, driven through its own `exec` so there is one regex
+        // path and replace cannot disagree with match about a boundary.
+        if (pattern.is_object() && c.lookup_property(pattern, "exec").is_callable()) {
+            const value exec = c.lookup_property(pattern, "exec");
+            // `g` on the pattern means every match even for `replace`; a plain
+            // `replace` with a non-global pattern takes the first only.
+            const bool every = all || context::truthy(c.lookup_property(pattern, "global"));
+            std::string out;
+            std::string rest = self;
+            std::size_t consumed = 0;
+            // An empty pattern matches at the END position too - `'ab'
+            // .replace(/x*/g, '-')` is "-a-b-" and not "-a-b" - so one pass
+            // runs with nothing left, and only a second one stops.
+            bool tail_seen = false;
+            for (std::size_t guard = 0; guard <= self.size() + 2; ++guard) {
+                if (rest.empty()) {
+                    if (tail_seen) { break; }
+                    tail_seen = true;
+                }
+                c.store_property(pattern, "lastIndex", value::number(0));
+                const value subject = c.string(rest);
+                const value found = c.call(exec, std::span<const value>{&subject, 1}, pattern);
+                if (!found.is_array()) { break; }
+                auto * parts = static_cast<array_object *>(found.as_heap());
+                if (parts->items.empty()) { break; }
+                const std::string matched = c.to_string(parts->items[0]);
+                const auto at =
+                    static_cast<std::size_t>(std::max(0.0, context::to_number(parts->index)));
+                if (at > rest.size()) { break; }
+                std::vector<std::string> groups;
+                for (std::size_t g = 1; g < parts->items.size(); ++g) {
+                    groups.push_back(parts->items[g].is_undefined() ? std::string{}
+                                                                    : c.to_string(parts->items[g]));
+                }
+                out += rest.substr(0, at);
+                if (replacement.is_callable()) {
+                    // (match, p1..pn, offset, whole) - the offset is into the
+                    // ORIGINAL string, not into what is left of it.
+                    std::vector<value> args;
+                    args.push_back(c.string(matched));
+                    for (const std::string & g : groups) { args.push_back(c.string(g)); }
+                    args.push_back(value::number(static_cast<double>(consumed + at)));
+                    args.push_back(c.string(self));
+                    out += c.to_string(c.call(replacement, args));
+                } else {
+                    out +=
+                        substitute(c.to_string(replacement), matched, groups, consumed + at, self);
+                }
+                // An empty match must still advance, or this never terminates.
+                const std::size_t step = at + std::max<std::size_t>(matched.size(), 1);
+                if (matched.empty() && at < rest.size()) { out += rest[at]; }
+                consumed += step;
+                rest = step >= rest.size() ? std::string{} : rest.substr(step);
+                if (!every) { break; }
+            }
+            out += rest;
+            return c.string(out);
+        }
+
+        // A STRING pattern: the first occurrence, or all of them.
+        const std::string from = c.to_string(pattern);
+        if (from.empty()) { return c.string(self); }
+        std::string out;
+        std::size_t at = 0;
+        while (true) {
+            const std::size_t found = self.find(from, at);
+            if (found == std::string::npos) {
+                out += self.substr(at);
+                break;
+            }
+            out += self.substr(at, found - at);
+            if (replacement.is_callable()) {
+                const value args[3] = {c.string(from), value::number(static_cast<double>(found)),
+                                       c.string(self)};
+                out += c.to_string(c.call(replacement, args));
+            } else {
+                out += substitute(c.to_string(replacement), from, {}, found, self);
+            }
+            at = found + from.size();
+            if (!all) {
+                out += self.substr(at);
+                break;
+            }
+        }
+        return c.string(out);
+    };
+
+    method(cx, string_proto, "replace",
+           [replace_with](context & c, std::span<value> a) { return replace_with(c, a, false); });
     // `match` - the single commonest thing done with a regular expression, and
     // it simply was not here. A page calling it got "undefined is not a
     // function" from inside whatever library it was using.
@@ -1283,25 +1424,8 @@ void install_string(context & cx) {
         }
         return list;
     });
-    method(cx, string_proto, "replaceAll", [](context & c, std::span<value> a) {
-        std::string s = detail::this_string(c);
-        const std::string from = str_at(c, a, 0);
-        const std::string to = str_at(c, a, 1);
-        if (from.empty()) { return c.string(s); }
-        std::string out;
-        std::size_t at = 0;
-        while (true) {
-            const std::size_t found = s.find(from, at);
-            if (found == std::string::npos) {
-                out += s.substr(at);
-                break;
-            }
-            out += s.substr(at, found - at);
-            out += to;
-            at = found + from.size();
-        }
-        return c.string(out);
-    });
+    method(cx, string_proto, "replaceAll",
+           [replace_with](context & c, std::span<value> a) { return replace_with(c, a, true); });
     method(cx, string_proto, "toUpperCase", [](context & c, std::span<value>) {
         std::string s = detail::this_string(c);
         for (char & ch : s) {

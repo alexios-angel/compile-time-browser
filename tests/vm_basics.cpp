@@ -1612,6 +1612,47 @@ void test_spread() {
 // Friendly Error System is exactly that, and so is any page logging what it
 // caught. The VM already built a trace when it raised a fault; a constructed
 // error simply never asked for one.
+// `replace` WITH A REGEXP - which is what the method is mostly for, and which
+// did not work at all.
+//
+// The pattern was coerced with to_string and looked for with std::string::find,
+// so `s.replace(/ /g, '|')` searched for the literal text of a regex object and,
+// finding none, returned the string unchanged. No error, no clue.
+//
+// It is not a corner: acorn builds its keyword tables with
+// `new RegExp('^(?:' + words.replace(/ /g, '|') + ')$')`, so every keyword
+// matcher inside the parser p5 bundles was a pattern that could never match -
+// and p5's error system reported a SyntaxError on ordinary code because of it.
+void test_string_replace() {
+    // The whole reason the bug was invisible: with a STRING pattern it was right.
+    expect_result("return 'a b c'.replace(' ', '|');", "a|b c");
+    expect_result("return 'a b c'.replaceAll(' ', '|');", "a|b|c");
+    // `g` on the pattern means every match; without it, the first only.
+    expect_result("return 'a b c'.replace(/ /g, '|');", "a|b|c");
+    expect_result("return 'a b c'.replace(/ /, '|');", "a|b c");
+    expect_result("return 'a b c'.replaceAll(/ /g, '|');", "a|b|c");
+    expect_result("return 'a\\tb'.replace(/\\t/g, '  ');", "a  b");
+    expect_result("return 'abc'.replace(/z/g, '!');", "abc");
+    // `$n` is a capture, `$&` the whole match, `$$` a literal dollar.
+    expect_result("return 'John Smith'.replace(/(\\w+) (\\w+)/, '$2, $1');", "Smith, John");
+    expect_result("return 'abc'.replace(/b/, '[$&]');", "a[b]c");
+    expect_result("return 'abc'.replace(/b/, '$$');", "a$c");
+    // A FUNCTION replacement is called with (match, p1..pn, offset, whole).
+    expect_result("return 'a1b2'.replace(/\\d/g, function (m) { return '<' + m + '>'; });",
+                  "a<1>b<2>");
+    expect_result("return 'xy'.replace(/(x)(y)/, function (m, p1, p2, off, whole) {"
+                  "  return p2 + p1 + off + whole.length; });",
+                  "yx02");
+    // Anchors and greedy groups, which is the shape p5 builds its CDN url with.
+    expect_result("return '1.2.3-x'.replace(/^(\\d+\\.\\d+)\\.\\d+.*$/, '$1');", "1.2");
+    // The idiom that broke acorn.
+    expect_result("return new RegExp('^(?:' + 'break case function'.replace(/ /g, '|') + ')$')"
+                  "  .test('function');",
+                  "true");
+    // An empty match still advances rather than looping forever.
+    expect_result("return 'ab'.replace(/x*/g, '-');", "-a-b-");
+}
+
 void test_error_stacks() {
     expect_result("function inner() { return new Error('boom'); }"
                   "function outer() { return inner(); }"
@@ -2165,6 +2206,7 @@ int main() {
     test_bitwise_and_friends();
     test_delete_in_instanceof();
     test_object_literal_keys();
+    test_string_replace();
     test_error_stacks();
     test_captured_destructured_parameters();
     test_to_primitive();
