@@ -368,6 +368,34 @@ void install_math(context & cx, std::uint64_t seed) {
         method(cx, math, name,
                [fn](context &, std::span<value> a) { return value::number(fn(num_at(a, 0))); });
     };
+    math->set("SQRT2", value::number(1.4142135623730951));
+    math->set("SQRT1_2", value::number(0.7071067811865476));
+    math->set("LN2", value::number(0.6931471805599453));
+    math->set("LN10", value::number(2.302585092994046));
+    math->set("LOG2E", value::number(1.4426950408889634));
+    math->set("LOG10E", value::number(0.4342944819032518));
+    unary("cbrt", [](double x) { return std::cbrt(x); });
+    unary("log2", [](double x) { return std::log2(x); });
+    unary("log10", [](double x) { return std::log10(x); });
+    unary("log1p", [](double x) { return std::log1p(x); });
+    unary("expm1", [](double x) { return std::expm1(x); });
+    unary("sinh", [](double x) { return std::sinh(x); });
+    unary("cosh", [](double x) { return std::cosh(x); });
+    unary("tanh", [](double x) { return std::tanh(x); });
+    unary("asinh", [](double x) { return std::asinh(x); });
+    unary("acosh", [](double x) { return std::acosh(x); });
+    unary("atanh", [](double x) { return std::atanh(x); });
+    unary("fround", [](double x) { return static_cast<double>(static_cast<float>(x)); });
+    method(cx, math, "clz32", [](context &, std::span<value> a) {
+        const std::uint32_t x = context::to_uint32(arg_at(a, 0));
+        int n = 0;
+        for (std::uint32_t bit = 0x80000000u; bit != 0 && (x & bit) == 0; bit >>= 1) { ++n; }
+        return value::number(x == 0 ? 32 : n);
+    });
+    method(cx, math, "imul", [](context &, std::span<value> a) {
+        return value::number(static_cast<double>(static_cast<std::int32_t>(
+            context::to_uint32(arg_at(a, 0)) * context::to_uint32(arg_at(a, 1)))));
+    });
     unary("floor", [](double x) { return std::floor(x); });
     unary("ceil", [](double x) { return std::ceil(x); });
     unary("abs", [](double x) { return std::fabs(x); });
@@ -435,7 +463,150 @@ void install_math(context & cx, std::uint64_t seed) {
 void install_array(context & cx) {
     using detail::method;
     using detail::new_table;
+
+    // `Array` itself. 88 uses of isArray in p5.js alone - it is how every
+    // overloaded signature in the library decides what it was handed.
+    auto * array_ctor = cx.allocate<native_object>("Array", [](context & c, std::span<value> a) {
+        value out = c.make_array();
+        auto * made = static_cast<array_object *>(out.as_heap());
+        // `Array(n)` is a length, `Array(a, b, ...)` is the elements.
+        if (a.size() == 1 && a[0].is_number()) {
+            made->items.assign(static_cast<std::size_t>(std::max(0.0, a[0].as_number())),
+                               value::undefined());
+        } else {
+            made->items.assign(a.begin(), a.end());
+        }
+        return out;
+    });
+    const auto static_method = [&](const char * name, native_fn fn) {
+        array_ctor->set(name, value::object(cx.allocate<native_object>(name, std::move(fn))));
+    };
+    static_method("isArray", [](context &, std::span<value> a) {
+        return value::boolean(arg_at(a, 0).is_array());
+    });
+    static_method("of", [](context & c, std::span<value> a) {
+        value out = c.make_array();
+        static_cast<array_object *>(out.as_heap())->items.assign(a.begin(), a.end());
+        return out;
+    });
+    static_method("from", [](context & c, std::span<value> a) {
+        value out = c.make_array();
+        auto * made = static_cast<array_object *>(out.as_heap());
+        const value from = arg_at(a, 0);
+        if (from.is_array()) {
+            made->items = static_cast<array_object *>(from.as_heap())->items;
+        } else if (from.is_string()) {
+            for (const char ch : static_cast<string_object *>(from.as_heap())->text) {
+                made->items.push_back(c.string(std::string{ch}));
+            }
+        } else if (from.is_object()) {
+            // array-LIKE: anything with a length, which is what most callers
+            // actually pass (a NodeList, `arguments`, a typed-array shim).
+            const double length = context::to_number(c.lookup_property(from, "length"));
+            for (double i = 0; i < length; ++i) {
+                made->items.push_back(c.lookup_index(from, value::number(i)));
+            }
+        }
+        if (a.size() > 1 && a[1].is_callable()) {
+            for (std::size_t i = 0; i < made->items.size(); ++i) {
+                const value args[2] = {made->items[i], value::number(static_cast<double>(i))};
+                made->items[i] = c.call(a[1], args);
+            }
+        }
+        return out;
+    });
+    cx.define_global("Array", value::object(array_ctor));
+
     object_object * array_proto = new_table(cx);
+    // The prototype methods p5.js uses that were not here. `at` and `fill` are
+    // the ones it leans on hardest - 43 and 31 uses - because a typed-array
+    // shim reaches for both.
+    method(cx, array_proto, "at", [](context & c, std::span<value> a) {
+        auto * self = detail::this_array(c);
+        if (self == nullptr) { return value::undefined(); }
+        double i = num_at(a, 0);
+        if (i < 0) { i += static_cast<double>(self->items.size()); }
+        if (i < 0 || i >= static_cast<double>(self->items.size())) { return value::undefined(); }
+        return self->items[static_cast<std::size_t>(i)];
+    });
+    method(cx, array_proto, "fill", [](context & c, std::span<value> a) {
+        auto * self = detail::this_array(c);
+        if (self == nullptr) { return c.current_this(); }
+        const std::size_t n = self->items.size();
+        const std::size_t from = a.size() > 1 ? clamp_index(num_at(a, 1), n) : 0;
+        const std::size_t to = a.size() > 2 ? clamp_index(num_at(a, 2), n) : n;
+        for (std::size_t i = from; i < to; ++i) { self->items[i] = arg_at(a, 0); }
+        return c.current_this();
+    });
+    method(cx, array_proto, "flat", [](context & c, std::span<value> a) {
+        // depth defaults to 1, which is what every use in p5 wants
+        const double depth = a.empty() ? 1.0 : num_at(a, 0);
+        auto * self = detail::this_array(c);
+        value out = c.make_array();
+        if (self == nullptr) { return out; }
+        auto * result = static_cast<array_object *>(out.as_heap());
+        // An explicit worklist rather than recursion: `flat(Infinity)` on a
+        // deep structure must not be bounded by the C++ stack.
+        std::vector<std::pair<value, double>> pending;
+        for (std::size_t i = self->items.size(); i-- > 0;) {
+            pending.emplace_back(self->items[i], depth);
+        }
+        while (!pending.empty()) {
+            const auto [item, left] = pending.back();
+            pending.pop_back();
+            if (item.is_array() && left > 0) {
+                const auto & inner = static_cast<array_object *>(item.as_heap())->items;
+                for (std::size_t i = inner.size(); i-- > 0;) {
+                    pending.emplace_back(inner[i], left - 1);
+                }
+            } else {
+                result->items.push_back(item);
+            }
+        }
+        return out;
+    });
+    method(cx, array_proto, "flatMap", [](context & c, std::span<value> a) {
+        auto * self = detail::this_array(c);
+        value out = c.make_array();
+        if (self == nullptr || a.empty() || !a[0].is_callable()) { return out; }
+        auto * result = static_cast<array_object *>(out.as_heap());
+        const std::size_t n = self->items.size();
+        for (std::size_t i = 0; i < n && i < self->items.size(); ++i) {
+            const value args[3] = {self->items[i], value::number(static_cast<double>(i)),
+                                   c.current_this()};
+            const value mapped = c.call(a[0], args);
+            if (mapped.is_array()) {
+                for (const value & item : static_cast<array_object *>(mapped.as_heap())->items) {
+                    result->items.push_back(item);
+                }
+            } else {
+                result->items.push_back(mapped);
+            }
+        }
+        return out;
+    });
+    method(cx, array_proto, "findLast", [](context & c, std::span<value> a) {
+        auto * self = detail::this_array(c);
+        if (self == nullptr || a.empty() || !a[0].is_callable()) { return value::undefined(); }
+        for (std::size_t i = self->items.size(); i-- > 0;) {
+            const value args[3] = {self->items[i], value::number(static_cast<double>(i)),
+                                   c.current_this()};
+            if (context::truthy(c.call(a[0], args))) { return self->items[i]; }
+        }
+        return value::undefined();
+    });
+    method(cx, array_proto, "findLastIndex", [](context & c, std::span<value> a) {
+        auto * self = detail::this_array(c);
+        if (self == nullptr || a.empty() || !a[0].is_callable()) { return value::number(-1); }
+        for (std::size_t i = self->items.size(); i-- > 0;) {
+            const value args[3] = {self->items[i], value::number(static_cast<double>(i)),
+                                   c.current_this()};
+            if (context::truthy(c.call(a[0], args))) {
+                return value::number(static_cast<double>(i));
+            }
+        }
+        return value::number(-1);
+    });
     method(cx, array_proto, "push", [](context & c, std::span<value> a) {
         array_object * self = detail::this_array(c);
         if (self == nullptr) { return value::number(0); }
@@ -841,6 +1012,47 @@ void install_string(context & cx) {
 void install_number(context & cx) {
     using detail::method;
     using detail::new_table;
+
+    // `Number` as a namespace as well as a coercion. It was only the latter,
+    // so every `Number.isFinite(x)` guard in a page read undefined and called
+    // it - the failure landing well away from the test that caused it.
+    auto * number_ctor = cx.allocate<native_object>("Number", [](context &, std::span<value> a) {
+        return value::number(a.empty() ? 0.0 : context::to_number(a[0]));
+    });
+    const auto constant = [&](const char * name, double v) {
+        number_ctor->set(name, value::number(v));
+    };
+    constant("EPSILON", 2.220446049250313e-16);
+    constant("MAX_SAFE_INTEGER", 9007199254740991.0);
+    constant("MIN_SAFE_INTEGER", -9007199254740991.0);
+    constant("MAX_VALUE", 1.7976931348623157e308);
+    constant("MIN_VALUE", 5e-324);
+    constant("POSITIVE_INFINITY", std::numeric_limits<double>::infinity());
+    constant("NEGATIVE_INFINITY", -std::numeric_limits<double>::infinity());
+    constant("NaN", std::nan(""));
+    const auto predicate = [&](const char * name, bool (*fn)(const value &)) {
+        number_ctor->set(name, value::object(cx.allocate<native_object>(
+                                   name, [fn](context &, std::span<value> a) {
+                                       const value v = arg_at(a, 0);
+                                       return value::boolean(fn(v));
+                                   })));
+    };
+    // These do NOT coerce - `Number.isFinite("1")` is false where the global
+    // `isFinite("1")` is true, and code uses the difference deliberately.
+    predicate("isFinite",
+              [](const value & v) { return v.is_number() && std::isfinite(v.as_number()); });
+    predicate("isNaN", [](const value & v) { return v.is_number() && std::isnan(v.as_number()); });
+    predicate("isInteger", [](const value & v) {
+        return v.is_number() && std::isfinite(v.as_number()) &&
+               v.as_number() == std::trunc(v.as_number());
+    });
+    predicate("isSafeInteger", [](const value & v) {
+        return v.is_number() && std::isfinite(v.as_number()) &&
+               v.as_number() == std::trunc(v.as_number()) &&
+               std::abs(v.as_number()) <= 9007199254740991.0;
+    });
+    cx.define_global("Number", value::object(number_ctor));
+
     object_object * number_proto = new_table(cx);
     method(cx, number_proto, "toFixed", [](context & c, std::span<value> a) {
         const double self = context::to_number(c.current_this());
@@ -1131,9 +1343,10 @@ void install_promise(context & cx) {
     cx.define_native("String", [](context & c, std::span<value> a) {
         return c.string(a.empty() ? std::string{} : c.to_string(a[0]));
     });
-    cx.define_native("Number", [](context &, std::span<value> a) {
-        return value::number(a.empty() ? 0.0 : context::to_number(a[0]));
-    });
+    // `Number` is installed by install_number, which gives it the statics as
+    // well as the coercion. Defining it again here would replace the whole
+    // thing with a bare function and silently drop Number.isFinite and its
+    // siblings - which is exactly what it used to do.
     cx.define_native("Boolean", [](context &, std::span<value> a) {
         return value::boolean(!a.empty() && context::truthy(a[0]));
     });
@@ -1340,10 +1553,314 @@ void install_symbol(context & cx) {
     cx.define_global("Symbol", value::object(symbol));
 }
 
+// `Map`, `Set`, `WeakMap`, `WeakSet`. 20 and 59 uses in p5.js, and `new Map()`
+// is what stopped it once Array and Number were there.
+//
+// Both are built on the object model rather than on a new heap kind: entries
+// live in a plain array on the instance, which makes lookup linear. That is the
+// wrong complexity and it is written down rather than hidden - the maps p5
+// builds are small and keyed by strings, and a hash keyed on a NaN-boxed value
+// wants SameValueZero over every value kind, which is a bigger piece of work
+// than this needs to be today.
+//
+// WeakMap and WeakSet are the strong versions under different names: nothing
+// here has weak references, so an entry keeps its key alive. Said out loud
+// because the difference is a leak, not a wrong answer.
+void install_collections(context & cx) {
+    using detail::method;
+    using detail::new_table;
+
+    // The entry list of the receiver, or null when called on something else.
+    const auto entries_of = [](context & c) -> array_object * {
+        const value self = c.current_this();
+        if (!self.is_object()) { return nullptr; }
+        value * held = static_cast<object_object *>(self.as_heap())->find("__entries");
+        return held != nullptr && held->is_array() ? static_cast<array_object *>(held->as_heap())
+                                                   : nullptr;
+    };
+    // SameValueZero, which is what Map and Set key on: like ===, except NaN
+    // matches NaN. A page that uses NaN as a key is doing something odd, but
+    // getting it wrong here would be a silent miss.
+    const auto same_value_zero = [](value a, value b) {
+        if (a.is_number() && b.is_number()) {
+            const double x = a.as_number();
+            const double y = b.as_number();
+            return (std::isnan(x) && std::isnan(y)) || x == y;
+        }
+        return a.strict_equals(b);
+    };
+
+    const auto build = [&](const char * name, bool keyed) {
+        object_object * proto = new_table(cx);
+        auto * ctor = cx.allocate<native_object>(name, [keyed](context & c, std::span<value> a) {
+            // INITIALISE THE RECEIVER when there is one. `class MySet extends
+            // Set {}` reaches here through super() with the new instance as
+            // `this`; making a fresh object instead left the instance with none
+            // of Set's state, and every method on it then failed somewhere
+            // else entirely.
+            value self = c.current_this();
+            if (!self.is_object()) { self = c.make_object(); }
+            auto * made = static_cast<object_object *>(self.as_heap());
+            made->set("__entries", c.make_array());
+            if (!made->prototype.is_object()) {
+                if (object_object * table =
+                        c.prototype(keyed ? context::proto_kind::map : context::proto_kind::set)) {
+                    made->prototype = value::object(table);
+                }
+            }
+            // `new Map([[k, v], ...])` and `new Set([...])` both seed from an
+            // iterable, and an array is the only iterable that reaches here.
+            if (!a.empty() && a[0].is_array()) {
+                auto * entries = static_cast<array_object *>(
+                    static_cast<object_object *>(self.as_heap())->find("__entries")->as_heap());
+                for (const value & item : static_cast<array_object *>(a[0].as_heap())->items) {
+                    if (keyed && item.is_array()) {
+                        const auto & pair = static_cast<array_object *>(item.as_heap())->items;
+                        value entry = c.make_array();
+                        auto * cell = static_cast<array_object *>(entry.as_heap());
+                        cell->items.push_back(pair.empty() ? value::undefined() : pair[0]);
+                        cell->items.push_back(pair.size() > 1 ? pair[1] : value::undefined());
+                        entries->items.push_back(entry);
+                    } else if (!keyed) {
+                        entries->items.push_back(item);
+                    }
+                }
+            }
+            return self;
+        });
+        // `class X extends Map` calls `super()`, which resolves through the
+        // parent prototype's `constructor` - absent, and the class could not be
+        // instantiated at all.
+        proto->set("constructor", value::object(ctor));
+        ctor->set("prototype", value::object(proto));
+        cx.set_prototype(keyed ? context::proto_kind::map : context::proto_kind::set, proto);
+        cx.define_global(name, value::object(ctor));
+        return proto;
+    };
+
+    // --- Map ---------------------------------------------------------------
+    object_object * map_proto = build("Map", true);
+    const auto find_entry = [entries_of, same_value_zero](context & c, value key) -> value * {
+        array_object * entries = entries_of(c);
+        if (entries == nullptr) { return nullptr; }
+        for (value & entry : entries->items) {
+            auto * pair = static_cast<array_object *>(entry.as_heap());
+            if (!pair->items.empty() && same_value_zero(pair->items[0], key)) { return &entry; }
+        }
+        return nullptr;
+    };
+    method(cx, map_proto, "get", [find_entry](context & c, std::span<value> a) {
+        value * entry = find_entry(c, arg_at(a, 0));
+        if (entry == nullptr) { return value::undefined(); }
+        const auto & pair = static_cast<array_object *>(entry->as_heap())->items;
+        return pair.size() > 1 ? pair[1] : value::undefined();
+    });
+    method(cx, map_proto, "has", [find_entry](context & c, std::span<value> a) {
+        return value::boolean(find_entry(c, arg_at(a, 0)) != nullptr);
+    });
+    method(cx, map_proto, "set", [find_entry, entries_of](context & c, std::span<value> a) {
+        if (value * entry = find_entry(c, arg_at(a, 0))) {
+            static_cast<array_object *>(entry->as_heap())->items[1] = arg_at(a, 1);
+            return c.current_this();
+        }
+        if (array_object * entries = entries_of(c)) {
+            value pair = c.make_array();
+            auto * cell = static_cast<array_object *>(pair.as_heap());
+            cell->items.push_back(arg_at(a, 0));
+            cell->items.push_back(arg_at(a, 1));
+            entries->items.push_back(pair);
+        }
+        return c.current_this();
+    });
+    method(cx, map_proto, "delete", [entries_of, same_value_zero](context & c, std::span<value> a) {
+        array_object * entries = entries_of(c);
+        if (entries == nullptr) { return value::boolean(false); }
+        for (std::size_t i = 0; i < entries->items.size(); ++i) {
+            auto * pair = static_cast<array_object *>(entries->items[i].as_heap());
+            if (!pair->items.empty() && same_value_zero(pair->items[0], arg_at(a, 0))) {
+                entries->items.erase(entries->items.begin() + static_cast<std::ptrdiff_t>(i));
+                return value::boolean(true);
+            }
+        }
+        return value::boolean(false);
+    });
+    method(cx, map_proto, "clear", [entries_of](context & c, std::span<value>) {
+        if (array_object * entries = entries_of(c)) { entries->items.clear(); }
+        return value::undefined();
+    });
+    method(cx, map_proto, "forEach", [entries_of](context & c, std::span<value> a) {
+        array_object * entries = entries_of(c);
+        if (entries == nullptr || a.empty() || !a[0].is_callable()) { return value::undefined(); }
+        // A copy: a callback that mutates the map must not invalidate the walk.
+        const std::vector<value> snapshot = entries->items;
+        for (const value & entry : snapshot) {
+            const auto & pair = static_cast<array_object *>(entry.as_heap())->items;
+            const value args[3] = {pair.size() > 1 ? pair[1] : value::undefined(),
+                                   pair.empty() ? value::undefined() : pair[0], c.current_this()};
+            (void)c.call(a[0], args);
+        }
+        return value::undefined();
+    });
+    const auto column = [entries_of](context & c, int which) {
+        value out = c.make_array();
+        auto * result = static_cast<array_object *>(out.as_heap());
+        if (array_object * entries = entries_of(c)) {
+            for (const value & entry : entries->items) {
+                const auto & pair = static_cast<array_object *>(entry.as_heap())->items;
+                if (which == 2) {
+                    result->items.push_back(entry);
+                } else if (static_cast<std::size_t>(which) < pair.size()) {
+                    result->items.push_back(pair[static_cast<std::size_t>(which)]);
+                }
+            }
+        }
+        return out;
+    };
+    // Arrays, not iterators: for..of walks an array, and that is what these are
+    // for. `[...map.keys()]` works; `map.keys().next()` does not.
+    method(cx, map_proto, "keys", [column](context & c, std::span<value>) { return column(c, 0); });
+    method(cx, map_proto, "values",
+           [column](context & c, std::span<value>) { return column(c, 1); });
+    method(cx, map_proto, "entries",
+           [column](context & c, std::span<value>) { return column(c, 2); });
+    map_proto->define_accessor(
+        "size",
+        value::object(cx.allocate<native_object>(
+            "size",
+            [entries_of](context & c, std::span<value>) {
+                array_object * e = entries_of(c);
+                return value::number(e == nullptr ? 0.0 : static_cast<double>(e->items.size()));
+            })),
+        value::undefined());
+
+    // --- Set ---------------------------------------------------------------
+    object_object * set_proto = build("Set", false);
+    const auto set_index = [entries_of, same_value_zero](context & c, value v) -> std::ptrdiff_t {
+        array_object * entries = entries_of(c);
+        if (entries == nullptr) { return -1; }
+        for (std::size_t i = 0; i < entries->items.size(); ++i) {
+            if (same_value_zero(entries->items[i], v)) { return static_cast<std::ptrdiff_t>(i); }
+        }
+        return -1;
+    };
+    method(cx, set_proto, "has", [set_index](context & c, std::span<value> a) {
+        return value::boolean(set_index(c, arg_at(a, 0)) >= 0);
+    });
+    method(cx, set_proto, "add", [set_index, entries_of](context & c, std::span<value> a) {
+        if (set_index(c, arg_at(a, 0)) < 0) {
+            if (array_object * entries = entries_of(c)) { entries->items.push_back(arg_at(a, 0)); }
+        }
+        return c.current_this();
+    });
+    method(cx, set_proto, "delete", [set_index, entries_of](context & c, std::span<value> a) {
+        const std::ptrdiff_t at = set_index(c, arg_at(a, 0));
+        if (at < 0) { return value::boolean(false); }
+        array_object * entries = entries_of(c);
+        entries->items.erase(entries->items.begin() + at);
+        return value::boolean(true);
+    });
+    method(cx, set_proto, "clear", [entries_of](context & c, std::span<value>) {
+        if (array_object * entries = entries_of(c)) { entries->items.clear(); }
+        return value::undefined();
+    });
+    method(cx, set_proto, "forEach", [entries_of](context & c, std::span<value> a) {
+        array_object * entries = entries_of(c);
+        if (entries == nullptr || a.empty() || !a[0].is_callable()) { return value::undefined(); }
+        const std::vector<value> snapshot = entries->items;
+        for (const value & item : snapshot) {
+            const value args[3] = {item, item, c.current_this()};
+            (void)c.call(a[0], args);
+        }
+        return value::undefined();
+    });
+    const auto members = [entries_of](context & c) {
+        value out = c.make_array();
+        if (array_object * entries = entries_of(c)) {
+            static_cast<array_object *>(out.as_heap())->items = entries->items;
+        }
+        return out;
+    };
+    method(cx, set_proto, "values",
+           [members](context & c, std::span<value>) { return members(c); });
+    method(cx, set_proto, "keys", [members](context & c, std::span<value>) { return members(c); });
+    set_proto->define_accessor(
+        "size",
+        value::object(cx.allocate<native_object>(
+            "size",
+            [entries_of](context & c, std::span<value>) {
+                array_object * e = entries_of(c);
+                return value::number(e == nullptr ? 0.0 : static_cast<double>(e->items.size()));
+            })),
+        value::undefined());
+
+    // Strong, under a weak name - see the note at the top.
+    cx.define_global("WeakMap", cx.global("Map"));
+    cx.define_global("WeakSet", cx.global("Set"));
+}
+
+// `Error` and the standard subclasses. 239 `throw new` in p5.js, and every one
+// of them used to construct undefined - which raised "attempted to construct a
+// non-function" and killed the run outright, uncatchably, from inside a `try`
+// that was there to handle exactly that.
+//
+// An error is an ordinary object with `name`, `message` and `stack`, and each
+// constructor's `prototype` chains to Error's so `e instanceof Error` holds for
+// a TypeError and for a page's own `class MyError extends Error`.
+void install_errors(context & cx) {
+    using detail::method;
+    using detail::new_table;
+
+    object_object * error_proto = new_table(cx);
+    error_proto->set("name", cx.string("Error"));
+    error_proto->set("message", cx.string(""));
+    method(cx, error_proto, "toString", [](context & c, std::span<value>) {
+        const value self = c.current_this();
+        const std::string name = c.to_string(c.lookup_property(self, "name"));
+        const std::string message = c.to_string(c.lookup_property(self, "message"));
+        return c.string(message.empty() ? name : name + ": " + message);
+    });
+
+    // One constructor shape, five names. `parent` is Error's prototype for the
+    // subclasses, so the chain a page walks is the one it expects.
+    const auto define = [&](const char * name, object_object * parent) {
+        object_object * proto = parent == nullptr ? error_proto : new_table(cx);
+        if (parent != nullptr) {
+            proto->prototype = value::object(parent);
+            proto->set("name", cx.string(name));
+        }
+        auto * ctor = cx.allocate<native_object>(name, [proto](context & c, std::span<value> a) {
+            // `this` is the instance when called through `new`; a bare
+            // `Error(...)` makes one anyway, which is what the spec says.
+            value self = c.current_this();
+            if (!self.is_object()) { self = c.make_object(); }
+            auto * made = static_cast<object_object *>(self.as_heap());
+            if (!made->prototype.is_object()) { made->prototype = value::object(proto); }
+            if (!a.empty()) { made->set("message", c.string(c.to_string(a[0]))); }
+            // `stack` is a string a page prints, so it exists and says what it
+            // knows rather than being absent and read as undefined.
+            made->set("stack", c.string(c.to_string(c.lookup_property(self, "name")) + ": " +
+                                        (a.empty() ? std::string{} : c.to_string(a[0]))));
+            return self;
+        });
+        proto->set("constructor", value::object(ctor));
+        ctor->set("prototype", value::object(proto));
+        cx.define_global(name, value::object(ctor));
+        return proto;
+    };
+    define("Error", nullptr);
+    for (const char * name :
+         {"TypeError", "RangeError", "ReferenceError", "SyntaxError", "EvalError", "URIError"}) {
+        (void)define(name, error_proto);
+    }
+    cx.set_prototype(context::proto_kind::error, error_proto);
+}
+
 void install_builtins(context & cx, std::uint64_t seed) {
     install_math(cx, seed);
     install_regexp(cx);
     install_symbol(cx);
+    install_collections(cx);
+    install_errors(cx);
     install_array(cx);
     install_string(cx);
     install_number(cx);

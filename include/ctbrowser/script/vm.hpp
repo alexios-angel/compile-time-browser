@@ -217,6 +217,9 @@ public:
         number,
         regexp,
         symbol,
+        map,
+        set,
+        error,
         count_
     };
 

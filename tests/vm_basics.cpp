@@ -203,7 +203,8 @@ void test_rest_parameters() {
     expect("function f(a, ...rest) { return rest.join('-'); } return f(1, 2, 3, 4);", "2-3-4");
     // no extra arguments is an EMPTY array, not undefined
     expect("function f(a, ...rest) { return rest.length; } return f(1);", "0");
-    expect("function f(...rest) { return Array.isArray ? 1 : rest.length; } return f();", "0");
+    expect("function f(...rest) { return Array.isArray(rest) && rest.length === 0; } return f();",
+           "true");
     // the rest array is a real array and the locals after it are undisturbed
     expect("function f(a, ...rest) { let x = 7; return a + rest.length + x; } return f(1, 2, 3);",
            "10");
@@ -566,6 +567,81 @@ void test_symbol() {
     expect("const s = Symbol('k'); const o = {}; o[s] = 5; return o.k;", "undefined");
     expect("const o = {}; o[Symbol.iterator] = 1; return o[Symbol.iterator];", "1");
     expect("return Symbol('x').toString();", "Symbol(x)");
+}
+
+void test_collections() {
+    expect("const s = new Set([1, 2, 3]); return s.has(2) + '|' + s.size;", "true|3");
+    expect("const s = new Set(); s.add(1); s.add(1); return s.size;", "1");
+    expect("const s = new Set([1, 2]); s.delete(1); return s.size;", "1");
+    expect("const s = new Set([1, 2]); let sum = 0; s.forEach(v => { sum += v; }); return sum;",
+           "3");
+    expect("const m = new Map([['a', 1]]); m.set('b', 2); return m.get('b') + '|' + m.size;",
+           "2|2");
+    expect("const m = new Map(); m.set('k', 1); m.set('k', 9); return m.get('k') + '|' + m.size;",
+           "9|1");
+    expect("const m = new Map([['a', 1], ['b', 2]]); return m.keys().join(',');", "a,b");
+    expect("const m = new Map([['a', 1]]); return m.has('z');", "false");
+    // NaN matches NaN as a key, which === does not
+    expect("const s = new Set([NaN]); return s.has(NaN);", "true");
+    // and a class may extend one - which means super() has to initialise the
+    // RECEIVER rather than making a fresh object
+    expect("class S extends Set {} const s = new S(); s.add(5); return s.has(5) + '|' + s.size;",
+           "true|1");
+}
+
+void test_errors() {
+    expect("const e = new Error('boom'); return e.message;", "boom");
+    expect("const e = new TypeError('t'); return e.name;", "TypeError");
+    expect("return new RangeError('r') instanceof Error;", "true");
+    expect("try { throw new TypeError('t'); } catch (e) { return e.name + ':' + e.message; }",
+           "TypeError:t");
+    // a page's own error type, which is the shape 239 `throw new` in p5 rely on
+    expect("class MyError extends Error { constructor(m) { super(m); this.name = 'MyError'; } } "
+           "try { throw new MyError('x'); } catch (e) { return e.name + '/' + e.message + '/' + "
+           "(e instanceof Error); }",
+           "MyError/x/true");
+    expect("return new Error('z').toString();", "Error: z");
+}
+
+// A DERIVED CLASS WITH NO CONSTRUCTOR still runs its parent's. An empty one was
+// synthesised instead, so the parent never ran and the instance had none of its
+// state - and the failure surfaced at the first method that needed it.
+void test_implicit_super() {
+    expect("class B { constructor(v) { this.v = v; } } class D extends B {} return new D(7).v;",
+           "7");
+    expect("class B { constructor() { this.n = 1; } } class M extends B {} class D extends M {} "
+           "return new D().n;",
+           "1");
+    expect("class B { constructor(a, b) { this.s = a + b; } } class D extends B {} "
+           "return new D(2, 3).s;",
+           "5");
+}
+
+// A CLASS EXPRESSION is as ordinary as a function expression. `class` had no
+// case in primary(), so `const X = class {...}` read a global named `class` and
+// the body's members leaked out as top-level statements - silently.
+void test_class_expressions() {
+    expect("const X = class { constructor() { this.v = 1; } }; return new X().v;", "1");
+    expect("const X = class Named { m() { return 'ok'; } }; return new X().m();", "ok");
+    expect("const make = () => class { get v() { return 5; } }; return new (make())().v;", "5");
+}
+
+void test_stdlib_additions() {
+    expect("return Array.isArray([]) + '|' + Array.isArray({});", "true|false");
+    expect("return Array.from('abc').join('-');", "a-b-c");
+    expect("return Array.from([1, 2], x => x * 2).join(',');", "2,4");
+    expect("return Array.of(1, 2, 3).length;", "3");
+    expect("return [1, 2, 3].at(-1);", "3");
+    expect("return [1, 2, 3, 4].fill(0, 1, 3).join(',');", "1,0,0,4");
+    expect("return [1, [2, [3]]].flat().length;", "3");
+    expect("return [1, [2, [3]]].flat(2).join(',');", "1,2,3");
+    expect("return [1, 2].flatMap(x => [x, x]).join(',');", "1,1,2,2");
+    expect("return [1, 2, 3].findLast(x => x < 3);", "2");
+    expect("return Math.cbrt(27) + '|' + Math.log2(8) + '|' + Math.log10(1000);", "3|3|3");
+    expect("return Number.isInteger(2) + '|' + Number.isInteger(2.5);", "true|false");
+    // these do NOT coerce, and the difference is used deliberately
+    expect("return Number.isFinite('1') + '|' + isFinite('1');", "false|true");
+    expect("return Number.MAX_SAFE_INTEGER;", "9007199254740991");
 }
 
 void test_typeof() {
@@ -1291,6 +1367,11 @@ int main() {
     test_object_descriptors();
     test_optional_chain_short_circuits();
     test_symbol();
+    test_collections();
+    test_errors();
+    test_implicit_super();
+    test_class_expressions();
+    test_stdlib_additions();
     test_typeof();
     test_variables_and_control_flow();
     test_increment_semantics();

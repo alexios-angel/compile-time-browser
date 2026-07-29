@@ -635,6 +635,13 @@ value context::run_loop(std::size_t stop_depth) {
                 if (value * p = static_cast<closure_object *>(ctor.as_heap())->find("prototype")) {
                     wanted = *p;
                 }
+            } else if (ctor.is_kind(heap_kind::native)) {
+                // A BUILT-IN constructor is a native, and every one of them is
+                // now something a page can extend - `class E extends Error`.
+                // Without this, `e instanceof Error` was false for every one.
+                if (value * p = static_cast<native_object *>(ctor.as_heap())->find("prototype")) {
+                    wanted = *p;
+                }
             } else if (ctor.is_object()) {
                 if (value * p = static_cast<object_object *>(ctor.as_heap())->find("prototype")) {
                     wanted = *p;
@@ -1079,7 +1086,8 @@ value context::run_loop(std::size_t stop_depth) {
                 break;
             }
             if (!callee.is_kind(heap_kind::function)) {
-                raise("`new` on " + describe_callee(fn, std::string{}, callee));
+                raise("`new` on " +
+                      describe_callee(fn, callee_origin(fn, frame.ip - 1, in.a), callee));
                 break;
             }
             auto * fnobj = static_cast<closure_object *>(callee.as_heap());

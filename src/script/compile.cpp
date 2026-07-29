@@ -2277,10 +2277,22 @@ public:
         }
 
         if (constructor_body >= 0) {
-            compile_expr(constructor_body, dst);
+            // Named after the CLASS. A constructor is a function expression, so
+            // it had no name of its own and every stack trace through one said
+            // `<anonymous>` - which in a 4.5 MB bundle is no answer at all.
+            const std::uint32_t index =
+                compile_function_body(constructor_body, std::string{n.text});
+            proto().emit(instruction::with_bx(op::closure, dst, index));
+        } else if (n.a >= 0) {
+            // A DERIVED class with no constructor gets `constructor(...args) {
+            // super(...args); }`. Synthesising an EMPTY one instead meant the
+            // parent constructor never ran, so `class MySet extends Set {}`
+            // produced an object with none of Set's state and every method on
+            // it failed - with nothing to say the constructor had been skipped.
+            compile_foreign_expr("(function (...args) { super(...args); })", dst);
         } else {
-            // A class with no constructor still needs a callable, or `new` has
-            // nothing to invoke.
+            // A base class with no constructor still needs a callable, or `new`
+            // has nothing to invoke.
             compile_foreign_expr("(function () {})", dst);
         }
         proto().emit(instruction{op::set_prop, dst, name_operand("prototype"), prototype_reg});
@@ -2322,6 +2334,7 @@ public:
             if (m.c == 2) {
                 // An accessor. It goes on the prototype like a method - or on
                 // the constructor when static - and `d` bit2 says which half.
+                // (Named below, with the methods.)
                 // Installing it as a DATA property, which is what happened
                 // before, made `obj.v` be the function rather than call it, and
                 // a `set` of the same name overwrote the getter outright.
