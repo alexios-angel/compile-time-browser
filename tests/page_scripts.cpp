@@ -80,6 +80,17 @@ void must_stop_at_source(const std::string & source, std::string_view blocker) {
     }
 }
 
+// The other side of must_stop_at_source: a construct that DOES compile now, and
+// is asserted to keep doing so. A deferral that has been lifted moves from one
+// to the other, which is the whole reason the refusals are written down.
+void must_compile_source(const std::string & source) {
+    const ctbrowser::script::program compiled = ctbrowser::script::compiler::compile(source);
+    if (!compiled.ok) {
+        std::printf("FAIL `%s`: %s\n", source.c_str(), compiled.error.c_str());
+        ++ctbrowser_test_failures;
+    }
+}
+
 // The same assertion for a source too big to echo. A generated program is not
 // anybody's page, so printing it on failure helps nobody; what matters is the
 // label and which limit it hit.
@@ -133,9 +144,13 @@ int main() {
     must_stop_at_source("var mobile = /iphone|android/i.test(navigator.userAgent);",
                         "regular expression literals");
 
-    // And the construct is NAMED, not numbered. "AST kind 13" is a fact about
-    // the parser's enum, not about anybody's program.
-    must_stop_at_source("Math.max(...[1, 2, 3]);", "spread in a call");
+    // Spread in a call was refused here one commit ago, by name rather than by
+    // number - "AST kind 13" is a fact about the parser's enum, not about
+    // anybody's program. It compiles now, and this line moving from
+    // must_stop_at_source to must_compile_source is what a lifted deferral is
+    // supposed to look like: the test failed the moment it started working.
+    must_compile_source("Math.max(...[1, 2, 3]);");
+    must_compile_source("function f(a, ...rest) { return f(a, ...rest); }");
 
     // THE STRUCTURAL LIMITS SAY WHAT THEY WANTED.
     //

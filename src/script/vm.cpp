@@ -295,8 +295,14 @@ value context::call(value callable, std::span<const value> args, value this_valu
     const function_proto & target = *fnobj->proto;
 
     const std::size_t new_base = registers_.size();
-    registers_.resize(new_base + target.frame_size + 8u, value::undefined());
-    for (std::size_t i = 0; i < target.param_count; ++i) {
+    // EVERY argument lands in a register, not just the declared ones. Two
+    // reasons, and both bite: a rest parameter reads the extra ones straight
+    // out of the frame, and a value that is only in the caller's std::vector is
+    // not a GC root - so a collection during the call would free an argument
+    // that is about to be used.
+    const std::size_t window = std::max<std::size_t>(target.frame_size, args.size());
+    registers_.resize(new_base + window + 8u, value::undefined());
+    for (std::size_t i = 0; i < std::max<std::size_t>(target.param_count, args.size()); ++i) {
         registers_[new_base + i] = i < args.size() ? args[i] : value::undefined();
     }
     if (frames_.size() > 512) {
@@ -346,6 +352,42 @@ value context::execute(const program & prog, const function_proto & entry) {
 // back to it. `stop_depth` is 0 for the top-level program and the caller's
 // depth for a call from C++ - which is what makes call() re-entrant instead of
 // a second interpreter.
+value context::make_instance(value callee) {
+    auto * instance = allocate<object_object>();
+    if (callee.is_object()) {
+        if (value * proto = static_cast<object_object *>(callee.as_heap())->find("prototype")) {
+            instance->prototype = *proto;
+        }
+    } else if (callee.is_kind(heap_kind::function)) {
+        if (value * proto = static_cast<closure_object *>(callee.as_heap())->find("prototype")) {
+            instance->prototype = *proto;
+        }
+    }
+    return value::object(instance);
+}
+
+value context::construct(value callee, std::span<const value> args) {
+    if (!callee.is_callable()) {
+        raise("attempted to construct a non-function");
+        return value::undefined();
+    }
+    const value self = make_instance(callee);
+    run_field_initialisers(callee, self);
+    if (callee.is_kind(heap_kind::native)) {
+        auto * nat = static_cast<native_object *>(callee.as_heap());
+        std::vector<value> copy{args.begin(), args.end()};
+        const value saved = current_this_;
+        current_this_ = self;
+        const value produced = nat->fn(*this, copy);
+        current_this_ = saved;
+        return produced.is_object() ? produced : self;
+    }
+    // `new C()` evaluates to the new object unless the body returned one of its
+    // own - the single case the spec lets override it.
+    const value produced = call(callee, args, self);
+    return produced.is_object() ? produced : self;
+}
+
 void context::run_field_initialisers(value constructor, value self) {
     // Most-derived first, walking `C.prototype`'s own prototype back to the
     // parent's `constructor`. Depth-capped for the same reason every other
@@ -587,6 +629,27 @@ value context::run_loop(std::size_t stop_depth) {
                 frame.ip = static_cast<std::size_t>(static_cast<std::int64_t>(frame.ip) + in.sbx());
             }
             break;
+
+        case op::apply:
+        case op::construct_apply: {
+            // The arguments arrived as an ARRAY because their count was not
+            // known until the spread was evaluated. Both go through the same
+            // re-entrant call path a native callback uses, which is why one
+            // opcode covers plain, method and computed calls: the receiver is
+            // just a register the compiler already filled in.
+            const value callee = reg(in.a);
+            const value argv = reg(in.b);
+            std::vector<value> args;
+            if (argv.is_array()) { args = static_cast<array_object *>(argv.as_heap())->items; }
+            if (in.code == op::construct_apply) {
+                reg(in.a) = construct(callee, args);
+            } else if (!callee.is_callable()) {
+                raise("attempted to call a non-function");
+            } else {
+                reg(in.a) = call(callee, args, reg(in.c));
+            }
+            break;
+        }
 
         case op::gather_rest: {
             // The arguments past the declared parameters. They are still in

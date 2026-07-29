@@ -106,6 +106,14 @@ enum class op : std::uint8_t {
     // declared, which is the wrong number here.
     gather_rest, // a = [...arguments].slice(b)
 
+    // `f(...args)`. Every other call form passes its arguments in consecutive
+    // registers and puts the COUNT in an operand, which cannot work when the
+    // count is not known until the spread is evaluated. These take the
+    // arguments as an array instead, so one form covers plain calls, method
+    // calls and computed calls - the receiver is simply a register.
+    apply,           // a = a.call(c, ...b)
+    construct_apply, // a = new a(...b)
+
     // --- objects and arrays
     new_object, // a = {}
     new_array,  // a = []

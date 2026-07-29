@@ -292,6 +292,15 @@ private:
     // not know what `extends` will evaluate to.
     void run_field_initialisers(value constructor, value self);
 
+    // The fresh object `new` builds, with its prototype taken from the
+    // constructor's own `prototype` property - which is what makes a method
+    // defined on the class reachable from every instance.
+    [[nodiscard]] value make_instance(value callee);
+    // `new callee(...args)` where the argument count is only known at run time.
+    // op::construct keeps its own inline path because it does not need a nested
+    // interpreter loop; this is for the spread form, which does.
+    [[nodiscard]] value construct(value callee, std::span<const value> args);
+
     [[nodiscard]] value execute(const program & prog, const function_proto & entry);
     [[nodiscard]] value run_loop(std::size_t stop_depth);
     void raise(std::string message) {

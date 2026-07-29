@@ -308,6 +308,44 @@ void test_class_fields_are_per_instance() {
            "4");
 }
 
+// `f(...args)` - the single construct that stopped more of p5.js than any
+// other. `nk::spread` was not a case in compile_expr at all, so it reached the
+// default arm and refused the whole call.
+void test_spread_in_a_call() {
+    expect("function f(a, b, c) { return a + b + c; } return f(...[1, 2, 3]);", "6");
+    // mixed with ordinary arguments, in any position
+    expect("function f(a, b, c) { return a + '-' + b + '-' + c; } "
+           "return f(1, ...[2, 3]);",
+           "1-2-3");
+    expect("function f(a, b, c) { return a + '-' + b + '-' + c; } "
+           "return f(...[1, 2], 3);",
+           "1-2-3");
+    expect("function f(a, b, c, d) { return a + b + c + d; } "
+           "return f(...[1, 2], ...[3, 4]);",
+           "10");
+    // a METHOD call keeps its receiver
+    expect("const o = { n: 10, add(a, b) { return this.n + a + b; } }; return o.add(...[1, 2]);",
+           "13");
+    // and so does a computed one
+    expect("const o = { n: 10, add(a, b) { return this.n + a + b; } }; "
+           "const k = 'add'; return o[k](...[1, 2]);",
+           "13");
+    // it reaches natives too
+    expect("return Math.max(...[3, 9, 4]);", "9");
+    // spread of a computed array, not just a literal
+    expect("function f(a, b) { return a * b; } const xs = [3, 4]; return f(...xs);", "12");
+    // ...and it composes with a rest parameter on the other side
+    expect("function f(...rest) { return rest.length; } return f(...[1, 2, 3], 4);", "4");
+    expect("function f(a, ...rest) { return rest.join(','); } return f(...[1, 2, 3]);", "2,3");
+    // `new C(...args)`
+    expect("class P { constructor(a, b) { this.v = a + b; } } return new P(...[2, 3]).v;", "5");
+    expect("class P { constructor(a, b, c) { this.v = a + b + c; } } "
+           "return new P(1, ...[2, 3]).v;",
+           "6");
+    // a spread of an empty array passes nothing
+    expect("function f(a) { return typeof a; } return f(...[]);", "undefined");
+}
+
 void test_typeof() {
     diff_vs_v1("typeof 1", "number");
     diff_vs_v1("typeof 'x'", "string");
@@ -1005,6 +1043,7 @@ int main() {
     test_arrow_this_is_lexical();
     test_class_fields_are_per_instance();
     test_bitwise_compound_assignment();
+    test_spread_in_a_call();
     test_typeof();
     test_variables_and_control_flow();
     test_increment_semantics();

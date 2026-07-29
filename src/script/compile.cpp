@@ -1594,8 +1594,83 @@ public:
         proto().emit(instruction{op::get_proto, dst, dst});
     }
 
+    [[nodiscard]] bool any_spread(const std::vector<std::int32_t> & args) const {
+        for (const std::int32_t arg : args) {
+            if (at(arg).kind == vp::nk::spread) { return true; }
+        }
+        return false;
+    }
+
+    // The arguments of a call, as one array. Same shape as an array literal,
+    // because that is exactly what it is.
+    void emit_argument_array(const std::vector<std::int32_t> & args, std::uint8_t dst) {
+        proto().emit(instruction{op::new_array, dst});
+        const std::uint32_t mark = reg_mark();
+        for (const std::int32_t arg : args) {
+            const std::uint8_t v = alloc_reg();
+            if (at(arg).kind == vp::nk::spread) {
+                compile_expr(at(arg).a, v);
+                emit_append_all(dst, v);
+            } else {
+                compile_expr(arg, v);
+                proto().emit(instruction{op::append, dst, v});
+            }
+            release_to(mark);
+        }
+    }
+
+    // `f(...args)`.
+    //
+    // Every other call form puts its arguments in consecutive registers and the
+    // COUNT in an operand, which cannot work when the count is not known until
+    // the spread is evaluated. So the arguments become an array and the callee
+    // and receiver are resolved into registers first - which collapses all four
+    // call forms into one, since by then the receiver is just a register.
+    //
+    // `nk::spread` was not a case in compile_expr at all, so this used to reach
+    // the default arm and refuse the whole call. It stops thirteen of p5.js's
+    // seventy-one modules, more than any other single construct.
+    void compile_spread_call(const vp::node & n, std::uint8_t dst) {
+        const std::vector<std::int32_t> args = kids(n);
+        const vp::node & callee = at(n.a);
+        const std::uint32_t mark = reg_mark();
+        const std::uint8_t target = alloc_reg();
+        const std::uint8_t self = alloc_reg();
+
+        const bool super_method = callee.kind == vp::nk::member && callee.a >= 0 &&
+                                  at(callee.a).kind == vp::nk::super_lit;
+        if (callee.kind == vp::nk::super_lit || super_method) {
+            emit_super_base(target);
+            const std::string name = super_method ? std::string{callee.text} : "constructor";
+            proto().emit(instruction{op::get_prop, target, target, name_operand(name)});
+            proto().emit(instruction{op::load_this, self});
+        } else if (callee.kind == vp::nk::member) {
+            compile_expr(callee.a, self);
+            proto().emit(
+                instruction{op::get_prop, target, self, name_operand(std::string{callee.text})});
+        } else if (callee.kind == vp::nk::index) {
+            compile_expr(callee.a, self);
+            const std::uint8_t key = alloc_reg();
+            compile_expr(callee.b, key);
+            proto().emit(instruction{op::get_index, target, self, key});
+        } else {
+            compile_expr(n.a, target);
+            proto().emit(instruction{op::load_undef, self});
+        }
+
+        const std::uint8_t argv = alloc_reg();
+        emit_argument_array(args, argv);
+        proto().emit(instruction{op::apply, target, argv, self});
+        proto().emit(instruction{op::move, dst, target});
+        release_to(mark);
+    }
+
     void compile_call(const vp::node & n, std::uint8_t dst) {
         const std::vector<std::int32_t> args = kids(n);
+        if (any_spread(args)) {
+            compile_spread_call(n, dst);
+            return;
+        }
         const vp::node & callee = at(n.a);
         const std::uint32_t mark = reg_mark();
         const std::uint8_t base = alloc_reg();
@@ -1650,6 +1725,15 @@ public:
         const std::vector<std::int32_t> args = kids(n);
         const std::uint32_t mark = reg_mark();
         const std::uint8_t base = alloc_reg();
+        if (any_spread(args)) {
+            compile_expr(n.a, base);
+            const std::uint8_t argv = alloc_reg();
+            emit_argument_array(args, argv);
+            proto().emit(instruction{op::construct_apply, base, argv});
+            proto().emit(instruction{op::move, dst, base});
+            release_to(mark);
+            return;
+        }
         compile_expr(n.a, base);
         for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
         proto().emit(instruction{op::construct, base, static_cast<std::uint8_t>(args.size())});
