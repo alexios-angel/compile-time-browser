@@ -135,8 +135,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CTBROWSER_SDL3_TTF_DLL}" "${dist-dir}")
     endif()
   endif()
-  # Named files, not the whole assets tree: that also holds the previous engine's glTF models
-  # and p5.js, which is 20 MB no the engine example opens.
+  # Named files, not the whole assets tree: that also holds the previous
+  # engine's glTF models, which nothing here opens.
+  #
+  # p5.js DOES travel now, and it is 4.4 MB. It used to be excluded on the
+  # grounds that no example opened it; four do - p5basic, p5text, p5transform
+  # and p5shape - and the whole pages directory is copied, so leaving the
+  # bundle behind would ship four pages that load nothing and render blank.
   list(APPEND dist-commands
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/pages" "${dist-dir}/examples/pages"
@@ -145,6 +150,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
             "${PROJECT_SOURCE_DIR}/examples/assets/sprites.bmp"
             "${PROJECT_SOURCE_DIR}/examples/assets/blip.wav"
             "${PROJECT_SOURCE_DIR}/examples/assets/chart.svg"
+            "${PROJECT_SOURCE_DIR}/examples/assets/p5.js"
             "${dist-dir}/examples/assets"
     # PressStart2P is a PAGE's font, fetched by @font-face through a URL
     # (elements.html), so it travels whatever the build did with the UA faces -
