@@ -658,6 +658,9 @@ void test_named_class_expression_binds_itself() {
     expect("let X = class Inner { constructor() { this.self = Inner; } }; "
            "return new X().self === X;",
            "true");
+    // TODO: scope the name to the class BODY. It is bound in the enclosing
+    // scope because that is the only scope this compiler has to put it in;
+    // a per-class scope would fix it.
     // APPROXIMATION, and worth knowing: the inner name is bound in the
     // ENCLOSING scope rather than only inside the class body, because that is
     // the only scope this compiler has to put it in. Real JavaScript would

@@ -852,6 +852,8 @@ void dom_bindings::install_window(context & cx) {
                 value::object(cx.allocate<script::native_object>(
                     "addEventListener", [this](context & c, std::span<value> args) {
                         // The third argument is options or a capture flag. Only
+                        // TODO: honour `once` and `capture`. A `once` listener
+                        // fires more than once today.
                         // `signal` is honoured; `capture`, `once` and `passive`
                         // are accepted and ignored, which is visible in that a
                         // `once` listener fires more than once.
@@ -877,6 +879,7 @@ void dom_bindings::install_window(context & cx) {
     // `localStorage`, IN MEMORY AND FOR THIS PAGE ONLY. 38 uses in p5.js, which
     // reads it before it draws anything.
     //
+    // TODO: persist per origin once there IS an origin to scope a store to.
     // Not persisted, deliberately: a test that leaves state behind fails the
     // next run for reasons that have nothing to do with the code, and this
     // engine has no origin to scope a store to anyway. A page gets a working
@@ -933,6 +936,8 @@ void dom_bindings::install_window(context & cx) {
     // remove them all at once.
     //
     // The signal is carried and honoured by removeEventListener via `abort`;
+    // TODO: aborting should cancel an in-flight fetch once fetch stops blocking
+    // the frame. Today there is nothing in flight to cancel.
     // what is NOT modelled is aborting an in-flight fetch, because a fetch here
     // does not overlap with anything. A page that aborts one gets a request
     // that already finished, which is a difference worth knowing about.
@@ -1233,6 +1238,10 @@ node_id dom_bindings::find_by_id(const std::string & want) {
 // (`document.querySelectorAll('script')`) and what `select()` is used for in
 // practice.
 //
+// TODO: support combinators by reaching the style engine's real matcher. It
+// needs element_facts and an ancestor_filter, so either those move somewhere
+// both callers can use or the engine grows a `matches(node, selector)` entry
+// point that builds them itself.
 // COMBINATORS ARE NOT SUPPORTED: `div p`, `ul > li`, `a + b` all match
 // nothing. The style engine has a real matcher for those, but it is built
 // around the cascade - element facts, an ancestor bloom filter, a rule index -

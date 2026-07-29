@@ -108,6 +108,9 @@ inline void method(context & cx, object_object * table, std::string name, native
 // `Promise.all([waitForDocumentReady(), waitingForTranslator]).then(_globalInit)`,
 // so the library could not begin without it.
 //
+// TODO: a microtask queue. A handler should run at the end of the turn, not
+// the moment the promise settles - drain it from run_due_callbacks, after
+// timers and before rAF, and again after each event dispatch.
 // What is still missing, and it is a real difference: there is no MICROTASK
 // QUEUE. A handler runs the moment the promise settles rather than at the end
 // of the turn, so code that depends on ordering between a `then` and the
@@ -1840,6 +1843,11 @@ void install_symbol(context & cx) {
 // wants SameValueZero over every value kind, which is a bigger piece of work
 // than this needs to be today.
 //
+// TODO: Map and Set lookup is LINEAR - a hash keyed on a NaN-boxed value wants
+// SameValueZero over every value kind. Fine for the small string-keyed maps p5
+// builds; wrong complexity for anything larger.
+// TODO: WeakMap and WeakSet keep their keys alive. That is a leak, not a wrong
+// answer, and it needs weak references the collector understands.
 // WeakMap and WeakSet are the strong versions under different names: nothing
 // here has weak references, so an entry keeps its key alive. Said out loud
 // because the difference is a leak, not a wrong answer.
@@ -2231,6 +2239,12 @@ void install_function(context & cx) {
                 return inner.call(self, args, receiver);
             }));
     });
+    // TODO: return the REAL source. p5's Friendly Error System parses a sketch
+    // with `f.toString()` and gets "[native code]", which is where the ratchet
+    // stops. Needs a source span on function_proto - the ctjs node's `text` is
+    // a string_view INTO the source, so the offset is a subtraction - plus the
+    // program keeping its source string. Error.stack wants the same thing, and
+    // would get real line numbers from it.
     method(cx, function_proto, "toString",
            [](context & c, std::span<value>) { return c.string("function () { [native code] }"); });
     cx.set_prototype(context::proto_kind::function, function_proto);
@@ -2246,6 +2260,8 @@ void install_function(context & cx) {
 // correctness on write, which is where a shortcut would have hurt: the element
 // coercion is real, so a Uint8ClampedArray clamps and a Uint8Array wraps.
 //
+// TODO: an ArrayBuffer should be SHARED storage. Two views over one buffer do
+// not see each other's writes today, because each view owns its elements.
 // The gap that remains, and it is a real one: an ArrayBuffer here is not
 // shared storage. Two views over the same buffer do not see each other's
 // writes, because each view owns its elements. p5 uses views over their own
@@ -2341,6 +2357,10 @@ void install_typed_arrays(context & cx) {
 
 // `new Function(body)` - a compiler at run time.
 //
+// TODO: this can be implemented NOW. The blocker cited below - that run_loop
+// read nested protos out of a single `program_` - was fixed when a closure
+// gained an `owner`. What remains is for the context to OWN the programs it
+// compiles at run time, the way browser::run_script now keeps its own.
 // It EXISTS, because p5.js builds one while loading and a missing global stops
 // the bundle outright; and it REFUSES when called, because compiling one here
 // properly is a VM change rather than a library one. A closure holds a
