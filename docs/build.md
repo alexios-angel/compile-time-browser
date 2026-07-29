@@ -264,6 +264,16 @@ Three things that cost time if you assume otherwise:
   executable links the shell, so turning it on unconditionally would put about
   160 MB of fonts into `build/` for something only a distributable build wants.
 
+**The `windows` preset turns it ON**, which is what it is for: those exes
+already carry a static SDL3 and no DLL, and the last thing they needed beside
+them was a font directory. `windows-dist` therefore stops copying `fonts/` -
+shipping 5.2 MB nothing reads - and copies only the OFL licences, which still
+have to travel. `examples/assets/fonts` is untouched either way: PressStart2P is
+a PAGE's font, fetched by `@font-face` through a URL, and embedding covers the
+three families `use_real_fonts` loads and nothing else.
+
 Verified end to end by running two builds of `ctdrive` from a directory with no
 `fonts/` in it: the ordinary one falls back to font8x8 and draws blocky
-bitmaps, the embedded one renders Tinos.
+bitmaps, the embedded one renders Tinos. And on the Windows side by rendering
+`widgets.exe` from a dist with no `.ttf` in it at all - bold serif heading,
+Fira Sans labels, Cousine textarea.

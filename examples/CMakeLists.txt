@@ -107,14 +107,34 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
             "${PROJECT_SOURCE_DIR}/examples/assets/sprites.bmp"
             "${PROJECT_SOURCE_DIR}/examples/assets/blip.wav"
             "${dist-dir}/examples/assets"
-    # The OFL faces back serif/sans-serif/monospace. Without them every exe
-    # falls back to the built-in bitmap font, which works but is not what the
-    # gallery is for; the licence rides along because the fonts do.
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${PROJECT_SOURCE_DIR}/fonts" "${dist-dir}/fonts"
+    # PressStart2P is a PAGE's font, fetched by @font-face through a URL
+    # (elements.html), so it travels whatever the build did with the UA faces -
+    # embedding covers the three families use_real_fonts loads and nothing else.
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${PROJECT_SOURCE_DIR}/examples/assets/fonts"
             "${dist-dir}/examples/assets/fonts")
+  # The OFL faces back serif/sans-serif/monospace. Without them every exe falls
+  # back to the built-in bitmap font, which works but is not what the gallery is
+  # for; the licence rides along because the fonts do.
+  #
+  # Unless they are IN the exe, which is what the windows preset now does - then
+  # shipping the directory as well would be shipping 5.2 MB nothing reads. The
+  # licence still travels: it is next to the faces inside fonts/ and is copied
+  # with them, so it is copied here on its own.
+  if(CTBROWSER_EMBED_FONTS)
+    # Globbed rather than named: the licences that need to travel are whatever
+    # is in fonts/ that is not a face, and naming them is how you ship a dist
+    # missing the licence for a font you added last month.
+    file(GLOB font-licences "${PROJECT_SOURCE_DIR}/fonts/*.txt"
+                            "${PROJECT_SOURCE_DIR}/fonts/*.md")
+    list(APPEND dist-commands
+      COMMAND ${CMAKE_COMMAND} -E make_directory "${dist-dir}/fonts"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different ${font-licences} "${dist-dir}/fonts")
+  else()
+    list(APPEND dist-commands
+      COMMAND ${CMAKE_COMMAND} -E copy_directory
+              "${PROJECT_SOURCE_DIR}/fonts" "${dist-dir}/fonts")
+  endif()
   add_custom_target(windows-dist ${dist-commands}
     DEPENDS ${dist-targets}
     COMMENT "collecting Windows exes + pages into examples-windows/"
