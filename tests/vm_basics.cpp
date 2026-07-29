@@ -708,6 +708,119 @@ void test_class_declaration_survives_the_statement() {
            "1");
 }
 
+// THE COMMA OPERATOR HAS EFFECTS. It was added to the parser with a test that
+// it PARSED and none that it ran, and it did nothing at all: the parser builds
+// `a, b, c` as seq(seq(a, b), c) - binary, left-nested - and the compiler read
+// a child LIST, which for such a node is empty. Every comma expression
+// evaluated nothing and produced undefined.
+//
+// It silently emptied every Babel-transpiled class in p5.js, because
+// `_createClass(e, r) { return r && _defineProperties(e.prototype, r), ..., e; }`
+// is how one installs its methods.
+void test_comma_operator_evaluates_everything() {
+    expect("let n = 0; function f() { n++; } const x = (f(), f(), 5); return n + '|' + x;", "2|5");
+    // the value is the LAST operand
+    expect("return (1, 2, 3);", "3");
+    // it composes with && short-circuits, which is the shape Babel emits
+    expect("let hit = 0; function f() { hit = 1; return 1; } "
+           "function g(a) { return a && f(), 9; } const r = g(1); return hit + '|' + r;",
+           "1|9");
+    expect("let hit = 0; function f() { hit = 1; return 1; } "
+           "function g(a) { return a && f(), 9; } const r = g(0); return hit + '|' + r;",
+           "0|9");
+    // and in a for-update clause, which is where p5 needed it first
+    expect("let s = ''; for (let i = 0, j = 5; i < 2; i++, j--) { s += i + ':' + j + ' '; } "
+           "return s;",
+           "0:5 1:4 ");
+}
+
+// EVERY FUNCTION HAS A `prototype`, made on first use. `function F() {}; new F()
+// instanceof F` is the constructor-function pattern every transpiler emits -
+// Babel's own `_classCallCheck` guard is exactly that test - and a plain
+// function had none, so `new F()` produced an object with no prototype.
+void test_functions_have_a_prototype() {
+    expect("function F() {} return typeof F.prototype;", "object");
+    expect("function F() {} return F.prototype.constructor === F;", "true");
+    expect("function F() {} return new F() instanceof F;", "true");
+    // the same object every time, or nothing built on it would hold
+    expect("function F() {} return F.prototype === F.prototype;", "true");
+    // methods installed on it are found by an instance
+    expect("function F() {} F.prototype.m = function () { return 4; }; return new F().m();", "4");
+    // an arrow is not a constructor and gets none
+    expect("const a = () => 1; return typeof a.prototype;", "undefined");
+}
+
+void test_proxy() {
+    expect("const p = new Proxy({ v: 1 }, {}); return p.v;", "1");
+    expect("const p = new Proxy({}, { get(t, k) { return 'got:' + k; } }); return p.anything;",
+           "got:anything");
+    expect("const p = new Proxy({ a: 1 }, { has(t, k) { return k === 'z'; } }); "
+           "return ('z' in p) + '|' + ('a' in p);",
+           "true|false");
+    // the trap p5.js needs at its top level
+    expect("class B { constructor(v) { this.v = v; } } "
+           "const P = new Proxy(B, { construct(t, args) { return new t(args[0] * 2); } }); "
+           "return new P(4).v;",
+           "8");
+    // an absent trap falls through to the target rather than being skipped
+    expect("class B { constructor() { this.v = 'base'; } } "
+           "const P = new Proxy(B, {}); return new P().v;",
+           "base");
+    expect("return typeof Reflect.get({ a: 5 }, 'a');", "number");
+    expect("return Reflect.get({ a: 5 }, 'a');", "5");
+}
+
+// `Object.defineProperty` with a descriptor that has no value, get or set
+// describes ATTRIBUTES ONLY and must leave the existing value alone. Writing
+// undefined instead is how `Object.defineProperty(C, "prototype",
+// {writable: false})` - which every Babel class emits - wiped the prototype it
+// had just filled in.
+void test_define_property_attributes_only() {
+    expect("const o = { v: 1 }; Object.defineProperty(o, 'v', { writable: false }); return o.v;",
+           "1");
+    expect("function F() {} F.prototype.m = function () { return 1; }; "
+           "Object.defineProperty(F, 'prototype', { writable: false }); "
+           "return typeof F.prototype.m;",
+           "function");
+    // a FUNCTION is an object: Babel defines onto the constructor as well
+    expect("function F() {} Object.defineProperty(F, 'tag', { value: 'x' }); return F.tag;", "x");
+}
+
+void test_function_prototype() {
+    expect("function f(a) { return this.v + a; } return f.call({ v: 1 }, 2);", "3");
+    expect("function f(a) { return this.v + a; } return f.apply({ v: 1 }, [2]);", "3");
+    expect("function f(a) { return this.v + a; } return f.bind({ v: 1 })(2);", "3");
+    // bind is a PARTIAL APPLICATION, not just a receiver change
+    expect("function f(a, b) { return this.v + a + b; } return f.bind({ v: 1 }, 10)(2);", "13");
+    // the constructor-borrowing pattern every transpiler emits
+    expect("function P() { this.v = 1; } function C() { P.call(this); } return new C().v;", "1");
+    // and a native has the same prototype
+    expect("return typeof Math.max.apply;", "function");
+}
+
+// A FUNCTION HAS A [[Prototype]] OF ITS OWN, and it is not its `prototype`
+// property. Babel's `_inherits` sets both - the subclass's prototype property
+// so instances find inherited methods, and the subclass FUNCTION so STATICS are
+// inherited - and answering null for a function broke every transpiled
+// `extends`.
+void test_function_prototype_link() {
+    expect("function B() {} function D() {} Object.setPrototypeOf(D, B); "
+           "return Object.getPrototypeOf(D) === B;",
+           "true");
+    // static inheritance through it
+    expect("function B() {} B.tag = 'base'; function D() {} Object.setPrototypeOf(D, B); "
+           "return D.tag;",
+           "base");
+    // two levels
+    expect("function A() {} A.tag = 'a'; function B() {} function C() {} "
+           "Object.setPrototypeOf(B, A); Object.setPrototypeOf(C, B); return C.tag;",
+           "a");
+    // an ordinary object still answers with its own prototype
+    expect("const base = {}; const o = Object.create(base); "
+           "return Object.getPrototypeOf(o) === base;",
+           "true");
+}
+
 void test_typeof() {
     diff_vs_v1("typeof 1", "number");
     diff_vs_v1("typeof 'x'", "string");
@@ -1439,6 +1552,12 @@ int main() {
     test_class_declaration_survives_the_statement();
     test_chain_state_does_not_leak_into_a_nested_function();
     test_stdlib_additions();
+    test_comma_operator_evaluates_everything();
+    test_functions_have_a_prototype();
+    test_proxy();
+    test_define_property_attributes_only();
+    test_function_prototype();
+    test_function_prototype_link();
     test_typeof();
     test_variables_and_control_flow();
     test_increment_semantics();

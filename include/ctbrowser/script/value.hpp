@@ -53,7 +53,8 @@ enum class heap_kind : std::uint8_t {
     function,
     native,
     cell,
-    symbol
+    symbol,
+    proxy
 };
 
 struct heap_object; // every heap value starts with one
@@ -111,8 +112,17 @@ public:
     [[nodiscard]] bool is_string() const noexcept { return is_kind(heap_kind::string); }
     [[nodiscard]] bool is_object() const noexcept { return is_kind(heap_kind::object); }
     [[nodiscard]] bool is_array() const noexcept { return is_kind(heap_kind::array); }
-    [[nodiscard]] bool is_callable() const noexcept {
-        return is_kind(heap_kind::function) || is_kind(heap_kind::native);
+    // A PROXY IS CALLABLE WHEN ITS TARGET IS - `new Proxy(SomeClass, {...})`
+    // has to be constructible, or the proxy is useless for the one thing p5.js
+    // uses it for. Defined out of line, below proxy_object.
+    [[nodiscard]] bool is_callable() const noexcept;
+    // "AN OBJECT" in the sense `new` means it: the spec says a constructor's
+    // return overrides the fresh instance when it is an object, and an array, a
+    // function and a proxy all are. Testing is_object() alone threw away every
+    // one of them - which is how `new Proxy(...)` returned a bare instance
+    // instead of the proxy.
+    [[nodiscard]] bool is_object_like() const noexcept {
+        return is_object() || is_array() || is_callable() || is_kind(heap_kind::proxy);
     }
 
     // Strict equality (===) is a bit compare for everything except numbers,
@@ -188,6 +198,25 @@ struct symbol_object final : heap_object {
     if (is_string() && o.is_string()) {
         return static_cast<const string_object *>(as_heap())->text ==
                static_cast<const string_object *>(o.as_heap())->text;
+    }
+    return false;
+}
+
+// `new Proxy(target, handler)`. Three traps are implemented - `get`, `has` and
+// `construct` - because those are the three p5.js uses, and one of them runs at
+// its top level: `p5.renderers['p2d-p3'] = new Proxy(Renderer2D, {construct(){...}})`.
+// A trap that is not implemented is not silently skipped; the operation falls
+// through to the target, which is what an absent trap means anyway.
+struct proxy_object final : heap_object {
+    value target;
+    value handler;
+    proxy_object(value t, value h) : heap_object(heap_kind::proxy), target(t), handler(h) {}
+};
+
+inline bool value::is_callable() const noexcept {
+    if (is_kind(heap_kind::function) || is_kind(heap_kind::native)) { return true; }
+    if (is_kind(heap_kind::proxy)) {
+        return static_cast<const proxy_object *>(as_heap())->target.is_callable();
     }
     return false;
 }

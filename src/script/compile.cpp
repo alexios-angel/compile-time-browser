@@ -2209,12 +2209,19 @@ public:
 
     // The comma operator: evaluate everything, yield the last.
     void compile_sequence(const vp::node & n, std::uint16_t dst) {
-        const std::vector<std::int32_t> parts = kids(n);
-        if (parts.empty()) {
-            proto().emit(instruction{op::load_undef, dst});
-            return;
-        }
-        for (const std::int32_t part : parts) { compile_expr(part, dst); }
+        // A SEQUENCE IS BINARY, not a list. The parser builds `a, b, c` as
+        // seq(seq(a, b), c) - left-nested, two children per node - and this
+        // read `kids(n)` instead, which for such a node is EMPTY. So every
+        // comma expression evaluated nothing at all and produced undefined,
+        // silently, from the day the operator was added.
+        //
+        // Nothing caught it because the operator was added to the parser with
+        // no test that a comma expression has EFFECTS - only that it parsed.
+        // `_createClass(e, r, t) { return r && _defineProperties(...), ..., e; }`
+        // is how every Babel-transpiled class installs its methods, so this one
+        // omission silently emptied every such class in p5.js.
+        compile_expr(n.a, dst);
+        compile_expr(n.b, dst);
     }
 
     // A class.

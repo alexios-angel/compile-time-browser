@@ -107,6 +107,14 @@ struct closure_object final : heap_object {
         accessors.define(name, getter, setter);
     }
 
+    // The function's OWN [[Prototype]] - what `Object.getPrototypeOf(F)`
+    // returns - which is a different thing from the `prototype` PROPERTY that
+    // its instances get. Babel's `_inherits` sets both: the subclass's
+    // prototype property chains to the superclass's for instance methods, and
+    // the subclass FUNCTION chains to the superclass function for static ones.
+    // Without this, `_getPrototypeOf(I18n).call(this)` read null.
+    value proto_link = value::null();
+
     const function_proto * proto = nullptr;
     std::vector<value> upvalues; // each one is a cell_object
     // Only meaningful when proto->is_arrow: the `this` in scope where the arrow
@@ -179,6 +187,12 @@ public:
     // script.
     value call(value callable, std::span<const value> args, value this_value = value::undefined());
 
+    // `new callee(...args)` where the argument count is only known at run time.
+    // op::construct keeps its own inline path because it does not need a nested
+    // interpreter loop; this is for the spread form and for `Reflect.construct`,
+    // which both do.
+    [[nodiscard]] value construct(value callee, std::span<const value> args);
+
     // --- conversions (ECMA-262 shaped, and shared with the bindings) -------
     [[nodiscard]] static bool truthy(value v);
     // ECMA-262 ToInt32 / ToUint32: NaN and the infinities are 0, everything
@@ -220,6 +234,7 @@ public:
         map,
         set,
         error,
+        function,
         count_
     };
 
@@ -340,11 +355,12 @@ private:
                                                    std::uint16_t reg_index);
     [[nodiscard]] std::string describe_callee(const function_proto & fn, std::string_view name,
                                               value callee);
+    // The handler's trap of this name, or undefined when it has none.
+    [[nodiscard]] value proxy_trap(value proxy, const std::string & name);
+    [[nodiscard]] std::string describe_thrown(value thrown);
+    // A function's `prototype`, made on first use. See the definition.
+    [[nodiscard]] value ensure_prototype(value fn);
     [[nodiscard]] value make_instance(value callee);
-    // `new callee(...args)` where the argument count is only known at run time.
-    // op::construct keeps its own inline path because it does not need a nested
-    // interpreter loop; this is for the spread form, which does.
-    [[nodiscard]] value construct(value callee, std::span<const value> args);
 
     [[nodiscard]] value execute(const program & prog, const function_proto & entry);
     [[nodiscard]] value run_loop(std::size_t stop_depth);

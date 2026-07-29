@@ -75,6 +75,11 @@ namespace detail {
     return static_cast<object_object *>(cx.make_object().as_heap());
 }
 
+// A native allocated from inside another native - `bind` returns one.
+[[nodiscard]] inline native_object * cx_native(context & cx, std::string name, native_fn fn) {
+    return cx.allocate<native_object>(std::move(name), std::move(fn));
+}
+
 inline void method(context & cx, object_object * table, std::string name, native_fn fn) {
     table->set(name, value::object(cx.allocate<native_object>(name, std::move(fn))));
 }
@@ -1068,6 +1073,53 @@ void install_number(context & cx) {
 }
 
 // Object
+// One `Object.defineProperty`, used by both it and defineProperties.
+//
+// Two things it has to get right, and both were wrong:
+//
+// A descriptor with NO `value`, `get` or `set` describes ATTRIBUTES ONLY, and
+// must leave the existing value alone. Writing undefined instead is how
+// `Object.defineProperty(C, "prototype", {writable: false})` - which is what
+// every Babel-transpiled class emits - wiped the prototype it had just filled
+// in, and the class's methods vanished with it.
+//
+// And a FUNCTION IS AN OBJECT. Babel defines onto the constructor as well as
+// onto its prototype, and `is_object()` is false for a closure, so half of
+// every transpiled class was silently dropped.
+void define_one(context & cx, value target, const std::string & key, object_object * descriptor) {
+    value * getter = descriptor->find("get");
+    value * setter = descriptor->find("set");
+    value * held = descriptor->find("value");
+    const bool describes_a_value = getter != nullptr || setter != nullptr || held != nullptr;
+
+    if (target.is_object()) {
+        auto * obj = static_cast<object_object *>(target.as_heap());
+        if (getter != nullptr || setter != nullptr) {
+            obj->define_accessor(key, getter == nullptr ? value::undefined() : *getter,
+                                 setter == nullptr ? value::undefined() : *setter);
+        } else if (held != nullptr) {
+            obj->erase_accessor(key);
+            obj->set(key, *held);
+        }
+        return;
+    }
+    if (target.is_kind(heap_kind::function)) {
+        auto * closure = static_cast<closure_object *>(target.as_heap());
+        if (getter != nullptr || setter != nullptr) {
+            closure->define_accessor(key, getter == nullptr ? value::undefined() : *getter,
+                                     setter == nullptr ? value::undefined() : *setter);
+        } else if (held != nullptr) {
+            closure->set(key, *held);
+        }
+        return;
+    }
+    if (target.is_kind(heap_kind::native) && held != nullptr) {
+        static_cast<native_object *>(target.as_heap())->set(key, *held);
+    }
+    (void)cx;
+    (void)describes_a_value;
+}
+
 void install_object(context & cx) {
     using detail::method;
     using detail::new_table;
@@ -1078,41 +1130,18 @@ void install_object(context & cx) {
     // data (`value`) or accessor (`get`/`set`); the two are the same property
     // described two ways, so defining one removes the other.
     method(cx, object_ctor, "defineProperty", [](context & c, std::span<value> a) {
-        if (!arg_at(a, 0).is_object() || !arg_at(a, 2).is_object()) { return arg_at(a, 0); }
-        auto * target = static_cast<object_object *>(a[0].as_heap());
-        const std::string key = c.to_string(arg_at(a, 1));
+        if (!arg_at(a, 2).is_object()) { return arg_at(a, 0); }
         auto * descriptor = static_cast<object_object *>(a[2].as_heap());
-        value * getter = descriptor->find("get");
-        value * setter = descriptor->find("set");
-        if (getter != nullptr || setter != nullptr) {
-            target->define_accessor(key, getter == nullptr ? value::undefined() : *getter,
-                                    setter == nullptr ? value::undefined() : *setter);
-            return a[0];
-        }
-        target->erase_accessor(key);
-        value * held = descriptor->find("value");
-        target->set(key, held == nullptr ? value::undefined() : *held);
-        return a[0];
+        define_one(c, arg_at(a, 0), c.to_string(arg_at(a, 1)), descriptor);
+        return arg_at(a, 0);
     });
-    method(cx, object_ctor, "defineProperties", [](context &, std::span<value> a) {
-        if (!arg_at(a, 0).is_object() || !arg_at(a, 1).is_object()) { return arg_at(a, 0); }
-        auto * target = static_cast<object_object *>(a[0].as_heap());
-        auto * all = static_cast<object_object *>(a[1].as_heap());
-        for (const auto & [key, descriptor] : all->props) {
+    method(cx, object_ctor, "defineProperties", [](context & c, std::span<value> a) {
+        if (!arg_at(a, 1).is_object()) { return arg_at(a, 0); }
+        for (const auto & [key, descriptor] : static_cast<object_object *>(a[1].as_heap())->props) {
             if (!descriptor.is_object()) { continue; }
-            auto * d = static_cast<object_object *>(descriptor.as_heap());
-            value * getter = d->find("get");
-            value * setter = d->find("set");
-            if (getter != nullptr || setter != nullptr) {
-                target->define_accessor(key, getter == nullptr ? value::undefined() : *getter,
-                                        setter == nullptr ? value::undefined() : *setter);
-                continue;
-            }
-            target->erase_accessor(key);
-            value * held = d->find("value");
-            target->set(key, held == nullptr ? value::undefined() : *held);
+            define_one(c, arg_at(a, 0), key, static_cast<object_object *>(descriptor.as_heap()));
         }
-        return a[0];
+        return arg_at(a, 0);
     });
     method(cx, object_ctor, "getOwnPropertyDescriptor", [](context & c, std::span<value> a) {
         if (!arg_at(a, 0).is_object()) { return value::undefined(); }
@@ -1140,15 +1169,26 @@ void install_object(context & cx) {
         if (arg_at(a, 0).is_object()) { out->prototype = a[0]; }
         return value::object(out);
     });
+    // A FUNCTION HAS A [[Prototype]] TOO, and it is not its `prototype`
+    // property. Babel's `_inherits` sets both - the subclass's prototype
+    // property for instance methods, the subclass FUNCTION for static ones -
+    // and answering null for a function broke every transpiled `extends`.
     method(cx, object_ctor, "getPrototypeOf", [](context &, std::span<value> a) {
-        if (!arg_at(a, 0).is_object()) { return value::null(); }
-        return static_cast<object_object *>(a[0].as_heap())->prototype;
+        const value of = arg_at(a, 0);
+        if (of.is_object()) { return static_cast<object_object *>(of.as_heap())->prototype; }
+        if (of.is_kind(heap_kind::function)) {
+            return static_cast<closure_object *>(of.as_heap())->proto_link;
+        }
+        return value::null();
     });
     method(cx, object_ctor, "setPrototypeOf", [](context &, std::span<value> a) {
-        if (arg_at(a, 0).is_object()) {
-            static_cast<object_object *>(a[0].as_heap())->prototype = arg_at(a, 1);
+        const value of = arg_at(a, 0);
+        if (of.is_object()) {
+            static_cast<object_object *>(of.as_heap())->prototype = arg_at(a, 1);
+        } else if (of.is_kind(heap_kind::function)) {
+            static_cast<closure_object *>(of.as_heap())->proto_link = arg_at(a, 1);
         }
-        return arg_at(a, 0);
+        return of;
     });
     method(cx, object_ctor, "getOwnPropertyNames", [](context & c, std::span<value> a) {
         value out = c.make_array();
@@ -1855,12 +1895,118 @@ void install_errors(context & cx) {
     cx.set_prototype(context::proto_kind::error, error_proto);
 }
 
+// `Proxy` and `Reflect`. p5.js has three proxies, and one of them runs at the
+// bundle's top level - `p5.renderers['p2d-p3'] = new Proxy(Renderer2D,
+// {construct(...) {...}})` - so the bundle could not finish loading without it.
+//
+// Three traps: `get`, `has` and `construct`, which are the three p5 uses. A
+// trap that is not implemented is not silently skipped - the operation falls
+// through to the target, which is what an absent trap means anyway. The traps
+// that ARE missing (set, deleteProperty, ownKeys, apply and the rest) behave
+// the same way, so a page using one gets the target's behaviour rather than a
+// wrong answer; that is a real gap and it is named here rather than discovered.
+void install_proxy(context & cx) {
+    using detail::method;
+    using detail::new_table;
+
+    cx.define_native("Proxy", [](context & c, std::span<value> a) {
+        return value::object(c.allocate<proxy_object>(arg_at(a, 0), arg_at(a, 1)));
+    });
+
+    // Reflect is the un-trapped operation a handler calls to do the default
+    // thing - `Reflect.get(t, k)` inside a `get` trap is how a proxy adds
+    // behaviour instead of replacing it.
+    object_object * reflect = new_table(cx);
+    method(cx, reflect, "get", [](context & c, std::span<value> a) {
+        return c.lookup_index(arg_at(a, 0), arg_at(a, 1));
+    });
+    method(cx, reflect, "set", [](context & c, std::span<value> a) {
+        if (arg_at(a, 0).is_object()) {
+            static_cast<object_object *>(a[0].as_heap())
+                ->set(c.to_string(arg_at(a, 1)), arg_at(a, 2));
+        }
+        return value::boolean(true);
+    });
+    method(cx, reflect, "has", [](context & c, std::span<value> a) {
+        return value::boolean(!c.lookup_index(arg_at(a, 0), arg_at(a, 1)).is_undefined());
+    });
+    method(cx, reflect, "construct", [](context & c, std::span<value> a) {
+        std::vector<value> args;
+        if (arg_at(a, 1).is_array()) { args = static_cast<array_object *>(a[1].as_heap())->items; }
+        return c.construct(arg_at(a, 0), args);
+    });
+    method(cx, reflect, "apply", [](context & c, std::span<value> a) {
+        std::vector<value> args;
+        if (arg_at(a, 2).is_array()) { args = static_cast<array_object *>(a[2].as_heap())->items; }
+        return c.call(arg_at(a, 0), args, arg_at(a, 1));
+    });
+    method(cx, reflect, "ownKeys", [](context & c, std::span<value> a) {
+        value out = c.make_array();
+        auto * result = static_cast<array_object *>(out.as_heap());
+        if (arg_at(a, 0).is_object()) {
+            static_cast<object_object *>(a[0].as_heap())->each_own_key([&](const std::string & k) {
+                result->items.push_back(c.string(k));
+            });
+        }
+        return out;
+    });
+    method(cx, reflect, "getPrototypeOf", [](context &, std::span<value> a) {
+        if (!arg_at(a, 0).is_object()) { return value::null(); }
+        return static_cast<object_object *>(a[0].as_heap())->prototype;
+    });
+    cx.define_global("Reflect", value::object(reflect));
+}
+
+// `Function.prototype`. 84 `.call(`, 78 `.apply(` and 26 `.bind(` in p5.js -
+// and it cannot install one event listener without bind:
+// `window.addEventListener(e, this['_on' + e].bind(this), {...})`.
+void install_function(context & cx) {
+    using detail::method;
+    using detail::new_table;
+    object_object * function_proto = new_table(cx);
+
+    method(cx, function_proto, "call", [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!self.is_callable()) { return value::undefined(); }
+        const std::vector<value> rest(a.begin() + (a.empty() ? 0 : 1), a.end());
+        return c.call(self, rest, arg_at(a, 0));
+    });
+    method(cx, function_proto, "apply", [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!self.is_callable()) { return value::undefined(); }
+        std::vector<value> args;
+        if (arg_at(a, 1).is_array()) { args = static_cast<array_object *>(a[1].as_heap())->items; }
+        return c.call(self, args, arg_at(a, 0));
+    });
+    method(cx, function_proto, "bind", [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!self.is_callable()) { return value::undefined(); }
+        const value receiver = arg_at(a, 0);
+        // The arguments bound NOW are prepended to the ones supplied later,
+        // which is what makes `f.bind(o, 1)` a partial application rather than
+        // just a receiver change.
+        const auto bound =
+            std::make_shared<std::vector<value>>(a.begin() + (a.empty() ? 0 : 1), a.end());
+        return value::object(detail::cx_native(
+            c, "bound", [self, receiver, bound](context & inner, std::span<value> later) {
+                std::vector<value> args = *bound;
+                args.insert(args.end(), later.begin(), later.end());
+                return inner.call(self, args, receiver);
+            }));
+    });
+    method(cx, function_proto, "toString",
+           [](context & c, std::span<value>) { return c.string("function () { [native code] }"); });
+    cx.set_prototype(context::proto_kind::function, function_proto);
+}
+
 void install_builtins(context & cx, std::uint64_t seed) {
     install_math(cx, seed);
     install_regexp(cx);
     install_symbol(cx);
     install_collections(cx);
     install_errors(cx);
+    install_proxy(cx);
+    install_function(cx);
     install_array(cx);
     install_string(cx);
     install_number(cx);

@@ -756,6 +756,20 @@ void dom_bindings::install_document(context & cx) {
         return value::object(list);
     });
 
+    method("hasFocus", [](context &, std::span<value>) {
+        // There is one window and a page in it is the thing being looked at.
+        // A page asks this to decide whether to keep animating; answering
+        // false would make every sketch stop.
+        return value::boolean(true);
+    });
+
+    // 'complete' BY THE TIME SCRIPT RUNS, which is this engine's model: a page
+    // is parsed, its resources are resolved, and only then does anything
+    // execute. A library that branches on this - p5.js starts immediately when
+    // it reads 'complete' and waits for a `load` event otherwise - takes the
+    // branch that matches what actually happened.
+    doc->set("readyState", cx.string("complete"));
+
     doc->set("body", wrap(cx, find_by_tag("body")));
     doc->set("documentElement", wrap(cx, find_by_tag("html")));
     document_ = value::object(doc);

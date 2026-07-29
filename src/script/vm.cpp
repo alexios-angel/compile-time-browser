@@ -149,11 +149,18 @@ void context::mark_object(heap_object * o) {
         }
         // ...and an arrow's captured `this`, which nothing else can reach.
         mark(closure->captured_this);
+        mark(closure->proto_link);
         break;
     }
     case heap_kind::native:
         for (const auto & [name, v] : static_cast<native_object *>(o)->props) { mark(v); }
         break;
+    case heap_kind::proxy: {
+        auto * proxy = static_cast<proxy_object *>(o);
+        mark(proxy->target);
+        mark(proxy->handler);
+        break;
+    }
     default: break; // strings and symbols own no values
     }
 }
@@ -204,6 +211,18 @@ bool context::assign_through_accessor(value target, const std::string & name, va
 }
 
 value context::lookup_property(value target, const std::string & name) {
+    // A PROXY ANSWERS FIRST, or hands the question to its target. This sits at
+    // the top because a proxy's whole purpose is to be asked before anything
+    // else looks at the object underneath it.
+    if (target.is_kind(heap_kind::proxy)) {
+        auto * p = static_cast<proxy_object *>(target.as_heap());
+        const value trap = proxy_trap(target, "get");
+        if (trap.is_callable()) {
+            const value args[3] = {p->target, string(name), target};
+            return call(trap, args, p->handler);
+        }
+        return lookup_property(p->target, name);
+    }
     // Own properties first: a page that writes `arr.length = 0` or shadows a
     // method on one object must not be overridden by the prototype.
     if (target.is_object()) {
@@ -265,6 +284,11 @@ value context::lookup_property(value target, const std::string & name) {
         if (value * found = static_cast<native_object *>(target.as_heap())->find(name)) {
             return *found;
         }
+        // ...then Function.prototype, so `nativeFn.call(...)` works too.
+        if (object_object * table = prototype(proto_kind::function)) {
+            if (value * found = table->find(name)) { return *found; }
+        }
+        return value::undefined();
     }
     if (target.is_kind(heap_kind::symbol)) {
         auto * sym = static_cast<symbol_object *>(target.as_heap());
@@ -277,6 +301,7 @@ value context::lookup_property(value target, const std::string & name) {
     if (target.is_kind(heap_kind::function)) {
         auto * closure = static_cast<closure_object *>(target.as_heap());
         if (value * found = closure->find(name)) { return *found; }
+        if (name == "prototype") { return ensure_prototype(target); }
         // `static get w()` on a class - the constructor IS the closure, so its
         // accessors live here rather than on any object.
         if (accessor_entry * entry = closure->find_accessor(name)) {
@@ -284,6 +309,27 @@ value context::lookup_property(value target, const std::string & name) {
                 return call(entry->getter, std::span<const value>{}, target);
             }
             return value::undefined();
+        }
+        // STATIC INHERITANCE: `class D extends B` makes D's own [[Prototype]]
+        // B, so `D.staticMethod` finds B's. Babel wires this by hand with
+        // _setPrototypeOf, and a real `extends` should do the same.
+        for (value up = closure->proto_link; up.is_callable();) {
+            if (up.is_kind(heap_kind::function)) {
+                auto * parent = static_cast<closure_object *>(up.as_heap());
+                if (value * found = parent->find(name)) { return *found; }
+                up = parent->proto_link;
+                continue;
+            }
+            if (value * found = static_cast<native_object *>(up.as_heap())->find(name)) {
+                return *found;
+            }
+            break;
+        }
+        // A FUNCTION IS AN OBJECT WITH A PROTOTYPE OF ITS OWN. `call`, `apply`
+        // and `bind` live there, and p5.js cannot install a single event
+        // listener without bind.
+        if (object_object * table = prototype(proto_kind::function)) {
+            if (value * found = table->find(name)) { return *found; }
         }
     }
     return value::undefined();
@@ -484,6 +530,28 @@ std::string context::describe_callee(const function_proto & fn, std::string_view
            (fn.name.empty() ? std::string{"<anonymous>"} : "`" + fn.name + "`");
 }
 
+// EVERY FUNCTION HAS A `prototype`, and JavaScript relies on it far beyond
+// classes: `function F() {}; new F() instanceof F` is the constructor-function
+// pattern every transpiler emits, and Babel's own `_classCallCheck` guard is
+// exactly that test. A class got one from the compiler; a plain function got
+// nothing, so `new F()` produced an object with no prototype and `instanceof`
+// was false for it.
+//
+// Made on demand rather than at closure creation: a program allocates far more
+// functions than it constructs, and an object per closure is a real cost for
+// something most of them never use.
+value context::ensure_prototype(value fn) {
+    if (!fn.is_kind(heap_kind::function)) { return value::undefined(); }
+    auto * closure = static_cast<closure_object *>(fn.as_heap());
+    if (value * existing = closure->find("prototype")) { return *existing; }
+    // An arrow is not a constructor and never needs one.
+    if (closure->proto != nullptr && closure->proto->is_arrow) { return value::undefined(); }
+    value made = make_object();
+    static_cast<object_object *>(made.as_heap())->set("constructor", fn);
+    closure->set("prototype", made);
+    return made;
+}
+
 value context::make_instance(value callee) {
     auto * instance = allocate<object_object>();
     if (callee.is_object()) {
@@ -491,14 +559,59 @@ value context::make_instance(value callee) {
             instance->prototype = *proto;
         }
     } else if (callee.is_kind(heap_kind::function)) {
-        if (value * proto = static_cast<closure_object *>(callee.as_heap())->find("prototype")) {
-            instance->prototype = *proto;
-        }
+        instance->prototype = ensure_prototype(callee);
     }
     return value::object(instance);
 }
 
+// The handler's trap of this name, if it has one. An ABSENT trap is not an
+// error and not a silent skip: the operation falls through to the target,
+// which is exactly what absent means in the spec.
+// WHAT WAS THROWN, in the terms the thrower used. `to_string` on an object is
+// "[object Object]", which is the least useful thing a diagnostic can say -
+// and an uncaught throw is almost always an Error, whose name and message are
+// right there.
+std::string context::describe_thrown(value thrown) {
+    if (thrown.is_object()) {
+        auto * obj = static_cast<object_object *>(thrown.as_heap());
+        const value name = lookup_property(thrown, "name");
+        const value message = lookup_property(thrown, "message");
+        if (!name.is_undefined() || !message.is_undefined()) {
+            return to_string(name.is_undefined() ? string("Error") : name) + ": " +
+                   to_string(message);
+        }
+        // Not an Error: say what it HAS, which is usually enough to recognise.
+        std::string keys;
+        obj->each_own_key([&](const std::string & key) {
+            if (keys.size() < 120) { keys += (keys.empty() ? "" : ", ") + key; }
+        });
+        return "exception: an object {" + keys + "}";
+    }
+    return "exception: " + to_string(thrown);
+}
+
+value context::proxy_trap(value proxy, const std::string & name) {
+    auto * p = static_cast<proxy_object *>(proxy.as_heap());
+    if (!p->handler.is_object()) { return value::undefined(); }
+    value * found = static_cast<object_object *>(p->handler.as_heap())->find(name);
+    return found == nullptr ? value::undefined() : *found;
+}
+
 value context::construct(value callee, std::span<const value> args) {
+    // `new proxy(...)` runs the construct trap with (target, argsArray). p5.js
+    // has exactly one of these and it runs at the bundle's top level:
+    // `p5.renderers['p2d-p3'] = new Proxy(Renderer2D, {construct(...) {...}})`.
+    if (callee.is_kind(heap_kind::proxy)) {
+        auto * p = static_cast<proxy_object *>(callee.as_heap());
+        const value trap = proxy_trap(callee, "construct");
+        if (trap.is_callable()) {
+            value list = make_array();
+            static_cast<array_object *>(list.as_heap())->items.assign(args.begin(), args.end());
+            const value trap_args[2] = {p->target, list};
+            return call(trap, trap_args, p->handler);
+        }
+        return construct(p->target, args);
+    }
     if (!callee.is_callable()) {
         raise("attempted to construct a non-function");
         return value::undefined();
@@ -512,12 +625,12 @@ value context::construct(value callee, std::span<const value> args) {
         current_this_ = self;
         const value produced = nat->fn(*this, copy);
         current_this_ = saved;
-        return produced.is_object() ? produced : self;
+        return produced.is_object_like() ? produced : self;
     }
     // `new C()` evaluates to the new object unless the body returned one of its
     // own - the single case the spec lets override it.
     const value produced = call(callee, args, self);
-    return produced.is_object() ? produced : self;
+    return produced.is_object_like() ? produced : self;
 }
 
 void context::run_field_initialisers(value constructor, value self) {
@@ -632,9 +745,7 @@ value context::run_loop(std::size_t stop_depth) {
             const value ctor = reg(in.c);
             value wanted = value::undefined();
             if (ctor.is_kind(heap_kind::function)) {
-                if (value * p = static_cast<closure_object *>(ctor.as_heap())->find("prototype")) {
-                    wanted = *p;
-                }
+                wanted = ensure_prototype(ctor);
             } else if (ctor.is_kind(heap_kind::native)) {
                 // A BUILT-IN constructor is a native, and every one of them is
                 // now something a page can extend - `class E extends Error`.
@@ -658,6 +769,19 @@ value context::run_loop(std::size_t stop_depth) {
             break;
         }
         case op::has_property: {
+            // A PROXY ANSWERS `in` ITSELF, or hands it to the target.
+            if (reg(in.c).is_kind(heap_kind::proxy)) {
+                auto * p = static_cast<proxy_object *>(reg(in.c).as_heap());
+                const value trap = proxy_trap(reg(in.c), "has");
+                if (trap.is_callable()) {
+                    const value args[2] = {p->target, reg(in.b)};
+                    reg(in.a) = value::boolean(truthy(call(trap, args, p->handler)));
+                } else {
+                    reg(in.a) = value::boolean(
+                        !lookup_property(p->target, to_string(reg(in.b))).is_undefined());
+                }
+                break;
+            }
             const std::string key = to_string(reg(in.b));
             const value target = reg(in.c);
             bool present = false;
@@ -962,7 +1086,7 @@ value context::run_loop(std::size_t stop_depth) {
         case op::ret:
         case op::ret_undef: {
             value returned = in.code == op::ret ? reg(in.a) : value::undefined();
-            if (frame.constructing && !returned.is_object()) { returned = frame.receiver; }
+            if (frame.constructing && !returned.is_object_like()) { returned = frame.receiver; }
             const std::uint16_t slot = frame.result_reg;
             // Handlers this frame installed die with it: a `return` out of a
             // try block must not leave its catch reachable from the caller.
@@ -1054,6 +1178,17 @@ value context::run_loop(std::size_t stop_depth) {
 
         case op::construct: {
             const value callee = reg(in.a);
+            // A PROXY GOES THE LONG WAY ROUND. The inline path exists to avoid
+            // a nested interpreter loop, and a construct trap needs one - so
+            // this hands over to the general form rather than duplicating it.
+            if (callee.is_kind(heap_kind::proxy)) {
+                const std::size_t arg_base = base + in.a + 1;
+                std::vector<value> args{registers_.begin() + static_cast<std::ptrdiff_t>(arg_base),
+                                        registers_.begin() +
+                                            static_cast<std::ptrdiff_t>(arg_base + in.b)};
+                reg(in.a) = construct(callee, args);
+                break;
+            }
             // The instance's prototype comes from the constructor's own
             // `prototype` property, which is what makes a method defined on the
             // class reachable from every instance.
@@ -1064,10 +1199,7 @@ value context::run_loop(std::size_t stop_depth) {
                     instance->prototype = *proto;
                 }
             } else if (callee.is_kind(heap_kind::function)) {
-                if (value * proto =
-                        static_cast<closure_object *>(callee.as_heap())->find("prototype")) {
-                    instance->prototype = *proto;
-                }
+                instance->prototype = ensure_prototype(callee);
             }
             const value self = value::object(instance);
             run_field_initialisers(callee, self);
@@ -1082,7 +1214,7 @@ value context::run_loop(std::size_t stop_depth) {
                 current_this_ = self;
                 const value produced = nat->fn(*this, args);
                 current_this_ = saved;
-                reg(in.a) = produced.is_object() ? produced : self;
+                reg(in.a) = produced.is_object_like() ? produced : self;
                 break;
             }
             if (!callee.is_kind(heap_kind::function)) {
@@ -1119,7 +1251,7 @@ value context::run_loop(std::size_t stop_depth) {
             break;
         case op::throw_value: {
             thrown_ = reg(in.a);
-            if (!unwind_to_handler()) { raise("uncaught exception: " + to_string(thrown_)); }
+            if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
             break;
         }
 
