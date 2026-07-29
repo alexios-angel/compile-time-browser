@@ -1,0 +1,111 @@
+# Which p5.js probes pass, one per line. tests/p5_api.cpp measures them and
+# tools/p5-api.py --advance is the only thing that writes this file - a test
+# that edits its own expectations cannot fail.
+#
+# A name here that stops passing FAILS the test. A name that starts passing is
+# reported as an ADVANCE and recorded deliberately. A probe that has never
+# passed is simply absent, and the test prints it every run: that list is the
+# work queue.
+a11y/describe
+color/background
+color/clear
+color/color
+color/colorMode
+color/fill/noFill
+color/hue/saturation/brightness
+color/lerpColor
+color/red/green/blue/alpha
+color/stroke/noStroke/strokeWeight
+data/hex/unhex
+data/int/float/str/boolean
+data/nf/nfc/nfp/nfs
+data/shuffle
+data/storeItem/getItem/removeItem
+dom/createA
+dom/createButton
+dom/createCheckbox
+dom/createDiv
+dom/createElement
+dom/createP/createSpan
+dom/createRadio
+dom/createSelect
+dom/createSlider
+dom/element.html/attribute
+dom/element.position/size
+dom/element.show/hide
+dom/element.style/class
+dom/select/selectAll
+events/cursor/noCursor
+events/keyIsDown
+events/mouseIsPressed/keyIsPressed
+events/mouseX/mouseY
+events/pmouseX/movedX
+math/abs/ceil/floor/round
+math/constrain
+math/dist
+math/lerp
+math/mag
+math/map
+math/min/max
+math/noise
+math/noiseDetail
+math/norm
+math/random
+math/randomGaussian
+math/sq/sqrt/pow/exp/log
+math/trig
+pixels/copy
+pixels/createImage
+pixels/get
+pixels/imageMode/tint/noTint
+pixels/loadPixels/updatePixels
+pixels/pixelDensity
+pixels/set
+shape/arc
+shape/beginShape/vertex/endShape
+shape/bezier
+shape/bezierVertex
+shape/blendMode
+shape/circle
+shape/ellipse
+shape/erase/noErase
+shape/line
+shape/point
+shape/quad
+shape/rect
+shape/rectMode/ellipseMode
+shape/square
+shape/strokeCap/strokeJoin
+shape/triangle
+structure/createCanvas/resizeCanvas
+structure/createGraphics
+structure/frameRate/frameCount
+structure/millis
+structure/noLoop/loop/isLooping
+structure/redraw
+transform/angleMode
+transform/applyMatrix
+transform/push/pop
+transform/resetMatrix
+transform/rotate
+transform/scale
+transform/shearX/shearY
+transform/translate
+typography/text
+typography/textAlign
+typography/textAscent/textDescent
+typography/textBounds
+typography/textFont
+typography/textLeading
+typography/textSize
+typography/textStyle
+typography/textWidth
+typography/textWrap
+vector/add/sub/mult/div
+vector/createVector
+vector/dot/cross
+vector/heading/rotate
+vector/normalize/limit/setMag
+vector/p5.Vector statics
+webgl/WEBGL renderer is constructible
+webgl/createCanvas(WEBGL) refuses
