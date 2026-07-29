@@ -1,0 +1,19 @@
+# How far examples/assets/p5.js gets through the engine. tests/p5_ratchet.cpp
+# measures it; this file records it. The level may not go DOWN, and at the same
+# level the blocker may not CHANGE, without the test failing.
+#
+# Only tools/p5-ratchet.py --advance writes this file. A test that edits its own
+# expectations cannot fail, so advancing is a deliberate act.
+#
+# The ladder: 1 read, 2 lexed, 3 parsed, 4 compiled, 5 fits the bytecode,
+# 6 top level ran, 7 defines p5. Rungs 8-12 (loads as a page, new p5(), setup,
+# draw, golden) arrive with the work that makes them reachable.
+
+level=1
+blocker=247 bytes match no token and are dropped; the first is at p5.js:10173:12
+
+# Wall-clock ceiling for lex + parse + compile + run, in milliseconds.
+# Generous on purpose: it is here to catch the compiler's quadratic scans
+# turning the first success into a forty-minute test, not to police noise.
+# Ratchet it down as those are fixed.
+budget-ms=120000

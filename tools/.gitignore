@@ -6,3 +6,6 @@ llvm-mingw/
 # and hundreds of megabytes once its browsers are fetched; recreate it with
 # `tools/compare.py setup` rather than committing it.
 .venv/
+
+# __pycache__ from importing a tool as a module (the survey does).
+__pycache__/
