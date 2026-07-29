@@ -262,11 +262,11 @@ private:
         const function_proto * proto = nullptr;
         std::size_t ip = 0;
         std::size_t base = 0; // index into registers_ of this frame's r0
-        std::uint8_t result_reg = 0;
+        std::uint16_t result_reg = 0;
         // How many arguments ACTUALLY arrived, which is not param_count: a rest
         // parameter binds the ones past the declared list, and nothing else in
         // the frame records that they were passed.
-        std::uint8_t argc = 0;
+        std::uint16_t argc = 0;
         closure_object * closure = nullptr; // whose upvalues this body sees
         // The receiver. A JS body reads it through `this`; before this existed
         // `this` compiled to undefined unconditionally, so no method could see
@@ -299,7 +299,7 @@ private:
         std::size_t frame = 0;   // index into frames_
         std::size_t address = 0; // the catch block
         std::size_t reg_top = 0; // registers_ size on entry
-        std::uint8_t slot = 0;   // where to put the thrown value
+        std::uint16_t slot = 0;  // where to put the thrown value
     };
 
     // Run the `__fields` initialiser of `constructor` and of every class it
@@ -364,7 +364,7 @@ private:
     // so the running frame's proto belongs to a DIFFERENT program from the one
     // being executed. Subtracting its address from the wrong program's
     // functions vector gave a garbage index and read off the end of the cache.
-    flat_map<const function_proto *, flat_map<std::uint16_t, value>> string_cache_;
+    flat_map<const function_proto *, flat_map<std::uint32_t, value>> string_cache_;
     // Live try blocks, innermost last. Not per-frame, because a throw has to be
     // able to find a handler several frames up.
     std::vector<handler> handlers_;

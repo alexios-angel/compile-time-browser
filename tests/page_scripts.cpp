@@ -91,25 +91,6 @@ void must_compile_source(const std::string & source) {
     }
 }
 
-// The same assertion for a source too big to echo. A generated program is not
-// anybody's page, so printing it on failure helps nobody; what matters is the
-// label and which limit it hit.
-void must_stop_at(std::string_view label, const std::string & source, std::string_view blocker) {
-    const ctbrowser::script::program compiled = ctbrowser::script::compiler::compile(source);
-    if (compiled.ok) {
-        std::printf("FAIL %s COMPILES - promote it\n", std::string{label}.c_str());
-        ++ctbrowser_test_failures;
-        return;
-    }
-    if (compiled.error.find(blocker) == std::string::npos) {
-        std::printf("FAIL %s stops at \"%s\", not at \"%s\"\n", std::string{label}.c_str(),
-                    compiled.error.c_str(), std::string{blocker}.c_str());
-        ++ctbrowser_test_failures;
-        return;
-    }
-    std::printf("     %s: %s\n", std::string{label}.c_str(), compiled.error.c_str());
-}
-
 // head, then `before<i>after` for i in [0, times), then tail. Enough to build a
 // program that is over one of the compiler's limits without writing it out.
 [[nodiscard]] std::string repeated(std::string_view head, std::string_view before,
@@ -162,26 +143,20 @@ int main() {
     must_compile_source("outer: { if (1) { break outer; } }");
     must_stop_at_source("outer: { continue outer; }", "names a block, not a loop");
 
-    // THE STRUCTURAL LIMITS SAY WHAT THEY WANTED.
+    // THE STRUCTURAL LIMITS THAT USED TO STOP THESE ARE GONE.
     //
-    // Each of these used to be a silent truncation - the program compiled, and
-    // then read the wrong property, or aliased two locals onto one register, or
-    // branched to an address that was never a jump target. A wrong answer with
-    // no diagnostic is the worst thing a compiler can produce, and these are the
-    // three the engine could produce until now.
+    // Each of these was a silent truncation once - the program compiled, then
+    // read the wrong property, or aliased two locals onto one register, or
+    // branched to an address that was never a jump target. They were made LOUD
+    // first and asserted here as refusals, which is what made it possible to
+    // tell whether widening the instruction had actually worked. It had: all
+    // three compile now, and the assertions moved rather than being deleted.
     //
-    // They are asserted with the NUMBER in them, because "too many names" and
-    // "wanted 1452 registers" are different amounts of help when the program in
-    // front of you is 4.5 MB.
-    must_stop_at("300 distinct property names",
-                 repeated("function f(o){ return 0", " + o.p", "", 300, "; }"),
-                 "mentions more than 256 distinct property names");
-    must_stop_at("300 locals", repeated("function g(){ ", "let v", " = 1; ", 300, "return v0; }"),
-                 " registers; a frame holds 256");
-    // A body long enough that a jump over it does not reach.
-    must_stop_at("a 40,000-instruction if",
-                 repeated("function h(o){ if (o) { ", "o.m(", ");", 40000, "} return 1; }"),
-                 " instructions; the displacement holds 32767");
+    // p5.js needs every one of them - 1,452 declarations in its top-level frame
+    // alone.
+    must_compile_source(repeated("function f(o){ return 0", " + o.p", "", 300, "; }"));
+    must_compile_source(repeated("function g(){ ", "let v", " = 1; ", 300, "return v0; }"));
+    must_compile_source(repeated("function h(o){ if (o) { ", "o.m(", ");", 40000, "} return 1; }"));
 
     REPORT("page_scripts");
 }

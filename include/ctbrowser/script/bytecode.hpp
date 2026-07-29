@@ -20,9 +20,16 @@
 // node, produces no spills because the frame is as large as it needs to be,
 // and removes every push/pop from the dispatch loop.
 //
-// An instruction is 4 bytes: an opcode and three byte operands. Ops that need
-// a wider operand (constant indices, jump offsets) read b and c as one 16-bit
-// field, which is why `bx()` exists.
+// An instruction is 8 bytes: an opcode and three 16-bit operands, the odd byte
+// going to alignment padding. Ops that need a wider operand (constant indices, jump offsets)
+// read b and c as one 32-bit field, which is why `bx()` exists.
+//
+// It was 4 bytes with three BYTE operands, and every operand that did not fit
+// was truncated without a word: the 257th distinct property name in a function
+// read a different property, a function wanting more than 256 registers
+// aliased its own locals, and a jump further than 32,767 instructions branched
+// to an address that was never a target. p5.js hits all three. Eight bytes
+// costs about 8 MB on a 4.5 MB bundle and removes the entire class of problem.
 
 namespace ctbrowser::script {
 
@@ -166,21 +173,21 @@ enum class op : std::uint8_t {
 
 struct instruction {
     op code = op::halt;
-    std::uint8_t a = 0, b = 0, c = 0;
+    std::uint16_t a = 0, b = 0, c = 0;
 
-    [[nodiscard]] constexpr std::uint16_t bx() const noexcept {
-        return static_cast<std::uint16_t>((static_cast<std::uint16_t>(b) << 8) | c);
+    [[nodiscard]] constexpr std::uint32_t bx() const noexcept {
+        return (static_cast<std::uint32_t>(b) << 16) | c;
     }
-    [[nodiscard]] constexpr std::int16_t sbx() const noexcept {
-        return static_cast<std::int16_t>(bx());
+    [[nodiscard]] constexpr std::int32_t sbx() const noexcept {
+        return static_cast<std::int32_t>(bx());
     }
-    static constexpr instruction with_bx(op o, std::uint8_t reg, std::uint16_t wide) noexcept {
-        return instruction{o, reg, static_cast<std::uint8_t>(wide >> 8),
-                           static_cast<std::uint8_t>(wide & 0xFF)};
+    static constexpr instruction with_bx(op o, std::uint16_t reg, std::uint32_t wide) noexcept {
+        return instruction{o, reg, static_cast<std::uint16_t>(wide >> 16),
+                           static_cast<std::uint16_t>(wide & 0xFFFF)};
     }
 };
 
-static_assert(sizeof(instruction) == 4, "instructions should stay one word");
+static_assert(sizeof(instruction) == 8, "an instruction is one 64-bit word");
 
 // Where one of a function's upvalues comes from, resolved at compile time.
 // A closure is built by walking this list: each entry either grabs a cell out
@@ -189,7 +196,7 @@ static_assert(sizeof(instruction) == 4, "instructions should stay one word");
 // more than one level of nesting.
 struct upvalue_desc {
     bool from_parent_local = true;
-    std::uint8_t index = 0;
+    std::uint16_t index = 0;
 };
 
 // One compiled function. `constants` holds every literal and every property
@@ -197,8 +204,8 @@ struct upvalue_desc {
 // except through an index.
 struct function_proto {
     std::string name;
-    std::uint8_t param_count = 0;
-    std::uint8_t frame_size = 1; // registers this body needs
+    std::uint16_t param_count = 0;
+    std::uint16_t frame_size = 1; // registers this body needs
     // An arrow does not get its own `this`; it sees the one where it was
     // WRITTEN. The VM cannot tell an arrow from a function at run time, and
     // reading the frame's own receiver made `this` undefined inside every arrow
@@ -216,23 +223,23 @@ struct function_proto {
     std::vector<upvalue_desc> upvalues;
     std::vector<std::uint32_t> nested; // indices into program::functions
 
-    [[nodiscard]] std::uint16_t add_constant(value v) {
+    [[nodiscard]] std::uint32_t add_constant(value v) {
         constants.push_back(v);
-        return static_cast<std::uint16_t>(constants.size() - 1);
+        return static_cast<std::uint32_t>(constants.size() - 1);
     }
-    [[nodiscard]] std::uint16_t add_string(std::string s) {
+    [[nodiscard]] std::uint32_t add_string(std::string s) {
         for (std::size_t i = 0; i < strings.size(); ++i) {
-            if (strings[i] == s) { return static_cast<std::uint16_t>(i); }
+            if (strings[i] == s) { return static_cast<std::uint32_t>(i); }
         }
         strings.push_back(std::move(s));
-        return static_cast<std::uint16_t>(strings.size() - 1);
+        return static_cast<std::uint32_t>(strings.size() - 1);
     }
-    [[nodiscard]] std::uint16_t add_name(std::string n) {
+    [[nodiscard]] std::uint32_t add_name(std::string n) {
         for (std::size_t i = 0; i < names.size(); ++i) {
-            if (names[i] == n) { return static_cast<std::uint16_t>(i); } // names repeat constantly
+            if (names[i] == n) { return static_cast<std::uint32_t>(i); } // names repeat constantly
         }
         names.push_back(std::move(n));
-        return static_cast<std::uint16_t>(names.size() - 1);
+        return static_cast<std::uint32_t>(names.size() - 1);
     }
     std::size_t emit(instruction i) {
         code.push_back(i);

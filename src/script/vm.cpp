@@ -372,7 +372,7 @@ value context::call(value callable, std::span<const value> args, value this_valu
     const std::size_t depth = frames_.size();
     const value saved = current_this_;
     current_this_ = this_value;
-    frames_.push_back(call_frame{&target, 0, new_base, 0, static_cast<std::uint8_t>(args.size()),
+    frames_.push_back(call_frame{&target, 0, new_base, 0, static_cast<std::uint16_t>(args.size()),
                                  fnobj, this_value, handlers_.size()});
     const value out = run_loop(depth);
     current_this_ = saved;
@@ -489,7 +489,7 @@ value context::run_loop(std::size_t stop_depth) {
         if (frame.ip >= fn.code.size()) { break; }
         const instruction in = fn.code[frame.ip++];
         const std::size_t base = frame.base;
-        const auto reg = [&](std::uint8_t r) -> value & { return registers_[base + r]; };
+        const auto reg = [&](std::uint16_t r) -> value & { return registers_[base + r]; };
 
         switch (in.code) {
         case op::load_const: reg(in.a) = fn.constants[in.bx()]; break;
@@ -877,7 +877,7 @@ value context::run_loop(std::size_t stop_depth) {
         case op::ret_undef: {
             value returned = in.code == op::ret ? reg(in.a) : value::undefined();
             if (frame.constructing && !returned.is_object()) { returned = frame.receiver; }
-            const std::uint8_t slot = frame.result_reg;
+            const std::uint16_t slot = frame.result_reg;
             // Handlers this frame installed die with it: a `return` out of a
             // try block must not leave its catch reachable from the caller.
             if (handlers_.size() > frame.handler_base) { handlers_.resize(frame.handler_base); }
