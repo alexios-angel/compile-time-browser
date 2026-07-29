@@ -740,6 +740,55 @@ void test_await_suspends_and_resumes() {
           "an async function awaiting one that suspends suspends too: " + after);
 }
 
+// A `value` CAPTURED BY A NATIVE LAMBDA IS NOT A ROOT.
+//
+// `new Promise(fn)` handed its executor a resolve function that held the promise
+// in a C++ lambda capture. The collector walks a native's properties, not its
+// captures, so a promise nothing else referenced was freed while the page was
+// still holding the resolve that would settle it - and settling a recycled cell
+// does nothing, silently, because settle() checks is_object() first.
+//
+// The symptom was an async function that could suspend EXACTLY ONCE. The first
+// await's promise was still in a live frame's registers; a promise created
+// during the resumption existed only in those captures and in its own handler
+// list - a cycle with no root - so the second await never came back.
+//
+// test_await_suspends_and_resumes has two awaits and passed throughout: its
+// gates are top-level consts, so they were rooted. Only a promise created DURING
+// the resumption shows it, which is what every real loader does - `await
+// fetch(u)` and then `await response.bytes()`.
+void test_a_promise_made_during_a_resumption_survives() {
+    browser page{browser_options{200, 200}};
+    page.load_html(R"(<html><body><script>
+        var log = '';
+        // No reference kept anywhere: the promise exists only inside the
+        // executor's resolve and, once awaited, in its own handler list.
+        function later(v) {
+          return new Promise(function (ok) { setTimeout(function () { ok(v); }, 0); });
+        }
+        async function three() {
+          const a = await later(1);
+          // Garbage between the suspensions, so a collection actually happens
+          // while the next promise is the only thing holding itself up.
+          for (var i = 0; i < 20000; i = i + 1) { var junk = { n: i }; }
+          const b = await later(2);
+          for (var j = 0; j < 20000; j = j + 1) { var more = { n: j }; }
+          const c = await later(3);
+          return a + b + c;
+        }
+        three().then(function (v) { log += 'sum=' + v + ';'; },
+                     function (e) { log += 'rejected:' + e + ';'; });
+        function report() { console.log('log=[' + log + ']'); }
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    // Three suspensions, each waiting on a timer registered by the previous
+    // resumption - so this needs a turn per await plus the drains between them.
+    for (int frame = 0; frame < 20; ++frame) { page.tick(16); }
+    (void)page.run_script("report();");
+    check(log_of(page).back() == "log=[sum=6;]",
+          "all three suspensions resumed: " + log_of(page).back());
+}
+
 // A SUSPENDED FRAME IS A GC ROOT. Its register window is copied out of the
 // register stack, which is what the collector normally walks - so without
 // tracing it, everything a waiting function was holding is freed and comes back
@@ -1539,7 +1588,7 @@ void test_collection_keeps_what_the_page_still_uses() {
 
     // And the wrapper the page is holding is still the live element.
     check(page.run_script("console.log(kept.tagName);"), "reading the kept wrapper works");
-    check(log_of(page).back() == "div", "it is still the element it was");
+    check(log_of(page).back() == "DIV", "it is still the element it was");
 }
 
 void test_collection_happens_on_its_own() {
@@ -1619,6 +1668,45 @@ void test_click_dispatch() {
     (void)page.handle(input_event::mouse_down_at(20, 20));
     (void)page.handle(input_event::mouse_up_at(380, 290));
     check(log_of(page).size() == 1, "releasing off the element does not click it");
+}
+
+// `el.onclick = fn` - THE OTHER HALF OF THE EVENT API, and it did nothing.
+//
+// Assigning a handler stored a function on the wrapper that nothing ever looked
+// at, so a page written the older way fired no callbacks and reported no
+// problem. p5.js needs it on its own load path: loadImage sets img.onload and
+// img.onerror and awaits a promise those two settle.
+void test_handler_properties() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><head><style>#a { width: 200px; height: 100px }</style></head>
+    <body><div id=a>click me</div><script>
+    var a = document.getElementById('a');
+    a.onclick = function (e) { console.log('handler ' + e.type + ' ' + (this === a)); };
+    a.addEventListener('click', function () { console.log('listener'); });
+    </script></body></html>)");
+    check(page.frame().has_value(), "the page renders");
+
+    (void)page.handle(input_event::mouse_down_at(20, 20));
+    (void)page.handle(input_event::mouse_up_at(20, 20));
+    const auto & log = log_of(page);
+    check(log.size() == 2, "both the listener and the handler property fired");
+    if (log.size() == 2) {
+        // `this` is the element, which is what a handler written this way reads.
+        check(log[0] == "listener" && log[1] == "handler click true",
+              "the handler runs with the event and the element as `this`");
+    }
+
+    // ASSIGNING OVER ONE REPLACES IT - that is the whole difference from
+    // addEventListener, and a page that reassigns in a loop relies on it.
+    (void)page.run_script("a.onclick = function () { console.log('replaced'); };");
+    (void)page.handle(input_event::mouse_down_at(20, 20));
+    (void)page.handle(input_event::mouse_up_at(20, 20));
+    check(log_of(page).size() == 4 && log_of(page)[3] == "replaced",
+          "the second assignment replaced the first rather than adding to it");
+    (void)page.run_script("a.onclick = null;");
+    (void)page.handle(input_event::mouse_down_at(20, 20));
+    (void)page.handle(input_event::mouse_up_at(20, 20));
+    check(log_of(page).size() == 5, "and null removes it, leaving the listener");
 }
 
 void test_events_bubble_and_can_be_prevented() {
@@ -2053,6 +2141,7 @@ int main() {
     test_collection_happens_on_its_own();
     test_a_link_reaches_the_application_through_run_app();
     test_click_dispatch();
+    test_handler_properties();
     test_events_bubble_and_can_be_prevented();
 
     test_timers();
@@ -2082,6 +2171,7 @@ int main() {
     test_listener_options();
     test_element_query_selector();
     test_await_suspends_and_resumes();
+    test_a_promise_made_during_a_resumption_survives();
     test_a_suspended_frame_survives_collection();
     test_location_parts_and_cookies();
     test_p5_receives_input();

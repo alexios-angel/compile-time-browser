@@ -357,6 +357,30 @@ private:
     };
     std::vector<pending_fetch> fetches_;
 
+    // AN IMAGE LOAD THAT HAS NOT HAPPENED YET, for the same reason a fetch is
+    // one: `img.src = url` returns immediately and the page hears about it
+    // through `onload` on a later turn. Firing synchronously from the setter
+    // would work for the way p5 writes it - handlers assigned before src - and
+    // break `img.src = url; img.onload = f`, which fires nothing at all.
+    struct pending_image {
+        value target; // the <img> wrapper whose src was assigned
+        node_id id;
+        std::string url;
+        value promise; // decode()'s promise; undefined for a plain src assignment
+    };
+    std::vector<pending_image> image_loads_;
+
+    // Resolve the bytes, set `complete`, and announce it - `onload` and any
+    // `load` listener, or the error pair.
+    void settle_image(context & cx, const pending_image & waiting);
+
+    // Queue one. `promise` is undefined unless decode() asked for it.
+    void begin_image_load(value target, node_id id, std::string url, value promise);
+
+    // The loading surface an <img> has beyond a plain element: src, the size
+    // that falls back to the decoded pixels, complete, decode().
+    void install_image_views(context & cx, script::object_object & obj, node_id id);
+
     // Do the work for one queued fetch and settle its promise. Called from the
     // event loop, not from fetch().
     void settle_fetch(context & cx, const pending_fetch & waiting);
@@ -488,6 +512,10 @@ private:
     [[nodiscard]] static bool prevented(value event);
 
     void fire_at(node_id target, std::string_view type, value event, bool capturing);
+
+    // `onclick`, `onload` - the handler PROPERTY, run after the listeners.
+    void fire_handler_property(value target, std::string_view type, value event);
+    [[nodiscard]] value value_of_wrapper(node_id id) const;
     void fire_global(std::string_view type, value event, bool capturing);
 
     // --- lookups ----------------------------------------------------------

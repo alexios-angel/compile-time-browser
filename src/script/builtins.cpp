@@ -2439,16 +2439,39 @@ void install_promise(context & cx) {
         auto * made = static_cast<object_object *>(promise.as_heap());
         made->set("__settled", value::boolean(false)); // pending until told otherwise
         if (a.empty() || !a[0].is_callable()) { return promise; }
-        const value resolve = value::object(
+        // A `value` CAPTURED BY A C++ LAMBDA IS INVISIBLE TO THE COLLECTOR.
+        //
+        // These two hold the only reference to the promise that outlives the
+        // constructor: a page keeps `resolve`, not the promise. The lambda
+        // capture is not a root, so the promise was collected out from under it
+        // and calling resolve() later settled freed memory - which failed
+        // SILENTLY, because settle() checks is_object() and a recycled cell is
+        // usually not one.
+        //
+        // The cost was an async function that could suspend exactly ONCE. The
+        // first await's promise was still in a live frame's registers; the
+        // second one's existed only inside these captures and in the awaited
+        // promise's handler list - a cycle with no root - so it went, and the
+        // frame never came back. Every p5 loader awaits twice.
+        //
+        // The fix is to make the reference REACHABLE rather than to stop
+        // capturing: a native's props are traced, so a property the page never
+        // reads is exactly the root this needs. Anything else that captures a
+        // value in a native lambda needs the same treatment.
+        auto * resolve_fn =
             c.allocate<native_object>("resolve", [promise](context & inner, std::span<value> args) {
                 detail::settle(inner, promise, args.empty() ? value::undefined() : args[0], false);
                 return value::undefined();
-            }));
-        const value reject = value::object(
+            });
+        auto * reject_fn =
             c.allocate<native_object>("reject", [promise](context & inner, std::span<value> args) {
                 detail::settle(inner, promise, args.empty() ? value::undefined() : args[0], true);
                 return value::undefined();
-            }));
+            });
+        resolve_fn->set("__promise", promise);
+        reject_fn->set("__promise", promise);
+        const value resolve = value::object(resolve_fn);
+        const value reject = value::object(reject_fn);
         const value args[2] = {resolve, reject};
         (void)c.call(a[0], args);
         return promise;

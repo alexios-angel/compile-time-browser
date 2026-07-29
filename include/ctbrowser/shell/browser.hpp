@@ -393,6 +393,10 @@ private:
 
     void load_images();
 
+    // Re-resolve every <img>'s bitmap, without clearing the SVG sources. Runs
+    // before each layout, because a script can change a src at any time.
+    void refresh_images();
+
     [[nodiscard]] std::shared_ptr<const ctbrowser::paint::bitmap> image_of(node_id id) const;
 
     void install_embedder_natives();

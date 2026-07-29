@@ -917,6 +917,52 @@ void test_string_escapes() {
     expect_result("return '\\0'.charCodeAt(0);", "0");
 }
 
+// A DESTRUCTURED NAME IS A LOCAL, NOT A TEMPORARY.
+//
+// `const { data } = f()` allocated `data`'s register INSIDE the reg_mark that
+// exists to free the temporary holding f()'s result - so release_to handed the
+// local's slot back and the next temporary in the same scope wrote over it.
+//
+// It only showed inside a BLOCK. In a function's top scope the name is hoisted,
+// so nothing was allocated and every test of destructuring passed. In a try
+// block, `const { data } = f(); return 'len=' + data.length` read `data` as the
+// string "len=" - a plausible value, from a plausible-looking line, with nothing
+// reporting anything.
+//
+// This is what stopped p5.js loading an image: `loadImage` destructures the
+// result of its fetch inside a try, so its bytes were a fragment of its own
+// error message and the decode failed with no explanation.
+void test_destructuring_in_a_block() {
+    expect(
+        "function f() { return { data: 'abc' }; }\n"
+        "try { const { data } = f(); return 'len=' + data.length; } catch (e) { return 'threw'; }",
+        "len=3");
+    // The two-name case, which happened to work and must keep working.
+    expect("function f() { return { a: 'xy', b: 'z' }; }\n"
+           "try { const { a, b } = f(); return a + b + '/' + a.length; } catch (e) { return "
+           "'threw'; }",
+           "xyz/2");
+    // `var` in a block takes the same path.
+    expect("function f() { return { data: [1, 2, 3] }; }\n"
+           "try { var { data } = f(); return 'n=' + data.length; } catch (e) { return 'threw'; }",
+           "n=3");
+    // Nested blocks, and a temporary allocated after the pattern.
+    expect("function f() { return { data: 'abc' }; }\n"
+           "{ { const { data } = f(); const t = 'a longer string'; return data + t.length; } }",
+           "abc15");
+    // Array patterns and defaults in a block, for the same reason.
+    expect("try { const [x, y] = ['ab', 'c']; return x + y + '/' + x.length; } catch (e) { return "
+           "'threw'; }",
+           "abc/2");
+    expect("function f() { return {}; }\n"
+           "{ const { missing = 'fallback' } = f(); return missing + '/' + missing.length; }",
+           "fallback/8");
+    // Renamed and nested shapes.
+    expect("function f() { return { outer: { inner: 'v' } }; }\n"
+           "{ const { outer: { inner } } = f(); return inner + '/' + inner.length; }",
+           "v/1");
+}
+
 // btoa and atob are BYTE oriented: btoa's argument is a binary string of values
 // 0-255, not text. Treating it as text is how a page's exported image arrives
 // truncated at the first byte that is not valid UTF-8.
@@ -2338,6 +2384,7 @@ int main() {
     test_string_statics();
     test_string_escapes();
     test_base64();
+    test_destructuring_in_a_block();
     test_a_declaration_shadows();
     test_pending_promises();
     test_function_to_string();

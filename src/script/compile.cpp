@@ -797,24 +797,40 @@ public:
     //
     // At the top level there is nothing to declare: a declaration there is a
     // global, and emit_write reaches one by falling through to set_global.
-    void compile_pattern_binding(std::int32_t pat, std::uint16_t src, bool declaring) {
-        if (declaring && frames_.size() > 1) {
-            std::vector<std::string> names;
-            pattern_names(pat, names);
-            for (std::string & name : names) {
-                // ONLY the current scope decides this. was_predeclared is
-                // function-scoped - it is how `var` and function declarations
-                // hoist - and asking it here made a `const {x}` inside a block
-                // reuse a slot hoisted at the top of the function, writing
-                // through to it instead of shadowing it. A hoisted name IS a
-                // local of the function's top scope, so when we are in that
-                // scope this finds it anyway.
-                if (find_local_in_current_scope(name) != nullptr) { continue; }
-                const std::uint16_t reg = declare_local(name);
-                proto().emit(instruction{op::load_undef, reg});
-                if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, reg}); }
-            }
+    // Give every name a pattern binds a register, before anything is written.
+    //
+    // SEPARATE FROM compile_pattern_binding BECAUSE OF WHERE IT HAS TO HAPPEN.
+    // declare_local allocates, and a caller that wraps the whole thing in
+    // reg_mark()/release_to(mark) - which every `const {a} = expr` site does, to
+    // free the temporary holding expr - hands those registers straight back. The
+    // next temporary in the same scope then lands on top of a live local: inside
+    // a try block, `const { data } = f(); return 'len=' + data.length` read
+    // `data` as the string "len=". Declaring OUTSIDE the mark is the fix.
+    //
+    // It only bit inside a block. In a function's top scope the names are
+    // hoisted, so find_local_in_current_scope finds them and nothing is
+    // allocated - which is why every test of this until now passed.
+    void declare_pattern_names(std::int32_t pat) {
+        if (frames_.size() <= 1) { return; } // a declaration there is a global
+        std::vector<std::string> names;
+        pattern_names(pat, names);
+        for (std::string & name : names) {
+            // ONLY the current scope decides this. was_predeclared is
+            // function-scoped - it is how `var` and function declarations
+            // hoist - and asking it here made a `const {x}` inside a block
+            // reuse a slot hoisted at the top of the function, writing
+            // through to it instead of shadowing it. A hoisted name IS a
+            // local of the function's top scope, so when we are in that
+            // scope this finds it anyway.
+            if (find_local_in_current_scope(name) != nullptr) { continue; }
+            const std::uint16_t reg = declare_local(name);
+            proto().emit(instruction{op::load_undef, reg});
+            if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, reg}); }
         }
+    }
+
+    void compile_pattern_binding(std::int32_t pat, std::uint16_t src, bool declaring) {
+        if (declaring) { declare_pattern_names(pat); }
         compile_pattern(pat, src);
     }
 
@@ -1046,6 +1062,12 @@ public:
             for (const std::int32_t d : kids(n)) {
                 const vp::node & decl = at(d);
                 if (decl.b >= 0) { // a shape, not a name
+                    // THE NAMES FIRST, ABOVE THE MARK. release_to(mark) below
+                    // frees the temporary holding the initializer - and would
+                    // free the pattern's own locals with it if they were
+                    // allocated inside, leaving the next temporary to overwrite
+                    // one. See declare_pattern_names.
+                    declare_pattern_names(decl.b);
                     const std::uint32_t mark = reg_mark();
                     const std::uint16_t r = alloc_reg();
                     if (decl.a >= 0) {
@@ -1053,7 +1075,7 @@ public:
                     } else {
                         proto().emit(instruction{op::load_undef, r});
                     }
-                    compile_pattern_binding(decl.b, r, true);
+                    compile_pattern_binding(decl.b, r, false);
                     release_to(mark);
                     continue;
                 }

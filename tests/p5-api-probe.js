@@ -535,8 +535,32 @@ globalThis.__probes = [
       return 'ok';
     });
   }],
-  // loadImage needs an Image and an object URL, which is the next phase.
-  ['load', 'loadImage', function (s) { return typeof s.loadImage === 'function' ? 'SKIP' : 'absent'; }],
+  // loadImage is the whole blob/object-URL/Image chain in one call: p5 fetches
+  // the bytes, wraps them in a Blob, makes an object URL, points an Image at it,
+  // REVOKES the URL inside onload and only then draws the image into its own
+  // canvas. Every one of those has to work for this to return pixels.
+  ['load', 'loadImage', function (s) {
+    return s.loadImage('probe-image.bmp').then(function (img) {
+      if (!img) { throw 'no image'; }
+      if (img.width !== 4 || img.height !== 4) { throw 'size=' + img.width + 'x' + img.height; }
+      // The PIXELS, not just the size: a 4x4 image of the wrong colour is what
+      // a decode that silently produced nothing looks like.
+      img.loadPixels();
+      var green = img.get(1, 1);
+      if (green[1] < 200 || green[0] > 50) { throw 'pixel=' + green.join(','); }
+      return 'ok';
+    });
+  }],
+  ['load', 'image() draws a loaded image', function (s) {
+    return s.loadImage('probe-image.bmp').then(function (img) {
+      s.background(0);
+      s.image(img, 0, 0);
+      s.loadPixels();
+      var at = 4 * (2 * s.width + 2);
+      if (s.pixels[at + 1] < 200) { throw 'canvas pixel=' + s.pixels.slice(at, at + 4).join(','); }
+      return 'ok';
+    });
+  }],
   ['load', 'loadFont', function (s) { return typeof s.loadFont === 'function' ? 'SKIP' : 'absent'; }],
 
   // --- 3D (out of scope; the constructors must still exist) ---------------

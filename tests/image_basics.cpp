@@ -241,6 +241,95 @@ void test_img_in_canvas_from_element() {
     if (pixels) { CHECK(pixels->at(4, 4) == 0xFFFF0000U); }
 }
 
+// THE EXACT SEQUENCE p5's loadImage RUNS, which is one piece of machinery with
+// four parts and no value in testing them apart:
+//
+//   fetch the bytes -> new Blob([bytes]) -> URL.createObjectURL(blob)
+//   -> new Image() with onload -> revoke the URL -> drawImage
+//
+// The revoke is the trap. It happens INSIDE onload, before the image is ever
+// drawn, so an object URL that only names bytes in the registry has nothing left
+// to resolve by the time drawImage asks. It works because image_store caches the
+// decode by name - which is the browser's own rule, that revoking frees the
+// bytes and not the decoded image.
+void test_blob_object_url_and_image() {
+    ctbrowser::browser page{{.width = 120, .height = 80}};
+    page.assets().add("https://example.invalid/sprite.bmp", make_bmp(8, 8, 0xFF00FF00U));
+    page.allow_network(false);
+    page.load_html(R"(<body>
+      <canvas id='c' width='40' height='40'></canvas>
+      <script>
+        async function boot() {
+          const response = await fetch('https://example.invalid/sprite.bmp');
+          const data = await response.bytes();
+          const image = await new Promise(function (resolve, reject) {
+            const img = new Image();
+            const url = URL.createObjectURL(new Blob([data], { type: 'image/bmp' }));
+            img.onerror = function (e) { URL.revokeObjectURL(url); reject(e); };
+            img.onload = function () { URL.revokeObjectURL(url); resolve(img); };
+            img.src = url;
+          });
+          console.log('loaded ' + image.width + 'x' + image.height +
+                      ' natural=' + image.naturalWidth + ' complete=' + image.complete);
+          document.getElementById('c').getContext('2d').drawImage(image, 4, 4);
+        }
+        boot();
+      </script>
+    </body>)");
+    CHECK(page.script_error().empty());
+    for (int frame = 0; frame < 20; ++frame) { page.tick(16); }
+    CHECK(logged(page) == "loaded 8x8 natural=8 complete=true");
+
+    // The pixels really arrived, through a URL that no longer resolves.
+    CHECK(page.frame());
+    const auto pixels = page.canvases().pixels_of(find_id(page, "c"));
+    CHECK(static_cast<bool>(pixels));
+    if (pixels) {
+        CHECK(pixels->at(6, 6) == 0xFF00FF00U);
+        CHECK(pixels->at(1, 1) == 0);
+    }
+}
+
+// A LOAD THAT FAILS SAYS SO. Reporting success with a zero-sized image is the
+// failure mode that hides: p5 would size a canvas to 0x0 and draw nothing, with
+// no error anywhere.
+void test_image_load_failure_is_reported() {
+    ctbrowser::browser page{{.width = 100, .height = 60}};
+    page.load_html(R"(<body><script>
+      var img = new Image();
+      img.onload = function () { console.log('load'); };
+      img.onerror = function (e) { console.log(e.type + ' complete=' + img.complete); };
+      img.src = 'absent.bmp';
+      new Image().decode().then(function () { console.log('decoded'); },
+                               function (e) { console.log('rejected: ' + e.message); });
+    </script></body>)");
+    CHECK(page.script_error().empty());
+    for (int frame = 0; frame < 10; ++frame) { page.tick(16); }
+    CHECK(logged(page) == "error complete=false|rejected: could not decode ");
+}
+
+// `new Image()` IS an <img>: it can be appended and it lays out, which is what
+// makes one implementation serve both. A parallel Image type would have needed
+// the layout, the painter and drawImage each taught about it.
+void test_a_constructed_image_is_an_element() {
+    ctbrowser::browser page{{.width = 120, .height = 80}};
+    page.assets().add("cat.bmp", make_bmp(20, 10));
+    page.load_html(R"(<body><script>
+      var img = new Image();
+      img.src = 'cat.bmp';
+      document.body.appendChild(img);
+      console.log(img.tagName + ' ' + (img.parentNode === document.body));
+    </script></body>)");
+    CHECK(page.script_error().empty());
+    CHECK(logged(page) == "IMG true");
+    for (int frame = 0; frame < 4; ++frame) { page.tick(16); }
+    CHECK(page.frame());
+    // Laid out at its intrinsic size, by the same code path an <img> in the
+    // markup takes.
+    CHECK(box_of_tag(page, "img").width == 20.0f);
+    CHECK(box_of_tag(page, "img").height == 10.0f);
+}
+
 void test_fetch_from_registry() {
     ctbrowser::browser page{{.width = 100, .height = 60}};
     page.assets().add("https://example.invalid/data.json",
@@ -300,6 +389,9 @@ int main() {
     test_img_sizing_rules();
     test_script_images();
     test_img_in_canvas_from_element();
+    test_blob_object_url_and_image();
+    test_image_load_failure_is_reported();
+    test_a_constructed_image_is_an_element();
     test_fetch_from_registry();
     test_fetch_rejects();
 

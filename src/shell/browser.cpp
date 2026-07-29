@@ -746,13 +746,31 @@ namespace {
 } // namespace
 
 void browser::load_images() {
-    images_by_node_.clear();
     // HERE, not beside canvases_.clear() in run_scripts. A canvas is created BY
     // a script, so clearing before scripts run is right for one; an SVG source
     // is found by this walk, which happens BEFORE scripts, so clearing there
     // deletes what was just loaded. Both are per-document - they just have
     // different producers, and this is the one that resets with its own writer.
+    //
+    // The SVG clear is the ONLY thing this adds over refresh_images, and it is
+    // per-document: an inline <svg>'s source comes from the parse and is re-set
+    // by the caller straight after, so a refresh must not wipe it.
     svg_.clear();
+    refresh_images();
+}
+
+// AN <img> WHOSE src A SCRIPT SET has a bitmap too.
+//
+// load_images ran once per document, before scripts, so `img.src = url` and
+// `document.body.appendChild(new Image())` laid out at 0x0 forever - the
+// attribute was right, the decode was cached, and layout had nothing to measure.
+// Silently: a zero-sized box is what a missing image looks like.
+//
+// Called before every layout, which is cheap for the reason that matters:
+// image_store caches by name, so this is a tree walk and an attribute read per
+// <img>, not a decode.
+void browser::refresh_images() {
+    images_by_node_.clear();
     const auto txn = doc_->read();
     const atom img_tag = atoms_.intern_lower("img");
     const atom src_attribute = atoms_.intern("src");
@@ -794,6 +812,9 @@ void browser::install_embedder_natives() {
 
 void browser::run_layout() {
     ++layouts_;
+    // The <img> set is re-resolved first: an image whose src a script assigned
+    // has to be measurable by the layout that follows, not the one after it.
+    refresh_images();
     const auto txn = doc_->read();
     ctbrowser::layout::box_builder builder{atoms_, resolved_, measure()};
     // An <img> with no width/height attribute is as big as its bitmap. Only

@@ -27,6 +27,7 @@
 
 #include "check.hpp"
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <set>
@@ -111,6 +112,33 @@ int main() {
     add("probe-data.json", R"({"name":"probe","n":4})");
     add("probe-lines.txt", "one\ntwo\nthree");
     add("probe-table.csv", "a,b\n1,2\n3,4");
+    // A 4x4 image for the loadImage probe, ASSEMBLED here rather than committed:
+    // a test that depends on a binary beside it fails for reasons that have
+    // nothing to do with the code. 24bpp bottom-up BMP, solid green.
+    {
+        std::vector<unsigned char> bmp(54 + 4 * 4 * 3, 0);
+        const auto put32 = [&bmp](std::size_t at, std::uint32_t v) {
+            for (int byte = 0; byte < 4; ++byte) {
+                bmp[at + static_cast<std::size_t>(byte)] =
+                    static_cast<unsigned char>((v >> (8 * byte)) & 0xFF);
+            }
+        };
+        bmp[0] = 'B';
+        bmp[1] = 'M';
+        put32(2, static_cast<std::uint32_t>(bmp.size()));
+        put32(10, 54); // where the pixels start
+        put32(14, 40); // BITMAPINFOHEADER
+        put32(18, 4);
+        put32(22, 4);
+        bmp[26] = 1;  // planes
+        bmp[28] = 24; // bits per pixel
+        for (std::size_t at = 54; at < bmp.size(); at += 3) {
+            bmp[at + 1] = 0xFF; // BGR, so this is green
+        }
+        std::vector<std::byte> bytes(bmp.size());
+        for (std::size_t i = 0; i < bmp.size(); ++i) { bytes[i] = static_cast<std::byte>(bmp[i]); }
+        page.assets().add("probe-image.bmp", std::move(bytes));
+    }
 
     // IS_MINIFIED, like the ratchet: the probe measures the drawing surface,
     // and the translator fetch is a different question answered elsewhere.

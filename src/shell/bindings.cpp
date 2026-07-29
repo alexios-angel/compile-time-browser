@@ -149,6 +149,12 @@ void dom_bindings::register_roots(context & cx) {
             mark(waiting.promise);
             mark(waiting.signal);
         }
+        // A QUEUED IMAGE LOAD holds the only reference to the wrapper whose
+        // onload will run and to decode()'s promise.
+        for (const pending_image & waiting : image_loads_) {
+            mark(waiting.target);
+            mark(waiting.promise);
+        }
         for (const value & callback : animation_callbacks_) { mark(callback); }
         for (const auto & [packed, obj] : wrappers_) {
             if (obj != nullptr) { mark(value::object(obj)); }
@@ -300,6 +306,18 @@ std::size_t dom_bindings::run_due_callbacks() {
             ++ran;
         }
     }
+    // IMAGE LOADS with them, and for the same reason: p5's loadImage awaits a
+    // fetch and then awaits an image load, so a turn that ran one but not the
+    // other would need two ticks per image instead of one.
+    if (!image_loads_.empty()) {
+        std::vector<pending_image> due;
+        due.swap(image_loads_);
+        for (const pending_image & waiting : due) {
+            settle_image(*cx_, waiting);
+            note_callback_fault("image load");
+            ++ran;
+        }
+    }
     // Copied before running: a callback may add or cancel timers, and
     // iterating the live list while it does is how a timer that
     // re-registers itself becomes an infinite loop inside one tick.
@@ -417,7 +435,20 @@ node_id dom_bindings::receiver(context & cx) {
 
 void dom_bindings::refresh_element(context & cx, script::object_object & obj, node_id id) {
     const auto txn = doc_->read();
-    obj.set("tagName", cx.string(std::string{atoms_->text(txn.tag(id).value_or(atom{}))}));
+    // `tagName` is UPPERCASE for an HTML element, and lowercase was a silent
+    // wrong answer: p5.js branches on `elt.tagName === 'INPUT'` and on
+    // `child.tagName === param` in its XML module, so every such comparison was
+    // false and the code behind it never ran. An SVG element keeps its own case -
+    // tagName is the qualified name, and only HTML uppercases it.
+    {
+        std::string tag_name{atoms_->text(txn.tag(id).value_or(atom{}))};
+        if (txn.element_ns(id) == node_ns::html) {
+            for (char & c : tag_name) {
+                if (c >= 'a' && c <= 'z') { c = static_cast<char>(c - 'a' + 'A'); }
+            }
+        }
+        obj.set("tagName", cx.string(tag_name));
+    }
     // `id`, `className`, `width` and `height` are NOT set here: they are
     // accessors over the attributes, installed once in install_element_views.
     // As data properties they were write-only in the wrong direction - a page
@@ -793,10 +824,13 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     };
     {
         const auto txn = doc_->read();
-        if (atoms_->text(txn.tag(id).value_or(atom{})) == "canvas") {
+        const std::string_view tag = atoms_->text(txn.tag(id).value_or(atom{}));
+        if (tag == "canvas") {
             // The HTML defaults, which a page that omits the attributes relies on.
             reflect_size("width", 300);
             reflect_size("height", 150);
+        } else if (tag == "img") {
+            install_image_views(cx, obj, id);
         } else if (txn.has_attribute(id, atoms_->intern("width")) ||
                    txn.has_attribute(id, atoms_->intern("height"))) {
             reflect_size("width", 0);
@@ -1178,6 +1212,159 @@ std::shared_ptr<const paint::bitmap> dom_bindings::image_argument(value v) {
     }
     const std::string_view src = txn.attribute_value(id, atoms_->intern("src"));
     return src.empty() ? nullptr : images_->load(*assets_, src);
+}
+
+// An `<img>`, which `new Image()` also is.
+//
+// THE DECISION THAT MADE THE REST FALL OUT: `new Image()` builds a real detached
+// <img> element rather than a parallel Image type. So `src` is already a
+// reflected attribute, `image_argument` already resolves it, drawImage already
+// accepts it, appendChild already displays it, and the CSS box already sizes it.
+// A separate object would have needed every one of those taught about it.
+//
+// What an <img> needs beyond a plain element is the LOADING surface: a src whose
+// assignment starts work, a size that falls back to the decoded pixels, and the
+// two ways a page learns the load finished.
+void dom_bindings::install_image_views(context & cx, script::object_object & obj, node_id id) {
+    auto * wrapper = &obj;
+    // `naturalWidth` is the DECODED size and `width` is the attribute when there
+    // is one, the decoded size otherwise. p5's loadImage reads `img.width`
+    // straight after the load to size its own canvas, so answering 0 there gave
+    // a zero-by-zero p5.Image that drew nothing.
+    const auto decoded = [this, id]() -> std::shared_ptr<const paint::bitmap> {
+        if (images_ == nullptr || assets_ == nullptr) { return nullptr; }
+        const auto txn = doc_->read();
+        const std::string_view src = txn.attribute_value(id, atoms_->intern("src"));
+        return src.empty() ? nullptr : images_->load(*assets_, src);
+    };
+    const auto size_view = [&](std::string property, bool natural_only, bool horizontal) {
+        obj.define_accessor(property,
+                            value::object(cx.allocate<script::native_object>(
+                                property,
+                                [this, id, property, natural_only, horizontal,
+                                 decoded](context &, std::span<value>) {
+                                    if (!natural_only) {
+                                        const auto txn = doc_->read();
+                                        const std::string_view text =
+                                            txn.attribute_value(id, atoms_->intern(property));
+                                        double parsed = 0;
+                                        bool any = false;
+                                        for (const char c : text) {
+                                            if (c < '0' || c > '9') { break; }
+                                            parsed = parsed * 10 + (c - '0');
+                                            any = true;
+                                        }
+                                        if (any) { return value::number(parsed); }
+                                    }
+                                    const std::shared_ptr<const paint::bitmap> image = decoded();
+                                    if (!image) { return value::number(0); }
+                                    return value::number(static_cast<double>(
+                                        horizontal ? image->width : image->height));
+                                })),
+                            value::object(cx.allocate<script::native_object>(
+                                property, [this, id, property](context & c, std::span<value> a) {
+                                    (void)doc_->set_attribute(
+                                        id, atoms_->intern(property),
+                                        std::to_string(static_cast<long long>(arg_number(a, 0))));
+                                    mutated();
+                                    (void)c;
+                                    return value::undefined();
+                                })));
+    };
+    size_view("width", false, true);
+    size_view("height", false, false);
+    size_view("naturalWidth", true, true);
+    size_view("naturalHeight", true, false);
+
+    // `src` REFLECTS, and assigning it STARTS A LOAD. The generic reflection two
+    // screens up would have given the first half only: the attribute changed and
+    // nothing ever told the page the pixels had arrived.
+    obj.define_accessor(
+        "src",
+        value::object(cx.allocate<script::native_object>(
+            "src",
+            [this, id](context & c, std::span<value>) {
+                const auto txn = doc_->read();
+                return c.string(std::string{txn.attribute_value(id, atoms_->intern("src"))});
+            })),
+        value::object(cx.allocate<script::native_object>(
+            "src", [this, id, wrapper](context & c, std::span<value> a) {
+                const std::string url = arg_string(c, a, 0);
+                (void)doc_->set_attribute(id, atoms_->intern("src"), url);
+                mutated();
+                begin_image_load(value::object(wrapper), id, url, value::undefined());
+                return value::undefined();
+            })));
+
+    // `complete` is what a page checks before waiting: p5 and many others do
+    // `if (img.complete) use(img); else img.onload = ...`, and a `complete` that
+    // is always false makes the second branch the only one, forever.
+    obj.define_accessor("complete",
+                        value::object(cx.allocate<script::native_object>(
+                            "complete",
+                            [decoded](context &, std::span<value>) {
+                                return value::boolean(decoded() != nullptr);
+                            })),
+                        value::undefined());
+
+    // `decode()` - the promise-shaped way to wait, and the one that does not
+    // need a handler property. Already decoded resolves on the next turn rather
+    // than immediately, because a promise that settles inside the call it was
+    // created by is not one.
+    obj.set("decode",
+            value::object(cx.allocate<script::native_object>(
+                "decode", [this, id, wrapper](context & c, std::span<value>) {
+                    const value promise = c.make_pending_promise();
+                    const auto txn = doc_->read();
+                    begin_image_load(value::object(wrapper), id,
+                                     std::string{txn.attribute_value(id, atoms_->intern("src"))},
+                                     promise);
+                    return promise;
+                })));
+}
+
+void dom_bindings::begin_image_load(value target, node_id id, std::string url, value promise) {
+    image_loads_.push_back(pending_image{target, id, std::move(url), promise});
+}
+
+void dom_bindings::settle_image(context & cx, const pending_image & waiting) {
+    // The decode happens HERE, on the turn that announces it, and is cached by
+    // name in image_store - which is what makes p5's loadImage work at all: it
+    // revokes the object URL inside onload, BEFORE drawing the image. The bytes
+    // are gone from the registry by then, and the cached bitmap is the browser's
+    // "already decoded" state made real.
+    const std::shared_ptr<const paint::bitmap> image =
+        waiting.url.empty() || images_ == nullptr || assets_ == nullptr
+            ? nullptr
+            : images_->load(*assets_, waiting.url);
+    const bool ok = image != nullptr;
+
+    auto * event = static_cast<script::object_object *>(cx.make_object().as_heap());
+    event->set("type", cx.string(ok ? "load" : "error"));
+    event->set("target", waiting.target);
+    if (!ok) { event->set("message", cx.string("could not load " + waiting.url)); }
+    const value as_event = value::object(event);
+
+    if (waiting.promise.is_object()) {
+        // decode() rejects with an Error rather than an event, which is what its
+        // caller catches.
+        value outcome = waiting.target;
+        if (!ok) {
+            // The ERROR OBJECT, not make_rejection's rejected promise: settling
+            // one promise with another gave `undefined` to the catch branch,
+            // which is a message about nothing.
+            auto * failure = static_cast<script::object_object *>(cx.make_object().as_heap());
+            failure->set("name", cx.string("EncodingError"));
+            failure->set("message", cx.string("could not decode " + waiting.url));
+            outcome = value::object(failure);
+        }
+        cx.settle_promise(waiting.promise, outcome, !ok);
+    }
+    fire_at(waiting.id, ok ? "load" : "error", as_event, false);
+    // A LOADED IMAGE CHANGES WHAT IS DRAWN. Without this an <img> appended
+    // before its bytes arrived kept its empty box until something else happened
+    // to invalidate the page.
+    if (ok) { mutated(); }
 }
 
 value dom_bindings::canvas_context_object(context & cx, node_id id) {
@@ -1725,9 +1912,23 @@ void dom_bindings::install_console(context & cx) {
         console_.push_back(std::move(line));
         return value::undefined();
     };
-    console->set("log", value::object(cx.allocate<script::native_object>("log", log)));
-    console->set("warn", value::object(cx.allocate<script::native_object>("warn", log)));
-    console->set("error", value::object(cx.allocate<script::native_object>("error", log)));
+    // EVERY name a page calls, all writing to the one list. `console.debug` was
+    // absent, and a missing console method is worse than a silent one: p5's own
+    // error REPORTER calls it, so a library that had something to say about a
+    // failed load threw a second error on top of the first and the real message
+    // was never printed. A page's diagnostics must not be able to fail.
+    //
+    // The grouping and timing ones exist and do nothing, deliberately: a page
+    // calls them for a console a test has no way to look at, and throwing is the
+    // only outcome that would change what the page does.
+    for (const char * name : {"log", "warn", "error", "debug", "info", "trace", "dir"}) {
+        console->set(name, value::object(cx.allocate<script::native_object>(name, log)));
+    }
+    const auto ignore = [](context &, std::span<value>) { return value::undefined(); };
+    for (const char * name :
+         {"group", "groupEnd", "groupCollapsed", "table", "time", "timeEnd", "assert", "count"}) {
+        console->set(name, value::object(cx.allocate<script::native_object>(name, ignore)));
+    }
     cx.define_global("console", value::object(console));
 }
 
@@ -2102,11 +2303,35 @@ void dom_bindings::install_window(context & cx) {
             // remove, and an empty entry is indistinguishable from a missing one
             // to every reader. A page that revokes and then loads gets the 404
             // it should.
+            //
+            // An image ALREADY DECODED from this URL survives, because
+            // image_store caches by name. That is not an accident to be tidied
+            // up - it is the browser's own rule, that revoking frees the bytes
+            // and not the decoded image, and p5's loadImage depends on it: it
+            // revokes inside onload and draws the image on the next line.
             if (assets_ != nullptr) { assets_->add(arg_string(c, a, 0), {}); }
             return value::undefined();
         });
         cx.define_global("URL", value::object(url));
     }
+
+    // `new Image()`, which is a detached <img>.
+    //
+    // See install_image_views for why that is the whole implementation: every
+    // path that already handles an <img> - src reflection, image_argument,
+    // drawImage, appendChild, the CSS box - handles this one with no changes.
+    // `new Image(w, h)` sets the presentational size, which p5 uses when it
+    // copies a region out of a canvas.
+    cx.define_native("Image", [this](context & c, std::span<value> a) {
+        const value wrapper = wrap(c, doc_->create_element(atoms_->intern("img")));
+        if (!wrapper.is_object()) { return wrapper; }
+        for (const auto & [index, name] :
+             std::initializer_list<std::pair<std::size_t, const char *>>{{0, "width"},
+                                                                         {1, "height"}}) {
+            if (a.size() > index) { c.store_property(wrapper, name, a[index]); }
+        }
+        return wrapper;
+    });
 
     // `new Path2D()` - a path recorded now and drawn later.
     //
@@ -2448,8 +2673,49 @@ void dom_bindings::install_resources(context & cx) {
     // a page that ships its resources never opens a socket and a test run
     // is reproducible; a miss goes to the network when the application
     // allows it.
+    // `new Request(url, init)`.
+    //
+    // p5.js does not call fetch with a string. Every loader builds a Request
+    // first - `new Request(path, { method: 'GET', mode: 'cors' })` - and hands
+    // that to fetch, so an absent Request constructor made loadImage, loadModel,
+    // loadShader and loadBytes throw on their first line. The failure named
+    // `Request`, which is not obviously about loading an image.
+    //
+    // The fields are the ones a caller reads back. `method` and `mode` are
+    // recorded rather than honoured: there is one transport here and it does a
+    // GET, so a POST would be a wrong answer either way - and a page that sets
+    // one can at least see what it set.
+    cx.define_native("Request", [](context & c, std::span<value> a) {
+        auto * request = static_cast<script::object_object *>(c.make_object().as_heap());
+        request->set("url", c.string(a.empty() ? std::string{} : c.to_string(a[0])));
+        std::string method = "GET";
+        std::string mode = "cors";
+        if (a.size() > 1 && a[1].is_object()) {
+            const value given_method = c.lookup_property(a[1], "method");
+            const value given_mode = c.lookup_property(a[1], "mode");
+            if (!given_method.is_undefined()) { method = c.to_string(given_method); }
+            if (!given_mode.is_undefined()) { mode = c.to_string(given_mode); }
+            const value headers = c.lookup_property(a[1], "headers");
+            if (!headers.is_undefined()) { request->set("headers", headers); }
+            const value body = c.lookup_property(a[1], "body");
+            if (!body.is_undefined()) { request->set("body", body); }
+        }
+        request->set("method", c.string(method));
+        request->set("mode", c.string(mode));
+        return value::object(request);
+    });
+
     cx.define_native("fetch", [this](context & c, std::span<value> args) {
-        const std::string url = arg_string(c, args, 0);
+        // A REQUEST OR A STRING. `fetch(request)` is the form every p5 loader
+        // uses, and to_string on an object would have produced "[object Object]"
+        // and looked for an asset by that name - a 404 that says nothing about
+        // why.
+        value target = arg(args, 0);
+        if (target.is_object()) {
+            const value from_request = c.lookup_property(target, "url");
+            if (!from_request.is_undefined()) { target = from_request; }
+        }
+        const std::string url = c.to_string(target);
         // QUEUED, not done. The promise is pending and the event loop settles
         // it, so a page's other work happens while the request is outstanding -
         // which is the whole point of the API and was not observable before.
@@ -2724,6 +2990,7 @@ void dom_bindings::fire_at(node_id target, std::string_view type, value event, b
         if (l.once) { l.spent = true; }
         (void)cx_->call(l.callback, std::span<const value>{&event, 1});
     }
+    if (!capturing) { fire_handler_property(value_of_wrapper(target), type, event); }
 }
 
 void dom_bindings::fire_global(std::string_view type, value event, bool capturing) {
@@ -2734,6 +3001,40 @@ void dom_bindings::fire_global(std::string_view type, value event, bool capturin
         if (l.once) { l.spent = true; }
         (void)cx_->call(l.callback, std::span<const value>{&event, 1});
     }
+    if (!capturing) { fire_handler_property(window_, type, event); }
+}
+
+// `el.onclick = fn` - an EVENT HANDLER PROPERTY, which is the other half of the
+// event API and was entirely absent. addEventListener worked; assigning a
+// handler stored a function nothing ever called, so a page written the older way
+// simply did nothing and said nothing about it.
+//
+// p5.js needs it on its own load path: `loadImage` sets `img.onload` and
+// `img.onerror` and awaits a promise those two settle, and `loadBytes` does the
+// same with a FileReader. It is not a legacy corner here, it is the only way
+// those callbacks arrive.
+//
+// The DEVIATION, said plainly: the spec registers an on-handler as a listener at
+// the moment it is ASSIGNED, so it runs interleaved with addEventListener ones
+// in registration order. Here it runs after them, in the bubble phase, once.
+// Observable only by a page that mixes both for one type and depends on the
+// order - and cheap, versus a listener list that must be rewritten whenever a
+// property is assigned.
+void dom_bindings::fire_handler_property(value target, std::string_view type, value event) {
+    if (cx_ == nullptr || !target.is_object()) { return; }
+    const value handler = cx_->lookup_property(target, "on" + std::string{type});
+    if (!handler.is_callable()) { return; }
+    (void)cx_->call(handler, std::span<const value>{&event, 1}, target);
+}
+
+// The wrapper for a node IF ONE EXISTS. Deliberately does not create one: this
+// is on the dispatch path for every event, and making a wrapper per node per
+// event would build the whole document's worth of them for a mousemove.
+value dom_bindings::value_of_wrapper(node_id id) const {
+    if (!id) { return value::undefined(); }
+    const auto it = wrappers_.find(pack(id));
+    return it == wrappers_.end() || it->second == nullptr ? value::undefined()
+                                                          : value::object(it->second);
 }
 
 node_id dom_bindings::find_by_id(const std::string & want) {
