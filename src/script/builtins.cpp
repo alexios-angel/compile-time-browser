@@ -1045,6 +1045,41 @@ void install_array(context & cx) {
         }
         return c.string(out);
     });
+    // `entries`, `keys` and `values`. Each hands back an ARRAY where the spec
+    // says an iterator, for the same reason matchAll does: `for (const [i, v] of
+    // xs.entries())` and a spread both work over one, which is everything
+    // anybody does with them. p5's Table walks its rows with entries().
+    method(cx, array_proto, "entries", [](context & c, std::span<value>) {
+        auto * self = detail::this_array(c);
+        value out = c.make_array();
+        if (self == nullptr) { return out; }
+        auto * pairs = static_cast<array_object *>(out.as_heap());
+        for (std::size_t i = 0; i < self->items.size(); ++i) {
+            value pair = c.make_array();
+            auto * both = static_cast<array_object *>(pair.as_heap());
+            both->items.push_back(value::number(static_cast<double>(i)));
+            both->items.push_back(self->items[i]);
+            pairs->items.push_back(pair);
+        }
+        return out;
+    });
+    method(cx, array_proto, "keys", [](context & c, std::span<value>) {
+        auto * self = detail::this_array(c);
+        value out = c.make_array();
+        if (self == nullptr) { return out; }
+        auto * items = static_cast<array_object *>(out.as_heap());
+        for (std::size_t i = 0; i < self->items.size(); ++i) {
+            items->items.push_back(value::number(static_cast<double>(i)));
+        }
+        return out;
+    });
+    method(cx, array_proto, "values", [](context & c, std::span<value>) {
+        auto * self = detail::this_array(c);
+        value out = c.make_array();
+        if (self == nullptr) { return out; }
+        static_cast<array_object *>(out.as_heap())->items = self->items;
+        return out;
+    });
     link_constructor(cx, array_proto, "Array", value::object(array_ctor));
     cx.set_prototype(context::proto_kind::array, array_proto);
 }
@@ -2876,6 +2911,22 @@ void install_collections(context & cx) {
     method(cx, set_proto, "values",
            [members](context & c, std::span<value>) { return members(c); });
     method(cx, set_proto, "keys", [members](context & c, std::span<value>) { return members(c); });
+    // A Set's `entries` pairs each member WITH ITSELF, which looks odd and is
+    // the spec: it exists so a Set and a Map can be walked by the same code.
+    method(cx, set_proto, "entries", [members](context & c, std::span<value>) {
+        const value all = members(c);
+        value out = c.make_array();
+        if (!all.is_array()) { return out; }
+        auto * pairs = static_cast<array_object *>(out.as_heap());
+        for (const value & member : static_cast<array_object *>(all.as_heap())->items) {
+            value pair = c.make_array();
+            auto * both = static_cast<array_object *>(pair.as_heap());
+            both->items.push_back(member);
+            both->items.push_back(member);
+            pairs->items.push_back(pair);
+        }
+        return out;
+    });
     set_proto->define_accessor(
         "size",
         value::object(cx.allocate<native_object>(

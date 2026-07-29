@@ -645,3 +645,39 @@ uses neither. `passive` on a listener is accepted and ignored, which changes
 nothing observable because nothing here optimises on the promise it makes.
 `localStorage` is in memory and starts empty every run, since there is no origin
 to scope a store to.
+
+## FETCH IS ASYNCHRONOUS (2026-07-29)
+
+`fetch()` used to do the work and hand back an already-settled promise. That was
+the only option while `await` could not suspend - a pending promise would have
+evaluated to `undefined` and the rest of the function would have run with it -
+and it is why `tests/image_basics` read a fetch's result before `load_html`
+returned.
+
+It queues now. `fetch()` makes a PENDING promise, records the request, and the
+event loop settles it: `run_due_callbacks` drains outstanding fetches first, so
+a handler waiting on one runs in the same turn as the timers rather than a turn
+behind them. A queued request is a GC root, because it holds the only reference
+to the promise a page is waiting on.
+
+Two things that were not observable before and now are. A page can do work while
+a request is outstanding, which is the entire point of the API. And an
+**AbortController has something to abort**: the request lives for at least one
+turn, so `control.abort()` has somewhere to be called from, and the fetch
+rejects with an `AbortError`.
+
+**The Response surface is what a real caller reads** rather than what was easy
+to provide. `headers` is an object with `get()`/`has()` and not a content-type
+string - p5's own `request()` helper does `res.headers.get(...)`, which threw on
+a library doing the ordinary thing. The body comes four ways: `text()`, `json()`,
+`bytes()`, `arrayBuffer()` and `blob()`. The buffer carries its bytes in the
+shape `install_typed_arrays` recognises, so `new Uint8Array(await
+res.arrayBuffer())` is a view over the response's own storage rather than a copy.
+
+Those bodies are settled promises: the bytes are in hand by the time a Response
+exists, so there is nothing to wait for. It is the fetch that is asynchronous.
+
+**p5's data loaders work as a result** - `loadJSON`, `loadStrings` and
+`loadTable` are p5's own code over `fetch`, and `tests/p5_api.cpp` bakes three
+assets so the probes exercise the whole path hermetically. `loadImage` still
+needs `Image` and `URL.createObjectURL`.

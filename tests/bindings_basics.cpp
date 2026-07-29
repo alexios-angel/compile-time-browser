@@ -86,6 +86,11 @@ void check(bool ok, std::string_view what) {
 // A file as bytes, for the asset registry. p5.js is 4.4 MB on disk and the
 // registry is what a `<script src>` resolves against, so the test loads it the
 // same way a page would rather than inlining it.
+[[nodiscard]] std::vector<std::byte> bytes_of(std::string_view text) {
+    return std::vector<std::byte>{reinterpret_cast<const std::byte *>(text.data()),
+                                  reinterpret_cast<const std::byte *>(text.data() + text.size())};
+}
+
 [[nodiscard]] std::vector<std::byte> read_bytes(const std::string & path) {
     std::ifstream in{path, std::ios::binary};
     const std::string text{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
@@ -1051,6 +1056,106 @@ void test_clip() {
     }
 }
 
+// `fetch` IS ASYNCHRONOUS.
+//
+// It used to do the work and hand back an already-settled promise - the only
+// option while `await` could not suspend, since a pending one would have
+// evaluated to undefined and the rest of the function would have run with it.
+// `await` suspends now, so a fetch can be what it is: work that finishes on a
+// later turn.
+//
+// That is not pedantry. `await fetch(url)` used to return before any other timer
+// or listener could run, so nothing a page does to stay responsive while loading
+// was observable - and an AbortController had nothing to abort, because the
+// request was over before the object existed.
+void test_fetch_is_async() {
+    browser page{browser_options{300, 200}};
+    page.assets().add("data.json", bytes_of(R"({"name":"ctbrowser","n":3})"));
+    page.load_html(R"(<html><body><script>
+        var log = '';
+        fetch('data.json').then(function (r) {
+          log += 'ok=' + r.ok + ',' + r.status + ';';
+          log += 'ct=' + r.headers.get('content-type') + ';';
+          log += 'absent=' + r.headers.get('x-nothing') + ';';
+          return r.json();
+        }).then(function (j) { log += 'name=' + j.name + ',' + j.n + ';'; });
+        // The request is OUTSTANDING here: nothing it produces may have
+        // happened yet, which is the whole difference.
+        log += 'sync;';
+        function report() { console.log(log); }
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    (void)page.run_script("report();");
+    check(log_of(page).back() == "sync;",
+          "nothing resolved before the turn ended: " + log_of(page).back());
+
+    for (int frame = 0; frame < 4; ++frame) { page.tick(16); }
+    (void)page.run_script("report();");
+    const std::string & after = log_of(page).back();
+    check(after.find("ok=true,200;") != std::string::npos, "the response arrived: " + after);
+    // `headers` is an OBJECT with get(), not a content-type string - a page
+    // doing the ordinary thing used to throw on it.
+    check(after.find("absent=null;") != std::string::npos,
+          "an unknown header is null rather than an error: " + after);
+    check(after.find("name=ctbrowser,3;") != std::string::npos, "json() parsed it: " + after);
+}
+
+// `await fetch(...)` across a real suspension, and the bytes three ways.
+void test_fetch_await_and_bytes() {
+    browser page{browser_options{300, 200}};
+    page.assets().add("blob.bin",
+                      std::vector<std::byte>{std::byte{1}, std::byte{2}, std::byte{255}});
+    page.load_html(R"(<html><body><script>
+        var log = '';
+        (async function () {
+          const r = await fetch('blob.bin');
+          const buf = await r.arrayBuffer();
+          // A view over the WHOLE buffer shares its storage, so this is the
+          // response's bytes rather than a copy of them.
+          const view = new Uint8Array(buf);
+          log += 'len=' + buf.byteLength + ',' + view.length + ';';
+          log += 'bytes=' + view[0] + ',' + view[1] + ',' + view[2] + ';';
+          const again = await (await fetch('blob.bin')).bytes();
+          log += 'bytes2=' + again.length + ';';
+          const blob = await (await fetch('blob.bin')).blob();
+          log += 'blob=' + blob.size + ';';
+        })();
+        log += 'sync;';
+        function report() { console.log(log); }
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    // Several awaits, each one a turn: the loop has to run enough times.
+    for (int frame = 0; frame < 20; ++frame) { page.tick(16); }
+    (void)page.run_script("report();");
+    const std::string & out = log_of(page).back();
+    check(out.find("sync;") == 0, "the async function suspended at its first await: " + out);
+    check(out.find("len=3,3;") != std::string::npos, "arrayBuffer and its view agree: " + out);
+    check(out.find("bytes=1,2,255;") != std::string::npos, "the bytes are the file's: " + out);
+    check(out.find("bytes2=3;") != std::string::npos, "bytes() too: " + out);
+    check(out.find("blob=3;") != std::string::npos, "and blob(): " + out);
+}
+
+// An ABORT now has something to abort, because the request is outstanding for at
+// least one turn.
+void test_fetch_abort() {
+    browser page{browser_options{300, 200}};
+    page.assets().add("data.json", bytes_of("{}"));
+    page.load_html(R"(<html><body><script>
+        var log = '';
+        const control = new AbortController();
+        fetch('data.json', { signal: control.signal })
+          .then(function () { log += 'resolved;'; },
+                function (e) { log += 'rejected=' + e.name + ';'; });
+        control.abort();
+        function report() { console.log(log); }
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    for (int frame = 0; frame < 4; ++frame) { page.tick(16); }
+    (void)page.run_script("report();");
+    check(log_of(page).back() == "rejected=AbortError;",
+          "an aborted fetch rejects: " + log_of(page).back());
+}
+
 // --- the document API -----------------------------------------------------
 
 void test_script_mutates_what_is_drawn() {
@@ -1966,6 +2071,9 @@ int main() {
     test_the_invaders_page_shoots();
     test_a_letterboxed_page_keeps_its_size();
 
+    test_fetch_is_async();
+    test_fetch_await_and_bytes();
+    test_fetch_abort();
     test_control_value_is_live();
     test_canvas_as_image_source();
     test_insert_adjacent_html();

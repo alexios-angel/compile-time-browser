@@ -511,12 +511,33 @@ globalThis.__probes = [
   ['a11y', 'describeElement', function (s) { s.describeElement('box', 'a box'); return 'ok'; }],
   ['a11y', 'textOutput/gridOutput', function (s) { return 'SKIP'; }],
 
-  // --- loading (needs the network or a file) ------------------------------
-  ['load', 'loadJSON', function (s) { return typeof s.loadJSON === 'function' ? 'SKIP' : 'absent'; }],
-  ['load', 'loadStrings', function (s) { return typeof s.loadStrings === 'function' ? 'SKIP' : 'absent'; }],
+  // --- loading ------------------------------------------------------------
+  //
+  // These are ASYNC and the runner is not, so each returns its promise and the
+  // runner awaits it. The assets are baked by tests/p5_api.cpp, so the whole
+  // fetch-and-parse path runs without reaching the network.
+  ['load', 'loadJSON', function (s) {
+    return s.loadJSON('probe-data.json').then(function (j) {
+      if (!j || j.name !== 'probe' || j.n !== 4) { throw 'parsed=' + JSON.stringify(j); }
+      return 'ok';
+    });
+  }],
+  ['load', 'loadStrings', function (s) {
+    return s.loadStrings('probe-lines.txt').then(function (lines) {
+      if (lines.join('/') !== 'one/two/three') { throw 'lines=' + JSON.stringify(lines); }
+      return 'ok';
+    });
+  }],
+  ['load', 'loadTable', function (s) {
+    return s.loadTable('probe-table.csv').then(function (t) {
+      if (!t || typeof t.getRowCount !== 'function') { throw 'not a Table: ' + typeof t; }
+      if (t.getRowCount() < 2) { throw 'rows=' + t.getRowCount(); }
+      return 'ok';
+    });
+  }],
+  // loadImage needs an Image and an object URL, which is the next phase.
   ['load', 'loadImage', function (s) { return typeof s.loadImage === 'function' ? 'SKIP' : 'absent'; }],
   ['load', 'loadFont', function (s) { return typeof s.loadFont === 'function' ? 'SKIP' : 'absent'; }],
-  ['load', 'loadTable', function (s) { return typeof s.loadTable === 'function' ? 'SKIP' : 'absent'; }],
 
   // --- 3D (out of scope; the constructors must still exist) ---------------
   ['webgl', 'WEBGL renderer is constructible', function (s) {
@@ -537,7 +558,10 @@ globalThis.__probes = [
 // The runner. Each probe gets the same sketch and a clean-ish canvas; a throw
 // is recorded against its name and the next probe still runs, because the
 // point is a LIST of what is broken rather than the first thing that is.
-globalThis.__runProbes = function (sketch) {
+// ASYNC, because some probes are. A probe may return a promise - a loader
+// does - and the runner awaits it, so a load that fails reports as that probe
+// failing rather than as an unhandled rejection with no name attached.
+globalThis.__runProbes = async function (sketch) {
   const passed = [];
   const failed = [];
   const skipped = [];
@@ -555,7 +579,7 @@ globalThis.__runProbes = function (sketch) {
     sketch.push();
     try {
       sketch.resetMatrix();
-      const out = entry[2](sketch);
+      const out = await entry[2](sketch);
       if (out === 'SKIP') { skipped.push(name); } else { passed.push(name); }
     } catch (e) {
       failed.push(name + ': ' + (e && e.message ? e.message : String(e)));

@@ -451,6 +451,20 @@ public:
     void set_promise_factory(std::function<value(context &, value, bool)> make) {
         promise_factory_ = std::move(make);
     }
+    // A PENDING promise, and settling one. What a host needs to model work that
+    // finishes later - a fetch off the event loop, a decode, a file read - now
+    // that `await` can actually suspend on one.
+    //
+    // The standard library owns what settling MEANS, including queueing the
+    // handlers, so both go through the hooks it installed rather than reaching
+    // into the object's properties.
+    [[nodiscard]] value make_pending_promise() {
+        return pending_promise_factory_ ? pending_promise_factory_(*this) : value::undefined();
+    }
+    void settle_promise(value promise, value with, bool rejected) {
+        if (promise_settler_) { promise_settler_(*this, promise, with, rejected); }
+    }
+
     [[nodiscard]] value make_promise(value v, bool rejected) {
         return promise_factory_ ? promise_factory_(*this, v, rejected) : v;
     }

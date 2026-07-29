@@ -548,6 +548,18 @@ int main(int argc, char ** argv) {
     if (argc > 2 && std::string{argv[1]} == "--sketch") {
         const std::string bundle = read_file("examples/assets/p5.js");
         ctbrowser::shell::browser page{ctbrowser::shell::browser_options{400, 400}};
+        // A few assets a --sketch probe can load, so the loaders can be tried
+        // without reaching the network.
+        const auto bake = [&](const char * name, const char * text) {
+            const std::string_view body{text};
+            page.assets().add(name,
+                              std::vector<std::byte>{
+                                  reinterpret_cast<const std::byte *>(body.data()),
+                                  reinterpret_cast<const std::byte *>(body.data() + body.size())});
+        };
+        bake("data.json", R"({"name":"probe","n":4})");
+        bake("lines.txt", "one\ntwo\nthree");
+        bake("table.csv", "a,b\n1,2\n3,4");
         page.assets().add("p5.js",
                           std::vector<std::byte>{
                               reinterpret_cast<const std::byte *>(bundle.data()),

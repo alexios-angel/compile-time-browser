@@ -105,6 +105,12 @@ int main() {
     };
     add("p5.js", bundle);
     add("probe.js", probes);
+    // Baked so the loader probes are hermetic: they exercise the real
+    // fetch-and-parse path without reaching the network, which is what
+    // CTBROWSER_NETWORK=0 asks of everything else in this tree.
+    add("probe-data.json", R"({"name":"probe","n":4})");
+    add("probe-lines.txt", "one\ntwo\nthree");
+    add("probe-table.csv", "a,b\n1,2\n3,4");
 
     // IS_MINIFIED, like the ratchet: the probe measures the drawing surface,
     // and the translator fetch is a different question answered elsewhere.
@@ -127,12 +133,17 @@ int main() {
             s.createCanvas(24, 24);
             s.noLoop();
             s.pixelDensity(1);
-            __out = globalThis.__runProbes(s);
+            // The runner is async now, because a loader probe returns a
+            // promise. Its result lands in a global when it finishes, so the
+            // test drives the loop until it does.
+            globalThis.__runProbes(s).then(function (json) { __out = json; });
           };
           s.draw = function () {};
         });
     )");
-    for (int frame = 0; frame < 5; ++frame) { page.tick(16); }
+    // Enough turns for every await in the probe list - each loader costs
+    // several, and the runner is one long chain of them.
+    for (int frame = 0; frame < 60; ++frame) { page.tick(16); }
 
     std::string reported;
     page.set_alert_hook([&reported](const std::string & said) { reported = said; });

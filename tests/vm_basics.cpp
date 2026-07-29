@@ -1647,6 +1647,31 @@ void test_spread() {
 // project. `new Date()` with no argument is the epoch, deliberately: the clock
 // is fixed here for the same reason Math.random is seeded, so a page that draws
 // from either can have a golden.
+// `entries`, `keys` and `values` on an array, and `entries` on a Set.
+//
+// Each hands back an ARRAY where the spec says an iterator, for the same reason
+// matchAll does: `for (const [i, v] of xs.entries())` and a spread both work
+// over one, which is everything anybody does with them. p5's Table walks its
+// rows with entries(), so loadTable could not parse a file without this.
+void test_array_iterators() {
+    expect_result("return JSON.stringify(['x', 'y'].entries());", "[[0,\"x\"],[1,\"y\"]]");
+    expect_result("let out = ''; for (const pair of ['x', 'y'].entries()) {"
+                  "  out += pair[0] + ':' + pair[1] + ';'; } return out;",
+                  "0:x;1:y;");
+    // Destructured, which is how it is actually written.
+    expect_result("let out = ''; for (const [i, v] of ['a', 'b'].entries()) {"
+                  "  out += i + v; } return out;",
+                  "0a1b");
+    expect_result("return [7, 8].keys().join(',');", "0,1");
+    expect_result("return [7, 8].values().join(',');", "7,8");
+    // A Set's entries pairs each member WITH ITSELF, which looks odd and is the
+    // spec: it exists so a Set and a Map can be walked by the same code.
+    expect_result("const s = new Set(['a']);"
+                  "let out = ''; for (const [k, v] of s.entries()) { out += k + v; } return out;",
+                  "aa");
+    expect_result("return typeof new Map().entries;", "function");
+}
+
 void test_date() {
     expect_result("const d = new Date(0);"
                   "return [d.getFullYear(), d.getMonth(), d.getDate(), d.getDay()].join(',');",
@@ -2315,6 +2340,7 @@ int main() {
     test_bitwise_and_friends();
     test_delete_in_instanceof();
     test_object_literal_keys();
+    test_array_iterators();
     test_date();
     test_array_buffer_is_shared();
     test_new_function();

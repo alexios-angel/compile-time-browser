@@ -337,12 +337,46 @@ private:
 
     void install_resources(context & cx);
 
+    // A FETCH THAT HAS NOT HAPPENED YET.
+    //
+    // fetch() used to do the work and hand back an already-settled promise,
+    // which was the only option while `await` could not suspend: a pending one
+    // would have evaluated to undefined and the rest of the function would have
+    // run with it. `await` suspends now, so a fetch can be what it is - work
+    // that finishes on a later turn.
+    //
+    // That is not pedantry. A page's `await fetch(url)` used to return before
+    // any other timer or listener could run, so nothing a real page does to stay
+    // responsive while loading could be observed at all - and an AbortController
+    // had nothing to abort, because the request was over before the object
+    // existed.
+    struct pending_fetch {
+        value promise;
+        std::string url;
+        value signal; // the AbortSignal it was given, if any
+    };
+    std::vector<pending_fetch> fetches_;
+
+    // Do the work for one queued fetch and settle its promise. Called from the
+    // event loop, not from fetch().
+    void settle_fetch(context & cx, const pending_fetch & waiting);
+
     [[nodiscard]] value fetch_now(context & cx, const std::string & url);
 
     [[nodiscard]] static value make_rejection(context & cx, const std::string & message);
 
-    // The Response object: settled promises all the way down, matching what the
-    // VM's await can unwrap.
+    // The Response object.
+    //
+    // The BODY methods hand back settled promises: the bytes are already in
+    // hand by the time a Response exists, so there is nothing to wait for. It is
+    // the fetch itself that is asynchronous, which is the part a page can
+    // observe.
+    //
+    // The surface is what a real caller reads rather than what is easy to
+    // provide. p5.js's own `request()` helper branches on `res.ok` and then
+    // calls one of json/text/arrayBuffer/blob/bytes, and reads `res.headers` -
+    // so `headers` being a bare content-type string meant `headers.get(...)`
+    // threw on a library doing the ordinary thing.
     [[nodiscard]] value make_response(context & cx, const std::string & url, int status,
                                       const std::string & content_type,
                                       std::vector<std::byte> body) {
@@ -350,7 +384,37 @@ private:
         response->set("url", cx.string(url));
         response->set("status", value::number(status));
         response->set("ok", value::boolean(status >= 200 && status < 300));
-        response->set("headers", cx.string(content_type));
+        response->set("statusText", cx.string(status == 200   ? "OK"
+                                              : status == 404 ? "Not Found"
+                                                              : ""));
+        response->set("type", cx.string("basic"));
+        // `headers` IS AN OBJECT with get() and has(), not a string. A page does
+        // `res.headers.get('content-type')`, and the only header this engine
+        // knows is the content type - so it answers that one and reports every
+        // other as absent rather than pretending.
+        {
+            auto * headers = static_cast<script::object_object *>(cx.make_object().as_heap());
+            headers->set("__contentType", cx.string(content_type));
+            const auto header_method = [&](std::string name, script::native_fn fn) {
+                headers->set(
+                    name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+            };
+            const auto is_content_type = [](std::string wanted) {
+                for (char & ch : wanted) { ch = static_cast<char>(std::tolower(ch)); }
+                return wanted == "content-type";
+            };
+            header_method("get", [content_type, is_content_type](context & c, std::span<value> a) {
+                if (!is_content_type(arg_string(c, a, 0)) || content_type.empty()) {
+                    return value::null();
+                }
+                return c.string(content_type);
+            });
+            header_method("has", [content_type, is_content_type](context & c, std::span<value> a) {
+                return value::boolean(is_content_type(arg_string(c, a, 0)) &&
+                                      !content_type.empty());
+            });
+            response->set("headers", value::object(headers));
+        }
 
         const std::string text{reinterpret_cast<const char *>(body.data()), body.size()};
         const auto method = [&](std::string name, script::native_fn fn) {
@@ -374,14 +438,41 @@ private:
             }
             return c.make_promise(value::undefined(), false);
         });
-        method("bytes", [body = std::move(body)](context & c, std::span<value>) {
+        // The bytes, three ways a caller may ask for them. `bytes()` is the
+        // newest and p5 prefers it when present; `arrayBuffer()` is what
+        // everything else uses, and `blob()` is what an object URL is made from.
+        const auto byte_array = [](context & c, const std::vector<std::byte> & bytes) {
             const value out = c.make_array();
             auto * items = static_cast<script::array_object *>(out.as_heap());
-            items->items.reserve(body.size());
-            for (const std::byte b : body) {
+            items->elements = script::element_kind::u8;
+            items->items.reserve(bytes.size());
+            for (const std::byte b : bytes) {
                 items->items.push_back(value::number(static_cast<double>(std::to_integer<int>(b))));
             }
-            return c.make_promise(out, false);
+            return out;
+        };
+        method("bytes", [body, byte_array](context & c, std::span<value>) {
+            return c.make_promise(byte_array(c, body), false);
+        });
+        method("arrayBuffer", [body, byte_array](context & c, std::span<value>) {
+            // The shape install_typed_arrays recognises: an object carrying
+            // `__bytes`, so `new Uint8Array(buffer)` is a view over THIS
+            // storage rather than a copy of it.
+            auto * buffer = static_cast<script::object_object *>(c.make_object().as_heap());
+            buffer->set("byteLength", value::number(static_cast<double>(body.size())));
+            buffer->set("length", value::number(static_cast<double>(body.size())));
+            buffer->set("__bytes", byte_array(c, body));
+            return c.make_promise(value::object(buffer), false);
+        });
+        method("blob", [body, content_type, byte_array](context & c, std::span<value>) {
+            // A minimal Blob: its size, its type and its bytes. Enough for a
+            // page that hands one to URL.createObjectURL, which is the only
+            // thing anything here does with one.
+            auto * blob = static_cast<script::object_object *>(c.make_object().as_heap());
+            blob->set("size", value::number(static_cast<double>(body.size())));
+            blob->set("type", c.string(content_type));
+            blob->set("__bytes", byte_array(c, body));
+            return c.make_promise(value::object(blob), false);
         });
         return cx.make_promise(value::object(response), false);
     }

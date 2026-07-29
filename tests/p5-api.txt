@@ -45,6 +45,9 @@ events/keyIsDown
 events/mouseIsPressed/keyIsPressed
 events/mouseX/mouseY
 events/pmouseX/movedX
+load/loadJSON
+load/loadStrings
+load/loadTable
 math/abs/ceil/floor/round
 math/constrain
 math/dist

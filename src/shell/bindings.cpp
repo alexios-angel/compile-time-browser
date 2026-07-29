@@ -142,6 +142,13 @@ void dom_bindings::register_roots(context & cx) {
             mark(l.abort_signal);
         }
         for (const timer & t : timers_) { mark(t.callback); }
+        // A QUEUED FETCH holds the only reference to the promise a page is
+        // waiting on, and to the signal that may cancel it. Neither is reachable
+        // from anywhere else between the call and the turn that settles it.
+        for (const pending_fetch & waiting : fetches_) {
+            mark(waiting.promise);
+            mark(waiting.signal);
+        }
         for (const value & callback : animation_callbacks_) { mark(callback); }
         for (const auto & [packed, obj] : wrappers_) {
             if (obj != nullptr) { mark(value::object(obj)); }
@@ -281,6 +288,18 @@ bool dom_bindings::dispatch_event(std::string_view type, node_id target, value e
 std::size_t dom_bindings::run_due_callbacks() {
     if (cx_ == nullptr) { return 0; }
     std::size_t ran = 0;
+    // FETCHES FIRST, so a handler waiting on one runs in the same turn as the
+    // timers rather than a turn behind them. Copied before running, because a
+    // handler resolved by one may start another.
+    if (!fetches_.empty()) {
+        std::vector<pending_fetch> due;
+        due.swap(fetches_);
+        for (const pending_fetch & waiting : due) {
+            settle_fetch(*cx_, waiting);
+            note_callback_fault("fetch");
+            ++ran;
+        }
+    }
     // Copied before running: a callback may add or cancel timers, and
     // iterating the live list while it does is how a timer that
     // re-registers itself becomes an infinite loop inside one tick.
@@ -2346,8 +2365,52 @@ void dom_bindings::install_resources(context & cx) {
     // allows it.
     cx.define_native("fetch", [this](context & c, std::span<value> args) {
         const std::string url = arg_string(c, args, 0);
-        return fetch_now(c, url);
+        // QUEUED, not done. The promise is pending and the event loop settles
+        // it, so a page's other work happens while the request is outstanding -
+        // which is the whole point of the API and was not observable before.
+        value signal = value::undefined();
+        if (arg(args, 1).is_object()) { signal = c.lookup_property(arg(args, 1), "signal"); }
+        const value promise = c.make_pending_promise();
+        if (promise.is_undefined()) {
+            // No promise machinery installed - a bare VM with no standard
+            // library. Do it the old way rather than returning nothing.
+            return fetch_now(c, url);
+        }
+        fetches_.push_back(pending_fetch{promise, url, signal});
+        return promise;
     });
+}
+
+// One queued fetch, resolved. The body work is fetch_now's, which still does
+// the deciding - asset registry, then a file next to the page, then the network -
+// so there is one answer to "where does a url come from" rather than two.
+void dom_bindings::settle_fetch(context & cx, const pending_fetch & waiting) {
+    // ABORTED BEFORE IT RAN. The signal is the only reason a queued fetch does
+    // not happen, and it is now possible to observe: the request is outstanding
+    // for at least one turn, so a page has somewhere to call abort() from.
+    if (waiting.signal.is_object() &&
+        context::truthy(cx.lookup_property(waiting.signal, "aborted"))) {
+        auto * error = static_cast<script::object_object *>(cx.make_object().as_heap());
+        error->set("name", cx.string("AbortError"));
+        error->set("message", cx.string("fetch of " + waiting.url + " was aborted"));
+        cx.settle_promise(waiting.promise, value::object(error), true);
+        return;
+    }
+    // fetch_now hands back a SETTLED promise, so its outcome is adopted rather
+    // than wrapped again.
+    const value done = fetch_now(cx, waiting.url);
+    bool rejected = false;
+    value with = done;
+    if (done.is_object()) {
+        auto * obj = static_cast<script::object_object *>(done.as_heap());
+        if (obj->find("__settled") != nullptr) {
+            value * held = obj->find("__value");
+            value * state = obj->find("__rejected");
+            with = held == nullptr ? value::undefined() : *held;
+            rejected = state != nullptr && context::truthy(*state);
+        }
+    }
+    cx.settle_promise(waiting.promise, with, rejected);
 }
 
 value dom_bindings::fetch_now(context & cx, const std::string & url) {

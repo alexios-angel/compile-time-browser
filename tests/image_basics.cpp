@@ -259,6 +259,12 @@ void test_fetch_from_registry() {
       boot();
     </script></body>)");
     CHECK(page.script_error().empty());
+    // FETCH IS ASYNCHRONOUS, so the event loop has to run. It used to do the
+    // work inside the call and hand back a settled promise, which meant this
+    // read its result before load_html returned - and meant a page could not
+    // do anything while a request was outstanding. Each await costs a turn and
+    // there are four here.
+    for (int frame = 0; frame < 20; ++frame) { page.tick(16); }
     CHECK(logged(page) == "200:7:registry|length=27");
 }
 
@@ -277,6 +283,7 @@ void test_fetch_rejects() {
       boot();
     </script></body>)");
     CHECK(page.script_error().empty());
+    for (int frame = 0; frame < 20; ++frame) { page.tick(16); }
     // A network failure REJECTS - that is what a page's catch branch is written
     // for, and it is how fetchboard reports a resource that was not baked in.
     const std::string outcome = logged(page);
