@@ -43,6 +43,27 @@ using native_fn = std::function<value(class context &, std::span<value>)>;
 struct native_object final : heap_object {
     std::string name;
     native_fn fn;
+    // A NATIVE IS A FUNCTION THAT IS ALSO AN OBJECT. `Symbol` has to be both -
+    // `Symbol('x')` calls it and `Symbol.iterator` reads a property of it - and
+    // without a table here the two were mutually exclusive. Closures have had
+    // one since classes needed somewhere for their statics; this is the same
+    // need arriving for the built-ins.
+    std::vector<std::pair<std::string, value>> props;
+
+    [[nodiscard]] value * find(std::string_view key) {
+        for (auto & [k, item] : props) {
+            if (k == key) { return &item; }
+        }
+        return nullptr;
+    }
+    void set(std::string_view key, value v) {
+        if (value * existing = find(key)) {
+            *existing = v;
+            return;
+        }
+        props.emplace_back(std::string{key}, v);
+    }
+
     native_object(std::string n, native_fn f)
         : heap_object(heap_kind::native), name(std::move(n)), fn(std::move(f)) {}
 };
@@ -195,6 +216,7 @@ public:
         string,
         number,
         regexp,
+        symbol,
         count_
     };
 
@@ -311,6 +333,10 @@ private:
     // The fresh object `new` builds, with its prototype taken from the
     // constructor's own `prototype` property - which is what makes a method
     // defined on the class reachable from every instance.
+    [[nodiscard]] static std::string callee_origin(const function_proto & fn, std::size_t ip,
+                                                   std::uint16_t reg_index);
+    [[nodiscard]] std::string describe_callee(const function_proto & fn, std::string_view name,
+                                              value callee);
     [[nodiscard]] value make_instance(value callee);
     // `new callee(...args)` where the argument count is only known at run time.
     // op::construct keeps its own inline path because it does not need a nested
@@ -319,11 +345,28 @@ private:
 
     [[nodiscard]] value execute(const program & prog, const function_proto & entry);
     [[nodiscard]] value run_loop(std::size_t stop_depth);
+    // A FAILURE COMES WITH THE STACK IT HAPPENED ON.
+    //
+    // "the value is undefined, not a function" is a fact about one instruction;
+    // which functions were running when it happened is what says where to look.
+    // Costs nothing until something fails, and in a 4.5 MB bundle it is the
+    // difference between a diagnostic and a shrug.
     void raise(std::string message) {
-        if (!failed_) {
-            failed_ = true;
-            error_ = std::move(message);
+        if (failed_) { return; }
+        failed_ = true;
+        error_ = std::move(message);
+        std::string trace;
+        int shown = 0;
+        for (std::size_t i = frames_.size(); i-- > 0 && shown < 12; ++shown) {
+            const function_proto * fp = frames_[i].proto;
+            if (fp == nullptr) { continue; }
+            trace += "\n        at " + (fp->name.empty() ? std::string{"<anonymous>"} : fp->name) +
+                     " (+" + std::to_string(frames_[i].ip) + ")";
         }
+        if (frames_.size() > 12) {
+            trace += "\n        ... " + std::to_string(frames_.size() - 12) + " more";
+        }
+        error_ += trace;
     }
 
     // Find the innermost live handler and jump to it, discarding every call

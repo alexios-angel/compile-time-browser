@@ -71,6 +71,9 @@ std::string context::to_string(value v) {
         return out;
     }
     if (v.is_string()) { return static_cast<string_object *>(v.as_heap())->text; }
+    // The KEY, not the description: this is what makes `o[sym]` reach a slot
+    // no literal can name, since a computed property goes through here.
+    if (v.is_kind(heap_kind::symbol)) { return static_cast<symbol_object *>(v.as_heap())->key; }
     if (v.is_array()) {
         auto * arr = static_cast<array_object *>(v.as_heap());
         std::string out;
@@ -85,6 +88,7 @@ std::string context::to_string(value v) {
 }
 
 std::string_view context::type_of(value v) {
+    if (v.is_kind(heap_kind::symbol)) { return "symbol"; }
     if (v.is_undefined()) { return "undefined"; }
     if (v.is_null()) { return "object"; } // the famous wart, preserved
     if (v.is_boolean()) { return "boolean"; }
@@ -147,7 +151,10 @@ void context::mark_object(heap_object * o) {
         mark(closure->captured_this);
         break;
     }
-    default: break; // strings and natives own no values
+    case heap_kind::native:
+        for (const auto & [name, v] : static_cast<native_object *>(o)->props) { mark(v); }
+        break;
+    default: break; // strings and symbols own no values
     }
 }
 
@@ -250,6 +257,19 @@ value context::lookup_property(value target, const std::string & name) {
     }
     if (target.is_number()) {
         if (object_object * table = prototype(proto_kind::number)) {
+            if (value * found = table->find(name)) { return *found; }
+        }
+        return value::undefined();
+    }
+    if (target.is_kind(heap_kind::native)) {
+        if (value * found = static_cast<native_object *>(target.as_heap())->find(name)) {
+            return *found;
+        }
+    }
+    if (target.is_kind(heap_kind::symbol)) {
+        auto * sym = static_cast<symbol_object *>(target.as_heap());
+        if (name == "description") { return string(sym->description); }
+        if (object_object * table = prototype(proto_kind::symbol)) {
             if (value * found = table->find(name)) { return *found; }
         }
         return value::undefined();
@@ -412,6 +432,58 @@ value context::execute(const program & prog, const function_proto & entry) {
 // back to it. `stop_depth` is 0 for the top-level program and the caller's
 // depth for a call from C++ - which is what makes call() re-entrant instead of
 // a second interpreter.
+// WHAT was called, in the terms the source used. "attempted to call a
+// non-function" is true and useless; `o.foo is undefined, not a function` says
+// which line to look at. The method and computed forms know the name outright;
+// a plain call only knows what it found, which is still the difference between
+// "undefined" and "a number".
+// Where a plain call's callee CAME FROM. A method call knows its name outright;
+// `f(...)` only has a register, so this walks back through the emitted code for
+// the instruction that last wrote it. Costs nothing until something fails, and
+// turns "the value is undefined" into "`Symbol` is undefined".
+// `ip` is the index of the failing instruction ITSELF, and the scan starts
+// strictly before it - passing the post-incremented ip made the call match
+// itself and report "what `x()` returned" about the very call that failed.
+std::string context::callee_origin(const function_proto & fn, std::size_t ip,
+                                   std::uint16_t reg_index) {
+    std::uint16_t want = reg_index;
+    for (std::size_t i = ip; i-- > 0;) {
+        const instruction & prior = fn.code[i];
+        if (prior.a != want) { continue; }
+        switch (prior.code) {
+        case op::get_global: return fn.names[prior.bx()];
+        case op::get_prop: return fn.names[prior.c];
+        // A `move` only relays: keep looking for whatever filled its source.
+        case op::move: want = prior.b; continue;
+        case op::get_index: return "a computed member";
+        case op::get_upvalue: return "a captured variable";
+        case op::cell_get: return "a boxed local";
+        // `f()(...)` - what was called is what the INNER call returned, so name
+        // that instead. Bounded because each step moves strictly earlier.
+        case op::call:
+        case op::call_method:
+        case op::construct: {
+            const std::string inner =
+                prior.code == op::call_method ? fn.names[prior.c] : callee_origin(fn, i, prior.a);
+            return inner.empty() ? std::string{"the result of a call"}
+                                 : "what `" + inner + "()` returned";
+        }
+        default: return "the result of opcode " + std::to_string(static_cast<int>(prior.code));
+        }
+    }
+    return {};
+}
+
+std::string context::describe_callee(const function_proto & fn, std::string_view name,
+                                     value callee) {
+    const std::string what =
+        name.empty() ? std::string{"the value"} : "`" + std::string{name} + "`";
+    return what + " is " + std::string{type_of(callee)} +
+           (callee.is_undefined() || callee.is_null() ? "" : " (" + to_string(callee) + ")") +
+           ", not a function - in " +
+           (fn.name.empty() ? std::string{"<anonymous>"} : "`" + fn.name + "`");
+}
+
 value context::make_instance(value callee) {
     auto * instance = allocate<object_object>();
     if (callee.is_object()) {
@@ -757,6 +829,8 @@ value context::run_loop(std::size_t stop_depth) {
                     static_cast<object_object *>(reg(in.a).as_heap())
                         ->set(fn.names[in.b], reg(in.c));
                 }
+            } else if (reg(in.a).is_kind(heap_kind::native)) {
+                static_cast<native_object *>(reg(in.a).as_heap())->set(fn.names[in.b], reg(in.c));
             } else if (reg(in.a).is_kind(heap_kind::function)) {
                 auto * closure = static_cast<closure_object *>(reg(in.a).as_heap());
                 if (accessor_entry * entry = closure->find_accessor(fn.names[in.b]);
@@ -851,7 +925,12 @@ value context::run_loop(std::size_t stop_depth) {
                 break;
             }
             if (!callee.is_kind(heap_kind::function)) {
-                raise("attempted to call a non-function");
+                raise(describe_callee(fn,
+                                      in.code == op::call_method ? fn.names[in.c]
+                                      : in.code == op::call_computed
+                                          ? to_string(reg(in.c))
+                                          : callee_origin(fn, frame.ip - 1, in.a),
+                                      callee));
                 break;
             }
             auto * fnobj = static_cast<closure_object *>(callee.as_heap());
@@ -1000,7 +1079,7 @@ value context::run_loop(std::size_t stop_depth) {
                 break;
             }
             if (!callee.is_kind(heap_kind::function)) {
-                raise("attempted to construct a non-function");
+                raise("`new` on " + describe_callee(fn, std::string{}, callee));
                 break;
             }
             auto * fnobj = static_cast<closure_object *>(callee.as_heap());

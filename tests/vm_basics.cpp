@@ -529,6 +529,45 @@ void test_object_descriptors() {
     expect("return Object.fromEntries([['a', 1], ['b', 2]]).b;", "2");
 }
 
+// AN OPTIONAL CHAIN SHORT-CIRCUITS THE WHOLE CHAIN, not one link.
+//
+// Each `?.` used to jump only past itself, leaving undefined in the register
+// for the REST of the chain to run on - so `o?.m()` with a null `o` called
+// undefined. That is how p5.js stopped, four thousand instructions into the
+// bundle.
+void test_optional_chain_short_circuits() {
+    expect("const o = null; return typeof o?.a;", "undefined");
+    expect("const o = null; return typeof o?.a.b.c;", "undefined");
+    expect("const o = null; return typeof o?.m();", "undefined");
+    expect("const o = null; return typeof o?.[0];", "undefined");
+    expect("const o = null; return typeof o?.a[0].b();", "undefined");
+    // and the present cases still evaluate the whole chain
+    expect("const o = { a: { b: 5 } }; return o?.a.b;", "5");
+    expect("const o = { m() { return 7; } }; return o.m?.();", "7");
+    expect("const o = { a: [9] }; return o?.a[0];", "9");
+    expect("const o = { a: { m() { return 'deep'; } } }; return o?.a.m();", "deep");
+    // undefined short-circuits as well as null, and nothing else does
+    expect("const o = undefined; return typeof o?.a;", "undefined");
+    expect("const o = 0; return typeof o?.toFixed;", "function");
+    // a chain inside an ARGUMENT is its own chain, not part of the outer one
+    expect("const o = { f(x) { return x === undefined ? 'inner' : x; } }; "
+           "const n = null; return o.f(n?.a);",
+           "inner");
+}
+
+void test_symbol() {
+    expect("return typeof Symbol('x');", "symbol");
+    expect("return typeof Symbol.iterator;", "symbol");
+    expect("return Symbol('tag').description;", "tag");
+    expect("return Symbol('a') === Symbol('a');", "false");
+    expect("return Symbol.iterator === Symbol.iterator;", "true");
+    // usable as a property key, which is the whole point
+    expect("const s = Symbol('k'); const o = {}; o[s] = 5; return o[s];", "5");
+    expect("const s = Symbol('k'); const o = {}; o[s] = 5; return o.k;", "undefined");
+    expect("const o = {}; o[Symbol.iterator] = 1; return o[Symbol.iterator];", "1");
+    expect("return Symbol('x').toString();", "Symbol(x)");
+}
+
 void test_typeof() {
     diff_vs_v1("typeof 1", "number");
     diff_vs_v1("typeof 'x'", "string");
@@ -718,7 +757,22 @@ void test_errors_are_reported_not_crashes() {
     bool ok = true;
     const std::string out = run_vm("let x = 1; x();", &ok);
     CHECK(!ok);
-    CHECK(out.find("non-function") != std::string::npos);
+    // The message NAMES what was called and what it turned out to be, and
+    // carries the stack it happened on. "attempted to call a non-function" is
+    // true and useless; in a 4.5 MB bundle it is the difference between a
+    // diagnostic and a shrug.
+    CHECK(out.find("not a function") != std::string::npos);
+    CHECK(out.find("`x`") != std::string::npos);
+    CHECK(out.find("number") != std::string::npos);
+    CHECK(out.find("at <script>") != std::string::npos);
+
+    // A method call names the method; a call on a call names the inner one.
+    bool method_ok = true;
+    const std::string method_out = run_vm("const o = {}; o.missing();", &method_ok);
+    CHECK(method_out.find("`missing`") != std::string::npos);
+    bool chain_ok = true;
+    const std::string chain_out = run_vm("function f() { return undefined; } f()();", &chain_ok);
+    CHECK(chain_out.find("`f()`") != std::string::npos);
 
     const program bad = compiler::compile("let x = ;");
     CHECK(!bad.ok);
@@ -1235,6 +1289,8 @@ int main() {
     test_regex();
     test_accessors();
     test_object_descriptors();
+    test_optional_chain_short_circuits();
+    test_symbol();
     test_typeof();
     test_variables_and_control_flow();
     test_increment_semantics();

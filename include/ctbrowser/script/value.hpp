@@ -52,7 +52,8 @@ enum class heap_kind : std::uint8_t {
     array,
     function,
     native,
-    cell
+    cell,
+    symbol
 };
 
 struct heap_object; // every heap value starts with one
@@ -150,6 +151,24 @@ inline bool value::is_kind(heap_kind k) const noexcept {
 struct string_object final : heap_object {
     std::string text;
     explicit string_object(std::string s) : heap_object(heap_kind::string), text(std::move(s)) {}
+};
+
+// A SYMBOL IS A PROPERTY KEY NOBODY CAN WRITE BY ACCIDENT.
+//
+// Its identity is `key`, a string chosen so no source literal can collide with
+// it: `@@iterator` for the well-known ones, `@@sym:<n>:<description>` for the
+// rest. Property access already goes through to_string() for a computed key, so
+// a symbol-keyed property works through the existing string-keyed machinery
+// with no change to the object model at all.
+//
+// What that trades away, said out loud: a symbol is not truly unforgeable - a
+// page that writes `o["@@iterator"]` reaches the same slot - and printing one
+// shows its key. `typeof` is still "symbol", which is what code branches on.
+struct symbol_object final : heap_object {
+    std::string description;
+    std::string key;
+    symbol_object(std::string d, std::string k)
+        : heap_object(heap_kind::symbol), description(std::move(d)), key(std::move(k)) {}
 };
 
 // `===` in full.

@@ -1292,9 +1292,58 @@ void install_regexp(context & cx) {
     cx.define_native(std::string{regexp_factory_name}, make);
 }
 
+// `Symbol`. p5.js needs it to EXIST before anything else - the bundled zod
+// calls `Symbol(...)` at load, and that one undefined global stopped the whole
+// bundle with nothing but "attempted to call a non-function" to say so.
+//
+// A symbol's identity is a STRING KEY no source literal collides with, so a
+// symbol-keyed property works through the existing string-keyed machinery
+// without touching the object model. The well-known ones get fixed keys, which
+// is what lets `Symbol.iterator` mean the same thing to two different pieces of
+// code that never met.
+void install_symbol(context & cx) {
+    using detail::method;
+    using detail::new_table;
+    auto counter = std::make_shared<std::uint64_t>(0);
+
+    object_object * symbol_proto = new_table(cx);
+    method(cx, symbol_proto, "toString", [](context & c, std::span<value>) {
+        const value self = c.current_this();
+        if (!self.is_kind(heap_kind::symbol)) { return c.string("Symbol()"); }
+        return c.string("Symbol(" + static_cast<symbol_object *>(self.as_heap())->description +
+                        ")");
+    });
+    cx.set_prototype(context::proto_kind::symbol, symbol_proto);
+
+    // Callable AND a namespace: `Symbol('x')` and `Symbol.iterator` are both
+    // ordinary uses, which is why a native carries a property table now.
+    auto * symbol =
+        cx.allocate<native_object>("Symbol", [counter](context & c, std::span<value> a) {
+            const std::string description = a.empty() ? std::string{} : c.to_string(a[0]);
+            const std::string key = "@@sym:" + std::to_string((*counter)++) + ":" + description;
+            return value::object(c.allocate<symbol_object>(description, key));
+        });
+    const auto well_known = [&](const char * name, const char * key) {
+        symbol->set(name, value::object(cx.allocate<symbol_object>(name, key)));
+    };
+    well_known("iterator", "@@iterator");
+    well_known("asyncIterator", "@@asyncIterator");
+    well_known("hasInstance", "@@hasInstance");
+    well_known("toPrimitive", "@@toPrimitive");
+    well_known("toStringTag", "@@toStringTag");
+    // A registry, so `Symbol.for('x')` twice is the same key both times.
+    symbol->set(
+        "for", value::object(cx.allocate<native_object>("for", [](context & c, std::span<value> a) {
+            const std::string d = a.empty() ? std::string{} : c.to_string(a[0]);
+            return value::object(c.allocate<symbol_object>(d, "@@for:" + d));
+        })));
+    cx.define_global("Symbol", value::object(symbol));
+}
+
 void install_builtins(context & cx, std::uint64_t seed) {
     install_math(cx, seed);
     install_regexp(cx);
+    install_symbol(cx);
     install_array(cx);
     install_string(cx);
     install_number(cx);

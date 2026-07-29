@@ -1372,7 +1372,17 @@ public:
     }
 
     // --- expressions ---------------------------------------------------------
+    // Every expression goes through here, and a member/call chain containing an
+    // optional link is compiled as ONE unit so it has one exit.
     void compile_expr(std::int32_t idx, std::uint16_t dst) {
+        if (idx >= 0 && out_.ok && !in_chain_ && chain_has_optional(idx)) {
+            compile_chain(idx, dst);
+            return;
+        }
+        compile_expr_inner(idx, dst);
+    }
+
+    void compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
         if (idx < 0 || !out_.ok) {
             proto().emit(instruction{op::load_undef, dst});
             return;
@@ -2093,6 +2103,57 @@ public:
     // Optional chaining. The whole point is the SHORT CIRCUIT: `a?.b.c` yields
     // undefined without evaluating `.c` when a is null-ish, so writing it as an
     // ordinary member access with a test afterwards would still crash.
+    // Does this member/call chain contain an optional link ANYWHERE below it?
+    // Only the spine is walked - `a?.b(c.d)` is optional, `a.b(c?.d)` is not,
+    // because the argument is its own chain.
+    [[nodiscard]] bool chain_has_optional(std::int32_t idx) const {
+        for (std::int32_t at = idx; at >= 0;) {
+            const vp::node & n = this->at(at);
+            switch (n.kind) {
+            case vp::nk::opt_member:
+            case vp::nk::opt_index:
+            case vp::nk::opt_call: return true;
+            case vp::nk::member:
+            case vp::nk::index:
+            case vp::nk::call: at = n.a; continue;
+            default: return false;
+            }
+        }
+        return false;
+    }
+
+    // `a?.b.c` AND `a?.m()` SHORT-CIRCUIT THE WHOLE CHAIN, not one link.
+    //
+    // Each optional link used to jump only past itself, leaving undefined in
+    // the register - and then the rest of the chain ran on it. `o?.m()` with a
+    // null `o` therefore CALLED undefined, which is exactly how p5.js stopped:
+    // "the result of opcode 2 is undefined, not a function", four thousand
+    // instructions into the bundle with nothing to say which line.
+    //
+    // The fix is that a chain has one exit. Whichever link short-circuits jumps
+    // to the same place, past everything built on it.
+    void compile_chain(std::int32_t idx, std::uint16_t dst) {
+        std::vector<std::size_t> outer;
+        outer.swap(optional_exits_);
+        const bool root = !in_chain_;
+        in_chain_ = true;
+        compile_expr_inner(idx, dst);
+        if (root) {
+            in_chain_ = false;
+            if (!optional_exits_.empty()) {
+                const std::size_t done = proto().emit(instruction{op::jump});
+                for (const std::size_t site : optional_exits_) { patch_here(site); }
+                proto().emit(instruction{op::load_undef, dst});
+                patch_here(done);
+            }
+        }
+        optional_exits_.swap(outer);
+        if (!root) {
+            // a nested chain hands its exits back to the enclosing one
+            for (const std::size_t site : outer) { optional_exits_.push_back(site); }
+        }
+    }
+
     void compile_optional(const vp::node & n, std::uint16_t dst) {
         const std::uint32_t mark = reg_mark();
         const std::uint16_t object = alloc_reg();
@@ -2119,10 +2180,9 @@ public:
             proto().emit(instruction{op::call, base, static_cast<std::uint16_t>(args.size())});
             proto().emit(instruction{op::move, dst, base});
         }
-        const std::size_t done = proto().emit(instruction{op::jump});
-        patch_here(skip);
-        proto().emit(instruction{op::load_undef, dst});
-        patch_here(done);
+        // The exit belongs to the CHAIN, not to this link. compile_chain
+        // patches every one of them to a single point past the whole thing.
+        optional_exits_.push_back(skip);
         release_to(mark);
     }
 
@@ -2455,6 +2515,10 @@ public:
     std::vector<frame> frames_;
     std::vector<loop_context> loops_;
     std::string pending_label_;
+    // The short-circuit jumps of the optional chain being compiled, and
+    // whether one is open - see compile_chain.
+    std::vector<std::size_t> optional_exits_;
+    bool in_chain_ = false;
     std::size_t handler_depth_ = 0;
 };
 
