@@ -182,6 +182,19 @@ private:
         // it removes every listener that carries it - which is how a library
         // takes down a whole sketch's listeners in one call.
         value abort_signal = value::undefined();
+        // `{ once: true }` - fire and remove. Accepted and ignored before, so a
+        // listener a page registered to run exactly once ran on every event: a
+        // one-shot "did the user interact yet" handler kept firing, and a
+        // library counting how often something happened counted wrong.
+        bool once = false;
+        // `{ capture: true }` - fired on the way DOWN to the target rather than
+        // on the way back up. It is the whole reason to pass it: a capturing
+        // listener on an ancestor sees the event BEFORE the target does, which
+        // is how a page intercepts one.
+        bool capture = false;
+        // Set when a `once` listener has fired, so the pass that removes them
+        // runs after the dispatch rather than mutating the list being walked.
+        bool spent = false;
     };
 
     // --- element wrappers -------------------------------------------------
@@ -249,6 +262,10 @@ private:
 
     void install_element_methods(context & cx, script::object_object & obj);
     void note_callback_fault(std::string_view source);
+    // One reading of addEventListener's third argument, shared by the element,
+    // document and window registrations - three copies is three chances for
+    // `once` to work on one of them and not the others.
+    [[nodiscard]] listener make_listener(context & cx, node_id target, std::span<value> args);
     void write_location_parts(context & cx, script::object_object & loc);
     // `element.style` and `element.classList` - the two views onto an element
     // that are OBJECTS rather than values, so unlike everything in
@@ -381,8 +398,8 @@ private:
 
     [[nodiscard]] static bool prevented(value event);
 
-    void fire_at(node_id target, std::string_view type, value event);
-    void fire_global(std::string_view type, value event);
+    void fire_at(node_id target, std::string_view type, value event, bool capturing);
+    void fire_global(std::string_view type, value event, bool capturing);
 
     // --- lookups ----------------------------------------------------------
 

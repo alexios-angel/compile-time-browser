@@ -250,8 +250,21 @@ bool dom_bindings::dispatch_event(std::string_view type, node_id target, value e
     // value, so a wrapper still holding the old one is the whole bug.
     (void)refresh_wrappers();
     const auto txn = doc_->read();
-    for (node_id at = target; at; at = txn.parent(at)) { fire_at(at, type, event); }
-    fire_global(type, event);
+    // CAPTURE THEN BUBBLE, which is what the two phases mean.
+    //
+    // A capturing listener sees the event on the way DOWN - before the target
+    // does - and that is the entire reason to pass `{ capture: true }`: it is
+    // how a page intercepts an event before whatever it is aimed at handles it.
+    // Firing everything in one bubbling pass ran them in the opposite order.
+    std::vector<node_id> chain;
+    for (node_id at = target; at; at = txn.parent(at)) { chain.push_back(at); }
+    fire_global(type, event, true);
+    for (std::size_t i = chain.size(); i-- > 0;) { fire_at(chain[i], type, event, true); }
+    for (const node_id at : chain) { fire_at(at, type, event, false); }
+    fire_global(type, event, false);
+    // A `once` listener is removed AFTER the dispatch, not during it: erasing
+    // from the vector being walked is how a later listener gets skipped.
+    std::erase_if(listeners_, [](const listener & l) { return l.spent; });
     // A LISTENER THAT FAULTS IS REPORTED AND THE FAULT CLEARED, exactly as for
     // a timer or an animation frame. Without this the first listener to fault
     // left the VM's failure flag set for the life of the page: every later
@@ -909,7 +922,7 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
     });
     method("addEventListener", [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
-        if (id) { listeners_.push_back(listener{id, arg_string(c, args, 0), arg(args, 1)}); }
+        if (id) { listeners_.push_back(make_listener(c, id, args)); }
         return value::undefined();
     });
 
@@ -1537,7 +1550,7 @@ void dom_bindings::install_document(context & cx) {
         return wrap(c, doc_->create_text(arg_string(c, args, 0)));
     });
     method("addEventListener", [this](context & c, std::span<value> args) {
-        listeners_.push_back(listener{node_id{}, arg_string(c, args, 0), arg(args, 1)});
+        listeners_.push_back(make_listener(c, node_id{}, args));
         return value::undefined();
     });
     method("getElementsByTagName", [this](context & c, std::span<value> args) {
@@ -1697,18 +1710,7 @@ void dom_bindings::install_window(context & cx) {
     window->set("addEventListener",
                 value::object(cx.allocate<script::native_object>(
                     "addEventListener", [this](context & c, std::span<value> args) {
-                        // The third argument is options or a capture flag. Only
-                        // TODO: honour `once` and `capture`. A `once` listener
-                        // fires more than once today.
-                        // `signal` is honoured; `capture`, `once` and `passive`
-                        // are accepted and ignored, which is visible in that a
-                        // `once` listener fires more than once.
-                        value signal = value::undefined();
-                        if (arg(args, 2).is_object()) {
-                            signal = c.lookup_property(arg(args, 2), "signal");
-                        }
-                        listeners_.push_back(
-                            listener{node_id{}, arg_string(c, args, 0), arg(args, 1), signal});
+                        listeners_.push_back(make_listener(c, node_id{}, args));
                         return value::undefined();
                     })));
     window->set("removeEventListener",
@@ -2195,19 +2197,49 @@ bool dom_bindings::prevented(value event) {
     return slot != nullptr && context::truthy(*slot);
 }
 
-void dom_bindings::fire_at(node_id target, std::string_view type, value event) {
-    for (const listener & l : listeners_) {
-        if (l.target == target && l.type == type) {
-            (void)cx_->call(l.callback, std::span<const value>{&event, 1});
-        }
+// The third argument is an options object or a bare capture flag -
+// `addEventListener(t, f, true)` is the old spelling and pages still use it.
+//
+// `passive` is accepted and ignored, which is honest: it is a promise the
+// listener will not call preventDefault, and nothing here optimises on that
+// promise, so honouring it would change nothing observable.
+dom_bindings::listener dom_bindings::make_listener(context & cx, node_id target,
+                                                   std::span<value> args) {
+    listener made;
+    made.target = target;
+    made.type = arg_string(cx, args, 0);
+    made.callback = arg(args, 1);
+    const value options = arg(args, 2);
+    if (options.is_object()) {
+        made.abort_signal = cx.lookup_property(options, "signal");
+        made.once = context::truthy(cx.lookup_property(options, "once"));
+        made.capture = context::truthy(cx.lookup_property(options, "capture"));
+    } else if (args.size() > 2) {
+        made.capture = context::truthy(options);
+    }
+    return made;
+}
+
+void dom_bindings::fire_at(node_id target, std::string_view type, value event, bool capturing) {
+    // Indexed rather than iterated: a listener may register another one, and
+    // appending to the vector being walked invalidates an iterator. A listener
+    // added during a dispatch does not run in that dispatch, which is the rule.
+    const std::size_t count = listeners_.size();
+    for (std::size_t i = 0; i < count && i < listeners_.size(); ++i) {
+        listener & l = listeners_[i];
+        if (l.target != target || l.type != type || l.capture != capturing || l.spent) { continue; }
+        if (l.once) { l.spent = true; }
+        (void)cx_->call(l.callback, std::span<const value>{&event, 1});
     }
 }
 
-void dom_bindings::fire_global(std::string_view type, value event) {
-    for (const listener & l : listeners_) {
-        if (!l.target && l.type == type) {
-            (void)cx_->call(l.callback, std::span<const value>{&event, 1});
-        }
+void dom_bindings::fire_global(std::string_view type, value event, bool capturing) {
+    const std::size_t count = listeners_.size();
+    for (std::size_t i = 0; i < count && i < listeners_.size(); ++i) {
+        listener & l = listeners_[i];
+        if (l.target || l.type != type || l.capture != capturing || l.spent) { continue; }
+        if (l.once) { l.spent = true; }
+        (void)cx_->call(l.callback, std::span<const value>{&event, 1});
     }
 }
 

@@ -781,6 +781,57 @@ void test_element_query_selector() {
     check(log[3] == "miss=true", "no match is null: " + log[3]);
 }
 
+// `once` AND `capture` ON A LISTENER.
+//
+// Both were accepted and ignored. `once` meant a listener a page registered to
+// run exactly once ran on every event - a one-shot "has the user interacted
+// yet" handler kept firing. `capture` meant a listener that asked to see an
+// event BEFORE its target saw it ran after instead, which is the entire reason
+// to pass the flag.
+void test_listener_options() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body style="margin:0">
+        <div id=outer style="width:100px;height:100px">
+          <div id=inner style="width:50px;height:50px"></div>
+        </div>
+        <script>
+          var log = '';
+          const outer = document.getElementById('outer');
+          const inner = document.getElementById('inner');
+          outer.addEventListener('click', function () { log += 'outer-capture;'; }, { capture: true });
+          outer.addEventListener('click', function () { log += 'outer-bubble;'; });
+          inner.addEventListener('click', function () { log += 'inner;'; });
+          // The old spelling: a bare boolean means capture.
+          document.addEventListener('click', function () { log += 'doc-capture;'; }, true);
+          var counted = 0;
+          inner.addEventListener('click', function () { counted++; }, { once: true });
+          function report() { console.log(log + ' counted=' + counted); }
+        </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    (void)page.frame();
+    for (int i = 0; i < 3; ++i) {
+        (void)page.handle(input_event::mouse_down_at(10, 10));
+        (void)page.handle(input_event::mouse_up_at(10, 10));
+    }
+    (void)page.run_script("report();");
+    const std::string & line = log_of(page).back();
+    // Down to the target first, then back up: the document's capturing
+    // listener is outermost and runs before the outer element's, which runs
+    // before the target's own.
+    const std::size_t doc = line.find("doc-capture;");
+    const std::size_t cap = line.find("outer-capture;");
+    const std::size_t at = line.find("inner;");
+    const std::size_t bubble = line.find("outer-bubble;");
+    check(doc != std::string::npos && cap != std::string::npos && at != std::string::npos &&
+              bubble != std::string::npos,
+          "every phase fired: " + line);
+    check(doc < cap && cap < at && at < bubble,
+          "capture runs outermost-first and before the target, bubble after: " + line);
+    // Three clicks, one call.
+    check(line.find("counted=1") != std::string::npos,
+          "a `once` listener fires exactly once: " + line);
+}
+
 // --- the document API -----------------------------------------------------
 
 void test_script_mutates_what_is_drawn() {
@@ -1696,6 +1747,7 @@ int main() {
     test_the_invaders_page_shoots();
     test_a_letterboxed_page_keeps_its_size();
 
+    test_listener_options();
     test_element_query_selector();
     test_await_suspends_and_resumes();
     test_a_suspended_frame_survives_collection();
