@@ -27,7 +27,7 @@
 // wherever a rung can be evaluated independently. The recorded number tracks
 // one thing; a developer wants to see everything that is wrong at once.
 
-#include <ctbrowser/script/script.hpp>
+#include <ctbrowser.hpp>
 
 #include "check.hpp"
 #include <chrono>
@@ -60,12 +60,12 @@ enum : int {
     level_fits = 5,       // every operand that program emitted fits its field
     level_ran = 6,        // the top-level IIFE executes without a fault
     level_defines_p5 = 7, // and leaves a callable `p5` behind
-    // 8  loads as a page, through <script src>
+    level_page = 8,       // it loads AS A PAGE, with a DOM under it
     // 9  new p5(sketch) constructs
     // 10 setup() runs
     // 11 draw() runs 30 times
     // 12 the render byte-matches a golden
-    level_ceiling = level_defines_p5,
+    level_ceiling = level_page,
 };
 
 const char * level_name(int level) {
@@ -78,6 +78,7 @@ const char * level_name(int level) {
     case level_fits: return "fits the bytecode";
     case level_ran: return "top level ran";
     case level_defines_p5: return "defines p5";
+    case level_page: return "loads as a page";
     default: return "?";
     }
 }
@@ -96,6 +97,7 @@ struct measurement {
     // edits that have nothing to do with the blocker. So the recorded string is
     // the first line - the message - and the rest is printed but not compared.
     std::string trace;
+    std::string said; // what the page alerted back, for the questions only it can answer
     void fail_at(int rung, std::string why) {
         if (stopped) { return; }
         level = rung - 1;
@@ -286,29 +288,49 @@ private:
         m.reached(level_fits);
     }
 
-    // --- run ---------------------------------------------------------------
-    ctbrowser::script::context cx;
-    ctbrowser::script::install_builtins(cx);
-    const ctbrowser::script::run_result result = cx.run(prog);
+    // --- run, WITH A DOM UNDER IT ------------------------------------------
+    //
+    // p5's top level is not self-contained: it reads `performance.now`, hangs
+    // listeners off `window`, and looks for a `document` to put a canvas in.
+    // A bare script::context has none of those, so running the bundle there
+    // stops at the first host object and says nothing about the engine.
+    //
+    // So the run happens through the browser, as a page, with the bundle
+    // delivered by `<script src>` the way a real page would get it. That also
+    // means rung 8 is proved by rungs 6 and 7 rather than being a separate
+    // exercise.
+    ctbrowser::shell::browser page{ctbrowser::shell::browser_options{400, 400}};
+    page.assets().add(
+        "p5.js",
+        std::vector<std::byte>{reinterpret_cast<const std::byte *>(source.data()),
+                               reinterpret_cast<const std::byte *>(source.data() + source.size())});
+    page.load_html(R"(<html><head><script src="p5.js"></script></head><body></body></html>)");
     m.run_ms = clock.lap();
-    std::printf("     run     %7.1f ms\n", m.run_ms);
-    if (!result.ok) {
-        std::printf("     !! %s\n", result.error.c_str());
-        m.fail_at(level_ran, result.error);
+    std::printf("     page    %7.1f ms\n", m.run_ms);
+    if (!page.script_error().empty()) {
+        std::printf("     !! %s\n", page.script_error().c_str());
+        m.fail_at(level_ran, page.script_error());
         return m;
     }
     m.reached(level_ran);
 
     // --- and is there a p5? ------------------------------------------------
-    const ctbrowser::script::value p5 = cx.global("p5");
-    const std::string_view kind = ctbrowser::script::context::type_of(p5);
-    if (kind != "function") {
-        const std::string why = "`p5` is " + std::string{kind} + ", not a function";
+    //
+    // Asked from inside the page, because that is the only place its globals
+    // live. run_script reports whether it RAN, so the answer comes back as an
+    // alert - the one channel a page has that the host can read directly.
+    page.set_alert_hook([&m](const std::string & said) { m.said = said; });
+    (void)page.run_script("alert(typeof p5);");
+    if (m.said != "function") {
+        const std::string why = "`p5` is " +
+                                (m.said.empty() ? std::string{"unreachable"} : m.said) +
+                                ", not a function";
         std::printf("     !! %s\n", why.c_str());
         m.fail_at(level_defines_p5, why);
         return m;
     }
     m.reached(level_defines_p5);
+    m.reached(level_page);
     return m;
 }
 

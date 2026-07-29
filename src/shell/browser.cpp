@@ -647,6 +647,28 @@ void browser::run_scripts() {
             // atom, so without this a graphic's script would run as the page's.
             if (txn.tag(at).value_or(atom{}) == script_tag &&
                 txn.element_ns(at) == ctbrowser::node_ns::html) {
+                // `<script src>` FIRST, then the element's own text - which is
+                // what the spec says (a src'd script ignores its content, and
+                // an element has one or the other in practice) and what any
+                // page carrying a library expects.
+                //
+                // It goes through the asset registry like every other load, so
+                // a test seeds it in memory and a page beside a file finds it
+                // on disk. Nothing here fetches over the network: a script that
+                // is not in the registry and not beside the page is a page that
+                // silently loses a library, so the miss is RECORDED rather than
+                // passed over.
+                const std::string_view src = txn.attribute_value(at, atoms_.intern("src"));
+                if (!src.empty()) {
+                    const std::string url{src};
+                    const std::vector<std::byte> bytes = assets_.load(url);
+                    if (bytes.empty()) {
+                        script_error_ = "<script src=\"" + url + "\"> not found";
+                    } else {
+                        source.append(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+                        source += '\n';
+                    }
+                }
                 for (const node_id child : txn.children(at)) { source += txn.text(child); }
                 source += '\n';
             }

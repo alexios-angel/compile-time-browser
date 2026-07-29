@@ -831,6 +831,16 @@ void dom_bindings::install_window(context & cx) {
     window->set("performance", value::object(performance));
     window_ = value::object(window);
     cx.define_global("window", window_);
+    // `globalThis` IS `window` here, and that is an approximation rather than
+    // the truth: the real one is the global OBJECT, so `globalThis.foo = 1`
+    // ought to create a global named foo and does not. What it does do is make
+    // `globalThis.performance.now()` work, which is how p5.js reads the clock -
+    // 13 uses, and the first host object its top level reaches for.
+    //
+    // Making window the actual global table is a bigger change and wants
+    // globals_ to stay the single storage, with window proxying to it, so the
+    // two cannot drift.
+    cx.define_global("globalThis", window_);
     cx.define_global("performance", value::object(performance));
 }
 
