@@ -291,6 +291,11 @@ private:
     // <img> element wrapper. Anything else is nothing to draw.
     [[nodiscard]] std::shared_ptr<const paint::bitmap> image_argument(value v);
 
+    // A DOMMatrix over a transform: the six numbers plus the methods a page
+    // composes them with. See the getTransform binding for why six bare numbers
+    // was not enough.
+    [[nodiscard]] value matrix_object(context & cx, const transform & t);
+
     [[nodiscard]] value canvas_context_object(context & cx, node_id id);
 
     [[nodiscard]] static float number(std::span<value> args, std::size_t i);

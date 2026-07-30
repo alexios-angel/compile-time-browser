@@ -685,21 +685,11 @@ void install_array(context & cx) {
     static_method("from", [](context & c, std::span<value> a) {
         value out = c.make_array();
         auto * made = static_cast<array_object *>(out.as_heap());
-        const value from = arg_at(a, 0);
-        if (from.is_array()) {
-            made->items = static_cast<array_object *>(from.as_heap())->items;
-        } else if (from.is_string()) {
-            for (const char ch : static_cast<string_object *>(from.as_heap())->text) {
-                made->items.push_back(c.string(std::string{ch}));
-            }
-        } else if (from.is_object()) {
-            // array-LIKE: anything with a length, which is what most callers
-            // actually pass (a NodeList, `arguments`, a typed-array shim).
-            const double length = context::to_number(c.lookup_property(from, "length"));
-            for (double i = 0; i < length; ++i) {
-                made->items.push_back(c.lookup_index(from, value::number(i)));
-            }
-        }
+        // Through the one conversion for..of and spread use, so all three agree
+        // about what "iterable" means - a Map, a Set, a string, an array or
+        // anything array-LIKE (a NodeList, `arguments`, a typed-array shim).
+        const value from = c.iterable_values(arg_at(a, 0));
+        if (from.is_array()) { made->items = static_cast<array_object *>(from.as_heap())->items; }
         if (a.size() > 1 && a[1].is_callable()) {
             for (std::size_t i = 0; i < made->items.size(); ++i) {
                 const value args[2] = {made->items[i], value::number(static_cast<double>(i))};
@@ -2820,7 +2810,8 @@ void install_collections(context & cx) {
 
     const auto build = [&](const char * name, bool keyed) {
         object_object * proto = new_table(cx);
-        auto * ctor = cx.allocate<native_object>(name, [keyed](context & c, std::span<value> a) {
+        auto * ctor = cx.allocate<native_object>(name, [keyed, same_value_zero](
+                                                           context & c, std::span<value> a) {
             // INITIALISE THE RECEIVER when there is one. `class MySet extends
             // Set {}` reaches here through super() with the new instance as
             // `this`; making a fresh object instead left the instance with none
@@ -2836,22 +2827,58 @@ void install_collections(context & cx) {
                     made->prototype = value::object(table);
                 }
             }
-            // `new Map([[k, v], ...])` and `new Set([...])` both seed from an
-            // iterable, and an array is the only iterable that reaches here.
-            if (!a.empty() && a[0].is_array()) {
+            // `new Map([[k, v], ...])` and `new Set([...])` seed from ANY
+            // iterable, through the same conversion for..of uses - so `new
+            // Set(otherSet)` and `new Map(map.entries())` work, which is how a page
+            // copies one.
+            const value seed = a.empty() ? value::undefined() : c.iterable_values(a[0]);
+            if (seed.is_array()) {
                 auto * entries = static_cast<array_object *>(
                     static_cast<object_object *>(self.as_heap())->find("__entries")->as_heap());
-                for (const value & item : static_cast<array_object *>(a[0].as_heap())->items) {
-                    if (keyed && item.is_array()) {
+                for (const value & item : static_cast<array_object *>(seed.as_heap())->items) {
+                    if (keyed) {
+                        if (!item.is_array()) { continue; }
                         const auto & pair = static_cast<array_object *>(item.as_heap())->items;
+                        const value key = pair.empty() ? value::undefined() : pair[0];
+                        const value held = pair.size() > 1 ? pair[1] : value::undefined();
+                        // A REPEATED KEY REPLACES, it does not append. `new Map([['a',
+                        // 1], ['a', 2]])` has ONE entry and it holds 2 - and a
+                        // duplicate that merely sat there would be found by get()
+                        // and missed by size(), which is two answers to one question.
+                        bool replaced = false;
+                        for (const value & existing : entries->items) {
+                            if (!existing.is_array()) { continue; }
+                            auto & cell = static_cast<array_object *>(existing.as_heap())->items;
+                            if (!cell.empty() && same_value_zero(cell[0], key)) {
+                                if (cell.size() > 1) {
+                                    cell[1] = held;
+                                } else {
+                                    cell.push_back(held);
+                                }
+                                replaced = true;
+                                break;
+                            }
+                        }
+                        if (replaced) { continue; }
                         value entry = c.make_array();
                         auto * cell = static_cast<array_object *>(entry.as_heap());
-                        cell->items.push_back(pair.empty() ? value::undefined() : pair[0]);
-                        cell->items.push_back(pair.size() > 1 ? pair[1] : value::undefined());
+                        cell->items.push_back(key);
+                        cell->items.push_back(held);
                         entries->items.push_back(entry);
-                    } else if (!keyed) {
-                        entries->items.push_back(item);
+                        continue;
                     }
+                    // A SET DEDUPES, which is the entire reason to use one.
+                    // `new Set([1, 2, 2, 3]).size` was 4 - so `[...new Set(v)]`
+                    // was not a unique list, and p5's colour-space registry is
+                    // exactly that idiom.
+                    bool seen = false;
+                    for (const value & existing : entries->items) {
+                        if (same_value_zero(existing, item)) {
+                            seen = true;
+                            break;
+                        }
+                    }
+                    if (!seen) { entries->items.push_back(item); }
                 }
             }
             return self;

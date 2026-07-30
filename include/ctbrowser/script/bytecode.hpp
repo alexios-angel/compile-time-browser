@@ -148,14 +148,18 @@ enum class op : std::uint8_t {
     delete_prop,   // a[k[b]] = gone
     delete_index,  // a[b] = gone
     own_keys,      // a = the own property names of b, as an array (for..in)
-    set_proto,     // a.__proto__ = b, for `class X extends Y`
-    get_proto,     // a = b's prototype, for `super`
-    load_home,     // a = the home object of the running method (its class's
-                   // prototype); `super` starts its lookup at the home's proto
-    await_value,   // a = the settled value of b (a promise, or b itself)
-    wrap_promise,  // a = a as a SETTLED promise (what an `async` function returns)
-    ret,           // return a
-    ret_undef,     // return undefined
+    // a = b as an ARRAY OF VALUES, for anything a page can iterate. for-of is an
+    // index loop over `length`, so a Map or a Set - which has neither - ran zero
+    // times and said nothing. See context::iterable_values.
+    iterable,
+    set_proto,    // a.__proto__ = b, for `class X extends Y`
+    get_proto,    // a = b's prototype, for `super`
+    load_home,    // a = the home object of the running method (its class's
+                  // prototype); `super` starts its lookup at the home's proto
+    await_value,  // a = the settled value of b (a promise, or b itself)
+    wrap_promise, // a = a as a SETTLED promise (what an `async` function returns)
+    ret,          // return a
+    ret_undef,    // return undefined
 
     // --- misc
     type_of,   // a = typeof b

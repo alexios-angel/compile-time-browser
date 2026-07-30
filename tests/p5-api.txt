@@ -104,6 +104,7 @@ shape/bezierPoint and bezierTangent
 shape/bezierVertex
 shape/blendMode
 shape/circle
+shape/clip
 shape/contours
 shape/ellipse
 shape/erase/noErase
@@ -148,4 +149,4 @@ vector/heading/rotate
 vector/normalize/limit/setMag
 vector/p5.Vector statics
 webgl/WEBGL renderer is constructible
-webgl/createCanvas(WEBGL) refuses
+webgl/getContext(webgl) refuses

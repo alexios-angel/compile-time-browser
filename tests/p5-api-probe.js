@@ -1035,6 +1035,26 @@ globalThis.__probes = [
     if (typeof s.constructor.renderers['webgl'] !== 'function') { throw 'not a function'; }
     return 'ok';
   }],
+  // THE ENGINE'S GUARANTEE, asked of the engine rather than of p5: a canvas
+  // refuses a webgl context out loud. Returning null - which is what a browser
+  // does - is worse here, because p5 keeps the null and falls back to its 2D
+  // renderer, so a WEBGL sketch drew nothing 3D and reported nothing.
+  ['webgl', 'getContext(webgl) refuses', function (s) {
+    try {
+      document.createElement('canvas').getContext('webgl');
+    } catch (e) {
+      if (!/webgl/i.test(String(e && e.message))) { throw 'refused without naming webgl: ' + e; }
+      return 'ok';
+    }
+    throw 'a webgl context was handed out, which this engine cannot honour';
+  }],
+  // KNOWN FAILING, and here to stay measured. As of p5 2.3.1 createCanvas(w, h,
+  // WEBGL) does not ask for a webgl context at all - it selects a renderer that
+  // reports itself as Renderer2D - so the refusal above is never reached and the
+  // sketch degrades to 2D in silence. It used to throw, and stopped when a batch
+  // of unrelated VM fixes let p5's renderer selection get further. WEBGL is out
+  // of scope; a degradation inside the library is not something this engine can
+  // observe, so this is a note in the queue rather than a claim that it is fine.
   ['webgl', 'createCanvas(WEBGL) refuses', function (s) {
     try {
       s.createCanvas(10, 10, s.WEBGL);
@@ -1042,7 +1062,7 @@ globalThis.__probes = [
       if (!/webgl/i.test(String(e && e.message))) { throw 'refused without naming webgl: ' + e; }
       return 'ok';
     }
-    throw 'WEBGL was accepted, which this engine cannot honour';
+    throw 'WEBGL was accepted and silently rendered 2D';
   }],
 ];
 

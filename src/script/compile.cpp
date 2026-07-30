@@ -1339,14 +1339,18 @@ public:
     // for..of and for..in.
     //
     // Compiled as an index loop over a length rather than through an iterator
-    // protocol: arrays and strings are what pages iterate, and a real iterator
-    // needs Symbol.iterator, which needs symbols. `for..in` goes through the
-    // same loop over an array of keys, so there is one iteration mechanism
+    // protocol: a real iterator needs Symbol.iterator dispatch, and an index loop
+    // is what every case a page actually writes reduces to. `for..in` goes through
+    // the same loop over an array of keys, so there is one iteration mechanism
     // here and not two.
     //
-    // The limitation is real and worth stating: an object that is neither an
-    // array nor a string has no `length`, so `for (x of somethingElse)` runs
-    // zero times instead of throwing.
+    // What makes that safe is op::iterable, which turns the source into an array
+    // of values first - arrays, strings, Maps, Sets and the views they hand out.
+    // Without it a Map had no `length` and the loop ran ZERO times in silence.
+    //
+    // The limit that remains, and it is written down in docs/script.md: an object
+    // with a `next()` of its own is not iterated, because nothing dispatches
+    // through Symbol.iterator.
     void compile_for_of(const vp::node & n) {
         push_scope();
         const std::string label = take_label();
@@ -1354,7 +1358,14 @@ public:
 
         const std::uint16_t source = alloc_reg();
         compile_expr(n.b, source);
-        if (n.text == "in") { proto().emit(instruction{op::own_keys, source, source}); }
+        if (n.text == "in") {
+            proto().emit(instruction{op::own_keys, source, source});
+        } else {
+            // `for (x of ...)` TAKES ANYTHING ITERABLE. This is an index loop over
+            // `length`, so a Map or a Set - which has neither - ran zero times and
+            // reported nothing.
+            proto().emit(instruction{op::iterable, source, source});
+        }
 
         const std::uint16_t length = alloc_reg();
         const std::uint16_t length_name = name_operand("length");
@@ -2389,6 +2400,54 @@ public:
             return;
         }
 
+        // `x?.m(...)` IS A METHOD CALL. The parser gives it as call(opt_member(x,
+        // 'm')), so the callee is an opt_member and this fell through to the plain
+        // path below - which calls the function with NO receiver. `this` was
+        // undefined inside the method, and for a primitive receiver that means the
+        // wrong answer rather than an error: `s?.trim()` was undefined,
+        // `(5)?.toFixed(1)` was NaN, `[1,2]?.join('-')` was "".
+        //
+        // It cost every colour string in p5.js. `parse$4` opens with `String(str)
+        // ?.trim()`, so every `fill('#ff0000')`, `color('red')` and
+        // `background('#fff')` threw "Invalid color string" - and an object
+        // receiver hid it, because a method that ignores `this` works either way.
+        const bool optional_member =
+            callee.kind == vp::nk::opt_member || callee.kind == vp::nk::opt_index;
+        if (optional_member) {
+            compile_expr(callee.a, base); // the receiver, which may be nullish
+            // The short-circuit, released before the argument window is reserved
+            // so the arguments stay contiguous from base+1.
+            {
+                const std::uint32_t guard = reg_mark();
+                const std::uint16_t nullish = alloc_reg();
+                proto().emit(instruction{op::load_null, nullish});
+                const std::uint16_t test = alloc_reg();
+                proto().emit(instruction{op::loose_equal, test, base, nullish});
+                optional_exits_.push_back(proto().emit(instruction{op::jump_if_true, test}));
+                release_to(guard);
+            }
+            if (callee.kind == vp::nk::opt_member) {
+                for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
+                proto().emit(instruction{op::call_method, base,
+                                         static_cast<std::uint16_t>(args.size()),
+                                         name_operand(std::string{callee.text})});
+            } else {
+                std::vector<std::uint16_t> arg_regs;
+                arg_regs.reserve(args.size());
+                for (std::size_t i = 0; i < args.size(); ++i) { arg_regs.push_back(alloc_reg()); }
+                const std::uint16_t key = alloc_reg();
+                compile_expr(callee.b, key);
+                for (std::size_t i = 0; i < args.size(); ++i) {
+                    compile_expr(args[i], arg_regs[i]);
+                }
+                proto().emit(instruction{op::call_computed, base,
+                                         static_cast<std::uint16_t>(args.size()), key});
+            }
+            proto().emit(instruction{op::move, dst, base});
+            release_to(mark);
+            return;
+        }
+
         if (callee.kind == vp::nk::member) {
             compile_expr(callee.a, base); // the receiver
             for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
@@ -2861,6 +2920,10 @@ public:
     // Append every element of `source` to the array in `target`.
     void emit_append_all(std::uint16_t target, std::uint16_t source) {
         const std::uint32_t mark = reg_mark();
+        // SPREAD TAKES ANYTHING ITERABLE, not just an array. This walks a
+        // `length`, so `[...new Set(v)]` and `f(...map.keys())` produced nothing
+        // at all - see context::iterable_values for what that cost.
+        proto().emit(instruction{op::iterable, source, source});
         const std::uint16_t length = alloc_reg();
         proto().emit(instruction{op::get_prop, length, source, name_operand("length")});
         const std::uint16_t index = alloc_reg();

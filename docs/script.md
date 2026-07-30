@@ -245,3 +245,72 @@ A code point becomes its UTF-8, the same choice `String.fromCharCode` makes,
 because strings here are bytes. A surrogate PAIR decodes as one code point, so an
 escaped emoji equals the same emoji written literally. `\u{...}` and the line
 continuation came with it.
+
+
+## ITERATION, OPTIONAL CALLS, AND EVERY COLOUR STRING (2026-07-29)
+
+`fill('#ff0000')` did not work. Nor did `color('red')`, `background('#fff')` or
+any other string colour - every one threw "Invalid color string". Both ratchets
+read 12/12 throughout, because the corpus pages all pass numbers.
+
+Two independent bugs, either of which was enough.
+
+### An optional call is still a method call
+
+`x?.m()` parses as call(opt_member(x, 'm')), and the call compiler had cases for
+`member` and `index` callees but not the optional ones - so it fell through to a
+plain call with NO RECEIVER. `this` was undefined inside the method, which for a
+primitive receiver is a wrong answer rather than an error:
+
+    ' x '?.trim()      -> undefined
+    (5)?.toFixed(1)    -> NaN
+    true?.toString()   -> false
+    [1, 2]?.join('-')  -> ""
+
+An object receiver hid it, because a method that ignores `this` works either way.
+p5's colour parser opens with `String(str)?.trim()`, so every colour string became
+undefined before anything looked at it.
+
+### Nothing could iterate a Map or a Set
+
+for-of is an index loop over `length`, and a Map and a Set have neither - so
+`for (const x of set)` ran ZERO times, `[...new Set(v)]` was empty, and
+`Array.from(set)` was empty. Silently, all three.
+
+That is what actually broke colour: p5's colour-space registry is
+`[...new Set(Object.values(registry))]`, so no colour space was ever registered
+and no format could match. And `new Set([1, 2, 2, 3]).size` was 4 - a Set that
+does not dedupe is not a Set.
+
+`context::iterable_values` is now the ONE answer to "what can this iterate",
+shared by for-of (through `op::iterable`), spread, `Array.from` and the Map/Set
+constructors - so `new Set(otherSet)` and `f(...map.keys())` work, and all of them
+agree. It covers arrays, strings, Maps, Sets, the views those hand out, and
+anything array-LIKE.
+
+**The limit that remains**: there is no `Symbol.iterator` dispatch, so an object
+with a `next()` of its own is not iterated. A generator would need the same
+machinery and is out of scope (below).
+
+### Reading a property of undefined does not throw
+
+`undefined.x` gives `undefined` here rather than a TypeError. It is why the class
+expression leak above took an afternoon: `p5` was undefined, `.TableRow` was
+undefined, and the error surfaced one step later naming `TableRow`. Left as it is
+for now, and written down because it turns a precise failure into a vague one.
+
+### WEBGL refuses at the ENGINE boundary now
+
+`canvas.getContext('webgl')` used to return null, on the reasoning that a page
+feature-detects with exactly that call. Wrong in the direction that matters: p5
+keeps the null and falls back to its 2D renderer, so a WEBGL sketch constructed,
+drew nothing 3D and reported nothing.
+
+It throws a catchable Error naming webgl. The deviation from a browser is
+deliberate - a browser returns null - and it is the WEBGL scope decision made
+enforceable rather than hoped for. Anything else still returns null.
+
+As of p5 2.3.1 `createCanvas(w, h, WEBGL)` does not reach that call: it selects a
+renderer that reports itself as Renderer2D and degrades to 2D in silence. That is
+inside the library and not something this engine can observe; it is a listed
+failure in tests/p5-api.txt rather than a claim that it is fine.

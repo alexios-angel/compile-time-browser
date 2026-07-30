@@ -1253,10 +1253,34 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
     // --- canvas --------------------------------------------------------
     method("getContext", [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
-        // "2d" ONLY. Returning an object for "webgl" that cannot draw is
-        // worse than returning null: a page feature-detects with exactly
-        // this call and would take the WebGL path into a dead end.
-        if (!id || arg_string(c, args, 0) != "2d") { return value::null(); }
+        const std::string kind = arg_string(c, args, 0);
+        // "2d" ONLY, and a WEBGL REQUEST IS REFUSED OUT LOUD.
+        //
+        // This used to return null for everything else, on the reasoning that a
+        // page feature-detects with exactly this call. The reasoning was wrong in
+        // the direction that matters: p5 asks for a webgl context, gets null,
+        // keeps the null, and falls back to its 2D renderer - so a WEBGL sketch
+        // constructed, drew nothing 3D, reported nothing, and filled the canvas
+        // with a background() that came out of the wrong renderer. A blank canvas
+        // and a clear conscience.
+        //
+        // THE DEVIATION, said plainly: a browser returns null when it cannot give
+        // you a context, and this throws for the WebGL family. That is a
+        // deliberate trade - WEBGL is out of scope here (docs/script.md), and the
+        // scope decision was that asking for it gets a CATCHABLE ERROR NAMING
+        // WEBGL rather than a canvas that quietly is not one. A page that really
+        // feature-detects can wrap it; a library that would otherwise limp on
+        // cannot miss it.
+        //
+        // Anything else still returns null, which is what an unknown context type
+        // means and what a page testing for one expects.
+        if (kind == "webgl" || kind == "webgl2" || kind == "experimental-webgl") {
+            c.throw_error("TypeError",
+                          "this engine has no webgl context - it renders 2D only, so `" + kind +
+                              "` cannot be honoured");
+            return value::undefined();
+        }
+        if (!id || kind != "2d") { return value::null(); }
         return canvas_context_object(c, id);
     });
 
@@ -1500,6 +1524,84 @@ void dom_bindings::settle_image(context & cx, const pending_image & waiting) {
     // before its bytes arrived kept its empty box until something else happened
     // to invalidate the page.
     if (ok) { mutated(); }
+}
+
+// A DOMMatrix: the six numbers a page reads, and the methods it composes with.
+//
+// Every method is IMMUTABLE - `inverse()`, `multiply()`, `translate()` and
+// `scale()` all return a new matrix - which is what the spec says for these
+// names, the mutating ones being `invertSelf`, `multiplySelf` and so on. Getting
+// that backwards would leave a page's base matrix quietly modified.
+value dom_bindings::matrix_object(context & cx, const transform & t) {
+    auto * out = static_cast<script::object_object *>(cx.make_object().as_heap());
+    out->set("a", value::number(t.a));
+    out->set("b", value::number(t.b));
+    out->set("c", value::number(t.c));
+    out->set("d", value::number(t.d));
+    out->set("e", value::number(t.e));
+    out->set("f", value::number(t.f));
+    // The aliases the CSS-facing half of the API uses for the same six numbers.
+    out->set("m11", value::number(t.a));
+    out->set("m12", value::number(t.b));
+    out->set("m21", value::number(t.c));
+    out->set("m22", value::number(t.d));
+    out->set("m41", value::number(t.e));
+    out->set("m42", value::number(t.f));
+    out->set("is2D", value::boolean(true));
+    const auto method = [&](std::string name, script::native_fn fn) {
+        out->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+    };
+    // Reads its operand back out of whatever object it was given, so a page can
+    // pass a DOMMatrix, a plain {a,b,c,d,e,f}, or the result of getTransform.
+    const auto read = [](context & c, value v) {
+        transform got;
+        if (!v.is_object()) { return got; }
+        const auto part = [&](const char * name, float fallback) {
+            const value held = c.lookup_property(v, name);
+            return held.is_undefined() ? fallback : static_cast<float>(context::to_number(held));
+        };
+        got.a = part("a", 1);
+        got.b = part("b", 0);
+        got.c = part("c", 0);
+        got.d = part("d", 1);
+        got.e = part("e", 0);
+        got.f = part("f", 0);
+        return got;
+    };
+    method("inverse",
+           [this, t](context & c, std::span<value>) { return matrix_object(c, t.inverse()); });
+    method("multiply", [this, t, read](context & c, std::span<value> a) {
+        // `A.multiply(B)` is B applied FIRST and then A, which is the order the
+        // spec's matrix product gives - and `then` here already composes that
+        // way round, so this is A.then(B) with the arguments as written.
+        return matrix_object(c, t.then(read(c, arg(a, 0))));
+    });
+    method("translate", [this, t](context & c, std::span<value> a) {
+        return matrix_object(c, transform::translation(number(a, 0), number(a, 1)).then(t));
+    });
+    method("scale", [this, t](context & c, std::span<value> a) {
+        const float sx = a.empty() ? 1.0f : number(a, 0);
+        const float sy = a.size() > 1 ? number(a, 1) : sx;
+        return matrix_object(c, transform::scaling(sx, sy).then(t));
+    });
+    method("rotate", [this, t](context & c, std::span<value> a) {
+        // DEGREES, which is the one place this API does not use radians.
+        const auto radians =
+            static_cast<float>(static_cast<double>(number(a, 0)) * 3.14159265358979 / 180.0);
+        return matrix_object(c, transform::rotation(radians).then(t));
+    });
+    method("toString", [t](context & c, std::span<value>) {
+        const auto text = [](float v) {
+            std::string out = std::to_string(v);
+            // Trailing zeros make `matrix(1.000000, ...)` - correct and unreadable.
+            while (out.size() > 1 && out.back() == '0') { out.pop_back(); }
+            if (!out.empty() && out.back() == '.') { out.pop_back(); }
+            return out;
+        };
+        return c.string("matrix(" + text(t.a) + ", " + text(t.b) + ", " + text(t.c) + ", " +
+                        text(t.d) + ", " + text(t.e) + ", " + text(t.f) + ")");
+    });
+    return value::object(out);
 }
 
 value dom_bindings::canvas_context_object(context & cx, node_id id) {
@@ -1779,16 +1881,34 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
     // Not wrapped in draws(): reading the matrix changes no pixels. It does
     // still have to be the LIVE one, so a library that reads it back after its
     // own translate() sees the translate.
-    method("getTransform", [canvas](context & c, std::span<value>) {
-        const transform & t = canvas->current_transform();
-        auto * out = static_cast<script::object_object *>(c.make_object().as_heap());
-        out->set("a", value::number(t.a));
-        out->set("b", value::number(t.b));
-        out->set("c", value::number(t.c));
-        out->set("d", value::number(t.d));
-        out->set("e", value::number(t.e));
-        out->set("f", value::number(t.f));
-        return value::object(out);
+    method("getTransform", [this, canvas](context & c, std::span<value>) {
+        return matrix_object(c, canvas->current_transform());
+    });
+    // `new DOMMatrix()` - and getTransform hands one back.
+    //
+    // It used to return six bare numbers, which is the arithmetic and none of the
+    // API. p5's beginClip does `getTransform().inverse().multiply(other)` to
+    // express a clip path relative to where the clip began, so `inverse is
+    // undefined` was the whole of clip() not working - and a page composing
+    // transforms has no other way to do it.
+    cx.define_native("DOMMatrix", [this](context & c, std::span<value> a) {
+        transform t;
+        // `new DOMMatrix([a, b, c, d, e, f])`, which is the form a page that
+        // serialises one writes back.
+        if (!a.empty() && a[0].is_array()) {
+            const auto & items = static_cast<script::array_object *>(a[0].as_heap())->items;
+            const auto at = [&](std::size_t i, float fallback) {
+                return i < items.size() ? static_cast<float>(context::to_number(items[i]))
+                                        : fallback;
+            };
+            t.a = at(0, 1);
+            t.b = at(1, 0);
+            t.c = at(2, 0);
+            t.d = at(3, 1);
+            t.e = at(4, 0);
+            t.f = at(5, 0);
+        }
+        return matrix_object(c, t);
     });
     method("fillText", draws([canvas](context & c, std::span<value> a) {
                canvas->fill_text(a.empty() ? std::string{} : c.to_string(a[0]), number(a, 1),

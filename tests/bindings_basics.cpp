@@ -725,11 +725,34 @@ void test_webgl_is_constructible_and_refuses() {
     const std::string registered = said("registered=");
     check(registered == "registered=function",
           "the WebGL renderer is still a constructible function: " + registered);
-    // Catchable, and it SAYS webgl - a refusal a page cannot read is a crash
-    // with extra steps.
+    // THE ENGINE'S OWN GUARANTEE, tested directly rather than through p5: asking
+    // a canvas for a webgl context is a catchable Error that names webgl. A
+    // refusal a page cannot read is a crash with extra steps, and returning null -
+    // which is what a browser does - is worse here: p5 keeps the null and falls
+    // back to its 2D renderer, so a WEBGL sketch drew nothing 3D and said nothing.
+    (void)page.run_script(R"(
+        var direct = 'no error';
+        try { document.createElement('canvas').getContext('webgl'); }
+        catch (e) { direct = e.name + ': ' + e.message; }
+        console.log('direct=' + direct);
+    )");
+    const std::string direct = said("direct=");
+    check(direct.find("webgl") != std::string::npos,
+          "getContext('webgl') refuses and names webgl: " + direct);
+    check(direct.find("no error") == std::string::npos,
+          "and it is a refusal rather than a null: " + direct);
+
+    // WHAT p5 DOES WITH IT IS NOT THE ENGINE'S TO DECIDE, and as of p5 2.3.1 it
+    // does not ask: createCanvas(w, h, WEBGL) selects a renderer that reports
+    // itself as Renderer2D and never requests a webgl context, so the refusal
+    // above is never reached and the sketch degrades to 2D in silence.
+    //
+    // Recorded as it is rather than asserted away. It used to throw, and stopped
+    // when a batch of unrelated VM fixes let p5's renderer selection get further -
+    // which is worth knowing, but WEBGL is out of scope (docs/script.md) and a
+    // degradation inside the library is not something this engine can observe.
     const std::string asking = said("asking=");
-    check(asking.find("Error") != std::string::npos && asking.find("webgl") != std::string::npos,
-          "asking for it throws a catchable Error naming WebGL: " + asking);
+    check(asking != "<not logged>", "the sketch reported what happened: " + asking);
 }
 
 // `location`'s parts, and `document.cookie`.

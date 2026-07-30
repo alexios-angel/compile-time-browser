@@ -610,22 +610,37 @@ void test_canvas_width_and_height_are_readable() {
     check(log[2] == "half=100", "so arithmetic on them works");
 }
 
+// getContext answers for 2d, REFUSES for webgl, and gives null for anything else.
+//
+// This used to expect null for webgl, on the reasoning that a page feature-detects
+// with exactly this call. The reasoning was wrong in the direction that matters:
+// p5 asks for a webgl context, gets the null, keeps it, and falls back to its 2D
+// renderer - so a WEBGL sketch constructed, drew nothing 3D and reported nothing.
+// A blank canvas and a clear conscience.
+//
+// So webgl is a catchable Error naming webgl, which is the scope decision for
+// WEBGL made explicit (docs/script.md). The deviation from a browser is real and
+// deliberate: a browser returns null. A page that genuinely feature-detects can
+// wrap the call; a library that would otherwise limp on cannot miss it.
 void test_getcontext_only_answers_for_2d() {
     browser page{browser_options{400, 300}};
     page.load_html("<html><body><canvas id=c></canvas><script>"
                    "var c = document.getElementById('c');"
                    "console.log('2d ' + (c.getContext('2d') != null));"
-                   "console.log('webgl ' + (c.getContext('webgl') != null));"
+                   "try { c.getContext('webgl'); console.log('webgl handed out'); }"
+                   "catch (e) { console.log('webgl refused: ' + e.message); }"
+                   "console.log('unknown ' + (c.getContext('nonsense') === null));"
                    "</script></body></html>");
     check(page.frame().has_value(), "the page renders");
     const auto & log = page.bindings().console_output();
-    check(log.size() == 2, "two console lines");
-    if (log.size() == 2) {
+    check(log.size() == 3, "three console lines");
+    if (log.size() == 3) {
         check(log[0] == "2d true", "a 2d context exists");
-        // Returning an object that cannot draw would be worse than null: a page
-        // feature-detects with exactly this call and would take the WebGL path
-        // into a dead end.
-        check(log[1] == "webgl false", "and an unsupported context is null, not a stub");
+        check(log[1].starts_with("webgl refused:") && log[1].find("webgl") != std::string::npos,
+              "webgl is refused out loud, and the message names it: " + log[1]);
+        // Anything ELSE is still null - that is what an unknown context type
+        // means, and a page testing for one expects null rather than a throw.
+        check(log[2] == "unknown true", "an unknown context type is still null");
     }
 }
 

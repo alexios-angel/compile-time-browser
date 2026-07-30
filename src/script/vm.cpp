@@ -748,6 +748,53 @@ value context::proxy_trap(value proxy, const std::string & name) {
     return found == nullptr ? value::undefined() : *found;
 }
 
+value context::iterable_values(value v) {
+    // Already an array: hand it straight back, so the common case allocates
+    // nothing. Callers must not mutate what they get.
+    if (v.is_array()) { return v; }
+    if (v.is_string()) {
+        // A string iterates by CHARACTER. The index loop already did this through
+        // `length`, and doing it here too means spread and for-of agree.
+        value out = make_array();
+        auto * items = static_cast<array_object *>(out.as_heap());
+        for (const char c : static_cast<string_object *>(v.as_heap())->text) {
+            items->items.push_back(string(std::string{c}));
+        }
+        return out;
+    }
+    if (!v.is_object()) { return make_array(); }
+    auto * obj = static_cast<object_object *>(v.as_heap());
+    // A Map or a Set, by the storage the standard library gives them. A Map
+    // iterates as [key, value] pairs and a Set as bare values, which is exactly
+    // how `__entries` already holds them - so this is a copy and not a rebuild.
+    if (value * entries = obj->find("__entries"); entries != nullptr && entries->is_array()) {
+        value out = make_array();
+        static_cast<array_object *>(out.as_heap())->items =
+            static_cast<array_object *>(entries->as_heap())->items;
+        return out;
+    }
+    // The views `keys()`, `values()` and `entries()` hand back - arrays already,
+    // so this is for anything that carries its items under another name.
+    if (value * items = obj->find("__items"); items != nullptr && items->is_array()) {
+        value out = make_array();
+        static_cast<array_object *>(out.as_heap())->items =
+            static_cast<array_object *>(items->as_heap())->items;
+        return out;
+    }
+    // An ARRAY-LIKE: anything with a numeric length and indexed properties, which
+    // is what a NodeList, `arguments` and a page's own collection look like.
+    if (value * length = obj->find("length"); length != nullptr && length->is_number()) {
+        value out = make_array();
+        auto * items = static_cast<array_object *>(out.as_heap());
+        const auto count = static_cast<std::size_t>(std::max(0.0, to_number(*length)));
+        for (std::size_t i = 0; i < count && i < 1u << 24; ++i) {
+            items->items.push_back(lookup_property(v, std::to_string(i)));
+        }
+        return out;
+    }
+    return make_array();
+}
+
 value context::construct(value callee, std::span<const value> args) {
     // `new proxy(...)` runs the construct trap with (target, argsArray). p5.js
     // has exactly one of these and it runs at the bundle's top level:
@@ -1423,6 +1470,8 @@ value context::run_loop(std::size_t stop_depth) {
             reg(in.a) =
                 frame.closure != nullptr ? value::object(frame.closure) : value::undefined();
             break;
+
+        case op::iterable: reg(in.a) = iterable_values(reg(in.b)); break;
 
         case op::own_keys: {
             // The own property names of an object, as an array. `for (k in o)`

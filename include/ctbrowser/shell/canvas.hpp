@@ -52,6 +52,21 @@ struct transform {
     [[nodiscard]] static transform scaling(float x, float y) noexcept {
         return transform{x, 0, 0, y, 0, 0};
     }
+    // The INVERSE, or the identity when there is none. A canvas transform is
+    // affine and 2x3, so this is one determinant and six terms - and a page
+    // cannot compose transforms without it: p5's beginClip expresses a clip path
+    // relative to where the clip began as `getTransform().inverse().multiply(...)`.
+    //
+    // A singular matrix (zero determinant) has flattened everything to a line, so
+    // there is nothing to invert; the identity is what a browser hands back, and
+    // it keeps a page's arithmetic finite rather than filling it with NaN.
+    [[nodiscard]] transform inverse() const noexcept {
+        const float det = a * d - b * c;
+        if (det == 0) { return transform{}; }
+        const float inv = 1.0f / det;
+        return transform{
+            d * inv, -b * inv, -c * inv, a * inv, (c * f - d * e) * inv, (b * e - a * f) * inv};
+    }
     [[nodiscard]] static transform rotation(float radians) noexcept {
         const float s = std::sin(radians);
         const float c = std::cos(radians);

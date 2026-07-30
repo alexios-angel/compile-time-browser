@@ -381,6 +381,21 @@ public:
     // op::construct keeps its own inline path because it does not need a nested
     // interpreter loop; this is for the spread form and for `Reflect.construct`,
     // which both do.
+    // WHATEVER A PAGE CAN ITERATE, AS AN ARRAY OF VALUES.
+    //
+    // for-of, spread and Array.from all need the same answer, and they used to
+    // each assume an array. A Map and a Set have no `length`, so `for (const x of
+    // set)` ran zero times and `[...new Set(v)]` was empty - silently, which cost
+    // every colour string in p5.js: its colour-space registry is
+    // `[...new Set(Object.values(registry))]`, so nothing was ever registered and
+    // `color('#ff0000')` threw "Invalid color string".
+    //
+    // NOT the real iterator protocol - there is no Symbol.iterator dispatch - but
+    // it covers arrays, strings, Maps, Sets and the key/value/entry views they
+    // hand out, which is what a page iterates. An object with none of those
+    // yields nothing, as before, and that limit is written down in docs/script.md.
+    [[nodiscard]] value iterable_values(value v);
+
     [[nodiscard]] value construct(value callee, std::span<const value> args);
 
     // --- conversions (ECMA-262 shaped, and shared with the bindings) -------
