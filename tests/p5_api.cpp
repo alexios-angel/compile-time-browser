@@ -117,6 +117,7 @@ int main() {
     add("probe-data.json", R"({"name":"probe","n":4})");
     add("probe-lines.txt", "one\ntwo\nthree");
     add("probe-table.csv", "a,b\n1,2\n3,4");
+    add("probe.xml", "<list><item>first</item><item>second</item></list>");
     // A 4x4 image for the loadImage probe, ASSEMBLED here rather than committed:
     // a test that depends on a binary beside it fails for reasons that have
     // nothing to do with the code. 24bpp bottom-up BMP, solid green.

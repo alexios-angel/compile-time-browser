@@ -776,6 +776,19 @@ value context::construct(value callee, std::span<const value> args) {
         current_this_ = self;
         const value produced = nat->fn(*this, copy);
         current_this_ = saved;
+        // A CONVERSION UNDER `new` KEEPS ITS VALUE. `new Number(5)` used to
+        // evaluate to the fresh empty instance, because a native returning a
+        // primitive looks exactly like a constructor that returned nothing - so
+        // the 5 was thrown away and `n + 1` was "[object Object]1". Silently.
+        //
+        // The DEVIATION, said plainly: the spec builds a wrapper OBJECT here, so
+        // `typeof new Number(5)` is "object" in a browser and "number" here.
+        // Every operation on it is right, which is the opposite of what happened
+        // before, and no page relies on the wrapper - every style guide in
+        // existence tells you not to write this. The flag is set only on the
+        // three conversions in install_globals, so a page's own constructor
+        // returning a primitive still evaluates to its instance per spec.
+        if (nat->find("__conversion") != nullptr) { return produced; }
         return produced.is_object_like() ? produced : self;
     }
     // `new C()` evaluates to the new object unless the body returned one of its
@@ -1011,14 +1024,38 @@ value context::run_loop(std::size_t stop_depth) {
                     wanted = *p;
                 }
             }
-            for (int depth = 0; depth < 64 && target.is_object(); ++depth) {
-                target = static_cast<object_object *>(target.as_heap())->prototype;
-                if (target.is_object() && wanted.is_object() &&
-                    target.as_heap() == wanted.as_heap()) {
-                    reg(in.a) = value::boolean(true);
-                    break;
+            if (!wanted.is_object()) { break; }
+            // The EXPLICIT chain first - a page's own classes, and every builtin
+            // whose instances carry a prototype (Error, Map, Blob).
+            value link = target.is_object()
+                             ? static_cast<object_object *>(target.as_heap())->prototype
+                             : value::undefined();
+            bool found = false;
+            for (int depth = 0; depth < 64 && link.is_object() && !found; ++depth) {
+                if (link.as_heap() == wanted.as_heap()) {
+                    found = true;
+                } else {
+                    link = static_cast<object_object *>(link.as_heap())->prototype;
                 }
             }
+            // Then the IMPLICIT one. An array, a function, a string and a plain
+            // object have no prototype field to walk - their chain is the tables
+            // property lookup falls back to - so instanceof answered false for
+            // every builtin while answering correctly for a page's own classes.
+            // OBJECT-LIKE ONLY. `5 instanceof Number` and `'x' instanceof
+            // String` are FALSE in JavaScript however many methods a primitive
+            // resolves - instanceof asks about a prototype chain and a primitive
+            // does not have one. Applying the fallback to everything made both
+            // of those true, which is the mirror image of the bug being fixed.
+            if (!found && target.is_object_like()) {
+                for (object_object * table : implicit_prototypes(target)) {
+                    if (table != nullptr && table == wanted.as_heap()) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            reg(in.a) = value::boolean(found);
             break;
         }
         case op::has_property: {
@@ -1519,6 +1556,21 @@ value context::run_loop(std::size_t stop_depth) {
                 reg(in.a) = construct(callee, args);
                 break;
             }
+            // A NATIVE GOES THE LONG WAY TOO, for the same reason as a proxy: the
+            // inline path exists to avoid a nested interpreter loop, which only a
+            // JavaScript body needs. Duplicating the native case here is what let
+            // the two disagree - this copy neither set the instance's prototype
+            // from a native's `prototype` property nor honoured the conversion
+            // flag, so `new Number(5)` was an empty object down this path and a 5
+            // down the other, depending only on whether a proxy was involved.
+            if (callee.is_kind(heap_kind::native)) {
+                const std::size_t arg_base = base + in.a + 1;
+                std::vector<value> args{registers_.begin() + static_cast<std::ptrdiff_t>(arg_base),
+                                        registers_.begin() +
+                                            static_cast<std::ptrdiff_t>(arg_base + in.b)};
+                reg(in.a) = construct(callee, args);
+                break;
+            }
             // The instance's prototype comes from the constructor's own
             // `prototype` property, which is what makes a method defined on the
             // class reachable from every instance.
@@ -1535,18 +1587,6 @@ value context::run_loop(std::size_t stop_depth) {
             run_field_initialisers(callee, self);
             const std::size_t arg_base = base + in.a + 1;
 
-            if (callee.is_kind(heap_kind::native)) {
-                auto * nat = static_cast<native_object *>(callee.as_heap());
-                std::vector<value> args{registers_.begin() + static_cast<std::ptrdiff_t>(arg_base),
-                                        registers_.begin() +
-                                            static_cast<std::ptrdiff_t>(arg_base + in.b)};
-                const value saved = current_this_;
-                current_this_ = self;
-                const value produced = nat->fn(*this, args);
-                current_this_ = saved;
-                reg(in.a) = produced.is_object_like() ? produced : self;
-                break;
-            }
             if (!callee.is_kind(heap_kind::function)) {
                 throw_error("TypeError",
                             "`new` on " +

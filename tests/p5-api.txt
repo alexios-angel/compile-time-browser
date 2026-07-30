@@ -15,8 +15,10 @@ color/colorMode
 color/fill/noFill
 color/hue/saturation/brightness
 color/lerpColor
+color/lightness and paletteLerp
 color/red/green/blue/alpha
 color/stroke/noStroke/strokeWeight
+color/the CSS colour spaces p5 2.x added
 data/hex/unhex
 data/int/float/str/boolean
 data/nf/nfc/nfp/nfs
@@ -28,6 +30,7 @@ dom/createButton
 dom/createCheckbox
 dom/createDiv
 dom/createElement
+dom/createImg
 dom/createInput
 dom/createP/createSpan
 dom/createRadio
@@ -38,21 +41,35 @@ dom/element.parent/child
 dom/element.position/size
 dom/element.show/hide
 dom/element.style/class
+dom/removeElements
 dom/select/selectAll
+env/frame rate
+env/mouse and key state
+env/print and noCanvas
+env/time
+env/window and display metrics
 events/cursor/noCursor
 events/element.mousePressed
 events/keyIsDown
 events/mouseIsPressed/keyIsPressed
 events/mouseX/mouseY
 events/pmouseX/movedX
+image/blend()
 image/blendMode
+image/smooth and noSmooth
 image/tint preserves transparency
+io/getURL/getURLParams/getURLPath
+io/httpGet
+io/loadBytes
+io/saveTable
+io/writeFile and createWriter
 load/image() draws a loaded image
 load/loadImage
 load/loadJSON
 load/loadStrings
 load/loadTable
 math/abs/ceil/floor/round
+math/byte/char/unchar/code conversions
 math/constrain
 math/dist
 math/lerp
@@ -66,6 +83,7 @@ math/random
 math/randomGaussian
 math/sq/sqrt/pow/exp/log
 math/trig
+math/trigonometry
 pixels/copy
 pixels/createImage
 pixels/get
@@ -82,9 +100,11 @@ save/saveStrings
 shape/arc
 shape/beginShape/vertex/endShape
 shape/bezier
+shape/bezierPoint and bezierTangent
 shape/bezierVertex
 shape/blendMode
 shape/circle
+shape/contours
 shape/ellipse
 shape/erase/noErase
 shape/line
@@ -92,6 +112,7 @@ shape/point
 shape/quad
 shape/rect
 shape/rectMode/ellipseMode
+shape/splines
 shape/square
 shape/strokeCap/strokeJoin
 shape/triangle

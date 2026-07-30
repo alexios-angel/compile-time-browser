@@ -679,17 +679,29 @@ void test_named_class_expression_binds_itself() {
     expect("let X = class Inner { constructor() { this.self = Inner; } }; "
            "return new X().self === X;",
            "true");
-    // TODO: scope the name to the class BODY. It is bound in the enclosing
-    // scope because that is the only scope this compiler has to put it in;
-    // a per-class scope would fix it.
-    // APPROXIMATION, and worth knowing: the inner name is bound in the
-    // ENCLOSING scope rather than only inside the class body, because that is
-    // the only scope this compiler has to put it in. Real JavaScript would
-    // leave `Inner` undefined out here. Nothing in p5.js depends on the
-    // difference, and a leaked binding is visible rather than wrong.
+    // AND NOWHERE ELSE. This used to read `inner|function`, recorded as a known
+    // approximation with a TODO and the note that "nothing in p5.js depends on
+    // the difference, and a leaked binding is visible rather than wrong".
+    //
+    // Both halves of that were wrong. p5's bundle is `let p5$2 = class p5 {...}`,
+    // so the module scope acquired a `p5` holding undefined; every function
+    // compiled after that point captured it instead of the global, and `new
+    // p5.TableRow()` three thousand lines later read undefined.TableRow. The
+    // reported error named `TableRow`. It cost an afternoon to find, which is the
+    // argument against leaving a known approximation in a compiler: the
+    // difference between visible and wrong is whoever happens to look.
+    //
+    // The name now lives in a scope of its own, opened before the methods are
+    // compiled - so they capture it - and closed after, so nothing else sees it.
     expect("let Outer = class Inner { static who() { return 'inner'; } }; "
            "return Outer.who() + '|' + typeof Inner;",
-           "inner|function");
+           "inner|undefined");
+    // The enclosing binding it used to overwrite is left alone, which is the
+    // failure that actually bit.
+    expect("var Shared = { tag: 'outer' }; "
+           "var alias = class Shared { static who() { return 'inner'; } }; "
+           "return Shared.tag + '|' + alias.who();",
+           "outer|inner");
 }
 
 // A function body is not part of the optional chain that encloses it.
@@ -961,6 +973,65 @@ void test_destructuring_in_a_block() {
     expect("function f() { return { outer: { inner: 'v' } }; }\n"
            "{ const { outer: { inner } } = f(); return inner + '/' + inner.length; }",
            "v/1");
+}
+
+// A NAMED CLASS EXPRESSION BINDS ITS NAME INSIDE ITSELF, AND NOWHERE ELSE.
+//
+// `let x = class C {}` used to declare `C` in the ENCLOSING scope, so everything
+// compiled after it captured that binding - which holds undefined, because the
+// class value goes to `x`. Exactly like a named function expression, whose name
+// is visible only in its own body.
+//
+// COMPILE ORDER decided whether it bit, which is what made it look arbitrary: a
+// hoisted function declaration is compiled before the leak exists and reads the
+// outer binding correctly; a class method written later does not.
+//
+// It broke p5.js. The bundle has `let p5$2 = class p5 { ... }`, so the module
+// scope acquired a `p5` holding undefined and `new p5.TableRow()` - three
+// thousand lines later, inside p5.Table's addRow - read undefined.TableRow. The
+// error named `TableRow`, which is not where the problem was.
+void test_a_named_class_expression_does_not_leak() {
+    // The reader is a CLASS METHOD, compiled after the expression - the case that
+    // failed. A function declaration is hoisted and would pass either way.
+    expect("var Shared = { tag: 'outer' };\n"
+           "var alias = class Shared { static who() { return 'inner'; } };\n"
+           "class Reader { read() { return Shared === undefined ? 'LEAKED' : Shared.tag; } }\n"
+           "return new Reader().read();",
+           "outer");
+    // A function expression compiled after it, same question.
+    expect("var Shared = { tag: 'outer' };\n"
+           "var alias = class Shared {};\n"
+           "var read = function () { return Shared === undefined ? 'LEAKED' : Shared.tag; };\n"
+           "return read();",
+           "outer");
+    // The class can still see its OWN name from inside, which is what the
+    // enclosing binding was there for.
+    expect("var alias = class Inner { static me() { return typeof Inner; } };\n"
+           "return alias.me();",
+           "function");
+    expect("var made = class Node { constructor() { this.kind = Node.name || 'Node'; } };\n"
+           "return typeof new made().kind;",
+           "string");
+    // A named function expression, for the same reason and the same shape.
+    expect("var Shared = 'outer';\n"
+           "var fn = function Shared() { return 1; };\n"
+           "class Reader { read() { return typeof Shared; } }\n"
+           "return new Reader().read();",
+           "string");
+    // And a class DECLARATION still binds its name in the enclosing scope -
+    // that is the whole difference, and breaking it would be the mirror bug.
+    expect("class Kept { static tag() { return 'declared'; } }\n"
+           "class User { read() { return Kept.tag(); } }\n"
+           "return new User().read();",
+           "declared");
+    // A declaration inside a function, too.
+    expect("function outer() {\n"
+           "  class Kept { static tag() { return 'nested'; } }\n"
+           "  class User { read() { return Kept.tag(); } }\n"
+           "  return new User().read();\n"
+           "}\n"
+           "return outer();",
+           "nested");
 }
 
 // btoa and atob are BYTE oriented: btoa's argument is a binary string of values
@@ -2385,6 +2456,7 @@ int main() {
     test_string_escapes();
     test_base64();
     test_destructuring_in_a_block();
+    test_a_named_class_expression_does_not_leak();
     test_a_declaration_shadows();
     test_pending_promises();
     test_function_to_string();

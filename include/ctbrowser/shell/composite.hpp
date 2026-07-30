@@ -154,8 +154,8 @@ namespace detail {
                           : blend_channel(composite::screen, cb, 2.0f * cs - 1.0f);
     case composite::soft_light: {
         if (cs <= 0.5f) { return cb - (1.0f - 2.0f * cs) * cb * (1.0f - cb); }
-        const float d = cb <= 0.25f ? ((16.0f * cb - 12.0f) * cb + 4.0f) * cb
-                                    : std::sqrt(std::max(0.0f, cb));
+        const float d =
+            cb <= 0.25f ? ((16.0f * cb - 12.0f) * cb + 4.0f) * cb : std::sqrt(std::max(0.0f, cb));
         return cb + (2.0f * cs - 1.0f) * (d - cb);
     }
     case composite::difference: return std::abs(cb - cs);
@@ -307,14 +307,13 @@ struct coefficients {
         // Premultiplied out, then divided back by the result's alpha - which is
         // the step that is easy to leave out and shows up as a colour that goes
         // pale wherever it is semi-transparent.
-        const float premultiplied =
-            as * k.fa * source_channel + ab * k.fb * backdrop_channel;
+        const float premultiplied = as * k.fa * source_channel + ab * k.fb * backdrop_channel;
         return static_cast<std::uint32_t>(
             std::clamp(premultiplied / out_alpha, 0.0f, 1.0f) * 255.0f + 0.5f);
     };
     const auto alpha_byte = static_cast<std::uint32_t>(out_alpha * 255.0f + 0.5f);
-    return (alpha_byte << 24) | (channel(blended.r, cb.r) << 16) |
-           (channel(blended.g, cb.g) << 8) | channel(blended.b, cb.b);
+    return (alpha_byte << 24) | (channel(blended.r, cb.r) << 16) | (channel(blended.g, cb.g) << 8) |
+           channel(blended.b, cb.b);
 }
 
 } // namespace ctbrowser::shell

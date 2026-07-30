@@ -427,8 +427,57 @@ public:
         error,
         function,
         typed_array,
+        // A promise's then/catch/finally used to be three natives PER PROMISE.
+        // On a prototype they are three for the whole program, and `p instanceof
+        // Promise` - which was false - is a pointer compare.
+        promise,
         count_
     };
+
+    // THE IMPLICIT PROTOTYPES FOR A VALUE'S KIND, most derived first.
+    //
+    // Property lookup falls back to these tables (see lookup_property), and
+    // anything else that asks "what is this value's prototype chain" has to see
+    // the SAME ones or it disagrees with `.` for no visible reason.
+    //
+    // `instanceof` did disagree. It walked only the explicit `prototype` field,
+    // which a builtin does not have - so `f instanceof Function`, `[] instanceof
+    // Array` and `({}) instanceof Object` were all FALSE while `new B()
+    // instanceof A` was true for a page's own classes. p5.js type-tests with
+    // `val.array instanceof Function` before serialising a vector and threw
+    // "Can't convert vector[2, 20, 0] to array!" on a perfectly good vector.
+    //
+    // Three entries because that is the deepest chain there is here - a typed
+    // array is TypedArray.prototype, then Array.prototype, then
+    // Object.prototype - and nullptr pads the rest.
+    [[nodiscard]] std::array<object_object *, 3> implicit_prototypes(value v) const {
+        const auto table = [this](proto_kind kind) { return prototype(kind); };
+        if (v.is_array()) {
+            auto * arr = static_cast<array_object *>(v.as_heap());
+            if (arr->elements != element_kind::none) {
+                return {table(proto_kind::typed_array), table(proto_kind::array),
+                        table(proto_kind::object)};
+            }
+            return {table(proto_kind::array), table(proto_kind::object), nullptr};
+        }
+        if (v.is_string()) {
+            return {table(proto_kind::string), table(proto_kind::object), nullptr};
+        }
+        if (v.is_number()) {
+            return {table(proto_kind::number), table(proto_kind::object), nullptr};
+        }
+        if (v.is_boolean()) {
+            return {table(proto_kind::boolean), table(proto_kind::object), nullptr};
+        }
+        if (v.is_kind(heap_kind::symbol)) {
+            return {table(proto_kind::symbol), table(proto_kind::object), nullptr};
+        }
+        if (v.is_kind(heap_kind::function) || v.is_kind(heap_kind::native)) {
+            return {table(proto_kind::function), table(proto_kind::object), nullptr};
+        }
+        if (v.is_object()) { return {table(proto_kind::object), nullptr, nullptr}; }
+        return {nullptr, nullptr, nullptr};
+    }
 
     void set_prototype(proto_kind kind, object_object * table) {
         prototypes_[static_cast<std::size_t>(kind)] = table;
@@ -442,6 +491,28 @@ public:
     // finally natives, and those live in the standard library - so builtins
     // installs this hook. Without it (a VM with no builtins) an async function
     // returns its plain value, which `await` still handles.
+    // WHAT TIME A PAGE THINKS IT IS.
+    //
+    // `Date.now()` returned a literal 0, so every page here believed it was
+    // 1 January 1970 - a copyright line, a date picker and an age calculation all
+    // silently wrong - and `Date.now() - start` was always 0, so anything pacing
+    // itself by wall clock saw no time pass at all.
+    //
+    // The frozen clock was deliberate, for the reason Math.random is seeded: a
+    // page that draws from either cannot have a byte-comparable golden otherwise.
+    // That reasoning is kept and the two failures are not: the default is a FIXED
+    // BASE plus the page's own monotonic time, so it is deterministic under
+    // `tick()` (16 ms a frame), it ADVANCES, and it reads as a plausible instant
+    // rather than the epoch.
+    //
+    // An embedder that wants real time installs one - `browser::set_clock`, which
+    // the SDL app does, because an application showing the wrong date is a bug no
+    // golden cares about.
+    static constexpr double fixed_epoch_base = 1767225600000.0; // 2026-01-01T00:00:00Z
+
+    void set_clock(std::function<double()> clock) { clock_ = std::move(clock); }
+    [[nodiscard]] double clock_ms() const { return clock_ ? clock_() : fixed_epoch_base; }
+
     void set_pending_promise_factory(std::function<value(context &)> make) {
         pending_promise_factory_ = std::move(make);
     }
@@ -734,6 +805,7 @@ private:
     // library's own logic, including queueing the handlers. Two hooks rather
     // than reaching into the object's properties, so there is one definition of
     // what settling means.
+    std::function<double()> clock_;
     std::function<value(context &)> pending_promise_factory_;
     std::function<void(context &, value, value, bool)> promise_settler_;
     // Set by a frame that suspended, so `resume` can tell "awaited again" from

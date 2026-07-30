@@ -300,6 +300,13 @@ public:
         download_hook_ = std::move(hook);
     }
 
+    // REAL TIME, if the embedder wants it. Without one, `Date.now()` is a fixed
+    // base plus the page's own elapsed time - deterministic, which is what makes
+    // a golden possible, and the same reason Math.random is seeded here. An
+    // interactive application installs the wall clock instead, because showing
+    // the wrong date is a bug no golden cares about; `run_app` does exactly that.
+    void set_clock(std::function<double()> clock) { clock_ = std::move(clock); }
+
     // Where a link that leaves this page goes. the engine does not navigate, so the
     // embedder decides - `ctbrowse` opens a local .html, the SDL app hands an
     // http(s) URL to the system browser, and a program with no hook does
@@ -1362,6 +1369,7 @@ private:
     // definition: this is the one behaviour this engine invents.
     bool save_download(const std::string & href, const std::string & suggested);
 
+    std::function<double()> clock_;
     std::filesystem::path download_directory_;
     std::vector<download_record> downloads_;
     std::function<void(const download_record &)> download_hook_;

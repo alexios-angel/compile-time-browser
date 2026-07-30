@@ -1121,7 +1121,9 @@ public:
         case vp::nk::forof_stmt: compile_for_of(n); break;
         case vp::nk::class_decl: {
             const std::uint16_t r = alloc_reg();
-            compile_class(n, r);
+            // A DECLARATION, so its name is a binding of this scope - which is
+            // the whole difference from the expression form.
+            compile_class(n, r, true);
             emit_write(std::string{n.text}, r);
             break;
         }
@@ -2623,8 +2625,14 @@ public:
     // Bind a class's own name to the class value, by whichever route this
     // frame uses. Harmless for a `class Foo {}` DECLARATION, which binds the
     // same value again a moment later.
-    void declare_class_name(std::string name) {
-        if (frames_.size() > 1 && !was_predeclared(name) &&
+    // `force` is for a class EXPRESSION, whose name must be a binding of its own
+    // and never a write to something outer. At the top level a declaration's name
+    // is a global, so the frame-depth test is right for that case - but for an
+    // expression it meant the name had no binding at all and emit_write fell
+    // through to set_global, CLOBBERING any global of the same name. `var Shared =
+    // {...}; var alias = class Shared {}` replaced the object with the class.
+    void declare_class_name(std::string name, bool force = false) {
+        if ((force || frames_.size() > 1) && !was_predeclared(name) &&
             find_local_in_current_scope(name) == nullptr) {
             const std::uint16_t reg = declare_local(name);
             proto().emit(instruction{op::load_undef, reg});
@@ -2632,13 +2640,34 @@ public:
         }
     }
 
-    void compile_class(const vp::node & n, std::uint16_t dst) {
+    // `as_declaration` is the difference between `class C {}` and `let x = class C
+    // {}`, and there is ONE node kind for both - only the call site knows which.
+    //
+    // A named class EXPRESSION binds its name inside its own body and NOWHERE
+    // ELSE, exactly like a named function expression. Binding it in the enclosing
+    // scope broke p5.js in a way that took an afternoon to find: the bundle has
+    // `let p5$2 = class p5 { ... }`, so the module scope acquired a local named
+    // `p5` holding undefined, and every function compiled AFTER that point
+    // captured it instead of the global. `new p5.TableRow()` inside p5.Table's
+    // addRow read undefined.TableRow - which this engine answers with undefined
+    // rather than a TypeError - and reported "`new` on `TableRow` is undefined",
+    // naming the wrong thing entirely.
+    //
+    // Compile ORDER decided whether it bit, which is why it looked so arbitrary:
+    // a hoisted function declaration is compiled before the leak exists and reads
+    // the global correctly, and a class method three thousand lines later does
+    // not.
+    void compile_class(const vp::node & n, std::uint16_t dst, bool as_declaration = false) {
         // The name is DECLARED first, before any method body is compiled, so a
         // method that mentions it resolves to this binding rather than to an
         // outer one - capture is decided when the nested function is compiled,
         // not when it runs. The value is written further down, as soon as the
         // class exists.
-        if (!n.text.empty()) { declare_class_name(std::string{n.text}); }
+        // A scope of its own for an expression's name, so the methods can capture
+        // it and the code after the expression cannot see it.
+        const bool own_scope = !as_declaration && !n.text.empty();
+        if (own_scope) { push_scope(); }
+        if (!n.text.empty()) { declare_class_name(std::string{n.text}, own_scope); }
         const std::vector<std::int32_t> members = kids(n);
         const std::uint32_t mark = reg_mark();
         const std::uint16_t prototype_reg = alloc_reg();
@@ -2766,6 +2795,10 @@ public:
             }
         }
         release_to(mark);
+        // Closed AFTER every method is compiled, so they capture the name, and
+        // before anything else in the enclosing scope is - so nothing else sees
+        // it. The register stays allocated, which is what a scope pop means here.
+        if (own_scope) { pop_scope(); }
     }
 
     // `/ab+c/gi`. The lexer hands the literal over whole, delimiters and all,

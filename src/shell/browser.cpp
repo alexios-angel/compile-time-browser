@@ -632,6 +632,14 @@ void browser::run_scripts() {
     // The standard library goes in FIRST, so a page's own globals can
     // shadow it rather than the other way round.
     script::install_builtins(*script_);
+    // WHAT TIME THE PAGE THINKS IT IS: a fixed base plus how long this page has
+    // been running, so `Date.now()` advances, reads as a plausible instant, and
+    // is still identical on every run - `tick()` moves the page clock by exactly
+    // what it was given. An embedder that wants real time calls set_clock; the
+    // SDL app does. See context::set_clock for why the frozen epoch had to go.
+    script_->set_clock([this] {
+        return clock_ ? clock_() : script::context::fixed_epoch_base + bindings_->now_ms();
+    });
     canvases_.clear();
     forms_.clear();
     focused_ = node_id{};

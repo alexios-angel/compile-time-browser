@@ -468,6 +468,23 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
     obj.set("offsetTop", value::number(static_cast<double>(box.y)));
     obj.set("offsetWidth", value::number(static_cast<double>(box.width)));
     obj.set("offsetHeight", value::number(static_cast<double>(box.height)));
+    // `clientWidth`/`clientHeight` - the CONTENT box, and the only way a page
+    // asks how big the viewport is: p5's own windowWidth and windowHeight are
+    // `document.documentElement.clientWidth`, so both of them read `undefined`
+    // and every sketch that sizes itself to the window got NaN.
+    //
+    // On the root element and the body they are the viewport, which is what the
+    // spec says and what makes the p5 case work. There are no scrollbars and no
+    // borders here, so for anything else the content box IS the border box.
+    const bool is_viewport = tag_text == "html" || tag_text == "body";
+    obj.set("clientWidth",
+            value::number(is_viewport ? viewport_width_ : static_cast<double>(box.width)));
+    obj.set("clientHeight",
+            value::number(is_viewport ? viewport_height_ : static_cast<double>(box.height)));
+    obj.set("clientLeft", value::number(0));
+    obj.set("clientTop", value::number(0));
+    obj.set("scrollWidth", value::number(static_cast<double>(box.width)));
+    obj.set("scrollHeight", value::number(static_cast<double>(box.height)));
 }
 
 namespace {

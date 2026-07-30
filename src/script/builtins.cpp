@@ -276,22 +276,35 @@ inline value settle_with(context & cx, value on_ok, value on_err,
     return next;
 }
 
+// then/catch/finally, once for the program rather than three natives per
+// promise. They were already receiver-based - settle_with reads current_this -
+// so nothing about them was per-instance; and having them here is what makes `p
+// instanceof Promise` answerable at all, since a promise then has a prototype to
+// walk. Built lazily so a context with no promise ever made pays nothing.
+[[nodiscard]] inline object_object * promise_prototype(context & cx) {
+    if (object_object * existing = cx.prototype(context::proto_kind::promise)) { return existing; }
+    object_object * table = new_table(cx);
+    method(cx, table, "then", [](context & c, std::span<value> a) {
+        return settle_with(c, a.empty() ? value::undefined() : a[0],
+                           a.size() > 1 ? a[1] : value::undefined());
+    });
+    method(cx, table, "catch", [](context & c, std::span<value> a) {
+        return settle_with(c, value::undefined(), a.empty() ? value::undefined() : a[0]);
+    });
+    method(cx, table, "finally", [](context & c, std::span<value> a) {
+        return settle_with(c, value::undefined(), value::undefined(), arg_at(a, 0));
+    });
+    cx.set_prototype(context::proto_kind::promise, table);
+    return table;
+}
+
 [[nodiscard]] inline value make_promise(context & cx, value v, bool rejected) {
     object_object * promise = new_table(cx);
+    promise->prototype = value::object(promise_prototype(cx));
     promise->set("__value", v);
     promise->set("__rejected", value::boolean(rejected));
     promise->set("__settled", value::boolean(true));
     promise->set("__handlers", cx.make_array());
-    method(cx, promise, "then", [](context & c, std::span<value> a) {
-        return settle_with(c, a.empty() ? value::undefined() : a[0],
-                           a.size() > 1 ? a[1] : value::undefined());
-    });
-    method(cx, promise, "catch", [](context & c, std::span<value> a) {
-        return settle_with(c, value::undefined(), a.empty() ? value::undefined() : a[0]);
-    });
-    method(cx, promise, "finally", [](context & c, std::span<value> a) {
-        return settle_with(c, value::undefined(), value::undefined(), arg_at(a, 0));
-    });
     return value::object(promise);
 }
 
@@ -1664,6 +1677,11 @@ void install_boolean(context & cx) {
     auto * boolean_ctor = cx.allocate<native_object>("Boolean", [](context &, std::span<value> a) {
         return value::boolean(!a.empty() && context::truthy(a[0]));
     });
+    // A CONVERSION, not a constructor of wrappers - see context::construct. `new
+    // Boolean(x)` evaluates to the converted value here rather than to a wrapper
+    // object; before the flag it evaluated to an empty object and the value was
+    // gone.
+    boolean_ctor->set("__conversion", value::boolean(true));
     boolean_ctor->set("prototype", value::object(boolean_proto));
     link_constructor(cx, boolean_proto, "Boolean", value::object(boolean_ctor));
     cx.define_global("Boolean", value::object(boolean_ctor));
@@ -1679,6 +1697,11 @@ void install_number(context & cx) {
     auto * number_ctor = cx.allocate<native_object>("Number", [](context &, std::span<value> a) {
         return value::number(a.empty() ? 0.0 : context::to_number(a[0]));
     });
+    // A CONVERSION, not a constructor of wrappers - see context::construct. `new
+    // Number(x)` evaluates to the converted value here rather than to a wrapper
+    // object; before the flag it evaluated to an empty object and the value was
+    // gone.
+    number_ctor->set("__conversion", value::boolean(true));
     const auto constant = [&](const char * name, double v) {
         number_ctor->set(name, value::number(v));
     };
@@ -2317,16 +2340,17 @@ void install_date(context & cx) {
                 ms = static_cast<double>(days) * 86400000.0 + part(3, 0) * 3600000.0 +
                      part(4, 0) * 60000.0 + part(5, 0) * 1000.0 + part(6, 0);
             }
-            // `new Date()` with no argument is NOW, which here is the epoch:
-            // Math.random is seeded and the clock is fixed so a page that draws
-            // from either can have a golden. docs/architecture says the same
-            // about randomness, and for the same reason.
+            // `new Date()` with no argument is NOW, and now comes from the
+            // context's clock - see context::set_clock. It used to be the literal
+            // epoch, so every page here believed it was 1970.
+            if (a.empty()) { ms = c.clock_ms(); }
             made->set("__ms", value::number(ms));
             return self;
         });
     ctor->set("prototype", value::object(date_proto));
     date_proto->set("constructor", value::object(ctor));
-    method(cx, ctor, "now", [](context &, std::span<value>) { return value::number(0); });
+    method(cx, ctor, "now",
+           [](context & c, std::span<value>) { return value::number(c.clock_ms()); });
     method(cx, ctor, "UTC", [days_from_civil](context & c, std::span<value> a) {
         const auto part = [&](std::size_t i, double fallback) {
             return i < a.size() ? context::to_number(a[i]) : fallback;
@@ -2477,6 +2501,7 @@ void install_promise(context & cx) {
         return promise;
     });
     for (const auto & [key, item] : promise_ctor->props) { promise_new->set(key, item); }
+    promise_new->set("prototype", value::object(detail::promise_prototype(cx)));
     cx.define_global("Promise", value::object(promise_new));
 
     cx.define_native("isNaN", [](context &, std::span<value> a) {
@@ -2493,6 +2518,11 @@ void install_promise(context & cx) {
             cx.allocate<native_object>("String", [](context & c, std::span<value> a) {
                 return c.string(a.empty() ? std::string{} : c.to_string(a[0]));
             });
+        // A CONVERSION, not a constructor of wrappers - see context::construct. `new
+        // String(x)` evaluates to the converted value here rather than to a wrapper
+        // object; before the flag it evaluated to an empty object and the value was
+        // gone.
+        string_ctor->set("__conversion", value::boolean(true));
         const auto stat = [&](const char * name, native_fn fn) {
             string_ctor->set(name, value::object(cx.allocate<native_object>(name, std::move(fn))));
         };

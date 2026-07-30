@@ -600,6 +600,22 @@ int run_app(std::string_view html, app_options options) {
     page.assets().set_base_path(options.asset_path);
     page.allow_network(options.network);
     detail::install_image_decoder(page.images());
+    // THE REAL WALL CLOCK, because this is an application and a page showing the
+    // wrong date is a bug. The engine's own default is deterministic - a fixed
+    // base plus the page's elapsed time - so a headless golden run is unaffected
+    // by this line, which is the whole reason the clock is a hook. Pinned by
+    // CTBROWSER_CLOCK (milliseconds since the epoch) when a golden does need to
+    // draw a date.
+    if (const char * pinned = std::getenv("CTBROWSER_CLOCK"); pinned != nullptr) {
+        const double fixed = std::strtod(pinned, nullptr);
+        page.set_clock([fixed] { return fixed; });
+    } else {
+        page.set_clock([] {
+            return static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           std::chrono::system_clock::now().time_since_epoch())
+                                           .count());
+        });
+    }
     // The system clipboard. The engine keeps its own when this is absent, so
     // copy and paste work headlessly - they just do not leave the process.
 #if CTBROWSER_WITH_SDL3
