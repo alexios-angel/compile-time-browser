@@ -14,6 +14,7 @@
 #include <ctbrowser/dom/dom.hpp>
 #include <ctbrowser/paint/paint.hpp>
 #include <ctbrowser/raster/raster.hpp>
+#include <ctbrowser/shell/composite.hpp>
 
 // The 2D canvas.
 //
@@ -79,6 +80,10 @@ public:
     color stroke_style = color::rgba(0, 0, 0);
     float line_width = 1;
     float global_alpha = 1;
+    // `globalCompositeOperation`. See shell/composite.hpp for why every mode is
+    // implemented rather than the two that look common: p5's tint() alone needs
+    // four of them, and blendMode() is fourteen more names for these.
+    composite composite_mode = composite::source_over;
     float font_size = 10;
     // The FAMILY is part of the state, not just the size. It was dropped on the
     // floor - `ctx.font = "16px Arial"` kept the 16 and threw "Arial" away - so
@@ -111,6 +116,8 @@ public:
     std::string font_spec = "10px sans-serif";
     std::string fill_spec = "#000000";
     std::string stroke_spec = "#000000";
+    // As script set it, for the same round-tripping reason as the others.
+    std::string composite_spec = "source-over";
 
     // The backend that both MEASURES and DRAWS this canvas's text. One object
     // answers both, which is the rule the rest of the engine already follows
@@ -218,6 +225,7 @@ public:
     void draw_image_region(const bitmap & source, float sx, float sy, float sw, float sh, float dx,
                            float dy, float dw, float dh) {
         if (!pixels_ || source.empty() || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) { return; }
+        const pass composited{*this};
         const point at = transform_.apply(dx, dy);
         const int left = static_cast<int>(at.x);
         const int top = static_cast<int>(at.y);
@@ -267,10 +275,43 @@ private:
         std::string stroke_spec;
         std::string text_align;
         std::string text_baseline;
+        composite composite_mode;
+        std::string composite_spec;
         // The clip region in force. A clip is undone by restore() and by
         // nothing else, so it belongs on this stack like the rest of the state.
         std::shared_ptr<const std::vector<std::uint8_t>> clip;
     };
+
+    // A COMPOSITE PASS, for the five operators where a pixel the source never
+    // touched still has to change (see clears_untouched). The backdrop is
+    // snapshotted and the surface cleared, so an untouched pixel ends up
+    // transparent - which is the formula's own answer for as = 0 - and a touched
+    // one composites against the snapshot rather than against the cleared
+    // surface it is being written into.
+    //
+    // Every public draw brackets itself with one. For source-over and the blend
+    // modes it does nothing at all and costs a bool test.
+    class pass {
+    public:
+        explicit pass(canvas_context & canvas) : canvas_(&canvas) {
+            if (!clears_untouched(canvas.composite_mode) || !canvas.pixels_) { return; }
+            canvas.backdrop_ = std::make_shared<bitmap>(*canvas.pixels_);
+            std::ranges::fill(canvas.pixels_->pixels, std::uint32_t{0});
+        }
+        pass(const pass &) = delete;
+        pass & operator=(const pass &) = delete;
+        ~pass() { canvas_->backdrop_.reset(); }
+
+    private:
+        canvas_context * canvas_;
+    };
+
+    // What a write composites AGAINST: the snapshot during a clearing pass, and
+    // the surface itself otherwise.
+    [[nodiscard]] std::uint32_t backdrop_at(int x, int y) const {
+        return backdrop_ ? backdrop_->at(x, y) : pixels_->at(x, y);
+    }
+    std::shared_ptr<const bitmap> backdrop_;
 
     void touch() { ++revision_; }
     void move_to_device(point p) { subpaths_.push_back(subpath{{p}, false}); }

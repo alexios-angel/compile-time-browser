@@ -45,6 +45,8 @@ events/keyIsDown
 events/mouseIsPressed/keyIsPressed
 events/mouseX/mouseY
 events/pmouseX/movedX
+image/blendMode
+image/tint preserves transparency
 load/image() draws a loaded image
 load/loadImage
 load/loadJSON

@@ -468,6 +468,110 @@ void test_fill_rule() {
     check(at(150, 50) == color::rgba(255, 255, 255), "even-odd leaves it hollow");
 }
 
+// `globalCompositeOperation` - EVERY MODE, because ignoring it was a silent
+// wrong answer and half-implementing it would be another.
+//
+// The maths is the W3C Compositing and Blending Level 1 formula (see
+// shell/composite.hpp), so the expectations here are computed from the spec by
+// hand rather than recorded from a run - a test that records what the code did
+// cannot tell you the code is right.
+void test_composite_operations() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body><canvas id=c width=80 height=40></canvas><script>
+        const ctx = document.getElementById('c').getContext('2d');
+        // Each cell: an opaque backdrop, then one source over it in some mode.
+        // Backdrop #804020 (128,64,32), source #40c060 (64,192,96), both opaque.
+        function cell(i, mode) {
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.fillStyle = '#804020';
+          ctx.fillRect(i * 8, 0, 8, 8);
+          ctx.globalCompositeOperation = mode;
+          ctx.fillStyle = '#40c060';
+          ctx.fillRect(i * 8, 0, 8, 8);
+        }
+        cell(0, 'source-over');
+        cell(1, 'multiply');
+        cell(2, 'screen');
+        cell(3, 'darken');
+        cell(4, 'lighten');
+        cell(5, 'difference');
+        cell(6, 'exclusion');
+        cell(7, 'destination-over');
+        // The operator has to come back with restore(), and read back as the
+        // string that was set.
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.save();
+        ctx.globalCompositeOperation = 'multiply';
+        console.log('set=' + ctx.globalCompositeOperation);
+        ctx.restore();
+        console.log('restored=' + ctx.globalCompositeOperation);
+        // An unknown name behaves as source-over rather than throwing.
+        ctx.globalCompositeOperation = 'nonsense';
+        ctx.fillStyle = '#ff0000';
+        ctx.fillRect(0, 30, 8, 8);
+    </script></body></html>)");
+    check(page.script_error().empty(), "the composite script ran: " + page.script_error());
+    const auto pixels = page.canvases().pixels_of(find_id(page, "c"));
+    check(pixels != nullptr, "the canvas has pixels");
+    if (pixels == nullptr) { return; }
+    const auto at = [&](int cell) { return color{pixels->at(cell * 8 + 4, 4)}; };
+
+    // Backdrop b = (128, 64, 32), source s = (64, 192, 96), both opaque - so
+    // ao = 1 and the result is B(b, s) with no alpha weighting at all.
+    check(at(0) == color::rgba(64, 192, 96), "source-over is the source");
+    // multiply: b*s/255 = (32, 48, 12)
+    check(at(1) == color::rgba(32, 48, 12), "multiply");
+    // screen: b + s - b*s/255 = (160, 208, 116)
+    check(at(2) == color::rgba(160, 208, 116), "screen");
+    check(at(3) == color::rgba(64, 64, 32), "darken takes the min per channel");
+    check(at(4) == color::rgba(128, 192, 96), "lighten takes the max per channel");
+    check(at(5) == color::rgba(64, 128, 64), "difference");
+    // exclusion: b + s - 2*b*s/255 = (128, 160, 104)
+    check(at(6) == color::rgba(128, 160, 104), "exclusion");
+    check(at(7) == color::rgba(128, 64, 32), "destination-over keeps the backdrop");
+
+    const auto & log = log_of(page);
+    check(log.size() >= 2, "the property reported itself");
+    if (log.size() >= 2) {
+        check(log[0] == "set=multiply", "the operator reads back what was set: " + log[0]);
+        check(log[1] == "restored=source-over", "and restore() puts it back: " + log[1]);
+    }
+    check(color{pixels->at(4, 34)} == color::rgba(255, 0, 0),
+          "an unknown operator draws as source-over rather than not at all");
+}
+
+// THE FIVE OPERATORS THAT CLEAR WHAT THE SOURCE NEVER TOUCHED.
+//
+// Put as = 0 in the formula and ao comes out 0 for source-in, source-out,
+// destination-in, destination-atop and copy. So `destination-in` with a small
+// shape does not mask that shape - it throws away everything outside it, which
+// is what a page uses it for. Compositing only the pixels the source covered
+// would leave the rest of the canvas untouched and look almost right.
+//
+// This is the half of globalCompositeOperation that is easy to skip, and p5's
+// tint() depends on it: the destination-in pass is what restores the alpha
+// channel the multiply destroyed.
+void test_composite_clears_untouched_pixels() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body><canvas id=c width=40 height=40></canvas><script>
+        const ctx = document.getElementById('c').getContext('2d');
+        ctx.fillStyle = '#ff0000';
+        ctx.fillRect(0, 0, 40, 40);          // the whole canvas red
+        ctx.globalCompositeOperation = 'destination-in';
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, 10, 10);          // a small opaque shape
+    </script></body></html>)");
+    check(page.script_error().empty(), "the destination-in script ran: " + page.script_error());
+    const auto pixels = page.canvases().pixels_of(find_id(page, "c"));
+    if (pixels == nullptr) { return; }
+    // Inside the shape: the BACKDROP survives - destination-in keeps the
+    // destination's colour and takes the source's alpha.
+    check(color{pixels->at(5, 5)} == color::rgba(255, 0, 0),
+          "destination-in keeps the backdrop where the source covered it");
+    // Outside it: gone. Not red, and not the source's black either.
+    check(pixels->at(30, 30) == 0, "and clears everything the source did not touch");
+}
+
 // getImageData / putImageData / createImageData - reading back what was
 // drawn and writing back what was computed. Every filter, every colour pick
 // and every `pixels[]` loop goes through them.
@@ -2176,6 +2280,8 @@ int main() {
     test_location_parts_and_cookies();
     test_p5_receives_input();
     test_webgl_is_constructible_and_refuses();
+    test_composite_operations();
+    test_composite_clears_untouched_pixels();
     test_image_data();
     test_fill_rule();
     test_text_alignment();

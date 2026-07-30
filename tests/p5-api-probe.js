@@ -575,6 +575,52 @@ globalThis.__probes = [
   // Found by comparing examples/pages/p5-image.html against Chrome pixel by
   // pixel: every other stage of that page agreed exactly, and this one differed
   // wherever the source was transparent.
+  // blendMode() is SIXTEEN NAMES FOR globalCompositeOperation - p5's constants
+  // are the CSS strings verbatim (DARKEST === 'darken'), so this probe is really
+  // asking whether the operator reached the canvas and changed the answer.
+  //
+  // Each mode is checked against a value computed from the W3C formula, not
+  // recorded: backdrop (128,64,32) opaque, source (64,192,96) opaque, so the
+  // result is B(b, s) with no alpha weighting.
+  ['image', 'blendMode', function (s) {
+    const cases = [
+      [s.BLEND, [64, 192, 96]],
+      [s.MULTIPLY, [32, 48, 12]],
+      [s.SCREEN, [160, 208, 116]],
+      [s.DARKEST, [64, 64, 32]],
+      [s.LIGHTEST, [128, 192, 96]],
+      [s.DIFFERENCE, [64, 128, 64]],
+      [s.EXCLUSION, [128, 160, 104]],
+      [s.ADD, [192, 255, 128]],       // lighter: b + s, clamped
+    ];
+    const wrong = [];
+    for (const [mode, want] of cases) {
+      s.blendMode(s.BLEND);
+      s.background(128, 64, 32);
+      s.blendMode(mode);
+      s.noStroke();
+      s.fill(64, 192, 96);
+      s.rect(0, 0, s.width, s.height);
+      s.blendMode(s.BLEND);
+      const got = s.get(4, 4);
+      if (got[0] !== want[0] || got[1] !== want[1] || got[2] !== want[2]) {
+        wrong.push(mode + ' gave ' + got.slice(0, 3).join(',') + ' want ' + want.join(','));
+      }
+    }
+    // The rest have to be ACCEPTED even where the value is not pinned here -
+    // p5 sets them straight onto globalCompositeOperation, so an unknown one
+    // would silently draw as source-over.
+    for (const mode of [s.OVERLAY, s.HARD_LIGHT, s.SOFT_LIGHT, s.DODGE, s.BURN, s.REPLACE,
+                        s.REMOVE]) {
+      s.blendMode(mode);
+      if (s.drawingContext.globalCompositeOperation !== mode) {
+        wrong.push(mode + ' did not reach the context');
+      }
+    }
+    s.blendMode(s.BLEND);
+    if (wrong.length) { throw wrong.join(' | '); }
+    return 'ok';
+  }],
   ['image', 'tint preserves transparency', function (s) {
     s.background(255);
     const g = s.createGraphics(8, 8);

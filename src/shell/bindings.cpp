@@ -1518,6 +1518,7 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
     obj->set("font", cx.string("10px sans-serif"));
     obj->set("textAlign", cx.string("start"));
     obj->set("textBaseline", cx.string("alphabetic"));
+    obj->set("globalCompositeOperation", cx.string("source-over"));
 
     const auto sync = [canvas](context & c) {
         const value self_value = c.current_this();
@@ -1557,6 +1558,15 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
         // that knows what the default means for each of them.
         if (const value * v = o->find("textAlign")) { canvas->text_align = c.to_string(*v); }
         if (const value * v = o->find("textBaseline")) { canvas->text_baseline = c.to_string(*v); }
+        // `globalCompositeOperation` is PARSED here rather than kept as a string,
+        // because the drawing code needs the operator on every pixel and a string
+        // comparison per pixel is not a thing to do. The spelling is kept
+        // alongside it so save/restore and the property read back what was set,
+        // and an unknown name behaves as source-over per spec.
+        if (const value * v = o->find("globalCompositeOperation")) {
+            canvas->composite_spec = c.to_string(*v);
+            canvas->composite_mode = composite_from_name(canvas->composite_spec);
+        }
     };
 
     // A drawing call does NOT report a document mutation. The canvas's
@@ -1710,6 +1720,7 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
                o->set("textBaseline", c.string(canvas->text_baseline));
                o->set("lineWidth", value::number(canvas->line_width));
                o->set("globalAlpha", value::number(canvas->global_alpha));
+               o->set("globalCompositeOperation", c.string(canvas->composite_spec));
            }));
     method("translate", draws([canvas](context &, std::span<value> a) {
                canvas->translate(number(a, 0), number(a, 1));

@@ -76,6 +76,13 @@
           //    is drawImage from one surface to another with the image in the
           //    middle.
           const buffer = s.createGraphics(120, 40);
+          // noSmooth() on the BUFFER as well as the sketch. This engine's
+          // drawImage is nearest-neighbour by choice (see CLAUDE.md), and a
+          // browser interpolates by default - so without this the page and
+          // Chrome disagree along the sprite's edges at a fractional scale, for
+          // a reason that is not a bug. Asking for what the engine does makes
+          // the page comparable, which is what it is for.
+          buffer.noSmooth();
           buffer.background(20, 30, 60);
           buffer.image(sprites, 4, 4, 112, 32);
           s.image(buffer, 10, 136);

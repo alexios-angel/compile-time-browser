@@ -19,7 +19,8 @@ void canvas_context::reset_surface(int width, int height) {
 void canvas_context::save() {
     stack_.push_back(state{transform_, fill_style, stroke_style, line_width, global_alpha,
                            font_size, font_family, font_bold, font_italic, font_spec, fill_spec,
-                           stroke_spec, text_align, text_baseline, clip_});
+                           stroke_spec, text_align, text_baseline, composite_mode, composite_spec,
+                           clip_});
 }
 
 void canvas_context::restore() {
@@ -37,6 +38,8 @@ void canvas_context::restore() {
     font_spec = s.font_spec;
     fill_spec = s.fill_spec;
     stroke_spec = s.stroke_spec;
+    composite_mode = s.composite_mode;
+    composite_spec = s.composite_spec;
     text_align = s.text_align;
     text_baseline = s.text_baseline;
     // A clip is undone by restore() and by nothing else, which is why it has to
@@ -237,6 +240,7 @@ void canvas_context::for_each_span(fill_rule rule,
 
 void canvas_context::fill(fill_rule rule) {
     if (!pixels_) { return; }
+    const pass composited{*this};
     for_each_span(rule, [&](int y, float from, float to) { span_row(y, from, to, fill_style); });
     touch();
 }
@@ -261,6 +265,7 @@ void canvas_context::clip(fill_rule rule) {
 }
 
 void canvas_context::stroke() {
+    const pass composited{*this};
     const float t = std::max(1.0f, line_width);
     for (const subpath & s : subpaths_) {
         const std::size_t n = s.points.size();
@@ -276,6 +281,7 @@ float canvas_context::measure_text(std::string_view text) const {
 
 void canvas_context::fill_text(std::string_view text, float x, float y) {
     if (!pixels_ || text.empty()) { return; }
+    const pass composited{*this};
     const raster::font_backend & backend = fonts();
     const float width = measure_text(text);
     const float ascent = backend.ascent(font_size, font_family, font_bold, font_italic);
@@ -368,6 +374,7 @@ void canvas_context::fill_text(std::string_view text, float x, float y) {
 
 void canvas_context::draw_image(const bitmap & source, float x, float y, float w, float h) {
     if (!pixels_ || source.empty() || w <= 0 || h <= 0) { return; }
+    const pass composited{*this};
     const point at = transform_.apply(x, y);
     const int left = static_cast<int>(at.x);
     const int top = static_cast<int>(at.y);
@@ -399,7 +406,14 @@ color canvas_context::with_alpha(color c) const {
 
 void canvas_context::blend(int x, int y, color c) {
     if (!pixels_ || clipped_out(x, y)) { return; }
-    pixels_->put(x, y, raster::blend_over(pixels_->at(x, y), with_alpha(c)));
+    const color source = with_alpha(c);
+    // The fast path stays fast: source-over with an opaque colour is a store, and
+    // that is what almost every page does almost all of the time.
+    if (composite_mode == composite::source_over) {
+        pixels_->put(x, y, raster::blend_over(pixels_->at(x, y), source));
+        return;
+    }
+    pixels_->put(x, y, composite_pixel(composite_mode, backdrop_at(x, y), source.argb));
 }
 
 void canvas_context::span_row(int y, float from, float to, color c) {
@@ -420,6 +434,7 @@ void canvas_context::fill_axis_rect(float x, float y, float w, float h, color c)
         fill_style = saved_fill;
         return;
     }
+    const pass composited{*this};
     const point at = transform_.apply(x, y);
     const float sw = w * transform_.a;
     const float sh = h * transform_.d;

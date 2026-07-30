@@ -788,3 +788,57 @@ succeeded, so a test can assert on it without reading the disk.
     does a GET.
   - **`Blob` has a prototype**, so `x instanceof Blob` is true. p5's
     `downloadFile` branches on exactly that.
+
+
+## globalCompositeOperation, AND THEREFORE tint() (2026-07-29)
+
+Found by comparing `examples/pages/p5-image.html` against Chrome pixel by pixel.
+Every stage of that page agreed exactly except `tint()`, which differed wherever
+the source was transparent - and the cause was not tint at all.
+
+**`globalCompositeOperation` was ignored.** p5 builds a tinted image out of five
+composited draws - `luminosity`, `color`, `multiply`, `destination-in` - and with
+every mode treated as source-over the `multiply` fillRect covers the whole canvas
+and the `destination-in` that would restore the alpha channel does nothing. A
+tinted sprite came out as a solid rectangle of the tint colour with the sprite on
+top of it. Nothing reported anything, and the page still drew a picture.
+
+It is also all of `blendMode()`: p5's sixteen constants ARE the CSS strings
+(`DARKEST === 'darken'`), so every one of them was a no-op.
+
+`shell/composite.hpp` implements the W3C Compositing and Blending Level 1 formula
+rather than an approximation of it:
+
+    Cs' = (1 - ab) x Cs + ab x B(Cb, Cs)      the blend, weighted by backdrop
+    co  = as x Fa x Cs' + ab x Fb x Cb        premultiplied result
+    ao  = as x Fa + ab x Fb
+
+Every mode in the spec is one blend function `B` and one pair of Porter-Duff
+coefficients, so there is no per-mode special case in the code. That is the
+point: a table of formulas can be checked against the spec line by line, and a
+pile of cases cannot. All 26 operators are implemented, the four non-separable
+ones (`hue`, `saturation`, `color`, `luminosity`) included - "roughly luminosity"
+is exactly the kind of thing that looks fine and is wrong, and p5's tint needs
+two of them.
+
+The expectations in `test_composite_operations` are computed from the spec by
+hand, not recorded from a run. `tint`'s colour now matches Chrome's exactly.
+
+**Five operators clear what the source never touched.** Put `as = 0` in the
+formula and `ao` comes out 0 for `source-in`, `source-out`, `destination-in`,
+`destination-atop` and `copy` - so `destination-in` with a small shape does not
+mask that shape, it throws away everything outside it. Compositing only the
+covered pixels would leave the rest of the canvas alone and look almost right.
+`canvas_context::pass` snapshots the backdrop and clears the surface before such
+a draw: an untouched pixel is then transparent, which is the formula's own
+answer, and a touched one composites against the snapshot. For source-over and
+every blend mode the pass does nothing and costs a bool test.
+
+One write funnel made this tractable - `canvas_context::blend` is where fills,
+strokes, text and images all land, so the operator had one place to go.
+
+**What still differs from Chrome, deliberately.** `drawImage` is
+nearest-neighbour (see CLAUDE.md), and a browser interpolates - so a fractional
+scale disagrees along an edge. `p5-image.html` calls `noSmooth()` on its
+offscreen buffer as well as the sketch, because a corpus page exists to be
+comparable and asking for what the engine does is the honest way to get there.
