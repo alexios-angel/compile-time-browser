@@ -841,8 +841,13 @@ void install_array(context & cx) {
         if (self == nullptr) { return removed; }
         const std::size_t n = self->items.size();
         const std::size_t from = clamp_index(num_at(a, 0), n);
+        // CLAMPED AS A DOUBLE, THEN CAST. `splice(i, Infinity)` is an ordinary
+        // way to say "to the end" and infinity does not convert to an integer -
+        // that is undefined behaviour, not a large number, and UBSan caught it
+        // going through here silently.
+        const double wanted = std::max(0.0, num_at(a, 1));
         const std::size_t count =
-            a.size() > 1 ? std::min(n - from, static_cast<std::size_t>(std::max(0.0, num_at(a, 1))))
+            a.size() > 1 ? static_cast<std::size_t>(std::min(wanted, static_cast<double>(n - from)))
                          : n - from;
         auto * out = static_cast<array_object *>(removed.as_heap());
         for (std::size_t i = 0; i < count; ++i) { out->items.push_back(self->items[from + i]); }

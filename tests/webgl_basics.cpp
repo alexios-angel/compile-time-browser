@@ -561,6 +561,79 @@ void test_a_page_can_draw_a_triangle() {
     CHECK(log[7] == "corner=0,0,0,255");
 }
 
+// WHAT A PROGRAM DECLARES, enumerated - and this is the shape of hole that a
+// hand-written test cannot find.
+//
+// Every WebGL page in this tree, and every test above, asks for uniforms and
+// attributes BY NAME, because a page that wrote the shader already knows what
+// is in it. A LIBRARY does the opposite: it asks how many there are and walks
+// them. p5 does exactly that, got zero for both, concluded the shader declared
+// nothing, bound no attributes, set no matrices, and drew a cube with no
+// vertices - through a getProgramParameter that answered 0 to every question it
+// did not recognise.
+void test_a_program_can_be_enumerated() {
+    ctbrowser::browser page{{.width = 64, .height = 64}};
+    page.load_html(R"(<body><canvas id='c' width='64' height='64'></canvas><script>
+      var gl = document.getElementById('c').getContext('webgl');
+      var vs = gl.createShader(gl.VERTEX_SHADER);
+      gl.shaderSource(vs, 'attribute vec3 aPos;' +
+                          'attribute vec2 aUV;' +
+                          'uniform mat4 uModel;' +
+                          'uniform float uScale;' +
+                          'varying vec2 vUV;' +
+                          'void main() { vUV = aUV;' +
+                          '  gl_Position = uModel * vec4(aPos * uScale, 1.0); }');
+      gl.compileShader(vs);
+      var fs = gl.createShader(gl.FRAGMENT_SHADER);
+      gl.shaderSource(fs, 'precision mediump float;' +
+                          'uniform vec4 uColour;' +
+                          'varying vec2 vUV;' +
+                          'void main() { gl_FragColor = uColour * vec4(vUV, 1.0, 1.0); }');
+      gl.compileShader(fs);
+      var p = gl.createProgram();
+      gl.attachShader(p, vs); gl.attachShader(p, fs); gl.linkProgram(p);
+      console.log('linked=' + gl.getProgramParameter(p, gl.LINK_STATUS));
+      console.log('attribs=' + gl.getProgramParameter(p, gl.ACTIVE_ATTRIBUTES));
+      console.log('uniforms=' + gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS));
+      // The INDEX is the location too, which is the contract a caller walking
+      // these depends on - it enables attribute i and points it at its buffer.
+      var names = [];
+      for (var i = 0; i < gl.getProgramParameter(p, gl.ACTIVE_ATTRIBUTES); i++) {
+        var a = gl.getActiveAttrib(p, i);
+        names.push(a.name + ':' + a.size + ':' + (a.type === gl.FLOAT_VEC3 ? 'vec3' :
+                   a.type === gl.FLOAT_VEC2 ? 'vec2' : a.type) +
+                   ':' + gl.getAttribLocation(p, a.name) + '=' + i);
+      }
+      console.log('attrib=' + names.join(' '));
+      // The TYPE has to be reported as the constant the context itself hands
+      // out, because a caller switches on it: `case gl.FLOAT_MAT4:`. Comparing
+      // against gl.* here rather than against a pasted 0x8B5C is what makes this
+      // test fail if the two ever disagree.
+      var us = {};
+      for (var j = 0; j < gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS); j++) {
+        var u = gl.getActiveUniform(p, j);
+        us[u.name] = (u.type === gl.FLOAT_MAT4) ? 'mat4'
+                   : (u.type === gl.FLOAT) ? 'float'
+                   : (u.type === gl.FLOAT_VEC4) ? 'vec4' : ('?' + u.type);
+      }
+      console.log('uModel=' + us.uModel + ' uScale=' + us.uScale + ' uColour=' + us.uColour);
+      // Past the end is null, not a throw and not a made-up entry.
+      console.log('past=' + (gl.getActiveUniform(p, 99) === null));
+    </script></body>)");
+    CHECK(page.script_error().empty());
+    const auto & log = page.bindings().console_output();
+    CHECK(log.size() == 6);
+    if (log.size() != 6) { return; }
+    CHECK(log[0] == "linked=true");
+    // TWO attributes and THREE uniforms - the fragment shader's uColour counts,
+    // because GL links both stages into one uniform namespace.
+    CHECK(log[1] == "attribs=2");
+    CHECK(log[2] == "uniforms=3");
+    CHECK(log[3] == "attrib=aPos:1:vec3:0=0 aUV:1:vec2:1=1");
+    CHECK(log[4] == "uModel=mat4 uScale=float uColour=vec4");
+    CHECK(log[5] == "past=true");
+}
+
 // p5 asks for `webgl2` FIRST and falls back to `webgl`, and this test asserted
 // the WRONG HALF of that for as long as it existed.
 //
@@ -612,6 +685,7 @@ int main() {
     test_delete_unbinds();
     test_texture_sampling();
     test_a_page_can_draw_a_triangle();
+    test_a_program_can_be_enumerated();
     test_webgl2_is_null_not_a_throw();
     REPORT("webgl_basics");
 }

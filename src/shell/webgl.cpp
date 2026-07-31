@@ -229,6 +229,79 @@ void webgl_context::attach_shader(std::uint32_t program, std::uint32_t shader) {
     }
 }
 
+std::uint32_t gl_type_code(const glsl::type & t) noexcept {
+    using glsl::base;
+    if (t.kind == base::sampler2d) { return gl_enum::sampler_2d; }
+    if (t.kind == base::sampler_cube) { return gl_enum::sampler_cube; }
+    if (t.is_matrix()) {
+        // WebGL 1 has square matrices only, and the GLSL front end parses no
+        // others - so anything unsquare here is a bug rather than a shape to
+        // report, and mat4 is the least surprising thing to say about it.
+        if (t.cols == 2 && t.rows == 2) { return gl_enum::float_mat2; }
+        if (t.cols == 3 && t.rows == 3) { return gl_enum::float_mat3; }
+        return gl_enum::float_mat4;
+    }
+    const std::uint8_t n = t.rows;
+    switch (t.kind) {
+    case base::i:
+        return n == 1   ? gl_enum::int_
+               : n == 2 ? gl_enum::int_vec2
+               : n == 3 ? gl_enum::int_vec3
+                        : gl_enum::int_vec4;
+    case base::b:
+        return n == 1   ? gl_enum::bool_
+               : n == 2 ? gl_enum::bool_vec2
+               : n == 3 ? gl_enum::bool_vec3
+                        : gl_enum::bool_vec4;
+    default:
+        return n == 1   ? gl_enum::float_
+               : n == 2 ? gl_enum::float_vec2
+               : n == 3 ? gl_enum::float_vec3
+                        : gl_enum::float_vec4;
+    }
+}
+
+std::vector<webgl_context::active_variable> webgl_context::active_uniforms(
+    std::uint32_t program) const {
+    std::vector<active_variable> out;
+    const auto found = programs_.find(program);
+    if (found == programs_.end() || !found->second.linked) { return out; }
+    // Vertex first, then any the fragment shader adds. GL links the two stages
+    // into ONE uniform namespace, so a name declared in both is one uniform -
+    // which p5's shaders rely on, declaring uModelViewMatrix in each.
+    for (const std::uint32_t which : {found->second.vertex, found->second.fragment}) {
+        const auto shader = shaders_.find(which);
+        if (shader == shaders_.end()) { continue; }
+        for (const glsl::interface_variable & v : shader->second.compiled.interface_) {
+            if (v.store != glsl::storage::uniform) { continue; }
+            const bool already = std::ranges::any_of(
+                out, [&](const active_variable & seen) { return seen.name == v.name; });
+            if (!already) { out.push_back({v.name, v.t}); }
+        }
+    }
+    return out;
+}
+
+std::vector<webgl_context::active_variable> webgl_context::active_attributes(
+    std::uint32_t program) const {
+    std::vector<active_variable> out;
+    const auto found = programs_.find(program);
+    if (found == programs_.end() || !found->second.linked) { return out; }
+    const auto shader = shaders_.find(found->second.vertex);
+    if (shader == shaders_.end()) { return out; }
+    // IN THE ORDER link_program ASSIGNED, so index i is location i - which is
+    // the whole contract a caller enumerating these depends on.
+    for (const std::string & name : found->second.attribute_names) {
+        for (const glsl::interface_variable & v : shader->second.compiled.interface_) {
+            if (v.store == glsl::storage::attribute && v.name == name) {
+                out.push_back({v.name, v.t});
+                break;
+            }
+        }
+    }
+    return out;
+}
+
 void webgl_context::link_program(std::uint32_t program) {
     const auto found = programs_.find(program);
     if (found == programs_.end()) { return; }

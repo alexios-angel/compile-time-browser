@@ -23,10 +23,20 @@ namespace {
 using script::value;
 using context = script::context;
 
+// A double as an unsigned index, WITHOUT the undefined behaviour. Every entry
+// point here takes numbers from a page, and `undefined` arrives as NaN while
+// `1/0` arrives as infinity - neither of which CONVERTS to an integer. The cast
+// is undefined behaviour rather than a large number, and UBSan found one
+// reaching enum_at where a page passed a null location.
+[[nodiscard]] std::uint32_t to_index(double d) noexcept {
+    if (!(d >= 0.0)) { return 0; } // false for NaN as well as for negatives
+    return d >= 4294967295.0 ? 4294967295u : static_cast<std::uint32_t>(d);
+}
+
 [[nodiscard]] std::uint32_t id_of(context & cx, value v) {
     if (!v.is_object()) { return 0; }
     const value held = cx.lookup_property(v, "__id");
-    return held.is_undefined() ? 0 : static_cast<std::uint32_t>(context::to_number(held));
+    return held.is_undefined() ? 0 : to_index(context::to_number(held));
 }
 
 [[nodiscard]] double number_at(std::span<value> args, std::size_t i) {
@@ -34,11 +44,14 @@ using context = script::context;
 }
 
 [[nodiscard]] std::uint32_t enum_at(std::span<value> args, std::size_t i) {
-    return static_cast<std::uint32_t>(number_at(args, i));
+    return to_index(number_at(args, i));
 }
 
 [[nodiscard]] int int_at(std::span<value> args, std::size_t i) {
-    return static_cast<int>(number_at(args, i));
+    const double d = number_at(args, i);
+    if (std::isnan(d)) { return 0; }
+    return static_cast<int>(std::clamp(d, static_cast<double>(std::numeric_limits<int>::min()),
+                                       static_cast<double>(std::numeric_limits<int>::max())));
 }
 
 // Pull bytes out of whatever a page passed: a typed array, an ArrayBuffer, or a
@@ -293,6 +306,31 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
     constant("FRAGMENT_SHADER", gl_enum::fragment_shader);
     constant("ACTIVE_UNIFORMS", 0x8B86);
     constant("ACTIVE_ATTRIBUTES", 0x8B89);
+    // THE TYPE CODES getActiveUniform REPORTS, and they have to be here because
+    // a caller SWITCHES on them against these very constants:
+    //
+    //     switch (uniform.type) { case gl.FLOAT_MAT4: ... }
+    //
+    // is p5's uniform dispatch. Without the constant, `gl.FLOAT_MAT4` is
+    // undefined, no case matches, there is no default, and every uniform is
+    // dropped in silence - which is what left a correctly-built cube with no
+    // matrices and an empty canvas. Named from gl_enum so they cannot drift
+    // apart from what gl_type_code answers; webgl_basics asserts they agree.
+    constant("FLOAT_VEC2", gl_enum::float_vec2);
+    constant("FLOAT_VEC3", gl_enum::float_vec3);
+    constant("FLOAT_VEC4", gl_enum::float_vec4);
+    constant("INT_VEC2", gl_enum::int_vec2);
+    constant("INT_VEC3", gl_enum::int_vec3);
+    constant("INT_VEC4", gl_enum::int_vec4);
+    constant("BOOL", gl_enum::bool_);
+    constant("BOOL_VEC2", gl_enum::bool_vec2);
+    constant("BOOL_VEC3", gl_enum::bool_vec3);
+    constant("BOOL_VEC4", gl_enum::bool_vec4);
+    constant("FLOAT_MAT2", gl_enum::float_mat2);
+    constant("FLOAT_MAT3", gl_enum::float_mat3);
+    constant("FLOAT_MAT4", gl_enum::float_mat4);
+    constant("SAMPLER_2D", gl_enum::sampler_2d);
+    constant("SAMPLER_CUBE", gl_enum::sampler_cube);
     constant("MAX_TEXTURE_SIZE", gl_enum::max_texture_size);
     constant("MAX_VERTEX_ATTRIBS", gl_enum::max_vertex_attribs);
     constant("MAX_TEXTURE_IMAGE_UNITS", 0x8872);
@@ -400,11 +438,50 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
     });
     method("getProgramParameter", [gl](context & c, std::span<value> a) {
         const std::uint32_t which = enum_at(a, 1);
+        const std::uint32_t program = id_of(c, a.empty() ? value::undefined() : a[0]);
         if (which == gl_enum::link_status || which == 0x8B83) {
-            return value::boolean(
-                gl->program_linked(id_of(c, a.empty() ? value::undefined() : a[0])));
+            return value::boolean(gl->program_linked(program));
         }
+        // ACTIVE_UNIFORMS and ACTIVE_ATTRIBUTES. These used to fall through to
+        // the zero below, which is the shape of wrong answer this engine keeps
+        // being bitten by: a library that ENUMERATES a program instead of
+        // asking for names it already knows was told the shader declared
+        // nothing, and bound nothing. See webgl.hpp.
+        if (which == gl_enum::active_uniforms) {
+            return value::number(static_cast<double>(gl->active_uniforms(program).size()));
+        }
+        if (which == gl_enum::active_attributes) {
+            return value::number(static_cast<double>(gl->active_attributes(program).size()));
+        }
+        // Still zero for everything else, and still a guess. Anything a page
+        // actually reads should be listed above rather than left to this.
         return value::number(0);
+    });
+    // WebGLActiveInfo: `{size, type, name}`. The INDEX is positional and is the
+    // attribute's location as well, which is why active_attributes preserves
+    // link order rather than sorting.
+    const auto active_info = [](context & c, const webgl_context::active_variable & v) {
+        value out = c.make_object();
+        auto * made = static_cast<script::object_object *>(out.as_heap());
+        made->set("name", c.string(v.name));
+        // `size` is the ARRAY LENGTH, not the component count - 1 for a plain
+        // uniform, and mat4 uColour[2] is size 2. Reporting components here
+        // would make a caller loop the wrong number of times.
+        made->set("size", value::number(v.t.array > 0 ? v.t.array : 1));
+        made->set("type", value::number(gl_type_code(v.t)));
+        return out;
+    };
+    method("getActiveUniform", [gl, active_info](context & c, std::span<value> a) {
+        const auto all = gl->active_uniforms(id_of(c, a.empty() ? value::undefined() : a[0]));
+        const auto i = static_cast<std::size_t>(std::max(0.0f, number(a, 1)));
+        if (i >= all.size()) { return value::null(); }
+        return active_info(c, all[i]);
+    });
+    method("getActiveAttrib", [gl, active_info](context & c, std::span<value> a) {
+        const auto all = gl->active_attributes(id_of(c, a.empty() ? value::undefined() : a[0]));
+        const auto i = static_cast<std::size_t>(std::max(0.0f, number(a, 1)));
+        if (i >= all.size()) { return value::null(); }
+        return active_info(c, all[i]);
     });
     method("getProgramInfoLog", [gl](context & c, std::span<value> a) {
         return c.string(gl->program_log(id_of(c, a.empty() ? value::undefined() : a[0])));

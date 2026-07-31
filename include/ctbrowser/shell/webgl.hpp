@@ -99,6 +99,27 @@ inline constexpr std::uint32_t repeat = 0x2901;
 
 inline constexpr std::uint32_t compile_status = 0x8B81;
 inline constexpr std::uint32_t link_status = 0x8B82;
+inline constexpr std::uint32_t active_uniforms = 0x8B86;
+inline constexpr std::uint32_t active_attributes = 0x8B89;
+
+// The type codes getActiveUniform and getActiveAttrib report. A caller
+// SWITCHES on these to decide which uniform* entry point to call, so a wrong
+// one here sends a mat4 through uniform4fv.
+inline constexpr std::uint32_t float_vec2 = 0x8B50;
+inline constexpr std::uint32_t float_vec3 = 0x8B51;
+inline constexpr std::uint32_t float_vec4 = 0x8B52;
+inline constexpr std::uint32_t int_vec2 = 0x8B53;
+inline constexpr std::uint32_t int_vec3 = 0x8B54;
+inline constexpr std::uint32_t int_vec4 = 0x8B55;
+inline constexpr std::uint32_t bool_ = 0x8B56;
+inline constexpr std::uint32_t bool_vec2 = 0x8B57;
+inline constexpr std::uint32_t bool_vec3 = 0x8B58;
+inline constexpr std::uint32_t bool_vec4 = 0x8B59;
+inline constexpr std::uint32_t float_mat2 = 0x8B5A;
+inline constexpr std::uint32_t float_mat3 = 0x8B5B;
+inline constexpr std::uint32_t float_mat4 = 0x8B5C;
+inline constexpr std::uint32_t sampler_2d = 0x8B5E;
+inline constexpr std::uint32_t sampler_cube = 0x8B60;
 inline constexpr std::uint32_t vertex_shader = 0x8B31;
 inline constexpr std::uint32_t fragment_shader = 0x8B30;
 
@@ -114,6 +135,11 @@ inline constexpr std::uint32_t invalid_enum = 0x0500;
 inline constexpr std::uint32_t invalid_value = 0x0501;
 inline constexpr std::uint32_t invalid_operation = 0x0502;
 } // namespace gl_enum
+
+// A GLSL type as the GL enum that names it. Free rather than a method on
+// `glsl::type` because it is GL's vocabulary, not the language's - raster/ has
+// no business knowing these numbers.
+[[nodiscard]] std::uint32_t gl_type_code(const raster::glsl::type & t) noexcept;
 
 // The objects a context owns. Each is reached by a small integer, which is what
 // `createBuffer` hands back and what the binding layer wraps in a JS object.
@@ -187,6 +213,27 @@ public:
     [[nodiscard]] bool program_linked(std::uint32_t program) const;
     [[nodiscard]] std::string program_log(std::uint32_t program) const;
     void use_program(std::uint32_t program);
+
+    // WHAT A PROGRAM DECLARES, enumerated. `getActiveUniform` and
+    // `getActiveAttrib` are how a LIBRARY discovers a shader rather than how a
+    // page uses one: a hand-written page knows its own uniform names and asks
+    // for them by name, so nothing needed this until p5 arrived.
+    //
+    // p5 asks for the counts first and only then asks for locations. Answering
+    // zero - which is what an unimplemented getProgramParameter did - told it
+    // the shader had no inputs at all, so it bound no attributes, set no
+    // matrices, and drew a cube with no vertices. No GL error, no warning, one
+    // correct-looking drawElements, and an empty canvas.
+    struct active_variable {
+        std::string name;
+        raster::glsl::type t;
+    };
+    // Uniforms from BOTH stages, by name: GL links them into one namespace, and
+    // p5's shaders declare the same matrix in each.
+    [[nodiscard]] std::vector<active_variable> active_uniforms(std::uint32_t program) const;
+    // Attributes are the VERTEX shader's alone, in the order link_program
+    // assigned their locations - so index i here is location i.
+    [[nodiscard]] std::vector<active_variable> active_attributes(std::uint32_t program) const;
 
     [[nodiscard]] int attribute_location(std::uint32_t program, const std::string & name) const;
     void enable_attribute(int location, bool on);

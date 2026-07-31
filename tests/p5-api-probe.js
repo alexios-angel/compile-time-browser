@@ -1192,10 +1192,44 @@ globalThis.__probes = [
     // that read the size once was left at the 300x150 HTML default, and a
     // readback of the sketch's own 20x20 window found nothing at all.
     const gl = s._renderer.drawingContext;
+    // THE DRAWING BUFFER MUST BE THE CANVAS'S SIZE, which is a separate bug from
+    // selecting the renderer and was hidden behind it. p5 creates the canvas,
+    // asks for a context, and only THEN sets width and height - so a context
+    // that read the size once was left at the 300x150 HTML default, and a
+    // readback of the sketch's own 20x20 window found nothing.
     if (gl.drawingBufferWidth !== 20 || gl.drawingBufferHeight !== 20) {
       throw 'drawing buffer is ' + gl.drawingBufferWidth + 'x' + gl.drawingBufferHeight
           + ', not the canvas 20x20';
     }
+    return 'ok';
+  }],
+  // AND IT ACTUALLY DRAWS, which is a different question from every one above
+  // and the only one a sketch cares about. Three engine bugs sat between
+  // "p5 picked the WebGL renderer" and "a cube appears", every one of them
+  // silent: no GL error, no console warning, one correct-looking drawElements
+  // of 36 indices, and a canvas with nothing on it but the background.
+  //
+  // The last was the worst. p5 dispatches uniforms with
+  // `switch (uniform.type) { case gl.FLOAT_MAT4: ... }` - against the CONTEXT'S
+  // OWN CONSTANTS - and this context did not define them, so `gl.FLOAT_MAT4`
+  // was undefined, no case matched, there is no default, and every matrix was
+  // dropped without a word.
+  ['webgl', 'a WEBGL sketch draws geometry', function (s) {
+    s.createCanvas(20, 20, s.WEBGL);
+    s.background(0, 0, 255);
+    s.noStroke();
+    s.fill(255, 0, 0);
+    s.box(8);
+    const gl = s._renderer.drawingContext;
+    const buf = new Uint8Array(20 * 20 * 4);
+    gl.readPixels(0, 0, 20, 20, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+    // The centre is inside a box drawn at the origin; a corner is not. Both
+    // halves matter - an all-red buffer would pass a "did anything draw" check
+    // and mean the geometry covered everything.
+    const at = (x, y) => buf[(y * 20 + x) * 4] + ',' + buf[(y * 20 + x) * 4 + 1] +
+                         ',' + buf[(y * 20 + x) * 4 + 2];
+    if (at(10, 10) !== '255,0,0') { throw 'centre is ' + at(10, 10) + ', not the fill'; }
+    if (at(0, 0) !== '0,0,255') { throw 'corner is ' + at(0, 0) + ', not the background'; }
     return 'ok';
   }],
 ];

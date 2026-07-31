@@ -78,8 +78,13 @@ foreach(source ${example-sources})
     # noLoop, no random, no text and no image - so the frame it draws is the
     # same on every platform, and the golden is the only proof that the bundle
     # actually PAINTS rather than merely running.
+    # p5webgl is the one that goes all the way through: p5's RendererGL, its
+    # shaders and its matrices, onto this engine's software rasteriser. It has a
+    # golden for the same reason p5basic does - the page runs noLoop with fixed
+    # rotations and no random, so the frame is the same everywhere, and nothing
+    # short of the pixels proves the geometry actually landed.
     set(golden-examples widgets elements p5basic p5text p5transform p5shape p5pixels
-        p5image webgltriangle)
+        p5image webgltriangle p5webgl)
     # plutosvg_FOUND, not CTBROWSER_WITH_SVG: the latter is a compile
     # definition on a target and is not a variable this scope can test.
     if(plutosvg_FOUND)
