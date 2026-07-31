@@ -533,7 +533,7 @@ std::size_t webgl_context::draw_arrays(std::uint32_t mode, int first, int count)
     request.vertices = &vertices;
     request.state = state_;
     request.uniform = [&program](std::string_view name) -> const glsl::value * {
-        const auto found = program->second.uniforms.find(std::string{name});
+        const auto found = program->second.uniforms.find(name);
         return found == program->second.uniforms.end() ? nullptr : &found->second;
     };
     request.sample = [this](int unit, float s, float t) {
@@ -605,7 +605,7 @@ std::size_t webgl_context::draw_elements(std::uint32_t mode, int count, std::uin
     request.vertices = &vertices;
     request.state = state_;
     request.uniform = [&program](std::string_view name) -> const glsl::value * {
-        const auto found = program->second.uniforms.find(std::string{name});
+        const auto found = program->second.uniforms.find(name);
         return found == program->second.uniforms.end() ? nullptr : &found->second;
     };
     return draw_triangles(request, framebuffer_);

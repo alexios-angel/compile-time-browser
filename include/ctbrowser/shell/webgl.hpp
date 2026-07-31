@@ -140,7 +140,8 @@ struct gl_program {
     std::vector<std::string> attribute_names;
     // Uniform VALUES live with the program, because that is where GL keeps them:
     // `useProgram` does not reset them, and a page relies on that.
-    std::unordered_map<std::string, raster::glsl::value> uniforms;
+    std::unordered_map<std::string, raster::glsl::value, raster::glsl::string_hash, std::equal_to<>>
+        uniforms;
 };
 
 struct gl_texture {

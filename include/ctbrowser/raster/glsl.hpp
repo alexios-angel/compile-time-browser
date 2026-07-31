@@ -1,6 +1,9 @@
 #pragma once
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -236,6 +239,95 @@ struct options {
 // It is also the slowest thing here by design. The benchmark in tests/ reports
 // what it costs, so stage three has a number to beat rather than an impression.
 
+// The components of a value, with INLINE STORAGE.
+//
+// THE MEASUREMENT THAT MADE THIS EXIST. With a `std::vector<float>` here, every
+// arithmetic node in a shader heap-allocated and freed a result - and the cost
+// per node was 0.24 microseconds, of which the arithmetic was almost none: a
+// hundred vec4 operations cost only 15% more than a hundred SCALAR ones, so four
+// times the data was nearly free while the container around it was everything.
+//
+// Sixteen floats inline is a mat4, which is the largest thing GLSL has that is
+// not an array or a struct - so a shader that touches neither never allocates.
+// Those two spill to the heap, which is right: they are rare and they are large.
+//
+// Only the operations the evaluator uses, deliberately. This is not a general
+// container and should not grow into one.
+class components {
+public:
+    static constexpr std::size_t inline_capacity = 16;
+
+    components() = default;
+    components(std::initializer_list<float> from) { assign_range(from.begin(), from.end()); }
+
+    [[nodiscard]] std::size_t size() const noexcept { return size_; }
+    [[nodiscard]] bool empty() const noexcept { return size_ == 0; }
+    [[nodiscard]] float * data() noexcept { return spilled() ? spill_.data() : inline_.data(); }
+    [[nodiscard]] const float * data() const noexcept {
+        return spilled() ? spill_.data() : inline_.data();
+    }
+    [[nodiscard]] float & operator[](std::size_t i) noexcept { return data()[i]; }
+    [[nodiscard]] const float & operator[](std::size_t i) const noexcept { return data()[i]; }
+    [[nodiscard]] float * begin() noexcept { return data(); }
+    [[nodiscard]] float * end() noexcept { return data() + size_; }
+    [[nodiscard]] const float * begin() const noexcept { return data(); }
+    [[nodiscard]] const float * end() const noexcept { return data() + size_; }
+    [[nodiscard]] float & front() noexcept { return data()[0]; }
+    [[nodiscard]] const float & front() const noexcept { return data()[0]; }
+
+    void clear() noexcept {
+        size_ = 0;
+        spill_.clear();
+    }
+    void push_back(float f) {
+        grow_to(size_ + 1);
+        data()[size_ - 1] = f;
+    }
+    void assign(std::size_t count, float f) {
+        clear();
+        grow_to(count);
+        for (std::size_t i = 0; i < count; ++i) { data()[i] = f; }
+    }
+    void resize(std::size_t count, float f = 0.0f) {
+        const std::size_t was = size_;
+        grow_to(count);
+        for (std::size_t i = was; i < count; ++i) { data()[i] = f; }
+    }
+    void reserve(std::size_t count) {
+        if (count > inline_capacity) { spill_.reserve(count); }
+    }
+    template <typename It> void assign_range(It first, It last) {
+        clear();
+        for (It at = first; at != last; ++at) { push_back(*at); }
+    }
+    template <typename It> void append(It first, It last) {
+        for (It at = first; at != last; ++at) { push_back(*at); }
+    }
+
+private:
+    [[nodiscard]] bool spilled() const noexcept { return size_ > inline_capacity; }
+    // Grow to `count`, moving to the heap the moment it no longer fits inline.
+    void grow_to(std::size_t count) {
+        if (count > inline_capacity) {
+            if (!spilled() || spill_.size() < size_) {
+                // Crossing the boundary: carry what is already there across.
+                std::vector<float> moved(inline_.begin(),
+                                         inline_.begin() + static_cast<std::ptrdiff_t>(
+                                                               std::min(size_, inline_capacity)));
+                moved.resize(count, 0.0f);
+                spill_ = std::move(moved);
+            } else {
+                spill_.resize(count, 0.0f);
+            }
+        }
+        size_ = count;
+    }
+
+    std::size_t size_ = 0;
+    std::array<float, inline_capacity> inline_{};
+    std::vector<float> spill_;
+};
+
 // A runtime value: a type and its components, flat.
 //
 // FLAT ON PURPOSE. A vec3 is three floats, a mat4 is sixteen in COLUMN-MAJOR
@@ -244,7 +336,7 @@ struct options {
 // swizzling are all the same operation - pick a range - instead of four.
 struct value {
     type t;
-    std::vector<float> v;
+    components v;
 
     [[nodiscard]] static value scalar(float f) {
         return value{type{base::f, 1, 1, -1, 0}, {f}};
@@ -261,6 +353,22 @@ struct value {
     [[nodiscard]] float f(std::size_t i = 0) const { return i < v.size() ? v[i] : 0.0f; }
     [[nodiscard]] int i(std::size_t at = 0) const { return static_cast<int>(f(at)); }
     [[nodiscard]] bool truthy() const { return f(0) != 0.0f; }
+};
+
+// LOOKING UP BY string_view WITHOUT BUILDING A string.
+//
+// Every identifier a shader reads is looked up by name, and the callers all keep
+// their inputs in a `std::string`-keyed map - so `find(std::string{name})`
+// allocated once per identifier per fragment. Transparent hashing removes the
+// allocation and changes nothing else.
+struct string_hash {
+    using is_transparent = void;
+    [[nodiscard]] std::size_t operator()(std::string_view text) const noexcept {
+        return std::hash<std::string_view>{}(text);
+    }
+    [[nodiscard]] std::size_t operator()(const std::string & text) const noexcept {
+        return std::hash<std::string_view>{}(text);
+    }
 };
 
 // What a shader sees that is not written in it.
@@ -286,9 +394,48 @@ struct execution {
     [[nodiscard]] const value * find(std::string_view name) const;
 };
 
-// Run `main`. Every runtime failure - an unknown name, an index out of range, a
-// call that resolves to nothing - comes back in `error` rather than as a crash,
-// for the same reason the parser's do: this is a page's text.
+// A shader PREPARED TO RUN MANY TIMES.
+//
+// THE MEASUREMENT THAT MADE THIS EXIST. `execute` below builds the function
+// table, evaluates every global initialiser and constructs the globals map on
+// every call - which is once per FRAGMENT. Adding twenty constants and twenty
+// functions that `main` never touches made the same shader run 3.9x slower
+// (1218k -> 313k fragments/sec), so for a real shader most of the time was
+// setup rather than evaluation.
+//
+// A `program` does that work once. Per fragment it resets the globals from a
+// template and runs `main`, which is a vector copy rather than a rebuild.
+//
+// It is also the shape the bytecode VM needs (docs/webgl-plan.md stage 3): the
+// split between "prepare once" and "run per fragment" is the same either way,
+// so this is the first half of that work rather than a detour around it.
+class program {
+public:
+    explicit program(const module & m);
+    ~program();
+    program(program &&) noexcept;
+    program & operator=(program &&) noexcept;
+    program(const program &) = delete;
+    program & operator=(const program &) = delete;
+
+    [[nodiscard]] bool ok() const noexcept;
+    [[nodiscard]] const std::string & error() const noexcept;
+
+    // Run `main` with these inputs. Cheap enough to call per fragment, which is
+    // the entire point.
+    [[nodiscard]] execution run(const environment & env) const;
+
+private:
+    struct impl;
+    std::unique_ptr<impl> impl_;
+};
+
+// Run `main` once. Every runtime failure - an unknown name, an index out of
+// range, a call that resolves to nothing - comes back in `error` rather than as
+// a crash, for the same reason the parser's do: this is a page's text.
+//
+// Prepares and runs in one go, so a caller that draws more than one fragment
+// should build a `program` instead and keep it.
 [[nodiscard]] execution execute(const module & m, const environment & env);
 
 // NOT IMPLEMENTED, named here rather than discovered at run time:

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <unordered_map>
 
 // The software rasteriser. See softgl.hpp for what it is and is not.
@@ -40,7 +41,7 @@ public:
     [[nodiscard]] glsl::environment as_environment() const {
         glsl::environment env;
         env.read = [this](std::string_view name) -> const glsl::value * {
-            if (const auto found = locals_.find(std::string{name}); found != locals_.end()) {
+            if (const auto found = locals_.find(name); found != locals_.end()) {
                 return &found->second;
             }
             return request_->uniform ? request_->uniform(name) : nullptr;
@@ -51,7 +52,7 @@ public:
 
 private:
     const draw_request * request_;
-    std::unordered_map<std::string, glsl::value> locals_;
+    std::unordered_map<std::string, glsl::value, glsl::string_hash, std::equal_to<>> locals_;
 };
 
 [[nodiscard]] float blend_scale(blend_factor which, float src, float src_alpha, float dst,
@@ -119,6 +120,23 @@ std::size_t draw_triangles(const draw_request & request, framebuffer & into) {
     if (width <= 0 || height <= 0) { return 0; }
     if (state.depth_enabled) { into.ensure_depth(width, height); }
 
+    // PREPARED ONCE PER DRAW. Building a shader's function table and globals is
+    // most of what running it used to cost - a shader with twenty constants and
+    // twenty functions its main never touches ran 3.9x slower than the same main
+    // alone, because all of that was rebuilt per fragment.
+    //
+    // A caller may hand over programs it keeps between draws (the WebGL context
+    // does); otherwise they are built here and thrown away, which is still once
+    // rather than once per pixel.
+    std::optional<glsl::program> own_vertex;
+    std::optional<glsl::program> own_fragment;
+    if (request.vertex_program == nullptr) { own_vertex.emplace(*request.vertex_shader); }
+    if (request.fragment_program == nullptr) { own_fragment.emplace(*request.fragment_shader); }
+    const glsl::program & vertex_program =
+        request.vertex_program != nullptr ? *request.vertex_program : *own_vertex;
+    const glsl::program & fragment_program =
+        request.fragment_program != nullptr ? *request.fragment_program : *own_fragment;
+
     stage_environment stage{request};
     std::size_t written = 0;
 
@@ -134,7 +152,7 @@ std::size_t draw_triangles(const draw_request & request, framebuffer & into) {
                 stage.set(name, held);
             }
             const glsl::environment env = stage.as_environment();
-            const glsl::execution ran = glsl::execute(*request.vertex_shader, env);
+            const glsl::execution ran = vertex_program.run(env);
             if (!ran.ok) {
                 usable = false;
                 break;
@@ -294,7 +312,7 @@ std::size_t draw_triangles(const draw_request & request, framebuffer & into) {
                 stage.set("gl_FragCoord", coord);
 
                 const glsl::environment env = stage.as_environment();
-                const glsl::execution ran = glsl::execute(*request.fragment_shader, env);
+                const glsl::execution ran = fragment_program.run(env);
                 if (!ran.ok) { continue; }
                 // DISCARD WRITES NOTHING, and that includes the depth buffer -
                 // a discarded fragment must not occlude what comes after it.

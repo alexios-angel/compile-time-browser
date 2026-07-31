@@ -344,12 +344,12 @@ targets, to be confirmed or corrected by measurement:
 
 | | fragments/sec | 200×200 full-screen draw |
 |---|---|---|
-| **tree walk (MEASURED, stage 2)** | **0.64 M** | **63 ms** |
-| bytecode, scalar | ~15 M | ~3 ms |
-| + 8-wide packets | ~100 M | ~0.4 ms |
-| + hoisting, early-Z, threads | ~400 M | ~0.1 ms |
+| tree walk, heap-allocating values (stage 2) | 0.64 M | 63 ms |
+| **+ inline storage, prepared programs (MEASURED, stage 3a)** | **0.83 M** | **48 ms** |
+| bytecode VM, scalar — NOT BUILT | ~10 M | ~4 ms |
+| + 8-wide packets — NOT BUILT | ~60 M | ~0.7 ms |
 
-**The first row is measured; the rest are still predictions.**
+**The first two rows are measured; the rest are still predictions.**
 `ctbrowser-test-glsl_basics --bench` reports it, on a shader with the shape of
 real work — a normalize, a dot, two multiplies and a clamp, which is what a
 diffuse term costs.
@@ -401,7 +401,48 @@ swizzle assignment, integer vs float division, `discard`.
 
 The benchmark lands here, so stage 3 has a baseline to beat.
 
-### 3. The bytecode VM — AFTER the pipeline exists, see the table above
+### 3a. What profiling actually said — DONE
+
+Before building the VM, the pipeline was measured. Three findings, two of which
+contradicted what this document previously assumed:
+
+1. **Per-fragment SETUP is not the bottleneck.** An early probe suggested it was
+   - a shader with twenty constants and twenty functions its `main` never touched
+   ran 3.9× slower than the same `main` alone - but that shader was artificial.
+   p5's `lightTextureFrag` declares eight things, and preparing it once rather
+   than per fragment is worth only **1.1×**. The `glsl::program` type that came
+   out of it is still right (it is the shape the VM needs, and it costs nothing),
+   but the claim was over-general and is corrected here rather than quietly
+   dropped.
+
+2. **The cost is PER AST NODE, and the arithmetic is free.** A hundred `vec4`
+   operations cost only 15% more than a hundred `float` ones - four times the
+   data for almost nothing - so essentially all of the ~0.2 µs per node was the
+   machinery around the arithmetic rather than the arithmetic.
+
+3. **Most of that machinery was one heap allocation per node.** Every `value`
+   held a `std::vector<float>`, so every intermediate result allocated and freed.
+   Sixteen floats of inline storage - a `mat4`, the largest thing that is not an
+   array or a struct - is worth a measured **1.5×**, controlled A/B, minimum of
+   seven runs.
+
+**Measuring on this machine needs care**: run-to-run variance is ±10%, which is
+wider than most changes worth making. Every number above is the minimum of seven
+runs, which is the robust estimator because noise only ever adds.
+
+### 3b. The bytecode VM — SCOPED, NOT BUILT
+
+The remaining ~10× needs the real thing: an AST-to-bytecode compiler with a flat
+register file, which removes the per-node allocation entirely, the name lookups,
+and the recursive dispatch in one go. Finding (2) above is precisely the argument
+for it - the overhead is structural, and no amount of tuning the tree walker
+reaches it.
+
+It is not built. It is a large piece of work - a compiler covering structs,
+arrays, overloads and `out` parameters, plus a VM, plus the differential test
+against the reference evaluator - and the GPU back end (stage 7) makes the
+software path's speed much less critical, so it is honest to say it is scoped
+rather than to half-build it.
 
 Note that this stage is for the SOFTWARE back end only. The GPU back end does not
 want it: a shader that reaches SPIR-V is executed by the driver, and the fastest

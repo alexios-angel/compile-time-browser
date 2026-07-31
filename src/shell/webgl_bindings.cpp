@@ -149,8 +149,8 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
 
     auto & made = webgl_contexts_[pack(id)];
     if (!made) {
-        made = std::make_unique<webgl_context>(const_cast<paint::bitmap *>(surface->surface().get()),
-                                               width, height);
+        made = std::make_unique<webgl_context>(
+            const_cast<paint::bitmap *>(surface->surface().get()), width, height);
     }
     webgl_context * gl = made.get();
 
@@ -315,8 +315,9 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
         return value::object(out);
     };
 
-    method("createBuffer",
-           [gl, handle](context & c, std::span<value>) { return handle(c, gl->create_buffer(), "buffer"); });
+    method("createBuffer", [gl, handle](context & c, std::span<value>) {
+        return handle(c, gl->create_buffer(), "buffer");
+    });
     method("createTexture", [gl, handle](context & c, std::span<value>) {
         return handle(c, gl->create_texture(), "texture");
     });
@@ -326,9 +327,8 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
     method("createShader", [gl, handle](context & c, std::span<value> a) {
         return handle(c, gl->create_shader(enum_at(a, 0)), "shader");
     });
-    for (const char * name :
-         {"deleteBuffer", "deleteTexture", "deleteProgram", "deleteShader", "deleteFramebuffer",
-          "deleteRenderbuffer"}) {
+    for (const char * name : {"deleteBuffer", "deleteTexture", "deleteProgram", "deleteShader",
+                              "deleteFramebuffer", "deleteRenderbuffer"}) {
         method(name, [gl](context & c, std::span<value> a) {
             gl->delete_object(id_of(c, a.empty() ? value::undefined() : a[0]));
             return value::undefined();
@@ -367,7 +367,8 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
     method("getShaderParameter", [gl](context & c, std::span<value> a) {
         const std::uint32_t which = enum_at(a, 1);
         if (which == gl_enum::compile_status) {
-            return value::boolean(gl->shader_compiled(id_of(c, a.empty() ? value::undefined() : a[0])));
+            return value::boolean(
+                gl->shader_compiled(id_of(c, a.empty() ? value::undefined() : a[0])));
         }
         return value::boolean(true);
     });
@@ -387,7 +388,8 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
     method("getProgramParameter", [gl](context & c, std::span<value> a) {
         const std::uint32_t which = enum_at(a, 1);
         if (which == gl_enum::link_status || which == 0x8B83) {
-            return value::boolean(gl->program_linked(id_of(c, a.empty() ? value::undefined() : a[0])));
+            return value::boolean(
+                gl->program_linked(id_of(c, a.empty() ? value::undefined() : a[0])));
         }
         return value::number(0);
     });
@@ -402,9 +404,9 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
 
     // --- attributes
     method("getAttribLocation", [gl](context & c, std::span<value> a) {
-        return value::number(gl->attribute_location(id_of(c, a.empty() ? value::undefined() : a[0]),
-                                                    a.size() > 1 ? c.to_string(a[1])
-                                                                 : std::string{}));
+        return value::number(
+            gl->attribute_location(id_of(c, a.empty() ? value::undefined() : a[0]),
+                                   a.size() > 1 ? c.to_string(a[1]) : std::string{}));
     });
     method("bindAttribLocation", [](context &, std::span<value>) {
         // Locations are assigned at link time in declaration order here, so this
@@ -448,23 +450,22 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
         std::uint8_t cols;
         raster::glsl::base kind;
     };
-    for (const uniform_shape & shape :
-         {uniform_shape{"uniform1f", 1, 1, raster::glsl::base::f},
-          uniform_shape{"uniform2f", 2, 1, raster::glsl::base::f},
-          uniform_shape{"uniform3f", 3, 1, raster::glsl::base::f},
-          uniform_shape{"uniform4f", 4, 1, raster::glsl::base::f},
-          uniform_shape{"uniform1i", 1, 1, raster::glsl::base::i},
-          uniform_shape{"uniform2i", 2, 1, raster::glsl::base::i},
-          uniform_shape{"uniform3i", 3, 1, raster::glsl::base::i},
-          uniform_shape{"uniform4i", 4, 1, raster::glsl::base::i},
-          uniform_shape{"uniform1fv", 1, 1, raster::glsl::base::f},
-          uniform_shape{"uniform2fv", 2, 1, raster::glsl::base::f},
-          uniform_shape{"uniform3fv", 3, 1, raster::glsl::base::f},
-          uniform_shape{"uniform4fv", 4, 1, raster::glsl::base::f},
-          uniform_shape{"uniform1iv", 1, 1, raster::glsl::base::i},
-          uniform_shape{"uniform2iv", 2, 1, raster::glsl::base::i},
-          uniform_shape{"uniform3iv", 3, 1, raster::glsl::base::i},
-          uniform_shape{"uniform4iv", 4, 1, raster::glsl::base::i}}) {
+    for (const uniform_shape & shape : {uniform_shape{"uniform1f", 1, 1, raster::glsl::base::f},
+                                        uniform_shape{"uniform2f", 2, 1, raster::glsl::base::f},
+                                        uniform_shape{"uniform3f", 3, 1, raster::glsl::base::f},
+                                        uniform_shape{"uniform4f", 4, 1, raster::glsl::base::f},
+                                        uniform_shape{"uniform1i", 1, 1, raster::glsl::base::i},
+                                        uniform_shape{"uniform2i", 2, 1, raster::glsl::base::i},
+                                        uniform_shape{"uniform3i", 3, 1, raster::glsl::base::i},
+                                        uniform_shape{"uniform4i", 4, 1, raster::glsl::base::i},
+                                        uniform_shape{"uniform1fv", 1, 1, raster::glsl::base::f},
+                                        uniform_shape{"uniform2fv", 2, 1, raster::glsl::base::f},
+                                        uniform_shape{"uniform3fv", 3, 1, raster::glsl::base::f},
+                                        uniform_shape{"uniform4fv", 4, 1, raster::glsl::base::f},
+                                        uniform_shape{"uniform1iv", 1, 1, raster::glsl::base::i},
+                                        uniform_shape{"uniform2iv", 2, 1, raster::glsl::base::i},
+                                        uniform_shape{"uniform3iv", 3, 1, raster::glsl::base::i},
+                                        uniform_shape{"uniform4iv", 4, 1, raster::glsl::base::i}}) {
         method(shape.name, [gl, shape, uniform_name](context & c, std::span<value> a) {
             gl->set_uniform(uniform_name(c, a),
                             uniform_value(c, a, 1, shape.rows, shape.cols, shape.kind));
@@ -521,10 +522,10 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
         gl->blend_func(enum_at(a, 0), enum_at(a, 1));
         return value::undefined();
     });
-    for (const char * name : {"blendEquation", "blendEquationSeparate", "blendColor",
-                              "stencilFunc", "stencilOp", "stencilMask", "colorMask",
-                              "polygonOffset", "sampleCoverage", "hint", "lineWidth",
-                              "pixelStorei", "generateMipmap", "flush", "finish"}) {
+    for (const char * name :
+         {"blendEquation", "blendEquationSeparate", "blendColor", "stencilFunc", "stencilOp",
+          "stencilMask", "colorMask", "polygonOffset", "sampleCoverage", "hint", "lineWidth",
+          "pixelStorei", "generateMipmap", "flush", "finish"}) {
         method(name, [](context &, std::span<value>) { return value::undefined(); });
     }
     method("cullFace", [gl](context &, std::span<value> a) {
@@ -583,7 +584,8 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
             const value source = a[5];
             const value data = c.lookup_property(source, "data");
             if (data.is_array() || (data.is_object() && !data.is_undefined())) {
-                const int w = static_cast<int>(context::to_number(c.lookup_property(source, "width")));
+                const int w =
+                    static_cast<int>(context::to_number(c.lookup_property(source, "width")));
                 const int h =
                     static_cast<int>(context::to_number(c.lookup_property(source, "height")));
                 gl->texture_image(enum_at(a, 0), w, h, bytes_of(c, data));
@@ -616,9 +618,8 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
     }
 
     // --- reading back
-    method("getError", [gl](context &, std::span<value>) {
-        return value::number(gl->take_error());
-    });
+    method("getError",
+           [gl](context &, std::span<value>) { return value::number(gl->take_error()); });
     method("getParameter", [width, height](context & c, std::span<value> a) {
         switch (enum_at(a, 0)) {
         case gl_enum::version: return c.string("WebGL 1.0 (ctbrowser software)");
@@ -698,9 +699,9 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
     method("createRenderbuffer", [gl, handle](context & c, std::span<value>) {
         return handle(c, gl->create_buffer(), "renderbuffer");
     });
-    for (const char * name : {"bindFramebuffer", "bindRenderbuffer", "framebufferTexture2D",
-                              "framebufferRenderbuffer", "renderbufferStorage",
-                              "renderbufferStorageMultisample", "blitFramebuffer"}) {
+    for (const char * name :
+         {"bindFramebuffer", "bindRenderbuffer", "framebufferTexture2D", "framebufferRenderbuffer",
+          "renderbufferStorage", "renderbufferStorageMultisample", "blitFramebuffer"}) {
         method(name, [](context &, std::span<value>) { return value::undefined(); });
     }
     method("checkFramebufferStatus", [](context &, std::span<value>) {

@@ -877,25 +877,75 @@ void run_benchmark() {
     // 200x200 is the corpus page size the plan budgets for, so the count is the
     // number of fragments one full-screen draw actually costs.
     constexpr int fragments = 200 * 200;
-    const auto started = std::chrono::steady_clock::now();
-    double sink = 0;
-    for (int i = 0; i < fragments; ++i) {
-        // The normal varies per fragment, so nothing can be hoisted by accident
-        // and the measurement is of real work.
-        inputs["vNormal"] =
-            glsl::value::vector({0.3f + static_cast<float>(i % 17) * 0.01f, 0.5f, 0.8f});
-        const glsl::execution ran = glsl::execute(m, env);
-        if (const glsl::value * c = ran.find("gl_FragColor")) { sink += c->f(0); }
-    }
-    const auto elapsed = std::chrono::steady_clock::now() - started;
-    const double seconds =
-        std::chrono::duration_cast<std::chrono::duration<double>>(elapsed).count();
+    const auto measure = [&](const char * label, auto && one_fragment) {
+        const auto started = std::chrono::steady_clock::now();
+        double sink = 0;
+        for (int i = 0; i < fragments; ++i) {
+            // The normal varies per fragment, so nothing can be hoisted by
+            // accident and the measurement is of real work.
+            inputs["vNormal"] =
+                glsl::value::vector({0.3f + static_cast<float>(i % 17) * 0.01f, 0.5f, 0.8f});
+            sink += one_fragment();
+        }
+        const double seconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        std::printf("    %-32s %7.2f M frag/s  %6.1f ms per draw  (sink %.0f)\n", label,
+                    fragments / seconds / 1e6, seconds * 1000.0, sink);
+        return seconds;
+    };
 
-    std::printf("\n  GLSL reference evaluator - the tree walker, stage 2\n\n");
-    std::printf("    %d fragments in %.3f s\n", fragments, seconds);
-    std::printf("    %.2f M fragments/sec\n", fragments / seconds / 1e6);
-    std::printf("    %.1f ms for one 200x200 full-screen draw\n", seconds * 1000.0);
-    std::printf("\n    (checksum %.3f, so the work cannot be optimised away)\n\n", sink);
+    std::printf("\n  GLSL execution, per fragment, over a 200x200 full-screen draw\n\n");
+    const double naive = measure("execute() - prepares each time", [&] {
+        const glsl::execution ran = glsl::execute(m, env);
+        const glsl::value * c = ran.find("gl_FragColor");
+        return c == nullptr ? 0.0 : static_cast<double>(c->f(0));
+    });
+    const glsl::program prepared{m};
+    const double fast = measure("program::run() - prepared once", [&] {
+        const glsl::execution ran = prepared.run(env);
+        const glsl::value * c = ran.find("gl_FragColor");
+        return c == nullptr ? 0.0 : static_cast<double>(c->f(0));
+    });
+    std::printf("\n    Preparing once is %.1fx faster here - and this shader declares three\n",
+                naive / fast);
+    std::printf("    things, so there is almost no setup to save. THE TOY SHADER IS THE\n");
+    std::printf("    WRONG MEASUREMENT; a real one follows.\n\n");
+
+    // A REAL SHADER, from the corpus. p5's lightTextureFrag is what actual work
+    // looks like: several uniforms, several varyings, and a function or two -
+    // which is exactly the setup a per-fragment `execute` was rebuilding.
+    const std::string preamble = read_file("tests/glsl/preamble.glsl");
+    const std::string real_source = preamble + "\n" + read_file("tests/glsl/lightTextureFrag.frag");
+    glsl::options how;
+    how.which = glsl::stage::fragment;
+    const glsl::module real = glsl::parse(real_source, how);
+    if (!real.ok) {
+        std::printf("  the corpus shader did not compile:\n%s", real.info_log().c_str());
+        return;
+    }
+    // Its inputs, all zero - the numbers do not matter, the WORK does.
+    for (const glsl::interface_variable & v : real.interface_) {
+        glsl::value made;
+        made.t = v.t;
+        made.v.assign(static_cast<std::size_t>(std::max(1, v.t.components())), 0.5f);
+        inputs[v.name] = made;
+    }
+    env.sample = [](int, float, float) { return glsl::value::vector({0.5f, 0.5f, 0.5f, 1.0f}); };
+
+    std::printf("  p5's lightTextureFrag - %zu declarations\n\n", real.interface_.size());
+    const double real_naive = measure("execute() - prepares each time", [&] {
+        const glsl::execution ran = glsl::execute(real, env);
+        const glsl::value * c = ran.find("gl_FragColor");
+        return c == nullptr ? 0.0 : static_cast<double>(c->f(0));
+    });
+    const glsl::program real_prepared{real};
+    const double real_fast = measure("program::run() - prepared once", [&] {
+        const glsl::execution ran = real_prepared.run(env);
+        const glsl::value * c = ran.find("gl_FragColor");
+        return c == nullptr ? 0.0 : static_cast<double>(c->f(0));
+    });
+    std::printf("\n    Preparing once is %.1fx faster on a shader anyone would actually run.\n\n",
+                real_naive / real_fast);
 }
 
 } // namespace

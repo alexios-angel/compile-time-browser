@@ -119,6 +119,12 @@ struct framebuffer {
 struct draw_request {
     const glsl::module * vertex_shader = nullptr;
     const glsl::module * fragment_shader = nullptr;
+    // PREPARED, so the per-fragment cost is running `main` rather than
+    // rebuilding the shader's function table and globals every time. Optional:
+    // with neither set the modules above are prepared here, once per draw, which
+    // is what a test that only wants pixels can rely on.
+    const glsl::program * vertex_program = nullptr;
+    const glsl::program * fragment_program = nullptr;
     const std::vector<attribute_set> * vertices = nullptr;
     std::function<const glsl::value *(std::string_view)> uniform;
     std::function<glsl::value(int unit, float s, float t)> sample;

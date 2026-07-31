@@ -30,7 +30,9 @@
 namespace ctbrowser::raster::glsl {
 namespace {
 
-using values = std::vector<float>;
+// String-keyed, but looked up by string_view - see glsl::string_hash.
+template <typename V>
+using by_name = std::unordered_map<std::string, V, string_hash, std::equal_to<>>;
 
 [[nodiscard]] type shape(base b, std::uint8_t rows, std::uint8_t cols = 1) {
     return type{b, rows, cols, -1, 0};
@@ -75,12 +77,53 @@ enum class flow : std::uint8_t {
     discarded
 };
 
+// What a shader needs built ONCE, whatever it is run against. Everything here is
+// decided by the source alone, so it survives from fragment to fragment.
+struct prepared_state {
+    by_name<std::vector<std::int32_t>> functions;
+    by_name<value> globals; // the template, after initialisers
+    std::int32_t main_fn = -1;
+    std::string error;
+};
+
 class interpreter {
 public:
     interpreter(const module & m, const environment & env, execution & out)
         : m_(&m), env_(&env), out_(&out) {}
 
+    // Build what only depends on the source. Split out so a caller drawing many
+    // fragments pays for it once - see glsl::program and the measurement in its
+    // header comment.
+    [[nodiscard]] prepared_state prepare() {
+        build_globals();
+        prepared_state out;
+        out.functions = functions_;
+        out.globals = globals_;
+        out.main_fn = find_function("main", {});
+        if (out.main_fn < 0) { out.error = "no main()"; }
+        out.error = out.error.empty() ? failure_ : out.error;
+        return out;
+    }
+
+    // Run against an already-built state. The globals are COPIED because main
+    // writes into them - gl_Position and every varying live there - so the
+    // template has to survive for the next fragment.
+    void run_prepared(const prepared_state & ready) {
+        if (!ready.error.empty()) {
+            out_->error = ready.error;
+            return;
+        }
+        functions_ = ready.functions;
+        globals_ = ready.globals;
+        run_main(ready.main_fn);
+    }
+
     void run() {
+        build_globals();
+        run_rest();
+    }
+
+    void build_globals() {
         // Top-level declarations first: a global `const` may be read by main,
         // and every function has to be findable before one calls another.
         for (const std::int32_t which : m_->declarations) {
@@ -115,12 +158,19 @@ public:
                 std::string_view{name} == "gl_Position" || std::string_view{name} == "gl_FragColor";
             globals_[name] = zero(shape(base::f, wide ? 4 : 1));
         }
+    }
 
+    void run_rest() {
         const std::int32_t main_fn = find_function("main", {});
         if (main_fn < 0) {
             fail("no main()");
             return;
         }
+        run_main(main_fn);
+    }
+
+private:
+    void run_main(std::int32_t main_fn) {
         std::vector<value> none;
         (void)call(main_fn, none);
 
@@ -145,7 +195,6 @@ public:
         out_->error = failure_;
     }
 
-private:
     // --- diagnostics
     void fail(std::string message) {
         if (failure_.empty()) { failure_ = std::move(message); }
@@ -436,8 +485,8 @@ private:
             if (field_of.name == name) {
                 value out;
                 out.t = field_of.t;
-                out.v.assign(on.v.begin() + static_cast<std::ptrdiff_t>(offset),
-                             on.v.begin() + static_cast<std::ptrdiff_t>(offset + width));
+                out.v.assign_range(on.v.begin() + static_cast<std::ptrdiff_t>(offset),
+                                   on.v.begin() + static_cast<std::ptrdiff_t>(offset + width));
                 return out;
             }
             offset += width;
@@ -464,8 +513,8 @@ private:
             }
             value out;
             out.t = each;
-            out.v.assign(on.v.begin() + static_cast<std::ptrdiff_t>(index * width),
-                         on.v.begin() + static_cast<std::ptrdiff_t>((index + 1) * width));
+            out.v.assign_range(on.v.begin() + static_cast<std::ptrdiff_t>(index * width),
+                               on.v.begin() + static_cast<std::ptrdiff_t>((index + 1) * width));
             return out;
         }
         if (on.t.is_matrix()) {
@@ -479,8 +528,8 @@ private:
             }
             value out;
             out.t = shape(on.t.kind, on.t.rows);
-            out.v.assign(on.v.begin() + static_cast<std::ptrdiff_t>(index * rows),
-                         on.v.begin() + static_cast<std::ptrdiff_t>((index + 1) * rows));
+            out.v.assign_range(on.v.begin() + static_cast<std::ptrdiff_t>(index * rows),
+                               on.v.begin() + static_cast<std::ptrdiff_t>((index + 1) * rows));
             return out;
         }
         if (index >= on.v.size()) {
@@ -773,9 +822,9 @@ private:
     const module * m_ = nullptr;
     const environment * env_ = nullptr;
     execution * out_ = nullptr;
-    std::unordered_map<std::string, value> globals_;
-    std::vector<std::unordered_map<std::string, value>> scopes_;
-    std::unordered_map<std::string, std::vector<std::int32_t>> functions_;
+    by_name<value> globals_;
+    std::vector<by_name<value>> scopes_;
+    by_name<std::vector<std::int32_t>> functions_;
     value returned_;
     std::string failure_;
     int depth_ = 0;
@@ -1120,7 +1169,7 @@ value interpreter::construct(const type & t, const std::vector<value> & args) {
 
     // A STRUCT takes its members in order.
     if (t.kind == base::struct_) {
-        for (const value & each : args) { out.v.insert(out.v.end(), each.v.begin(), each.v.end()); }
+        for (const value & each : args) { out.v.append(each.v.begin(), each.v.end()); }
         out.v.resize(want, 0.0f);
         return out;
     }
@@ -1204,6 +1253,56 @@ const value * execution::find(std::string_view name) const {
         if (key == name) { return &held; }
     }
     return nullptr;
+}
+
+// --- the prepared program --------------------------------------------------
+
+struct program::impl {
+    const module * m = nullptr;
+    prepared_state ready;
+};
+
+program::program(const module & m) : impl_(std::make_unique<impl>()) {
+    impl_->m = &m;
+    if (!m.ok) {
+        impl_->ready.error = "the shader did not compile";
+        return;
+    }
+    // A throwaway execution: preparing evaluates global initialisers, and those
+    // can fail the same way anything else can.
+    execution scratch;
+    environment none;
+    interpreter build{m, none, scratch};
+    impl_->ready = build.prepare();
+}
+
+program::~program() = default;
+program::program(program &&) noexcept = default;
+program & program::operator=(program &&) noexcept = default;
+
+bool program::ok() const noexcept {
+    return impl_ != nullptr && impl_->ready.error.empty();
+}
+
+const std::string & program::error() const noexcept {
+    static const std::string none;
+    return impl_ == nullptr ? none : impl_->ready.error;
+}
+
+execution program::run(const environment & env) const {
+    execution out;
+    if (impl_ == nullptr || impl_->m == nullptr) {
+        out.error = "no program";
+        return out;
+    }
+    if (!impl_->ready.error.empty()) {
+        out.error = impl_->ready.error;
+        return out;
+    }
+    interpreter run{*impl_->m, env, out};
+    run.run_prepared(impl_->ready);
+    out.discarded = run.discarded();
+    return out;
 }
 
 execution execute(const module & m, const environment & env) {
