@@ -451,6 +451,71 @@ void test_to_data_url() {
     CHECK(logged(page) == "data:image/png;base64,|len=true|sig=137,807871");
 }
 
+// FileReader - THE INPUT SIDE of the same machinery that does export.
+//
+// Nothing here can open a file picker, and it does not pretend to: an <input
+// type=file> has an EMPTY FileList because there is no user to choose with. What
+// works is everything a page does with a file it already has, which is what a
+// drag-and-drop shim and p5's own loaders need.
+void test_file_reader() {
+    ctbrowser::browser page{{.width = 100, .height = 60}};
+    page.load_html(R"(<body><script>
+      var f = new File(['hello world'], 'greeting.txt', { type: 'text/plain' });
+      console.log('file ' + f.name + ' ' + f.size + ' ' + f.type + ' ' + (f instanceof Blob));
+      var r = new FileReader();
+      // Assigned AFTER the read is started, which is the whole reason the result
+      // arrives on a later turn: a synchronous reader would fire before this line.
+      r.readAsText(f);
+      r.onload = function (e) {
+        console.log('text ' + r.result + ' ' + (e.target === r) + ' ' + r.readyState);
+      };
+      var d = new FileReader();
+      d.readAsDataURL(f);
+      d.onload = function () { console.log('url ' + d.result); };
+      var b = new FileReader();
+      b.readAsArrayBuffer(f);
+      b.onload = function () {
+        var view = new Uint8Array(b.result);
+        console.log('bytes ' + view.length + ' ' + view[0]);
+      };
+      var bad = new FileReader();
+      bad.readAsText('not a blob');
+      bad.onerror = function () { console.log('error ' + bad.error.name); };
+    </script></body>)");
+    CHECK(page.script_error().empty());
+    for (int frame = 0; frame < 4; ++frame) { page.tick(16); }
+    CHECK(logged(page) == "file greeting.txt 11 text/plain true|"
+                          "text hello world true 2|"
+                          "url data:text/plain;base64,aGVsbG8gd29ybGQ=|"
+                          "bytes 11 104|"
+                          "error NotReadableError");
+}
+
+// `new DOMParser().parseFromString(...)`, which is how p5's loadXML gets a
+// document. Built on the fragment parse innerHTML already does, so everything a
+// page walks afterwards is the ordinary element surface.
+void test_dom_parser() {
+    ctbrowser::browser page{{.width = 100, .height = 60}};
+    page.load_html(R"(<body><script>
+      var doc = new DOMParser().parseFromString(
+          '<list kind="demo"><item id="a">first</item><item>second</item></list>',
+          'application/xml');
+      var root = doc.documentElement;
+      console.log('root ' + root.tagName + ' ' + root.children.length);
+      console.log('attrs ' + root.attributes.length + ' ' + root.attributes[0].name +
+                  '=' + root.attributes[0].value);
+      var items = root.getElementsByTagName('item');
+      console.log('items ' + items.length + ' ' + items[0].textContent + ' ' +
+                  items[1].textContent);
+      console.log('nested attr ' + items[0].attributes[0].nodeName + '=' +
+                  items[0].attributes[0].nodeValue);
+    </script></body>)");
+    CHECK(page.script_error().empty());
+    // The tag name comes back UPPERCASE because this is the HTML parser - see the
+    // DOMParser binding, where that deviation is written down.
+    CHECK(logged(page) == "root LIST 2|attrs 1 kind=demo|items 2 first second|nested attr id=a");
+}
+
 void test_fetch_from_registry() {
     ctbrowser::browser page{{.width = 100, .height = 60}};
     page.assets().add("https://example.invalid/data.json",
@@ -510,6 +575,8 @@ int main() {
     test_img_sizing_rules();
     test_script_images();
     test_img_in_canvas_from_element();
+    test_file_reader();
+    test_dom_parser();
     test_encode_png();
     test_export_writes_a_file();
     test_a_download_cannot_escape_its_directory();

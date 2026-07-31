@@ -155,6 +155,12 @@ void dom_bindings::register_roots(context & cx) {
             mark(waiting.target);
             mark(waiting.promise);
         }
+        // A QUEUED READ holds the only reference to the reader whose onload will
+        // run and to the blob it is reading.
+        for (const pending_read & waiting : reads_) {
+            mark(waiting.reader);
+            mark(waiting.blob);
+        }
         for (const value & callback : animation_callbacks_) { mark(callback); }
         for (const auto & [packed, obj] : wrappers_) {
             if (obj != nullptr) { mark(value::object(obj)); }
@@ -322,6 +328,16 @@ std::size_t dom_bindings::run_due_callbacks() {
             ++ran;
         }
     }
+    // FileReader results, beside the image loads and for the same reason.
+    if (!reads_.empty()) {
+        std::vector<pending_read> due;
+        due.swap(reads_);
+        for (const pending_read & waiting : due) {
+            settle_read(*cx_, waiting);
+            note_callback_fault("FileReader");
+            ++ran;
+        }
+    }
     // Copied before running: a callback may add or cancel timers, and
     // iterating the live list while it does is how a timer that
     // re-registers itself becomes an infinite loop inside one tick.
@@ -481,6 +497,24 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
             value::number(is_viewport ? viewport_width_ : static_cast<double>(box.width)));
     obj.set("clientHeight",
             value::number(is_viewport ? viewport_height_ : static_cast<double>(box.height)));
+    // `element.attributes` - a live-ish NamedNodeMap, as an array of {name,
+    // value} with the aliases a page reads. p5's XML module walks it for
+    // getAttributeCount, listAttributes and setName, so an absent one made every
+    // attribute of a parsed document invisible.
+    {
+        const value list = cx.make_array();
+        auto * items = static_cast<script::array_object *>(list.as_heap());
+        for (const attribute & held : txn.attributes(id)) {
+            auto * pair = static_cast<script::object_object *>(cx.make_object().as_heap());
+            const std::string text{atoms_->text(held.name)};
+            pair->set("name", cx.string(text));
+            pair->set("nodeName", cx.string(text)); // the older spelling p5 uses
+            pair->set("value", cx.string(held.value));
+            pair->set("nodeValue", cx.string(held.value));
+            items->items.push_back(value::object(pair));
+        }
+        obj.set("attributes", list);
+    }
     obj.set("clientLeft", value::number(0));
     obj.set("clientTop", value::number(0));
     obj.set("scrollWidth", value::number(static_cast<double>(box.width)));
@@ -690,6 +724,15 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
              {"title", "title"},
              {"name", "name"},
              {"placeholder", "placeholder"},
+             // `type` is what a page branches on for a control - p5 itself does
+             // `elt.tagName === 'INPUT' && elt.type === 'checkbox'` - and
+             // createFileInput builds its element with setAttribute('type',
+             // 'file') and then hands back something whose `.type` read undefined.
+             // NOT `value` or `src`: both have live accessors of their own - a
+             // control's value tracks what the user typed rather than the
+             // attribute, and an <img>'s src has to start a load. A generic
+             // reflection here overwrites those and quietly wins.
+             {"type", "type"},
              {"htmlFor", "for"}}) {
         reflect_string(property, attribute);
     }
@@ -877,6 +920,15 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             reflect_size("height", 150);
         } else if (tag == "img") {
             install_image_views(cx, obj, id);
+        } else if (tag == "input" && txn.attribute_value(id, atoms_->intern("type")) == "file") {
+            // AN EMPTY FileList, and it has to EXIST. There is no user here to
+            // choose a file, so this is always empty - but `event.target.files`
+            // is what every change handler iterates, and undefined there is a
+            // TypeError on the first line of the handler rather than a quiet
+            // nothing-was-chosen.
+            const value files = cx.make_array();
+            static_cast<script::array_object *>(files.as_heap())->items.clear();
+            obj.set("files", files);
         } else if (txn.has_attribute(id, atoms_->intern("width")) ||
                    txn.has_attribute(id, atoms_->intern("height"))) {
             reflect_size("width", 0);
@@ -1153,6 +1205,28 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         value out = c.make_array();
         auto * items = static_cast<script::array_object *>(out.as_heap());
         for (const node_id node : found) { items->items.push_back(wrap(c, node)); }
+        return out;
+    });
+    // `element.getElementsByTagName(tag)` - the DOCUMENT had one and an element
+    // did not, so a page that scoped its search to a subtree found the method
+    // missing. p5's XML module walks a parsed document with exactly this.
+    method("getElementsByTagName", [this](context & c, std::span<value> args) {
+        const node_id from = receiver(c);
+        const std::string want = arg_string(c, args, 0);
+        value out = c.make_array();
+        auto * items = static_cast<script::array_object *>(out.as_heap());
+        if (!from) { return out; }
+        const auto txn = doc_->read();
+        // `*` is every descendant, which is what a page uses to count a subtree.
+        const atom tag = want == "*" ? atom{} : atoms_->intern_lower(want);
+        const auto walk = [&](auto && self, node_id at, bool include) -> void {
+            if (include && (want == "*" || txn.tag(at).value_or(atom{}) == tag)) {
+                items->items.push_back(wrap(c, at));
+            }
+            for (const node_id child : txn.children(at)) { self(self, child, true); }
+        };
+        // DESCENDANTS ONLY - the element itself is not one of its own results.
+        walk(walk, from, false);
         return out;
     });
     method("getBoundingClientRect", [this](context & c, std::span<value>) {
@@ -1484,6 +1558,95 @@ void dom_bindings::install_image_views(context & cx, script::object_object & obj
 
 void dom_bindings::begin_image_load(value target, node_id id, std::string url, value promise) {
     image_loads_.push_back(pending_image{target, id, std::move(url), promise});
+}
+
+// One FileReader read, delivered. `result` is set BEFORE the handlers run,
+// because every one of them reads it.
+void dom_bindings::settle_read(context & cx, const pending_read & waiting) {
+    if (!waiting.reader.is_object()) { return; }
+    auto * reader = static_cast<script::object_object *>(waiting.reader.as_heap());
+
+    // The bytes, from whatever it was handed. A Blob, a File and a Response body
+    // all carry them in the same slot, so this needs to know about none of them.
+    std::string bytes;
+    bool readable = false;
+    if (waiting.blob.is_object()) {
+        const value held = cx.lookup_property(waiting.blob, "__bytes");
+        if (held.is_array()) {
+            readable = true;
+            for (const value & b : static_cast<script::array_object *>(held.as_heap())->items) {
+                bytes += static_cast<char>(
+                    static_cast<unsigned char>(std::clamp(context::to_number(b), 0.0, 255.0)));
+            }
+        }
+    }
+
+    reader->set("readyState", value::number(2)); // DONE, either way
+    auto * event = static_cast<script::object_object *>(cx.make_object().as_heap());
+    event->set("target", waiting.reader);
+    if (!readable) {
+        // NOT a silent empty string. A page that reads something that is not a
+        // blob gets the error branch, which is what it is written for.
+        auto * failure = static_cast<script::object_object *>(cx.make_object().as_heap());
+        failure->set("name", cx.string("NotReadableError"));
+        failure->set("message", cx.string("FileReader was given something with no bytes"));
+        reader->set("error", value::object(failure));
+        event->set("type", cx.string("error"));
+        const value as_event = value::object(event);
+        fire_handler_property(waiting.reader, "error", as_event);
+        fire_handler_property(waiting.reader, "loadend", as_event);
+        return;
+    }
+
+    switch (waiting.kind) {
+    case read_kind::text:
+    case read_kind::binary_string:
+        // The same thing here, and honestly so: strings are BYTES in this engine,
+        // so a "binary string" and a decoded UTF-8 one are one value. A page that
+        // reads text it wrote as UTF-8 gets it back unchanged.
+        reader->set("result", cx.string(bytes));
+        break;
+    case read_kind::data_url: {
+        std::string type = "application/octet-stream";
+        const value given = cx.lookup_property(waiting.blob, "type");
+        if (!given.is_undefined() && !cx.to_string(given).empty()) { type = cx.to_string(given); }
+        // Through the standard library's btoa, so one base64 encoder decides what
+        // this means here.
+        const value encoder = cx.global("btoa");
+        std::string encoded;
+        if (encoder.is_callable()) {
+            const value text = cx.string(bytes);
+            const value args[1] = {text};
+            encoded = cx.to_string(cx.call(encoder, args));
+        }
+        reader->set("result", cx.string("data:" + type + ";base64," + encoded));
+        break;
+    }
+    case read_kind::array_buffer: {
+        // The shape install_typed_arrays recognises, so `new Uint8Array(result)`
+        // is a view over these bytes rather than a copy of nothing.
+        auto * buffer = static_cast<script::object_object *>(cx.make_object().as_heap());
+        value stored = cx.make_array();
+        auto * items = static_cast<script::array_object *>(stored.as_heap());
+        items->elements = script::element_kind::u8;
+        items->items.reserve(bytes.size());
+        for (const char b : bytes) {
+            items->items.push_back(
+                value::number(static_cast<double>(static_cast<unsigned char>(b))));
+        }
+        buffer->set("byteLength", value::number(static_cast<double>(bytes.size())));
+        buffer->set("length", value::number(static_cast<double>(bytes.size())));
+        buffer->set("__bytes", stored);
+        reader->set("result", value::object(buffer));
+        break;
+    }
+    }
+    event->set("type", cx.string("load"));
+    const value as_event = value::object(event);
+    // `onload` then `onloadend`, which is the order a page relies on when it uses
+    // both - loadend is the "whatever happened, I am done" hook.
+    fire_handler_property(waiting.reader, "load", as_event);
+    fire_handler_property(waiting.reader, "loadend", as_event);
 }
 
 void dom_bindings::settle_image(context & cx, const pending_image & waiting) {
@@ -2554,6 +2717,97 @@ void dom_bindings::install_window(context & cx) {
     blob_ctor->set("prototype", blob_prototype_);
     cx.define_global("Blob", value::object(blob_ctor));
 
+    // `File`, `FileList` and `FileReader` - THE INPUT SIDE of the machinery that
+    // already does export.
+    //
+    // p5's createFileInput refuses to build anything unless all four of
+    // `window.File`, `window.FileReader`, `window.FileList` and `window.Blob`
+    // exist, so their absence made it return undefined and a sketch's drag-and-drop
+    // never happened. More than that, FileReader is how any page reads a file a
+    // user gave it: `reader.onload = e => ...; reader.readAsText(file)`.
+    //
+    // NOTHING HERE CAN OPEN A FILE PICKER, and it does not pretend to: an <input
+    // type=file> has an EMPTY FileList, because there is no user to choose with.
+    // What works is everything a page does with a file it already has - construct
+    // one, read it, hand it to createObjectURL - which is what a test, a
+    // drag-and-drop shim and p5's own loader path all need.
+    {
+        // A File IS a Blob with a name, so it shares the prototype and
+        // `file instanceof Blob` is true - which is what p5's downloadFile
+        // branches on.
+        auto * file_ctor =
+            cx.allocate<script::native_object>("File", [](context & c, std::span<value> a) {
+                const value blob_ctor_value = c.global("Blob");
+                // Built THROUGH Blob rather than beside it: one place decides what
+                // a part list means, so a File made of strings, typed arrays and
+                // other Blobs behaves exactly as a Blob made the same way.
+                value parts[2] = {arg(a, 0), arg(a, 2)};
+                const value made = blob_ctor_value.is_callable()
+                                       ? c.construct(blob_ctor_value, parts)
+                                       : c.make_object();
+                if (!made.is_object()) { return made; }
+                auto * file = static_cast<script::object_object *>(made.as_heap());
+                file->set("name", c.string(a.size() > 1 ? c.to_string(a[1]) : std::string{}));
+                // The clock, not zero: a page that sorts by lastModified would
+                // otherwise find every file identical.
+                file->set("lastModified", value::number(c.clock_ms()));
+                return made;
+            });
+        file_ctor->set("prototype", blob_prototype_);
+        cx.define_global("File", value::object(file_ctor));
+
+        // A FileList is array-SHAPED: indices, a length, and item(). Every page
+        // walks one with `for (const f of files)` or `files[0]`, and both of those
+        // an array already answers.
+        cx.define_native("FileList", [](context & c, std::span<value>) {
+            auto * list = static_cast<script::object_object *>(c.make_object().as_heap());
+            list->set("length", value::number(0));
+            list->set("item", value::object(c.allocate<script::native_object>(
+                                  "item", [](context & inner, std::span<value> a) {
+                                      const value self = inner.current_this();
+                                      return inner.lookup_index(self, arg(a, 0));
+                                  })));
+            return value::object(list);
+        });
+
+        // `new FileReader()`. The result arrives on a LATER TURN, through the same
+        // queue an image load uses - a page assigns `onload` after calling
+        // `readAsText`, and a reader that delivered synchronously would fire before
+        // the handler existed.
+        cx.define_native("FileReader", [this](context & c, std::span<value>) {
+            auto * reader = static_cast<script::object_object *>(c.make_object().as_heap());
+            reader->set("result", value::null());
+            reader->set("error", value::null());
+            reader->set("readyState", value::number(0)); // EMPTY
+            const value self = value::object(reader);
+            const auto read = [this, self](const char * name, read_kind kind) {
+                return std::pair<std::string, script::native_fn>{
+                    name, [this, self, kind](context & inner, std::span<value> a) {
+                        auto * target = static_cast<script::object_object *>(self.as_heap());
+                        target->set("readyState", value::number(1)); // LOADING
+                        reads_.push_back(pending_read{self, arg(a, 0), kind});
+                        (void)inner;
+                        return value::undefined();
+                    }};
+            };
+            for (const auto & [name, fn] :
+                 {read("readAsText", read_kind::text), read("readAsDataURL", read_kind::data_url),
+                  read("readAsArrayBuffer", read_kind::array_buffer),
+                  read("readAsBinaryString", read_kind::binary_string)}) {
+                reader->set(name, value::object(c.allocate<script::native_object>(name, fn)));
+            }
+            reader->set("abort", value::object(c.allocate<script::native_object>(
+                                     "abort", [this, self](context &, std::span<value>) {
+                                         std::erase_if(reads_, [&](const pending_read & r) {
+                                             return r.reader.is_object() && self.is_object() &&
+                                                    r.reader.as_heap() == self.as_heap();
+                                         });
+                                         return value::undefined();
+                                     })));
+            return self;
+        });
+    }
+
     {
         auto * url = static_cast<script::object_object *>(cx.make_object().as_heap());
         const auto url_method = [&](std::string name, script::native_fn fn) {
@@ -2609,6 +2863,58 @@ void dom_bindings::install_window(context & cx) {
             if (a.size() > index) { c.store_property(wrapper, name, a[index]); }
         }
         return wrapper;
+    });
+
+    // `new DOMParser().parseFromString(text, type)`.
+    //
+    // p5's loadXML fetches the text and hands it to one of these, so an absent
+    // DOMParser made loadXML fail on its first line - and p5's SVG path and its
+    // FileReader-based XML loader use it too.
+    //
+    // Built on the fragment parse `innerHTML` already does: the markup is parsed
+    // into a DETACHED subtree hung off a synthetic root, and the root is wrapped
+    // like any other element. Everything p5.XML walks - children, attributes,
+    // textContent, tagName, getElementsByTagName, appendChild - is then the
+    // ordinary element surface, with nothing XML-specific to maintain.
+    //
+    // THE DEVIATION, and it is real: this is the HTML parser, not an XML one. Tag
+    // names are lowercased, HTML's implied elements apply, and a malformed
+    // document is repaired rather than rejected - where XML would report an error.
+    // For the documents p5 reads (a flat tree of elements with attributes and
+    // text) the two agree, and writing a second parser to disagree in different
+    // ways would be worse than saying this.
+    cx.define_native("DOMParser", [this](context & c, std::span<value>) {
+        auto * parser = static_cast<script::object_object *>(c.make_object().as_heap());
+        parser->set("parseFromString",
+                    value::object(c.allocate<script::native_object>(
+                        "parseFromString", [this](context & inner, std::span<value> a) {
+                            // A synthetic root, so the result has ONE element to be the
+                            // document element even when the source has several - which is
+                            // what `documentElement` means and what p5 walks from.
+                            const node_id root =
+                                doc_->create_element(atoms_->intern("ctbrowser-document"));
+                            set_inner_html(root, arg_string(inner, a, 0));
+                            const value wrapper = wrap(inner, root);
+                            if (!wrapper.is_object()) { return wrapper; }
+                            auto * document_like =
+                                static_cast<script::object_object *>(wrapper.as_heap());
+                            // The document surface over the same node: `documentElement`
+                            // is the first child if there is one, and the root otherwise.
+                            value first = wrapper;
+                            {
+                                const auto txn = doc_->read();
+                                const std::span<const node_id> kids = txn.children(root);
+                                if (!kids.empty()) { first = wrap(inner, kids.front()); }
+                            }
+                            document_like->set("documentElement", first);
+                            // A page checks this to decide whether the parse worked. It is
+                            // always empty here because the HTML parser repairs rather than
+                            // rejects - said in the comment above rather than pretended
+                            // otherwise.
+                            document_like->set("parsererror", value::null());
+                            return wrapper;
+                        })));
+        return value::object(parser);
     });
 
     // `new Path2D()` - a path recorded now and drawn later.

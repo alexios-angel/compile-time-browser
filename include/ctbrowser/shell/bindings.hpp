@@ -382,6 +382,23 @@ private:
     };
     std::vector<pending_image> image_loads_;
 
+    // A FileReader's read, which finishes on a LATER TURN for the same reason an
+    // image load does: a page assigns `onload` after calling readAsText, so a
+    // reader that delivered synchronously would fire before the handler existed.
+    enum class read_kind : std::uint8_t {
+        text,
+        data_url,
+        array_buffer,
+        binary_string
+    };
+    struct pending_read {
+        value reader;
+        value blob;
+        read_kind kind;
+    };
+    std::vector<pending_read> reads_;
+    void settle_read(context & cx, const pending_read & waiting);
+
     // Resolve the bytes, set `complete`, and announce it - `onload` and any
     // `load` listener, or the error pair.
     void settle_image(context & cx, const pending_image & waiting);

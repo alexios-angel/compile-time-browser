@@ -28,6 +28,7 @@ data/storeItem/getItem/removeItem
 dom/createA
 dom/createButton
 dom/createCheckbox
+dom/createColorPicker and createFileInput
 dom/createDiv
 dom/createElement
 dom/createImg
@@ -61,6 +62,7 @@ image/tint preserves transparency
 io/getURL/getURLParams/getURLPath
 io/httpGet
 io/loadBytes
+io/loadXML
 io/saveTable
 io/writeFile and createWriter
 load/image() draws a loaded image
