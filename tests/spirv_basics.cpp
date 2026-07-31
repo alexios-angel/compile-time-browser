@@ -38,10 +38,10 @@ using namespace ctbrowser::raster;
 
 namespace {
 
-[[nodiscard]] glsl::module compile(const char * source, glsl::stage which) {
+[[nodiscard]] glsl::shader compile(const char * source, glsl::stage which) {
     glsl::options how;
     how.which = which;
-    glsl::module m = glsl::parse(source, how);
+    glsl::shader m = glsl::parse(source, how);
     if (!m.ok) {
         std::printf("FAIL a test shader did not compile:\n%s", m.info_log().c_str());
         ++ctbrowser_test_failures;
@@ -105,11 +105,11 @@ struct verdict {
         // Everything else contributes its operands as `used`, which is the check
         // that matters: an id that is never defined is the commonest way to
         // build a module a driver rejects.
-        static const std::set<std::uint32_t> result_first{
-            19, 20, 21, 22, 23, 24, 32, 33}; // types: result is operand 1
+        static const std::set<std::uint32_t> result_first{19, 20, 21, 22, 23,
+                                                          24, 32, 33}; // types: result is operand 1
         static const std::set<std::uint32_t> result_second{
-            43, 44, 59, 61, 65, 79, 80, 81, 127, 129, 131, 133, 136,
-            142, 145, 146, 148, 12, 54}; // typed results: type, result, ...
+            43,  44,  59,  61,  65,  79,  80,  81, 127, 129,
+            131, 133, 136, 142, 145, 146, 148, 12, 54}; // typed results: type, result, ...
         if (result_first.contains(opcode) && length >= 2) {
             defined.insert(w[at + 1]);
         } else if (result_second.contains(opcode) && length >= 3) {
@@ -157,8 +157,10 @@ void write_out(const std::string & path, const spirv::module_binary & binary) {
 void test_the_verifier_accepts_real_spirv() {
     spirv::module_binary reference;
     reference.ok = true;
-    const auto * words = reinterpret_cast<const std::uint32_t *>(ctbrowser::gpu::shaders::tile_vert_spv);
-    reference.words.assign(words, words + ctbrowser::gpu::shaders::tile_vert_spv_size / sizeof(std::uint32_t));
+    const auto * words =
+        reinterpret_cast<const std::uint32_t *>(ctbrowser::gpu::shaders::tile_vert_spv);
+    reference.words.assign(words, words + ctbrowser::gpu::shaders::tile_vert_spv_size /
+                                              sizeof(std::uint32_t));
 
     const verdict v = verify(reference);
     CHECK(v.ok);
@@ -170,7 +172,7 @@ void test_the_verifier_accepts_real_spirv() {
 // --- what this emitter produces --------------------------------------------
 
 void test_a_vertex_shader_emits() {
-    const glsl::module m = compile(R"(
+    const glsl::shader m = compile(R"(
         attribute vec2 aPosition;
         attribute vec4 aColor;
         varying vec4 vColor;
@@ -178,7 +180,8 @@ void test_a_vertex_shader_emits() {
           vColor = aColor;
           gl_Position = vec4(aPosition, 0.0, 1.0);
         }
-    )", glsl::stage::vertex);
+    )",
+                                   glsl::stage::vertex);
     const spirv::module_binary binary = spirv::emit(m);
     CHECK(binary.ok);
     if (!binary.ok) {
@@ -201,14 +204,15 @@ void test_a_vertex_shader_emits() {
 }
 
 void test_a_fragment_shader_emits() {
-    const glsl::module m = compile(R"(
+    const glsl::shader m = compile(R"(
         varying vec4 vColor;
         uniform vec4 uTint;
         void main() {
           vec4 lit = vColor * uTint;
           gl_FragColor = vec4(lit.rgb, 1.0);
         }
-    )", glsl::stage::fragment);
+    )",
+                                   glsl::stage::fragment);
     const spirv::module_binary binary = spirv::emit(m);
     CHECK(binary.ok);
     if (!binary.ok) {
@@ -226,7 +230,7 @@ void test_a_fragment_shader_emits() {
 // The arithmetic shapes that need their own opcodes, because SPIR-V will not
 // take an OpFMul of a vec4 and a float - unlike GLSL, which broadcasts.
 void test_mixed_width_arithmetic() {
-    const glsl::module m = compile(R"(
+    const glsl::shader m = compile(R"(
         varying vec3 vNormal;
         uniform float uScale;
         void main() {
@@ -235,7 +239,8 @@ void test_mixed_width_arithmetic() {
           float lit = dot(normalize(shifted), vec3(0.0, 0.0, 1.0));
           gl_FragColor = vec4(scaled * lit, 1.0);
         }
-    )", glsl::stage::fragment);
+    )",
+                                   glsl::stage::fragment);
     const spirv::module_binary binary = spirv::emit(m);
     CHECK(binary.ok);
     if (!binary.ok) {
@@ -259,11 +264,12 @@ void test_mixed_width_arithmetic() {
 // A matrix times a vector is its own opcode too, and it is the one whose absence
 // still produces a picture - a plausible wrong transform.
 void test_matrix_arithmetic() {
-    const glsl::module m = compile(R"(
+    const glsl::shader m = compile(R"(
         attribute vec4 aPosition;
         uniform mat4 uProjectionMatrix;
         void main() { gl_Position = uProjectionMatrix * aPosition; }
-    )", glsl::stage::vertex);
+    )",
+                                   glsl::stage::vertex);
     const spirv::module_binary binary = spirv::emit(m);
     CHECK(binary.ok);
     if (!binary.ok) {
@@ -293,28 +299,23 @@ void test_the_unsupported_is_refused() {
         const char * source;
     };
     for (const sample & each : {
-             sample{"a loop",
-                    "void main() { float x = 0.0;"
-                    " for (int i = 0; i < 4; i++) { x += 1.0; }"
-                    " gl_FragColor = vec4(x); }"},
-             sample{"a user function",
-                    "float twice(float x) { return x * 2.0; }"
-                    "void main() { gl_FragColor = vec4(twice(1.0)); }"},
+             sample{"a loop", "void main() { float x = 0.0;"
+                              " for (int i = 0; i < 4; i++) { x += 1.0; }"
+                              " gl_FragColor = vec4(x); }"},
+             sample{"a user function", "float twice(float x) { return x * 2.0; }"
+                                       "void main() { gl_FragColor = vec4(twice(1.0)); }"},
              sample{"a struct",
                     "struct S { vec3 a; };"
                     "void main() { S s; s.a = vec3(1.0); gl_FragColor = vec4(s.a, 1.0); }"},
-             sample{"a texture",
-                    "uniform sampler2D uSampler;"
-                    "void main() { gl_FragColor = texture2D(uSampler, vec2(0.0)); }"},
-             sample{"a uniform array",
-                    "uniform vec3 uLights[4];"
-                    "void main() { gl_FragColor = vec4(uLights[0], 1.0); }"},
-             sample{"discard",
-                    "void main() { discard; }"},
+             sample{"a texture", "uniform sampler2D uSampler;"
+                                 "void main() { gl_FragColor = texture2D(uSampler, vec2(0.0)); }"},
+             sample{"a uniform array", "uniform vec3 uLights[4];"
+                                       "void main() { gl_FragColor = vec4(uLights[0], 1.0); }"},
+             sample{"discard", "void main() { discard; }"},
          }) {
         glsl::options how;
         how.which = glsl::stage::fragment;
-        const glsl::module m = glsl::parse(each.source, how);
+        const glsl::shader m = glsl::parse(each.source, how);
         if (!m.ok) {
             std::printf("FAIL the `%s` sample did not even parse:\n%s", each.why,
                         m.info_log().c_str());
@@ -335,16 +336,19 @@ void test_the_unsupported_is_refused() {
 // A shader is untrusted text, so nothing here may crash on a malformed one -
 // the same rule the parser and the evaluator have.
 void test_malformed_input_is_harmless() {
-    for (const char * bad : {"", "void main() {", "void main() { gl_FragColor = ; }",
-                             "void main() { nope(); }"}) {
+    for (const char * bad :
+         {"", "void main() {", "void main() { gl_FragColor = ; }", "void main() { nope(); }"}) {
         glsl::options how;
         how.which = glsl::stage::fragment;
-        const glsl::module m = glsl::parse(bad, how);
+        const glsl::shader m = glsl::parse(bad, how);
         const spirv::module_binary binary = spirv::emit(m);
         // Either refuses or produces something structurally sound - never
         // half a module, which is what a driver crashes on.
-        if (binary.ok) { CHECK(verify(binary).ok); }
-        else { CHECK(!binary.error.empty()); }
+        if (binary.ok) {
+            CHECK(verify(binary).ok);
+        } else {
+            CHECK(!binary.error.empty());
+        }
     }
 }
 

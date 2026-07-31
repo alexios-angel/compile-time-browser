@@ -323,7 +323,7 @@ void test_a_driver_accepts_our_spirv() {
     const auto build = [](const char * source, raster::glsl::stage which) {
         raster::glsl::options how;
         how.which = which;
-        const raster::glsl::module m = raster::glsl::parse(source, how);
+        const raster::glsl::shader m = raster::glsl::parse(source, how);
         return raster::spirv::emit(m);
     };
     struct sample {
@@ -370,8 +370,74 @@ void test_a_driver_accepts_our_spirv() {
         std::printf("     the driver accepted %s (%zu bytes)\n", each.what, binary.size_in_bytes());
         SDL_ReleaseGPUShader(device, shader);
     }
-    // HOW MUCH IS THIS CHECK WORTH? Measured rather than assumed: hand the same
-    // call a module that is definitely not SPIR-V and see whether it says so.
+    // BUILDING A PIPELINE forces the SPIR-V through the driver's own compiler,
+    // which is further than creating a shader gets. It is still not validation,
+    // and that was measured rather than assumed - see the NOTE below and the
+    // paragraph in docs/webgl-plan.md.
+    //
+    // It is worth having anyway: it proves the bytes survive the entire path
+    // into a driver that will draw with them, which no structural check can.
+    {
+        const auto make_shader = [&](const char * source, raster::glsl::stage which,
+                                     SDL_GPUShaderStage sdl_stage) -> SDL_GPUShader * {
+            raster::glsl::options how;
+            how.which = which;
+            const raster::glsl::shader parsed = raster::glsl::parse(source, how);
+            const raster::spirv::module_binary binary = raster::spirv::emit(parsed);
+            if (!binary.ok) { return nullptr; }
+            SDL_GPUShaderCreateInfo info{};
+            info.code = reinterpret_cast<const Uint8 *>(binary.bytes());
+            info.code_size = binary.size_in_bytes();
+            info.entrypoint = "main";
+            info.format = SDL_GPU_SHADERFORMAT_SPIRV;
+            info.stage = sdl_stage;
+            return SDL_CreateGPUShader(device, &info);
+        };
+        SDL_GPUShader * vertex =
+            make_shader("attribute vec2 aPosition;\n"
+                        "varying vec4 vColor;\n"
+                        "void main() { vColor = vec4(1.0);"
+                        " gl_Position = vec4(aPosition, 0.0, 1.0); }",
+                        raster::glsl::stage::vertex, SDL_GPU_SHADERSTAGE_VERTEX);
+        // The fragment shader mixes widths on purpose - `vec3 * float` and
+        // `vec3 + float` - so the pipeline is compiling the operand-broadcast
+        // path rather than only the easy instructions. A check that never
+        // exercises the interesting code is not a check.
+        SDL_GPUShader * fragment =
+            make_shader("uniform float uScale;\n"
+                        "varying vec4 vColor;\n"
+                        "void main() {\n"
+                        "  vec3 scaled = vColor.rgb * uScale;\n"
+                        "  vec3 shifted = scaled + 0.25;\n"
+                        "  gl_FragColor = vec4(normalize(shifted), 1.0);\n"
+                        "}",
+                        raster::glsl::stage::fragment, SDL_GPU_SHADERSTAGE_FRAGMENT);
+        check(vertex != nullptr && fragment != nullptr, "both shaders were created");
+        if (vertex != nullptr && fragment != nullptr) {
+            SDL_GPUColorTargetDescription target{};
+            target.format = SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM;
+            SDL_GPUGraphicsPipelineCreateInfo info{};
+            info.vertex_shader = vertex;
+            info.fragment_shader = fragment;
+            info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+            info.target_info.num_color_targets = 1;
+            info.target_info.color_target_descriptions = &target;
+            SDL_GPUGraphicsPipeline * pipeline = SDL_CreateGPUGraphicsPipeline(device, &info);
+            if (pipeline == nullptr) {
+                std::printf("FAIL the driver would not build a pipeline from our SPIR-V: %s\n",
+                            SDL_GetError());
+                ++ctbrowser_test_failures;
+            } else {
+                std::printf("     THE DRIVER COMPILED OUR SPIR-V INTO A PIPELINE\n");
+                SDL_ReleaseGPUGraphicsPipeline(device, pipeline);
+            }
+        }
+        if (vertex != nullptr) { SDL_ReleaseGPUShader(device, vertex); }
+        if (fragment != nullptr) { SDL_ReleaseGPUShader(device, fragment); }
+    }
+
+    // HOW MUCH IS THE SHADER-CREATION CHECK WORTH? Measured rather than assumed:
+    // hand the same call a module that is definitely not SPIR-V and see.
     {
         std::vector<std::uint32_t> rubbish{raster::spirv::magic, 0x00010000, 0,         4, 0,
                                            0xDEADBEEF,           0xDEADBEEF, 0xDEADBEEF};
@@ -384,13 +450,24 @@ void test_a_driver_accepts_our_spirv() {
         SDL_GPUShader * junk = SDL_CreateGPUShader(device, &info);
         if (junk != nullptr) {
             // It accepted nonsense, so acceptance proves nothing about validity.
-            // Said here rather than in a comment that could go stale, because the
-            // value of the checks above depends entirely on this answer.
-            std::printf("     NOTE: this driver accepts invalid SPIR-V too, so the checks\n");
-            std::printf("           above are a SMOKE TEST - they prove the bytes reach the\n");
-            std::printf("           driver, not that they are valid. Real validation needs\n");
-            std::printf("           spirv-val or the Vulkan validation layers, neither of\n");
-            std::printf("           which is installed here.\n");
+            // PRINTED rather than left in a comment, because the worth of every
+            // check above depends on this answer and a comment can go stale.
+            //
+            // Measured on BOTH drivers this engine has been run against: lavapipe
+            // here, and a real Intel Arc through the Windows cross-build. Neither
+            // rejects garbage at shader creation, and neither rejects a module
+            // with mismatched OpFAdd operand widths at PIPELINE creation either -
+            // which was tried by deliberately breaking the emitter's operand
+            // broadcast and watching the pipeline build anyway.
+            //
+            // That is the correct mental model rather than a driver bug: Vulkan
+            // is an explicit API and trusts its input. Validating SPIR-V is the
+            // application's job, which is what tools/check-spirv.py is for.
+            std::printf("     NOTE: this driver accepts invalid SPIR-V, so everything above\n");
+            std::printf("           is a SMOKE TEST - the bytes reach the driver and survive\n");
+            std::printf("           its compiler, which is worth knowing and is NOT the same\n");
+            std::printf("           as being valid. Real validation is tools/check-spirv.py,\n");
+            std::printf("           which needs spirv-val - not installed here.\n");
             SDL_ReleaseGPUShader(device, junk);
         } else {
             std::printf("     this driver rejects invalid SPIR-V, so the checks above are real\n");

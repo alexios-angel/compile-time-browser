@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <numbers>
 #include <string_view>
 #include <unordered_map>
@@ -88,7 +89,7 @@ struct prepared_state {
 
 class interpreter {
 public:
-    interpreter(const module & m, const environment & env, execution & out)
+    interpreter(const shader & m, const environment & env, execution & out)
         : m_(&m), env_(&env), out_(&out) {}
 
     // Build what only depends on the source. Split out so a caller drawing many
@@ -819,7 +820,7 @@ private:
     [[nodiscard]] value construct(const type & t, const std::vector<value> & args);
     [[nodiscard]] bool builtin(const std::string & name, std::vector<value> & args, value & out);
 
-    const module * m_ = nullptr;
+    const shader * m_ = nullptr;
     const environment * env_ = nullptr;
     execution * out_ = nullptr;
     by_name<value> globals_;
@@ -1133,7 +1134,7 @@ bool interpreter::builtin(const std::string & name, std::vector<value> & args, v
 }
 
 // A type name used as a call is a constructor: `vec3(1.0)`, `mat4(m)`.
-[[nodiscard]] bool constructor_type(std::string_view word, const module & m, type & into) {
+[[nodiscard]] bool constructor_type(std::string_view word, const shader & m, type & into) {
     struct entry {
         std::string_view name;
         base kind;
@@ -1258,11 +1259,11 @@ const value * execution::find(std::string_view name) const {
 // --- the prepared program --------------------------------------------------
 
 struct program::impl {
-    const module * m = nullptr;
+    const shader * m = nullptr;
     prepared_state ready;
 };
 
-program::program(const module & m) : impl_(std::make_unique<impl>()) {
+program::program(const shader & m) : impl_(std::make_unique<impl>()) {
     impl_->m = &m;
     if (!m.ok) {
         impl_->ready.error = "the shader did not compile";
@@ -1305,7 +1306,7 @@ execution program::run(const environment & env) const {
     return out;
 }
 
-execution execute(const module & m, const environment & env) {
+execution execute(const shader & m, const environment & env) {
     execution out;
     if (!m.ok) {
         out.error = "the shader did not compile";

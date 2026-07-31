@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdlib>
 #include <string_view>
 #include <unordered_map>
 
@@ -201,7 +202,7 @@ struct token {
 
 class parser {
 public:
-    parser(std::vector<token> tokens, module & into) : t_(std::move(tokens)), m_(&into) {}
+    parser(std::vector<token> tokens, shader & into) : t_(std::move(tokens)), m_(&into) {}
 
     void run() {
         while (!at_end()) {
@@ -893,7 +894,7 @@ private:
     }
 
     std::vector<token> t_;
-    module * m_ = nullptr;
+    shader * m_ = nullptr;
     std::size_t at_ = 0;
 };
 
@@ -925,7 +926,7 @@ std::string spell(const type & t) {
     return out;
 }
 
-std::string module::info_log() const {
+std::string shader::info_log() const {
     std::string out;
     for (const diagnostic & d : errors) {
         out += "ERROR: 0:" + std::to_string(d.line) + ": " + d.message + "\n";
@@ -933,13 +934,23 @@ std::string module::info_log() const {
     return out;
 }
 
-module parse(std::string_view source, const options & how){module out;
-out.which = how.which;
-out.preprocessed = preprocess(source, how, out.errors);
-parser p{lex(out.preprocessed), out};
-p.run();
-out.ok = out.errors.empty();
-return out;
+// QUALIFIED, AND IT HAS TO BE. A line beginning with `module` at namespace scope
+// is a C++20 MODULE DECLARATION as far as clang is concerned - `module` is a
+// context-sensitive keyword there - so `module parse(...)` is a syntax error
+// before it is ever a function. Writing the namespace first moves the keyword
+// off the front of the line and it is a return type again.
+//
+// libstdc++ let this through and the mingw cross-build did not, which is the
+// second thing that pairing caught here: it also found the missing <cstdlib>
+// above. Anything returning this type at namespace scope needs the same.
+glsl::shader parse(std::string_view source, const options & how) {
+    shader out;
+    out.which = how.which;
+    out.preprocessed = preprocess(source, how, out.errors);
+    parser p{lex(out.preprocessed), out};
+    p.run();
+    out.ok = out.errors.empty();
+    return out;
 } // namespace ctbrowser::raster::glsl
 
 } // namespace ctbrowser::raster::glsl

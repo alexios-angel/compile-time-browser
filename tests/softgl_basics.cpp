@@ -45,10 +45,10 @@ constexpr const char * colour_fragment = R"(
     void main() { gl_FragColor = vColor; }
 )";
 
-[[nodiscard]] glsl::module compile(const char * source, glsl::stage which) {
+[[nodiscard]] glsl::shader compile(const char * source, glsl::stage which) {
     glsl::options how;
     how.which = which;
-    glsl::module m = glsl::parse(source, how);
+    glsl::shader m = glsl::parse(source, how);
     if (!m.ok) {
         std::printf("FAIL a test shader did not compile:\n%s", m.info_log().c_str());
         ++ctbrowser_test_failures;
@@ -70,8 +70,8 @@ constexpr const char * colour_fragment = R"(
 struct scene {
     paint::bitmap surface;
     framebuffer target;
-    glsl::module vertex_shader;
-    glsl::module fragment_shader;
+    glsl::shader vertex_shader;
+    glsl::shader fragment_shader;
     std::vector<attribute_set> vertices;
     draw_state state;
 

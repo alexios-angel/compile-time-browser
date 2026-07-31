@@ -60,7 +60,7 @@ struct type {
     base kind = base::f;
     std::uint8_t rows = 1;  // components of a vector, or rows of a matrix
     std::uint8_t cols = 1;  // 1 unless this is a matrix
-    std::int32_t user = -1; // index into module::structs when kind is struct_
+    std::int32_t user = -1; // index into shader::structs when kind is struct_
     // 0 when not an array. -1 means `float x[];` - a size the declaration did
     // not give, which only a parameter or an unsized uniform may have.
     std::int32_t array = 0;
@@ -188,10 +188,18 @@ struct diagnostic {
 
 // A parsed shader.
 //
+// NAMED `shader` AND NOT `module`, and that is not taste. A line beginning with
+// `module` at namespace scope is a C++20 MODULE DECLARATION as far as clang is
+// concerned - it is a context-sensitive keyword there - so `module parse(...)`
+// and even `module out;` are syntax errors before they are ever declarations.
+// libstdc++ and gcc let it through; the mingw cross-build did not, which is how
+// it was found. `shader` beside `program` is also the naming GL itself uses: a
+// shader is compiled source, a program is what runs.
+//
 // `ok` is the only thing a caller must check. Everything else is meaningful only
 // when it is true - which is why the errors carry line numbers: they become
 // getShaderInfoLog, and that is what a page shows a person.
-struct module {
+struct shader {
     bool ok = false;
     std::vector<diagnostic> errors;
     std::vector<node> nodes;
@@ -222,7 +230,7 @@ struct options {
 // Preprocess and parse. Never throws and never asserts on bad input: a shader is
 // UNTRUSTED text from a page, so every malformed one has to come back as a
 // diagnostic rather than as a crash.
-[[nodiscard]] module parse(std::string_view source, const options & how);
+[[nodiscard]] shader parse(std::string_view source, const options & how);
 
 // The preprocessor on its own, exposed because it is separately testable and
 // because #define/#if is where the surprises live. Errors land in `into`.
@@ -411,7 +419,7 @@ struct execution {
 // so this is the first half of that work rather than a detour around it.
 class program {
 public:
-    explicit program(const module & m);
+    explicit program(const shader & m);
     ~program();
     program(program &&) noexcept;
     program & operator=(program &&) noexcept;
@@ -436,7 +444,7 @@ private:
 //
 // Prepares and runs in one go, so a caller that draws more than one fragment
 // should build a `program` instead and keep it.
-[[nodiscard]] execution execute(const module & m, const environment & env);
+[[nodiscard]] execution execute(const shader & m, const environment & env);
 
 // NOT IMPLEMENTED, named here rather than discovered at run time:
 //

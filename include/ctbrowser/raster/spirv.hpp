@@ -23,11 +23,19 @@
 // `tests/api_surface` lints the SDL-free rule, and this file keeps it: `gpu/`
 // takes the bytes from here and hands them to SDL_CreateGPUShader.
 //
-// It is also what makes this testable on a machine with no hardware. The words
-// can be checked structurally, and lavapipe - a real Vulkan implementation, and
-// what `gpu_basics` already runs against - REJECTS malformed SPIR-V. A driver
-// saying no is a loud failure, which is exactly what a back end nobody can
-// benchmark locally needs.
+// HOW THIS IS CHECKED, and the first answer here was wrong. An earlier version
+// of this comment said a driver rejecting malformed SPIR-V made the round trip
+// self-checking. It does not: neither lavapipe nor a real Intel Arc rejects
+// garbage at shader creation, and neither rejects a module with mismatched
+// operand widths at PIPELINE creation either - both measured, the second by
+// deliberately breaking the operand broadcast below and watching the pipeline
+// build anyway. Vulkan is an explicit API and trusts its input.
+//
+// So the checks are the ones this repository owns: `tests/spirv_basics.cpp`
+// decodes the words structurally, `tools/check-spirv.py` runs `spirv-val` where
+// it is installed, and `gpu_basics` hands a real driver a real module - which
+// proves the bytes survive the whole path, and says out loud that it is not
+// proving them valid.
 
 namespace ctbrowser::raster::spirv {
 
@@ -59,7 +67,7 @@ inline constexpr std::uint32_t magic = 0x07230203;
 // crashes or hangs, and a page's shader is untrusted text. Everything this
 // cannot express is a clean `ok == false` and a reason, which the caller turns
 // into a fall back to the software path.
-[[nodiscard]] module_binary emit(const glsl::module & m);
+[[nodiscard]] module_binary emit(const glsl::shader & m);
 
 // WHAT THIS SUBSET COVERS, and it is smaller than what the software path runs:
 //

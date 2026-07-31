@@ -117,8 +117,8 @@ struct framebuffer {
 // Returns the number of fragments actually written, which is what the tests
 // assert on when they want to know whether anything happened at all.
 struct draw_request {
-    const glsl::module * vertex_shader = nullptr;
-    const glsl::module * fragment_shader = nullptr;
+    const glsl::shader * vertex_shader = nullptr;
+    const glsl::shader * fragment_shader = nullptr;
     // PREPARED, so the per-fragment cost is running `main` rather than
     // rebuilding the shader's function table and globals every time. Optional:
     // with neither set the modules above are prepared here, once per draw, which

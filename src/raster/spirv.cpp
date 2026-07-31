@@ -1,6 +1,7 @@
 #include <ctbrowser/raster/spirv.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <unordered_map>
 
@@ -105,7 +106,7 @@ enum ext : std::uint32_t {
 
 class emitter {
 public:
-    explicit emitter(const glsl::module & m) : m_(&m) {}
+    explicit emitter(const glsl::shader & m) : m_(&m) {}
 
     [[nodiscard]] module_binary run() {
         module_binary out;
@@ -145,8 +146,8 @@ public:
         append_raw(words, import);
         append(words, {op_memory_model, 0 /* Logical */, 1 /* GLSL450 */});
 
-        std::vector<std::uint32_t> entry{op_entry_point,
-                                         m_->which == glsl::stage::vertex ? 0u : 4u, entry_};
+        std::vector<std::uint32_t> entry{op_entry_point, m_->which == glsl::stage::vertex ? 0u : 4u,
+                                         entry_};
         push_string(entry, "main");
         for (const std::uint32_t id : interface_ids_) { entry.push_back(id); }
         append_raw(words, entry);
@@ -322,8 +323,9 @@ private:
         std::int32_t main_fn = -1;
         for (const std::int32_t which : m_->declarations) {
             const glsl::node & n = m_->at(which);
-            if (n.kind == glsl::nk::function && n.text == "main" && n.a >= 0) { main_fn = which; }
-            else if (n.kind == glsl::nk::function && n.a >= 0) {
+            if (n.kind == glsl::nk::function && n.text == "main" && n.a >= 0) {
+                main_fn = which;
+            } else if (n.kind == glsl::nk::function && n.a >= 0) {
                 fail("this back end cannot express the function `" + n.text + "`");
                 return;
             }
@@ -357,9 +359,7 @@ private:
         }
         case glsl::nk::expr_stmt: (void)expression(n.a); return;
         case glsl::nk::assign: (void)expression(which); return;
-        default:
-            fail("this back end cannot express that statement");
-            return;
+        default: fail("this back end cannot express that statement"); return;
         }
     }
 
@@ -436,10 +436,18 @@ private:
         std::vector<std::uint32_t> picks;
         for (const char c : n.text) {
             switch (c) {
-            case 'x': case 'r': case 's': picks.push_back(0); break;
-            case 'y': case 'g': case 't': picks.push_back(1); break;
-            case 'z': case 'b': case 'p': picks.push_back(2); break;
-            case 'w': case 'a': case 'q': picks.push_back(3); break;
+            case 'x':
+            case 'r':
+            case 's': picks.push_back(0); break;
+            case 'y':
+            case 'g':
+            case 't': picks.push_back(1); break;
+            case 'z':
+            case 'b':
+            case 'p': picks.push_back(2); break;
+            case 'w':
+            case 'a':
+            case 'q': picks.push_back(3); break;
             default: fail("`." + n.text + "` is not a swizzle this back end knows"); return on;
             }
         }
@@ -500,17 +508,33 @@ private:
 
         std::uint32_t code = 0;
         bool comparison = false;
-        if (n.text == "+") { code = op_f_add; }
-        else if (n.text == "-") { code = op_f_sub; }
-        else if (n.text == "*") { code = op_f_mul; }
-        else if (n.text == "/") { code = op_f_div; }
-        else if (n.text == "<") { code = op_f_ord_less_than; comparison = true; }
-        else if (n.text == ">") { code = op_f_ord_greater_than; comparison = true; }
-        else if (n.text == "<=") { code = op_f_ord_less_than_equal; comparison = true; }
-        else if (n.text == ">=") { code = op_f_ord_greater_than_equal; comparison = true; }
-        else if (n.text == "==") { code = op_f_ord_equal; comparison = true; }
-        else if (n.text == "!=") { code = op_f_ord_not_equal; comparison = true; }
-        else {
+        if (n.text == "+") {
+            code = op_f_add;
+        } else if (n.text == "-") {
+            code = op_f_sub;
+        } else if (n.text == "*") {
+            code = op_f_mul;
+        } else if (n.text == "/") {
+            code = op_f_div;
+        } else if (n.text == "<") {
+            code = op_f_ord_less_than;
+            comparison = true;
+        } else if (n.text == ">") {
+            code = op_f_ord_greater_than;
+            comparison = true;
+        } else if (n.text == "<=") {
+            code = op_f_ord_less_than_equal;
+            comparison = true;
+        } else if (n.text == ">=") {
+            code = op_f_ord_greater_than_equal;
+            comparison = true;
+        } else if (n.text == "==") {
+            code = op_f_ord_equal;
+            comparison = true;
+        } else if (n.text == "!=") {
+            code = op_f_ord_not_equal;
+            comparison = true;
+        } else {
             fail("this back end cannot express `" + n.text + "`");
             return left;
         }
@@ -594,18 +618,28 @@ private:
             bool returns_scalar;
         };
         static constexpr builtin table[] = {
-            {"abs", glsl_fabs, 1, false},        {"floor", glsl_floor, 1, false},
-            {"ceil", glsl_ceil, 1, false},       {"fract", glsl_fract, 1, false},
-            {"sin", glsl_sin, 1, false},         {"cos", glsl_cos, 1, false},
-            {"tan", glsl_tan, 1, false},         {"exp", glsl_exp, 1, false},
-            {"log", glsl_log, 1, false},         {"sqrt", glsl_sqrt, 1, false},
+            {"abs", glsl_fabs, 1, false},
+            {"floor", glsl_floor, 1, false},
+            {"ceil", glsl_ceil, 1, false},
+            {"fract", glsl_fract, 1, false},
+            {"sin", glsl_sin, 1, false},
+            {"cos", glsl_cos, 1, false},
+            {"tan", glsl_tan, 1, false},
+            {"exp", glsl_exp, 1, false},
+            {"log", glsl_log, 1, false},
+            {"sqrt", glsl_sqrt, 1, false},
             {"normalize", glsl_normalize, 1, false},
-            {"pow", glsl_pow, 2, false},         {"min", glsl_fmin, 2, false},
-            {"max", glsl_fmax, 2, false},        {"step", glsl_step, 2, false},
-            {"reflect", glsl_reflect, 2, false}, {"cross", glsl_cross, 2, false},
-            {"clamp", glsl_fclamp, 3, false},    {"mix", glsl_fmix, 3, false},
+            {"pow", glsl_pow, 2, false},
+            {"min", glsl_fmin, 2, false},
+            {"max", glsl_fmax, 2, false},
+            {"step", glsl_step, 2, false},
+            {"reflect", glsl_reflect, 2, false},
+            {"cross", glsl_cross, 2, false},
+            {"clamp", glsl_fclamp, 3, false},
+            {"mix", glsl_fmix, 3, false},
             {"smoothstep", glsl_smoothstep, 3, false},
-            {"length", glsl_length, 1, true},    {"distance", glsl_distance, 2, true},
+            {"length", glsl_length, 1, true},
+            {"distance", glsl_distance, 2, true},
         };
         for (const builtin & known : table) {
             if (n.text != known.name || args.size() != known.arity) { continue; }
@@ -658,7 +692,7 @@ private:
         return found == id_shapes_.end() ? glsl::type{glsl::base::f, 1, 1, -1, 0} : found->second;
     }
 
-    const glsl::module * m_ = nullptr;
+    const glsl::shader * m_ = nullptr;
     std::string failure_;
     std::uint32_t next_ = 1;
     std::uint32_t entry_ = 0;
@@ -686,7 +720,7 @@ private:
 
 } // namespace
 
-module_binary emit(const glsl::module & m) {
+module_binary emit(const glsl::shader & m) {
     module_binary out;
     if (!m.ok) {
         out.error = "the shader did not compile";

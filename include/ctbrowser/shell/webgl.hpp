@@ -125,7 +125,7 @@ struct gl_buffer {
 struct gl_shader {
     std::uint32_t which = gl_enum::vertex_shader;
     std::string source;
-    raster::glsl::module compiled;
+    raster::glsl::shader compiled;
     bool compiled_ok = false;
     std::string log;
 };

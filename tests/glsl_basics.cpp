@@ -40,7 +40,7 @@ namespace {
 }
 
 // Parse a fragment of GLSL with nothing prepended. For the unit tests.
-[[nodiscard]] glsl::module parse_fragment(const std::string & source) {
+[[nodiscard]] glsl::shader parse_fragment(const std::string & source) {
     glsl::options how;
     how.which = glsl::stage::fragment;
     return glsl::parse(source, how);
@@ -89,7 +89,7 @@ void test_the_p5_corpus_parses() {
 
         glsl::options how;
         how.which = vertex ? glsl::stage::vertex : glsl::stage::fragment;
-        const glsl::module m = glsl::parse(preamble + "\n" + read_file(path), how);
+        const glsl::shader m = glsl::parse(preamble + "\n" + read_file(path), how);
         if (!m.ok) {
             std::printf("FAIL %s did not parse:\n%s", path.filename().string().c_str(),
                         m.info_log().c_str());
@@ -120,7 +120,7 @@ void test_the_p5_corpus_parses() {
     // so its shape is pinned by hand.
     glsl::options how;
     how.which = glsl::stage::vertex;
-    const glsl::module phong =
+    const glsl::shader phong =
         glsl::parse(preamble + "\n" + read_file(dir / "phongVert.vert"), how);
     CHECK(phong.ok);
     CHECK(phong.structs.size() == 1);
@@ -163,7 +163,7 @@ void test_the_preamble_decides_storage() {
 
     glsl::options as_vertex;
     as_vertex.which = glsl::stage::vertex;
-    const glsl::module v = glsl::parse(preamble + "\n" + body, as_vertex);
+    const glsl::shader v = glsl::parse(preamble + "\n" + body, as_vertex);
     CHECK(v.ok);
     CHECK(v.interface_.size() >= 1);
     if (!v.interface_.empty()) {
@@ -173,7 +173,7 @@ void test_the_preamble_decides_storage() {
 
     glsl::options as_fragment;
     as_fragment.which = glsl::stage::fragment;
-    const glsl::module f = glsl::parse(preamble + "\n" + body, as_fragment);
+    const glsl::shader f = glsl::parse(preamble + "\n" + body, as_fragment);
     CHECK(f.ok);
     if (!f.interface_.empty()) { CHECK(f.interface_.front().store == glsl::storage::varying); }
 }
@@ -235,7 +235,7 @@ void test_macros() {
 // nothing would be simpler and would misreport every error after an #if.
 void test_line_numbers_survive() {
     const std::string source = "#define A 1\n#if 0\ngone\ngone\n#endif\nvec3 x = ;\n";
-    const glsl::module m = parse_fragment(source);
+    const glsl::shader m = parse_fragment(source);
     CHECK(!m.ok);
     CHECK(!m.errors.empty());
     if (!m.errors.empty()) { CHECK(m.errors.front().line == 6); }
@@ -255,7 +255,7 @@ void test_comments() {
 // --- the parser ------------------------------------------------------------
 
 void test_declarations_and_shapes() {
-    const glsl::module m = parse_fragment(R"(
+    const glsl::shader m = parse_fragment(R"(
         uniform mat4 uProjectionMatrix;
         uniform sampler2D uSampler;
         uniform vec3 uLights[8];
@@ -304,7 +304,7 @@ void test_declarations_and_shapes() {
 // functions. The first plan named them as out of scope; the corpus said
 // otherwise.
 void test_structs() {
-    const glsl::module m = parse_fragment(R"(
+    const glsl::shader m = parse_fragment(R"(
         struct Vertex {
           vec3 position;
           vec3 normal;
@@ -336,7 +336,7 @@ void test_structs() {
 // p5's font shader has three `ifloor`. The parser records each; choosing between
 // them is stage 2's job, and it cannot choose from a list it never got.
 void test_overloads_are_all_recorded() {
-    const glsl::module m = parse_fragment(R"(
+    const glsl::shader m = parse_fragment(R"(
         int ifloor(float v) { return int(v); }
         int ifloor(int v) { return v; }
         ivec2 ifloor(vec2 v) { return ivec2(v); }
@@ -352,7 +352,7 @@ void test_overloads_are_all_recorded() {
 }
 
 void test_statements_and_expressions() {
-    const glsl::module m = parse_fragment(R"(
+    const glsl::shader m = parse_fragment(R"(
         uniform int uCount;
         uniform vec3 uColors[8];
         vec3 total(void) {
@@ -398,7 +398,7 @@ void test_malformed_shaders_are_diagnosed_not_fatal() {
              "void main() { x[[[ }",
              "#define A(\nA(1)",
          }) {
-        const glsl::module m = parse_fragment(bad);
+        const glsl::shader m = parse_fragment(bad);
         // Not asserting that each FAILS - `for(;;){}` is valid, and an empty
         // shader has no syntax error either. Asserting that each one RETURNS,
         // and that a failure always carries a message a page could show.
@@ -414,7 +414,7 @@ void test_malformed_shaders_are_diagnosed_not_fatal() {
 // Run a fragment shader body and read back one float from gl_FragColor.
 [[nodiscard]] glsl::execution run_fragment(const std::string & body,
                                            const glsl::environment & env) {
-    const glsl::module m = parse_fragment("void main() {\n" + body + "\n}");
+    const glsl::shader m = parse_fragment("void main() {\n" + body + "\n}");
     if (!m.ok) {
         std::printf("FAIL the test shader did not compile:\n%s%s\n", m.info_log().c_str(),
                     body.c_str());
@@ -596,7 +596,7 @@ void test_control_flow_and_functions() {
 // parameter types. p5's font shader has three `ifloor`, so picking the first by
 // name would call the wrong one two times in three.
 void test_overload_resolution() {
-    const glsl::module m = parse_fragment(R"(
+    const glsl::shader m = parse_fragment(R"(
         float pick(float v) { return 1.0; }
         float pick(vec2 v) { return 2.0; }
         float pick(vec3 v) { return 3.0; }
@@ -618,7 +618,7 @@ void test_overload_resolution() {
 // `out` and `inout` parameters are copied BACK. GLSL passes by value, so a
 // callee that writes one has written a copy until the call returns.
 void test_out_parameters() {
-    const glsl::module m = parse_fragment(R"(
+    const glsl::shader m = parse_fragment(R"(
         void addTo(inout float total, in float by) { total += by; }
         void split(float v, out float half1, out float half2) { half1 = v * 0.5; half2 = v * 0.5; }
         void main() {
@@ -642,7 +642,7 @@ void test_out_parameters() {
 }
 
 void test_structs_at_runtime() {
-    const glsl::module m = parse_fragment(R"(
+    const glsl::shader m = parse_fragment(R"(
         struct Vertex { vec3 position; vec3 normal; vec2 texCoord; vec4 color; };
         Vertex scale(Vertex v, float by) { v.position = v.position * by; return v; }
         void main() {
@@ -670,7 +670,7 @@ void test_structs_at_runtime() {
 // Uniforms, attributes and varyings arrive through the environment, and a
 // uniform ARRAY is indexed by a loop - which is exactly p5's light shaders.
 void test_uniforms_and_arrays() {
-    const glsl::module m = parse_fragment(R"(
+    const glsl::shader m = parse_fragment(R"(
         uniform vec3 uColors[4];
         uniform int uCount;
         uniform mat4 uProjectionMatrix;
@@ -733,7 +733,7 @@ void test_discard() {
 void test_a_vertex_shader_publishes_its_varyings() {
     glsl::options how;
     how.which = glsl::stage::vertex;
-    const glsl::module m = glsl::parse(R"(
+    const glsl::shader m = glsl::parse(R"(
         attribute vec3 aPosition;
         uniform mat4 uProjectionMatrix;
         varying vec2 vTexCoord;
@@ -780,7 +780,7 @@ void test_a_vertex_shader_publishes_its_varyings() {
 // A texture fetch goes through the environment, so this file knows nothing
 // about how textures are stored.
 void test_texture_sampling() {
-    const glsl::module m = parse_fragment(R"(
+    const glsl::shader m = parse_fragment(R"(
         uniform sampler2D uSampler;
         void main() { gl_FragColor = texture2D(uSampler, vec2(0.25, 0.75)); }
     )");
@@ -814,20 +814,20 @@ void test_runtime_failures_are_reported() {
              "gl_FragColor = vec4(noSuchFunction(1.0));",
              "vec3 v = vec3(0.0); v.qqqq = vec4(1.0); gl_FragColor = vec4(v, 1.0);",
          }) {
-        const glsl::module m = parse_fragment(std::string{"void main() { "} + bad + " }");
+        const glsl::shader m = parse_fragment(std::string{"void main() { "} + bad + " }");
         if (!m.ok) { continue; } // a parse error is a fine outcome too
         const glsl::execution ran = glsl::execute(m, env);
         if (!ran.ok) { CHECK(!ran.error.empty()); }
     }
     // And one that must definitely fail, so the loop cannot pass by accepting
     // everything.
-    const glsl::module m = parse_fragment("void main() { gl_FragColor = vec4(nope); }");
+    const glsl::shader m = parse_fragment("void main() { gl_FragColor = vec4(nope); }");
     CHECK(m.ok);
     CHECK(!glsl::execute(m, env).ok);
 
     // A LOOP THAT NEVER ENDS MUST NOT HANG. A page can write one, so the
     // evaluator caps iterations rather than trusting the shader.
-    const glsl::module spin =
+    const glsl::shader spin =
         parse_fragment("void main() { float x = 0.0; while (true) { x += 1.0; } "
                        "gl_FragColor = vec4(x); }");
     CHECK(spin.ok);
@@ -848,7 +848,7 @@ void run_benchmark() {
     // A shader with the shape of real work: a normalize, a dot, a couple of
     // multiplies and a clamp - which is what a diffuse term costs, and roughly
     // what p5's lightTextureFrag does per fragment.
-    const glsl::module m = parse_fragment(R"(
+    const glsl::shader m = parse_fragment(R"(
         uniform vec3 uLightDirection;
         uniform vec4 uMaterialColor;
         varying vec3 vNormal;
@@ -918,7 +918,7 @@ void run_benchmark() {
     const std::string real_source = preamble + "\n" + read_file("tests/glsl/lightTextureFrag.frag");
     glsl::options how;
     how.which = glsl::stage::fragment;
-    const glsl::module real = glsl::parse(real_source, how);
+    const glsl::shader real = glsl::parse(real_source, how);
     if (!real.ok) {
         std::printf("  the corpus shader did not compile:\n%s", real.info_log().c_str());
         return;
