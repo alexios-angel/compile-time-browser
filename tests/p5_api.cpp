@@ -61,22 +61,28 @@ struct outcome {
     std::vector<std::string> out;
     const std::size_t at = json.find("\"" + key + "\"");
     if (at == std::string::npos) { return out; }
-    const std::size_t open = json.find('[', at);
-    const std::size_t close = json.find(']', open);
-    if (open == std::string::npos || close == std::string::npos) { return out; }
-    std::size_t i = open;
-    while (true) {
-        const std::size_t start = json.find('"', i);
-        if (start == std::string::npos || start > close) { break; }
-        std::string item;
-        std::size_t j = start + 1;
-        for (; j < json.size() && json[j] != '"'; ++j) {
-            // The runner's messages can contain an escaped quote or backslash.
-            if (json[j] == '\\' && j + 1 < json.size()) { ++j; }
-            item += json[j];
+    std::size_t i = json.find('[', at);
+    if (i == std::string::npos) { return out; }
+    ++i;
+    // A `]` ENDS THE ARRAY ONLY OUTSIDE A STRING. This used to find the first
+    // one anywhere and treat it as the end, so a probe whose failure MESSAGE
+    // contained a bracket truncated the list - silently, and only for the
+    // probes that sorted after it. Five failures vanished from a report that
+    // still looked complete, which is the harness version of the bug this whole
+    // file exists to find.
+    while (i < json.size() && json[i] != ']') {
+        if (json[i] != '"') {
+            ++i; // a comma or whitespace between items
+            continue;
         }
+        std::string item;
+        for (++i; i < json.size() && json[i] != '"'; ++i) {
+            // The runner's messages can contain an escaped quote or backslash.
+            if (json[i] == '\\' && i + 1 < json.size()) { ++i; }
+            item += json[i];
+        }
+        ++i; // past the closing quote
         out.push_back(item);
-        i = j + 1;
     }
     return out;
 }
@@ -194,6 +200,19 @@ int main() {
     now.skipped = field(reported, "skipped");
 
     const std::size_t total = now.passed.size() + now.failed.size() + now.skipped.size();
+    // EVERY PROBE MUST BE ACCOUNTED FOR. The runner reports how many it was
+    // given, and every one of them lands in exactly one of the three lists - so
+    // a mismatch means the report lost some, whatever it says about the rest.
+    // Cheap, and it is the check that was missing when a bracket in a message
+    // ate five failures.
+    const std::vector<std::string> declared = field(reported, "count");
+    const std::size_t expected =
+        declared.empty() ? total : static_cast<std::size_t>(std::atoll(declared[0].c_str()));
+    if (expected != total) {
+        std::printf("FAIL the report lost probes: %zu declared, %zu accounted for\n", expected,
+                    total);
+        ++ctbrowser_test_failures;
+    }
     std::printf("     p5 API: %zu probes - %zu pass, %zu fail, %zu skipped\n", total,
                 now.passed.size(), now.failed.size(), now.skipped.size());
     for (const std::string & failure : now.failed) { std::printf("     !! %s\n", failure.c_str()); }

@@ -483,6 +483,12 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
         if (i >= all.size()) { return value::null(); }
         return active_info(c, all[i]);
     });
+    // NOT A GL CALL. There is no such entry point in WebGL, because a compiled
+    // GPU shader cannot fail per fragment - this evaluator can, and a draw that
+    // silently wrote nothing is the hardest kind of failure to diagnose. Named
+    // with the engine's prefix so nobody mistakes it for standard surface.
+    method("ctbrowserShaderError",
+           [gl](context & c, std::span<value>) { return c.string(gl->shader_error()); });
     method("getProgramInfoLog", [gl](context & c, std::span<value> a) {
         return c.string(gl->program_log(id_of(c, a.empty() ? value::undefined() : a[0])));
     });

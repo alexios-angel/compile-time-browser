@@ -154,6 +154,12 @@ std::size_t draw_triangles(const draw_request & request, framebuffer & into) {
             const glsl::environment env = stage.as_environment();
             const glsl::execution ran = vertex_program.run(env);
             if (!ran.ok) {
+                // FIRST ONE WINS, like glGetError: a shader that fails on one
+                // vertex fails on most of them, and the thousandth message is
+                // the same as the first.
+                if (request.shader_error != nullptr && request.shader_error->empty()) {
+                    *request.shader_error = "vertex shader: " + ran.error;
+                }
                 usable = false;
                 break;
             }
@@ -313,7 +319,12 @@ std::size_t draw_triangles(const draw_request & request, framebuffer & into) {
 
                 const glsl::environment env = stage.as_environment();
                 const glsl::execution ran = fragment_program.run(env);
-                if (!ran.ok) { continue; }
+                if (!ran.ok) {
+                    if (request.shader_error != nullptr && request.shader_error->empty()) {
+                        *request.shader_error = "fragment shader: " + ran.error;
+                    }
+                    continue;
+                }
                 // DISCARD WRITES NOTHING, and that includes the depth buffer -
                 // a discarded fragment must not occlude what comes after it.
                 if (ran.discarded) { continue; }

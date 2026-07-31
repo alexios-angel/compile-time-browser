@@ -129,6 +129,20 @@ struct draw_request {
     std::function<const glsl::value *(std::string_view)> uniform;
     std::function<glsl::value(int unit, float s, float t)> sample;
     draw_state state;
+
+    // WHERE A SHADER THAT FAILS AT RUN TIME GETS REPORTED, and it needs
+    // somewhere to go. A vertex shader whose `main` errors used to drop its
+    // triangle and a fragment shader's error used to drop its pixel, both in
+    // total silence - so a shader this evaluator cannot run produced an empty
+    // canvas indistinguishable from geometry that legitimately missed.
+    //
+    // A REAL DRIVER HAS NO EQUIVALENT, because a compiled GPU shader cannot
+    // fail per fragment. This evaluator can, so the condition is this engine's
+    // to report rather than something to model on GL.
+    //
+    // Optional: null means the caller does not want it, which is what the tests
+    // that only care about pixels pass.
+    std::string * shader_error = nullptr;
 };
 
 [[nodiscard]] std::size_t draw_triangles(const draw_request & request, framebuffer & into);

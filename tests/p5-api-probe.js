@@ -1256,7 +1256,10 @@ globalThis.__probes = [
       for (let i = 0; i < buf.length; i += 4) {
         if (buf[i] !== 0 || buf[i + 1] !== 0 || buf[i + 2] !== 255) { other++; }
       }
-      if (other === 0) { throw 'nothing was drawn - the canvas is all background'; }
+      if (other === 0) {
+        throw 'nothing was drawn - the canvas is all background'
+            + ' [shaderError=' + (gl.ctbrowserShaderError() || 'none') + ']';
+      }
       if (other === 24 * 24) { throw 'everything was drawn - no background survives'; }
       const err = gl.getError();
       if (err !== 0) { throw 'gl error ' + err; }
@@ -1379,5 +1382,11 @@ globalThis.__runProbes = async function (sketch) {
   passed.sort();
   failed.sort();
   skipped.sort();
-  return JSON.stringify({ passed: passed, failed: failed, skipped: skipped });
+  // `count` is a STRING so the harness's small JSON reader, which only pulls
+  // string arrays, can see it. It exists so the C++ side can prove no probe
+  // fell out of the report rather than trusting that none did.
+  return JSON.stringify({
+    passed: passed, failed: failed, skipped: skipped,
+    count: [String(globalThis.__probes.length)]
+  });
 };

@@ -637,7 +637,15 @@ std::size_t webgl_context::draw_arrays(std::uint32_t mode, int first, int count)
                                     static_cast<float>(texel & 0xFF) / 255.0f,
                                     static_cast<float>((texel >> 24) & 0xFF) / 255.0f});
     };
-    return draw_triangles(request, framebuffer_);
+    // A SHADER THAT FAILS AT RUN TIME IS AN ENGINE CONDITION, not a GL one, and
+    // it used to be pure silence. INVALID_OPERATION is the closest GL has, and
+    // it means a page checking getError() sees that the draw did not do what it
+    // asked instead of an empty canvas with a clean bill of health.
+    shader_error_.clear();
+    request.shader_error = &shader_error_;
+    const std::size_t drawn = draw_triangles(request, framebuffer_);
+    if (!shader_error_.empty()) { fail(gl_enum::invalid_operation); }
+    return drawn;
 }
 
 std::size_t webgl_context::draw_elements(std::uint32_t mode, int count, std::uint32_t type,
@@ -681,7 +689,15 @@ std::size_t webgl_context::draw_elements(std::uint32_t mode, int count, std::uin
         const auto found = program->second.uniforms.find(name);
         return found == program->second.uniforms.end() ? nullptr : &found->second;
     };
-    return draw_triangles(request, framebuffer_);
+    // A SHADER THAT FAILS AT RUN TIME IS AN ENGINE CONDITION, not a GL one, and
+    // it used to be pure silence. INVALID_OPERATION is the closest GL has, and
+    // it means a page checking getError() sees that the draw did not do what it
+    // asked instead of an empty canvas with a clean bill of health.
+    shader_error_.clear();
+    request.shader_error = &shader_error_;
+    const std::size_t drawn = draw_triangles(request, framebuffer_);
+    if (!shader_error_.empty()) { fail(gl_enum::invalid_operation); }
+    return drawn;
 }
 
 } // namespace ctbrowser::shell

@@ -271,6 +271,13 @@ public:
     std::size_t draw_arrays(std::uint32_t mode, int first, int count);
     std::size_t draw_elements(std::uint32_t mode, int count, std::uint32_t type, int offset);
 
+    // WHY A DRAW DREW NOTHING, when the reason was the shader rather than the
+    // geometry. Empty when the last draw ran clean. GL has no such call - a
+    // compiled GPU shader cannot fail per fragment - so this is the engine's
+    // own, and it is the difference between a diagnosable failure and an empty
+    // canvas. The matching getError() code is INVALID_OPERATION.
+    [[nodiscard]] const std::string & shader_error() const noexcept { return shader_error_; }
+
     [[nodiscard]] std::uint32_t error() const noexcept { return error_; }
     [[nodiscard]] std::uint32_t take_error() noexcept {
         const std::uint32_t was = error_;
@@ -314,6 +321,7 @@ private:
     float clear_[4]{0, 0, 0, 0};
     float clear_depth_ = 1.0f;
     std::uint32_t error_ = gl_enum::no_error;
+    std::string shader_error_;
 };
 
 } // namespace ctbrowser::shell
