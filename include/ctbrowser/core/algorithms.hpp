@@ -35,9 +35,17 @@ namespace ctbrowser {
     return c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c;
 }
 
+// `boost::algorithm::to_lower` and friends, pinned to the classic locale - the
+// same discipline as ascii_iequals below, and the same trap: the default
+// overloads take std::locale(), the global one. Verified with the classic
+// locale they fold A-Z and leave bytes above 127 untouched.
+//
+// The single-character ascii_lower above is NOT these: it is constexpr and used
+// per character in scanners, where a function call into Boost would not be.
 void ascii_lower_in_place(std::string & text) noexcept;
-
 [[nodiscard]] std::string ascii_lower_copy(std::string_view text);
+void ascii_upper_in_place(std::string & text) noexcept;
+[[nodiscard]] std::string ascii_upper_copy(std::string_view text);
 
 // Was: `tokenizer::ascii_iequals` for HTML tag names, plus one in each of the
 // two HTTP transports for header names.
@@ -61,6 +69,11 @@ void ascii_lower_in_place(std::string & text) noexcept;
 //
 // -1 rather than 0 for a non-digit, because `0` is a perfectly good hex digit
 // and a caller that cannot tell them apart parses `#gg0000` as black.
+// NOT `boost::convert` with the stream converter, which was measured rather
+// than dismissed: it is a std::stringstream per call and came out **85x
+// slower** over 200,000 digits (0.115 ms against 9.789 ms). This runs on every
+// `&#x41;` the tokenizer sees, every `\x` escape in a script, and every CSS
+// colour, so that is not a trade worth making for four fewer lines.
 [[nodiscard]] constexpr int hex_value(char c) noexcept {
     if (c >= '0' && c <= '9') { return c - '0'; }
     if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
@@ -85,6 +98,13 @@ inline constexpr std::string_view html_whitespace = " \t\n\r\f";
 inline constexpr std::string_view js_whitespace = " \t\n\r\f\v";
 inline constexpr std::string_view glsl_line_whitespace = " \t\r";
 
+// NOT `boost::algorithm::trim`, for two measured reasons. It trims what the
+// locale calls space, which under the classic locale INCLUDES vertical tab -
+// and HTML's set excludes it, so it is simply the wrong set for two of the
+// three uses above. `trim_if` with `is_any_of` does express them, but it
+// returns a std::string where this returns a string_view, and that allocation
+// measured **7x slower** over 200,000 trims (2.0 ms against 14.2 ms) on a path
+// the parsers run constantly.
 [[nodiscard]] constexpr std::string_view trim(std::string_view text,
                                               std::string_view set) noexcept {
     const std::size_t first = text.find_first_not_of(set);
@@ -92,8 +112,7 @@ inline constexpr std::string_view glsl_line_whitespace = " \t\r";
     return text.substr(first, text.find_last_not_of(set) - first + 1);
 }
 
-[[nodiscard]] constexpr bool all_whitespace(std::string_view text,
-                                            std::string_view set) noexcept {
+[[nodiscard]] constexpr bool all_whitespace(std::string_view text, std::string_view set) noexcept {
     return text.find_first_not_of(set) == std::string_view::npos;
 }
 

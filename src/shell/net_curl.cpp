@@ -107,9 +107,7 @@ std::size_t on_body(char * data, std::size_t size, std::size_t count, void * opa
 std::size_t on_header(char * data, std::size_t size, std::size_t count, void * opaque) {
     auto & into = *static_cast<sink *>(opaque);
     std::string_view line{data, size * count};
-    while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) {
-        line.remove_suffix(1);
-    }
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) { line.remove_suffix(1); }
     // A STATUS LINE STARTS A NEW RESPONSE, and with redirects followed inside
     // libcurl there may be several. Only the LAST one's headers are the
     // answer, so each status line throws away what came before it - otherwise a
@@ -223,9 +221,7 @@ http_response fetch(const http_request & request, http_options options) {
     sending.add("Accept: */*");
     // The CALLER'S headers last, so a page can override the defaults - which is
     // what fetch(url, {headers}) means in a page.
-    for (const http_header & each : request.headers) {
-        sending.add(each.name + ": " + each.value);
-    }
+    for (const http_header & each : request.headers) { sending.add(each.name + ": " + each.value); }
     curl_easy_setopt(handle.get(), CURLOPT_HTTPHEADER, sending.get());
 
     // NEVER THROWS, which the C API makes easy: every failure is a return code.
