@@ -1006,6 +1006,119 @@ globalThis.__probes = [
     return 'ok';
   }],
 
+  // The 2D remainder of the coverage list. What is left after these is WEBGL,
+  // motion sensors, audio, video and capture - out of scope by name, not by
+  // omission.
+
+  ['io', 'httpPost and httpDo', function (s) {
+    const wrong = [];
+    if (typeof s.httpPost !== 'function') { wrong.push('httpPost absent'); }
+    if (typeof s.httpDo !== 'function') { wrong.push('httpDo absent'); }
+    if (wrong.length) { throw wrong.join(' | '); }
+    // httpDo with an explicit GET reaches the same path httpGet does, which is
+    // the one this engine can serve without a network.
+    return s.httpDo('probe-data.json', 'GET', 'json').then(function (data) {
+      if (!data || data.n !== 4) { throw 'parsed=' + JSON.stringify(data); }
+      return 'ok';
+    });
+  }],
+  ['io', 'loadBlob', function (s) {
+    if (typeof s.loadBlob !== 'function') { throw 'loadBlob absent'; }
+    return s.loadBlob('probe-lines.txt').then(function (blob) {
+      if (!blob) { throw 'no blob'; }
+      if (blob.size !== 13) { throw 'size=' + blob.size; }
+      if (!(blob instanceof Blob)) { throw 'not a Blob'; }
+      return 'ok';
+    });
+  }],
+
+  ['env', 'fullscreen and pointer lock', function (s) {
+    const wrong = [];
+    // READ ONLY. There is no window manager here, so asking to go fullscreen or
+    // to lock the pointer cannot be honoured - but the READ has to answer, and
+    // p5 calls fullscreen() with no argument to ask.
+    // FALSY, not literally false: p5 returns document.fullscreenElement, which is
+    // the element or null. What matters is that the read ANSWERS - undefined
+    // there means the property does not exist, which is a different question.
+    if (typeof s.fullscreen !== 'function') { wrong.push('fullscreen absent'); }
+    else if (s.fullscreen() !== null && s.fullscreen() !== false) {
+      wrong.push('fullscreen() = ' + s.fullscreen());
+    }
+    for (const name of ['requestPointerLock', 'exitPointerLock']) {
+      if (typeof s[name] !== 'function') { wrong.push(name + ' absent'); }
+    }
+    if (wrong.length) { throw wrong.join(' | '); }
+    return 'ok';
+  }],
+  ['env', 'setFrameRate and touches', function (s) {
+    const wrong = [];
+    if (typeof s.setFrameRate !== 'function') { wrong.push('setFrameRate absent'); }
+    else {
+      s.setFrameRate(24);
+      if (s.getTargetFrameRate() !== 24) { wrong.push('target=' + s.getTargetFrameRate()); }
+      s.setFrameRate(60);
+    }
+    // `touches` is an ARRAY even with no touch device - a sketch reads
+    // touches.length every frame, and undefined there is a TypeError per frame.
+    if (!Array.isArray(s.touches)) { wrong.push('touches is ' + typeof s.touches); }
+    if (wrong.length) { throw wrong.join(' | '); }
+    return 'ok';
+  }],
+
+  ['math', 'createMatrix', function (s) {
+    if (typeof s.createMatrix !== 'function') { throw 'createMatrix absent'; }
+    const m = s.createMatrix(4, 4);
+    if (!m) { throw 'no matrix'; }
+    return 'ok';
+  }],
+
+  ['shape', 'curveDetail, strokeMode and vertexProperty', function (s) {
+    const wrong = [];
+    for (const name of ['curveDetail', 'strokeMode', 'vertexProperty', 'splineProperties']) {
+      if (typeof s[name] !== 'function') { wrong.push(name + ' absent'); }
+    }
+    if (wrong.length) { throw wrong.join(' | '); }
+    // curveDetail changes how finely a spline is walked; a value that throws or
+    // that silently stops the shape drawing is the failure worth catching.
+    s.curveDetail(10);
+    s.background(255);
+    s.noFill();
+    s.stroke(0);
+    s.beginShape();
+    s.splineVertex(2, 20); s.splineVertex(8, 4); s.splineVertex(16, 20); s.splineVertex(22, 4);
+    s.endShape();
+    s.loadPixels();
+    let dark = 0;
+    for (let i = 0; i < s.pixels.length; i += 4) { if (s.pixels[i] < 128) { dark++; } }
+    if (dark === 0) { throw 'the shape drew nothing after curveDetail'; }
+    return 'ok';
+  }],
+
+  ['save', 'saveFrames', function (s) {
+    if (typeof s.saveFrames !== 'function') { throw 'saveFrames absent'; }
+    // The callback form, which hands the frames back instead of downloading
+    // them - the only form a headless run can observe.
+    return new Promise(function (resolve, reject) {
+      let settled = false;
+      // Half a second at 10fps - saveFrames paces itself with setInterval at
+      // 1000/fps and stops on a setTimeout at the duration, so a duration
+      // SHORTER than one interval captures nothing at all. Which is correct, and
+      // was my probe's mistake rather than the library's.
+      s.saveFrames('probe', 'png', 0.5, 10, function (frames) {
+        settled = true;
+        if (!Array.isArray(frames)) { reject('frames is ' + typeof frames); return; }
+        if (frames.length === 0) { reject('no frames captured'); return; }
+        if (!frames[0].imageData || frames[0].imageData.indexOf('data:image') !== 0) {
+          reject('frame 0 has no data URL: ' + JSON.stringify(frames[0]).slice(0, 60));
+          return;
+        }
+        resolve('ok');
+      });
+      // saveFrames paces itself with the frame loop, so it needs turns to pass.
+      setTimeout(function () { if (!settled) { reject('saveFrames never called back'); } }, 800);
+    });
+  }],
+
   // --- saving -------------------------------------------------------------
   //
   // Every p5 save() ends in downloadFile: a Blob, an object URL, an <a href

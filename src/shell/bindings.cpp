@@ -2422,6 +2422,24 @@ void dom_bindings::install_document(context & cx) {
     // it reads 'complete' and waits for a `load` event otherwise - takes the
     // branch that matches what actually happened.
     doc->set("readyState", cx.string("complete"));
+    // NULL, NOT ABSENT. `document.fullscreenElement` is how a page asks whether
+    // it is fullscreen - p5's own `fullscreen()` with no argument is exactly that
+    // read - and undefined there is indistinguishable from "the property does not
+    // exist", which is a different question. There is no window manager here, so
+    // the answer is always null: nothing is fullscreen.
+    for (const char * name :
+         {"fullscreenElement", "webkitFullscreenElement", "mozFullScreenElement",
+          "msFullscreenElement", "pointerLockElement"}) {
+        doc->set(name, value::null());
+    }
+    // Asking to ENTER either is a no-op that succeeds quietly rather than a
+    // missing method: a page calls these from a click handler and does not check.
+    for (const char * name : {"exitFullscreen", "exitPointerLock"}) {
+        doc->set(name, value::object(cx.allocate<script::native_object>(
+                           name, [](context & c, std::span<value>) {
+                               return c.make_promise(value::undefined(), false);
+                           })));
+    }
     // `document.cookie`, IN MEMORY AND FOR THIS PAGE ONLY.
     //
     // An accessor rather than a string, because the API is not a string: READING
