@@ -38,9 +38,12 @@ reference, the fallback, and the oracle, for four reasons:
    different rounding, a different `sin` — so the goldens stay on software and
    the GPU path is verified against it with a tolerance. That is the same
    arrangement `svg_basics` already has for plutosvg.
-2. **There is no GPU on the machine this is written on.** `docs/platform.md`:
-   Linux binaries here see only lavapipe. Software has to work regardless, or
-   the engine is untestable where it is developed.
+2. **There is no GPU HARDWARE on the machine this is written on** - only
+   lavapipe, a software Vulkan implementation (`docs/platform.md`). An earlier
+   draft of this document read that as "no adapter at all"; that was wrong, and
+   `gpu_basics` has been running SDL_GPU against lavapipe the whole time. What
+   is true is that nothing here can be benchmarked meaningfully, and that
+   software has to work regardless.
 3. **`raster/` is already software-always** and `gpu/` is already "the fallback
    when there is none". This is the same split, not a new one.
 4. **The front end is shared, so neither back end is wasted work.** SDL_GPU takes
@@ -65,11 +68,31 @@ It is also the first thing in this engine to **rasterise** on the GPU. Today
 quads. A WebGL draw call is the first workload where the GPU does the drawing,
 which is why it needs a graphics pipeline rather than the existing blit.
 
-**Lavapipe makes this developable here.** It is a real Vulkan implementation, so
-the SPIR-V and all the pipeline plumbing can be *exercised and validated* on this
-machine — it is only the speed that is not representative. A driver rejecting
-malformed SPIR-V is a loud failure, which is exactly what is wanted from a
-back end nobody can benchmark locally.
+**Lavapipe makes this developable here**, and one claim this document made about
+it was **wrong and is corrected**.
+
+It is a real Vulkan implementation - `gpu_basics` runs the compositor against it
+and matches the software path byte for byte - so the pipeline plumbing genuinely
+can be exercised here. Only the speed is unrepresentative.
+
+But this document also said "a driver rejecting malformed SPIR-V is a loud
+failure, which is exactly what is wanted". **It does not reject it.**
+`SDL_CreateGPUShader` was measured, in `gpu_basics`, against deliberate garbage -
+a valid magic number followed by `0xDEADBEEF` - and accepted it. Omitting the
+entry-point interface, mismatching operand widths and storing a float into a
+`vec4` were all accepted too. Acceptance proves the bytes reached the driver and
+nothing more, and the test now PRINTS that rather than leaving it to a comment
+that could go stale.
+
+So validation is three things, honestly ranked:
+
+  * **structure**, in `spirv_basics` - header, word counts, ids defined before
+    use. Calibrated by requiring it to accept `glslc`'s own committed output,
+    which is what stops a checker that passes everything.
+  * **reaching the driver**, in `gpu_basics` - a smoke test, and labelled as one.
+  * **real validation**, by `tools/check-spirv.py`, which runs `spirv-val` when
+    it is installed and says plainly that it did not when it is not. Optional in
+    the same way plutosvg and SDL3_image are.
 
 ### The invariant this must not break
 
@@ -478,7 +501,7 @@ The first point at which the whole stack is provably real.
 Layered on once the pipeline is correct and measured, each behind the same
 differential test.
 
-### 7. The GPU back end — `gpu/webgl_device.hpp`, `src/gpu/spirv.cpp`
+### 7. The GPU back end — `raster/spirv.hpp` (DONE), the pipeline (NOT DONE)
 
 A SPIR-V emitter over the stage-1 AST, and an SDL_GPU graphics pipeline built
 from the result. Written after the software path works end to end, so there is

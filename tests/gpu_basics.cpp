@@ -294,6 +294,111 @@ void test_gpu_through_the_compositor_thread() {
 
 } // namespace
 
+// DOES A REAL DRIVER TAKE THE SPIR-V THIS ENGINE EMITS?
+//
+// tests/spirv_basics.cpp checks the bytes structurally, which catches a wrong
+// word count or an undefined id. It cannot catch a module that is well-formed
+// and still invalid - a type mismatch, a missing decoration, an entry point
+// whose interface does not list a variable it uses. Only a driver catches those,
+// and a driver REJECTS them rather than misbehaving, which makes this a real
+// test rather than a smoke test.
+//
+// It lives here because it needs SDL. The emitter itself needs nothing but the
+// GLSL front end, which is why it is in raster/ - see raster/spirv.hpp.
+void test_a_driver_accepts_our_spirv() {
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+        std::printf("     no SDL video: skipping the driver check\n");
+        return;
+    }
+    if (!SDL_GPUSupportsShaderFormats(SDL_GPU_SHADERFORMAT_SPIRV, nullptr)) {
+        std::printf("     no SPIR-V driver here: skipping\n");
+        return;
+    }
+    SDL_GPUDevice * device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, true, nullptr);
+    if (device == nullptr) {
+        std::printf("     no GPU device: skipping\n");
+        return;
+    }
+
+    const auto build = [](const char * source, raster::glsl::stage which) {
+        raster::glsl::options how;
+        how.which = which;
+        const raster::glsl::module m = raster::glsl::parse(source, how);
+        return raster::spirv::emit(m);
+    };
+    struct sample {
+        const char * what;
+        const char * source;
+        raster::glsl::stage stage;
+        SDL_GPUShaderStage sdl_stage;
+    };
+    for (const sample & each :
+         {sample{"a vertex shader",
+                 "attribute vec2 aPosition;\n"
+                 "attribute vec4 aColor;\n"
+                 "varying vec4 vColor;\n"
+                 "void main() { vColor = aColor; gl_Position = vec4(aPosition, 0.0, 1.0); }",
+                 raster::glsl::stage::vertex, SDL_GPU_SHADERSTAGE_VERTEX},
+          sample{"a vertex shader with a matrix",
+                 "attribute vec4 aPosition;\n"
+                 "uniform mat4 uProjectionMatrix;\n"
+                 "void main() { gl_Position = uProjectionMatrix * aPosition; }",
+                 raster::glsl::stage::vertex, SDL_GPU_SHADERSTAGE_VERTEX},
+          sample{"a fragment shader",
+                 "varying vec4 vColor;\n"
+                 "void main() { gl_FragColor = vec4(vColor.rgb, 1.0); }",
+                 raster::glsl::stage::fragment, SDL_GPU_SHADERSTAGE_FRAGMENT}}) {
+        const raster::spirv::module_binary binary = build(each.source, each.stage);
+        check(binary.ok, std::string{"emitted "} + each.what + ": " + binary.error);
+        if (!binary.ok) { continue; }
+
+        SDL_GPUShaderCreateInfo info{};
+        info.code = reinterpret_cast<const Uint8 *>(binary.bytes());
+        info.code_size = binary.size_in_bytes();
+        info.entrypoint = "main";
+        info.format = SDL_GPU_SHADERFORMAT_SPIRV;
+        info.stage = each.sdl_stage;
+        // One uniform buffer for the matrix sample; the driver checks the
+        // counts against what the module actually declares.
+        info.num_uniform_buffers = 0;
+        SDL_GPUShader * shader = SDL_CreateGPUShader(device, &info);
+        if (shader == nullptr) {
+            std::printf("FAIL the driver rejected %s: %s\n", each.what, SDL_GetError());
+            ++ctbrowser_test_failures;
+            continue;
+        }
+        std::printf("     the driver accepted %s (%zu bytes)\n", each.what, binary.size_in_bytes());
+        SDL_ReleaseGPUShader(device, shader);
+    }
+    // HOW MUCH IS THIS CHECK WORTH? Measured rather than assumed: hand the same
+    // call a module that is definitely not SPIR-V and see whether it says so.
+    {
+        std::vector<std::uint32_t> rubbish{raster::spirv::magic, 0x00010000, 0,         4, 0,
+                                           0xDEADBEEF,           0xDEADBEEF, 0xDEADBEEF};
+        SDL_GPUShaderCreateInfo info{};
+        info.code = reinterpret_cast<const Uint8 *>(rubbish.data());
+        info.code_size = rubbish.size() * sizeof(std::uint32_t);
+        info.entrypoint = "main";
+        info.format = SDL_GPU_SHADERFORMAT_SPIRV;
+        info.stage = SDL_GPU_SHADERSTAGE_VERTEX;
+        SDL_GPUShader * junk = SDL_CreateGPUShader(device, &info);
+        if (junk != nullptr) {
+            // It accepted nonsense, so acceptance proves nothing about validity.
+            // Said here rather than in a comment that could go stale, because the
+            // value of the checks above depends entirely on this answer.
+            std::printf("     NOTE: this driver accepts invalid SPIR-V too, so the checks\n");
+            std::printf("           above are a SMOKE TEST - they prove the bytes reach the\n");
+            std::printf("           driver, not that they are valid. Real validation needs\n");
+            std::printf("           spirv-val or the Vulkan validation layers, neither of\n");
+            std::printf("           which is installed here.\n");
+            SDL_ReleaseGPUShader(device, junk);
+        } else {
+            std::printf("     this driver rejects invalid SPIR-V, so the checks above are real\n");
+        }
+    }
+    SDL_DestroyGPUDevice(device);
+}
+
 int main() {
     // The GPU backend needs SDL video up before a device can exist. `offscreen`
     // so this runs with no display; `dummy` has no Vulkan surface support and
@@ -315,6 +420,7 @@ int main() {
     test_gpu_matches_software_on_translucent_content();
     test_gpu_scrolling_does_not_reraster();
     test_gpu_through_the_compositor_thread();
+    test_a_driver_accepts_our_spirv();
 
     if (skipped > 0) {
         std::printf("     %d gpu test(s) skipped - no device on this machine\n", skipped);

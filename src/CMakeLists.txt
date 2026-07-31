@@ -260,6 +260,7 @@ target_sources(ctbrowser-raster
     raster/glsl_preprocess.cpp
     raster/glsl_eval.cpp
     raster/softgl.cpp
+    raster/spirv.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
@@ -277,7 +278,8 @@ target_sources(ctbrowser-raster
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/compositor.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/pipeline.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/glsl.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/softgl.hpp")
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/softgl.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/spirv.hpp")
 target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-raster)
 target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)

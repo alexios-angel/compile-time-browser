@@ -28,6 +28,7 @@
 #include <ctbrowser/raster/renderer.hpp>
 #include <ctbrowser/raster/softgl.hpp>
 #include <ctbrowser/raster/software.hpp>
+#include <ctbrowser/raster/spirv.hpp>
 #include <ctbrowser/raster/surface.hpp>
 #include <ctbrowser/raster/svg.hpp>
 #include <ctbrowser/raster/tile.hpp>
