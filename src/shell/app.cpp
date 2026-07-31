@@ -6,6 +6,7 @@
 #endif
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -607,7 +608,12 @@ int run_app(std::string_view html, app_options options) {
     // CTBROWSER_CLOCK (milliseconds since the epoch) when a golden does need to
     // draw a date.
     if (const char * pinned = std::getenv("CTBROWSER_CLOCK"); pinned != nullptr) {
-        const double fixed = std::strtod(pinned, nullptr);
+        // from_chars rather than strtod: this pins the clock so a golden can
+        // draw a date, and a value that parsed differently under another
+        // locale would move the very render it exists to hold still.
+        double fixed = 0.0;
+        const std::string_view text{pinned};
+        std::from_chars(text.data(), text.data() + text.size(), fixed);
         page.set_clock([fixed] { return fixed; });
     } else {
         page.set_clock([] {

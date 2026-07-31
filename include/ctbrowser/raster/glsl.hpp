@@ -141,6 +141,20 @@ struct node {
     nk kind = nk::literal;
     type t;
     std::string text;
+    // A LITERAL'S VALUE, PARSED ONCE, when the node is built.
+    //
+    // `literal()` in the evaluator used to call std::strtof(n.text.c_str()) on
+    // EVERY evaluation, so the `0.5` written in a shader was re-parsed from its
+    // characters millions of times per draw - 5.4% of the shader benchmark,
+    // measured with callgrind.
+    //
+    // It was also a DETERMINISM bug, which matters more. strtof and strtol
+    // respect LC_NUMERIC, so on a host whose locale writes decimals with a
+    // comma the same shader would produce different pixels - and this
+    // repository byte-compares its renders across Linux and the Windows cross
+    // build. std::from_chars is locale-independent by definition.
+    float number = 0.0f;
+    std::int32_t integer = 0;
     std::int32_t a = -1;
     std::int32_t b = -1;
     std::int32_t c = -1;

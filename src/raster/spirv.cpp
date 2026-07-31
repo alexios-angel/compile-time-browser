@@ -374,7 +374,7 @@ private:
         if (which < 0 || failed()) { return constant(0.0f); }
         const glsl::node & n = m_->at(which);
         switch (n.kind) {
-        case glsl::nk::literal: return constant(std::strtof(n.text.c_str(), nullptr));
+        case glsl::nk::literal: return constant(n.number);
         case glsl::nk::identifier: return load(n.text);
         case glsl::nk::assign: return assign(n);
         case glsl::nk::field: return swizzle(n);

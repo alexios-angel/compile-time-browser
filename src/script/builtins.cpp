@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -464,8 +465,15 @@ struct json_reader {
             ok = false;
             return value::undefined();
         }
-        return value::number(
-            std::strtod(std::string{text.substr(start, at - start)}.c_str(), nullptr));
+        // from_chars, NOT strtod: strtod respects LC_NUMERIC, so on a host whose
+        // locale writes decimals with a comma `JSON.parse("{\"n\":1.5}")` would
+        // stop at the dot and read 1. Goldens are byte-compared across
+        // platforms, so a locale-sensitive parser is a portability bug waiting
+        // for the first machine that has one.
+        const std::string_view digits = text.substr(start, at - start);
+        double parsed = 0.0;
+        std::from_chars(digits.data(), digits.data() + digits.size(), parsed);
+        return value::number(parsed);
     }
     [[nodiscard]] value parse_array() {
         auto * arr = static_cast<array_object *>(cx.make_array().as_heap());
@@ -1892,10 +1900,13 @@ void install_object(context & cx) {
         if (self.is_array()) {
             auto * arr = static_cast<array_object *>(self.as_heap());
             if (key == "length") { return value::boolean(true); }
-            char * end = nullptr;
-            const double at = std::strtod(key.c_str(), &end);
-            return value::boolean(end != nullptr && *end == '\0' && at >= 0 &&
-                                  at < static_cast<double>(arr->items.size()));
+            // AN INDEX, so the whole key must be one - `"1x" in a` is false.
+            // from_chars reports where it stopped, which is the same check
+            // without strtod's locale sensitivity.
+            double at = 0.0;
+            const auto [stopped, failed] = std::from_chars(key.data(), key.data() + key.size(), at);
+            return value::boolean(failed == std::errc{} && stopped == key.data() + key.size() &&
+                                  at >= 0 && at < static_cast<double>(arr->items.size()));
         }
         if (self.is_kind(heap_kind::function)) {
             return value::boolean(static_cast<closure_object *>(self.as_heap())->find(key) !=

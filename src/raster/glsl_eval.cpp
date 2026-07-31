@@ -438,12 +438,14 @@ private:
         }
     }
 
+    // PARSED AT PARSE TIME, not here. This called strtof on every evaluation -
+    // the same `0.5` re-read from its characters millions of times per draw,
+    // 5.4% of the shader benchmark - and strtof respects LC_NUMERIC, so it was
+    // a cross-platform determinism bug as well. See node::number in glsl.hpp.
     [[nodiscard]] static value literal(const node & n) {
-        if (n.t.kind == base::b) { return value::boolean(n.text == "true"); }
-        if (n.t.kind == base::i) {
-            return value::integer(static_cast<int>(std::strtol(n.text.c_str(), nullptr, 0)));
-        }
-        return value::scalar(std::strtof(n.text.c_str(), nullptr));
+        if (n.t.kind == base::b) { return value::boolean(n.integer != 0); }
+        if (n.t.kind == base::i) { return value::integer(n.integer); }
+        return value::scalar(n.number);
     }
 
     [[nodiscard]] value read_name(const std::string & name) {

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cstdlib>
 #include <unordered_map>
 
@@ -488,9 +489,25 @@ private:
             return inner;
         }
         if (std::isdigit(static_cast<unsigned char>(text[at])) != 0) {
-            char * end = nullptr;
-            const long long value = std::strtoll(text.c_str() + at, &end, 0);
-            at = static_cast<std::size_t>(end - text.c_str());
+            // from_chars reports where it stopped, which is what `at` needs,
+            // and needs the base saying explicitly where strtoll sniffed it.
+            // Not a determinism fix - LC_NUMERIC governs the decimal point and
+            // an integer has none - just one number parser instead of two.
+            std::size_t begin = at;
+            int base_of = 10;
+            if (text.size() - at > 2 && text[at] == '0' &&
+                (text[at + 1] == 'x' || text[at + 1] == 'X')) {
+                base_of = 16;
+                begin = at + 2;
+            }
+            long long value = 0;
+            const auto [stopped, failed] =
+                std::from_chars(text.data() + begin, text.data() + text.size(), value, base_of);
+            if (failed != std::errc{}) {
+                ++at;
+                return 0;
+            }
+            at = static_cast<std::size_t>(stopped - text.data());
             return value;
         }
         // AN UNDEFINED NAME IS ZERO. That is the C rule and the GLSL one, and it

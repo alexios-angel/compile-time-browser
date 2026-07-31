@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <cstdlib>
 #include <string_view>
 #include <unordered_map>
@@ -261,6 +262,34 @@ private:
         }
     }
 
+    // LOCALE-INDEPENDENT, which is the point as much as the speed. from_chars
+    // never consults LC_NUMERIC; strtof and strtol do, and a shader that parsed
+    // `0.5` differently on a host whose locale uses a decimal comma would move
+    // the goldens. Hex integers are spelled `0x...` in GLSL, which from_chars
+    // needs told about explicitly.
+    static void parse_literal(node & n) {
+        std::string_view text = n.text;
+        if (n.t.kind == base::f) {
+            float value = 0.0f;
+            if (std::from_chars(text.data(), text.data() + text.size(), value).ec == std::errc{}) {
+                n.number = value;
+            }
+            n.integer = static_cast<std::int32_t>(n.number);
+            return;
+        }
+        int base_of = 10;
+        if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+            base_of = 16;
+            text.remove_prefix(2);
+        }
+        std::int32_t value = 0;
+        if (std::from_chars(text.data(), text.data() + text.size(), value, base_of).ec ==
+            std::errc{}) {
+            n.integer = value;
+        }
+        n.number = static_cast<float>(n.integer);
+    }
+
     [[nodiscard]] std::int32_t add(node n) {
         n.line = here().line;
         m_->nodes.push_back(std::move(n));
@@ -345,7 +374,14 @@ private:
         if (accept("]")) { return -1; } // sized by its initialiser or by the caller
         std::int32_t length = 0;
         if (here().kind == tk::number) {
-            length = static_cast<std::int32_t>(std::strtol(here().text.c_str(), nullptr, 0));
+            // from_chars for consistency with parse_literal above rather than
+            // for correctness: strtol is NOT locale-sensitive - LC_NUMERIC
+            // governs the decimal point, and an integer has none.
+            node sized;
+            sized.text = here().text;
+            sized.t = type{base::i, 1, 1, -1, 0};
+            parse_literal(sized);
+            length = sized.integer;
             ++at_;
         } else {
             // A constant expression this parser does not fold. Recorded as
@@ -850,6 +886,7 @@ private:
             n.kind = nk::literal;
             n.text = here().text;
             n.t = here().is_float ? type{base::f, 1, 1, -1, 0} : type{base::i, 1, 1, -1, 0};
+            parse_literal(n);
             ++at_;
             return add(std::move(n));
         }
@@ -858,6 +895,8 @@ private:
             n.kind = nk::literal;
             n.text = here().text;
             n.t = type{base::b, 1, 1, -1, 0};
+            n.number = n.text == "true" ? 1.0f : 0.0f;
+            n.integer = n.text == "true" ? 1 : 0;
             ++at_;
             return add(std::move(n));
         }
