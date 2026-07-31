@@ -201,8 +201,8 @@ void webgl_context::compile_shader(std::uint32_t shader) {
     const auto found = shaders_.find(shader);
     if (found == shaders_.end()) { return; }
     glsl::options how;
-    how.which = found->second.which == gl_enum::vertex_shader ? glsl::stage::vertex
-                                                              : glsl::stage::fragment;
+    how.which =
+        found->second.which == gl_enum::vertex_shader ? glsl::stage::vertex : glsl::stage::fragment;
     found->second.compiled = glsl::parse(found->second.source, how);
     found->second.compiled_ok = found->second.compiled.ok;
     found->second.log = found->second.compiled.info_log();
@@ -263,8 +263,9 @@ void webgl_context::link_program(std::uint32_t program) {
                 return v.store == glsl::storage::varying && v.name == wanted.name;
             });
         if (!written) {
-            p.log = "varying `" + wanted.name + "` is read by the fragment shader but never "
-                                                "written by the vertex shader";
+            p.log = "varying `" + wanted.name +
+                    "` is read by the fragment shader but never "
+                    "written by the vertex shader";
             return;
         }
     }
@@ -281,7 +282,9 @@ std::string webgl_context::program_log(std::uint32_t program) const {
     return found == programs_.end() ? std::string{} : found->second.log;
 }
 
-void webgl_context::use_program(std::uint32_t program) { current_program_ = program; }
+void webgl_context::use_program(std::uint32_t program) {
+    current_program_ = program;
+}
 
 int webgl_context::attribute_location(std::uint32_t program, const std::string & name) const {
     const auto found = programs_.find(program);
@@ -349,15 +352,17 @@ void webgl_context::set_enabled(std::uint32_t capability, bool on) {
     case gl_enum::depth_test: state_.depth_enabled = on; break;
     case gl_enum::blend: state_.blend_enabled = on; break;
     case gl_enum::scissor_test: state_.scissor_enabled = on; break;
-    case gl_enum::cull_face:
-        state_.cull = on ? cull_mode::back : cull_mode::none;
-        break;
+    case gl_enum::cull_face: state_.cull = on ? cull_mode::back : cull_mode::none; break;
     default: fail(gl_enum::invalid_enum); break;
     }
 }
 
-void webgl_context::depth_func(std::uint32_t how) { state_.depth = to_depth(how); }
-void webgl_context::depth_mask(bool on) { state_.depth_write = on; }
+void webgl_context::depth_func(std::uint32_t how) {
+    state_.depth = to_depth(how);
+}
+void webgl_context::depth_mask(bool on) {
+    state_.depth_write = on;
+}
 
 void webgl_context::blend_func(std::uint32_t source, std::uint32_t destination) {
     state_.source = to_blend(source);
@@ -380,7 +385,9 @@ void webgl_context::clear_color(float r, float g, float b, float a) {
     clear_[3] = a;
 }
 
-void webgl_context::clear_depth(float depth) { clear_depth_ = depth; }
+void webgl_context::clear_depth(float depth) {
+    clear_depth_ = depth;
+}
 
 void webgl_context::clear(std::uint32_t mask) {
     if ((mask & gl_enum::color_buffer_bit) != 0 && framebuffer_.colour != nullptr) {
@@ -481,13 +488,12 @@ attribute_set webgl_context::gather(const gl_program & program, int index) const
                 // makes every vertex read the first one.
                 const int stride = where.stride > 0 ? where.stride : component * where.size;
                 const auto start =
-                    static_cast<std::size_t>(where.offset) + static_cast<std::size_t>(index) *
-                                                                 static_cast<std::size_t>(stride);
+                    static_cast<std::size_t>(where.offset) +
+                    static_cast<std::size_t>(index) * static_cast<std::size_t>(stride);
                 for (int c = 0; c < where.size && c < 4; ++c) {
-                    made.v[static_cast<std::size_t>(c)] =
-                        read_component(buffer->second.bytes,
-                                       start + static_cast<std::size_t>(c * component), where.type,
-                                       where.normalized);
+                    made.v[static_cast<std::size_t>(c)] = read_component(
+                        buffer->second.bytes, start + static_cast<std::size_t>(c * component),
+                        where.type, where.normalized);
                 }
             }
         }
@@ -589,8 +595,7 @@ std::size_t webgl_context::draw_elements(std::uint32_t mode, int count, std::uin
     for (int i = 0; i < count; ++i) {
         const auto at = static_cast<std::size_t>(offset) +
                         static_cast<std::size_t>(i) * static_cast<std::size_t>(component);
-        const auto index =
-            static_cast<int>(read_component(indices->second.bytes, at, type, false));
+        const auto index = static_cast<int>(read_component(indices->second.bytes, at, type, false));
         vertices.push_back(gather(program->second, index));
     }
 

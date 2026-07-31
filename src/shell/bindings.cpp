@@ -170,6 +170,11 @@ void dom_bindings::register_roots(context & cx) {
         // Blob.prototype is held here as well as on the global, and the global
         // is what keeps it alive - but a page can delete a global, and a Blob
         // whose prototype was collected stops being `instanceof Blob`.
+        // A WebGL context object is reachable only from here once the page has
+        // dropped its variable, and getContext must still hand back the same one.
+        for (const auto & [packed, obj] : webgl_objects_) {
+            if (obj != nullptr) { mark(value::object(obj)); }
+        }
         mark(blob_prototype_);
         mark(location_);
         mark(document_);
@@ -1330,31 +1335,30 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
     method("getContext", [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         const std::string kind = arg_string(c, args, 0);
-        // "2d" ONLY, and a WEBGL REQUEST IS REFUSED OUT LOUD.
+        // "2d" and "webgl". WEBGL 2 STILL REFUSES, and the difference matters.
         //
-        // This used to return null for everything else, on the reasoning that a
-        // page feature-detects with exactly this call. The reasoning was wrong in
-        // the direction that matters: p5 asks for a webgl context, gets null,
-        // keeps the null, and falls back to its 2D renderer - so a WEBGL sketch
-        // constructed, drew nothing 3D, reported nothing, and filled the canvas
-        // with a background() that came out of the wrong renderer. A blank canvas
-        // and a clear conscience.
+        // This used to throw for the whole WebGL family, because returning null
+        // was worse: p5 asks for a webgl context, gets the null, keeps it, and
+        // falls back to its 2D renderer - so a WEBGL sketch drew nothing 3D and
+        // reported nothing. A blank canvas and a clear conscience.
         //
-        // THE DEVIATION, said plainly: a browser returns null when it cannot give
-        // you a context, and this throws for the WebGL family. That is a
-        // deliberate trade - WEBGL is out of scope here (docs/script.md), and the
-        // scope decision was that asking for it gets a CATCHABLE ERROR NAMING
-        // WEBGL rather than a canvas that quietly is not one. A page that really
-        // feature-detects can wrap it; a library that would otherwise limp on
-        // cannot miss it.
+        // Now there is a real one, so `webgl` and `experimental-webgl` hand it
+        // over. `webgl2` is a different language version (docs/webgl-plan.md)
+        // and still refuses OUT LOUD rather than returning null - which is also
+        // what makes p5 fall back to `webgl` and get the working one, since p5
+        // tries 2 first and catches nothing.
         //
-        // Anything else still returns null, which is what an unknown context type
-        // means and what a page testing for one expects.
-        if (kind == "webgl" || kind == "webgl2" || kind == "experimental-webgl") {
+        // Anything else is null, which is what an unknown context type means and
+        // what a page testing for one expects.
+        if (kind == "webgl2") {
             c.throw_error("TypeError",
-                          "this engine has no webgl context - it renders 2D only, so `" + kind +
-                              "` cannot be honoured");
+                          "this engine implements WebGL 1 only, so `webgl2` cannot be honoured - "
+                          "ask for `webgl`");
             return value::undefined();
+        }
+        if (kind == "webgl" || kind == "experimental-webgl") {
+            if (!id) { return value::null(); }
+            return webgl_context_object(c, id);
         }
         if (!id || kind != "2d") { return value::null(); }
         return canvas_context_object(c, id);

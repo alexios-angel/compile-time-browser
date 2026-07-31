@@ -132,7 +132,7 @@ Read the one that matches what you are touching — not all of them.
 | `docs/script.md` | the JS compiler, the VM, the standard library — what the language supports and what it rejects by name. **p5.js v2.3.1 runs**: `tests/p5_ratchet.cpp` records how FAR the bundle gets and `tests/p5_api.cpp` how WIDE the working surface is; `tools/p5-ratchet.py` and `tools/p5-api.py` drive them |
 | `docs/shell.md` | the application API, form controls, editing, input, navigation, resources — anything a page can do |
 | `docs/style-layout.md` | the cascade and the `style` attribute; tables, generated content, whitespace collapsing |
-| `docs/raster.md` | fonts, glyph rasterisation, the font8x8 fallback, **SVG** — what plutosvg does and does not draw |
+| `docs/raster.md` | fonts, glyph rasterisation, the font8x8 fallback, **SVG**, and **WebGL** — GLSL ES in `glsl.hpp` and the software rasteriser in `softgl.hpp`. `docs/webgl-plan.md` is the design and the staging |
 | `docs/build.md` | why the build takes as long as it does, the formatting gate, the runtime profiler |
 | `docs/platform.md` | **the GPU here reports no adapter** (WSL2), the Windows cross-build, the devbox. Read before drawing conclusions from a Linux run. |
 | `docs/v1-retirement.md` | what the deleted compile-time engine had that this does not |

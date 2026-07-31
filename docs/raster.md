@@ -158,3 +158,53 @@ The golden is gated on `CTBROWSER_WITH_IMAGE` in `examples/CMakeLists.txt`,
 exactly as the SVG one is gated on plutosvg: without the dependency the page
 lays out identically and draws nothing, and comparing then fails for the wrong
 reason.
+
+
+## WEBGL: GLSL AND A SOFTWARE RASTERISER (2026-07-30)
+
+`raster/` grew a language. `glsl.hpp` is GLSL ES 1.00 - preprocessor, parser,
+type model and a reference evaluator - and `softgl.hpp` is a triangle rasteriser
+that runs it. Together they are what makes `canvas.getContext('webgl')` return
+something real. `docs/webgl-plan.md` has the whole design and the staging; this
+is what a reader of `raster/` needs to know.
+
+**Why it is here.** WebGL has no fixed pipeline: `drawArrays` runs a vertex
+shader per vertex and a fragment shader per fragment, and nothing draws without
+executing them. That is software rasterisation, which is what this directory
+does. It stays SDL-free like everything else here, and the GPU back end -
+stage 7, not yet written - will live in `gpu/` behind an interface.
+
+**The parse corpus is p5's own shaders.** `tools/gen-glsl-fixtures.py` extracts
+the sixteen shaders p5.js ships into `tests/glsl/`, and the test compiles each
+one the way p5 would. They are somebody else's GLSL, which is the only kind
+worth testing a parser against - and reading them is what added the
+preprocessor, structs, function overloading and uniform arrays to the plan.
+
+**The four rules that look almost right when they are wrong**, each with its own
+test because none of them shows up as an error:
+
+  * **Matrices are column-major.** `m[i]` is a column and `m * v` sums columns.
+    Transposed gives a plausible wrong rotation.
+  * **Perspective-correct interpolation.** A varying is interpolated as `attr/w`
+    against `1/w` and divided at the end. Screen-linear looks fine on a quad
+    facing the camera and bends a texture along each triangle's diagonal
+    otherwise.
+  * **The top-left fill rule.** A pixel centre on a shared edge belongs to
+    exactly one of two triangles; without it a seam double-draws or drops.
+  * **The Y flip reverses the winding.** A counter-clockwise triangle in NDC has
+    a NEGATIVE doubled area in window coordinates, because y grows downwards
+    here and upwards there. Getting the sign backwards culls the faces you meant
+    to keep, and the symptom is a black screen.
+
+**What is not drawn**, named rather than discovered: points and lines
+(`drawArrays(gl.POINTS)` draws nothing), multisampling, `gl_FragDepth`,
+framebuffer objects (every draw goes to the canvas), instancing, and near-plane
+clipping - a triangle with any vertex at or behind the eye is dropped rather
+than split.
+
+**Speed.** The evaluator is a tree walker at 0.6 M fragments/sec -
+`ctbrowser-test-glsl_basics --bench` reports it. That is 60 ms for a 200x200
+full-screen draw, which is why `examples/pages/webgl-triangle.html` is 160x160.
+Stage 3 of the plan replaces the evaluator with a bytecode VM over
+eight-fragment packets; it is scheduled after the pipeline exists, so the
+optimisation lands where the measurement says it matters.

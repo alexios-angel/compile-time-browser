@@ -337,6 +337,7 @@ add_library(ctbrowser-shell)
 target_sources(ctbrowser-shell
   PRIVATE
     shell/webgl.cpp
+    shell/webgl_bindings.cpp
     shell/browser.cpp
     shell/bindings.cpp
     shell/canvas.cpp

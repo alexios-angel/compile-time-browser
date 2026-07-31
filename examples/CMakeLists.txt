@@ -79,7 +79,7 @@ foreach(source ${example-sources})
     # same on every platform, and the golden is the only proof that the bundle
     # actually PAINTS rather than merely running.
     set(golden-examples widgets elements p5basic p5text p5transform p5shape p5pixels
-        p5image)
+        p5image webgltriangle)
     # plutosvg_FOUND, not CTBROWSER_WITH_SVG: the latter is a compile
     # definition on a target and is not a variable this scope can test.
     if(plutosvg_FOUND)

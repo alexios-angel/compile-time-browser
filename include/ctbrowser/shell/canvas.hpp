@@ -89,6 +89,13 @@ public:
     // stale frame, which is the failure everyone hits once.
     [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
 
+    // SOMETHING ELSE DREW INTO THESE PIXELS. A canvas has one surface whichever
+    // context it handed out, and a WebGL draw writes it through
+    // raster::draw_triangles rather than through any method here - so it has to
+    // say so, or the revision does not move and the browser shows the frame
+    // before. Public for exactly that caller; everything inside touches its own.
+    void note_foreign_draw() { touch(); }
+
     // --- state -----------------------------------------------------------
 
     color fill_style = color::rgba(0, 0, 0);

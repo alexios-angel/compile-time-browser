@@ -725,32 +725,24 @@ void test_webgl_is_constructible_and_refuses() {
     const std::string registered = said("registered=");
     check(registered == "registered=function",
           "the WebGL renderer is still a constructible function: " + registered);
-    // THE ENGINE'S OWN GUARANTEE, tested directly rather than through p5: asking
-    // a canvas for a webgl context is a catchable Error that names webgl. A
-    // refusal a page cannot read is a crash with extra steps, and returning null -
-    // which is what a browser does - is worse here: p5 keeps the null and falls
-    // back to its 2D renderer, so a WEBGL sketch drew nothing 3D and said nothing.
+    // THE ENGINE'S OWN GUARANTEE, tested directly rather than through p5: a
+    // canvas hands out a real webgl context, and refuses `webgl2` out loud
+    // because this is a WebGL 1 implementation (docs/webgl-plan.md).
     (void)page.run_script(R"(
-        var direct = 'no error';
-        try { document.createElement('canvas').getContext('webgl'); }
-        catch (e) { direct = e.name + ': ' + e.message; }
-        console.log('direct=' + direct);
+        var one = document.createElement('canvas').getContext('webgl');
+        console.log('direct=' + (one !== null && typeof one.drawArrays === 'function'));
+        var two = 'no error';
+        try { document.createElement('canvas').getContext('webgl2'); }
+        catch (e) { two = e.message; }
+        console.log('two=' + (two.indexOf('webgl2') >= 0));
     )");
-    const std::string direct = said("direct=");
-    check(direct.find("webgl") != std::string::npos,
-          "getContext('webgl') refuses and names webgl: " + direct);
-    check(direct.find("no error") == std::string::npos,
-          "and it is a refusal rather than a null: " + direct);
+    check(said("direct=") == "direct=true", "a webgl context exists: " + said("direct="));
+    check(said("two=") == "two=true", "and webgl2 refuses by name: " + said("two="));
 
-    // WHAT p5 DOES WITH IT IS NOT THE ENGINE'S TO DECIDE, and as of p5 2.3.1 it
-    // does not ask: createCanvas(w, h, WEBGL) selects a renderer that reports
-    // itself as Renderer2D and never requests a webgl context, so the refusal
-    // above is never reached and the sketch degrades to 2D in silence.
-    //
-    // Recorded as it is rather than asserted away. It used to throw, and stopped
-    // when a batch of unrelated VM fixes let p5's renderer selection get further -
-    // which is worth knowing, but WEBGL is out of scope (docs/script.md) and a
-    // degradation inside the library is not something this engine can observe.
+    // WHAT p5 DOES WITH IT IS STILL NOT THE ENGINE'S TO DECIDE. As of p5 2.3.1
+    // createCanvas(w, h, WEBGL) selects a renderer that reports itself as
+    // Renderer2D; whether it now finds the real context is measured by the p5
+    // probe rather than asserted here.
     const std::string asking = said("asking=");
     check(asking != "<not logged>", "the sketch reported what happened: " + asking);
 }

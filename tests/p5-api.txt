@@ -158,4 +158,4 @@ vector/heading/rotate
 vector/normalize/limit/setMag
 vector/p5.Vector statics
 webgl/WEBGL renderer is constructible
-webgl/getContext(webgl) refuses
+webgl/getContext(webgl) works

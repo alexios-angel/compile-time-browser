@@ -610,37 +610,41 @@ void test_canvas_width_and_height_are_readable() {
     check(log[2] == "half=100", "so arithmetic on them works");
 }
 
-// getContext answers for 2d, REFUSES for webgl, and gives null for anything else.
+// getContext answers for 2d AND webgl, refuses webgl2, and gives null otherwise.
 //
-// This used to expect null for webgl, on the reasoning that a page feature-detects
-// with exactly this call. The reasoning was wrong in the direction that matters:
-// p5 asks for a webgl context, gets the null, keeps it, and falls back to its 2D
-// renderer - so a WEBGL sketch constructed, drew nothing 3D and reported nothing.
-// A blank canvas and a clear conscience.
+// This assertion has now been through three shapes, which is worth recording
+// because each was right at the time:
 //
-// So webgl is a catchable Error naming webgl, which is the scope decision for
-// WEBGL made explicit (docs/script.md). The deviation from a browser is real and
-// deliberate: a browser returns null. A page that genuinely feature-detects can
-// wrap the call; a library that would otherwise limp on cannot miss it.
+//   1. null for webgl - and p5 kept the null, fell back to its 2D renderer, and
+//      drew nothing 3D while reporting nothing.
+//   2. a catchable Error for the whole WebGL family, so that failure was at
+//      least loud while WEBGL was out of scope.
+//   3. a real context for `webgl`, now that there is one.
+//
+// `webgl2` still refuses out loud, and that is load-bearing rather than
+// leftover: p5 asks for 2 FIRST and falls back to 1, so a null or a stub for 2
+// is what would send it down a path this engine cannot honour.
 void test_getcontext_only_answers_for_2d() {
     browser page{browser_options{400, 300}};
     page.load_html("<html><body><canvas id=c></canvas><script>"
                    "var c = document.getElementById('c');"
                    "console.log('2d ' + (c.getContext('2d') != null));"
-                   "try { c.getContext('webgl'); console.log('webgl handed out'); }"
-                   "catch (e) { console.log('webgl refused: ' + e.message); }"
+                   "console.log('webgl ' + (c.getContext('webgl') != null));"
+                   "try { c.getContext('webgl2'); console.log('webgl2 handed out'); }"
+                   "catch (e) { console.log('webgl2 refused: ' + e.message); }"
                    "console.log('unknown ' + (c.getContext('nonsense') === null));"
                    "</script></body></html>");
     check(page.frame().has_value(), "the page renders");
     const auto & log = page.bindings().console_output();
-    check(log.size() == 3, "three console lines");
-    if (log.size() == 3) {
+    check(log.size() == 4, "four console lines");
+    if (log.size() == 4) {
         check(log[0] == "2d true", "a 2d context exists");
-        check(log[1].starts_with("webgl refused:") && log[1].find("webgl") != std::string::npos,
-              "webgl is refused out loud, and the message names it: " + log[1]);
+        check(log[1] == "webgl true", "and so does a webgl one");
+        check(log[2].starts_with("webgl2 refused:") && log[2].find("webgl2") != std::string::npos,
+              "webgl2 is refused out loud, and the message names it: " + log[2]);
         // Anything ELSE is still null - that is what an unknown context type
         // means, and a page testing for one expects null rather than a throw.
-        check(log[2] == "unknown true", "an unknown context type is still null");
+        check(log[3] == "unknown true", "an unknown context type is still null");
     }
 }
 

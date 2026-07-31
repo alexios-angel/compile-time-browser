@@ -1149,33 +1149,39 @@ globalThis.__probes = [
     return 'ok';
   }],
   // THE ENGINE'S GUARANTEE, asked of the engine rather than of p5: a canvas
-  // refuses a webgl context out loud. Returning null - which is what a browser
-  // does - is worse here, because p5 keeps the null and falls back to its 2D
-  // renderer, so a WEBGL sketch drew nothing 3D and reported nothing.
-  ['webgl', 'getContext(webgl) refuses', function (s) {
-    try {
-      document.createElement('canvas').getContext('webgl');
-    } catch (e) {
-      if (!/webgl/i.test(String(e && e.message))) { throw 'refused without naming webgl: ' + e; }
-      return 'ok';
+  // hands out a REAL webgl context now - compile, link, buffer, draw - and
+  // refuses `webgl2` out loud, which is what makes p5's fallback land on the one
+  // that works.
+  ['webgl', 'getContext(webgl) works', function (s) {
+    const gl = document.createElement('canvas').getContext('webgl');
+    if (gl === null) { throw 'no context'; }
+    for (const name of ['createShader', 'compileShader', 'linkProgram', 'bufferData',
+                        'vertexAttribPointer', 'drawArrays', 'readPixels']) {
+      if (typeof gl[name] !== 'function') { throw name + ' is missing'; }
     }
-    throw 'a webgl context was handed out, which this engine cannot honour';
+    if (gl.TRIANGLES !== 4) { throw 'TRIANGLES=' + gl.TRIANGLES; }
+    let refused = false;
+    try { document.createElement('canvas').getContext('webgl2'); }
+    catch (e) { refused = /webgl2/i.test(String(e && e.message)); }
+    if (!refused) { throw 'webgl2 was not refused by name'; }
+    return 'ok';
   }],
-  // KNOWN FAILING, and here to stay measured. As of p5 2.3.1 createCanvas(w, h,
-  // WEBGL) does not ask for a webgl context at all - it selects a renderer that
-  // reports itself as Renderer2D - so the refusal above is never reached and the
-  // sketch degrades to 2D in silence. It used to throw, and stopped when a batch
-  // of unrelated VM fixes let p5's renderer selection get further. WEBGL is out
-  // of scope; a degradation inside the library is not something this engine can
-  // observe, so this is a note in the queue rather than a claim that it is fine.
-  ['webgl', 'createCanvas(WEBGL) refuses', function (s) {
-    try {
-      s.createCanvas(10, 10, s.WEBGL);
-    } catch (e) {
-      if (!/webgl/i.test(String(e && e.message))) { throw 'refused without naming webgl: ' + e; }
-      return 'ok';
+  // KNOWN FAILING, and the reason has CHANGED - which is why it stays measured
+  // rather than being deleted.
+  //
+  // It used to fail because there was no webgl context at all. There is one now
+  // (see the probe above, and tests/webgl_basics.cpp draws a triangle through a
+  // page with it), and p5 STILL selects a renderer reporting itself as
+  // Renderer2D and never asks for the context. So the remaining fault is inside
+  // p5's own renderer selection, not in the engine's surface - which is stage 8
+  // of docs/webgl-plan.md and not something to paper over here.
+  ['webgl', 'createCanvas(WEBGL) uses the webgl renderer', function (s) {
+    s.createCanvas(20, 20, s.WEBGL);
+    const name = s._renderer && s._renderer.constructor && s._renderer.constructor.name;
+    if (name === 'Renderer2D') {
+      throw 'p5 selected Renderer2D despite a real webgl context being available';
     }
-    throw 'WEBGL was accepted and silently rendered 2D';
+    return 'ok';
   }],
 ];
 

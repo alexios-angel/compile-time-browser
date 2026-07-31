@@ -24,6 +24,7 @@
 #include <ctbrowser/shell/images.hpp>
 #include <ctbrowser/shell/input.hpp>
 #include <ctbrowser/shell/net.hpp>
+#include <ctbrowser/shell/webgl.hpp>
 
 // The web platform, bound to the the engine VM.
 //
@@ -297,6 +298,20 @@ private:
     [[nodiscard]] value matrix_object(context & cx, const transform & t);
 
     [[nodiscard]] value canvas_context_object(context & cx, node_id id);
+
+    // `canvas.getContext('webgl')`. The JavaScript surface is in its own file -
+    // seventy-nine methods and a constant table would bury the DOM in this one -
+    // and the state machine it drives is in shell/webgl.hpp.
+    [[nodiscard]] value webgl_context_object(context & cx, node_id id);
+
+    // ONE CONTEXT PER CANVAS, kept for the document's life. getContext is
+    // idempotent in the spec: a page that calls it twice gets the same object
+    // with the same buffers and programs still bound, and a fresh one each time
+    // would quietly lose everything it had uploaded.
+    flat_map<std::uint64_t, std::unique_ptr<webgl_context>> webgl_contexts_;
+    // The JS wrapper for each, so getContext hands back the SAME object - and a
+    // GC root, because the page may drop its reference and ask again.
+    flat_map<std::uint64_t, script::object_object *> webgl_objects_;
 
     [[nodiscard]] static float number(std::span<value> args, std::size_t i);
 

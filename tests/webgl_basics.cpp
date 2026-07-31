@@ -8,7 +8,7 @@
 // WebGL's bugs are rarely in the drawing and almost always in WHAT WAS BOUND
 // WHEN, so most of what follows is about binding rather than about pixels.
 
-#include <ctbrowser/shell/shell.hpp>
+#include <ctbrowser.hpp>
 
 #include "check.hpp"
 
@@ -103,9 +103,7 @@ struct harness {
     [[nodiscard]] int green(int x, int y) const {
         return static_cast<int>((surface.at(x, y) >> 8) & 0xFF);
     }
-    [[nodiscard]] int blue(int x, int y) const {
-        return static_cast<int>(surface.at(x, y) & 0xFF);
-    }
+    [[nodiscard]] int blue(int x, int y) const { return static_cast<int>(surface.at(x, y) & 0xFF); }
 };
 
 // --- compiling and linking -------------------------------------------------
@@ -164,9 +162,24 @@ void test_a_triangle_reaches_the_surface() {
     harness h{32};
     // A triangle covering the viewport, red at every corner.
     h.bind_interleaved(floats({
-        -3, -3, 1, 0, 0, 1,
-        3,  -3, 1, 0, 0, 1,
-        0,  3,  1, 0, 0, 1,
+        -3,
+        -3,
+        1,
+        0,
+        0,
+        1,
+        3,
+        -3,
+        1,
+        0,
+        0,
+        1,
+        0,
+        3,
+        1,
+        0,
+        0,
+        1,
     }));
     const std::size_t written = h.gl.draw_arrays(gl_enum::triangles, 0, 3);
     CHECK(written > 0);
@@ -182,9 +195,24 @@ void test_interleaved_attributes_are_unpacked() {
     harness h{32};
     h.bind_interleaved(floats({
         // x    y     r  g  b  a
-        -3, -3, 1, 0, 0, 1, // red
-        3,  -3, 0, 1, 0, 1, // green
-        0,  3,  0, 0, 1, 1, // blue
+        -3,
+        -3,
+        1,
+        0,
+        0,
+        1, // red
+        3,
+        -3,
+        0,
+        1,
+        0,
+        1, // green
+        0,
+        3,
+        0,
+        0,
+        1,
+        1, // blue
     }));
     CHECK(h.gl.draw_arrays(gl_enum::triangles, 0, 3) > 0);
     // Near the bottom-left corner it is mostly red; bottom-right mostly green.
@@ -300,10 +328,7 @@ void test_draw_elements() {
     harness h{32};
     // Four corners of a quad, drawn as two triangles by index.
     h.bind_interleaved(floats({
-        -1, -1, 1, 0, 0, 1,
-        1,  -1, 1, 0, 0, 1,
-        1,  1,  1, 0, 0, 1,
-        -1, 1,  1, 0, 0, 1,
+        -1, -1, 1, 0, 0, 1, 1, -1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 1, -1, 1, 1, 0, 0, 1,
     }));
     const std::uint32_t indices = h.gl.create_buffer();
     h.gl.bind_buffer(gl_enum::element_array_buffer, indices);
@@ -339,9 +364,24 @@ void test_the_viewport_origin_is_flipped() {
     // GL's bottom half: y = 0, height 16.
     h.gl.viewport(0, 0, 32, 16);
     h.bind_interleaved(floats({
-        -3, -3, 1, 0, 0, 1,
-        3,  -3, 1, 0, 0, 1,
-        0,  3,  1, 0, 0, 1,
+        -3,
+        -3,
+        1,
+        0,
+        0,
+        1,
+        3,
+        -3,
+        1,
+        0,
+        0,
+        1,
+        0,
+        3,
+        1,
+        0,
+        0,
+        1,
     }));
     CHECK(h.gl.draw_arrays(gl_enum::triangles, 0, 3) > 0);
     // ...lands in the BOTTOM rows of the bitmap.
@@ -447,6 +487,107 @@ void test_texture_sampling() {
     CHECK((surface.at(8, 8) & 0xFF) == 0);
 }
 
+// --- through a page --------------------------------------------------------
+
+// THE WHOLE STACK, from `getContext('webgl')` to pixels: the binding layer, the
+// context, the rasteriser and the GLSL evaluator, driven the way a page drives
+// them. Everything above this point tests one layer; this is the one that fails
+// when two of them disagree.
+void test_a_page_can_draw_a_triangle() {
+    ctbrowser::browser page{{.width = 200, .height = 200}};
+    page.load_html(R"(<body><canvas id='c' width='64' height='64'></canvas><script>
+      var gl = document.getElementById('c').getContext('webgl');
+      console.log('context=' + (gl !== null) + ' TRIANGLES=' + gl.TRIANGLES);
+      var vs = gl.createShader(gl.VERTEX_SHADER);
+      gl.shaderSource(vs, 'attribute vec2 aPosition; attribute vec3 aColor;' +
+                          'varying vec3 vColor;' +
+                          'void main() { vColor = aColor;' +
+                          '  gl_Position = vec4(aPosition, 0.0, 1.0); }');
+      gl.compileShader(vs);
+      console.log('vs=' + gl.getShaderParameter(vs, gl.COMPILE_STATUS));
+      var fs = gl.createShader(gl.FRAGMENT_SHADER);
+      gl.shaderSource(fs, 'precision mediump float; varying vec3 vColor;' +
+                          'void main() { gl_FragColor = vec4(vColor, 1.0); }');
+      gl.compileShader(fs);
+      console.log('fs=' + gl.getShaderParameter(fs, gl.COMPILE_STATUS));
+      var p = gl.createProgram();
+      gl.attachShader(p, vs); gl.attachShader(p, fs); gl.linkProgram(p);
+      console.log('link=' + gl.getProgramParameter(p, gl.LINK_STATUS) + ' ' +
+                  gl.getProgramInfoLog(p));
+      gl.useProgram(p);
+      var buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+        -0.9, -0.9, 1, 0, 0,
+         0.9, -0.9, 0, 1, 0,
+         0.0,  0.9, 0, 0, 1]), gl.STATIC_DRAW);
+      var pos = gl.getAttribLocation(p, 'aPosition');
+      var col = gl.getAttribLocation(p, 'aColor');
+      console.log('locations=' + pos + ',' + col);
+      gl.enableVertexAttribArray(pos);
+      gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 20, 0);
+      gl.enableVertexAttribArray(col);
+      gl.vertexAttribPointer(col, 3, gl.FLOAT, false, 20, 8);
+      gl.clearColor(0.0, 0.0, 0.0, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      console.log('error=' + gl.getError());
+      var px = new Uint8Array(4);
+      gl.readPixels(32, 8, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      console.log('bottom=' + px[0] + ',' + px[1] + ',' + px[2]);
+      gl.readPixels(1, 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      console.log('corner=' + px[0] + ',' + px[1] + ',' + px[2] + ',' + px[3]);
+    </script></body>)");
+    CHECK(page.script_error().empty());
+    if (!page.script_error().empty()) { std::printf("     %s\n", page.script_error().c_str()); }
+    const auto & log = page.bindings().console_output();
+    for (const std::string & line : log) { std::printf("     %s\n", line.c_str()); }
+    CHECK(log.size() == 8);
+    if (log.size() != 8) { return; }
+    CHECK(log[0] == "context=true TRIANGLES=4");
+    CHECK(log[1] == "vs=true");
+    CHECK(log[2] == "fs=true");
+    CHECK(log[3] == "link=true ");
+    // Locations are assigned in declaration order at link time.
+    CHECK(log[4] == "locations=0,1");
+    CHECK(log[5] == "error=0");
+    // NEAR THE BOTTOM EDGE the triangle is between its red and green corners, so
+    // both channels are substantial and blue - the apex colour - is not.
+    // readPixels reads BOTTOM-UP, which is the same origin flip the viewport has.
+    // Measured: red and green both substantial, blue small. A stride or an
+    // interpolation bug gives one channel or none.
+    CHECK(log[6] == "bottom=114,118,23");
+    // The corner outside the triangle is the clear colour, opaque black.
+    CHECK(log[7] == "corner=0,0,0,255");
+}
+
+// p5 asks for `webgl2` FIRST and falls back to `webgl`. Refusing 2 out loud is
+// what makes that fallback happen and land on the one that works.
+void test_webgl2_still_refuses() {
+    ctbrowser::browser page{{.width = 100, .height = 100}};
+    page.load_html(R"(<body><canvas id='c'></canvas><script>
+      var c = document.getElementById('c');
+      var two = 'no error';
+      try { c.getContext('webgl2'); } catch (e) { two = e.message; }
+      console.log('webgl2=' + (two.indexOf('webgl2') >= 0));
+      console.log('webgl=' + (c.getContext('webgl') !== null));
+      console.log('unknown=' + (c.getContext('nonsense') === null));
+      // getContext is IDEMPOTENT: a page calling it twice gets the same context,
+      // with its buffers and programs still there. A fresh one each time would
+      // quietly lose everything uploaded.
+      console.log('same=' + (c.getContext('webgl') === c.getContext('webgl')));
+    </script></body>)");
+    CHECK(page.script_error().empty());
+    const auto & log = page.bindings().console_output();
+    CHECK(log.size() == 4);
+    if (log.size() == 4) {
+        CHECK(log[0] == "webgl2=true");
+        CHECK(log[1] == "webgl=true");
+        CHECK(log[2] == "unknown=true");
+        CHECK(log[3] == "same=true");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -466,5 +607,7 @@ int main() {
     test_unsupported_modes_are_refused();
     test_delete_unbinds();
     test_texture_sampling();
+    test_a_page_can_draw_a_triangle();
+    test_webgl2_still_refuses();
     REPORT("webgl_basics");
 }
