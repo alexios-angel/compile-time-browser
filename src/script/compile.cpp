@@ -1,6 +1,8 @@
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
 
+#include <boost/unordered/unordered_flat_set.hpp>
+
 #include <array>
 #include <charconv>
 #include <cstdint>
@@ -29,11 +31,32 @@ public:
         std::uint16_t reg = 0;
         bool boxed = false; // lives in a heap cell; see mark_captured
     };
+    // Heterogeneous lookup, so is_captured can ask with a string_view without
+    // building a std::string to throw away.
+    struct sv_hash {
+        using is_transparent = void;
+        [[nodiscard]] std::size_t operator()(std::string_view s) const noexcept {
+            return std::hash<std::string_view>{}(s);
+        }
+    };
+    using name_set = boost::unordered_flat_set<std::string, sv_hash, std::equal_to<>>;
+
     struct frame {
         std::uint32_t proto = 0;
         std::vector<local> locals;
-        std::vector<std::string> declared;      // pre-scanned; see collect_declared_names
-        std::vector<std::string> captured;      // names some nested function mentions
+        std::vector<std::string> declared; // pre-scanned; see collect_declared_names
+        // A SET, NOT A LIST, and the difference was 15% of a page load.
+        //
+        // is_captured() runs once per local declaration and used to LINEAR SCAN
+        // this, while collect_captured_names appends every identifier inside
+        // every nested function with no deduplication - so a big function paid
+        // O(locals x mentions) string comparisons against a vector full of
+        // repeats. Callgrind put declare_local at 15.05% of rendering a p5
+        // sketch, above the entire VM.
+        //
+        // Nothing reads it in order or cares about duplicates: it is filled
+        // once and then only asked "is this name in here".
+        name_set captured;                      // names some nested function mentions
         std::vector<std::string> upvalue_names; // parallel to proto().upvalues
         std::vector<std::string> predeclared;   // hoisted at body entry; see predeclare_locals
         std::vector<std::size_t> scope_marks;   // locals.size() at each scope entry
@@ -373,11 +396,7 @@ public:
         return false;
     }
     [[nodiscard]] bool is_captured(std::string_view name) const {
-        const frame & f = frames_.back();
-        for (const std::string & c : f.captured) {
-            if (c == name) { return true; }
-        }
-        return false;
+        return frames_.back().captured.contains(name);
     }
 
     // The lexer hands back the RAW lexeme, quotes and all - `'a'` arrives as
@@ -734,7 +753,9 @@ public:
         push_scope();
 
         const vp::node & root = at(ast_.root);
-        collect_captured_names(ast_.root, false, fn().captured);
+        collect_captured_names(ast_.root, false, captured_scratch_);
+        fn().captured.insert(captured_scratch_.begin(), captured_scratch_.end());
+        captured_scratch_.clear();
         collect_declared_names(ast_.root);
         // Function declarations hoist: a script may call one before its text.
         for (const std::int32_t s : kids(root)) {
@@ -1594,7 +1615,9 @@ public:
         // Which of this body's names some nested function mentions has to be
         // known BEFORE any local is declared - that is what decides whether a
         // local gets a register or a cell.
-        collect_captured_names(n.a, false, fn().captured);
+        collect_captured_names(n.a, false, captured_scratch_);
+        fn().captured.insert(captured_scratch_.begin(), captured_scratch_.end());
+        captured_scratch_.clear();
         const std::vector<std::int32_t> params = kids(n);
         for (const std::int32_t p : params) { (void)declare_local(std::string{at(p).text}); }
         // WHICH LOCALS THE BOXING LOOP BELOW OWNS: the parameters, and only
@@ -3032,6 +3055,9 @@ public:
     std::vector<std::unique_ptr<std::string>> owned_sources_;
     program & out_;
     std::vector<frame> frames_;
+    // Reused across declarations so collecting names does not reallocate per
+    // function; cleared by each caller after it inserts.
+    std::vector<std::string> captured_scratch_;
     std::vector<loop_context> loops_;
     std::string pending_label_;
     // The short-circuit jumps of the optional chain being compiled, and
