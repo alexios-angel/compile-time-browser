@@ -3,6 +3,8 @@
 
 #include <boost/unordered/unordered_flat_set.hpp>
 
+#include <algorithm>
+#include <ranges>
 #include <span>
 
 #include <array>
@@ -43,22 +45,23 @@ public:
     };
     using name_set = boost::unordered_flat_set<std::string, sv_hash, std::equal_to<>>;
 
+    // A HALF-OPEN RANGE OF EULER-TOUR TICKS. A function's descendants are
+    // exactly the functions whose tick lies strictly inside its own range.
+    struct interval {
+        std::int32_t lo = 0;
+        std::int32_t hi = 0;
+        [[nodiscard]] bool empty() const noexcept { return lo >= hi; }
+    };
+
     struct frame {
         std::uint32_t proto = 0;
         std::vector<local> locals;
         std::vector<std::string> declared; // pre-scanned; see collect_declared_names
-        // A SET, NOT A LIST, and the difference was 15% of a page load.
-        //
-        // is_captured() runs once per local declaration and used to LINEAR SCAN
-        // this, while collect_captured_names appends every identifier inside
-        // every nested function with no deduplication - so a big function paid
-        // O(locals x mentions) string comparisons against a vector full of
-        // repeats. Callgrind put declare_local at 15.05% of rendering a p5
-        // sketch, above the entire VM.
-        //
-        // Nothing reads it in order or cares about duplicates: it is filled
-        // once and then only asked "is this name in here".
-        name_set captured;                      // names some nested function mentions
+        // WHERE THIS FUNCTION SITS IN THE EULER TOUR, which is how
+        // is_captured() is answered. Empty (lo >= hi) means nothing is
+        // captured, which is what a field initialiser's frame gets - it never
+        // had a captured set either.
+        interval captures;
         std::vector<std::string> upvalue_names; // parallel to proto().upvalues
         std::vector<std::string> predeclared;   // hoisted at body entry; see predeclare_locals
         std::vector<std::size_t> scope_marks;   // locals.size() at each scope entry
@@ -333,7 +336,7 @@ public:
     // that is not really captured only boxes a local that did not need boxing,
     // which is correct and slightly slower; MISSING one reads undefined at run
     // time with nothing to say so.
-    static void names_in_template(std::string_view raw, std::vector<std::string> & out) {
+    template <typename Fn> static void each_name_in_template(std::string_view raw, Fn && add) {
         for_each_template_hole(raw, [&](std::string_view hole) {
             for (std::size_t i = 0; i < hole.size();) {
                 const auto begins = [](char c) {
@@ -346,34 +349,87 @@ public:
                 }
                 const std::size_t start = i;
                 while (i < hole.size() && continues(hole[i])) { ++i; }
-                out.emplace_back(hole.substr(start, i - start));
+                add(hole.substr(start, i - start));
             }
         });
     }
 
-    void collect_captured_names(std::int32_t idx, bool inside_nested,
-                                std::vector<std::string> & out) {
-        if (idx < 0) { return; }
-        const vp::node & n = at(idx);
-        const bool nested = inside_nested || n.kind == vp::nk::func_decl ||
-                            n.kind == vp::nk::func_expr || n.kind == vp::nk::arrow;
-        if (inside_nested && n.kind == vp::nk::ident) { out.emplace_back(n.text); }
+    [[nodiscard]] static bool is_function_node(const vp::node & n) {
+        return n.kind == vp::nk::func_decl || n.kind == vp::nk::func_expr ||
+               n.kind == vp::nk::arrow;
+    }
+
+    // WHICH NAMES A NESTED FUNCTION MENTIONS, WITHOUT A SET PER FUNCTION.
+    //
+    // This used to walk each function's whole subtree once per ENCLOSING
+    // function - 18,906 calls and 16.5 million node visits on the p5.js bundle,
+    // about eighty visits per node. Two obvious repairs were measured and both
+    // failed (docs/script.md): memoising the walk moved the quadratic from the
+    // traversal into the set copying and won 0.3%, and inserting into a set
+    // during the walk was 3% WORSE than building a vector and deduplicating
+    // once. The cost was never the walking - it was materialising a set of
+    // names for every function.
+    //
+    // So no set is materialised. One pass numbers every function in an Euler
+    // tour and records, for each name, the tick of the INNERMOST function that
+    // mentions it. A name is captured by function F exactly when one of those
+    // ticks lies strictly inside F's range - strictly, because a name F
+    // mentions itself is not captured by F. That is a binary search, and the
+    // memory is one integer per distinct (name, function) pair rather than
+    // O(names x nesting depth).
+    //
+    // BUILT ONCE, THEN READ-ONLY. Nothing mutates it after build_capture_index
+    // returns, so concurrent compilation can share it without a lock - which
+    // the memoised version could not have done.
+    void build_capture_index() {
+        fn_range_.assign(ast_.nodes.size(), interval{});
+        std::int32_t tick = 0;
+        tour(ast_.root, -1, tick, true);
+        for (auto & [name, ticks] : mentions_) {
+            std::ranges::sort(ticks);
+            ticks.erase(std::unique(ticks.begin(), ticks.end()), ticks.end());
+        }
+    }
+
+    void tour(std::int32_t idx, std::int32_t enclosing, std::int32_t & tick, bool boundary) {
+        if (idx < 0 || static_cast<std::size_t>(idx) >= ast_.nodes.size()) { return; }
+        const vp::node & n = ast_.nodes[static_cast<std::size_t>(idx)];
+        const bool opens = boundary || is_function_node(n);
+        const std::int32_t inner = opens ? tick++ : enclosing;
+        // RECORDED AGAINST `inner`, INCLUDING WHEN THIS NODE OPENED IT. A field
+        // initialiser's boundary IS the node itself - `class A { val = v; }`
+        // makes `v` the whole initialiser - so skipping the opener loses the
+        // only mention there is, and the enclosing local never gets boxed.
+        // vm_basics caught exactly that: `function build(v) { class A { val =
+        // v; } ... }` read undefined. A real function node is never an ident,
+        // so this costs it nothing.
+        if (n.kind == vp::nk::ident) { mentions_[std::string{n.text}].push_back(inner); }
         // A template's substitutions are text on the node, not children, so
         // nothing below this reaches them.
-        if (inside_nested && n.kind == vp::nk::tmpl) { names_in_template(n.text, out); }
-        // An instance field's initialiser now compiles into its OWN function -
-        // that is what makes each instance get its own value - so anything it
+        if (n.kind == vp::nk::tmpl) {
+            each_name_in_template(n.text, [&](std::string_view name) {
+                mentions_[std::string{name}].push_back(inner);
+            });
+        }
+        // An instance field's initialiser compiles into its OWN function - that
+        // is what makes each instance get its own value - so anything it
         // mentions is captured exactly as if it had been written inside one.
         // Without this the initialiser reads an unboxed enclosing local and
-        // finds undefined.
+        // finds undefined. Slot 1 is `b`, which for a field is the initialiser.
         const bool field_init = n.kind == vp::nk::class_member && n.c == 0 && (n.d & 1) == 0;
         const std::array<std::int32_t, 4> slots = child_slots(n);
         for (std::size_t i = 0; i < slots.size(); ++i) {
-            // slot 1 is `b`, which for a field is the initialiser
-            collect_captured_names(slots[i], nested || (field_init && i == 1), out);
+            tour(slots[i], inner, tick, field_init && i == 1);
         }
-        for (const std::int32_t k : kids(n)) { collect_captured_names(k, nested, out); }
+        for (const std::int32_t k : kids(n)) { tour(k, inner, tick, false); }
+        if (opens) { fn_range_[static_cast<std::size_t>(idx)] = interval{inner, tick}; }
     }
+
+    [[nodiscard]] interval range_of(std::int32_t idx) const {
+        if (idx < 0 || static_cast<std::size_t>(idx) >= fn_range_.size()) { return {}; }
+        return fn_range_[static_cast<std::size_t>(idx)];
+    }
+
     // Does this body read `arguments`?
     //
     // Materialising it costs a register and an array per call, so it is only
@@ -390,11 +446,10 @@ public:
         if (n.kind == vp::nk::func_decl || n.kind == vp::nk::func_expr) { return false; }
         if (n.kind == vp::nk::ident && n.text == "arguments") { return true; }
         if (n.kind == vp::nk::tmpl) {
-            std::vector<std::string> named;
-            names_in_template(n.text, named);
-            for (const std::string & name : named) {
-                if (name == "arguments") { return true; }
-            }
+            bool found = false;
+            each_name_in_template(
+                n.text, [&](std::string_view name) { found = found || name == "arguments"; });
+            if (found) { return true; }
         }
         for (const std::int32_t slot : child_slots(n)) {
             if (mentions_arguments(slot)) { return true; }
@@ -405,7 +460,16 @@ public:
         return false;
     }
     [[nodiscard]] bool is_captured(std::string_view name) const {
-        return frames_.back().captured.contains(name);
+        const interval where = frames_.back().captures;
+        if (where.empty()) { return false; }
+        const auto found = mentions_.find(name);
+        if (found == mentions_.end()) { return false; }
+        // The first tick strictly greater than `lo`; captured if it is also
+        // inside. Strictly, because `lo` is this function's own tick and the
+        // names it mentions itself are not captured by it.
+        const auto & ticks = found->second;
+        const auto at = std::upper_bound(ticks.begin(), ticks.end(), where.lo);
+        return at != ticks.end() && *at < where.hi;
     }
 
     // The lexer hands back the RAW lexeme, quotes and all - `'a'` arrives as
@@ -762,9 +826,8 @@ public:
         push_scope();
 
         const vp::node & root = at(ast_.root);
-        collect_captured_names(ast_.root, false, captured_scratch_);
-        fn().captured.insert(captured_scratch_.begin(), captured_scratch_.end());
-        captured_scratch_.clear();
+        build_capture_index();
+        fn().captures = range_of(ast_.root);
         collect_declared_names(ast_.root);
         // Function declarations hoist: a script may call one before its text.
         for (const std::int32_t s : kids(root)) {
@@ -1624,9 +1687,7 @@ public:
         // Which of this body's names some nested function mentions has to be
         // known BEFORE any local is declared - that is what decides whether a
         // local gets a register or a cell.
-        collect_captured_names(n.a, false, captured_scratch_);
-        fn().captured.insert(captured_scratch_.begin(), captured_scratch_.end());
-        captured_scratch_.clear();
+        fn().captures = range_of(idx);
         const std::span<const std::int32_t> params = kids(n);
         for (const std::int32_t p : params) { (void)declare_local(std::string{at(p).text}); }
         // WHICH LOCALS THE BOXING LOOP BELOW OWNS: the parameters, and only
@@ -3064,9 +3125,11 @@ public:
     std::vector<std::unique_ptr<std::string>> owned_sources_;
     program & out_;
     std::vector<frame> frames_;
-    // Reused across declarations so collecting names does not reallocate per
-    // function; cleared by each caller after it inserts.
-    std::vector<std::string> captured_scratch_;
+    // The capture index: node -> its Euler-tour range, and name -> the ticks of
+    // the innermost functions mentioning it. Read-only after build.
+    std::vector<interval> fn_range_;
+    boost::unordered_flat_map<std::string, std::vector<std::int32_t>, sv_hash, std::equal_to<>>
+        mentions_;
     std::vector<loop_context> loops_;
     std::string pending_label_;
     // The short-circuit jumps of the optional chain being compiled, and
