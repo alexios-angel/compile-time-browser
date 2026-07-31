@@ -7,6 +7,7 @@
 //   images   BMP decoding into the display list's bitmap, plus a hook the app
 //            layer fills in from SDL3_image
 //   net      HTTP over header-only Boost.Asio, which is what backs fetch()
+//   url      RFC 3986, over Boost.URL - the ONE parser, for the client and the DOM
 //   forms    form-control state, kept off the DOM node on purpose
 //   canvas   the 2D drawing context and where its pixels live
 //   bindings the web platform, bound to the VM - script holds HANDLES, and
@@ -29,4 +30,5 @@
 #include <ctbrowser/shell/metrics.hpp>
 #include <ctbrowser/shell/net.hpp>
 #include <ctbrowser/shell/svg.hpp>
+#include <ctbrowser/shell/url.hpp>
 #include <ctbrowser/shell/webgl.hpp>

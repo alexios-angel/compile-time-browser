@@ -80,19 +80,32 @@ compares byte-for-byte on both platforms.
 
 --- the engine (src/) ---
 
-The engine uses Boost, HEADER-ONLY LIBRARIES ONLY (Boost Software
-License 1.0, https://www.boost.org/LICENSE_1_0.txt), as an external
-dependency; nothing from Boost is bundled and nothing is linked.
-Currently used: Boost.Unordered (unordered_flat_map), Boost.Container
-(small_vector, flat_map, stable_vector), Boost.Intrusive, Boost.SmartPtr
-(intrusive_ptr) and Boost.Lockfree (spsc_queue).
+The engine uses Boost (Boost Software License 1.0,
+https://www.boost.org/LICENSE_1_0.txt) as an external dependency; nothing
+from Boost is bundled.
 
-The header-only restriction is load bearing, not a preference. The
-`windows` / `windows-fetch` CMake presets cross-compile with llvm-mingw;
-a header-only Boost drops into that build with no new machinery, while a
-compiled Boost would have to be cross-compiled for every target. In
-particular Boost.Context (and therefore Boost.Coroutine2) is per-ABI
-assembly and MUST NOT be introduced.
+HEADER-ONLY: Boost.Unordered (unordered_flat_map), Boost.Container
+(small_vector, flat_map, stable_vector), Boost.Intrusive, Boost.SmartPtr
+(intrusive_ptr), Boost.Lockfree (spsc_queue) and Boost.Asio.
+
+LINKED: Boost.URL, since 2026-07-31. It is the first compiled Boost
+library here and the restriction against them was lifted for it, because
+there is no alternative: Boost.URL has been compiled-only since 1.87, its
+`boost/url/src.hpp` now being a hard #error reading "src.hpp is
+discontinued". The engine had two hand-written URL parsers that disagreed
+with each other, and RFC 3986 is not worth hand-rolling a third time.
+
+The restriction was never a preference - it was about the `windows` /
+`windows-fetch` presets, which cross-compile with llvm-mingw, where a
+header-only Boost needs no machinery and a compiled one must be built for
+every target. That cost is now paid deliberately and in one place:
+tools/build-boost-mingw.sh compiles Boost.URL's 66 sources with the cross
+compiler into the mingw sysroot, beside the static SDL3 already there. It
+does not use b2, so no Boost build system is involved.
+
+Boost.Context (and therefore Boost.Coroutine2 and Boost.Fiber) is per-ABI
+assembly and MUST STILL NOT be introduced. Lifting the rule for a library
+that is portable C++ says nothing about one that is not.
 
 The compositor's shaders (src/gpu/shaders/tile.vert.glsl and
 tile.frag.glsl) are original to this project. src/gpu/shaders/tile_spv.hpp

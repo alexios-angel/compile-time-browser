@@ -13,6 +13,7 @@
 // Unconditional, and above the switch below on purpose: this is what the file
 // implements, so it must not sit inside anyone's #if.
 #include <ctbrowser/shell/net.hpp>
+#include <ctbrowser/shell/url.hpp>
 
 // Asio, from whichever distribution the build found. Boost's is what this tree
 // already depends on (Boost::headers is on three other engine targets and is
@@ -58,51 +59,10 @@ namespace ctbrowser::shell {
 
 namespace detail {
 
-struct parsed_url {
-    std::string scheme;
-    std::string host;
-    std::string port;
-    std::string target = "/";
-    bool valid = false;
-};
-
-[[nodiscard]] inline parsed_url parse_url(std::string_view url) {
-    parsed_url out;
-    const std::size_t scheme_end = url.find("://");
-    if (scheme_end == std::string_view::npos) { return out; }
-    out.scheme = url.substr(0, scheme_end);
-    std::transform(out.scheme.begin(), out.scheme.end(), out.scheme.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    url.remove_prefix(scheme_end + 3);
-
-    const std::size_t path_at = url.find_first_of("/?#");
-    std::string_view authority = url.substr(0, path_at);
-    if (path_at != std::string_view::npos) {
-        // A fragment is CLIENT-side and is never sent.
-        std::string_view rest = url.substr(path_at);
-        const std::size_t fragment = rest.find('#');
-        out.target = std::string{rest.substr(0, fragment)};
-        if (out.target.empty() || out.target.front() != '/') { out.target.insert(0, "/"); }
-    }
-    // Credentials in the authority are parsed off and dropped: this client does
-    // not do HTTP auth, and sending them as part of the host would be worse.
-    if (const std::size_t at = authority.rfind('@'); at != std::string_view::npos) {
-        authority.remove_prefix(at + 1);
-    }
-    if (const std::size_t colon = authority.rfind(':');
-        colon != std::string_view::npos && authority.find(']', colon) == std::string_view::npos) {
-        out.port = std::string{authority.substr(colon + 1)};
-        authority = authority.substr(0, colon);
-    }
-    out.host = std::string{authority};
-    if (out.host.size() > 2 && out.host.front() == '[' && out.host.back() == ']') {
-        out.host = out.host.substr(1, out.host.size() - 2); // an IPv6 literal
-    }
-    if (out.port.empty()) { out.port = out.scheme == "https" ? "443" : "80"; }
-    out.valid = !out.host.empty() && (out.scheme == "http" || out.scheme == "https");
-    return out;
-}
-
+// parsed_url and parse_url USED TO BE HERE, and their twin lived in
+// bindings.cpp. Both are gone: shell/url.hpp parses once, for everybody, over
+// Boost.URL. The twin had an IPv6 bug this one guarded against, which is what
+// two parsers for one job buys you.
 [[nodiscard]] inline bool iequals(std::string_view a, std::string_view b) {
     return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
                return std::tolower(static_cast<unsigned char>(x)) ==
@@ -222,12 +182,13 @@ struct message {
 
 // One request, no redirect following. `raw` comes back so the caller can decide
 // what to do with a 3xx.
-[[nodiscard]] inline message fetch_once(const parsed_url & url, const http_options & options) {
+[[nodiscard]] inline message fetch_once(const fetch_url & url, const http_options & options) {
     message out;
     const auto timeout = std::chrono::milliseconds{options.timeout_ms};
     std::string request;
     request += "GET " + url.target + " HTTP/1.1\r\n";
-    request += "Host: " + url.host + "\r\n";
+    // `authority`, not `host`: an IPv6 literal needs its brackets back here.
+    request += "Host: " + url.authority + "\r\n";
     request += "User-Agent: " + options.user_agent + "\r\n";
     request += "Accept: */*\r\n";
     // Identity, and close when done: this client reads to EOF and does not keep
@@ -378,7 +339,7 @@ http_response http_get(std::string_view url, http_options options) {
 
     std::string current{url};
     for (int hop = 0; hop <= options.max_redirects; ++hop) {
-        const detail::parsed_url target = detail::parse_url(current);
+        const fetch_url target = parse_absolute(current);
         if (!target.valid) {
             out.error = "not an http(s) url: " + current;
             return out;

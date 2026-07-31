@@ -1,4 +1,5 @@
 #include <ctbrowser/shell/bindings.hpp>
+#include <ctbrowser/shell/url.hpp>
 
 #include <numbers>
 
@@ -26,62 +27,20 @@ namespace {
 // Parsed rather than tracked, because href is the one thing the browser
 // actually knows and keeping seven fields in step with it by hand is how they
 // drift apart.
-struct url_parts {
-    std::string protocol; // "file:" - WITH the colon, as the DOM reports it
-    std::string host;     // hostname:port
-    std::string hostname;
-    std::string port;
-    std::string pathname;
-    std::string search; // "?a=1", empty when there is none - not "?"
-    std::string hash;   // "#x"
-    std::string origin;
-};
-
-[[nodiscard]] url_parts split_url(std::string_view href) {
-    url_parts out;
-    std::string_view rest = href;
-    if (const std::size_t scheme = rest.find("://"); scheme != std::string_view::npos) {
-        out.protocol = std::string{rest.substr(0, scheme)} + ":";
-        rest = rest.substr(scheme + 3);
-        const std::size_t authority = rest.find_first_of("/?#");
-        const std::string_view host = rest.substr(0, authority);
-        out.host = std::string{host};
-        if (const std::size_t colon = host.rfind(':'); colon != std::string_view::npos) {
-            out.hostname = std::string{host.substr(0, colon)};
-            out.port = std::string{host.substr(colon + 1)};
-        } else {
-            out.hostname = std::string{host};
-        }
-        out.origin = out.protocol + "//" + out.host;
-        rest = authority == std::string_view::npos ? std::string_view{} : rest.substr(authority);
-    } else if (const std::size_t colon = rest.find(':');
-               colon != std::string_view::npos && rest.substr(colon).starts_with(":/")) {
-        // `file:/path` - a scheme with no authority at all.
-        out.protocol = std::string{rest.substr(0, colon)} + ":";
-        out.origin = "null";
-        rest = rest.substr(colon + 1);
-    }
-    if (const std::size_t at = rest.find('#'); at != std::string_view::npos) {
-        out.hash = std::string{rest.substr(at)};
-        rest = rest.substr(0, at);
-    }
-    if (const std::size_t at = rest.find('?'); at != std::string_view::npos) {
-        out.search = std::string{rest.substr(at)};
-        rest = rest.substr(0, at);
-    }
-    out.pathname = std::string{rest};
-    // A URL with no path still HAS one, and a page joining onto it produces
-    // "//thing" rather than "/thing" when it is empty.
-    if (out.pathname.empty() && !out.host.empty()) { out.pathname = "/"; }
-    return out;
-}
+// url_parts and split_url USED TO BE HERE. They are gone, and the reason is
+// worth keeping: this one reached for the last colon in the authority with no
+// bracket guard, so `http://[::1]/` reported hostname `[:` and port `1]`. Its
+// twin in net.cpp guarded exactly that case. Two parsers for one job, written
+// apart, drifted apart - and nothing compared them because nothing could.
+//
+// shell/url.hpp parses once now, for both.
 
 } // namespace
 
 // Every part of the URL, derived from href. Called wherever href is set, so
 // the two cannot disagree.
 void dom_bindings::write_location_parts(context & cx, script::object_object & loc) {
-    const url_parts parts = split_url(location_href_);
+    const location_url parts = location_parts(location_href_);
     loc.set("protocol", cx.string(parts.protocol));
     loc.set("host", cx.string(parts.host));
     loc.set("hostname", cx.string(parts.hostname));

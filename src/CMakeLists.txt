@@ -7,22 +7,45 @@
 include(GNUInstallDirs)
 
 # CONFIG mode: FindBoost was removed in CMake 4 (policy CMP0167), and Boost has
-# shipped its own package config for years. Header-only usage only - see the
-# plan's dependency policy: compiled Boost would mean cross-compiling Boost
-# itself for the llvm-mingw Windows presets.
+# shipped its own package config for years.
 #
-# CROSS BUILDS have no BoostConfig for the target and do not need one: what the engine
-# links is Boost::headers, so an isolated include directory (the toolchain finds
-# it, the same way it finds GLM's) is the entire dependency.
+# MOSTLY header-only, and the exception is deliberate. This was header-only ONLY
+# until 2026-07-31, because a compiled Boost meant cross-compiling Boost for the
+# llvm-mingw Windows presets. Boost.URL forced the question: it has been
+# compiled-only since 1.87 - `boost/url/src.hpp` now hard-errors, "src.hpp is
+# discontinued" - so there is no header-only way to have it. The rule is lifted
+# for libraries worth the cost, and Boost.URL is the first. See NOTICE.
+#
+# STILL EXCLUDED: Boost.Context, Coroutine and Fiber. Those are what actually
+# broke the cross build, and nothing here needs them.
+#
+# CROSS BUILDS have no BoostConfig for the target: the headers come from an
+# isolated include directory (the toolchain finds it the way it finds GLM's) and
+# the compiled libraries from the mingw sysroot, beside the static SDL3 that
+# already lives there.
 if(CTBROWSER_BOOST_INCLUDE_DIR)
   if(NOT TARGET Boost::headers)
     add_library(Boost::headers INTERFACE IMPORTED)
     set_target_properties(Boost::headers PROPERTIES
       INTERFACE_INCLUDE_DIRECTORIES "${CTBROWSER_BOOST_INCLUDE_DIR}")
   endif()
-  message(STATUS "ctbrowser: header-only Boost from ${CTBROWSER_BOOST_INCLUDE_DIR}")
+  find_library(CTBROWSER_BOOST_URL_LIBRARY NAMES boost_url libboost_url)
+  if(NOT CTBROWSER_BOOST_URL_LIBRARY)
+    message(FATAL_ERROR
+      "ctbrowser: no libboost_url for this target. It is not header-only and cannot be "
+      "(boost/url/src.hpp is discontinued upstream). Build it into the mingw sysroot - "
+      "tools/build-boost-mingw.sh does exactly that - and configure again.")
+  endif()
+  if(NOT TARGET Boost::url)
+    add_library(Boost::url UNKNOWN IMPORTED)
+    set_target_properties(Boost::url PROPERTIES
+      IMPORTED_LOCATION "${CTBROWSER_BOOST_URL_LIBRARY}"
+      INTERFACE_INCLUDE_DIRECTORIES "${CTBROWSER_BOOST_INCLUDE_DIR}")
+  endif()
+  message(STATUS "ctbrowser: Boost headers ${CTBROWSER_BOOST_INCLUDE_DIR}, "
+                 "url ${CTBROWSER_BOOST_URL_LIBRARY}")
 else()
-  find_package(Boost 1.80 REQUIRED CONFIG)
+  find_package(Boost 1.80 REQUIRED CONFIG COMPONENTS url)
 endif()
 
 # the engine is NOT header-only and does NOT depend on std::embed. Keeping the warning
@@ -346,6 +369,7 @@ target_sources(ctbrowser-shell
     shell/svg.cpp
     shell/forms.cpp
     shell/net.cpp
+    shell/url.cpp
     shell/embedded_fonts.cpp
   PUBLIC
     FILE_SET HEADERS
@@ -357,6 +381,7 @@ target_sources(ctbrowser-shell
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/metrics.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/assets.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/images.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/url.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/net.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/canvas.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/webgl.hpp"
@@ -408,6 +433,10 @@ endif()
 target_link_libraries(ctbrowser-shell PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style
                                              ctbrowser-layout ctbrowser-paint ctbrowser-raster
                                              ctbrowser-script Boost::headers)
+# PRIVATE: boost/url is 1.2 MB of headers and shell/url.cpp is the only place it
+# appears. Nothing that links the engine should have to parse it, which is the
+# same rule net.hpp states for Asio.
+target_link_libraries(ctbrowser-shell PRIVATE Boost::url)
 
 # Asio comes from Boost by default - Boost::headers is already a dependency of
 # three the engine targets and is header-only. A build that would rather not have Boost

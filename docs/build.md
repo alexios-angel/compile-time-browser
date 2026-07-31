@@ -39,6 +39,62 @@ interface made that BMI 27 MB, `<SDL3/SDL.h>` made `ctbrowser.app.pcm` 26 MB.
 Now it is about every consumer re-parsing them. Same rule, same fix, different
 reason: put them in the `.cpp`, as `core/cpu_time.cpp` does with `<windows.h>`.
 
+## BOOST: WHAT IS LINKED, AND WHAT WAS DELIBERATELY NOT TAKEN (2026-07-31)
+
+Boost was header-only here until 2026-07-31. **Boost.URL ended that**, and it had
+to: it has been compiled-only since 1.87, where `boost/url/src.hpp` became a hard
+`#error` reading "src.hpp is discontinued". There is no header-only way to have
+it, and the engine was carrying **two hand-written URL parsers that disagreed** -
+`parse_url` in net.cpp and `split_url` in bindings.cpp, the second of which
+reported hostname `[:` and port `1]` for `http://[::1]/` because it reached for
+the last colon with no bracket guard.
+
+**How it reaches the cross-build.** `tools/build-boost-mingw.sh` compiles
+Boost.URL's 66 sources with the llvm-mingw compiler into
+`tools/llvm-mingw/x86_64-w64-mingw32/lib/libboost_url.a`, beside the static SDL3,
+SDL3_ttf and plutosvg already living there. **No b2** - Boost's build system is
+not involved, because the sources are self-contained C++ whose only dependencies
+are header-only Boost. The script reads the tag out of the Boost headers it
+builds against, so a library built from one release against another's headers
+cannot happen quietly.
+
+**What it cost, measured:** `p5webgl.exe` went from 17,083,904 to 17,340,928
+bytes, +251 KB, and the archive is 1.0 MB across 66 objects. All ten Windows
+goldens stayed byte-identical.
+
+**Two bugs the script itself had first**, both the silent kind. `src/*.cpp`
+matches 27 of the 66 files, so the first archive linked, looked healthy and had
+`url_impl` *undefined inside it*; and the compile loop was `... & done; wait`,
+which discards every exit code, so a failed compile would have been archived
+around without a word. It is recursive and checks each PID now.
+
+### Rejected, with reasons
+
+Not everything Boost offers is an improvement, and these were each considered and
+turned down rather than overlooked:
+
+* **Boost.Locale**, and `boost::algorithm::iequals` with it — both are
+  **locale-aware**, and this repository byte-compares renders across Linux and
+  Windows. Host-dependent case folding would make a golden depend on `LC_ALL`.
+  HTTP headers and HTML tag names are defined as **ASCII-only** folding anyway,
+  so the locale-aware version is not merely riskier, it is wrong for the job.
+  (Same reasoning retires `std::strtod`, which respects `LC_NUMERIC`, in favour
+  of `std::from_chars`, which does not.)
+* **Boost.Context / Coroutine / Fiber** — per-ABI assembly, and what actually
+  broke the cross-build. Lifting the rule for portable C++ says nothing about
+  these. `fetch` is already asynchronous by another route.
+* **Boost.Endian** — the byte-packing sites in softgl, webgl and svg are ARGB
+  *channel* packing, not byte order. Right-looking, wrong tool.
+* **Boost.Regex** — would close the two gaps `script/regex.hpp` names (lookbehind
+  and backreferences), but JS `RegExp` semantics are not Perl's, and swapping a
+  working 455-line engine for a subtly different one risks p5.js for a feature no
+  page here uses. Revisit only with tests pinning behaviour first.
+* **Boost.Filesystem, Boost.Test, Boost.ProgramOptions, Boost.Process** —
+  `std::filesystem` and the repo's own harness already cover the first two;
+  nothing here parses argv or spawns a process.
+* **Base64** — Boost has it only in `beast::detail`, a private namespace with no
+  stability promise.
+
 ## BUILD SPEED (2026-07-25)
 
 Measured, then fixed. A clean the engine build was **143.7 s wall / 237.9 s CPU**; it is

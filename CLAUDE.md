@@ -52,6 +52,10 @@ gate and CI runs it.
   zlib. `encode_png` uses STORED deflate blocks and no compression library, so
   "the chunk names look right" is not evidence; the CRCs and the Adler-32 are
   silent when wrong.
+- `tools/build-boost-mingw.sh` — compiles Boost.URL for the llvm-mingw target
+  into the cross sysroot. Boost.URL is the one COMPILED Boost library the engine
+  links (it cannot be header-only), so the Windows presets need this run once.
+  See `docs/build.md` for what else was considered and turned down.
 - `tools/format.sh`, `tools/check-package.sh`, `tools/check-render.cmake`,
   `tools/remote-build.sh`.
 

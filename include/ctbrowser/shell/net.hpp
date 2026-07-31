@@ -4,9 +4,11 @@
 #include <string_view>
 #include <vector>
 
-// HTTP over Boost.Asio - HEADER-ONLY Boost, which is the project's standing
-// constraint (see NOTICE: compiled Boost, Boost.Context above all, breaks the
-// llvm-mingw Windows cross-build).
+// HTTP over Boost.Asio, which is header-only. That USED to be the project's
+// blanket rule; since 2026-07-31 it is not - shell/url.hpp links Boost.URL,
+// because Boost.URL cannot be header-only and RFC 3986 was being hand-rolled
+// twice. Boost.Context still must not appear: it is per-ABI assembly and is what
+// actually breaks the llvm-mingw cross-build. See NOTICE.
 //
 // SYNCHRONOUS, on purpose. Promises in this VM are settled when they are made,
 // so `await fetch(url)` has to have the bytes by the time fetch returns; there
