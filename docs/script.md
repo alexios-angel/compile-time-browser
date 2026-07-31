@@ -315,6 +315,39 @@ the p5 bundle compile.
 
 The lexer is next and has its own document: `docs/lexer-plan.md`.
 
+### collect_captured_names: TWO attempts, both measured, both reverted (2026-07-31)
+
+It is the obvious next target and it looks quadratic, so this is written down to
+stop the next person - or the next session - rediscovering it.
+
+It **is** quadratic in nesting depth: instrumented on the p5 bundle, **18,906
+calls and 16,529,682 node visits**, about eighty visits per node, because each
+function's subtree is re-walked once per enclosing function.
+
+**Attempt 1, memoise `all_names` at function boundaries.** Visits fell 16.5M ->
+9.6M, 42% fewer. Instructions fell **0.3%**. The walk was never the cost: the
+cost is the set data, and unioning each function's memoised names into its
+ancestors moves exactly as many strings as re-walking did. The quadratic moved
+from the traversal to the copying rather than going away, which is why an
+asymptotic argument was not enough on its own.
+
+**Attempt 2, insert into the set during the walk** instead of building a
+duplicate-filled vector and inserting once at the end. **3.1% WORSE.** Hashing
+every identifier occurrence costs more than appending it and deduplicating once.
+It does save 12 MB of peak RSS (156 -> 144 MB), which was not worth 3% CPU.
+
+Measured with callgrind, because wall clock on this machine varies ±10% and the
+first attempt looked like a 10% win by that measure and was not.
+
+**What would actually work**, if this is ever worth the effort: stop
+materialising a set per function at all. `is_captured` is only ever asked about
+the handful of names being declared as locals of the current function. Give each
+function node an Euler-tour interval, record for each name the entry times of
+the innermost functions mentioning it, and answer the query with a binary search
+- O(occurrences) memory rather than O(names x depth), and no per-function set.
+That is a different algorithm, not a tweak, which is why it was not attempted
+here.
+
 ### WEBGL WORKS (2026-07-31), and getting there was four wrong answers
 
 `createCanvas(w, h, WEBGL)` selects p5's RendererGL, and a sketch drawing `box()`
