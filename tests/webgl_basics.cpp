@@ -561,15 +561,19 @@ void test_a_page_can_draw_a_triangle() {
     CHECK(log[7] == "corner=0,0,0,255");
 }
 
-// p5 asks for `webgl2` FIRST and falls back to `webgl`. Refusing 2 out loud is
-// what makes that fallback happen and land on the one that works.
-void test_webgl2_still_refuses() {
+// p5 asks for `webgl2` FIRST and falls back to `webgl`, and this test asserted
+// the WRONG HALF of that for as long as it existed.
+//
+// It said refusing 2 out loud was what made the fallback happen. It is not: the
+// fallback is `getContext('webgl2') || getContext('webgl')`, which needs a falsy
+// value to fall THROUGH. A throw escaped p5's constructor entirely and left the
+// sketch on its 2D renderer - the exact outcome the throw was defending against.
+// Null is also what the specification returns for an unsupported context id.
+void test_webgl2_is_null_not_a_throw() {
     ctbrowser::browser page{{.width = 100, .height = 100}};
     page.load_html(R"(<body><canvas id='c'></canvas><script>
       var c = document.getElementById('c');
-      var two = 'no error';
-      try { c.getContext('webgl2'); } catch (e) { two = e.message; }
-      console.log('webgl2=' + (two.indexOf('webgl2') >= 0));
+      console.log('webgl2=' + (c.getContext('webgl2') === null));
       console.log('webgl=' + (c.getContext('webgl') !== null));
       console.log('unknown=' + (c.getContext('nonsense') === null));
       // getContext is IDEMPOTENT: a page calling it twice gets the same context,
@@ -608,6 +612,6 @@ int main() {
     test_delete_unbinds();
     test_texture_sampling();
     test_a_page_can_draw_a_triangle();
-    test_webgl2_still_refuses();
+    test_webgl2_is_null_not_a_throw();
     REPORT("webgl_basics");
 }

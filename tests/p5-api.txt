@@ -158,4 +158,5 @@ vector/heading/rotate
 vector/normalize/limit/setMag
 vector/p5.Vector statics
 webgl/WEBGL renderer is constructible
+webgl/createCanvas(WEBGL) uses the webgl renderer
 webgl/getContext(webgl) works

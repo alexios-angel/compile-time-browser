@@ -726,23 +726,22 @@ void test_webgl_is_constructible_and_refuses() {
     check(registered == "registered=function",
           "the WebGL renderer is still a constructible function: " + registered);
     // THE ENGINE'S OWN GUARANTEE, tested directly rather than through p5: a
-    // canvas hands out a real webgl context, and refuses `webgl2` out loud
-    // because this is a WebGL 1 implementation (docs/webgl-plan.md).
+    // canvas hands out a real webgl context, and answers NULL for `webgl2`
+    // because this is a WebGL 1 implementation (docs/webgl-plan.md). Null is
+    // what an unsupported context id returns, and what feature detection - p5's
+    // included - is built on; this asserted a throw until that was measured.
     (void)page.run_script(R"(
         var one = document.createElement('canvas').getContext('webgl');
         console.log('direct=' + (one !== null && typeof one.drawArrays === 'function'));
-        var two = 'no error';
-        try { document.createElement('canvas').getContext('webgl2'); }
-        catch (e) { two = e.message; }
-        console.log('two=' + (two.indexOf('webgl2') >= 0));
+        console.log('two=' + (document.createElement('canvas').getContext('webgl2') === null));
     )");
     check(said("direct=") == "direct=true", "a webgl context exists: " + said("direct="));
-    check(said("two=") == "two=true", "and webgl2 refuses by name: " + said("two="));
+    check(said("two=") == "two=true", "and webgl2 is null: " + said("two="));
 
-    // WHAT p5 DOES WITH IT IS STILL NOT THE ENGINE'S TO DECIDE. As of p5 2.3.1
-    // createCanvas(w, h, WEBGL) selects a renderer that reports itself as
-    // Renderer2D; whether it now finds the real context is measured by the p5
-    // probe rather than asserted here.
+    // WHAT p5 DOES WITH IT IS MEASURED BY THE p5 PROBE, not asserted here.
+    // createCanvas(w, h, WEBGL) now reaches p5's RendererGL; it used to land on
+    // Renderer2D, and the two engine bugs behind that - a throwing `webgl2` and
+    // a missing `Float32Array.from` - were both invisible from this file.
     const std::string asking = said("asking=");
     check(asking != "<not logged>", "the sketch reported what happened: " + asking);
 }

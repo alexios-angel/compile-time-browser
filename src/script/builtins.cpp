@@ -3391,6 +3391,58 @@ void install_typed_arrays(context & cx) {
             return out;
         });
         ctor->set("BYTES_PER_ELEMENT", value::number(each.bytes));
+
+        // `Float32Array.from` and `.of`, WHICH ARE NOT THE SAME FUNCTIONS AS
+        // `Array.from` and `.of`: they coerce into this view's element kind, so
+        // `Float32Array.from([1.5])` keeps 1.5 and `Uint8Array.from([1.5])`
+        // does not. Delegating to the Array versions would have been the wrong
+        // answer rather than a missing one.
+        //
+        // p5's WEBGL renderer builds its matrices with `Float32Array.from`, so
+        // without these the constructor threw ``from` is undefined` and p5 fell
+        // back to Renderer2D - which the API probe saw only as the wrong
+        // renderer, several layers away from the cause.
+        const auto build = [kind](context & c, std::span<value> items, const value * mapper) {
+            value out = c.make_array();
+            auto * made = static_cast<array_object *>(out.as_heap());
+            made->elements = kind;
+            for (std::size_t i = 0; i < items.size(); ++i) {
+                value v = items[i];
+                if (mapper != nullptr && mapper->is_callable()) {
+                    const value call_args[2]{v, value::number(static_cast<double>(i))};
+                    v = c.call(*mapper, call_args);
+                }
+                made->items.push_back(value::number(coerce_element(kind, context::to_number(v))));
+            }
+            return out;
+        };
+        method(cx, ctor, "of",
+               [build](context & c, std::span<value> a) { return build(c, a, nullptr); });
+        method(cx, ctor, "from", [build](context & c, std::span<value> a) {
+            const value source = arg_at(a, 0);
+            const value mapper = arg_at(a, 1);
+            // An iterable OR an array-like, because both reach here: p5 passes
+            // real arrays, and `from(gl.getParameter(...))` passes a view.
+            std::vector<value> items;
+            if (source.is_array()) {
+                items = static_cast<array_object *>(source.as_heap())->items;
+            } else if (source.is_object()) {
+                const value seq = c.iterable_values(source);
+                if (seq.is_array()) { items = static_cast<array_object *>(seq.as_heap())->items; }
+                if (items.empty()) {
+                    // Array-LIKE rather than iterable: `{length: 2, 0: ..., 1: ...}`,
+                    // which is what `arguments` and several DOM lists are. An empty
+                    // iterable lands here too and simply finds no length, so the
+                    // ambiguity costs a lookup and not an answer.
+                    const double n = context::to_number(c.lookup_property(source, "length"));
+                    for (double i = 0; i < n; ++i) {
+                        items.push_back(
+                            c.lookup_property(source, std::to_string(static_cast<long long>(i))));
+                    }
+                }
+            }
+            return build(c, items, &mapper);
+        });
         cx.define_global(each.name, value::object(ctor));
     }
 

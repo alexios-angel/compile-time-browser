@@ -304,6 +304,14 @@ private:
     // and the state machine it drives is in shell/webgl.hpp.
     [[nodiscard]] value webgl_context_object(context & cx, node_id id);
 
+    // SETTING canvas.width RESIZES THE DRAWING BUFFER, and for a WebGL canvas
+    // that is not cosmetic: canvas_context::resize REALLOCATES the bitmap, so a
+    // context still holding the old pointer is drawing into freed memory. The
+    // size disagreement is the visible half - p5 creates its canvas, asks for a
+    // context, and only then sets the size, so without this every p5 WEBGL
+    // sketch drew into a 300x150 buffer and read back a 20x20 window of nothing.
+    void resize_webgl_context(node_id id, int width, int height);
+
     // ONE CONTEXT PER CANVAS, kept for the document's life. getContext is
     // idempotent in the spec: a page that calls it twice gets the same object
     // with the same buffers and programs still bound, and a fresh one each time

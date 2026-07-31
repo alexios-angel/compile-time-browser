@@ -610,7 +610,7 @@ void test_canvas_width_and_height_are_readable() {
     check(log[2] == "half=100", "so arithmetic on them works");
 }
 
-// getContext answers for 2d AND webgl, refuses webgl2, and gives null otherwise.
+// getContext answers for 2d AND webgl, and gives null for everything else.
 //
 // This assertion has now been through three shapes, which is worth recording
 // because each was right at the time:
@@ -620,18 +620,17 @@ void test_canvas_width_and_height_are_readable() {
 //   2. a catchable Error for the whole WebGL family, so that failure was at
 //      least loud while WEBGL was out of scope.
 //   3. a real context for `webgl`, now that there is one.
-//
-// `webgl2` still refuses out loud, and that is load-bearing rather than
-// leftover: p5 asks for 2 FIRST and falls back to 1, so a null or a stub for 2
-// is what would send it down a path this engine cannot honour.
+//   4. NULL for `webgl2`, which is what the specification says an unsupported
+//      context id returns - and what p5's `webgl2 || webgl` fallback needs in
+//      order to reach the one that works. Shape 3 kept the throw for webgl2 on
+//      the reasoning that it forced that fallback. It prevented it.
 void test_getcontext_only_answers_for_2d() {
     browser page{browser_options{400, 300}};
     page.load_html("<html><body><canvas id=c></canvas><script>"
                    "var c = document.getElementById('c');"
                    "console.log('2d ' + (c.getContext('2d') != null));"
                    "console.log('webgl ' + (c.getContext('webgl') != null));"
-                   "try { c.getContext('webgl2'); console.log('webgl2 handed out'); }"
-                   "catch (e) { console.log('webgl2 refused: ' + e.message); }"
+                   "console.log('webgl2 ' + (c.getContext('webgl2') === null));"
                    "console.log('unknown ' + (c.getContext('nonsense') === null));"
                    "</script></body></html>");
     check(page.frame().has_value(), "the page renders");
@@ -640,8 +639,7 @@ void test_getcontext_only_answers_for_2d() {
     if (log.size() == 4) {
         check(log[0] == "2d true", "a 2d context exists");
         check(log[1] == "webgl true", "and so does a webgl one");
-        check(log[2].starts_with("webgl2 refused:") && log[2].find("webgl2") != std::string::npos,
-              "webgl2 is refused out loud, and the message names it: " + log[2]);
+        check(log[2] == "webgl2 true", "webgl2 is null, not a context and not a throw");
         // Anything ELSE is still null - that is what an unknown context type
         // means, and a page testing for one expects null rather than a throw.
         check(log[3] == "unknown true", "an unknown context type is still null");

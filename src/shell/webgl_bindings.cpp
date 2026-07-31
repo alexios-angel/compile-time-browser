@@ -124,6 +124,19 @@ using context = script::context;
 
 } // namespace
 
+void dom_bindings::resize_webgl_context(node_id id, int width, int height) {
+    const auto found = webgl_contexts_.find(pack(id));
+    if (found == webgl_contexts_.end() || !found->second || canvases_ == nullptr) { return; }
+    canvas_context * surface = canvases_->context_for(id, width, height);
+    if (surface == nullptr) { return; }
+    found->second->resize(const_cast<paint::bitmap *>(surface->surface().get()), width, height);
+    // The page reads these, and p5 reads them to size its projection matrix.
+    if (const auto seen = webgl_objects_.find(pack(id)); seen != webgl_objects_.end()) {
+        seen->second->set("drawingBufferWidth", value::number(width));
+        seen->second->set("drawingBufferHeight", value::number(height));
+    }
+}
+
 value dom_bindings::webgl_context_object(context & cx, node_id id) {
     if (canvases_ == nullptr) { return value::null(); }
     const auto txn = doc_->read();

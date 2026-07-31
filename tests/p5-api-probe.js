@@ -1150,7 +1150,7 @@ globalThis.__probes = [
   }],
   // THE ENGINE'S GUARANTEE, asked of the engine rather than of p5: a canvas
   // hands out a REAL webgl context now - compile, link, buffer, draw - and
-  // refuses `webgl2` out loud, which is what makes p5's fallback land on the one
+  // answers null for `webgl2`, which is what lets p5's fallback reach the one
   // that works.
   ['webgl', 'getContext(webgl) works', function (s) {
     const gl = document.createElement('canvas').getContext('webgl');
@@ -1160,26 +1160,41 @@ globalThis.__probes = [
       if (typeof gl[name] !== 'function') { throw name + ' is missing'; }
     }
     if (gl.TRIANGLES !== 4) { throw 'TRIANGLES=' + gl.TRIANGLES; }
-    let refused = false;
-    try { document.createElement('canvas').getContext('webgl2'); }
-    catch (e) { refused = /webgl2/i.test(String(e && e.message)); }
-    if (!refused) { throw 'webgl2 was not refused by name'; }
+    // webgl2 is NOT implemented, and HOW it says so is load-bearing. This
+    // asserted a THROW, on the theory that a null was the silent-wrong-answer
+    // shape. The specification returns null for an unsupported context id and
+    // p5's RendererGL is written as `getContext('webgl2') || getContext('webgl')`
+    // - so the throw escaped the constructor and left the sketch on Renderer2D,
+    // which is exactly the outcome throwing was meant to prevent.
+    if (document.createElement('canvas').getContext('webgl2') !== null) {
+      throw 'webgl2 should be null here, not a context';
+    }
     return 'ok';
   }],
-  // KNOWN FAILING, and the reason has CHANGED - which is why it stays measured
-  // rather than being deleted.
+  // THIS PROBE FAILED FOR TWO SEPARATE REASONS BEFORE IT PASSED, and staying
+  // measured through both is the only reason either was found.
   //
-  // It used to fail because there was no webgl context at all. There is one now
-  // (see the probe above, and tests/webgl_basics.cpp draws a triangle through a
-  // page with it), and p5 STILL selects a renderer reporting itself as
-  // Renderer2D and never asks for the context. So the remaining fault is inside
-  // p5's own renderer selection, not in the engine's surface - which is stage 8
-  // of docs/webgl-plan.md and not something to paper over here.
+  // First there was no webgl context at all. Then there was one and p5 still
+  // chose Renderer2D - which read like a fault in p5's renderer selection, and
+  // was not. Selection was fine: `getContext('webgl2')` THREW instead of
+  // returning null, so p5's `webgl2 || webgl` fallback never ran, and then
+  // `Float32Array.from` was missing, so the constructor died. Two engine bugs,
+  // three layers from what the probe could see.
   ['webgl', 'createCanvas(WEBGL) uses the webgl renderer', function (s) {
     s.createCanvas(20, 20, s.WEBGL);
     const name = s._renderer && s._renderer.constructor && s._renderer.constructor.name;
     if (name === 'Renderer2D') {
       throw 'p5 selected Renderer2D despite a real webgl context being available';
+    }
+    // THE DRAWING BUFFER MUST BE THE CANVAS'S SIZE, which is a separate bug from
+    // selecting the renderer and was hidden behind it. p5 creates the canvas,
+    // asks for a context, and only THEN sets width and height - so a context
+    // that read the size once was left at the 300x150 HTML default, and a
+    // readback of the sketch's own 20x20 window found nothing at all.
+    const gl = s._renderer.drawingContext;
+    if (gl.drawingBufferWidth !== 20 || gl.drawingBufferHeight !== 20) {
+      throw 'drawing buffer is ' + gl.drawingBufferWidth + 'x' + gl.drawingBufferHeight
+          + ', not the canvas 20x20';
     }
     return 'ok';
   }],

@@ -912,7 +912,12 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                             }
                             return any ? out : missing;
                         };
-                        canvases_->resize(id, number("width", 300), number("height", 150));
+                        const int w = number("width", 300);
+                        const int h = number("height", 150);
+                        canvases_->resize(id, w, h);
+                        // And the WebGL context over the same canvas, which held
+                        // a pointer INTO the buffer that resize just replaced.
+                        resize_webgl_context(id, w, h);
                     }
                     mutated();
                     return value::undefined();
@@ -1335,27 +1340,27 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
     method("getContext", [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         const std::string kind = arg_string(c, args, 0);
-        // "2d" and "webgl". WEBGL 2 STILL REFUSES, and the difference matters.
+        // "2d" and "webgl". `webgl2` IS NOT IMPLEMENTED AND RETURNS NULL, and
+        // getting that right took two wrong answers.
         //
-        // This used to throw for the whole WebGL family, because returning null
-        // was worse: p5 asks for a webgl context, gets the null, keeps it, and
-        // falls back to its 2D renderer - so a WEBGL sketch drew nothing 3D and
-        // reported nothing. A blank canvas and a clear conscience.
+        // It first threw for the whole WebGL family, on the grounds that a null
+        // was the silent-wrong-answer shape: p5 would take it, fall back to its
+        // 2D renderer, and a WEBGL sketch would draw nothing 3D while reporting
+        // nothing. A blank canvas and a clear conscience.
         //
-        // Now there is a real one, so `webgl` and `experimental-webgl` hand it
-        // over. `webgl2` is a different language version (docs/webgl-plan.md)
-        // and still refuses OUT LOUD rather than returning null - which is also
-        // what makes p5 fall back to `webgl` and get the working one, since p5
-        // tries 2 first and catches nothing.
+        // When a real context arrived, `webgl2` kept throwing - and the comment
+        // here claimed the throw was what made p5 fall back to `webgl`. That was
+        // backwards, and measurably so. p5's RendererGL asks for `webgl2` first
+        // and relies on `getContext(...) || getContext('webgl')`, so it needs a
+        // FALSY VALUE to fall through. It catches nothing, so the throw escaped
+        // the constructor, escaped createCanvas, and left the sketch on the
+        // Renderer2D it already had - which is precisely the outcome the throw
+        // was supposed to prevent.
         //
-        // Anything else is null, which is what an unknown context type means and
-        // what a page testing for one expects.
-        if (kind == "webgl2") {
-            c.throw_error("TypeError",
-                          "this engine implements WebGL 1 only, so `webgl2` cannot be honoured - "
-                          "ask for `webgl`");
-            return value::undefined();
-        }
+        // Null is also simply what the specification says: an unsupported
+        // context id returns null, and feature detection is BUILT on that. It is
+        // a documented "not supported" signal rather than a plausible wrong
+        // answer, which is the distinction the loud-failure rule turns on.
         if (kind == "webgl" || kind == "experimental-webgl") {
             if (!id) { return value::null(); }
             return webgl_context_object(c, id);
