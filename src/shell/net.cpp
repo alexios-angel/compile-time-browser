@@ -91,6 +91,7 @@ struct message {
     int status = 0;
     std::string location;
     std::string content_type;
+    std::vector<http_header> headers;
     std::vector<std::byte> body;
     std::string error;
 };
@@ -132,6 +133,7 @@ struct message {
             const std::string_view name = line.substr(0, colon);
             std::string_view v = line.substr(colon + 1);
             while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) { v.remove_prefix(1); }
+            out.headers.push_back(http_header{std::string{name}, std::string{v}});
             if (iequals(name, "location")) {
                 out.location = std::string{v};
             } else if (iequals(name, "content-type")) {
@@ -182,15 +184,20 @@ struct message {
 
 // One request, no redirect following. `raw` comes back so the caller can decide
 // what to do with a 3xx.
-[[nodiscard]] inline message fetch_once(const fetch_url & url, const http_options & options) {
+[[nodiscard]] inline message fetch_once(const fetch_url & url, const http_options & options,
+                                        http_method method,
+                                        const std::vector<http_header> & extra) {
     message out;
     const auto timeout = std::chrono::milliseconds{options.timeout_ms};
     std::string request;
-    request += "GET " + url.target + " HTTP/1.1\r\n";
+    request += std::string{spelling(method)} + " " + url.target + " HTTP/1.1\r\n";
     // `authority`, not `host`: an IPv6 literal needs its brackets back here.
     request += "Host: " + url.authority + "\r\n";
     request += "User-Agent: " + options.user_agent + "\r\n";
     request += "Accept: */*\r\n";
+    // The CALLER'S headers last, so a page can override the defaults above -
+    // which is what fetch(url, {headers}) means in a page.
+    for (const http_header & each : extra) { request += each.name + ": " + each.value + "\r\n"; }
     // Identity, and close when done: this client reads to EOF and does not keep
     // connections alive, so asking for a compressed body it cannot decode would
     // be asking to fail.
@@ -333,11 +340,30 @@ struct message {
 // A GET, following redirects. Never throws: a failure is an `error` on the
 // response, because that is what the caller has to turn into a rejected promise
 // anyway.
-http_response http_get(std::string_view url, http_options options) {
-    http_response out;
-    out.url = std::string{url};
+std::string_view spelling(http_method method) noexcept {
+    switch (method) {
+    case http_method::head: return "HEAD";
+    case http_method::post: return "POST";
+    case http_method::put: return "PUT";
+    case http_method::patch: return "PATCH";
+    case http_method::delete_: return "DELETE";
+    case http_method::get: break;
+    }
+    return "GET";
+}
 
-    std::string current{url};
+std::string_view http_response::header(std::string_view name) const noexcept {
+    for (const http_header & each : headers) {
+        if (detail::iequals(each.name, name)) { return each.value; }
+    }
+    return {};
+}
+
+http_response fetch(const http_request & request, http_options options) {
+    http_response out;
+    out.url = request.url;
+
+    std::string current = request.url;
     for (int hop = 0; hop <= options.max_redirects; ++hop) {
         const fetch_url target = parse_absolute(current);
         if (!target.valid) {
@@ -348,10 +374,12 @@ http_response http_get(std::string_view url, http_options options) {
             out.error = "https:// needs OpenSSL, which this build does not have";
             return out;
         }
-        detail::message reply = detail::fetch_once(target, options);
+        detail::message reply =
+            detail::fetch_once(target, options, request.method, request.headers);
         out.url = current;
         out.status = reply.status;
         out.content_type = std::move(reply.content_type);
+        out.headers = std::move(reply.headers);
         out.body = std::move(reply.body);
         if (!reply.error.empty()) {
             out.error = std::move(reply.error);
@@ -360,20 +388,18 @@ http_response http_get(std::string_view url, http_options options) {
         const bool redirect = out.status == 301 || out.status == 302 || out.status == 303 ||
                               out.status == 307 || out.status == 308;
         if (!redirect || reply.location.empty()) { return out; }
-        // A relative Location is resolved against where we just were, which is
-        // the common case for a site redirecting to its own canonical path.
-        if (reply.location.find("://") != std::string::npos) {
-            current = reply.location;
-        } else if (reply.location.front() == '/') {
-            current = target.scheme + "://" + target.host + ":" + target.port + reply.location;
-        } else {
-            const std::size_t last_slash = target.target.rfind('/');
-            current = target.scheme + "://" + target.host + ":" + target.port +
-                      target.target.substr(0, last_slash + 1) + reply.location;
-        }
+        // RESOLVED THROUGH shell/url.hpp, which is what it is for. This was
+        // three branches of string surgery over scheme, host, port and the
+        // last slash - the same job the URL parser already does correctly, and
+        // one of the two places that used to disagree about it.
+        current = resolve(current, reply.location);
     }
     out.error = "too many redirects";
     return out;
+}
+
+http_response http_get(std::string_view url, http_options options) {
+    return fetch(http_request{http_method::get, std::string{url}, {}, {}}, options);
 }
 
 } // namespace ctbrowser::shell

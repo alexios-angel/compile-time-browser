@@ -138,6 +138,42 @@ void test_relative_redirect() {
     CHECK(body_text(response) == "relative worked");
 }
 
+void test_the_request_carries_a_method_and_headers() {
+    // The surface widened from `http_get(url)` to a request, so it is exercised
+    // rather than merely compiled. The server echoes what it was sent, which is
+    // the only way to prove the request line and headers left this process.
+    test_server server{{canned("ok")}};
+    ctbrowser::shell::http_request request;
+    request.method = ctbrowser::shell::http_method::post;
+    request.url = server.url("/submit");
+    request.headers.push_back({"X-Test", "sent"});
+    const auto response = ctbrowser::shell::fetch(request);
+    CHECK(response.ok());
+    const std::string sent = server.last_request();
+    CHECK(sent.starts_with("POST /submit HTTP/1.1"));
+    CHECK(sent.find("X-Test: sent") != std::string::npos);
+}
+
+void test_every_response_header_is_kept() {
+    // content_type used to be the ONLY header a caller could see. A page's
+    // `Response.headers` needs all of them, and a name may repeat - Set-Cookie
+    // is the one that matters, and a map would have lost one of these two.
+    test_server server{{"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n"
+                        "Set-Cookie: a=1\r\nSet-Cookie: b=2\r\n"
+                        "Content-Length: 2\r\n\r\nhi"}};
+    const auto response = ctbrowser::shell::http_get(server.url("/h"));
+    CHECK(response.ok());
+    CHECK(response.content_type == "text/plain");
+    // Case-insensitive, because HTTP field names are.
+    CHECK(response.header("CONTENT-TYPE") == "text/plain");
+    CHECK(response.header("no-such-header").empty());
+    int cookies = 0;
+    for (const auto & each : response.headers) {
+        if (each.name == "Set-Cookie") { ++cookies; }
+    }
+    CHECK(cookies == 2);
+}
+
 void test_failures() {
     // Port 1 is not listening. This must come back as an error, not a hang and
     // not an exception.
@@ -193,6 +229,8 @@ int main() {
     test_status_and_body();
     test_redirect();
     test_relative_redirect();
+    test_the_request_carries_a_method_and_headers();
+    test_every_response_header_is_kept();
     test_failures();
     test_timeout();
     test_tls_is_honest();

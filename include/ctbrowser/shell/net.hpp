@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,12 +38,54 @@ struct http_options {
     std::string user_agent = "ctbrowser/2.0";
 };
 
+// One header. A LIST, not a map, because HTTP allows a name to repeat -
+// `Set-Cookie` is the one that matters and the one a map would silently lose.
+struct http_header {
+    std::string name;
+    std::string value;
+};
+
+// WHY THERE IS A REQUEST TYPE AT ALL, when only GET is issued today.
+//
+// This surface existed as a single `http_get(url)` and every widening of it -
+// a method, a header, a body - was a change to every caller. `fetch()` in a
+// page already means all three, and cookies and keep-alive are ahead of it. So
+// the shape a browser needs is here now, and the parts not yet honoured say so
+// rather than being absent.
+enum class http_method : std::uint8_t {
+    get,
+    head,
+    post,
+    put,
+    patch,
+    delete_
+};
+
+[[nodiscard]] std::string_view spelling(http_method method) noexcept;
+
+struct http_request {
+    http_method method = http_method::get;
+    std::string url;
+    std::vector<http_header> headers;
+    std::vector<std::byte> body; // ignored for get and head
+};
+
 struct http_response {
     int status = 0;
     std::string url;   // the FINAL url, after redirects
     std::string error; // non-empty: the request never completed
     std::vector<std::byte> body;
     std::string content_type;
+    // EVERY header, in the order the server sent them. `Response.headers` in a
+    // page needs this, and content_type above is the one field that was ever
+    // exposed - kept because callers read it, and now a shorthand for
+    // header("content-type") rather than the only thing available.
+    std::vector<http_header> headers;
+
+    // Case-insensitive, because HTTP field names are - and ASCII-only, because
+    // that is what the specification says and a locale-aware fold would make
+    // the answer depend on the host.
+    [[nodiscard]] std::string_view header(std::string_view name) const noexcept;
 
     // `Response.ok` in the fetch API is the 2xx range, and it is NOT the same
     // question as "did the request complete" - a 404 completed.
@@ -59,9 +102,14 @@ struct http_response {
 #endif
 }
 
-// A GET, following redirects. Never throws: a failure is an `error` on the
-// response, because that is what the caller has to turn into a rejected
-// promise anyway.
+// Make a request, following redirects. NEVER THROWS: a failure is an `error` on
+// the response, because that is what the caller has to turn into a rejected
+// promise anyway, and because an exception crossing into the script engine has
+// nowhere to go.
+[[nodiscard]] http_response fetch(const http_request & request, http_options options = {});
+
+// The common case, kept because it reads better at the call site and because
+// every caller today is one.
 [[nodiscard]] http_response http_get(std::string_view url, http_options options = {});
 
 } // namespace ctbrowser::shell
