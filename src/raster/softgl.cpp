@@ -21,11 +21,11 @@ namespace ctbrowser::raster {
 namespace {
 
 struct shaded_vertex {
-    glsl::value position;                                   // clip space, from gl_Position
+    glsl::value position; // clip space, from gl_Position
     std::vector<std::pair<std::string, glsl::value>> varyings;
-    float x = 0;  // window coordinates after the viewport transform
+    float x = 0; // window coordinates after the viewport transform
     float y = 0;
-    float z = 0;  // 0..1, what the depth buffer holds
+    float z = 0; // 0..1, what the depth buffer holds
     float inverse_w = 1;
 };
 
@@ -129,7 +129,8 @@ std::size_t draw_triangles(const draw_request & request, framebuffer & into) {
         bool usable = true;
         for (int i = 0; i < 3; ++i) {
             stage.clear();
-            for (const auto & [name, held] : (*request.vertices)[first + static_cast<std::size_t>(i)]) {
+            for (const auto & [name, held] :
+                 (*request.vertices)[first + static_cast<std::size_t>(i)]) {
                 stage.set(name, held);
             }
             const glsl::environment env = stage.as_environment();
@@ -249,8 +250,7 @@ std::size_t draw_triangles(const draw_request & request, framebuffer & into) {
                 const float b1 = w1 * inverse_area;
                 const float b2 = w2 * inverse_area;
 
-                const float depth_here =
-                    b0 * corner[0].z + b1 * corner[1].z + b2 * corner[2].z;
+                const float depth_here = b0 * corner[0].z + b1 * corner[1].z + b2 * corner[2].z;
                 const auto pixel = static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
                                    static_cast<std::size_t>(x);
                 // EARLY DEPTH. The fragment shader is the expensive thing here,
@@ -258,7 +258,8 @@ std::size_t draw_triangles(const draw_request & request, framebuffer & into) {
                 // is only correct because `discard` cannot change the depth
                 // value - it can only remove the fragment - so a shader that
                 // discards is handled by not WRITING below, not by shading first.
-                if (state.depth_enabled && !depth_passes(state.depth, depth_here, into.depth[pixel])) {
+                if (state.depth_enabled &&
+                    !depth_passes(state.depth, depth_here, into.depth[pixel])) {
                     continue;
                 }
 
@@ -312,12 +313,10 @@ std::size_t draw_triangles(const draw_request & request, framebuffer & into) {
                     const float db = static_cast<float>(under & 0xFF) / 255.0f;
                     const float da = static_cast<float>((under >> 24) & 0xFF) / 255.0f;
                     const auto mix = [&](float source_channel, float destination_channel) {
-                        return source_channel *
-                                   blend_scale(state.source, source_channel, a,
-                                               destination_channel, da) +
-                               destination_channel *
-                                   blend_scale(state.destination, source_channel, a,
-                                               destination_channel, da);
+                        return source_channel * blend_scale(state.source, source_channel, a,
+                                                            destination_channel, da) +
+                               destination_channel * blend_scale(state.destination, source_channel,
+                                                                 a, destination_channel, da);
                     };
                     r = mix(r, dr);
                     g = mix(g, dg);

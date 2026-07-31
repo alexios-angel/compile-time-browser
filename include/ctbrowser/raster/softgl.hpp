@@ -42,10 +42,22 @@ enum class blend_factor : std::uint8_t {
     one_minus_dst_alpha,
 };
 
-enum class depth_test : std::uint8_t { never, less, equal, less_equal, greater, not_equal,
-                                       greater_equal, always };
+enum class depth_test : std::uint8_t {
+    never,
+    less,
+    equal,
+    less_equal,
+    greater,
+    not_equal,
+    greater_equal,
+    always
+};
 
-enum class cull_mode : std::uint8_t { none, front, back };
+enum class cull_mode : std::uint8_t {
+    none,
+    front,
+    back
+};
 
 // One draw call's state. Everything the WebGL context has bound at the moment
 // `drawArrays` is called, flattened into what the rasteriser needs - so this

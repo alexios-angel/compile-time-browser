@@ -336,6 +336,7 @@ add_library(ctbrowser::raster ALIAS ctbrowser-raster)
 add_library(ctbrowser-shell)
 target_sources(ctbrowser-shell
   PRIVATE
+    shell/webgl.cpp
     shell/browser.cpp
     shell/bindings.cpp
     shell/canvas.cpp
@@ -355,6 +356,7 @@ target_sources(ctbrowser-shell
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/images.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/net.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/canvas.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/webgl.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/svg.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/forms.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/bindings.hpp"

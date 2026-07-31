@@ -299,8 +299,8 @@ void test_scissor() {
     s.state.scissor_height = 16;
     cover(s, 1, 0, 0);
     CHECK(s.draw() > 0);
-    CHECK(s.red(4, 4) == 255);   // inside
-    CHECK(s.red(24, 24) == 0);   // outside, untouched
+    CHECK(s.red(4, 4) == 255); // inside
+    CHECK(s.red(24, 24) == 0); // outside, untouched
 }
 
 void test_viewport() {
