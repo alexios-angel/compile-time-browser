@@ -202,6 +202,20 @@ framebuffer objects (every draw goes to the canvas), instancing, and near-plane
 clipping - a triangle with any vertex at or behind the eye is dropped rather
 than split.
 
+**A PROGRAM CAN BE ENUMERATED, and that is not a detail.** `getProgramParameter`
+answers `ACTIVE_UNIFORMS` and `ACTIVE_ATTRIBUTES`, and `getActiveUniform` /
+`getActiveAttrib` walk them - names, array sizes and GL type codes, off the
+interface the GLSL front end already recorded. Attributes come back in the order
+`link_program` assigned, so index i is location i.
+
+Nothing that asks for uniforms **by name** needs any of it, which is why it was
+missing: every page and every test here wrote its own shader and knew what was in
+it. p5 does the opposite, and got zero for both - so it bound no attributes, set
+no matrices, and drew a cube with no vertices, with no GL error and an empty
+canvas. The type codes have to be constants on the CONTEXT too, because a caller
+dispatches with `switch (uniform.type) { case gl.FLOAT_MAT4: ... }`; undefined
+matches no case, and there is no default.
+
 **Speed.** The evaluator is a tree walker at 0.6 M fragments/sec -
 `ctbrowser-test-glsl_basics --bench` reports it. That is 60 ms for a 200x200
 full-screen draw, which is why `examples/pages/webgl-triangle.html` is 160x160.

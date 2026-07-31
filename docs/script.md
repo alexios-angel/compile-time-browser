@@ -299,18 +299,30 @@ expression leak above took an afternoon: `p5` was undefined, `.TableRow` was
 undefined, and the error surfaced one step later naming `TableRow`. Left as it is
 for now, and written down because it turns a precise failure into a vague one.
 
-### WEBGL refuses at the ENGINE boundary now
+### WEBGL WORKS (2026-07-31), and getting there was four wrong answers
 
-`canvas.getContext('webgl')` used to return null, on the reasoning that a page
-feature-detects with exactly that call. Wrong in the direction that matters: p5
-keeps the null and falls back to its 2D renderer, so a WEBGL sketch constructed,
-drew nothing 3D and reported nothing.
+`createCanvas(w, h, WEBGL)` selects p5's RendererGL, and a sketch drawing `box()`
+and `sphere()` renders — `examples/pages/p5-webgl.html` has a golden that matches
+byte-for-byte on Linux and on the Windows cross-build.
 
-It throws a catchable Error naming webgl. The deviation from a browser is
-deliberate - a browser returns null - and it is the WEBGL scope decision made
-enforceable rather than hoped for. Anything else still returns null.
+Every step of the way was a silent wrong answer in this engine, and the record is
+kept because the SHAPE repeats:
 
-As of p5 2.3.1 `createCanvas(w, h, WEBGL)` does not reach that call: it selects a
-renderer that reports itself as Renderer2D and degrades to 2D in silence. That is
-inside the library and not something this engine can observe; it is a listed
-failure in tests/p5-api.txt rather than a claim that it is fine.
+* `getContext('webgl')` returned null. p5 kept the null and fell back to 2D, so a
+  WEBGL sketch drew nothing and reported nothing.
+* So it threw instead — and that was worse, for a reason the comment defending it
+  got backwards. RendererGL is `getContext('webgl2') || getContext('webgl')` and
+  needs a FALSY value to fall through, so the throw escaped the constructor and
+  left the sketch on the Renderer2D it already had: the exact outcome throwing was
+  meant to prevent. **`webgl2` now returns null**, which is also what the
+  specification says for an unsupported context id. Feature detection is built on
+  that; it is a documented "not supported" signal, not a plausible wrong answer.
+* `Float32Array.from` did not exist, so RendererGL's constructor died. Typed
+  arrays now have `from` and `of`, and they are NOT the `Array` ones — they
+  coerce into the view's element kind, so `Uint8Array.from([1.5])` must not keep
+  the 1.5.
+* `getProgramParameter` answered 0 to anything it did not recognise, so
+  ACTIVE_UNIFORMS and ACTIVE_ATTRIBUTES were zero and p5 concluded the shader
+  declared nothing. See `docs/raster.md` — that one is the interesting hole.
+
+For three of those, the diagnosis blamed p5 first and p5 was innocent each time.

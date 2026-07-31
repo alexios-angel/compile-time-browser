@@ -525,13 +525,32 @@ channel catches "the shader ran and drew the right thing", which is what this
 test is for. Anything finer than that belongs to the software path, where exact
 is achievable and therefore required.
 
-### 8. p5 on top
+### 8. p5 on top — DONE (2026-07-31), and it found what nothing else could
 
-`createCanvas(w, h, WEBGL)` genuinely selects `RendererGL`; the probe grows a
-WEBGL module (`box`, `sphere`, `rotateX/Y/Z`, `camera`, lights, `texture`,
-`createShader`); `examples/pages/p5-webgl.html` gets a golden that is opened and
-looked at. The known-failing `webgl/createCanvas(WEBGL) refuses` probe is replaced
-by one asserting it works.
+`createCanvas(w, h, WEBGL)` selects `RendererGL`, and `box()` and `sphere()`
+render. `examples/pages/p5-webgl.html` has a golden — a rotated cube and a
+sphere, opened and looked at, byte-identical on Linux and on the Windows
+cross-build. Two probes replace the known-failing one: the renderer is selected,
+and a sketch actually draws geometry.
+
+**Four engine bugs sat between "the context works" and "p5 draws", and every one
+was silent.** They are listed in `docs/script.md`. The one worth reading this far
+for is `getProgramParameter`, because it is the hole this plan's own testing
+strategy could not have found:
+
+> Every WebGL page in this tree, and every test in `webgl_basics`, asks for
+> uniforms and attributes **by name** — because a page that wrote the shader
+> already knows what is in it. A **library** does the opposite: it asks how many
+> there are and walks them. `getProgramParameter` answered 0 to every question it
+> did not recognise, so p5 was told the shader declared nothing, bound no
+> attributes, set no matrices, and drew a cube with no vertices. One
+> correct-looking `drawElements` of 36 indices, no GL error, empty canvas.
+
+The corpus page written by hand could never have caught it, and neither could a
+larger corpus of hand-written pages. **Running somebody else's library is a
+different test from running more of your own pages** — that is the transferable
+result, and it is why the GLSL parse corpus is p5's sixteen shaders rather than
+sixteen shaders written here.
 
 ## Definition of done for the first milestone
 

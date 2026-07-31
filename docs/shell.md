@@ -638,10 +638,10 @@ matrix with a skew turns a circle into an ellipse at an angle and these verbs
 cannot express that. The centre is placed correctly and the radii take the
 matrix's scale, which is right for the translate/scale/rotate a page passes.
 
-**Still missing, by name.** WEBGL constructs but refuses: `p5.renderers["webgl"]`
-is a real function and `createCanvas(w, h, WEBGL)` throws a catchable Error
-naming it, which is the scope that was chosen. No gradients or patterns — p5
-uses neither. `passive` on a listener is accepted and ignored, which changes
+**Still missing, by name.** WEBGL 2: `getContext('webgl2')` returns null, which
+is what an unsupported context id does and what p5's `webgl2 || webgl` fallback
+needs in order to reach WebGL 1, which does work — see `docs/script.md`. No
+gradients or patterns — p5 uses neither. `passive` on a listener is accepted and ignored, which changes
 nothing observable because nothing here optimises on the promise it makes.
 `localStorage` is in memory and starts empty every run, since there is no origin
 to scope a store to.
