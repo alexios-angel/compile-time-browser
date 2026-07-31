@@ -80,7 +80,44 @@ thousands of them. It is the same shape as the `is_captured` linear scan that
 turned out to be 15% of a page render — which is exactly why it must be
 *measured* rather than assumed. Stage 0 exists for that.
 
-## Stages
+## STAGE 0 RAN, AND IT CANCELLED STAGES 1-5 (2026-07-31)
+
+The plan said stage 0 could end the plan. It did, and it is worth reading before
+anything below is acted on.
+
+**The hypothesis was wrong.** `is_keyword` scanning forty keywords per
+identifier looked exactly like the `is_captured` bug. Replacing it with a hash
+table measured **38.30 ms -> 39.20 ms** on the p5 bundle: nothing. Forty short
+comparisons that short-circuit on length are about what one hash of the same
+string costs.
+
+**The real cost was the operator table.** Line-level attribution put ~44% of
+`lex` inside `<string_view>` and `<char_traits.h>`, and the punctuator loop
+`substr`'d and compared **all 56 operators, longest first** - with `(`, `)`,
+`;`, `,`, `.`, `{`, `}` at the END of the table. Every parenthesis in p5.js paid
+~45 failed comparisons.
+
+Comparing one byte first fixes it in one line, keeps `constexpr`, and keeps
+longest-match semantics:
+
+```
+38.30 ms  ->  19.64 ms       1.95x     (landed, ctjs 8b30d84)
+38.30 ms  ->  16.53 ms       2.34x     (first-byte bucket table - NOT landed,
+                                        needs static storage, costs constexpr)
+```
+
+Token streams verified **identical** - kind, offset and lexeme of every token -
+across p5.js, sixteen corpus pages and the GLSL fixtures: 18 files, ~450,000
+tokens. `p5_ratchet` went 0.88s -> **0.70s**.
+
+**So there is no new lexer, for now.** The plan's own terms were that if the fix
+turned out to be a patch to ctjs then that is what should happen, and it was.
+Whether a runtime-only lexer is still worth writing is a question for the NEXT
+profile, not this one - `lex` has to be re-measured in its new position before
+anyone spends a week on it. Everything below stays as the design if that
+measurement says yes.
+
+## Stages (deferred - see above)
 
 ### 0. Confirm the attribution inside `lex`
 Callgrind attributes to functions, and `is_keyword` is small enough to be
