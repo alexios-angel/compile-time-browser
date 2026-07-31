@@ -9,12 +9,12 @@
 #include <version>
 
 #if defined(__cpp_lib_stacktrace) && __cpp_lib_stacktrace >= 202011L
-#    include <stacktrace>
-#    define CTBROWSER_TEST_HAS_STACKTRACE 1
+#include <stacktrace>
+#define CTBROWSER_TEST_HAS_STACKTRACE 1
 #else
 // The llvm-mingw cross build has <format> but NOT <stacktrace>, so this is a
 // real branch rather than defensive decoration. Checked, not assumed.
-#    define CTBROWSER_TEST_HAS_STACKTRACE 0
+#define CTBROWSER_TEST_HAS_STACKTRACE 0
 #endif
 
 // Same shape as the previous engine's tests: a non-zero exit fails ctest, and every failure
@@ -51,9 +51,7 @@ inline void report_terminate() {
             std::rethrow_exception(held);
         } catch (const std::exception & failed) {
             std::printf("  uncaught exception: %s\n", failed.what());
-        } catch (...) {
-            std::printf("  uncaught exception of a non-std type\n");
-        }
+        } catch (...) { std::printf("  uncaught exception of a non-std type\n"); }
     }
 #if CTBROWSER_TEST_HAS_STACKTRACE
     // Needs -g to name lines; without it this is still frames and addresses,

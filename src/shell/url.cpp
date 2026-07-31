@@ -92,8 +92,8 @@ fetch_url parse_absolute(std::string_view url) {
     // when it is not the default. `parsed.host()` keeps the brackets that
     // `host_address()` above strips.
     out.authority = parsed.host();
-    const bool default_port = (out.scheme == "http" && out.port == "80") ||
-                              (out.scheme == "https" && out.port == "443");
+    const bool default_port =
+        (out.scheme == "http" && out.port == "80") || (out.scheme == "https" && out.port == "443");
     if (!default_port) { out.authority += ":" + out.port; }
 
     // THE FRAGMENT IS NEVER APPENDED. It is client-side state; sending it leaks
@@ -133,9 +133,9 @@ location_url location_parts(std::string_view href) {
     // AN ORIGIN IS A (scheme, host, port) TUPLE, and only the schemes that have
     // one get one. `file:` and `data:` are opaque origins, which the DOM reports
     // as the STRING "null" rather than as an absent property.
-    const bool tuple_origin = !out.hostname.empty() &&
-                              (out.protocol == "http:" || out.protocol == "https:" ||
-                               out.protocol == "ws:" || out.protocol == "wss:");
+    const bool tuple_origin =
+        !out.hostname.empty() && (out.protocol == "http:" || out.protocol == "https:" ||
+                                  out.protocol == "ws:" || out.protocol == "wss:");
     out.origin = tuple_origin ? out.protocol + "//" + out.host : "null";
     return out;
 }

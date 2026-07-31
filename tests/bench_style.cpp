@@ -156,7 +156,26 @@ int main() {
     const style::style_map resolved = styles.resolve_all(txn);
     for (const auto & [key, style] : resolved) {
         for (const std::string_view property : wanted) {
-            if (!style->get(atoms.intern_lower(property)).empty()) { ++resolve_hits; }
+            if (!style->get(atoms.intern_lower(property)).empty()) {
+                ++resolve_hits;
+                continue;
+            }
+            // A SHORTHAND IS GONE BY NOW, and that is correct: the engine
+            // expands `margin: 4px` into four longhands at parse time so the
+            // cascade orders them properly (style/engine.hpp says why). Asking
+            // for `margin` back therefore finds nothing, while ctcss::query -
+            // which matches selectors and never expands - does find it.
+            //
+            // So the count is taken through the engine's OWN expansion rather
+            // than a second copy of that knowledge here.
+            for (const auto & [longhand, ignored] :
+                 style::engine::expand_shorthand(property, "0")) {
+                (void)ignored;
+                if (!style->get(atoms.intern_lower(longhand)).empty()) {
+                    ++resolve_hits;
+                    break;
+                }
+            }
         }
     }
     const auto resolve_time = clock_type::now() - t1;
@@ -167,9 +186,20 @@ int main() {
     std::printf("  ctcss query() per property  %8.2f ms\n", query_ms);
     std::printf("  resolve once + read        %8.2f ms   %.1fx faster\n", resolve_ms,
                 query_ms / resolve_ms);
+    // A CROSS-CHECK THAT ALWAYS FAILS IS NOT A CROSS-CHECK. This printed
+    // DISAGREE on every run for as long as it existed, because the two sides
+    // counted shorthands differently - so a REAL divergence appearing later
+    // would have been indistinguishable from the standing noise. It is the same
+    // failure the p5 harness had: a signal nobody can act on.
+    //
+    // The gap was exactly 61 - `margin` on 60 sections and `padding` on one div
+    // - and it was benign every time. Now the two sides count the same thing and
+    // DISAGREE means something again. This check earned its keep once already,
+    // by catching the dangling element_ref views described above.
     std::printf("\n  declarations found: query=%zu resolve=%zu %s\n", query_hits, resolve_hits,
-                query_hits == resolve_hits ? "(agree)"
-                                           : "(DISAGREE - the comparison is not like-for-like)");
+                query_hits == resolve_hits
+                    ? "(agree)"
+                    : "(DISAGREE - the two paths found different declarations)");
     std::printf("  distinct computed styles: %zu (for %zu elements)\n",
                 styles.styles().distinct_styles(), resolved.size());
     return 0;

@@ -38,7 +38,7 @@ namespace ctbrowser::shell {
 struct fetch_url {
     std::string scheme;
     std::string host;
-    std::string port;        // never empty: the scheme's default when unstated
+    std::string port;         // never empty: the scheme's default when unstated
     std::string target = "/"; // path and query, NEVER the fragment
     // WHAT GOES IN THE `Host:` HEADER, which is NOT `host` above. An IPv6
     // literal has to be bracketed there - `Host: [::1]:8080` - or the server
@@ -57,9 +57,9 @@ struct location_url {
     std::string hostname; // an IPv6 literal KEEPS its brackets here
     std::string port;
     std::string pathname;
-    std::string search;   // "?a=1", empty when there is none - never a bare "?"
-    std::string hash;     // "#x"
-    std::string origin;   // "null" where there is no tuple origin, as a file: URL
+    std::string search; // "?a=1", empty when there is none - never a bare "?"
+    std::string hash;   // "#x"
+    std::string origin; // "null" where there is no tuple origin, as a file: URL
 };
 
 // Parse something a request can be made to. Anything that is not http or https
