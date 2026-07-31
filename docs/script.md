@@ -315,6 +315,47 @@ the p5 bundle compile.
 
 The lexer is next and has its own document: `docs/lexer-plan.md`.
 
+### CAN THE SCRIPT ENGINE USE THREADS? Yes - the front end, not the runtime (2026-07-31)
+
+Asked and answered from the code, because the two halves have opposite answers.
+
+**The runtime cannot, and it is not a limitation to fix.** Values are NaN-boxed,
+heap objects are shared and unguarded, and the GC is mark-and-sweep over precise
+roots per context. More fundamentally, JavaScript's memory model is
+single-threaded: two threads running one context's bytecode is not slow, it is
+*wrong*. No engine does it.
+
+**The front end can, and that is where the time is.** Callgrind on a page render
+puts lexing plus compilation above 50% and `run_loop` at 1.4%. And
+`compiler::compile` is a **static function with no mutable state** - checked, not
+assumed: no statics, no thread_locals, no atomics anywhere in `src/script`. It is
+a pure `source -> program`, which is exactly the shape that parallelises.
+
+Where that could go, in increasing order of work:
+
+1. **Independent programs concurrently.** `new Function` bodies, and worker
+   scripts if they arrive. Free today - the function is already pure.
+2. **Lexing pipelined with parsing.** The lexer produces a token vector the
+   parser then consumes; they need not be sequential.
+3. **Nested function bodies in parallel.** Each produces an independent
+   `function_proto`. The blocker is that they share `out_.functions` and the
+   frame stack, not anything semantic. **The capture index was deliberately
+   built read-only for this** - a lazily-filled memo would have needed a lock,
+   an Euler tour built once does not.
+4. **Web Workers**, which is the only runtime parallelism the language actually
+   sanctions - and it is feasible precisely because a context already owns
+   everything it touches. A worker is another `script::context`, with structured
+   cloning across the boundary and no shared heap.
+
+**One thing to know before attempting 1 or 3**: every `<script>` on a page is
+currently CONCATENATED into a single source string and compiled as one program
+(`browser::run_scripts`). Splitting them to compile in parallel is a semantic
+change - `var` hoisting and function declarations are shared across scripts -
+so it is not the free win it looks like.
+
+Not planned yet. Written down because the read-only shape of the capture index
+above only makes sense in this light.
+
 ### collect_captured_names: TWO attempts, both measured, both reverted (2026-07-31)
 
 It is the obvious next target and it looks quadratic, so this is written down to
