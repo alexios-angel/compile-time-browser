@@ -40,6 +40,10 @@ gate and CI runs it.
   clicks and keystrokes, live, so parity can be seen rather than guessed.
   `--headed --delay` makes it watchable; `examples/ctdrive.cpp` is the
   ctbrowser half. See `docs/build.md`.
+- `tools/gen-glsl-fixtures.py` — extracts the sixteen shaders p5.js ships into
+  `tests/glsl/`, plus the preamble it prepends. They are the GLSL front end's
+  parse corpus: somebody else's shaders, which is the only kind worth testing a
+  parser against.
 - `tools/check-png.py` — decodes a PNG this engine wrote using Python's own
   zlib. `encode_png` uses STORED deflate blocks and no compression library, so
   "the chunk names look right" is not evidence; the CRCs and the Adler-32 are
@@ -105,7 +109,8 @@ style        selector matching, the cascade, computed values, UA sheet
 layout       block, inline and table formatting contexts -> placed geometry
 paint        the display list, in layers
 raster       tiles across the pool; software always, SDL3_ttf for real fonts,
-             plutosvg for SVG
+             plutosvg for SVG, and GLSL ES (glsl.hpp) for WebGL - see
+             docs/webgl-plan.md
 gpu          SDL_GPUDevice composition, and the fallback when there is none
 script       JS -> bytecode -> register VM over NaN-boxed values, + stdlib
 shell        the assembly: browser, page bindings, forms, canvas, input, net
