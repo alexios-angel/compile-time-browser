@@ -299,6 +299,22 @@ expression leak above took an afternoon: `p5` was undefined, `.TableRow` was
 undefined, and the error surfaced one step later naming `TableRow`. Left as it is
 for now, and written down because it turns a precise failure into a vague one.
 
+### THE FRONT END COSTS MORE THAN THE VM (2026-07-31)
+
+Callgrind on a whole page render: `ctjs::vp::lex` 23.7%, the compiler's own
+passes another ~12%, and `context::run_loop` - actually executing the program -
+**1.4%**. Reading JavaScript costs an order of magnitude more than running it
+here, which is not where anyone would guess the time goes.
+
+Two compiler faults are already fixed and were the same shape as each other,
+both linear where they should not have been: `is_captured` scanned a
+`std::vector<std::string>` once per local declaration (15.1% of a page render),
+and `kids()` built a vector per AST node visit for children already contiguous
+in the pool (3.9%). Together **-26.5% instructions** on that render and -33% on
+the p5 bundle compile.
+
+The lexer is next and has its own document: `docs/lexer-plan.md`.
+
 ### WEBGL WORKS (2026-07-31), and getting there was four wrong answers
 
 `createCanvas(w, h, WEBGL)` selects p5's RendererGL, and a sketch drawing `box()`
