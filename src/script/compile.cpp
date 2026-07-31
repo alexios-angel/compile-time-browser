@@ -3,6 +3,8 @@
 
 #include <boost/unordered/unordered_flat_set.hpp>
 
+#include <span>
+
 #include <array>
 #include <charconv>
 #include <cstdint>
@@ -127,15 +129,22 @@ public:
         current_ast_ = saved;
         owned_asts_.push_back(std::move(tree));
     }
-    [[nodiscard]] std::vector<std::int32_t> kids(const vp::node & n) const {
-        std::vector<std::int32_t> out;
-        // The ACTIVE ast, not the outer one: a node reached inside a template
-        // literal's sub-AST indexes that AST's pool, and reading the program's
-        // would hand back unrelated nodes.
-        for (std::int32_t i = 0; i < n.list_len; ++i) {
-            out.push_back(current_ast_->pool[static_cast<std::size_t>(n.list + i)]);
-        }
-        return out;
+    // A VIEW, NOT A COPY. This built and returned a std::vector on every call,
+    // so every walk of the AST - and there are several, over every node - paid a
+    // malloc and a free per node visit. Callgrind put it at 3.9% of rendering a
+    // page with malloc/free above it, for children that were already contiguous.
+    //
+    // The ACTIVE ast, not the outer one: a node reached inside a template
+    // literal's sub-AST indexes that AST's pool, and reading the program's would
+    // hand back unrelated nodes.
+    //
+    // Safe because compilation only READS the AST - nothing pushes to the pool
+    // while a span into it is alive, and a template's sub-AST is a separate
+    // object whose pool this one never reallocates.
+    [[nodiscard]] std::span<const std::int32_t> kids(const vp::node & n) const {
+        if (n.list < 0 || n.list_len <= 0) { return {}; }
+        return std::span<const std::int32_t>{current_ast_->pool.data() + n.list,
+                                             static_cast<std::size_t>(n.list_len)};
     }
 
     // --- frames and registers ----------------------------------------------
@@ -613,7 +622,7 @@ public:
     //      the cell on the floor and the closure would see the wrong variable.
     //   3. a temporary allocated for a default expression must be released, or
     //      every default permanently widens the frame.
-    void compile_parameter_prologue(const std::vector<std::int32_t> & params) {
+    void compile_parameter_prologue(std::span<const std::int32_t> params) {
         for (std::size_t i = 0; i < params.size(); ++i) {
             const vp::node & p = at(params[i]);
             if (p.d == 1) {
@@ -884,7 +893,7 @@ public:
         }
 
         case vp::nk::array_pattern: {
-            const std::vector<std::int32_t> elements = kids(n);
+            const std::span<const std::int32_t> elements = kids(n);
             for (std::size_t i = 0; i < elements.size(); ++i) {
                 if (elements[i] < 0) { continue; } // a hole binds nothing
                 const std::uint32_t mark = reg_mark();
@@ -940,7 +949,7 @@ public:
     void compile_literal_as_pattern(std::int32_t literal, std::uint16_t src) {
         const vp::node & n = at(literal);
         if (n.kind == vp::nk::array) {
-            const std::vector<std::int32_t> elements = kids(n);
+            const std::span<const std::int32_t> elements = kids(n);
             for (std::size_t i = 0; i < elements.size(); ++i) {
                 if (elements[i] < 0) { continue; } // `[, x] = pair` skips one
                 const std::uint32_t mark = reg_mark();
@@ -1451,7 +1460,7 @@ public:
         const std::uint16_t subject = alloc_reg();
         compile_expr(n.a, subject);
 
-        const std::vector<std::int32_t> clauses = kids(n);
+        const std::span<const std::int32_t> clauses = kids(n);
         std::vector<std::size_t> entries(clauses.size(), 0);
         std::size_t default_clause = clauses.size();
 
@@ -1618,7 +1627,7 @@ public:
         collect_captured_names(n.a, false, captured_scratch_);
         fn().captured.insert(captured_scratch_.begin(), captured_scratch_.end());
         captured_scratch_.clear();
-        const std::vector<std::int32_t> params = kids(n);
+        const std::span<const std::int32_t> params = kids(n);
         for (const std::int32_t p : params) { (void)declare_local(std::string{at(p).text}); }
         // WHICH LOCALS THE BOXING LOOP BELOW OWNS: the parameters, and only
         // them. The prologue declares more - every name inside a destructuring
@@ -2323,7 +2332,7 @@ public:
         proto().emit(instruction{op::get_proto, dst, dst});
     }
 
-    [[nodiscard]] bool any_spread(const std::vector<std::int32_t> & args) const {
+    [[nodiscard]] bool any_spread(std::span<const std::int32_t> args) const {
         for (const std::int32_t arg : args) {
             if (at(arg).kind == vp::nk::spread) { return true; }
         }
@@ -2332,7 +2341,7 @@ public:
 
     // The arguments of a call, as one array. Same shape as an array literal,
     // because that is exactly what it is.
-    void emit_argument_array(const std::vector<std::int32_t> & args, std::uint16_t dst) {
+    void emit_argument_array(std::span<const std::int32_t> args, std::uint16_t dst) {
         proto().emit(instruction{op::new_array, dst});
         const std::uint32_t mark = reg_mark();
         for (const std::int32_t arg : args) {
@@ -2360,7 +2369,7 @@ public:
     // the default arm and refuse the whole call. It stops thirteen of p5.js's
     // seventy-one modules, more than any other single construct.
     void compile_spread_call(const vp::node & n, std::uint16_t dst) {
-        const std::vector<std::int32_t> args = kids(n);
+        const std::span<const std::int32_t> args = kids(n);
         const vp::node & callee = at(n.a);
         const std::uint32_t mark = reg_mark();
         const std::uint16_t target = alloc_reg();
@@ -2395,7 +2404,7 @@ public:
     }
 
     void compile_call(const vp::node & n, std::uint16_t dst) {
-        const std::vector<std::int32_t> args = kids(n);
+        const std::span<const std::int32_t> args = kids(n);
         if (any_spread(args)) {
             compile_spread_call(n, dst);
             return;
@@ -2513,7 +2522,7 @@ public:
     // what the expression evaluates to - the new object, unless the constructor
     // returned one of its own.
     void compile_new(const vp::node & n, std::uint16_t dst) {
-        const std::vector<std::int32_t> args = kids(n);
+        const std::span<const std::int32_t> args = kids(n);
         const std::uint32_t mark = reg_mark();
         const std::uint16_t base = alloc_reg();
         if (any_spread(args)) {
@@ -2605,7 +2614,7 @@ public:
             compile_expr(n.b, key);
             proto().emit(instruction{op::get_index, dst, object, key});
         } else { // opt_call
-            const std::vector<std::int32_t> args = kids(n);
+            const std::span<const std::int32_t> args = kids(n);
             const std::uint16_t base = alloc_reg();
             proto().emit(instruction{op::move, base, object});
             for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
@@ -2750,7 +2759,7 @@ public:
         const bool own_scope = !as_declaration && !n.text.empty();
         if (own_scope) { push_scope(); }
         if (!n.text.empty()) { declare_class_name(std::string{n.text}, own_scope); }
-        const std::vector<std::int32_t> members = kids(n);
+        const std::span<const std::int32_t> members = kids(n);
         const std::uint32_t mark = reg_mark();
         const std::uint16_t prototype_reg = alloc_reg();
         proto().emit(instruction{op::new_object, prototype_reg});
