@@ -141,6 +141,7 @@ Read the one that matches what you are touching — not all of them.
 | `docs/shell.md` | the application API, form controls, editing, input, navigation, resources — anything a page can do |
 | `docs/style-layout.md` | the cascade and the `style` attribute; tables, generated content, whitespace collapsing |
 | `docs/raster.md` | fonts, glyph rasterisation, the font8x8 fallback, **SVG**, and **WebGL** — GLSL ES in `glsl.hpp` and the software rasteriser in `softgl.hpp`. **p5.js WEBGL mode works**: `examples/pages/p5-webgl.html` draws a cube and a sphere through p5's own shaders, with a golden. `docs/webgl-plan.md` is the design and the staging |
+| `docs/performance.md` | **where the time actually goes, measured** — how to profile on WSL2 (callgrind, because `perf` cannot work), what landed, and the three confident hypotheses that measured wrong. **Read before optimising anything.** |
 | `docs/lexer-plan.md` | the JS lexer this engine is writing to replace ctjs's, why, and how it is verified. **Read before touching `script/lexer`** |
 | `docs/build.md` | why the build takes as long as it does, the formatting gate, the runtime profiler |
 | `docs/platform.md` | **a Linux binary here sees only lavapipe** (CPU Vulkan) — real hardware needs the Windows `.exe`, which gets an Intel Arc. The cross-build and the devbox. Read before drawing conclusions from a Linux run. |
