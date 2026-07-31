@@ -159,5 +159,19 @@ vector/normalize/limit/setMag
 vector/p5.Vector statics
 webgl/WEBGL renderer is constructible
 webgl/a WEBGL sketch draws geometry
+webgl/ambientLight + ambientMaterial
+webgl/box
+webgl/cone
 webgl/createCanvas(WEBGL) uses the webgl renderer
+webgl/createShader + shader()
+webgl/cylinder
+webgl/ellipsoid
 webgl/getContext(webgl) works
+webgl/normalMaterial
+webgl/plane
+webgl/push/pop keeps the matrix
+webgl/rotateX/Y/Z
+webgl/sphere
+webgl/texture
+webgl/torus
+webgl/translate/scale in 3D

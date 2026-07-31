@@ -1232,6 +1232,116 @@ globalThis.__probes = [
     if (at(0, 0) !== '0,0,255') { throw 'corner is ' + at(0, 0) + ', not the background'; }
     return 'ok';
   }],
+
+  // --- WEBGL, the 3D surface ----------------------------------------------
+  //
+  // Every probe below draws and then READS THE CANVAS BACK, because in WEBGL
+  // mode "it did not throw" is worth even less than usual: the whole reason
+  // this module exists is that p5 drew a geometrically correct cube with no
+  // vertices, threw nothing, and set no GL error.
+  //
+  // `drew` is the shared shape - clear to a known background, draw, and require
+  // that SOMETHING is no longer the background. It deliberately does not care
+  // what colour, because lighting and material probes each produce a different
+  // one and pinning them here would be a golden in the wrong place.
+  ...(function () {
+    const drew = function (s, body) {
+      s.createCanvas(24, 24, s.WEBGL);
+      s.background(0, 0, 255);
+      body(s);
+      const gl = s._renderer.drawingContext;
+      const buf = new Uint8Array(24 * 24 * 4);
+      gl.readPixels(0, 0, 24, 24, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+      let other = 0;
+      for (let i = 0; i < buf.length; i += 4) {
+        if (buf[i] !== 0 || buf[i + 1] !== 0 || buf[i + 2] !== 255) { other++; }
+      }
+      if (other === 0) { throw 'nothing was drawn - the canvas is all background'; }
+      if (other === 24 * 24) { throw 'everything was drawn - no background survives'; }
+      const err = gl.getError();
+      if (err !== 0) { throw 'gl error ' + err; }
+      return other + ' px';
+    };
+    const shape = function (name, body) {
+      return ['webgl', name, function (s) { return drew(s, body); }];
+    };
+    return [
+      shape('box', function (s) { s.noStroke(); s.fill(255, 0, 0); s.box(10); }),
+      shape('sphere', function (s) { s.noStroke(); s.fill(255, 0, 0); s.sphere(8); }),
+      shape('plane', function (s) { s.noStroke(); s.fill(255, 0, 0); s.plane(12, 12); }),
+      shape('cylinder', function (s) { s.noStroke(); s.fill(255, 0, 0); s.cylinder(6, 12); }),
+      shape('cone', function (s) { s.noStroke(); s.fill(255, 0, 0); s.cone(6, 12); }),
+      shape('torus', function (s) { s.noStroke(); s.fill(255, 0, 0); s.torus(8, 3); }),
+      shape('ellipsoid', function (s) { s.noStroke(); s.fill(255, 0, 0); s.ellipsoid(6, 8, 5); }),
+      shape('rotateX/Y/Z', function (s) {
+        s.noStroke(); s.fill(255, 0, 0);
+        s.rotateX(0.4); s.rotateY(0.5); s.rotateZ(0.6); s.box(10);
+      }),
+      shape('translate/scale in 3D', function (s) {
+        s.noStroke(); s.fill(255, 0, 0);
+        s.translate(2, -2, 0); s.scale(1.5); s.box(6);
+      }),
+      shape('push/pop keeps the matrix', function (s) {
+        s.noStroke(); s.fill(255, 0, 0);
+        s.push(); s.translate(60, 60, 0); s.box(6); s.pop();
+        // The first box is translated far off-canvas, so anything visible is
+        // the SECOND one - which only lands if pop() restored the matrix.
+        s.box(10);
+      }),
+      shape('normalMaterial', function (s) { s.noStroke(); s.normalMaterial(); s.box(10); }),
+      shape('ambientLight + ambientMaterial', function (s) {
+        s.noStroke(); s.ambientLight(200); s.ambientMaterial(255, 0, 0); s.box(10);
+      }),
+      shape('directionalLight', function (s) {
+        s.noStroke(); s.directionalLight(255, 255, 255, 0, 0, -1);
+        s.fill(255, 0, 0); s.box(10);
+      }),
+      shape('pointLight', function (s) {
+        s.noStroke(); s.pointLight(255, 255, 255, 0, 0, 40);
+        s.fill(255, 0, 0); s.box(10);
+      }),
+      shape('specularMaterial + shininess', function (s) {
+        s.noStroke(); s.directionalLight(255, 255, 255, 0, 0, -1);
+        s.specularMaterial(255, 0, 0); s.shininess(20); s.sphere(8);
+      }),
+      shape('ortho', function (s) {
+        s.ortho(-12, 12, -12, 12, 0, 500);
+        s.noStroke(); s.fill(255, 0, 0); s.box(10);
+      }),
+      shape('perspective', function (s) {
+        s.perspective(Math.PI / 3, 1, 0.1, 500);
+        s.noStroke(); s.fill(255, 0, 0); s.box(10);
+      }),
+      shape('camera', function (s) {
+        s.camera(0, 0, 40, 0, 0, 0, 0, 1, 0);
+        s.noStroke(); s.fill(255, 0, 0); s.box(10);
+      }),
+      shape('stroke in 3D', function (s) {
+        s.stroke(255, 0, 0); s.strokeWeight(2); s.noFill(); s.box(10);
+      }),
+      shape('createShader + shader()', function (s) {
+        const sh = s.createShader(
+          'attribute vec3 aPosition;' +
+          'uniform mat4 uModelViewMatrix;' +
+          'uniform mat4 uProjectionMatrix;' +
+          'void main() {' +
+          '  gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aPosition, 1.0);' +
+          '}',
+          'precision mediump float;' +
+          'uniform vec3 uTint;' +
+          'void main() { gl_FragColor = vec4(uTint, 1.0); }');
+        s.shader(sh);
+        sh.setUniform('uTint', [1.0, 0.0, 0.0]);
+        s.noStroke();
+        s.box(10);
+      }),
+      shape('texture', function (s) {
+        const g = s.createGraphics(8, 8);
+        g.background(255, 0, 0);
+        s.noStroke(); s.texture(g); s.plane(12, 12);
+      }),
+    ];
+  })(),
 ];
 
 // The runner. Each probe gets the same sketch and a clean-ish canvas; a throw
