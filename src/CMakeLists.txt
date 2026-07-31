@@ -493,14 +493,26 @@ if(WIN32)
   target_link_libraries(ctbrowser-shell PUBLIC ws2_32 mswsock)
 endif()
 
-find_package(OpenSSL QUIET COMPONENTS SSL Crypto)
-if(OpenSSL_FOUND)
-  target_link_libraries(ctbrowser-shell PUBLIC OpenSSL::SSL OpenSSL::Crypto)
-  target_compile_definitions(ctbrowser-shell PUBLIC CTBROWSER_WITH_TLS=1)
-  message(STATUS "ctbrowser: https:// enabled (OpenSSL ${OPENSSL_VERSION})")
+# TLS BELONGS TO THE TRANSPORT NOW, which is most of the point of moving to
+# libcurl. curl brings its own - SCHANNEL on Windows, the OS stack, so the
+# cross build gets https:// with no OpenSSL cross-compiled at all. It reports
+# what it has at run time through curl_version_info, which is why
+# tls_available() stopped being a constexpr on a build-system guess.
+#
+# The Asio transport has no TLS of its own, so it still needs OpenSSL and the
+# CTBROWSER_WITH_TLS define below is read only by that path.
+if(CTBROWSER_NET_CURL)
+  message(STATUS "ctbrowser: https:// through libcurl's own TLS (Schannel on Windows)")
 else()
-  target_compile_definitions(ctbrowser-shell PUBLIC CTBROWSER_WITH_TLS=0)
-  message(STATUS "ctbrowser: no OpenSSL - fetch() does http:// only")
+  find_package(OpenSSL QUIET COMPONENTS SSL Crypto)
+  if(OpenSSL_FOUND)
+    target_link_libraries(ctbrowser-shell PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+    target_compile_definitions(ctbrowser-shell PUBLIC CTBROWSER_WITH_TLS=1)
+    message(STATUS "ctbrowser: https:// enabled (OpenSSL ${OPENSSL_VERSION})")
+  else()
+    target_compile_definitions(ctbrowser-shell PUBLIC CTBROWSER_WITH_TLS=0)
+    message(STATUS "ctbrowser: no OpenSSL - fetch() does http:// only")
+  endif()
 endif()
 
 add_library(ctbrowser::shell ALIAS ctbrowser-shell)

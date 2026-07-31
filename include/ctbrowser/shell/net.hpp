@@ -94,13 +94,17 @@ struct http_response {
 };
 
 // Whether this build can do https:// at all.
-[[nodiscard]] constexpr bool tls_available() noexcept {
-#if CTBROWSER_WITH_TLS
-    return true;
-#else
-    return false;
-#endif
-}
+//
+// A RUNTIME QUESTION NOW, and it had to become one. This was constexpr on
+// CTBROWSER_WITH_TLS, which was set by `find_package(OpenSSL)` - correct while
+// the transport was Asio and the engine linked OpenSSL itself. With libcurl the
+// engine links no TLS library at all: curl brings its own, and on Windows that
+// is SCHANNEL, the operating system's stack, which no OpenSSL probe can see.
+//
+// So the transport answers instead, and the libcurl one answers by ASKING
+// LIBCURL - curl_version_info reports what it was actually built with, which
+// cannot drift from the truth the way a build-system guess can.
+[[nodiscard]] bool tls_available() noexcept;
 
 // Make a request, following redirects. NEVER THROWS: a failure is an `error` on
 // the response, because that is what the caller has to turn into a rejected

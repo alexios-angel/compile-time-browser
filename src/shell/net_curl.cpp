@@ -129,6 +129,15 @@ std::size_t on_header(char * data, std::size_t size, std::size_t count, void * o
 
 } // namespace
 
+// ASKED OF LIBCURL, not of the build system. curl_version_info reports the
+// features the linked library actually has, so this is right whether the
+// backend is Schannel on Windows, OpenSSL on Linux, or absent entirely.
+bool tls_available() noexcept {
+    ensure_curl();
+    const curl_version_info_data * about = curl_version_info(CURLVERSION_NOW);
+    return about != nullptr && (about->features & CURL_VERSION_SSL) != 0;
+}
+
 std::string_view spelling(http_method method) noexcept {
     switch (method) {
     case http_method::head: return "HEAD";

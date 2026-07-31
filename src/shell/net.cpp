@@ -334,6 +334,12 @@ struct message {
 // A GET, following redirects. Never throws: a failure is an `error` on the
 // response, because that is what the caller has to turn into a rejected promise
 // anyway.
+// The Asio transport links OpenSSL itself, so the build-time answer IS the
+// answer here - unlike the libcurl one, which asks the library.
+bool tls_available() noexcept {
+    return CTBROWSER_WITH_TLS != 0;
+}
+
 std::string_view spelling(http_method method) noexcept {
     switch (method) {
     case http_method::head: return "HEAD";
