@@ -3,7 +3,7 @@
 Written 2026-07-30, before any of it exists. Every measurement below is from
 `examples/assets/p5.js` (v2.3.1) and this tree, not from memory.
 
-## The decision that shapes everything: software
+## The decision that shapes everything: ONE FRONT END, TWO BACK ENDS
 
 WebGL has **no fixed pipeline**. `drawArrays` runs a vertex shader per vertex and
 a fragment shader per fragment, and there is no path that draws anything without
@@ -13,19 +13,81 @@ them draws nothing while reporting success. That is the failure this codebase
 keeps finding and refusing to ship; it is also exactly what happens today, where
 p5 quietly falls back to its 2D renderer.
 
-It will be a **software rasteriser**, for four reasons that all point the same
-way:
+The shape is the one this engine already uses everywhere else — **software
+always, hardware when it is there**:
 
-1. **There is no GPU here.** This machine reports no adapter at all
-   (`docs/platform.md`); Linux binaries see only lavapipe. A hardware path could
-   not be tested on the machine it is written on.
-2. **Goldens are the test story.** Software rasterisation is identical on every
-   machine, so a WebGL page can have a byte-compared golden the way every other
-   corpus page does. A GPU path cannot.
-3. **`raster/` is already software-always.** Glyphs, tiles and SVG all rasterise
-   in software with the GPU as an optional compositor. This is the same shape.
-4. **SDL_GPU would not save the hard part.** It takes SPIR-V, not GLSL ES — so a
-   GLSL front end has to exist either way. The rasteriser is the *smaller* half.
+```
+        GLSL ES source (from the page)
+                  |
+        preprocess / parse / type      <- stage 1, DONE, serves both
+                  |
+              the AST
+              /            reference evaluator  SPIR-V emitter
+    + software rasteriser        |
+              |            SDL_GPU pipeline
+        paint::bitmap            |
+                            a GPU texture
+```
+
+**The software back end is not a placeholder for the GPU one.** It is the
+reference, the fallback, and the oracle, for four reasons:
+
+1. **Goldens are the test story.** Software rasterisation is identical on every
+   machine, so a WebGL page gets a byte-compared golden like every other corpus
+   page. A GPU render will *not* be bit-identical — different fill rules,
+   different rounding, a different `sin` — so the goldens stay on software and
+   the GPU path is verified against it with a tolerance. That is the same
+   arrangement `svg_basics` already has for plutosvg.
+2. **There is no GPU on the machine this is written on.** `docs/platform.md`:
+   Linux binaries here see only lavapipe. Software has to work regardless, or
+   the engine is untestable where it is developed.
+3. **`raster/` is already software-always** and `gpu/` is already "the fallback
+   when there is none". This is the same split, not a new one.
+4. **The front end is shared, so neither back end is wasted work.** SDL_GPU takes
+   SPIR-V, not GLSL ES, so stage 1 has to exist for the GPU path too — it is a
+   new *back end*, not a new *compiler*.
+
+### What the GPU path actually requires
+
+The existing GPU code compiles its shaders to SPIR-V **at build time**, with
+`glslc`, and commits the result (`tools/gen-shaders.py`). **WebGL cannot do
+that**: the shaders arrive from the page at run time, and shelling out to a
+compiler that may not be installed is not an option for a browser engine.
+
+So the GPU back end is a **SPIR-V emitter written in C++**, walking the same AST
+stage 1 produces. That is the honest cost of this decision, and it is a real
+piece of work — though a bounded and mechanical one: SPIR-V is a simple SSA
+binary format, a header and a stream of fixed-layout words, and the AST is
+already typed.
+
+It is also the first thing in this engine to **rasterise** on the GPU. Today
+`gpu/` does composition only: tiles are drawn on the CPU and uploaded as textured
+quads. A WebGL draw call is the first workload where the GPU does the drawing,
+which is why it needs a graphics pipeline rather than the existing blit.
+
+**Lavapipe makes this developable here.** It is a real Vulkan implementation, so
+the SPIR-V and all the pipeline plumbing can be *exercised and validated* on this
+machine — it is only the speed that is not representative. A driver rejecting
+malformed SPIR-V is a loud failure, which is exactly what is wanted from a
+back end nobody can benchmark locally.
+
+### The invariant this must not break
+
+**The engine is SDL-free** outside `shell/app.cpp` and `gpu/`, and
+`tests/api_surface` lints it. So the WebGL *context* lives in `shell/` and knows
+nothing about SDL; the GPU back end lives in `gpu/` behind an interface the shell
+calls through. Same shape as `raster::backend` already has for the compositor.
+
+### Choosing between them
+
+Software by default, because that is what makes a golden. The GPU back end is
+selected by the embedder (`app_options`) or by `CTBROWSER_WEBGL=gpu`, and falls
+back with a message rather than silently when there is no device or no SPIR-V
+support — a renderer that quietly is not the one you asked for is the failure
+this whole document is about.
+
+`tools/check-render.cmake` forces software, so every committed golden means
+software and says so.
 
 **Version: WebGL 1 only.** p5 asks for `webgl2` first and falls back to `webgl`
 (p5.js:73000), and its shaders are written with `IN`/`OUT` macros that expand to
@@ -249,10 +311,14 @@ Expected: **~cores**, minus binning overhead.
 
 ## What is deliberately NOT being done
 
-- **Machine-code JIT.** It would be the next multiplier, and it is not worth it
-  here: it breaks the cross-compile matrix, it needs W^X handling, and it is a
-  large amount of platform-specific code to maintain for a browser engine whose
-  point is being readable. The bytecode VM is the stopping point.
+- **Machine-code JIT for the software path.** It would be the next multiplier
+  after the bytecode VM, and it is not worth it: it breaks the cross-compile
+  matrix, needs W^X handling, and is a large amount of platform-specific code to
+  maintain. The GPU back end is the answer to "make it much faster", and it
+  arrives by emitting SPIR-V rather than machine code.
+- **DXIL and MSL.** SPIR-V means the Vulkan driver, which is the same limit
+  `gpu/device.hpp` already documents for the compositor. Direct3D and Metal want
+  their own back ends and belong with the Windows and macOS platform work.
 - **A native fast path for p5's specific shaders** — recognising `phongVert` and
   substituting hand-written C++. It would be fast and it is cheating: it diverges
   silently the moment p5 changes a shader. If it is ever needed, the only
@@ -337,6 +403,10 @@ The benchmark lands here, so stage 3 has a baseline to beat.
 
 ### 3. The bytecode VM — AFTER the pipeline exists, see the table above
 
+Note that this stage is for the SOFTWARE back end only. The GPU back end does not
+want it: a shader that reaches SPIR-V is executed by the driver, and the fastest
+interpreter is the one that never runs.
+
 Compiler from AST to the 8-byte instruction set, SoA register file, N-wide
 packets, masked control flow. **Differential test against stage 2** over the p5
 shader corpus with randomised inputs.
@@ -367,7 +437,31 @@ The first point at which the whole stack is provably real.
 Layered on once the pipeline is correct and measured, each behind the same
 differential test.
 
-### 7. p5 on top
+### 7. The GPU back end — `gpu/webgl_device.hpp`, `src/gpu/spirv.cpp`
+
+A SPIR-V emitter over the stage-1 AST, and an SDL_GPU graphics pipeline built
+from the result. Written after the software path works end to end, so there is
+something correct to compare against — and so the shape of what a back end needs
+is known from having built one rather than guessed.
+
+**Verification, and this is the part that needs saying.** A GPU render is not
+bit-identical to a software one, so it cannot share a golden. Instead:
+
+  * the emitted SPIR-V is validated structurally, and by lavapipe accepting it -
+    a driver rejecting malformed SPIR-V is a loud failure and a useful test even
+    on a machine with no real GPU;
+  * `tests/webgl_parity.cpp` renders the same scene through both back ends and
+    asserts a per-channel difference under a tolerance, and SKIPS with a message
+    when there is no device - the arrangement `svg_basics` already uses for
+    plutosvg;
+  * the committed goldens stay on software, and `check-render.cmake` forces it.
+
+The tolerance is a real weakening and it is bounded deliberately: a few units per
+channel catches "the shader ran and drew the right thing", which is what this
+test is for. Anything finer than that belongs to the software path, where exact
+is achievable and therefore required.
+
+### 8. p5 on top
 
 `createCanvas(w, h, WEBGL)` genuinely selects `RendererGL`; the probe grows a
 WEBGL module (`box`, `sphere`, `rotateX/Y/Z`, `camera`, lights, `texture`,
