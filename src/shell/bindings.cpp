@@ -1,3 +1,4 @@
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/bindings.hpp>
 #include <ctbrowser/shell/url.hpp>
 
@@ -1081,7 +1082,7 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         const node_id self = receiver(c);
         if (!self || atoms_ == nullptr) { return value::undefined(); }
         std::string where = arg_string(c, args, 0);
-        for (char & ch : where) { ch = static_cast<char>(std::tolower(ch)); }
+        ascii_lower_in_place(where);
         const std::string markup = arg_string(c, args, 1);
 
         // Parsed into a scratch document, as innerHTML does and for the same

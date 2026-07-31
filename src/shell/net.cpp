@@ -12,6 +12,7 @@
 
 // Unconditional, and above the switch below on purpose: this is what the file
 // implements, so it must not sit inside anyone's #if.
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/net.hpp>
 #include <ctbrowser/shell/url.hpp>
 
@@ -63,13 +64,6 @@ namespace detail {
 // bindings.cpp. Both are gone: shell/url.hpp parses once, for everybody, over
 // Boost.URL. The twin had an IPv6 bug this one guarded against, which is what
 // two parsers for one job buys you.
-[[nodiscard]] inline bool iequals(std::string_view a, std::string_view b) {
-    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
-               return std::tolower(static_cast<unsigned char>(x)) ==
-                      std::tolower(static_cast<unsigned char>(y));
-           });
-}
-
 // One asynchronous operation, given a deadline. Asio's synchronous calls cannot
 // be interrupted, so a hung server would hang the frame forever - this starts
 // the async form and lets the io_context run only until the timeout.
@@ -134,13 +128,13 @@ struct message {
             std::string_view v = line.substr(colon + 1);
             while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) { v.remove_prefix(1); }
             out.headers.push_back(http_header{std::string{name}, std::string{v}});
-            if (iequals(name, "location")) {
+            if (ctbrowser::ascii_iequals(name, "location")) {
                 out.location = std::string{v};
-            } else if (iequals(name, "content-type")) {
+            } else if (ctbrowser::ascii_iequals(name, "content-type")) {
                 out.content_type = std::string{v};
-            } else if (iequals(name, "transfer-encoding")) {
+            } else if (ctbrowser::ascii_iequals(name, "transfer-encoding")) {
                 chunked = v.find("chunked") != std::string_view::npos;
-            } else if (iequals(name, "content-length")) {
+            } else if (ctbrowser::ascii_iequals(name, "content-length")) {
                 std::size_t parsed = 0;
                 if (std::from_chars(v.data(), v.data() + v.size(), parsed).ec == std::errc{}) {
                     content_length = parsed;

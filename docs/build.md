@@ -73,13 +73,21 @@ around without a word. It is recursive and checks each PID now.
 Not everything Boost offers is an improvement, and these were each considered and
 turned down rather than overlooked:
 
-* **Boost.Locale**, and `boost::algorithm::iequals` with it — both are
-  **locale-aware**, and this repository byte-compares renders across Linux and
-  Windows. Host-dependent case folding would make a golden depend on `LC_ALL`.
-  HTTP headers and HTML tag names are defined as **ASCII-only** folding anyway,
-  so the locale-aware version is not merely riskier, it is wrong for the job.
-  (Same reasoning retires `std::strtod`, which respects `LC_NUMERIC`, in favour
-  of `std::from_chars`, which does not.)
+* **Boost.Locale** — needs ICU, and is **locale-aware by definition**. This
+  repository byte-compares renders across Linux and Windows; host-dependent
+  collation would make a golden depend on `LC_ALL`. (Same reasoning retires
+  `std::strtod`, which respects `LC_NUMERIC`, in favour of `std::from_chars`,
+  which does not.)
+
+  > **CORRECTED 2026-07-31.** This entry used to reject
+  > `boost::algorithm::iequals` alongside it, on the same locale grounds. That
+  > was too broad and it is now what `core/algorithms.hpp` is built on. Only the
+  > DEFAULT overload is locale-aware — it takes `std::locale()`, the global one.
+  > Passing `std::locale::classic()` gives ASCII-only folding that is
+  > deterministic by the standard's definition of the C locale, which is exactly
+  > what HTTP field names and HTML tag names want. Verified rather than
+  > reasoned: with the classic locale it folds A-Z, leaves bytes above 127
+  > alone, and never merges two different UTF-8 sequences.
 * **Boost.Context / Coroutine / Fiber** — per-ABI assembly, and what actually
   broke the cross-build. Lifting the rule for portable C++ says nothing about
   these. `fetch` is already asynchronous by another route.

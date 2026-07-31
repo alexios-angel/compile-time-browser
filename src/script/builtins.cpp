@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
 #include <ctbrowser/script/regex.hpp>
@@ -1550,10 +1551,11 @@ void install_string(context & cx) {
         return c.string(self);
     });
     method(cx, string_proto, "toLocaleLowerCase", [](context & c, std::span<value>) {
+        // ASCII-ONLY, and toLocaleLowerCase is where that shows most: a real
+        // one folds by locale, this one does not, which keeps a render the same
+        // on every host. Said here rather than discovered.
         std::string self = detail::this_string(c);
-        for (char & ch : self) {
-            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-        }
+        ascii_lower_in_place(self);
         return c.string(self);
     });
     method(cx, string_proto, "concat", [](context & c, std::span<value> a) {

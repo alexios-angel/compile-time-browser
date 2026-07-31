@@ -1,6 +1,7 @@
 #pragma once
 #include <charconv>
 #include <cstdint>
+#include <ctbrowser/core/algorithms.hpp>
 #include <optional>
 #include <string_view>
 
@@ -16,11 +17,11 @@ namespace ctbrowser::paint {
 
 using ctbrowser::color;
 
+// The optional-returning shape its callers want, over the shared decoder.
 [[nodiscard]] constexpr std::optional<std::uint8_t> hex_digit(char c) noexcept {
-    if (c >= '0' && c <= '9') { return static_cast<std::uint8_t>(c - '0'); }
-    if (c >= 'a' && c <= 'f') { return static_cast<std::uint8_t>(c - 'a' + 10); }
-    if (c >= 'A' && c <= 'F') { return static_cast<std::uint8_t>(c - 'A' + 10); }
-    return std::nullopt;
+    const int value = hex_value(c);
+    if (value < 0) { return std::nullopt; }
+    return static_cast<std::uint8_t>(value);
 }
 
 // The CSS named colours a real page actually uses. This is deliberately not

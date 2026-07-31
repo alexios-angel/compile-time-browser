@@ -18,6 +18,7 @@
 #include <ctbrowser/raster/raster.hpp>
 #include <ctbrowser/script/script.hpp>
 
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/assets.hpp>
 #include <ctbrowser/shell/canvas.hpp>
 #include <ctbrowser/shell/forms.hpp>
@@ -475,9 +476,8 @@ private:
                 headers->set(
                     name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
             };
-            const auto is_content_type = [](std::string wanted) {
-                for (char & ch : wanted) { ch = static_cast<char>(std::tolower(ch)); }
-                return wanted == "content-type";
+            const auto is_content_type = [](std::string_view wanted) {
+                return ascii_iequals(wanted, "content-type");
             };
             header_method("get", [content_type, is_content_type](context & c, std::span<value> a) {
                 if (!is_content_type(arg_string(c, a, 0)) || content_type.empty()) {

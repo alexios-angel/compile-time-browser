@@ -1,5 +1,7 @@
 #include <ctbrowser/dom/tokenizer.hpp>
 
+#include <ctbrowser/core/algorithms.hpp>
+
 // tokenizer: the method bodies.
 // The header says what these do; this says how.
 
@@ -63,7 +65,8 @@ token tokenizer::in_data() {
         // bytes are a bogus comment, which is what the branch below makes of
         // them. `<![CDATA[<b>]]>` inside an SVG is the TEXT "<b>", not markup.
         if (preserve_case_ && looking_at("<![CDATA[")) { return cdata(); }
-        if (input_.size() - at_ >= 9 && ascii_iequals(input_.substr(at_, 9), "<!doctype")) {
+        if (input_.size() - at_ >= 9 &&
+            ctbrowser::ascii_iequals(input_.substr(at_, 9), "<!doctype")) {
             return doctype();
         }
         if (looking_at("<!") || looking_at("<?")) { return bogus_comment(); }
@@ -71,14 +74,6 @@ token tokenizer::in_data() {
         // it is why `a < b` in a paragraph renders as text.
     }
     return characters();
-}
-
-bool tokenizer::ascii_iequals(std::string_view a, std::string_view b) {
-    if (a.size() != b.size()) { return false; }
-    for (std::size_t i = 0; i < a.size(); ++i) {
-        if (lower(a[i]) != lower(b[i])) { return false; }
-    }
-    return true;
 }
 
 token tokenizer::characters() {
@@ -117,7 +112,7 @@ token tokenizer::in_text_until_close(bool decode_entities) {
     out.kind = token_kind::character;
     while (at_ < input_.size()) {
         if (input_[at_] == '<' && peek(1) == '/' &&
-            ascii_iequals(input_.substr(at_ + 2, close_tag_.size()), close_tag_)) {
+            ctbrowser::ascii_iequals(input_.substr(at_ + 2, close_tag_.size()), close_tag_)) {
             const std::size_t after = at_ + 2 + close_tag_.size();
             const char follows = after < input_.size() ? input_[after] : '>';
             if (is_space(follows) || follows == '>' || follows == '/') { break; }
@@ -171,7 +166,7 @@ token tokenizer::tag_open() {
     // element that actually carries `viewBox` would be the one element whose
     // attributes get folded. The name has just been read, so the decision can
     // be made from it: `<svg`, whatever the tree builder currently thinks.
-    read_attributes(out, preserve_case_ || ascii_iequals(out.name, "svg"));
+    read_attributes(out, preserve_case_ || ctbrowser::ascii_iequals(out.name, "svg"));
     return out;
 }
 
@@ -304,14 +299,11 @@ std::string tokenizer::decode_reference(bool in_attribute) {
         bool any = false;
         while (at_ < input_.size()) {
             const char c = input_[at_];
-            std::uint32_t digit = 0;
-            if (c >= '0' && c <= '9') {
-                digit = static_cast<std::uint32_t>(c - '0');
-            } else if (hex && lower(c) >= 'a' && lower(c) <= 'f') {
-                digit = static_cast<std::uint32_t>(lower(c) - 'a' + 10);
-            } else {
-                break;
-            }
+            // One decoder for both bases: a value above 9 is only a digit when
+            // this is `&#x...`, which is what `hex` says.
+            const int decoded = hex_value(c);
+            if (decoded < 0 || (!hex && decoded > 9)) { break; }
+            const auto digit = static_cast<std::uint32_t>(decoded);
             if (code < 0x110000) { code = code * (hex ? 16u : 10u) + digit; }
             any = true;
             ++at_;

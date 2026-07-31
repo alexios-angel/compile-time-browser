@@ -134,8 +134,6 @@ private:
 
     [[nodiscard]] token in_data();
 
-    [[nodiscard]] static bool ascii_iequals(std::string_view a, std::string_view b);
-
     // A run of text up to the next markup, with character references decoded.
     [[nodiscard]] token characters();
 

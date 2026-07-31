@@ -1,3 +1,4 @@
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
 
@@ -476,13 +477,6 @@ public:
     // three characters. Without this, every string literal in the program is
     // wrong by two characters, which shows up as 'a' + 'b' === "'a''b'" and
     // as o['a'] failing to find the property named a.
-    [[nodiscard]] static int hex_digit(char c) {
-        if (c >= '0' && c <= '9') { return c - '0'; }
-        if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
-        if (c >= 'A' && c <= 'F') { return c - 'A' + 10; }
-        return -1;
-    }
-
     // Read up to `count` hex digits after position `at`, leaving `at` on the
     // last one consumed so the caller's ++i lands past it. Lenient: a truncated
     // escape yields what digits there were, matching the parser's leniency
@@ -491,7 +485,7 @@ public:
                                                 std::size_t count) {
         std::uint32_t value = 0;
         for (std::size_t n = 0; n < count && at + 1 < s.size(); ++n) {
-            const int digit = hex_digit(s[at + 1]);
+            const int digit = hex_value(s[at + 1]);
             if (digit < 0) { break; }
             value = value * 16 + static_cast<std::uint32_t>(digit);
             ++at;
@@ -551,7 +545,7 @@ public:
                 if (i + 1 < lexeme.size() && lexeme[i + 1] == '{') {
                     i += 2; // past the u and the {
                     for (; i < lexeme.size() && lexeme[i] != '}'; ++i) {
-                        code = code * 16 + static_cast<std::uint32_t>(hex_digit(lexeme[i]));
+                        code = code * 16 + static_cast<std::uint32_t>(hex_value(lexeme[i]));
                     }
                 } else {
                     code = read_hex(lexeme, i, 4);

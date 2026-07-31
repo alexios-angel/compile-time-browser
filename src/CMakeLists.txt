@@ -102,6 +102,7 @@ set(CTBROWSER_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/include")
 add_library(ctbrowser-core)
 target_sources(ctbrowser-core
   PRIVATE
+    core/algorithms.cpp
     core/atom.cpp
     core/epoch.cpp
     core/scheduler.cpp
@@ -115,6 +116,7 @@ target_sources(ctbrowser-core
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/handle.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/epoch.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/slab.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/algorithms.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/atom.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/scheduler.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/cpu_time.hpp"
@@ -358,6 +360,32 @@ add_library(ctbrowser::raster ALIAS ctbrowser-raster)
 # --- ctbrowser.shell -----------------------------------------------------
 # The engine assembled. SDL-free on purpose: a browser you can drive without a
 # display is a browser you can test.
+# --- THE HTTP TRANSPORT ---------------------------------------------------
+#
+# Two implementations of shell/net.hpp and nothing else differs, which is the
+# point of having widened that interface first.
+#
+# libcurl IS THE DEFAULT, for capability rather than speed - the network is in
+# no profile. It uses SCHANNEL on Windows, so https:// on the cross build needs
+# no OpenSSL cross-compiled, and it already speaks HTTP/2, brotli and zstd. See
+# the header of src/shell/net_curl.cpp, including why POCO was written first
+# and set aside.
+#
+# The Asio one stays as the fallback so a build without libcurl still works
+# rather than failing to configure.
+find_package(CURL QUIET)
+option(CTBROWSER_NET_CURL "HTTP over libcurl instead of Asio" ${CURL_FOUND})
+if(CTBROWSER_NET_CURL AND NOT CURL_FOUND)
+  message(FATAL_ERROR "ctbrowser: CTBROWSER_NET_CURL is on but libcurl was not found")
+endif()
+if(CTBROWSER_NET_CURL)
+  set(CTBROWSER_NET_SOURCE shell/net_curl.cpp)
+  message(STATUS "ctbrowser: HTTP over libcurl")
+else()
+  set(CTBROWSER_NET_SOURCE shell/net.cpp)
+  message(STATUS "ctbrowser: HTTP over Asio")
+endif()
+
 add_library(ctbrowser-shell)
 target_sources(ctbrowser-shell
   PRIVATE
@@ -368,7 +396,7 @@ target_sources(ctbrowser-shell
     shell/canvas.cpp
     shell/svg.cpp
     shell/forms.cpp
-    shell/net.cpp
+    ${CTBROWSER_NET_SOURCE}
     shell/url.cpp
     shell/embedded_fonts.cpp
   PUBLIC
@@ -437,6 +465,11 @@ target_link_libraries(ctbrowser-shell PUBLIC ctbrowser-core ctbrowser-dom ctbrow
 # appears. Nothing that links the engine should have to parse it, which is the
 # same rule net.hpp states for Asio.
 target_link_libraries(ctbrowser-shell PRIVATE Boost::url)
+if(CTBROWSER_NET_CURL)
+  # PRIVATE for the same reason as Boost::url: curl.h is the transport's
+  # business and net_curl.cpp is the only place it appears.
+  target_link_libraries(ctbrowser-shell PRIVATE CURL::libcurl)
+endif()
 
 # Asio comes from Boost by default - Boost::headers is already a dependency of
 # three the engine targets and is header-only. A build that would rather not have Boost

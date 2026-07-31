@@ -1,3 +1,4 @@
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/raster/ttf.hpp>
 
 // ttf: the method bodies.
@@ -36,10 +37,7 @@ void ttf_backend::set_default_family(std::string family) {
 }
 
 std::string ttf_backend::lowered(std::string_view text) {
-    std::string out{text};
-    std::ranges::transform(out, out.begin(),
-                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return out;
+    return ascii_lower_copy(text);
 }
 
 int ttf_backend::pixel_size(float font_size) noexcept {

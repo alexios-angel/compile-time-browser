@@ -67,6 +67,13 @@ gate and CI runs it.
   exactly one engine include - the umbrella header - and no SDL symbol, and the
   rest of `include/` and `src/` must stay clean. That test carries an explicit
   allow-list for the files that may include SDL.
+- **Small shared algorithms live in `core/algorithms.hpp`** — ASCII case
+  folding, hex digits, whitespace trimming. Everything there had at least three
+  copies before it moved. It is **ASCII-only on purpose**: goldens are
+  byte-compared across Linux and Windows, so a locale-aware fold would make a
+  render depend on `LC_ALL`. The whitespace SET is a parameter, because HTML,
+  JavaScript and the GLSL preprocessor genuinely disagree about what whitespace
+  is and unifying them would be a bug.
 - **No third-party header in a public header.** Boost/SDL/FreeType includes
   belong in a `.cpp`: every consumer parses what a header includes, and
   `<windows.h>` or `<boost/asio.hpp>` in one is a cost paid by everyone who
