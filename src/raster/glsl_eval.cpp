@@ -42,10 +42,18 @@ using values = std::vector<float>;
 // Returns -1 for a letter that is not one of them.
 [[nodiscard]] int swizzle_index(char c) {
     switch (c) {
-    case 'x': case 'r': case 's': return 0;
-    case 'y': case 'g': case 't': return 1;
-    case 'z': case 'b': case 'p': return 2;
-    case 'w': case 'a': case 'q': return 3;
+    case 'x':
+    case 'r':
+    case 's': return 0;
+    case 'y':
+    case 'g':
+    case 't': return 1;
+    case 'z':
+    case 'b':
+    case 'p': return 2;
+    case 'w':
+    case 'a':
+    case 'q': return 3;
     default: return -1;
     }
 }
@@ -59,7 +67,13 @@ using values = std::vector<float>;
 
 // How a statement finished. `discard` and `return` both unwind, and telling them
 // apart is what stops a discarded fragment from also writing an output.
-enum class flow : std::uint8_t { normal, broke, continued, returned, discarded };
+enum class flow : std::uint8_t {
+    normal,
+    broke,
+    continued,
+    returned,
+    discarded
+};
 
 class interpreter {
 public:
@@ -93,13 +107,12 @@ public:
             if (v.store != storage::varying) { continue; }
             if (m_->which == stage::vertex) { globals_[v.name] = zero(v.t); }
         }
-        for (const char * name : m_->which == stage::vertex
-                                     ? std::initializer_list<const char *>{"gl_Position",
-                                                                          "gl_PointSize"}
-                                     : std::initializer_list<const char *>{"gl_FragColor",
-                                                                          "gl_FragDepth"}) {
-            const bool wide = std::string_view{name} == "gl_Position" ||
-                              std::string_view{name} == "gl_FragColor";
+        for (const char * name :
+             m_->which == stage::vertex
+                 ? std::initializer_list<const char *>{"gl_Position", "gl_PointSize"}
+                 : std::initializer_list<const char *>{"gl_FragColor", "gl_FragDepth"}) {
+            const bool wide =
+                std::string_view{name} == "gl_Position" || std::string_view{name} == "gl_FragColor";
             globals_[name] = zero(shape(base::f, wide ? 4 : 1));
         }
 
@@ -397,9 +410,7 @@ private:
     // which is why the parser did not have to decide.
     [[nodiscard]] value field(const node & n) {
         const value on = evaluate(n.a);
-        if (on.t.kind == base::struct_ && on.t.user >= 0) {
-            return member(on, n.text);
-        }
+        if (on.t.kind == base::struct_ && on.t.user >= 0) { return member(on, n.text); }
         if (!is_swizzle(n.text)) {
             fail("`." + n.text + "` is not a field of " + spell(on.t));
             return value::scalar(0);
@@ -569,7 +580,9 @@ private:
                 return false;
             }
             std::vector<std::size_t> narrowed;
-            for (std::size_t i = 0; i < width; ++i) { narrowed.push_back(into.positions[start + i]); }
+            for (std::size_t i = 0; i < width; ++i) {
+                narrowed.push_back(into.positions[start + i]);
+            }
             into.positions = std::move(narrowed);
             into.t = each;
             return true;
@@ -587,15 +600,17 @@ private:
             // been resolved, so the left side is not walked twice.
             value current;
             current.t = where.t;
-            for (const std::size_t at : where.positions) { current.v.push_back(where.store->v[at]); }
+            for (const std::size_t at : where.positions) {
+                current.v.push_back(where.store->v[at]);
+            }
             right = arithmetic(n.text.substr(0, n.text.size() - 1), current, right);
         }
         right = convert(std::move(right), where.t);
         // A SCALAR SPREADS. `v.xyz = 1.0` sets all three, which is what GLSL's
         // assignment of a scalar to a vector means.
         for (std::size_t i = 0; i < where.positions.size(); ++i) {
-            const float from = right.v.size() == 1 ? right.v[0]
-                                                   : (i < right.v.size() ? right.v[i] : 0.0f);
+            const float from =
+                right.v.size() == 1 ? right.v[0] : (i < right.v.size() ? right.v[i] : 0.0f);
             where.store->v[where.positions[i]] = from;
         }
         value result;
@@ -675,16 +690,23 @@ private:
             const float a = l.v.size() == 1 ? l.v[0] : (i < l.v.size() ? l.v[i] : 0.0f);
             const float b = r.v.size() == 1 ? r.v[0] : (i < r.v.size() ? r.v[i] : 0.0f);
             float made = 0;
-            if (op == "+") { made = a + b; }
-            else if (op == "-") { made = a - b; }
-            else if (op == "*") { made = a * b; }
-            else if (op == "/") {
+            if (op == "+") {
+                made = a + b;
+            } else if (op == "-") {
+                made = a - b;
+            } else if (op == "*") {
+                made = a * b;
+            } else if (op == "/") {
                 // `int / int` TRUNCATES toward zero, and division by zero is a
                 // defined nothing rather than a trap - a shader is a page's text
                 // and must not be able to fault the process.
-                if (b == 0.0f) { made = 0.0f; }
-                else if (integral) { made = std::trunc(a / b); }
-                else { made = a / b; }
+                if (b == 0.0f) {
+                    made = 0.0f;
+                } else if (integral) {
+                    made = std::trunc(a / b);
+                } else {
+                    made = a / b;
+                }
             } else if (op == "%") {
                 made = b == 0.0f ? 0.0f : std::fmod(a, b);
             }
@@ -826,7 +848,9 @@ using binary_fn = float (*)(float, float);
     return sum;
 }
 
-[[nodiscard]] float length_of(const value & a) { return std::sqrt(dot_product(a, a)); }
+[[nodiscard]] float length_of(const value & a) {
+    return std::sqrt(dot_product(a, a));
+}
 
 [[nodiscard]] value normalize_of(const value & a) {
     const float len = length_of(a);
@@ -935,8 +959,7 @@ bool interpreter::builtin(const std::string & name, std::vector<value> & args, v
         const value & a = arg(0);
         const value & b = arg(1);
         if (a.v.size() < 3 || b.v.size() < 3) { return false; }
-        out = value::vector({a.v[1] * b.v[2] - a.v[2] * b.v[1],
-                             a.v[2] * b.v[0] - a.v[0] * b.v[2],
+        out = value::vector({a.v[1] * b.v[2] - a.v[2] * b.v[1], a.v[2] * b.v[0] - a.v[0] * b.v[2],
                              a.v[0] * b.v[1] - a.v[1] * b.v[0]});
         return true;
     }
@@ -1097,9 +1120,7 @@ value interpreter::construct(const type & t, const std::vector<value> & args) {
 
     // A STRUCT takes its members in order.
     if (t.kind == base::struct_) {
-        for (const value & each : args) {
-            out.v.insert(out.v.end(), each.v.begin(), each.v.end());
-        }
+        for (const value & each : args) { out.v.insert(out.v.end(), each.v.begin(), each.v.end()); }
         out.v.resize(want, 0.0f);
         return out;
     }
@@ -1110,9 +1131,7 @@ value interpreter::construct(const type & t, const std::vector<value> & args) {
     if (t.is_matrix() && args.size() == 1 && args.front().t.is_scalar()) {
         out.v.assign(want, 0.0f);
         const float diagonal = args.front().f();
-        for (std::size_t i = 0; i < t.cols && i < t.rows; ++i) {
-            out.v[i * t.rows + i] = diagonal;
-        }
+        for (std::size_t i = 0; i < t.cols && i < t.rows; ++i) { out.v[i * t.rows + i] = diagonal; }
         return out;
     }
     // `mat3(m4)` takes the top-left corner; `mat4(m3)` fills the rest with the
