@@ -258,6 +258,7 @@ target_sources(ctbrowser-raster
     raster/renderer.cpp
     raster/glsl.cpp
     raster/glsl_preprocess.cpp
+    raster/glsl_eval.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"

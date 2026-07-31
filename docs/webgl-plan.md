@@ -278,10 +278,34 @@ targets, to be confirmed or corrected by measurement:
 
 | | fragments/sec | 200×200 full-screen draw |
 |---|---|---|
-| tree walk | ~1 M | ~1 s |
-| bytecode, scalar | ~20 M | ~50 ms |
-| + 8-wide packets | ~120 M | ~8 ms |
-| + hoisting, early-Z, 4 threads | ~500 M | ~2 ms |
+| **tree walk (MEASURED, stage 2)** | **0.64 M** | **63 ms** |
+| bytecode, scalar | ~15 M | ~3 ms |
+| + 8-wide packets | ~100 M | ~0.4 ms |
+| + hoisting, early-Z, threads | ~400 M | ~0.1 ms |
+
+**The first row is measured; the rest are still predictions.**
+`ctbrowser-test-glsl_basics --bench` reports it, on a shader with the shape of
+real work — a normalize, a dot, two multiplies and a clamp, which is what a
+diffuse term costs.
+
+Two corrections the measurement forced, recorded rather than quietly fixed:
+
+- The original table said **~1 s** for the tree walk. That was arithmetic I got
+  wrong, not a mis-estimate: 1 M fragments/sec over 40,000 fragments is 40 ms,
+  not a second. The fragments/sec guess was about right; the time column was
+  nonsense.
+- **63 ms per draw changes the ordering.** The reference evaluator is not
+  unusable at corpus size — it is roughly fifteen frames a second for a
+  full-screen shader, and far better than that for the small triangles a real
+  scene draws. So the rasteriser and the WebGL context (stages 4 and 5) can be
+  built **on the reference evaluator**, and the bytecode VM can follow once
+  there is a whole pipeline to measure end to end. Optimising the one stage
+  that has a benchmark, before the four that do not, is how effort goes to the
+  wrong place.
+
+  It bites at real sizes: 800×600 is 480,000 fragments, or about 750 ms a
+  frame. That is what stage 3 is for, and it is now scheduled after the thing
+  that will tell it which parts matter.
 
 ---
 
@@ -311,7 +335,7 @@ swizzle assignment, integer vs float division, `discard`.
 
 The benchmark lands here, so stage 3 has a baseline to beat.
 
-### 3. The bytecode VM
+### 3. The bytecode VM — AFTER the pipeline exists, see the table above
 
 Compiler from AST to the 8-byte instruction set, SoA register file, N-wide
 packets, masked control flow. **Differential test against stage 2** over the p5

@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <limits>
 #include <memory>
+#include <numbers>
 #include <span>
 #include <string>
 #include <string_view>
@@ -555,18 +556,25 @@ void install_math(context & cx, std::uint64_t seed) {
     using detail::method;
     using detail::new_table;
     object_object * math = new_table(cx);
-    math->set("PI", value::number(3.14159265358979323846));
-    math->set("E", value::number(2.71828182845904523536));
+    // FROM <numbers>, not written out by hand. A transcribed constant is a digit
+    // waiting to be wrong, and one that is wrong in its last few places is
+    // invisible: it agrees with every printed value a test is likely to check
+    // and disagrees with the real one by an amount that accumulates.
+    math->set("PI", value::number(std::numbers::pi));
+    math->set("E", value::number(std::numbers::e));
     const auto unary = [&](std::string name, double (*fn)(double)) {
         method(cx, math, name,
                [fn](context &, std::span<value> a) { return value::number(fn(num_at(a, 0))); });
     };
-    math->set("SQRT2", value::number(1.4142135623730951));
-    math->set("SQRT1_2", value::number(0.7071067811865476));
-    math->set("LN2", value::number(0.6931471805599453));
-    math->set("LN10", value::number(2.302585092994046));
-    math->set("LOG2E", value::number(1.4426950408889634));
-    math->set("LOG10E", value::number(0.4342944819032518));
+    math->set("SQRT2", value::number(std::numbers::sqrt2));
+    // <numbers> has no SQRT1_2 or LN10, so those two are DERIVED rather than
+    // transcribed - which is exact for the reciprocal and one division for the
+    // other, and neither can be typed wrong.
+    math->set("SQRT1_2", value::number(1.0 / std::numbers::sqrt2));
+    math->set("LN2", value::number(std::numbers::ln2));
+    math->set("LN10", value::number(std::numbers::ln10));
+    math->set("LOG2E", value::number(std::numbers::log2e));
+    math->set("LOG10E", value::number(std::numbers::log10e));
     unary("cbrt", [](double x) { return std::cbrt(x); });
     unary("log2", [](double x) { return std::log2(x); });
     unary("log10", [](double x) { return std::log10(x); });

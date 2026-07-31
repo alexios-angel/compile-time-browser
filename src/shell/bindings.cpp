@@ -1,5 +1,7 @@
 #include <ctbrowser/shell/bindings.hpp>
 
+#include <numbers>
+
 // dom_bindings' method bodies - the API a page's script actually calls.
 //
 // The header lists what a page can reach; this is how each one works.
@@ -1750,7 +1752,7 @@ value dom_bindings::matrix_object(context & cx, const transform & t) {
     method("rotate", [this, t](context & c, std::span<value> a) {
         // DEGREES, which is the one place this API does not use radians.
         const auto radians =
-            static_cast<float>(static_cast<double>(number(a, 0)) * 3.14159265358979 / 180.0);
+            static_cast<float>(static_cast<double>(number(a, 0)) * std::numbers::pi / 180.0);
         return matrix_object(c, transform::rotation(radians).then(t));
     });
     method("toString", [t](context & c, std::span<value>) {

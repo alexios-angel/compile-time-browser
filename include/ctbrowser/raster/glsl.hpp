@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -32,7 +33,15 @@ namespace ctbrowser::raster::glsl {
 // --- types -----------------------------------------------------------------
 
 // The base of a type. `void_` is a real one: it is what a function returns.
-enum class base : std::uint8_t { f, i, b, void_, sampler2d, sampler_cube, struct_ };
+enum class base : std::uint8_t {
+    f,
+    i,
+    b,
+    void_,
+    sampler2d,
+    sampler_cube,
+    struct_
+};
 
 // A GLSL type: a base, a shape, and possibly an array length.
 //
@@ -71,10 +80,20 @@ struct type {
 [[nodiscard]] std::string spell(const type & t);
 
 // How a declaration reaches the shader. `none` is an ordinary local.
-enum class storage : std::uint8_t { none, attribute, uniform, varying, constant };
+enum class storage : std::uint8_t {
+    none,
+    attribute,
+    uniform,
+    varying,
+    constant
+};
 
 // A parameter's direction. GLSL passes by value and copies `out` back on return.
-enum class direction : std::uint8_t { in, out, inout };
+enum class direction : std::uint8_t {
+    in,
+    out,
+    inout
+};
 
 // --- the tree --------------------------------------------------------------
 
@@ -154,7 +173,10 @@ struct interface_variable {
 // Which shader this is. It decides more than it looks: a fragment shader has no
 // `gl_Position` and a vertex shader has no `gl_FragColor`, and p5's own preamble
 // branches on `FRAGMENT_SHADER` to decide what `IN` means.
-enum class stage : std::uint8_t { vertex, fragment };
+enum class stage : std::uint8_t {
+    vertex,
+    fragment
+};
 
 struct diagnostic {
     std::uint32_t line = 0;
@@ -179,7 +201,9 @@ struct module {
     // something the author never saw is worse than no message.
     std::string preprocessed;
 
-    [[nodiscard]] const node & at(std::int32_t i) const { return nodes[static_cast<std::size_t>(i)]; }
+    [[nodiscard]] const node & at(std::int32_t i) const {
+        return nodes[static_cast<std::size_t>(i)];
+    }
     // One message per line, in source order - the shape glGetShaderInfoLog has.
     [[nodiscard]] std::string info_log() const;
 };
@@ -201,6 +225,71 @@ struct options {
 // because #define/#if is where the surprises live. Errors land in `into`.
 [[nodiscard]] std::string preprocess(std::string_view source, const options & how,
                                      std::vector<diagnostic> & into);
+
+// --- running one --------------------------------------------------------
+//
+// Stage two of docs/webgl-plan.md: the REFERENCE evaluator. A plain tree walker,
+// deliberately the simplest thing that is correct, because it is the ORACLE -
+// the bytecode VM in stage three is differentially tested against it, and a fast
+// implementation that is only checked against itself proves nothing.
+//
+// It is also the slowest thing here by design. The benchmark in tests/ reports
+// what it costs, so stage three has a number to beat rather than an impression.
+
+// A runtime value: a type and its components, flat.
+//
+// FLAT ON PURPOSE. A vec3 is three floats, a mat4 is sixteen in COLUMN-MAJOR
+// order, an array is its elements end to end, and a struct is its members end to
+// end. One representation for all of them means member access, indexing and
+// swizzling are all the same operation - pick a range - instead of four.
+struct value {
+    type t;
+    std::vector<float> v;
+
+    [[nodiscard]] static value scalar(float f) {
+        return value{type{base::f, 1, 1, -1, 0}, {f}};
+    }
+    [[nodiscard]] static value integer(int i) {
+        return value{type{base::i, 1, 1, -1, 0}, {static_cast<float>(i)}};
+    }
+    [[nodiscard]] static value boolean(bool b) {
+        return value{type{base::b, 1, 1, -1, 0}, {b ? 1.0f : 0.0f}};
+    }
+    [[nodiscard]] static value vector(std::initializer_list<float> parts) {
+        return value{type{base::f, static_cast<std::uint8_t>(parts.size()), 1, -1, 0}, parts};
+    }
+    [[nodiscard]] float f(std::size_t i = 0) const { return i < v.size() ? v[i] : 0.0f; }
+    [[nodiscard]] int i(std::size_t at = 0) const { return static_cast<int>(f(at)); }
+    [[nodiscard]] bool truthy() const { return f(0) != 0.0f; }
+};
+
+// What a shader sees that is not written in it.
+//
+// `read` is how uniforms, attributes and varyings arrive, and how gl_FragCoord
+// and friends do - the caller decides what exists, because the rasteriser knows
+// and the language does not. `sample` is a texture fetch: a unit index and a
+// coordinate in, RGBA in 0..1 out. Kept as a callback so this file knows nothing
+// about how textures are stored.
+struct environment {
+    std::function<const value *(std::string_view)> read;
+    std::function<value(int unit, float s, float t)> sample;
+};
+
+struct execution {
+    bool ok = false;
+    // NOT AN ERROR. A fragment shader that ran `discard` did exactly what it was
+    // asked; reporting it through `ok` would confuse it with one that failed.
+    bool discarded = false;
+    std::vector<std::pair<std::string, value>> outputs;
+    std::string error;
+
+    [[nodiscard]] const value * find(std::string_view name) const;
+};
+
+// Run `main`. Every runtime failure - an unknown name, an index out of range, a
+// call that resolves to nothing - comes back in `error` rather than as a crash,
+// for the same reason the parser's do: this is a page's text.
+[[nodiscard]] execution execute(const module & m, const environment & env);
 
 // NOT IMPLEMENTED, named here rather than discovered at run time:
 //

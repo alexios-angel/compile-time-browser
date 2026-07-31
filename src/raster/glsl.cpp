@@ -29,7 +29,13 @@ namespace {
 
 // --- the lexer -------------------------------------------------------------
 
-enum class tk : std::uint8_t { end, name, number, punct, keyword };
+enum class tk : std::uint8_t {
+    end,
+    name,
+    number,
+    punct,
+    keyword
+};
 
 struct token {
     tk kind = tk::end;
@@ -41,7 +47,9 @@ struct token {
 [[nodiscard]] bool name_start(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
 }
-[[nodiscard]] bool name_part(char c) { return name_start(c) || (c >= '0' && c <= '9'); }
+[[nodiscard]] bool name_part(char c) {
+    return name_start(c) || (c >= '0' && c <= '9');
+}
 
 // The words that are not identifiers. Type names are NOT here: they are
 // identifiers until the parser decides otherwise, which is what lets
@@ -49,9 +57,9 @@ struct token {
 // exactly that.
 [[nodiscard]] bool is_keyword(std::string_view word) {
     static constexpr std::array<std::string_view, 24> words{
-        "if",        "else",   "for",     "while",  "do",      "return", "break",  "continue",
-        "discard",   "struct", "uniform", "attribute", "varying", "const",  "in",     "out",
-        "inout",     "precision", "invariant", "highp", "mediump", "lowp",  "true",   "false"};
+        "if",      "else",      "for",       "while",     "do",      "return", "break", "continue",
+        "discard", "struct",    "uniform",   "attribute", "varying", "const",  "in",    "out",
+        "inout",   "precision", "invariant", "highp",     "mediump", "lowp",   "true",  "false"};
     return std::ranges::find(words, word) != words.end();
 }
 
@@ -115,7 +123,8 @@ struct token {
                 real = true;
                 ++i;
             }
-            out.push_back(token{tk::number, std::string{text.substr(start, i - start)}, line, real});
+            out.push_back(
+                token{tk::number, std::string{text.substr(start, i - start)}, line, real});
             continue;
         }
         // The longest operator that matches, so `<<=` beats `<<` beats `<`.
@@ -160,17 +169,26 @@ struct token {
         std::uint8_t cols;
     };
     static constexpr std::array<entry, 20> table{{
-        {"void", base::void_, 1, 1},      {"float", base::f, 1, 1},
-        {"int", base::i, 1, 1},           {"bool", base::b, 1, 1},
-        {"vec2", base::f, 2, 1},          {"vec3", base::f, 3, 1},
-        {"vec4", base::f, 4, 1},          {"ivec2", base::i, 2, 1},
-        {"ivec3", base::i, 3, 1},         {"ivec4", base::i, 4, 1},
-        {"bvec2", base::b, 2, 1},         {"bvec3", base::b, 3, 1},
-        {"bvec4", base::b, 4, 1},         {"mat2", base::f, 2, 2},
-        {"mat3", base::f, 3, 3},          {"mat4", base::f, 4, 4},
+        {"void", base::void_, 1, 1},
+        {"float", base::f, 1, 1},
+        {"int", base::i, 1, 1},
+        {"bool", base::b, 1, 1},
+        {"vec2", base::f, 2, 1},
+        {"vec3", base::f, 3, 1},
+        {"vec4", base::f, 4, 1},
+        {"ivec2", base::i, 2, 1},
+        {"ivec3", base::i, 3, 1},
+        {"ivec4", base::i, 4, 1},
+        {"bvec2", base::b, 2, 1},
+        {"bvec3", base::b, 3, 1},
+        {"bvec4", base::b, 4, 1},
+        {"mat2", base::f, 2, 2},
+        {"mat3", base::f, 3, 3},
+        {"mat4", base::f, 4, 4},
         {"sampler2D", base::sampler2d, 1, 1},
         {"samplerCube", base::sampler_cube, 1, 1},
-        {"mat2x2", base::f, 2, 2},        {"mat3x3", base::f, 3, 3},
+        {"mat2x2", base::f, 2, 2},
+        {"mat3x3", base::f, 3, 3},
     }};
     for (const entry & known : table) {
         if (known.name == word) {
@@ -548,9 +566,9 @@ private:
             expect(";");
             return add(std::move(n));
         }
-        for (const auto & [word, kind] :
-             std::initializer_list<std::pair<std::string_view, nk>>{
-                 {"break", nk::break_stmt}, {"continue", nk::continue_stmt},
+        for (const auto & [word, kind] : std::initializer_list<std::pair<std::string_view, nk>>{
+                 {"break", nk::break_stmt},
+                 {"continue", nk::continue_stmt},
                  {"discard", nk::discard_stmt}}) {
             if (is(word)) {
                 ++at_;
@@ -684,8 +702,8 @@ private:
 
     [[nodiscard]] std::int32_t assignment() {
         const std::int32_t left = conditional();
-        static constexpr std::array<std::string_view, 11> ops{"=",  "+=", "-=", "*=", "/=", "%=",
-                                                              "<<=", ">>=", "&=", "^=", "|="};
+        static constexpr std::array<std::string_view, 11> ops{
+            "=", "+=", "-=", "*=", "/=", "%=", "<<=", ">>=", "&=", "^=", "|="};
         for (const std::string_view op : ops) {
             if (is(op)) {
                 node n;
@@ -915,14 +933,13 @@ std::string module::info_log() const {
     return out;
 }
 
-module parse(std::string_view source, const options & how) {
-    module out;
-    out.which = how.which;
-    out.preprocessed = preprocess(source, how, out.errors);
-    parser p{lex(out.preprocessed), out};
-    p.run();
-    out.ok = out.errors.empty();
-    return out;
-}
+module parse(std::string_view source, const options & how){module out;
+out.which = how.which;
+out.preprocessed = preprocess(source, how, out.errors);
+parser p{lex(out.preprocessed), out};
+p.run();
+out.ok = out.errors.empty();
+return out;
+} // namespace ctbrowser::raster::glsl
 
 } // namespace ctbrowser::raster::glsl

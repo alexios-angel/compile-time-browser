@@ -31,7 +31,9 @@ struct macro {
 [[nodiscard]] bool name_start(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
 }
-[[nodiscard]] bool name_part(char c) { return name_start(c) || (c >= '0' && c <= '9'); }
+[[nodiscard]] bool name_part(char c) {
+    return name_start(c) || (c >= '0' && c <= '9');
+}
 
 [[nodiscard]] std::string_view trim(std::string_view text) {
     const std::size_t first = text.find_first_not_of(" \t\r");
@@ -69,23 +71,24 @@ struct macro {
 // The state of one `#if` nest level. `taken` is what stops an `#elif` from
 // running after an earlier branch already did.
 struct conditional {
-    bool active = true;   // is this branch's text being emitted
-    bool taken = false;   // has any branch of this #if been taken
+    bool active = true; // is this branch's text being emitted
+    bool taken = false; // has any branch of this #if been taken
     bool parent_active = true;
 };
 
 class preprocessor {
 public:
     preprocessor(const options & how, std::vector<diagnostic> & into) : errors_(&into) {
-        for (const auto & [name, body] : how.defines) {
-            macros_[name] = macro{{}, body, false};
-        }
+        for (const auto & [name, body] : how.defines) { macros_[name] = macro{{}, body, false}; }
         // p5's preamble branches on this to decide what IN means, and the
         // difference is `attribute` versus `varying` - so a fragment shader
         // preprocessed as a vertex one declares the wrong storage for every
         // input it has.
-        if (how.which == stage::fragment) { macros_["FRAGMENT_SHADER"] = macro{{}, "1", false}; }
-        else { macros_["VERTEX_SHADER"] = macro{{}, "1", false}; }
+        if (how.which == stage::fragment) {
+            macros_["FRAGMENT_SHADER"] = macro{{}, "1", false};
+        } else {
+            macros_["VERTEX_SHADER"] = macro{{}, "1", false};
+        }
         macros_["GL_ES"] = macro{{}, "1", false};
     }
 
@@ -112,7 +115,9 @@ public:
             if (end == clean.size()) { break; }
             at = end + 1;
         }
-        if (!nest_.empty()) { fail("unterminated #if - " + std::to_string(nest_.size()) + " open"); }
+        if (!nest_.empty()) {
+            fail("unterminated #if - " + std::to_string(nest_.size()) + " open");
+        }
         return out;
     }
 
@@ -136,9 +141,13 @@ private:
             const bool outer = emitting();
             bool yes = false;
             if (outer) {
-                if (word == "ifdef") { yes = macros_.contains(std::string{first_word(rest)}); }
-                else if (word == "ifndef") { yes = !macros_.contains(std::string{first_word(rest)}); }
-                else { yes = evaluate(rest) != 0; }
+                if (word == "ifdef") {
+                    yes = macros_.contains(std::string{first_word(rest)});
+                } else if (word == "ifndef") {
+                    yes = !macros_.contains(std::string{first_word(rest)});
+                } else {
+                    yes = evaluate(rest) != 0;
+                }
             }
             nest_.push_back(conditional{outer && yes, yes, outer});
             return;
@@ -157,8 +166,11 @@ private:
             return;
         }
         if (word == "endif") {
-            if (nest_.empty()) { fail("#endif without #if"); }
-            else { nest_.pop_back(); }
+            if (nest_.empty()) {
+                fail("#endif without #if");
+            } else {
+                nest_.pop_back();
+            }
             return;
         }
         if (!emitting()) { return; }
@@ -169,8 +181,7 @@ private:
             macros_.erase(std::string{first_word(rest)});
         } else if (word == "error") {
             fail("#error " + std::string{rest});
-        } else if (word == "version" || word == "extension" || word == "pragma" ||
-                   word == "line") {
+        } else if (word == "version" || word == "extension" || word == "pragma" || word == "line") {
             // RECORDED AND IGNORED, deliberately. `#version 300 es` cannot be
             // honoured - this is a WebGL 1 implementation and says so - and
             // `#extension GL_OES_standard_derivatives : enable` asks for
@@ -387,7 +398,7 @@ private:
     };
 
     [[nodiscard]] long long binary(const std::string & text, std::size_t & at, int precedence) {
-        static constexpr std::string_view levels[] = {"||", "&&", "|", "^", "&",
+        static constexpr std::string_view levels[] = {"||", "&&", "|",  "^",  "&",
                                                       "==", "<>", "+-", "*/%"};
         static constexpr int count = 9;
         if (precedence >= count) { return unary_expr(text, at); }
