@@ -1,6 +1,6 @@
 # WebGL in ctbrowser — the plan
 
-Written 2026-07-30, before any of it exists. The measurements below are from
+Written 2026-07-30, before any of it exists. Every measurement below is from
 `examples/assets/p5.js` (v2.3.1) and this tree, not from memory.
 
 ## The decision that shapes everything: software
@@ -49,104 +49,313 @@ doc-comment examples — use:
 So the subset is bigger than "vec4 arithmetic". Discovering that before writing
 the parser is why this document exists.
 
+---
+
+# Performance: the architecture, not an afterthought
+
+A tree-walking interpreter over a 200×200 canvas runs the fragment shader 40,000
+times per full-screen draw, each walk chasing pointers through an AST. That is
+seconds per frame. **Speed is structural here, so it is designed in from the
+first commit** — retrofitting the two decisions below (bytecode, and batching
+over fragments) would mean rewriting the evaluator, the register model and the
+rasteriser's inner loop together.
+
+What is *not* designed in from the first commit is a hand-tuned anything. The
+order below is by payoff per unit of risk, and each step is measured before the
+next is started.
+
+## 0a. OpenMP is OPTIONAL, and it is a speed switch not a behaviour switch
+
+`find_package(OpenMP)` and use it when it is there. It must not become a build
+requirement: this tree's stated invariant is that the build asks nothing unusual
+of the compiler, and the mingw cross-build cannot be assumed to have libgomp.
+
+The hard rule that follows: **the goldens must be byte-identical with OpenMP on
+and off.** That is directly testable rather than asserted — the render tests run
+in CI with it enabled and the same comparison is available with
+`-DCTBROWSER_WITH_OPENMP=OFF`, and any divergence is a bug in how a pragma was
+used, not a tolerance to widen. It is what keeps §0 true.
+
+## 0. The constraint that rules several optimisations out
+
+**Every float result must be bit-identical on every platform**, because
+`tests/golden/*.ppm` are byte-compared and the Windows cross-build is expected to
+match Linux exactly. This tree already gets that for free — there is no
+`-ffast-math`, no `-Ofast` and no `-march=` anywhere in the build — and WebGL
+must not be the thing that breaks it.
+
+So, ruled out: fast-math, reassociation of float expressions, FMA contraction
+(`-ffp-contract=off` if any compiler here defaults otherwise), and any reduction
+whose summation order is not fixed. `dot()` and matrix multiply sum in a
+**defined order**, written down in the code, because "the compiler picked one" is
+not a specification.
+
+Ruled *in* and safe: everything below. Lane-parallel SIMD is bit-identical to
+scalar when lanes are independent, which is why it is the first big win rather
+than a risky one.
+
+## 1. A bytecode VM — yes, and it fits better than the JS one
+
+The engine already has a register VM for JavaScript, and this follows its shape:
+fixed-width instructions, an opcode and three operands, a register file per
+invocation. The differences all make GLSL **easier and faster** than JS:
+
+| | JS VM | GLSL VM |
+|---|---|---|
+| Types | dynamic, NaN-boxed, checked per op | **static, resolved at compile time** |
+| Dispatch | branch on value kind inside each op | none — the opcode encodes the shape |
+| Memory | GC heap, allocation per closure | **one flat `float` array, no allocation** |
+| Frame size | grows with the call | **known when the shader compiles** |
+| Control flow | exceptions, closures, generators | `if`/`for`/`return`/`discard` only |
+
+GLSL is statically typed, so `a * b` resolves at compile time to exactly one of
+`mul_f`, `mul_v3_f`, `mul_mat4_v4`, … and the interpreter never asks what
+anything is. There is no GC, nothing to box, and no dynamic property lookup — the
+three things that make the JS VM's inner loop expensive.
+
+**Instruction shape**: 8 bytes, matching `script/bytecode.hpp` — opcode plus
+three 16-bit operands, where an operand is a *register index* and registers are
+allocated at compile time. Constants and uniforms live in the same register file,
+written before the program runs.
+
+Expected: **10–40×** over a tree walk, on its own.
+
+## 2. Run the shader over N fragments at once — the real win
+
+This is what every production software rasteriser does (llvmpipe, SwiftShader),
+and it is the single largest factor. Instead of running the shader once per
+fragment, run it over a **packet of N fragments simultaneously**, with the
+register file laid out **structure-of-arrays**:
+
+```
+register file:  float regs[num_regs][4][N]     // component-major, then lane
+                                ^^^ up to vec4  ^ N fragments in flight
+```
+
+An `add_v3` is then 3 × N independent float adds over contiguous memory — which
+vectorises without a single intrinsic, and stays portable across the
+Linux/mingw/ARM matrix this repo builds for. `N = 8` targets AVX2; `N = 4` is the
+SSE/NEON baseline; `N = 1` is the scalar fallback and the correctness oracle.
+
+**`#pragma omp simd` is how those loops are made to vectorise reliably.** Leaving
+it to the auto-vectoriser means the speed of this depends on whether a particular
+compiler noticed a particular loop, which is not a thing to build a renderer on.
+`omp simd` states the intent — these lanes are independent — in one portable line
+per loop, and `declare simd` does the same for the built-in library so a call to
+`normalize` inside a packet does not fall back to scalar.
+
+**What OpenMP must NOT be used for here: reductions.** `reduction(+:x)`
+reassociates the summation, so `dot()` would give a different answer depending on
+lane count and thread count — and a different answer means a different golden on
+a different machine. §0 is not negotiable. Horizontal reductions are written by
+hand in a defined order; `omp simd` is used only on the lane-independent loops,
+where it cannot change a result.
+
+The consequences to design for, not discover:
+
+- **Branches become masks.** `if (c) A else B` evaluates both sides and blends by
+  a per-lane mask. Cheap for the small conditionals shaders actually contain, and
+  it is why shaders avoid heavy branching in the first place.
+- **Loops run until every lane exits**, with inactive lanes masked off.
+- **`discard` is a lane mask**, not a control-flow exit — which is what it
+  already is on a GPU.
+- **Shade in 2×2 quads.** The natural packet unit. This has a bonus worth
+  calling out: `dFdx`/`dFdy`/`fwidth` are listed below as out of scope precisely
+  because a scanline rasteriser has no neighbouring fragments — but a
+  quad-shading rasteriser has them **by construction**, so derivatives become
+  nearly free. Designing for quads now turns a "not in scope" into "falls out".
+
+Expected: **4–8×** on top of the bytecode VM.
+
+## 3. Hoist everything that does not change per fragment
+
+Uniforms are constant for the whole draw call. Any subexpression depending only
+on uniforms and literals can be computed **once per draw** instead of once per
+fragment. In p5's own shaders that is a lot: `uProjectionMatrix * uModelViewMatrix`,
+the whole ambient-light accumulation loop, every `uMaterialColor` read.
+
+Implementation: mark each AST node uniform-invariant during compilation, lift
+maximal invariant subtrees into a **preamble program** that runs once per draw
+and writes its results into constant registers. This is loop-invariant code
+motion with a trivially-known loop.
+
+Expected: **1.5–3×** on real shaders, more on lighting ones.
+
+## 4. Specialise on uniform *values*
+
+A step past hoisting, and it suits p5 unusually well. `if (uUseVertexColor)` is a
+`bool` uniform; `for (i = 0; i < 8; i++) if (i < uAmbientLightCount)` is a loop
+whose real trip count is a uniform. With the uniform values known at draw time:
+
+- dead branches are eliminated entirely
+- the loop is unrolled to its actual count
+- `uniform1i` samplers fold into a direct texture pointer
+
+Compile a specialised program keyed by a hash of the uniforms that appear in
+branch conditions, and cache it. p5 changes those rarely — the same specialised
+program serves whole frames.
+
+Expected: **1.5–4×** on p5's lighting and material shaders specifically.
+
+## 5. Do not shade what cannot be seen
+
+Cheaper than making shading fast:
+
+- **Early-Z**: run the depth test *before* the fragment shader whenever the
+  shader neither discards nor writes `gl_FragDepth` — both knowable at compile
+  time. For a scene with any overdraw this skips whole fragments.
+- **Backface culling and scissor** before shading, not after.
+- **Tile binning with per-tile Z bounds**, so a tile entirely behind what is
+  already drawn is rejected without touching a fragment.
+
+Expected: proportional to overdraw — **2–5×** on a scene like a sphere, ~1× on a
+single quad.
+
+## 6. Rasterise tiles in parallel — on the scheduler, not on OpenMP
+
+`core/scheduler.hpp` already has a `parallel_for`, and `raster/` already runs
+tiles across it. Same shape: bin triangles into tiles, then shade tiles
+concurrently.
+
+**Threading stays on the existing scheduler even though OpenMP is available**,
+and the reason is oversubscription: the engine already owns a worker pool sized
+to the machine, and an `omp parallel for` inside a task that is already running
+on one of those workers spawns a second pool of the same size. Two pools of N
+threads on N cores is slower than one, and the failure is a performance cliff
+that looks like nothing in particular.
+
+So the division is: **OpenMP for SIMD (`omp simd`, inside one thread), the
+scheduler for threads.** Each does the thing it is better at and they do not
+contend.
+
+**Determinism is preserved by construction**: each tile owns its pixels
+exclusively and its triangle list stays in submission order, so the result does
+not depend on how the work was scheduled. That is the property goldens need, and
+it is why tile-parallel is safe where a parallel-over-triangles scheme would not
+be.
+
+Expected: **~cores**, minus binning overhead.
+
+## 7. The small structural ones
+
+- **Per-triangle setup once**: edge functions and varying gradients computed
+  once, then incremented per pixel — never a barycentric solve per fragment.
+- **Perspective correction per quad**, not per pixel: interpolate `attr/w` and
+  `1/w` linearly, one reciprocal per quad.
+- **Sampler closures resolved at bind time** — filter and wrap mode decided when
+  the texture is bound, not re-branched per sample.
+- **One execution context per worker thread**, reset per packet. No allocation
+  anywhere in the inner loop.
+
+## What is deliberately NOT being done
+
+- **Machine-code JIT.** It would be the next multiplier, and it is not worth it
+  here: it breaks the cross-compile matrix, it needs W^X handling, and it is a
+  large amount of platform-specific code to maintain for a browser engine whose
+  point is being readable. The bytecode VM is the stopping point.
+- **A native fast path for p5's specific shaders** — recognising `phongVert` and
+  substituting hand-written C++. It would be fast and it is cheating: it diverges
+  silently the moment p5 changes a shader. If it is ever needed, the only
+  acceptable form is one *differentially tested against the interpreter*, and
+  that is a decision for after measurement, not before.
+- Derivatives are back **in** scope (see §2). Still out: multisampling,
+  transform feedback, cube maps beyond one face, WebGL 2.
+
+## How this is kept honest
+
+**A scalar reference evaluator is written first and kept forever.** It is the
+simplest possible tree-walker, it is the oracle, and every optimised path is
+**differentially tested against it**: same shader, same inputs, results must
+match bit for bit. That is what makes it safe to write a masked SIMD interpreter
+with uniform specialisation and still believe the output.
+
+The reference implementation is not wasted work on the way to the fast one. It is
+the thing that proves the fast one.
+
+**A benchmark exists from stage 2**, reporting fragments/second for a fixed
+shader, so every claim above becomes a number in the commit that makes it. The
+targets, to be confirmed or corrected by measurement:
+
+| | fragments/sec | 200×200 full-screen draw |
+|---|---|---|
+| tree walk | ~1 M | ~1 s |
+| bytecode, scalar | ~20 M | ~50 ms |
+| + 8-wide packets | ~120 M | ~8 ms |
+| + hoisting, early-Z, 4 threads | ~500 M | ~2 ms |
+
+---
+
 ## Stages
 
-Each stage is independently testable and independently committable, and each one
-ends with something that can fail loudly rather than a milestone that can only be
-demonstrated by the next stage.
+Each is independently testable and independently committable, and each ends with
+something that can fail loudly rather than a milestone only the next stage can
+demonstrate.
 
-### 1. GLSL front end — `include/ctbrowser/raster/glsl.hpp`, `src/raster/glsl.cpp`
+### 1. GLSL front end — `raster/glsl.hpp`, `src/raster/glsl.cpp`
 
-Preprocessor, lexer, parser, and the type model (`base` × rows × cols, plus
-structs and arrays). No execution.
+Preprocessor, lexer, parser, type model (base × rows × cols, structs, arrays).
+No execution.
 
-- **Test**: parse every built-in shader p5 ships. They are string literals in the
-  bundle, so `tools/gen-glsl-fixtures.py` extracts them into
-  `tests/glsl/*.vert|.frag` and the test parses each one and asserts no error.
-  That is a real corpus written by someone else, which is worth more than
-  shaders I invent to suit my parser.
-- Also: a syntax error must produce a MESSAGE with a line number, because
-  `getShaderInfoLog` is what a page shows its user.
+**Test**: parse every built-in shader p5 ships. They are string literals in the
+bundle, so `tools/gen-glsl-fixtures.py` extracts them into `tests/glsl/*.vert|.frag`
+and the test parses each and asserts no error — a corpus written by someone else,
+worth more than shaders invented to suit my own parser. A syntax error must carry
+a line number, because `getShaderInfoLog` is what a page shows its user.
 
-### 2. Interpreter — same files
+### 2. Reference evaluator + benchmark
 
-A tree-walking evaluator with the built-in function library (≈60 functions:
-`normalize`, `dot`, `cross`, `mix`, `clamp`, `smoothstep`, `texture2D`, the
-`lessThan` family, …). Uniforms, attributes and varyings come in through an
-`environment` the caller fills.
+The scalar tree-walker and the built-in library (~60 functions). Numeric unit
+tests: matrix multiply order (**column-major**, as `uniformMatrix4fv` hands it
+over — transposed looks like a plausible wrong rotation rather than an error),
+swizzle assignment, integer vs float division, `discard`.
 
-- **Test**: run shaders with known inputs and assert outputs numerically —
-  matrix multiply order, swizzle assignment (`v.xz = ...`), integer vs float
-  division, `discard`. Pure unit tests, no pixels.
-- **Matrices are column-major**, which is what `uniformMatrix4fv` hands over.
-  Getting it transposed looks like a plausible wrong rotation rather than an
-  error, so it gets its own test.
+The benchmark lands here, so stage 3 has a baseline to beat.
 
-### 3. Rasteriser — `include/ctbrowser/raster/softgl.hpp`
+### 3. The bytecode VM
 
-Triangle setup, the viewport transform, perspective-correct varying
-interpolation, a depth buffer, face culling, scissor, and the blend equations
-(which `shell/composite.hpp` already has the formulas for — same maths, different
-caller). Draws into the `paint::bitmap` a canvas already owns.
+Compiler from AST to the 8-byte instruction set, SoA register file, N-wide
+packets, masked control flow. **Differential test against stage 2** over the p5
+shader corpus with randomised inputs.
 
-- **Test**: draw known triangles and assert pixels — a full-screen quad, a
-  z-fight resolved by `depthFunc`, a back face culled, a blended overlap.
-- Perspective-correct interpolation gets its own test with a strongly perspective
-  quad: interpolating in screen space instead looks *almost* right, which is the
-  kind of wrong this codebase cares about.
+### 4. Rasteriser — `raster/softgl.hpp`
 
-### 4. The context — `include/ctbrowser/shell/webgl.hpp`, bound in `bindings.cpp`
+Triangle setup, viewport transform, perspective-correct interpolation, depth
+buffer, culling, scissor, blending (the equations `shell/composite.hpp` already
+has — same maths, different caller). Quad shading, early-Z, tile binning,
+`parallel_for`.
 
-The 79 methods, the constant table, and the objects: buffers, textures,
-programs, shaders, framebuffers, renderbuffers. `getContext('webgl')` returns it
-instead of throwing.
+**Test**: known triangles, asserted pixels — a full-screen quad, a z-fight
+resolved by `depthFunc`, a culled back face, a blended overlap. Perspective
+correction gets its own test with a strongly perspective quad, because
+interpolating in screen space looks *almost* right.
 
-- **Test**: `examples/pages/webgl-triangle.html` — raw WebGL, no p5: compile a
-  shader, upload a buffer, draw a triangle, with a golden. This is the first
-  point at which the whole stack is provably real.
-- The refusal that exists today stays for `webgl2` and moves out of the way for
-  `webgl`.
+### 5. The context — `shell/webgl.hpp`, bound in `bindings.cpp`
 
-### 5. p5 on top
+The 79 methods, the constant table, and the objects: buffers, textures, programs,
+shaders, framebuffers, renderbuffers. `getContext('webgl')` returns it instead of
+throwing; `webgl2` keeps refusing.
 
-`createCanvas(w, h, WEBGL)` genuinely selects `RendererGL`. Then the p5 probe
-grows a WEBGL module: `box`, `sphere`, `plane`, `rotateX/Y/Z`, `camera`,
-`ambientLight`/`directionalLight`, `texture`, `createShader`.
+**Test**: `examples/pages/webgl-triangle.html` — raw WebGL, no p5, with a golden.
+The first point at which the whole stack is provably real.
 
-- **Test**: `examples/pages/p5-webgl.html` with a golden, opened and looked at.
-- The known-failing `webgl/createCanvas(WEBGL) refuses` probe is replaced by one
-  that asserts it *works*.
+### 6. Uniform hoisting and specialisation
 
-## Risks, named now
+Layered on once the pipeline is correct and measured, each behind the same
+differential test.
 
-**Speed.** A tree-walking interpreter runs the fragment shader per pixel. At
-200×200 that is 40,000 fragment invocations per full-screen draw, each walking an
-AST. This will be slow — think seconds per frame, not milliseconds. Mitigations,
-in order: keep corpus pages small; only shade fragments that pass the depth and
-scissor tests; cache the AST per program. If it is still too slow to be useful,
-the evaluator is the replaceable part — a bytecode compiler for GLSL is a
-contained follow-up, which is why the parser and the type model are separate from
-it. **This will be measured and reported, not hoped about.**
+### 7. p5 on top
 
-**Scope creep into 3D maths.** p5 supplies its own matrices through uniforms, so
-this engine needs no camera or projection maths of its own. Resisting the urge to
-write a matrix library that duplicates p5's is a deliberate constraint.
-
-**The `raster` subsystem grows a language.** `glsl.cpp` will be the largest file
-in `raster/`. It is the right home — it is software rasterisation, and it must
-stay SDL-free — but `docs/architecture.md` needs a line saying so.
-
-## What is deliberately NOT in scope
-
-Cube maps beyond sampling one face; derivatives (`dFdx`/`dFdy`/`fwidth`, which
-need neighbouring fragments a scanline rasteriser does not have in hand);
-multisampling; instanced drawing beyond the call existing; transform feedback;
-WebGL 2 in any form. Each gets named in `docs/raster.md` rather than discovered.
+`createCanvas(w, h, WEBGL)` genuinely selects `RendererGL`; the probe grows a
+WEBGL module (`box`, `sphere`, `rotateX/Y/Z`, `camera`, lights, `texture`,
+`createShader`); `examples/pages/p5-webgl.html` gets a golden that is opened and
+looked at. The known-failing `webgl/createCanvas(WEBGL) refuses` probe is replaced
+by one asserting it works.
 
 ## Definition of done for the first milestone
 
 `examples/pages/webgl-triangle.html` draws a shaded triangle through the real
 WebGL API — compile, link, buffer, uniform, `drawArrays` — with a committed
-golden that matches on Linux and on the Windows cross-build. p5 comes after that,
-because a stack that cannot draw a triangle cannot draw a sphere, and finding out
-which of five stages is wrong is much easier with four of them already pinned.
+golden matching on Linux and on the Windows cross-build, and a benchmark number
+in the commit message. p5 comes after, because a stack that cannot draw a
+triangle cannot draw a sphere, and finding out which of six stages is wrong is
+much easier with five of them already pinned.
