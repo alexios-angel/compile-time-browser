@@ -39,6 +39,41 @@ interface made that BMI 27 MB, `<SDL3/SDL.h>` made `ctbrowser.app.pcm` 26 MB.
 Now it is about every consumer re-parsing them. Same rule, same fix, different
 reason: put them in the `.cpp`, as `core/cpu_time.cpp` does with `<windows.h>`.
 
+## HTTP: libcurl, AND https ON WINDOWS (2026-07-31)
+
+`fetch()` runs over **libcurl**, not the hand-written Asio client it replaced.
+Asio is a socket; the request line, header folding, chunked decoding and
+redirects were all written here, and that is the half a browser keeps needing
+more of.
+
+**The reason it is libcurl and not POCO** - which was written first, and does
+cross-compile; that work is in the history:
+
+* **TLS on Windows for free.** curl uses **Schannel**, the OS TLS stack, so the
+  cross build gets `https://` with no OpenSSL cross-compiled. The Windows
+  presets shipped `CTBROWSER_WITH_TLS=0` - no https at all - and POCO's NetSSL
+  would have meant cross-building OpenSSL to change that.
+* HTTP/2, brotli and zstd are already there, which retires the zlib work
+  Content-Encoding was going to need.
+
+POCO's mature WebSocket is what curl lacks; if that becomes a requirement it is
+the reason to revisit, and `net.hpp`'s request/response interface is what makes
+revisiting cheap - both are peers behind one `fetch()`, chosen in
+`src/CMakeLists.txt`, with the Asio transport still present as the fallback.
+
+**TLS belongs to the transport.** `tls_available()` was a `constexpr` on
+`CTBROWSER_WITH_TLS`, which `find_package(OpenSSL)` set - correct while the
+engine linked OpenSSL itself, and wrong the moment curl brought its own, because
+no OpenSSL probe can see Schannel. It is a runtime call now, and the libcurl
+transport answers it by asking `curl_version_info` what the linked library
+actually has.
+
+**For the cross build**, `build-curl-sysroot.sh` in the llvm-mingw repo installs
+the static libcurl into `<toolchain>/<triple>/`. It delegates to that repo's
+existing `build-curl.sh` rather than duplicating the pinned versions and TLS
+decision - that script already builds this library, for clang's own
+`std::fetch`. Run once; the artifact is 1.2 MB.
+
 ## BOOST: WHAT IS LINKED, AND WHAT WAS DELIBERATELY NOT TAKEN (2026-07-31)
 
 Boost was header-only here until 2026-07-31. **Boost.URL ended that**, and it had
