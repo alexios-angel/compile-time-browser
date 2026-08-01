@@ -590,6 +590,78 @@ void test_symbol() {
     expect("return Symbol('x').toString();", "Symbol(x)");
 }
 
+// `a.length = n` RESIZES, and a write that is silently dropped is the kind of
+// gap that looks like support. The engine read `length` and ignored every write
+// to it, so `a.length = 0` - which is how a great deal of code empties an array
+// - left the array exactly as full as it was. Phaser found it: its scene
+// manager ends boot with `this._pending.length = 0`, so the queue it had just
+// drained was still full and the next frame added the same scene again and
+// threw "Cannot add Scene with duplicate key".
+void test_var_declarators_run_left_to_right() {
+    expect("var a = 1, b = a + 1; return b;", "2");
+    expect("var s = 'ab', n = s.length; return n;", "2");
+    expect("var xs = [3,4], first = xs[0]; return first;", "3");
+    expect("let a = 1, b = a + 1; return b;", "2");
+    expect("const a = 1, b = a + 1; return b;", "2");
+    expect("function f(x) { return x * 2; } var a = 2, b = f(a); return b;", "4");
+}
+
+// `+x` IS ToNumber, and it compiled to a plain register copy - so `+"2"` was
+// still the string "2".
+//
+// THE TEST THAT MISSED IT FIRST is instructive enough to keep the shape of:
+// `var x = +xy[0]; return x + '/' + y;` passed with the bug in, because "2" and
+// 2 concatenate identically. So every assertion here either asks `typeof` or
+// puts the result somewhere only a number works - which is exactly how the bug
+// surfaced in the first place, indexing pixel data with `(+y * 8 + +x) * 4`.
+void test_unary_plus_converts() {
+    expect("return typeof (+'2');", "number");
+    expect("return typeof (+'abc');", "number");
+    expect("var xs = [10,20,30]; var i = '1'; return xs[(+i) * 1];", "20");
+    // The arithmetic a copy would get wrong: `+` on two strings concatenates,
+    // so the conversion has to happen before the addition.
+    expect("var a = '2', b = '3'; return (+a) + (+b);", "5");
+    expect("return String(+'');", "0");
+    expect("return String(+'  7  ');", "7");
+    expect("return String(+'0x10');", "16");
+    expect("return String(+true);", "1");
+    expect("return String(+null);", "0");
+    expect("return String(+[]);", "0");
+    expect("return String(+'abc');", "NaN");
+    expect("return String(+undefined);", "NaN");
+    // Already a number: unchanged, and still a number.
+    expect("return String(+42);", "42");
+    expect("return String(+-3.5);", "-3.5");
+    // The idiom that found it, end to end.
+    expect("var d = [0,1,2,3,4,5,6,7,8];"
+           "var k = '1,2', xy = k.split(',');"
+           "return d[+xy[1] * 2 + +xy[0]];",
+           "5");
+}
+
+void test_array_length_is_writable() {
+    expect("var a = [1,2,3]; a.length = 0; return a.length;", "0");
+    expect("var a = [1,2,3]; a.length = 0; return JSON.stringify(a);", "[]");
+    // Truncation keeps the front, not the back.
+    expect("var a = [1,2,3,4]; a.length = 2; return JSON.stringify(a);", "[1,2]");
+    // Growing pads with undefined, which JSON writes as null.
+    expect("var a = [1]; a.length = 3; return a.length;", "3");
+    expect("var a = [1]; a.length = 3; return String(a[2]);", "undefined");
+    // A string coerces, as it does everywhere else.
+    expect("var a = [1,2,3]; a.length = '1'; return JSON.stringify(a);", "[1]");
+    // NONSENSE LEAVES IT ALONE rather than throwing: the spec says RangeError,
+    // and this engine is lenient with pages for the same reason it is elsewhere.
+    expect("var a = [1,2]; a.length = -1; return a.length;", "2");
+    expect("var a = [1,2]; a.length = NaN; return a.length;", "2");
+    // A TYPED array is a view over bytes sized once; resizing it would leave
+    // the view and its buffer disagreeing, so the write is a no-op.
+    expect("var t = new Uint8Array(4); t.length = 0; return t.length;", "4");
+    // And the ordinary uses still work either side of it.
+    expect("var a = []; a.push(1); a.push(2); a.length = 0; a.push(9); "
+           "return JSON.stringify(a);",
+           "[9]");
+}
+
 void test_collections() {
     expect("const s = new Set([1, 2, 3]); return s.has(2) + '|' + s.size;", "true|3");
     expect("const s = new Set(); s.add(1); s.add(1); return s.size;", "1");
@@ -2436,6 +2508,9 @@ int main() {
     test_object_descriptors();
     test_optional_chain_short_circuits();
     test_symbol();
+    test_var_declarators_run_left_to_right();
+    test_unary_plus_converts();
+    test_array_length_is_writable();
     test_collections();
     test_errors();
     test_implicit_super();

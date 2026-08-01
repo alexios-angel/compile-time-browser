@@ -2136,7 +2136,12 @@ public:
             // shipped, and it is what `await fetch(...)` needs.
             proto().emit(instruction{op::await_value, dst, operand});
         } else if (n.text == "+") {
-            proto().emit(instruction{op::move, dst, operand});
+            // NOT `move`. Unary plus is ToNumber, and the only reason a copy
+            // survived here is that the difference hides: `+x` used in a string
+            // concatenation reads identically whether it converted or not, and
+            // that is most of where it appears. It stops hiding the moment the
+            // result indexes an array.
+            proto().emit(instruction{op::to_number, dst, operand});
         } else if (n.text == "~") {
             proto().emit(instruction{op::bit_not, dst, operand});
         }

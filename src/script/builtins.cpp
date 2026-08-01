@@ -1638,23 +1638,11 @@ void install_base64(context & cx) {
         }
         return c.string(out);
     });
+    // THE SAME DECODER A data: URL GOES THROUGH (core/algorithms.hpp). These
+    // were one loop retyped twice for a while, which is the shape of bug this
+    // tree has already paid for once in its two URL parsers.
     cx.define_native("atob", [](context & c, std::span<value> a) {
-        const std::string in = a.empty() ? std::string{} : c.to_string(a[0]);
-        std::string out;
-        unsigned accumulator = 0;
-        int bits = 0;
-        for (const char ch : in) {
-            if (ch == '=' || ch == '\n' || ch == '\r' || ch == ' ') { continue; }
-            const std::size_t at = alphabet.find(ch);
-            if (at == std::string_view::npos) { continue; }
-            accumulator = (accumulator << 6) | static_cast<unsigned>(at);
-            bits += 6;
-            if (bits >= 8) {
-                bits -= 8;
-                out += static_cast<char>((accumulator >> bits) & 0xFF);
-            }
-        }
-        return c.string(out);
+        return c.string(base64_decode(a.empty() ? std::string{} : c.to_string(a[0])));
     });
 }
 
@@ -1916,6 +1904,21 @@ void install_object(context & cx) {
         if (self.is_object()) {
             auto * obj = static_cast<object_object *>(self.as_heap());
             return value::boolean(obj->find(key) != nullptr || obj->find_accessor(key) != nullptr);
+        }
+        // A PROXY ANSWERS FOR ITSELF, the way `in` already lets it: the trap is
+        // the only thing that knows what the proxy is standing in for. `window`
+        // is one, and `window.hasOwnProperty('HTMLVideoElement')` reaching past
+        // its handler to a bare object would say "no" about every global there
+        // is. Falling back to the target when there is no trap matches the
+        // `has_property` opcode exactly.
+        if (self.is_kind(heap_kind::proxy)) {
+            auto * p = static_cast<proxy_object *>(self.as_heap());
+            const value trap = c.proxy_trap(self, "has");
+            if (trap.is_callable()) {
+                const value args[2] = {p->target, c.string(key)};
+                return value::boolean(c.truthy(c.call(trap, args, p->handler)));
+            }
+            return value::boolean(!c.lookup_property(p->target, key).is_undefined());
         }
         if (self.is_array()) {
             auto * arr = static_cast<array_object *>(self.as_heap());

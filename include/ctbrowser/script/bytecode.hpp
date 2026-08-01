@@ -71,6 +71,7 @@ enum class op : std::uint8_t {
     mod,
     pow,
     negate,      // a = -b
+    to_number,   // a = +b  - a CONVERSION, not a copy; see compile_unary
     logical_not, // a = !b
 
     // --- comparison

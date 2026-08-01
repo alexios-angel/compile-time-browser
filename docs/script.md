@@ -416,3 +416,60 @@ kept because the SHAPE repeats:
   declared nothing. See `docs/raster.md` — that one is the interesting hole.
 
 For three of those, the diagnosis blamed p5 first and p5 was innocent each time.
+
+## WHAT PHASER 4 NEEDED (2026-08-01)
+
+A second corpus, and it earned its keep in an afternoon. Phaser stopped at
+`new Phaser.Game()` with `isBooted` true, `isRunning` false and **no error any
+page could see** — the throw happened four callbacks deep inside an image
+handler. `tests/phaser_ratchet.cpp` went 7/10 → 9/10; the tenth rung is
+honestly unreached, because no corpus page draws through Phaser yet.
+
+Four engine bugs, none of them about games, and **p5.js could not have found
+any of them** — which is the entire argument for a second library.
+
+### `+x` was a register copy, not a conversion
+
+`compile_unary` emitted `op::move` for unary plus, so `+"2"` was still the
+string `"2"`. There is now an `op::to_number`.
+
+**It hid because it usually cannot be seen.** `+x` is nearly always written into
+a string concatenation, and `"2" + "/"` and `2 + "/"` are the same characters.
+The first test written for it passed *with the bug in*. It shows only where the
+result is used as a number — indexing `d[(+y * 8 + +x) * 4]` read `undefined`
+from pixel data that was perfectly correct.
+
+`op::to_number` and `op::negate` both go through `to_number_value`, the
+ToPrimitive-then-ToNumber that `-`, `*` and `/` already used; before that, `[] -
+0` was `0` while `-[]` was `NaN`.
+
+### `a.length = n` was silently dropped
+
+`store_property` had no array branch at all: the engine read `length` and
+ignored every write to it. `a.length = 0` is how a great deal of code empties an
+array — Phaser's scene manager ends boot with `this._pending.length = 0`, so the
+queue it had just drained was still full, the next frame added the same scene
+again, and it threw `Cannot add Scene with duplicate key`. Growing pads with
+undefined; a typed array's length is fixed and the write is a no-op.
+
+### `window.hasOwnProperty` was undefined
+
+`window` is a proxy — the `get` trap is what makes `window.foo` and a bare `foo`
+the same variable — and the trap answered own properties, then globals, then
+gave up. It never reached `Object.prototype`. `window.hasOwnProperty('X')` is
+the most common feature-detection idiom there is, and Phaser asks it before it
+will build **any** texture.
+
+Two halves: the trap now falls through to the prototype chain, and
+`Object.prototype.hasOwnProperty` answers through a proxy's own `has` handler,
+the way the `in` operator already did. Reaching past the handler to the bare
+target would say "no" about every global there is.
+
+### The diagnosis itself was the bottleneck
+
+The VM said ``` `get` is undefined, not a function, on undefined ``` — which
+names the *method* and says nothing about the object that was missing it, and
+the object is always the bug. A method call keeps its receiver in the callee's
+own register, so the walk that already named a plain call's callee names the
+receiver too. It now says ``` from `texture` ```, and that one word ended a
+search that had run through four wrong hypotheses.

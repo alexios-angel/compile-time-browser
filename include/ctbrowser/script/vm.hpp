@@ -400,6 +400,11 @@ public:
 
     // --- conversions (ECMA-262 shaped, and shared with the bindings) -------
     [[nodiscard]] static bool truthy(value v);
+
+    // The handler's trap of this name, or undefined when it has none. Public
+    // for the standard library: `hasOwnProperty` must ask a proxy's handler the
+    // same question `in` asks it, and `window` is a proxy.
+    [[nodiscard]] value proxy_trap(value proxy, const std::string & name);
     // ECMA-262 ToInt32 / ToUint32: NaN and the infinities are 0, everything
     // else truncates toward zero and wraps modulo 2^32.
     [[nodiscard]] static std::int32_t to_int32(value v) {
@@ -741,8 +746,7 @@ private:
                                                    std::uint16_t reg_index);
     [[nodiscard]] std::string describe_callee(const function_proto & fn, std::string_view name,
                                               value callee);
-    // The handler's trap of this name, or undefined when it has none.
-    [[nodiscard]] value proxy_trap(value proxy, const std::string & name);
+
     [[nodiscard]] std::string describe_thrown(value thrown);
     // ToPrimitive for the string case: an object's own toString, then valueOf.
     [[nodiscard]] std::string to_primitive_string(value v);

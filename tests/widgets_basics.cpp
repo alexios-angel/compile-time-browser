@@ -631,6 +631,48 @@ void test_canvas_width_and_height_are_readable() {
 // "Cannot create Canvas context, aborting" if that is false. A bare marker
 // object would have satisfied it - and made `instanceof` silently false, which
 // Phaser asks nine times and p5 four. So both are asserted here.
+// `window` IS AN OBJECT as well as the global scope, and it reaches
+// Object.prototype like any other. It is a proxy here - the `get` trap is what
+// makes `window.foo` and a bare `foo` the same variable - and that trap answered
+// own properties, then globals, then gave up. So `window.hasOwnProperty` read
+// `undefined`, which is the single most common feature-detection idiom there
+// is: Phaser asks `window.hasOwnProperty('HTMLVideoElement')` before it will
+// build ANY texture, so every texture in the framework threw instead.
+//
+// The answer has to come from the proxy's own handler, too. Object.prototype's
+// hasOwnProperty reaching past the handler to the bare target would say "no"
+// about every global there is.
+void test_window_is_an_object_too() {
+    browser page{browser_options{200, 200}};
+    page.load_html("<html><body><script>"
+                   "console.log('has ' + (typeof window.hasOwnProperty));"
+                   // A global the engine defines: the proxy must answer for it.
+                   "console.log('global ' + window.hasOwnProperty('document'));"
+                   // A global the PAGE defines, after the fact.
+                   "window.__mine = 1;"
+                   "console.log('mine ' + window.hasOwnProperty('__mine'));"
+                   // And the negative, or the two above prove nothing.
+                   "console.log('absent ' + window.hasOwnProperty('__nope'));"
+                   // The idiom Phaser actually uses, on an interface this
+                   // engine does NOT have - it must answer false, not throw.
+                   "console.log('video ' + window.hasOwnProperty('HTMLVideoElement'));"
+                   // One it DOES have.
+                   "console.log('canvas ' + window.hasOwnProperty('HTMLCanvasElement'));"
+                   // Other Object.prototype methods arrive by the same route.
+                   "console.log('str ' + (typeof window.toString));"
+                   "</script></body></html>");
+    const auto & log = page.bindings().console_output();
+    check(log.size() == 7, "seven answers");
+    if (log.size() != 7) { return; }
+    check(log[0] == "has function", "window.hasOwnProperty is a function: " + log[0]);
+    check(log[1] == "global true", "it sees an engine global: " + log[1]);
+    check(log[2] == "mine true", "and one the page just made: " + log[2]);
+    check(log[3] == "absent false", "and says no to one that is not there: " + log[3]);
+    check(log[4] == "video false", "an absent interface answers false: " + log[4]);
+    check(log[5] == "canvas true", "a present one answers true: " + log[5]);
+    check(log[6] == "str function", "the rest of Object.prototype is reachable: " + log[6]);
+}
+
 void test_the_dom_interface_objects() {
     browser page{browser_options{400, 300}};
     page.load_html("<html><body><canvas id=c></canvas><img id=i src=x.bmp><script>"
@@ -923,6 +965,7 @@ int main() {
 
     test_canvas_is_sized_by_its_attributes();
     test_canvas_width_and_height_are_readable();
+    test_window_is_an_object_too();
     test_the_dom_interface_objects();
     test_getcontext_only_answers_for_2d();
     test_measuretext_reads_the_font_just_set();

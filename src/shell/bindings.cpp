@@ -3239,7 +3239,16 @@ void dom_bindings::install_window(context & cx) {
         if (target->find(name) != nullptr || target->find_accessor(name) != nullptr) {
             return c.lookup_property(args[0], name);
         }
-        return c.global(name);
+        // A GLOBAL, WHICH IS MOST OF WHY THIS PROXY EXISTS.
+        if (c.has_global(name)) { return c.global(name); }
+        // AND FAILING THAT, THE PROTOTYPE CHAIN - `window` is an ordinary
+        // object as well as the global scope, so `window.hasOwnProperty(...)`
+        // has to reach Object.prototype like any other object's would. Stopping
+        // at the globals meant it read `undefined`, and that is the single most
+        // common feature-detection idiom there is: Phaser asks
+        // `window.hasOwnProperty('HTMLVideoElement')` before it will build a
+        // texture, so every texture in the framework threw instead.
+        return c.lookup_property(args[0], name);
     });
     window_trap("set", [](context & c, std::span<value> args) {
         if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }

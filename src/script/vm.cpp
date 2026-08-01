@@ -273,6 +273,34 @@ void context::store_property(value target, const std::string & name, value v) {
         }
         return;
     }
+    // `a.length = n` RESIZES THE ARRAY, and dropping the write silently is not
+    // a small gap: `a.length = 0` is how a great deal of code empties one -
+    // Phaser's scene manager ends its boot with `this._pending.length = 0`, and
+    // with the write ignored the queue it had just drained was still full, so
+    // the next frame added the same scene a second time and threw "Cannot add
+    // Scene with duplicate key". An engine that reads `length` but will not
+    // write it looks like it supports arrays right up until it does not.
+    //
+    // Growing pads with undefined, which is what the spec says and what
+    // `a.length = 10` is occasionally used for.
+    if (target.is_array()) {
+        if (name != "length") { return; } // arrays have no property table here
+        auto * arr = static_cast<array_object *>(target.as_heap());
+        // A TYPED array's length is fixed - it is a view over bytes that were
+        // sized once, and resizing it here would leave the view and its buffer
+        // disagreeing. The spec makes the write a no-op, not an error.
+        if (arr->elements != element_kind::none) { return; }
+        const double wanted = to_number(v);
+        // The spec throws RangeError for a non-integer or negative length. This
+        // engine is lenient with pages elsewhere for the same reason it is
+        // here: a dropped nonsense write leaves the array as it was, which is
+        // strictly better than the page dying.
+        if (!std::isfinite(wanted) || wanted < 0) { return; }
+        constexpr double length_limit = 4294967295.0; // 2^32 - 1, the spec's cap
+        if (wanted > length_limit) { return; }
+        arr->items.resize(static_cast<std::size_t>(wanted));
+        return;
+    }
     if (target.is_kind(heap_kind::native)) {
         static_cast<native_object *>(target.as_heap())->set(name, v);
         return;
@@ -1040,7 +1068,17 @@ value context::run_loop(std::size_t stop_depth) {
             break;
         }
         case op::concat: reg(in.a) = string(to_string(reg(in.b)) + to_string(reg(in.c))); break;
-        case op::negate: reg(in.a) = value::number(-to_number(reg(in.b))); break;
+        // `to_number_value`, NOT `to_number`, and for the same reason `-` and
+        // `*` already use it: ToNumber on an object runs valueOf/toString
+        // first. Without it `[] - 0` was 0 while `-[]` was NaN, which is one
+        // conversion spelled two ways.
+        case op::negate: reg(in.a) = value::number(-to_number_value(reg(in.b))); break;
+        // `+x` IS A CONVERSION. It compiled to a plain `move` for a long time,
+        // so `+"2"` stayed the string "2" - and that is invisible in most of the
+        // places it is written, because `+x + "/"` concatenates either way. It
+        // shows up where the result is USED as a number: `d[(+y * 8 + +x) * 4]`
+        // indexed with a string built by concatenation and read undefined.
+        case op::to_number: reg(in.a) = value::number(to_number_value(reg(in.b))); break;
         case op::logical_not: reg(in.a) = value::boolean(!truthy(reg(in.b))); break;
 
         case op::equal: reg(in.a) = value::boolean(reg(in.b).strict_equals(reg(in.c))); break;
@@ -1410,7 +1448,18 @@ value context::run_loop(std::size_t stop_depth) {
                     // bugs in different places.
                     if (in.code == op::call_method || in.code == op::call_computed) {
                         what += ", on " + std::string{type_of(receiver)};
-                        if (receiver.is_nullish()) { what += " (" + to_string(receiver) + ")"; }
+                        if (receiver.is_nullish()) {
+                            what += " (" + to_string(receiver) + ")";
+                            // WHICH undefined. "`get` is undefined, on
+                            // undefined" names the method and says nothing
+                            // about the object, and the object is the bug -
+                            // `get` is fine, whatever should have had it is
+                            // missing. A method call keeps its receiver in the
+                            // callee's own register, so the walk that names a
+                            // plain call's callee names the receiver too.
+                            const std::string from = callee_origin(fn, frame.ip - 1, in.a);
+                            if (!from.empty()) { what += " from `" + from + "`"; }
+                        }
                     }
                     throw_error("TypeError", std::move(what));
                 }
