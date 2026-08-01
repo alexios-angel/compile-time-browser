@@ -32,8 +32,29 @@ with a pawl that fails on a regression AND on a silently changed blocker),
 `examples/pages/phaser-basic.html` + `tests/golden/phaserbasic.ppm` for rung 10
 — byte-identical on Linux and on the Windows cross-build.
 
-**Still not built: `tests/phaser_api.cpp`**, the how-WIDE half. That is the
-remaining work, and the p5 side (179 probes) is the model.
+`tests/phaser_api.cpp` is built too — **114 probes, 33/33 namespaces**, and it
+found a fifth engine bug the ratchet could not: `(5).hasOwnProperty` was
+undefined, because numbers, booleans *and* strings never chained to
+`Object.prototype`. Only arrays did.
+
+## And then it played a game (2026-08-01)
+
+`examples/pages/phaser-invaders.html` is a working Space Invaders: a
+keyboard-driven ship, bullets, a formation that marches and descends, invaders
+dropping bombs back, collisions in both directions, a score, three lives, and
+both win and lose conditions. Every texture is drawn at boot with
+`generateTexture`, so the page ships no assets.
+
+That page is the point of the whole corpus. The ratchet, the probes and the
+golden each answer a narrower question, and **all three were satisfied while
+every arrow key did nothing** — Phaser matches keys on the legacy `keyCode`, and
+the engine set only `code` and `key`. It took asking "is it playable?" to see
+it, which is a question none of the three instruments asks.
+
+`tests/phaser_invaders.cpp` asks both halves of it: that a held key moves the
+ship *differently from the scripted sweep*, and that 700 unattended frames raise
+the score and cost a life. The second is the one that would notice the loop
+dying halfway — every other test here stops before frame 200.
 
 ## Why a second library at all
 
