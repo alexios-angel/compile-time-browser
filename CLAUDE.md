@@ -60,6 +60,10 @@ gate and CI runs it.
   runs for p5.js: build, measure, `--advance` to record. A SECOND CORPUS, and
   it earned its keep in a day — see `docs/script.md`. No `--bisect`: Phaser
   clears every language rung, so there is nothing to carve.
+- `tools/phaser-api.py` — how WIDE the Phaser surface is, to `p5-api.py`'s
+  shape. `--coverage` lists the namespaces no probe mentions, which is the work
+  queue. The ratchet read 10/10 while `(5).hasOwnProperty` was undefined,
+  because nothing on the ladder asked a number for a property.
 - `tools/build-image-libs-mingw.sh` — its sibling, for zlib, libpng and
   libjpeg-turbo. PNG and JPEG decode in the SDL-FREE engine, so the Windows
   presets need this run once too. Versions are pinned on purpose; see

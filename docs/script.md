@@ -473,3 +473,34 @@ the object is always the bug. A method call keeps its receiver in the callee's
 own register, so the walk that already named a plain call's callee names the
 receiver too. It now says ``` from `texture` ```, and that one word ended a
 search that had run through four wrong hypotheses.
+
+### And a primitive could not box
+
+Found by the API probe rather than the ratchet, which is the distinction those
+two instruments exist for: the ratchet read **10/10 while this was broken**,
+because nothing on the ladder asks a number for a property.
+
+`(5).hasOwnProperty` was `undefined`. A primitive boxes on property access —
+`Number.prototype`'s own prototype **is** `Object.prototype` — and numbers,
+booleans *and strings* all stopped at their own prototype table and answered
+undefined past it. Only arrays chained, and the comment there called it "the
+chain JavaScript actually has", which was true of arrays and of nothing else.
+Phaser's tween manager asks `hasOwnProperty` of a number while working out which
+properties of a target to animate.
+
+The regression test caught the second half **by accident**: it asserted the
+string case on the assumption that one already worked, and it did not. Worth
+remembering when writing a test around a fix — the assertions you add for
+completeness are the ones that find the next thing.
+
+## THE TWO INSTRUMENTS, AND WHY BOTH
+
+| | asks | Phaser | p5 |
+|---|---|---|---|
+| `*_ratchet` | how FAR — one number up a ladder | 10/10 | 12/12 |
+| `*_api` | how WIDE — does each call work | 76/77 | 169/179 |
+
+A ratchet at its ceiling says nothing about width, and this is not theoretical
+in either corpus: p5's read 12/12 for days while `colorMode(HSB)` was broken,
+and Phaser's read 10/10 while primitives could not reach `Object.prototype`.
+Both were found by the wide, shallow instrument within one run of writing it.
