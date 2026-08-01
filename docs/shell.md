@@ -517,10 +517,38 @@ filesystem (cwd → `asset_path` → two levels up, the previous engine's probe 
 FIRST is the whole design: a binary that ships its resources works from any
 directory, and a test that seeds the registry is hermetic.
 
+**`data:` URLs resolve here** (2026-08-01), between the registry and the
+filesystem, which is what makes one change serve an `<img src>`, a `fetch`, a
+CSS `url()` and a `<script src>` at once. Both RFC 2397 forms are read —
+`;base64` and percent-encoded text — through `shell::parse_data_url`, and the
+registry still wins, so a page may override one by name. The engine could
+*write* these long before it could read them (`toDataURL`, FileReader), and
+nothing noticed, because a page that makes a data URL hands it back to itself; a
+library ships its images *inside itself*, which is how Phaser's texture manager
+found it. `tests/data_url.cpp` asserts on the decoded bytes and on a real
+`<img>` — a BMP, so the whole path is provable in a headless build.
+`ctbrowser::base64_decode` (`core/algorithms.hpp`) is shared with `atob`.
+
 `ctbrowser.shell:images` decodes BMP (24/32bpp, either row order) into
-`paint::bitmap` with no library at all; **SDL3_image is optional** and arrives
-as a decoder hook installed by `ctbrowser.app` — the only place SDL and images
-are allowed to meet, since the shell stays SDL-free. `<img>` sizes itself from
+`paint::bitmap` with no library at all, **PNG through libpng** (`png.hpp`) and
+**JPEG through libjpeg-turbo** (`jpeg.hpp`), all three in the SDL-free engine.
+**SDL3_image is optional** and arrives as a decoder hook installed by
+`ctbrowser.app` for what is left — GIF, WEBP, TIFF — the only place SDL and
+images are allowed to meet, since the shell stays SDL-free.
+
+**PNG AND JPEG CAME OUT OF THAT HOOK on 2026-08-01**, and the reason is a gap
+nothing could see: `tests/` is SDL-free by an invariant `tests/api_surface`
+lints for, so the whole suite saw a PNG as a zero-sized image and *nothing said
+so*, because every page in this tree loads BMPs. Phaser found it — its texture
+manager loads three base64 PNGs during boot and will not start until all three
+settle. A format whose result depends on whether SDL happened to be found is
+also one no golden can compare, so the built-in decoders run **before** the
+hook and a headless test and a real application now decode the same file with
+the same library. `tests/data_url.cpp` asserts PNG against BMP pixel for pixel
+(that comparison caught a row-order bug in the *test data*, not the engine),
+and JPEG within a tolerance — with the alpha byte asserted exactly, since
+TurboJPEG leaves it undefined and an image that decodes and then draws as fully
+transparent is the specific bug there. `<img>` sizes itself from
 the decoded bitmap unless width/height say otherwise (one attribute scales the
 other through the aspect ratio); a missing image is zero-sized, not a broken
 icon. `loadImage`/`imageWidth`/`imageHeight` and `ctx.drawImage` (3-, 5- and

@@ -108,6 +108,34 @@ cannot happen quietly.
 bytes, +251 KB, and the archive is 1.0 MB across 66 objects. All ten Windows
 goldens stayed byte-identical.
 
+## THE IMAGE CODECS REACH IT THE SAME WAY (2026-08-01)
+
+`tools/build-image-libs-mingw.sh` is that script's sibling and builds **zlib,
+libpng and libjpeg-turbo** into the same sysroot. PNG and JPEG moved out of the
+optional SDL3_image hook and into the SDL-free engine, so the cross build needs
+them; `docs/shell.md` has why, and the short version is that `tests/` is
+SDL-free by an invariant, so the whole suite saw a PNG as a zero-sized image and
+nothing said so until Phaser arrived.
+
+Three things worth knowing before running it:
+
+* **The versions are PINNED** (`zlib_tag`, `libpng_tag`, `turbo_tag`). A cross
+  build that quietly follows upstream's default branch is how the Windows half
+  of a byte-compared golden starts disagreeing with the Linux half for a reason
+  nobody can see. zlib is only there because libpng needs it.
+* **zlib builds a DLL whatever you ask it.** `BUILD_SHARED_LIBS=OFF` does not
+  stop it, and `FindZLIB` prefers the import library's name - so every `.exe`
+  would want a `zlib1.dll` beside it, which is the folder-of-DLLs this sysroot
+  exists to avoid. The script deletes them and keeps `libzlibstatic.a`.
+* **No NASM means no SIMD in libjpeg-turbo**, which it warns about and then
+  builds anyway. Correct either way, slower on Windows than on Linux; install
+  `nasm` before running it if that matters.
+
+Verified end to end: the Windows preset configures, links, and **29 of 29 test
+executables pass when run through WSL**, `data_url` among them - which is the
+one that decodes a PNG and a JPEG and compares the PNG against a BMP pixel for
+pixel.
+
 **Two bugs the script itself had first**, both the silent kind. `src/*.cpp`
 matches 27 of the 66 files, so the first archive linked, looked healthy and had
 `url_impl` *undefined inside it*; and the compile loop was `... & done; wait`,

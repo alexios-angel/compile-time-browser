@@ -1,6 +1,8 @@
 #pragma once
+#include <cstddef>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // URLs, parsed in ONE place.
 //
@@ -80,5 +82,34 @@ struct location_url {
 // elsewhere. Returns the reference unchanged if the base is unparseable, which
 // is the lenient answer rather than an empty string that loses information.
 [[nodiscard]] std::string resolve(std::string_view base, std::string_view reference);
+
+// A `data:` URL carries its own bytes, so it is a resource that needs no
+// transport at all.
+//
+// THE ENGINE COULD WRITE THESE LONG BEFORE IT COULD READ THEM - `toDataURL` and
+// FileReader both produce one - and nothing noticed, because a hand-written page
+// that makes a data URL hands it straight back to the same page. A LIBRARY ships
+// its own images inside itself: Phaser's texture manager loads three base64 PNGs
+// during boot and waits for all three, so every one of them failing left it
+// waiting forever with no error anyone could see.
+//
+// Parsed here rather than at each consumer because every one of them - an <img>
+// src, `fetch`, a CSS `url()`, a <script> - resolves through asset_registry,
+// which is the single place this needs to be understood.
+struct data_url {
+    std::string mime = "text/plain"; // the RFC 2397 default when none is stated
+    std::vector<std::byte> bytes;
+};
+
+// Cheap enough to ask before every load, which is why it is separate from the
+// parse: it is a scheme comparison and nothing else. ASCII case-insensitive,
+// because `DATA:` is the same scheme.
+[[nodiscard]] bool is_data_url(std::string_view url);
+
+// Decodes both forms RFC 2397 allows: `;base64` and percent-encoded text. Fails
+// only on a URL that is not a data: URL at all - a malformed payload decodes as
+// far as it can, which is the same leniency the rest of this file documents, and
+// matches what browsers do with a truncated base64 tail.
+[[nodiscard]] bool parse_data_url(std::string_view url, data_url & out);
 
 } // namespace ctbrowser::shell

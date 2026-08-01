@@ -116,4 +116,20 @@ inline constexpr std::string_view glsl_line_whitespace = " \t\r";
     return text.find_first_not_of(set) == std::string_view::npos;
 }
 
+// --- base64 ---------------------------------------------------------------
+
+// Bytes, not text: the result is a "binary string" of 0-255, which is what
+// `atob` is defined to return and what a data: URL's payload actually is.
+//
+// HERE RATHER THAN AT EITHER CALLER, even though there are only two of them, and
+// the reason is on this project's record: `split_url` and `parse_url` were two
+// implementations of one job that drifted until one of them was wrong about IPv6
+// and nothing could compare them. A base64 decoder is small enough to retype and
+// exactly the kind of thing that is retyped slightly differently.
+//
+// LENIENT, matching the WHATWG `atob` in every browser: padding is optional,
+// whitespace is skipped, and a character outside the alphabet is ignored rather
+// than fatal. A truncated tail decodes as far as it goes.
+[[nodiscard]] std::string base64_decode(std::string_view text);
+
 } // namespace ctbrowser

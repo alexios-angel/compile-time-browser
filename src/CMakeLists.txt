@@ -385,6 +385,8 @@ target_sources(ctbrowser-shell
     shell/forms.cpp
     shell/net_curl.cpp
     shell/url.cpp
+    shell/png.cpp
+    shell/jpeg.cpp
     shell/embedded_fonts.cpp
   PUBLIC
     FILE_SET HEADERS
@@ -397,6 +399,8 @@ target_sources(ctbrowser-shell
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/assets.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/images.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/url.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/png.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/jpeg.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/net.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/canvas.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/webgl.hpp"
@@ -455,6 +459,50 @@ target_link_libraries(ctbrowser-shell PRIVATE Boost::url)
 # PRIVATE for the same reason: curl.h is the transport's business and
 # net_curl.cpp is the only place it appears.
 target_link_libraries(ctbrowser-shell PRIVATE CURL::libcurl)
+
+# --- PNG, WITHOUT SDL ----------------------------------------------------
+# The engine decoded BMP itself and got every other format from a hook the
+# application layer fills in from SDL3_image. That split held until `tests/`
+# needed a PNG: the suite is SDL-FREE by an invariant `tests/api_surface`
+# lints for, so every test saw a PNG as a zero-sized image and nothing said so.
+# Phaser's texture manager loads three base64 PNGs during boot and waits for
+# all three, which is how it was found.
+#
+# LIBPNG, the format's reference implementation, and zlib with it. PRIVATE for
+# the same reason as curl and boost/url: png.h is png.cpp's business.
+find_package(PNG REQUIRED)
+target_link_libraries(ctbrowser-shell PRIVATE PNG::PNG)
+
+# --- JPEG, WITHOUT SDL ---------------------------------------------------
+# The same move as PNG above and for the same reason: a format that only
+# decodes when SDL3_image happened to be found is one no test can assert on
+# and no golden can compare.
+#
+# LIBJPEG-TURBO through its TurboJPEG API - libjpeg's decoder with SIMD, and
+# the one browsers and Android ship. PRIVATE: turbojpeg.h is jpeg.cpp's
+# business. No CMake config module is guaranteed for it, so pkg-config is the
+# portable way to ask, with a plain library search as the fallback the cross
+# build lands on.
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+  pkg_check_modules(CTB_TURBOJPEG QUIET IMPORTED_TARGET libturbojpeg)
+endif()
+if(TARGET PkgConfig::CTB_TURBOJPEG)
+  target_link_libraries(ctbrowser-shell PRIVATE PkgConfig::CTB_TURBOJPEG)
+  message(STATUS "ctbrowser: JPEG through libjpeg-turbo ${CTB_TURBOJPEG_VERSION}")
+else()
+  find_path(CTBROWSER_TURBOJPEG_INCLUDE_DIR turbojpeg.h)
+  find_library(CTBROWSER_TURBOJPEG_LIBRARY NAMES turbojpeg libturbojpeg)
+  if(NOT CTBROWSER_TURBOJPEG_INCLUDE_DIR OR NOT CTBROWSER_TURBOJPEG_LIBRARY)
+    message(FATAL_ERROR
+      "ctbrowser: no libjpeg-turbo for this target. It decodes JPEG in the "
+      "SDL-free engine, so tests can assert on one. Install it (brew: "
+      "jpeg-turbo) or build it into the mingw sysroot for a cross build.")
+  endif()
+  target_include_directories(ctbrowser-shell PRIVATE ${CTBROWSER_TURBOJPEG_INCLUDE_DIR})
+  target_link_libraries(ctbrowser-shell PRIVATE ${CTBROWSER_TURBOJPEG_LIBRARY})
+  message(STATUS "ctbrowser: JPEG through ${CTBROWSER_TURBOJPEG_LIBRARY}")
+endif()
 
 # TLS BELONGS TO THE TRANSPORT, which is most of the point of moving to libcurl.
 # curl brings its own - SCHANNEL on Windows, the OS stack, so the cross build

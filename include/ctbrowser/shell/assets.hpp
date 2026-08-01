@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/shell/url.hpp>
 
 // Everything a page loads by name - sprites, sounds, JSON, whatever `fetch`
 // asks for - comes through here.
@@ -54,12 +55,23 @@ public:
     void set_base_path(std::filesystem::path base) { base_ = std::move(base); }
     [[nodiscard]] const std::filesystem::path & base_path() const { return base_; }
 
-    // The registry, then the filesystem. Empty when neither has it.
+    // The registry, then a data: URL, then the filesystem. Empty when none of
+    // them has it.
     [[nodiscard]] std::vector<std::byte> load(std::string_view name) const {
         if (const std::span<const std::byte> baked = find(name); !baked.empty()) {
             return {baked.begin(), baked.end()};
         }
         if (name.empty()) { return {}; }
+        // A data: URL CARRIES ITS OWN BYTES, so it resolves here and reaches no
+        // socket and no disk. Doing it in the registry rather than at each
+        // caller is what makes an <img src="data:...">, a fetch, a CSS url()
+        // and a <script src> all work from one change - and the registry is
+        // consulted first, so a page may still override one by name.
+        if (is_data_url(name)) {
+            data_url inline_bytes;
+            if (parse_data_url(name, inline_bytes)) { return std::move(inline_bytes.bytes); }
+            return {};
+        }
         const std::filesystem::path relative{name};
         if (relative.is_absolute()) { return read_file(relative); }
         for (const std::filesystem::path & root :

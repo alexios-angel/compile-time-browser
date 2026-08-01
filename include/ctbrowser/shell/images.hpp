@@ -14,15 +14,22 @@
 #include <ctbrowser/paint/paint.hpp>
 
 #include <ctbrowser/shell/assets.hpp>
+#include <ctbrowser/shell/jpeg.hpp>
+#include <ctbrowser/shell/png.hpp>
 
 // Decoding images into the bitmap the display list already carries.
 //
 // BMP is built in - uncompressed 24/32bpp, which every image tool can write and
-// which needs no library at all. Everything else arrives through `decoder`, a
-// hook the application layer fills in from SDL3_image when it was found. That
-// split is deliberate: this module is part of the SDL-FREE engine, so sprite
-// loading and drawing are testable headless, and a build without SDL3_image
-// still shows BMPs rather than nothing.
+// which needs no library at all. PNG goes through libpng (`png.hpp`) and JPEG
+// through libjpeg-turbo (`jpeg.hpp`), both part of the SDL-free engine.
+// Everything else - GIF, WEBP, TIFF - arrives through `decoder`, a hook the
+// application layer fills in from SDL3_image when it was found.
+//
+// PNG MOVED OUT OF THAT HOOK on 2026-08-01. Leaving it there meant `tests/`,
+// which is SDL-free by an invariant `tests/api_surface` lints for, saw every
+// PNG as a zero-sized image - and nothing in the suite said so, because the
+// pages in this tree load BMPs. Phaser found it: its texture manager loads
+// three base64 PNGs during boot and will not start until all three settle.
 
 namespace ctbrowser::shell {
 
@@ -226,6 +233,12 @@ public:
         std::shared_ptr<const paint::bitmap> image;
         if (!bytes.empty()) {
             paint::bitmap decoded = decode_bmp(bytes);
+            // PNG BEFORE THE HOOK, deliberately: it means a headless test and an
+            // application with SDL3_image decode the same file with the same
+            // library and get the same pixels. A format whose result depended on
+            // whether SDL was found is one a golden cannot compare.
+            if (decoded.empty() && looks_like_png(bytes)) { decoded = decode_png(bytes); }
+            if (decoded.empty() && looks_like_jpeg(bytes)) { decoded = decode_jpeg(bytes); }
             if (decoded.empty() && decoder_) { decoded = decoder_(bytes, name); }
             if (!decoded.empty()) {
                 image = std::make_shared<const paint::bitmap>(std::move(decoded));

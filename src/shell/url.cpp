@@ -5,6 +5,9 @@
 // what keeps 1.2 MB of headers off every consumer of the engine.
 #include <boost/url.hpp>
 
+#include <ctbrowser/core/algorithms.hpp>
+
+#include <cstring>
 #include <string>
 
 namespace ctbrowser::shell {
@@ -12,6 +15,27 @@ namespace ctbrowser::shell {
 namespace urls = boost::urls;
 
 namespace {
+
+// A data: URL's non-base64 form is percent-encoded text. NOT Boost.URL's
+// `pct_string_view`, which validates and throws on a stray `%` - and a browser
+// shows the image anyway. Ten lines with the engine's own hex_value is the
+// lenient answer, and this is the rare form: every generator this engine has
+// met, Phaser's textures included, writes base64.
+[[nodiscard]] std::string percent_decode(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const int high = i + 2 < text.size() && text[i] == '%' ? hex_value(text[i + 1]) : -1;
+        const int low = high < 0 ? -1 : hex_value(text[i + 2]);
+        if (low < 0) {
+            out += text[i];
+            continue;
+        }
+        out += static_cast<char>(high * 16 + low);
+        i += 2;
+    }
+    return out;
+}
 
 // LENIENCY, AND IT HAS TO COME FIRST.
 //
@@ -155,6 +179,61 @@ std::string resolve(std::string_view base, std::string_view reference) {
     if (!urls::resolve(*base_url, *ref_url, out)) { return std::string{reference}; }
     out.normalize();
     return out.buffer();
+}
+
+// NOT THROUGH BOOST.URL, and that is deliberate rather than an oversight. It
+// parses a data: URL happily, but everything interesting lives in the opaque
+// path - Boost hands back `image/png;base64,iVBOR...` as one string and the
+// splitting is still here. Worse, pre_encode() above would percent-encode the
+// payload's own `+` and `/` on the way in, which are base64 alphabet
+// characters: running a data URL through the lenient path would corrupt it.
+bool is_data_url(std::string_view url) {
+    constexpr std::string_view scheme = "data:";
+    if (url.size() < scheme.size()) { return false; }
+    for (std::size_t i = 0; i < scheme.size(); ++i) {
+        if (ascii_lower(url[i]) != scheme[i]) { return false; }
+    }
+    return true;
+}
+
+bool parse_data_url(std::string_view url, data_url & out) {
+    if (!is_data_url(url)) { return false; }
+    url.remove_prefix(std::string_view{"data:"}.size());
+    // RFC 2397's comma separates the metadata from the payload, and a URL
+    // without one is not a data URL - there is no payload to be lenient about.
+    const std::size_t comma = url.find(',');
+    if (comma == std::string_view::npos) { return false; }
+    std::string_view meta = url.substr(0, comma);
+    const std::string_view payload = url.substr(comma + 1);
+
+    // `;base64` is the LAST parameter or it is not the encoding marker: a
+    // media type parameter that merely contains the word is not one.
+    constexpr std::string_view marker = ";base64";
+    bool is_base64 = false;
+    if (meta.size() >= marker.size()) {
+        const std::string_view tail = meta.substr(meta.size() - marker.size());
+        if (ascii_iequals(tail, marker)) {
+            is_base64 = true;
+            meta.remove_suffix(marker.size());
+        }
+    }
+
+    // The media type is everything up to the first parameter. Its parameters -
+    // `;charset=utf-8` - are dropped: nothing in this engine dispatches on
+    // them, and a type that lies about its bytes is decided by the decoder
+    // sniffing the bytes anyway.
+    const std::size_t semicolon = meta.find(';');
+    const std::string_view type = meta.substr(0, semicolon);
+    // Empty means the RFC's default, which is already in the struct.
+    if (!type.empty()) { out.mime = ascii_lower_copy(type); }
+
+    const std::string decoded = is_base64 ? base64_decode(payload) : percent_decode(payload);
+    out.bytes.resize(decoded.size());
+    // `data:,` IS A VALID DATA URL and decodes to no bytes at all - and memcpy
+    // is declared never-null in both arguments, so the empty case is UB rather
+    // than a harmless no-op. UBSan caught this; a release build would not have.
+    if (!decoded.empty()) { std::memcpy(out.bytes.data(), decoded.data(), decoded.size()); }
+    return true;
 }
 
 } // namespace ctbrowser::shell

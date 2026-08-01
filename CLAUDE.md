@@ -56,6 +56,10 @@ gate and CI runs it.
   into the cross sysroot. Boost.URL is the one COMPILED Boost library the engine
   links (it cannot be header-only), so the Windows presets need this run once.
   See `docs/build.md` for what else was considered and turned down.
+- `tools/build-image-libs-mingw.sh` — its sibling, for zlib, libpng and
+  libjpeg-turbo. PNG and JPEG decode in the SDL-FREE engine, so the Windows
+  presets need this run once too. Versions are pinned on purpose; see
+  `docs/build.md`.
 - `tools/format.sh`, `tools/check-package.sh`, `tools/check-render.cmake`,
   `tools/remote-build.sh`.
 
@@ -68,12 +72,19 @@ gate and CI runs it.
   rest of `include/` and `src/` must stay clean. That test carries an explicit
   allow-list for the files that may include SDL.
 - **Small shared algorithms live in `core/algorithms.hpp`** — ASCII case
-  folding, hex digits, whitespace trimming. Everything there had at least three
-  copies before it moved. It is **ASCII-only on purpose**: goldens are
+  folding, hex digits, whitespace trimming, base64. Everything there had at
+  least three copies before it moved, except `base64_decode`, which went there
+  with two on the grounds that `atob` and `data:` URLs decoding base64
+  *differently* is the same bug the two URL parsers were. It is **ASCII-only on purpose**: goldens are
   byte-compared across Linux and Windows, so a locale-aware fold would make a
   render depend on `LC_ALL`. The whitespace SET is a parameter, because HTML,
   JavaScript and the GLSL preprocessor genuinely disagree about what whitespace
   is and unifying them would be a bug.
+- **Images decode WITHOUT SDL**, all the way down: BMP by hand, PNG through
+  libpng, JPEG through libjpeg-turbo, each in one `.cpp` behind a two-function
+  header. SDL3_image remains an optional hook for the rest. A format that only
+  works when SDL was found is one `tests/` cannot assert on and no golden can
+  compare — which is exactly how PNG stayed broken until Phaser arrived.
 - **No third-party header in a public header.** Boost/SDL/FreeType includes
   belong in a `.cpp`: every consumer parses what a header includes, and
   `<windows.h>` or `<boost/asio.hpp>` in one is a cost paid by everyone who
