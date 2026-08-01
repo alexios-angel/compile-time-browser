@@ -614,6 +614,31 @@ void test_var_declarators_run_left_to_right() {
 // 2 concatenate identically. So every assertion here either asks `typeof` or
 // puts the result somewhere only a number works - which is exactly how the bug
 // surfaced in the first place, indexing pixel data with `(+y * 8 + +x) * 4`.
+// A PRIMITIVE BOXES ON PROPERTY ACCESS, so `Number.prototype`'s own prototype
+// is `Object.prototype` and `(5).hasOwnProperty(...)` is a perfectly ordinary
+// thing to write. Numbers and booleans stopped at their own prototype table
+// here and answered undefined past it; arrays and strings already chained
+// correctly, which is why nothing noticed.
+//
+// Found by the Phaser API probe: its tween manager asks `hasOwnProperty` of a
+// number while working out which properties of a target to animate. Library
+// code does this constantly on values whose type it has not checked.
+void test_primitives_reach_object_prototype() {
+    expect("return typeof (5).hasOwnProperty;", "function");
+    expect("return String((5).hasOwnProperty('x'));", "false");
+    expect("return typeof true.hasOwnProperty;", "function");
+    expect("return String(true.hasOwnProperty('x'));", "false");
+    expect("return typeof (5).isPrototypeOf;", "function");
+    expect("return typeof (5).propertyIsEnumerable;", "function");
+    // The own tables still WIN, or this fix would have shadowed them.
+    expect("return (255).toString(16);", "ff");
+    expect("return (1.5).toFixed(2);", "1.50");
+    expect("return true.toString();", "true");
+    // And the chain arrives at the same place a string's and an array's do.
+    expect("return typeof 'a'.hasOwnProperty;", "function");
+    expect("return typeof [].hasOwnProperty;", "function");
+}
+
 void test_unary_plus_converts() {
     expect("return typeof (+'2');", "number");
     expect("return typeof (+'abc');", "number");
@@ -2510,6 +2535,7 @@ int main() {
     test_symbol();
     test_var_declarators_run_left_to_right();
     test_unary_plus_converts();
+    test_primitives_reach_object_prototype();
     test_array_length_is_writable();
     test_collections();
     test_errors();

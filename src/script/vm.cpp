@@ -416,10 +416,28 @@ value context::lookup_property(value target, const std::string & name) {
         if (object_object * table = prototype(proto_kind::string)) {
             if (value * found = table->find(name)) { return *found; }
         }
+        if (object_object * table = prototype(proto_kind::object)) {
+            if (value * found = table->find(name)) { return *found; }
+        }
         return value::undefined();
     }
     if (target.is_number()) {
         if (object_object * table = prototype(proto_kind::number)) {
+            if (value * found = table->find(name)) { return *found; }
+        }
+        // ...THEN Object.prototype, because `Number.prototype`'s own prototype
+        // IS Object.prototype and a primitive boxes on property access. Without
+        // this `(5).hasOwnProperty(...)` read undefined - and library code does
+        // exactly that on values whose type it has not checked. Phaser's tween
+        // manager asks `hasOwnProperty` of a number while working out which
+        // properties of a target to animate.
+        //
+        // NUMBERS, BOOLEANS AND STRINGS ALL LACKED THIS. Only arrays chained to
+        // Object.prototype, and the comment there says it is "the chain
+        // JavaScript actually has" - which was true of arrays and of nothing
+        // else. The regression test asserted the string case on the assumption
+        // it already worked, and it did not.
+        if (object_object * table = prototype(proto_kind::object)) {
             if (value * found = table->find(name)) { return *found; }
         }
         return value::undefined();
@@ -429,6 +447,9 @@ value context::lookup_property(value target, const std::string & name) {
     // that calls it explicitly - to build a cache key, say - found nothing.
     if (target.is_boolean()) {
         if (object_object * table = prototype(proto_kind::boolean)) {
+            if (value * found = table->find(name)) { return *found; }
+        }
+        if (object_object * table = prototype(proto_kind::object)) {
             if (value * found = table->find(name)) { return *found; }
         }
         return value::undefined();
