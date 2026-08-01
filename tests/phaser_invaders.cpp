@@ -61,7 +61,8 @@ void check(bool ok, std::string_view what) {
 [[nodiscard]] std::string ask(browser & page, const char * expression) {
     const std::size_t before = page.bindings().console_output().size();
     (void)page.run_script(std::string{"try { console.log('=' + String("} + expression +
-                          ")); } catch (e) { console.log('=threw: " "' + (e && e.message ? "
+                          ")); } catch (e) { console.log('=threw: "
+                          "' + (e && e.message ? "
                           "e.message : e)); }");
     const auto & said = page.bindings().console_output();
     for (std::size_t i = said.size(); i-- > before;) {
@@ -120,16 +121,14 @@ int main() {
     const auto number = [](const std::string & text) {
         try {
             return std::stod(text);
-        } catch (...) {
-            return std::nan("");
-        }
+        } catch (...) { return std::nan(""); }
     };
     const double idle = number(drifted);
     const double left = number(pushed_left);
     const double right = number(pushed_right);
     if (std::isnan(idle) || std::isnan(left) || std::isnan(right)) {
-        std::printf("FAIL the ship's position could not be read: [%s] [%s] [%s]\n",
-                    drifted.c_str(), pushed_left.c_str(), pushed_right.c_str());
+        std::printf("FAIL the ship's position could not be read: [%s] [%s] [%s]\n", drifted.c_str(),
+                    pushed_left.c_str(), pushed_right.c_str());
         ++ctbrowser_test_failures;
         REPORT("phaser_invaders");
     }
