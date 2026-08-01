@@ -94,10 +94,10 @@ int main() {
 
     ctbrowser::shell::browser page{ctbrowser::shell::browser_options{320, 240}};
     const auto add = [&page](const char * name, const std::string & text) {
-        page.assets().add(name,
-                          std::vector<std::byte>{
-                              reinterpret_cast<const std::byte *>(text.data()),
-                              reinterpret_cast<const std::byte *>(text.data() + text.size())});
+        page.assets().add(
+            name,
+            std::vector<std::byte>{reinterpret_cast<const std::byte *>(text.data()),
+                                   reinterpret_cast<const std::byte *>(text.data() + text.size())});
     };
     add("phaser.js", bundle);
     add("probe.js", probes);
@@ -145,7 +145,7 @@ int main() {
         std::string at;
         page.set_alert_hook([&at](const std::string & said) { at = said; });
         (void)page.run_script("alert('at=' + globalThis.__at + ' probes=' + "
-                             "(globalThis.__probes ? globalThis.__probes.length : 'none'));");
+                              "(globalThis.__probes ? globalThis.__probes.length : 'none'));");
         std::printf("FAIL the probes did not run: %s [%s]\n", page.script_error().c_str(),
                     at.c_str());
         ++ctbrowser_test_failures;
