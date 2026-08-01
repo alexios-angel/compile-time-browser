@@ -32,6 +32,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -209,10 +210,69 @@ private:
     }
     m.reached(rung_update);
 
-    // Painting is a separate question and gets its own corpus page when there
-    // is something to paint; until then this rung is honestly unreached.
-    m.fail_at(rung_paints, "no corpus page draws through Phaser yet");
+    // --- and does what it drew reach the PIXELS? -----------------------------
+    //
+    // A create() that is called and paints nothing satisfies every rung above
+    // this one, so these are genuinely different questions. p5 answered them
+    // differently for a whole stretch: it ran its entire draw loop while
+    // `(220).toString(16)` returned "220", so every fill came out white.
+    //
+    // Drawn HERE rather than left to examples/phaserbasic.cpp, because that one
+    // needs SDL to build and this test must not. The golden comparison is still
+    // that example's job - this rung asks the weaker, unmissable question: did
+    // any of it land at all.
+    (void)ask(R"JS((function () {
+        var scene = window.__game.scene.scenes[0];
+        var g = scene.add.graphics();
+        g.fillStyle(0xff0000, 1);
+        g.fillRect(0, 0, 60, 60);
+        return 'drew';
+    })())JS");
+    for (int i = 0; i < 5; ++i) { page.tick(16); }
+
+    // The canvas is found by walking the document for the element Phaser made,
+    // rather than by id - Phaser does not give it one.
+    const auto txn = page.doc().read();
+    ctbrowser::node_id canvas{};
+    const auto walk = [&](auto && self, ctbrowser::node_id at) -> void {
+        if (!canvas && page.atoms().text(txn.tag(at).value_or(ctbrowser::atom{})) == "canvas") {
+            canvas = at;
+        }
+        for (const ctbrowser::node_id child : txn.children(at)) { self(self, child); }
+    };
+    walk(walk, txn.root());
+    const auto pixels = page.canvases().pixels_of(canvas);
+    if (!canvas || pixels == nullptr) {
+        m.fail_at(rung_paints, "Phaser's canvas has no pixel buffer");
+        return m;
+    }
+    const ctbrowser::color drawn{pixels->at(20, 20)};
+    if (drawn != ctbrowser::color::rgba(255, 0, 0)) {
+        m.fail_at(rung_paints, "fillRect did not reach the pixels (20,20 is " +
+                                   std::to_string(drawn.red()) + "," +
+                                   std::to_string(drawn.green()) + "," +
+                                   std::to_string(drawn.blue()) + ")");
+        return m;
+    }
+    m.reached(rung_paints);
     return m;
+}
+
+// The recorded floor: `key=value` lines, the same shape tests/p5-ratchet.txt
+// uses. A missing file is not an error - it is the state this test shipped in
+// for one day, and it reports the number rather than inventing a floor.
+[[nodiscard]] std::string recorded(const std::string & text, std::string_view key) {
+    for (std::size_t at = 0; at < text.size();) {
+        const std::size_t end = text.find('\n', at);
+        const std::string_view line{text.data() + at,
+                                    (end == std::string::npos ? text.size() : end) - at};
+        if (line.starts_with(key) && line.size() > key.size() && line[key.size()] == '=') {
+            return std::string{line.substr(key.size() + 1)};
+        }
+        if (end == std::string::npos) { break; }
+        at = end + 1;
+    }
+    return {};
 }
 
 } // namespace
@@ -221,13 +281,49 @@ int main() {
     const std::string source = read_file("examples/assets/phaser.js");
     const measurement m = measure(source);
 
+    // MACHINE-READABLE FIRST, for tools/phaser-ratchet.py, then the sentence a
+    // person reads. Same two lines p5_ratchet emits, so one tool shape drives
+    // both.
+    std::printf("LEVEL %d/%d\n", m.level, rung_paints);
+    std::printf("BLOCKER %s\n", m.blocker.c_str());
     std::printf("     PHASER LEVEL %d/%d (%s)\n", m.level, rung_paints, rung_name(m.level));
     if (!m.blocker.empty()) { std::printf("     blocked by: %s\n", m.blocker.c_str()); }
     std::printf("     compile %.0f ms, page %.0f ms\n", m.compile_ms, m.page_ms);
 
-    // NO RECORD FILE YET, and that is deliberate: a ratchet records a number
-    // somebody has decided is the floor, and this number has been measured
-    // exactly once. tools/phaser-ratchet.py --advance writes it once the first
-    // real work against it has settled.
+    // THE PAWL. It turns one way: the level may not go down, and at the same
+    // level the blocker may not change. That second half is the one that
+    // matters - a fix that trades one wall for another leaves the number alone
+    // and reads as "no change" without it.
+    //
+    // Only tools/phaser-ratchet.py --advance writes the record, because a test
+    // that edits its own expectations cannot fail.
+    const std::string record = read_file("tests/phaser-ratchet.txt");
+    if (record.empty()) {
+        std::printf("     (no tests/phaser-ratchet.txt yet - run "
+                    "tools/phaser-ratchet.py --advance to record this)\n");
+        REPORT("phaser_ratchet");
+    }
+    const std::string want_level = recorded(record, "level");
+    const std::string want_blocker = recorded(record, "blocker");
+    if (!want_level.empty()) {
+        const int floor_level = std::stoi(want_level);
+        if (m.level < floor_level) {
+            std::printf("FAIL phaser went BACKWARDS: %d, recorded %d (%s)\n", m.level, floor_level,
+                        rung_name(floor_level));
+            ++ctbrowser_test_failures;
+        } else if (m.level == floor_level && m.blocker != want_blocker) {
+            // Progress at the same rung is still progress, but it has to be
+            // recorded deliberately - a blocker that changes silently is a fix
+            // that swapped one wall for another and told nobody.
+            std::printf("FAIL phaser is stuck at %d but the blocker CHANGED\n"
+                        "  was: %s\n  now: %s\n",
+                        m.level, want_blocker.c_str(), m.blocker.c_str());
+            ++ctbrowser_test_failures;
+        } else if (m.level > floor_level) {
+            std::printf("     AHEAD of the record (%d > %d) - run "
+                        "tools/phaser-ratchet.py --advance\n",
+                        m.level, floor_level);
+        }
+    }
     REPORT("phaser_ratchet");
 }

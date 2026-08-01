@@ -56,6 +56,10 @@ gate and CI runs it.
   into the cross sysroot. Boost.URL is the one COMPILED Boost library the engine
   links (it cannot be header-only), so the Windows presets need this run once.
   See `docs/build.md` for what else was considered and turned down.
+- `tools/phaser-ratchet.py` — the same loop for Phaser 4 that `p5-ratchet.py`
+  runs for p5.js: build, measure, `--advance` to record. A SECOND CORPUS, and
+  it earned its keep in a day — see `docs/script.md`. No `--bisect`: Phaser
+  clears every language rung, so there is nothing to carve.
 - `tools/build-image-libs-mingw.sh` — its sibling, for zlib, libpng and
   libjpeg-turbo. PNG and JPEG decode in the SDL-FREE engine, so the Windows
   presets need this run once too. Versions are pinned on purpose; see
@@ -155,7 +159,7 @@ Read the one that matches what you are touching — not all of them.
 | | |
 |---|---|
 | `docs/architecture.md` | where everything lives, and how to add a file to a subsystem. **Start here if you do not know where something lives.** |
-| `docs/script.md` | the JS compiler, the VM, the standard library — what the language supports and what it rejects by name. **p5.js v2.3.1 runs**: `tests/p5_ratchet.cpp` records how FAR the bundle gets and `tests/p5_api.cpp` how WIDE the working surface is; `tools/p5-ratchet.py` and `tools/p5-api.py` drive them |
+| `docs/script.md` | the JS compiler, the VM, the standard library — what the language supports and what it rejects by name. **p5.js v2.3.1 runs**: `tests/p5_ratchet.cpp` records how FAR the bundle gets and `tests/p5_api.cpp` how WIDE the working surface is; `tools/p5-ratchet.py` and `tools/p5-api.py` drive them. **Phaser 4.2.1 runs too** — a second corpus, 10/10, and the four engine bugs it found that p5 could not |
 | `docs/shell.md` | the application API, form controls, editing, input, navigation, resources — anything a page can do |
 | `docs/style-layout.md` | the cascade and the `style` attribute; tables, generated content, whitespace collapsing |
 | `docs/raster.md` | fonts, glyph rasterisation, the font8x8 fallback, **SVG**, and **WebGL** — GLSL ES in `glsl.hpp` and the software rasteriser in `softgl.hpp`. **p5.js WEBGL mode works**: `examples/pages/p5-webgl.html` draws a cube and a sphere through p5's own shaders, with a golden. `docs/webgl-plan.md` is the design and the staging |

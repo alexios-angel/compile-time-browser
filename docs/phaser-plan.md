@@ -1,17 +1,39 @@
 # Phaser as a second corpus
 
-## Read this first: nothing here is measured yet
+## Status: DONE, 10/10, and stage 0 rewrote the rest as predicted
 
-The p5.js work and the WebGL 2 plan were both scoped by *reading the bundle* —
-`rg` over 4.5 MB told us WebGL 2 needed four functions and no VAOs, and the p5
-ratchet told us where the engine stopped before a line of code was written.
+**This file was written with the network down and every stage below the harness
+was a hypothesis.** Stage 0 replaced them with facts on 2026-08-01, and — as the
+lexer plan's stage 0 did before it — the facts cancelled most of what follows.
+It is kept because the reasoning about *why a second corpus* is the part that
+was right, and because the guessed stages are a useful record of how far off a
+plan written without measurement can be.
 
-**None of that has happened for Phaser.** The network was down when this was
-written, so the bundle could not be fetched and the engine has never seen it.
-Everything below the harness design is therefore a *hypothesis about what a game
-framework needs*, not a finding, and it is marked as such. Stage 0 replaces it
-with facts, and stage 0 may well rewrite the rest — the lexer plan's stage 0
-cancelled its own stages 1-5, which is the outcome to hope for rather than fear.
+What actually happened:
+
+| | |
+|---|---|
+| Rung reached on arrival | **7/10** — constructs a Game |
+| Rung reached the same day | **10/10** — paints what the scene drew |
+| Engine bugs found | **4**, none about games, none findable by p5 |
+| Stages 1+ below that were needed | **none of them** |
+
+The four were a `data:` URL that could be written but never read, a PNG that
+would not decode without SDL, `+x` compiling to a register copy instead of
+ToNumber, and `a.length = 0` being silently dropped. `docs/script.md` and
+`docs/shell.md` have them in full. Not one appears in the guessed list below —
+which named `requestAnimationFrame`, delta timing, the loader, input state and
+Canvas 2D corners, and every one of those already worked.
+
+The harness is what the plan got right, and it is all in place:
+`tests/phaser_ratchet.cpp` (the ladder), `tests/phaser-ratchet.txt` (the record,
+with a pawl that fails on a regression AND on a silently changed blocker),
+`tools/phaser-ratchet.py --advance` (the only writer), and
+`examples/pages/phaser-basic.html` + `tests/golden/phaserbasic.ppm` for rung 10
+— byte-identical on Linux and on the Windows cross-build.
+
+**Still not built: `tests/phaser_api.cpp`**, the how-WIDE half. That is the
+remaining work, and the p5 side (179 probes) is the model.
 
 ## Why a second library at all
 
@@ -72,18 +94,26 @@ Two things the p5 harness learned the hard way, to be built in from the start:
 `tools/phaser-ratchet.py` and `tools/phaser-api.py` drive them, as their p5
 counterparts do.
 
-## Stage 0 — get the bundle and find the wall
+## Stage 0 — get the bundle and find the wall — DONE
 
-Fetch Phaser 3 into `examples/assets/`, point the ratchet at it, and **report
-the rung it stops at and why**. Nothing else. That number decides everything
-after it, and guessing it would waste the work.
+Fetch Phaser into `examples/assets/`, point the ratchet at it, and **report the
+rung it stops at and why**. Nothing else. That number decides everything after
+it, and guessing it would waste the work.
+
+**Done, and it decided everything after it.** The bundle is Phaser **4.2.1**,
+not 3. It stopped at 7/10 with `create() never ran` — and the cause was four
+deep, each bug hidden by the one in front of it.
 
 The bundle is large — Phaser 3 is roughly 1 MB minified, several MB
 unminified — so this also re-measures the front-end cost that
 `docs/performance.md` covers, on a second input. Compile time on p5 is ~0.65 s;
 if Phaser is much worse per byte, that is itself a finding.
 
-## Stages 1+ — provisional, pending stage 0
+## Stages 1+ — provisional, pending stage 0 — AND ALL WRONG
+
+Kept verbatim as written, because the gap between them and what stage 0 actually
+found is the lesson. Every item below already worked; not one of the four real
+bugs is on the list.
 
 Listed so the shape is clear, **not** as commitments. Each is a guess at what a
 game framework needs that a sketch library does not:

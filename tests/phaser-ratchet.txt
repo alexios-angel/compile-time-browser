@@ -1,0 +1,47 @@
+# How far examples/assets/phaser.js (Phaser 4.2.1) gets through the engine.
+# tests/phaser_ratchet.cpp measures it; this file records it. The level may not
+# go DOWN, and at the same level the blocker may not CHANGE, without the test
+# failing.
+#
+# Only tools/phaser-ratchet.py --advance writes this file. A test that edits its
+# own expectations cannot fail, so advancing is a deliberate act.
+#
+# The ladder: 1 read, 2 lexed, 3 parsed, 4 compiled, 5 runs as a page,
+# 6 defines Phaser, 7 constructs a Game, 8 runs create(), 9 runs update(),
+# 10 paints what the scene drew.
+#
+# WHY THE BLOCKER IS COMPARED and not just the level: the four bugs that took
+# this from 7 to 9 were found one behind another, each hidden by the one in
+# front. A fix that trades one wall for another leaves the number alone, and
+# without comparing the blocker that reads as "no change".
+
+level=10
+blocker=
+
+# WHAT THE SECOND CORPUS COST AND BOUGHT (2026-08-01).
+#
+# It reached 7/10 the day it arrived and 9/10 the same day, and every one of the
+# four bugs between was an ENGINE bug that p5.js could not have found:
+#
+#   data: URLs could be written but never read - so Phaser's three base64 boot
+#   textures all failed, and the framework waited forever with isBooted true and
+#   isRunning false, reporting nothing
+#
+#   PNG did not decode without SDL, because it arrived through a hook only the
+#   application layer installs and tests/ is SDL-free
+#
+#   `+x` was a register copy rather than ToNumber, so `+"2"` stayed a string
+#
+#   `a.length = 0` was silently dropped, so a queue Phaser had just drained was
+#   still full and the next frame threw "duplicate key"
+#
+# RUNG 10 LANDED THE SAME DAY. examples/pages/phaser-basic.html draws through
+# Phaser's own Graphics object and Canvas renderer - rects filled and stroked,
+# circles, a triangle, a line - and tests/golden/phaserbasic.ppm compares the
+# frame byte for byte on Linux and on the Windows cross-build.
+#
+# The rung inside THIS test asks the weaker question on purpose: it draws one
+# red rectangle through the scene and reads the pixel back. That is the check
+# that cannot be skipped, because this test must build without SDL and the
+# golden example cannot. A create() that runs and paints nothing clears every
+# rung below this one.

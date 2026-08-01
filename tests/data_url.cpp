@@ -105,7 +105,7 @@ void test_the_parser() {
 // the world inserts a newline every 76 characters.
 void test_the_decoder() {
     CHECK_EQ(base64_decode("aGVsbG8="), std::string{"hello"});
-    CHECK_EQ(base64_decode("aGVsbG8"), std::string{"hello"});  // padding optional
+    CHECK_EQ(base64_decode("aGVsbG8"), std::string{"hello"});    // padding optional
     CHECK_EQ(base64_decode("aGVs\nbG8="), std::string{"hello"}); // wrapped
     CHECK_EQ(base64_decode("aGVs bG8="), std::string{"hello"});
     CHECK_EQ(base64_decode(""), std::string{});
@@ -115,7 +115,7 @@ void test_the_decoder() {
     // percent-encoder would have eaten had data URLs gone through the lenient
     // pre-encoding path the rest of url.cpp uses.
     CHECK_EQ(base64_decode("Pz8/Pg=="), std::string{"??"
-                                                  "?>"});
+                                                    "?>"});
 }
 
 // THROUGH THE ASSET REGISTRY, which is where this had to land for one change to
@@ -128,10 +128,10 @@ void test_the_registry() {
 
     // The registry is still consulted FIRST, so a page may override one by name.
     const std::string override_text = "seeded";
-    assets.add("data:text/plain;base64,aGVsbG8=",
-               std::vector<std::byte>{
-                   reinterpret_cast<const std::byte *>(override_text.data()),
-                   reinterpret_cast<const std::byte *>(override_text.data() + 6)});
+    assets.add(
+        "data:text/plain;base64,aGVsbG8=",
+        std::vector<std::byte>{reinterpret_cast<const std::byte *>(override_text.data()),
+                               reinterpret_cast<const std::byte *>(override_text.data() + 6)});
     const std::vector<std::byte> seeded = assets.load("data:text/plain;base64,aGVsbG8=");
     CHECK_EQ(std::string(reinterpret_cast<const char *>(seeded.data()), seeded.size()),
              override_text);
@@ -177,7 +177,8 @@ void test_a_scripted_image() {
         var im = new Image();
         im.onload = function () { window.__fired = 'load:' + im.width + 'x' + im.height; };
         im.onerror = function () { window.__fired = 'error'; };
-        im.src = ')"} + bmp_2x2 + "';");
+        im.src = ')"} + bmp_2x2 +
+                          "';");
     for (int i = 0; i < 4; ++i) { page.tick(16); }
 
     const std::size_t before = page.bindings().console_output().size();
@@ -240,8 +241,7 @@ void test_a_png_decodes_without_sdl() {
         });
         return out[0] === out[1] ? 'same: ' + out[0] : 'DIFFER png=' + out[0] + ' bmp=' + out[1];
     })())JS";
-    CHECK_EQ(ask(read),
-             std::string{"same: 255,0,0,255 0,255,0,255 0,0,255,255 255,255,255,255"});
+    CHECK_EQ(ask(read), std::string{"same: 255,0,0,255 0,255,0,255 0,0,255,255 255,255,255,255"});
 }
 
 // JPEG, THROUGH LIBJPEG-TURBO, IN A BUILD WITH NO SDL - the same gap as PNG

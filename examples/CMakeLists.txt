@@ -83,8 +83,14 @@ foreach(source ${example-sources})
     # golden for the same reason p5basic does - the page runs noLoop with fixed
     # rotations and no random, so the frame is the same everywhere, and nothing
     # short of the pixels proves the geometry actually landed.
+    # phaserbasic is the second library's answer to p5basic, and it is a
+    # different claim: somebody else's game framework, its own display list,
+    # its own Graphics object and its own Canvas renderer, onto this engine.
+    # The page draws only in create() with an empty update(), so the frame does
+    # not depend on which tick the screenshot landed on - Phaser owns its game
+    # loop, and a scene that animated would have no stable golden.
     set(golden-examples widgets elements p5basic p5text p5transform p5shape p5pixels
-        p5image webgltriangle p5webgl)
+        p5image webgltriangle p5webgl phaserbasic)
     # plutosvg_FOUND, not CTBROWSER_WITH_SVG: the latter is a compile
     # definition on a target and is not a variable this scope can test.
     if(plutosvg_FOUND)
