@@ -11,6 +11,7 @@
 #include <array>
 #include <charconv>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -643,7 +644,51 @@ public:
                 hoist(std::string{at(stmt).text});
             }
         }
+        // And every `var` in a NESTED block, which the loop above cannot see -
+        // it walks this body's own statements only. `hoist` returns early on a
+        // name already declared, so the statements just handled cost a lookup.
+        for (const std::int32_t stmt : kids(at(body))) { hoist_nested_vars(stmt, hoist); }
     }
+    // `var` IS FUNCTION-SCOPED. `let` and `const` are not, and until now the
+    // compiler could not tell them apart - the parser has always put the
+    // keyword on the node and nothing read it.
+    //
+    // So `if (c) { var x = 1; }` declared `x` in the BLOCK, the block's scope
+    // popped it, and every later read - including one from a nested function -
+    // found undefined. Phaser 4 is built by webpack, which emits exactly that
+    // shape for its feature flags:
+    //
+    //     if (true) { var SoundManagerCreator = __webpack_require__(14747); }
+    //     var Game = new Class({ initialize: function Game () {
+    //         this.sound = SoundManagerCreator.create(this);   // undefined
+    //     }});
+    //
+    // p5 never reached it because p5 is modern code that uses let and const.
+    // Two libraries, and the second found it in an afternoon.
+    //
+    // Hoisting stops at a nested function, because that function's vars are
+    // ITS scope's, and does not descend into a declarator's initialiser, which
+    // is an expression and cannot contain a declaration statement.
+    template <typename Hoist> void hoist_nested_vars(std::int32_t index, const Hoist & hoist) {
+        if (index < 0) { return; }
+        const vp::node & n = at(index);
+        if (is_function_node(n)) { return; }
+        if (n.kind == vp::nk::var_decl && n.text == "var") {
+            for (const std::int32_t d : kids(n)) {
+                if (at(d).b >= 0) {
+                    std::vector<std::string> names;
+                    pattern_names(at(d).b, names);
+                    for (std::string & name : names) { hoist(std::move(name)); }
+                } else {
+                    hoist(std::string{at(d).text});
+                }
+            }
+            return;
+        }
+        for (const std::int32_t slot : child_slots(n)) { hoist_nested_vars(slot, hoist); }
+        for (const std::int32_t k : kids(n)) { hoist_nested_vars(k, hoist); }
+    }
+
     [[nodiscard]] bool was_predeclared(std::string_view name) const {
         for (const std::string & p : frames_.back().predeclared) {
             if (p == name) { return true; }
@@ -1166,13 +1211,21 @@ public:
                     release_to(mark);
                     continue;
                 }
-                // The hoisted slot is reused only when it is in THIS scope.
-                // was_predeclared is function-scoped - that is what hoisting
-                // means - so asking it alone made a `const` inside a block
-                // assign through to a binding declared at the top of the
-                // function instead of shadowing it.
+                // WHICH KEYWORD IT IS DECIDES THIS, and until now nothing
+                // asked. `var` is FUNCTION-scoped: it always writes the hoisted
+                // binding, wherever the statement sits, because there is only
+                // one of it per function. `let` and `const` are BLOCK-scoped
+                // and must shadow, which is why the hoisted slot is reused for
+                // them only when it is in THIS scope - asking was_predeclared
+                // alone made a `const` inside a block assign through to a
+                // binding at the top of the function.
+                //
+                // Getting this wrong the other way is what `if (c) { var x = 1; }`
+                // did: the block declared its own `x`, the scope popped it, and
+                // every later read found undefined.
+                const bool function_scoped = n.text == "var";
                 if (was_predeclared(decl.text) &&
-                    find_local_in_current_scope(decl.text) != nullptr) {
+                    (function_scoped || find_local_in_current_scope(decl.text) != nullptr)) {
                     // hoisted above: this statement is only the initializer,
                     // and emit_write knows whether it goes through a cell
                     if (decl.a >= 0) {

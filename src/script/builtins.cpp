@@ -1202,6 +1202,26 @@ void install_string(context & cx) {
         if (from > to) { std::swap(from, to); }
         return c.string(s.substr(from, to - from));
     });
+    method(cx, string_proto, "substr", [](context & c, std::span<value> a) {
+        // LEGACY, and present because real code still uses it - Phaser 4 calls
+        // it fourteen times and died on the first. It is Annex B rather than
+        // the main specification, which is why it was missed: it takes a START
+        // and a LENGTH where slice and substring both take two positions.
+        //
+        // A NEGATIVE START COUNTS FROM THE END, which neither of the others
+        // does. `"abcdef".substr(-2)` is "ef", and getting that wrong reads
+        // from the front and looks almost right.
+        const std::string s = detail::this_string(c);
+        const double raw = num_at(a, 0);
+        const auto size = static_cast<double>(s.size());
+        const double start = raw < 0 ? std::max(size + raw, 0.0) : std::min(raw, size);
+        const auto from = static_cast<std::size_t>(start);
+        // A missing length means "to the end"; a negative one means nothing.
+        double want = a.size() > 1 ? num_at(a, 1) : size - start;
+        if (std::isnan(want) || want < 0) { want = 0; }
+        const auto count = static_cast<std::size_t>(std::min(want, size - start));
+        return c.string(s.substr(from, count));
+    });
     method(cx, string_proto, "split", [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
         value out = c.make_array();
