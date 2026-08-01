@@ -1,0 +1,193 @@
+<!doctype html>
+<!-- Space Invaders, in Phaser 4, on this engine.
+
+     THE POINT OF THE WHOLE PHASER CORPUS. The ratchet says how far the bundle
+     gets and the probes say how wide the surface is; neither is a game. This
+     runs the combination that only a real game exercises - sprites moving under
+     arcade physics, a group of enemies stepping in formation, bullets, overlap
+     callbacks that destroy things mid-frame, a score that updates, and a scene
+     that can end. Every one of those works in isolation according to the
+     probes; whether they work TOGETHER is a different claim.
+
+     NO ASSET FILES. Every texture is drawn at boot with a Graphics object and
+     `generateTexture`, which is a normal Phaser idiom and keeps this page
+     self-contained - no sprite sheet to commit, and nothing to go stale.
+
+     DETERMINISM, because this page has a golden:
+
+     * No `Math.random` anywhere. The invaders step on a fixed interval and the
+       player fires on one, so the same frame count always produces the same
+       frame.
+     * The player moves under a SCRIPT when no key is held - a fixed pattern of
+       left and right - so the golden does not depend on input while the arrow
+       keys still work for a human driving it.
+     * `physics.world.fixedStep` is left on with the engine's fixed timestep, so
+       the integration is identical run to run. -->
+<html>
+  <head>
+    <meta charset="utf-8">
+    <script src="../assets/phaser.js"></script>
+  </head>
+  <body style="margin:0;background:#000000">
+    <script>
+      var WIDTH = 320, HEIGHT = 240;
+
+      // The textures, drawn rather than loaded. Each is a Graphics object
+      // rendered into the texture manager and then thrown away.
+      function makeTextures(scene) {
+        var g = scene.add.graphics();
+
+        // The player: a squat turret.
+        g.fillStyle(0x44ff44, 1);
+        g.fillRect(0, 6, 20, 6);
+        g.fillRect(8, 0, 4, 6);
+        g.generateTexture('player', 20, 12);
+        g.clear();
+
+        // An invader: a blocky crab, two arms and a body.
+        g.fillStyle(0xff5555, 1);
+        g.fillRect(2, 2, 12, 8);
+        g.fillRect(0, 6, 2, 4);
+        g.fillRect(14, 6, 2, 4);
+        g.fillStyle(0x000000, 1);
+        g.fillRect(4, 4, 2, 2);
+        g.fillRect(10, 4, 2, 2);
+        g.generateTexture('invader', 16, 12);
+        g.clear();
+
+        // A bullet.
+        g.fillStyle(0xffff66, 1);
+        g.fillRect(0, 0, 2, 6);
+        g.generateTexture('bullet', 2, 6);
+
+        g.destroy();
+      }
+
+      var Invaders = {
+        // CUSTOM METHODS LIVE UNDER `extend`, and this is Phaser's rule rather
+        // than a quirk of this engine: createSceneFromObject copies the
+        // LIFECYCLE members - init, preload, create, update - straight onto the
+        // scene, and everything else only if it is inside `extend`. With `fire`
+        // and `hit` at the top level `this.fire` was undefined, update threw on
+        // its first frame, and the page rendered create()'s output forever
+        // while looking like a frozen game.
+        extend: {
+          hit: function (bullet, invader) {
+            bullet.destroy();
+            invader.destroy();
+            this.score += 10;
+            this.scoreText.setText('SCORE ' + this.score);
+            if (this.invaders.countActive(true) === 0) {
+              this.over = true;
+              this.add.text(WIDTH / 2 - 40, HEIGHT / 2, 'CLEARED',
+                            { fontSize: '16px', color: '#44ff44' });
+            }
+          },
+
+          fire: function () {
+            var b = this.bullets.create(this.player.x, this.player.y - 10, 'bullet');
+            b.setVelocityY(-160);
+          }
+        },
+
+        create: function () {
+          makeTextures(this);
+
+          this.score = 0;
+          this.over = false;
+          // The invader formation marches by stepping sideways on a timer and
+          // dropping when it reaches an edge - the original's behaviour, and
+          // the reason this is a timer rather than a velocity.
+          this.stepMs = 500;
+          this.sinceStep = 0;
+          this.marchDir = 1;
+
+          this.player = this.physics.add.sprite(WIDTH / 2, HEIGHT - 16, 'player');
+          this.player.setCollideWorldBounds(true);
+
+          this.bullets = this.physics.add.group();
+          this.invaders = this.physics.add.group();
+
+          // Five columns by three rows, placed by arithmetic so the formation
+          // is the same every run.
+          for (var row = 0; row < 3; row++) {
+            for (var col = 0; col < 5; col++) {
+              var inv = this.invaders.create(40 + col * 40, 30 + row * 26, 'invader');
+              inv.setImmovable(true);
+            }
+          }
+
+          this.scoreText = this.add.text(6, 4, 'SCORE 0', { fontSize: '12px', color: '#ffffff' });
+
+          this.physics.add.overlap(this.bullets, this.invaders, this.hit, null, this);
+
+          this.cursors = this.input.keyboard.createCursorKeys();
+          this.fireKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+
+          // The scripted run, used when nothing is held down. Frame counts, so
+          // it is the same wherever the page is opened.
+          this.frame = 0;
+          this.fireEvery = 24;
+        },
+
+        update: function (time, delta) {
+          if (this.over) { return; }
+          this.frame++;
+
+          // --- the player -----------------------------------------------------
+          var held = false;
+          if (this.cursors.left.isDown) { this.player.setVelocityX(-120); held = true; }
+          else if (this.cursors.right.isDown) { this.player.setVelocityX(120); held = true; }
+          if (!held) {
+            // THE SCRIPT: a slow sweep right, then back, on a fixed period. It
+            // is what makes the golden reproducible without freezing the page.
+            var phase = Math.floor(this.frame / 60) % 2;
+            this.player.setVelocityX(phase === 0 ? 60 : -60);
+          }
+          if (Phaser.Input.Keyboard.JustDown(this.fireKey)) { this.fire(); }
+          else if (this.frame % this.fireEvery === 0) { this.fire(); }
+
+          // --- the bullets ----------------------------------------------------
+          var bullets = this.bullets.getChildren();
+          for (var i = bullets.length - 1; i >= 0; i--) {
+            if (bullets[i].y < -8) { bullets[i].destroy(); }
+          }
+
+          // --- the formation --------------------------------------------------
+          this.sinceStep += delta;
+          if (this.sinceStep >= this.stepMs) {
+            this.sinceStep -= this.stepMs;
+            var live = this.invaders.getChildren();
+            var edge = false;
+            for (var j = 0; j < live.length; j++) {
+              var x = live[j].x + this.marchDir * 8;
+              if (x < 12 || x > WIDTH - 12) { edge = true; }
+            }
+            for (var k = 0; k < live.length; k++) {
+              if (edge) { live[k].y += 10; } else { live[k].x += this.marchDir * 8; }
+              // A landed invader ends the run, which is the whole lose
+              // condition and the reason the formation descends at all.
+              if (live[k].y > HEIGHT - 30) {
+                this.over = true;
+                this.add.text(WIDTH / 2 - 50, HEIGHT / 2, 'GAME OVER',
+                              { fontSize: '16px', color: '#ff5555' });
+              }
+            }
+            if (edge) { this.marchDir = -this.marchDir; }
+          }
+        }
+      };
+
+      new Phaser.Game({
+        type: Phaser.CANVAS,
+        width: WIDTH,
+        height: HEIGHT,
+        banner: false,
+        audio: { noAudio: true },
+        backgroundColor: '#000010',
+        physics: { default: 'arcade', arcade: { gravity: { y: 0 }, debug: false } },
+        scene: Invaders
+      });
+    </script>
+  </body>
+</html>

@@ -16,7 +16,15 @@
 
 set(ENV{SDL_VIDEODRIVER} offscreen)
 set(ENV{SDL_AUDIODRIVER} dummy)
-set(ENV{CTBROWSER_TEST_FRAMES} 30)
+# 30 FRAMES SUITS A DRAWING, and not a game. A page that renders once needs one
+# frame; phaser-invaders has to fire, travel and connect before there is
+# anything to compare, and at 30 frames nothing has happened yet. Overridable
+# per test with -DFRAMES= rather than by making the game unrealistic to suit the
+# harness.
+if(NOT DEFINED FRAMES)
+  set(FRAMES 30)
+endif()
+set(ENV{CTBROWSER_TEST_FRAMES} ${FRAMES})
 set(ENV{CTBROWSER_NETWORK} 0)
 set(ENV{CTBROWSER_FONTS} font8x8)
 set(ENV{CTBROWSER_SCREENSHOT} "${OUT}")

@@ -89,8 +89,15 @@ foreach(source ${example-sources})
     # The page draws only in create() with an empty update(), so the frame does
     # not depend on which tick the screenshot landed on - Phaser owns its game
     # loop, and a scene that animated would have no stable golden.
+    # phaserinvaders is the one that is a GAME rather than a drawing: sprites
+    # under arcade physics, a formation stepping on a timer, bullets, overlap
+    # callbacks destroying objects mid-frame and a score that updates. Every
+    # piece of that passes a probe on its own; the golden is the only thing that
+    # says they work together. Deterministic by construction - no Math.random,
+    # and the player sweeps on a frame-count script when no key is held, so the
+    # same frame cap always produces the same frame.
     set(golden-examples widgets elements p5basic p5text p5transform p5shape p5pixels
-        p5image webgltriangle p5webgl phaserbasic)
+        p5image webgltriangle p5webgl phaserbasic phaserinvaders)
     # plutosvg_FOUND, not CTBROWSER_WITH_SVG: the latter is a compile
     # definition on a target and is not a variable this scope can test.
     if(plutosvg_FOUND)
@@ -104,11 +111,19 @@ foreach(source ${example-sources})
       list(APPEND golden-examples imageformats)
     endif()
     if(example IN_LIST golden-examples)
+      # A GAME NEEDS LONGER THAN A DRAWING. 30 frames is one render; the
+      # invaders page has to fire, travel and connect before its frame says
+      # anything, so it gets a count that reaches a state worth comparing.
+      set(render-frames 30)
+      if(example STREQUAL phaserinvaders)
+        set(render-frames 150)
+      endif()
       add_test(NAME render-${example} COMMAND ${CMAKE_COMMAND}
                -DEXE=$<TARGET_FILE:ctbrowser-example-${example}>
                -DOUT=${CMAKE_BINARY_DIR}/render-${example}.ppm
                -DGOLDEN=${PROJECT_SOURCE_DIR}/tests/golden/${example}.ppm
                -DWORKDIR=${PROJECT_SOURCE_DIR}
+               -DFRAMES=${render-frames}
                -P ${PROJECT_SOURCE_DIR}/tools/check-render.cmake)
     endif()
   endif()
