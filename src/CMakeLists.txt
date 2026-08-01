@@ -362,29 +362,16 @@ add_library(ctbrowser::raster ALIAS ctbrowser-raster)
 # display is a browser you can test.
 # --- THE HTTP TRANSPORT ---------------------------------------------------
 #
-# Two implementations of shell/net.hpp and nothing else differs, which is the
-# point of having widened that interface first.
+# libcurl, and only libcurl. There used to be a hand-written Asio client beside
+# it and a switch to choose; both are gone (see docs/build.md). Asio is a
+# socket, and everything above the socket - the request line, header folding,
+# chunked decoding, redirects - had to be written and maintained here, which is
+# precisely the half a browser keeps needing more of. curl brings TLS as well:
+# SCHANNEL on Windows, so the cross build has https with no OpenSSL.
 #
-# libcurl IS THE DEFAULT, for capability rather than speed - the network is in
-# no profile. It uses SCHANNEL on Windows, so https:// on the cross build needs
-# no OpenSSL cross-compiled, and it already speaks HTTP/2, brotli and zstd. See
-# the header of src/shell/net_curl.cpp, including why POCO was written first
-# and set aside.
-#
-# The Asio one stays as the fallback so a build without libcurl still works
-# rather than failing to configure.
-find_package(CURL QUIET)
-option(CTBROWSER_NET_CURL "HTTP over libcurl instead of Asio" ${CURL_FOUND})
-if(CTBROWSER_NET_CURL AND NOT CURL_FOUND)
-  message(FATAL_ERROR "ctbrowser: CTBROWSER_NET_CURL is on but libcurl was not found")
-endif()
-if(CTBROWSER_NET_CURL)
-  set(CTBROWSER_NET_SOURCE shell/net_curl.cpp)
-  message(STATUS "ctbrowser: HTTP over libcurl")
-else()
-  set(CTBROWSER_NET_SOURCE shell/net.cpp)
-  message(STATUS "ctbrowser: HTTP over Asio")
-endif()
+# REQUIRED rather than optional. An engine that silently falls back to a
+# transport with no TLS is worse than one that will not configure.
+find_package(CURL REQUIRED)
 
 add_library(ctbrowser-shell)
 target_sources(ctbrowser-shell
@@ -396,7 +383,7 @@ target_sources(ctbrowser-shell
     shell/canvas.cpp
     shell/svg.cpp
     shell/forms.cpp
-    ${CTBROWSER_NET_SOURCE}
+    shell/net_curl.cpp
     shell/url.cpp
     shell/embedded_fonts.cpp
   PUBLIC
@@ -462,58 +449,22 @@ target_link_libraries(ctbrowser-shell PUBLIC ctbrowser-core ctbrowser-dom ctbrow
                                              ctbrowser-layout ctbrowser-paint ctbrowser-raster
                                              ctbrowser-script Boost::headers)
 # PRIVATE: boost/url is 1.2 MB of headers and shell/url.cpp is the only place it
-# appears. Nothing that links the engine should have to parse it, which is the
-# same rule net.hpp states for Asio.
+# appears. Nothing that links the engine should have to parse it - the same rule
+# net.hpp states for curl.h.
 target_link_libraries(ctbrowser-shell PRIVATE Boost::url)
-if(CTBROWSER_NET_CURL)
-  # PRIVATE for the same reason as Boost::url: curl.h is the transport's
-  # business and net_curl.cpp is the only place it appears.
-  target_link_libraries(ctbrowser-shell PRIVATE CURL::libcurl)
-endif()
+# PRIVATE for the same reason: curl.h is the transport's business and
+# net_curl.cpp is the only place it appears.
+target_link_libraries(ctbrowser-shell PRIVATE CURL::libcurl)
 
-# Asio comes from Boost by default - Boost::headers is already a dependency of
-# three the engine targets and is header-only. A build that would rather not have Boost
-# at all can point at STANDALONE Asio instead; the module supports both.
-find_path(CTBROWSER_STANDALONE_ASIO_INCLUDE asio.hpp)
-option(CTBROWSER_ASIO_STANDALONE "Use standalone Asio instead of Boost.Asio"
-       ${CTBROWSER_PREFER_STANDALONE_ASIO})
-if(CTBROWSER_ASIO_STANDALONE AND CTBROWSER_STANDALONE_ASIO_INCLUDE)
-  target_include_directories(ctbrowser-shell PUBLIC ${CTBROWSER_STANDALONE_ASIO_INCLUDE})
-  target_compile_definitions(ctbrowser-shell PUBLIC CTBROWSER_ASIO_STANDALONE=1 ASIO_STANDALONE=1)
-  message(STATUS "ctbrowser: networking on standalone Asio")
-else()
-  target_compile_definitions(ctbrowser-shell PUBLIC CTBROWSER_ASIO_STANDALONE=0)
-endif()
-
-# https:// needs TLS, and TLS needs OpenSSL - which is NOT Boost, so it does not
-# touch the header-only-Boost rule. It IS optional: without it the build still
-# does http:// and rejects https:// by name.
-# Asio's Windows backend is winsock; nothing links it implicitly.
-if(WIN32)
-  target_link_libraries(ctbrowser-shell PUBLIC ws2_32 mswsock)
-endif()
-
-# TLS BELONGS TO THE TRANSPORT NOW, which is most of the point of moving to
-# libcurl. curl brings its own - SCHANNEL on Windows, the OS stack, so the
-# cross build gets https:// with no OpenSSL cross-compiled at all. It reports
-# what it has at run time through curl_version_info, which is why
-# tls_available() stopped being a constexpr on a build-system guess.
+# TLS BELONGS TO THE TRANSPORT, which is most of the point of moving to libcurl.
+# curl brings its own - SCHANNEL on Windows, the OS stack, so the cross build
+# gets https:// with no OpenSSL cross-compiled at all. It reports what it has at
+# run time through curl_version_info, which is why tls_available() is not a
+# constexpr on a build-system guess.
 #
-# The Asio transport has no TLS of its own, so it still needs OpenSSL and the
-# CTBROWSER_WITH_TLS define below is read only by that path.
-if(CTBROWSER_NET_CURL)
-  message(STATUS "ctbrowser: https:// through libcurl's own TLS (Schannel on Windows)")
-else()
-  find_package(OpenSSL QUIET COMPONENTS SSL Crypto)
-  if(OpenSSL_FOUND)
-    target_link_libraries(ctbrowser-shell PUBLIC OpenSSL::SSL OpenSSL::Crypto)
-    target_compile_definitions(ctbrowser-shell PUBLIC CTBROWSER_WITH_TLS=1)
-    message(STATUS "ctbrowser: https:// enabled (OpenSSL ${OPENSSL_VERSION})")
-  else()
-    target_compile_definitions(ctbrowser-shell PUBLIC CTBROWSER_WITH_TLS=0)
-    message(STATUS "ctbrowser: no OpenSSL - fetch() does http:// only")
-  endif()
-endif()
+# NOTHING HERE LOOKS FOR OpenSSL ANY MORE. The Asio transport needed it and the
+# Asio transport is gone.
+message(STATUS "ctbrowser: https:// through libcurl's own TLS (Schannel on Windows)")
 
 add_library(ctbrowser::shell ALIAS ctbrowser-shell)
 
@@ -666,7 +617,13 @@ install(EXPORT ctbrowser-targets
 # Whatever the exported targets name in their link interface, the consumer has
 # to be able to resolve. SDL3 is conditional because the app module links it
 # only when it was found - a headless install must not demand it back.
-set(CTBROWSER_CONFIG_DEPS "find_dependency(Boost 1.80 CONFIG)\nfind_dependency(Threads)")
+# COMPONENTS url, and CURL beside it. Both are linked PRIVATE, which for a
+# STATIC library still puts them on a consumer's link line - so a consumer that
+# cannot find them fails to link with no idea why. The Boost line said no
+# component at all until 2026-07-31, which was a gap from the day Boost.URL
+# landed; tools/check-package.sh is what exists to catch exactly this.
+set(CTBROWSER_CONFIG_DEPS
+    "find_dependency(Boost 1.80 CONFIG COMPONENTS url)\nfind_dependency(CURL)\nfind_dependency(Threads)")
 if(SDL3_FOUND)
   string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(SDL3 CONFIG)")
 endif()
@@ -676,9 +633,6 @@ endif()
 # of break tools/check-package.sh exists to catch - it caught these two.
 if(Freetype_FOUND)
   string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(Freetype)")
-endif()
-if(OpenSSL_FOUND)
-  string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(OpenSSL COMPONENTS SSL Crypto)")
 endif()
 if(SDL3_image_FOUND)
   string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(SDL3_image CONFIG)")

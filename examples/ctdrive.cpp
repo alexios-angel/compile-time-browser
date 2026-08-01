@@ -21,11 +21,20 @@
 
 #include <ctbrowser.hpp>
 
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/read_until.hpp>
-#include <boost/asio/streambuf.hpp>
-#include <boost/asio/write.hpp>
+// PLAIN SOCKETS. This used Asio, and the engine's dependency on it is gone -
+// a tool in the same repository reintroducing it would put the header back on
+// every build that compiles the examples. What a one-client line protocol
+// needs is listen, accept, read, write, and a non-blocking flag.
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 // Header-only Boost.JSON: this include belongs in exactly ONE translation unit
 // and brings the implementation with it. Compiled Boost is not available here -
 // a cross build gets an isolated include directory and links Boost::headers and
@@ -40,7 +49,40 @@
 namespace {
 
 namespace json = boost::json;
-using boost::asio::ip::tcp;
+// One socket API, two spellings.
+#if defined(_WIN32)
+using socket_t = SOCKET;
+inline constexpr socket_t invalid_socket = INVALID_SOCKET;
+inline void close_socket(socket_t s) {
+    ::closesocket(s);
+}
+inline void set_non_blocking(socket_t s) {
+    u_long on = 1;
+    // FIONBIO expands to an unsigned long while ioctlsocket takes a signed
+    // one, so the cast is required rather than cosmetic under -Wconversion.
+    ::ioctlsocket(s, static_cast<long>(FIONBIO), &on);
+}
+using socklen_arg = int;
+using iolen_t = int;
+struct winsock_once {
+    winsock_once() {
+        WSADATA data;
+        ::WSAStartup(MAKEWORD(2, 2), &data);
+    }
+};
+#else
+using socket_t = int;
+inline constexpr socket_t invalid_socket = -1;
+inline void close_socket(socket_t s) {
+    ::close(s);
+}
+inline void set_non_blocking(socket_t s) {
+    ::fcntl(s, F_SETFL, ::fcntl(s, F_GETFL, 0) | O_NONBLOCK);
+}
+using socklen_arg = socklen_t;
+using iolen_t = std::size_t;
+struct winsock_once {};
+#endif
 
 // A character's DOM `code`, for the key event that accompanies typed text.
 //
@@ -64,58 +106,91 @@ using boost::asio::ip::tcp;
 // one place - tools/compare.py speaks exactly this and nothing else.
 class session {
 public:
-    explicit session(unsigned short port)
-        : acceptor_{io_, tcp::endpoint{boost::asio::ip::make_address("127.0.0.1"), port}} {
-        accept();
+    explicit session(unsigned short port) {
+        listener_ = ::socket(AF_INET, SOCK_STREAM, 0);
+        int reuse = 1;
+        ::setsockopt(listener_, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char *>(&reuse),
+                     sizeof(reuse));
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = ::htonl(INADDR_LOOPBACK);
+        address.sin_port = ::htons(port);
+        ::bind(listener_, reinterpret_cast<sockaddr *>(&address), sizeof(address));
+        ::listen(listener_, 1);
+        sockaddr_in bound{};
+        auto length = static_cast<socklen_arg>(sizeof(bound));
+        ::getsockname(listener_, reinterpret_cast<sockaddr *>(&bound), &length);
+        port_ = ::ntohs(bound.sin_port);
+        // NON-BLOCKING, which is the whole contract of poll() below: a page
+        // with no command pending must run at full speed.
+        set_non_blocking(listener_);
     }
+    ~session() {
+        if (peer_ != invalid_socket) { close_socket(peer_); }
+        if (listener_ != invalid_socket) { close_socket(listener_); }
+    }
+    session(const session &) = delete;
+    session & operator=(const session &) = delete;
 
-    [[nodiscard]] unsigned short port() const { return acceptor_.local_endpoint().port(); }
+    [[nodiscard]] unsigned short port() const { return port_; }
 
     // Called every iteration from app_options::on_frame. Runs whatever the
-    // socket has ready and returns - never blocks, so a page with no commands
-    // pending is a page running at full speed.
+    // socket has ready and returns - never blocks.
     void poll(ctbrowser::browser & page) {
         page_ = &page;
-        io_.poll();
-        io_.restart(); // poll() leaves the context stopped once it runs dry
+        if (peer_ == invalid_socket) {
+            const socket_t incoming = ::accept(listener_, nullptr, nullptr);
+            if (incoming != invalid_socket) {
+                peer_ = incoming;
+                set_non_blocking(peer_);
+            }
+        }
+        if (peer_ != invalid_socket) { drain(); }
         page_ = nullptr;
     }
 
 private:
-    void accept() {
-        acceptor_.async_accept([this](const boost::system::error_code & ec, tcp::socket peer) {
-            if (!ec) {
-                socket_ = std::move(peer);
-                read();
+    // READ WHAT IS THERE, then run every COMPLETE line. A partial line stays in
+    // the buffer for the next frame - the client may write a command in more
+    // than one packet, and treating a fragment as a command is how a driver
+    // starts answering questions nobody asked.
+    void drain() {
+        char chunk[4096];
+        for (;;) {
+            const auto got = ::recv(peer_, chunk, static_cast<iolen_t>(sizeof(chunk)), 0);
+            if (got > 0) {
+                pending_.append(chunk, static_cast<std::size_t>(got));
+                continue;
             }
-            accept(); // one client at a time, but never stop listening
-        });
-    }
-
-    void read() {
-        if (!socket_) { return; }
-        boost::asio::async_read_until(
-            *socket_, buffer_, '\n', [this](const boost::system::error_code & ec, std::size_t n) {
-                if (ec) {
-                    socket_.reset();
-                    return;
-                }
-                std::string line(n, '\0');
-                buffer_.sgetn(line.data(), static_cast<std::streamsize>(n));
-                reply(run(line));
-                read();
-            });
+            // Zero means the client closed; negative means nothing ready
+            // (EWOULDBLOCK) or a real error, and both end this frame's read.
+            if (got == 0) {
+                close_socket(peer_);
+                peer_ = invalid_socket;
+                pending_.clear();
+                return;
+            }
+            break;
+        }
+        for (std::size_t at = pending_.find('\n'); at != std::string::npos;
+             at = pending_.find('\n')) {
+            const std::string line = pending_.substr(0, at + 1);
+            pending_.erase(0, at + 1);
+            reply(run(line));
+        }
     }
 
     void reply(const json::value & answer) {
-        if (!socket_) { return; }
+        if (peer_ == invalid_socket) { return; }
         const std::string text = json::serialize(answer) + "\n";
-        boost::system::error_code ec;
-        // BLOCKING write, deliberately: the reply is one short line and the
-        // client is waiting on it. An async write would have to outlive this
-        // poll(), and the page it describes will have moved on by then.
-        (void)boost::asio::write(*socket_, boost::asio::buffer(text), ec);
-        if (ec) { socket_.reset(); }
+        // BLOCKING-ish write, deliberately: the reply is one short line and the
+        // client is waiting on it. Sending is allowed to fail on a socket that
+        // went away, which drops the client rather than the process.
+        if (::send(peer_, text.data(), static_cast<iolen_t>(text.size()), 0) < 0) {
+            close_socket(peer_);
+            peer_ = invalid_socket;
+            pending_.clear();
+        }
     }
 
     [[nodiscard]] static json::value ok() {
@@ -249,10 +324,11 @@ private:
         return fail("unknown command: " + cmd);
     }
 
-    boost::asio::io_context io_;
-    tcp::acceptor acceptor_;
-    std::optional<tcp::socket> socket_;
-    boost::asio::streambuf buffer_;
+    [[maybe_unused]] winsock_once winsock_;
+    socket_t listener_ = invalid_socket;
+    socket_t peer_ = invalid_socket; // one client at a time, by design
+    std::string pending_;            // bytes read but not yet a whole line
+    unsigned short port_ = 0;
     ctbrowser::browser * page_ = nullptr;
 };
 

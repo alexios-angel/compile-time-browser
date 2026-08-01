@@ -5,15 +5,20 @@
 // on somebody else's uptime is not a test - but the code path exercised is the
 // real one, sockets and all.
 
-// Asio BEFORE the module import, deliberately. On Windows its headers drag in
-// <windows.h>, and a non-modular header included AFTER an import that already
-// consumed it is seen twice - which clang reports as several hundred
-// "conflicting types" errors against identical declarations.
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/address.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/write.hpp>
+// PLAIN SOCKETS, because the engine no longer depends on Asio and a test
+// harness has no business reintroducing the dependency it just removed. What a
+// canned-reply server needs - listen, accept, read once, write, close - is a
+// dozen calls, and having them here means `ctest` proves the transport against
+// a real socket without Boost.Asio existing anywhere in the tree.
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -28,20 +33,60 @@
 
 namespace {
 
-using boost::asio::ip::tcp;
+// One socket API, two spellings. Winsock needs an explicit startup and spells
+// close and the length type differently; nothing else here differs.
+#if defined(_WIN32)
+using socket_t = SOCKET;
+inline constexpr socket_t invalid_socket = INVALID_SOCKET;
+inline void close_socket(socket_t s) {
+    ::closesocket(s);
+}
+using socklen_arg = int;
+// send/recv take an int length on Winsock and a size_t on POSIX. Naming the
+// type is what keeps -Wconversion quiet honestly, rather than casting at each
+// call and hoping the cast is the right one on the other platform.
+using iolen_t = int;
+struct winsock_once {
+    winsock_once() {
+        WSADATA data;
+        ::WSAStartup(MAKEWORD(2, 2), &data);
+    }
+};
+#else
+using socket_t = int;
+inline constexpr socket_t invalid_socket = -1;
+inline void close_socket(socket_t s) {
+    ::close(s);
+}
+using socklen_arg = socklen_t;
+using iolen_t = std::size_t;
+struct winsock_once {};
+#endif
 
 // A one-shot server: it answers `replies.size()` requests and stops. The
 // canned replies are byte-exact so the client's parsing is what is under test.
 class test_server {
 public:
-    explicit test_server(std::vector<std::string> replies)
-        : acceptor_{io_, tcp::endpoint{boost::asio::ip::make_address("127.0.0.1"), 0}},
-          replies_{std::move(replies)} {
-        port_ = acceptor_.local_endpoint().port();
+    explicit test_server(std::vector<std::string> replies) : replies_{std::move(replies)} {
+        listener_ = ::socket(AF_INET, SOCK_STREAM, 0);
+        // PORT ZERO, and the port read back afterwards: a fixed port makes the
+        // suite fail when anything else on the machine happens to hold it, and
+        // fail in a way that looks like the client is broken.
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = ::htonl(INADDR_LOOPBACK);
+        address.sin_port = 0;
+        ::bind(listener_, reinterpret_cast<sockaddr *>(&address), sizeof(address));
+        ::listen(listener_, 4);
+        sockaddr_in bound{};
+        auto length = static_cast<socklen_arg>(sizeof(bound));
+        ::getsockname(listener_, reinterpret_cast<sockaddr *>(&bound), &length);
+        port_ = ::ntohs(bound.sin_port);
         thread_ = std::thread{[this] { serve(); }};
     }
     ~test_server() {
         if (thread_.joinable()) { thread_.join(); }
+        if (listener_ != invalid_socket) { close_socket(listener_); }
     }
     test_server(const test_server &) = delete;
     test_server & operator=(const test_server &) = delete;
@@ -54,20 +99,19 @@ public:
 private:
     void serve() {
         for (const std::string & reply : replies_) {
-            boost::system::error_code failed;
-            tcp::socket socket = acceptor_.accept(failed);
-            if (failed) { return; }
+            const socket_t peer = ::accept(listener_, nullptr, nullptr);
+            if (peer == invalid_socket) { return; }
             char buffer[4096];
-            const std::size_t got = socket.read_some(boost::asio::buffer(buffer), failed);
-            last_request_.assign(buffer, got);
-            boost::asio::write(socket, boost::asio::buffer(reply), failed);
-            // The client reads to EOF, so the shutdown IS the end of the body.
-            socket.shutdown(tcp::socket::shutdown_both, failed);
+            const auto got = ::recv(peer, buffer, sizeof(buffer), 0);
+            if (got > 0) { last_request_.assign(buffer, static_cast<std::size_t>(got)); }
+            ::send(peer, reply.data(), static_cast<iolen_t>(reply.size()), 0);
+            // The client may read to EOF, so the close IS the end of the body.
+            close_socket(peer);
         }
     }
 
-    boost::asio::io_context io_;
-    tcp::acceptor acceptor_;
+    [[maybe_unused]] winsock_once winsock_;
+    socket_t listener_ = invalid_socket;
     std::vector<std::string> replies_;
     unsigned short port_ = 0;
     std::string last_request_;
@@ -192,14 +236,25 @@ void test_failures() {
 void test_timeout() {
     // A server that accepts and then says nothing. Without a deadline the frame
     // would block forever; with one the request fails and the page carries on.
-    boost::asio::io_context io;
-    tcp::acceptor acceptor{io, tcp::endpoint{boost::asio::ip::make_address("127.0.0.1"), 0}};
-    const unsigned short port = acceptor.local_endpoint().port();
+    [[maybe_unused]] const winsock_once winsock;
+    const socket_t listener = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = ::htonl(INADDR_LOOPBACK);
+    ::bind(listener, reinterpret_cast<sockaddr *>(&address), sizeof(address));
+    ::listen(listener, 4);
+    sockaddr_in bound{};
+    auto length = static_cast<socklen_arg>(sizeof(bound));
+    ::getsockname(listener, reinterpret_cast<sockaddr *>(&bound), &length);
+    const unsigned short port = ::ntohs(bound.sin_port);
     std::atomic<bool> stop{false};
     std::thread server{[&] {
-        boost::system::error_code failed;
-        tcp::socket socket = acceptor.accept(failed);
+        // ACCEPT AND THEN SAY NOTHING, holding the connection open. The socket
+        // has to outlive the accept or the client sees a close rather than a
+        // hang, and would fail for the wrong reason.
+        const socket_t peer = ::accept(listener, nullptr, nullptr);
         while (!stop.load()) { std::this_thread::sleep_for(std::chrono::milliseconds{10}); }
+        if (peer != invalid_socket) { close_socket(peer); }
     }};
 
     const auto response = ctbrowser::shell::http_get(
@@ -207,6 +262,7 @@ void test_timeout() {
     CHECK(!response.completed());
     stop.store(true);
     server.join();
+    close_socket(listener);
 }
 
 void test_tls_is_honest() {

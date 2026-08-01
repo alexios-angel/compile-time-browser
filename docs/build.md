@@ -58,8 +58,19 @@ cross-compile; that work is in the history:
 
 POCO's mature WebSocket is what curl lacks; if that becomes a requirement it is
 the reason to revisit, and `net.hpp`'s request/response interface is what makes
-revisiting cheap - both are peers behind one `fetch()`, chosen in
-`src/CMakeLists.txt`, with the Asio transport still present as the fallback.
+revisiting cheap - a transport is one `.cpp` behind one `fetch()`.
+
+**Asio is gone entirely** (2026-07-31), not kept as a fallback. Keeping it meant
+keeping the hand-written HTTP above it compiling and correct for a path nothing
+took, and meant an engine that could silently fall back to a transport with NO
+TLS - worse than one that refuses to configure. `find_package(CURL REQUIRED)`.
+
+That removed it from two more places, which is where a dependency actually
+lives: `tests/net_basics.cpp` stood up its loopback server with Asio, and
+`examples/ctdrive.cpp` ran its command socket on it. Both are plain BSD
+sockets now - roughly fifty lines each, `#if defined(_WIN32)` for the Winsock
+spelling - because a harness that reintroduces the dependency the engine just
+dropped has not dropped it.
 
 **TLS belongs to the transport.** `tls_available()` was a `constexpr` on
 `CTBROWSER_WITH_TLS`, which `find_package(OpenSSL)` set - correct while the
