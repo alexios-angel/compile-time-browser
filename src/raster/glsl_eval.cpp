@@ -151,10 +151,21 @@ public:
             if (v.store != storage::varying) { continue; }
             if (m_->which == stage::vertex) { globals_[v.name] = zero(v.t); }
         }
-        for (const char * name :
-             m_->which == stage::vertex
-                 ? std::initializer_list<const char *>{"gl_Position", "gl_PointSize"}
-                 : std::initializer_list<const char *>{"gl_FragColor", "gl_FragDepth"}) {
+        // STATIC ARRAYS, NOT A TERNARY OVER TWO `initializer_list`s. That form
+        // built here for months and is a DANGLING POINTER before C++23: an
+        // initializer_list's backing array is a temporary, and only P2718R0
+        // extends the lifetime of temporaries in a range-for's initializer.
+        // Clang implements it, the GCC 13 on the shared devbox does not, and it
+        // failed the build there with -Wdangling-pointer the first time this
+        // tree was compiled on a second compiler.
+        //
+        // Correct under every standard version rather than only the newest:
+        // these have static storage duration, so there is no lifetime question
+        // to get right.
+        static constexpr const char * vertex_outputs[] = {"gl_Position", "gl_PointSize"};
+        static constexpr const char * fragment_outputs[] = {"gl_FragColor", "gl_FragDepth"};
+        const auto & outputs = m_->which == stage::vertex ? vertex_outputs : fragment_outputs;
+        for (const char * name : outputs) {
             const bool wide =
                 std::string_view{name} == "gl_Position" || std::string_view{name} == "gl_FragColor";
             globals_[name] = zero(shape(base::f, wide ? 4 : 1));

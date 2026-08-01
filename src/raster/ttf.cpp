@@ -3,6 +3,23 @@
 
 // ttf: the method bodies.
 // The header says what these do; this says how.
+//
+// GUARDED THE SAME WAY THE HEADER IS, and it was not. `ttf.hpp` declares
+// `ttf_backend` inside `#if CTBROWSER_WITH_TTF`; this file defined its methods
+// unconditionally and CMake compiles it unconditionally - so on a machine
+// WITHOUT SDL3_ttf the class was declared nowhere and defined here, and the
+// build failed on `'ttf_backend' has not been declared`.
+//
+// That is a configuration this repository claims to support in as many words -
+// "SDL3 is OPTIONAL AT BUILD TIME... Without SDL3 the engine still renders" -
+// and no machine that built it had ever been without SDL3_ttf. The shared
+// devbox is, which is how it finally surfaced: builds moved there and the very
+// first one stopped here.
+//
+// The guard rather than a conditional source list, because the header already
+// chose that pattern and two spellings of one condition is the drift this tree
+// keeps paying for.
+#if CTBROWSER_WITH_TTF
 
 namespace ctbrowser::raster {
 
@@ -53,3 +70,5 @@ TTF_Font * ttf_backend::open_sized(const std::vector<std::byte> & bytes, int siz
 }
 
 } // namespace ctbrowser::raster
+
+#endif // CTBROWSER_WITH_TTF
