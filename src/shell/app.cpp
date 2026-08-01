@@ -675,6 +675,10 @@ int run_app(std::string_view html, app_options options) {
     int frame = 0;
     bool needs_frame = true;
     bool running = true;
+    // The last message reported, so a fault that repeats every frame is said
+    // once. `script_error()` keeps the FIRST callback fault rather than the
+    // latest, so this settles rather than churning.
+    std::string last_script_error;
 
     const bool profiling = !options.profile_path.empty() || options.profile_seconds > 0;
     std::vector<detail::frame_record> history;
@@ -721,6 +725,27 @@ int run_app(std::string_view html, app_options options) {
         // previous reference loop never called it, so every animated page was
         // frozen and nothing said so.
         if (page.tick(elapsed_ms) > 0) { needs_frame = true; }
+        // AND SAY SO WHEN THE PAGE BREAKS. The loop ticked the clock and never
+        // once looked at what came back: a page whose callbacks throw keeps
+        // rendering whatever it last drew, so it looks frozen and reports
+        // nothing at all. That is how the Phaser invaders page hid an undefined
+        // method for an afternoon - update() threw on every frame and the
+        // window showed create()'s output forever.
+        //
+        // ONCE PER DISTINCT MESSAGE, not once per frame: a callback that faults
+        // every frame at 60 Hz would otherwise bury the first and only useful
+        // line under thousands of copies of itself, which is the same as saying
+        // nothing at all.
+        if (const std::string & failure = page.script_error();
+            !failure.empty() && failure != last_script_error) {
+            last_script_error = failure;
+            if (options.on_script_error) {
+                options.on_script_error(failure);
+            } else {
+                // stderr, so a screenshot pipeline reading stdout is unaffected.
+                std::fprintf(stderr, "ctbrowser: script error: %s\n", failure.c_str());
+            }
+        }
         // ASK THE PAGE. Not everything that changes what should be on screen
         // comes from an event or a callback: a caret blinks, and a scrollbar
         // appears when a relayout makes the page taller. A loop that redraws

@@ -1764,6 +1764,70 @@ void test_a_link_reaches_the_application_through_run_app() {
     if (!asked.empty()) { check(asked[0] == "https://example.com/here", "with its href"); }
 }
 
+// A PAGE THAT DIES MUST SAY SO. `run_app` ticked the clock and never looked at
+// what came back, so a page whose callbacks throw kept rendering whatever it
+// last drew - it looked FROZEN and reported nothing at all. That is how the
+// Phaser invaders page hid an undefined method for an afternoon: update() threw
+// on every frame and the window showed create()'s output forever.
+//
+// The message arrives ONCE PER DISTINCT FAULT, not once per frame. A callback
+// that faults every frame at 60 Hz would otherwise bury the first and only
+// useful line under thousands of copies of itself, which is the same as saying
+// nothing.
+void test_run_app_reports_a_script_error() {
+    std::vector<std::string> reported;
+    ctbrowser::app_options options;
+    options.width = 200;
+    options.height = 150;
+    // Several frames, so a fault that repeats is given every chance to repeat.
+    options.max_frames = 8;
+    options.real_fonts = false;
+    options.network = false;
+    options.on_script_error = [&reported](const std::string & message) {
+        reported.push_back(message);
+    };
+    // The fault is in an ANIMATION FRAME rather than in the page's top level:
+    // a top-level throw is reported by load_html and was never the gap. What
+    // was missing is the one that happens later, on a turn nobody is watching.
+    const int code = ctbrowser::run_app(R"(<body><script>
+        function spin() { window.requestAnimationFrame(spin); missingFunction(); }
+        window.requestAnimationFrame(spin);
+    </script></body>)",
+                                        options);
+    check(code == 0, "a page that throws does not take the application down");
+    check(reported.size() == 1,
+          "reported once, not once per frame: " + std::to_string(reported.size()));
+    if (!reported.empty()) {
+        check(reported[0].find("missingFunction") != std::string::npos,
+              "and it names what was missing: " + reported[0]);
+        check(reported[0].find("requestAnimationFrame") != std::string::npos,
+              "and which kind of callback it was in: " + reported[0]);
+    }
+}
+
+// AND STAYS SILENT WHEN NOTHING IS WRONG, or the hook is noise a caller learns
+// to ignore - which is the same as not having it.
+void test_run_app_is_silent_for_a_healthy_page() {
+    std::vector<std::string> reported;
+    ctbrowser::app_options options;
+    options.width = 200;
+    options.height = 150;
+    options.max_frames = 8;
+    options.real_fonts = false;
+    options.network = false;
+    options.on_script_error = [&reported](const std::string & message) {
+        reported.push_back(message);
+    };
+    const int code = ctbrowser::run_app(R"(<body><script>
+        var n = 0;
+        function spin() { n++; window.requestAnimationFrame(spin); }
+        window.requestAnimationFrame(spin);
+    </script></body>)",
+                                        options);
+    check(code == 0, "the application ran");
+    check(reported.empty(), "a healthy page reports nothing");
+}
+
 void test_click_dispatch() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><head><style>#a { width: 200px; height: 100px }</style></head>
@@ -2258,6 +2322,8 @@ int main() {
     test_collection_keeps_what_the_page_still_uses();
     test_collection_happens_on_its_own();
     test_a_link_reaches_the_application_through_run_app();
+    test_run_app_reports_a_script_error();
+    test_run_app_is_silent_for_a_healthy_page();
     test_click_dispatch();
     test_handler_properties();
     test_events_bubble_and_can_be_prevented();

@@ -138,6 +138,25 @@ struct app_options {
     // An empty hook costs one std::function check per iteration.
     std::function<void(shell::browser &)> on_frame;
 
+    // A SCRIPT ERROR the page could not report for itself.
+    //
+    // Called once per DISTINCT message, with the loop still running - a page
+    // that throws is not a page that should be torn down, which is what a
+    // browser does and what `note_callback_fault` already implements one level
+    // down.
+    //
+    // WITH NO HOOK THE MESSAGE GOES TO stderr, and that default is the whole
+    // reason this exists. `run_app` looked at `script_error()` nowhere at all,
+    // so a page whose callbacks died looked FROZEN and said nothing: the
+    // Phaser invaders page rendered its create() output forever because
+    // `this.fire` was undefined and update() threw on every frame, and finding
+    // that took a throwaway driver written by hand to read the one string the
+    // application had never been shown. An engine that knows why a page stopped
+    // and does not say so is worse than one that does not know.
+    //
+    // Set it to an empty function to silence the default without replacing it.
+    std::function<void(const std::string & message)> on_script_error;
+
     // A link the page followed that LEAVES this document. Return true if the
     // application handled it - `ctbrowse` loads a local .html this way - and
     // false to let it go to the SYSTEM BROWSER, which is what happens with no

@@ -32,6 +32,19 @@ prefix, builds `tests/package/` against it via `find_package`.
 one engine include - the umbrella header - and no SDL symbol, and the engine must stay
 SDL-free.
 
+**A PAGE THAT DIES NOW SAYS SO (2026-08-01).** `run_app` ticked the clock and
+never looked at what came back, so a page whose callbacks throw kept rendering
+whatever it last drew — it looked **frozen and reported nothing at all**. The
+Phaser invaders page hid an undefined method that way for an afternoon:
+`update()` threw on every frame and the window showed `create()`'s output
+forever, and finding it took a throwaway driver written by hand to read the one
+string the application had never been shown. `app_options::on_script_error` gets
+the message, and with no hook it goes to **stderr** so a screenshot pipeline
+reading stdout is unaffected. Once per DISTINCT message, not once per frame — at
+60 Hz the useful first line would otherwise be buried under thousands of copies
+of itself, which is the same as saying nothing. The page keeps running, which is
+what a browser does and what `note_callback_fault` already did one level down.
+
 ## THE SHELL IS THE ENGINE (2026-07-25)
 
 `ctbrowse` (examples/) is the browser: `ctbrowse page.html`, or
