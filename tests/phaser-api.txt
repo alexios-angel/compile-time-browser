@@ -7,6 +7,9 @@
 # The probes themselves are tests/phaser-api-probe.js, one per line here as
 # `module/name`. A probe that is SKIPPED is not recorded - it is not a claim
 # about anything working.
+actions/Call
+actions/IncX
+actions/SetXY
 add/circle
 add/container
 add/graphics
@@ -17,12 +20,33 @@ add/sprite
 add/text
 add/triangle
 anims/create
+cache/exists
+cache/json
+cache/text
 cameras/main
 cameras/setBackgroundColor
 cameras/setScroll
 cameras/setZoom
+class/Extends
+const/BlendModes
+const/ScaleModes
+const/TintModes
+const/renderer types
+core/Events constants
+core/TimeStep
+curves/Ellipse
+curves/Line
+curves/Path
+data/DataManager
+display/ColorMatrix
 displaylist/bringToTop
 displaylist/getChildren
+dom/ParseXML
+events/EventEmitter
+events/once
+filters/controller
+game/instanceof
+game/loop
 gameobject/destroy
 gameobject/getBounds
 gameobject/setAlpha
@@ -54,6 +78,13 @@ math/Snap.To
 math/Vector2
 math/Vector2.add
 math/Wrap
+physics/body velocity integrates
+physics/overlap
+physics/plugin
+physics/setGravity
+physics/world bounds
+plugins/PluginCache core
+plugins/scene plugins
 renderer/2d context
 renderer/canvas element
 renderer/type is CANVAS
@@ -66,11 +97,17 @@ scene/isActive
 scene/registry
 scene/sys.settings
 sound/noAudio manager
+structs/List
+structs/Map
+structs/ProcessQueue
+structs/Size
 textures/addCanvas
 textures/boot textures exist
 textures/get
 textures/getFrame size
 textures/getPixel
+tilemaps/Formats
+tilemaps/make from data
 time/addEvent
 time/delayedCall
 time/now

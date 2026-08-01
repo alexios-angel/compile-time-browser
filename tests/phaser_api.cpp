@@ -123,6 +123,12 @@ int main() {
         new Phaser.Game({
             type: Phaser.CANVAS, width: 200, height: 150, banner: false,
             audio: { noAudio: true },
+            // ARCADE PHYSICS IS ON, or `scene.physics` does not exist and the
+            // physics probes could only assert that it is absent. Gravity is
+            // zero so a body moves only where a probe pushes it - a probe that
+            // has to subtract gravity to check its own arithmetic is testing
+            // the probe.
+            physics: { default: 'arcade', arcade: { gravity: { y: 0 }, debug: false } },
             scene: {
                 create: function () {
                     globalThis.__runProbes(this).then(function (json) { __out = json; });
