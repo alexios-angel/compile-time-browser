@@ -624,6 +624,47 @@ void test_canvas_width_and_height_are_readable() {
 //      context id returns - and what p5's `webgl2 || webgl` fallback needs in
 //      order to reach the one that works. Shape 3 kept the throw for webgl2 on
 //      the reasoning that it forced that fallback. It prevented it.
+// The DOM's INTERFACE OBJECTS, and both ways a library uses them.
+//
+// Phaser refused to start at all without the first: it computes
+// `Features.canvas = !!window['CanvasRenderingContext2D']` and then throws
+// "Cannot create Canvas context, aborting" if that is false. A bare marker
+// object would have satisfied it - and made `instanceof` silently false, which
+// Phaser asks nine times and p5 four. So both are asserted here.
+void test_the_dom_interface_objects() {
+    browser page{browser_options{400, 300}};
+    page.load_html("<html><body><canvas id=c></canvas><img id=i src=x.bmp><script>"
+                   "console.log('detect ' + (!!window.CanvasRenderingContext2D &&"
+                   "  !!window.HTMLCanvasElement && !!window.HTMLImageElement &&"
+                   "  !!window.WebGLRenderingContext));"
+                   "var c = document.getElementById('c');"
+                   "var i = document.getElementById('i');"
+                   "console.log('canvas ' + (c instanceof HTMLCanvasElement));"
+                   "console.log('image ' + (i instanceof HTMLImageElement));"
+                   "console.log('not-an-image ' + (c instanceof HTMLImageElement));"
+                   "console.log('ctx ' + (c.getContext('2d') instanceof CanvasRenderingContext2D));"
+                   "console.log('gl ' + (document.createElement('canvas').getContext('webgl')"
+                   "  instanceof WebGLRenderingContext));"
+                   "try { new HTMLCanvasElement(); console.log('ctor allowed'); }"
+                   "catch (e) { console.log('ctor refused'); }"
+                   "</script></body></html>");
+    check(page.frame().has_value(), "the page renders");
+    const auto & log = page.bindings().console_output();
+    check(log.size() == 7, "seven answers");
+    if (log.size() != 7) { return; }
+    check(log[0] == "detect true", "all four are defined for feature detection: " + log[0]);
+    check(log[1] == "canvas true", "a <canvas> IS an HTMLCanvasElement: " + log[1]);
+    check(log[2] == "image true", "an <img> IS an HTMLImageElement: " + log[2]);
+    // The NEGATIVE matters as much: a prototype linked to everything would make
+    // every instanceof true, which passes the two above and means nothing.
+    check(log[3] == "not-an-image false", "and a <canvas> is NOT an image: " + log[3]);
+    check(log[4] == "ctx true", "a 2d context is a CanvasRenderingContext2D: " + log[4]);
+    check(log[5] == "gl true", "a webgl context is a WebGLRenderingContext: " + log[5]);
+    // `new HTMLCanvasElement()` throws in a browser, and handing back an object
+    // that is not an element would be worse than refusing.
+    check(log[6] == "ctor refused", "they are not constructible: " + log[6]);
+}
+
 void test_getcontext_only_answers_for_2d() {
     browser page{browser_options{400, 300}};
     page.load_html("<html><body><canvas id=c></canvas><script>"
@@ -882,6 +923,7 @@ int main() {
 
     test_canvas_is_sized_by_its_attributes();
     test_canvas_width_and_height_are_readable();
+    test_the_dom_interface_objects();
     test_getcontext_only_answers_for_2d();
     test_measuretext_reads_the_font_just_set();
     test_the_canvas_state_stack_restores_every_property();

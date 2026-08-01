@@ -393,6 +393,18 @@ value dom_bindings::wrap(context & cx, node_id id) {
     auto * obj = static_cast<script::object_object *>(cx.make_object().as_heap());
     value wrapper = value::object(obj);
     obj->set(std::string{handle_property}, value::number(static_cast<double>(pack(id))));
+    // WHICH INTERFACE THIS ELEMENT IS, so `instanceof` can answer. Only the two
+    // a library actually asks about are distinguished; everything else stays a
+    // plain object rather than growing a hierarchy nothing reads.
+    {
+        const auto txn = doc_->read();
+        const std::string_view tag = atoms_->text(txn.tag(id).value_or(atom{}));
+        if (tag == "canvas" && canvas_element_prototype_.is_object()) {
+            obj->prototype = canvas_element_prototype_;
+        } else if (tag == "img" && image_element_prototype_.is_object()) {
+            obj->prototype = image_element_prototype_;
+        }
+    }
     install_element_methods(cx, *obj);
     install_element_views(cx, *obj, id);
     refresh_element(cx, *obj, id);
@@ -1755,6 +1767,7 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
     if (canvas == nullptr) { return value::null(); }
 
     auto * obj = static_cast<script::object_object *>(cx.make_object().as_heap());
+    if (canvas2d_prototype_.is_object()) { obj->prototype = canvas2d_prototype_; }
     const value self = value::object(obj);
     obj->set("canvas", wrap(cx, id));
     const auto method = [&](std::string name, script::native_fn fn) {
@@ -2705,6 +2718,36 @@ void dom_bindings::install_window(context & cx) {
         });
     blob_ctor->set("prototype", blob_prototype_);
     cx.define_global("Blob", value::object(blob_ctor));
+
+    // --- the DOM's interface objects -----------------------------------
+    //
+    // `window.HTMLCanvasElement` and friends. A library uses them two ways and
+    // both have to work: FEATURE DETECTION, which is why Phaser refused to
+    // start at all - `Features.canvas = !!window['CanvasRenderingContext2D']`
+    // and then `if (!Features.canvas) throw` - and IDENTITY, `el instanceof
+    // HTMLCanvasElement`, which Phaser asks nine times and p5 four.
+    //
+    // A bare marker object would answer the first and make the second silently
+    // false, so each of these carries a real prototype and the objects that are
+    // instances are linked to it. They are NOT constructible: `new
+    // HTMLCanvasElement()` throws in a browser too, and saying so is better
+    // than handing back an object that is not an element.
+    const auto interface_object = [&cx](const char * name, value & prototype_out) {
+        auto * prototype = static_cast<script::object_object *>(cx.make_object().as_heap());
+        prototype_out = value::object(prototype);
+        auto * ctor =
+            cx.allocate<script::native_object>(name, [name](context & c, std::span<value>) {
+                c.throw_error("TypeError", std::string{"Illegal constructor: "} + name +
+                                               " cannot be constructed by a page");
+                return value::undefined();
+            });
+        ctor->set("prototype", prototype_out);
+        cx.define_global(name, value::object(ctor));
+    };
+    interface_object("HTMLCanvasElement", canvas_element_prototype_);
+    interface_object("HTMLImageElement", image_element_prototype_);
+    interface_object("CanvasRenderingContext2D", canvas2d_prototype_);
+    interface_object("WebGLRenderingContext", webgl_prototype_);
 
     // `File`, `FileList` and `FileReader` - THE INPUT SIDE of the machinery that
     // already does export.

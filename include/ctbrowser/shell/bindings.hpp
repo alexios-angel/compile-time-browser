@@ -618,6 +618,22 @@ private:
     // Blob.prototype, kept so canvas.toBlob's Blob is one too - `x instanceof
     // Blob` has to be true whoever made it.
     value blob_prototype_;
+
+    // THE DOM'S INTERFACE OBJECTS - `window.HTMLCanvasElement` and friends.
+    //
+    // A browser exposes one per interface, and libraries use them two ways that
+    // both have to work: feature detection (`!!window.CanvasRenderingContext2D`)
+    // and identity (`el instanceof HTMLCanvasElement`). Defining a bare marker
+    // object satisfies the first and makes the second silently FALSE, which is
+    // the shape of wrong answer this engine keeps being bitten by - Phaser tests
+    // instanceof nine times and p5 four.
+    //
+    // So each carries a real `prototype`, and the objects that are instances get
+    // that prototype linked. See interface_prototype().
+    value canvas_element_prototype_;
+    value image_element_prototype_;
+    value canvas2d_prototype_;
+    value webgl_prototype_;
     std::string callback_error_;
     std::size_t callback_faults_ = 0;
     bool reload_requested_ = false;

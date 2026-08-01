@@ -189,6 +189,8 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
     }
 
     auto * obj = static_cast<script::object_object *>(cx.make_object().as_heap());
+    // So `gl instanceof WebGLRenderingContext` is true, which Phaser asks.
+    if (webgl_prototype_.is_object()) { obj->prototype = webgl_prototype_; }
     webgl_objects_[pack(id)] = obj;
     obj->set("canvas", wrap(cx, id));
     obj->set("drawingBufferWidth", value::number(width));

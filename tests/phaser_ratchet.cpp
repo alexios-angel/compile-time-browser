@@ -138,10 +138,10 @@ private:
     // AS A PAGE, from here on. Phaser calls document.createElement before it
     // does anything else, so there is no headless rung to measure.
     ctbrowser::shell::browser page{ctbrowser::shell::browser_options{400, 400}};
-    page.assets().add("phaser.js",
-                      std::vector<std::byte>{
-                          reinterpret_cast<const std::byte *>(source.data()),
-                          reinterpret_cast<const std::byte *>(source.data() + source.size())});
+    page.assets().add(
+        "phaser.js",
+        std::vector<std::byte>{reinterpret_cast<const std::byte *>(source.data()),
+                               reinterpret_cast<const std::byte *>(source.data() + source.size())});
     page.load_html(R"(<html><head><meta charset="utf-8">
       <script src="phaser.js"></script></head><body></body></html>)");
     m.page_ms = clock.ms();
