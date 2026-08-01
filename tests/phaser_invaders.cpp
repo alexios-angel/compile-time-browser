@@ -94,6 +94,31 @@ void check(bool ok, std::string_view what) {
     return ask(page, "window.__game.scene.scenes[0].player.x");
 }
 
+// AND DOES IT PLAY? Moving the ship is one claim; a game running its whole loop
+// unattended is another, and it is the one the corpus exists for. Left alone
+// the page shoots on a timer, the formation marches and drops bombs, and both
+// overlap callbacks fire - so after enough frames the score has gone up AND a
+// life has come off, with no input at all.
+//
+// This is the assertion that would notice the loop dying halfway: a scene whose
+// update() throws after frame 200 still passes every other test in this tree,
+// because they all stop before it.
+[[nodiscard]] std::string play(const std::string & html, const std::string & bundle, int frames) {
+    browser page{browser_options{320, 240}};
+    page.assets().add(
+        "../assets/phaser.js",
+        std::vector<std::byte>{reinterpret_cast<const std::byte *>(bundle.data()),
+                               reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
+    page.load_html(html);
+    for (int i = 0; i < frames; ++i) { page.tick(16); }
+    // The script error too, because a callback that throws is cleared and the
+    // page carries on looking healthy - which is exactly how this page hid an
+    // undefined method for an afternoon.
+    const std::string state = ask(page, "(function () { var s = window.__game.scene.scenes[0];"
+                                        "return s.score + ',' + s.lives + ',' + s.over; })()");
+    return state + "|" + page.script_error();
+}
+
 } // namespace
 
 int main() {
@@ -143,6 +168,30 @@ int main() {
     // pass on floating-point noise.
     check(std::abs(right - left) > 20.0,
           "the two directions land far apart: " + std::to_string(right - left) + " px");
+
+    // --- and it plays on its own -------------------------------------------
+    const std::string played = play(html, bundle, 700);
+    std::printf("     after 700 frames: score,lives,over = %s\n", played.c_str());
+    const std::size_t bar = played.find('|');
+    const std::string state = played.substr(0, bar);
+    const std::string failure = played.substr(bar + 1);
+
+    check(failure.empty(), "no callback threw across 700 frames: " + failure);
+    // score,lives,over - parsed rather than matched exactly, because the exact
+    // score depends on timing this test has no business pinning. What it does
+    // pin is that BOTH overlap callbacks fired at least once.
+    const std::size_t first = state.find(',');
+    const std::size_t second = state.find(',', first + 1);
+    if (first == std::string::npos || second == std::string::npos) {
+        std::printf("FAIL could not read the scene's state: [%s]\n", state.c_str());
+        ++ctbrowser_test_failures;
+        REPORT("phaser_invaders");
+    }
+    const double score = std::stod(state.substr(0, first));
+    const double lives = std::stod(state.substr(first + 1, second - first - 1));
+    check(score > 0, "the ship shot something: score " + std::to_string(score));
+    check(lives < 3, "and a bomb reached the ship: lives " + std::to_string(lives));
+    check(lives >= 0, "lives never went negative: " + std::to_string(lives));
 
     REPORT("phaser_invaders");
 }
