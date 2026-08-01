@@ -114,4 +114,76 @@ struct input_event {
     return std::string{code};
 }
 
+// THE LEGACY `keyCode`, which is deprecated and which everything still uses.
+//
+// `code` and `key` are the modern pair and this engine had both; `keyCode` is
+// the one the spec marks deprecated, and leaving it out meant an event that
+// looked complete and was unusable to a large amount of real code. PHASER'S
+// ENTIRE KEYBOARD SYSTEM IS KEYED ON IT - `KeyCodes.LEFT` is 37, and a Key
+// object matches by number - so every arrow key in a Phaser game silently did
+// nothing: the listener fired, the event arrived, `code` was right, and no key
+// ever matched. A game that renders and cannot be played.
+//
+// The values are the well-known ones every browser reports, which is what makes
+// them worth having: they are not derived from anything, they are a table
+// history left behind, and a page comparing against 37 wants exactly 37.
+//
+// `which` is the same number again - an even older alias that survives for the
+// same reason - and both are set, because code that reads one reads the other.
+[[nodiscard]] inline int dom_key_code(std::string_view code) {
+    // Letters and digits are positional: "KeyA" is 65 whatever the layout says
+    // the key produces, which is precisely what makes keyCode a POSITION rather
+    // than a character.
+    if (code.size() == 4 && code.starts_with("Key")) {
+        return static_cast<int>(code[3]); // 'A' is 65, and so is KeyA
+    }
+    if (code.size() == 6 && code.starts_with("Digit")) {
+        return static_cast<int>(code[5]); // '0' is 48, and so is Digit0
+    }
+    if (code.size() == 8 && code.starts_with("Numpad") && code[6] >= '0' && code[6] <= '9') {
+        return 96 + (code[6] - '0');
+    }
+    if (code.size() >= 2 && code[0] == 'F' && code[1] >= '1' && code[1] <= '9') {
+        // F1 is 112. Parsed rather than tabled so F10-F12 come out right.
+        int n = 0;
+        for (std::size_t i = 1; i < code.size(); ++i) {
+            if (code[i] < '0' || code[i] > '9') { return 0; }
+            n = n * 10 + (code[i] - '0');
+        }
+        return n >= 1 && n <= 12 ? 111 + n : 0;
+    }
+    struct named {
+        std::string_view code;
+        int value;
+    };
+    static constexpr named table[] = {
+        {"Backspace", 8},    {"Tab", 9},
+        {"Enter", 13},       {"NumpadEnter", 13},
+        {"ShiftLeft", 16},   {"ShiftRight", 16},
+        {"ControlLeft", 17}, {"ControlRight", 17},
+        {"AltLeft", 18},     {"AltRight", 18},
+        {"Pause", 19},       {"CapsLock", 20},
+        {"Escape", 27},      {"Space", 32},
+        {"PageUp", 33},      {"PageDown", 34},
+        {"End", 35},         {"Home", 36},
+        {"ArrowLeft", 37},   {"ArrowUp", 38},
+        {"ArrowRight", 39},  {"ArrowDown", 40},
+        {"Insert", 45},      {"Delete", 46},
+        {"MetaLeft", 91},    {"MetaRight", 92},
+        {"NumLock", 144},    {"ScrollLock", 145},
+        {"Semicolon", 186},  {"Equal", 187},
+        {"Comma", 188},      {"Minus", 189},
+        {"Period", 190},     {"Slash", 191},
+        {"Backquote", 192},  {"BracketLeft", 219},
+        {"Backslash", 220},  {"BracketRight", 221},
+        {"Quote", 222},
+    };
+    for (const named & entry : table) {
+        if (entry.code == code) { return entry.value; }
+    }
+    // 0 rather than a guess: a page testing `keyCode === 0` learns nothing,
+    // and a page testing against a real code correctly fails to match.
+    return 0;
+}
+
 } // namespace ctbrowser::shell

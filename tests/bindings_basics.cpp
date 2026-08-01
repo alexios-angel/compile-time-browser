@@ -1774,6 +1774,51 @@ void test_a_link_reaches_the_application_through_run_app() {
 // that faults every frame at 60 Hz would otherwise bury the first and only
 // useful line under thousands of copies of itself, which is the same as saying
 // nothing.
+// `keyCode` AND `which` - deprecated, and universally used.
+//
+// The engine had `code` and `key`, the modern pair, and stopped there. The
+// event looked complete and was unusable to a large amount of real code:
+// PHASER'S ENTIRE KEYBOARD SYSTEM MATCHES ON keyCode - `KeyCodes.LEFT` is 37 -
+// so every arrow key in a Phaser game did nothing. The listener fired, the
+// event arrived, `code` was correct, and no key ever matched. A game that
+// renders and cannot be played.
+void test_key_events_carry_the_legacy_codes() {
+    browser page{browser_options{200, 150}};
+    page.load_html(R"(<html><body><script>
+        window.__log = [];
+        window.addEventListener('keydown', function (e) {
+          window.__log.push(e.code + ' ' + e.keyCode + ' ' + e.which + ' ' + e.key);
+        });
+    </script></body></html>)");
+    check(page.frame().has_value(), "the page renders");
+
+    // The arrows first, because they are the ones that were broken. The numbers
+    // are the well-known ones every browser reports rather than anything
+    // derived, which is the whole reason they are worth having.
+    for (const char * code : {"ArrowLeft", "ArrowUp", "ArrowRight", "ArrowDown", "Space", "Enter",
+                              "Escape", "KeyA", "KeyZ", "Digit0", "Digit9", "F1", "F12"}) {
+        (void)page.handle(input_event::key_press(code));
+    }
+
+    const std::size_t before = page.bindings().console_output().size();
+    (void)page.run_script("console.log('=' + window.__log.join('|'));");
+    std::string answer;
+    const auto & said = page.bindings().console_output();
+    for (std::size_t i = said.size(); i-- > before;) {
+        if (said[i].starts_with("=")) {
+            answer = said[i].substr(1);
+            break;
+        }
+    }
+    const std::string want =
+        "ArrowLeft 37 37 ArrowLeft|ArrowUp 38 38 ArrowUp|ArrowRight 39 39 ArrowRight|"
+        "ArrowDown 40 40 ArrowDown|Space 32 32  |Enter 13 13 Enter|Escape 27 27 Escape|"
+        "KeyA 65 65 a|KeyZ 90 90 z|Digit0 48 48 0|Digit9 57 57 9|F1 112 112 F1|"
+        "F12 123 123 F12";
+    check(answer == want,
+          "keyCode and which are the legacy numbers:\n  got  " + answer + "\n  want " + want);
+}
+
 void test_run_app_reports_a_script_error() {
     std::vector<std::string> reported;
     ctbrowser::app_options options;
@@ -2322,6 +2367,7 @@ int main() {
     test_collection_keeps_what_the_page_still_uses();
     test_collection_happens_on_its_own();
     test_a_link_reaches_the_application_through_run_app();
+    test_key_events_carry_the_legacy_codes();
     test_run_app_reports_a_script_error();
     test_run_app_is_silent_for_a_healthy_page();
     test_click_dispatch();

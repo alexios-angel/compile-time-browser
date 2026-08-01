@@ -32,6 +32,17 @@ prefix, builds `tests/package/` against it via `find_package`.
 one engine include - the umbrella header - and no SDL symbol, and the engine must stay
 SDL-free.
 
+**KEY EVENTS CARRY `keyCode` AND `which` (2026-08-01)** — deprecated, and
+universally used. The engine had `code` and `key`, the modern pair, and stopped
+there; the event looked complete and was unusable to a large amount of real
+code. **Phaser's entire keyboard system matches on `keyCode`** — `KeyCodes.LEFT`
+is 37, and a `Key` object matches by number — so every arrow key in a Phaser game
+did nothing at all: the listener fired, the event arrived, `code` was right, and
+no key ever matched. A game that renders and cannot be played. `dom_key_code` in
+`shell/input.hpp` is the table; the values are the well-known ones every browser
+reports, which is the whole point of having them, and `tests/phaser_ratchet.cpp`
+now holds ArrowLeft down for several frames and asserts a Phaser scene sees it.
+
 **A PAGE THAT DIES NOW SAYS SO (2026-08-01).** `run_app` ticked the clock and
 never looked at what came back, so a page whose callbacks throw kept rendering
 whatever it last drew — it looked **frozen and reported nothing at all**. The

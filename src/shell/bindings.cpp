@@ -170,6 +170,13 @@ bool dom_bindings::dispatch_key(std::string_view type, node_id target, const inp
     object->set("altKey", value::boolean(false));
     object->set("metaKey", value::boolean(false));
     object->set("repeat", value::boolean(false));
+    // THE LEGACY PAIR, and they are not optional in practice. Phaser's whole
+    // keyboard system matches on `keyCode` - `KeyCodes.LEFT` is 37 - so without
+    // these the event arrived with a correct `code` and no key ever matched:
+    // every arrow key in a Phaser game did nothing at all. See dom_key_code.
+    const int legacy = dom_key_code(input.key);
+    object->set("keyCode", value::number(legacy));
+    object->set("which", value::number(legacy));
     return dispatch_event(type, target, event);
 }
 

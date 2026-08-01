@@ -258,6 +258,58 @@ private:
     return m;
 }
 
+// IS IT PLAYABLE? A different question from any rung above, and the one the
+// corpus is ultimately for: Space Invaders is only a game if a key moves the
+// ship. Phaser reads the keyboard as STATE polled per frame - `cursors.left
+// .isDown` - rather than as a callback, which is a path no p5 sketch in this
+// tree exercises at all, and it depends on the engine delivering DOM `code`
+// values ("ArrowLeft") to a listener Phaser installed on the document.
+//
+// Reported rather than ratcheted, because it is a separate claim from how far
+// the bundle gets and belongs beside it rather than inside its ladder.
+[[nodiscard]] std::string keyboard_verdict() {
+    const std::string source = read_file("examples/assets/phaser.js");
+    if (source.empty()) { return "phaser.js is missing"; }
+
+    ctbrowser::shell::browser page{ctbrowser::shell::browser_options{200, 200}};
+    page.assets().add(
+        "phaser.js",
+        std::vector<std::byte>{reinterpret_cast<const std::byte *>(source.data()),
+                               reinterpret_cast<const std::byte *>(source.data() + source.size())});
+    page.load_html(R"(<html><head><meta charset="utf-8">
+      <script src="phaser.js"></script></head><body></body></html>)");
+    (void)page.run_script(R"JS((function () {
+        window.__seen = 'none';
+        new Phaser.Game({
+            type: Phaser.CANVAS, width: 100, height: 100, banner: false,
+            audio: { noAudio: true },
+            scene: {
+                create: function () { this.cursors = this.input.keyboard.createCursorKeys(); },
+                update: function () {
+                    if (this.cursors.left.isDown) { window.__seen = 'left'; }
+                    else if (this.cursors.right.isDown) { window.__seen = 'right'; }
+                }
+            }
+        });
+    })())JS");
+    for (int i = 0; i < 30; ++i) { page.tick(16); }
+
+    // Held down across several frames, because Phaser polls state per frame -
+    // a press and release inside one tick is exactly what a polled reader is
+    // allowed to miss, and asserting on that would be testing the test.
+    (void)page.handle(ctbrowser::input_event::key_press("ArrowLeft"));
+    for (int i = 0; i < 5; ++i) { page.tick(16); }
+    (void)page.handle(ctbrowser::input_event::key_release("ArrowLeft"));
+
+    const std::size_t before = page.bindings().console_output().size();
+    (void)page.run_script("console.log('=' + String(window.__seen));");
+    const auto & said = page.bindings().console_output();
+    for (std::size_t i = said.size(); i-- > before;) {
+        if (said[i].starts_with("=")) { return said[i].substr(1); }
+    }
+    return "<no answer>";
+}
+
 // The recorded floor: `key=value` lines, the same shape tests/p5-ratchet.txt
 // uses. A missing file is not an error - it is the state this test shipped in
 // for one day, and it reports the number rather than inventing a floor.
@@ -289,6 +341,13 @@ int main() {
     std::printf("     PHASER LEVEL %d/%d (%s)\n", m.level, rung_paints, rung_name(m.level));
     if (!m.blocker.empty()) { std::printf("     blocked by: %s\n", m.blocker.c_str()); }
     std::printf("     compile %.0f ms, page %.0f ms\n", m.compile_ms, m.page_ms);
+    const std::string keyboard = keyboard_verdict();
+    std::printf("     keyboard: ArrowLeft held -> %s\n", keyboard.c_str());
+    if (keyboard != "left") {
+        std::printf("FAIL a held arrow key does not reach a Phaser scene - the corpus can "
+                    "render a game but not play one\n");
+        ++ctbrowser_test_failures;
+    }
 
     // THE PAWL. It turns one way: the level may not go down, and at the same
     // level the blocker may not change. That second half is the one that
