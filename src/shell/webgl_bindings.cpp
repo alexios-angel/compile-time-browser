@@ -737,13 +737,126 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
         default: return value::number(0);
         }
     });
-    method("getExtension", [](context &, std::span<value>) {
-        // NULL FOR EVERY EXTENSION, which is what a driver without one returns
-        // and what a page checks for. Handing back an object would make a page
-        // take a path this cannot honour.
+    // --- the extensions, which are the WebGL 1 spelling of WebGL 2 ----------
+    //
+    // ONE IMPLEMENTATION, TWO NAMES. `createVertexArrayOES` here and
+    // `createVertexArray` on a WebGL 2 context call the SAME webgl_context
+    // method, which is the decision docs/webgl2-plan.md records - and the
+    // reason a corpus can check it. Phaser reaches VAOs and instancing ONLY
+    // through these objects, so this is the machinery getting a workout from
+    // somebody else's renderer rather than from a page written to test it.
+    //
+    // STILL NULL FOR EVERYTHING ELSE, which is what a driver without an
+    // extension returns and what a page checks for. Handing back an object for
+    // a name this cannot honour would make a page take a path that then fails
+    // somewhere unrelated.
+    method("getSupportedExtensions", [](context & c, std::span<value>) {
+        const value list = c.make_array();
+        auto * items = static_cast<script::array_object *>(list.as_heap());
+        items->items.push_back(c.string("OES_vertex_array_object"));
+        items->items.push_back(c.string("ANGLE_instanced_arrays"));
+        // Derivatives are already implemented in the GLSL evaluator, so this
+        // extension is a NAME over a capability that exists rather than new
+        // work - checked in glsl_eval.cpp, not assumed.
+        items->items.push_back(c.string("OES_standard_derivatives"));
+        return list;
+    });
+    method("getExtension", [gl, touches](context & c, std::span<value> a) {
+        const std::string name = a.empty() ? std::string{} : c.to_string(a[0]);
+        const auto make = [&c](const char * label, auto && install) {
+            auto * ext = static_cast<script::object_object *>(c.make_object().as_heap());
+            const auto add = [&c, ext](std::string method_name, script::native_fn fn) {
+                ext->set(method_name, value::object(c.allocate<script::native_object>(
+                                          method_name, std::move(fn))));
+            };
+            install(add);
+            (void)label;
+            return value::object(ext);
+        };
+        if (name == "OES_vertex_array_object") {
+            return make("vao", [gl](auto add) {
+                add("createVertexArrayOES", [gl](context & inner, std::span<value>) {
+                    return value::number(gl->create_vertex_array());
+                    (void)inner;
+                });
+                add("bindVertexArrayOES", [gl](context & inner, std::span<value> args) {
+                    gl->bind_vertex_array(args.empty() || !args[0].is_number()
+                                              ? 0U
+                                              : static_cast<std::uint32_t>(args[0].as_number()));
+                    (void)inner;
+                    return value::undefined();
+                });
+                add("deleteVertexArrayOES", [gl](context & inner, std::span<value> args) {
+                    if (!args.empty() && args[0].is_number()) {
+                        gl->delete_vertex_array(static_cast<std::uint32_t>(args[0].as_number()));
+                    }
+                    (void)inner;
+                    return value::undefined();
+                });
+                add("isVertexArrayOES", [gl](context & inner, std::span<value> args) {
+                    (void)inner;
+                    return value::boolean(
+                        !args.empty() && args[0].is_number() &&
+                        gl->is_vertex_array(static_cast<std::uint32_t>(args[0].as_number())));
+                });
+            });
+        }
+        if (name == "ANGLE_instanced_arrays") {
+            return make("angle", [gl, touches](auto add) {
+                add("vertexAttribDivisorANGLE", [gl](context & inner, std::span<value> args) {
+                    (void)inner;
+                    gl->attribute_divisor(args.size() > 0 && args[0].is_number()
+                                              ? static_cast<int>(args[0].as_number())
+                                              : -1,
+                                          args.size() > 1 && args[1].is_number()
+                                              ? static_cast<int>(args[1].as_number())
+                                              : 0);
+                    return value::undefined();
+                });
+                add("drawArraysInstancedANGLE",
+                    touches([gl](context & inner, std::span<value> args) {
+                        const auto n = [&args](std::size_t i) {
+                            return args.size() > i && args[i].is_number()
+                                       ? static_cast<int>(args[i].as_number())
+                                       : 0;
+                        };
+                        (void)gl->draw_arrays_instanced(
+                            args.empty() || !args[0].is_number()
+                                ? 0U
+                                : static_cast<std::uint32_t>(args[0].as_number()),
+                            n(1), n(2), n(3));
+                        (void)inner;
+                        return value::undefined();
+                    }));
+                add("drawElementsInstancedANGLE",
+                    touches([gl](context & inner, std::span<value> args) {
+                        const auto n = [&args](std::size_t i) {
+                            return args.size() > i && args[i].is_number()
+                                       ? static_cast<int>(args[i].as_number())
+                                       : 0;
+                        };
+                        (void)gl->draw_elements_instanced(
+                            args.empty() || !args[0].is_number()
+                                ? 0U
+                                : static_cast<std::uint32_t>(args[0].as_number()),
+                            n(1),
+                            args.size() > 2 && args[2].is_number()
+                                ? static_cast<std::uint32_t>(args[2].as_number())
+                                : 0U,
+                            n(3), n(4));
+                        (void)inner;
+                        return value::undefined();
+                    }));
+            });
+        }
+        if (name == "OES_standard_derivatives") {
+            // No methods: the extension only enables dFdx/dFdy/fwidth in the
+            // shading language, and those already evaluate. An empty object is
+            // the correct answer - a page checks that it is non-null.
+            return make("derivatives", [](auto) {});
+        }
         return value::null();
     });
-    method("getSupportedExtensions", [](context & c, std::span<value>) { return c.make_array(); });
     method("isContextLost", [](context &, std::span<value>) { return value::boolean(false); });
     method("readPixels", [gl](context & c, std::span<value> a) {
         // Into the caller's typed array, which is how a page gets pixels back.

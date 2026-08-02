@@ -553,6 +553,12 @@ attribute_set webgl_context::gather(const gl_program & program, int index) const
         // would be the strictly correct default; zero is what a page that
         // forgot to enable an array actually sees on a real driver too.
         if (where.enabled) {
+            // THE DIVISOR IS THE WHOLE OF INSTANCING. Divisor 0 advances once
+            // per vertex - every WebGL 1 attribute - and divisor N advances
+            // once per N instances, so one buffer holds per-instance data and
+            // `index` is not the row to read. Applied here because this is the
+            // one place an attribute row is chosen.
+            const int row = where.divisor > 0 ? current_instance_ / where.divisor : index;
             const auto buffer = buffers_.find(where.buffer);
             if (buffer != buffers_.end()) {
                 const int component = size_of(where.type);
@@ -560,9 +566,8 @@ attribute_set webgl_context::gather(const gl_program & program, int index) const
                 // and by far the commonest case - treating it as a literal zero
                 // makes every vertex read the first one.
                 const int stride = where.stride > 0 ? where.stride : component * where.size;
-                const auto start =
-                    static_cast<std::size_t>(where.offset) +
-                    static_cast<std::size_t>(index) * static_cast<std::size_t>(stride);
+                const auto start = static_cast<std::size_t>(where.offset) +
+                                   static_cast<std::size_t>(row) * static_cast<std::size_t>(stride);
                 for (int c = 0; c < where.size && c < 4; ++c) {
                     made.v[static_cast<std::size_t>(c)] = read_component(
                         buffer->second.bytes, start + static_cast<std::size_t>(c * component),
@@ -573,6 +578,110 @@ attribute_set webgl_context::gather(const gl_program & program, int index) const
         out.emplace_back(program.attribute_names[location], std::move(made));
     }
     return out;
+}
+
+// --- vertex array objects, both spellings -------------------------------
+// ONE IMPLEMENTATION. `createVertexArray` on a WebGL 2 context and
+// `createVertexArrayOES` on the OES_vertex_array_object object both land here,
+// which is the decision docs/webgl2-plan.md records and the reason Phaser can
+// verify the WebGL 2 machinery: it reaches VAOs only through the extension.
+std::uint32_t webgl_context::create_vertex_array() {
+    const std::uint32_t id = next_vao_++;
+    vertex_arrays_[id] = gl_vertex_array{};
+    return id;
+}
+
+void webgl_context::bind_vertex_array(std::uint32_t id) {
+    // SWAP, DO NOT COPY-OUT-AND-FORGET. The live table is `attributes_`, so
+    // binding means saving it back into whatever was bound and loading the new
+    // one - otherwise everything set while a VAO was bound is lost the moment
+    // something else binds, which is the failure that makes a VAO look like it
+    // works until a second one exists.
+    if (id == bound_vao_) { return; }
+    if (bound_vao_ != 0) {
+        const auto previous = vertex_arrays_.find(bound_vao_);
+        if (previous != vertex_arrays_.end()) {
+            previous->second.attributes = attributes_;
+            previous->second.element_buffer = element_buffer_;
+        }
+    } else {
+        default_vao_.attributes = attributes_;
+        default_vao_.element_buffer = element_buffer_;
+    }
+    if (id == 0) {
+        attributes_ = default_vao_.attributes;
+        element_buffer_ = default_vao_.element_buffer;
+        bound_vao_ = 0;
+        return;
+    }
+    const auto next = vertex_arrays_.find(id);
+    if (next == vertex_arrays_.end()) {
+        fail(gl_enum::invalid_operation);
+        return;
+    }
+    attributes_ = next->second.attributes;
+    element_buffer_ = next->second.element_buffer;
+    bound_vao_ = id;
+}
+
+void webgl_context::delete_vertex_array(std::uint32_t id) {
+    if (id == 0) { return; }
+    // Deleting the BOUND one unbinds it first, which is what the spec says and
+    // what stops the next bind saving state back into a hole.
+    if (id == bound_vao_) { bind_vertex_array(0); }
+    vertex_arrays_.erase(id);
+}
+
+bool webgl_context::is_vertex_array(std::uint32_t id) const {
+    return id != 0 && vertex_arrays_.find(id) != vertex_arrays_.end();
+}
+
+void webgl_context::attribute_divisor(int location, int divisor) {
+    if (location < 0 || divisor < 0) {
+        fail(gl_enum::invalid_value);
+        return;
+    }
+    if (static_cast<std::size_t>(location) >= attributes_.size()) {
+        attributes_.resize(static_cast<std::size_t>(location) + 1);
+    }
+    attributes_[static_cast<std::size_t>(location)].divisor = divisor;
+}
+
+int webgl_context::attribute_divisor_of(int location) const {
+    if (location < 0 || static_cast<std::size_t>(location) >= attributes_.size()) { return 0; }
+    return attributes_[static_cast<std::size_t>(location)].divisor;
+}
+
+std::size_t webgl_context::draw_arrays_instanced(std::uint32_t mode, int first, int count,
+                                                 int instances) {
+    if (instances < 0) {
+        fail(gl_enum::invalid_value);
+        return 0;
+    }
+    // ZERO INSTANCES DRAWS NOTHING, and is not an error - a page that computed
+    // an empty batch should not have to branch around the call.
+    std::size_t painted = 0;
+    for (int i = 0; i < instances; ++i) {
+        current_instance_ = i;
+        painted += draw_arrays(mode, first, count);
+    }
+    current_instance_ = 0;
+    return painted;
+}
+
+std::size_t webgl_context::draw_elements_instanced(std::uint32_t mode, int count,
+                                                   std::uint32_t type, int offset, int instances) {
+    if (instances < 0) {
+        fail(gl_enum::invalid_value);
+        return 0;
+    }
+    std::size_t painted = 0;
+    for (int i = 0; i < instances; ++i) {
+        current_instance_ = i;
+        painted += draw_elements(mode, count, type, offset);
+    }
+    current_instance_ = 0;
+    return painted;
 }
 
 std::size_t webgl_context::draw_arrays(std::uint32_t mode, int first, int count) {

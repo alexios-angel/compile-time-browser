@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -187,6 +188,29 @@ struct vertex_attribute {
     bool normalized = false;
     int stride = 0;
     int offset = 0;
+    // INSTANCING. 0 means "advance once per vertex", which is every attribute a
+    // WebGL 1 page ever set; N means "advance once per N instances", which is
+    // what makes one buffer hold per-instance data. `vertexAttribDivisor` in
+    // WebGL 2 and `vertexAttribDivisorANGLE` in the extension set the same
+    // field - see the note on gl_vertex_array below.
+    int divisor = 0;
+};
+
+// A VERTEX ARRAY OBJECT: the attribute state, captured.
+//
+// That is all one is - `bindVertexArray` swaps the whole attribute table and
+// the element-array binding in and out, so a renderer can set up its formats
+// once and select them with a single call instead of a dozen. Phaser does
+// exactly that, through OES_vertex_array_object.
+//
+// ONE IMPLEMENTATION, TWO SPELLINGS, which is the decision docs/webgl2-plan.md
+// records: `createVertexArray` on a WebGL 2 context and `createVertexArrayOES`
+// on the extension object are the same operation, so they call the same code
+// here. Two implementations of one job is the bug this tree has already paid
+// for twice.
+struct gl_vertex_array {
+    std::vector<vertex_attribute> attributes;
+    std::uint32_t element_buffer = 0;
 };
 
 class webgl_context {
@@ -270,6 +294,21 @@ public:
     // when the question is "did anything happen at all".
     std::size_t draw_arrays(std::uint32_t mode, int first, int count);
     std::size_t draw_elements(std::uint32_t mode, int count, std::uint32_t type, int offset);
+    // INSTANCED, which is `count` vertices drawn `instances` times. An
+    // attribute with divisor 0 advances per vertex as always; one with divisor
+    // N advances once per N instances, which is the whole feature.
+    std::size_t draw_arrays_instanced(std::uint32_t mode, int first, int count, int instances);
+    std::size_t draw_elements_instanced(std::uint32_t mode, int count, std::uint32_t type,
+                                        int offset, int instances);
+    void attribute_divisor(int location, int divisor);
+    [[nodiscard]] int attribute_divisor_of(int location) const;
+
+    // --- vertex array objects, both spellings ------------------------------
+    [[nodiscard]] std::uint32_t create_vertex_array();
+    void bind_vertex_array(std::uint32_t id);
+    void delete_vertex_array(std::uint32_t id);
+    [[nodiscard]] bool is_vertex_array(std::uint32_t id) const;
+    [[nodiscard]] std::uint32_t bound_vertex_array() const noexcept { return bound_vao_; }
 
     // WHY A DRAW DREW NOTHING, when the reason was the shader rather than the
     // geometry. Empty when the last draw ran clean. GL has no such call - a
@@ -313,6 +352,21 @@ private:
     std::uint32_t active_unit_ = 0;
     std::unordered_map<std::uint32_t, std::uint32_t> texture_units_; // unit -> texture id
     std::vector<vertex_attribute> attributes_;
+    // The vertex arrays a page made, and which one is bound. ZERO IS THE
+    // DEFAULT vertex array and is not in the map: it is `attributes_` itself,
+    // which is what every WebGL 1 page has always used and what binding null
+    // returns to.
+    std::map<std::uint32_t, gl_vertex_array> vertex_arrays_;
+    std::uint32_t bound_vao_ = 0;
+    // The DEFAULT vertex array's saved state, for when a page binds one and
+    // then binds null again. It is not in the map because zero is not an id a
+    // page may delete or re-create.
+    gl_vertex_array default_vao_;
+    std::uint32_t next_vao_ = 1;
+    // Which instance the draw is on, for gather() to apply divisors against.
+    // Held here rather than threaded through every call between draw and
+    // gather, which is four layers of signature for one integer.
+    int current_instance_ = 0;
 
     raster::draw_state state_;
     raster::framebuffer framebuffer_;
