@@ -77,6 +77,19 @@ public:
         std::uint32_t high_water = 0;
         bool is_async = false;     // `return v` hands back a settled promise of v
         bool is_generator = false; // `function*` - calling it does not run it
+        // WHERE A NAME OR STRING ALREADY WENT.
+        //
+        // `function_proto::add_name` and `add_string` deduplicate by LINEAR
+        // SCAN, which is quadratic in the distinct names a function mentions
+        // and does a std::string compare at every step. On the p5.js bundle
+        // that was 4.4% of the load in add_name alone, plus most of an 8.3%
+        // memcmp.
+        //
+        // The index lives HERE rather than on the proto because it is wanted
+        // only while compiling: a shipped program carries the vectors and
+        // should not also carry a hash map per function.
+        flat_map<std::string, std::uint32_t> name_index;
+        flat_map<std::string, std::uint32_t> string_index;
     };
 
     compiler_impl(const vp::ast & tree, program & out)
@@ -828,8 +841,56 @@ public:
     // The seam every property-name operand goes through. It was the place the
     // 256-name cap was reported; now it is the place the widening paid off, and
     // the check that remains is for a limit no real program reaches.
+    // The same answers add_name and add_string give, without the scan. The
+    // NUMBERING IS IDENTICAL: an unseen entry is appended and takes the next
+    // index, which is exactly what the linear versions did - the bytecode is
+    // byte-for-byte the same.
+    // SCAN WHILE SMALL, INDEX ONCE IT IS NOT.
+    //
+    // Indexing everything unconditionally made the p5 bundle 6.4% cheaper to
+    // load and the Phaser one 0.5% DEARER: p5 has functions mentioning many
+    // distinct names, where the quadratic scan hurt, and Phaser has a great
+    // many small ones, where building two hash maps per function costs more
+    // than the scan it replaces. Most functions mention a handful of names.
+    //
+    // So the scan stays for the small case and the index is built on crossing.
+    // Sixteen is where a linear scan of short strings stops beating a hash.
+    static constexpr std::size_t small_pool = 16;
+
+    [[nodiscard]] static std::uint32_t intern_into(std::vector<std::string> & pool,
+                                                   flat_map<std::string, std::uint32_t> & index,
+                                                   std::string text) {
+        if (pool.size() < small_pool) {
+            for (std::size_t i = 0; i < pool.size(); ++i) {
+                if (pool[i] == text) { return static_cast<std::uint32_t>(i); }
+            }
+            pool.push_back(std::move(text));
+            return static_cast<std::uint32_t>(pool.size() - 1);
+        }
+        if (index.empty()) { // crossing the threshold: catch the index up
+            for (std::size_t i = 0; i < pool.size(); ++i) {
+                index.emplace(pool[i], static_cast<std::uint32_t>(i));
+            }
+        }
+        if (const auto it = index.find(text); it != index.end()) { return it->second; }
+        const auto at = static_cast<std::uint32_t>(pool.size());
+        pool.push_back(text);
+        index.emplace(std::move(text), at);
+        return at;
+    }
+
+    // The same answers add_name and add_string give, without the quadratic
+    // scan. The NUMBERING IS IDENTICAL either way - an unseen entry is appended
+    // and takes the next index - so the bytecode is byte-for-byte the same.
+    [[nodiscard]] std::uint32_t intern_name(std::string text) {
+        return intern_into(proto().names, fn().name_index, std::move(text));
+    }
+    [[nodiscard]] std::uint32_t intern_string(std::string text) {
+        return intern_into(proto().strings, fn().string_index, std::move(text));
+    }
+
     [[nodiscard]] std::uint16_t name_operand(std::string text) {
-        const std::uint32_t index = proto().add_name(std::move(text));
+        const std::uint32_t index = intern_name(std::move(text));
         if (index > operand_limit) {
             fail(frame_name(fn().proto) + " mentions more than " +
                  std::to_string(operand_limit + 1) +
@@ -1886,7 +1947,7 @@ public:
         }
         case vp::nk::str:
             proto().emit(instruction::with_bx(op::load_string, dst,
-                                              proto().add_string(decode_string_literal(n.text))));
+                                              intern_string(decode_string_literal(n.text))));
             break;
         case vp::nk::tmpl: compile_template(n, dst); break;
         case vp::nk::new_expr: compile_new(n, dst); break;
@@ -2010,7 +2071,7 @@ public:
             return;
         }
         proto().emit(
-            instruction::with_bx(op::get_global, dst, proto().add_name(std::string{name_text})));
+            instruction::with_bx(op::get_global, dst, intern_name(std::string{name_text})));
     }
     void emit_write(std::string_view name_text, std::uint16_t src) {
         if (const local * l = find_local_entry(fn(), name_text)) {
@@ -2027,7 +2088,7 @@ public:
             return;
         }
         proto().emit(
-            instruction::with_bx(op::set_global, src, proto().add_name(std::string{name_text})));
+            instruction::with_bx(op::set_global, src, intern_name(std::string{name_text})));
     }
 
     void compile_ident(const vp::node & n, std::uint16_t dst) {
@@ -3078,7 +3139,7 @@ public:
         const std::uint32_t mark = reg_mark();
         const std::uint16_t callee = alloc_reg();
         proto().emit(instruction::with_bx(op::get_global, callee,
-                                          proto().add_name(std::string{regexp_factory_name})));
+                                          intern_name(std::string{regexp_factory_name})));
         const std::uint16_t source = alloc_reg();
         emit_string(source, std::string{literal.substr(1, close - 1)});
         const std::uint16_t flags = alloc_reg();
@@ -3193,8 +3254,7 @@ public:
 
     // --- helpers -------------------------------------------------------------
     void emit_string(std::uint16_t dst, std::string text) {
-        proto().emit(
-            instruction::with_bx(op::load_string, dst, proto().add_string(std::move(text))));
+        proto().emit(instruction::with_bx(op::load_string, dst, intern_string(std::move(text))));
     }
     void emit_const(std::uint16_t dst, value v) {
         proto().emit(instruction::with_bx(op::load_const, dst, proto().add_constant(v)));
