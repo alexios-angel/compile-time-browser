@@ -1,0 +1,10 @@
+# Which WebGL 2 probes pass. tests/webgl2_api.cpp measures it; this file
+# records it. A probe that used to pass and now does not FAILS the test.
+#
+# Only tools/webgl2-api.py --advance writes this file. A test that edits its
+# own expectations cannot fail, so advancing is a deliberate act.
+#
+# The probes themselves are tests/webgl2-api-probe.js, one per line here as
+# `module/name`. A probe that is SKIPPED is not recorded - it is not a claim
+# about anything working.
+extensions/unimplemented ones stay null

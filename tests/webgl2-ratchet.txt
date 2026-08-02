@@ -1,0 +1,40 @@
+# How far a WebGL 2 page gets through the engine. tests/webgl2_ratchet.cpp
+# measures it; this file records it. The level may not go DOWN, and at the same
+# level the blocker may not CHANGE, without the test failing.
+#
+# Only tools/webgl2-ratchet.py --advance writes this file. A test that edits its
+# own expectations cannot fail, so advancing is a deliberate act.
+#
+# The ladder: 1 a webgl2 context, 2 the WebGL 2 constants, 3 #version 300 es
+# compiles, 4 vertex array objects, 5 instanced drawing accepted, 6 an instanced
+# draw reaches the pixels, 7 the same capability under its WebGL 1 extension
+# names, 8 Phaser's own WebGL renderer paints on it.
+#
+# RUNG 7 IS THE DESIGN DECISION MADE CHECKABLE. docs/webgl2-plan.md commits to
+# ONE implementation of VAOs and instancing exposed under TWO spellings, because
+# Phaser reaches them only through the WebGL 1 extensions and would otherwise
+# never touch the code the WebGL 2 rungs prove. If 6 passes and 7 fails, there
+# are two implementations - the bug this tree has already paid for twice, with
+# two URL parsers and two base64 decoders.
+
+level=0
+blocker=getContext('webgl2') returned null
+
+# WHY THIS STARTS AT ZERO (2026-08-02). `getContext('webgl2')` returns null by
+# an explicit decision recorded in shell/bindings.cpp, so the first rung is
+# where it stops and every rung above is unmeasured rather than failing. That is
+# the honest starting position for a plan whose stage 0 is this harness.
+#
+# WHAT THE THREE CORPORA SAY, measured rather than assumed:
+#
+#   p5.js      asks for webgl2 FIRST and falls back silently - so everything
+#              ever proven about its WEBGL mode here was proven on the fallback
+#   Phaser     never asks at all; it takes VAOs and instancing from WebGL 1
+#              extensions, and gets null for all of them today
+#   Babylon    asks for webgl2 and uses nearly the whole specification - UBOs,
+#              3D textures, MRT, transform feedback, queries, sync, samplers -
+#              gating 52 sites on _webGLVersion so it degrades cleanly
+#
+# So rung 8 asks the only corpus question available today: Phaser's renderer
+# runs on WebGL 1, and whether it paints at all is worth a rung of its own.
+# Babylon is not vendored - see the open question in docs/webgl2-plan.md.
