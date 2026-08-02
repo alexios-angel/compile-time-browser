@@ -131,10 +131,79 @@ The runtime cannot; the front end can, and that is where the time is. See
 `docs/script.md` — and note the capture index is built read-only *for* that
 future.
 
+## Property lookup: a `std::string` built and thrown away on EVERY lookup (2026-08-02)
+
+`object_object::find` was 10.7% of a Phaser frame - two thirds of what the whole
+interpreter costs. The cause was one line:
+
+```cpp
+[[nodiscard]] value * find(std::string_view name) {
+    const auto it = index.find(std::string{name});   // <-- a temporary, per lookup
+```
+
+`flat_map<std::string, V>::find` takes the key type, so asking it with a
+`string_view` constructs a `std::string` to throw away. Every property read in
+the engine paid for it.
+
+The fix is heterogeneous lookup - a transparent hasher and `std::equal_to<>`, so
+`find(string_view)` is answered directly. `ctbrowser::string_flat_map` in
+`core/containers.hpp`. Both hasher overloads hash *through* `string_view` on
+purpose: heterogeneous lookup is only correct when the two key types hash
+identically, and `std::hash<std::string>` is not required to agree with
+`std::hash<std::string_view>`.
+
+**Measured, callgrind, same build directory, only the source toggled:**
+
+| | `object_object::find` | total |
+|---|---|---|
+| `tests/bench_script` before | 2.658 G (6.59%) | 40.345 G |
+| `tests/bench_script` after | **1.462 G (3.67%)** | **39.839 G (-1.26%)** |
+| `phaser_invaders` before | 2.558 G (**10.74%**) | 23.815 G |
+| `phaser_invaders` after | **1.350 G (5.78%)** | **23.342 G (-1.99%)** |
+
+**Property lookup got 47% cheaper and a whole Phaser frame got 2% cheaper, by
+deleting a temporary.** No library was added - the map was already
+`boost::unordered_flat_map`, which is the right container; it was being asked
+the wrong way.
+
+**What is left in `find`, for whoever goes further.** It still hashes a string
+and compares bytes on every property access. The engine already interns strings
+(`core/atom.hpp`), so the real ceiling here is property names as atoms - an
+integer compare instead of a hash and a memcmp - which is the change
+`value.hpp` already anticipates when it calls the index "the slot a shape /
+inline-cache design replaces later". That is a much larger change and it is not
+a library question either.
+
+## Computed-goto dispatch: MEASUREMENT WITHDRAWN - it was invalid (2026-08-02)
+
+**An earlier revision of this file reported that computed goto executed 5.8%
+more instructions and ran 3% slower. That conclusion does not stand, and the
+numbers behind it were not comparing what they claimed to.**
+
+`ctbrowser_bench` targets are `EXCLUDE_FROM_ALL`, so `tools/remote-build.sh`
+does not rebuild them. The "computed goto" binary was never rebuilt after the
+dispatch change - it was the ORIGINAL binary, which is why its instruction count
+matched a later untouched build to within ten instructions. The "switch" number
+came from a second build directory that *was* built explicitly, from the
+RESTRUCTURED loop with the dispatch macros compiled in switch mode.
+
+So the comparison was **original switch vs restructured switch** - and it
+pointed the other way: the restructuring alone measured about 5.5% FEWER
+instructions. Nothing in it measured computed goto at all.
+
+The implementation was reverted before the error was found, so there is nothing
+to re-measure without redoing it. **The dispatch question is therefore OPEN, not
+answered**, and `docs/computed-goto-plan.md` is still live.
+
+The lesson is the one this tree keeps relearning and had already written down
+for the GLSL work: **verify that the thing you changed is the thing you ran.**
+A stale binary does not announce itself, and an A/B across two build directories
+is not an A/B.
+
 ## Computed-goto dispatch: MEASURED, AND IT LOST (2026-08-02)
 
-Tried, measured, reverted. The implementation is in the history; the number is
-here so nobody spends the day again.
+SUPERSEDED - see the withdrawal above. The numbers in this section are the
+invalid ones and are kept only so the mistake is legible.
 
 `docs/computed-goto-plan.md` set a gate before the answer was known: under 5% of
 an execution-heavy workload and the plan deletes itself. The share came in at

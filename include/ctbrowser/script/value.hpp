@@ -457,7 +457,7 @@ struct accessor_table {
 
 struct object_object final : heap_object {
     std::vector<std::pair<std::string, value>> props;
-    flat_map<std::string, std::uint32_t> index;
+    string_flat_map<std::uint32_t> index;
     value prototype = value::null();
 
     accessor_table accessors;
@@ -465,7 +465,10 @@ struct object_object final : heap_object {
     object_object() : heap_object(heap_kind::object) {}
 
     [[nodiscard]] value * find(std::string_view name) {
-        const auto it = index.find(std::string{name});
+        // NO TEMPORARY. This used to be `index.find(std::string{name})`, which
+        // built and destroyed a std::string on every property read in the
+        // engine - see the note on string_flat_map.
+        const auto it = index.find(name);
         return it == index.end() ? nullptr : &props[it->second].second;
     }
     [[nodiscard]] accessor_entry * find_accessor(std::string_view name) {
@@ -507,7 +510,7 @@ struct object_object final : heap_object {
     // shifts every position after it - the index is rebuilt rather than patched,
     // because delete is rare and a half-updated index is a silent wrong answer.
     bool erase(std::string_view name) {
-        const auto it = index.find(std::string{name});
+        const auto it = index.find(name);
         if (it == index.end()) { return false; }
         props.erase(props.begin() + static_cast<std::ptrdiff_t>(it->second));
         index.clear();

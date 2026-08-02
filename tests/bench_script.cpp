@@ -134,7 +134,8 @@ struct timing {
         const script::run_result out = cx.run(program);
         const auto run_end = clock_type::now();
 
-        best.compile_seconds = std::min(best.compile_seconds, seconds_of(compile_end - compile_start));
+        best.compile_seconds =
+            std::min(best.compile_seconds, seconds_of(compile_end - compile_start));
         best.run_seconds = std::min(best.run_seconds, seconds_of(run_end - run_start));
         best.answer = out.ok ? cx.to_string(out.returned) : "RUN ERROR: " + out.error;
     }
@@ -162,8 +163,8 @@ int main(int argc, char ** argv) {
         total_compile += t.compile_seconds;
         total_run += t.run_seconds;
         if (csv) {
-            std::printf("%s,%.3f,%.3f,%.1f\n", w.name, t.compile_seconds * 1e3,
-                        t.run_seconds * 1e3, share);
+            std::printf("%s,%.3f,%.3f,%.1f\n", w.name, t.compile_seconds * 1e3, t.run_seconds * 1e3,
+                        share);
         } else {
             std::printf("%-10s %10.3f %10.3f %7.1f%%  %s\n", w.name, t.compile_seconds * 1e3,
                         t.run_seconds * 1e3, share, t.answer.c_str());

@@ -1,14 +1,31 @@
 # Computed gotos in the script VM
 
-**Status: DONE, AND THE ANSWER WAS NO (2026-08-02).** Built, measured, reverted.
-Computed goto executed **5.8% more instructions** and ran **3% slower** than the
-`switch` on the workload most favourable to it. The numbers, and the two reasons
-it lost, are in `docs/performance.md`; the implementation is in the history.
+**Status: STILL OPEN. It was built, mis-measured, and reverted (2026-08-02).**
 
-The rest of this file is left as written, because the plan called the outcome
-("the honest expectation is that it will say no") and the gate it set before the
-answer was known is the reason the work stopped at a day instead of a week. What
-survives is `tests/bench_script`, which should have existed years ago.
+An attempt was made and reported as a loss. **That measurement was invalid** and
+is withdrawn - `ctbrowser_bench` targets are `EXCLUDE_FROM_ALL`, the benchmark
+binary was never rebuilt after the dispatch change, and the comparison turned
+out to be *original switch vs restructured switch* rather than switch vs
+computed goto. See `docs/performance.md`. Nothing measured computed goto.
+
+The one real signal in the wreckage points the OTHER way: the restructuring
+alone - hoisting the frame into pointers, wrapping handlers in `do {} while (0)`
+- measured about **5.5% fewer instructions** than the loop as written, with no
+computed goto involved. That is worth chasing on its own.
+
+Two implementation facts are worth keeping for whoever picks this up, because
+both cost time:
+
+* **An indirect `goto` may not leave the scope of a non-trivially-destructible
+  local.** `VM_NEXT` cannot sit inside a handler holding a
+  `std::vector<value> args`. Wrapping each handler in `do { ... } while (0);`
+  makes the existing `break` mean "end of handler" in both dispatch modes and
+  puts the jump outside the braces, where the destructors have already run.
+* **Do not `#define fn (*vm_proto)`** as a shim - it collides with `nat->fn(...)`.
+  Name the pointers directly.
+
+What survives regardless is `tests/bench_script`, which should have existed
+years ago.
 
 **What stage 0 actually found, and it matters more than the dispatch question:**
 in a Phaser frame the interpreter is 15%, `canvas_context::blend` is 22%, and
