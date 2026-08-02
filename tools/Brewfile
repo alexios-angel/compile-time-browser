@@ -1,5 +1,12 @@
-# Brew-only deps for compile-time-browser, converged by tools/remote-build.sh
-# (the devbox's brew is deliberately package-empty; box-wide tools are apt).
+# Dependencies for compile-time-browser, converged by tools/remote-build.sh.
+#
+# BREW RATHER THAN APT, and the reason is versions. Ubuntu 24.04 LTS ships
+# libjpeg-turbo 2.1.5, which does not have the API this engine decodes JPEG
+# with, and a Boost that packages `boost_url` separately from libboost-dev - so
+# a devbox build stopped dead twice on dependencies that were "installed".
+# Brew ships current versions AND the same ones the development machine has,
+# which keeps the two in step; apt stays right for the box's own furniture
+# (build-essential, git, rsync, the toolchain).
 brew "glm"   # >=1.0: constexpr vector math. Predates the compile-time engine's
              # retirement and nothing in the tree includes it today; kept
              # because the devbox provisions from this file for several repos.
@@ -12,3 +19,15 @@ brew "glm"   # >=1.0: constexpr vector math. Predates the compile-time engine's
 brew "plutosvg"   # 0.0.8: SVG document -> plutovg canvas
 brew "plutovg"    # 1.3.3: the rasteriser under it, pulled in as a dependency
                   # anyway - named so the pin is visible
+
+# The compiled libraries the engine LINKS. All three were apt packages until
+# 2026-08-01; see the note at the top for why they are not any more.
+brew "boost"          # Boost.URL - COMPILED, not header-only, since 1.87. One
+                      # formula rather than apt's split libboost-dev /
+                      # libboost-url-dev, which is how a box ended up with the
+                      # first and not the second.
+brew "libpng"         # PNG, decoded inside the SDL-free engine
+brew "jpeg-turbo"     # JPEG, likewise. apt's 2.1.5 predates the tj3_* API;
+                      # brew's is 3.x. The decoder is written to the 2.x
+                      # spelling anyway so it builds against either, but the
+                      # version gap is what moved this file off apt.

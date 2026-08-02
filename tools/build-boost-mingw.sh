@@ -38,7 +38,15 @@ if [ -z "${mingw:-}" ]; then
 fi
 
 # --- header-only Boost, which the sources need to compile against ----------
-for root in "${BOOST_INC:-}" "$HOME/projects/boost-inc"; do
+# BREW'S FIRST when it has one. This tree moved its compiled dependencies onto
+# brew on 2026-08-01 because apt's versions are the distribution's - noble
+# packages `boost_url` separately from libboost-dev, so a box could have Boost
+# installed and still fail to configure. Taking the headers from the same place
+# the host library comes from also stops the cross build compiling one release
+# against another's headers, which the tag check below exists to prevent.
+brew_inc=""
+if command -v brew >/dev/null 2>&1; then brew_inc="$(brew --prefix 2>/dev/null)/include"; fi
+for root in "${BOOST_INC:-}" "$brew_inc" "$HOME/projects/boost-inc"; do
     if [ -n "$root" ] && [ -f "$root/boost/version.hpp" ]; then
         boost_inc="$root"
         break

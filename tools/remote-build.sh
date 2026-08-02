@@ -70,7 +70,14 @@ fi
 REMOTE
 
 if [ "${1:-}" = windows ]; then
-  ssh "$host" "cd projects/compile-time-browser && cmake --preset windows-fetch && cmake --build --preset windows-fetch && cmake --build --preset windows-fetch --target windows-dist"
+  # `windows`, not `windows-fetch`: that preset no longer exists and this line
+  # had gone stale, so the windows path failed at the first command with
+  # "No such preset". The cross build also needs FOUR compiled libraries in the
+  # mingw sysroot that the box does not ship - Boost.URL, zlib, libpng and
+  # libjpeg-turbo - so the two builder scripts run first. Both are idempotent
+  # and skip what is already installed.
+  ssh "$host" "cd projects/compile-time-browser && tools/build-image-libs-mingw.sh && tools/build-boost-mingw.sh"
+  ssh "$host" "cd projects/compile-time-browser && cmake --preset windows && cmake --build --preset windows && cmake --build --preset windows --target windows-dist"
   rsync -az "$host:projects/compile-time-browser/examples-windows/" "$repo_root/examples-windows/"
   echo "examples-windows/ refreshed from the devbox"
 elif [ $# -gt 0 ]; then
