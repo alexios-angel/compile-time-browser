@@ -35,6 +35,24 @@ blocker=Phaser's WEBGL fill did not reach the pixels (32,32 is 0,0,0)
 #              3D textures, MRT, transform feedback, queries, sync, samplers -
 #              gating 52 sites on _webGLVersion so it degrades cleanly
 #
+# WHAT IS KNOWN ABOUT RUNG 8, so the next attempt starts here rather than
+# re-deriving it. Phaser's WEBGL renderer initialises (renderer.type is 2, it
+# holds a gl context), boots, and runs create() - the scene's draw calls happen.
+# Two gaps were found and closed on 2026-08-02: `bufferSubData` did not exist,
+# and TRIANGLE_STRIP/FAN were refused, which is Phaser's DEFAULT topology.
+#
+# What remains: `drawElements(TRIANGLES, 6, UNSIGNED_SHORT)` answers
+# INVALID_OPERATION, repeatedly, once per frame. webgl_context::draw_elements
+# raises that for exactly three reasons - no current program, a program that is
+# not linked, or no ELEMENT_ARRAY_BUFFER bound - so the next step is to find out
+# WHICH, and the likeliest is that Phaser's own shaders do not compile here.
+#
+# A caution learned instrumenting it: wrapping every gl method from JS and
+# reading getError() after each call ATTRIBUTES A STALE ERROR to the first
+# wrapped call, because getError returns the first error since it was last
+# asked. The `bindFramebuffer=1280` seen that way was not bindFramebuffer's -
+# that method is a no-op stub that cannot raise anything.
+#
 # So rung 8 asks the only corpus question available today: Phaser's renderer
 # runs on WebGL 1, and whether it paints at all is worth a rung of its own.
 # Babylon is not vendored - see the open question in docs/webgl2-plan.md.
