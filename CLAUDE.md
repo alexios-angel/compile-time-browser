@@ -19,6 +19,13 @@ a submodule at all: the DOM has its own WHATWG tokenizer and tree builder, and
 `include/ctbrowser/dom/entities.hpp` is the entity table carried forward from it.
 
 ## Build & test
+**BUILD ON THE DEVBOX**, not here: `tools/remote-build.sh` syncs and builds on
+the shared box (`../infra/azure-build-server/server.sh start`, then `allow-ip`
+when the home IP has rotated). This WSL instance has ~7.5 GiB and a full build —
+the Windows cross-build especially — takes it down. The devbox is also a
+SECOND set of assumptions: GCC 13 rather than clang, and no SDL at all, which
+found four real defects the first time it ran. See `docs/build.md`.
+
 ```bash
 git submodule update --init --recursive    # ctcss + ctjs (+ nested ctc)
 cmake --preset default && cmake --build --preset default && ctest --preset default
