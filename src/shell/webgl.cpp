@@ -1,6 +1,7 @@
 #include <ctbrowser/shell/webgl.hpp>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 
 // The WebGL context's state machine. See webgl.hpp for the shape; this is the

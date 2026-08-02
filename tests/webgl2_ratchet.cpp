@@ -347,10 +347,21 @@ struct measurement {
         return m;
     }
     // Drew is not painted: the pixels are the claim.
+    //
+    // ASK PHASER WHICH CANVAS IS ITS OWN. Taking the first `canvas` in the
+    // document is what tests/phaser_ratchet.cpp does and it is right there,
+    // because a CANVAS-mode game makes one. A WEBGL game makes SEVERAL - the
+    // texture manager builds canvases for its base64 textures - so the first in
+    // document order is a texture, and reading it finds black however well the
+    // renderer is working. That cost an afternoon: the draws were painting 2048
+    // fragments with no shader error the whole time.
+    (void)game.run_script("window.__game.canvas.id = 'phaser-game-canvas';");
     const auto txn = game.doc().read();
     ctbrowser::node_id canvas{};
+    const ctbrowser::atom id_attribute = game.atoms().intern("id");
     const auto walk = [&](auto && self, ctbrowser::node_id at) -> void {
-        if (!canvas && game.atoms().text(txn.tag(at).value_or(ctbrowser::atom{})) == "canvas") {
+        if (!canvas && game.atoms().text(txn.tag(at).value_or(ctbrowser::atom{})) == "canvas" &&
+            txn.attribute_value(at, id_attribute) == "phaser-game-canvas") {
             canvas = at;
         }
         for (const ctbrowser::node_id child : txn.children(at)) { self(self, child); }

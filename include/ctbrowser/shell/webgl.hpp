@@ -315,6 +315,8 @@ public:
     // used prefix every frame. Phaser's WebGL renderer does exactly that and
     // could not draw a single quad without it.
     void buffer_sub_data(std::uint32_t target, int offset, std::span<const std::byte> bytes);
+    void bind_framebuffer(std::uint32_t id) { bound_framebuffer_ = id; }
+    [[nodiscard]] std::uint32_t bound_framebuffer() const noexcept { return bound_framebuffer_; }
     void attribute_divisor(int location, int divisor);
     [[nodiscard]] int attribute_divisor_of(int location) const;
 
@@ -373,6 +375,7 @@ private:
     // returns to.
     std::map<std::uint32_t, gl_vertex_array> vertex_arrays_;
     int version_ = 1;
+    std::uint32_t bound_framebuffer_ = 0;
     std::uint32_t bound_vao_ = 0;
     // The DEFAULT vertex array's saved state, for when a page binds one and
     // then binds null again. It is not in the map because zero is not an id a

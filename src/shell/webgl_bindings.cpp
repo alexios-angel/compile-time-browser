@@ -1032,8 +1032,13 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
     method("createRenderbuffer", [gl, handle](context & c, std::span<value>) {
         return handle(c, gl->create_buffer(), "renderbuffer");
     });
+    method("bindFramebuffer", [gl](context &, std::span<value> a) {
+        gl->bind_framebuffer(
+            a.size() > 1 && a[1].is_number() ? static_cast<std::uint32_t>(a[1].as_number()) : 0U);
+        return value::undefined();
+    });
     for (const char * name :
-         {"bindFramebuffer", "bindRenderbuffer", "framebufferTexture2D", "framebufferRenderbuffer",
+         {"bindRenderbuffer", "framebufferTexture2D", "framebufferRenderbuffer",
           "renderbufferStorage", "renderbufferStorageMultisample", "blitFramebuffer"}) {
         method(name, [](context &, std::span<value>) { return value::undefined(); });
     }
