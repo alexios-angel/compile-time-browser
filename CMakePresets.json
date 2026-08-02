@@ -7,7 +7,8 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "${sourceDir}/tools/clang-std-embed/bin/clang++"
       }
     },
     {
@@ -20,7 +21,7 @@
         "CTBROWSER_BUILD_EXAMPLES": "OFF",
         "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer -g",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
-        "CMAKE_CXX_COMPILER": "/home/linuxbrew/.linuxbrew/bin/clang++"
+        "CMAKE_CXX_COMPILER": "${sourceDir}/tools/clang-std-embed/bin/clang++"
       }
     },
     {
@@ -33,7 +34,7 @@
         "CTBROWSER_BUILD_EXAMPLES": "OFF",
         "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer -g",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
-        "CMAKE_CXX_COMPILER": "/home/linuxbrew/.linuxbrew/bin/clang++"
+        "CMAKE_CXX_COMPILER": "${sourceDir}/tools/clang-std-embed/bin/clang++"
       }
     },
     {

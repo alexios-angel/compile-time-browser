@@ -17,8 +17,8 @@
 # are two implementations - the bug this tree has already paid for twice, with
 # two URL parsers and two base64 decoders.
 
-level=7
-blocker=Phaser's WEBGL fill did not reach the pixels (32,32 is 0,0,0; 64x64 canvas has 0 non-black pixels)
+level=8
+blocker=the bundle did not run: `yield` is not in this VM subset - there are no generators
 
 # WHY THIS STARTS AT ZERO (2026-08-02). `getContext('webgl2')` returns null by
 # an explicit decision recorded in shell/bindings.cpp, so the first rung is
@@ -35,14 +35,23 @@ blocker=Phaser's WEBGL fill did not reach the pixels (32,32 is 0,0,0; 64x64 canv
 #              3D textures, MRT, transform feedback, queries, sync, samplers -
 #              gating 52 sites on _webGLVersion so it degrades cleanly
 #
-# WHAT IS KNOWN ABOUT RUNG 8, so the next attempt starts here rather than
-# re-deriving it. Phaser's WEBGL renderer initialises (renderer.type is 2, it
-# holds a gl context), boots, and runs create() - the scene's draw calls happen.
-# Two gaps were found and closed on 2026-08-02: `bufferSubData` did not exist,
-# and TRIANGLE_STRIP/FAN were refused, which is Phaser's DEFAULT topology.
+# WHAT RUNG 8 COST, kept because four defects had to fall for it and each was
+# invisible from JavaScript. Phaser's WEBGL renderer initialises, boots and runs
+# create(); getting from there to a painted pixel needed, in order:
 #
-# WHAT REMAINS, traced end to end on 2026-08-02 and now down to ONE defect,
-# which is not in the WebGL code at all. Phaser's draws reach the rasteriser
+#   bufferSubData             did not exist
+#   TRIANGLE_STRIP / FAN      refused - and STRIP is Phaser's DEFAULT topology
+#   a fresh VAO's attributes  an EMPTY table, so every vertexAttribPointer after
+#                             binding one was dropped by its own bounds guard
+#   typed arrays              owned values instead of viewing bytes, so four
+#                             views over one ArrayBuffer were the same object
+#
+# Not one of them raised a GL error or threw. The whole class is "a silent no-op
+# that leaves the canvas black", which is why every step below was measured
+# inside the engine rather than inferred from what the page could see.
+#
+# THE TRACE THAT FOUND THE LAST ONE, since the method is the reusable part.
+# Phaser's draws reached the rasteriser
 # with six vertices and shaders that compile and link; `inPosition` is bound at
 # location 0 from buffer 13, size 2, float, stride 12, offset 0 - all correct -
 # and 288 bytes are uploaded to that buffer by bufferSubData every frame. Those
@@ -57,10 +66,11 @@ blocker=Phaser's WEBGL fill did not reach the pixels (32,32 is 0,0,0; 64x64 canv
 # to an integer. Read back as float, 64 becomes 9e-44, which is zero to any
 # question the rasteriser asks.
 #
-# The fix is a typed array that VIEWS bytes rather than owning values: the
-# ArrayBuffer holds the bytes and each view carries its own (kind, offset,
-# length) over them. That also removes the RangeError builtins.cpp throws today
-# for `new Uint8Array(buf, offset, length)`, which exists for the same reason.
+# The fix, landed: a typed array VIEWS bytes rather than owning values. The
+# ArrayBuffer holds them and each view carries its own (kind, offset, length)
+# over them. That also removed the RangeError builtins.cpp used to throw for
+# `new Uint8Array(buf, offset, length)`, which existed for the same reason - an
+# offset view could not be expressed while a view owned its elements.
 #
 # Two wrong diagnoses, recorded because both cost a day:
 #
@@ -72,14 +82,20 @@ blocker=Phaser's WEBGL fill did not reach the pixels (32,32 is 0,0,0; 64x64 canv
 #      fragments are rungs 5-7's own test page, not Phaser: the DIAG output was
 #      read without checking which context it came from. Phaser paints ZERO.
 #
-# One real fix landed on the way. A fresh gl_vertex_array default-constructed
-# its attribute table EMPTY while the context sized its own to 16, so binding a
-# new VAO installed a zero-slot table - after which every enableVertexAttribArray
-# and vertexAttribPointer was silently dropped by its own bounds guard and every
-# draw gathered no attributes. Phaser reaches VAOs through
+# The VAO defect found on the way is worth its own note, because it is the one
+# a future VAO change is most likely to reintroduce. A fresh gl_vertex_array
+# default-constructed its attribute table EMPTY while the context sized its own
+# to 16 slots, and binding SWAPS the live table - so binding a new VAO installed
+# a zero-slot table, after which every enableVertexAttribArray and
+# vertexAttribPointer was dropped by its own bounds guard and every draw
+# gathered no attributes. Phaser reaches VAOs only through
 # OES_vertex_array_object, so it hit this the moment rung 7 made the extension
-# real. Attributes arrive with their bindings intact now.
+# real: rung 7 going green is what broke rung 8.
 #
-# So rung 8 asks the only corpus question available today: Phaser's renderer
-# runs on WebGL 1, and whether it paints at all is worth a rung of its own.
-# Babylon is not vendored - see the open question in docs/webgl2-plan.md.
+# RUNG 9 IS BABYLON, and it is blocked on something with nothing to do with
+# WebGL: 622 `function*` and 803 `yield` in the bundle, from TypeScript's
+# __awaiter transpilation. Generators are a VM feature - suspending and resuming
+# a frame - and the machinery for it already half exists, because `await` on an
+# unsettled promise saves a frame into a coroutine object (see heap_kind::
+# coroutine in script/value.hpp). That is the decision rung 9 waits on, and it
+# should be taken on its own merits rather than as a step in this plan.

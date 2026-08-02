@@ -2002,11 +2002,61 @@ void test_array_buffer_is_shared() {
     expect_result("const buf = new ArrayBuffer(2); const shared = new Uint8Array(buf);"
                   "const own = new Uint8Array(2); own[0] = 9; shared[0] = 1; return own[0];",
                   "9");
-    // A SUB-RANGE view cannot be expressed while a view owns its elements, so
-    // it refuses rather than handing back a silently independent copy.
-    expect_result("try { new Uint8Array(new ArrayBuffer(4), 1, 2); } catch (e) { return e.name; }"
-                  "return 'not thrown';",
-                  "RangeError");
+    // A SUB-RANGE view. This used to throw RangeError, because a view owned its
+    // elements and an offset one could not have seen writes through the buffer.
+    // A view views now, so it works and sees them.
+    expect_result("const buf = new ArrayBuffer(4); const whole = new Uint8Array(buf);"
+                  "const part = new Uint8Array(buf, 1, 2);"
+                  "whole[1] = 5; whole[2] = 6; return part[0] + ',' + part[1] + ',' + part.length;",
+                  "5,6,2");
+    expect_result("const buf = new ArrayBuffer(4); const whole = new Uint8Array(buf);"
+                  "const part = new Uint8Array(buf, 2, 2); part[0] = 9; return whole[2];",
+                  "9");
+
+    // VIEWS OF DIFFERENT WIDTHS OVER ONE BUFFER, which is the case that was
+    // silently wrong: every view was handed the SAME array with its element
+    // kind overwritten, so the last one made won and every earlier view's
+    // writes were coerced to the wrong type. A float written through the F32
+    // view came back as an integer - 64 read back as 9e-44, which is zero to
+    // anything that asks. Phaser makes four such views over its vertex buffer,
+    // which is why its WebGL renderer drew nothing at all.
+    expect_result("const buf = new ArrayBuffer(8);"
+                  "const f = new Float32Array(buf), u = new Uint32Array(buf);"
+                  "const b = new Uint8Array(buf), h = new Uint16Array(buf);"
+                  "f[0] = 64; return f[0];",
+                  "64");
+    // 64.0f is 0x42800000, so the bytes are readable through every other view.
+    expect_result("const buf = new ArrayBuffer(4);"
+                  "const f = new Float32Array(buf), u = new Uint32Array(buf);"
+                  "f[0] = 64; return u[0];",
+                  "1115684864");
+    expect_result("const buf = new ArrayBuffer(4);"
+                  "const f = new Float32Array(buf), b = new Uint8Array(buf);"
+                  "f[0] = 64; return b[0] + ',' + b[1] + ',' + b[2] + ',' + b[3];",
+                  "0,0,128,66");
+    // And back the other way: bytes written through the narrow view are the
+    // float the wide one reads.
+    expect_result("const buf = new ArrayBuffer(4);"
+                  "const f = new Float32Array(buf), b = new Uint8Array(buf);"
+                  "b[3] = 66; b[2] = 128; return f[0];",
+                  "64");
+    // A view's length is in ELEMENTS and its byteLength in bytes.
+    expect_result("const buf = new ArrayBuffer(8); const f = new Float32Array(buf);"
+                  "return f.length + ',' + f.byteLength + ',' + f.BYTES_PER_ELEMENT;",
+                  "2,8,4");
+    // `subarray` SHARES; it is not `slice`.
+    expect_result("const buf = new ArrayBuffer(16); const f = new Float32Array(buf);"
+                  "const tail = f.subarray(2); f[2] = 7; return tail[0] + ',' + tail.length;",
+                  "7,2");
+    // A view over a buffer another view reached through `.buffer`.
+    expect_result("const f = new Float32Array(new ArrayBuffer(4));"
+                  "const b = new Uint8Array(f.buffer); f[0] = 64; return b[3];",
+                  "66");
+    // Signed kinds reinterpret rather than wrap on READ.
+    expect_result("const buf = new ArrayBuffer(4);"
+                  "const u = new Uint8Array(buf), s = new Int8Array(buf);"
+                  "u[0] = 200; return s[0];",
+                  "-56");
 }
 
 void test_new_function() {

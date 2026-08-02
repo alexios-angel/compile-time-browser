@@ -285,11 +285,49 @@ enum class element_kind : std::uint8_t {
     return v;
 }
 
+// How many bytes one element of a typed array occupies.
+[[nodiscard]] constexpr std::size_t bytes_per_element(element_kind k) noexcept {
+    switch (k) {
+    case element_kind::i8:
+    case element_kind::u8:
+    case element_kind::u8_clamped: return 1;
+    case element_kind::i16:
+    case element_kind::u16: return 2;
+    case element_kind::f64: return 8;
+    default: return 4;
+    }
+}
+
 struct array_object final : heap_object {
     std::vector<value> items;
     // `none` for an ordinary array. A typed one coerces on every write and
     // cannot grow past its length.
     element_kind elements = element_kind::none;
+
+    // --- a VIEW over somebody else's bytes ---------------------------------
+    //
+    // A typed array used to OWN its elements, one `value` each, and an
+    // ArrayBuffer handed the same array_object to every view made over it. Two
+    // views of DIFFERENT kinds could not both be right about that storage: each
+    // `new` overwrote the shared element kind, the last one won, and every
+    // write through an earlier view was silently coerced to the wrong type.
+    // Phaser makes four views over one buffer - Float32Array, Uint8Array,
+    // Uint16Array, Uint32Array - so its vertex positions were stored as
+    // integers and read back as denormal floats: a black canvas, no error.
+    //
+    // So a view now VIEWS. `viewed` is the ArrayBuffer's byte array, one value
+    // per byte, and this object carries its own kind, offset and length over
+    // it. `items` stays EMPTY for a view - deliberately, so that any path which
+    // reads it directly rather than going through length()/view_get is
+    // obviously empty rather than subtly stale.
+    value viewed;
+    std::uint32_t byte_offset = 0;
+    std::uint32_t view_length = 0; // in ELEMENTS, not bytes
+
+    [[nodiscard]] bool is_view() const noexcept { return viewed.is_array(); }
+    [[nodiscard]] std::size_t length() const noexcept {
+        return is_view() ? view_length : items.size();
+    }
     // What `RegExp.prototype.exec` hangs off its result. The spec puts these on
     // the array as ordinary properties; an array here has no property table, so
     // they live in named slots and property lookup checks them first. p5.js
@@ -300,6 +338,61 @@ struct array_object final : heap_object {
     value groups;
     array_object() : heap_object(heap_kind::array) {}
 };
+
+// --- reading and writing one element of a view -----------------------------
+//
+// The bytes live in the ArrayBuffer's array, one `value` per byte, LITTLE
+// ENDIAN - which is what every platform this engine targets uses and what a
+// page assembling a colour out of four bytes assumes. Assembling through a
+// uint64 rather than memcpy keeps it independent of the host's own order, so
+// the goldens stay byte-identical wherever they are produced.
+[[nodiscard]] inline std::uint64_t view_raw(const array_object & view, std::size_t i,
+                                            std::size_t width) noexcept {
+    const auto * bytes = static_cast<const array_object *>(view.viewed.as_heap());
+    const std::size_t at = view.byte_offset + i * width;
+    std::uint64_t raw = 0;
+    for (std::size_t b = 0; b < width; ++b) {
+        if (at + b >= bytes->items.size()) { break; }
+        const double each = bytes->items[at + b].is_number() ? bytes->items[at + b].as_number() : 0;
+        raw |= static_cast<std::uint64_t>(static_cast<std::uint8_t>(each)) << (8 * b);
+    }
+    return raw;
+}
+
+[[nodiscard]] inline double view_get(const array_object & view, std::size_t i) noexcept {
+    const std::size_t width = bytes_per_element(view.elements);
+    const std::uint64_t raw = view_raw(view, i, width);
+    switch (view.elements) {
+    case element_kind::f32: return std::bit_cast<float>(static_cast<std::uint32_t>(raw));
+    case element_kind::f64: return std::bit_cast<double>(raw);
+    case element_kind::i8: return static_cast<std::int8_t>(raw);
+    case element_kind::i16: return static_cast<std::int16_t>(raw);
+    case element_kind::i32: return static_cast<std::int32_t>(raw);
+    default: return static_cast<double>(raw);
+    }
+}
+
+inline void view_set(array_object & view, std::size_t i, double v) noexcept {
+    auto * bytes = static_cast<array_object *>(view.viewed.as_heap());
+    const std::size_t width = bytes_per_element(view.elements);
+    std::uint64_t raw = 0;
+    switch (view.elements) {
+    case element_kind::f32: raw = std::bit_cast<std::uint32_t>(static_cast<float>(v)); break;
+    case element_kind::f64: raw = std::bit_cast<std::uint64_t>(v); break;
+    default:
+        // THE SAME COERCION AN OWNING TYPED ARRAY DOES - wrap for the integer
+        // kinds, clamp for u8_clamped - so a view and a plain typed array agree
+        // about what `a[i] = 300` means.
+        raw =
+            static_cast<std::uint64_t>(static_cast<std::int64_t>(coerce_element(view.elements, v)));
+        break;
+    }
+    const std::size_t at = view.byte_offset + i * width;
+    for (std::size_t b = 0; b < width; ++b) {
+        if (at + b >= bytes->items.size()) { break; }
+        bytes->items[at + b] = value::number(static_cast<double>((raw >> (8 * b)) & 0xFF));
+    }
+}
 
 // Insertion-ordered, like a JS object. A flat hash index over the property
 // names keeps lookup O(1) - the previous engine scanned a vector of pairs linearly on every

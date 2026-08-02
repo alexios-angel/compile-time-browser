@@ -66,6 +66,24 @@ using context = script::context;
     }
     if (!items.is_array()) { return out; }
     auto * array = static_cast<script::array_object *>(items.as_heap());
+    // A VIEW ALREADY IS BYTES, in the layout the GPU wants - that is the whole
+    // point of it - so this is a copy of a range rather than a re-encoding of
+    // element values. Going through the element accessors instead would turn
+    // the bytes back into numbers and then back into bytes, which is both
+    // slower and a chance to disagree with what the page actually wrote.
+    if (array->is_view()) {
+        const auto * bytes = static_cast<const script::array_object *>(array->viewed.as_heap());
+        const std::size_t width = script::bytes_per_element(array->elements);
+        const std::size_t from = array->byte_offset;
+        const std::size_t want = std::min(
+            array->view_length * width, bytes->items.size() - std::min(from, bytes->items.size()));
+        out.resize(want);
+        for (std::size_t i = 0; i < want; ++i) {
+            out[i] = static_cast<std::byte>(static_cast<unsigned char>(
+                std::clamp(context::to_number(bytes->items[from + i]), 0.0, 255.0)));
+        }
+        return out;
+    }
     // A FLOAT ARRAY IS FOUR BYTES A NUMBER, not one. The element kind says which
     // - getting it wrong turns a buffer of positions into a quarter of one, and
     // the triangle that results looks like a bad transform rather than a bad

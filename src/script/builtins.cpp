@@ -3359,11 +3359,18 @@ void install_typed_arrays(context & cx) {
     method(cx, typed_proto, "set", [](context & c, std::span<value> a) {
         auto * self = detail::this_array(c);
         if (self == nullptr || !arg_at(a, 0).is_array()) { return value::undefined(); }
-        const auto & from = static_cast<array_object *>(a[0].as_heap())->items;
+        auto * source = static_cast<array_object *>(a[0].as_heap());
         const auto at = static_cast<std::size_t>(std::max(0.0, num_at(a, 1)));
-        for (std::size_t i = 0; i < from.size() && at + i < self->items.size(); ++i) {
-            self->items[at + i] =
-                value::number(coerce_element(self->elements, context::to_number(from[i])));
+        // EITHER SIDE MAY BE A VIEW, so both go through the accessors rather
+        // than touching `items` - a view's `items` is empty by design.
+        for (std::size_t i = 0; i < source->length() && at + i < self->length(); ++i) {
+            const double each =
+                source->is_view() ? view_get(*source, i) : context::to_number(source->items[i]);
+            if (self->is_view()) {
+                view_set(*self, at + i, each);
+            } else {
+                self->items[at + i] = value::number(coerce_element(self->elements, each));
+            }
         }
         return value::undefined();
     });
@@ -3373,9 +3380,20 @@ void install_typed_arrays(context & cx) {
         if (self == nullptr) { return out; }
         auto * made = static_cast<array_object *>(out.as_heap());
         made->elements = self->elements;
-        const std::size_t n = self->items.size();
+        const std::size_t n = self->length();
         const std::size_t from = a.empty() ? 0 : clamp_index(num_at(a, 0), n);
         const std::size_t to = a.size() > 1 ? clamp_index(num_at(a, 1), n) : n;
+        // SHARES THE BYTES when the receiver does. `subarray` is a view onto
+        // the same storage, not a copy - a page uploads
+        // `view.subarray(0, used)` and expects writes made through the parent
+        // to be in it. `slice` is the copying one, and is a different method.
+        if (self->is_view()) {
+            made->viewed = self->viewed;
+            made->byte_offset = static_cast<std::uint32_t>(
+                self->byte_offset + from * bytes_per_element(self->elements));
+            made->view_length = static_cast<std::uint32_t>(to > from ? to - from : 0);
+            return out;
+        }
         for (std::size_t i = from; i < to; ++i) { made->items.push_back(self->items[i]); }
         return out;
     });
@@ -3408,16 +3426,24 @@ void install_typed_arrays(context & cx) {
                 // that reaches the gap is told.
                 const value bytes = c.lookup_property(from, "__bytes");
                 if (bytes.is_array()) {
-                    if (a.size() > 1) {
-                        c.throw_error("RangeError",
-                                      "a typed array over PART of an ArrayBuffer is not "
-                                      "implemented - a view owns its elements here, so an "
-                                      "offset view could not see writes through the buffer");
-                        return value::undefined();
-                    }
-                    auto * shared = static_cast<array_object *>(bytes.as_heap());
-                    shared->elements = kind;
-                    return bytes;
+                    // A VIEW, WITH ITS OWN KIND. This used to hand back the
+                    // buffer's own array with its element kind overwritten,
+                    // which meant several views over one buffer were the SAME
+                    // object and only the last one's kind survived. Phaser
+                    // makes four, so its float writes were stored as integers.
+                    auto * store = static_cast<array_object *>(bytes.as_heap());
+                    const auto width = bytes_per_element(kind);
+                    const auto total = store->items.size();
+                    const auto offset =
+                        a.size() > 1 ? static_cast<std::size_t>(std::max(0.0, num_at(a, 1))) : 0;
+                    const std::size_t rest = offset < total ? total - offset : 0;
+                    const auto count = a.size() > 2
+                                           ? static_cast<std::size_t>(std::max(0.0, num_at(a, 2)))
+                                           : rest / width;
+                    made->viewed = bytes;
+                    made->byte_offset = static_cast<std::uint32_t>(offset);
+                    made->view_length = static_cast<std::uint32_t>(std::min(count, rest / width));
+                    return out;
                 }
                 // Anything else with a length: a fresh zeroed view of that size.
                 const double length = context::to_number(c.lookup_property(from, "length"));

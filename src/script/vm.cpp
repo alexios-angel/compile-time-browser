@@ -174,6 +174,7 @@ void context::mark_object(heap_object * o) {
     case heap_kind::array: {
         auto * arr = static_cast<array_object *>(o);
         for (const value & v : arr->items) { mark(v); }
+        mark(arr->viewed);
         mark(arr->index);
         mark(arr->input);
         mark(arr->groups);
@@ -240,6 +241,11 @@ value context::lookup_index(value target, value key) {
     if (target.is_array() && key.is_number()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
         const auto i = static_cast<std::ptrdiff_t>(key.as_number());
+        if (arr->is_view()) {
+            return i >= 0 && static_cast<std::size_t>(i) < arr->length()
+                       ? value::number(view_get(*arr, static_cast<std::size_t>(i)))
+                       : value::undefined();
+        }
         if (i >= 0 && static_cast<std::size_t>(i) < arr->items.size()) {
             return arr->items[static_cast<std::size_t>(i)];
         }
@@ -388,7 +394,28 @@ value context::lookup_property(value target, const std::string & name) {
     }
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
-        if (name == "length") { return value::number(static_cast<double>(arr->items.size())); }
+        if (name == "length") { return value::number(static_cast<double>(arr->length())); }
+        // WHAT A VIEW KNOWS ABOUT ITS BUFFER. `new Uint8Array(f32.buffer)` is
+        // how a page makes a second view of a different width over storage it
+        // already has - Phaser does exactly that - and it needs `buffer` to
+        // hand back something the constructor recognises as one.
+        if (arr->is_view()) {
+            const auto width = bytes_per_element(arr->elements);
+            if (name == "byteLength") {
+                return value::number(static_cast<double>(arr->view_length * width));
+            }
+            if (name == "byteOffset") { return value::number(arr->byte_offset); }
+            if (name == "BYTES_PER_ELEMENT") { return value::number(static_cast<double>(width)); }
+            if (name == "buffer") {
+                value made = make_object();
+                auto * buffer = static_cast<object_object *>(made.as_heap());
+                const auto * bytes = static_cast<const array_object *>(arr->viewed.as_heap());
+                buffer->set("byteLength", value::number(static_cast<double>(bytes->items.size())));
+                buffer->set("length", value::number(static_cast<double>(bytes->items.size())));
+                buffer->set("__bytes", arr->viewed);
+                return made;
+            }
+        }
         if (arr->is_match) { // an exec() result carries index/input/groups
             if (name == "index") { return arr->index; }
             if (name == "input") { return arr->input; }
@@ -1372,6 +1399,12 @@ value context::run_loop(std::size_t stop_depth) {
                 // what makes it typed: `pixels[i] = 300` is 255 in a clamped
                 // byte array, and a write past the end is DROPPED rather than
                 // extending it.
+                if (arr->is_view()) {
+                    if (i >= 0 && static_cast<std::size_t>(i) < arr->length()) {
+                        view_set(*arr, static_cast<std::size_t>(i), to_number(reg(in.c)));
+                    }
+                    break;
+                }
                 if (arr->elements != element_kind::none) {
                     if (i >= 0 && static_cast<std::size_t>(i) < arr->items.size()) {
                         arr->items[static_cast<std::size_t>(i)] =

@@ -20,7 +20,8 @@ host="${DEVBOX_HOST:-devbox}"
 # Same knob + default as CI (.github/workflows/tests.yml): the embed repo's
 # pinned toolchain release. sync-to-ctbrowser.sh may install a locally-built
 # one instead — the rsync protect filter keeps whichever is on the server.
-CLANG_STD_EMBED_RELEASE="${CLANG_STD_EMBED_RELEASE:-https://github.com/alexios-angel/embed/releases/download/clang-std-embed-23dd34f8f924/clang-std-embed-23dd34f8f924-linux-x86_64.tar.xz}"
+CLANG_STD_EMBED_TAG="${CLANG_STD_EMBED_TAG:-clang-std-embed-e3986d225}"
+CLANG_STD_EMBED_RELEASE="${CLANG_STD_EMBED_RELEASE:-https://github.com/alexios-angel/embed/releases/download/${CLANG_STD_EMBED_TAG}/${CLANG_STD_EMBED_TAG}-linux-x86_64.tar.xz}"
 
 if ! ssh -o ConnectTimeout=5 "$host" true 2>/dev/null; then
   cat >&2 <<EOF
@@ -70,9 +71,16 @@ else
   dpkg -s libglm-dev >/dev/null 2>&1 || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libglm-dev
 fi
 tool="$HOME/projects/compile-time-browser/tools/clang-std-embed"
-if [ ! -x "$tool/bin/clang++" ]; then
+# KEYED ON THE RELEASE, not merely on the binary existing. The guard used to be
+# `[ ! -x "$tool/bin/clang++" ]`, which installs once and then never upgrades:
+# bumping the pin above changed nothing, and the box quietly kept building with
+# a toolchain three releases behind the one this file names. A stamp costs one
+# line and makes the pin mean what it says.
+if [ "$(cat "$tool/.release" 2>/dev/null)" != "$CLANG_STD_EMBED_RELEASE" ]; then
+  rm -rf "$tool"
   mkdir -p "$tool"
   curl -fsSL --retry 5 "$CLANG_STD_EMBED_RELEASE" | tar -xJ --strip-components=1 -C "$tool"
+  printf '%s' "$CLANG_STD_EMBED_RELEASE" > "$tool/.release"
 fi
 REMOTE
 
