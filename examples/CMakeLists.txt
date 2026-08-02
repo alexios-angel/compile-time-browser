@@ -176,6 +176,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
   # grounds that no example opened it; four do - p5basic, p5text, p5transform
   # and p5shape - and the whole pages directory is copied, so leaving the
   # bundle behind would ship four pages that load nothing and render blank.
+  #
+  # AND phaser.js FOR THE SAME REASON, which this list learned twice. It was
+  # added to the tree after the list was written, so phaserbasic.exe and
+  # phaserinvaders.exe shipped and rendered a page with no framework in it -
+  # and their goldens duly differed on Windows, which reads exactly like an
+  # engine divergence until you look. A named-file list is a list that goes
+  # stale; it stays named rather than globbed because assets/ also holds the
+  # previous engine's glTF models, but every corpus bundle belongs here.
   list(APPEND dist-commands
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/pages" "${dist-dir}/examples/pages"
@@ -186,6 +194,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
             "${PROJECT_SOURCE_DIR}/examples/assets/chart.svg"
             "${PROJECT_SOURCE_DIR}/examples/assets/badge.png"
             "${PROJECT_SOURCE_DIR}/examples/assets/p5.js"
+            "${PROJECT_SOURCE_DIR}/examples/assets/phaser.js"
             "${dist-dir}/examples/assets"
     # PressStart2P is a PAGE's font, fetched by @font-face through a URL
     # (elements.html), so it travels whatever the build did with the UA faces -
