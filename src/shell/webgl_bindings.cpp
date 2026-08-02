@@ -150,7 +150,7 @@ void dom_bindings::resize_webgl_context(node_id id, int width, int height) {
     }
 }
 
-value dom_bindings::webgl_context_object(context & cx, node_id id) {
+value dom_bindings::webgl_context_object(context & cx, node_id id, int version) {
     if (canvases_ == nullptr) { return value::null(); }
     const auto txn = doc_->read();
     const auto attribute = [&](std::string_view name, int fallback) {
@@ -174,17 +174,38 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
     if (surface == nullptr) { return value::null(); }
 
     auto & made = webgl_contexts_[pack(id)];
+    // `made` IS A REFERENCE INTO THE MAP, so it is non-null from here on
+    // whatever happened - which is why the freshness has to be captured before
+    // the create rather than tested after it. Checking `made != nullptr`
+    // afterwards is always true, and that mistake converted an existing WebGL 1
+    // context into a WebGL 2 one the moment a page asked for `webgl2`.
+    const bool created = !made;
     if (!made) {
         made = std::make_unique<webgl_context>(
             const_cast<paint::bitmap *>(surface->surface().get()), width, height);
     }
     webgl_context * gl = made.get();
+    // THE VERSION IS DECIDED ONCE, WHEN THE CONTEXT IS CREATED. A canvas has
+    // one context type for ever: the spec says a request for a different id
+    // returns null rather than converting what is there, and the cache check
+    // below is where that null comes from.
+    if (created && version >= 2) { gl->set_version(2); }
+    const bool webgl2 = gl->version() >= 2;
 
     // THE SAME JS OBJECT, not just the same state. getContext is idempotent in
     // the spec, and a page compares what it gets - `if (this.gl !== canvas
     // .getContext('webgl'))` is a real pattern - so handing back a fresh wrapper
     // each call is observably wrong even when the state behind it is shared.
     if (const auto seen = webgl_objects_.find(pack(id)); seen != webgl_objects_.end()) {
+        // A CANVAS HAS ONE CONTEXT TYPE, FOR EVER. The spec is explicit: once
+        // a canvas has a context, asking for a DIFFERENT id returns null - it
+        // does not convert, and it does not hand back the one it has under the
+        // wrong name. `webgl` and `webgl2` are different ids.
+        //
+        // Handing back the WebGL 1 object for a `webgl2` request is the shape
+        // that matters here: a page would feature-detect on a non-null answer
+        // and then reach for constants and methods that are not on it.
+        if (gl->version() != version) { return value::null(); }
         return value::object(seen->second);
     }
 
@@ -337,6 +358,42 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
     constant("MAX_VERTEX_ATTRIBS", gl_enum::max_vertex_attribs);
     constant("MAX_TEXTURE_IMAGE_UNITS", 0x8872);
     constant("MAX_VIEWPORT_DIMS", 0x0D3A);
+    // --- WebGL 2 only ------------------------------------------------------
+    // Dull, and load-bearing: a constant that arrives as `undefined` makes every
+    // comparison against it silently false, so a page takes a path nobody
+    // intended and nothing reports an error. Set only on a WebGL 2 context,
+    // because a WebGL 1 page that finds `gl.RGBA8` concludes it has WebGL 2.
+    //
+    // THE VALUES ARE THE SPECIFICATION'S. They are not derived from anything -
+    // they are the numbers every driver reports, and a page comparing against
+    // 0x8058 wants exactly 0x8058.
+    if (webgl2) {
+        constant("RGBA8", 0x8058);
+        constant("RGB8", 0x8051);
+        constant("SRGB8_ALPHA8", 0x8C43);
+        constant("R8", 0x8229);
+        constant("RG8", 0x822B);
+        constant("RGBA16F", 0x881A);
+        constant("RGBA32F", 0x8814);
+        constant("DEPTH_COMPONENT24", 0x81A6);
+        constant("DEPTH24_STENCIL8", 0x88F0);
+        constant("TEXTURE_3D", 0x806F);
+        constant("TEXTURE_2D_ARRAY", 0x8C1A);
+        constant("UNIFORM_BUFFER", 0x8A11);
+        constant("COPY_READ_BUFFER", 0x8F36);
+        constant("PIXEL_PACK_BUFFER", 0x88EB);
+        constant("VERTEX_ARRAY_BINDING", 0x85B5);
+        constant("TRANSFORM_FEEDBACK", 0x8E22);
+        constant("SYNC_GPU_COMMANDS_COMPLETE", 0x9117);
+        constant("MAX_DRAW_BUFFERS", 0x8824);
+        constant("MAX_COLOR_ATTACHMENTS", 0x8CDF);
+        constant("DRAW_BUFFER0", 0x8825);
+        for (std::uint32_t i = 0; i < 8; ++i) {
+            constant((std::string{"COLOR_ATTACHMENT"} + std::to_string(i)).c_str(), 0x8CE0 + i);
+            constant((std::string{"DRAW_BUFFER"} + std::to_string(i)).c_str(), 0x8825 + i);
+        }
+        constant("VERTEX_ATTRIB_ARRAY_DIVISOR", 0x88FE);
+    }
     constant("VERSION", gl_enum::version);
     constant("RENDERER", gl_enum::renderer);
     constant("VENDOR", gl_enum::vendor);
@@ -698,6 +755,50 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
     method("texSubImage2D", [](context &, std::span<value>) { return value::undefined(); });
 
     // --- drawing
+    // --- WebGL 2's spelling of what the extensions already expose -----------
+    // THE SAME webgl_context METHODS the OES/ANGLE objects call. That is the
+    // decision docs/webgl2-plan.md records, and it is why this arrives already
+    // exercised: Phaser has been driving VAOs and instancing through the
+    // extension names since stage 2, so this binds names to code a real
+    // renderer has been using rather than to code written for a test.
+    if (webgl2) {
+        method("createVertexArray", [gl](context &, std::span<value>) {
+            return value::number(gl->create_vertex_array());
+        });
+        method("bindVertexArray", [gl](context &, std::span<value> a) {
+            gl->bind_vertex_array(
+                a.empty() || !a[0].is_number() ? 0U : static_cast<std::uint32_t>(a[0].as_number()));
+            return value::undefined();
+        });
+        method("deleteVertexArray", [gl](context &, std::span<value> a) {
+            if (!a.empty() && a[0].is_number()) {
+                gl->delete_vertex_array(static_cast<std::uint32_t>(a[0].as_number()));
+            }
+            return value::undefined();
+        });
+        method("isVertexArray", [gl](context &, std::span<value> a) {
+            return value::boolean(
+                !a.empty() && a[0].is_number() &&
+                gl->is_vertex_array(static_cast<std::uint32_t>(a[0].as_number())));
+        });
+        method("vertexAttribDivisor", [gl](context &, std::span<value> a) {
+            gl->attribute_divisor(
+                !a.empty() && a[0].is_number() ? static_cast<int>(a[0].as_number()) : -1,
+                a.size() > 1 && a[1].is_number() ? static_cast<int>(a[1].as_number()) : 0);
+            return value::undefined();
+        });
+        method("drawArraysInstanced", touches([gl](context &, std::span<value> a) {
+                   (void)gl->draw_arrays_instanced(enum_at(a, 0), int_at(a, 1), int_at(a, 2),
+                                                   int_at(a, 3));
+                   return value::undefined();
+               }));
+        method("drawElementsInstanced", touches([gl](context &, std::span<value> a) {
+                   (void)gl->draw_elements_instanced(enum_at(a, 0), int_at(a, 1), enum_at(a, 2),
+                                                     int_at(a, 3), int_at(a, 4));
+                   return value::undefined();
+               }));
+    }
+
     method("drawArrays", touches([gl](context &, std::span<value> a) {
                (void)gl->draw_arrays(enum_at(a, 0), int_at(a, 1), int_at(a, 2));
                return value::undefined();
@@ -706,22 +807,38 @@ value dom_bindings::webgl_context_object(context & cx, node_id id) {
                (void)gl->draw_elements(enum_at(a, 0), int_at(a, 1), enum_at(a, 2), int_at(a, 3));
                return value::undefined();
            }));
-    for (const char * name : {"drawArraysInstanced", "drawElementsInstanced"}) {
-        method(name, [](context &, std::span<value>) {
-            // Instancing is named as out of scope in docs/webgl-plan.md. Doing
-            // nothing is the honest answer; drawing ONE instance would look like
-            // it worked and be wrong by however many were asked for.
-            return value::undefined();
-        });
-    }
+    // THE NO-OP STUBS FOR drawArraysInstanced/drawElementsInstanced ARE GONE.
+    // They were honest when instancing was out of scope - doing nothing beats
+    // drawing one instance and being wrong by however many were asked for -
+    // and they were registered AFTER the real methods above, so they silently
+    // overwrote them the moment those arrived. A draw that reported no error
+    // and painted nothing, which is exactly the shape both stubs existed to
+    // avoid, arrived at from the other side.
+    //
+    // They are not replaced by a WebGL 1 stub either: in WebGL 1 these names do
+    // not exist at all - a page reaches instancing through
+    // ANGLE_instanced_arrays - and an absent method is what feature detection
+    // reads.
 
     // --- reading back
     method("getError",
            [gl](context &, std::span<value>) { return value::number(gl->take_error()); });
-    method("getParameter", [width, height](context & c, std::span<value> a) {
+    method("getParameter", [width, height, webgl2, gl](context & c, std::span<value> a) {
         switch (enum_at(a, 0)) {
-        case gl_enum::version: return c.string("WebGL 1.0 (ctbrowser software)");
-        case gl_enum::shading_language_version: return c.string("WebGL GLSL ES 1.0");
+        // WHICH VERTEX ARRAY IS BOUND. A page checks this to save and restore
+        // the binding around its own work, and zero - the default array - has
+        // to read as null rather than 0, because that is what a page tests.
+        case 0x85B5:
+            return gl->bound_vertex_array() == 0 ? value::null()
+                                                 : value::number(gl->bound_vertex_array());
+        // p5 READS BOTH OF THESE to decide what it is talking to, so they
+        // have to say 2.0 / 3.00 on a WebGL 2 context rather than being
+        // decoration.
+        case gl_enum::version:
+            return c.string(webgl2 ? "WebGL 2.0 (ctbrowser software)"
+                                   : "WebGL 1.0 (ctbrowser software)");
+        case gl_enum::shading_language_version:
+            return c.string(webgl2 ? "WebGL GLSL ES 3.00" : "WebGL GLSL ES 1.0");
         case gl_enum::vendor: return c.string("ctbrowser");
         case gl_enum::renderer: return c.string("ctbrowser software rasteriser");
         case gl_enum::max_texture_size: return value::number(4096);

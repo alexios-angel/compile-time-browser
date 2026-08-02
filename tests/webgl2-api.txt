@@ -7,7 +7,22 @@
 # The probes themselves are tests/webgl2-api-probe.js, one per line here as
 # `module/name`. A probe that is SKIPPED is not recorded - it is not a claim
 # about anything working.
+constants/draw buffers
+constants/targets and bindings
+constants/texture formats
+context/SHADING_LANGUAGE_VERSION says 3.00
+context/VERSION says 2
+context/getContext webgl2
 extensions/ANGLE_instanced_arrays
 extensions/OES_vertex_array_object
 extensions/getSupportedExtensions lists them
 extensions/unimplemented ones stay null
+glsl300/ES 1.00 still compiles
+glsl300/compiles in/out
+glsl300/declared fragment output
+glsl300/texture() not texture2D()
+instancing/drawArraysInstanced
+instancing/drawElementsInstanced
+unscoped/blitFramebuffer
+vao/create and bind
+vao/isVertexArray

@@ -17,8 +17,8 @@
 # are two implementations - the bug this tree has already paid for twice, with
 # two URL parsers and two base64 decoders.
 
-level=0
-blocker=getContext('webgl2') returned null
+level=7
+blocker=Phaser's WEBGL fill did not reach the pixels (32,32 is 0,0,0)
 
 # WHY THIS STARTS AT ZERO (2026-08-02). `getContext('webgl2')` returns null by
 # an explicit decision recorded in shell/bindings.cpp, so the first rung is

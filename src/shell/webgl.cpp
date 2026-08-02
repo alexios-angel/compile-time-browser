@@ -203,6 +203,12 @@ void webgl_context::compile_shader(std::uint32_t shader) {
     glsl::options how;
     how.which =
         found->second.which == gl_enum::vertex_shader ? glsl::stage::vertex : glsl::stage::fragment;
+    // `WEBGL2`, WHICH IS WHAT FLIPS p5's PREAMBLE. p5 ships one set of shaders
+    // written to macro over the two languages - `#ifdef WEBGL2` selects
+    // in/out/a declared output over attribute/varying/gl_FragColor - so
+    // defining this is what makes a WebGL 2 context get ES 3.00 source out of
+    // the same file.
+    if (version_ >= 2) { how.defines.emplace_back("WEBGL2", "1"); }
     found->second.compiled = glsl::parse(found->second.source, how);
     found->second.compiled_ok = found->second.compiled.ok;
     found->second.log = found->second.compiled.info_log();

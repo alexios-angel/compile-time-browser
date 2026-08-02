@@ -1342,7 +1342,21 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         // answer, which is the distinction the loud-failure rule turns on.
         if (kind == "webgl" || kind == "experimental-webgl") {
             if (!id) { return value::null(); }
-            return webgl_context_object(c, id);
+            return webgl_context_object(c, id, 1);
+        }
+        // `webgl2` RETURNS A CONTEXT NOW (2026-08-02). Everything above is the
+        // history of it returning null, and every word of it was right at the
+        // time; what changed is that the language and the two capabilities
+        // behind it exist - see docs/webgl2-plan.md stages 1 to 3.
+        //
+        // p5's RendererGL asks for this FIRST, so from here on every p5 WEBGL
+        // sketch takes a path it has never taken in this engine.
+        // examples/pages/p5-webgl.html's golden is the tripwire: the same
+        // sketch must produce the same pixels through either context, and if
+        // that image moves, this path is wrong rather than new.
+        if (kind == "webgl2") {
+            if (!id) { return value::null(); }
+            return webgl_context_object(c, id, 2);
         }
         if (!id || kind != "2d") { return value::null(); }
         return canvas_context_object(c, id);

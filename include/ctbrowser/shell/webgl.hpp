@@ -217,6 +217,15 @@ class webgl_context {
 public:
     webgl_context(paint::bitmap * target, int width, int height);
 
+    // WHICH WEBGL THIS CONTEXT IS. 1 or 2, decided by the string the page
+    // passed to getContext, and it changes exactly two things here: the version
+    // strings a page reads, and whether `WEBGL2` is defined for every shader
+    // this context compiles. That define is what flips p5's own preamble from
+    // attribute/varying/gl_FragColor to in/out/a declared output - p5 ships
+    // ONE set of shaders written to macro over the difference.
+    void set_version(int version) { version_ = version; }
+    [[nodiscard]] int version() const noexcept { return version_; }
+
     // --- objects
     [[nodiscard]] std::uint32_t create_buffer();
     [[nodiscard]] std::uint32_t create_shader(std::uint32_t which);
@@ -357,6 +366,7 @@ private:
     // which is what every WebGL 1 page has always used and what binding null
     // returns to.
     std::map<std::uint32_t, gl_vertex_array> vertex_arrays_;
+    int version_ = 1;
     std::uint32_t bound_vao_ = 0;
     // The DEFAULT vertex array's saved state, for when a page binds one and
     // then binds null again. It is not in the map because zero is not an id a

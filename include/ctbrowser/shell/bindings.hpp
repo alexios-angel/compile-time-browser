@@ -303,7 +303,7 @@ private:
     // `canvas.getContext('webgl')`. The JavaScript surface is in its own file -
     // seventy-nine methods and a constant table would bury the DOM in this one -
     // and the state machine it drives is in shell/webgl.hpp.
-    [[nodiscard]] value webgl_context_object(context & cx, node_id id);
+    [[nodiscard]] value webgl_context_object(context & cx, node_id id, int version);
 
     // SETTING canvas.width RESIZES THE DRAWING BUFFER, and for a WebGL canvas
     // that is not cosmetic: canvas_context::resize REALLOCATES the bitmap, so a

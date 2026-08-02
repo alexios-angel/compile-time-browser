@@ -733,10 +733,13 @@ void test_webgl_is_constructible_and_refuses() {
     (void)page.run_script(R"(
         var one = document.createElement('canvas').getContext('webgl');
         console.log('direct=' + (one !== null && typeof one.drawArrays === 'function'));
-        console.log('two=' + (document.createElement('canvas').getContext('webgl2') === null));
+        console.log('two=' + (document.createElement('canvas').getContext('webgl2') !== null));
     )");
     check(said("direct=") == "direct=true", "a webgl context exists: " + said("direct="));
-    check(said("two=") == "two=true", "and webgl2 is null: " + said("two="));
+    // WAS `=== null`; `webgl2` returns a context since 2026-08-02 - see
+    // docs/webgl2-plan.md stage 4. Replaced rather than removed, so the shape
+    // of the answer is still pinned.
+    check(said("two=") == "two=true", "and webgl2 hands back a context: " + said("two="));
 
     // WHAT p5 DOES WITH IT IS MEASURED BY THE p5 PROBE, not asserted here.
     // createCanvas(w, h, WEBGL) now reaches p5's RendererGL; it used to land on

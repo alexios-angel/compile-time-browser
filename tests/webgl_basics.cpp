@@ -646,19 +646,25 @@ void test_webgl2_is_null_not_a_throw() {
     ctbrowser::browser page{{.width = 100, .height = 100}};
     page.load_html(R"(<body><canvas id='c'></canvas><script>
       var c = document.getElementById('c');
-      console.log('webgl2=' + (c.getContext('webgl2') === null));
-      console.log('webgl=' + (c.getContext('webgl') !== null));
+      // webgl2 FIRST, because a canvas has one context type for ever: asking
+      // for `webgl` first would make this `webgl2` request return null, which
+      // is the spec's answer and is asserted in widgets_basics.
+      console.log('webgl2=' + (c.getContext('webgl2') !== null));
+      console.log('webgl=' + (c.getContext('webgl') === null));
       console.log('unknown=' + (c.getContext('nonsense') === null));
       // getContext is IDEMPOTENT: a page calling it twice gets the same context,
       // with its buffers and programs still there. A fresh one each time would
       // quietly lose everything uploaded.
-      console.log('same=' + (c.getContext('webgl') === c.getContext('webgl')));
+      console.log('same=' + (c.getContext('webgl2') === c.getContext('webgl2')));
     </script></body>)");
     CHECK(page.script_error().empty());
     const auto & log = page.bindings().console_output();
     CHECK(log.size() == 4);
     if (log.size() == 4) {
         CHECK(log[0] == "webgl2=true");
+        // NULL, because the canvas above is already a webgl2 canvas. Asking
+        // for a different context id does not convert it and does not hand
+        // back the one it has under the wrong name.
         CHECK(log[1] == "webgl=true");
         CHECK(log[2] == "unknown=true");
         CHECK(log[3] == "same=true");

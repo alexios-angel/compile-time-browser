@@ -1160,15 +1160,24 @@ globalThis.__probes = [
       if (typeof gl[name] !== 'function') { throw name + ' is missing'; }
     }
     if (gl.TRIANGLES !== 4) { throw 'TRIANGLES=' + gl.TRIANGLES; }
-    // webgl2 is NOT implemented, and HOW it says so is load-bearing. This
-    // asserted a THROW, on the theory that a null was the silent-wrong-answer
-    // shape. The specification returns null for an unsupported context id and
-    // p5's RendererGL is written as `getContext('webgl2') || getContext('webgl')`
-    // - so the throw escaped the constructor and left the sketch on Renderer2D,
-    // which is exactly the outcome throwing was meant to prevent.
-    if (document.createElement('canvas').getContext('webgl2') !== null) {
-      throw 'webgl2 should be null here, not a context';
-    }
+    // webgl2 IS implemented since 2026-08-02, and this assertion has now been
+    // right in three different forms, which is worth keeping the history of:
+    //
+    //   1. it asserted a THROW, on the theory that a null was the
+    //      silent-wrong-answer shape;
+    //   2. it asserted NULL, because the specification returns null for an
+    //      unsupported context id and p5's RendererGL is written as
+    //      `getContext('webgl2') || getContext('webgl')` - the throw escaped
+    //      the constructor and left the sketch on Renderer2D, which is exactly
+    //      what throwing was meant to prevent;
+    //   3. it asserts a CONTEXT, because there is one - docs/webgl2-plan.md
+    //      stage 4 - and p5 now takes that path first.
+    //
+    // Replaced rather than deleted at each step: what is asserted changed,
+    // the fact that SOMETHING is asserted did not.
+    const two = document.createElement('canvas').getContext('webgl2');
+    if (two === null) { throw 'webgl2 should be a context now'; }
+    if (two.RGBA8 === undefined) { throw 'a webgl2 context without the WebGL 2 constants'; }
     return 'ok';
   }],
   // THIS PROBE FAILED FOR TWO SEPARATE REASONS BEFORE IT PASSED, and staying

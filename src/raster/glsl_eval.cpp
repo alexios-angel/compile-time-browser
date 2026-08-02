@@ -209,6 +209,15 @@ private:
         } else {
             publish("gl_FragColor");
             publish("gl_FragDepth");
+            // AND THE DECLARED OUTPUT, for GLSL ES 3.00. Seeding it above and
+            // never publishing it means the shader computes the colour, writes
+            // it into a global, and the rasteriser is handed everything EXCEPT
+            // that - so the draw paints nothing while compiling, linking and
+            // running without an error anywhere. Two halves of one feature, and
+            // having only the first is indistinguishable from having neither.
+            for (const interface_variable & v : m_->interface_) {
+                if (v.store == storage::fragment_output) { publish(v.name); }
+            }
         }
         out_->ok = failure_.empty();
         out_->error = failure_;
