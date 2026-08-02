@@ -162,6 +162,13 @@ public:
         // Correct under every standard version rather than only the newest:
         // these have static storage duration, so there is no lifetime question
         // to get right.
+        // A GLSL ES 3.00 FRAGMENT SHADER WRITES ITS OWN OUTPUT, so that name
+        // needs a zero to write into exactly as `gl_FragColor` does. Without
+        // it the assignment creates nothing the rasteriser can find and the
+        // draw paints nothing - while compiling, linking and running.
+        for (const interface_variable & v : m_->interface_) {
+            if (v.store == storage::fragment_output) { globals_[v.name] = zero(v.t); }
+        }
         static constexpr const char * vertex_outputs[] = {"gl_Position", "gl_PointSize"};
         static constexpr const char * fragment_outputs[] = {"gl_FragColor", "gl_FragDepth"};
         const auto & outputs = m_->which == stage::vertex ? vertex_outputs : fragment_outputs;

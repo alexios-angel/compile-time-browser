@@ -79,6 +79,10 @@ struct conditional {
 
 class preprocessor {
 public:
+    // Whether `#version 300 es` was seen. Read once, after run().
+    [[nodiscard]] bool saw_es300() const noexcept { return es300_; }
+
+public:
     preprocessor(const options & how, std::vector<diagnostic> & into) : errors_(&into) {
         for (const auto & [name, body] : how.defines) { macros_[name] = macro{{}, body, false}; }
         // p5's preamble branches on this to decide what IN means, and the
@@ -123,6 +127,9 @@ public:
     }
 
 private:
+    // Set by `#version 300 es`; read through saw_es300() after run().
+    bool es300_ = false;
+
     [[nodiscard]] bool emitting() const {
         return std::ranges::all_of(nest_, [](const conditional & c) { return c.active; });
     }
@@ -182,14 +189,21 @@ private:
             macros_.erase(std::string{first_word(rest)});
         } else if (word == "error") {
             fail("#error " + std::string{rest});
-        } else if (word == "version" || word == "extension" || word == "pragma" || word == "line") {
-            // RECORDED AND IGNORED, deliberately. `#version 300 es` cannot be
-            // honoured - this is a WebGL 1 implementation and says so - and
+        } else if (word == "version") {
+            // `#version 300 es` SELECTS A LANGUAGE, so unlike the directives
+            // below it cannot be ignored. It was, for as long as this was a
+            // WebGL 1 implementation that said so; it is honoured now.
+            //
+            // Anything else - `#version 100`, or no directive at all - is
+            // ES 1.00, which is the default and needs no branch.
+            if (rest.find("300") != std::string_view::npos) { es300_ = true; }
+        } else if (word == "extension" || word == "pragma" || word == "line") {
+            // RECORDED AND IGNORED, deliberately.
             // `#extension GL_OES_standard_derivatives : enable` asks for
-            // something a scanline rasteriser cannot give. Failing here would
-            // reject p5's font shader, which asks and then guards its use with
-            // `#ifdef`, so ignoring is both correct and what a driver does with
-            // an extension it lacks.
+            // something this rasteriser gives anyway - the derivatives are
+            // implemented - and failing here would reject p5's font shader,
+            // which asks and then guards its use with `#ifdef`. Ignoring is
+            // both correct and what a driver does with an extension it lacks.
         } else {
             fail("unknown directive #" + std::string{word});
         }
@@ -528,10 +542,12 @@ private:
 
 } // namespace
 
-std::string preprocess(std::string_view source, const options & how,
-                       std::vector<diagnostic> & into) {
+std::string preprocess(std::string_view source, const options & how, std::vector<diagnostic> & into,
+                       bool * es300) {
     preprocessor pass{how, into};
-    return pass.run(source);
+    std::string out = pass.run(source);
+    if (es300 != nullptr) { *es300 = pass.saw_es300(); }
+    return out;
 }
 
 } // namespace ctbrowser::raster::glsl

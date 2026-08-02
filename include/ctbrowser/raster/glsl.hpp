@@ -88,7 +88,13 @@ enum class storage : std::uint8_t {
     attribute,
     uniform,
     varying,
-    constant
+    constant,
+    // A GLSL ES 3.00 fragment shader's declared colour output - `out vec4 c;`.
+    // Not a varying: a varying in a fragment shader is an INPUT read from the
+    // environment, and this is written by the shader and read by the
+    // rasteriser. Conflating the two makes the output read as zero every frame
+    // and the shader's writes go nowhere.
+    fragment_output
 };
 
 // A parameter's direction. GLSL passes by value and copies `out` back on return.
@@ -222,6 +228,24 @@ struct shader {
     std::vector<interface_variable> interface_;
     stage which = stage::fragment;
 
+    // GLSL ES 3.00 rather than 1.00, selected by `#version 300 es`.
+    //
+    // The directive was recorded and ignored until 2026-08-02, which was honest
+    // when this was a WebGL 1 implementation and said so. It selects a
+    // LANGUAGE, so ignoring it is the one directive that cannot keep being
+    // ignored once ES 3.00 shaders are accepted at all.
+    bool es300 = false;
+
+    // WHICH VARIABLE THE FRAGMENT COLOUR COMES OUT OF.
+    //
+    // ES 1.00 writes the built-in `gl_FragColor`, and the rasteriser looked for
+    // that name outright. ES 3.00 declares its own output - `out vec4 colour;`
+    // - and may not contain the identifier `gl_FragColor` anywhere, so a
+    // hardcoded lookup finds nothing and the draw paints NOTHING while
+    // compiling and linking perfectly. That is the silent-wrong-answer shape
+    // this tree keeps paying for, so the name lives here and softgl asks.
+    std::string fragment_output = "gl_FragColor";
+
     // The preprocessed text, kept for diagnostics: a message about line 40 of
     // something the author never saw is worse than no message.
     std::string preprocessed;
@@ -248,8 +272,11 @@ struct options {
 
 // The preprocessor on its own, exposed because it is separately testable and
 // because #define/#if is where the surprises live. Errors land in `into`.
+// `es300` reports whether the source said `#version 300 es`. An out-parameter
+// rather than a second return, because every existing caller wants only the
+// text and this keeps them unchanged.
 [[nodiscard]] std::string preprocess(std::string_view source, const options & how,
-                                     std::vector<diagnostic> & into);
+                                     std::vector<diagnostic> & into, bool * es300 = nullptr);
 
 // --- running one --------------------------------------------------------
 //

@@ -806,6 +806,75 @@ void test_texture_sampling() {
 
 // A RUNTIME FAILURE IS A MESSAGE, NOT A CRASH - the same rule the parser has,
 // and for the same reason: this is a page's text.
+// GLSL ES 3.00 - `#version 300 es`, `in`/`out` as the interface, and a
+// DECLARED fragment output.
+//
+// The version directive was recorded and ignored for as long as this was a
+// WebGL 1 implementation that said so. It selects a LANGUAGE, so it is the one
+// directive that cannot go on being ignored once ES 3.00 shaders are accepted.
+//
+// THE OUTPUT IS THE PART THAT MATTERS. softgl looked for `gl_FragColor` by
+// name; an ES 3.00 shader declares its own and may not contain that identifier
+// anywhere, so the lookup found nothing and the draw painted NOTHING while
+// compiling and linking perfectly - the silent-wrong-answer shape this tree
+// keeps paying for. So these assert on the recorded name, not on "it parsed".
+void test_glsl_es_300() {
+    const glsl::shader fragment = parse_fragment("#version 300 es\n"
+                                                 "precision mediump float;\n"
+                                                 "in vec2 uv;\n"
+                                                 "out vec4 colour;\n"
+                                                 "void main() { colour = vec4(uv, 0.0, 1.0); }\n");
+    CHECK(fragment.ok);
+    CHECK(fragment.es300);
+    CHECK(fragment.fragment_output == "colour");
+    // `in` in a fragment shader is a varying - an INPUT - and must not be
+    // mistaken for the output, or it reads zero every frame.
+    bool uv_is_varying = false;
+    bool colour_is_output = false;
+    for (const glsl::interface_variable & v : fragment.interface_) {
+        if (v.name == "uv" && v.store == glsl::storage::varying) { uv_is_varying = true; }
+        if (v.name == "colour" && v.store == glsl::storage::fragment_output) {
+            colour_is_output = true;
+        }
+    }
+    CHECK(uv_is_varying);
+    CHECK(colour_is_output);
+
+    // THE SAME WORDS MEAN DIFFERENT THINGS IN A VERTEX SHADER, which is why
+    // the mapping is stage-aware rather than a rename.
+    glsl::options how;
+    how.which = glsl::stage::vertex;
+    const glsl::shader vertex = glsl::parse("#version 300 es\n"
+                                            "in vec2 position;\n"
+                                            "out vec2 uv;\n"
+                                            "void main() { uv = position;"
+                                            " gl_Position = vec4(position, 0.0, 1.0); }\n",
+                                            how);
+    CHECK(vertex.ok);
+    bool position_is_attribute = false;
+    bool uv_is_out_varying = false;
+    for (const glsl::interface_variable & v : vertex.interface_) {
+        if (v.name == "position" && v.store == glsl::storage::attribute) {
+            position_is_attribute = true;
+        }
+        if (v.name == "uv" && v.store == glsl::storage::varying) { uv_is_out_varying = true; }
+    }
+    CHECK(position_is_attribute);
+    CHECK(uv_is_out_varying);
+
+    // ES 1.00 IS STILL ACCEPTED, unchanged and without a version directive.
+    // Strict ES 3.00 removes `varying` and `gl_FragColor`; enforcing that would
+    // reject shaders that work in browsers, which is the leniency contract the
+    // rest of this tree keeps.
+    const glsl::shader old_style =
+        parse_fragment("precision mediump float;\n"
+                       "varying vec2 uv;\n"
+                       "void main() { gl_FragColor = vec4(uv, 0.0, 1.0); }\n");
+    CHECK(old_style.ok);
+    CHECK(!old_style.es300);
+    CHECK(old_style.fragment_output == "gl_FragColor");
+}
+
 void test_runtime_failures_are_reported() {
     glsl::environment env;
     for (const char * bad : {
@@ -979,6 +1048,7 @@ int main(int argc, char ** argv) {
     test_discard();
     test_a_vertex_shader_publishes_its_varyings();
     test_texture_sampling();
+    test_glsl_es_300();
     test_runtime_failures_are_reported();
     REPORT("glsl_basics");
 }

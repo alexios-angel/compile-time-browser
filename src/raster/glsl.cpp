@@ -477,12 +477,39 @@ private:
         return made_node;
     }
 
+    // GLSL ES 3.00 SPELLS THE INTERFACE `in` AND `out`, and what they mean
+    // depends on the stage: `in` is a vertex shader's attribute and a fragment
+    // shader's varying, `out` is a vertex shader's varying and a fragment
+    // shader's colour output. The existing storage enum already distinguishes
+    // all of those, so this is spelling rather than semantics - which is why
+    // the mapping is a translation here and not a second code path everywhere.
+    //
+    // ONLY AT TOP LEVEL. Inside a parameter list `in`/`out` mean the direction
+    // an argument is copied, which is a different thing entirely and is what
+    // `q.dir` goes on meaning there.
+    //
+    // LENIENTLY: this does not require `#version 300 es`, and does not reject
+    // `attribute`/`varying` in a shader that declared it. Strict ES 3.00
+    // removes those and strict ES 1.00 has no `in`/`out`, but pages ship both
+    // and browsers take both - the same leniency contract shell/url.hpp records
+    // for Boost.URL.
+    [[nodiscard]] storage interface_storage(const qualified & q) const {
+        if (q.store != storage::none) { return q.store; }
+        if (q.dir == direction::in) {
+            return m_->which == stage::vertex ? storage::attribute : storage::varying;
+        }
+        if (q.dir == direction::out) {
+            return m_->which == stage::vertex ? storage::varying : storage::fragment_output;
+        }
+        return storage::none;
+    }
+
     [[nodiscard]] std::int32_t variable(std::string name, const qualified & q, bool top_level) {
         node n;
         n.kind = nk::var_decl;
         n.text = std::move(name);
         n.t = q.t;
-        n.store = q.store;
+        n.store = top_level ? interface_storage(q) : q.store;
         n.t.array = array_suffix();
         if (accept("=")) { n.a = expression(); }
         const std::int32_t first = add(std::move(n));
@@ -499,7 +526,7 @@ private:
             extra.kind = nk::var_decl;
             extra.text = here().text;
             extra.t = q.t;
-            extra.store = q.store;
+            extra.store = top_level ? interface_storage(q) : q.store;
             ++at_;
             extra.t.array = array_suffix();
             if (accept("=")) { extra.a = expression(); }
@@ -527,6 +554,19 @@ private:
     void note_interface(std::int32_t which) {
         const node & n = m_->at(which);
         if (n.store == storage::none || n.store == storage::constant) { return; }
+        // THE DECLARED FRAGMENT OUTPUT, remembered by NAME. softgl reads the
+        // colour out of the finished environment and had `gl_FragColor`
+        // hardcoded; an ES 3.00 shader may not contain that identifier at all,
+        // so the lookup found nothing and the draw painted nothing while
+        // compiling and linking perfectly.
+        //
+        // The FIRST one wins. ES 3.00 allows several outputs with explicit
+        // locations, which is multiple render targets - out of scope in
+        // docs/webgl2-plan.md, and taking the first is what a single-target
+        // rasteriser can honour.
+        if (n.store == storage::fragment_output && m_->fragment_output == "gl_FragColor") {
+            m_->fragment_output = n.text;
+        }
         m_->interface_.push_back(interface_variable{n.text, n.t, n.store, n.line});
     }
 
@@ -985,7 +1025,7 @@ std::string shader::info_log() const {
 glsl::shader parse(std::string_view source, const options & how) {
     shader out;
     out.which = how.which;
-    out.preprocessed = preprocess(source, how, out.errors);
+    out.preprocessed = preprocess(source, how, out.errors, &out.es300);
     parser p{lex(out.preprocessed), out};
     p.run();
     out.ok = out.errors.empty();

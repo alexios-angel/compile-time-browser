@@ -137,6 +137,11 @@ std::size_t draw_triangles(const draw_request & request, framebuffer & into) {
     const glsl::program & fragment_program =
         request.fragment_program != nullptr ? *request.fragment_program : *own_fragment;
 
+    // The fragment shader says where its colour comes out: `gl_FragColor` for
+    // ES 1.00, the declared `out` variable for ES 3.00. Read once here rather
+    // than per fragment.
+    const std::string & fragment_output_name = request.fragment_shader->fragment_output;
+
     stage_environment stage{request};
     std::size_t written = 0;
 
@@ -328,7 +333,11 @@ std::size_t draw_triangles(const draw_request & request, framebuffer & into) {
                 // DISCARD WRITES NOTHING, and that includes the depth buffer -
                 // a discarded fragment must not occlude what comes after it.
                 if (ran.discarded) { continue; }
-                const glsl::value * colour = ran.find("gl_FragColor");
+                // THE NAME THE MODULE DECLARED, not a hardcoded one. ES 1.00
+                // writes `gl_FragColor` and that is still the default; an
+                // ES 3.00 shader declares its own output and may not contain
+                // that identifier anywhere. See glsl::shader::fragment_output.
+                const glsl::value * colour = ran.find(fragment_output_name);
                 if (colour == nullptr) { continue; }
 
                 float r = colour->f(0);
