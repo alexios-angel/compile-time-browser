@@ -505,6 +505,58 @@ chasing is near the noise floor, interleave; do not compare two sittings.** That
 is the second time in this file that comparing numbers taken at different times
 produced a confident wrong answer.
 
+
+## simdutf for base64: 42x, verified, and NOT adopted yet (2026-08-02)
+
+Tested on request. `simdutf::base64_to_binary` against
+`ctbrowser::base64_decode`, on a 256 KB payload the size of the base64 PNGs
+Phaser decodes at boot:
+
+| | throughput |
+|---|---|
+| `ctbrowser::base64_decode` | 1,131 MB/s |
+| `simdutf::base64_to_binary` | **47,878 MB/s — 42.3x** |
+
+Byte-identical output. That is the largest single-function margin measured in
+this whole exercise.
+
+**It is not a drop-in, and the differential test is why we know.** simdutf's
+`base64_default_accept_garbage` looked like our documented leniency - "a
+character outside the alphabet is ignored rather than fatal" - and it is not:
+it **stops at the first `=`**, where ours reads past it. Over 200,000 malformed
+inputs the two disagreed on **4.7%**, first case `"=w%S5"` (ours 2 bytes, theirs
+0).
+
+**The shape that works is strict-with-fallback.** simdutf's *default* mode is
+the spec's forgiving-base64: whitespace skipped, a character outside the
+alphabet a failure. Restricting the comparison to inputs it ACCEPTS:
+
+```
+strict accepted and we AGREE:  60856
+strict accepted and we DIFFER: 0
+```
+
+So: try simdutf strict, and fall back to the existing decoder when it refuses.
+Well-formed input - every `data:` URL and every real `atob` - takes the fast
+path; malformed input keeps today's behaviour exactly.
+
+**Not adopted, because the honest case is thin.** base64 does not appear in
+either corpus profile at all: it is below the 99% threshold on both the Phaser
+frame and the p5 load, because each decodes a few hundred KB once at boot. 42x
+on 0.2% is 0.2%. Against that, simdutf is a COMPILED library and would need the
+mingw sysroot treatment mimalloc got.
+
+It is written down because the argument changes the moment a corpus page embeds
+a large `data:` URL, which is ordinary on the real web - and because the
+measurement and the equivalence proof are the expensive part, and they are done.
+
+**Our decoder is also more lenient than the specification**, which this file
+should say plainly: WHATWG forgiving-base64 FAILS on a character outside the
+alphabet, and browsers throw `InvalidCharacterError`. `base64_decode`'s comment
+claims to match "the WHATWG `atob` in every browser" and does not. Adopting
+simdutf strict *without* the fallback would fix that - a behaviour change worth
+making deliberately rather than as a side effect of a performance patch.
+
 ## Computed-goto dispatch: measured properly, and the surprise was elsewhere (2026-08-02)
 
 A first attempt at this reported computed goto 5.8% slower. **That measurement
