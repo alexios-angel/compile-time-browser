@@ -108,6 +108,28 @@ cannot happen quietly.
 bytes, +251 KB, and the archive is 1.0 MB across 66 objects. All ten Windows
 goldens stayed byte-identical.
 
+## DEPENDENCIES COME FROM BREW, NOT APT (2026-08-01)
+
+`tools/Brewfile` is the list, and `tools/remote-build.sh` converges it with
+`brew bundle` before every build. **The reason is versions.** Two devbox builds
+died on apt packages that were installed and unusable:
+
+* Ubuntu 24.04 ships **libjpeg-turbo 2.1.5**, and the `tj3_*` API this engine's
+  JPEG decoder was first written against arrived in **3.0**. Not a warning — the
+  functions simply do not exist.
+* apt packages **`boost_url` separately** from `libboost-dev`, so a box with
+  Boost installed still fails at configure with "Could not find a package
+  configuration file provided by boost_url".
+
+Brew ships current versions *and the same ones the development machine has*,
+which keeps the two in step — a cross-platform golden depends on that far more
+than on either being newest. apt stays right for the box's own furniture:
+`build-essential`, `git`, `rsync`, the toolchain.
+
+The JPEG decoder is nevertheless written to libjpeg-turbo's **2.x API**, which
+3.x still exports without deprecation, so it builds against either. Brew-first
+removes the constraint; it does not make the portable spelling wrong.
+
 ## A SECOND COMPILER FOUND FOUR THINGS (2026-08-01)
 
 Builds moved to the shared devbox, and **the first build there stopped four

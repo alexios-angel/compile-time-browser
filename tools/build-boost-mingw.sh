@@ -44,8 +44,18 @@ fi
 # installed and still fail to configure. Taking the headers from the same place
 # the host library comes from also stops the cross build compiling one release
 # against another's headers, which the tag check below exists to prevent.
+# NOT `command -v brew`: on the devbox this runs over a non-interactive ssh,
+# where brew is not on PATH and that test silently answers no - which is exactly
+# how this script reported "no Boost include tree" on a box that had one.
+# tools/remote-build.sh hardcodes the same path for the same reason.
 brew_inc=""
-if command -v brew >/dev/null 2>&1; then brew_inc="$(brew --prefix 2>/dev/null)/include"; fi
+for brew in "$(command -v brew 2>/dev/null || true)" /home/linuxbrew/.linuxbrew/bin/brew \
+            /opt/homebrew/bin/brew; do
+    if [ -n "$brew" ] && [ -x "$brew" ]; then
+        brew_inc="$("$brew" --prefix)/include"
+        break
+    fi
+done
 for root in "${BOOST_INC:-}" "$brew_inc" "$HOME/projects/boost-inc"; do
     if [ -n "$root" ] && [ -f "$root/boost/version.hpp" ]; then
         boost_inc="$root"
