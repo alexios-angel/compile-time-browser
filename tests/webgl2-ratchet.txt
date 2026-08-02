@@ -8,7 +8,8 @@
 # The ladder: 1 a webgl2 context, 2 the WebGL 2 constants, 3 #version 300 es
 # compiles, 4 vertex array objects, 5 instanced drawing accepted, 6 an instanced
 # draw reaches the pixels, 7 the same capability under its WebGL 1 extension
-# names, 8 Phaser's own WebGL renderer paints on it.
+# names, 8 Phaser's own WebGL renderer paints on it, 9 Babylon runs and reports
+# its WebGL version, 10 Babylon renders a scene to the pixels.
 #
 # RUNG 7 IS THE DESIGN DECISION MADE CHECKABLE. docs/webgl2-plan.md commits to
 # ONE implementation of VAOs and instancing exposed under TWO spellings, because
@@ -18,9 +19,30 @@
 # two URL parsers and two base64 decoders.
 
 level=9
-blocker=
+blocker=Babylon cleared but drew no geometry (centre and corner are both 0,0,255)
 
-# THE LADDER IS COMPLETE (2026-08-02). It started at ZERO the same day:
+# RUNG 10 WAS ADDED THE DAY RUNG 9 WENT GREEN, because 9 turned out to ask too
+# little: it built a BABYLON.Engine and read `webGLVersion`, which a bundle can
+# answer without ever drawing. Running is not rendering. Rung 10 builds the
+# smallest real scene - a camera, a light and a box - and asks the canvas.
+#
+# WHERE IT STOPS, and the reading is precise: Babylon's CLEAR reaches the pixels
+# (the canvas is the blue it cleared to) and its GEOMETRY does not (the centre
+# is that same blue, so the box is not there). Draws do reach the rasteriser -
+# 40 of them, 4096 fragments each, which is the whole 64x64 canvas - so this is
+# not "nothing runs", it is "the geometry shades to the background". That is the
+# next thing to chase and it is a much narrower question than the one rung 9
+# left.
+#
+# THE PROBE HAD TO BE FIXED BEFORE IT COULD SAY THAT. It first cleared to BLACK
+# and asked for any non-black pixel, which makes "painted nothing" and "painted
+# black" the same reading - two different findings with two different next
+# steps. Clearing to blue separated them. Then it asked only for a non-black
+# pixel, which the blue clear satisfies on its own: that version passed while
+# the box was missing entirely. It now requires the CENTRE and the CORNER to
+# differ, which is the assertion that actually means "geometry drew".
+#
+# THE LADDER'S FIRST NINE RUNGS ARE COMPLETE (2026-08-02). It started at ZERO the same day:
 # `getContext('webgl2')` returned null by an explicit decision, so rung 1 was
 # where it stopped and everything above was unmeasured rather than failing.
 #

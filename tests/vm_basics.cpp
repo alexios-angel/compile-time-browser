@@ -2135,6 +2135,47 @@ void test_generators() {
                   "4");
 }
 
+// A SYMBOL-KEYED PROPERTY ON A CLASS. Babylon's decorator metadata does exactly
+// this - `new.target[Symbol.metadata] = {}` and then reads it straight back -
+// and throws a named error if the read comes back empty.
+void test_symbol_keys_on_functions() {
+    expect_result("const s = Symbol('m'); const o = {}; o[s] = 3; return o[s];", "3");
+    expect_result("const s = Symbol('m'); function F() {} F[s] = 2; return F[s];", "2");
+    expect_result("const s = Symbol('m'); class C {} C[s] = 7; return C[s];", "7");
+    expect_result("const s = Symbol('m'); class C {} return String(!C[s]);", "true");
+    expect_result("const s = Symbol('m'); class C {} C[s] = {a: 1}; return C[s].a;", "1");
+    // Through `new.target`, which is how the class gets at itself.
+    expect_result("const s = Symbol('m');"
+                  "class E { constructor() { const t = new.target; t[s] = t[s] || {v: 5}; } }"
+                  "new E(); return E[s].v;",
+                  "5");
+    // NEW.TARGET THROUGH A super() CHAIN. Babylon reads it in a derived
+    // constructor, after super(...), to hang decorator metadata off the class
+    // actually being constructed.
+    expect_result("var seen = 'unset';"
+                  "class A { constructor() { seen = new.target === undefined ? 'undefined'"
+                  " : new.target.name; } }"
+                  "class B extends A { constructor() { super(); } }"
+                  "new B(); return seen;",
+                  "B");
+    expect_result("var seen = 'unset';"
+                  "class A { constructor() { seen = String(new.target && new.target.name); } }"
+                  "class B extends A {}"
+                  "new B(); return seen;",
+                  "B");
+    // And in the derived constructor itself, after super() has run.
+    expect_result("var seen = 'unset';"
+                  "class A { constructor() {} }"
+                  "class B extends A { constructor() { super(); seen = String(new.target"
+                  " && new.target.name); } }"
+                  "new B(); return seen;",
+                  "B");
+    // A subclass must not see the parent's own metadata as its own.
+    expect_result("const s = Symbol('m'); class A {} A[s] = 1; class B extends A {}"
+                  "return String(Object.prototype.hasOwnProperty.call(B, s));",
+                  "false");
+}
+
 void test_new_function() {
     expect_result("return typeof new Function();", "function");
     expect_result("return new Function('return 41 + 1;')();", "42");
@@ -2767,6 +2808,7 @@ int main() {
     test_date();
     test_array_buffer_is_shared();
     test_generators();
+    test_symbol_keys_on_functions();
     test_new_function();
     test_string_replace();
     test_error_stacks();

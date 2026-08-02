@@ -2553,6 +2553,10 @@ public:
 
         const std::uint16_t argv = alloc_reg();
         emit_argument_array(args, argv);
+        // `super(...)` - NOT `super.m(...)` - carries new.target into the base
+        // constructor. Babylon reads it there to hang decorator metadata off
+        // the class actually being constructed, and got undefined.
+        if (callee.kind == vp::nk::super_lit) { proto().emit(instruction{op::pass_new_target}); }
         proto().emit(instruction{op::apply, target, argv, self});
         proto().emit(instruction{op::move, dst, target});
         release_to(mark);
@@ -2580,6 +2584,13 @@ public:
             for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
             const std::uint16_t self = alloc_reg();
             proto().emit(instruction{op::load_this, self});
+            // `super(...)` - NOT `super.m(...)` - carries new.target into the
+            // base constructor. THIS is the path a plain super() takes; the
+            // spread form a few hundred lines up is the other one, and marking
+            // only that one left the common case still reading undefined.
+            if (callee.kind == vp::nk::super_lit) {
+                proto().emit(instruction{op::pass_new_target});
+            }
             proto().emit(instruction{op::call_receiver, base,
                                      static_cast<std::uint16_t>(args.size()), self});
             proto().emit(instruction{op::move, dst, base});

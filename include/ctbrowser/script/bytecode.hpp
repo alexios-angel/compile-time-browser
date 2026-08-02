@@ -179,6 +179,13 @@ enum class op : std::uint8_t {
     // carries `constructing` so that `new C()` can evaluate to the new object -
     // so this reads state that was there rather than adding any.
     load_new_target,
+    // `super(...)` PASSES new.target ALONG. The spec propagates it down the
+    // constructor chain: inside a base constructor reached through super(),
+    // `new.target` is the class `new` was written against, not the base. That
+    // cannot be inferred at run time - a super() call and an ordinary method
+    // call look identical by then - so the compiler marks the call and the VM
+    // hands the value to the next frame it pushes.
+    pass_new_target,
     // a = the CLOSURE running this frame. `var f = function me() { ... me() }`
     // binds `me` inside its own body and nowhere else, and there is no other
     // way to reach it: the enclosing scope has no such name, and the closure

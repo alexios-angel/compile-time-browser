@@ -557,6 +557,10 @@ std::size_t context::collect() {
     // in a register, so nothing else would keep it alive - and collecting the
     // object a method is running on is about as bad as it gets.
     mark(current_this_);
+    // The constructor a super() call is in the middle of handing on. It lives
+    // only in this slot between the two instructions, which is exactly the
+    // window a collection can fall in.
+    mark(pending_new_target_);
     // And the closure each live frame is executing. A function called from C++
     // via call() is likewise only referenced from a C++ local; without this its
     // upvalues can be freed while its body is still running.
@@ -565,6 +569,7 @@ std::size_t context::collect() {
         mark(f.receiver);
         mark(f.arguments_object);
         mark(f.async_promise);
+        mark(f.new_target);
     }
     // A QUEUED JOB AND ITS ARGUMENTS. Nothing else refers to them between the
     // moment they are queued and the moment they run, which is precisely the
@@ -668,8 +673,15 @@ value context::call(value callable, std::span<const value> args, value this_valu
     const std::size_t depth = frames_.size();
     const value saved = current_this_;
     current_this_ = this_value;
-    frames_.push_back(call_frame{&target, 0, new_base, 0, static_cast<std::uint16_t>(args.size()),
-                                 fnobj, this_value, handlers_.size()});
+    call_frame entered{
+        &target, 0,          new_base,        0, static_cast<std::uint16_t>(args.size()),
+        fnobj,   this_value, handlers_.size()};
+    // THIS IS THE PATH super() TAKES - it compiles to `op::apply`, which lands
+    // here - so the new.target a super() call passed along is consumed here or
+    // nowhere.
+    entered.new_target = pending_new_target_;
+    pending_new_target_ = value::undefined();
+    frames_.push_back(entered);
     const value out = run_loop(depth);
     current_this_ = saved;
     // Only shrink back if nothing below is still using the space - a nested
@@ -1728,8 +1740,10 @@ value context::run_loop(std::size_t stop_depth) {
                 raise("call stack exhausted");
                 break;
             }
-            frames_.push_back(
-                call_frame{&target, 0, new_base, in.a, in.b, fnobj, receiver, handlers_.size()});
+            call_frame entered{&target, 0, new_base, in.a, in.b, fnobj, receiver, handlers_.size()};
+            entered.new_target = pending_new_target_;
+            pending_new_target_ = value::undefined();
+            frames_.push_back(entered);
             break;
         }
 
@@ -1762,11 +1776,7 @@ value context::run_loop(std::size_t stop_depth) {
         // class; that distinction only shows up in a hierarchy, and the pages
         // that use this - a transpiler's `_classCallCheck`, Babylon's decorator
         // metadata - ask whether it is undefined, not which constructor it is.
-        case op::load_new_target:
-            reg(in.a) = frame.constructing && frame.closure != nullptr
-                            ? value::object(frame.closure)
-                            : value::undefined();
-            break;
+        case op::load_new_target: reg(in.a) = frame.new_target; break;
         case op::make_arguments: {
             // The frame knows how many arguments ARRIVED; the proto only knows
             // how many were declared, and those are different numbers whenever
@@ -1923,6 +1933,12 @@ value context::run_loop(std::size_t stop_depth) {
             break;
         }
 
+        case op::pass_new_target:
+            // The NEXT frame pushed - the base constructor super() is about to
+            // enter - gets this frame's new.target rather than undefined.
+            pending_new_target_ = frame.new_target;
+            break;
+
         case op::set_proto:
             if (reg(in.a).is_object()) {
                 static_cast<object_object *>(reg(in.a).as_heap())->prototype = reg(in.b);
@@ -2012,6 +2028,7 @@ value context::run_loop(std::size_t stop_depth) {
             }
             call_frame fresh{&target, 0, new_base, in.a, in.b, fnobj, self, handlers_.size()};
             fresh.constructing = true;
+            fresh.new_target = callee;
             frames_.push_back(fresh);
             break;
         }

@@ -42,6 +42,7 @@ enum rung {
     rung_extensions = 7, // the SAME capability under its WebGL 1 names
     rung_phaser = 8,     // Phaser's own WebGL renderer boots on it and paints
     rung_babylon = 9,    // and Babylon - the one corpus that WANTS WebGL 2 - runs
+    rung_scene = 10,     // and renders a real scene, through its own WebGL 2 path
 };
 
 [[nodiscard]] const char * rung_name(int level) {
@@ -56,6 +57,7 @@ enum rung {
     case rung_extensions: return "the WebGL 1 extensions expose the same thing";
     case rung_phaser: return "Phaser's WebGL renderer paints on it";
     case rung_babylon: return "Babylon runs and reports its WebGL version";
+    case rung_scene: return "Babylon renders a scene to the pixels";
     default: return "?";
     }
 }
@@ -441,6 +443,80 @@ struct measurement {
         return m;
     }
     m.reached(rung_babylon);
+
+    // --- 10: and does it DRAW ------------------------------------------------
+    // RUNNING IS NOT RENDERING, and rung 9 only asked the engine which version
+    // it settled on. This builds the smallest real scene - a camera, a light
+    // and a box - and asks the canvas whether anything landed, which is the
+    // same question rung 8 asks of Phaser and the only one that cannot be
+    // answered by a bundle that merely loaded.
+    const std::string scene_drew = ask(babylon, R"JS((function () {
+        try {
+            var canvas = document.getElementById('c');
+            var engine = new BABYLON.Engine(canvas, true);
+            var scene = new BABYLON.Scene(engine);
+            // NOT BLACK. A black clear makes "Babylon painted nothing" and
+            // "Babylon painted black" the same reading, and they are different
+            // findings - the first is a pipeline that never reached the canvas,
+            // the second is one that reached it and shaded wrong.
+            scene.clearColor = new BABYLON.Color4(0, 0, 1, 1);
+            var camera = new BABYLON.FreeCamera('cam', new BABYLON.Vector3(0, 0, -5), scene);
+            camera.setTarget(BABYLON.Vector3.Zero());
+            new BABYLON.HemisphericLight('light', new BABYLON.Vector3(0, 1, 0), scene);
+            var box = BABYLON.MeshBuilder.CreateBox('box', {size: 2}, scene);
+            box.material = new BABYLON.StandardMaterial('mat', scene);
+            box.material.emissiveColor = new BABYLON.Color3(1, 0, 0);
+            scene.render();
+            return 'rendered';
+        } catch (e) {
+            return 'threw: ' + (e && e.message ? e.message : e);
+        }
+      })())JS");
+    if (scene_drew != "rendered") {
+        m.fail_at(rung_scene,
+                  "Babylon's scene did not render: " + scene_drew +
+                      (babylon.script_error().empty() ? "" : " | " + babylon.script_error()));
+        return m;
+    }
+    // The pixels are the claim, exactly as for Phaser.
+    const auto scene_txn = babylon.doc().read();
+    ctbrowser::node_id scene_canvas{};
+    const auto find_canvas = [&](auto && self, ctbrowser::node_id at) -> void {
+        if (!scene_canvas &&
+            babylon.atoms().text(scene_txn.tag(at).value_or(ctbrowser::atom{})) == "canvas") {
+            scene_canvas = at;
+        }
+        for (const ctbrowser::node_id child : scene_txn.children(at)) { self(self, child); }
+    };
+    find_canvas(find_canvas, scene_txn.root());
+    const auto scene_pixels = babylon.canvases().pixels_of(scene_canvas);
+    if (!scene_canvas || scene_pixels == nullptr) {
+        m.fail_at(rung_scene, "Babylon's canvas has no pixel buffer");
+        return m;
+    }
+    // THE BOX AGAINST THE BACKGROUND, not merely "something is not black".
+    // The scene clears to blue and puts a red box in the middle, so the centre
+    // and the corner MUST differ - and a rung that only asked for a non-black
+    // pixel would pass on the clear alone, which proves the pipeline reached
+    // the canvas and nothing whatever about the geometry.
+    const ctbrowser::color corner{scene_pixels->at(1, 1)};
+    const ctbrowser::color centre{
+        scene_pixels->at(scene_pixels->width / 2, scene_pixels->height / 2)};
+    const auto describe = [](ctbrowser::color c) {
+        return std::to_string(c.red()) + "," + std::to_string(c.green()) + "," +
+               std::to_string(c.blue());
+    };
+    if (corner.red() == 0 && corner.green() == 0 && corner.blue() == 0) {
+        m.fail_at(rung_scene, "Babylon's clear did not reach the pixels (corner is " +
+                                  describe(corner) + ", wanted the blue it cleared to)");
+        return m;
+    }
+    if (centre == corner) {
+        m.fail_at(rung_scene, "Babylon cleared but drew no geometry (centre and corner are both " +
+                                  describe(centre) + ")");
+        return m;
+    }
+    m.reached(rung_scene);
     return m;
 }
 
@@ -449,9 +525,9 @@ struct measurement {
 int main() {
     const measurement m = measure();
 
-    std::printf("LEVEL %d/%d\n", m.level, rung_babylon);
+    std::printf("LEVEL %d/%d\n", m.level, rung_scene);
     std::printf("BLOCKER %s\n", m.blocker.c_str());
-    std::printf("     WEBGL2 LEVEL %d/%d (%s)\n", m.level, rung_babylon, rung_name(m.level));
+    std::printf("     WEBGL2 LEVEL %d/%d (%s)\n", m.level, rung_scene, rung_name(m.level));
     if (!m.blocker.empty()) { std::printf("     blocked by: %s\n", m.blocker.c_str()); }
 
     std::printf("     babylon: %s\n", babylon_verdict().c_str());

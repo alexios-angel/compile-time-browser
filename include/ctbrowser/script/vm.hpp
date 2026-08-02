@@ -728,6 +728,12 @@ private:
         // back to it, so a handler in a caller cannot be caught by a callee.
         std::size_t handler_base = 0;
 
+        // `new.target`: the constructor this frame was entered with, or
+        // undefined for an ordinary call. It is a VALUE rather than a flag
+        // because it PROPAGATES - a base constructor reached through super()
+        // reports the derived class `new` was written against, not itself.
+        value new_target = value::undefined();
+
         // WHICH GENERATOR THIS FRAME IS THE BODY OF, or null for an ordinary
         // call. `yield` needs it to know where to save itself, and it cannot be
         // found any other way: the coroutine is reached from the generator
@@ -866,6 +872,9 @@ private:
     std::function<void(context &, value, value, bool)> promise_settler_;
     // Set by a frame that suspended, so `resume` can tell "awaited again" from
     // "returned" - both leave run_loop the same way.
+    // Set by `op::pass_new_target` and consumed by the very next frame push, so
+    // a super() call hands its own new.target to the base constructor.
+    value pending_new_target_ = value::undefined();
     bool suspended_ = false;
     // Set by `op::yield_value` so generator_resume can tell a body that YIELDED
     // from one that RETURNED - run_loop hands back a value either way, and the

@@ -324,7 +324,17 @@ void webgl_context::link_program(std::uint32_t program) {
         return;
     }
     if (!vertex->second.compiled_ok || !fragment->second.compiled_ok) {
+        // WHICH SHADER, AND WHY. `getProgramInfoLog` saying only "a shader did
+        // not compile" makes a page report a link failure and say nothing about
+        // the cause, which is half a diagnostic - and the compiler already knew
+        // the answer.
         p.log = "a shader did not compile";
+        if (!vertex->second.compiled_ok && !vertex->second.log.empty()) {
+            p.log += "\n  vertex: " + vertex->second.log;
+        }
+        if (!fragment->second.compiled_ok && !fragment->second.log.empty()) {
+            p.log += "\n  fragment: " + fragment->second.log;
+        }
         return;
     }
     // ATTRIBUTE LOCATIONS ARE ASSIGNED HERE, in declaration order. That is what

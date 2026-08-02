@@ -713,10 +713,30 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
         gl->blend_func(enum_at(a, 0), enum_at(a, 1));
         return value::undefined();
     });
+    // ACCEPTED AND IGNORED. Two different reasons live in this list and it is
+    // worth being honest about which is which:
+    //
+    //   genuinely nothing to do here - `flush`, `finish`, `hint`,
+    //   `generateMipmap`, `pixelStorei` - a software rasteriser with no command
+    //   queue and no mip chain has no work for them.
+    //
+    //   NOT IMPLEMENTED, and a page using them gets a wrong picture rather than
+    //   an error - the whole stencil family, `colorMask`, `polygonOffset`,
+    //   `sampleCoverage`, `lineWidth`, and the blend-equation calls. There is no
+    //   stencil buffer in softgl.hpp at all, so a page masking with one simply
+    //   draws unmasked.
+    //
+    // The second group SHOULD refuse by name the way the WebGL 2 surface does.
+    // They do not yet because they are called during ordinary engine setup by
+    // libraries that then render fine without them - Babylon sets stencil state
+    // on every scene - and turning that into a torrent of refusals would bury
+    // the diagnostics that matter. Recorded here rather than left as a
+    // pleasant-looking list of no-ops; docs/raster.md carries the same note.
     for (const char * name :
-         {"blendEquation", "blendEquationSeparate", "blendColor", "stencilFunc", "stencilOp",
-          "stencilMask", "colorMask", "polygonOffset", "sampleCoverage", "hint", "lineWidth",
-          "pixelStorei", "generateMipmap", "flush", "finish"}) {
+         {"blendEquation", "blendEquationSeparate", "blendColor", "stencilFunc",
+          "stencilFuncSeparate", "stencilOp", "stencilOpSeparate", "stencilMask",
+          "stencilMaskSeparate", "clearStencil", "colorMask", "polygonOffset", "sampleCoverage",
+          "hint", "lineWidth", "pixelStorei", "generateMipmap", "flush", "finish"}) {
         method(name, [](context &, std::span<value>) { return value::undefined(); });
     }
     method("cullFace", [gl](context &, std::span<value> a) {
