@@ -110,7 +110,7 @@ webgl_context::webgl_context(paint::bitmap * target, int width, int height) {
     resize(target, width, height);
     // SIXTEEN, which is WebGL 1's floor and what a page reads from
     // MAX_VERTEX_ATTRIBS before deciding how much it can pack in.
-    attributes_.resize(16);
+    attributes_.resize(max_vertex_attributes);
 }
 
 void webgl_context::resize(paint::bitmap * target, int width, int height) {
@@ -627,6 +627,12 @@ void webgl_context::bind_vertex_array(std::uint32_t id) {
         return;
     }
     attributes_ = next->second.attributes;
+    // NEVER FEWER SLOTS THAN THE CONTEXT STARTED WITH. The table is sized when
+    // a vertex array is created, so this cannot fire today - it is here because
+    // the failure it prevents is invisible: a short table makes every attribute
+    // setter a silent no-op rather than an error, and the draw simply paints
+    // nothing.
+    if (attributes_.size() < max_vertex_attributes) { attributes_.resize(max_vertex_attributes); }
     element_buffer_ = next->second.element_buffer;
     bound_vao_ = id;
 }

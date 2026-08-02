@@ -209,8 +209,22 @@ struct vertex_attribute {
 // on the extension object are the same operation, so they call the same code
 // here. Two implementations of one job is the bug this tree has already paid
 // for twice.
+// MAX_VERTEX_ATTRIBS. GL's attribute table is a fixed-size array of slots, not
+// a list that grows as a page fills it in: `vertexAttribPointer(3, ...)` on a
+// context where nothing has touched 0..2 is legal and must land in slot 3.
+inline constexpr std::size_t max_vertex_attributes = 16;
+
 struct gl_vertex_array {
-    std::vector<vertex_attribute> attributes;
+    // SIZED, NOT EMPTY, and that is the whole point of the initialiser. A
+    // vertex array object holds the same table the context does, so a fresh one
+    // has to start with the same number of slots - `attributes_` is swapped
+    // wholesale on bind, and every setter guards its index against the live
+    // table's size. Default-constructing this empty meant binding a new VAO
+    // installed a zero-slot table, after which every enableVertexAttribArray
+    // and vertexAttribPointer was silently dropped by that guard and every draw
+    // gathered no attributes at all - a black canvas, with no error anywhere,
+    // which is exactly how Phaser's renderer failed.
+    std::vector<vertex_attribute> attributes = std::vector<vertex_attribute>(max_vertex_attributes);
     std::uint32_t element_buffer = 0;
 };
 

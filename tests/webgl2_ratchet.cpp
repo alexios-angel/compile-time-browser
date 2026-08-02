@@ -374,10 +374,31 @@ struct measurement {
     }
     const ctbrowser::color drawn{surface->at(32, 32)};
     if (drawn != ctbrowser::color::rgba(255, 0, 0)) {
-        m.fail_at(rung_phaser, "Phaser's WEBGL fill did not reach the pixels (32,32 is " +
-                                   std::to_string(drawn.red()) + "," +
-                                   std::to_string(drawn.green()) + "," +
-                                   std::to_string(drawn.blue()) + ")");
+        // SAY WHAT IS IN THE CANVAS, not just what one pixel is. A single
+        // sample cannot tell "nothing drew" from "something drew somewhere
+        // else", and those want completely different next steps - the first is
+        // a renderer question and the second is a coordinate one. Three rounds
+        // of this rung were spent on the wrong one of the two.
+        std::size_t painted = 0;
+        int first_x = -1, first_y = -1;
+        for (int y = 0; y < surface->height; ++y) {
+            for (int x = 0; x < surface->width; ++x) {
+                const ctbrowser::color px{surface->at(x, y)};
+                if (px.alpha() != 0 && (px.red() != 0 || px.green() != 0 || px.blue() != 0)) {
+                    if (first_x < 0) { first_x = x, first_y = y; }
+                    ++painted;
+                }
+            }
+        }
+        m.fail_at(rung_phaser,
+                  "Phaser's WEBGL fill did not reach the pixels (32,32 is " +
+                      std::to_string(drawn.red()) + "," + std::to_string(drawn.green()) + "," +
+                      std::to_string(drawn.blue()) + "; " + std::to_string(surface->width) + "x" +
+                      std::to_string(surface->height) + " canvas has " + std::to_string(painted) +
+                      " non-black pixels" +
+                      (first_x < 0 ? ")"
+                                   : ", first at " + std::to_string(first_x) + "," +
+                                         std::to_string(first_y) + ")"));
         return m;
     }
     m.reached(rung_phaser);

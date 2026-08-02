@@ -18,7 +18,7 @@
 # two URL parsers and two base64 decoders.
 
 level=7
-blocker=Phaser's WEBGL fill did not reach the pixels (32,32 is 0,0,0)
+blocker=Phaser's WEBGL fill did not reach the pixels (32,32 is 0,0,0; 64x64 canvas has 0 non-black pixels)
 
 # WHY THIS STARTS AT ZERO (2026-08-02). `getContext('webgl2')` returns null by
 # an explicit decision recorded in shell/bindings.cpp, so the first rung is
@@ -41,17 +41,44 @@ blocker=Phaser's WEBGL fill did not reach the pixels (32,32 is 0,0,0)
 # Two gaps were found and closed on 2026-08-02: `bufferSubData` did not exist,
 # and TRIANGLE_STRIP/FAN were refused, which is Phaser's DEFAULT topology.
 #
-# What remains: `drawElements(TRIANGLES, 6, UNSIGNED_SHORT)` answers
-# INVALID_OPERATION, repeatedly, once per frame. webgl_context::draw_elements
-# raises that for exactly three reasons - no current program, a program that is
-# not linked, or no ELEMENT_ARRAY_BUFFER bound - so the next step is to find out
-# WHICH, and the likeliest is that Phaser's own shaders do not compile here.
+# WHAT REMAINS, traced end to end on 2026-08-02 and now down to ONE defect,
+# which is not in the WebGL code at all. Phaser's draws reach the rasteriser
+# with six vertices and shaders that compile and link; `inPosition` is bound at
+# location 0 from buffer 13, size 2, float, stride 12, offset 0 - all correct -
+# and 288 bytes are uploaded to that buffer by bufferSubData every frame. Those
+# 288 bytes are ALL ZERO, and they are zero before they ever reach C++.
 #
-# A caution learned instrumenting it: wrapping every gl method from JS and
-# reading getError() after each call ATTRIBUTES A STALE ERROR to the first
-# wrapped call, because getError returns the first error since it was last
-# asked. The `bindFramebuffer=1280` seen that way was not bindFramebuffer's -
-# that method is a no-op stub that cannot raise anything.
+# Phaser's WebGLBufferWrapper.createViews makes FOUR views over one ArrayBuffer
+# - Float32Array, Uint8Array, Uint16Array, Uint32Array - and writes vertex
+# positions through the F32 one. A typed array here OWNS its elements as
+# `value`s rather than viewing bytes, so all four views are handed the SAME
+# array_object and each `new` overwrites its element kind. The last view wins,
+# the shared storage ends up u32, and every float written afterwards is coerced
+# to an integer. Read back as float, 64 becomes 9e-44, which is zero to any
+# question the rasteriser asks.
+#
+# The fix is a typed array that VIEWS bytes rather than owning values: the
+# ArrayBuffer holds the bytes and each view carries its own (kind, offset,
+# length) over them. That also removes the RangeError builtins.cpp throws today
+# for `new Uint8Array(buf, offset, length)`, which exists for the same reason.
+#
+# Two wrong diagnoses, recorded because both cost a day:
+#
+#   1. `drawElements` answering INVALID_OPERATION. It never does. That reading
+#      came from wrapping every gl method in JS and calling getError() after
+#      each - which ATTRIBUTES A STALE ERROR to the first wrapped call, because
+#      getError returns the first error since it was last asked.
+#   2. "Phaser paints 2048 fragments, so the renderer works." Those 2048
+#      fragments are rungs 5-7's own test page, not Phaser: the DIAG output was
+#      read without checking which context it came from. Phaser paints ZERO.
+#
+# One real fix landed on the way. A fresh gl_vertex_array default-constructed
+# its attribute table EMPTY while the context sized its own to 16, so binding a
+# new VAO installed a zero-slot table - after which every enableVertexAttribArray
+# and vertexAttribPointer was silently dropped by its own bounds guard and every
+# draw gathered no attributes. Phaser reaches VAOs through
+# OES_vertex_array_object, so it hit this the moment rung 7 made the extension
+# real. Attributes arrive with their bindings intact now.
 #
 # So rung 8 asks the only corpus question available today: Phaser's renderer
 # runs on WebGL 1, and whether it paints at all is worth a rung of its own.
