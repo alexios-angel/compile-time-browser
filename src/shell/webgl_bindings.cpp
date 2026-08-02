@@ -449,6 +449,11 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
         gl->bind_buffer(enum_at(a, 0), id_of(c, a.size() > 1 ? a[1] : value::undefined()));
         return value::undefined();
     });
+    method("bufferSubData", [gl](context & c, std::span<value> a) {
+        const std::vector<std::byte> bytes = bytes_of(c, a.size() > 2 ? a[2] : value::undefined());
+        gl->buffer_sub_data(enum_at(a, 0), int_at(a, 1), bytes);
+        return value::undefined();
+    });
     method("bufferData", [gl](context & c, std::span<value> a) {
         // `bufferData(target, size, usage)` ALLOCATES rather than uploading -
         // a page that means to reserve space passes a number, and treating that

@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <map>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -309,6 +310,11 @@ public:
     std::size_t draw_arrays_instanced(std::uint32_t mode, int first, int count, int instances);
     std::size_t draw_elements_instanced(std::uint32_t mode, int count, std::uint32_t type,
                                         int offset, int instances);
+    // `bufferSubData(target, offset, data)` - UPDATE IN PLACE, which is how a
+    // batching renderer works: allocate one large buffer once and rewrite the
+    // used prefix every frame. Phaser's WebGL renderer does exactly that and
+    // could not draw a single quad without it.
+    void buffer_sub_data(std::uint32_t target, int offset, std::span<const std::byte> bytes);
     void attribute_divisor(int location, int divisor);
     [[nodiscard]] int attribute_divisor_of(int location) const;
 

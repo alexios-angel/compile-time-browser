@@ -642,6 +642,31 @@ bool webgl_context::is_vertex_array(std::uint32_t id) const {
     return id != 0 && vertex_arrays_.find(id) != vertex_arrays_.end();
 }
 
+void webgl_context::buffer_sub_data(std::uint32_t target, int offset,
+                                    std::span<const std::byte> bytes) {
+    const std::uint32_t which =
+        target == gl_enum::element_array_buffer ? element_buffer_ : array_buffer_;
+    const auto found = buffers_.find(which);
+    if (found == buffers_.end()) {
+        fail(gl_enum::invalid_operation);
+        return;
+    }
+    if (offset < 0) {
+        fail(gl_enum::invalid_value);
+        return;
+    }
+    // PAST THE END IS AN ERROR, NOT A RESIZE. bufferSubData updates a range of
+    // a buffer that bufferData already sized; growing it here would let a page
+    // that miscounted keep working locally and then fail on a real driver,
+    // which is the wrong direction for a difference to point.
+    const auto at = static_cast<std::size_t>(offset);
+    if (at + bytes.size() > found->second.bytes.size()) {
+        fail(gl_enum::invalid_value);
+        return;
+    }
+    std::copy(bytes.begin(), bytes.end(), found->second.bytes.begin() + offset);
+}
+
 void webgl_context::attribute_divisor(int location, int divisor) {
     if (location < 0 || divisor < 0) {
         fail(gl_enum::invalid_value);
@@ -690,11 +715,56 @@ std::size_t webgl_context::draw_elements_instanced(std::uint32_t mode, int count
     return painted;
 }
 
+// A STRIP OR A FAN, AS INDEPENDENT TRIANGLES.
+//
+// The rasteriser takes triangles three vertices at a time, so a strip is
+// expanded here rather than taught to it - N vertices become N-2 triangles, and
+// the winding ALTERNATES: (0,1,2), (2,1,3), (2,3,4)... Getting that flip wrong
+// makes every other triangle back-facing, which is invisible until something
+// enables culling and then looks like a hole rather than a winding bug.
+//
+// A fan is the simpler one: every triangle shares vertex 0.
+//
+// WORTH DOING BECAUSE PHASER ASKS. Its WebGL renderer defaults to
+// TRIANGLE_STRIP topology, so `drawArrays(gl.TRIANGLE_STRIP, ...)` was the
+// first thing it did and INVALID_ENUM was the answer - the renderer initialised,
+// ran, and painted nothing.
+[[nodiscard]] std::vector<int> expand_topology(std::uint32_t mode, int first, int count) {
+    std::vector<int> out;
+    if (mode == gl_enum::triangles) {
+        out.reserve(static_cast<std::size_t>(count));
+        for (int i = 0; i < count; ++i) { out.push_back(first + i); }
+        return out;
+    }
+    if (count < 3) { return out; }
+    out.reserve(static_cast<std::size_t>(count - 2) * 3U);
+    if (mode == gl_enum::triangle_fan) {
+        for (int i = 1; i + 1 < count; ++i) {
+            out.push_back(first);
+            out.push_back(first + i);
+            out.push_back(first + i + 1);
+        }
+        return out;
+    }
+    for (int i = 0; i + 2 < count; ++i) {
+        if ((i % 2) == 0) {
+            out.push_back(first + i);
+            out.push_back(first + i + 1);
+        } else {
+            out.push_back(first + i + 1);
+            out.push_back(first + i);
+        }
+        out.push_back(first + i + 2);
+    }
+    return out;
+}
+
 std::size_t webgl_context::draw_arrays(std::uint32_t mode, int first, int count) {
-    if (mode != gl_enum::triangles) {
-        // POINTS, LINES and the strips are named in softgl.hpp as not drawn.
-        // Reporting INVALID_ENUM is better than drawing nothing in silence: a
-        // page that asks for a line strip gets an answer it can read.
+    if (mode != gl_enum::triangles && mode != gl_enum::triangle_strip &&
+        mode != gl_enum::triangle_fan) {
+        // POINTS and LINES are named in softgl.hpp as not drawn. Reporting
+        // INVALID_ENUM is better than drawing nothing in silence: a page that
+        // asks for a line strip gets an answer it can read.
         fail(gl_enum::invalid_enum);
         return 0;
     }
@@ -711,9 +781,10 @@ std::size_t webgl_context::draw_arrays(std::uint32_t mode, int first, int count)
     }
     if (count <= 0 || first < 0) { return 0; }
 
+    const std::vector<int> order = expand_topology(mode, first, count);
     std::vector<attribute_set> vertices;
-    vertices.reserve(static_cast<std::size_t>(count));
-    for (int i = 0; i < count; ++i) { vertices.push_back(gather(program->second, first + i)); }
+    vertices.reserve(order.size());
+    for (const int index : order) { vertices.push_back(gather(program->second, index)); }
 
     draw_request request;
     request.vertex_shader = &vertex->second.compiled;
@@ -765,7 +836,8 @@ std::size_t webgl_context::draw_arrays(std::uint32_t mode, int first, int count)
 
 std::size_t webgl_context::draw_elements(std::uint32_t mode, int count, std::uint32_t type,
                                          int offset) {
-    if (mode != gl_enum::triangles) {
+    if (mode != gl_enum::triangles && mode != gl_enum::triangle_strip &&
+        mode != gl_enum::triangle_fan) {
         fail(gl_enum::invalid_enum);
         return 0;
     }
@@ -785,12 +857,18 @@ std::size_t webgl_context::draw_elements(std::uint32_t mode, int count, std::uin
     // The index buffer decides the ORDER vertices are gathered in, which is the
     // whole point of an indexed draw: a shared vertex is stored once and used
     // many times.
+    // THE TOPOLOGY IS EXPANDED OVER THE INDEX POSITIONS, not over the indices
+    // themselves: a strip's alternating winding is about which slots of the
+    // index buffer form each triangle, and the value read from each slot is
+    // then the vertex. Expanding the values instead would give the right
+    // triangles from the wrong buffer positions the moment indices repeat.
+    const std::vector<int> order = expand_topology(mode, 0, count);
     std::vector<attribute_set> vertices;
-    vertices.reserve(static_cast<std::size_t>(std::max(count, 0)));
+    vertices.reserve(order.size());
     const int component = size_of(type);
-    for (int i = 0; i < count; ++i) {
+    for (const int slot : order) {
         const auto at = static_cast<std::size_t>(offset) +
-                        static_cast<std::size_t>(i) * static_cast<std::size_t>(component);
+                        static_cast<std::size_t>(slot) * static_cast<std::size_t>(component);
         const auto index = static_cast<int>(read_component(indices->second.bytes, at, type, false));
         vertices.push_back(gather(program->second, index));
     }

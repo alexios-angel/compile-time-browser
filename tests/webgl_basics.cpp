@@ -407,14 +407,25 @@ void test_error_reporting() {
     CHECK(gl.error() == gl_enum::invalid_operation);
 }
 
-// Anything but TRIANGLES is refused out loud. softgl.hpp names points and lines
-// as not drawn; a page that asks for a line strip gets an answer it can read
-// rather than an empty canvas.
+// POINTS AND LINES are refused out loud - softgl.hpp names them as not drawn,
+// and a page that asks gets an answer it can read rather than an empty canvas.
+//
+// TRIANGLE_STRIP AND TRIANGLE_FAN USED TO BE ON THAT LIST and are drawn since
+// 2026-08-02: Phaser 4's WebGL renderer defaults to strip topology, so refusing
+// it meant the renderer initialised, ran, and painted nothing. They are
+// expanded into independent triangles rather than taught to the rasteriser.
 void test_unsupported_modes_are_refused() {
     harness h{16};
     h.bind_interleaved(floats({-3, -3, 1, 0, 0, 1, 3, -3, 1, 0, 0, 1, 0, 3, 1, 0, 0, 1}));
-    CHECK(h.gl.draw_arrays(gl_enum::triangle_strip, 0, 3) == 0);
-    CHECK(h.gl.take_error() == gl_enum::invalid_enum);
+    // A three-vertex strip is one triangle, and it paints.
+    CHECK(h.gl.draw_arrays(gl_enum::triangle_strip, 0, 3) > 0);
+    CHECK(h.gl.take_error() == gl_enum::no_error);
+    CHECK(h.gl.draw_arrays(gl_enum::triangle_fan, 0, 3) > 0);
+    CHECK(h.gl.take_error() == gl_enum::no_error);
+    // FEWER THAN THREE IS NOT AN ERROR, it is nothing to draw - which is what
+    // a driver does and what a page building a strip incrementally relies on.
+    CHECK(h.gl.draw_arrays(gl_enum::triangle_strip, 0, 2) == 0);
+    CHECK(h.gl.take_error() == gl_enum::no_error);
     CHECK(h.gl.draw_arrays(gl_enum::points, 0, 3) == 0);
     CHECK(h.gl.take_error() == gl_enum::invalid_enum);
 }
