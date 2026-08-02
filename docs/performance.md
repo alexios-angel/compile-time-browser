@@ -294,6 +294,58 @@ lookup becomes an integer hash and an integer compare - `_Hash_bytes` and
 index "the slot a shape / inline-cache design replaces later". That is a large
 change and it is the honest next one.
 
+
+## The clip mask was built a pixel at a time (2026-08-02)
+
+`canvas_context::clip` builds a full-canvas mask, and the lambda it hands to
+`for_each_span` ran per PIXEL with every term loop-invariant - `clipped_out`
+calling `width()` twice, a third `width()` for the index, three `shared_ptr`
+derefs a pixel, and the row offset re-derived each time. **9.4% of a Phaser
+frame**, in a lambda.
+
+Hoisted the same way `blend_span` was: 15.601 G -> **15.058 G (-3.5%)**, and the
+lambda itself 9.40% -> **6.13%**. All 13 goldens byte-identical.
+
+`for_each_span` takes a `std::function`, which is an indirect call - but it is
+called once per SPAN while the body runs per PIXEL, so the call is not the cost
+and a `function_ref` or a template would buy little. The body was the cost.
+
+## Allocators: measured three, and the answer is "yes, but" (2026-08-02)
+
+Allocator traffic is **~4.8%** of a Phaser frame: `_int_malloc` 1.32%,
+`_int_free` 1.26%, `malloc` 0.97%, `free` 0.62%, `malloc_consolidate` 0.25%,
+`operator new` 0.35%. That is the one remaining hot item where a LIBRARY is the
+whole answer - a drop-in allocator is a link-line change that cannot alter
+results.
+
+Measured by `LD_PRELOAD` before adopting anything, which is the cheap way to
+find out:
+
+| allocator | instructions | wall clock (min of 7) |
+|---|---|---|
+| glibc | 15.058 G | 1021 ms |
+| jemalloc | 14.618 G (-2.9%) | **974 ms (-4.6%)** |
+| mimalloc | **14.421 G (-4.2%)** | 976 ms (-4.4%) |
+
+**jemalloc and mimalloc are tied on wall clock** - 974 against 976 is noise -
+while mimalloc executes about 1.4% fewer instructions.
+
+**So the tie-breaker is not performance, it is the Windows cross-build.**
+mimalloc is a Microsoft project with first-class Windows support and builds
+under llvm-mingw; jemalloc's mingw support is an afterthought and its Windows
+story has been unmaintained for years. This tree ships Windows binaries and
+byte-compares 13 goldens on them, so an allocator that does not cross-compile is
+not a candidate whatever it scores.
+
+**Not adopted yet, deliberately.** It needs a `tools/build-mimalloc-mingw.sh`
+alongside the three that already build zlib, libpng, libjpeg-turbo and Boost.URL
+into the cross sysroot, and that is a build-matrix commitment rather than a code
+change. The measurement is here so the decision can be made on numbers.
+
+The cheaper half of the same win needs no dependency: `clip()` allocates a fresh
+`width * height` mask on every call, and Phaser calls it every frame. Reusing
+that buffer removes a large allocation per frame without adding anything.
+
 ## Computed-goto dispatch: measured properly, and the surprise was elsewhere (2026-08-02)
 
 A first attempt at this reported computed goto 5.8% slower. **That measurement

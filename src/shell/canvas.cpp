@@ -252,13 +252,26 @@ void canvas_context::clip(fill_rule rule) {
     if (!pixels_ || width() <= 0 || height() <= 0) { return; }
     auto mask = std::make_shared<std::vector<std::uint8_t>>(
         static_cast<std::size_t>(width()) * static_cast<std::size_t>(height()), 0);
+    // HOISTED, for the same reason blend_span is: the body of this lambda runs
+    // per PIXEL, and every term in it was loop-invariant. It called width()
+    // twice inside clipped_out and once more for the index - three shared_ptr
+    // derefs a pixel - and re-derived the row offset each time. It was 9.4% of
+    // a Phaser frame on its own.
+    const int w = width();
+    const int h = height();
+    std::uint8_t * into = mask->data();
+    // The clip being REPLACED. `clip()` intersects with what is already there,
+    // which is what clipped_out was being asked per pixel; read directly here.
+    const std::uint8_t * previous = clip_ ? clip_->data() : nullptr;
     for_each_span(rule, [&](int y, float from, float to) {
+        if (y < 0 || y >= h) { return; }
         const int left = std::max(0, static_cast<int>(std::ceil(from - 0.5f)));
-        const int right = std::min(width() - 1, static_cast<int>(std::floor(to - 0.5f)));
+        const int right = std::min(w - 1, static_cast<int>(std::floor(to - 0.5f)));
+        const auto row = static_cast<std::size_t>(y) * static_cast<std::size_t>(w);
         for (int x = left; x <= right; ++x) {
-            if (clipped_out(x, y)) { continue; }
-            (*mask)[static_cast<std::size_t>(y) * static_cast<std::size_t>(width()) +
-                    static_cast<std::size_t>(x)] = 1;
+            const std::size_t at = row + static_cast<std::size_t>(x);
+            if (previous != nullptr && previous[at] == 0) { continue; }
+            into[at] = 1;
         }
     });
     clip_ = std::move(mask);
