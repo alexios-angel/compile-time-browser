@@ -132,6 +132,8 @@
             this.over = true;
             this.add.text(WIDTH / 2 - message.length * 4, HEIGHT / 2, message,
                           { fontSize: '16px', color: colour });
+            this.add.text(WIDTH / 2 - 76, HEIGHT / 2 + 24, 'SPACE TO PLAY AGAIN',
+                          { fontSize: '10px', color: '#888888' });
           }
         },
 
@@ -190,7 +192,16 @@
         },
 
         update: function (time, delta) {
-          if (this.over) { return; }
+          // OVER IS NOT THE END OF THE UPDATE LOOP, it is a state within it.
+          // `scene.restart()` tears the whole scene down and runs create()
+          // again - every game object destroyed, every group emptied, the
+          // display list cleared - which is a path nothing else in this tree
+          // goes near and the reason a restart is here at all rather than a
+          // reload.
+          if (this.over) {
+            if (Phaser.Input.Keyboard.JustDown(this.fireKey)) { this.scene.restart(); }
+            return;
+          }
           this.frame++;
 
           // --- the player -----------------------------------------------------

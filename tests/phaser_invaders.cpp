@@ -119,6 +119,41 @@ void check(bool ok, std::string_view what) {
     return state + "|" + page.script_error();
 }
 
+// AND DOES IT COME BACK? `scene.restart()` tears the whole scene down and runs
+// create() again - every game object destroyed, every group emptied, the
+// display list cleared, the timers dropped. That is a TEARDOWN path, and
+// nothing else in this tree goes near one: every other page here is built once
+// and runs until the process ends.
+//
+// A teardown that half-works looks fine for a frame and then leaks - stale
+// bodies still in the physics world, a display list holding destroyed objects -
+// so the assertions are on the state being FRESH, not merely present.
+[[nodiscard]] std::string restart(const std::string & html, const std::string & bundle) {
+    browser page{browser_options{320, 240}};
+    page.assets().add(
+        "../assets/phaser.js",
+        std::vector<std::byte>{reinterpret_cast<const std::byte *>(bundle.data()),
+                               reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
+    page.load_html(html);
+    // Long enough that the scene is thoroughly dirty: the score has moved, the
+    // formation has thinned, and bullets and bombs are in flight.
+    for (int i = 0; i < 300; ++i) { page.tick(16); }
+    const std::string before =
+        ask(page, "(function () { var s = window.__game.scene.scenes[0];"
+                  "return s.score + '/' + s.invaders.getChildren().length; })()");
+
+    (void)page.run_script("window.__game.scene.scenes[0].scene.restart();");
+    // Three frames, not thirty: the formation is whole until a bullet reaches
+    // it, and this is asking what create() built rather than what play did to
+    // it afterwards.
+    for (int i = 0; i < 3; ++i) { page.tick(16); }
+    const std::string after =
+        ask(page, "(function () { var s = window.__game.scene.scenes[0];"
+                  "return s.score + '/' + s.invaders.getChildren().length + '/' + s.lives"
+                  " + '/' + s.over + '/' + s.bullets.getChildren().length; })()");
+    return before + " -> " + after + " |" + page.script_error();
+}
+
 } // namespace
 
 int main() {
@@ -192,6 +227,25 @@ int main() {
     check(score > 0, "the ship shot something: score " + std::to_string(score));
     check(lives < 3, "and a bomb reached the ship: lives " + std::to_string(lives));
     check(lives >= 0, "lives never went negative: " + std::to_string(lives));
+
+    // --- and it can be restarted -------------------------------------------
+    const std::string cycled = restart(html, bundle);
+    std::printf("     restart: %s\n", cycled.c_str());
+    const std::size_t split = cycled.find(" |");
+    const std::string states = cycled.substr(0, split);
+    check(cycled.substr(split + 2).empty(),
+          "restarting threw nothing: " + cycled.substr(split + 2));
+    // A dirty scene first, or the comparison proves nothing: a restart that
+    // resets everything is indistinguishable from a game that never started.
+    check(states.find("0/15 ->") == std::string::npos,
+          "the scene was dirty before the restart: " + states);
+    const std::size_t arrow = states.find(" -> ");
+    check(arrow != std::string::npos, "both states were read: " + states);
+    if (arrow != std::string::npos) {
+        // score/invaders/lives/over/bullets, all as create() leaves them.
+        check(states.substr(arrow + 4) == "0/15/3/false/0",
+              "create() ran again from scratch: " + states.substr(arrow + 4));
+    }
 
     REPORT("phaser_invaders");
 }

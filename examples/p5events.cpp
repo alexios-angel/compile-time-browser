@@ -5,8 +5,13 @@
 // clicks and keystrokes through this and through Chrome, side by side, so the
 // two can be watched rather than guessed at.
 //
-//   tools/compare.py start --engine=ctbrowse --engine=chrome --headed --delay 400 \
-//       examples/pages/p5-events.html
+//   tools/compare.py start --engine=ctbrowse --engine=chrome --headed
+//       --delay 400 examples/pages/p5-events.html
+//
+// (written without a trailing backslash on purpose: a `\` at the end of a `//`
+// line splices the NEXT line into the comment, so gcc's -Wcomment rejects it
+// and -Werror stops the build. Clang says nothing, which is why it survived
+// here until this tree was first compiled with gcc on the devbox.)
 //
 // p5 2.x listens for POINTER events and converts each one's viewport
 // coordinates through the canvas's getBoundingClientRect(). Every link in that
