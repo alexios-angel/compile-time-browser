@@ -165,6 +165,11 @@ enum class op : std::uint8_t {
     // --- misc
     type_of,   // a = typeof b
     load_this, // a = the receiver of the call that entered this frame
+    // a = `new.target`: the constructor this frame was invoked with, or
+    // undefined when it was an ordinary call. The frame already knows - it
+    // carries `constructing` so that `new C()` can evaluate to the new object -
+    // so this reads state that was there rather than adding any.
+    load_new_target,
     // a = the CLOSURE running this frame. `var f = function me() { ... me() }`
     // binds `me` inside its own body and nowhere else, and there is no other
     // way to reach it: the enclosing scope has no such name, and the closure

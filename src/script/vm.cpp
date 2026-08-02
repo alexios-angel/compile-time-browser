@@ -1522,6 +1522,23 @@ value context::run_loop(std::size_t stop_depth) {
         case op::type_of: reg(in.a) = string(std::string{type_of(reg(in.b))}); break;
 
         case op::load_this: reg(in.a) = effective_this(frame); break;
+        // `new.target` IS THE CONSTRUCTOR, OR UNDEFINED. The frame already
+        // carries both halves - `constructing`, so `new C()` can evaluate to
+        // the new object rather than the body's return, and `closure`, which is
+        // the function running - so this reads state that was there rather than
+        // adding any.
+        //
+        // The closure is the function this frame is EXECUTING, which for a
+        // direct `new C()` is C. The spec's new.target follows the originally
+        // invoked constructor through a `super()` chain to the derived-most
+        // class; that distinction only shows up in a hierarchy, and the pages
+        // that use this - a transpiler's `_classCallCheck`, Babylon's decorator
+        // metadata - ask whether it is undefined, not which constructor it is.
+        case op::load_new_target:
+            reg(in.a) = frame.constructing && frame.closure != nullptr
+                            ? value::object(frame.closure)
+                            : value::undefined();
+            break;
         case op::make_arguments: {
             // The frame knows how many arguments ARRIVED; the proto only knows
             // how many were declared, and those are different numbers whenever

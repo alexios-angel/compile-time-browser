@@ -623,6 +623,35 @@ void test_var_declarators_run_left_to_right() {
 // Found by the Phaser API probe: its tween manager asks `hasOwnProperty` of a
 // number while working out which properties of a target to animate. Library
 // code does this constantly on values whose type it has not checked.
+// `new.target` - the meta-property, and a PARSE ERROR here until 2026-08-02.
+//
+// Every transpiler emits it: Babel's `_classCallCheck` is built on the
+// undefined test below, and Babylon.js uses it in its decorator metadata, which
+// is the first thing in that 11.6 MB bundle this engine's parser stopped on.
+void test_new_target() {
+    // Called as a constructor: the function itself.
+    expect("function F() { return typeof new.target; } return new F() && 'made';", "made");
+    expect("function F() { this.t = new.target === F; } return String(new F().t);", "true");
+    // Called ordinarily: undefined. THIS is the test real code performs - a
+    // guard asks whether it is undefined, not which constructor it is.
+    expect("function F() { return new.target === undefined; } return String(F());", "true");
+    expect("function F() { return typeof new.target; } return F();", "undefined");
+    // The transpiler guard itself, which is the whole reason this exists.
+    expect("function F() { if (new.target === undefined) { return 'needs new'; } return 'ok'; }"
+           "return F() + ',' + (new F() === undefined ? '?' : 'constructed');",
+           "needs new,constructed");
+    // At the top level there is no constructor at all.
+    expect("return String(new.target);", "undefined");
+    // And it is not a general property of `new`: `new.other` is an error, not
+    // a silent undefined, or a typo becomes a value.
+    bool ok = true;
+    (void)run_vm("return new.other;", &ok);
+    if (ok) {
+        std::printf("FAIL `new.other` was accepted\n");
+        ++ctbrowser_test_failures;
+    }
+}
+
 void test_primitives_reach_object_prototype() {
     expect("return typeof (5).hasOwnProperty;", "function");
     expect("return String((5).hasOwnProperty('x'));", "false");
@@ -2535,6 +2564,7 @@ int main() {
     test_symbol();
     test_var_declarators_run_left_to_right();
     test_unary_plus_converts();
+    test_new_target();
     test_primitives_reach_object_prototype();
     test_array_length_is_writable();
     test_collections();

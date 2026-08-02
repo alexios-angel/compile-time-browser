@@ -1926,6 +1926,11 @@ public:
             break;
         }
         case vp::nk::this_lit: proto().emit(instruction{op::load_this, dst}); break;
+        // `new.target` - a meta-property, so it takes no operands and reads the
+        // frame. Every transpiler emits it (Babel's `_classCallCheck` guard is
+        // built on it) and Babylon.js uses it in its decorator metadata; it
+        // reached this compiler as a PARSE error until ctjs learned it.
+        case vp::nk::new_target: proto().emit(instruction{op::load_new_target, dst}); break;
         // Regular expressions are DEFERRED, not overlooked: they need a regex
         // engine, and the standard library says the same about String.match and
         // the RegExp forms of replace/split. Rejecting one by name beats
