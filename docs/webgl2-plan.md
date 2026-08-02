@@ -41,9 +41,12 @@ Three positions, and each one is useful for a different reason:
   KHR_parallel_shader_compile   optional; Phaser disables skipUnreadyShaders without it
   ```
 
-  The engine returns `null` from `getExtension` and `[]` from
-  `getSupportedExtensions` today, so Phaser takes the no-extension path for all
-  four and degrades gracefully — which is why its renderer works at all.
+  The engine used to return `null` from `getExtension` and `[]` from
+  `getSupportedExtensions`, so Phaser took the no-extension path for all four.
+  It now answers truthfully for the first three, and Phaser takes the VAO and
+  instancing paths — which is how rung 7 going green is what broke rung 8, and
+  exactly the corpus pressure the "one implementation, two spellings" decision
+  was chosen to buy.
 * **Babylon uses nearly the whole specification**, and is the only corpus that
   would exercise this work properly. It also degrades: `_webGLVersion` gates 52
   sites, so it runs on WebGL 1 and simply does less.
@@ -74,8 +77,10 @@ The subset the corpora actually use. Everything outside refuses BY NAME, the way
 `raster/spirv.hpp` refuses loops and structs, so a page reaching the edge is told
 rather than quietly given a wrong answer.
 
-1. **A `webgl2` context.** `getContext('webgl2')` returns null today by explicit
-   decision (`shell/bindings.cpp:1322`).
+1. **A `webgl2` context.** `getContext('webgl2')` used to return null by an
+   explicit decision; it returns a context now, and a canvas keeps ONE context
+   type for ever — a later request for a different id gets null rather than
+   converting what is there.
 2. **The WebGL 2 constants.** Dull and load-bearing: one arriving as `undefined`
    makes every comparison against it silently false.
 3. **GLSL ES 3.00** — the language work, and most of the job. Babylon ships five
@@ -157,9 +162,41 @@ extension and are **already implemented** (`glsl_eval.cpp:1129`) — checked, no
 assumed. That is also what makes `OES_standard_derivatives` cheap: the extension
 is a name over a capability that already exists.
 
+## Where this stands (2026-08-02)
+
+**Stages 0–5 are done. The ratchet reads 8 of 9 and the API probes 31 of 31.**
+
+The remaining rung is Babylon, and it is not blocked on WebGL at all: the
+bundle needs **generators** (622 `function*`, 803 `yield`, from TypeScript's
+`__awaiter` transpilation). That is a VM feature — suspending and resuming a
+frame — and the machinery half exists already, because `await` on an unsettled
+promise saves a frame into a coroutine object (`heap_kind::coroutine`). It
+wants its own decision rather than being taken as a step here.
+
+**What the corpora found, which is the part worth keeping.** Four defects stood
+between Phaser's WebGL renderer and a painted pixel, and *not one of them
+raised a GL error or threw*:
+
+| | |
+|---|---|
+| `bufferSubData` | did not exist |
+| `TRIANGLE_STRIP` / `FAN` | refused — and STRIP is Phaser's default topology |
+| a fresh VAO's attribute table | **empty**, so every `vertexAttribPointer` after binding one was dropped by its own bounds guard |
+| typed arrays | owned values instead of viewing bytes, so four views over one `ArrayBuffer` were the same object and only the last one's kind survived |
+
+The last is the interesting one: it is a **JavaScript engine** bug, found only
+because a WebGL corpus wrote floats and read them back as bytes. Phaser's vertex
+positions were being stored as integers and read back as denormal floats — 64
+became 9e-44 — so 288 bytes of vertex data arrived at the rasteriser as zeros,
+with every WebGL call along the way behaving perfectly.
+
+**The p5 goldens did not move, on either platform.** `p5-webgl.html` is
+byte-identical on Linux and on the Windows cross-build, which is what the risk
+section below asks for.
+
 ## Stages
 
-### 0 — the harness, before any engine work
+### 0 — the harness, before any engine work — DONE
 `tests/webgl2_ratchet.cpp` + `tests/webgl2-ratchet.txt` +
 `tools/webgl2-ratchet.py` for how FAR; `tests/webgl2_api.cpp` +
 `tests/webgl2-api-probe.js` + `tests/webgl2-api.txt` + `tools/webgl2-api.py`
@@ -167,30 +204,30 @@ for how WIDE. Its first reading is the scoping measurement, the way stage 0 was
 for the lexer and Phaser plans — both of which cancelled their own later stages,
 which is the outcome to hope for rather than fear.
 
-### 1 — the language, behind a flag nothing sets yet
+### 1 — the language, behind a flag nothing sets yet — DONE
 `in`/`out`, the declared fragment output, `texture()`, `#version 300 es`.
 Extend `tests/glsl_basics.cpp` and add ES 3.00 spellings of existing fixtures so
 the same shader is parsed both ways and compared. Invisible from JavaScript on
 purpose: the language change is the risky half and it lands where the tests can
 see it alone.
 
-### 2 — the extensions, which need no context work
+### 2 — the extensions, which need no context work — DONE
 `getSupportedExtensions` lists the three; `getExtension` returns an object whose
 methods are the same C++ the WebGL 2 spellings will call. **Phaser starts using
 them the moment they appear**, so this is the stage the corpus can check.
 
-### 3 — VAOs and instancing underneath both
+### 3 — VAOs and instancing underneath both — DONE
 `softgl.cpp` draws a vertex range and needs to draw it N times with an instance
 index the attribute fetch can see. VAOs are state capture — bindings and
 enables — which the context already holds in one place.
 
-### 4 — `getContext('webgl2')` returns a context
+### 4 — `getContext('webgl2')` returns a context — DONE
 `WEBGL2` into `glsl::options::defines`, which flips p5's preamble.
 `getParameter(VERSION)` and `SHADING_LANGUAGE_VERSION` must say ES 3.0 / 3.00 —
 p5 reads them. `tests/p5-api-probe.js` asserts `webgl2` is null today and that
 assertion is correct until this stage; it gets REPLACED, not deleted.
 
-### 5 — refuse the rest, by name
+### 5 — refuse the rest, by name — DONE
 Each unimplemented entry point returns null or sets `INVALID_OPERATION` **and
 says which it was**. The p5 WEBGL work was lost for a day to
 `getProgramParameter` answering 0 to a question it did not understand; the
