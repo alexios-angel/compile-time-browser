@@ -35,15 +35,22 @@ fi
 
 repo_root=$(git rev-parse --show-toplevel)
 
+# `build*/`, NOT `build/`: the presets here write build-windows/, build-asan/
+# and build-tsan/ beside it, and only the first was excluded - so a local
+# build-windows/ was copied UP to the box, cache and all, and cmake refused it
+# with "the current CMakeCache.txt directory is different than the directory
+# where CMakeCache.txt was created". A cache is full of absolute paths from the
+# machine that wrote it and never belongs on another one.
+#
 # rsync the whole tree including submodule checkouts; leave remote build
 # artifacts in place so the PCH bake is reused across syncs.
 # tools/clang-std-embed stays local: the server-side copy is converged below.
 rsync -az --delete \
   --exclude '.git/' \
-  --exclude 'build/' \
+  --exclude 'build*/' \
   --exclude 'tools/clang-std-embed/' \
   --exclude '*.d' \
-  --filter 'protect *.pch' --filter 'protect *.gch' --filter 'protect build/' \
+  --filter 'protect *.pch' --filter 'protect *.gch' --filter 'protect build*/' \
   --filter 'protect tools/clang-std-embed/' --filter 'protect *.d' \
   "$repo_root"/ "$host:projects/compile-time-browser/"
 
