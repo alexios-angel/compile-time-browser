@@ -450,6 +450,61 @@ interns. Boost.Flyweight is the library-shaped version of the same idea and was
 considered; it loses here because this tree already has an intern table, and two
 implementations of one job is the mistake it keeps citing.
 
+
+## Five hash maps, measured rather than compared from their READMEs (2026-08-02)
+
+`ctbrowser::string_flat_map` is the VM's property index and the hottest map in
+the engine. Five open-addressing maps were built into it and run on a real
+Phaser frame, because on paper they are all the same shape.
+
+| map | instructions | wall (min of 11) | peak RSS |
+|---|---|---|---|
+| `boost::unordered_flat_map` | 14.053 G | 1009 ms | 199.7 MB |
+| `ankerl::unordered_dense` | 14.360 G | 989 ms | 182.5 MB |
+| **`tsl::robin_map`** | **13.995 G** | **973 ms** | **182.4 MB** |
+| `absl::flat_hash_map` | 14.593 G | 1005 ms | 199.4 MB |
+| `gtl::flat_hash_map` | 14.340 G | 997 ms | 200.5 MB |
+
+**tsl::robin_map: -3.6% wall and -8.7% peak RSS** against the Boost default.
+Adopted, vendored header-only at `external/robin-map` with its MIT licence.
+`CTBROWSER_STRING_MAP` still selects any of the five, so this is re-measurable
+rather than frozen in.
+
+**The instruction count barely moved (-0.4%) while wall clock did, and that
+disagreement IS the finding.** Robin-hood probing bounds how far a key can sit
+from its ideal slot, so a lookup touches fewer cache lines. Callgrind counts
+instructions and cannot see a cache miss - which is why the deterministic metric
+this file has leaned on all day is the wrong instrument for THIS question, and
+peak RSS moving 8.7% in the same direction is the corroboration.
+
+`google::dense_hash_map` was asked about and rejected without benchmarking, on
+evidence rather than reputation: it has **no `is_transparent`** anywhere, so
+heterogeneous lookup is impossible - every `find(string_view)` would rebuild a
+`std::string` (undoing -47%) and the prehashed chain walk could not exist at all
+(-18.6%). It also needs `set_empty_key`/`set_deleted_key` sentinels, and no
+string is safe to reserve when any string can be a property name. Last upstream
+push 2021. `absl::flat_hash_map` is its living descendant and was measured.
+
+### Windows needed a different method, and the first answer was wrong
+
+The Windows exe is timed by launching it from WSL, and run-to-run drift there is
+about **4%** - larger than the effect. A first pass compared 614 ms against an
+earlier 589 ms and concluded tsl REGRESSED Windows. Those numbers came from
+different sittings.
+
+Rebuilding both maps as two binaries and **interleaving the runs**, ten rounds
+each, removes the drift:
+
+| | Windows (interleaved, min of 10) |
+|---|---|
+| `boost::unordered_flat_map` | 611 ms |
+| `tsl::robin_map` | **602 ms (-1.5%)** |
+
+Smaller than Linux's -3.6% but the same direction. **When the difference you are
+chasing is near the noise floor, interleave; do not compare two sittings.** That
+is the second time in this file that comparing numbers taken at different times
+produced a confident wrong answer.
+
 ## Computed-goto dispatch: measured properly, and the surprise was elsewhere (2026-08-02)
 
 A first attempt at this reported computed goto 5.8% slower. **That measurement
