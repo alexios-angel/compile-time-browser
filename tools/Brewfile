@@ -42,3 +42,10 @@ brew "jpeg-turbo"     # JPEG, likewise. apt's 2.1.5 predates the tj3_* API;
 # platforms on two allocator versions is the kind of difference that makes a
 # byte-compared golden disagree for a reason nobody can see.
 brew "mimalloc"       # 3.4.3
+
+# base64, and eventually UTF-8 validation. Backs base64_decode's fast path at
+# 42x the hand-written loop; that loop stays as the fallback for input simdutf's
+# strict mode refuses, so the leniency contract is unchanged.
+# PIN IT TO THE WINDOWS SYSROOT'S, as with mimalloc and plutosvg:
+# tools/build-simdutf-mingw.sh builds the same version there.
+brew "simdutf"        # 9.0.0

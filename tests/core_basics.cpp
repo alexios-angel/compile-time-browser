@@ -1,5 +1,6 @@
 // ctbrowser.core: the single-threaded contracts. The concurrent ones live in
 // stress_slab.cpp, which runs under TSan.
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/allocator.hpp>
 #include <ctbrowser/core/core.hpp>
 
@@ -242,6 +243,27 @@ void test_scheduler() {
 // that announces itself to nobody. allocator_name() asks mimalloc whether a
 // fresh allocation came out of its own regions, so this is the override
 // reporting on itself rather than a build flag reporting on its intent.
+// BASE64 KEEPS ITS LENIENCY, which matters because the fast path does not have
+// it. simdutf's strict mode handles every well-formed payload at 42x; anything
+// it refuses falls through to the hand-written loop, and THAT is what these
+// pin. Delete the fallback and the last three of these fail.
+//
+// The inputs are not invented: "=w%S5" is the first case where simdutf's
+// `accept_garbage` option - the obvious drop-in - disagreed with this decoder,
+// out of 4.7% of 200,000 malformed inputs that did.
+void test_base64_leniency() {
+    // Well-formed: the fast path, and the ordinary case.
+    CHECK_EQ(ctbrowser::base64_decode("aGVsbG8="), std::string{"hello"});
+    CHECK_EQ(ctbrowser::base64_decode("aGVsbG8"), std::string{"hello"});   // padding optional
+    CHECK_EQ(ctbrowser::base64_decode("aGVs bG8="), std::string{"hello"}); // whitespace skipped
+    CHECK_EQ(ctbrowser::base64_decode(""), std::string{});
+    // Refused by strict mode, so answered by the loop: characters outside the
+    // alphabet are IGNORED rather than fatal, and a `=` does not stop the read.
+    CHECK_EQ(ctbrowser::base64_decode("aGVs!bG8="), std::string{"hello"});
+    CHECK_EQ(ctbrowser::base64_decode("=aGVsbG8="), std::string{"hello"});
+    CHECK_EQ(ctbrowser::base64_decode("a@G#V$s%b&G*8"), std::string{"hello"});
+}
+
 void test_allocator_is_mimalloc() {
     // The DEFAULT build uses mimalloc; -DCTBROWSER_USE_MIMALLOC=OFF is a
     // supported configuration and says "system" honestly rather than being
@@ -257,6 +279,7 @@ void test_allocator_is_mimalloc() {
 }
 
 int main() {
+    test_base64_leniency();
     test_allocator_is_mimalloc();
     test_handle();
     test_slab_basics();

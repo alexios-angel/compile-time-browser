@@ -178,6 +178,20 @@ if(CTBROWSER_USE_MIMALLOC AND (NOT CTBROWSER_MIMALLOC OR NOT CTBROWSER_MIMALLOC_
     "Windows cross: run tools/build-mimalloc-mingw.sh. "
     "Or configure with -DCTBROWSER_USE_MIMALLOC=OFF to use the system allocator.")
 endif()
+# simdutf. It backs base64_decode's fast path - 42x on well-formed input, with
+# this file's own decoder still handling anything simdutf's strict mode refuses,
+# so the leniency contract is unchanged. See docs/performance.md, which also
+# records the differential test that ruled out the obvious drop-in.
+find_library(CTBROWSER_SIMDUTF NAMES simdutf HINTS ${CTBROWSER_BREW_HINTS} PATH_SUFFIXES lib)
+find_path(CTBROWSER_SIMDUTF_INCLUDE simdutf.h HINTS ${CTBROWSER_BREW_HINTS} PATH_SUFFIXES include)
+if(NOT CTBROWSER_SIMDUTF OR NOT CTBROWSER_SIMDUTF_INCLUDE)
+  message(FATAL_ERROR
+    "simdutf not found. Linux: brew install simdutf. "
+    "Windows cross: run tools/build-simdutf-mingw.sh")
+endif()
+target_link_libraries(ctbrowser-core PUBLIC "${CTBROWSER_SIMDUTF}")
+target_include_directories(ctbrowser-core SYSTEM PUBLIC "${CTBROWSER_SIMDUTF_INCLUDE}")
+
 if(CTBROWSER_USE_MIMALLOC)
   target_compile_definitions(ctbrowser-core PRIVATE CTBROWSER_WITH_MIMALLOC=1)
   target_link_libraries(ctbrowser-core PUBLIC "${CTBROWSER_MIMALLOC}")
