@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BUNDLE = ROOT / "examples/assets/phaser.js"
+BUNDLE = ROOT / "examples/assets/phaser/phaser.js"
 PROBES = ROOT / "tests/phaser-api-probe.js"
 RECORD = ROOT / "tests/phaser-api.txt"
 TEST = ROOT / "build/src/tests/ctbrowser-test-phaser_api"

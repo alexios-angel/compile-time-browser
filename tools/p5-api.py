@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BUNDLE = ROOT / "examples/assets/p5.js"
+BUNDLE = ROOT / "examples/assets/p5/p5.js"
 PROBES = ROOT / "tests/p5-api-probe.js"
 RECORD = ROOT / "tests/p5-api.txt"
 TEST = ROOT / "build/src/tests/ctbrowser-test-p5_api"

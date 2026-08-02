@@ -95,10 +95,10 @@ struct outcome {
 } // namespace
 
 int main() {
-    const std::string bundle = read_file("examples/assets/p5.js");
+    const std::string bundle = read_file("examples/assets/p5/p5.js");
     const std::string probes = read_file("tests/p5-api-probe.js");
     if (bundle.empty() || probes.empty()) {
-        std::printf("FAIL examples/assets/p5.js or tests/p5-api-probe.js is missing\n");
+        std::printf("FAIL examples/assets/p5/p5.js or tests/p5-api-probe.js is missing\n");
         ++ctbrowser_test_failures;
         REPORT("p5_api");
     }

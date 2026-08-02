@@ -115,7 +115,7 @@ private:
     stopwatch clock;
 
     if (source.empty()) {
-        m.fail_at(rung_read, "examples/assets/phaser.js is missing or empty");
+        m.fail_at(rung_read, "examples/assets/phaser/phaser.js is missing or empty");
         return m;
     }
     m.reached(rung_read);
@@ -268,7 +268,7 @@ private:
 // Reported rather than ratcheted, because it is a separate claim from how far
 // the bundle gets and belongs beside it rather than inside its ladder.
 [[nodiscard]] std::string keyboard_verdict() {
-    const std::string source = read_file("examples/assets/phaser.js");
+    const std::string source = read_file("examples/assets/phaser/phaser.js");
     if (source.empty()) { return "phaser.js is missing"; }
 
     ctbrowser::shell::browser page{ctbrowser::shell::browser_options{200, 200}};
@@ -330,7 +330,7 @@ private:
 } // namespace
 
 int main() {
-    const std::string source = read_file("examples/assets/phaser.js");
+    const std::string source = read_file("examples/assets/phaser/phaser.js");
     const measurement m = measure(source);
 
     // MACHINE-READABLE FIRST, for tools/phaser-ratchet.py, then the sentence a

@@ -53,7 +53,7 @@ CodeMan38 (Cody Boisclair), used and redistributed under the SIL Open
 Font License, Version 1.1 (the license text is alongside the font at
 examples/assets/fonts/OFL.txt).
 
-examples/assets/p5.js is p5.js v2.3.1 (https://p5js.org,
+examples/assets/p5/p5.js is p5.js v2.3.1 (https://p5js.org,
 https://github.com/processing/p5.js), Copyright (c) the p5.js
 contributors, redistributed UNMODIFIED under the GNU Lesser General
 Public License, version 2.1. It is a distribution bundle and vendors
@@ -62,6 +62,16 @@ whose copyright notices are preserved inline in the file. It is test
 DATA, not a dependency: nothing in the engine links it, includes it or
 embeds it, and it is present so tests/p5_ratchet.cpp can measure how
 much of a real, large, modern JavaScript library this engine can take.
+The licence text is alongside it at examples/assets/p5/LICENSE.
+
+examples/assets/phaser/phaser.js is Phaser 4.2.1
+(https://phaser.io, https://github.com/phaserjs/phaser), Copyright (c)
+Richard Davey and Phaser Studio Inc., redistributed UNMODIFIED under the
+MIT License; the licence text is alongside it at
+examples/assets/phaser/LICENSE. It is test DATA on the same terms as
+p5.js above - nothing links, includes or embeds it - and it is a SECOND
+corpus because the bugs one library's idioms cannot reach are invisible
+from inside a corpus of one.
 
 Simple DirectMedia Layer (SDL3, https://libsdl.org) and its optional
 satellite libraries SDL3_image, SDL3_mixer and SDL3_ttf are used as

@@ -258,7 +258,7 @@ def serve_repo() -> str:
     """A local HTTP server rooted at the repository. Returns its base URL.
 
     THE PAGE IS SERVED, NOT OPENED. Chrome treats every file:// URL as its own
-    origin, so a page's `<script src="../assets/p5.js">` is a cross-origin
+    origin, so a page's `<script src="../assets/p5/p5.js">` is a cross-origin
     request and is blocked - the window comes up blank with nothing in the
     console, which reads as "ctbrowser renders and Chrome does not" when the
     truth is that Chrome never loaded the script. `--allow-file-access-from-files`

@@ -76,11 +76,11 @@ void check(bool ok, std::string_view what) {
 [[nodiscard]] std::string run(const std::string & html, const std::string & bundle,
                               const char * hold, int frames) {
     browser page{browser_options{320, 240}};
-    // The page asks for `../assets/phaser.js`, which is what it resolves to from
+    // The page asks for `../assets/phaser/phaser.js`, which is what it resolves to from
     // examples/pages/ - registered under that exact name so the load is
     // hermetic and no path outside the registry is touched.
     page.assets().add(
-        "../assets/phaser.js",
+        "../assets/phaser/phaser.js",
         std::vector<std::byte>{reinterpret_cast<const std::byte *>(bundle.data()),
                                reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
     page.load_html(html);
@@ -106,7 +106,7 @@ void check(bool ok, std::string_view what) {
 [[nodiscard]] std::string play(const std::string & html, const std::string & bundle, int frames) {
     browser page{browser_options{320, 240}};
     page.assets().add(
-        "../assets/phaser.js",
+        "../assets/phaser/phaser.js",
         std::vector<std::byte>{reinterpret_cast<const std::byte *>(bundle.data()),
                                reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
     page.load_html(html);
@@ -131,7 +131,7 @@ void check(bool ok, std::string_view what) {
 [[nodiscard]] std::string restart(const std::string & html, const std::string & bundle) {
     browser page{browser_options{320, 240}};
     page.assets().add(
-        "../assets/phaser.js",
+        "../assets/phaser/phaser.js",
         std::vector<std::byte>{reinterpret_cast<const std::byte *>(bundle.data()),
                                reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
     page.load_html(html);
@@ -158,7 +158,7 @@ void check(bool ok, std::string_view what) {
 
 int main() {
     const std::string html = read_file("examples/pages/phaser-invaders.html");
-    const std::string bundle = read_file("examples/assets/phaser.js");
+    const std::string bundle = read_file("examples/assets/phaser/phaser.js");
     if (html.empty() || bundle.empty()) {
         std::printf("FAIL examples/pages/phaser-invaders.html or the bundle is missing\n");
         ++ctbrowser_test_failures;

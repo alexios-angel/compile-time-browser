@@ -1,7 +1,7 @@
 # WebGL in ctbrowser — the plan
 
 Written 2026-07-30, before any of it exists. Every measurement below is from
-`examples/assets/p5.js` (v2.3.1) and this tree, not from memory.
+`examples/assets/p5/p5.js` (v2.3.1) and this tree, not from memory.
 
 ## The decision that shapes everything: ONE FRONT END, TWO BACK ENDS
 

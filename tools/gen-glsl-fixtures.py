@@ -25,7 +25,7 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-BUNDLE = ROOT / "examples/assets/p5.js"
+BUNDLE = ROOT / "examples/assets/p5/p5.js"
 OUT = ROOT / "tests/glsl"
 
 # `  var phongVert = "....";` - the whole literal on one line, which is how the

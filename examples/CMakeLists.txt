@@ -193,9 +193,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
             "${PROJECT_SOURCE_DIR}/examples/assets/blip.wav"
             "${PROJECT_SOURCE_DIR}/examples/assets/chart.svg"
             "${PROJECT_SOURCE_DIR}/examples/assets/badge.png"
-            "${PROJECT_SOURCE_DIR}/examples/assets/p5.js"
-            "${PROJECT_SOURCE_DIR}/examples/assets/phaser.js"
             "${dist-dir}/examples/assets"
+    # The two corpus bundles live in their OWN directories with their own
+    # licences (LGPL-2.1 and MIT), so they are copied as directories - which
+    # also carries the licence beside the code, where it has to stay.
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${PROJECT_SOURCE_DIR}/examples/assets/p5" "${dist-dir}/examples/assets/p5"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${PROJECT_SOURCE_DIR}/examples/assets/phaser" "${dist-dir}/examples/assets/phaser"
     # PressStart2P is a PAGE's font, fetched by @font-face through a URL
     # (elements.html), so it travels whatever the build did with the UA faces -
     # embedding covers the three families use_real_fonts loads and nothing else.

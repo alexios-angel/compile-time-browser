@@ -84,10 +84,11 @@ struct outcome {
 } // namespace
 
 int main() {
-    const std::string bundle = read_file("examples/assets/phaser.js");
+    const std::string bundle = read_file("examples/assets/phaser/phaser.js");
     const std::string probes = read_file("tests/phaser-api-probe.js");
     if (bundle.empty() || probes.empty()) {
-        std::printf("FAIL examples/assets/phaser.js or tests/phaser-api-probe.js is missing\n");
+        std::printf(
+            "FAIL examples/assets/phaser/phaser.js or tests/phaser-api-probe.js is missing\n");
         ++ctbrowser_test_failures;
         REPORT("phaser_api");
     }
