@@ -1,40 +1,29 @@
 # Computed gotos in the script VM
 
-**Status: STILL OPEN. It was built, mis-measured, and reverted (2026-08-02).**
+**Status: DONE (2026-08-02). Implemented, measured properly, kept behind a flag
+that is OFF by default.**
 
-An attempt was made and reported as a loss. **That measurement was invalid** and
-is withdrawn - `ctbrowser_bench` targets are `EXCLUDE_FROM_ALL`, the benchmark
-binary was never rebuilt after the dispatch change, and the comparison turned
-out to be *original switch vs restructured switch* rather than switch vs
-computed goto. See `docs/performance.md`. Nothing measured computed goto.
+Computed goto measured **+3.0% instructions and +3.3% wall** against the
+`switch` on the dispatch-bound benchmark - the only comparison that isolates
+dispatch, one build directory, benchmark rebuilt and checksummed each time. It
+is retained and switchable (`-DCTBROWSER_COMPUTED_GOTO`, or the CMake option)
+because that verdict belongs to the branch predictor, not to this code.
 
-The one real signal in the wreckage points the OTHER way: the restructuring
-alone - hoisting the frame into pointers, wrapping handlers in `do {} while (0)`
-- measured about **5.5% fewer instructions** than the loop as written, with no
-computed goto involved. That is worth chasing on its own.
+**An earlier run of this experiment was invalid and its conclusion was
+withdrawn** - the benchmark target is `EXCLUDE_FROM_ALL` and was never rebuilt,
+so the numbers compared two things neither of which was computed goto. The
+lesson, which this tree had already written down once: verify that the thing you
+changed is the thing you ran, and checksum the binary if you are not sure.
 
-Two implementation facts are worth keeping for whoever picks this up, because
-both cost time:
+**The result that mattered was not the one being looked for.** The dispatch loop
+derived `prog` - the program a frame belongs to - on EVERY instruction, to serve
+the single opcode that reads it. Moving it into that handler is -5.6%
+instructions on the benchmark and -1.7% on a real Phaser frame, from six lines.
+`docs/performance.md` has the table.
 
-* **An indirect `goto` may not leave the scope of a non-trivially-destructible
-  local.** `VM_NEXT` cannot sit inside a handler holding a
-  `std::vector<value> args`. Wrapping each handler in `do { ... } while (0);`
-  makes the existing `break` mean "end of handler" in both dispatch modes and
-  puts the jump outside the braces, where the destructors have already run.
-* **Do not `#define fn (*vm_proto)`** as a shim - it collides with `nat->fn(...)`.
-  Name the pointers directly.
-
-What survives regardless is `tests/bench_script`, which should have existed
-years ago.
-
-**What stage 0 actually found, and it matters more than the dispatch question:**
-in a Phaser frame the interpreter is 15%, `canvas_context::blend` is 22%, and
-`object_object::find` - property lookup by string hash - is 10.7%. Two thirds of
-the entire interpreter's cost, in one function. That is the next thing to look
-at, and it is not dispatch.
+What also survives is `tests/bench_script`, which should have existed years ago.
 
 ---
-
 
 ## The idea
 

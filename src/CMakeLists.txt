@@ -182,6 +182,11 @@ target_sources(ctbrowser-script
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/vm.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/builtins.hpp")
 target_compile_features(ctbrowser-script PUBLIC cxx_std_23)
+# PRIVATE: the dispatch strategy is an implementation detail of run_loop and
+# nothing a consumer compiles against can see it.
+if(CTBROWSER_COMPUTED_GOTO)
+  target_compile_definitions(ctbrowser-script PRIVATE CTBROWSER_COMPUTED_GOTO)
+endif()
 ctbrowser_target(ctbrowser-script)
 target_include_directories(ctbrowser-script PRIVATE
   "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"

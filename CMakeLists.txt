@@ -42,6 +42,15 @@ cmake_dependent_option(CTBROWSER_BUILD_EXAMPLES "Build ctbrowser examples (need 
 # either way, being CLIs whose output is the whole point. Windows only.
 option(CTBROWSER_WINDOWS_CONSOLE "Keep the console window behind a Windows exe" ON)
 
+# COMPUTED-GOTO DISPATCH IN THE SCRIPT VM. Off, because it MEASURED SLOWER here:
+# +3.0% instructions and +3.3% wall against the switch on the dispatch-bound
+# benchmark (docs/performance.md has the table, tests/bench_script is the
+# measurement). It is kept and switchable rather than deleted because that
+# result is a property of the branch predictor rather than of this code - the
+# technique still wins on some microarchitectures, and on those it is one flag
+# away. GNU compilers only; anything else silently keeps the switch.
+option(CTBROWSER_COMPUTED_GOTO "Dispatch the script VM with computed gotos (GNU only)" OFF)
+
 # The strict flags every test and example builds with, kept off the exported
 # interface: a consumer's warnings are their own business.
 set(CTBROWSER_WARNING_OPTIONS

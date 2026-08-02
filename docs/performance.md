@@ -174,93 +174,55 @@ integer compare instead of a hash and a memcmp - which is the change
 inline-cache design replaces later". That is a much larger change and it is not
 a library question either.
 
-## Computed-goto dispatch: MEASUREMENT WITHDRAWN - it was invalid (2026-08-02)
+## Computed-goto dispatch: measured properly, and the surprise was elsewhere (2026-08-02)
 
-**An earlier revision of this file reported that computed goto executed 5.8%
-more instructions and ran 3% slower. That conclusion does not stand, and the
-numbers behind it were not comparing what they claimed to.**
+A first attempt at this reported computed goto 5.8% slower. **That measurement
+was invalid** - `ctbrowser_bench` targets are `EXCLUDE_FROM_ALL`, so
+`tools/remote-build.sh` never rebuilt the benchmark, and the comparison was
+accidentally *original switch vs restructured switch* across two differently
+configured build directories. It is redone here: one build directory, only the
+source toggled, the benchmark rebuilt explicitly and its **md5 checked** every
+time.
 
-`ctbrowser_bench` targets are `EXCLUDE_FROM_ALL`, so `tools/remote-build.sh`
-does not rebuild them. The "computed goto" binary was never rebuilt after the
-dispatch change - it was the ORIGINAL binary, which is why its instruction count
-matched a later untouched build to within ten instructions. The "switch" number
-came from a second build directory that *was* built explicitly, from the
-RESTRUCTURED loop with the dispatch macros compiled in switch mode.
-
-So the comparison was **original switch vs restructured switch** - and it
-pointed the other way: the restructuring alone measured about 5.5% FEWER
-instructions. Nothing in it measured computed goto at all.
-
-The implementation was reverted before the error was found, so there is nothing
-to re-measure without redoing it. **The dispatch question is therefore OPEN, not
-answered**, and `docs/computed-goto-plan.md` is still live.
-
-The lesson is the one this tree keeps relearning and had already written down
-for the GLSL work: **verify that the thing you changed is the thing you ran.**
-A stale binary does not announce itself, and an A/B across two build directories
-is not an A/B.
-
-## Computed-goto dispatch: MEASURED, AND IT LOST (2026-08-02)
-
-SUPERSEDED - see the withdrawal above. The numbers in this section are the
-invalid ones and are kept only so the mistake is legible.
-
-`docs/computed-goto-plan.md` set a gate before the answer was known: under 5% of
-an execution-heavy workload and the plan deletes itself. The share came in at
-the top of the marginal band, so it was worth building.
-
-**What it measured, on the devbox with clang 24:**
-
-| workload | run_loop share | why it was chosen |
+| config | instructions | wall (min of 7) |
 |---|---|---|
-| `tests/bench_script` | **76.9%** | dispatch-bound on purpose - the best case |
-| `tests/phaser_invaders` | **15.0%** | a real frame-driven page |
+| **A** the loop as it was | 39.839 G | 277.3 ms |
+| **B** restructured, `switch` dispatch | **37.628 G** (-5.6%) | **263.7 ms** (-4.9%) |
+| **C** restructured, computed goto | 38.772 G | 272.6 ms |
+| **D** original + ONE line moved | **37.612 G** (-5.6%) | 265.4 ms |
 
-Then, same binary, both dispatch paths, `tests/bench_script`:
+Two findings, and the second is worth more than the first.
 
-| | instructions (callgrind, deterministic) | wall clock (min of 7) |
-|---|---|---|
-| `switch` | **38.13 G** | **272.3 ms** |
-| computed goto | 40.35 G (**+5.8%**) | 280.5 ms (**+3.0%**) |
+**Computed goto loses, on this hardware.** C against B is the only pair that
+isolates dispatch: **+3.0% instructions and +3.3% wall.** The technique needs to
+keep the frame in registers and jump handler to handler; this VM cannot, because
+12 handlers push, pop or unwind `frames_` - a `std::vector` that can reallocate
+and dangle a cached pointer - so every dispatch has to re-derive, and that
+re-derivation is duplicated into all 88 handlers. Caching only in the "pure"
+handlers does not rescue it either: `to_number` calls `valueOf`/`toString`
+through `call()`, so `add`, `sub` and every comparison can re-enter the VM.
 
-**Computed goto executed 5.8% MORE instructions and ran 3% slower**, on the
-workload most favourable to it, with six of seven sub-workloads regressing.
-Callgrind is deterministic, so this is not variance.
+**It is kept anyway, behind `-DCTBROWSER_COMPUTED_GOTO` (CMake option of the
+same name, off by default).** The result is a property of the branch predictor
+rather than of this code - the devbox is Zen-class with a modern indirect
+predictor, and the technique still wins on some microarchitectures. Measure it
+on yours; `tests/bench_script` is how.
 
-### Why, and it is the interesting part
+**The real win was one line, and it had nothing to do with dispatch.** D is the
+whole of the restructuring's benefit reproduced by a six-line change: the loop
+derived
 
-A `goto *table[op]` at the end of every handler is supposed to win on branch
-prediction: 88 dispatch sites instead of one, each learning the opcode PAIRS
-this bytecode emits. Two things stopped it.
+```cpp
+const program & prog = frame.closure != nullptr && frame.closure->owner != nullptr
+                           ? *frame.closure->owner : *program_;
+```
 
-**The frame cannot be cached across a dispatch, which is what the technique
-actually depends on.** The textbook version keeps `frame`, `fn` and `base` live
-in registers and jumps straight from handler to handler. Here it cannot: 12
-handlers push, pop or unwind `frames_`, which is a `std::vector` - any of them
-can reallocate it and leave a cached pointer dangling. So `VM_NEXT` has to
-re-derive all of it, and that re-derivation is duplicated into all 88 handlers,
-where the `switch` does it once per loop iteration and the compiler keeps it in
-registers.
+at the top of **every instruction**, to serve the ONE opcode that reads it
+(`op::closure`). Moving it into that handler is **-5.6% instructions** across
+the benchmark and **-1.7%** across a real Phaser frame. B and D measure the
+same, so the 900-line restructure buys nothing the six-line change does not.
 
-**And the obvious fix is not available.** "Only the pure handlers keep the frame
-cached" fails on the opcodes that matter: `context::to_number` calls `valueOf`
-and `toString` through `call()` for an object operand, so `add`, `sub`, `less`
-and every comparison can re-enter the VM. The safe set reduces to loads, moves
-and jumps - not enough to pay for the duplication.
+Combined with the property-lookup fix above, a Phaser frame went from
+**23.815 G to 22.936 G instructions - 3.7% - for two small changes**, neither of
+which needed a library and neither of which was the thing being looked for.
 
-**A modern predictor does not need the help.** The devbox is Zen-class, and
-indirect-branch predictors have moved on since the technique was published in
-the 1990s; a single well-exercised switch site is predicted about as well as 88.
-
-### What survives
-
-`tests/bench_script` - which did not exist before and should have. Six
-benchmarks covered core, style, layout, raster, interaction and the GPU, and
-none covered the VM, which is why the only number anyone had for `run_loop`
-came from a page-load profile where it was 1.4% and therefore noise. It reports
-compile against run, per workload, min of seven.
-
-**The real finding is in the table above and it is not about dispatch.** In a
-Phaser frame the interpreter is 15%, while `canvas_context::blend` is 22% and
-`object_object::find` is 10.7%. Property lookup by string hash costs two thirds
-of what the entire interpreter costs. That is where the next work is.
