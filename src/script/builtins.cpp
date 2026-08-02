@@ -3585,8 +3585,34 @@ void install_dynamic_function(context & cx) {
     }
 }
 
+// `.next(v)`, `.throw(e)`, `.return(v)` - the iterator protocol, for every
+// generator object at once. On a prototype for the same reason a promise's
+// then/catch/finally are: three natives for the whole program rather than
+// three per generator, and two generator objects then compare alike.
+//
+// Installed EAGERLY, unlike the promise table, because the object is built by
+// context::make_generator over in the VM - which cannot reach into builtins to
+// construct a table lazily.
+void install_generator(context & cx) {
+    object_object * table = detail::new_table(cx);
+    const auto driver = [](context::resume_mode how) {
+        return [how](context & c, std::span<value> a) {
+            return c.generator_resume(c.current_this(), arg_at(a, 0), how);
+        };
+    };
+    detail::method(cx, table, "next", driver(context::resume_mode::next));
+    detail::method(cx, table, "throw", driver(context::resume_mode::thrown));
+    detail::method(cx, table, "return", driver(context::resume_mode::returned));
+    // A GENERATOR IS ITS OWN ITERATOR, which is what `for (x of gen())` needs
+    // and what makes `[...gen()]` work.
+    detail::method(cx, table, "@@iterator",
+                   [](context & c, std::span<value>) { return c.current_this(); });
+    cx.set_prototype(context::proto_kind::generator, table);
+}
+
 void install_builtins(context & cx, std::uint64_t seed) {
     install_math(cx, seed);
+    install_generator(cx);
     install_regexp(cx);
     install_symbol(cx);
     install_collections(cx);

@@ -153,11 +153,20 @@ enum class op : std::uint8_t {
     // index loop over `length`, so a Map or a Set - which has neither - ran zero
     // times and said nothing. See context::iterable_values.
     iterable,
-    set_proto,    // a.__proto__ = b, for `class X extends Y`
-    get_proto,    // a = b's prototype, for `super`
-    load_home,    // a = the home object of the running method (its class's
-                  // prototype); `super` starts its lookup at the home's proto
-    await_value,  // a = the settled value of b (a promise, or b itself)
+    set_proto,   // a.__proto__ = b, for `class X extends Y`
+    get_proto,   // a = b's prototype, for `super`
+    load_home,   // a = the home object of the running method (its class's
+                 // prototype); `super` starts its lookup at the home's proto
+    await_value, // a = the settled value of b (a promise, or b itself)
+    // `yield b`. Suspends the frame into its generator and hands b out to
+    // whoever called `.next()`; a is where the value passed to the NEXT
+    // `.next(v)` lands, which is what makes `var x = yield y` work.
+    //
+    // It is the same machinery `await` uses - the frame is lifted into a
+    // coroutine_object and put back later - and deliberately so. The difference
+    // is only WHO resumes it: a settling promise for await, an explicit
+    // `.next()` for a generator.
+    yield_value,
     wrap_promise, // a = a as a SETTLED promise (what an `async` function returns)
     ret,          // return a
     ret_undef,    // return undefined
@@ -238,6 +247,10 @@ struct function_proto {
     // reading the frame's own receiver made `this` undefined inside every arrow
     // inside a method - which is exactly where arrows are usually written.
     bool is_arrow = false;
+    // `function*`. Calling one does NOT run the body: it builds a generator
+    // object over a suspended frame and hands that back, so the first
+    // instruction runs on the first `.next()`.
+    bool is_generator = false;
     // WHERE IT WAS WRITTEN, as byte offsets into the program's source.
     //
     // `f.toString()` has to hand back the text, and an engine with no answer

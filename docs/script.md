@@ -493,6 +493,76 @@ string case on the assumption that one already worked, and it did not. Worth
 remembering when writing a test around a fix — the assertions you add for
 completeness are the ones that find the next thing.
 
+## GENERATORS, AND WHAT BABYLON.JS ACTUALLY NEEDED (2026-08-02)
+
+`function*` and `yield` work. They were refused by name until Babylon.js asked
+for them, and the measurement that made the work bounded came first: **622
+`function*` bodies in that bundle, 803 `yield`, and ZERO `yield*`.**
+
+None of those 622 is an author writing a generator. TypeScript compiles every
+`async` function into a generator driven by an `__awaiter` helper:
+
+```js
+function __awaiter(thisArg, args, P, generator) {
+    return new P(function (resolve, reject) {
+        function fulfilled(v) { step(generator.next(v)); }
+        function rejected(v)  { step(generator["throw"](v)); }
+        function step(r) { r.done ? resolve(r.value)
+                                  : Promise.resolve(r.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, args)).next());
+    });
+}
+```
+
+So `yield` in that bundle is what `await` became, and the feature needed is
+exactly `.next(v)`, `.throw(e)` and a `{value, done}` record. Counting `yield*`
+and finding none turned an open-ended language feature into a bounded one.
+
+### It is the SAME suspension `await` already had
+
+A generator is a paused frame, and `coroutine_object` was already exactly that:
+a proto, an ip, a register window, a receiver and the frame's own handlers, with
+`reg_top` made relative so it can come back somewhere else in the stack. `await`
+lifts a frame into one when it hits a pending promise. `yield` lifts it into one
+too. **The only difference is who puts it back** - a settling promise for
+`await`, an explicit `.next()` for a generator - so there is no second
+suspension mechanism, and `op::yield_value` is `op::await_value` with the
+promise machinery removed.
+
+### THREE places had to learn it, and two were found only by the blocker moving
+
+The ratchet's level stayed at 8 while its blocker string changed three times,
+which is precisely what a pawl that records the blocker is for:
+
+1. **The compiler** refused `yield` by name. Now it emits `op::yield_value`, and
+   a generator's `return` is NOT promise-wrapped even when the function is also
+   `async` - the record's `value` is the return, and making a promise of it is
+   the driver's job.
+2. **ctjs parsed `*method() {}` and threw the star away.** `eat_kw("async");
+   eat_p("*");` - the async bit was kept and the generator bit was discarded, in
+   both classes and object literals, so a generator method compiled as an
+   ordinary function whose `yield` had nowhere to go. Babylon has **162** of
+   them. Object-literal `{ *g() {} }` did not parse at all.
+3. **`context::call`**, the C++ entry a native takes, built an ordinary frame.
+   That is the path `Function.prototype.apply` uses - and __awaiter starts every
+   generator with `(g = g.apply(thisArg, args)).next()`, so this was the one
+   that mattered most and the last to be found.
+
+### What is NOT implemented, by name
+
+* **`yield*`** - delegation. Zero uses across all three corpora; it would be a
+  loop over the inner iterator and is not written because nothing asks.
+* **`.return(v)` does not run `finally` blocks.** It marks the generator done
+  and answers `{value: v, done: true}`. The spec resumes the body to run any
+  pending `finally`, which needs the unwinder rather than the resumer.
+* **`for (x of gen())` MATERIALIZES.** `op::iterable` hands back an array by
+  construction, so the generator is drained - up to 2^20 values - rather than
+  pulled lazily. An INFINITE generator hangs there instead of looping for ever,
+  which is a bounded failure rather than a silent one. Laziness means a real
+  iterator protocol in the loop opcodes, which no corpus has asked for.
+* **Async generators** (`async function*`) parse and run as plain generators;
+  `for await` is not implemented.
+
 ## THE TWO INSTRUMENTS, AND WHY BOTH
 
 | | asks | Phaser | p5 |

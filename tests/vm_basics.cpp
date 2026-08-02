@@ -2059,6 +2059,82 @@ void test_array_buffer_is_shared() {
                   "-56");
 }
 
+// GENERATORS. Landed for Babylon.js, where 622 `function*` bodies are not an
+// author writing generators at all - TypeScript compiles every `async` function
+// into one driven by an `__awaiter` helper, so `yield` there is what `await`
+// became. That helper is the shape these pin.
+void test_generators() {
+    expect_result("function* g() { yield 1; yield 2; }"
+                  "const it = g(); const a = it.next();"
+                  "return a.value + ',' + a.done;",
+                  "1,false");
+    expect_result("function* g() { yield 1; yield 2; }"
+                  "const it = g(); it.next(); const b = it.next();"
+                  "return b.value + ',' + b.done;",
+                  "2,false");
+    // Falling off the end is done with no value; a generator that has finished
+    // keeps answering rather than running its body again.
+    expect_result("function* g() { yield 1; }"
+                  "const it = g(); it.next(); const c = it.next(); const d = it.next();"
+                  "return c.value + ',' + c.done + ',' + d.done;",
+                  "undefined,true,true");
+    // `return v` in the body is the value of the DONE record.
+    expect_result("function* g() { yield 1; return 9; }"
+                  "const it = g(); it.next(); const r = it.next();"
+                  "return r.value + ',' + r.done;",
+                  "9,true");
+    // WHAT `.next(v)` SENDS IN. `var x = yield y` sees it, and this is the half
+    // an eager implementation gets wrong by yielding the operand and never
+    // resuming.
+    expect_result("function* g() { const x = yield 1; yield x * 2; }"
+                  "const it = g(); it.next(); return it.next(21).value;",
+                  "42");
+    // The body runs NOTHING until the first next().
+    expect_result("var ran = false;"
+                  "function* g() { ran = true; yield 1; }"
+                  "const it = g(); const before = ran; it.next();"
+                  "return before + ',' + ran;",
+                  "false,true");
+    // State survives across suspensions - the register window is the point.
+    expect_result("function* g() { let n = 0; while (n < 3) { yield n; n++; } }"
+                  "const it = g(); return it.next().value + ',' + it.next().value + ','"
+                  " + it.next().value + ',' + it.next().done;",
+                  "0,1,2,true");
+    // Arguments are bound, and parameters survive a suspension.
+    expect_result("function* g(a, b) { yield a; yield b; yield a + b; }"
+                  "const it = g(3, 4); it.next(); it.next(); return it.next().value;",
+                  "7");
+    // `.throw()` throws AT THE YIELD, which is how __awaiter turns a rejected
+    // promise back into an exception inside the async function's body.
+    expect_result("function* g() { try { yield 1; } catch (e) { yield 'caught ' + e; } }"
+                  "const it = g(); it.next(); return it.throw('boom').value;",
+                  "caught boom");
+    // A generator is its own iterable, so for-of and spread work.
+    expect_result("function* g() { yield 1; yield 2; yield 3; }"
+                  "let sum = 0; for (const v of g()) { sum += v; } return sum;",
+                  "6");
+    // A generator EXPRESSION, which is the form TypeScript actually emits.
+    expect_result("const g = function* () { yield 5; };"
+                  "return g().next().value;",
+                  "5");
+    // A generator method in an object literal, and one in a class.
+    expect_result("const o = { *g() { yield 7; } }; return o.g().next().value;", "7");
+    expect_result("class C { *g() { yield 8; } } return new C().g().next().value;", "8");
+    // Two generators from one function do not share state.
+    expect_result("function* g() { yield 1; yield 2; }"
+                  "const a = g(), b = g(); a.next();"
+                  "return a.next().value + ',' + b.next().value;",
+                  "2,1");
+    // THE __awaiter SHAPE ITSELF, which is the only reason this exists.
+    expect_result("function drive(gen) {"
+                  "  const it = gen(); let step = it.next(); let last;"
+                  "  while (!step.done) { last = step.value; step = it.next(last * 2); }"
+                  "  return step.value;"
+                  "}"
+                  "return drive(function* () { const a = yield 1; const b = yield a; return b; });",
+                  "4");
+}
+
 void test_new_function() {
     expect_result("return typeof new Function();", "function");
     expect_result("return new Function('return 41 + 1;')();", "42");
@@ -2690,6 +2766,7 @@ int main() {
     test_array_iterators();
     test_date();
     test_array_buffer_is_shared();
+    test_generators();
     test_new_function();
     test_string_replace();
     test_error_stacks();

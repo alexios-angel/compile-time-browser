@@ -642,6 +642,13 @@ value context::call(value callable, std::span<const value> args, value this_valu
     }
     auto * fnobj = static_cast<closure_object *>(callable.as_heap());
     const function_proto & target = *fnobj->proto;
+    // CALLING A GENERATOR RUNS NOTHING, here as much as in `op::call`. This
+    // path is the one `Function.prototype.apply` and `.call` take, and it is
+    // how a generator is actually started in practice: TypeScript's __awaiter
+    // does `(generator = generator.apply(thisArg, args)).next()`. Missing it
+    // meant the body was entered as an ordinary frame and its first `yield` had
+    // no generator to suspend into.
+    if (target.is_generator) { return make_generator(fnobj, this_value, args); }
 
     const std::size_t new_base = registers_.size();
     // EVERY argument lands in a register, not just the declared ones. Two
@@ -840,6 +847,29 @@ value context::iterable_values(value v) {
     }
     if (!v.is_object()) { return make_array(); }
     auto * obj = static_cast<object_object *>(v.as_heap());
+    // A GENERATOR IS DRAINED BY RUNNING IT. There is no `length` to loop over
+    // and no array behind it - the values do not exist until the body is
+    // resumed, once per value.
+    //
+    // THIS MATERIALIZES, which for-of over an INFINITE generator turns into a
+    // hang rather than a lazy loop. `op::iterable` hands back an array by
+    // construction, so laziness would mean a different opcode and a real
+    // iterator protocol in the loop. Recorded in docs/script.md rather than
+    // left to be discovered: the bound is there to make the failure a
+    // diagnosable one instead of a silent freeze.
+    if (value * co = obj->find("__co"); co != nullptr && co->is_kind(heap_kind::coroutine)) {
+        value out = make_array();
+        auto * items = static_cast<array_object *>(out.as_heap());
+        for (std::size_t guard = 0; guard < 1u << 20; ++guard) {
+            const value step = generator_resume(v, value::undefined(), resume_mode::next);
+            if (!step.is_object()) { break; }
+            auto * record = static_cast<object_object *>(step.as_heap());
+            if (value * done = record->find("done"); done != nullptr && truthy(*done)) { break; }
+            if (value * each = record->find("value")) { items->items.push_back(*each); }
+            if (failed_) { break; }
+        }
+        return out;
+    }
     // A Map or a Set, by the storage the standard library gives them. A Map
     // iterates as [key, value] pairs and a Set as bare values, which is exactly
     // how `__entries` already holds them - so this is a copy and not a rebuild.
@@ -961,6 +991,161 @@ void context::run_field_initialisers(value constructor, value self) {
 // Called from a microtask, because a resumption IS a promise handler - it was
 // registered on the awaited promise's own handler list, so it queues and orders
 // with every other `then`.
+// --- generators -------------------------------------------------------------
+//
+// A generator is the SAME suspended frame `await` uses, with a different
+// resumer: an explicit `.next()` instead of a settling promise. That is why
+// there is no second suspension mechanism here - `coroutine_object` already
+// carried a proto, an ip, a register window and this frame's handlers, which
+// is the whole of what a paused function is.
+//
+// WHAT THIS IS FOR. Babylon.js has 622 `function*` bodies and not one of them
+// is an author writing a generator: TypeScript compiles every `async` function
+// into a generator driven by an `__awaiter` helper, so `yield` there is what
+// `await` became. That helper needs exactly `.next(v)`, `.throw(e)` and a
+// `{value, done}` record back, which is what this implements.
+
+value context::make_generator(closure_object * closure, value receiver,
+                              std::span<const value> args) {
+    auto * saved = allocate<coroutine_object>();
+    saved->proto = closure->proto;
+    saved->ip = 0;
+    saved->argc = static_cast<std::uint16_t>(args.size());
+    saved->closure = closure;
+    saved->receiver = receiver;
+    saved->generator = true;
+    // THE ARGUMENTS ARE THE FRAME'S FIRST REGISTERS, which is how an ordinary
+    // call passes them - the callee's frame starts where its arguments already
+    // are. A generator has no such frame yet, so the window is built here and
+    // the body runs out of it on the first `.next()`.
+    saved->window.assign(args.begin(), args.end());
+    saved->window.resize(closure->proto->frame_size, value::undefined());
+
+    value out = make_object();
+    auto * obj = static_cast<object_object *>(out.as_heap());
+    if (object_object * table = prototype(proto_kind::generator)) {
+        obj->prototype = value::object(table);
+    }
+    obj->set("__co", value::object(saved));
+    return out;
+}
+
+value context::generator_resume(value generator, value sent, resume_mode how) {
+    const auto record = [&](value v, bool done) {
+        value out = make_object();
+        auto * obj = static_cast<object_object *>(out.as_heap());
+        obj->set("value", v);
+        obj->set("done", value::boolean(done));
+        return out;
+    };
+    if (!generator.is_object()) { return record(value::undefined(), true); }
+    value * held = static_cast<object_object *>(generator.as_heap())->find("__co");
+    if (held == nullptr || !held->is_kind(heap_kind::coroutine)) {
+        return record(value::undefined(), true);
+    }
+    auto * saved = static_cast<coroutine_object *>(held->as_heap());
+
+    // A GENERATOR CANNOT RESUME ITSELF. `.next()` from inside the body would
+    // push a second frame over the same register window and both would write
+    // each other's locals; the spec makes it a TypeError and so does this.
+    if (saved->running) {
+        throw_error("TypeError", "this generator is already running");
+        return record(value::undefined(), true);
+    }
+    // A FINISHED GENERATOR KEEPS ANSWERING, for ever. `.next()` past the end is
+    // not an error and must not run the body again.
+    if (saved->done) {
+        if (how == resume_mode::thrown) {
+            thrown_ = sent;
+            if (!unwind_to_handler()) { raise("uncaught exception from a finished generator"); }
+            return record(value::undefined(), true);
+        }
+        return record(how == resume_mode::returned ? sent : value::undefined(), true);
+    }
+    // `.throw()` / `.return()` BEFORE THE BODY EVER RAN never enter it: there is
+    // no `yield` to throw at, so the generator simply finishes.
+    if (!saved->started && how != resume_mode::next) {
+        saved->done = true;
+        if (how == resume_mode::thrown) {
+            thrown_ = sent;
+            if (!unwind_to_handler()) { raise("uncaught exception from a generator"); }
+        }
+        return record(how == resume_mode::returned ? sent : value::undefined(), true);
+    }
+    // `.return(v)` at a yield finishes the generator without running any more of
+    // it. Running the rest would be wrong - `return` means stop - and the
+    // `finally` blocks the spec would run on the way out need the unwinder,
+    // which is a bigger change than this corpus asks for. Recorded rather than
+    // silent: docs/script.md says so by name.
+    if (how == resume_mode::returned) {
+        saved->done = true;
+        return record(sent, true);
+    }
+
+    const std::size_t base = registers_.size();
+    registers_.insert(registers_.end(), saved->window.begin(), saved->window.end());
+    // Slack above the window, for the same reason a call reserves it: an
+    // expression allocates scratch registers past the frame's declared size.
+    registers_.resize(registers_.size() + 8u, value::undefined());
+
+    call_frame frame;
+    frame.proto = saved->proto;
+    frame.ip = saved->ip;
+    frame.base = base;
+    frame.result_reg = 0;
+    frame.argc = saved->argc;
+    frame.closure = saved->closure;
+    frame.receiver = saved->receiver;
+    frame.handler_base = handlers_.size();
+    frame.generator = saved;
+    frames_.push_back(frame);
+    const std::size_t index = frames_.size() - 1;
+    for (handler restored : saved->handlers) {
+        restored.frame = index;
+        restored.reg_top += base; // relative while saved; absolute again here
+        handlers_.push_back(restored);
+    }
+    saved->handlers.clear();
+
+    // WHERE THE VALUE PASSED TO `.next(v)` LANDS: the destination register of
+    // the `yield` that suspended, which is what makes `var x = yield y` see it.
+    // NOT on the first resume - nothing is waiting for it there, and writing it
+    // would clobber the frame's first local, which on a body with parameters is
+    // an argument.
+    if (saved->started) { registers_[base + saved->await_reg] = sent; }
+    saved->started = true;
+
+    const std::size_t stop = frames_.size() - 1;
+    saved->running = true;
+    yielded_ = false;
+
+    if (how == resume_mode::thrown) {
+        // THROW AT THE YIELD, so `try { yield x } catch` works across a real
+        // suspension. __awaiter's rejection path is exactly this.
+        thrown_ = sent;
+        if (!unwind_to_handler()) {
+            while (frames_.size() > stop) { frames_.pop_back(); }
+            registers_.resize(base);
+            saved->running = false;
+            saved->done = true;
+            return record(value::undefined(), true);
+        }
+    }
+
+    const value produced = run_loop(stop);
+    saved->running = false;
+
+    if (yielded_) {
+        yielded_ = false;
+        return record(produced, false);
+    }
+    // The body returned, threw past its own handlers, or the VM failed. Any of
+    // those finish the generator; a further `.next()` answers done for ever.
+    saved->done = true;
+    registers_.resize(base);
+    return record(produced, true);
+}
+
 void context::resume(value coroutine, value with, bool rejected) {
     if (!coroutine.is_kind(heap_kind::coroutine) || failed_) { return; }
     auto * saved = static_cast<coroutine_object *>(coroutine.as_heap());
@@ -1521,6 +1706,16 @@ value context::run_loop(std::size_t stop_depth) {
             }
             auto * fnobj = static_cast<closure_object *>(callee.as_heap());
             const function_proto & target = *fnobj->proto;
+            // CALLING A GENERATOR RUNS NOTHING. It hands back an object over a
+            // frame that has not started; the first instruction runs on the
+            // first `.next()`.
+            if (target.is_generator) {
+                std::vector<value> args{registers_.begin() + static_cast<std::ptrdiff_t>(arg_base),
+                                        registers_.begin() +
+                                            static_cast<std::ptrdiff_t>(arg_base + in.b)};
+                reg(in.a) = make_generator(fnobj, receiver, args);
+                break;
+            }
             // The callee's frame starts where its arguments already are, so no
             // copying is needed to pass them.
             const std::size_t new_base = arg_base;
@@ -1684,6 +1879,47 @@ value context::run_loop(std::size_t stop_depth) {
                 }
                 if (value * settled = obj->find("__value")) { reg(in.a) = *settled; }
             }
+            break;
+        }
+
+        case op::yield_value: {
+            // SUSPEND INTO THE GENERATOR AND HAND THE VALUE OUT. Everything
+            // here is the frame-lifting `await` does a few cases up; what
+            // differs is only who puts it back, and that a value goes to the
+            // caller of `.next()` rather than to a promise.
+            coroutine_object * saved = frame.generator;
+            if (saved == nullptr) {
+                // The compiler refuses `yield` outside a generator, so this is
+                // unreachable - and cheap insurance against it becoming
+                // reachable, since the alternative is a null dereference.
+                raise("`yield` outside a generator");
+                break;
+            }
+            const value produced = reg(in.b);
+            saved->ip = frame.ip;
+            saved->await_reg = in.a;
+            saved->receiver = frame.receiver;
+            saved->window.assign(registers_.begin() + static_cast<std::ptrdiff_t>(base),
+                                 registers_.end());
+            // This frame's handlers travel with it, with reg_top made RELATIVE:
+            // the frame comes back somewhere else in the register stack, and an
+            // absolute mark would point at whatever is there then.
+            saved->handlers.clear();
+            for (std::size_t i = frame.handler_base; i < handlers_.size(); ++i) {
+                handler moved = handlers_[i];
+                moved.reg_top -= base;
+                saved->handlers.push_back(moved);
+            }
+            handlers_.resize(frame.handler_base);
+            registers_.resize(base);
+            frames_.pop_back();
+            yielded_ = true;
+            if (frames_.size() <= stop_depth) { return produced; }
+            // A generator body is only ever entered by generator_resume, which
+            // stops at its own depth - so reaching here would mean a yield ran
+            // under some other caller's loop and there is nowhere to put the
+            // value.
+            raise("a generator yielded outside its own resume");
             break;
         }
 

@@ -75,7 +75,8 @@ public:
         // were wanted, which is the difference between a diagnostic and a bug.
         std::uint32_t next_reg = 0;
         std::uint32_t high_water = 0;
-        bool is_async = false; // `return v` hands back a settled promise of v
+        bool is_async = false;     // `return v` hands back a settled promise of v
+        bool is_generator = false; // `function*` - calling it does not run it
     };
 
     compiler_impl(const vp::ast & tree, program & out)
@@ -1283,7 +1284,13 @@ public:
             }
             // `async function f() { return 5 }` hands back a PROMISE of 5, not
             // 5 - so `f().then(...)` works and not only `await f()`.
-            if (fn().is_async) { proto().emit(instruction{op::wrap_promise, r}); }
+            // NOT for a generator, even an async one. A generator's `return`
+            // becomes the `value` of a `{value, done: true}` record; the
+            // promise, if there is to be one, is the driver's job - which is
+            // exactly what TypeScript's __awaiter helper does with it.
+            if (fn().is_async && !fn().is_generator) {
+                proto().emit(instruction{op::wrap_promise, r});
+            }
             proto().emit(instruction{op::ret, r});
             break;
         }
@@ -1672,7 +1679,7 @@ public:
 
     // Falling off the end of an async function still owes the caller a promise.
     void emit_implicit_return() {
-        if (!fn().is_async) {
+        if (!fn().is_async || fn().is_generator) {
             proto().emit(instruction{op::ret_undef});
             return;
         }
@@ -1820,6 +1827,8 @@ public:
         // c bit0 = async, bit1 = generator - but `c` DEFAULTS TO -1, so an
         // unmarked function looks async unless the sign is checked first.
         fn().is_async = n.c > 0 && (n.c & 1) != 0;
+        fn().is_generator = n.c > 0 && (n.c & 2) != 0;
+        proto().is_generator = fn().is_generator;
 
         const std::int32_t body = n.a;
         if (body >= 0 && at(body).kind == vp::nk::block) {
@@ -1834,7 +1843,13 @@ public:
             // concise arrow body: `x => expr` returns expr
             const std::uint16_t r = alloc_reg();
             compile_expr(body, r);
-            if (fn().is_async) { proto().emit(instruction{op::wrap_promise, r}); }
+            // NOT for a generator, even an async one. A generator's `return`
+            // becomes the `value` of a `{value, done: true}` record; the
+            // promise, if there is to be one, is the driver's job - which is
+            // exactly what TypeScript's __awaiter helper does with it.
+            if (fn().is_async && !fn().is_generator) {
+                proto().emit(instruction{op::wrap_promise, r});
+            }
             proto().emit(instruction{op::ret, r});
         } else {
             emit_implicit_return();
@@ -1936,10 +1951,32 @@ public:
         // the RegExp forms of replace/split. Rejecting one by name beats
         // mis-compiling it into something that silently does nothing.
         case vp::nk::regex: compile_regex_literal(n, dst); break;
-        case vp::nk::yield_expr:
-            fail("`yield` is not in this VM subset - there are no generators");
-            proto().emit(instruction{op::load_undef, dst});
+        // `yield x`, and `yield` with nothing - which yields undefined.
+        //
+        // Refused by name here until 2026-08-02, and the reason it stopped
+        // being refused is Babylon.js: TypeScript compiles every `async`
+        // function to a generator driven by an `__awaiter` helper, so 622
+        // `function*` bodies in that bundle are not the author writing
+        // generators at all - they are what `await` became.
+        case vp::nk::yield_expr: {
+            if (!fn().is_generator) {
+                // `yield` outside a generator is a plain identifier in sloppy
+                // mode and a SyntaxError in a generator-less function body.
+                // Saying so beats compiling a suspend into a frame that can
+                // never be resumed.
+                fail("`yield` outside a generator function");
+                proto().emit(instruction{op::load_undef, dst});
+                break;
+            }
+            const std::uint16_t sent = alloc_reg();
+            if (n.a >= 0) {
+                compile_expr(n.a, sent);
+            } else {
+                proto().emit(instruction{op::load_undef, sent});
+            }
+            proto().emit(instruction{op::yield_value, dst, sent});
             break;
+        }
         case vp::nk::tagged:
             fail("tagged template literals are not in this VM subset");
             proto().emit(instruction{op::load_undef, dst});

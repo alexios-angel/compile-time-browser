@@ -17,13 +17,18 @@
 # are two implementations - the bug this tree has already paid for twice, with
 # two URL parsers and two base64 decoders.
 
-level=8
-blocker=the bundle did not run: `yield` is not in this VM subset - there are no generators
+level=9
+blocker=
 
-# WHY THIS STARTS AT ZERO (2026-08-02). `getContext('webgl2')` returns null by
-# an explicit decision recorded in shell/bindings.cpp, so the first rung is
-# where it stops and every rung above is unmeasured rather than failing. That is
-# the honest starting position for a plan whose stage 0 is this harness.
+# THE LADDER IS COMPLETE (2026-08-02). It started at ZERO the same day:
+# `getContext('webgl2')` returned null by an explicit decision, so rung 1 was
+# where it stopped and everything above was unmeasured rather than failing.
+#
+# RUNG 9 WAS NEVER A WEBGL PROBLEM. Babylon asks for webgl2 first and settles on
+# version 2 here, but it could not be compiled at all until GENERATORS existed -
+# 622 `function*` bodies, none of them an author writing a generator:
+# TypeScript compiles every `async` function into one driven by an `__awaiter`
+# helper, so `yield` in that bundle is what `await` became. See docs/script.md.
 #
 # WHAT THE THREE CORPORA SAY, measured rather than assumed:
 #

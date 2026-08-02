@@ -451,6 +451,11 @@ public:
         // On a prototype they are three for the whole program, and `p instanceof
         // Promise` - which was false - is a pointer compare.
         promise,
+        // `.next` / `.throw` / `.return` for every generator object, and
+        // Symbol.iterator so `for (x of gen())` works. On a prototype for the
+        // same reason promise's are: three natives for the program rather than
+        // three per generator, and `gen()` objects compare alike.
+        generator,
         count_
     };
 
@@ -652,12 +657,38 @@ public:
         // The promise the caller was given, settled when the body finally
         // returns. One per suspended function however many times it awaits.
         value promise;
+        // --- generators ------------------------------------------------
+        // A generator is the SAME suspended frame with a different resumer: an
+        // explicit `.next()` rather than a settling promise. `started` exists
+        // because the first `.next(v)` must NOT deliver v anywhere - there is
+        // no yield waiting for it yet - and `done` because a finished generator
+        // must keep answering `{value: undefined, done: true}` for ever rather
+        // than running its body again.
+        bool generator = false;
+        bool started = false;
+        bool done = false;
+        // Set while the body is running, so a `.next()` from inside itself is
+        // refused rather than corrupting the register stack.
+        bool running = false;
         coroutine_object() : heap_object(heap_kind::coroutine) {}
     };
 
     // Put a suspended frame back and run it. `with` is what the await
     // evaluates to; `rejected` throws it at the await instead.
     void resume(value coroutine, value with, bool rejected);
+
+    // What `.next(v)` / `.throw(e)` / `.return(v)` do. Runs the body until it
+    // yields or finishes, and answers the `{value, done}` record the iterator
+    // protocol is made of.
+    enum class resume_mode {
+        next,
+        thrown,
+        returned
+    };
+    [[nodiscard]] value generator_resume(value generator, value sent, resume_mode how);
+    // The object a generator function call hands back.
+    [[nodiscard]] value make_generator(closure_object * closure, value receiver,
+                                       std::span<const value> args);
     // Whether this value is a promise that has NOT settled - the one case
     // `await` cannot answer by reading. The shape is the standard library's:
     // `__settled` present and false.
@@ -696,6 +727,12 @@ private:
         // How many exception handlers this frame had on entry. Unwinding pops
         // back to it, so a handler in a caller cannot be caught by a callee.
         std::size_t handler_base = 0;
+
+        // WHICH GENERATOR THIS FRAME IS THE BODY OF, or null for an ordinary
+        // call. `yield` needs it to know where to save itself, and it cannot be
+        // found any other way: the coroutine is reached from the generator
+        // object, not from the frame.
+        coroutine_object * generator = nullptr;
 
         // `new C()` evaluates to the new object, NOT to whatever the
         // constructor body happens to return - unless it returns an object,
@@ -830,6 +867,10 @@ private:
     // Set by a frame that suspended, so `resume` can tell "awaited again" from
     // "returned" - both leave run_loop the same way.
     bool suspended_ = false;
+    // Set by `op::yield_value` so generator_resume can tell a body that YIELDED
+    // from one that RETURNED - run_loop hands back a value either way, and the
+    // difference is the whole of `done`.
+    bool yielded_ = false;
     // The MICROTASK QUEUE. A promise handler runs at the end of the turn, not
     // the moment the promise settles.
     //
