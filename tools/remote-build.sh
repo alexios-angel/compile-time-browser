@@ -83,6 +83,16 @@ if [ "${1:-}" = windows ]; then
   # mingw sysroot that the box does not ship - Boost.URL, zlib, libpng and
   # libjpeg-turbo - so the two builder scripts run first. Both are idempotent
   # and skip what is already installed.
+  # THE ISOLATED BOOST INCLUDE DIR the cross toolchain wants. It is one
+  # symlink: cmake/toolchain-windows-x86_64.cmake puts this on the cross
+  # compile's -isystem path, so it must hold boost/ AND NOTHING ELSE - pointing
+  # it at brew's whole include/ would put the host's SDL3, libpng and zlib
+  # headers in front of a Windows build's. Created here rather than documented
+  # as a prerequisite, because a box that cannot build itself is not much of a
+  # build box.
+  ssh "$host" 'inc="$HOME/projects/boost-inc"; mkdir -p "$inc";
+    [ -e "$inc/boost" ] || ln -s /home/linuxbrew/.linuxbrew/include/boost "$inc/boost";
+    ls "$inc/boost/version.hpp" >/dev/null'
   ssh "$host" "cd projects/compile-time-browser && tools/build-image-libs-mingw.sh && tools/build-boost-mingw.sh"
   ssh "$host" "cd projects/compile-time-browser && cmake --preset windows && cmake --build --preset windows && cmake --build --preset windows --target windows-dist"
   rsync -az "$host:projects/compile-time-browser/examples-windows/" "$repo_root/examples-windows/"
