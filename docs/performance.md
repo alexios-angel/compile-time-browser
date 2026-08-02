@@ -346,6 +346,57 @@ The cheaper half of the same win needs no dependency: `clip()` allocates a fresh
 `width * height` mask on every call, and Phaser calls it every frame. Reusing
 that buffer removes a large allocation per frame without adding anything.
 
+
+## mimalloc adopted, and Windows gained three times what Linux did (2026-08-02)
+
+Allocator traffic was ~4.8% of a Phaser frame and the one hot item a LIBRARY
+answered outright. Three were measured by `LD_PRELOAD` before anything was
+adopted, which is the cheap way to find out:
+
+| allocator | instructions | wall clock (min of 7) |
+|---|---|---|
+| glibc | 15.058 G | 1021 ms |
+| jemalloc | 14.618 G (-2.9%) | 974 ms (-4.6%) |
+| mimalloc | **14.421 G (-4.2%)** | 976 ms (-4.4%) |
+
+**jemalloc and mimalloc tied on wall clock**, so the tie-breaker was the Windows
+cross-build: mimalloc is a Microsoft project that cross-compiles under
+llvm-mingw, jemalloc's mingw support is an afterthought. This tree ships Windows
+binaries and byte-compares thirteen goldens on them.
+
+**Adopted as v3.4.3**, pinned identically on both platforms - brew on Linux
+(`tools/Brewfile`), `tools/build-mimalloc-mingw.sh` into the mingw sysroot.
+
+| | Linux (instructions) | Windows `.exe` (600 frames, min of 7) |
+|---|---|---|
+| system allocator | 15.058 G | 678 ms |
+| mimalloc v3 | **14.433 G (-4.2%)** | **599 ms (-11.7%)** |
+
+**Windows gained nearly three times what Linux did**, which is not a surprise
+once stated: it is measuring the distance from the platform's default allocator,
+and the Windows CRT's is much further behind than glibc's. It is also the answer
+to "why carry a third-party allocator when glibc is fine" - glibc is the good
+case.
+
+### Three ways this could have silently done nothing, and what stops each
+
+* **The override may not be linked.** A global `operator new` in a static
+  archive is pulled in only to satisfy an undefined symbol; if link order lets
+  libstdc++ answer first, the binary uses the system allocator and looks
+  identical. `ctbrowser::allocator_name()` ASKS mimalloc whether a fresh
+  allocation came from its own regions, and `tests/core_basics` asserts it.
+* **The wrong major version.** apt ships v2, this tree pins v3, and they are
+  different allocators behind the same header name - compile against one and
+  link the other and the result is undefined behaviour that starts as a crash
+  somewhere unrelated. `allocator_version()` is checked against 300.
+* **A stale cross-build.** The builder script clones only if the checkout is
+  missing, so bumping the pin would have changed nothing - the same trap the
+  clang toolchain sat in for weeks. It is keyed on the tag now.
+
+Half the `delete` forms are the other quiet failure: replacing
+`operator new(size_t)` and leaving the sized or aligned `delete` to libstdc++
+hands a mimalloc pointer to the system `free`. All eight forms are overridden.
+
 ## Computed-goto dispatch: measured properly, and the surprise was elsewhere (2026-08-02)
 
 A first attempt at this reported computed goto 5.8% slower. **That measurement

@@ -103,6 +103,7 @@ add_library(ctbrowser-core)
 target_sources(ctbrowser-core
   PRIVATE
     core/algorithms.cpp
+    core/allocator.cpp
     core/atom.cpp
     core/epoch.cpp
     core/scheduler.cpp
@@ -111,6 +112,7 @@ target_sources(ctbrowser-core
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
       FILES
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/allocator.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/core.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/containers.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/handle.hpp"
@@ -127,6 +129,56 @@ target_link_libraries(ctbrowser-core PUBLIC Boost::headers)
 
 find_package(Threads REQUIRED)
 target_link_libraries(ctbrowser-core PUBLIC Threads::Threads)
+
+# THE ALLOCATOR. mimalloc backs operator new/delete (core/allocator.cpp),
+# because allocator traffic is ~4.8% of a Phaser frame and a drop-in allocator
+# is a link-line change that cannot alter results - see docs/performance.md,
+# which also records why jemalloc lost (a tie on wall clock, and no
+# cross-build).
+#
+# REQUIRED once found, and PUBLIC on purpose: an executable that links the
+# engine but not mimalloc would resolve operator new from libstdc++ instead and
+# silently run on the system allocator. tests/core_basics asks
+# ctbrowser::allocator_name() so that mistake is a test failure.
+#
+# The Windows sysroot gets it from tools/build-mimalloc-mingw.sh.
+# BY PATH, NOT BY find_package. mimalloc's exported config advertises a
+# `mimalloc-static` target on distributions that ship only the shared library,
+# so taking the config's word for it fails at link time with a target that
+# cannot be satisfied. Asking for the file answers what is actually installed,
+# and the static one is preferred where both exist because that is what makes a
+# Windows .exe self-contained.
+# BREW IS HINTED EXPLICITLY. Nothing puts its prefix on CMake's default search
+# path, so a box with brew's mimalloc and no apt one configures with "mimalloc
+# not found" while the library sits in /home/linuxbrew/.linuxbrew/lib. The
+# hints are checked FIRST so brew's copy wins over a distribution's - which
+# matters here because apt ships v2 and this tree pins v3, and the two are
+# different allocators behind the same header name.
+set(CTBROWSER_BREW_HINTS "$ENV{HOMEBREW_PREFIX}" /home/linuxbrew/.linuxbrew /opt/homebrew
+                         /usr/local)
+find_library(CTBROWSER_MIMALLOC NAMES mimalloc-static mimalloc
+  HINTS ${CTBROWSER_BREW_HINTS} PATH_SUFFIXES lib)
+find_path(CTBROWSER_MIMALLOC_INCLUDE mimalloc.h
+  HINTS ${CTBROWSER_BREW_HINTS} PATH_SUFFIXES include)
+if(CTBROWSER_USE_MIMALLOC AND (NOT CTBROWSER_MIMALLOC OR NOT CTBROWSER_MIMALLOC_INCLUDE))
+  message(FATAL_ERROR
+    "mimalloc not found. Linux: brew install mimalloc. "
+    "Windows cross: run tools/build-mimalloc-mingw.sh. "
+    "Or configure with -DCTBROWSER_USE_MIMALLOC=OFF to use the system allocator.")
+endif()
+if(CTBROWSER_USE_MIMALLOC)
+  target_compile_definitions(ctbrowser-core PRIVATE CTBROWSER_WITH_MIMALLOC=1)
+  target_link_libraries(ctbrowser-core PUBLIC "${CTBROWSER_MIMALLOC}")
+endif()
+# SYSTEM, and this is not cosmetic. That path is a whole brew prefix's include
+# directory: adding it normally puts every header brew has installed - Boost's
+# among them - on the strict-warning path, and the build stops on
+# -Wunused-template inside boost/move/algo. Third-party headers are not this
+# project's warnings to answer, which is the same rule ctbrowser_target already
+# states about its own exported interface.
+if(CTBROWSER_USE_MIMALLOC)
+  target_include_directories(ctbrowser-core SYSTEM PUBLIC "${CTBROWSER_MIMALLOC_INCLUDE}")
+endif()
 
 add_library(ctbrowser::core ALIAS ctbrowser-core)
 

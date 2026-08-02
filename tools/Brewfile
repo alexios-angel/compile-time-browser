@@ -31,3 +31,14 @@ brew "jpeg-turbo"     # JPEG, likewise. apt's 2.1.5 predates the tj3_* API;
                       # brew's is 3.x. The decoder is written to the 2.x
                       # spelling anyway so it builds against either, but the
                       # version gap is what moved this file off apt.
+
+# THE ALLOCATOR, backing operator new/delete (src/core/allocator.cpp). Allocator
+# traffic was ~4.8% of a Phaser frame and this is the one hot path a library
+# answered outright - see docs/performance.md, which also records why jemalloc
+# lost: a tie on wall clock, and no usable Windows cross-build.
+#
+# PIN IT TO THE WINDOWS SYSROOT'S, exactly as plutosvg is pinned:
+# tools/build-mimalloc-mingw.sh builds v3.4.3 into the mingw sysroot, and two
+# platforms on two allocator versions is the kind of difference that makes a
+# byte-compared golden disagree for a reason nobody can see.
+brew "mimalloc"       # 3.4.3

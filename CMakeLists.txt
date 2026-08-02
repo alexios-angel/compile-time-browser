@@ -49,6 +49,12 @@ option(CTBROWSER_WINDOWS_CONSOLE "Keep the console window behind a Windows exe" 
 # result is a property of the branch predictor rather than of this code - the
 # technique still wins on some microarchitectures, and on those it is one flag
 # away. GNU compilers only; anything else silently keeps the switch.
+# THE ALLOCATOR. mimalloc backs operator new/delete, and it is ON because it
+# measured -4.2% instructions and -4.4% wall on a real Phaser frame - see
+# docs/performance.md. Switchable because a platform without it should still
+# build, and because turning it off is how the measurement is repeated.
+option(CTBROWSER_USE_MIMALLOC "Back operator new/delete with mimalloc" ON)
+
 option(CTBROWSER_COMPUTED_GOTO "Dispatch the script VM with computed gotos (GNU only)" OFF)
 
 # The strict flags every test and example builds with, kept off the exported

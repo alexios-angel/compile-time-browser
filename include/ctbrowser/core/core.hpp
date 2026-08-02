@@ -17,6 +17,7 @@
 // the one line a subsystem above needs. Include a single header directly when
 // that is all you want - nothing here depends on being included as a set.
 
+#include <ctbrowser/core/allocator.hpp>
 #include <ctbrowser/core/atom.hpp>
 #include <ctbrowser/core/containers.hpp>
 #include <ctbrowser/core/cpu_time.hpp>

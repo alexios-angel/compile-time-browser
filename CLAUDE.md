@@ -35,6 +35,15 @@ cmake --preset tsan && ctest --preset tsan     # and asan
 # the golden compares across Linux and Windows). Without it everything still
 # builds and passes; svg_basics skips its pixel assertions, as CI does.
 ```
+**mimalloc backs `operator new`/`delete`** and is REQUIRED by default — `brew
+install mimalloc` (v3, pinned in `tools/Brewfile`), or
+`tools/build-mimalloc-mingw.sh` for the Windows sysroot. It measured -4.2%
+instructions on Linux and **-11.7% wall on the Windows .exe**, because Windows'
+CRT allocator is much further behind than glibc's. Opt out with
+`-DCTBROWSER_USE_MIMALLOC=OFF`; `tests/core_basics` asks
+`ctbrowser::allocator_name()` which allocator is ACTUALLY linked, because a
+global `operator new` in a static archive can be silently dropped by link order.
+
 Flags: `-O2 -pedantic -Wall -Wextra -Werror -Wconversion`. Tests are
 EXECUTABLES, SDL-free, headless. `tools/format.sh --check` is the formatting
 gate and CI runs it.
@@ -71,6 +80,9 @@ gate and CI runs it.
   shape. `--coverage` lists the namespaces no probe mentions, which is the work
   queue. The ratchet read 10/10 while `(5).hasOwnProperty` was undefined,
   because nothing on the ladder asked a number for a property.
+- `tools/build-mimalloc-mingw.sh` — mimalloc v3 for the Windows sysroot. The
+  allocator is not optional in the default build, so the cross build needs this
+  run once; `tools/remote-build.sh windows` runs it.
 - `tools/build-image-libs-mingw.sh` — its sibling, for zlib, libpng and
   libjpeg-turbo. PNG and JPEG decode in the SDL-FREE engine, so the Windows
   presets need this run once too. Versions are pinned on purpose; see

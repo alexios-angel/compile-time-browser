@@ -1,5 +1,6 @@
 // ctbrowser.core: the single-threaded contracts. The concurrent ones live in
 // stress_slab.cpp, which runs under TSan.
+#include <ctbrowser/core/allocator.hpp>
 #include <ctbrowser/core/core.hpp>
 
 #include "check.hpp"
@@ -232,7 +233,31 @@ void test_scheduler() {
 
 } // namespace
 
+// THE ALLOCATOR IS ACTUALLY mimalloc, and this is not a formality.
+//
+// A global `operator new` living in a static archive is pulled in only to
+// satisfy an undefined symbol. If the link order lets libstdc++ answer first,
+// the override is dropped and the binary runs on the system allocator while
+// building, linking and passing every other test identically - a ~4% regression
+// that announces itself to nobody. allocator_name() asks mimalloc whether a
+// fresh allocation came out of its own regions, so this is the override
+// reporting on itself rather than a build flag reporting on its intent.
+void test_allocator_is_mimalloc() {
+    // The DEFAULT build uses mimalloc; -DCTBROWSER_USE_MIMALLOC=OFF is a
+    // supported configuration and says "system" honestly rather than being
+    // asserted out of existence.
+    const std::string which = ctbrowser::allocator_name();
+    CHECK(which == "mimalloc" || which == "system");
+    if (which == "mimalloc") {
+        // V3, which catches the specific accident of a box with both major
+        // versions installed compiling against one header and linking the
+        // other - they are different allocators behind the same header name.
+        CHECK(ctbrowser::allocator_version() >= 300);
+    }
+}
+
 int main() {
+    test_allocator_is_mimalloc();
     test_handle();
     test_slab_basics();
     test_stale_handle_does_not_resolve();
