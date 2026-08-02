@@ -416,10 +416,56 @@ void canvas_context::blend(int x, int y, color c) {
     pixels_->put(x, y, composite_pixel(composite_mode, backdrop_at(x, y), source.argb));
 }
 
+void canvas_context::blend_span(int y, int x0, int x1, color c) {
+    if (!pixels_) { return; }
+    bitmap & target = *pixels_;
+    if (y < 0 || y >= target.height) { return; }
+    const int left = std::max(0, x0);
+    const int right = std::min(target.width - 1, x1);
+    if (left > right) { return; }
+
+    const color source = with_alpha(c);
+    const auto row = static_cast<std::size_t>(y) * static_cast<std::size_t>(target.width);
+    std::uint32_t * out = target.pixels.data() + row;
+    // The clip mask is the same shape as the bitmap, so the row offset serves
+    // both and the per-pixel index arithmetic in clipped_out disappears.
+    const std::uint8_t * mask = clip_ ? clip_->data() + row : nullptr;
+
+    if (composite_mode == composite::source_over) {
+        for (int x = left; x <= right; ++x) {
+            if (mask != nullptr && mask[x] == 0) { continue; }
+            out[x] = raster::blend_over(out[x], source);
+        }
+        return;
+    }
+    for (int x = left; x <= right; ++x) {
+        if (mask != nullptr && mask[x] == 0) { continue; }
+        out[x] = composite_pixel(composite_mode, backdrop_at(x, y), source.argb);
+    }
+}
+
+void canvas_context::write_span(int y, int x0, int x1, std::uint32_t argb) {
+    if (!pixels_) { return; }
+    bitmap & target = *pixels_;
+    if (y < 0 || y >= target.height) { return; }
+    const int left = std::max(0, x0);
+    const int right = std::min(target.width - 1, x1);
+    if (left > right) { return; }
+    const auto row = static_cast<std::size_t>(y) * static_cast<std::size_t>(target.width);
+    std::uint32_t * out = target.pixels.data() + row;
+    const std::uint8_t * mask = clip_ ? clip_->data() + row : nullptr;
+    if (mask == nullptr) {
+        std::fill(out + left, out + right + 1, argb);
+        return;
+    }
+    for (int x = left; x <= right; ++x) {
+        if (mask[x] != 0) { out[x] = argb; }
+    }
+}
+
 void canvas_context::span_row(int y, float from, float to, color c) {
-    const int left = std::max(0, static_cast<int>(std::ceil(from - 0.5f)));
-    const int right = std::min(pixels_->width - 1, static_cast<int>(std::floor(to - 0.5f)));
-    for (int x = left; x <= right; ++x) { blend(x, y, c); }
+    blend_span(y, static_cast<int>(std::ceil(from - 0.5f)), static_cast<int>(std::floor(to - 0.5f)),
+               c);
 }
 
 void canvas_context::fill_axis_rect(float x, float y, float w, float h, color c) {
@@ -438,10 +484,10 @@ void canvas_context::fill_axis_rect(float x, float y, float w, float h, color c)
     const point at = transform_.apply(x, y);
     const float sw = w * transform_.a;
     const float sh = h * transform_.d;
+    const int first = static_cast<int>(at.x);
+    const int last = static_cast<int>(at.x + sw) - 1;
     for (int py = static_cast<int>(at.y); py < static_cast<int>(at.y + sh); ++py) {
-        for (int px = static_cast<int>(at.x); px < static_cast<int>(at.x + sw); ++px) {
-            blend(px, py, c);
-        }
+        blend_span(py, first, last, c);
     }
     touch();
 }
@@ -451,11 +497,10 @@ void canvas_context::write_axis_rect(float x, float y, float w, float h, std::ui
     const point at = transform_.apply(x, y);
     const float sw = w * transform_.a;
     const float sh = h * transform_.d;
+    const int first = static_cast<int>(at.x);
+    const int last = static_cast<int>(at.x + sw) - 1;
     for (int py = static_cast<int>(at.y); py < static_cast<int>(at.y + sh); ++py) {
-        for (int px = static_cast<int>(at.x); px < static_cast<int>(at.x + sw); ++px) {
-            if (clipped_out(px, py)) { continue; }
-            pixels_->put(px, py, argb);
-        }
+        write_span(py, first, last, argb);
     }
     touch();
 }

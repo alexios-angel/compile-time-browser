@@ -353,6 +353,21 @@ private:
 
     // Whether this pixel is outside the clip region. One test at every write
     // site, and it is a single bool check when nothing has clipped.
+    // ONE ROW AT A TIME, which is how the filled shapes actually arrive.
+    //
+    // `blend` is per pixel and re-derives everything on every one of them: a
+    // shared_ptr null check, `width()` (another shared_ptr deref) up to twice
+    // inside clipped_out, the global-alpha multiply, and a bounds check in each
+    // of `at` and `put`. None of that varies across a row. It was 22.9% of a
+    // Phaser frame - see docs/performance.md.
+    //
+    // The ARITHMETIC IS UNCHANGED, deliberately: same blend_over, same order,
+    // same rounding. Thirteen goldens are byte-compared across two platforms,
+    // so this had to be a pure hoist rather than a better blend.
+    void blend_span(int y, int x0, int x1, color c);
+    // The same hoist for the opaque write path (`clearRect`, image blits).
+    void write_span(int y, int x0, int x1, std::uint32_t argb);
+
     [[nodiscard]] bool clipped_out(int x, int y) const noexcept {
         if (!clip_) { return false; }
         if (x < 0 || y < 0 || x >= width() || y >= height()) { return true; }

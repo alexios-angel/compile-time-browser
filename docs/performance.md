@@ -174,6 +174,65 @@ integer compare instead of a hash and a memcmp - which is the change
 inline-cache design replaces later". That is a much larger change and it is not
 a library question either.
 
+
+## Canvas blending was per PIXEL, and everything in it was loop-invariant (2026-08-02)
+
+`canvas_context::blend` was **22.9% of a Phaser frame** - the single largest
+item in the engine, larger than the whole interpreter. Adding
+`write_axis_rect` (9.1%), the `clip` lambda (6.4%) and `fill_axis_rect` (3.2%),
+software canvas rasterisation was **41.6%**.
+
+`blend(x, y, c)` is called once per pixel and re-derived, per pixel:
+
+* a `shared_ptr` null check on `pixels_`
+* `clipped_out`, which calls `width()` - another `shared_ptr` deref - up to
+  twice, then indexes the mask
+* `with_alpha(c)`, the global-alpha multiply
+* a bounds check inside `bitmap::at` and another inside `bitmap::put`
+
+**None of it varies along a row.** `blend_span(y, x0, x1, c)` hoists all of it:
+one null check, one row clamp, the row pointer and the mask pointer computed
+once, and the global alpha applied once. `write_span` does the same for the
+opaque path and degenerates to `std::fill` when nothing is clipped.
+
+**Measured, callgrind, a real Phaser frame:**
+
+| | instructions |
+|---|---|
+| before | 22.939 G |
+| after | **16.101 G (-29.8%)** |
+
+`blend` and `write_axis_rect` both fall out of the top of the profile entirely.
+
+**THE ARITHMETIC IS UNCHANGED, deliberately** - same `blend_over`, same order,
+same rounding. This is a hoist, not a better blend, and the evidence is that all
+**13 goldens are byte-identical** on the Windows cross-build. A faster blend that
+moved a golden would be a different change needing a different argument.
+
+### Why not the GPU
+
+Asked and answered: the `gpu` subsystem is **composition** - tile textures and
+one textured quad - not a 2D rasteriser. Moving canvas fills onto it would be a
+real project, and three things stand in the way of even measuring it: the devbox
+has no SDL at all, a Linux binary under WSL2 sees only lavapipe (a CPU Vulkan),
+and the 13 goldens are byte-compared across two platforms - a GPU rasteriser
+will not be bit-identical to the software one. See `docs/platform.md`.
+
+### Where the time is now
+
+| | share |
+|---|---|
+| `context::run_loop` | 18.4% |
+| the `clip` lambda | 9.1% |
+| `ctjs::vp::lex` | 8.8% |
+| `object_object::find` | 8.4% |
+| `std::_Hash_bytes` | 6.8% |
+
+`find` plus `_Hash_bytes` is **15%** - property lookup still hashes a string and
+compares bytes on every access. Interning property names as atoms
+(`core/atom.hpp` already interns) is the change that removes both, and it is the
+next thing worth doing.
+
 ## Computed-goto dispatch: measured properly, and the surprise was elsewhere (2026-08-02)
 
 A first attempt at this reported computed goto 5.8% slower. **That measurement
