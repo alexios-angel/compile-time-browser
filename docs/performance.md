@@ -397,6 +397,59 @@ Half the `delete` forms are the other quiet failure: replacing
 `operator new(size_t)` and leaving the sized or aligned `delete` to libstdc++
 hands a mimalloc pointer to the system `free`. All eight forms are overridden.
 
+
+## The prototype chain hashed the same name at every level (2026-08-02)
+
+After mimalloc the property cluster was still the top actionable item:
+`object_object::find` 13.09%, `lookup_property` 4.11%, `memcmp` 3.51% - **20.7%**
+of a Phaser frame.
+
+**Call counts said what the percentages could not.** 18.78 M calls to `find` for
+8.35 M calls to `lookup_property` - **2.25 finds per property access** - at about
+101 instructions each. The 2.25 is the prototype chain: `lookup_property` asks
+every level for the same name, and each `find` HASHED IT AGAIN. The hash cannot
+change between levels.
+
+The fix rides **Boost.Unordered's heterogeneous lookup** - the same machinery
+that lets a `string_view` be found in a `std::string`-keyed map. A transparent
+hasher may accept more than one key type, so it can accept one that hands back
+the hash it was given:
+
+```cpp
+struct prehashed_name { std::string_view text; std::size_t hash; };
+std::size_t operator()(prehashed_name n) const noexcept { return n.hash; }  // free
+```
+
+`lookup_property` computes the hash once and walks the whole chain with it.
+There is no lower-level "find with this hash" entry point in the container, and
+none is needed.
+
+| | before | after |
+|---|---|---|
+| `find` + `lookup_property` + `memcmp` | 2.992 G (20.7%) | **2.435 G (17.3%)** |
+| a Phaser frame | 14.452 G | **14.053 G (-2.8%)** |
+
+The cluster is **-18.6%**. `find`'s own line drops from 13.09% to 4.12% while
+`lookup_property` rises, because the prehashed overload inlines into it - the
+third time in this file that reading one line rather than the cluster would have
+given the wrong answer.
+
+The equality had to be spelled out beside the hasher: `std::equal_to<>` cannot
+compare a `prehashed_name` to a `std::string`, and the comparison is against the
+TEXT only - two names are equal when their characters are, never because their
+hashes agree.
+
+### What is left, and it is not a library
+
+`memcmp` is still 3.6%: **key comparison**, which no hash function and no
+container removes. 28.5 M calls, mostly on names of a few characters, where the
+call overhead rivals the compare. The remaining structural fix is what it has
+been for three rounds - **property names as atoms**, turning the key into a
+`std::uint32_t` so the comparison is an integer one. `core/atom.hpp` already
+interns. Boost.Flyweight is the library-shaped version of the same idea and was
+considered; it loses here because this tree already has an intern table, and two
+implementations of one job is the mistake it keeps citing.
+
 ## Computed-goto dispatch: measured properly, and the surprise was elsewhere (2026-08-02)
 
 A first attempt at this reported computed goto 5.8% slower. **That measurement

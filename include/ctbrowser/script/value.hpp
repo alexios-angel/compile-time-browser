@@ -471,6 +471,13 @@ struct object_object final : heap_object {
         const auto it = index.find(name);
         return it == index.end() ? nullptr : &props[it->second].second;
     }
+    // THE SAME LOOKUP WITH THE HASH ALREADY IN HAND, for walking a prototype
+    // chain: every level is asked for the SAME name, and hashing it once per
+    // level was 2.25 hashes per property access on a Phaser frame.
+    [[nodiscard]] value * find(prehashed_name name) {
+        const auto it = index.find(name);
+        return it == index.end() ? nullptr : &props[it->second].second;
+    }
     [[nodiscard]] accessor_entry * find_accessor(std::string_view name) {
         return accessors.find(name);
     }

@@ -370,8 +370,11 @@ value context::lookup_property(value target, const std::string & name) {
         // cap because a page can make the chain cyclic and a lookup must not
         // hang because of it.
         auto * obj = static_cast<object_object *>(target.as_heap());
+        // HASHED ONCE FOR THE WHOLE CHAIN. Every level below is asked for the
+        // same name, and each `find` used to hash it again.
+        const prehashed_name key{name, hash_name(name)};
         for (int depth = 0; obj != nullptr && depth < 64; ++depth) {
-            if (value * found = obj->find(name)) { return *found; }
+            if (value * found = obj->find(key)) { return *found; }
             // An accessor found anywhere on the chain is CALLED, with the
             // original target as its receiver - a getter defined on a prototype
             // reads the instance, which is the entire point of putting one
@@ -388,7 +391,7 @@ value context::lookup_property(value target, const std::string & name) {
                       : nullptr;
         }
         if (object_object * table = prototype(proto_kind::object)) {
-            if (value * found = table->find(name)) { return *found; }
+            if (value * found = table->find(key)) { return *found; }
         }
         return value::undefined();
     }

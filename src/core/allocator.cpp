@@ -67,12 +67,24 @@ void * operator new[](std::size_t size, std::align_val_t align, const std::nothr
     return mi_malloc_aligned(size, static_cast<std::size_t>(align));
 }
 
-void operator delete(void * p) noexcept { mi_free(p); }
-void operator delete[](void * p) noexcept { mi_free(p); }
-void operator delete(void * p, const std::nothrow_t &) noexcept { mi_free(p); }
-void operator delete[](void * p, const std::nothrow_t &) noexcept { mi_free(p); }
-void operator delete(void * p, std::size_t size) noexcept { mi_free_size(p, size); }
-void operator delete[](void * p, std::size_t) noexcept { mi_free(p); }
+void operator delete(void * p) noexcept {
+    mi_free(p);
+}
+void operator delete[](void * p) noexcept {
+    mi_free(p);
+}
+void operator delete(void * p, const std::nothrow_t &) noexcept {
+    mi_free(p);
+}
+void operator delete[](void * p, const std::nothrow_t &) noexcept {
+    mi_free(p);
+}
+void operator delete(void * p, std::size_t size) noexcept {
+    mi_free_size(p, size);
+}
+void operator delete[](void * p, std::size_t) noexcept {
+    mi_free(p);
+}
 void operator delete(void * p, std::align_val_t align) noexcept {
     mi_free_aligned(p, static_cast<std::size_t>(align));
 }

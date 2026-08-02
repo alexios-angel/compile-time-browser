@@ -44,6 +44,23 @@ template <typename Key> using flat_set = boost::unordered_flat_set<Key>;
 // `std::hash<std::string>` is not required to agree with
 // `std::hash<std::string_view>` - converting first makes them agree by
 // construction rather than by hoping.
+// A NAME WHOSE HASH IS ALREADY KNOWN.
+//
+// Property lookup walks a prototype chain asking EVERY level for the same name
+// - 2.25 levels on average in a Phaser frame - and each `find` hashed the
+// string again. The hash cannot change between levels, so compute it once and
+// carry it.
+//
+// This rides Boost.Unordered's HETEROGENEOUS LOOKUP, the same machinery that
+// lets a `string_view` be looked up in a `std::string`-keyed map: a transparent
+// hasher may accept more than one key type, so it can accept one that simply
+// hands back the hash it was given. There is no lower-level "find with this
+// hash" entry point to reach for, and this needs none.
+struct prehashed_name {
+    std::string_view text;
+    std::size_t hash;
+};
+
 struct string_hash {
     using is_transparent = void;
     // AVALANCHING, and this is a promise rather than a decoration:
@@ -60,9 +77,37 @@ struct string_hash {
     [[nodiscard]] std::size_t operator()(const std::string & text) const noexcept {
         return boost::hash<std::string_view>{}(text);
     }
+    // The whole point: free.
+    [[nodiscard]] std::size_t operator()(prehashed_name name) const noexcept { return name.hash; }
+};
+
+// Transparent equality, which heterogeneous lookup needs beside the hasher.
+// `std::equal_to<>` cannot compare a `prehashed_name` to a `std::string`, so it
+// is spelled out - and only ever against the TEXT, because two names are equal
+// when their characters are, never because their hashes agree.
+struct string_equal {
+    using is_transparent = void;
+    [[nodiscard]] bool operator()(std::string_view a, std::string_view b) const noexcept {
+        return a == b;
+    }
+    [[nodiscard]] bool operator()(std::string_view a, prehashed_name b) const noexcept {
+        return a == b.text;
+    }
+    [[nodiscard]] bool operator()(prehashed_name a, std::string_view b) const noexcept {
+        return a.text == b;
+    }
+    [[nodiscard]] bool operator()(prehashed_name a, prehashed_name b) const noexcept {
+        return a.text == b.text;
+    }
 };
 
 template <typename Value>
-using string_flat_map = boost::unordered_flat_map<std::string, Value, string_hash, std::equal_to<>>;
+using string_flat_map = boost::unordered_flat_map<std::string, Value, string_hash, string_equal>;
+
+// The hash a `prehashed_name` carries, computed the one way the map agrees
+// with. Using anything else here is a lookup that silently never matches.
+[[nodiscard]] inline std::size_t hash_name(std::string_view text) noexcept {
+    return string_hash{}(text);
+}
 
 } // namespace ctbrowser
