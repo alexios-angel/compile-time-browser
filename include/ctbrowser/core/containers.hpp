@@ -3,6 +3,7 @@
 #include <string>
 #include <string_view>
 
+#include <boost/container_hash/hash.hpp>
 #include <boost/unordered/unordered_flat_map.hpp>
 #include <boost/unordered/unordered_flat_set.hpp>
 
@@ -45,11 +46,19 @@ template <typename Key> using flat_set = boost::unordered_flat_set<Key>;
 // construction rather than by hoping.
 struct string_hash {
     using is_transparent = void;
+    // AVALANCHING, and this is a promise rather than a decoration:
+    // boost::unordered applies an EXTRA mixing step to any hash not marked so,
+    // because open addressing needs the low bits to be as good as the high
+    // ones. libstdc++'s std::hash for strings is MurmurHash2 walked a byte at a
+    // time and is NOT marked - so using it here paid for a weak hash and then
+    // paid again to fix it up. boost::hash is a stronger mix over word-sized
+    // chunks and carries the guarantee, so both costs go away at once.
+    using is_avalanching = void;
     [[nodiscard]] std::size_t operator()(std::string_view text) const noexcept {
-        return std::hash<std::string_view>{}(text);
+        return boost::hash<std::string_view>{}(text);
     }
     [[nodiscard]] std::size_t operator()(const std::string & text) const noexcept {
-        return std::hash<std::string_view>{}(text);
+        return boost::hash<std::string_view>{}(text);
     }
 };
 

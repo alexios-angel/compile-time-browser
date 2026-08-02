@@ -233,6 +233,67 @@ compares bytes on every access. Interning property names as atoms
 (`core/atom.hpp` already interns) is the change that removes both, and it is the
 next thing worth doing.
 
+
+## The hash was paid for twice (2026-08-02)
+
+The property-lookup cluster was the top of the profile after the canvas work -
+bigger than the interpreter:
+
+| | share |
+|---|---|
+| `object_object::find` | 8.39% |
+| `std::_Hash_bytes` | 6.78% |
+| `context::lookup_property` | 3.69% |
+| `__memcmp_avx2_movbe` | 3.17% |
+| **total** | **22.0%** |
+
+`std::_Hash_bytes` is libstdc++'s MurmurHash2, walked a BYTE AT A TIME, and it
+was reached through the `string_hash` added an hour earlier - which used
+`std::hash<std::string_view>` because that was the house pattern.
+
+**boost::unordered applies an EXTRA mixing step to any hash not declared
+avalanching**, because open addressing needs the low bits to be as good as the
+high ones - and `std::hash` is not declared. So every lookup paid for a weak
+byte-wise hash and then paid again to fix it up.
+
+`boost::hash` is a stronger mix over word-sized chunks *and* carries the
+guarantee. Using it, and declaring `using is_avalanching = void;`, removes both
+costs at once:
+
+| | before | after |
+|---|---|---|
+| `std::_Hash_bytes` | 1.091 G (6.78%) | **0.037 G (0.24%)** |
+| `find` + hash together | 2.441 G | **1.929 G (-21%)** |
+| a Phaser frame | 16.101 G | **15.601 G (-3.1%)** |
+
+The hash is now inlined into `find` rather than called out to, which is why
+`find`'s own number goes *up* while the pair goes down - a reminder to read the
+cluster and not the line.
+
+All 13 goldens byte-identical. Nothing observable depends on hash order: the
+only iterations over these maps are GC marking and a size sum, and property
+ORDER comes from the `props` vector, not the index.
+
+### The library question, answered
+
+This was worth asking of a library and the answer was already in the tree.
+`flat_map` has been `boost::unordered_flat_map` for a long time - the right
+container. What was wrong was how it was being *asked*: the wrong key type (a
+temporary per lookup, fixed above) and the wrong hash (weak, then re-mixed).
+**Two library-shaped bugs, no new library.**
+
+A faster hash still - wyhash or xxh3, both single-header and in awesome-cpp -
+would now buy almost nothing: hashing is 0.24%. What is left in the cluster is
+the probe and `memcmp` at 3.26%, which is **key comparison**, and no hash
+function removes that.
+
+**The next step here is structural, not a dependency: property names as atoms.**
+`core/atom.hpp` already interns strings, so a name becomes a `std::uint32_t` and
+lookup becomes an integer hash and an integer compare - `_Hash_bytes` and
+`memcmp` both go to zero, and `value.hpp` already anticipates it by calling the
+index "the slot a shape / inline-cache design replaces later". That is a large
+change and it is the honest next one.
+
 ## Computed-goto dispatch: measured properly, and the surprise was elsewhere (2026-08-02)
 
 A first attempt at this reported computed goto 5.8% slower. **That measurement
