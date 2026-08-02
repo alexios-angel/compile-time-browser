@@ -141,6 +141,16 @@ void click(browser & page, float x, float y) {
 // caret ran ahead by the difference on every character - which reads as a
 // growing gap between what you typed and where the caret is.
 void test_a_control_draws_in_the_face_it_measures() {
+    // NO SDL3_ttf, NO REAL FACES. `use_real_fonts()` answers false in that
+    // build and this asserted it was true, so the whole file failed on a
+    // machine that simply does not have the library - which the engine
+    // supports and `test_inline_text_shares_a_baseline` below already guarded
+    // for. Found when builds moved to the shared devbox, which has no SDL at
+    // all.
+    if (!raster::ttf_available()) {
+        std::printf("     no SDL3_ttf in this build - real-font checks skipped\n");
+        return;
+    }
     browser page{browser_options{500, 300}};
     check(page.use_real_fonts(), "the vendored faces load");
     page.load_html("<body><textarea id=t rows=3 cols=20></textarea></body>");
@@ -295,6 +305,10 @@ void test_a_password_shows_bullets() {
 }
 
 void test_a_password_caret_is_measured_on_the_bullets() {
+    if (!raster::ttf_available()) {
+        std::printf("     no SDL3_ttf in this build - real-font checks skipped\n");
+        return;
+    }
     browser page{browser_options{500, 300}};
     check(page.use_real_fonts(), "the vendored faces load");
     page.load_html("<body><input type=password id=p size=20></body>");
@@ -446,6 +460,10 @@ void test_a_submit_button_has_a_default_label() {
 // real fonts on purpose: font8x8 quantises every size to the same cell, so the
 // two measurements agree there and the bug is invisible.
 void test_the_caret_is_measured_with_the_drawing_font() {
+    if (!raster::ttf_available()) {
+        std::printf("     no SDL3_ttf in this build - real-font checks skipped\n");
+        return;
+    }
     browser page{browser_options{400, 200}};
     check(page.use_real_fonts(), "the vendored faces load");
     page.load_html("<body><input type=text id=f style='font-family:serif'></body>");
