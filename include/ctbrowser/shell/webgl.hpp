@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <span>
@@ -333,6 +334,12 @@ public:
     [[nodiscard]] std::uint32_t bound_framebuffer() const noexcept { return bound_framebuffer_; }
     void attribute_divisor(int location, int divisor);
     [[nodiscard]] int attribute_divisor_of(int location) const;
+    // `getVertexAttrib`. The whole point of a vertex array object is that
+    // binding one RESTORES the enables and pointers set while it was bound, and
+    // there is no way to check that from a page without this - which is why the
+    // VAO probe could not tell a working implementation from a stub that
+    // remembered nothing.
+    [[nodiscard]] const vertex_attribute * attribute_at(int location) const;
 
     // --- vertex array objects, both spellings ------------------------------
     [[nodiscard]] std::uint32_t create_vertex_array();
@@ -360,6 +367,24 @@ public:
 
     // What `readPixels` hands back, and what a test looks at.
     [[nodiscard]] const paint::bitmap * surface() const noexcept { return framebuffer_.colour; }
+
+    // AN ENTRY POINT THAT EXISTS AND REFUSES, by name. Stage 5 of
+    // docs/webgl2-plan.md: a WebGL 2 context has to carry the whole interface,
+    // because a page that got one does not feature-detect the methods - it
+    // calls them, and an absent one is a TypeError that says nothing about
+    // why. So the unimplemented half is present, sets INVALID_OPERATION like a
+    // driver refusing an operation, and NAMES ITSELF where a developer looks.
+    // The lesson is `getProgramParameter` answering 0 to a question it did not
+    // understand, which cost the p5 WEBGL work a day.
+    void refuse(std::string_view name) {
+        fail(gl_enum::invalid_operation);
+        // ONCE EACH. A refused call is usually made every frame, and a log that
+        // repeats it sixty times a second buries everything else in itself.
+        if (std::ranges::find(refused_, name) == refused_.end()) { refused_.emplace_back(name); }
+    }
+    // Every entry point a page has reached for and not got, in order, without
+    // repeats. The browser prints these; a test asserts on them.
+    [[nodiscard]] const std::vector<std::string> & refused() const noexcept { return refused_; }
 
 private:
     void fail(std::uint32_t code) {
@@ -408,6 +433,7 @@ private:
     float clear_[4]{0, 0, 0, 0};
     float clear_depth_ = 1.0f;
     std::uint32_t error_ = gl_enum::no_error;
+    std::vector<std::string> refused_;
     std::string shader_error_;
 };
 

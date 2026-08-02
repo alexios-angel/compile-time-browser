@@ -634,6 +634,12 @@ private:
     value image_element_prototype_;
     value canvas2d_prototype_;
     value webgl_prototype_;
+    // A SEPARATE INTERFACE, not a subclass. `WebGL2RenderingContext` does not
+    // inherit from `WebGLRenderingContext` in the specification, so a real
+    // WebGL 2 context is NOT `instanceof WebGLRenderingContext` - and a page
+    // that tests for one to decide which path to take (Phaser does) must get
+    // the same answer here as it would in a browser.
+    value webgl2_prototype_;
     std::string callback_error_;
     std::size_t callback_faults_ = 0;
     bool reload_requested_ = false;

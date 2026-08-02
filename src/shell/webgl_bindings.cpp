@@ -228,8 +228,12 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
     }
 
     auto * obj = static_cast<script::object_object *>(cx.make_object().as_heap());
-    // So `gl instanceof WebGLRenderingContext` is true, which Phaser asks.
-    if (webgl_prototype_.is_object()) { obj->prototype = webgl_prototype_; }
+    // So `gl instanceof WebGLRenderingContext` is true, which Phaser asks - and
+    // `instanceof WebGL2RenderingContext` for a version 2 context, which is a
+    // DIFFERENT interface rather than a subclass. A page gets the same answer
+    // from both tests that a browser would give it.
+    const value & interface_prototype = webgl2 ? webgl2_prototype_ : webgl_prototype_;
+    if (interface_prototype.is_object()) { obj->prototype = interface_prototype; }
     webgl_objects_[pack(id)] = obj;
     obj->set("canvas", wrap(cx, id));
     obj->set("drawingBufferWidth", value::number(width));
@@ -412,6 +416,15 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
         }
         constant("VERTEX_ATTRIB_ARRAY_DIVISOR", 0x88FE);
     }
+    // WHAT getVertexAttrib IS ASKED. WebGL 1 constants, so they sit out here
+    // rather than in the block above - the divisor one is the exception and
+    // stays there, because the divisor only exists with the extension or with
+    // WebGL 2.
+    constant("VERTEX_ATTRIB_ARRAY_ENABLED", 0x8622);
+    constant("VERTEX_ATTRIB_ARRAY_SIZE", 0x8623);
+    constant("VERTEX_ATTRIB_ARRAY_STRIDE", 0x8624);
+    constant("VERTEX_ATTRIB_ARRAY_TYPE", 0x8625);
+    constant("VERTEX_ATTRIB_ARRAY_NORMALIZED", 0x886A);
     constant("VERSION", gl_enum::version);
     constant("RENDERER", gl_enum::renderer);
     constant("VENDOR", gl_enum::vendor);
@@ -784,6 +797,24 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
     // exercised: Phaser has been driving VAOs and instancing through the
     // extension names since stage 2, so this binds names to code a real
     // renderer has been using rather than to code written for a test.
+    // `getVertexAttrib`, which is how a page CHECKS that a vertex array
+    // object captured anything. Without it the VAO probe could not tell a
+    // working implementation from a stub that remembered nothing, because
+    // every other VAO call returns void.
+    method("getVertexAttrib", [gl](context &, std::span<value> a) {
+        const vertex_attribute * where = gl->attribute_at(int_at(a, 0));
+        if (where == nullptr) { return value::null(); }
+        switch (enum_at(a, 1)) {
+        case 0x8622: return value::boolean(where->enabled);    // ARRAY_ENABLED
+        case 0x8623: return value::number(where->size);        // ARRAY_SIZE
+        case 0x8624: return value::number(where->stride);      // ARRAY_STRIDE
+        case 0x8625: return value::number(where->type);        // ARRAY_TYPE
+        case 0x886A: return value::boolean(where->normalized); // ARRAY_NORMALIZED
+        case 0x88FE: return value::number(where->divisor);     // ARRAY_DIVISOR
+        default: return value::null();
+        }
+    });
+
     if (webgl2) {
         method("createVertexArray", [gl](context &, std::span<value>) {
             return value::number(gl->create_vertex_array());
@@ -820,6 +851,92 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
                                                      int_at(a, 3), int_at(a, 4));
                    return value::undefined();
                }));
+
+        // STAGE 5 of docs/webgl2-plan.md: THE HALF THIS ENGINE DOES NOT
+        // IMPLEMENT, present by name and refusing loudly.
+        //
+        // A page that asked for `webgl2` and got one does not feature-detect
+        // these - it calls them, because in a browser a WebGL 2 context always
+        // has them. Leaving them off turns that into a TypeError with nothing
+        // in it about why; defining them means the page is TOLD, and gets the
+        // INVALID_OPERATION a driver refusing an operation would give it.
+        //
+        // Babylon.js calls every one of these, gating 52 sites on
+        // `_webGLVersion` so it degrades rather than refusing. It is the page
+        // that will find out, and the plan's own words are that it should be
+        // told rather than left to guess.
+        for (const char * name : {"texImage3D",
+                                  "texSubImage3D",
+                                  "texStorage2D",
+                                  "texStorage3D",
+                                  "copyTexSubImage3D",
+                                  "compressedTexImage3D",
+                                  "drawBuffers",
+                                  "clearBufferfv",
+                                  "clearBufferiv",
+                                  "clearBufferuiv",
+                                  "clearBufferfi",
+                                  "createSampler",
+                                  "deleteSampler",
+                                  "bindSampler",
+                                  "samplerParameteri",
+                                  "samplerParameterf",
+                                  "isSampler",
+                                  "createQuery",
+                                  "deleteQuery",
+                                  "beginQuery",
+                                  "endQuery",
+                                  "getQueryParameter",
+                                  "isQuery",
+                                  "fenceSync",
+                                  "deleteSync",
+                                  "clientWaitSync",
+                                  "waitSync",
+                                  "getSyncParameter",
+                                  "isSync",
+                                  "createTransformFeedback",
+                                  "deleteTransformFeedback",
+                                  "bindTransformFeedback",
+                                  "beginTransformFeedback",
+                                  "endTransformFeedback",
+                                  "transformFeedbackVaryings",
+                                  "getTransformFeedbackVarying",
+                                  "pauseTransformFeedback",
+                                  "resumeTransformFeedback",
+                                  "isTransformFeedback",
+                                  "bindBufferBase",
+                                  "bindBufferRange",
+                                  "getUniformBlockIndex",
+                                  "uniformBlockBinding",
+                                  "getActiveUniformBlockParameter",
+                                  "getActiveUniformBlockName",
+                                  "getActiveUniforms",
+                                  "getUniformIndices",
+                                  "renderbufferStorageMultisample",
+                                  "blitFramebuffer",
+                                  "invalidateFramebuffer",
+                                  "readBuffer",
+                                  "getInternalformatParameter",
+                                  "getBufferSubData",
+                                  "copyBufferSubData",
+                                  "getFragDataLocation",
+                                  "vertexAttribI4i",
+                                  "vertexAttribI4ui",
+                                  "vertexAttribIPointer"}) {
+            method(name, [this, gl, name](context &, std::span<value>) {
+                const std::size_t before = gl->refused().size();
+                gl->refuse(name);
+                // ONCE EACH, into the page's own console - which is where a
+                // developer looks and what `refuse` deduplicates for. A call
+                // refused every frame would otherwise be the only thing in it.
+                if (gl->refused().size() != before) {
+                    console_.push_back(std::string{"WebGL: gl."} + name +
+                                       " is not implemented by this engine "
+                                       "(see docs/webgl2-plan.md); it raises INVALID_OPERATION");
+                }
+                return value::null();
+            });
+        }
     }
 
     method("drawArrays", touches([gl](context &, std::span<value> a) {

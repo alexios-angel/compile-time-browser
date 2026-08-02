@@ -26,6 +26,20 @@
 // a wrong answer. They are expected to fail until the plan says otherwise; the
 // recorded surface in tests/webgl2-api.txt is what says which.
 
+// Calls `body` and insists it REFUSED: raised INVALID_OPERATION and threw
+// nothing. Shared by every out-of-scope probe, because `typeof x === 'function'`
+// on its own passes against a stub that silently does nothing - which is the
+// failure mode this whole file exists to catch.
+function refuses(gl, body) {
+  while (gl.getError() !== gl.NO_ERROR) { /* drain what came before */ }
+  body();
+  var err = gl.getError();
+  if (err !== gl.INVALID_OPERATION) {
+    throw 'did not refuse: getError said ' + err + ', wanted INVALID_OPERATION';
+  }
+  return 'refuses';
+}
+
 globalThis.__probes = [
   // --- the context itself -------------------------------------------------
   ['context', 'getContext webgl2', function (gl) {
@@ -209,40 +223,54 @@ globalThis.__probes = [
     return 'ok';
   }],
 
-  // --- OUT OF SCOPE, probed anyway ----------------------------------------
-  // Babylon.js calls every one of these. They are expected to fail until
-  // docs/webgl2-plan.md says otherwise, and they are here so that "not
-  // implemented" is a recorded fact rather than a surprise - and so the day one
-  // lands, the probe is already written.
+  // --- OUT OF SCOPE, and REFUSING BY NAME ---------------------------------
+  // Babylon.js calls every one of these. Stage 5 of docs/webgl2-plan.md: they
+  // are PRESENT on a WebGL 2 context, because a page that got one calls them
+  // rather than feature-detecting them, and an absent method is a TypeError
+  // that says nothing about why. Each raises INVALID_OPERATION and names itself
+  // in the console.
+  //
+  // So these probes assert the refusal, not merely the presence - `typeof x ===
+  // 'function'` alone would pass against a stub that silently did nothing,
+  // which is the exact failure this whole plan exists to avoid.
+  ['unscoped', 'refusing is loud', function (gl) {
+    while (gl.getError() !== gl.NO_ERROR) { /* drain */ }
+    gl.createQuery();
+    var err = gl.getError();
+    if (err !== gl.INVALID_OPERATION) {
+      throw 'createQuery did not raise INVALID_OPERATION, it raised ' + err;
+    }
+    return 'ok';
+  }],
   ['unscoped', 'uniform buffer objects', function (gl) {
     if (typeof gl.bindBufferBase !== 'function') { throw 'no bindBufferBase'; }
     if (typeof gl.getUniformBlockIndex !== 'function') { throw 'no getUniformBlockIndex'; }
-    return 'ok';
+    return refuses(gl, function () { gl.bindBufferBase(0, 0, null); });
   }],
   ['unscoped', '3D textures', function (gl) {
     if (typeof gl.texImage3D !== 'function') { throw 'no texImage3D'; }
     if (typeof gl.texStorage3D !== 'function') { throw 'no texStorage3D'; }
-    return 'ok';
+    return refuses(gl, function () { gl.texImage3D(0, 0, 0, 0, 0, 0, 0, 0, 0, null); });
   }],
   ['unscoped', 'multiple render targets', function (gl) {
     if (typeof gl.drawBuffers !== 'function') { throw 'no drawBuffers'; }
-    return 'ok';
+    return refuses(gl, function () { gl.drawBuffers([]); });
   }],
   ['unscoped', 'sampler objects', function (gl) {
     if (typeof gl.createSampler !== 'function') { throw 'no createSampler'; }
-    return 'ok';
+    return refuses(gl, function () { gl.createSampler(); });
   }],
   ['unscoped', 'query objects', function (gl) {
     if (typeof gl.createQuery !== 'function') { throw 'no createQuery'; }
-    return 'ok';
+    return refuses(gl, function () { gl.createQuery(); });
   }],
   ['unscoped', 'sync objects', function (gl) {
     if (typeof gl.fenceSync !== 'function') { throw 'no fenceSync'; }
-    return 'ok';
+    return refuses(gl, function () { gl.fenceSync(0, 0); });
   }],
   ['unscoped', 'transform feedback', function (gl) {
     if (typeof gl.createTransformFeedback !== 'function') { throw 'no createTransformFeedback'; }
-    return 'ok';
+    return refuses(gl, function () { gl.createTransformFeedback(); });
   }],
   ['unscoped', 'blitFramebuffer', function (gl) {
     if (typeof gl.blitFramebuffer !== 'function') { throw 'no blitFramebuffer'; }
@@ -250,7 +278,7 @@ globalThis.__probes = [
   }],
   ['unscoped', 'texStorage2D', function (gl) {
     if (typeof gl.texStorage2D !== 'function') { throw 'no texStorage2D'; }
-    return 'ok';
+    return refuses(gl, function () { gl.texStorage2D(0, 0, 0, 0, 0); });
   }]
 ];
 

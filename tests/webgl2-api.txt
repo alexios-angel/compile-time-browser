@@ -13,6 +13,7 @@ constants/texture formats
 context/SHADING_LANGUAGE_VERSION says 3.00
 context/VERSION says 2
 context/getContext webgl2
+context/is a WebGL2RenderingContext
 extensions/ANGLE_instanced_arrays
 extensions/OES_vertex_array_object
 extensions/getSupportedExtensions lists them
@@ -23,6 +24,17 @@ glsl300/declared fragment output
 glsl300/texture() not texture2D()
 instancing/drawArraysInstanced
 instancing/drawElementsInstanced
+instancing/vertexAttribDivisor
+unscoped/3D textures
 unscoped/blitFramebuffer
+unscoped/multiple render targets
+unscoped/query objects
+unscoped/refusing is loud
+unscoped/sampler objects
+unscoped/sync objects
+unscoped/texStorage2D
+unscoped/transform feedback
+unscoped/uniform buffer objects
+vao/captures attribute state
 vao/create and bind
 vao/isVertexArray

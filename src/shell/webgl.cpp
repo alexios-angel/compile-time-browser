@@ -685,6 +685,13 @@ void webgl_context::attribute_divisor(int location, int divisor) {
     attributes_[static_cast<std::size_t>(location)].divisor = divisor;
 }
 
+const vertex_attribute * webgl_context::attribute_at(int location) const {
+    if (location < 0 || static_cast<std::size_t>(location) >= attributes_.size()) {
+        return nullptr;
+    }
+    return &attributes_[static_cast<std::size_t>(location)];
+}
+
 int webgl_context::attribute_divisor_of(int location) const {
     if (location < 0 || static_cast<std::size_t>(location) >= attributes_.size()) { return 0; }
     return attributes_[static_cast<std::size_t>(location)].divisor;

@@ -2769,6 +2769,7 @@ void dom_bindings::install_window(context & cx) {
     interface_object("HTMLImageElement", image_element_prototype_);
     interface_object("CanvasRenderingContext2D", canvas2d_prototype_);
     interface_object("WebGLRenderingContext", webgl_prototype_);
+    interface_object("WebGL2RenderingContext", webgl2_prototype_);
 
     // `File`, `FileList` and `FileReader` - THE INPUT SIDE of the machinery that
     // already does export.
