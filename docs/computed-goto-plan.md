@@ -1,9 +1,23 @@
 # Computed gotos in the script VM
 
-**Status: planned, not started. Stage 0 exists to decide whether the rest
-should happen at all**, and on the evidence already in this repository the
-honest expectation is that it will say no for page loads and *maybe* for game
-loops.
+**Status: DONE, AND THE ANSWER WAS NO (2026-08-02).** Built, measured, reverted.
+Computed goto executed **5.8% more instructions** and ran **3% slower** than the
+`switch` on the workload most favourable to it. The numbers, and the two reasons
+it lost, are in `docs/performance.md`; the implementation is in the history.
+
+The rest of this file is left as written, because the plan called the outcome
+("the honest expectation is that it will say no") and the gate it set before the
+answer was known is the reason the work stopped at a day instead of a week. What
+survives is `tests/bench_script`, which should have existed years ago.
+
+**What stage 0 actually found, and it matters more than the dispatch question:**
+in a Phaser frame the interpreter is 15%, `canvas_context::blend` is 22%, and
+`object_object::find` - property lookup by string hash - is 10.7%. Two thirds of
+the entire interpreter's cost, in one function. That is the next thing to look
+at, and it is not dispatch.
+
+---
+
 
 ## The idea
 

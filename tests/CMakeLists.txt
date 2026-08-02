@@ -136,6 +136,7 @@ function(ctbrowser_bench name)
     "${PROJECT_SOURCE_DIR}/external/compile-time-css/include")
 endfunction()
 
+ctbrowser_bench(bench_script)
 ctbrowser_bench(bench_reads)
 ctbrowser_bench(bench_style)
 ctbrowser_bench(bench_interaction)

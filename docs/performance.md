@@ -130,3 +130,68 @@ refactor makes the question disappear rather than trading correctness for it.
 The runtime cannot; the front end can, and that is where the time is. See
 `docs/script.md` — and note the capture index is built read-only *for* that
 future.
+
+## Computed-goto dispatch: MEASURED, AND IT LOST (2026-08-02)
+
+Tried, measured, reverted. The implementation is in the history; the number is
+here so nobody spends the day again.
+
+`docs/computed-goto-plan.md` set a gate before the answer was known: under 5% of
+an execution-heavy workload and the plan deletes itself. The share came in at
+the top of the marginal band, so it was worth building.
+
+**What it measured, on the devbox with clang 24:**
+
+| workload | run_loop share | why it was chosen |
+|---|---|---|
+| `tests/bench_script` | **76.9%** | dispatch-bound on purpose - the best case |
+| `tests/phaser_invaders` | **15.0%** | a real frame-driven page |
+
+Then, same binary, both dispatch paths, `tests/bench_script`:
+
+| | instructions (callgrind, deterministic) | wall clock (min of 7) |
+|---|---|---|
+| `switch` | **38.13 G** | **272.3 ms** |
+| computed goto | 40.35 G (**+5.8%**) | 280.5 ms (**+3.0%**) |
+
+**Computed goto executed 5.8% MORE instructions and ran 3% slower**, on the
+workload most favourable to it, with six of seven sub-workloads regressing.
+Callgrind is deterministic, so this is not variance.
+
+### Why, and it is the interesting part
+
+A `goto *table[op]` at the end of every handler is supposed to win on branch
+prediction: 88 dispatch sites instead of one, each learning the opcode PAIRS
+this bytecode emits. Two things stopped it.
+
+**The frame cannot be cached across a dispatch, which is what the technique
+actually depends on.** The textbook version keeps `frame`, `fn` and `base` live
+in registers and jumps straight from handler to handler. Here it cannot: 12
+handlers push, pop or unwind `frames_`, which is a `std::vector` - any of them
+can reallocate it and leave a cached pointer dangling. So `VM_NEXT` has to
+re-derive all of it, and that re-derivation is duplicated into all 88 handlers,
+where the `switch` does it once per loop iteration and the compiler keeps it in
+registers.
+
+**And the obvious fix is not available.** "Only the pure handlers keep the frame
+cached" fails on the opcodes that matter: `context::to_number` calls `valueOf`
+and `toString` through `call()` for an object operand, so `add`, `sub`, `less`
+and every comparison can re-enter the VM. The safe set reduces to loads, moves
+and jumps - not enough to pay for the duplication.
+
+**A modern predictor does not need the help.** The devbox is Zen-class, and
+indirect-branch predictors have moved on since the technique was published in
+the 1990s; a single well-exercised switch site is predicted about as well as 88.
+
+### What survives
+
+`tests/bench_script` - which did not exist before and should have. Six
+benchmarks covered core, style, layout, raster, interaction and the GPU, and
+none covered the VM, which is why the only number anyone had for `run_loop`
+came from a page-load profile where it was 1.4% and therefore noise. It reports
+compile against run, per workload, min of seven.
+
+**The real finding is in the table above and it is not about dispatch.** In a
+Phaser frame the interpreter is 15%, while `canvas_context::blend` is 22% and
+`object_object::find` is 10.7%. Property lookup by string hash costs two thirds
+of what the entire interpreter costs. That is where the next work is.
