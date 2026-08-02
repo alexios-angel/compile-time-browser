@@ -197,14 +197,14 @@ says which it was**. The p5 WEBGL work was lost for a day to
 lesson was to make the unimplemented loud. Babylon is the page that will find
 out, and it should be told rather than left to guess.
 
-## Whether Babylon becomes a corpus
+## Babylon as the third corpus
 
-It is 11.6 MB unminified, against p5's 4.6 and Phaser's 8.8, and the two
-existing corpora are already 13 MB of this repository. It is the only library
-that would exercise stages 3-5 properly, and it degrades cleanly, so it can be
-pointed at the engine without being committed to it. **Not vendored yet** — that
-is a deliberate open question rather than an oversight, and the ratchet is
-written so a third corpus can be added as one more rung.
+**Vendored 2026-08-02**, at `examples/assets/babylon/` with its Apache-2.0
+licence — 11.6 MB against p5's 4.6 and Phaser's 8.8, which is real weight it
+earns by being the only witness to the half of WebGL this engine has never been
+asked for. It degrades cleanly (52 `_webGLVersion` gates), so it can be pointed
+at the engine today and simply do less; its top rung in the ratchet measures how
+much less.
 
 ## Verification
 

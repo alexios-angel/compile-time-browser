@@ -3198,7 +3198,31 @@ program compiler::compile(std::string_view source) {
     program out;
     if (!tree.ok) {
         out.ok = false;
-        out.error = "parse error: " + std::string{tree.error};
+        // WITH THE POSITION, which was thrown away here for as long as this
+        // function has existed. `vp::ast` carries `error_offset` precisely so a
+        // caller holding the source can say where the parser stopped - the
+        // comment on that field says so - and dropping it left every parse
+        // failure reading "parse error: expression" about a bundle several
+        // megabytes long. That is half a diagnostic, and it is the half that
+        // costs the afternoon.
+        //
+        // Resolved to a line and column here rather than by every caller,
+        // because the source is right there and none of them have it in a
+        // convenient form. The shape matches what the ratchets' tooling already
+        // greps for - `<name>:<line>:<column>`.
+        std::size_t line = 1;
+        std::size_t column = 1;
+        const std::size_t stopped = std::min(tree.error_offset, source.size());
+        for (std::size_t i = 0; i < stopped; ++i) {
+            if (source[i] == '\n') {
+                ++line;
+                column = 1;
+            } else {
+                ++column;
+            }
+        }
+        out.error = "parse error: " + std::string{tree.error} + " - at " + std::to_string(line) +
+                    ":" + std::to_string(column);
         return out;
     }
     out.source = std::string{source};

@@ -73,6 +73,17 @@ p5.js above - nothing links, includes or embeds it - and it is a SECOND
 corpus because the bugs one library's idioms cannot reach are invisible
 from inside a corpus of one.
 
+examples/assets/babylon/babylon.js is Babylon.js 9.18.2
+(https://babylonjs.com, https://github.com/BabylonJS/Babylon.js),
+Copyright (c) Microsoft Corporation and the Babylon.js contributors,
+redistributed UNMODIFIED under the Apache License 2.0; the licence text
+is alongside it at examples/assets/babylon/LICENSE. It is test DATA on
+the same terms as the two above - nothing links, includes or embeds it -
+and it is a THIRD corpus because it is the only one that exercises
+WebGL 2: p5.js asks for it and barely uses it, Phaser never asks at all,
+and Babylon uses nearly the whole specification while degrading cleanly
+when it is absent. See docs/webgl2-plan.md.
+
 Simple DirectMedia Layer (SDL3, https://libsdl.org) and its optional
 satellite libraries SDL3_image, SDL3_mixer and SDL3_ttf are used as
 external dependencies and are NOT bundled; all are distributed under

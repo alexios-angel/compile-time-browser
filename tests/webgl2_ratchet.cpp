@@ -41,6 +41,7 @@ enum rung {
     rung_draws = 6,      // and an instanced draw is IN THE PIXELS
     rung_extensions = 7, // the SAME capability under its WebGL 1 names
     rung_phaser = 8,     // Phaser's own WebGL renderer boots on it and paints
+    rung_babylon = 9,    // and Babylon - the one corpus that WANTS WebGL 2 - runs
 };
 
 [[nodiscard]] const char * rung_name(int level) {
@@ -54,6 +55,7 @@ enum rung {
     case rung_draws: return "an instanced draw reaches the pixels";
     case rung_extensions: return "the WebGL 1 extensions expose the same thing";
     case rung_phaser: return "Phaser's WebGL renderer paints on it";
+    case rung_babylon: return "Babylon runs and reports its WebGL version";
     default: return "?";
     }
 }
@@ -111,16 +113,52 @@ struct measurement {
     return "<no answer>";
 }
 
+// DOES BABYLON EVEN RUN? Reported beside the ladder rather than inside it,
+// because the ladder stops at its first failure and this is the number that
+// says whether rung 9 is reachable at all - an 11.6 MB bundle is a real ask of
+// a JavaScript engine, and "the corpus is aspirational" is a different problem
+// from "WebGL 2 is not implemented".
+//
+// The version it settles on is the honest headline for this whole plan: it
+// reads 1 until getContext('webgl2') returns a context, and the day it reads 2
+// is the day the work landed.
+[[nodiscard]] std::string babylon_verdict() {
+    const std::string source = read_file("examples/assets/babylon/babylon.js");
+    if (source.empty()) { return "examples/assets/babylon/babylon.js is missing"; }
+    // THROUGH THE COMPILER FIRST, because a page reports "parse error:
+    // expression" with no position and that is half a diagnostic. The compiler
+    // names the offset, which is the difference between a finding and a hunt -
+    // the same reason tests/phaser_ratchet.cpp measures its language rungs
+    // before it opens a page.
+    const ctbrowser::script::program program = ctbrowser::script::compiler::compile(source);
+    if (!program.ok) { return "does not compile: " + program.error; }
+    ctbrowser::shell::browser page{ctbrowser::shell::browser_options{200, 200}};
+    page.assets().add(
+        "babylon.js",
+        std::vector<std::byte>{reinterpret_cast<const std::byte *>(source.data()),
+                               reinterpret_cast<const std::byte *>(source.data() + source.size())});
+    page.load_html(R"(<html><head><meta charset="utf-8">
+      <script src="babylon.js"></script></head>
+      <body><canvas id=c width=64 height=64></canvas></body></html>)");
+    if (!page.script_error().empty()) { return "the bundle threw: " + page.script_error(); }
+    return ask(page, R"JS((function () {
+        if (typeof BABYLON === 'undefined') { return 'BABYLON is not defined'; }
+        try {
+            var e = new BABYLON.Engine(document.getElementById('c'), true);
+            return 'runs, webGLVersion=' + e.webGLVersion;
+        } catch (err) { return 'Engine threw: ' + (err && err.message ? err.message : err); }
+      })())JS");
+}
+
 [[nodiscard]] measurement measure() {
     measurement m;
     ctbrowser::shell::browser page{ctbrowser::shell::browser_options{200, 200}};
     page.load_html(R"(<html><body><canvas id=c width=64 height=64></canvas></body></html>)");
 
     // --- 1: a context at all ------------------------------------------------
-    const std::string context =
-        ask(page, "(function(){ var c = document.getElementById('c');"
-                  "var gl = c.getContext('webgl2'); window.__gl = gl;"
-                  "return gl ? 'ok' : 'null'; })()");
+    const std::string context = ask(page, "(function(){ var c = document.getElementById('c');"
+                                          "var gl = c.getContext('webgl2'); window.__gl = gl;"
+                                          "return gl ? 'ok' : 'null'; })()");
     if (context != "ok") {
         m.fail_at(rung_context, "getContext('webgl2') returned " + context);
         return m;
@@ -149,8 +187,7 @@ struct measurement {
     // rather than attribute/varying, and a declared output rather than
     // gl_FragColor. A context that accepts the calls and refuses the shaders is
     // a WebGL 2 context nobody can use.
-    const std::string glsl =
-        ask(page, R"JS((function(){ var gl = window.__gl;
+    const std::string glsl = ask(page, R"JS((function(){ var gl = window.__gl;
         var vs = gl.createShader(gl.VERTEX_SHADER);
         gl.shaderSource(vs, '#version 300 es\nin vec2 p;\nvoid main(){ gl_Position = vec4(p,0.,1.); }');
         gl.compileShader(vs);
@@ -174,8 +211,7 @@ struct measurement {
     // --- 4: vertex array objects --------------------------------------------
     // THE ONE PHASER WOULD USE, though it reaches them through the WebGL 1
     // extension rather than through a WebGL 2 context. p5 uses none at all.
-    const std::string vao =
-        ask(page, R"JS((function(){ var gl = window.__gl;
+    const std::string vao = ask(page, R"JS((function(){ var gl = window.__gl;
         var a = gl.createVertexArray();
         if (!a) { return 'createVertexArray gave nothing'; }
         gl.bindVertexArray(a);
@@ -194,8 +230,7 @@ struct measurement {
     m.reached(rung_vao);
 
     // --- 5: instancing ------------------------------------------------------
-    const std::string instancing =
-        ask(page, R"JS((function(){ var gl = window.__gl;
+    const std::string instancing = ask(page, R"JS((function(){ var gl = window.__gl;
         if (typeof gl.vertexAttribDivisor !== 'function') { return 'no vertexAttribDivisor'; }
         if (typeof gl.drawArraysInstanced !== 'function') { return 'no drawArraysInstanced'; }
         var buf = gl.createBuffer();
@@ -221,8 +256,7 @@ struct measurement {
     // A draw that is accepted and paints nothing satisfies every rung above.
     // readPixels rather than the canvas store, because that is what a page
     // uses and it asks the context rather than the engine.
-    const std::string pixels =
-        ask(page, R"JS((function(){ var gl = window.__gl;
+    const std::string pixels = ask(page, R"JS((function(){ var gl = window.__gl;
         gl.clearColor(0., 0., 0., 1.); gl.clear(gl.COLOR_BUFFER_BIT);
         gl.drawArraysInstanced(gl.TRIANGLES, 0, 3, 1);
         var px = new Uint8Array(4);
@@ -307,8 +341,9 @@ struct measurement {
     for (int i = 0; i < 40; ++i) { game.tick(16); }
     const std::string drew = ask(game, "window.__painted");
     if (drew != "drew") {
-        m.fail_at(rung_phaser, "Phaser's WEBGL renderer did not reach create(): " + drew +
-                                   (game.script_error().empty() ? "" : " | " + game.script_error()));
+        m.fail_at(rung_phaser,
+                  "Phaser's WEBGL renderer did not reach create(): " + drew +
+                      (game.script_error().empty() ? "" : " | " + game.script_error()));
         return m;
     }
     // Drew is not painted: the pixels are the claim.
@@ -335,6 +370,45 @@ struct measurement {
         return m;
     }
     m.reached(rung_phaser);
+
+    // --- 9: the corpus this work exists for ---------------------------------
+    // BABYLON IS THE ONLY ONE THAT WANTS WEBGL 2. It asks for it first, uses
+    // nearly the whole specification, and gates 52 sites on `_webGLVersion` so
+    // it degrades rather than refusing - which is what makes it measurable
+    // today, before any of this is implemented.
+    //
+    // The rung asks two things: that the bundle runs at all, and WHICH VERSION
+    // it settled on. That number is the honest headline for this whole plan -
+    // it reads 1 until `getContext('webgl2')` returns a context, and the day it
+    // reads 2 is the day the work landed.
+    const std::string babylon_source = read_file("examples/assets/babylon/babylon.js");
+    if (babylon_source.empty()) {
+        m.fail_at(rung_babylon, "examples/assets/babylon/babylon.js is missing");
+        return m;
+    }
+    ctbrowser::shell::browser babylon{ctbrowser::shell::browser_options{200, 200}};
+    babylon.assets().add(
+        "babylon.js",
+        std::vector<std::byte>{
+            reinterpret_cast<const std::byte *>(babylon_source.data()),
+            reinterpret_cast<const std::byte *>(babylon_source.data() + babylon_source.size())});
+    babylon.load_html(R"(<html><head><meta charset="utf-8">
+      <script src="babylon.js"></script></head>
+      <body><canvas id=c width=64 height=64></canvas></body></html>)");
+    if (!babylon.script_error().empty()) {
+        m.fail_at(rung_babylon, "the bundle did not run: " + babylon.script_error());
+        return m;
+    }
+    const std::string version = ask(babylon, R"JS((function () {
+        if (typeof BABYLON === 'undefined') { return 'BABYLON is not defined'; }
+        var e = new BABYLON.Engine(document.getElementById('c'), true);
+        return 'webgl' + e.webGLVersion;
+      })())JS");
+    if (version != "webgl2") {
+        m.fail_at(rung_babylon, "Babylon settled on " + version);
+        return m;
+    }
+    m.reached(rung_babylon);
     return m;
 }
 
@@ -343,10 +417,12 @@ struct measurement {
 int main() {
     const measurement m = measure();
 
-    std::printf("LEVEL %d/%d\n", m.level, rung_phaser);
+    std::printf("LEVEL %d/%d\n", m.level, rung_babylon);
     std::printf("BLOCKER %s\n", m.blocker.c_str());
-    std::printf("     WEBGL2 LEVEL %d/%d (%s)\n", m.level, rung_phaser, rung_name(m.level));
+    std::printf("     WEBGL2 LEVEL %d/%d (%s)\n", m.level, rung_babylon, rung_name(m.level));
     if (!m.blocker.empty()) { std::printf("     blocked by: %s\n", m.blocker.c_str()); }
+
+    std::printf("     babylon: %s\n", babylon_verdict().c_str());
 
     // THE PAWL, identical in rule to the other two: the level may not go down,
     // and at the same level the blocker may not change. Only
