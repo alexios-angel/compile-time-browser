@@ -557,6 +557,63 @@ claims to match "the WHATWG `atob` in every browser" and does not. Adopting
 simdutf strict *without* the fallback would fix that - a behaviour change worth
 making deliberately rather than as a side effect of a performance patch.
 
+
+## Array.prototype.sort was O(n^2) - and why it cannot be threaded (2026-08-02)
+
+Found by asking whether x86-simd-sort applied. It does not: the engine has
+exactly three sorts, the only hot one is the polygon filler's scanline
+crossings (**2-20 elements**, where SIMD sorting is far below its crossover),
+and `Array.prototype.sort` compares through a page-supplied callback that no
+SIMD kernel can vectorise. But looking established that the sort was a stable
+INSERTION sort:
+
+| n | before | after | |
+|---|---|---|---|
+| 250 | 0.5 ms | 0.1 ms | |
+| 1000 | 6.7 ms | 0.4 ms | |
+| 4000 | **104.5 ms** | **1.8 ms** | **58x** |
+
+Measured against `n^2`, the old numbers tracked it to within a tenth; the new
+ones fall away from it. Extrapolating the old curve, ten thousand elements was
+most of a second and a page would have looked hung.
+
+**A bottom-up merge sort keeps the property that made insertion sort the
+choice.** `std::sort` is undefined behaviour with an inconsistent comparator,
+and a comparator written in JavaScript can return anything at all. A merge reads
+only inside two index ranges it computed itself, so no answer the comparator
+gives can move an index out of them - the safety is STRUCTURAL rather than a
+promise the comparator has to keep. It is also stable, which the specification
+requires.
+
+**It sorts a snapshot**, which is a robustness fix rather than a speed one: the
+old loop indexed the live array while calling out, so
+`a.sort(() => { a.length = 0; return 0; })` walked off the end. There are tests
+for that now, and for stability - mutation-tested by taking the right side on a
+tie, which produces `cdab` where `cbad` is required.
+
+The default (no comparator) path **computes its string keys once**. It was
+calling `to_string` inside `stable_sort`'s comparison, so about `2 log n`
+conversions per element - a thousand items paid for twenty thousand string
+allocations to answer a thousand questions.
+
+### Why this is not multithreaded
+
+Asked, and the answer is correctness rather than effort. **`c.call(comparator,
+...)` re-enters the VM**: it pushes onto `frames_`, allocates in `registers_`,
+can allocate on the script heap and can trigger a collection. That state is
+per-context and single-threaded. Calling a JS comparator from several threads
+would not be slow, it would be memory corruption. The specification also lets a
+comparator have side effects, so the ORDER of calls is observable and parallel
+evaluation changes behaviour.
+
+The default path is different in principle: once the string keys are extracted -
+which needs the VM, because `to_string` can call a user `toString` - what
+remains is a plain array of `std::string` with no VM involvement, and the
+engine has a thread pool. **It is still not worth it**: sorting two thousand
+keys is 0.4 ms, and a parallel merge does not pay for its coordination until
+tens of thousands of elements, which is far past what pages sort. Recorded so
+the idea is dismissed with a number rather than re-proposed.
+
 ## Computed-goto dispatch: measured properly, and the surprise was elsewhere (2026-08-02)
 
 A first attempt at this reported computed goto 5.8% slower. **That measurement

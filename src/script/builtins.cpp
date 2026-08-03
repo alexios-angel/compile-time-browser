@@ -1032,26 +1032,67 @@ void install_array(context & cx) {
         if (self == nullptr) { return c.current_this(); }
         const value comparator = arg_at(a, 0);
         if (comparator.is_callable()) {
-            // std::sort would be UB with an inconsistent comparator, and a
-            // comparator written in JS can be anything at all. A stable
-            // insertion sort cannot be talked into reading out of bounds.
-            for (std::size_t i = 1; i < self->items.size(); ++i) {
-                value item = self->items[i];
-                std::size_t j = i;
-                while (j > 0) {
-                    const value pair[2] = {self->items[j - 1], item};
-                    if (context::to_number(c.call(comparator, pair)) <= 0) { break; }
-                    self->items[j] = self->items[j - 1];
-                    --j;
+            // A BOTTOM-UP MERGE SORT, and every word of that is load-bearing.
+            //
+            // `std::sort` would be undefined behaviour with an inconsistent
+            // comparator, and a comparator written in JavaScript can be
+            // anything at all - it can return random numbers, or mutate the
+            // array it is sorting. That is why this was a stable INSERTION
+            // sort: it cannot be talked into reading out of bounds.
+            //
+            // But it was O(n^2), measured: 250 elements 0.5 ms, 4000 elements
+            // 104 ms, tracking n^2 to within a tenth. Ten thousand would be
+            // most of a second and a page would look hung.
+            //
+            // Merge sort keeps the property that mattered. Each merge reads
+            // only within two index ranges it computed itself, so no answer the
+            // comparator gives can move an index out of them - the safety comes
+            // from the STRUCTURE rather than from the comparator behaving. It
+            // is stable, which the specification requires. And it is n log n.
+            //
+            // ON A SNAPSHOT, which is a robustness fix rather than a speed one.
+            // The old loop indexed `self->items` while calling out to the
+            // comparator, so a comparator that shortened the array - `a.sort(()
+            // => { a.length = 0; return 0; })` - left it indexing past the end.
+            // Sorting a copy and writing it back cannot: the comparator may do
+            // what it likes to the array meanwhile.
+            std::vector<value> work = self->items;
+            const std::size_t n = work.size();
+            if (n > 1) {
+                std::vector<value> spare(n);
+                for (std::size_t width = 1; width < n; width *= 2) {
+                    for (std::size_t lo = 0; lo < n; lo += 2 * width) {
+                        const std::size_t mid = std::min(lo + width, n);
+                        const std::size_t hi = std::min(lo + 2 * width, n);
+                        std::size_t left = lo, right = mid, out = lo;
+                        while (left < mid && right < hi) {
+                            // `<= 0` TAKES THE LEFT, which is what makes this
+                            // stable: equal elements keep their order.
+                            const value pair[2] = {work[left], work[right]};
+                            const double order = context::to_number(c.call(comparator, pair));
+                            spare[out++] = order <= 0 ? work[left++] : work[right++];
+                        }
+                        while (left < mid) { spare[out++] = work[left++]; }
+                        while (right < hi) { spare[out++] = work[right++]; }
+                    }
+                    work.swap(spare);
                 }
-                self->items[j] = item;
             }
+            self->items = std::move(work);
         } else {
             // The default really is lexicographic on the STRING form, which is
             // why [10, 9].sort() is [10, 9].
-            std::ranges::stable_sort(self->items, [&](const value & x, const value & y) {
-                return c.to_string(x) < c.to_string(y);
-            });
+            //
+            // THE KEYS ARE COMPUTED ONCE. `stable_sort` with `to_string` inside
+            // the comparison converts each element about 2 log n times and
+            // allocates a std::string for every one of them; a page sorting a
+            // thousand items paid for twenty thousand conversions to answer a
+            // thousand questions.
+            std::vector<std::pair<std::string, value>> keyed;
+            keyed.reserve(self->items.size());
+            for (const value & item : self->items) { keyed.emplace_back(c.to_string(item), item); }
+            std::ranges::stable_sort(keyed, {}, &std::pair<std::string, value>::first);
+            for (std::size_t i = 0; i < keyed.size(); ++i) { self->items[i] = keyed[i].second; }
         }
         return c.current_this();
     });

@@ -1675,6 +1675,62 @@ void test_array_sort() {
     // The default really is lexicographic on the string form, which is why
     // [10, 9] sorts to [10, 9] and surprises everyone once.
     expect_result("return [10,9].sort().join(',');", "10,9");
+
+    // --- what the merge sort has to keep -----------------------------------
+    // It replaced a stable insertion sort that was O(n^2) - 104 ms at 4000
+    // elements, tracking n^2 exactly. Speed is not what these check.
+
+    // STABLE: equal keys keep their original order. The specification requires
+    // it, and a merge that takes the right side on a tie would quietly break it
+    // while still producing sorted output.
+    expect_result("const xs = [['b',1],['a',1],['c',0],['d',1]];"
+                  "xs.sort(function (p, q) { return p[1] - q[1]; });"
+                  "return xs.map(function (p) { return p[0]; }).join('');",
+                  "cbad");
+
+    // Big enough that a quadratic sort would be visible, and checked by
+    // CONTENT rather than by trusting the sort that produced it.
+    expect_result("const a = []; let s = 12345;"
+                  "for (let i = 0; i < 2000; i++) { s = (s * 1103515245 + 12345) & 2147483647;"
+                  "  a.push(s % 1000); }"
+                  "a.sort(function (x, y) { return x - y; });"
+                  "let ok = a.length === 2000;"
+                  "for (let i = 1; i < a.length; i++) { if (a[i-1] > a[i]) { ok = false; } }"
+                  "return String(ok);",
+                  "true");
+
+    // AN INCONSISTENT COMPARATOR MUST NOT CORRUPT ANYTHING. This is why
+    // std::sort is not used: it would be undefined behaviour. A merge reads
+    // only inside two ranges it computed itself, so no answer can move an index
+    // out of them - the result is unspecified, staying alive is not.
+    expect_result("const a = [5,3,8,1,9,2,7];"
+                  "a.sort(function () { return 1; });"
+                  "return String(a.length);",
+                  "7");
+    expect_result("const a = [5,3,8,1,9,2,7];"
+                  "a.sort(function () { return -1; });"
+                  "return String(a.length);",
+                  "7");
+
+    // A COMPARATOR THAT MUTATES THE ARRAY IT IS SORTING. The old loop indexed
+    // the live array while calling out, so this walked off the end; the merge
+    // sorts a snapshot and writes it back, so the worst case is an unspecified
+    // order.
+    expect_result("const a = [4,2,5,1,3];"
+                  "a.sort(function (x, y) { a.length = 0; return x - y; });"
+                  "return 'survived';",
+                  "survived");
+    expect_result("const a = [4,2,5,1,3];"
+                  "a.sort(function (x, y) { a.push(99); return x - y; });"
+                  "return 'survived';",
+                  "survived");
+
+    // The default path now precomputes its string keys; it must still be the
+    // same lexicographic order, and still stable.
+    expect_result("return ['banana','apple','cherry'].sort().join(',');", "apple,banana,cherry");
+    expect_result("return [1,5,20,3].sort().join(',');", "1,20,3,5");
+    expect_result("return [].sort().length;", "0");
+    expect_result("return [1].sort().join('');", "1");
 }
 
 void test_string_methods() {
