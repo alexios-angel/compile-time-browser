@@ -83,13 +83,13 @@ namespace {
 }
 
 [[nodiscard]] std::unique_ptr<ctbrowser::shell::browser> orbit_page(const std::string & bundle,
-                                                                   const std::string & page_html) {
-    auto page = std::make_unique<ctbrowser::shell::browser>(
-        ctbrowser::shell::browser_options{420, 360});
-    page->assets().add("../assets/babylon/babylon.js",
-                       std::vector<std::byte>{
-                           reinterpret_cast<const std::byte *>(bundle.data()),
-                           reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
+                                                                    const std::string & page_html) {
+    auto page =
+        std::make_unique<ctbrowser::shell::browser>(ctbrowser::shell::browser_options{420, 360});
+    page->assets().add(
+        "../assets/babylon/babylon.js",
+        std::vector<std::byte>{reinterpret_cast<const std::byte *>(bundle.data()),
+                               reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
     page->load_html(page_html);
     // A FRAME FIRST, AND IT IS LOAD-BEARING. Hit testing reads the LAYOUT, and
     // without one every event lands on the body: the canvas is not there to be
@@ -110,8 +110,8 @@ void drag(ctbrowser::shell::browser & page, float from_x, float from_y, float to
     (void)page.handle(input_event::mouse_down_at(from_x, from_y));
     for (int i = 1; i <= steps; ++i) {
         const float t = static_cast<float>(i) / static_cast<float>(steps);
-        (void)page.handle(input_event::mouse_move_to(from_x + (to_x - from_x) * t,
-                                                     from_y + (to_y - from_y) * t));
+        (void)page.handle(
+            input_event::mouse_move_to(from_x + (to_x - from_x) * t, from_y + (to_y - from_y) * t));
         page.tick(16);
     }
     (void)page.handle(input_event::mouse_up_at(to_x, to_y));
@@ -165,11 +165,11 @@ int main() {
         const std::string after = ask(*page, "window.__cam.alpha.toFixed(4)");
         const std::uint64_t picture_after = canvas_digest(*page);
 
-        expect(before != after, "a horizontal drag turned the camera: alpha " + before + " -> " +
-                                   after);
+        expect(before != after,
+               "a horizontal drag turned the camera: alpha " + before + " -> " + after);
         expect(picture_before != picture_after,
-              "and the picture followed it (digest " +
-                  std::string{picture_before == picture_after ? "unchanged" : "changed"} + ")");
+               "and the picture followed it (digest " +
+                   std::string{picture_before == picture_after ? "unchanged" : "changed"} + ")");
         std::printf("     alpha %s -> %s\n", before.c_str(), after.c_str());
     }
 
@@ -188,10 +188,10 @@ int main() {
 
         const std::string after = ask(*page, "window.__cam.beta.toFixed(4)");
         const std::string alpha_after = ask(*page, "window.__cam.alpha.toFixed(4)");
-        expect(before != after, "a vertical drag changed the elevation: beta " + before + " -> " +
-                                   after);
+        expect(before != after,
+               "a vertical drag changed the elevation: beta " + before + " -> " + after);
         expect(alpha_before == alpha_after,
-              "and left the bearing alone: alpha " + alpha_before + " -> " + alpha_after);
+               "and left the bearing alone: alpha " + alpha_before + " -> " + alpha_after);
         expect(picture_before != canvas_digest(*page), "the picture followed the elevation");
         std::printf("     beta %s -> %s\n", before.c_str(), after.c_str());
     }
@@ -237,8 +237,8 @@ int main() {
         for (int i = 0; i < 6; ++i) { page->tick(16); }
         const std::string after = ask(*page, "window.__cam.alpha.toFixed(4) + ',' + "
                                              "window.__cam.beta.toFixed(4)");
-        expect(before == after, "a click that did not move left the camera where it was: " + before +
-                                   " -> " + after);
+        expect(before == after, "a click that did not move left the camera where it was: " +
+                                    before + " -> " + after);
     }
 
     REPORT("babylon_interaction");
