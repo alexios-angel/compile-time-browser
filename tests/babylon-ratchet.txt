@@ -82,8 +82,22 @@ blocker=no shadow on the ground: 0 grey level(s) (3 colours 0,0,255x3220 50,0,0x
 # An INCOMPLETE framebuffer now draws NOWHERE rather than to the canvas, which
 # is what GL does and is much better than drawing to the wrong surface.
 #
-# RUNG 9 IS THE SHADOW, and the reading is precise: the box is there in two
-# shades of red (250,0,0 and 50,0,0) and THE GROUND IS NOT DRAWN AT ALL - 3220
-# of 4096 pixels are still the clear colour. So this is not "the shadow is
-# missing", it is "the surface the shadow would fall on never arrived", and the
-# next attempt starts there rather than in the shadow map.
+# RUNG 9 IS THE SHADOW, and it has been narrowed to one line. The box is there
+# in two shades of red and THE GROUND IS NOT DRAWN AT ALL - 3220 of 4096 pixels
+# are still the clear colour - so this is not "the shadow is missing", it is
+# "the surface the shadow would fall on never arrived".
+#
+# ISOLATED, four scenes, one variable at a time:
+#
+#   ground alone, unlit                    3060 white pixels - fine
+#   ground lit by a directional light      3060 at 250,250,250 - fine
+#   ground + receiveShadows, NO generator  3060 at 250,250,250 - fine
+#   the same + a ShadowGenerator           the ground is GONE
+#
+# So `receiveShadows` alone is harmless and the SHADOW GENERATOR is what breaks
+# the ground's draw. A generator makes Babylon add its shadow defines to that
+# material and recompile it, so the next thing to look at is whether that
+# recompiled shader RUNS - a shader that fails at run time has its draw dropped
+# with INVALID_OPERATION, which paints exactly nothing and is what this looks
+# like. Not the shadow map's contents, and not the render target, which rung 8
+# now exercises.
