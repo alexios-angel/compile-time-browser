@@ -106,6 +106,16 @@ cmake --install "$work/build" >/dev/null
 # MI_INSTALL_TOPLEVEL is supposed to prevent that and is not honoured by 2.1.9.
 # Copying is version-proof and needs no guess about which release renamed which
 # option.
+# EVERY PREVIOUS COPY GOES FIRST. mimalloc names its static library differently
+# across versions - v2 installs libmimalloc-static.a, v3 libmimalloc.a - so a
+# bump leaves BOTH in the sysroot and find_library picks whichever it is asked
+# for first. It picked the stale v2, and the Windows build quietly linked the
+# old allocator across a major version while the Linux one used v3.
+#
+# tests/core_basics asks ctbrowser::allocator_version() and caught it, which is
+# the entire reason that check exists.
+rm -f "$sysroot"/lib/libmimalloc*.a
+
 built="$(find "$work/build" -name 'libmimalloc*.a' -print -quit)"
 header="$(find "$work/mimalloc/include" -name 'mimalloc.h' -print -quit)"
 if [ -z "$built" ] || [ -z "$header" ]; then

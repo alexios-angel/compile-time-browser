@@ -83,6 +83,11 @@ gate and CI runs it.
 - `tools/module-ratchet.py` — the same loop for ES MODULES. Reads **0/9**: no
   module system at all, and `import` is not even a keyword. `--advance` records.
   See `docs/modules-plan.md`.
+- `tools/build-cpptrace-mingw.sh` — cpptrace for the Windows sysroot. TESTS
+  ONLY and optional: a missing trace makes a failure harder to read, not wrong.
+  It is here because llvm-mingw has no `<stacktrace>` at all, so the platform
+  where most of this project's expensive bugs have lived had no trace when a
+  test died.
 - `tools/build-mimalloc-mingw.sh` — mimalloc v3 for the Windows sysroot. The
   allocator is not optional in the default build, so the cross build needs this
   run once; `tools/remote-build.sh windows` runs it.

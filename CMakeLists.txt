@@ -53,6 +53,14 @@ option(CTBROWSER_WINDOWS_CONSOLE "Keep the console window behind a Windows exe" 
 # measured -4.2% instructions and -4.4% wall on a real Phaser frame - see
 # docs/performance.md. Switchable because a platform without it should still
 # build, and because turning it off is how the measurement is repeated.
+# WHERE BREW PUTS THINGS. Nothing adds its prefix to CMake's default search
+# path, so a box with brew's mimalloc, simdutf or cpptrace and no distribution
+# copy configures with "not found" while the library sits right there. Hoisted
+# to the top level because both src/ and tests/ need it and a variable set in
+# one subdirectory is invisible to its sibling.
+set(CTBROWSER_BREW_HINTS "$ENV{HOMEBREW_PREFIX}" /home/linuxbrew/.linuxbrew /opt/homebrew
+                         /usr/local)
+
 option(CTBROWSER_USE_MIMALLOC "Back operator new/delete with mimalloc" ON)
 
 option(CTBROWSER_COMPUTED_GOTO "Dispatch the script VM with computed gotos (GNU only)" OFF)

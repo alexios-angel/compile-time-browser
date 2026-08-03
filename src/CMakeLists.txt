@@ -166,8 +166,6 @@ target_link_libraries(ctbrowser-core PUBLIC Threads::Threads)
 # hints are checked FIRST so brew's copy wins over a distribution's - which
 # matters here because apt ships v2 and this tree pins v3, and the two are
 # different allocators behind the same header name.
-set(CTBROWSER_BREW_HINTS "$ENV{HOMEBREW_PREFIX}" /home/linuxbrew/.linuxbrew /opt/homebrew
-                         /usr/local)
 find_library(CTBROWSER_MIMALLOC NAMES mimalloc-static mimalloc
   HINTS ${CTBROWSER_BREW_HINTS} PATH_SUFFIXES lib)
 find_path(CTBROWSER_MIMALLOC_INCLUDE mimalloc.h

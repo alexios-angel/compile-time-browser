@@ -8,13 +8,18 @@
 #include <string>
 #include <version>
 
-#if defined(__cpp_lib_stacktrace) && __cpp_lib_stacktrace >= 202011L
-#include <stacktrace>
-#define CTBROWSER_TEST_HAS_STACKTRACE 1
+#include <csignal>
+
+// CPPTRACE, NOT <stacktrace>. The llvm-mingw cross build has <format> but NOT
+// <stacktrace> - checked, not assumed - so half the platforms this engine ships
+// on had no trace at all, and almost every expensive bug here has been the
+// Windows-only kind. cpptrace supports mingw explicitly (StackWalk64, libgcc
+// _Unwind_Backtrace, dbghelp) and gives both platforms the same output.
+#if __has_include(<cpptrace/cpptrace.hpp>)
+#include <cpptrace/cpptrace.hpp>
+#define CTBROWSER_TEST_HAS_TRACE 1
 #else
-// The llvm-mingw cross build has <format> but NOT <stacktrace>, so this is a
-// real branch rather than defensive decoration. Checked, not assumed.
-#define CTBROWSER_TEST_HAS_STACKTRACE 0
+#define CTBROWSER_TEST_HAS_TRACE 0
 #endif
 
 // Same shape as the previous engine's tests: a non-zero exit fails ctest, and every failure
@@ -53,21 +58,53 @@ inline void report_terminate() {
             std::printf("  uncaught exception: %s\n", failed.what());
         } catch (...) { std::printf("  uncaught exception of a non-std type\n"); }
     }
-#if CTBROWSER_TEST_HAS_STACKTRACE
+#if CTBROWSER_TEST_HAS_TRACE
     // Needs -g to name lines; without it this is still frames and addresses,
     // which beats nothing. tests/CMakeLists.txt asks for both.
-    std::printf("%s\n", std::to_string(std::stacktrace::current()).c_str());
+    cpptrace::generate_trace().print();
 #else
-    std::printf("  (no <stacktrace> in this toolchain - build on Linux for a trace)\n");
+    std::printf("  (no cpptrace in this toolchain - install it for a trace)\n");
 #endif
     std::fflush(stdout);
     std::abort();
+}
+
+// WHY A TEST DIED WHEN IT DIED WITHOUT UNWINDING AT ALL.
+//
+// A segfault is not an exception: std::terminate never runs, the handler above
+// never fires, and ctest reports "Subprocess aborted" with nothing else. That
+// cost real time on 2026-08-02 - `export default 42` crashed the compiler
+// because an AST walk followed a flag as a node index - and the evidence went
+// with it, because the probe's stdout was still buffered when the process died.
+//
+// So: print the trace, flush, and re-raise with the default handler so the
+// shell still sees a signal death rather than a clean exit.
+extern "C" inline void report_signal(int number) {
+    const char * name = number == SIGSEGV   ? "SIGSEGV (bad memory access)"
+                        : number == SIGABRT ? "SIGABRT"
+                        : number == SIGFPE  ? "SIGFPE (arithmetic)"
+                        : number == SIGILL  ? "SIGILL (illegal instruction)"
+                                            : "a fatal signal";
+    std::printf("\nDIED ON %s\n", name);
+#if CTBROWSER_TEST_HAS_TRACE
+    // Strictly, only async-signal-safe calls belong in a handler and this is
+    // not one. It is the right trade for a TEST BINARY: the process is already
+    // dying, and a trace that occasionally deadlocks beats no trace at all,
+    // which is what the alternative measured.
+    cpptrace::generate_trace().print();
+#endif
+    std::fflush(stdout);
+    std::signal(number, SIG_DFL);
+    std::raise(number);
 }
 
 // Installed by a namespace-scope initialiser, because terminate can happen long
 // before main's first statement - a throwing static initialiser, for one.
 inline const bool trace_installed = [] {
     std::set_terminate(&report_terminate);
+    for (const int fatal : {SIGSEGV, SIGABRT, SIGFPE, SIGILL}) {
+        std::signal(fatal, &report_signal);
+    }
     return true;
 }();
 

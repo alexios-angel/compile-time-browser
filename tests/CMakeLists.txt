@@ -29,8 +29,58 @@ else()
   message(STATUS "ctbrowser: no std::stacktrace here; a dying test says less")
 endif()
 
+# CPPTRACE, for the tests only. Almost every expensive bug in this project has
+# been the Windows-only kind, and the llvm-mingw build has no <stacktrace> at
+# all - so half the platforms had no trace when a test died. cpptrace supports
+# mingw explicitly and gives both the same output. tools/build-cpptrace-mingw.sh
+# puts it in the cross sysroot.
+#
+# OPTIONAL, unlike mimalloc and simdutf: a missing trace makes a failure harder
+# to read, not wrong, and a test suite that will not build because a diagnostic
+# is absent is worse than one that prints fewer frames.
+find_library(CTBROWSER_CPPTRACE NAMES cpptrace HINTS ${CTBROWSER_BREW_HINTS} PATH_SUFFIXES lib)
+find_path(CTBROWSER_CPPTRACE_INCLUDE cpptrace/cpptrace.hpp
+  HINTS ${CTBROWSER_BREW_HINTS} PATH_SUFFIXES include)
+find_library(CTBROWSER_CPPTRACE_DWARF NAMES dwarf HINTS ${CTBROWSER_BREW_HINTS}
+  PATH_SUFFIXES lib)
+find_library(CTBROWSER_CPPTRACE_ZSTD NAMES zstd HINTS ${CTBROWSER_BREW_HINTS} PATH_SUFFIXES lib)
+if(NOT CTBROWSER_CPPTRACE OR NOT CTBROWSER_CPPTRACE_INCLUDE)
+  message(STATUS "cpptrace not found - tests will print no stack traces. "
+                 "brew install cpptrace, or tools/build-cpptrace-mingw.sh for the cross build.")
+endif()
+
 function(ctbrowser_test name)
   add_executable(ctbrowser-test-${name} ${name}.cpp)
+  if(CTBROWSER_CPPTRACE AND CTBROWSER_CPPTRACE_INCLUDE)
+    target_link_libraries(ctbrowser-test-${name} PRIVATE "${CTBROWSER_CPPTRACE}")
+    target_include_directories(ctbrowser-test-${name} SYSTEM PRIVATE
+      "${CTBROWSER_CPPTRACE_INCLUDE}")
+    # CPPTRACE_STATIC_DEFINE when it IS static. cpptrace's header declares its
+    # entry points __declspec(dllimport) otherwise, and the Windows cross link
+    # fails with "undefined symbol: __declspec(dllimport) cpptrace::v1::
+    # generate_trace" against a perfectly good libcpptrace.a. The attribute is a
+    # no-op off Windows, so keying on the file extension is enough.
+    if(CTBROWSER_CPPTRACE MATCHES "\\.a$")
+      target_compile_definitions(ctbrowser-test-${name} PRIVATE CPPTRACE_STATIC_DEFINE)
+      # A STATIC cpptrace does not carry its own dependencies. It reads DWARF -
+      # which is what mingw emits - through libdwarf, and libdwarf reads
+      # compressed sections through zstd. Its install puts both in the sysroot
+      # beside it; the link line has to name them, in this order.
+      if(CTBROWSER_CPPTRACE_DWARF)
+        target_link_libraries(ctbrowser-test-${name} PRIVATE "${CTBROWSER_CPPTRACE_DWARF}")
+      endif()
+      if(CTBROWSER_CPPTRACE_ZSTD)
+        target_link_libraries(ctbrowser-test-${name} PRIVATE "${CTBROWSER_CPPTRACE_ZSTD}")
+      endif()
+    endif()
+    # dbghelp is where StackWalk64, SymFunctionTableAccess64 and
+    # SymGetModuleBase64 live. A static cpptrace does not carry them, so the
+    # Windows link fails on all three - which is the platform this whole
+    # dependency exists to serve.
+    if(WIN32 OR MINGW)
+      target_link_libraries(ctbrowser-test-${name} PRIVATE dbghelp)
+    endif()
+  endif()
   target_link_libraries(ctbrowser-test-${name} PRIVATE ctbrowser::core ctbrowser::dom ctbrowser::script ctbrowser::style ctbrowser::layout ctbrowser::paint ctbrowser::raster ctbrowser::shell ctbrowser::ctbrowser)
   # vm_basics differentially tests the VM against ctjs's own interpreter, so
   # the brick's headers have to be reachable.
