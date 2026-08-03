@@ -562,7 +562,20 @@ triangle cannot draw a sphere, and finding out which of six stages is wrong is
 much easier with five of them already pinned.
 
 
-## libshaderc: measured, and it cannot do the job that would matter
+## libshaderc: this section answered the NARROW question — see docs/gpu-shaders-plan.md
+
+**What follows asks whether shaderc could be a drop-in for `raster/spirv.cpp` or
+for the interpreter AS THEY STAND, and answers no. That was the wrong question.**
+The one worth asking is whether page shaders should be compiled to SPIR-V and
+run on the GPU *instead of being interpreted*, which is the only route to
+hardware acceleration — and the version obstacle below turns out to be a
+mechanical translation, not a wall. `docs/gpu-shaders-plan.md` has the
+measurements: the three things glslang wants are all numbers this engine already
+assigns at link time, and a translated Babylon-shaped shader compiles.
+
+The narrow answer is kept because the facts in it are still facts.
+
+## libshaderc: measured, and it cannot do the job AS A DROP-IN
 
 **Asked 2026-08-03: could `libshaderc` compile the GLSL instead of the code in
 this tree? Measured with shaderc 2026.3 on the devbox, and the answer is no for
