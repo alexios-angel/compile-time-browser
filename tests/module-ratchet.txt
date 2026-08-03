@@ -15,8 +15,8 @@
 # graph. Then the graph, where live bindings and cycles live. Then the loader,
 # where a page and a network arrive. Babylon last, because it needs all of it.
 
-level=3
-blocker=an imported binding did not update (wanted 1,42 got 1,undefined)
+level=4
+blocker=a cycle did not resolve (wanted ab got undefined)
 
 # WHY THIS STARTS AT ZERO, and it is further down than it looks. `import` and
 # `export` are not refused by name in this engine - they are NOT KEYWORDS AT
@@ -118,12 +118,26 @@ blocker=an imported binding did not update (wanted 1,42 got 1,undefined)
 #   the hoist passes did not look THROUGH `export`. A wrapped function
 #   declaration was compiled in the second pass, after anything that called it.
 #
-# RUNG 4 IS NOT PASSING YET and the symptom is exact: `1,undefined`. The first
-# read is right, so this is NOT the copy the rung was written to catch - a copy
-# would read `1,1`. Something clears the binding across the call instead, and
-# the next attempt starts there rather than from the assumption.
+# RUNG 4 PASSES: an imported binding is LIVE. The exporter reassigns and the
+# importer sees it, which is the property a value-copy cannot have - and the
+# reason rungs 3 and 4 are separate.
 #
-# RUNG 4 IS THE ONE THAT WILL BE SHORTCUT. An imported binding is LIVE: if the
+# THE BUG THAT HELD IT WAS NOT THE ONE THE RUNG WAS WATCHING FOR. The symptom
+# was `1,undefined`, and a copy reads `1,1` - so the blocker said what it saw
+# rather than naming a cause it could not support. It turned out that ONE
+# import worked and TWO did not: the import handler allocated its registers
+# INSIDE the statement, above the statement's register mark, and
+# `release_to(mark)` handed them straight back - so the next statement's
+# temporary landed on the second binding. An import is a DECLARATION and its
+# names are hoisted now, which is the same trap declare_pattern_names already
+# records for destructuring.
+#
+# RUNG 5 IS THE CYCLE, and `undefined` says the shape is not right yet: A
+# imports B imports A, and the loader registers a module before its
+# dependencies so the descent stops - but stopping is not the same as binding.
+# The specification creates every binding in the graph BEFORE evaluating any of
+# them, so a cycle sees an uninitialised binding rather than a missing one. That
+# is the two-phase instantiate/evaluate split, and it is the next piece. An imported binding is LIVE: if the
 # exporter reassigns it, the importer sees the new value. Copying at link time
 # is the CommonJS behaviour, is observably wrong, and passes rung 3 - which is
 # exactly why rung 4 exists separately.

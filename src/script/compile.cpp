@@ -703,6 +703,17 @@ public:
                         hoist(std::string{at(d).text});
                     }
                 }
+            } else if (at(stmt).kind == vp::nk::import_decl) {
+                // AN IMPORT IS A DECLARATION, so its names are hoisted like any
+                // other. Allocating them inside the statement instead put them
+                // ABOVE the statement's register mark, and `release_to(mark)`
+                // handed them straight back - so `import { a }` survived by
+                // luck and `import { a, b }` did not: the next statement's
+                // temporary landed on top of `b`. The same trap
+                // declare_pattern_names records for destructuring.
+                for (const std::int32_t spec : kids(at(stmt))) {
+                    hoist(std::string{at(spec).text});
+                }
             } else if (at(stmt).kind == vp::nk::func_decl) {
                 // A nested function declaration is a BINDING IN ITS SCOPE, and
                 // it has to exist before its own body compiles or a recursive
@@ -1332,9 +1343,22 @@ public:
                                              : spec.a >= 0 ? std::string{at(spec.a).text}
                                                            : std::string{spec.text};
                 const std::uint16_t what = name_operand(exported);
-                const std::uint16_t r = alloc_reg();
+                const int hoisted = find_local(spec.text);
+                if (hoisted < 0) {
+                    fail("`import` of `" + std::string{spec.text} +
+                         "` was not hoisted - see predeclare_locals");
+                    break;
+                }
+                const auto r = static_cast<std::uint16_t>(hoisted);
                 proto().emit(instruction{op::load_import, r, what, from});
-                declare_imported_local(std::string{spec.text}, r);
+                // ALWAYS BOXED, whether or not this module captures it: every
+                // read has to go through the exporter's cell to see the writes
+                // that make the binding live. And no `new_cell` - load_import
+                // has already put the exporter's box here, and boxing a box
+                // leaves the importer reading a cell containing a cell.
+                for (local & each : fn().locals) {
+                    if (each.name == spec.text) { each.boxed = true; }
+                }
             }
             break;
         }
