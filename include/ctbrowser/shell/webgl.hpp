@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <span>
 #include <string>
@@ -286,6 +287,11 @@ public:
     [[nodiscard]] const raster::glsl::value * uniform_for_draw(const gl_program & program,
                                                                std::string_view name,
                                                                uniform_cache & cache) const;
+    // THE TEXTURE SAMPLER EVERY DRAW PATH USES. One, not one per path: it was
+    // written as a lambda inside drawArrays and drawElements simply did not have
+    // it, so every INDEXED draw sampled black - see the definition.
+    [[nodiscard]] std::function<raster::glsl::value(int, float, float)> sampler() const;
+
     void buffer_data(std::uint32_t target, std::vector<std::byte> bytes, std::uint32_t usage);
 
     void shader_source(std::uint32_t shader, std::string source);

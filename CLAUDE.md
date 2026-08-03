@@ -83,7 +83,7 @@ gate and CI runs it.
 - `tools/babylon-ratchet.py` — the ladder for BABYLON.JS, the third corpus, and
   the second ladder over the same bundle: `webgl2-ratchet.py` asks whether
   Babylon draws AT ALL (10/10) and this asks what a scene can CONTAIN. Reads
-  **1/12** — a scene renders, and a texture samples BLACK. `tools/babylon-api.py`
+  **7/12** — through alpha blending; a post-process still blanks the canvas. `tools/babylon-api.py`
   is its width counterpart, 39/43 probes. See `docs/babylon-plan.md`.
 - `tools/module-ratchet.py` — the same loop for ES MODULES. Reads **8/9**: a
   graph links, bindings are LIVE, cycles resolve, module scripts defer like page

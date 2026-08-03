@@ -884,7 +884,30 @@ std::size_t webgl_context::draw_arrays(std::uint32_t mode, int first, int count)
     request.uniform = [this, &program, &block_values](std::string_view name) {
         return uniform_for_draw(program->second, name, block_values);
     };
-    request.sample = [this](int unit, float s, float t) {
+    request.sample = sampler();
+    // A SHADER THAT FAILS AT RUN TIME IS AN ENGINE CONDITION, not a GL one, and
+    // it used to be pure silence. INVALID_OPERATION is the closest GL has, and
+    // it means a page checking getError() sees that the draw did not do what it
+    // asked instead of an empty canvas with a clean bill of health.
+    shader_error_.clear();
+    request.shader_error = &shader_error_;
+    const std::size_t drawn = draw_triangles(request, framebuffer_);
+    if (!shader_error_.empty()) { fail(gl_enum::invalid_operation); }
+    return drawn;
+}
+
+// ONE SAMPLER FOR EVERY DRAW PATH, and the reason it is a function rather than
+// a lambda written twice is a real bug: `drawArrays` set `request.sample` and
+// `drawElements` DID NOT. Every indexed draw therefore sampled (0, 0, 0, 1) -
+// black - however correct the texture was, and an indexed draw is what a mesh
+// is. Babylon's every textured material came out black while a hand-written
+// `drawArrays` quad through the same context sampled perfectly, which is what
+// made it look like a Babylon problem for a while.
+//
+// Two copies of one job is the shape this tree has paid for three times now -
+// two URL parsers, two base64 decoders, two sampler callbacks - so there is one.
+std::function<raster::glsl::value(int, float, float)> webgl_context::sampler() const {
+    return [this](int unit, float s, float t) {
         const auto bound = texture_units_.find(static_cast<std::uint32_t>(unit));
         if (bound == texture_units_.end()) { return glsl::value::vector({0, 0, 0, 1}); }
         const auto texture = textures_.find(bound->second);
@@ -912,15 +935,6 @@ std::size_t webgl_context::draw_arrays(std::uint32_t mode, int first, int count)
                                     static_cast<float>(texel & 0xFF) / 255.0f,
                                     static_cast<float>((texel >> 24) & 0xFF) / 255.0f});
     };
-    // A SHADER THAT FAILS AT RUN TIME IS AN ENGINE CONDITION, not a GL one, and
-    // it used to be pure silence. INVALID_OPERATION is the closest GL has, and
-    // it means a page checking getError() sees that the draw did not do what it
-    // asked instead of an empty canvas with a clean bill of health.
-    shader_error_.clear();
-    request.shader_error = &shader_error_;
-    const std::size_t drawn = draw_triangles(request, framebuffer_);
-    if (!shader_error_.empty()) { fail(gl_enum::invalid_operation); }
-    return drawn;
 }
 
 // --- uniform blocks ---------------------------------------------------------
@@ -1099,6 +1113,7 @@ std::size_t webgl_context::draw_elements(std::uint32_t mode, int count, std::uin
     request.uniform = [this, &program, &block_values](std::string_view name) {
         return uniform_for_draw(program->second, name, block_values);
     };
+    request.sample = sampler();
     // A SHADER THAT FAILS AT RUN TIME IS AN ENGINE CONDITION, not a GL one, and
     // it used to be pure silence. INVALID_OPERATION is the closest GL has, and
     // it means a page checking getError() sees that the draw did not do what it

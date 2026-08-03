@@ -3598,6 +3598,35 @@ void install_typed_arrays(context & cx) {
         made->set("__bytes", bytes);
         return out;
     });
+
+    // `ArrayBuffer.isView(x)` - IS THIS A TYPED ARRAY OR A DataView.
+    //
+    // One method, and without it the whole of Babylon's physically-based
+    // material path was unreachable: PBRMaterial and
+    // PBRMetallicRoughnessMaterial both threw `isView is not a function` in
+    // their constructors. It is the cheapest item docs/babylon-plan.md
+    // measured, by a wide margin.
+    //
+    // THE ANSWER IS THE OBJECT'S OWN, not a guess from its shape: an
+    // array_object records the element kind it views bytes with, so a typed
+    // array and an ordinary array are told apart by what they ARE rather than
+    // by whether they happen to have a `BYTES_PER_ELEMENT` property.
+    //
+    // ON THE NATIVE'S OWN TABLE. `ArrayBuffer` is a native_object, not an
+    // object_object - define_native makes a function that is also an object -
+    // so it carries its statics in `props`, and casting it to object_object
+    // writes the property somewhere nothing will ever look for it.
+    const value array_buffer = cx.global("ArrayBuffer");
+    if (array_buffer.is_kind(heap_kind::native)) {
+        auto * table = static_cast<native_object *>(array_buffer.as_heap());
+        table->set(
+            "isView",
+            value::object(cx.allocate<native_object>("isView", [](context &, std::span<value> a) {
+                if (a.empty() || !a[0].is_array()) { return value::boolean(false); }
+                const auto * made = static_cast<array_object *>(a[0].as_heap());
+                return value::boolean(made->elements != element_kind::none);
+            })));
+    }
 }
 
 // `new Function(body)` - A COMPILER AT RUN TIME.

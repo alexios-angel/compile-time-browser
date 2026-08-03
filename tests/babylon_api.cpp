@@ -101,9 +101,8 @@ int main() {
                                reinterpret_cast<const std::byte *>(probes.data() + probes.size())});
     page.assets().add(
         "babylon.js",
-        std::vector<std::byte>{
-            reinterpret_cast<const std::byte *>(bundle.data()),
-            reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
+        std::vector<std::byte>{reinterpret_cast<const std::byte *>(bundle.data()),
+                               reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
     page.load_html(R"(<html><head><meta charset="utf-8">
         <script src="babylon.js"></script>
         <script src="probe.js"></script></head>

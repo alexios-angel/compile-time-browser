@@ -19,8 +19,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
-#include <memory>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -33,18 +33,18 @@ namespace {
 
 enum rung : int {
     rung_none = 0,
-    rung_scene = 1,     // a box lands on the canvas in the right colour
-    rung_texture = 2,   // a texture SAMPLES - the commonest thing a material does
-    rung_two = 3,       // two meshes, two materials, both in the picture
-    rung_animate = 4,   // the silhouette changes under a running Animation
-    rung_light = 5,     // a directional light shades one face differently
-    rung_specular = 6,  // a highlight exists
-    rung_alpha = 7,     // a transparent mesh shows what is behind it
-    rung_post = 8,      // a post-process leaves the scene visible
-    rung_shadow = 9,    // a shadow generator darkens the ground
-    rung_pbr = 10,      // a PBRMaterial renders
-    rung_gltf = 11,     // SceneLoader brings in a mesh
-    rung_gui = 12,      // a babylon.gui.js control draws
+    rung_scene = 1,    // a box lands on the canvas in the right colour
+    rung_texture = 2,  // a texture SAMPLES - the commonest thing a material does
+    rung_two = 3,      // two meshes, two materials, both in the picture
+    rung_animate = 4,  // the silhouette changes under a running Animation
+    rung_light = 5,    // a directional light shades one face differently
+    rung_specular = 6, // a highlight exists
+    rung_alpha = 7,    // a transparent mesh shows what is behind it
+    rung_post = 8,     // a post-process leaves the scene visible
+    rung_shadow = 9,   // a shadow generator darkens the ground
+    rung_pbr = 10,     // a PBRMaterial renders
+    rung_gltf = 11,    // SceneLoader brings in a mesh
+    rung_gui = 12,     // a babylon.gui.js control draws
 };
 
 [[nodiscard]] const char * rung_name(int level) {
@@ -122,6 +122,12 @@ struct measurement {
 // several rungs below turn on exactly that difference.
 struct picture {
     std::vector<std::pair<std::uint32_t, int>> colours; // most common first
+    // EVERY PIXEL, IN SCAN ORDER, reduced to one number. A colour histogram
+    // cannot see a picture that MOVED: a rotation preserves area, so the same
+    // mesh turned by 22 degrees has the same colours in the same amounts and a
+    // count-based rung reads it as "nothing happened". Rung 4 was written that
+    // way and failed against a working animation.
+    std::uint64_t digest = 0;
     bool ok = false;
 
     [[nodiscard]] int count_of(std::uint32_t rgb) const {
@@ -161,8 +167,8 @@ struct picture {
     for (int y = 0; y < static_cast<int>(pixels->height); ++y) {
         for (int x = 0; x < static_cast<int>(pixels->width); ++x) {
             const ctbrowser::color c{pixels->at(x, y)};
-            const std::uint32_t key = (std::uint32_t{c.red()} << 16) |
-                                      (std::uint32_t{c.green()} << 8) | c.blue();
+            const std::uint32_t key =
+                (std::uint32_t{c.red()} << 16) | (std::uint32_t{c.green()} << 8) | c.blue();
             bool found = false;
             for (auto & [existing, n] : out.colours) {
                 if (existing == key) {
@@ -172,11 +178,11 @@ struct picture {
                 }
             }
             if (!found) { out.colours.emplace_back(key, 1); }
+            out.digest = (out.digest ^ key) * 1099511628211ULL; // FNV-1a
         }
     }
-    std::ranges::sort(out.colours, [](const auto & a, const auto & b) {
-        return a.second > b.second;
-    });
+    std::ranges::sort(out.colours,
+                      [](const auto & a, const auto & b) { return a.second > b.second; });
     out.ok = true;
     return out;
 }
@@ -184,12 +190,12 @@ struct picture {
 // A PAGE WITH BABYLON ON IT, one per rung. Sharing a page would let a rung that
 // leaves the scene in a strange state decide the verdict for the next one.
 [[nodiscard]] std::unique_ptr<ctbrowser::shell::browser> babylon_page(const std::string & bundle) {
-    auto page = std::make_unique<ctbrowser::shell::browser>(
-        ctbrowser::shell::browser_options{200, 200});
-    page->assets().add("babylon.js",
-                       std::vector<std::byte>{
-                           reinterpret_cast<const std::byte *>(bundle.data()),
-                           reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
+    auto page =
+        std::make_unique<ctbrowser::shell::browser>(ctbrowser::shell::browser_options{200, 200});
+    page->assets().add(
+        "babylon.js",
+        std::vector<std::byte>{reinterpret_cast<const std::byte *>(bundle.data()),
+                               reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
     page->load_html(R"(<html><head><meta charset="utf-8">
       <script src="babylon.js"></script></head>
       <body><canvas id=c width=64 height=64></canvas></body></html>)");
@@ -224,7 +230,7 @@ struct render_result {
             window.__engine = engine; window.__scene = scene;
             window.__camera = camera; window.__box = box;
             var said = (function () { )JS"} +
-                              setup + R"JS( })();
+                             setup + R"JS( })();
             window.__frames = 0;
             engine.runRenderLoop(function () { window.__frames++; scene.render(); });
             return said === undefined ? 'ok' : String(said);
@@ -274,10 +280,16 @@ const std::uint32_t clear_blue = 0x0000ff;
     // it no material carrying an image works at all - which is most of what
     // anybody uses Babylon for.
     //
-    // THROUGH emissiveTexture WITH A WHITE emissiveColor, so the answer does
-    // not depend on the lighting being right as well: the box should be the
-    // texture's own green. A texture that fails to sample reads BLACK, which is
-    // a different reading from "the box is missing" and the rung reports which.
+    // THROUGH emissiveTexture WITH A BLACK emissiveColor, so the answer does not
+    // depend on the lighting being right as well and the texture is the ONLY
+    // thing that can colour the box.
+    //
+    // BLACK, NOT WHITE, and the difference cost a measurement. Babylon's shader
+    // says `emissiveColor += texture(emissiveSampler, uv).rgb * vEmissiveInfos.y`
+    // - it ADDS - so a white emissiveColor saturates to white whether the
+    // texture sampled or not, and the rung reads the same either way. It was
+    // written with white and reported "0 green pixels" while the sampler was
+    // broken AND after it was fixed.
     {
         auto page = babylon_page(bundle);
         const render_result r = render(*page, R"JS(
@@ -287,7 +299,7 @@ const std::uint32_t clear_blue = 0x0000ff;
             ctx.fillRect(0, 0, 16, 16);
             t.update();
             box.material.emissiveTexture = t;
-            box.material.emissiveColor = new BABYLON.Color3(1, 1, 1);
+            box.material.emissiveColor = new BABYLON.Color3(0, 0, 0);
             box.material.disableLighting = true;
             return 'ready=' + t.isReady();
         )JS");
@@ -347,18 +359,21 @@ const std::uint32_t clear_blue = 0x0000ff;
             box.scaling = new BABYLON.Vector3(1, 0.4, 1);
             BABYLON.Animation.CreateAndStartAnimation(
                 'spin', box, 'rotation.z', 30, 120, 0, Math.PI / 2, 0);
-        )JS", 2);
-        const int early = 4096 - before.image.count_of(clear_blue);
+        )JS",
+                                            2);
         for (int i = 0; i < 60; ++i) { page->tick(16); }
         const picture later = canvas_of(*page);
-        const int late = 4096 - later.count_of(clear_blue);
-        // A FLAT box rotating about z sweeps a very different area, so the two
-        // readings differ by a lot when this works.
-        if (std::abs(early - late) < 100) {
+        // THE PIXELS, NOT THE COUNT. See picture::digest: a rotation PRESERVES
+        // AREA, so counting painted pixels reads a turning mesh as a still one.
+        // This rung was written that way and failed against a working
+        // animation - the rotation had reached 0.38 radians and the count had
+        // moved by 16 pixels out of 592.
+        if (before.image.digest == later.digest) {
             m.fail_at(rung_animate,
-                      "an animation did not change the picture (" + std::to_string(early) +
-                          " painted at frame 2, " + std::to_string(late) + " at frame 62; rot=" +
-                          ask(*page, "String(window.__box.rotation.z)") + ")");
+                      "an animation did not change the picture (identical pixels at frame 2 and "
+                      "frame 62; rotation.z=" +
+                          ask(*page, "String(window.__box.rotation.z)") + ", " + later.describe() +
+                          ")");
             return m;
         }
     }
@@ -470,14 +485,13 @@ const std::uint32_t clear_blue = 0x0000ff;
         const int red = r.image.count_of(0xff0000);
         const int black = r.image.count_of(0x000000);
         if (red < 300) {
-            m.fail_at(rung_post,
-                      "a pass post-process lost the scene: " + std::to_string(red) +
-                          " red pixels" +
-                          (black > 2000 ? " and " + std::to_string(black) +
-                                              " BLACK ones - the whole canvas went dark"
-                                        : "") +
-                          " (" + r.image.describe() + ")" +
-                          (r.error.empty() ? "" : " | " + r.error));
+            m.fail_at(rung_post, "a pass post-process lost the scene: " + std::to_string(red) +
+                                     " red pixels" +
+                                     (black > 2000 ? " and " + std::to_string(black) +
+                                                         " BLACK ones - the whole canvas went dark"
+                                                   : "") +
+                                     " (" + r.image.describe() + ")" +
+                                     (r.error.empty() ? "" : " | " + r.error));
             return m;
         }
     }
@@ -537,8 +551,8 @@ const std::uint32_t clear_blue = 0x0000ff;
         )JS");
         const int painted = 4096 - r.image.count_of(clear_blue);
         if (painted < 400) {
-            m.fail_at(rung_pbr, "a PBR material painted " + std::to_string(painted) +
-                                    " pixels (" + r.image.describe() + ")" +
+            m.fail_at(rung_pbr, "a PBR material painted " + std::to_string(painted) + " pixels (" +
+                                    r.image.describe() + ")" +
                                     (r.error.empty() ? "" : " | " + r.error));
             return m;
         }

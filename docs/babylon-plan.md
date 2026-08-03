@@ -32,7 +32,13 @@ frame-dependent feature above measurable at all.
 
 ## What is broken, in the order the measurement puts them
 
-### 1. Textures sample as BLACK — every textured material
+### 1. Textures sample as BLACK — every textured material — FIXED
+
+**`drawArrays` set a texture sampler on its draw request and `drawElements` did
+not.** Every indexed draw sampled `(0, 0, 0, 1)` however correct the texture
+was — and an indexed draw is what a mesh is. That is why the hand-written
+`drawArrays` quad below sampled perfectly through the same context. There is one
+sampler now, shared by both paths.
 
 The box comes back `0,0,0` with a `DynamicTexture`, and again with a
 `RawTexture`, and again with the texture on `emissiveTexture` and
@@ -67,7 +73,10 @@ has no line topology for filled meshes, so the draw silently produces no
 fragments. **Refusing loudly would be better than the current silence** even
 before it is implemented.
 
-### 4. `PBRMaterial` throws: `ArrayBuffer.isView` is not a function
+### 4. `PBRMaterial` throws: `ArrayBuffer.isView` is not a function — FIXED
+
+One method. Both PBR materials construct now, and the surface probe reads
+41/43 with only the two corpus gaps left.
 
 One missing standard-library method, and the entire physically-based material
 path is unreachable. This is the cheapest item on the list by a wide margin.
@@ -132,6 +141,26 @@ tests: an example is what a HUMAN looks at, and the goldens are what catch a
 render changing by accident. It is deterministic for the same reason the other
 example pages are — `Math.random` is seeded — and it draws a scene that
 exercises what the ladder has reached rather than what it has not.
+
+## Lighting, which is measured rather than eyeballed
+
+`tests/babylon_lighting.cpp` computes what a Lambert surface should be and
+compares: a plane whose normal is exactly `(0, 0, -1)` under one directional
+light, with no specular, no emissive and no ambient, so
+
+    colour = diffuseColor * intensity * max(0, dot(N, -L))
+
+is the whole answer. It reads **204 for `dot = 1`, 102 at 60 degrees, 144 at 45,
+0 facing away** and 102 for a material at half the diffuse colour — every one
+exact.
+
+That is a different claim from ratchet rung 5, which only asks whether a light
+produces two different shades. A transposed normal matrix, an intensity applied
+twice or a Lambert term clamped in the wrong place would all still give two
+shades and all still be wrong. **`examples/pages/babylon-scene.html` is lit for
+the same reason** — no `disableLighting` anywhere, a directional key light and a
+dim hemispheric fill, a box turned so three faces catch the light at three
+angles, and a sphere carrying the specular highlight.
 
 ## Verification, and the thing most likely to break
 

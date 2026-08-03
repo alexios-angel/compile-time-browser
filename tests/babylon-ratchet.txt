@@ -19,42 +19,50 @@
 # canvas showed nothing but the clear colour. A Babylon feature that is missing
 # here fails SILENTLY from JavaScript - that is the character of this corpus.
 
-level=1
-blocker=a green texture painted 0 green pixels (ready=true, 2 colours 0,0,255x2652 255,255,255x1444)
+level=7
+blocker=a pass post-process lost the scene: 0 red pixels and 4096 BLACK ones - the whole canvas went dark (1 colours 0,0,0x4096)
 
-# FIRST READING, and it is the scoping measurement rather than a result. Written
-# after docs/babylon-plan.md measured the corpus one feature at a time; the
-# numbers below are from that probe and are what the rungs were shaped around.
+# 7/12 ON THE SECOND READING, and one engine bug did most of it.
 #
-# WHAT ALREADY WORKS, confirmed by pixels and not by the absence of an
-# exception: meshes (box, sphere, ground, MergeMeshes, clone, dispose),
-# instancing, world transforms set before AND changed during frames, animation
-# (rotation.y reaches 1.48 over 60 frames, getDeltaTime advances), FreeCamera
-# and ArcRotateCamera including movement during frames, hemispheric, point and
-# directional lights, exponential fog, and picking.
+# THE BUG: `drawArrays` set a texture sampler on its draw request and
+# `drawElements` DID NOT. Every INDEXED draw therefore sampled (0, 0, 0, 1) -
+# black - however correct the texture was, and an indexed draw is what a mesh
+# is. A hand-written `drawArrays` quad sampled a texture perfectly through the
+# same context, which is what made this look like a Babylon problem rather than
+# an engine one for a while. There is ONE sampler now, shared by both paths:
+# two copies of one job is the shape this tree has paid for three times, with
+# two URL parsers, two base64 decoders and now two sampler callbacks.
 #
-# WHAT IS BROKEN, in the order the measurement put them:
+# AND `ArrayBuffer.isView`, which did not exist. One missing standard-library
+# method, and PBRMaterial and PBRMetallicRoughnessMaterial both threw in their
+# constructors - the whole physically-based path unreachable.
 #
-#   TEXTURES SAMPLE AS BLACK. A DynamicTexture painted green, a RawTexture, and
-#   the same texture on emissiveTexture with a white emissiveColor all give a
-#   box of 0,0,0. The mesh has UVs - 48 floats on a box - and isReady() is true.
-#   And it is BABYLON'S PATH, not texturing: a plain WebGL 2 textured quad
-#   through the same context renders green across the whole canvas. Something
-#   between Babylon's texture object and the sampler is losing it.
+# TWO OF THE FOUR RUNGS THAT MOVED WERE MY OWN MISTAKES, recorded because the
+# next reader will write rungs too:
 #
-#   A POST-PROCESS BLANKS THE CANVAS. PassPostProcess is the IDENTITY and leaves
-#   all 4096 pixels at 0,0,0 - not the clear colour, black, with the scene's own
-#   render gone too. Probably the same fault as textures reached from the other
-#   side, since a post-process samples a framebuffer; worth re-measuring rather
-#   than assuming.
+#   RUNG 2 SET emissiveColor TO WHITE and expected a green box. Babylon's
+#   shader says `emissiveColor += texture(emissiveSampler, uv).rgb * ...` - it
+#   ADDS - so white saturates to white whether the texture sampled or not, and
+#   the rung read the same before and after the fix. It sets BLACK now, so the
+#   texture is the only thing that can colour the box.
 #
-#   WIREFRAME DRAWS NOTHING. The rasteriser has no line topology for a filled
-#   mesh, so the draw produces no fragments and says nothing. Refusing loudly
-#   would beat the silence even before it is implemented.
+#   RUNG 4 COUNTED PAINTED PIXELS to see an animation move. A rotation
+#   PRESERVES AREA: the box had turned 0.38 radians and the count had moved by
+#   16 pixels out of 592. It compares the pixels themselves now (picture::digest),
+#   which is what "the picture changed" actually means.
 #
-#   PBRMaterial THROWS: `ArrayBuffer.isView` is not a function. One missing
-#   standard-library method, and the whole physically-based path is unreachable.
-#   The cheapest item on the list by a wide margin.
+# WHAT PASSES NOW: a scene renders, a texture samples, two meshes with two
+# materials, an animation moves the picture, A DIRECTIONAL LIGHT SHADES (two
+# distinct shades on a turned box, which is what says the normal matrix
+# arrived), SPECULAR (a highlight brighter than the diffuse term), and ALPHA
+# BLENDING (a colour with both channels, which no opaque draw here can make).
 #
-#   BABYLON.GUI IS NOT IN THE BUNDLE. It ships as a separate babylon.gui.js.
-#   A corpus question rather than an engine one, which is why it is rung 12.
+# RUNG 8 IS THE POST-PROCESS, and it is the last purely-engine item on the
+# ladder: PassPostProcess is the IDENTITY - it copies the frame and changes
+# nothing - and it leaves all 4096 pixels BLACK, taking the scene's own render
+# with it. A post-process renders into a framebuffer and then draws a
+# full-screen quad sampling it, so the next thing to check is framebuffer
+# attachments rather than sampling, which now works.
+#
+# RUNGS 11 AND 12 NEED CORPUS ADDITIONS - a glTF asset and babylon.gui.js - and
+# are a corpus decision rather than an engine one.

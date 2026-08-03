@@ -17,17 +17,28 @@
      no Math.random, nothing moves, and every frame after the effect compiles is
      the same frame.
 
+     IT IS LIT, and that is the point of the page rather than a decoration.
+     Every material here takes its colour from a LIGHT: a directional light for
+     the shape and a dim hemispheric one so the unlit faces are not pure black.
+     Nothing uses `disableLighting`.
+
+     That means the picture depends on the whole lighting path being right - the
+     normal matrix, the light's direction in world space, the Lambert term and
+     the specular exponent - and a fault in any of them shows up as a face that
+     is the wrong brightness rather than as an error. tests/babylon_lighting.cpp
+     checks those numbers against the arithmetic; this page is what a human
+     looks at, and it is where a wrong one is OBVIOUS: the three box faces are
+     lit differently on purpose, so a normal matrix that stopped arriving would
+     flatten them into one colour.
+
      WHAT IT DRAWS, and why each piece is here rather than a prettier scene:
-       - a box and a sphere, so two meshes and two materials are on screen
-       - both with disableLighting and an emissive colour, so the picture does
-         not depend on the lighting model being right as well; that is rung 5
-         of tests/babylon-ratchet.txt and this page is not the place to claim it
-       - a hemispheric light and a directional light all the same, because a
-         scene with no light at all takes a different path through Babylon's
-         shader assembly than the one a real page uses
-       - a ground plane, which is the only thing here with a large flat area,
-         so a change in the projection or the depth test shows up as a shape
-         rather than as a few edge pixels
+       - a box turned so THREE faces are visible, each at a different angle to
+         the light, so the shading has to be right three times
+       - a sphere, which is a continuous gradient rather than three flat faces,
+         plus a specular highlight - the one thing on the page that depends on
+         the view direction as well as the light direction
+       - a ground plane, the only large flat area, so a change in the projection
+         or the depth test shows up as a shape rather than as a few edge pixels
 
      tests/babylon_ratchet.cpp is the ladder and tests/babylon_api.cpp is the
      surface; this is what a HUMAN looks at, and the golden is what catches the
@@ -53,35 +64,51 @@
       var camera = new BABYLON.FreeCamera('camera', new BABYLON.Vector3(0, 2.2, -6.5), scene);
       camera.setTarget(new BABYLON.Vector3(0, 0.4, 0));
 
-      // Both lights exist so the shader Babylon assembles is the one a real
-      // page gets. The materials below opt out of lighting deliberately - see
-      // the note at the top.
-      new BABYLON.HemisphericLight('sky', new BABYLON.Vector3(0, 1, 0), scene);
-      var sun = new BABYLON.DirectionalLight('sun', new BABYLON.Vector3(-0.4, -1, 0.6), scene);
-      sun.position = new BABYLON.Vector3(4, 8, -4);
+      // THE LIGHT THAT SHAPES THE PICTURE. A single directional light, so every
+      // surface's brightness is one dot product away from its normal and a
+      // wrong normal matrix is visible rather than plausible.
+      var sun = new BABYLON.DirectionalLight('sun', new BABYLON.Vector3(-0.5, -1, 0.45), scene);
+      sun.position = new BABYLON.Vector3(5, 9, -4);
+      sun.intensity = 1;
 
-      function flat(name, r, g, b) {
+      // AND A DIM AMBIENT FILL, so a face turned away from the sun is dark
+      // rather than black. Without it the unlit faces are all 0,0,0 and the
+      // difference between "shaded correctly" and "not drawn" disappears -
+      // which is exactly the reading this page exists to make obvious.
+      var fill = new BABYLON.HemisphericLight('fill', new BABYLON.Vector3(0, 1, 0), scene);
+      fill.intensity = 0.25;
+      fill.diffuse = new BABYLON.Color3(0.6, 0.65, 0.8);
+      fill.groundColor = new BABYLON.Color3(0.12, 0.12, 0.16);
+
+      function lit(name, r, g, b, shine) {
         var m = new BABYLON.StandardMaterial(name, scene);
-        m.emissiveColor = new BABYLON.Color3(r, g, b);
-        m.disableLighting = true;
+        m.diffuseColor = new BABYLON.Color3(r, g, b);
+        m.specularColor = shine
+          ? new BABYLON.Color3(0.85, 0.85, 0.85)
+          : new BABYLON.Color3(0, 0, 0);
+        m.specularPower = 48;
         return m;
       }
 
+      // TURNED SO THREE FACES SHOW, each at a different angle to the sun.
       var box = BABYLON.MeshBuilder.CreateBox('box', {size: 2}, scene);
       box.position.x = -1.7;
       box.position.y = 0.6;
       box.rotation.y = 0.6;
       box.rotation.x = 0.25;
-      box.material = flat('boxMat', 0.92, 0.29, 0.29);
+      box.material = lit('boxMat', 0.92, 0.29, 0.29, false);
 
-      var ball = BABYLON.MeshBuilder.CreateSphere('ball', {diameter: 2.1, segments: 16}, scene);
+      // The sphere carries the highlight: a gradient and a specular term, which
+      // is the only thing here that depends on where the CAMERA is as well as
+      // where the light is.
+      var ball = BABYLON.MeshBuilder.CreateSphere('ball', {diameter: 2.1, segments: 24}, scene);
       ball.position.x = 1.7;
       ball.position.y = 0.6;
-      ball.material = flat('ballMat', 0.29, 0.75, 0.95);
+      ball.material = lit('ballMat', 0.29, 0.75, 0.95, true);
 
       var ground = BABYLON.MeshBuilder.CreateGround('ground', {width: 9, height: 9}, scene);
       ground.position.y = -0.9;
-      ground.material = flat('groundMat', 0.16, 0.17, 0.22);
+      ground.material = lit('groundMat', 0.42, 0.44, 0.5, false);
 
       // A RENDER LOOP, and it has to be one. Babylon compiles its effects
       // through PROMISES, and a promise settles at the end of a turn - so a
