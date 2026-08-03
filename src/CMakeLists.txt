@@ -363,6 +363,7 @@ target_sources(ctbrowser-raster
     raster/software.cpp
     raster/renderer.cpp
     raster/glsl.cpp
+    raster/glsl_translate.cpp
     raster/glsl_preprocess.cpp
     raster/glsl_eval.cpp
     raster/softgl.cpp
@@ -384,6 +385,7 @@ target_sources(ctbrowser-raster
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/compositor.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/pipeline.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/glsl.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/glsl_translate.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/softgl.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/spirv.hpp")
 target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
