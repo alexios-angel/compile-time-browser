@@ -1,0 +1,48 @@
+# Which Babylon probes pass. tests/babylon_api.cpp measures it; this file
+# records it. A probe that used to pass and now does not FAILS the test.
+#
+# Only tools/babylon-api.py --advance writes this file. A test that edits its
+# own expectations cannot fail, so advancing is a deliberate act.
+#
+# The probes themselves are tests/webgl2-api-probe.js, one per line here as
+# `module/name`. A probe that is SKIPPED is not recorded - it is not a claim
+# about anything working.
+animation/CreateAndStartAnimation
+animation/keyframed Animation
+camera/ArcRotateCamera
+camera/FreeCamera
+camera/attachControl
+camera/isInFrustum
+light/DirectionalLight
+light/HemisphericLight
+light/PointLight
+light/ShadowGenerator
+light/SpotLight
+loader/SceneLoader exists
+material/MultiMaterial
+material/ShaderMaterial
+material/StandardMaterial
+math/Matrix decompose
+math/Quaternion from euler
+math/Vector3 arithmetic
+mesh/CreateBox
+mesh/CreateCylinder
+mesh/CreateGround
+mesh/CreateLines
+mesh/CreateSphere
+mesh/CreateTorus
+mesh/MergeMeshes
+mesh/VertexData.CreateBox
+mesh/instancing
+mesh/uv and normal attributes
+post/BlackAndWhitePostProcess
+post/PassPostProcess
+scene/clone and dispose
+scene/fog
+scene/getDeltaTime
+scene/observables fire
+scene/pick
+texture/DynamicTexture
+texture/RawTexture
+texture/RenderTargetTexture
+texture/texture wrap and sampling modes

@@ -1,0 +1,60 @@
+# How much of a Babylon.js SCENE this engine can render.
+# tests/babylon_ratchet.cpp measures it; this file records it. The level may not
+# go DOWN, and at the same level the blocker may not CHANGE, without the test
+# failing.
+#
+# Only tools/babylon-ratchet.py --advance writes this file. A test that edits its
+# own expectations cannot fail, so advancing is a deliberate act.
+#
+# The ladder: 1 a scene renders, 2 a texture samples, 3 two meshes with two
+# materials, 4 an animation moves the picture, 5 a directional light shades,
+# 6 specular, 7 alpha blending, 8 a post-process runs, 9 a shadow lands, 10 PBR,
+# 11 glTF import, 12 the GUI.
+#
+# IT STARTS WHERE tests/webgl2-ratchet.txt STOPS. That ladder asks whether
+# Babylon draws AT ALL and reads 10/10; this one asks what a scene can CONTAIN.
+#
+# EVERY RUNG ASKS THE CANVAS, and that is not a stylistic choice. `isReady()`,
+# `material.isReady()` and "did it throw" all answered YES for weeks while the
+# canvas showed nothing but the clear colour. A Babylon feature that is missing
+# here fails SILENTLY from JavaScript - that is the character of this corpus.
+
+level=1
+blocker=a green texture painted 0 green pixels (ready=true, 2 colours 0,0,255x2652 255,255,255x1444)
+
+# FIRST READING, and it is the scoping measurement rather than a result. Written
+# after docs/babylon-plan.md measured the corpus one feature at a time; the
+# numbers below are from that probe and are what the rungs were shaped around.
+#
+# WHAT ALREADY WORKS, confirmed by pixels and not by the absence of an
+# exception: meshes (box, sphere, ground, MergeMeshes, clone, dispose),
+# instancing, world transforms set before AND changed during frames, animation
+# (rotation.y reaches 1.48 over 60 frames, getDeltaTime advances), FreeCamera
+# and ArcRotateCamera including movement during frames, hemispheric, point and
+# directional lights, exponential fog, and picking.
+#
+# WHAT IS BROKEN, in the order the measurement put them:
+#
+#   TEXTURES SAMPLE AS BLACK. A DynamicTexture painted green, a RawTexture, and
+#   the same texture on emissiveTexture with a white emissiveColor all give a
+#   box of 0,0,0. The mesh has UVs - 48 floats on a box - and isReady() is true.
+#   And it is BABYLON'S PATH, not texturing: a plain WebGL 2 textured quad
+#   through the same context renders green across the whole canvas. Something
+#   between Babylon's texture object and the sampler is losing it.
+#
+#   A POST-PROCESS BLANKS THE CANVAS. PassPostProcess is the IDENTITY and leaves
+#   all 4096 pixels at 0,0,0 - not the clear colour, black, with the scene's own
+#   render gone too. Probably the same fault as textures reached from the other
+#   side, since a post-process samples a framebuffer; worth re-measuring rather
+#   than assuming.
+#
+#   WIREFRAME DRAWS NOTHING. The rasteriser has no line topology for a filled
+#   mesh, so the draw produces no fragments and says nothing. Refusing loudly
+#   would beat the silence even before it is implemented.
+#
+#   PBRMaterial THROWS: `ArrayBuffer.isView` is not a function. One missing
+#   standard-library method, and the whole physically-based path is unreachable.
+#   The cheapest item on the list by a wide margin.
+#
+#   BABYLON.GUI IS NOT IN THE BUNDLE. It ships as a separate babylon.gui.js.
+#   A corpus question rather than an engine one, which is why it is rung 12.

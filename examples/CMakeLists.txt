@@ -96,8 +96,15 @@ foreach(source ${example-sources})
     # says they work together. Deterministic by construction - no Math.random,
     # and the player sweeps on a frame-count script when no key is held, so the
     # same frame cap always produces the same frame.
+    # babylonscene is the THIRD library and the hardest of the three: a 3D
+    # engine with its own scene graph, camera and light model, a material system
+    # and a shader assembled at run time - and every uniform delivered through a
+    # BUFFER, which is what made it the corpus that found the WebGL 2 gaps. The
+    # page renders a fixed number of times rather than running a render loop,
+    # because Babylon compiles its effects asynchronously and a loop would make
+    # the frame depend on timing.
     set(golden-examples widgets elements p5basic p5text p5transform p5shape p5pixels
-        p5image webgltriangle p5webgl phaserbasic phaserinvaders)
+        p5image webgltriangle p5webgl phaserbasic phaserinvaders babylonscene)
     # plutosvg_FOUND, not CTBROWSER_WITH_SVG: the latter is a compile
     # definition on a target and is not a variable this scope can test.
     if(plutosvg_FOUND)
@@ -117,6 +124,13 @@ foreach(source ${example-sources})
       set(render-frames 30)
       if(example STREQUAL phaserinvaders)
         set(render-frames 150)
+      endif()
+      # Babylon needs longer than a drawing for a different reason than the
+      # game does: it compiles its effects through PROMISES, so the first
+      # frames legitimately draw nothing while they settle. 30 frames is a
+      # golden of pure background.
+      if(example STREQUAL babylonscene)
+        set(render-frames 90)
       endif()
       add_test(NAME render-${example} COMMAND ${CMAKE_COMMAND}
                -DEXE=$<TARGET_FILE:ctbrowser-example-${example}>

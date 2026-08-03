@@ -80,6 +80,11 @@ gate and CI runs it.
   shape. `--coverage` lists the namespaces no probe mentions, which is the work
   queue. The ratchet read 10/10 while `(5).hasOwnProperty` was undefined,
   because nothing on the ladder asked a number for a property.
+- `tools/babylon-ratchet.py` — the ladder for BABYLON.JS, the third corpus, and
+  the second ladder over the same bundle: `webgl2-ratchet.py` asks whether
+  Babylon draws AT ALL (10/10) and this asks what a scene can CONTAIN. Reads
+  **1/12** — a scene renders, and a texture samples BLACK. `tools/babylon-api.py`
+  is its width counterpart, 39/43 probes. See `docs/babylon-plan.md`.
 - `tools/module-ratchet.py` — the same loop for ES MODULES. Reads **8/9**: a
   graph links, bindings are LIVE, cycles resolve, module scripts defer like page
   scripts and relative specifiers resolve against the importer, and dynamic
@@ -200,6 +205,7 @@ Read the one that matches what you are touching — not all of them.
 | `docs/webgl2-plan.md` | WebGL 2: the SUBSET p5.js actually uses, scoped by measurement, what refuses by name, and why the p5-webgl golden moving would mean the new path is wrong. **Babylon.js renders a scene (ratchet 10/10)** - which took uniform BUFFER objects, moved into scope after "out of scope" turned out to mean every matrix reads zero while nothing errors |
 | `docs/performance.md` | **where the time actually goes, measured** — how to profile on WSL2 (callgrind, because `perf` cannot work), what landed, and the three confident hypotheses that measured wrong. **Read before optimising anything.** |
 | `docs/modules-plan.md` | **ES modules — running ordinary JavaScript with nothing shimmed.** `import`/`export` are not even keywords in ctjs today, and `run_scripts` concatenates every `<script>` into ONE program, which is what modules cannot be. Babylon's UMD build rejects its own dynamic `import()`, which is what blocks webgl2 rung 10 |
+| `docs/babylon-plan.md` | **Babylon.js, from "renders a box" to functional** — what a scene can contain, measured one feature at a time rather than listed. Textures sample BLACK, a post-process blanks the canvas, `wireframe` draws nothing, `PBRMaterial` throws on one missing string method, and the GUI is a separate bundle. The twelve-rung ladder, the surface probe and the example page |
 | `docs/ada-url-plan.md` | **this engine parses URLs by the wrong standard** — `shell/url.cpp` is RFC 3986 (Boost.URL) where browsers are WHATWG. Measured against ada: 8 of 15 cases differ, including backslash URLs losing the host and IDNA hosts never resolving. Read before touching `shell/url` |
 | `docs/computed-goto-plan.md` | replacing the VM's `switch` dispatch with computed gotos: the macro layer that falls back to `switch` off GNU, the pragmas that make it survive `-pedantic -Werror` on clang AND gcc, and **the measurement that will probably cancel it** — the whole interpreter is 1.4% of a page render |
 | `docs/lexer-plan.md` | the JS lexer this engine is writing to replace ctjs's, why, and how it is verified. **Read before touching `script/lexer`** |

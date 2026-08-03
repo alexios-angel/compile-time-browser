@@ -1,0 +1,100 @@
+<!doctype html>
+<!-- Babylon.js, running on this engine.
+
+     THE THIRD LIBRARY, and a different claim from the first two. p5 and Phaser
+     are 2D frameworks that happen to reach WebGL; Babylon is a 3D ENGINE - it
+     brings its own scene graph, its own camera and light model, its own
+     material system and a shader it assembles at run time out of a hundred
+     `#define`s. Everything on this page is Babylon's; the engine underneath
+     only has to answer correctly.
+
+     DETERMINISTIC BY CONSTRUCTION, which a golden requires - but NOT by
+     rendering a fixed number of times, which was the first attempt and does not
+     work: Babylon compiles its effects through PROMISES, and a promise settles
+     at the end of a turn, so a synchronous loop of render() calls never sees
+     one resolve. It produced a golden of pure background. The page runs a real
+     render loop instead, and is deterministic because the scene never changes:
+     no Math.random, nothing moves, and every frame after the effect compiles is
+     the same frame.
+
+     WHAT IT DRAWS, and why each piece is here rather than a prettier scene:
+       - a box and a sphere, so two meshes and two materials are on screen
+       - both with disableLighting and an emissive colour, so the picture does
+         not depend on the lighting model being right as well; that is rung 5
+         of tests/babylon-ratchet.txt and this page is not the place to claim it
+       - a hemispheric light and a directional light all the same, because a
+         scene with no light at all takes a different path through Babylon's
+         shader assembly than the one a real page uses
+       - a ground plane, which is the only thing here with a large flat area,
+         so a change in the projection or the depth test shows up as a shape
+         rather than as a few edge pixels
+
+     tests/babylon_ratchet.cpp is the ladder and tests/babylon_api.cpp is the
+     surface; this is what a HUMAN looks at, and the golden is what catches the
+     render changing by accident. -->
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Babylon.js on ctbrowser</title>
+    <script src="../assets/babylon/babylon.js"></script>
+    <style>
+      body { margin: 0; background: #101014; }
+      canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <canvas id="scene" width="360" height="260"></canvas>
+    <script>
+      var canvas = document.getElementById('scene');
+      var engine = new BABYLON.Engine(canvas, true);
+      var scene = new BABYLON.Scene(engine);
+      scene.clearColor = new BABYLON.Color4(0.06, 0.06, 0.09, 1);
+
+      var camera = new BABYLON.FreeCamera('camera', new BABYLON.Vector3(0, 2.2, -6.5), scene);
+      camera.setTarget(new BABYLON.Vector3(0, 0.4, 0));
+
+      // Both lights exist so the shader Babylon assembles is the one a real
+      // page gets. The materials below opt out of lighting deliberately - see
+      // the note at the top.
+      new BABYLON.HemisphericLight('sky', new BABYLON.Vector3(0, 1, 0), scene);
+      var sun = new BABYLON.DirectionalLight('sun', new BABYLON.Vector3(-0.4, -1, 0.6), scene);
+      sun.position = new BABYLON.Vector3(4, 8, -4);
+
+      function flat(name, r, g, b) {
+        var m = new BABYLON.StandardMaterial(name, scene);
+        m.emissiveColor = new BABYLON.Color3(r, g, b);
+        m.disableLighting = true;
+        return m;
+      }
+
+      var box = BABYLON.MeshBuilder.CreateBox('box', {size: 2}, scene);
+      box.position.x = -1.7;
+      box.position.y = 0.6;
+      box.rotation.y = 0.6;
+      box.rotation.x = 0.25;
+      box.material = flat('boxMat', 0.92, 0.29, 0.29);
+
+      var ball = BABYLON.MeshBuilder.CreateSphere('ball', {diameter: 2.1, segments: 16}, scene);
+      ball.position.x = 1.7;
+      ball.position.y = 0.6;
+      ball.material = flat('ballMat', 0.29, 0.75, 0.95);
+
+      var ground = BABYLON.MeshBuilder.CreateGround('ground', {width: 9, height: 9}, scene);
+      ground.position.y = -0.9;
+      ground.material = flat('groundMat', 0.16, 0.17, 0.22);
+
+      // A RENDER LOOP, and it has to be one. Babylon compiles its effects
+      // through PROMISES, and a promise settles at the end of a turn - so a
+      // synchronous `for (...) scene.render()` can never see one resolve
+      // however many times it runs. That loop was the first thing written here
+      // and it produced a golden of pure background, which is exactly the
+      // failure a golden nobody looked at would have frozen in place.
+      //
+      // A LOOP IS STILL DETERMINISTIC HERE because the scene never changes:
+      // nothing moves, nothing is random, and every frame after the effect
+      // compiles is the same frame. The render count is fixed by the harness
+      // (CTBROWSER_TEST_FRAMES), not by the page.
+      engine.runRenderLoop(function () { scene.render(); });
+    </script>
+  </body>
+</html>

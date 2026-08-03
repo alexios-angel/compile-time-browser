@@ -1,0 +1,154 @@
+# Babylon.js, from "renders a box" to functional
+
+**Where it stands: `tests/webgl2-ratchet.txt` reads 10/10 — Babylon builds an
+engine, a scene, a camera, a light and a mesh, and the box lands on the canvas
+in the right colour.** That is one rung. It is not a working renderer, and this
+plan is about the distance between the two.
+
+**Everything below is measured on this tree, today, not estimated.** The probe
+that produced it built one page per feature, ran sixty frames, and read the
+CANVAS rather than asking Babylon whether it was happy — because every one of
+the failures here reports success from the JavaScript side.
+
+## What already works
+
+Confirmed by pixels, not by the absence of an exception:
+
+| | evidence |
+|---|---|
+| meshes: box, sphere, ground, `MergeMeshes`, `clone`, `dispose` | a second mesh set apart renders in its own colour, 142 distinct colours |
+| instancing | `createInstance` at a second position paints 1928 pixels where one mesh paints 1444 |
+| world transforms | rotation, position and scaling each change the silhouette, set before frames AND changed during them |
+| animation | `Animation.CreateAndStartAnimation` advances `rotation.y` to 1.48 over 60 frames, and `getDeltaTime` advances |
+| cameras | `FreeCamera` and `ArcRotateCamera`; moving the camera during frames changes the picture |
+| lights | hemispheric, point and directional all change shading; a point light gives 18 distinct colours |
+| fog | `FOGMODE_EXP` produces a real gradient, 7 colours |
+| picking | `scene.pick(32, 32)` reports `hit=true` on the box |
+| construction of `ShadowGenerator`, `RenderTargetTexture`, `SceneLoader` | no throw; whether they *do* anything is untested and unclaimed |
+
+**`getDeltaTime` returning 0 on the first frame and 16 after** is worth noting:
+the render loop is being driven properly, which is what makes every
+frame-dependent feature above measurable at all.
+
+## What is broken, in the order the measurement puts them
+
+### 1. Textures sample as BLACK — every textured material
+
+The box comes back `0,0,0` with a `DynamicTexture`, and again with a
+`RawTexture`, and again with the texture on `emissiveTexture` and
+`emissiveColor` set to white. The mesh has UVs (48 floats on a box).
+`texture.isReady()` is true.
+
+**And it is Babylon's path specifically, not texturing.** A plain WebGL 2
+textured quad — `texImage2D` of one green texel, `sampler2D`, `texture(tex, uv)`
+— renders green across the whole canvas through the same context. So the
+sampler, the texture unit and the rasteriser all work; something between
+Babylon's texture object and the sampler does not.
+
+This is first because it is the largest: without it no material with an image
+works, which is most of what anybody uses Babylon for.
+
+### 2. A post-process blanks the canvas
+
+`new BABYLON.PassPostProcess('pass', 1.0, camera)` — the *identity* post-process,
+which is meant to copy the frame and change nothing — leaves the canvas
+`0,0,0` across all 4096 pixels. Not the clear colour: black. The scene's own
+render is gone too.
+
+A post-process renders the scene into a framebuffer and then draws a full-screen
+quad sampling it, so this is very likely the same fault as (1) reached from the
+other side, plus framebuffer attachments. Worth doing straight after textures
+and worth re-measuring before assuming they are one bug.
+
+### 3. `wireframe` draws nothing
+
+`material.wireframe = true` gives a canvas of pure clear colour. The rasteriser
+has no line topology for filled meshes, so the draw silently produces no
+fragments. **Refusing loudly would be better than the current silence** even
+before it is implemented.
+
+### 4. `PBRMaterial` throws: `ArrayBuffer.isView` is not a function
+
+One missing standard-library method, and the entire physically-based material
+path is unreachable. This is the cheapest item on the list by a wide margin.
+
+### 5. `BABYLON.GUI` is not in the bundle at all
+
+`babylon.js` is the core UMD build; the GUI ships as a separate
+`babylon.gui.js`. Nothing is broken — the corpus simply does not include it.
+**A corpus decision, not an engine one**, and it belongs at the end of the
+ladder rather than the middle.
+
+## The ladder
+
+`tests/babylon_ratchet.cpp` measures, `tests/babylon-ratchet.txt` records,
+`tools/babylon-ratchet.py` drives — the shape used four times now (p5, Phaser,
+WebGL 2, modules).
+
+**It starts where the WebGL 2 ratchet stops.** That one asks "does Babylon draw
+at all" and is answered; this one asks what a scene can contain.
+
+1. **a scene renders** — the box on the canvas, in the right colour. Green on
+   day one, deliberately: a ladder whose first rung fails cannot tell a broken
+   engine from a broken harness.
+2. **a texture samples** — a `DynamicTexture` painted green shows up green.
+3. **a second material and mesh** — two meshes with different materials, both
+   in the picture, each its own colour.
+4. **transforms animate** — the silhouette at frame 60 differs from frame 0
+   under a running `Animation`.
+5. **a directional light shades** — a lit face and an unlit face differ, which
+   is what says the normal matrix arrived.
+6. **specular** — a highlight exists: the brightest pixel is brighter than the
+   diffuse term alone.
+7. **alpha blending** — a half-transparent mesh over another shows both.
+8. **a post-process runs** — `PassPostProcess` leaves the scene visible.
+9. **a shadow lands** — a `ShadowGenerator` darkens the ground under the box.
+10. **PBR** — a `PBRMaterial` renders.
+11. **glTF** — `SceneLoader.ImportMesh` of a small embedded asset appears.
+12. **GUI** — a `babylon.gui.js` control draws.
+
+Rungs 1 and 2 are the immediate work. 11 and 12 need corpus additions and are
+named so the ladder does not have to be rewritten when they arrive.
+
+## The surface probe
+
+`tests/babylon_api.cpp` + `tests/babylon-api-probe.js` + `tests/babylon-api.txt`,
+to `p5_api.cpp`'s shape: **how WIDE the working surface is, as opposed to how
+far one scene gets.** The ratchet stops at its first failure and tells you one
+thing; the probe runs everything and tells you the shape of the gap.
+
+Both are needed here for the reason `phaser-api.py` was written: the Phaser
+ratchet read 10/10 while `(5).hasOwnProperty` was undefined, because nothing on
+the ladder happened to ask a number for a property.
+
+**Probes that are expected to fail are included on purpose**, exactly as
+`webgl2-api-probe.js` does it, and the recorded file says which. Recording "not
+implemented" as a fact beats discovering it later as a wrong answer.
+
+## The example page
+
+`examples/pages/babylon-scene.html`, with a golden. Not a duplicate of the
+tests: an example is what a HUMAN looks at, and the goldens are what catch a
+render changing by accident. It is deterministic for the same reason the other
+example pages are — `Math.random` is seeded — and it draws a scene that
+exercises what the ladder has reached rather than what it has not.
+
+## Verification, and the thing most likely to break
+
+* **The thirteen existing goldens must stay byte-identical.** Texture work
+  touches the sampler path, and `p5-webgl.html` and the Phaser pages draw
+  through it. If one of those moves, the change is wrong.
+* p5 12/12, Phaser 10/10, invaders, and every API surface unmoved.
+* `tools/compare.py` against Chrome for anything where the right answer is a
+  judgement call rather than a fact — shading in particular. There is an oracle
+  and it is already in the repository.
+
+## What this plan does NOT promise
+
+Babylon is enormous — physics, WebXR, node materials, particle systems, sprite
+managers, morph targets, skeletal animation, GPU particles, screen-space
+reflections. **"Fully functional" is not a state this engine will reach**, and
+saying so up front is cheaper than discovering it at rung 40. What the ladder
+above buys is a scene a person would recognise as a 3D scene: textured, lit,
+animated, shadowed, and composited. Anything past rung 12 should be added
+because a corpus asked for it, which is how every other ladder in this tree grew.
