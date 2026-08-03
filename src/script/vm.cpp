@@ -588,6 +588,7 @@ std::size_t context::collect() {
     // same cell.
     for (auto & [specifier, mod] : modules_) {
         for (auto & [name, cell] : mod.exports) { mark(cell); }
+        mark(mod.namespace_object);
     }
     // A thrown value in flight is reachable from nothing else.
     mark(thrown_);
@@ -721,6 +722,36 @@ void context::instantiate_module(const program & prog, module_record & into) {
     }
 }
 
+// THE NAMESPACE OBJECT, and its properties are ACCESSORS rather than values.
+//
+// A namespace is live exactly as a named import is - `ns.count` after the
+// exporter reassigns `count` must read the new value - so copying the cells'
+// contents into an ordinary object here would be the same shortcut in a
+// different shape. Each property is a getter over the cell instead, which is
+// what the cell was for.
+//
+// ONE OBJECT PER MODULE, cached in the record: `import * as a` and `import * as
+// b` of the same module are required to be the SAME object, and code compares
+// namespaces by identity.
+value context::module_namespace(module_record & of) {
+    if (of.namespace_object.is_kind(heap_kind::object)) { return of.namespace_object; }
+    object_object * const ns = allocate<object_object>();
+    of.namespace_object = value::object(ns);
+    for (auto & [name, cell] : of.exports) {
+        const value box = cell;
+        ns->define_accessor(name,
+                            value::object(allocate<native_object>(
+                                "get " + name,
+                                [box](context &, std::span<value>) {
+                                    return box.is_kind(heap_kind::cell)
+                                               ? static_cast<cell_object *>(box.as_heap())->slot
+                                               : value::undefined();
+                                })),
+                            value::undefined());
+    }
+    return of.namespace_object;
+}
+
 // A MODULE IS RUN LIKE ANY OTHER PROGRAM, with two differences: it knows which
 // record it is filling in, so `bind_export` knows which cells to adopt, and its
 // exports outlive the call.
@@ -728,9 +759,49 @@ run_result context::run_module(const program & prog, module_record & into) {
     module_record * const outer = current_module_;
     current_module_ = &into;
     into.compiled = &prog;
-    const run_result result = run(prog);
+    const run_result result = frames_.empty() ? run(prog) : run_reentrant(prog);
     into.evaluated = true;
     current_module_ = outer;
+    return result;
+}
+
+// RUNNING A PROGRAM WHILE ONE IS ALREADY RUNNING, which `run` cannot do and
+// must not pretend to: `execute` CLEARS `frames_` and reassigns `registers_`,
+// because it is the entry point for a whole turn. A dynamic import is the first
+// thing that ever needed a program evaluated from inside the interpreter, and
+// calling `run` there wiped the importing module's own frame - so the module
+// stopped dead at the `import(...)` and every statement after it silently never
+// ran. Nothing threw; the loop simply found no frames left and finished.
+//
+// This is `call`'s shape rather than `run`'s: push a frame on top of what is
+// already there and run down to the depth it started at.
+run_result context::run_reentrant(const program & prog) {
+    run_result result;
+    if (!prog.ok) {
+        result.ok = false;
+        result.error = prog.error;
+        return result;
+    }
+    const function_proto & entry = prog.functions[0];
+    const std::size_t new_base = registers_.size();
+    registers_.resize(new_base + entry.frame_size + 8u, value::undefined());
+    const std::size_t depth = frames_.size();
+    // THE PROGRAM POINTER IS SAVED AND RESTORED. `call` reads it to decide
+    // whether a closure can be entered at all, and leaving it pointing at the
+    // imported module would make every later call in the IMPORTING one look up
+    // its function protos in the wrong program.
+    const program * const outer_program = program_;
+    program_ = &prog;
+    frames_.push_back(
+        call_frame{&entry, 0, new_base, 0, 0, nullptr, value::undefined(), handlers_.size()});
+    (void)run_loop(depth);
+    program_ = outer_program;
+    if (registers_.size() >= new_base) { registers_.resize(new_base); }
+    // NO drain_microtasks HERE. The checkpoint belongs to the end of a turn,
+    // and this is the middle of one - draining now would run the importer's own
+    // pending handlers before its next statement.
+    result.ok = !failed_;
+    result.error = error_;
     return result;
 }
 
@@ -1368,6 +1439,8 @@ void context::resume(value coroutine, value with, bool rejected) {
     X(pass_new_target)                                                                             \
     X(load_import)                                                                                 \
     X(bind_export)                                                                                 \
+    X(dyn_import)                                                                                  \
+    X(load_namespace)                                                                              \
     X(load_callee)                                                                                 \
     X(make_arguments)                                                                              \
     X(push_handler)                                                                                \
@@ -2527,6 +2600,52 @@ value context::run_loop(std::size_t stop_depth) {
                 break;
             }
             reg(in.a) = cell->second;
+            break;
+        }
+        while (0);
+        VM_NEXT;
+
+        VM_CASE(load_namespace) do {
+            reg(in.a) = value::undefined();
+            const std::string & written = vm_proto->names[in.b];
+            const std::string & from = [&]() -> const std::string & {
+                if (current_module_ == nullptr) { return written; }
+                const auto mapped = current_module_->resolved.find(written);
+                return mapped == current_module_->resolved.end() ? written : mapped->second;
+            }();
+            const auto found = modules_.find(from);
+            if (found == modules_.end()) {
+                raise("module `" + from + "` was not loaded");
+                break;
+            }
+            reg(in.a) = module_namespace(found->second);
+            break;
+        }
+        while (0);
+        VM_NEXT;
+
+        VM_CASE(dyn_import) do {
+            // THE REFERRER COMES FROM THE RUNNING FUNCTION, not from
+            // current_module_, and the difference is the whole point: a
+            // dynamic import is usually called long after its module finished
+            // evaluating, from a callback, where current_module_ is null. The
+            // proto knows which module it was compiled in - see
+            // function_proto::module.
+            if (!module_loader_) {
+                raise("dynamic import() has no loader installed");
+                break;
+            }
+            const value spec = reg(in.b);
+            // THE RESULT INTO A LOCAL FIRST, and it is not a style choice. The
+            // loader evaluates the module it fetches, which RE-ENTERS this VM
+            // and grows `registers_` - so a reference to reg(in.a) taken before
+            // the call points into a freed buffer by the time the value comes
+            // back. Written that way it stored the promise into memory nobody
+            // owned and `import(...)` read undefined, with no error anywhere.
+            const value loaded = module_loader_(
+                *this, to_string(spec),
+                vm_frame->proto == nullptr ? std::string{} : vm_frame->proto->module);
+            reg(in.a) = loaded;
             break;
         }
         while (0);

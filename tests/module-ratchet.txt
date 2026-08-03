@@ -15,8 +15,8 @@
 # graph. Then the graph, where live bindings and cycles live. Then the loader,
 # where a page and a network arrive. Babylon last, because it needs all of it.
 
-level=7
-blocker=dynamic import() did not resolve to a namespace (wanted lazy,object got undefined)
+level=8
+blocker=no ES Babylon is vendored to boot - only the UMD build is vendored, and it REJECTS its own dynamic import() - see docs/modules-plan.md
 
 # WHY THIS STARTS AT ZERO, and it is further down than it looks. `import` and
 # `export` are not refused by name in this engine - they are NOT KEYWORDS AT
@@ -184,12 +184,33 @@ blocker=dynamic import() did not resolve to a namespace (wanted lazy,object got 
 # arithmetic stays in the shell, which is the half that will know about URLs and
 # import maps when there are any.
 #
-# RUNG 8 IS DYNAMIC import(), which is the one Babylon's UMD build asks for and
-# rejects. It reads `undefined`: the call is still refused by name at compile
-# time, which is what stage 1 built and what rung 1 measures as UNDERSTOOD. It
-# needs a promise for a namespace object, and a namespace object is a thing this
-# engine does not have yet - `import * as ns` is refused by name for the same
-# reason.
+# RUNG 8 PASSES: dynamic import() returns a promise for a NAMESPACE OBJECT, and
+# `import * as ns` binds one. A namespace's properties are ACCESSORS over the
+# export cells, not values copied at link time - live for the same reason a named
+# import is - and there is one object per module, because two `import * as` of
+# the same module must be the same object.
 #
-# RUNG 9 IS BABYLON'S ES BUILD, and nothing above 8 can be measured until there
-# is one vendored. Only the UMD bundle is here.
+# TWO REAL BUGS ON THE WAY, both silent:
+#
+# `run` CANNOT BE RE-ENTERED. `execute` clears `frames_` and reassigns
+# `registers_` because it is the entry point for a whole turn - so evaluating an
+# imported module from inside the interpreter wiped the IMPORTING module's own
+# frame. The module stopped dead at the `import(...)` and every statement after
+# it never ran. Nothing threw: the loop found no frames left and finished
+# normally. Dynamic import is the first thing that ever needed a program run
+# from inside another, and it has `call`'s shape now rather than `run`'s.
+#
+# It was found by asking whether the code AFTER the import ran, which is a
+# question worth reaching for early: `__before` was 1 and `__after` was
+# undefined, and that ruled out everything about promises, namespaces and the
+# loader in one probe.
+#
+# AND A DESTINATION REGISTER HELD ACROSS A RE-ENTRY. The loader grows
+# `registers_`, so `reg(in.a) = loader(...)` wrote through a reference taken
+# before the call - into a buffer that had been freed. That one was fixed on a
+# hypothesis rather than a measurement, and the measurement then showed it was
+# not the fault that mattered. It is still a real bug and the fix stays.
+#
+# RUNG 9 IS BABYLON'S ES BUILD, and it cannot be measured because there is no ES
+# Babylon vendored - only the UMD bundle. That is a corpus question, not an
+# engine one, and the blocker says so.

@@ -155,6 +155,9 @@ struct module_record {
     // import maps - so it leaves the answer here and `op::load_import` looks it
     // up rather than doing any path arithmetic of its own.
     flat_map<std::string, std::string> resolved;
+    // ONE PER MODULE, made on demand: two `import * as` of the same module must
+    // give the same object. See context::module_namespace.
+    value namespace_object = value::undefined();
     // Evaluated ONCE, however many modules import it. The flag is the whole of
     // "a module is a singleton".
     bool evaluated = false;
@@ -238,6 +241,15 @@ public:
     // evaluating it, so a cyclic importer finds an empty binding rather than a
     // missing one. See the definition.
     void instantiate_module(const program & prog, module_record & into);
+    // THE NAMESPACE OBJECT for a module, live and cached. See the definition.
+    [[nodiscard]] value module_namespace(module_record & of);
+    // WHAT `import(specifier)` CALLS. The VM knows nothing about paths, URLs or
+    // fetching, so a dynamic import hands the specifier and the module that
+    // wrote it to the embedder and expects a promise back.
+    void set_module_loader(
+        std::function<value(context &, const std::string &, const std::string &)> loader) {
+        module_loader_ = std::move(loader);
+    }
     run_result run_module(const program & prog, module_record & into);
     // Where a module is found by specifier. The loader owns the graph; the VM
     // only needs to look a name up when `load_import` runs.
@@ -303,7 +315,9 @@ public:
     // It also makes a diagnosis possible: an uncatchable fault unwinds nothing,
     // so a probe wrapped in try/catch reported no error at all and the failure
     // appeared to come from wherever the run happened to stop.
-    void throw_error(std::string_view kind, std::string message) {
+    // AN ERROR OBJECT WITHOUT THROWING IT. A rejected promise carries one and
+    // is not a throw, so building and throwing had to come apart.
+    [[nodiscard]] value make_error(std::string_view kind, std::string message) {
         value made = make_object();
         auto * o = static_cast<object_object *>(made.as_heap());
         o->set("name", string(std::string{kind}));
@@ -317,7 +331,11 @@ public:
         if (object_object * table = prototype(proto_kind::error)) {
             o->prototype = value::object(table);
         }
-        thrown_ = made;
+        return made;
+    }
+
+    void throw_error(std::string_view kind, std::string message) {
+        thrown_ = make_error(kind, std::move(message));
         if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
     }
 
@@ -915,6 +933,10 @@ private:
     // The module being evaluated, so `bind_export` knows whose cells to adopt and
     // `load_import` knows who is asking. Null while a classic script runs.
     module_record * current_module_ = nullptr;
+    // See the definition: `run` cannot be re-entered, and a dynamic import
+    // needs a program evaluated from inside the interpreter.
+    run_result run_reentrant(const program & prog);
+    std::function<value(context &, const std::string &, const std::string &)> module_loader_;
     bool suspended_ = false;
     // Set by `op::yield_value` so generator_resume can tell a body that YIELDED
     // from one that RETURNED - run_loop hands back a value either way, and the

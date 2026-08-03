@@ -262,9 +262,34 @@ public:
             // the whole module object, which is stage 4 work - it is refused by
             // name rather than bound to nothing.
             if (spec.c == 2) {
-                fail("`import * as ns` is not implemented yet - ES modules are staged in "
-                     "docs/modules-plan.md");
-                return;
+                // `import * as ns`: one binding, holding the exporter's
+                // namespace object. NOT a cell - the namespace is itself the
+                // live thing, because each of its properties reads a cell.
+                const int hoisted_ns = find_local(spec.text);
+                if (hoisted_ns < 0) {
+                    fail("`import * as " + std::string{spec.text} +
+                         "` was not hoisted - see predeclare_locals");
+                    return;
+                }
+                // THROUGH THE CELL IF IT IS ONE. A namespace binding captured
+                // by a function was hoisted BOXED, so writing the register
+                // directly would throw the cell away and leave the closure
+                // reading undefined - the same shape of bug that made an
+                // imported function called from a closure read undefined.
+                bool boxed = false;
+                for (const local & each : fn().locals) {
+                    if (each.name == spec.text) { boxed = each.boxed; }
+                }
+                if (boxed) {
+                    const std::uint16_t temp = alloc_reg();
+                    proto().emit(instruction{op::load_namespace, temp, from});
+                    proto().emit(
+                        instruction{op::cell_set, static_cast<std::uint16_t>(hoisted_ns), temp});
+                } else {
+                    proto().emit(instruction{op::load_namespace,
+                                             static_cast<std::uint16_t>(hoisted_ns), from});
+                }
+                continue;
             }
             // The name the EXPORTER knows it by: the original when renamed,
             // otherwise the same as the local one. `default` for a default
@@ -2351,11 +2376,19 @@ public:
         // Refusing beats accepting: a page whose `import` silently did nothing
         // would run with half its bindings undefined and fail somewhere else
         // entirely, which is the failure mode this tree keeps paying for.
-        case vp::nk::dynamic_import:
-            fail("`import(...)` is not implemented yet - ES modules are staged in "
-                 "docs/modules-plan.md");
-            proto().emit(instruction{op::load_undef, dst});
+        case vp::nk::dynamic_import: {
+            // A RUNTIME SPECIFIER, which is the whole difference from a static
+            // import: there is nothing here for the loader to have resolved in
+            // advance, and nothing to record in out_.imports. The graph a
+            // dynamic import reaches is not knowable at compile time - that is
+            // what it is FOR.
+            const std::uint32_t mark = reg_mark();
+            const std::uint16_t spec = alloc_reg();
+            compile_expr(n.a, spec);
+            proto().emit(instruction{op::dyn_import, dst, spec});
+            release_to(mark);
             break;
+        }
         case vp::nk::import_meta:
             fail("`import.meta` is not implemented yet - ES modules are staged in "
                  "docs/modules-plan.md");

@@ -160,8 +160,23 @@ that the import then replaces, and the closure watches a box nobody writes to.
 That read `undefined` with no error, in a plain two-module chain with no cycle
 in sight.
 
-### 4 — the loader
-Fetching, caching, parallel dependency fetch, import maps, dynamic `import()`.
+### 4 — the loader — DONE for everything that does not fetch, ratchet 8/9
+Dynamic `import()`, relative specifier resolution, a specifier per module script.
+Namespace objects (`import * as ns` and what a dynamic import resolves to) are
+LIVE: each property is an accessor over an export cell, and there is one
+namespace object per module because identity is observable.
+
+**Still to do here, and all of it needs a network:** fetching, caching, parallel
+dependency fetch, import maps. Everything today goes through the synchronous
+asset registry, which is why the promise a dynamic import returns is settled
+before it is handed back. The promise is the right shape for a real fetch; the
+fetch is what is missing.
+
+**`run` cannot be re-entered**, and a dynamic import is the first thing that
+needed it: `execute` clears the frame stack because it is the entry point for a
+whole turn. Evaluating an imported module from inside the interpreter wiped the
+importing module's own frame, and it stopped dead at the `import(...)` with
+nothing thrown.
 
 ### 5 — Babylon's ES build
 Which is rung 9 of the module ratchet and rung 10 of the WebGL 2 one.

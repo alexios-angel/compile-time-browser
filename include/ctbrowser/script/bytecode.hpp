@@ -195,6 +195,16 @@ enum class op : std::uint8_t {
     load_import,
     // Publish the cell in register a as this module's export named names[bx].
     bind_export,
+    // `a = import(b)` - a PROMISE for the namespace object of the module whose
+    // specifier is the string in register b. The specifier is a runtime value,
+    // so unlike a static import there is nothing the loader could have resolved
+    // in advance: the VM hands it and the calling function's own module to the
+    // embedder's loader and gets back a settled promise.
+    dyn_import,
+    // `a = the namespace object of the module at names[b]`, for `import * as
+    // ns`. LIVE, like every other imported binding: each property is an
+    // accessor reading the exporter's cell, not a value copied at link time.
+    load_namespace,
 
     // a = the CLOSURE running this frame. `var f = function me() { ... me() }`
     // binds `me` inside its own body and nowhere else, and there is no other
@@ -256,6 +266,15 @@ struct upvalue_desc {
 // name the body mentions, so the dispatch loop never touches a std::string
 // except through an index.
 struct function_proto {
+    // THE MODULE THIS FUNCTION WAS COMPILED IN, empty for a classic script. The
+    // compiler cannot know it - a specifier is the LOADER's name for a file -
+    // so the loader stamps every proto in a program after compiling it.
+    //
+    // It is here rather than on `program` because that is where it can be
+    // reached: a running frame holds a `function_proto *` and nothing else, and
+    // `import('./x.js')` called from a callback long after evaluation still has
+    // to resolve `./x.js` against the module that WROTE it.
+    std::string module;
     std::string name;
     std::uint16_t param_count = 0;
     std::uint16_t frame_size = 1; // registers this body needs

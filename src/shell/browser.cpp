@@ -842,6 +842,11 @@ void browser::instantiate_module(const std::string & source, const std::string &
         module_programs_.push_back(std::move(compiled));
         return;
     }
+    // EVERY PROTO STAMPED WITH THE SPECIFIER, because a running frame holds a
+    // function_proto and nothing else - and `import('./x.js')` called from a
+    // callback still has to resolve against the module that wrote it. The
+    // compiler cannot do this: a specifier is the loader's name for a file.
+    for (script::function_proto & fn : compiled->functions) { fn.module = specifier; }
     // THE CELLS, before a single dependency is even fetched. This is the line
     // the whole two-pass split exists for.
     script_->instantiate_module(*compiled, record);
@@ -1004,6 +1009,41 @@ std::shared_ptr<const ctbrowser::paint::bitmap> browser::image_of(node_id id) co
 
 void browser::install_embedder_natives() {
     for (const auto & [name, fn] : embedder_natives_) { script_->define_native(name, fn); }
+
+    // WHAT `import(specifier)` CALLS. The VM hands over the specifier and the
+    // module that wrote it; resolving, finding the bytes and walking the graph
+    // are all this side's job, which is why the hook exists at all.
+    //
+    // IT SETTLES IMMEDIATELY, and that is a limitation rather than a design:
+    // the asset registry is synchronous, so there is nothing to wait for. A
+    // real fetch makes this a pending promise settled later, and the promise is
+    // already the right shape for that - which is why the return type is a
+    // promise now rather than the namespace itself.
+    script_->set_module_loader([this](script::context & cx, const std::string & specifier,
+                                      const std::string & referrer) {
+        const std::string target = resolve_specifier(referrer, specifier);
+        auto & registry = cx.modules();
+        if (registry.find(target) == registry.end()) {
+            const std::vector<std::byte> bytes = assets_.load(target);
+            if (bytes.empty()) {
+                return cx.make_promise(cx.make_error("Error", "module `" + target + "` not found"),
+                                       true);
+            }
+            load_module(std::string{reinterpret_cast<const char *>(bytes.data()), bytes.size()},
+                        target);
+        } else {
+            // ALREADY IN THE REGISTRY is not already EVALUATED - a module can
+            // be instantiated and waiting, and importing it dynamically has to
+            // run it rather than hand back empty bindings.
+            evaluate_module(target);
+        }
+        const auto found = registry.find(target);
+        if (found == registry.end()) {
+            return cx.make_promise(cx.make_error("Error", "module `" + target + "` did not load"),
+                                   true);
+        }
+        return cx.make_promise(cx.module_namespace(found->second), false);
+    });
 }
 
 void browser::run_layout() {
