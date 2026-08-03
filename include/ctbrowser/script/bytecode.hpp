@@ -194,7 +194,7 @@ enum class op : std::uint8_t {
     // shortcut docs/modules-plan.md names in advance.
     load_import,
     // Publish the cell in register a as this module's export named names[bx].
-    define_export,
+    bind_export,
 
     // a = the CLOSURE running this frame. `var f = function me() { ... me() }`
     // binds `me` inside its own body and nowhere else, and there is no other
@@ -316,6 +316,13 @@ struct program {
     // exactly as written - resolving them against the importing module's URL is
     // the loader's job, not the compiler's.
     std::vector<std::string> imports;
+    // AND WHAT IT EXPORTS, likewise statically known. The loader needs these
+    // BEFORE the module runs: every binding in a cyclic graph has to exist
+    // before any of the graph is evaluated, or the module that imports first
+    // asks for a name whose exporter has not reached its own first statement.
+    // That is the specification's instantiate-then-evaluate split, and this
+    // vector is the half of it the compiler can answer.
+    std::vector<std::string> exports;
     // THE SOURCE THIS WAS COMPILED FROM, kept so a function can be printed.
     // A 4.5 MB bundle costs 4.5 MB, which it already cost to compile.
     std::string source;

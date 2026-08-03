@@ -581,6 +581,14 @@ std::size_t context::collect() {
         mark(job.fn);
         for (const value & arg : job.args) { mark(arg); }
     }
+    // EVERY MODULE'S EXPORT CELLS. They live in `modules_` and in no register
+    // once the module has finished evaluating, so without this a collection
+    // between two modules frees the bindings the second one is about to import
+    // - and it frees them while a closure inside the first still refers to the
+    // same cell.
+    for (auto & [specifier, mod] : modules_) {
+        for (auto & [name, cell] : mod.exports) { mark(cell); }
+    }
     // A thrown value in flight is reachable from nothing else.
     mark(thrown_);
     // The prototype tables hold every builtin method. Nothing else references
@@ -693,8 +701,28 @@ value context::call(value callable, std::span<const value> args, value this_valu
     return out;
 }
 
+// CREATE THE BINDINGS WITHOUT RUNNING ANYTHING. This is the instantiate half of
+// the specification's two-phase module loading, and a cycle is the reason it
+// exists: A imports B imports A, so B evaluates first and asks A for a binding
+// A has not reached the declaration of. With every cell in the graph created up
+// front, B gets a real box that is merely EMPTY, and the write A makes later is
+// a write B reads - which is a cycle resolving rather than a missing export.
+//
+// It also has to happen before evaluation for a reason unrelated to cycles: the
+// cell an importer takes and the cell the exporter writes must be the SAME
+// object, and the only way to guarantee that is for one of them not to make it.
+void context::instantiate_module(const program & prog, module_record & into) {
+    into.compiled = &prog;
+    for (const std::string & name : prog.exports) {
+        value & slot = into.exports[name];
+        if (!slot.is_kind(heap_kind::cell)) {
+            slot = value::object(allocate<cell_object>(value::undefined()));
+        }
+    }
+}
+
 // A MODULE IS RUN LIKE ANY OTHER PROGRAM, with two differences: it knows which
-// record it is filling in, so `define_export` has somewhere to publish, and its
+// record it is filling in, so `bind_export` knows which cells to adopt, and its
 // exports outlive the call.
 run_result context::run_module(const program & prog, module_record & into) {
     module_record * const outer = current_module_;
@@ -1338,12 +1366,32 @@ void context::resume(value coroutine, value with, bool rejected) {
     X(load_this)                                                                                   \
     X(load_new_target)                                                                             \
     X(pass_new_target)                                                                             \
+    X(load_import)                                                                                 \
+    X(bind_export)                                                                                 \
     X(load_callee)                                                                                 \
     X(make_arguments)                                                                              \
     X(push_handler)                                                                                \
     X(pop_handler)                                                                                 \
     X(throw_value)                                                                                 \
     X(halt)
+
+// COUNTED, NOT SIZED, and the difference is the whole guarantee. The table below
+// is built with array designators, so `std::size` on it reports the HIGHEST
+// designated index plus one - which is `op::halt + 1` whether or not the middle
+// of the list has holes in it. A hole is a null entry and a jump to address
+// zero, and the assert written to catch exactly that could not see one: two
+// opcodes (`load_import`, `bind_export`) were missing from the list for as long
+// as modules have existed, and the only reason nothing jumped to zero is that
+// computed gotos are off by default.
+//
+// Counting the list's ENTRIES catches a hole, and it holds in the switch build
+// too, where there is no table to size.
+#define VM_COUNT_OPCODE(name) +1
+static_assert(0 VM_OPCODES(VM_COUNT_OPCODE) == static_cast<std::size_t>(op::halt) + 1,
+              "VM_OPCODES(X) must list every opcode exactly once - a GAP is invisible to a "
+              "std::size check on a designated-initializer table, and is a null entry and a "
+              "jump to address zero in the computed-goto build");
+#undef VM_COUNT_OPCODE
 
 // --- INSTRUCTION DISPATCH: computed goto, or a switch ------------------------
 //
@@ -2429,15 +2477,25 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
 
-        VM_CASE(define_export) do {
-            // THE CELL, NOT THE VALUE. reg(a) already holds a cell because the
-            // compiler boxes every exported binding, and publishing the box is
-            // what makes the binding LIVE for whoever imports it. Publishing
-            // the value would pass "an importer sees an export" and fail "an
-            // imported binding is live" - the shortcut docs/modules-plan.md
-            // names in advance.
+        VM_CASE(bind_export) do {
+            // ADOPT THE RECORD'S CELL, do not publish this register's. The cell
+            // is created before ANY module in the graph runs - see
+            // instantiate_module - so by the time this executes it already
+            // exists and something in a cycle may already be holding it.
+            // Overwriting the record here would hand that importer a box
+            // nobody ever writes to again.
+            //
+            // THE CELL, NOT THE VALUE, either way: an importer holds the box,
+            // which is what makes the binding LIVE. Handing over the value
+            // passes "an importer sees an export" and fails "an imported
+            // binding is live" - the shortcut docs/modules-plan.md names in
+            // advance.
             if (current_module_ != nullptr) {
-                current_module_->exports[vm_proto->names[in.bx()]] = reg(in.a);
+                value & slot = current_module_->exports[vm_proto->names[in.bx()]];
+                if (!slot.is_kind(heap_kind::cell)) {
+                    slot = value::object(allocate<cell_object>(value::undefined()));
+                }
+                reg(in.a) = slot;
             }
             break;
         }

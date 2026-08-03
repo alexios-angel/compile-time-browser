@@ -737,26 +737,32 @@ void browser::run_scripts() {
     //
     // ONE PROGRAM EACH, kept alive: a module's top-level declarations live in
     // its frame, and its functions close over them.
-    for (const std::string & module_source : modules) {
-        evaluate_module(module_source, "<inline>");
-    }
+    for (const std::string & module_source : modules) { load_module(module_source, "<inline>"); }
 }
 
-// LOAD A MODULE AND EVERYTHING IT NEEDS, depth-first, evaluating each once.
+// LOAD A MODULE AND EVERYTHING IT NEEDS: instantiate the whole graph, then
+// evaluate it. TWO PASSES, and they are two because a cycle cannot be done in
+// one.
 //
-// Depth-first POST-ORDER is what the specification asks for and what makes an
-// import work at all: a module's dependencies have finished running before its
-// own first statement, so the cells it imports already hold values.
+// The single pass this replaced compiled a module, loaded its dependencies and
+// ran it, all on the way down. That is right for a tree and wrong for a cycle:
+// A imports B imports A, so B ran while A had not reached its first statement,
+// and B asked A for an export whose cell did not exist yet. Registering A early
+// stopped the descent - but stopping is not binding, and B was told `undefined`.
 //
-// `already` breaks cycles - and a cycle is legal JavaScript, not a bug. A
-// module already being loaded is left to finish; what it exports is bound
-// later, which is exactly why an imported binding has to be a CELL rather than
-// a value. Whether the timing of that is right for every cycle is rung 5 of
-// tests/module-ratchet.txt and is not claimed here.
-void browser::evaluate_module(const std::string & source, const std::string & specifier) {
+// The specification's answer is to create every binding in the graph BEFORE
+// evaluating any of it, so a cycle sees an UNINITIALISED binding rather than a
+// missing one. instantiate_module makes the cells; evaluation fills them.
+void browser::load_module(const std::string & source, const std::string & specifier) {
     if (script_ == nullptr) { return; }
+    instantiate_module(source, specifier);
+    evaluate_module(specifier);
+}
+
+// PASS ONE: compile, register, create the export cells, recurse. Nothing runs.
+void browser::instantiate_module(const std::string & source, const std::string & specifier) {
     auto & registry = script_->modules();
-    if (const auto seen = registry.find(specifier); seen != registry.end()) { return; }
+    if (registry.find(specifier) != registry.end()) { return; }
     // Registered BEFORE its dependencies, so a cycle finds it and stops rather
     // than descending for ever.
     script::module_record & record = registry[specifier];
@@ -769,21 +775,49 @@ void browser::evaluate_module(const std::string & source, const std::string & sp
         module_programs_.push_back(std::move(compiled));
         return;
     }
+    // THE CELLS, before a single dependency is even fetched. This is the line
+    // the whole two-pass split exists for.
+    script_->instantiate_module(*compiled, record);
 
-    for (const std::string & needed : compiled->imports) {
-        if (registry.find(needed) != registry.end()) { continue; }
-        const std::vector<std::byte> bytes = assets_.load(needed);
+    const std::vector<std::string> needed = compiled->imports;
+    module_programs_.push_back(std::move(compiled));
+    for (const std::string & specifier_of : needed) {
+        if (registry.find(specifier_of) != registry.end()) { continue; }
+        const std::vector<std::byte> bytes = assets_.load(specifier_of);
         if (bytes.empty()) {
-            if (script_error_.empty()) { script_error_ = "module `" + needed + "` not found"; }
+            if (script_error_.empty()) {
+                script_error_ = "module `" + specifier_of + "` not found";
+            }
             continue;
         }
-        evaluate_module(std::string{reinterpret_cast<const char *>(bytes.data()), bytes.size()},
-                        needed);
+        instantiate_module(std::string{reinterpret_cast<const char *>(bytes.data()), bytes.size()},
+                           specifier_of);
     }
+}
 
-    const script::run_result result = script_->run_module(*compiled, record);
+// PASS TWO: depth-first POST-ORDER, each module once. A dependency has finished
+// running before the module that imports it reaches its own first statement -
+// except around a cycle, where by definition one of them cannot, and where the
+// cells from pass one are what keeps that from being a missing export.
+void browser::evaluate_module(const std::string & specifier) {
+    auto & registry = script_->modules();
+    const auto found = registry.find(specifier);
+    if (found == registry.end() || found->second.evaluated || found->second.compiled == nullptr) {
+        return;
+    }
+    // MARKED BEFORE THE DEPENDENCIES, not after: around a cycle the recursion
+    // arrives back here, and a flag set afterwards would let it descend for
+    // ever. This is the specification's `evaluating` status under another name.
+    found->second.evaluated = true;
+    const script::program * const compiled = found->second.compiled;
+    for (const std::string & needed : compiled->imports) { evaluate_module(needed); }
+
+    // RE-FOUND, because the registry is a flat_map and the recursion above can
+    // insert into it - a reference taken before it would dangle.
+    const auto self = registry.find(specifier);
+    if (self == registry.end()) { return; }
+    const script::run_result result = script_->run_module(*compiled, self->second);
     if (!result.ok && script_error_.empty()) { script_error_ = result.error; }
-    module_programs_.push_back(std::move(compiled));
 }
 
 const ctbrowser::raster::font_backend & browser::fonts() const {

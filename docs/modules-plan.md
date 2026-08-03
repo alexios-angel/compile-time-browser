@@ -140,9 +140,25 @@ ctjs parses every form above and the compiler REFUSES them by name, the way
 A `<script type="module">` with no dependencies runs in its own scope. Proves
 the execution path without the graph.
 
-### 3 — the graph
+### 3 — the graph — DONE, ratchet 5/9
 Static imports, live bindings, cycles, post-order evaluation. Multiple modules
 from the asset registry, no network.
+
+**It is TWO PASSES over the graph, and it has to be.** Instantiate every module
+first - compile it, register it, create its export cells - and only then
+evaluate, depth-first post-order. One pass that compiles-loads-runs on the way
+down is right for a tree and cannot work for a cycle: A imports B imports A, so
+B runs while A has not reached its first statement, and asks A for a binding
+whose cell does not exist. Creating every binding in the graph before evaluating
+any of it is what the specification does, and what makes a cycle see an
+UNINITIALISED binding rather than a missing one.
+
+**Imports and exports both bind at MODULE ENTRY, not at their statements.** A
+module's closures are made in the function-declaration pass, which runs before
+the body - so binding at the statement lets a closure capture a placeholder cell
+that the import then replaces, and the closure watches a box nobody writes to.
+That read `undefined` with no error, in a plain two-module chain with no cycle
+in sight.
 
 ### 4 — the loader
 Fetching, caching, parallel dependency fetch, import maps, dynamic `import()`.

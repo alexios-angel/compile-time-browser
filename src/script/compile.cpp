@@ -205,19 +205,127 @@ public:
     // a box containing a box. It is always boxed, whether or not anything in
     // this module captures it, because every read has to go through the cell to
     // see the exporter's later writes.
-    // Publish a local as an export. The binding must be a CELL first, because
-    // an importer holds the box rather than the value - see op::define_export.
-    // A local that nothing captured is not boxed yet, so it is boxed here and
-    // marked, or every later read in this module would bypass the cell the
-    // importer is watching.
-    void publish_export(const std::string & name, std::uint16_t reg) {
+    // BIND a local to its export cell, AT MODULE ENTRY - not at the
+    // declaration. The cell belongs to the module RECORD and the loader creates
+    // it before anything in the graph runs, so what this emits is an adoption:
+    // the local's register becomes the record's cell, and every later write in
+    // this module is a write the importer reads.
+    //
+    // AT ENTRY IS THE WHOLE POINT. Publishing at the declaration site instead
+    // worked for a straight line and could not work for a CYCLE: A imports B
+    // imports A, so B runs first and asks A for a binding A has not reached the
+    // declaration of. Creating the binding early and leaving it undefined is
+    // what the specification does, and it is why a cycle sees an uninitialised
+    // binding rather than a missing one.
+    //
+    // ALWAYS BOXED, captured or not: every read has to go through the cell.
+    void bind_export(const std::string & name, std::uint16_t reg) {
         for (local & each : fn().locals) {
-            if (each.reg == reg && !each.boxed) {
-                proto().emit(instruction{op::new_cell, reg});
-                each.boxed = true;
+            if (each.reg == reg) { each.boxed = true; }
+        }
+        proto().emit(instruction::with_bx(op::bind_export, reg, name_operand(name)));
+        if (std::ranges::find(out_.exports, name) == out_.exports.end()) {
+            out_.exports.push_back(name);
+        }
+    }
+
+    // BIND EVERY NAME AN `import` STATEMENT INTRODUCES, AT MODULE ENTRY - for
+    // the same reason bind_export runs there, and found the same way.
+    //
+    // Binding at the statement instead put the `load_import` AFTER the
+    // function-declaration pass, which is where a module's closures are made.
+    // So a function that used an imported name captured the register's
+    // PLACEHOLDER cell, and `load_import` then replaced the register with the
+    // exporter's - leaving the closure holding a box nobody would ever write
+    // to. It read `undefined`, and it did so whether or not there was a cycle:
+    // `a.js` imports `b.js` and calls it from a function, and the call returned
+    // undefined with no error at all. The cycle was not the fault; it was just
+    // the first shape that showed it.
+    void bind_imports(std::int32_t idx) {
+        const vp::node & n = at(idx);
+        if (n.kind != vp::nk::import_decl) { return; }
+        // THE SPECIFIER IS RECORDED FOR THE LOADER, which walks the graph
+        // without re-parsing anything.
+        //
+        // DECODED, because the parser hands over the token as written - quotes
+        // included. Recording `'./m.js'` rather than `./m.js` made every lookup
+        // miss and every import read undefined, with the loader reporting a
+        // module it had never been asked for.
+        const std::string specifier = decode_string_literal(n.text);
+        if (std::ranges::find(out_.imports, specifier) == out_.imports.end()) {
+            out_.imports.push_back(specifier);
+        }
+        const std::uint16_t from = name_operand(specifier);
+        for (const std::int32_t spec_index : kids(n)) {
+            const vp::node & spec = at(spec_index);
+            // `c`: 0 named, 1 default, 2 namespace. A namespace import wants
+            // the whole module object, which is stage 4 work - it is refused by
+            // name rather than bound to nothing.
+            if (spec.c == 2) {
+                fail("`import * as ns` is not implemented yet - ES modules are staged in "
+                     "docs/modules-plan.md");
+                return;
+            }
+            // The name the EXPORTER knows it by: the original when renamed,
+            // otherwise the same as the local one. `default` for a default
+            // import, which is the name the specification gives it.
+            const std::string exported = spec.c == 1   ? std::string{"default"}
+                                         : spec.a >= 0 ? std::string{at(spec.a).text}
+                                                       : std::string{spec.text};
+            const std::uint16_t what = name_operand(exported);
+            const int hoisted = find_local(spec.text);
+            if (hoisted < 0) {
+                fail("`import` of `" + std::string{spec.text} +
+                     "` was not hoisted - see predeclare_locals");
+                return;
+            }
+            const auto r = static_cast<std::uint16_t>(hoisted);
+            proto().emit(instruction{op::load_import, r, what, from});
+            // ALWAYS BOXED, whether or not this module captures it: every read
+            // has to go through the exporter's cell to see the writes that make
+            // the binding live. And no `new_cell` - load_import has already put
+            // the exporter's box here, and boxing a box leaves the importer
+            // reading a cell containing a cell.
+            for (local & each : fn().locals) {
+                if (each.name == spec.text) { each.boxed = true; }
             }
         }
-        proto().emit(instruction::with_bx(op::define_export, reg, name_operand(name)));
+    }
+
+    // THE NAME THE SPECIFICATION GIVES `export default`, which is not a legal
+    // identifier on purpose - nothing in the module can name it, and it still
+    // hoists and binds like any other export.
+    static constexpr std::string_view default_binding = "*default*";
+
+    // The (local, exported) pairs a top-level statement binds. Collected rather
+    // than published in place, because the binding pass runs at entry and the
+    // statement compiles later.
+    void export_bindings(std::int32_t outer,
+                         std::vector<std::pair<std::string, std::string>> & out) {
+        const vp::node & n = at(outer);
+        if (n.kind != vp::nk::export_decl || !n.text.empty() || n.c == 2) { return; }
+        if (n.c == 1) {
+            out.emplace_back(std::string{default_binding}, "default");
+            return;
+        }
+        if (n.a >= 0) {
+            const vp::node & declared = at(n.a);
+            if (declared.kind == vp::nk::var_decl) {
+                for (const std::int32_t d : kids(declared)) {
+                    if (!at(d).text.empty()) {
+                        out.emplace_back(std::string{at(d).text}, std::string{at(d).text});
+                    }
+                }
+            } else if (!declared.text.empty()) {
+                out.emplace_back(std::string{declared.text}, std::string{declared.text});
+            }
+            return;
+        }
+        for (const std::int32_t spec_index : kids(n)) {
+            const vp::node & spec = at(spec_index);
+            out.emplace_back(std::string{spec.text},
+                             spec.a >= 0 ? std::string{at(spec.a).text} : std::string{spec.text});
+        }
     }
 
     void declare_imported_local(std::string name, std::uint16_t reg) {
@@ -691,6 +799,13 @@ public:
             // nothing, so `export function f` was never a binding here - and
             // then `export { f }` could not find it to publish, which read as
             // "has no export named f" on the importing side.
+            // `export default <expr>` carries the EXPRESSION in `a` and says
+            // so with `c == 1`, so unwrapping it hands the loop an expression
+            // where it expects a statement. It binds one name of its own.
+            if (at(outer).kind == vp::nk::export_decl && at(outer).c == 1) {
+                hoist(std::string{default_binding});
+                continue;
+            }
             const std::int32_t stmt =
                 at(outer).kind == vp::nk::export_decl && at(outer).a >= 0 ? at(outer).a : outer;
             if (at(stmt).kind == vp::nk::var_decl) {
@@ -1005,14 +1120,33 @@ public:
         // A MODULE'S TOP LEVEL IS A SCOPE, so its declarations are pre-declared
         // exactly as a function body's are. A classic script's are globals and
         // need none of this, which is why it was never called here before.
-        if (module_scope_) { predeclare_locals(ast_.root); }
+        if (module_scope_) {
+            predeclare_locals(ast_.root);
+            // THEN THE IMPORTS, still at entry: a function declared anywhere in
+            // this module closes over them, and the closures are made below.
+            for (const std::int32_t s : kids(root)) { bind_imports(s); }
+            // AND THE EXPORTS, likewise before a single statement of the body
+            // runs. See bind_export.
+            std::vector<std::pair<std::string, std::string>> bindings;
+            for (const std::int32_t s : kids(root)) { export_bindings(s, bindings); }
+            for (const auto & [local_name, exported] : bindings) {
+                const int r = find_local(local_name);
+                if (r < 0) {
+                    fail("`export { " + local_name +
+                         " }` names something this module does not "
+                         "declare");
+                    continue;
+                }
+                bind_export(exported, static_cast<std::uint16_t>(r));
+            }
+        }
         // Function declarations hoist: a script may call one before its text.
         // THROUGH AN `export` WRAPPER TOO - `export function f() {}` is a
         // function declaration that hoists like any other, and looking only at
         // the wrapper left it compiled in the second pass, after anything that
         // called it.
         const auto declared_by = [this](std::int32_t s) {
-            return at(s).kind == vp::nk::export_decl && at(s).a >= 0 ? at(s).a : s;
+            return at(s).kind == vp::nk::export_decl && at(s).c != 1 && at(s).a >= 0 ? at(s).a : s;
         };
         for (const std::int32_t s : kids(root)) {
             if (at(declared_by(s)).kind == vp::nk::func_decl) { compile_stmt(s); }
@@ -1314,52 +1448,9 @@ public:
                 fail("`import` is only allowed in a module - a classic <script> cannot use it");
                 break;
             }
-            // THE SPECIFIER IS RECORDED FOR THE LOADER, which walks the graph
-            // without re-parsing anything.
-            //
-            // DECODED, because the parser hands over the token as written -
-            // quotes included. Recording `'./m.js'` rather than `./m.js` made
-            // every lookup miss and every import read undefined, with the
-            // loader reporting a module it had never been asked for.
-            const std::string specifier = decode_string_literal(n.text);
-            if (std::ranges::find(out_.imports, specifier) == out_.imports.end()) {
-                out_.imports.push_back(specifier);
-            }
-            const std::uint16_t from = name_operand(specifier);
-            for (const std::int32_t spec_index : kids(n)) {
-                const vp::node & spec = at(spec_index);
-                // `c`: 0 named, 1 default, 2 namespace. A namespace import
-                // wants the whole module object, which is stage 4 work - it is
-                // refused by name rather than bound to nothing.
-                if (spec.c == 2) {
-                    fail("`import * as ns` is not implemented yet - ES modules are staged in "
-                         "docs/modules-plan.md");
-                    break;
-                }
-                // The name the EXPORTER knows it by: the original when renamed,
-                // otherwise the same as the local one. `default` for a default
-                // import, which is the name the specification gives it.
-                const std::string exported = spec.c == 1   ? std::string{"default"}
-                                             : spec.a >= 0 ? std::string{at(spec.a).text}
-                                                           : std::string{spec.text};
-                const std::uint16_t what = name_operand(exported);
-                const int hoisted = find_local(spec.text);
-                if (hoisted < 0) {
-                    fail("`import` of `" + std::string{spec.text} +
-                         "` was not hoisted - see predeclare_locals");
-                    break;
-                }
-                const auto r = static_cast<std::uint16_t>(hoisted);
-                proto().emit(instruction{op::load_import, r, what, from});
-                // ALWAYS BOXED, whether or not this module captures it: every
-                // read has to go through the exporter's cell to see the writes
-                // that make the binding live. And no `new_cell` - load_import
-                // has already put the exporter's box here, and boxing a box
-                // leaves the importer reading a cell containing a cell.
-                for (local & each : fn().locals) {
-                    if (each.name == spec.text) { each.boxed = true; }
-                }
-            }
+            // AND NOTHING ELSE HAPPENS HERE. The binding was made at module
+            // entry - see bind_imports - because a function declared above the
+            // `import` still closes over what it imports.
             break;
         }
         case vp::nk::export_decl: {
@@ -1378,14 +1469,19 @@ public:
                 break;
             }
             if (n.c == 1) {
-                // `export default <expr>`: no binding to share, so the cell is
-                // made here and published under the name the specification
-                // gives it.
+                // `export default <expr>`: the binding was hoisted and bound at
+                // entry under `*default*`, so this only WRITES it. Making a
+                // fresh cell here instead would leave the importer holding the
+                // one from entry - which is exactly the bug a cycle exposes.
+                const int slot = find_local(default_binding);
+                if (slot < 0) {
+                    fail("`export default` was not hoisted - see predeclare_locals");
+                    break;
+                }
                 const std::uint32_t mark = reg_mark();
                 const std::uint16_t r = alloc_reg();
                 compile_expr(n.a, r);
-                proto().emit(instruction{op::new_cell, r});
-                proto().emit(instruction::with_bx(op::define_export, r, name_operand("default")));
+                proto().emit(instruction{op::cell_set, static_cast<std::uint16_t>(slot), r});
                 release_to(mark);
                 break;
             }
@@ -1401,44 +1497,24 @@ public:
                 // nothing at all. It read `undefined` on the other side and
                 // said nothing, which is the failure this whole ladder exists
                 // to make loud.
-                compile_stmt(n.a);
-                const vp::node & declared = at(n.a);
-                if (declared.kind == vp::nk::var_decl) {
-                    for (const std::int32_t d : kids(declared)) {
-                        const vp::node & one = at(d);
-                        if (one.text.empty()) {
+                if (at(n.a).kind == vp::nk::var_decl) {
+                    for (const std::int32_t d : kids(at(n.a))) {
+                        if (at(d).text.empty()) {
                             fail("`export` of a destructuring declaration is not implemented yet - "
                                  "ES modules are staged in docs/modules-plan.md");
                             break;
                         }
-                        const int reg = find_local(one.text);
-                        if (reg >= 0) {
-                            publish_export(std::string{one.text}, static_cast<std::uint16_t>(reg));
-                        }
-                    }
-                } else if (!declared.text.empty()) {
-                    // `export function f() {}` and `export class C {}` bind one
-                    // name, which the declaration carries.
-                    const int reg = find_local(declared.text);
-                    if (reg >= 0) {
-                        publish_export(std::string{declared.text}, static_cast<std::uint16_t>(reg));
                     }
                 }
+                // AND THAT IS ALL: the declaration compiles as itself. Its
+                // names were bound to their export cells at module entry, so
+                // there is nothing left to publish here - see bind_export.
+                compile_stmt(n.a);
                 break;
             }
-            // `export { a, b as c }`: the names already exist.
-            for (const std::int32_t spec_index : kids(n)) {
-                const vp::node & spec = at(spec_index);
-                const int reg = find_local(spec.text);
-                if (reg < 0) {
-                    fail("`export { " + std::string{spec.text} +
-                         " }` names something this module does not declare");
-                    break;
-                }
-                const std::string exported =
-                    spec.a >= 0 ? std::string{at(spec.a).text} : std::string{spec.text};
-                publish_export(exported, static_cast<std::uint16_t>(reg));
-            }
+            // `export { a, b as c }` emits NOTHING. The binding pass at entry
+            // already tied each name to its cell, and it is the pass that
+            // reports a name this module does not declare.
             break;
         }
         case vp::nk::expr_stmt: {

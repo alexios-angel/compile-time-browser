@@ -227,6 +227,10 @@ public:
     // --- ES modules --------------------------------------------------------
     // Run `prog` AS a module: its exports are published into `into`, and its
     // imports are resolved through the registry the loader filled in.
+    // BEFORE ANY OF THE GRAPH RUNS: creates this module's export cells without
+    // evaluating it, so a cyclic importer finds an empty binding rather than a
+    // missing one. See the definition.
+    void instantiate_module(const program & prog, module_record & into);
     run_result run_module(const program & prog, module_record & into);
     // Where a module is found by specifier. The loader owns the graph; the VM
     // only needs to look a name up when `load_import` runs.
@@ -901,7 +905,7 @@ private:
     // a super() call hands its own new.target to the base constructor.
     value pending_new_target_ = value::undefined();
     flat_map<std::string, module_record> modules_;
-    // The module being evaluated, so `define_export` knows where to publish and
+    // The module being evaluated, so `bind_export` knows whose cells to adopt and
     // `load_import` knows who is asking. Null while a classic script runs.
     module_record * current_module_ = nullptr;
     bool suspended_ = false;

@@ -261,6 +261,30 @@ struct measurement {
             return m;
         }
     }
+    // AND A CHAIN, still rung 4, because the ladder had no rung for it and a
+    // real bug walked through the gap. The entry module imports `a.js`, which
+    // imports `b.js` and calls it FROM INSIDE A FUNCTION. Nothing above asks
+    // that: rung 3 calls an import at the module's top level, and this calls
+    // one from a closure - which is where a module's imports are actually used.
+    //
+    // It read `undefined` for a while, and the rung that caught it was the
+    // CYCLE rung, which is the wrong place: the same source with the cycle
+    // removed failed identically. A rung reporting a failure two levels above
+    // where it lives sends the next reader after the wrong thing.
+    {
+        auto page = page_with("import { fromA } from './a.js';"
+                              "globalThis.__chain = fromA();",
+                              {{"./a.js", "import { fromB } from './b.js';"
+                                          "export function fromA() { return 'a' + fromB(); }"},
+                               {"./b.js", "export function fromB() { return 'b'; }"}});
+        const std::string chained = ask(*page, "String(globalThis.__chain)");
+        if (chained != "ab") {
+            m.fail_at(rung_live,
+                      "an import used inside a function did not resolve (wanted ab got " + chained +
+                          ")" + (page->script_error().empty() ? "" : " | " + page->script_error()));
+            return m;
+        }
+    }
     m.reached(rung_live);
 
     // --- 5: a cycle resolves rather than hanging ----------------------------

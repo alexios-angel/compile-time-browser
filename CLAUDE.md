@@ -80,9 +80,11 @@ gate and CI runs it.
   shape. `--coverage` lists the namespaces no probe mentions, which is the work
   queue. The ratchet read 10/10 while `(5).hasOwnProperty` was undefined,
   because nothing on the ladder asked a number for a property.
-- `tools/module-ratchet.py` — the same loop for ES MODULES. Reads **0/9**: no
-  module system at all, and `import` is not even a keyword. `--advance` records.
-  See `docs/modules-plan.md`.
+- `tools/module-ratchet.py` — the same loop for ES MODULES. Reads **5/9**: a
+  graph of modules links, imported bindings are LIVE, and cycles resolve. Rungs
+  6-9 are the loader — `<script type=module>` on a page, relative specifiers,
+  dynamic `import()`, Babylon's ES build. `--advance` records. See
+  `docs/modules-plan.md`.
 - `tools/build-cpptrace-mingw.sh` — cpptrace for the Windows sysroot. TESTS
   ONLY and optional: a missing trace makes a failure harder to read, not wrong.
   It is here because llvm-mingw has no `<stacktrace>` at all, so the platform

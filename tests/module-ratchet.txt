@@ -15,8 +15,8 @@
 # graph. Then the graph, where live bindings and cycles live. Then the loader,
 # where a page and a network arrive. Babylon last, because it needs all of it.
 
-level=4
-blocker=a cycle did not resolve (wanted ab got undefined)
+level=5
+blocker=not measured yet - rungs 6 to 9 need the loader to fetch and resolve
 
 # WHY THIS STARTS AT ZERO, and it is further down than it looks. `import` and
 # `export` are not refused by name in this engine - they are NOT KEYWORDS AT
@@ -132,16 +132,40 @@ blocker=a cycle did not resolve (wanted ab got undefined)
 # names are hoisted now, which is the same trap declare_pattern_names already
 # records for destructuring.
 #
-# RUNG 5 IS THE CYCLE, and `undefined` says the shape is not right yet: A
-# imports B imports A, and the loader registers a module before its
-# dependencies so the descent stops - but stopping is not the same as binding.
-# The specification creates every binding in the graph BEFORE evaluating any of
-# them, so a cycle sees an uninitialised binding rather than a missing one. That
-# is the two-phase instantiate/evaluate split, and it is the next piece. An imported binding is LIVE: if the
-# exporter reassigns it, the importer sees the new value. Copying at link time
-# is the CommonJS behaviour, is observably wrong, and passes rung 3 - which is
-# exactly why rung 4 exists separately.
+# RUNG 5 PASSES: a cycle resolves. A imports B imports A, and both sides work.
 #
-# RUNG 9 IS BLOCKED BEFORE IT STARTS: only the UMD Babylon is vendored, and it
-# opens by defining _BabylonUMDDynamicImportUnsupported and rejecting its own
-# import(). That is what stops webgl2 rung 10 too. See docs/modules-plan.md.
+# WHAT MADE IT WORK IS THE TWO-PHASE SPLIT the last note predicted: every export
+# cell in the graph is created BEFORE any of the graph is evaluated
+# (context::instantiate_module), so a cyclic importer finds an empty binding
+# rather than a missing one. `bind_export` ADOPTS that cell rather than
+# publishing its own, because by the time a module runs, something in the cycle
+# may already be holding it.
+#
+# BUT THE BUG THIS RUNG CAUGHT WAS NOT A CYCLE BUG, and that is the finding
+# worth keeping. The same source with the cycle REMOVED failed identically:
+# `a.js` imports `b.js` and calls it from inside a function, and the call read
+# undefined. `load_import` was emitted at the import STATEMENT, which runs after
+# the function-declaration pass - so a closure captured the placeholder cell and
+# the import then replaced the register with the exporter's, leaving the closure
+# watching a box nobody would ever write to. Imports bind at module entry now,
+# for the same reason exports do.
+#
+# The ladder had NO RUNG for that shape - rung 3 calls an import at the top
+# level, and nothing called one from a closure, which is where a module's
+# imports are actually used. Rung 4 now has that case, so the failure would be
+# reported where it lives rather than two rungs above.
+#
+# AND IT SURFACED A SEPARATE LATENT BUG, in the VM's dispatch table:
+# `load_import` and `bind_export` were missing from VM_OPCODES(X) for as long as
+# modules have existed. The static_assert written to catch exactly that could
+# not: `std::size` on a designated-initializer array reports the HIGHEST index
+# plus one, so a HOLE in the middle is invisible. Nothing jumped to address zero
+# only because computed gotos are off by default. The check counts the list's
+# entries now, holds in the switch build too, and was mutation-tested by
+# deleting a line.
+#
+# RUNGS 6 TO 9 ARE THE LOADER: <script type="module"> as a real page script,
+# relative specifiers resolved against the importing module's URL, dynamic
+# import(), an import map, and then Babylon's ES build. Stage 4 of
+# docs/modules-plan.md. Nothing above 5 has been measured yet, and the blocker
+# says so rather than implying a failure.

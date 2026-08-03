@@ -1476,7 +1476,11 @@ private:
     std::vector<std::unique_ptr<script::program>> module_programs_;
     // Load a module and everything it imports, depth-first, evaluating each
     // once. See the definition for why post-order is the only order that works.
-    void evaluate_module(const std::string & source, const std::string & specifier);
+    // TWO PASSES over the graph, because a cycle cannot be done in one - see
+    // the definitions. load_module runs both.
+    void load_module(const std::string & source, const std::string & specifier);
+    void instantiate_module(const std::string & source, const std::string & specifier);
+    void evaluate_module(const std::string & specifier);
     // Every program run by run_script AFTER the page's own. They accumulate for
     // the life of the page because a closure from any of them may still be
     // reachable - a listener, a timer, a rAF callback - and a program that
