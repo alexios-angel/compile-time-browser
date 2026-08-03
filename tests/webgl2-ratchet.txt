@@ -73,9 +73,11 @@ blocker=Babylon cleared but drew no geometry (centre and corner are both 0,0,255
 # rejects its own request. 58 `gl_Position` occurrences are in the bundle, so
 # some shaders ship; the default material's does not.
 #
-# SO THE NEXT STEP IS A VENDORING DECISION, not an engine change: use a Babylon
-# build whose shaders are included, or add module support. Rung 10 measures the
-# engine and right now it is measuring the corpus.
+# SO THE NEXT STEP IS ES MODULES, and it has its own plan now:
+# docs/modules-plan.md. The alternative - vendor a different Babylon build and
+# hope its shaders are inlined - is the shim this tree was told not to build.
+# Babylon ships as modules first and a UMD bundle as a courtesy, and that
+# courtesy is what rung 10 currently depends on.
 #
 # THE PROBE HAD TO BE FIXED BEFORE IT COULD SAY THAT. It first cleared to BLACK
 # and asked for any non-black pixel, which makes "painted nothing" and "painted
