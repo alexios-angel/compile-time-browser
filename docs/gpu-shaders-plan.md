@@ -83,6 +83,87 @@ reading what pages actually send — it is lenient in the ways
 behind it. glslang is good at lowering correct GLSL to correct SPIR-V. Neither
 job is one the other wants.
 
+## Should the fork be MODIFIED? Measured: no — and it does not need to be
+
+There is a fork at `github.com/alexios-angel/shaderc`. The useful question is
+what it should carry, and the measurements say **a packaging fork, not a
+compiler fork.**
+
+### The restriction is not shaderc's
+
+`libshaderc_combined.a` contains **18,841 glslang and SPIRV-Tools symbols**.
+shaderc is a thin C/C++ API over glslang; the "ES shaders for SPIR-V require
+version 310" rule lives in glslang's version checking. So "modify shaderc" means
+"modify glslang" — a compiler of well over a hundred thousand lines, in a
+security-relevant position, that would then need rebasing forever.
+
+### And upstream already does the job, with two flags
+
+Measured with stock shaderc 2026.3, no patches:
+
+```
+-std=310es                     forces the version, overriding the shader's own
+                               `#version 300 es` — a WARNING, not an error
+-fauto-map-locations           assigns the locations glslang was demanding
+-fauto-bind-uniforms           assigns the block bindings
+```
+
+With those, the ES 3.00 shader that upstream rejected **compiles unmodified to
+the same 2160 bytes** as the hand-annotated version. For WebGL 2 there is no
+source translation to do at all.
+
+### But we should inject our OWN locations rather than use `-fauto-map-locations`
+
+Not because auto-mapping fails — because of what this engine has already told
+the page. Locations here are assigned at link time in declaration order,
+`getAttribLocation` reports them, and `bindAttribLocation` is deliberately a
+no-op that says so. **The page then uses those numbers in
+`vertexAttribPointer`.** If glslang picks its own, the SPIR-V's inputs and the
+page's buffer bindings agree only by coincidence. Injecting
+`layout(location=N)` from `gl_program::attribute_names` makes them agree by
+construction, and the same argument applies to `layout(binding=)` against
+`block_bindings`.
+
+So the auto flags are the proof that no patch is needed; the shipped path should
+still pass our own numbers.
+
+### WebGL 1 is where real translation is needed, and it belongs HERE
+
+ES 1.00 uses `attribute`, `varying` and `gl_FragColor`, all removed in ES 3.00:
+
+```
+es1b.frag:3: error: 'varying' : no longer supported in es profile; removed in version 300
+es1b.frag:6: error: 'gl_FragColor' : undeclared identifier
+```
+
+That is a dialect translation — `attribute` to `in`, `varying` to `in`/`out` by
+stage, `gl_FragColor` to a declared output. **It belongs in ctbrowser and not in
+a compiler fork**, because it needs this tree's own tables: which stage is being
+compiled, which varyings the linker matched, and what `shader::fragment_output`
+already records. It is also then testable against the p5, Phaser and Babylon
+shaders already sitting in `tests/glsl/`, which a patch inside glslang would not
+be.
+
+### What the fork IS worth carrying
+
+* **Pinned dependencies.** Upstream's build runs `git-sync-deps`, a Python
+  script that fetches glslang, SPIRV-Tools and SPIRV-Headers from the network at
+  configure time. This tree pins everything and builds it into a sysroot —
+  `tools/build-boost-mingw.sh` and its four siblings — and a fork that vendors
+  those at fixed revisions fits that exactly.
+* **A trimmed build.** HLSL, the `glslc` command line, tests, examples and the
+  fuzzers are all build options, not code changes: `SHADERC_SKIP_TESTS`,
+  `SHADERC_SKIP_EXAMPLES`, `ENABLE_HLSL=OFF`. The Homebrew bottle is 41.7 MB
+  installed and this engine wants the library only, in a Windows dist that is
+  already 469 MB.
+* **The llvm-mingw cross build**, which is the reason four other libraries in
+  this tree have a build script each.
+
+None of that is a change to the compiler. If a real gap turns up later, the
+trade to weigh is "carry a patch against glslang forever" against "carry a few
+hundred lines of translator we own and can test" — and this tree has been much
+happier owning the small thing.
+
 ## The compiler is the SMALL part
 
 Compiling the shader is one piece of running a page's draw on the GPU. The rest,
