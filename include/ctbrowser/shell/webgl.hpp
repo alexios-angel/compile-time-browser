@@ -89,6 +89,9 @@ inline constexpr std::uint32_t element_array_buffer = 0x8893;
 // that was not the element buffer used to go to `array_buffer_`, so a page
 // filling a uniform buffer overwrote whichever vertex buffer was bound.
 inline constexpr std::uint32_t uniform_buffer = 0x8A11;
+inline constexpr std::uint32_t color_attachment0 = 0x8CE0;
+inline constexpr std::uint32_t framebuffer_complete = 0x8CD5;
+inline constexpr std::uint32_t framebuffer_incomplete_attachment = 0x8CD6;
 // Capabilities this rasteriser does not have. They are named so that DISABLING
 // one can be a no-op rather than an error - see set_enabled.
 inline constexpr std::uint32_t polygon_offset_fill = 0x8037;
@@ -196,6 +199,22 @@ struct gl_program {
     // Which binding POINT each block is attached to, parallel to `blocks`.
     // Zero until the page says otherwise, which is also GL's default.
     std::vector<std::uint32_t> block_bindings;
+};
+
+// A FRAMEBUFFER OBJECT: somewhere to render that is not the canvas.
+//
+// Render-to-texture is what a post-process, a shadow map and every
+// RenderTargetTexture are built on - the scene is drawn into a texture and then
+// sampled. Without it `bindFramebuffer` recorded an id and changed nothing, so
+// the scene went to the CANVAS while the page believed it was in a texture, and
+// the pass that sampled that texture read an empty one. Babylon's identity
+// post-process turned a working scene into a black canvas that way.
+struct gl_framebuffer {
+    std::uint32_t colour_texture = 0;
+    // Its own depth buffer, sized to the attachment rather than to the canvas:
+    // a shadow map is usually a different size from the window, and sharing the
+    // canvas's depth would compare fragments against the wrong surface.
+    std::vector<float> depth;
 };
 
 struct gl_texture {
@@ -372,7 +391,15 @@ public:
     // used prefix every frame. Phaser's WebGL renderer does exactly that and
     // could not draw a single quad without it.
     void buffer_sub_data(std::uint32_t target, int offset, std::span<const std::byte> bytes);
-    void bind_framebuffer(std::uint32_t id) { bound_framebuffer_ = id; }
+    // BINDING ONE REDIRECTS EVERY DRAW AND CLEAR, which is the whole point and
+    // what it did not use to do. Zero is the canvas.
+    void bind_framebuffer(std::uint32_t id);
+    // `framebufferTexture2D(target, attachment, textarget, texture, level)`.
+    void framebuffer_texture(std::uint32_t attachment, std::uint32_t texture);
+    // COMPLETE only when there is really something to draw into. It used to
+    // answer COMPLETE unconditionally, which is a lie a page acts on: Babylon
+    // checks it before deciding a render target is usable.
+    [[nodiscard]] std::uint32_t framebuffer_status() const;
     [[nodiscard]] std::uint32_t bound_framebuffer() const noexcept { return bound_framebuffer_; }
     void attribute_divisor(int location, int divisor);
     [[nodiscard]] int attribute_divisor_of(int location) const;
@@ -469,6 +496,9 @@ private:
     std::map<std::uint32_t, gl_vertex_array> vertex_arrays_;
     int version_ = 1;
     std::uint32_t bound_framebuffer_ = 0;
+    std::unordered_map<std::uint32_t, gl_framebuffer> framebuffers_;
+    // The canvas, kept so binding framebuffer 0 can point back at it.
+    paint::bitmap * canvas_ = nullptr;
     std::uint32_t bound_vao_ = 0;
     // The DEFAULT vertex array's saved state, for when a page binds one and
     // then binds null again. It is not in the map because zero is not an id a

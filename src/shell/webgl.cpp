@@ -115,6 +115,7 @@ webgl_context::webgl_context(paint::bitmap * target, int width, int height) {
 
 void webgl_context::resize(paint::bitmap * target, int width, int height) {
     framebuffer_.colour = target;
+    canvas_ = target;
     width_ = width;
     height_ = height;
     framebuffer_.depth.clear();
@@ -555,9 +556,82 @@ void webgl_context::clear(std::uint32_t mask) {
         std::ranges::fill(framebuffer_.colour->pixels, packed);
     }
     if ((mask & gl_enum::depth_buffer_bit) != 0) {
-        framebuffer_.ensure_depth(width_, height_);
+        // SIZED TO WHAT IS BOUND, not to the canvas. A render target is usually
+        // a different size - a shadow map especially - and a depth buffer sized
+        // to the window would compare a fragment against a neighbour's depth.
+        const int depth_width =
+            framebuffer_.colour != nullptr ? framebuffer_.colour->width : width_;
+        const int depth_height =
+            framebuffer_.colour != nullptr ? framebuffer_.colour->height : height_;
+        framebuffer_.ensure_depth(depth_width, depth_height);
         std::ranges::fill(framebuffer_.depth, clear_depth_);
     }
+}
+
+// --- framebuffer objects ----------------------------------------------------
+//
+// RENDER TO A TEXTURE, which is what a post-process, a shadow map and every
+// RenderTargetTexture are built on. `bindFramebuffer` used to record an id and
+// change nothing: the scene went to the CANVAS while the page believed it was
+// filling a texture, and whatever sampled that texture afterwards read an empty
+// one. Babylon's IDENTITY post-process - a pass that copies the frame and
+// changes nothing - turned a working scene into a black canvas that way, with
+// no GL error anywhere and `checkFramebufferStatus` answering COMPLETE.
+
+void webgl_context::framebuffer_texture(std::uint32_t attachment, std::uint32_t texture) {
+    if (bound_framebuffer_ == 0) {
+        // Attaching to the default framebuffer is meaningless and GL says so.
+        fail(gl_enum::invalid_operation);
+        return;
+    }
+    if (attachment != gl_enum::color_attachment0) {
+        // DEPTH and STENCIL attachments are not implemented - the depth buffer
+        // here belongs to the framebuffer rather than to a texture a page can
+        // sample. Refused by name rather than silently ignored, because a page
+        // reading back a depth texture would get a wrong picture.
+        fail(gl_enum::invalid_enum);
+        return;
+    }
+    framebuffers_[bound_framebuffer_].colour_texture = texture;
+    // AND RE-POINT IMMEDIATELY IF IT IS THE BOUND ONE: a page attaches after
+    // binding, which is the usual order, and the redirect has to follow.
+    bind_framebuffer(bound_framebuffer_);
+}
+
+void webgl_context::bind_framebuffer(std::uint32_t id) {
+    bound_framebuffer_ = id;
+    if (id == 0) {
+        framebuffer_.colour = canvas_;
+        framebuffer_.depth.clear();
+        return;
+    }
+    gl_framebuffer & target = framebuffers_[id];
+    const auto texture = textures_.find(target.colour_texture);
+    if (texture == textures_.end() || texture->second.pixels.empty()) {
+        // AN INCOMPLETE FRAMEBUFFER DRAWS NOWHERE, which is what GL does and is
+        // much better than drawing to the canvas by accident - that was the old
+        // behaviour and it is how a post-process erased a scene.
+        framebuffer_.colour = nullptr;
+        return;
+    }
+    framebuffer_.colour = &texture->second.pixels;
+    // ITS OWN DEPTH, swapped in with it. Sharing one buffer across targets of
+    // different sizes is the same class of bug as sharing the attribute table
+    // across vertex arrays, which this engine has already paid for once.
+    framebuffer_.depth.swap(target.depth);
+}
+
+std::uint32_t webgl_context::framebuffer_status() const {
+    if (bound_framebuffer_ == 0) { return gl_enum::framebuffer_complete; }
+    const auto found = framebuffers_.find(bound_framebuffer_);
+    if (found == framebuffers_.end() || found->second.colour_texture == 0) {
+        return gl_enum::framebuffer_incomplete_attachment;
+    }
+    const auto texture = textures_.find(found->second.colour_texture);
+    if (texture == textures_.end() || texture->second.pixels.empty()) {
+        return gl_enum::framebuffer_incomplete_attachment;
+    }
+    return gl_enum::framebuffer_complete;
 }
 
 // --- textures --------------------------------------------------------------

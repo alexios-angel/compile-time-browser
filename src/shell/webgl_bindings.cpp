@@ -1229,19 +1229,34 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
     method("createRenderbuffer", [gl, handle](context & c, std::span<value>) {
         return handle(c, gl->create_buffer(), "renderbuffer");
     });
-    method("bindFramebuffer", [gl](context &, std::span<value> a) {
-        gl->bind_framebuffer(
-            a.size() > 1 && a[1].is_number() ? static_cast<std::uint32_t>(a[1].as_number()) : 0U);
+    // THROUGH id_of, NOT as_number. A framebuffer arrives as a WRAPPED OBJECT
+    // like every other GL object, so reading it as a number saw `undefined` and
+    // bound ZERO every time - which meant every render target silently drew to
+    // the canvas, and reading that target back gave an empty texture. It was
+    // invisible while framebufferTexture2D was a no-op, and became an
+    // INVALID_OPERATION the moment that stopped being one.
+    method("bindFramebuffer", [gl](context & c, std::span<value> a) {
+        gl->bind_framebuffer(id_of(c, a.size() > 1 ? a[1] : value::undefined()));
         return value::undefined();
     });
-    for (const char * name :
-         {"bindRenderbuffer", "framebufferTexture2D", "framebufferRenderbuffer",
-          "renderbufferStorage", "renderbufferStorageMultisample", "blitFramebuffer"}) {
+    // `framebufferTexture2D(target, attachment, textarget, texture, level)` -
+    // WHAT MAKES A FRAMEBUFFER SOMEWHERE TO DRAW. It was a no-op, so every
+    // render target was an empty texture and the scene went to the canvas
+    // instead; see webgl_context::bind_framebuffer.
+    method("framebufferTexture2D", [gl](context & c, std::span<value> a) {
+        gl->framebuffer_texture(enum_at(a, 1), id_of(c, a.size() > 3 ? a[3] : value::undefined()));
+        return value::undefined();
+    });
+    for (const char * name : {"bindRenderbuffer", "framebufferRenderbuffer", "renderbufferStorage",
+                              "renderbufferStorageMultisample", "blitFramebuffer"}) {
         method(name, [](context &, std::span<value>) { return value::undefined(); });
     }
-    method("checkFramebufferStatus", [](context &, std::span<value>) {
-        return value::number(0x8CD5); // FRAMEBUFFER_COMPLETE
-    });
+    // ASKED, NOT ASSUMED. This answered FRAMEBUFFER_COMPLETE unconditionally,
+    // which is a lie a page acts on - Babylon checks it before deciding a
+    // render target is usable, and would have been told yes about a target that
+    // had nothing attached.
+    method("checkFramebufferStatus",
+           [gl](context &, std::span<value>) { return value::number(gl->framebuffer_status()); });
 
     return value::object(obj);
 }

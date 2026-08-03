@@ -40,19 +40,18 @@ was — and an indexed draw is what a mesh is. That is why the hand-written
 `drawArrays` quad below sampled perfectly through the same context. There is one
 sampler now, shared by both paths.
 
-The box comes back `0,0,0` with a `DynamicTexture`, and again with a
-`RawTexture`, and again with the texture on `emissiveTexture` and
-`emissiveColor` set to white. The mesh has UVs (48 floats on a box).
-`texture.isReady()` is true.
+**How it was found, since the method transfers.** The box came back `0,0,0` with
+a `DynamicTexture`, again with a `RawTexture`, and again with the texture on
+`emissiveTexture` — while the mesh had UVs and `isReady()` was true. A plain
+WebGL 2 textured quad through the *same context* rendered green, which said the
+sampler, the texture unit and the rasteriser were all fine and moved the search
+to what was different about Babylon's draw. What was different is that a mesh is
+drawn with `drawElements`.
 
-**And it is Babylon's path specifically, not texturing.** A plain WebGL 2
-textured quad — `texImage2D` of one green texel, `sampler2D`, `texture(tex, uv)`
-— renders green across the whole canvas through the same context. So the
-sampler, the texture unit and the rasteriser all work; something between
-Babylon's texture object and the sampler does not.
-
-This is first because it is the largest: without it no material with an image
-works, which is most of what anybody uses Babylon for.
+**And one of the two readings was the harness's fault**, which is worth knowing
+before trusting a rung: ratchet rung 2 set `emissiveColor` to white and Babylon's
+shader ADDS the emissive texture, so it saturated to white and read the same
+before and after the fix.
 
 ### 2. A post-process blanks the canvas
 
@@ -75,11 +74,14 @@ before it is implemented.
 
 ### 4. `PBRMaterial` throws: `ArrayBuffer.isView` is not a function — FIXED
 
-One method. Both PBR materials construct now, and the surface probe reads
-41/43 with only the two corpus gaps left.
-
 One missing standard-library method, and the entire physically-based material
-path is unreachable. This is the cheapest item on the list by a wide margin.
+path was unreachable — the cheapest item on the list by a wide margin. Both PBR
+materials construct now and the surface probe reads 41/43, with only the two
+corpus gaps left.
+
+It goes on the NATIVE's own property table: `define_native` makes a function
+that is also an object, so casting it to an `object_object` writes the property
+somewhere nothing will ever look for it.
 
 ### 5. `BABYLON.GUI` is not in the bundle at all
 
@@ -116,8 +118,9 @@ at all" and is answered; this one asks what a scene can contain.
 11. **glTF** — `SceneLoader.ImportMesh` of a small embedded asset appears.
 12. **GUI** — a `babylon.gui.js` control draws.
 
-Rungs 1 and 2 are the immediate work. 11 and 12 need corpus additions and are
-named so the ladder does not have to be rewritten when they arrive.
+**It reads 7/12.** Rung 8, the post-process, is the last purely-engine item;
+9 and 10 follow it. 11 and 12 need corpus additions and are named so the ladder
+does not have to be rewritten when they arrive.
 
 ## The surface probe
 

@@ -19,8 +19,8 @@
 # canvas showed nothing but the clear colour. A Babylon feature that is missing
 # here fails SILENTLY from JavaScript - that is the character of this corpus.
 
-level=7
-blocker=a pass post-process lost the scene: 0 red pixels and 4096 BLACK ones - the whole canvas went dark (1 colours 0,0,0x4096)
+level=8
+blocker=no shadow on the ground: 0 grey level(s) (3 colours 0,0,255x3220 50,0,0x690 250,0,0x186)
 
 # 7/12 ON THE SECOND READING, and one engine bug did most of it.
 #
@@ -57,12 +57,33 @@ blocker=a pass post-process lost the scene: 0 red pixels and 4096 BLACK ones - t
 # arrived), SPECULAR (a highlight brighter than the diffuse term), and ALPHA
 # BLENDING (a colour with both channels, which no opaque draw here can make).
 #
-# RUNG 8 IS THE POST-PROCESS, and it is the last purely-engine item on the
-# ladder: PassPostProcess is the IDENTITY - it copies the frame and changes
-# nothing - and it leaves all 4096 pixels BLACK, taking the scene's own render
-# with it. A post-process renders into a framebuffer and then draws a
-# full-screen quad sampling it, so the next thing to check is framebuffer
-# attachments rather than sampling, which now works.
+# RUNG 8 PASSES: a post-process runs, and it took RENDER-TO-TEXTURE, which did
+# not exist. `bindFramebuffer` recorded an id and changed nothing, so a scene
+# drawn "into a texture" went to the CANVAS and whatever sampled that texture
+# afterwards read an empty one. Babylon's IDENTITY post-process - a pass that
+# copies the frame and changes nothing - turned a working scene into a black
+# canvas that way, with no GL error and `checkFramebufferStatus` answering
+# COMPLETE unconditionally, which is a lie a page acts on.
 #
-# RUNGS 11 AND 12 NEED CORPUS ADDITIONS - a glTF asset and babylon.gui.js - and
-# are a corpus decision rather than an engine one.
+# THREE THINGS HAD TO BE TRUE AT ONCE and each hid the next:
+#
+#   `framebufferTexture2D` was a no-op, so no framebuffer had an attachment.
+#
+#   `bindFramebuffer` read its argument with `as_number` while a framebuffer
+#   arrives as a WRAPPED OBJECT like every other GL object - so it bound ZERO
+#   every time. That was invisible while framebufferTexture2D did nothing, and
+#   became an INVALID_OPERATION the moment it stopped being a no-op.
+#
+#   A framebuffer needs its OWN depth buffer, swapped in with it. A shadow map
+#   is a different size from the window, and sharing the canvas's depth compares
+#   a fragment against a neighbour's - the same class of bug as sharing an
+#   attribute table across vertex arrays, which this tree has paid for once.
+#
+# An INCOMPLETE framebuffer now draws NOWHERE rather than to the canvas, which
+# is what GL does and is much better than drawing to the wrong surface.
+#
+# RUNG 9 IS THE SHADOW, and the reading is precise: the box is there in two
+# shades of red (250,0,0 and 50,0,0) and THE GROUND IS NOT DRAWN AT ALL - 3220
+# of 4096 pixels are still the clear colour. So this is not "the shadow is
+# missing", it is "the surface the shadow would fall on never arrived", and the
+# next attempt starts there rather than in the shadow map.

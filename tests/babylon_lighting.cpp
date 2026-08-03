@@ -78,17 +78,16 @@ struct sample {
 // light travelling (0, 0, 1).
 [[nodiscard]] sample lit_by(const std::string & bundle, const std::string & light,
                             double grey = 0.8) {
-    auto page = std::make_unique<ctbrowser::shell::browser>(
-        ctbrowser::shell::browser_options{200, 200});
-    page->assets().add("babylon.js",
-                       std::vector<std::byte>{
-                           reinterpret_cast<const std::byte *>(bundle.data()),
-                           reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
+    auto page =
+        std::make_unique<ctbrowser::shell::browser>(ctbrowser::shell::browser_options{200, 200});
+    page->assets().add(
+        "babylon.js",
+        std::vector<std::byte>{reinterpret_cast<const std::byte *>(bundle.data()),
+                               reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
     page->load_html(R"(<html><head><meta charset="utf-8">
       <script src="babylon.js"></script></head>
       <body><canvas id=c width=64 height=64></canvas></body></html>)");
-    (void)page->run_script(
-        std::string{R"JS((function () {
+    (void)page->run_script(std::string{R"JS((function () {
         var engine = new BABYLON.Engine(document.getElementById('c'), true);
         var scene = new BABYLON.Scene(engine);
         // BLACK, so nothing the light does not account for can reach the pixel.
@@ -105,14 +104,15 @@ struct sample {
         var plane = BABYLON.MeshBuilder.CreatePlane('p', {size: 6}, scene);
         var m = new BABYLON.StandardMaterial('m', scene);
         m.diffuseColor = new BABYLON.Color3()JS"} +
-        std::to_string(grey) + ", " + std::to_string(grey) + ", " + std::to_string(grey) + R"JS();
+                           std::to_string(grey) + ", " + std::to_string(grey) + ", " +
+                           std::to_string(grey) + R"JS();
         // NO SPECULAR AND NO EMISSIVE, so `diffuse * dot` is the whole answer.
         m.specularColor = new BABYLON.Color3(0, 0, 0);
         m.emissiveColor = new BABYLON.Color3(0, 0, 0);
         m.ambientColor = new BABYLON.Color3(0, 0, 0);
         plane.material = m;
         var sun = new BABYLON.DirectionalLight('sun', new BABYLON.Vector3()JS" +
-        light + R"JS(), scene);
+                           light + R"JS(), scene);
         sun.intensity = 1;
         sun.diffuse = new BABYLON.Color3(1, 1, 1);
         sun.specular = new BABYLON.Color3(0, 0, 0);
