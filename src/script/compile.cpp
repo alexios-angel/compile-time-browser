@@ -312,6 +312,22 @@ public:
         case vp::nk::forof_stmt: return {n.a, n.b, n.c, -1};
         // a = the test, the statements are the list; d marks `default:`
         case vp::nk::case_clause: return {n.a, -1, -1, -1};
+        // ES MODULES. `c` IS A FLAG ON ALL OF THESE - which binding form an
+        // import_spec is, whether an export is `default` or `*` - and the
+        // default branch below would follow it as a NODE INDEX. It did: walking
+        // `export default 42` segfaulted, because `c = 1` sent the tour into
+        // node 1 and off from there.
+        //
+        // The bindings live in `list`, which every walk handles separately, and
+        // `a` is the only real child: the declaration an export wraps, the
+        // specifier a dynamic import takes, or the str node holding the
+        // original name of a renamed binding.
+        case vp::nk::import_decl:
+        case vp::nk::import_meta: return {-1, -1, -1, -1};
+        case vp::nk::import_spec:
+        case vp::nk::export_decl:
+        case vp::nk::export_spec:
+        case vp::nk::dynamic_import: return {n.a, -1, -1, -1};
         default: return {n.a, n.b, n.c, n.d};
         }
     }
@@ -1221,6 +1237,19 @@ public:
         const vp::node & n = at(idx);
         const std::uint32_t mark = reg_mark();
         switch (n.kind) {
+        // REFUSED BY NAME, for the same reason the expression forms are: a
+        // page whose `import` silently did nothing would run with half its
+        // bindings undefined and fail somewhere else entirely. The syntax
+        // parses (ctjs 2026-08-02); the semantics are staged in
+        // docs/modules-plan.md.
+        case vp::nk::import_decl:
+            fail("`import` declarations are not implemented yet - ES modules are staged in "
+                 "docs/modules-plan.md");
+            break;
+        case vp::nk::export_decl:
+            fail("`export` declarations are not implemented yet - ES modules are staged in "
+                 "docs/modules-plan.md");
+            break;
         case vp::nk::expr_stmt: {
             const std::uint16_t r = alloc_reg();
             compile_expr(n.a, r);
@@ -2038,6 +2067,24 @@ public:
             proto().emit(instruction{op::yield_value, dst, sent});
             break;
         }
+        // ES MODULES ARE REFUSED BY NAME, not mis-compiled. The syntax parses
+        // now (ctjs 2026-08-02); the semantics - a scope per module, live
+        // bindings, a dependency graph, a loader - are staged in
+        // docs/modules-plan.md and measured by tests/module_ratchet.cpp.
+        //
+        // Refusing beats accepting: a page whose `import` silently did nothing
+        // would run with half its bindings undefined and fail somewhere else
+        // entirely, which is the failure mode this tree keeps paying for.
+        case vp::nk::dynamic_import:
+            fail("`import(...)` is not implemented yet - ES modules are staged in "
+                 "docs/modules-plan.md");
+            proto().emit(instruction{op::load_undef, dst});
+            break;
+        case vp::nk::import_meta:
+            fail("`import.meta` is not implemented yet - ES modules are staged in "
+                 "docs/modules-plan.md");
+            proto().emit(instruction{op::load_undef, dst});
+            break;
         case vp::nk::tagged:
             fail("tagged template literals are not in this VM subset");
             proto().emit(instruction{op::load_undef, dst});

@@ -38,15 +38,15 @@ namespace {
 
 enum rung {
     rung_none = 0,
-    rung_syntax = 1,    // import/export parse at all
+    rung_syntax = 1,     // import/export parse at all
     rung_one_module = 2, // a module with no imports runs, in its own scope
-    rung_graph = 3,     // two modules, and the importer sees the export
-    rung_live = 4,      // an imported binding is LIVE, not a copy
-    rung_cycle = 5,     // A imports B imports A resolves rather than hangs
-    rung_page = 6,      // <script type="module"> on a real page
-    rung_relative = 7,  // "./x.js" resolves against the importing module's URL
-    rung_dynamic = 8,   // await import("./x.js") - the one Babylon needs
-    rung_babylon = 9,   // and Babylon's ES build boots on it
+    rung_graph = 3,      // two modules, and the importer sees the export
+    rung_live = 4,       // an imported binding is LIVE, not a copy
+    rung_cycle = 5,      // A imports B imports A resolves rather than hangs
+    rung_page = 6,       // <script type="module"> on a real page
+    rung_relative = 7,   // "./x.js" resolves against the importing module's URL
+    rung_dynamic = 8,    // await import("./x.js") - the one Babylon needs
+    rung_babylon = 9,    // and Babylon's ES build boots on it
 };
 
 [[nodiscard]] const char * rung_name(int level) {
@@ -236,8 +236,8 @@ int main() {
     if (!want_level.empty()) {
         const int floor_level = std::stoi(want_level);
         if (m.level < floor_level) {
-            std::printf("FAIL modules went BACKWARDS: %d, recorded %d (%s)\n", m.level,
-                        floor_level, rung_name(floor_level));
+            std::printf("FAIL modules went BACKWARDS: %d, recorded %d (%s)\n", m.level, floor_level,
+                        rung_name(floor_level));
             ++ctbrowser_test_failures;
         } else if (m.level == floor_level && m.blocker != want_blocker) {
             std::printf("FAIL modules is stuck at %d but the blocker CHANGED\n"

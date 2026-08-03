@@ -16,7 +16,7 @@
 # where a page and a network arrive. Babylon last, because it needs all of it.
 
 level=0
-blocker=`import(...)` is parsed as an IDENTIFIER, not syntax: uncaught TypeError: `import` is undefined, not a function - in `<script>`
+blocker=dynamic import does not compile: `import(...)` is not implemented yet - ES modules are staged in docs/modules-plan.md
 
 # WHY THIS STARTS AT ZERO, and it is further down than it looks. `import` and
 # `export` are not refused by name in this engine - they are NOT KEYWORDS AT
@@ -40,6 +40,26 @@ blocker=`import(...)` is parsed as an IDENTIFIER, not syntax: uncaught TypeError
 #
 # (That the parser accepts arbitrary text is a finding in its own right and is
 # not this ladder's to fix. docs/lexer-plan.md is where it belongs.)
+#
+# STAGE 1 IS DONE (2026-08-02): the syntax parses and the compiler REFUSES IT BY
+# NAME, the way `yield` was refused before generators existed. `import` and
+# `export` are keywords in ctjs now, every form in docs/modules-plan.md parses,
+# and the blocker moved from "parsed as an identifier" to "not implemented yet",
+# which is the whole of what stage 1 was for.
+#
+# TWO BUGS ON THE WAY, both worth keeping:
+#
+#   `from` and `as` ARE NOT KEYWORDS. They are ordinary identifiers that mean
+#   something only inside an import or export, which is what keeps `from` usable
+#   as a variable name - so eat_kw never matched them and every `import d from
+#   './m.js'` was "import needs `from`". They are matched by SPELLING now.
+#
+#   THE COMPILER'S GENERIC AST WALK FOLLOWED A FLAG AS A NODE INDEX, and
+#   `export default 42` segfaulted. `child_slots` falls through to
+#   `{a, b, c, d}`, and `c` on these new kinds is which binding form a spec is,
+#   not a child - the comment above that function warns about exactly this for
+#   the kinds that came before. Adding a case per kind is the fix, and any node
+#   kind added later needs one too.
 #
 # AND THE ARCHITECTURE IS THE REAL DISTANCE. browser::run_scripts concatenates
 # EVERY script on the page into one string and compiles it as ONE program:
