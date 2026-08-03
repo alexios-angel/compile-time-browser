@@ -40,11 +40,28 @@
 
 namespace ctbrowser::script {
 
+// WHICH KIND OF SCRIPT THIS IS, which decides where its top-level declarations
+// go.
+//
+// A CLASSIC script's `var x = 1` at top level becomes a GLOBAL - that is the
+// whole reason two <script> tags can see each other's variables, and why this
+// engine could concatenate them all into one program and be right.
+//
+// A MODULE's does not. Its top level is a scope of its own; `globalThis.x = 1`
+// still reaches the global object because that is an explicit write, but a bare
+// declaration is the module's own. Getting this wrong is how "modules work"
+// while every module on a page silently shares state with every other.
+enum class script_kind {
+    classic,
+    module_
+};
+
 class compiler {
 public:
     // Compile `source` to a program. On a parse error the program comes back
     // with ok == false and error set, rather than throwing.
-    [[nodiscard]] static program compile(std::string_view source);
+    [[nodiscard]] static program compile(std::string_view source,
+                                         script_kind kind = script_kind::classic);
 };
 
 } // namespace ctbrowser::script

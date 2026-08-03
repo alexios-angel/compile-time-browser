@@ -668,9 +668,17 @@ void browser::run_scripts() {
     script_error_.clear();
 
     std::string source;
+    // MODULES ARE COLLECTED SEPARATELY AND RUN SEPARATELY, because that is the
+    // one thing they cannot share with a classic script: its top level is the
+    // global scope and theirs is not. Concatenating them all - which is what
+    // this did, and what makes the classic path cheap and correct - would put
+    // every module's declarations on the global object and let them overwrite
+    // each other. See docs/modules-plan.md.
+    std::vector<std::string> modules;
     {
         const auto txn = doc_->read();
         const atom script_tag = atoms_.intern_lower("script");
+        const atom type_attribute = atoms_.intern("type");
         const auto walk = [&](auto && self, node_id at) -> void {
             // HTML <script> ONLY, for the same reason as <style> and <title>
             // above: SVG has a <script> of its own and it interns to the same
@@ -688,6 +696,14 @@ void browser::run_scripts() {
                 // is not in the registry and not beside the page is a page that
                 // silently loses a library, so the miss is RECORDED rather than
                 // passed over.
+                // `type="module"` is the whole difference. Any other value -
+                // absent, "text/javascript", "application/json" - is not one;
+                // the spec is a fixed string here rather than a MIME match.
+                const bool is_module = txn.attribute_value(at, type_attribute) == "module";
+                std::string * into = is_module ? nullptr : &source;
+                std::string module_text;
+                if (is_module) { into = &module_text; }
+
                 const std::string_view src = txn.attribute_value(at, atoms_.intern("src"));
                 if (!src.empty()) {
                     const std::string url{src};
@@ -695,22 +711,39 @@ void browser::run_scripts() {
                     if (bytes.empty()) {
                         script_error_ = "<script src=\"" + url + "\"> not found";
                     } else {
-                        source.append(reinterpret_cast<const char *>(bytes.data()), bytes.size());
-                        source += '\n';
+                        into->append(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+                        *into += '\n';
                     }
                 }
-                for (const node_id child : txn.children(at)) { source += txn.text(child); }
-                source += '\n';
+                for (const node_id child : txn.children(at)) { *into += txn.text(child); }
+                *into += '\n';
+                if (is_module) { modules.push_back(std::move(module_text)); }
             }
             for (const node_id child : txn.children(at)) { self(self, child); }
         };
         walk(walk, txn.root());
     }
-    if (source.empty()) { return; }
+    if (!source.empty()) {
+        script_program_ = std::make_unique<script::program>(script::compiler::compile(source));
+        const script::run_result result = script_->run(*script_program_);
+        if (!result.ok) { script_error_ = result.error; }
+    }
 
-    script_program_ = std::make_unique<script::program>(script::compiler::compile(source));
-    const script::run_result result = script_->run(*script_program_);
-    if (!result.ok) { script_error_ = result.error; }
+    // MODULES RUN AFTER THE CLASSIC SCRIPTS, each as its own program in its own
+    // scope. Deferred is what the specification says a module script is - it
+    // waits for the document rather than running where it sits - and running
+    // them last is the shape that will still be right when the loader arrives
+    // and they have to wait for their dependencies too.
+    //
+    // ONE PROGRAM EACH, kept alive: a module's top-level declarations live in
+    // its frame, and its functions close over them.
+    for (const std::string & module_source : modules) {
+        auto compiled = std::make_unique<script::program>(
+            script::compiler::compile(module_source, script::script_kind::module_));
+        const script::run_result result = script_->run(*compiled);
+        if (!result.ok && script_error_.empty()) { script_error_ = result.error; }
+        module_programs_.push_back(std::move(compiled));
+    }
 }
 
 const ctbrowser::raster::font_backend & browser::fonts() const {

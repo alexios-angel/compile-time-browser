@@ -95,6 +95,11 @@ public:
     compiler_impl(const vp::ast & tree, program & out)
         : ast_(tree), current_ast_(&tree), out_(out) {}
 
+    // A MODULE'S TOP LEVEL IS A SCOPE, NOT THE GLOBAL OBJECT. Set by
+    // compiler::compile from the script_kind; see the note on that enum for why
+    // the distinction is not cosmetic.
+    bool module_scope_ = false;
+
     // --- AST access -------------------------------------------------------
     // A NEGATIVE INDEX IS "NOTHING", not an address.
     //
@@ -1262,7 +1267,11 @@ public:
             // common shape in JavaScript there is. Making them registers would
             // turn every one of those into the enclosing-local refusal below,
             // which would be correct and useless.
-            if (frames_.size() == 1) {
+            // A MODULE'S top-level declarations are its OWN, so they take the
+            // local path below exactly as a function body's would. A classic
+            // script's become globals, which is what lets two <script> tags see
+            // each other.
+            if (frames_.size() == 1 && !module_scope_) {
                 for (const std::int32_t d : kids(n)) {
                     const vp::node & decl = at(d);
                     const std::uint32_t mark = reg_mark();
@@ -3353,7 +3362,7 @@ public:
 
 } // namespace
 
-program compiler::compile(std::string_view source) {
+program compiler::compile(std::string_view source, script_kind kind) {
     const vp::ast tree = vp::parse(source);
     program out;
     if (!tree.ok) {
@@ -3387,6 +3396,7 @@ program compiler::compile(std::string_view source) {
     }
     out.source = std::string{source};
     compiler_impl c{tree, out};
+    c.module_scope_ = kind == script_kind::module_;
     c.compile_program();
     return out;
 }

@@ -128,48 +128,55 @@ struct measurement {
     //     this is not javascript at all ###
     //
     // without complaint. A lenient parser that accepts arbitrary text cannot be
-    // asked whether it understood something - the answer is always yes. So the
-    // rung asks what the syntax MEANS instead, and the cleanest question is the
-    // one Babylon depends on.
+    // asked whether it understood something - the answer is always yes.
     //
-    // `import('./m.js')` today fails at RUN time with "`import` is undefined,
-    // not a function". That is the parser treating `import` as an identifier
-    // and the call as an ordinary call - which is exactly the wrong answer, and
-    // an unambiguous one to test for.
+    // AND NOT "does it work" either, which was the second version and was too
+    // strict in the other direction: it demanded dynamic import RETURN a
+    // Promise, which is stage 4 of docs/modules-plan.md, so the whole ladder
+    // sat at 0 while rungs 2 and 3 went unmeasured. A rung that cannot be
+    // reached measures nothing.
+    //
+    // So: UNDERSTOOD means the engine knows what it is being asked. Refusing by
+    // name counts - that is what stage 1 built - and treating `import` as an
+    // ordinary identifier does not. The two are easy to tell apart: the first
+    // says "not implemented", the second says "`import` is undefined".
     {
-        ctbrowser::script::context probe;
-        ctbrowser::script::install_builtins(probe);
         const ctbrowser::script::program dynamic =
-            ctbrowser::script::compiler::compile("const p = import('./m.js'); return typeof p;");
-        if (!dynamic.ok) {
-            m.fail_at(rung_syntax, "dynamic import does not compile: " + dynamic.error);
+            ctbrowser::script::compiler::compile("const p = import('./m.js');");
+        const bool understood =
+            dynamic.ok || dynamic.error.find("not implemented") != std::string::npos;
+        if (!understood) {
+            m.fail_at(rung_syntax, "`import(...)` is not understood: " + dynamic.error);
             return m;
         }
-        const ctbrowser::script::run_result ran = probe.run(dynamic);
-        if (!ran.ok) {
-            m.fail_at(rung_syntax, "`import(...)` is parsed as an IDENTIFIER, not syntax: " +
-                                       ran.error.substr(0, ran.error.find('\n')));
-            return m;
-        }
-        const std::string kind = probe.to_string(ran.returned);
-        if (kind != "object") {
-            m.fail_at(rung_syntax, "import() returned " + kind + ", wanted a Promise");
+        // A COMPILE-TIME REFUSAL IS ITSELF THE PROOF. Before the syntax
+        // existed this source COMPILED - `import` was an identifier and
+        // `import(...)` an ordinary call - and failed at run time with
+        // "`import` is undefined, not a function". A compiler that stops and
+        // names the feature has understood it.
+        //
+        // (`typeof import` was tried as a second check and is not a question
+        // with a meaningful answer: `import` is not an expression on its own in
+        // any JavaScript, so what it reports says nothing either way.)
+    }
+    {
+        const ctbrowser::script::program meta =
+            ctbrowser::script::compiler::compile("const u = import.meta.url;");
+        const bool understood = meta.ok || meta.error.find("not implemented") != std::string::npos;
+        if (!understood) {
+            m.fail_at(rung_syntax, "`import.meta` is not understood: " + meta.error);
             return m;
         }
     }
-    // `import.meta` likewise: an identifier lookup would throw or be undefined.
-    {
-        ctbrowser::script::context probe;
-        ctbrowser::script::install_builtins(probe);
-        const ctbrowser::script::program meta =
-            ctbrowser::script::compiler::compile("return typeof import.meta;");
-        if (!meta.ok) {
-            m.fail_at(rung_syntax, "import.meta does not compile: " + meta.error);
-            return m;
-        }
-        const ctbrowser::script::run_result ran = probe.run(meta);
-        if (!ran.ok || probe.to_string(ran.returned) != "object") {
-            m.fail_at(rung_syntax, "import.meta is not a meta-property here");
+    // And every declaration form, to the same bar.
+    for (const char * form :
+         {"import d from './m.js';", "import { a, b as c } from './m.js';",
+          "import * as ns from './m.js';", "import './m.js';", "export const x = 1;",
+          "export function f() {}", "export class C {}", "const a = 1; export { a };",
+          "export default 42;", "export * from './m.js';", "export { x } from './m.js';"}) {
+        const ctbrowser::script::program one = ctbrowser::script::compiler::compile(form);
+        if (!one.ok && one.error.find("not implemented") == std::string::npos) {
+            m.fail_at(rung_syntax, std::string{"`"} + form + "` is not understood: " + one.error);
             return m;
         }
     }

@@ -1469,6 +1469,11 @@ private:
     std::uint64_t canvas_revision_ = 0;
 
     std::unique_ptr<script::program> script_program_;
+    // ONE PROGRAM PER MODULE, kept alive for the page's lifetime. A module's
+    // top-level declarations live in its own frame and its functions close over
+    // them, so the program cannot be a temporary the way a classic script's
+    // could be. See docs/modules-plan.md.
+    std::vector<std::unique_ptr<script::program>> module_programs_;
     // Every program run by run_script AFTER the page's own. They accumulate for
     // the life of the page because a closure from any of them may still be
     // reachable - a listener, a timer, a rAF callback - and a program that

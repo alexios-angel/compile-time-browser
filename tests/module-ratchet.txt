@@ -15,8 +15,8 @@
 # graph. Then the graph, where live bindings and cycles live. Then the loader,
 # where a page and a network arrive. Babylon last, because it needs all of it.
 
-level=0
-blocker=dynamic import does not compile: `import(...)` is not implemented yet - ES modules are staged in docs/modules-plan.md
+level=2
+blocker=not measured yet - rungs 3 to 9 need a module loader
 
 # WHY THIS STARTS AT ZERO, and it is further down than it looks. `import` and
 # `export` are not refused by name in this engine - they are NOT KEYWORDS AT
@@ -54,6 +54,12 @@ blocker=dynamic import does not compile: `import(...)` is not implemented yet - 
 #   as a variable name - so eat_kw never matched them and every `import d from
 #   './m.js'` was "import needs `from`". They are matched by SPELLING now.
 #
+#   `import.meta` AND `import()` WERE PARSED IN THE WRONG FUNCTION. They went
+#   into unary(), which RETURNS - so postfix(), which applies `.name` and
+#   `(...)`, never saw the result. `import.meta` parsed and `import.meta.url`
+#   did not; `import(x)` parsed and `import(x).then(f)` did not. Both are the
+#   forms people actually write. Fixed in ctjs c4b62b2.
+#
 #   THE COMPILER'S GENERIC AST WALK FOLLOWED A FLAG AS A NODE INDEX, and
 #   `export default 42` segfaulted. `child_slots` falls through to
 #   `{a, b, c, d}`, and `c` on these new kinds is which binding form a spec is,
@@ -72,6 +78,22 @@ blocker=dynamic import does not compile: `import(...)` is not implemented yet - 
 # binding namespace, and an execution ORDER derived from a dependency graph.
 # Replacing it is the change this ladder is really measuring, and the syntax is
 # the easy half.
+#
+# STAGE 2 IS DONE (2026-08-02): a `<script type="module">` runs in its own
+# scope. `script_kind` on the compiler decides where top-level declarations go -
+# a classic script's become globals, which is what lets two <script> tags see
+# each other and what made concatenating them right; a module's stay in its own
+# frame. browser::run_scripts collects modules SEPARATELY and runs each as its
+# own program after the classic ones, which is also what "deferred" means and is
+# the shape that stays right when the loader arrives.
+#
+# RUNG 1 WAS REDEFINED TWICE BEFORE IT MEASURED ANYTHING, and both mistakes are
+# the same mistake in opposite directions. First it asked "does it parse", which
+# a lenient parser always says yes to. Then it asked "does it WORK" - demanding
+# dynamic import return a Promise, which is stage 4 - so the ladder sat at 0
+# while rungs 2 and 3 went unmeasured. A rung that cannot be reached measures
+# nothing. It asks whether the engine UNDERSTOOD the syntax now: refusing by
+# name counts, treating `import` as an identifier does not.
 #
 # RUNG 4 IS THE ONE THAT WILL BE SHORTCUT. An imported binding is LIVE: if the
 # exporter reassigns it, the importer sees the new value. Copying at link time
