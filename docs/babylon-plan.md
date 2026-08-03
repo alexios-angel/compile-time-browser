@@ -137,6 +137,41 @@ the ladder happened to ask a number for a property.
 `webgl2-api-probe.js` does it, and the recorded file says which. Recording "not
 implemented" as a fact beats discovering it later as a wrong answer.
 
+## The interactive demo, and the two faults it found
+
+`examples/pages/babylon-orbit.html` is a cube, a sphere and a plane under them,
+lit by a directional light that is nowhere in the picture: **drag to orbit,
+wheel to zoom**, with nothing in the page handling a mouse — the camera is an
+ArcRotateCamera with `attachControl`, so the whole path is Babylon's own input
+manager reading DOM events off the canvas.
+
+`tests/babylon_interaction.cpp` is the claim behind it, and it asserts TWO
+things every time: the camera moved AND the picture changed. Those are not the
+same — a camera whose angle updates while the render does not follow is exactly
+the half-working this corpus keeps producing.
+
+**Nothing dispatched a `wheel` event at all.** The notch went straight to the
+document scroller, so a page could not zoom, could not scroll its own canvas and
+could not refuse the page scroll. `deltaY` is in pixels and its sign is the
+opposite of this engine's `wheel_y`, which is why the test asserts the
+DIRECTION rather than that the number moved.
+
+**And `'onwheel' in element` was false.** Every element had the handler
+properties *assignable* but not *present*, so feature detection failed —
+Babylon picks its wheel event name with
+
+```js
+"onwheel" in document.createElement("div") ? "wheel"
+  : document.onmousewheel !== undefined ? "mousewheel" : "DOMMouseScroll"
+```
+
+and fell through to `DOMMouseScroll`, a Firefox-only name nothing here sends.
+Every listener was attached, every event was dispatched, and the two sets had
+different names — the same shape as the `pointerdown`/`mousedown` fault
+`bindings.cpp` already records. The handler properties exist now, and
+deliberately only for events this engine can actually dispatch: a detection that
+answers yes for an event that never fires is worse than one that answers no.
+
 ## The example page
 
 `examples/pages/babylon-scene.html`, with a golden. Not a duplicate of the

@@ -103,8 +103,12 @@ foreach(source ${example-sources})
     # page renders a fixed number of times rather than running a render loop,
     # because Babylon compiles its effects asynchronously and a loop would make
     # the frame depend on timing.
+    # babylonorbit is the INTERACTIVE one, and its golden is the frame before
+    # anybody touches it: the scene does not move on its own, so the picture is
+    # stable, and tests/babylon_interaction.cpp is what drives a drag through it.
     set(golden-examples widgets elements p5basic p5text p5transform p5shape p5pixels
-        p5image webgltriangle p5webgl phaserbasic phaserinvaders babylonscene)
+        p5image webgltriangle p5webgl phaserbasic phaserinvaders babylonscene
+        babylonorbit)
     # plutosvg_FOUND, not CTBROWSER_WITH_SVG: the latter is a compile
     # definition on a target and is not a variable this scope can test.
     if(plutosvg_FOUND)
@@ -129,7 +133,7 @@ foreach(source ${example-sources})
       # game does: it compiles its effects through PROMISES, so the first
       # frames legitimately draw nothing while they settle. 30 frames is a
       # golden of pure background.
-      if(example STREQUAL babylonscene)
+      if(example STREQUAL babylonscene OR example STREQUAL babylonorbit)
         set(render-frames 90)
       endif()
       add_test(NAME render-${example} COMMAND ${CMAKE_COMMAND}

@@ -379,13 +379,22 @@ bool browser::handle(const input_event & event) {
         have_pointer_ = true;
     }
     switch (event.kind) {
-    case input_kind::wheel:
-        // The field under the pointer takes the notch first, and only what it
+    case input_kind::wheel: {
+        // THE PAGE GETS THE NOTCH FIRST, and may keep it. A `wheel` listener
+        // that calls preventDefault means the document must NOT also scroll -
+        // which is how a canvas zooms without the page sliding out from under
+        // it, and what every 3D library on the web relies on. Nothing was
+        // dispatched at all before this: the notch went straight to the
+        // scroller, so a scene could be orbited and not zoomed.
+        const node_id under = event.has_pointer ? hit_test(event.x, event.y) : body_node();
+        if (bindings_->dispatch_wheel(under ? under : body_node(), event)) { return true; }
+        // The field under the pointer takes the notch next, and only what it
         // cannot use falls through to the page - which is what makes a textarea
         // at its last line stop swallowing the wheel.
         if (scroll_field_under(event)) { return true; }
         scroll_by(-event.wheel_y * options_.wheel_step);
         return true;
+    }
     case input_kind::mouse_move: {
         if (sb_dragging_) {
             // The grab offset is kept so the thumb does not jump to centre

@@ -180,6 +180,48 @@ bool dom_bindings::dispatch_key(std::string_view type, node_id target, const inp
     return dispatch_event(type, target, event);
 }
 
+// A `wheel` EVENT, which the page never used to get at all.
+//
+// The notch went straight to the scroller: `handle` scrolled the document and
+// nothing was dispatched, so a page could not zoom, could not scroll its own
+// canvas, and could not refuse the page scroll. Every 3D library on the web
+// reads this one - Babylon's ArcRotateCamera has a `mousewheel` input attached
+// by default - and a scene you could orbit but not zoom is how it showed up.
+//
+// deltaY IS IN PIXELS AND ITS SIGN IS THE OPPOSITE OF THE ENGINE'S. `wheel_y`
+// here is notches with POSITIVE meaning away from the user; the DOM's `deltaY`
+// is positive when the content scrolls DOWN, which is the same physical
+// direction with the other sign. Getting that backwards inverts every zoom, and
+// looks like a preference rather than a fault.
+//
+// The 100 is what a browser reports per notch in pixel mode (deltaMode 0), and
+// libraries divide by it: Babylon's default wheelPrecision is 3, so a notch at
+// 100 moves the camera about 33 units - which is why the number matters rather
+// than being a scale nobody sees.
+bool dom_bindings::dispatch_wheel(node_id target, const input_event & input) {
+    if (cx_ == nullptr) { return false; }
+    value event = make_event(*cx_, "wheel", target);
+    auto * object = static_cast<script::object_object *>(event.as_heap());
+    object->set("clientX", value::number(input.x));
+    object->set("clientY", value::number(input.y));
+    object->set("pageX", value::number(input.x));
+    object->set("pageY", value::number(input.y));
+    object->set("offsetX", value::number(input.x));
+    object->set("offsetY", value::number(input.y));
+    object->set("deltaX", value::number(0));
+    object->set("deltaY", value::number(-input.wheel_y * 100.0));
+    object->set("deltaZ", value::number(0));
+    object->set("deltaMode", value::number(0)); // 0 = pixels
+    // THE LEGACY SPELLING TOO, and it is not politeness: plenty of shipped code
+    // reads `wheelDelta` and it is the OPPOSITE sign again by definition, so a
+    // library falling back to it inverts unless both are right.
+    object->set("wheelDelta", value::number(input.wheel_y * 120.0));
+    object->set("shiftKey", value::boolean(input.shift));
+    object->set("ctrlKey", value::boolean(input.ctrl));
+    object->set("buttons", value::number(0));
+    return dispatch_event("wheel", target, event);
+}
+
 bool dom_bindings::dispatch_mouse(std::string_view type, node_id target,
                                   const input_event & input) {
     if (cx_ == nullptr) { return false; }
@@ -1025,6 +1067,35 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
     const auto method = [&](std::string name, script::native_fn fn) {
         obj.set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
     };
+
+    // THE `on...` HANDLER PROPERTIES, PRESENT AND NULL.
+    //
+    // A browser gives every element one of these per event, defaulting to null,
+    // and libraries FEATURE-DETECT with `'onwheel' in element`. Assignment
+    // already worked here - `el.onclick = fn` made a property - but `in`
+    // answered false, because the property did not exist until something wrote
+    // it. That is not a distinction a page can be expected to know about.
+    //
+    // IT COST A ZOOM. Babylon picks which wheel event to listen for with
+    //
+    //     "onwheel" in document.createElement("div") ? "wheel"
+    //       : document.onmousewheel !== undefined ? "mousewheel" : "DOMMouseScroll"
+    //
+    // so it fell all the way through to DOMMouseScroll - a Firefox-only name
+    // nothing here dispatches - and its ArcRotateCamera could be dragged and
+    // not zoomed. Every listener was attached, every event was sent, and the
+    // two sets had different names: the same shape as the pointerdown/mousedown
+    // fault this file already records.
+    //
+    // EXACTLY THE EVENTS THIS ENGINE CAN DISPATCH, and no more. A handler
+    // property for an event that never fires is a detection that answers yes
+    // and a page that then waits forever - which is worse than answering no.
+    for (const char * handler :
+         {"onclick", "onwheel", "onmousedown", "onmouseup", "onmousemove", "oncontextmenu",
+          "onpointerdown", "onpointerup", "onpointermove", "onkeydown", "onkeyup", "oninput",
+          "onchange", "onsubmit", "ontoggle", "onfocus", "onblur", "onload", "onerror"}) {
+        if (obj.find(handler) == nullptr) { obj.set(handler, value::null()); }
+    }
 
     // `element.click()` - CLICKING WITHOUT A MOUSE.
     //

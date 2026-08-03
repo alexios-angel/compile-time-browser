@@ -153,6 +153,10 @@ public:
     // A MouseEvent. clientX/clientY are viewport coordinates, which is what
     // MDN's breakout reads to move its paddle.
     bool dispatch_mouse(std::string_view type, node_id target, const input_event & input);
+    // A `wheel` event, and whether the page CONSUMED it - a page that calls
+    // preventDefault means the document must not scroll as well. See the
+    // definition for the sign and the units, both of which are easy to invert.
+    bool dispatch_wheel(node_id target, const input_event & input);
 
     bool dispatch_event(std::string_view type, node_id target, value event);
 
