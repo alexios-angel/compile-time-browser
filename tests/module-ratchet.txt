@@ -15,8 +15,8 @@
 # graph. Then the graph, where live bindings and cycles live. Then the loader,
 # where a page and a network arrive. Babylon last, because it needs all of it.
 
-level=5
-blocker=not measured yet - rungs 6 to 9 need the loader to fetch and resolve
+level=7
+blocker=dynamic import() did not resolve to a namespace (wanted lazy,object got undefined)
 
 # WHY THIS STARTS AT ZERO, and it is further down than it looks. `import` and
 # `export` are not refused by name in this engine - they are NOT KEYWORDS AT
@@ -164,8 +164,32 @@ blocker=not measured yet - rungs 6 to 9 need the loader to fetch and resolve
 # entries now, holds in the switch build too, and was mutation-tested by
 # deleting a line.
 #
-# RUNGS 6 TO 9 ARE THE LOADER: <script type="module"> as a real page script,
-# relative specifiers resolved against the importing module's URL, dynamic
-# import(), an import map, and then Babylon's ES build. Stage 4 of
-# docs/modules-plan.md. Nothing above 5 has been measured yet, and the blocker
-# says so rather than implying a failure.
+# RUNGS 6 AND 7 PASS: module scripts behave like page scripts, and a relative
+# specifier resolves against the module that WROTE it.
+#
+# RUNG 6 FOUND A SILENT ONE. Every inline module script was registered under the
+# specifier `<inline>`, so a page with TWO of them ran the first and took the
+# second for a module already loaded - it never ran and said nothing. The
+# specifier is the registry key, so it has to be distinct per script; `src` gives
+# a module script a real one, and an inline module gets `<inline:N>`.
+#
+# RUNG 7 IS DECOYED ON PURPOSE. `sub/a.js` imports `./b.js` and `../top.js`, and
+# `./b.js` and `./sub/top.js` also exist holding the WRONG values. Without them
+# the rung passes on an engine that ignores the base entirely - which is what
+# this one did, and what every earlier rung is blind to because they put every
+# module in one directory.
+#
+# The specifier as WRITTEN is all the bytecode can carry, so the loader records
+# the translation in the module record and op::load_import looks it up. Path
+# arithmetic stays in the shell, which is the half that will know about URLs and
+# import maps when there are any.
+#
+# RUNG 8 IS DYNAMIC import(), which is the one Babylon's UMD build asks for and
+# rejects. It reads `undefined`: the call is still refused by name at compile
+# time, which is what stage 1 built and what rung 1 measures as UNDERSTOOD. It
+# needs a promise for a namespace object, and a namespace object is a thing this
+# engine does not have yet - `import * as ns` is refused by name for the same
+# reason.
+#
+# RUNG 9 IS BABYLON'S ES BUILD, and nothing above 8 can be measured until there
+# is one vendored. Only the UMD bundle is here.

@@ -148,6 +148,13 @@ struct module_record {
     std::string specifier;
     const program * compiled = nullptr;
     flat_map<std::string, value> exports;
+    // THE SPECIFIER AS WRITTEN -> THE ONE THE REGISTRY IS KEYED BY. `./dep.js`
+    // means a different file depending on WHICH module wrote it, and the
+    // bytecode can only carry what was written. Resolving is the loader's job -
+    // it is the half that knows about paths, and eventually about URLs and
+    // import maps - so it leaves the answer here and `op::load_import` looks it
+    // up rather than doing any path arithmetic of its own.
+    flat_map<std::string, std::string> resolved;
     // Evaluated ONCE, however many modules import it. The flag is the whole of
     // "a module is a singleton".
     bool evaluated = false;

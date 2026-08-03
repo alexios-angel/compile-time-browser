@@ -674,7 +674,12 @@ void browser::run_scripts() {
     // this did, and what makes the classic path cheap and correct - would put
     // every module's declarations on the global object and let them overwrite
     // each other. See docs/modules-plan.md.
-    std::vector<std::string> modules;
+    // WITH A SPECIFIER EACH, because the specifier is the registry key and two
+    // module scripts sharing one means the second is taken for a module already
+    // loaded and never runs at all. It also decides what `./dep.js` INSIDE the
+    // script means: a `src`'d module resolves against its own URL, an inline
+    // one against the page.
+    std::vector<std::pair<std::string, std::string>> modules;
     {
         const auto txn = doc_->read();
         const atom script_tag = atoms_.intern_lower("script");
@@ -700,9 +705,14 @@ void browser::run_scripts() {
                 // absent, "text/javascript", "application/json" - is not one;
                 // the spec is a fixed string here rather than a MIME match.
                 const bool is_module = txn.attribute_value(at, type_attribute) == "module";
-                std::string * into = is_module ? nullptr : &source;
                 std::string module_text;
-                if (is_module) { into = &module_text; }
+                std::string * into = is_module ? &module_text : &source;
+                // THE SPECIFIER A MODULE SCRIPT IS KNOWN BY. `src` gives it a
+                // real one; an inline module gets a distinct synthetic one -
+                // distinct because it is the registry key, and shared keys made
+                // the second inline module on a page silently not run.
+                std::string specifier =
+                    is_module ? "<inline:" + std::to_string(modules.size()) + ">" : std::string{};
 
                 const std::string_view src = txn.attribute_value(at, atoms_.intern("src"));
                 if (!src.empty()) {
@@ -714,10 +724,13 @@ void browser::run_scripts() {
                         into->append(reinterpret_cast<const char *>(bytes.data()), bytes.size());
                         *into += '\n';
                     }
+                    if (is_module) { specifier = url; }
                 }
                 for (const node_id child : txn.children(at)) { *into += txn.text(child); }
                 *into += '\n';
-                if (is_module) { modules.push_back(std::move(module_text)); }
+                if (is_module) {
+                    modules.emplace_back(std::move(module_text), std::move(specifier));
+                }
             }
             for (const node_id child : txn.children(at)) { self(self, child); }
         };
@@ -737,7 +750,9 @@ void browser::run_scripts() {
     //
     // ONE PROGRAM EACH, kept alive: a module's top-level declarations live in
     // its frame, and its functions close over them.
-    for (const std::string & module_source : modules) { load_module(module_source, "<inline>"); }
+    for (const auto & [module_source, specifier] : modules) {
+        load_module(module_source, specifier);
+    }
 }
 
 // LOAD A MODULE AND EVERYTHING IT NEEDS: instantiate the whole graph, then
@@ -759,6 +774,58 @@ void browser::load_module(const std::string & source, const std::string & specif
     evaluate_module(specifier);
 }
 
+// A RELATIVE SPECIFIER MEANS A DIFFERENT FILE IN EVERY MODULE THAT WRITES IT.
+// `./dep.js` inside `sub/a.js` is `sub/dep.js`; the same three words inside the
+// page's own module are `dep.js`. Using the specifier as written happens to
+// work while everything sits in one directory, which is exactly what makes it
+// worth measuring - it passes every earlier rung and fails on the first library
+// laid out in folders.
+//
+// PATHS, NOT URLS, DELIBERATELY. These are asset-registry keys: nothing here
+// fetches, so there is no base URL to resolve against yet. When the loader does
+// fetch, this becomes real URL resolution - and `docs/ada-url-plan.md` is about
+// which standard that should be by. Bare and absolute specifiers pass through
+// untouched: a bare one is an import map's business, which is not built.
+namespace {
+[[nodiscard]] std::string resolve_specifier(std::string_view base, const std::string & spec) {
+    if (!spec.starts_with("./") && !spec.starts_with("../")) { return spec; }
+    const std::size_t slash = base.rfind('/');
+    std::string joined =
+        (slash == std::string_view::npos ? std::string{} : std::string{base.substr(0, slash + 1)}) +
+        spec;
+
+    std::vector<std::string_view> parts;
+    for (std::size_t at = 0; at <= joined.size();) {
+        const std::size_t end = joined.find('/', at);
+        const std::string_view part{joined.data() + at,
+                                    (end == std::string::npos ? joined.size() : end) - at};
+        if (part == "..") {
+            // ABOVE THE ROOT IT STAYS: `../` out of the top is not something
+            // this can answer, and silently dropping it would resolve two
+            // different specifiers to the same file.
+            if (!parts.empty() && parts.back() != "..") {
+                parts.pop_back();
+            } else {
+                parts.push_back(part);
+            }
+        } else if (part != "." && !part.empty()) {
+            parts.push_back(part);
+        }
+        if (end == std::string::npos) { break; }
+        at = end + 1;
+    }
+
+    std::string out;
+    for (const std::string_view part : parts) {
+        if (!out.empty()) { out += '/'; }
+        out += part;
+    }
+    // KEYED THE WAY THE PAGE WRITES THEM. `./dep.js` and `dep.js` are the same
+    // file and must not become two registry entries.
+    return out.starts_with("..") ? out : "./" + out;
+}
+} // namespace
+
 // PASS ONE: compile, register, create the export cells, recurse. Nothing runs.
 void browser::instantiate_module(const std::string & source, const std::string & specifier) {
     auto & registry = script_->modules();
@@ -779,19 +846,26 @@ void browser::instantiate_module(const std::string & source, const std::string &
     // the whole two-pass split exists for.
     script_->instantiate_module(*compiled, record);
 
-    const std::vector<std::string> needed = compiled->imports;
+    // RESOLVED HERE, AND RECORDED, before anything recurses: the bytecode can
+    // only carry the specifier as written, so the translation has to live
+    // somewhere the VM can read it.
+    std::vector<std::string> needed;
+    for (const std::string & written : compiled->imports) {
+        std::string target = resolve_specifier(specifier, written);
+        record.resolved[written] = target;
+        needed.push_back(std::move(target));
+    }
     module_programs_.push_back(std::move(compiled));
-    for (const std::string & specifier_of : needed) {
-        if (registry.find(specifier_of) != registry.end()) { continue; }
-        const std::vector<std::byte> bytes = assets_.load(specifier_of);
+
+    for (const std::string & target : needed) {
+        if (registry.find(target) != registry.end()) { continue; }
+        const std::vector<std::byte> bytes = assets_.load(target);
         if (bytes.empty()) {
-            if (script_error_.empty()) {
-                script_error_ = "module `" + specifier_of + "` not found";
-            }
+            if (script_error_.empty()) { script_error_ = "module `" + target + "` not found"; }
             continue;
         }
         instantiate_module(std::string{reinterpret_cast<const char *>(bytes.data()), bytes.size()},
-                           specifier_of);
+                           target);
     }
 }
 
@@ -810,7 +884,12 @@ void browser::evaluate_module(const std::string & specifier) {
     // ever. This is the specification's `evaluating` status under another name.
     found->second.evaluated = true;
     const script::program * const compiled = found->second.compiled;
-    for (const std::string & needed : compiled->imports) { evaluate_module(needed); }
+    std::vector<std::string> needed;
+    for (const std::string & written : compiled->imports) {
+        const auto mapped = found->second.resolved.find(written);
+        needed.push_back(mapped == found->second.resolved.end() ? written : mapped->second);
+    }
+    for (const std::string & target : needed) { evaluate_module(target); }
 
     // RE-FOUND, because the registry is a flat_map and the recursion above can
     // insert into it - a reference taken before it would dangle.

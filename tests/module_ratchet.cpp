@@ -118,6 +118,8 @@ struct measurement {
     return "<no answer>";
 }
 
+[[nodiscard]] std::string babylon_es_verdict();
+
 [[nodiscard]] measurement measure() {
     measurement m;
 
@@ -205,8 +207,11 @@ struct measurement {
     m.reached(rung_one_module);
 
     // --- 3: two modules, and the importer sees the export -------------------
-    const auto page_with = [](const char * module_source,
-                              std::initializer_list<std::pair<const char *, const char *>> files) {
+    // THE WHOLE DOCUMENT, so a rung can put more than one script on a page and
+    // ask about ORDER - which is the half of "a module script" that has nothing
+    // to do with the module system.
+    const auto page_of = [](const std::string & html,
+                            std::initializer_list<std::pair<const char *, const char *>> files) {
         auto page = std::make_unique<ctbrowser::shell::browser>(
             ctbrowser::shell::browser_options{200, 200});
         for (const auto & [name, text] : files) {
@@ -216,10 +221,16 @@ struct measurement {
                           reinterpret_cast<const std::byte *>(bytes.data()),
                           reinterpret_cast<const std::byte *>(bytes.data() + bytes.size())});
         }
-        page->load_html(std::string{R"(<html><body><script type="module">)"} + module_source +
-                        "</script></body></html>");
+        page->load_html(html);
         return page;
     };
+    const auto page_with =
+        [&page_of](const char * module_source,
+                   std::initializer_list<std::pair<const char *, const char *>> files) {
+            return page_of(std::string{R"(<html><body><script type="module">)"} + module_source +
+                               "</script></body></html>",
+                           files);
+        };
 
     {
         auto page = page_with("import { greeting } from './m.js';"
@@ -305,7 +316,118 @@ struct measurement {
     }
     m.reached(rung_cycle);
 
-    m.fail_at(rung_page, "not measured yet - rungs 6 to 9 need the loader to fetch and resolve");
+    // --- 6: <script type=module> as a PAGE script ---------------------------
+    //
+    // Rungs 2 to 5 all used one, so what is left to measure is the half that is
+    // not about the module system at all: a module script is DEFERRED - it
+    // waits for the document rather than running where it sits - and a page may
+    // carry more than one of them, and one may come from `src`.
+    {
+        // A module written FIRST still runs after a classic script written
+        // second. That is the deferral, and it is observable.
+        auto page = page_of(R"(<html><body>
+            <script type="module">globalThis.__o = (globalThis.__o || '') + 'M';</script>
+            <script>globalThis.__o = (globalThis.__o || '') + 'C';</script>
+            </body></html>)",
+                            {});
+        const std::string order = ask(*page, "String(globalThis.__o)");
+        if (order != "CM") {
+            m.fail_at(rung_page,
+                      "a module script did not defer past a classic one (wanted CM got " + order +
+                          ")" + (page->script_error().empty() ? "" : " | " + page->script_error()));
+            return m;
+        }
+    }
+    {
+        // TWO module scripts, and both run, in order. Worth its own case
+        // because the failure is silent: whatever keys the module registry has
+        // to distinguish them, and a shared key means the second one is taken
+        // for a module already loaded and never runs at all.
+        auto page = page_of(R"(<html><body>
+            <script type="module">globalThis.__two = 'a';</script>
+            <script type="module">globalThis.__two += 'b';</script>
+            </body></html>)",
+                            {});
+        const std::string both = ask(*page, "String(globalThis.__two)");
+        if (both != "ab") {
+            m.fail_at(rung_page,
+                      "two module scripts did not both run (wanted ab got " + both + ")" +
+                          (page->script_error().empty() ? "" : " | " + page->script_error()));
+            return m;
+        }
+    }
+    {
+        // AND ONE FROM `src`, which is how every real page carries a module.
+        auto page =
+            page_of(R"(<html><body><script type="module" src="./entry.js"></script></body></html>)",
+                    {{"./entry.js", "import { v } from './dep.js'; globalThis.__src = v;"},
+                     {"./dep.js", "export const v = 'from-src';"}});
+        const std::string sourced = ask(*page, "String(globalThis.__src)");
+        if (sourced != "from-src") {
+            m.fail_at(rung_page,
+                      "<script type=module src> did not run (wanted from-src got " + sourced + ")" +
+                          (page->script_error().empty() ? "" : " | " + page->script_error()));
+            return m;
+        }
+    }
+    m.reached(rung_page);
+
+    // --- 7: relative specifiers resolve against the IMPORTER ----------------
+    //
+    // `./dep.js` inside `sub/a.js` means `sub/dep.js`, not `dep.js`. Using the
+    // specifier as written happens to work when everything sits in one
+    // directory, which is exactly why this needs measuring: it passes rungs 3
+    // to 6 and fails on the first library laid out in folders.
+    {
+        auto page =
+            page_of(R"(<html><body><script type="module" src="./sub/a.js"></script></body></html>)",
+                    {{"./sub/a.js", "import { deep } from './b.js';"
+                                    "import { up } from '../top.js';"
+                                    "globalThis.__rel = deep + up;"},
+                     {"./sub/b.js", "export const deep = 'deep';"},
+                     {"./top.js", "export const up = '-up';"},
+                     // THE DECOYS: if `./b.js` resolves against the PAGE rather than
+                     // against `sub/a.js`, it finds these instead and the rung passes
+                     // for the wrong reason.
+                     {"./b.js", "export const deep = 'WRONG';"},
+                     {"./sub/top.js", "export const up = '-WRONG';"}});
+        const std::string resolved = ask(*page, "String(globalThis.__rel)");
+        if (resolved != "deep-up") {
+            m.fail_at(rung_relative,
+                      "a relative specifier did not resolve against the importer (wanted deep-up "
+                      "got " +
+                          resolved + ")" +
+                          (page->script_error().empty() ? "" : " | " + page->script_error()));
+            return m;
+        }
+    }
+    m.reached(rung_relative);
+
+    // --- 8: dynamic import() ------------------------------------------------
+    //
+    // THE ONE BABYLON NEEDS. It returns a PROMISE for the module's namespace
+    // object, so this measures three things at once: that the call works, that
+    // what it resolves to is a namespace, and that the promise settles.
+    {
+        auto page =
+            page_of(R"(<html><body><script type="module" src="./go.js"></script></body></html>)",
+                    {{"./go.js", "import('./lazy.js').then(function (ns) {"
+                                 "  globalThis.__dyn = ns.value + ',' + typeof ns;"
+                                 "});"},
+                     {"./lazy.js", "export const value = 'lazy';"}});
+        page->run_script("0"); // drain whatever the load queued
+        const std::string dynamic = ask(*page, "String(globalThis.__dyn)");
+        if (dynamic != "lazy,object") {
+            m.fail_at(rung_dynamic,
+                      "dynamic import() did not resolve to a namespace (wanted lazy,object got " +
+                          dynamic + ")" +
+                          (page->script_error().empty() ? "" : " | " + page->script_error()));
+            return m;
+        }
+    }
+    m.reached(rung_dynamic);
+
+    m.fail_at(rung_babylon, "no ES Babylon is vendored to boot - " + babylon_es_verdict());
     return m;
 }
 

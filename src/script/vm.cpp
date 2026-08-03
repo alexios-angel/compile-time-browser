@@ -2506,8 +2506,16 @@ value context::run_loop(std::size_t stop_depth) {
             // The exporter has been evaluated already - the loader walks the
             // graph depth-first - so its cell is there to be taken.
             reg(in.a) = value::undefined();
-            const std::string & from = vm_proto->names[in.c];
+            const std::string & written = vm_proto->names[in.c];
             const std::string & what = vm_proto->names[in.b];
+            // AS WRITTEN IS NOT AS KEYED: `./dep.js` in one module and in
+            // another are two different files. The loader left the translation
+            // in the record - see module_record::resolved.
+            const std::string & from = [&]() -> const std::string & {
+                if (current_module_ == nullptr) { return written; }
+                const auto mapped = current_module_->resolved.find(written);
+                return mapped == current_module_->resolved.end() ? written : mapped->second;
+            }();
             const auto found = modules_.find(from);
             if (found == modules_.end()) {
                 raise("module `" + from + "` was not loaded");
