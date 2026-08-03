@@ -157,6 +157,13 @@ struct gl_shader {
     raster::glsl::shader compiled;
     bool compiled_ok = false;
     std::string log;
+    // `glDeleteShader` FLAGS, IT DOES NOT DESTROY. A shader attached to a
+    // program stays alive until the program is gone, and every engine relies on
+    // it: compile, attach, link, then delete the shader objects immediately
+    // because the program owns what it needs. Erasing on delete meant the
+    // program lost its shaders and every later draw failed - see
+    // webgl_context::delete_object.
+    bool deleted = false;
 };
 
 struct gl_program {
@@ -387,6 +394,10 @@ public:
     [[nodiscard]] const std::vector<std::string> & refused() const noexcept { return refused_; }
 
 private:
+    // Whether any program still names this shader, which is what decides
+    // whether `glDeleteShader` may actually free it.
+    [[nodiscard]] bool attached_to_a_program(std::uint32_t shader) const;
+
     void fail(std::uint32_t code) {
         // FIRST ERROR WINS, which is what glGetError does: it reports the oldest
         // unretrieved one, so a later failure cannot hide the cause.

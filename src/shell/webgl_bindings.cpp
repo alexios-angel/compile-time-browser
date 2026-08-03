@@ -821,6 +821,26 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
     // object captured anything. Without it the VAO probe could not tell a
     // working implementation from a stub that remembered nothing, because
     // every other VAO call returns void.
+    // `getShaderPrecisionFormat`. Babylon asks for it during capability
+    // detection and sets `highPrecisionShaderSupported` from the answer;
+    // returning undefined made it decide this engine has no high-precision
+    // floats and pick its lower-precision shader paths.
+    //
+    // THE NUMBERS ARE IEEE SINGLE, because that is literally what the software
+    // rasteriser computes in: raster/glsl_eval.cpp holds every float in a C++
+    // `float`, so highp, mediump and lowp are all the same type here and saying
+    // otherwise would be a lie a page could act on.
+    method("getShaderPrecisionFormat", [](context & c, std::span<value> a) {
+        const std::uint32_t kind = enum_at(a, 1);
+        value out = c.make_object();
+        auto * o = static_cast<script::object_object *>(out.as_heap());
+        // INT_* are 0x8DF4..0x8DF6; the float ones are 0x8DF0..0x8DF2.
+        const bool integer = kind >= 0x8DF4 && kind <= 0x8DF6;
+        o->set("rangeMin", value::number(integer ? 31 : 127));
+        o->set("rangeMax", value::number(integer ? 31 : 127));
+        o->set("precision", value::number(integer ? 0 : 23));
+        return out;
+    });
     method("getVertexAttrib", [gl](context &, std::span<value> a) {
         const vertex_attribute * where = gl->attribute_at(int_at(a, 0));
         if (where == nullptr) { return value::null(); }

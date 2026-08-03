@@ -450,6 +450,12 @@ struct measurement {
     // and a box - and asks the canvas whether anything landed, which is the
     // same question rung 8 asks of Phaser and the only one that cannot be
     // answered by a bundle that merely loaded.
+    // BUILT ONCE, THEN DRIVEN BY FRAMES. Babylon processes shader code through
+    // promises, so an effect is not ready in the same turn the material is
+    // created - a single `scene.render()` renders nothing and can never render
+    // anything, however correct the engine underneath is. A page does not call
+    // render() once either; it registers a render loop and the browser drives
+    // it. So does this.
     const std::string scene_drew = ask(babylon, R"JS((function () {
         try {
             var canvas = document.getElementById('c');
@@ -466,18 +472,36 @@ struct measurement {
             var box = BABYLON.MeshBuilder.CreateBox('box', {size: 2}, scene);
             box.material = new BABYLON.StandardMaterial('mat', scene);
             box.material.emissiveColor = new BABYLON.Color3(1, 0, 0);
-            scene.render();
-            return 'rendered';
+            window.__scene = scene;
+            window.__frames = 0;
+            engine.runRenderLoop(function () { window.__frames++; scene.render(); });
+            return 'looping';
         } catch (e) {
             return 'threw: ' + (e && e.message ? e.message : e);
         }
       })())JS");
-    if (scene_drew != "rendered") {
+    if (scene_drew != "looping") {
         m.fail_at(rung_scene,
-                  "Babylon's scene did not render: " + scene_drew +
+                  "Babylon's scene did not start: " + scene_drew +
                       (babylon.script_error().empty() ? "" : " | " + babylon.script_error()));
         return m;
     }
+    // Enough frames for an effect to compile and a frame to be drawn with it.
+    for (int i = 0; i < 120; ++i) { babylon.tick(16); }
+    if (!babylon.script_error().empty()) {
+        m.fail_at(rung_scene, "Babylon's render loop threw: " + babylon.script_error());
+        return m;
+    }
+    const std::string state = ask(babylon, R"JS((function () {
+        var s = window.__scene;
+        if (!s) { return 'no scene'; }
+        var m = s.meshes[0];
+        // WHAT THE RUNG NEEDS TO SAY WHEN IT FAILS. "no geometry" alone cannot
+        // tell a renderer that never ran from one that ran and shaded wrong.
+        return 'frames=' + window.__frames + ' ready=' + s.isReady() + ' matReady=' +
+               (m && m.material ? m.material.isReady(m) : '?');
+      })())JS");
+
     // The pixels are the claim, exactly as for Phaser.
     const auto scene_txn = babylon.doc().read();
     ctbrowser::node_id scene_canvas{};
@@ -513,7 +537,7 @@ struct measurement {
     }
     if (centre == corner) {
         m.fail_at(rung_scene, "Babylon cleared but drew no geometry (centre and corner are both " +
-                                  describe(centre) + ")");
+                                  describe(centre) + "; " + state + ")");
         return m;
     }
     m.reached(rung_scene);

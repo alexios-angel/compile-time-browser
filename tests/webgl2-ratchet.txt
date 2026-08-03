@@ -19,7 +19,7 @@
 # two URL parsers and two base64 decoders.
 
 level=9
-blocker=Babylon cleared but drew no geometry (centre and corner are both 0,0,255)
+blocker=Babylon cleared but drew no geometry (centre and corner are both 0,0,255; frames=120 ready=true matReady=true)
 
 # RUNG 10 WAS ADDED THE DAY RUNG 9 WENT GREEN, because 9 turned out to ask too
 # little: it built a BABYLON.Engine and read `webGLVersion`, which a bundle can
@@ -33,6 +33,49 @@ blocker=Babylon cleared but drew no geometry (centre and corner are both 0,0,255
 # not "nothing runs", it is "the geometry shades to the background". That is the
 # next thing to chase and it is a much narrower question than the one rung 9
 # left.
+#
+# WHAT RUNG 10 COST SO FAR, and where it now stands. Four things were wrong and
+# two of them were this engine's:
+#
+#   getShaderPrecisionFormat   NOT IMPLEMENTED, so Babylon's capability probe
+#                              decided the engine has no high-precision floats
+#                              and took its lower-precision paths. It returns
+#                              IEEE single now, because that is literally what
+#                              raster/glsl_eval.cpp computes in.
+#   deleteShader               ERASED THE SHADER. `glDeleteShader` only FLAGS an
+#                              object; one attached to a program lives until the
+#                              program does, which is why compile-attach-link-
+#                              delete is the universal idiom. Babylon does
+#                              exactly that, and it cost 119 refused draws a
+#                              frame: the program linked, the material reported
+#                              ready, and every drawElements failed on a program
+#                              whose shaders had evaporated.
+#   the probe rendered once    Babylon processes shader code through PROMISES,
+#                              so an effect is never ready in the turn the
+#                              material is created. One scene.render() renders
+#                              nothing and can never render anything however
+#                              correct the engine is. It registers a render loop
+#                              and runs 120 frames now, which is what a page
+#                              does - and readiness went false -> true.
+#   THE VENDORED BUNDLE        is the current blocker and is NOT an engine bug.
+#
+# WHERE IT STOPS. Babylon links a program whose vertex shader is 1388 bytes of
+# `#define` lines and NO BODY - it parses to zero interface variables, so there
+# are no attribute locations, so Babylon never calls vertexAttribPointer, so
+# every vertex gathers as zero and 119 draws a frame paint nothing. The reason
+# is the first line of the file we vendored:
+#
+#   function _BabylonUMDDynamicImportUnsupported() {
+#     return Promise.reject(new Error("Dynamic import of a module specifier is
+#     not supported in the UMD/global Babylon build; use the ES module build"))
+#
+# The UMD build fetches StandardMaterial's shader body by dynamic import and
+# rejects its own request. 58 `gl_Position` occurrences are in the bundle, so
+# some shaders ship; the default material's does not.
+#
+# SO THE NEXT STEP IS A VENDORING DECISION, not an engine change: use a Babylon
+# build whose shaders are included, or add module support. Rung 10 measures the
+# engine and right now it is measuring the corpus.
 #
 # THE PROBE HAD TO BE FIXED BEFORE IT COULD SAY THAT. It first cleared to BLACK
 # and asked for any non-black pixel, which makes "painted nothing" and "painted

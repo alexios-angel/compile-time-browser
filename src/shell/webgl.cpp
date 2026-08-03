@@ -154,9 +154,30 @@ std::uint32_t webgl_context::create_texture() {
 
 void webgl_context::delete_object(std::uint32_t id) {
     buffers_.erase(id);
-    shaders_.erase(id);
-    programs_.erase(id);
     textures_.erase(id);
+    const bool was_program = programs_.erase(id) > 0;
+
+    // A SHADER ATTACHED TO A PROGRAM SURVIVES ITS OWN DELETION. `glDeleteShader`
+    // flags the object and the driver frees it once nothing references it -
+    // which is why the universal idiom is compile, attach, link, delete, and
+    // why erasing it here broke every draw that followed.
+    //
+    // Babylon.js does exactly that, and it cost 119 refused draws a frame: the
+    // program linked, the material reported itself ready, and drawElements
+    // failed on a program whose shaders had evaporated.
+    if (const auto shader = shaders_.find(id); shader != shaders_.end()) {
+        if (attached_to_a_program(id)) {
+            shader->second.deleted = true;
+        } else {
+            shaders_.erase(shader);
+        }
+    }
+    // Deleting a PROGRAM can be what finally releases its shaders.
+    if (was_program) {
+        std::erase_if(shaders_, [this](const auto & entry) {
+            return entry.second.deleted && !attached_to_a_program(entry.first);
+        });
+    }
     // UNBIND IT TOO. Deleting the bound buffer and leaving the binding is how a
     // later draw reads freed state; GL unbinds on delete and so does this.
     if (array_buffer_ == id) { array_buffer_ = 0; }
@@ -165,6 +186,12 @@ void webgl_context::delete_object(std::uint32_t id) {
     for (auto & [unit, texture] : texture_units_) {
         if (texture == id) { texture = 0; }
     }
+}
+
+bool webgl_context::attached_to_a_program(std::uint32_t shader) const {
+    return std::ranges::any_of(programs_, [shader](const auto & entry) {
+        return entry.second.vertex == shader || entry.second.fragment == shader;
+    });
 }
 
 void webgl_context::bind_buffer(std::uint32_t target, std::uint32_t buffer) {
