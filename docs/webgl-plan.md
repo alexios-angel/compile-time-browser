@@ -560,3 +560,55 @@ golden matching on Linux and on the Windows cross-build, and a benchmark number
 in the commit message. p5 comes after, because a stack that cannot draw a
 triangle cannot draw a sphere, and finding out which of six stages is wrong is
 much easier with five of them already pinned.
+
+
+## libshaderc: measured, and it cannot do the job that would matter
+
+**Asked 2026-08-03: could `libshaderc` compile the GLSL instead of the code in
+this tree? Measured with shaderc 2026.3 on the devbox, and the answer is no for
+the path that counts.**
+
+There are three places GLSL is consumed here, and they want different things:
+
+| | what it does | could shaderc do it |
+|---|---|---|
+| `raster/glsl.cpp` + `glsl_eval.cpp`, 2,571 lines | parses and **interprets** GLSL ES for the software rasteriser | **No.** shaderc compiles GLSL to SPIR-V; it does not execute anything. Replacing this means also writing a SPIR-V interpreter, which is strictly more work than what is here |
+| `raster/spirv.cpp`, 733 lines | GLSL AST → SPIR-V at run time, for the GPU back end | **This is the one it is for** — and it still cannot, see below |
+| `tools/gen-shaders.py` | the tile shaders, offline | **It already does.** That script shells out to `glslc`, which IS shaderc's command-line front end |
+
+### Why it cannot replace `raster/spirv.cpp`
+
+glslang — which is what shaderc wraps — refuses the GLSL versions the web uses:
+
+```
+#version 100      ES shaders for SPIR-V require version 310 or higher
+#version 300 es   ES shaders for SPIR-V require version 310 or higher
+#version 310 es   'location' : SPIR-V requires location for user input/output
+```
+
+**WebGL 1 is GLSL ES 1.00 and WebGL 2 is GLSL ES 3.00.** Those are exactly the
+two shaderc will not lower to SPIR-V, and the third line shows that even at 310
+it demands explicit `location` qualifiers that a WebGL shader does not carry.
+Babylon emits `#version 300 es`; p5 emits ES 1.00. So the shaders this engine
+actually receives from pages are the ones shaderc rejects.
+
+### And the value would be small today anyway
+
+`raster/spirv.cpp` has **no non-test callers**: `gpu/` builds its pipelines from
+the pre-baked `tile_spv.hpp`, and every one of the sixteen goldens goes through
+the SOFTWARE rasteriser. The emitter is stage seven built ahead of its consumer.
+Swapping it would change code nothing but `tests/spirv_basics` and `gpu_basics`
+run.
+
+### What would be worth having, and it is a different tool
+
+`glslangValidator` WITHOUT `-V` validates ES 1.00 and 3.00 without lowering
+them, so it can answer "would a real compiler accept this shader?" — which is a
+differential ORACLE for the front end, the same shape as `spirv-val` for the
+SPIR-V bytes, v8diff for ctjs and Chrome for layout. It would be optional and
+test-only, like `tools/check-spirv.py`, and it would catch the front end
+accepting something no driver would.
+
+**That is a real gap and this file does not claim it is filled.** What is
+recorded here is only that libshaderc is not the way to fill it, because the
+tool that can read these shaders is a different one.
