@@ -61,7 +61,13 @@ sysroot, put there by `build-sdl3.sh` for SDL3_ttf's colour glyphs. It also mean
 both platforms rasterise through the same code at the same version, which is what
 lets `tests/golden/svg.ppm` compare across them.
 
-**Verified**: all 19 the engine tests pass as Windows binaries WITH NO DLL BESIDE THEM
+**Verified 2026-08-03**: all FOURTEEN renderable examples produce screenshots
+BYTE-IDENTICAL to the Linux goldens, including the new `babylonscene.exe` — so
+uniform buffer objects, render-to-texture and the shared texture sampler all
+behave the same on the cross-build. `tools/remote-build.sh windows` is the whole
+process; running one from WSL still needs the `WSLENV` line below.
+
+**Earlier verified**: all 19 the engine tests pass as Windows binaries WITH NO DLL BESIDE THEM
 (gpu_basics.exe failed that way before), the five renderable examples produce
 screenshots BYTE-IDENTICAL to the Linux ones, and counter.exe runs alone in an
 otherwise empty directory.

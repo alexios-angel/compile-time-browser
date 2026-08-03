@@ -183,44 +183,42 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CTBROWSER_SDL3_TTF_DLL}" "${dist-dir}")
     endif()
   endif()
-  # Named files, not the whole assets tree: that also holds the previous
-  # engine's glTF models, which nothing here opens.
+  # GLOBBED, NOT NAMED, and that is this list's third lesson rather than a
+  # preference.
   #
-  # p5.js DOES travel now, and it is 4.4 MB. It used to be excluded on the
-  # grounds that no example opened it; four do - p5basic, p5text, p5transform
-  # and p5shape - and the whole pages directory is copied, so leaving the
-  # bundle behind would ship four pages that load nothing and render blank.
+  # It was a hand-written list of files because assets/ used to hold the
+  # previous engine's glTF models, which nothing here opened. Those are GONE,
+  # so the reason is gone with them - and in the meantime the list went stale
+  # twice in exactly the same way. phaser.js was added to the tree after the
+  # list was written, so phaserbasic.exe and phaserinvaders.exe shipped and
+  # rendered a page with no framework in it. Then babylon.js did the same, and
+  # babylonscene.exe came up with `BABYLON.Engine is undefined`.
   #
-  # AND phaser.js FOR THE SAME REASON, which this list learned twice. It was
-  # added to the tree after the list was written, so phaserbasic.exe and
-  # phaserinvaders.exe shipped and rendered a page with no framework in it -
-  # and their goldens duly differed on Windows, which reads exactly like an
-  # engine divergence until you look. A named-file list is a list that goes
-  # stale; it stays named rather than globbed because assets/ also holds the
-  # previous engine's glTF models, but every corpus bundle belongs here.
+  # THE FAILURE READS LIKE AN ENGINE DIVERGENCE, which is what makes it worth
+  # this much comment: the Windows goldens differ from the Linux ones, on a
+  # cross-build that is meant to be byte-identical, and nothing says the page
+  # was missing its library.
+  #
+  # A directory is copied as a directory - which also carries each corpus's
+  # licence beside its code, where it has to stay - and a loose file as a file.
+  file(GLOB asset-entries CONFIGURE_DEPENDS LIST_DIRECTORIES true
+       "${PROJECT_SOURCE_DIR}/examples/assets/*")
   list(APPEND dist-commands
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/pages" "${dist-dir}/examples/pages"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${dist-dir}/examples/assets"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${PROJECT_SOURCE_DIR}/examples/assets/sprites.bmp"
-            "${PROJECT_SOURCE_DIR}/examples/assets/blip.wav"
-            "${PROJECT_SOURCE_DIR}/examples/assets/chart.svg"
-            "${PROJECT_SOURCE_DIR}/examples/assets/badge.png"
-            "${dist-dir}/examples/assets"
-    # The two corpus bundles live in their OWN directories with their own
-    # licences (LGPL-2.1 and MIT), so they are copied as directories - which
-    # also carries the licence beside the code, where it has to stay.
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${PROJECT_SOURCE_DIR}/examples/assets/p5" "${dist-dir}/examples/assets/p5"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${PROJECT_SOURCE_DIR}/examples/assets/phaser" "${dist-dir}/examples/assets/phaser"
-    # PressStart2P is a PAGE's font, fetched by @font-face through a URL
-    # (elements.html), so it travels whatever the build did with the UA faces -
-    # embedding covers the three families use_real_fonts loads and nothing else.
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${PROJECT_SOURCE_DIR}/examples/assets/fonts"
-            "${dist-dir}/examples/assets/fonts")
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${dist-dir}/examples/assets")
+  foreach(entry ${asset-entries})
+    get_filename_component(asset-name "${entry}" NAME)
+    if(IS_DIRECTORY "${entry}")
+      list(APPEND dist-commands
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${entry}" "${dist-dir}/examples/assets/${asset-name}")
+    else()
+      list(APPEND dist-commands
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${entry}" "${dist-dir}/examples/assets")
+    endif()
+  endforeach()
   # The OFL faces back serif/sans-serif/monospace. Without them every exe falls
   # back to the built-in bitmap font, which works but is not what the gallery is
   # for; the licence rides along because the fonts do.
