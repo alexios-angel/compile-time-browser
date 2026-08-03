@@ -1,0 +1,63 @@
+# How much of the ES module system this engine has. tests/module_ratchet.cpp
+# measures it; this file records it. The level may not go DOWN, and at the same
+# level the blocker may not CHANGE, without the test failing.
+#
+# Only tools/module-ratchet.py --advance writes this file. A test that edits its
+# own expectations cannot fail, so advancing is a deliberate act.
+#
+# The ladder: 1 import/export parse, 2 one module runs in its own scope, 3 an
+# importer sees an export, 4 imported bindings are LIVE, 5 a cycle resolves,
+# 6 <script type=module> runs on a page, 7 relative specifiers resolve,
+# 8 dynamic import() works, 9 Babylon's ES build boots.
+#
+# THE ORDER IS WHAT DEPENDS ON WHAT. Syntax first, because nothing runs until it
+# parses. Then one module in its own scope - the execution path without the
+# graph. Then the graph, where live bindings and cycles live. Then the loader,
+# where a page and a network arrive. Babylon last, because it needs all of it.
+
+level=0
+blocker=`import(...)` is parsed as an IDENTIFIER, not syntax: uncaught TypeError: `import` is undefined, not a function - in `<script>`
+
+# WHY THIS STARTS AT ZERO, and it is further down than it looks. `import` and
+# `export` are not refused by name in this engine - they are NOT KEYWORDS AT
+# ALL. They are absent from ctjs's keyword table, so `import` is an ordinary
+# identifier and `import('./m.js')` is an ordinary call to an undefined name.
+# That run-time TypeError is what rung 1 tests for, and it is unambiguous.
+#
+# RUNG 1 ASKED THE WRONG QUESTION FIRST, and the mistake is worth keeping
+# because it is the trap this whole ladder is built to avoid. The first version
+# compiled thirteen module forms and checked that none of them was a parse
+# error. It passed on day one - and it would have passed against any input at
+# all, because ctjs accepts
+#
+#     this is not javascript at all ###
+#
+# without complaint. A LENIENT PARSER CANNOT BE ASKED WHETHER IT UNDERSTOOD
+# SOMETHING: the answer is always yes. So rung 1 asks what the syntax MEANS
+# instead - `import(...)` must not be an identifier, `import.meta` must not be a
+# property lookup on an undefined name - and those are questions with real
+# answers.
+#
+# (That the parser accepts arbitrary text is a finding in its own right and is
+# not this ladder's to fix. docs/lexer-plan.md is where it belongs.)
+#
+# AND THE ARCHITECTURE IS THE REAL DISTANCE. browser::run_scripts concatenates
+# EVERY script on the page into one string and compiles it as ONE program:
+#
+#     for (each <script>) source += its bytes;
+#     script_program_ = compile(source);
+#
+# That is right for classic scripts, which do share one global scope. It is not
+# something modules can be bent into: a module has its own scope, its own
+# binding namespace, and an execution ORDER derived from a dependency graph.
+# Replacing it is the change this ladder is really measuring, and the syntax is
+# the easy half.
+#
+# RUNG 4 IS THE ONE THAT WILL BE SHORTCUT. An imported binding is LIVE: if the
+# exporter reassigns it, the importer sees the new value. Copying at link time
+# is the CommonJS behaviour, is observably wrong, and passes rung 3 - which is
+# exactly why rung 4 exists separately.
+#
+# RUNG 9 IS BLOCKED BEFORE IT STARTS: only the UMD Babylon is vendored, and it
+# opens by defining _BabylonUMDDynamicImportUnsupported and rejecting its own
+# import(). That is what stops webgl2 rung 10 too. See docs/modules-plan.md.

@@ -80,6 +80,9 @@ gate and CI runs it.
   shape. `--coverage` lists the namespaces no probe mentions, which is the work
   queue. The ratchet read 10/10 while `(5).hasOwnProperty` was undefined,
   because nothing on the ladder asked a number for a property.
+- `tools/module-ratchet.py` — the same loop for ES MODULES. Reads **0/9**: no
+  module system at all, and `import` is not even a keyword. `--advance` records.
+  See `docs/modules-plan.md`.
 - `tools/build-mimalloc-mingw.sh` — mimalloc v3 for the Windows sysroot. The
   allocator is not optional in the default build, so the cross build needs this
   run once; `tools/remote-build.sh windows` runs it.
