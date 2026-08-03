@@ -226,6 +226,38 @@ struct shader {
     std::vector<std::int32_t> declarations; // top-level, in source order
     std::vector<struct_type> structs;
     std::vector<interface_variable> interface_;
+
+    // A UNIFORM BLOCK - `layout(std140) uniform Material { vec4 a; mat4 b; };`
+    // - which is how WebGL 2 delivers uniforms and how Babylon delivers all of
+    // them.
+    //
+    // ITS MEMBERS ARE ORDINARY UNIFORMS to everything downstream. A block
+    // without an instance name is referenced UNQUALIFIED in the shader body -
+    // `diffuseColor`, not `Material.diffuseColor` - so the members are declared
+    // as uniforms like any other and the evaluator needs to know nothing about
+    // blocks at all. What is recorded here is only what the GL side needs: WHERE
+    // in the buffer each member's bytes are.
+    //
+    // std140 OFFSETS, computed from the member types. The layout is the
+    // specification's, not this engine's choice, because the page fills the
+    // buffer to it: a vec3 occupies 12 bytes but aligns and strides as 16, a
+    // mat4 is four 16-byte columns, and getting it wrong reads a matrix out of
+    // the middle of two others.
+    struct uniform_block {
+        struct member {
+            std::string name;
+            type t;
+            std::uint32_t offset = 0;
+        };
+        std::string name;
+        // The INSTANCE name, empty when the block has none. With one, the body
+        // says `light0.vLightData` and the members are reached through a struct
+        // uniform called `light0`; without one they are globals.
+        std::string instance;
+        std::vector<member> members;
+        std::uint32_t size = 0;
+    };
+    std::vector<uniform_block> blocks;
     stage which = stage::fragment;
 
     // GLSL ES 3.00 rather than 1.00, selected by `#version 300 es`.

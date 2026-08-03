@@ -18,8 +18,8 @@
 # are two implementations - the bug this tree has already paid for twice, with
 # two URL parsers and two base64 decoders.
 
-level=9
-blocker=Babylon cleared but drew no geometry (centre and corner are both 0,0,255; frames=120 ready=true matReady=true)
+level=10
+blocker=
 
 # RUNG 10 WAS ADDED THE DAY RUNG 9 WENT GREEN, because 9 turned out to ask too
 # little: it built a BABYLON.Engine and read `webGLVersion`, which a bundle can
@@ -164,10 +164,61 @@ blocker=Babylon cleared but drew no geometry (centre and corner are both 0,0,255
 # OES_vertex_array_object, so it hit this the moment rung 7 made the extension
 # real: rung 7 going green is what broke rung 8.
 #
-# RUNG 9 IS BABYLON, and it is blocked on something with nothing to do with
-# WebGL: 622 `function*` and 803 `yield` in the bundle, from TypeScript's
-# __awaiter transpilation. Generators are a VM feature - suspending and resuming
-# a frame - and the machinery for it already half exists, because `await` on an
-# unsettled promise saves a frame into a coroutine object (see heap_kind::
-# coroutine in script/value.hpp). That is the decision rung 9 waits on, and it
-# should be taken on its own merits rather than as a step in this plan.
+# RUNG 10 IS GREEN: Babylon renders a scene to the pixels. 1444 of the 4096 are
+# the box, at 255,128,128 - emissive red plus half white, which is a hemispheric
+# light on a face whose normal is perpendicular to it. The number being RIGHT
+# rather than merely non-background is what says the uniforms arrived.
+#
+# FOUR THINGS WERE WRONG, and they were in series: each was invisible until the
+# one before it was fixed, and not one of them raised an error.
+#
+#   1. `String.prototype.search` DID NOT EXIST. Babylon's shader processor calls
+#      it on every shader it compiles. The call rejected a promise nobody
+#      surfaces, the processed source stayed empty, and every material compiled a
+#      program out of its `#define` lines alone - 1388 bytes with no body. One
+#      missing string method, and a whole renderer draws nothing.
+#
+#   2. THE SHADERS THEN DID NOT COMPILE: `layout(...)` qualifiers, `uniform
+#      Material { ... }` blocks, `uint` and the `1u` suffix. A block's members
+#      are declared as ordinary uniforms when it has no instance name, and as a
+#      STRUCT when it has one, because those are the two ways the body refers to
+#      them. `uint` is mapped onto `int` and the limit is written down rather
+#      than hidden.
+#
+#   3. UNIFORM BUFFER OBJECTS WERE REFUSED BY NAME. That was a deliberate
+#      scoping decision in docs/webgl2-plan.md and it was the wrong one: WebGL 2
+#      delivers uniforms through buffers and Babylon uses them for everything the
+#      moment it sees a WebGL 2 context. Refused, its shaders linked, its draws
+#      were issued, and every matrix read as ZERO - a scene collapsed to a point
+#      on a canvas showing exactly the colour it was cleared to. `bindBuffer`
+#      also sent UNIFORM_BUFFER to the array-buffer binding, so filling a
+#      uniform buffer overwrote whichever vertex buffer was bound.
+#
+#   4. A STRUCT UNIFORM ARRIVED WITHOUT ITS TYPE. The environment hands over
+#      floats and cannot know which entry of a shader's struct table the type is
+#      - the same value is read by both shaders and their tables differ - so the
+#      declared type is put back on read. The map that does it lives in
+#      prepared_state: `prepare` runs on one interpreter and every draw runs on
+#      a fresh one, so anything built by build_globals and not carried across is
+#      silently empty at run time. It was, and the error read "`.vLightDiffuse`
+#      is not a field of struct", which is true and useless.
+#
+# AND A WRONG DIAGNOSIS THAT SAT IN THIS FILE FOR WEEKS, corrected here because
+# it sent two sessions the wrong way: rung 10 was NOT blocked on the UMD build
+# rejecting its own dynamic `import()`. That call is an HTML-in-canvas polyfill
+# loader and has nothing to do with drawing - Babylon's shaders come out of its
+# own ShaderStore, which was fully populated the whole time. The reading came
+# from finding `_BabylonUMDDynamicImportUnsupported` in the bundle and the empty
+# shader source in the same session, and connecting them.
+#
+# HOW THE CHAIN WAS ACTUALLY FOUND, since the method is the reusable part: wrap
+# every method on the gl object from JS, DRAIN getError before each call and read
+# it after, and record the first call that errors. The record above warns that
+# getError attributes a stale error to the wrong call - draining first is what
+# makes it sound. That one probe named `getUniformBlockIndex`,
+# `uniformBlockBinding`, `bindBufferBase` and `drawElements` in a single run.
+#
+# Then, for the failures that raise NOTHING: ask whether the code AFTER the
+# suspect point ran. `_rawVertexSourceCode` was 5705 bytes and
+# `_vertexSourceCode` was empty, which located the fault between them without
+# knowing anything about Babylon's internals.

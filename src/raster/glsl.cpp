@@ -124,6 +124,12 @@ struct token {
             if (i < text.size() && (text[i] == 'f' || text[i] == 'F')) {
                 real = true;
                 ++i;
+            } else if (i < text.size() && (text[i] == 'u' || text[i] == 'U')) {
+                // `1u` is an UNSIGNED literal, and ES 3.00 shaders are full of
+                // them - `(1u << width) - 1u`. The suffix is consumed rather
+                // than left to the operator table, where it lexed as an
+                // identifier and every such expression failed to parse.
+                ++i;
             }
             out.push_back(
                 token{tk::number, std::string{text.substr(start, i - start)}, line, real});
@@ -170,7 +176,7 @@ struct token {
         std::uint8_t rows;
         std::uint8_t cols;
     };
-    static constexpr std::array<entry, 20> table{{
+    static constexpr std::array<entry, 24> table{{
         {"void", base::void_, 1, 1},
         {"float", base::f, 1, 1},
         {"int", base::i, 1, 1},
@@ -191,6 +197,18 @@ struct token {
         {"samplerCube", base::sampler_cube, 1, 1},
         {"mat2x2", base::f, 2, 2},
         {"mat3x3", base::f, 3, 3},
+        // UNSIGNED INTEGERS, MAPPED ONTO SIGNED ONES, and the limit is stated
+        // rather than hidden: this evaluator holds every value as a float, so
+        // `uint` differs from `int` only for the top bit and for `>>`, which is
+        // arithmetic here and logical in GLSL. Babylon's shaders use them for
+        // bit-packed light indices well inside 31 bits. A shader that depends
+        // on the difference gets a wrong answer rather than a diagnostic, which
+        // is the one thing this tree tries not to ship - so it is recorded here
+        // and in docs/raster.md rather than left to be discovered.
+        {"uint", base::i, 1, 1},
+        {"uvec2", base::i, 2, 1},
+        {"uvec3", base::i, 3, 1},
+        {"uvec4", base::i, 4, 1},
     }};
     for (const entry & known : table) {
         if (known.name == word) {
@@ -313,6 +331,29 @@ private:
             if (accept("highp") || accept("mediump") || accept("lowp") || accept("invariant")) {
                 continue; // parsed and ignored: everything here is a float
             }
+            // `layout(std140, column_major)`, `layout(location = 0)`. It says
+            // how storage is ARRANGED, which a software rasteriser gathering by
+            // name does not need - except for a uniform block's std140 offsets,
+            // which are computed from the member types rather than read from
+            // here. Skipped as a balanced group so an unfamiliar qualifier
+            // inside cannot derail the parse.
+            // BY TEXT AND KIND, not through is(): `layout` is not in the
+            // keyword table, so it lexes as a name and is() - which only ever
+            // matches punctuation or keywords - answered false. The skip below
+            // was therefore never reached and every `layout(...) uniform;`
+            // still reported "expected a type".
+            if (here().kind == tk::name && here().text == "layout") {
+                ++at_;
+                if (accept("(")) {
+                    int depth = 1;
+                    while (!at_end() && depth > 0) {
+                        if (is("(")) { ++depth; }
+                        if (is(")")) { --depth; }
+                        ++at_;
+                    }
+                }
+                continue;
+            }
             if (is("uniform")) {
                 ++at_;
                 out.store = storage::uniform;
@@ -406,6 +447,17 @@ private:
 
         const std::size_t start = at_;
         qualified q = type_specifier();
+        // `layout(std140, column_major) uniform;` - a DEFAULT for the blocks
+        // that follow, and a whole statement on its own. It names no variable,
+        // so the ordinary path below reports "expected a type" and the rest of
+        // the shader is lost with it.
+        if (!q.found && q.store == storage::uniform && accept(";")) { return -1; }
+        // `uniform Material { vec4 a; mat4 b; };` - a uniform BLOCK. It is not
+        // a type followed by a name; it is a name followed by a brace.
+        if (!q.found && q.store == storage::uniform && here().kind == tk::name &&
+            peek(1).text == "{") {
+            return uniform_block();
+        }
         if (!q.found) {
             fail("expected a type, found `" + here().text + "`");
             at_ = start;
@@ -620,6 +672,108 @@ private:
         }
         expect("}");
         return index;
+    }
+
+    // std140, WHICH IS THE PAGE'S LAYOUT AND NOT A CHOICE. The page writes the
+    // buffer to these offsets, so they are the specification's rules verbatim:
+    // a scalar aligns to 4, a vec2 to 8, a vec3 and a vec4 to 16, a matrix is
+    // its columns each aligned to 16, and an array's elements stride by 16
+    // however small the element is.
+    static std::uint32_t std140_align(const type & t) {
+        if (t.array != 0 || t.is_matrix()) { return 16; }
+        if (t.rows == 3 || t.rows == 4) { return 16; }
+        if (t.rows == 2) { return 8; }
+        return 4;
+    }
+    static std::uint32_t std140_size(const type & t) {
+        const std::uint32_t stride =
+            t.is_matrix() ? 16u * t.cols : (t.rows == 3 ? 16u : 4u * t.rows);
+        if (t.array > 0) {
+            return 16u * static_cast<std::uint32_t>(t.array) * (t.is_matrix() ? t.cols : 1u);
+        }
+        return stride;
+    }
+
+    [[nodiscard]] std::int32_t uniform_block() {
+        shader::uniform_block block;
+        block.name = here().text;
+        ++at_;
+        expect("{");
+        std::uint32_t offset = 0;
+        while (!at_end() && !is("}")) {
+            const qualified member_type = type_specifier();
+            if (!member_type.found || here().kind != tk::name) {
+                fail("expected a member declaration in uniform block `" + block.name + "`");
+                recover();
+                break;
+            }
+            while (true) {
+                std::string name = here().text;
+                ++at_;
+                type t = member_type.t;
+                t.array = array_suffix();
+                const std::uint32_t align = std140_align(t);
+                offset = (offset + align - 1) / align * align;
+                block.members.push_back(shader::uniform_block::member{std::move(name), t, offset});
+                offset += std140_size(t);
+                if (!accept(",")) { break; }
+                if (here().kind != tk::name) {
+                    fail("expected a name after `,`");
+                    break;
+                }
+            }
+            expect(";");
+        }
+        expect("}");
+        block.size = (offset + 15) / 16 * 16;
+
+        // AN INSTANCE NAME CHANGES HOW THE BODY REFERS TO THE MEMBERS, and
+        // that is the whole difference between the two shapes:
+        //
+        //   uniform Light0 { vec4 a; };          ->  `a`
+        //   uniform Light0 { vec4 a; } light0;   ->  `light0.a`
+        //
+        // So the second becomes a STRUCT type and one uniform of it, which is
+        // machinery this front end already has, rather than a second kind of
+        // name resolution. Babylon declares its per-light block that way and
+        // its material and scene blocks the other, in the same shader.
+        if (here().kind == tk::name) {
+            std::string instance = here().text;
+            ++at_;
+            struct_type shape;
+            shape.name = block.name;
+            for (const shader::uniform_block::member & each : block.members) {
+                shape.members.push_back(struct_type::member{each.name, each.t});
+            }
+            m_->structs.push_back(std::move(shape));
+            node n;
+            n.kind = nk::var_decl;
+            n.text = instance;
+            n.t = type{base::struct_, 1, 1, static_cast<std::int32_t>(m_->structs.size()) - 1, 0};
+            n.store = storage::uniform;
+            n.t.array = array_suffix();
+            const std::int32_t which = add(std::move(n));
+            m_->declarations.push_back(which);
+            note_interface(which);
+            block.instance = std::move(instance);
+        } else {
+            // NO INSTANCE: the members ARE globals, so they are declared as
+            // ordinary uniforms and nothing downstream needs to know a block
+            // was involved at all.
+            for (const shader::uniform_block::member & each : block.members) {
+                node n;
+                n.kind = nk::var_decl;
+                n.text = each.name;
+                n.t = each.t;
+                n.store = storage::uniform;
+                const std::int32_t which = add(std::move(n));
+                m_->declarations.push_back(which);
+                note_interface(which);
+            }
+        }
+        expect(";");
+        m_->blocks.push_back(std::move(block));
+        return -1;
     }
 
     [[nodiscard]] std::int32_t statement() {

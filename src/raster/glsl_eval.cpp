@@ -83,6 +83,11 @@ enum class flow : std::uint8_t {
 struct prepared_state {
     by_name<std::vector<std::int32_t>> functions;
     by_name<value> globals; // the template, after initialisers
+    // The declared types of the struct-typed uniforms - see read_name. It
+    // belongs HERE and not only on the interpreter: `prepare` runs on one
+    // interpreter and every draw runs on a fresh one, so anything built by
+    // build_globals and not carried across is silently empty at run time.
+    std::unordered_map<std::string, type> uniform_shapes;
     std::int32_t main_fn = -1;
     std::string error;
 };
@@ -100,6 +105,7 @@ public:
         prepared_state out;
         out.functions = functions_;
         out.globals = globals_;
+        out.uniform_shapes = uniform_shapes_;
         out.main_fn = find_function("main", {});
         if (out.main_fn < 0) { out.error = "no main()"; }
         out.error = out.error.empty() ? failure_ : out.error;
@@ -116,6 +122,7 @@ public:
         }
         functions_ = ready.functions;
         globals_ = ready.globals;
+        uniform_shapes_ = ready.uniform_shapes;
         run_main(ready.main_fn);
     }
 
@@ -123,6 +130,9 @@ public:
         build_globals();
         run_rest();
     }
+
+    // Declared types of the struct-typed uniforms, by name. See read_name.
+    std::unordered_map<std::string, type> uniform_shapes_;
 
     void build_globals() {
         // Top-level declarations first: a global `const` may be read by main,
@@ -139,6 +149,18 @@ public:
             if (n.store == storage::none || n.store == storage::constant) {
                 value made = n.a >= 0 ? evaluate(n.a) : zero(n.t);
                 globals_[n.text] = convert(std::move(made), n.t);
+            }
+            // A STRUCT-TYPED UNIFORM NEEDS ITS DECLARED TYPE BACK. The
+            // environment hands over floats and the SHAPE it knows - and it
+            // cannot know which entry of THIS shader's struct table the type
+            // is, because the same value is read by the vertex and fragment
+            // shaders and their tables are different. So the declared type is
+            // kept here and put back on the value when it is read.
+            //
+            // Only structs: a vec4 needs nothing, and this is on the path every
+            // uniform read takes.
+            if (n.store == storage::uniform && n.t.kind == base::struct_) {
+                uniform_shapes_[n.text] = n.t;
             }
         }
         // WHAT THE SHADER WRITES has to exist before it writes it.
@@ -479,7 +501,17 @@ private:
         if (const value * local = lookup(name)) { return *local; }
         // Then the environment: uniforms, attributes, varyings, gl_FragCoord.
         if (env_->read) {
-            if (const value * outside = env_->read(name)) { return *outside; }
+            if (const value * outside = env_->read(name)) {
+                // A struct arriving without a table index cannot answer
+                // `.member` - `field` sees `user < 0` and reports that the name
+                // is not a field of `struct`, which is true and useless. The
+                // declaration knows which struct it is.
+                if (outside->t.kind == base::struct_ && outside->t.user < 0) {
+                    const auto shape = uniform_shapes_.find(name);
+                    if (shape != uniform_shapes_.end()) { return convert(*outside, shape->second); }
+                }
+                return *outside;
+            }
         }
         fail("`" + name + "` is not declared");
         return value::scalar(0);

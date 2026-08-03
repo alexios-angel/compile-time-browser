@@ -1519,6 +1519,32 @@ void install_string(context & cx) {
         // usual guard is `if (m)`, and an empty array is truthy.
         return items->items.empty() ? value::null() : list;
     });
+    // `search` - WHERE a pattern matches, or -1. It is the smallest of the
+    // regular-expression string methods and it was the one missing, which is
+    // worth stating plainly: Babylon's shader processor calls it on every
+    // shader it compiles, so the processing rejected, the processed source
+    // stayed empty, and every Babylon material compiled a program out of its
+    // `#define` lines alone. Nothing threw where anyone would look - the
+    // rejection was inside a promise the engine does not surface - and the
+    // canvas simply showed the clear colour. One missing method, and a whole
+    // renderer draws nothing.
+    //
+    // ON `exec`, LIKE `match` AND `matchAll`, so the three cannot disagree
+    // about what matched. `search` ignores `lastIndex` and the `g` flag by
+    // specification, so it is reset first and the search always starts at 0.
+    method(cx, string_proto, "search", [](context & c, std::span<value> a) {
+        if (a.empty() || !a[0].is_object()) { return value::number(-1); }
+        const value pattern = a[0];
+        const value exec = c.lookup_property(pattern, "exec");
+        if (!exec.is_callable()) { return value::number(-1); }
+        const value subject = c.string(detail::this_string(c));
+        const value saved = c.lookup_property(pattern, "lastIndex");
+        c.store_property(pattern, "lastIndex", value::number(0));
+        const value found = c.call(exec, std::span<const value>{&subject, 1}, pattern);
+        c.store_property(pattern, "lastIndex", saved);
+        if (found.is_nullish() || !found.is_array()) { return value::number(-1); }
+        return value::number(context::to_number(c.lookup_property(found, "index")));
+    });
     // `matchAll` is exec RUN TO EXHAUSTION, which is exactly what it means -
     // so it is built on exec rather than on a second copy of the regex
     // plumbing, and it cannot disagree with `match` about what matched.

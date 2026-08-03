@@ -7,6 +7,7 @@
 # The probes themselves are tests/webgl2-api-probe.js, one per line here as
 # `module/name`. A probe that is SKIPPED is not recorded - it is not a claim
 # about anything working.
+blocks/uniform buffer objects
 constants/draw buffers
 constants/targets and bindings
 constants/texture formats
@@ -34,7 +35,6 @@ unscoped/sampler objects
 unscoped/sync objects
 unscoped/texStorage2D
 unscoped/transform feedback
-unscoped/uniform buffer objects
 vao/captures attribute state
 vao/create and bind
 vao/isVertexArray

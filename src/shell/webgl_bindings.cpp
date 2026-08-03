@@ -624,6 +624,31 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
     // A "location" here is the NAME. WebGL hands back an opaque object and a
     // page only ever passes it straight back, so a name is a location that is
     // also readable in a diagnostic.
+    // --- uniform blocks, WebGL 2's way of delivering uniforms ---------------
+    //
+    // A page using them does not call `uniform4fv` at all: it fills a buffer and
+    // binds it. Refused by name, these three left Babylon's every matrix reading
+    // zero while its shaders linked and its draws were issued - a collapsed
+    // scene on a canvas showing exactly the colour it was cleared to.
+    method("getUniformBlockIndex", [gl](context & c, std::span<value> a) {
+        const int index =
+            gl->get_uniform_block_index(id_of(c, a.empty() ? value::undefined() : a[0]),
+                                        a.size() > 1 ? c.to_string(a[1]) : std::string{});
+        // GL_INVALID_INDEX, which is 0xFFFFFFFF and NOT an error: asking about a
+        // block the shader does not have is a legitimate question.
+        return index < 0 ? value::number(4294967295.0) : value::number(index);
+    });
+    method("uniformBlockBinding", [gl](context & c, std::span<value> a) {
+        gl->uniform_block_binding(id_of(c, a.empty() ? value::undefined() : a[0]),
+                                  static_cast<std::uint32_t>(int_at(a, 1)),
+                                  static_cast<std::uint32_t>(int_at(a, 2)));
+        return value::undefined();
+    });
+    method("bindBufferBase", [gl](context & c, std::span<value> a) {
+        gl->bind_buffer_base(enum_at(a, 0), static_cast<std::uint32_t>(int_at(a, 1)),
+                             id_of(c, a.size() > 2 ? a[2] : value::undefined()));
+        return value::undefined();
+    });
     method("getUniformLocation", [](context & c, std::span<value> a) {
         if (a.size() < 2) { return value::null(); }
         auto * out = static_cast<script::object_object *>(c.make_object().as_heap());
@@ -944,10 +969,7 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
                                   "pauseTransformFeedback",
                                   "resumeTransformFeedback",
                                   "isTransformFeedback",
-                                  "bindBufferBase",
                                   "bindBufferRange",
-                                  "getUniformBlockIndex",
-                                  "uniformBlockBinding",
                                   "getActiveUniformBlockParameter",
                                   "getActiveUniformBlockName",
                                   "getActiveUniforms",

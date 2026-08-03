@@ -242,10 +242,52 @@ globalThis.__probes = [
     }
     return 'ok';
   }],
-  ['unscoped', 'uniform buffer objects', function (gl) {
+  // UNIFORM BUFFER OBJECTS ARE IN SCOPE NOW, and this probe changed sides: it
+  // used to assert they REFUSED. They are how WebGL 2 delivers uniforms and how
+  // Babylon delivers all of them, so "out of scope" meant Babylon's every matrix
+  // read as zero while its shaders linked and its draws were issued.
+  //
+  // A REAL BLOCK, LINKED AND ASKED ABOUT, not just `typeof`: a stub returning a
+  // plausible number passes a shallow check and is exactly what this file exists
+  // to catch.
+  ['blocks', 'uniform buffer objects', function (gl) {
     if (typeof gl.bindBufferBase !== 'function') { throw 'no bindBufferBase'; }
     if (typeof gl.getUniformBlockIndex !== 'function') { throw 'no getUniformBlockIndex'; }
-    return refuses(gl, function () { gl.bindBufferBase(0, 0, null); });
+    var vs = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vs, '#version 300 es\n' +
+      'layout(std140) uniform Tint { vec4 colour; };\n' +
+      'in vec2 at;\n' +
+      'void main() { gl_Position = vec4(at, 0.0, 1.0) + colour * 0.0; }\n');
+    gl.compileShader(vs);
+    if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) {
+      throw 'a uniform block did not compile: ' + gl.getShaderInfoLog(vs);
+    }
+    var fs = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fs, '#version 300 es\nprecision highp float;\n' +
+      'out vec4 fragColour;\nvoid main() { fragColour = vec4(1.0); }\n');
+    gl.compileShader(fs);
+    var p = gl.createProgram();
+    gl.attachShader(p, vs);
+    gl.attachShader(p, fs);
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+      throw 'link failed: ' + gl.getProgramInfoLog(p);
+    }
+    var index = gl.getUniformBlockIndex(p, 'Tint');
+    if (index !== 0) { throw 'getUniformBlockIndex said ' + index; }
+    // AND A NAME NO BLOCK HAS is INVALID_INDEX rather than an error - a page
+    // asks about blocks its shader may have dropped, and Babylon does.
+    var missing = gl.getUniformBlockIndex(p, 'NotABlock');
+    if (missing !== 0xFFFFFFFF) { throw 'an unknown block said ' + missing; }
+    while (gl.getError() !== gl.NO_ERROR) { /* drain */ }
+    gl.uniformBlockBinding(p, index, 1);
+    var buffer = gl.createBuffer();
+    gl.bindBuffer(gl.UNIFORM_BUFFER, buffer);
+    gl.bufferData(gl.UNIFORM_BUFFER, new Float32Array([1, 0, 0, 1]), gl.DYNAMIC_DRAW);
+    gl.bindBufferBase(gl.UNIFORM_BUFFER, 1, buffer);
+    var err = gl.getError();
+    if (err !== gl.NO_ERROR) { throw 'binding a block raised ' + err; }
+    return 'works';
   }],
   ['unscoped', '3D textures', function (gl) {
     if (typeof gl.texImage3D !== 'function') { throw 'no texImage3D'; }

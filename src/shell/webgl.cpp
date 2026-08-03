@@ -197,15 +197,26 @@ bool webgl_context::attached_to_a_program(std::uint32_t shader) const {
 void webgl_context::bind_buffer(std::uint32_t target, std::uint32_t buffer) {
     if (target == gl_enum::element_array_buffer) {
         element_buffer_ = buffer;
+    } else if (target == gl_enum::uniform_buffer) {
+        uniform_buffer_ = buffer;
     } else {
         array_buffer_ = buffer;
     }
 }
 
+// WHICH BUFFER A TARGET WRITES TO. It was `element ? element : array`, so a page
+// filling a UNIFORM buffer wrote its uniforms over whichever VERTEX buffer
+// happened to be bound - which is a wrong picture rather than an error, and the
+// worst shape of bug this tree keeps finding.
+std::uint32_t webgl_context::buffer_for(std::uint32_t target) const noexcept {
+    if (target == gl_enum::element_array_buffer) { return element_buffer_; }
+    if (target == gl_enum::uniform_buffer) { return uniform_buffer_; }
+    return array_buffer_;
+}
+
 void webgl_context::buffer_data(std::uint32_t target, std::vector<std::byte> bytes,
                                 std::uint32_t usage) {
-    const std::uint32_t which =
-        target == gl_enum::element_array_buffer ? element_buffer_ : array_buffer_;
+    const std::uint32_t which = buffer_for(target);
     const auto found = buffers_.find(which);
     if (found == buffers_.end()) {
         // NO BUFFER BOUND. A real driver raises INVALID_OPERATION rather than
@@ -371,6 +382,23 @@ void webgl_context::link_program(std::uint32_t program) {
     for (const glsl::interface_variable & v : vertex->second.compiled.interface_) {
         if (v.store == glsl::storage::attribute) { p.attribute_names.push_back(v.name); }
     }
+    // UNIFORM BLOCKS, merged by NAME across the two shaders. A block declared in
+    // both is one block with one binding point - the same rule as for a uniform
+    // declared in both - and Babylon declares `Scene` and `Material` in each.
+    p.blocks.clear();
+    p.block_bindings.clear();
+    for (const gl_shader * stage : {&vertex->second, &fragment->second}) {
+        for (const glsl::shader::uniform_block & block : stage->compiled.blocks) {
+            const bool already =
+                std::ranges::any_of(p.blocks, [&](const glsl::shader::uniform_block & b) {
+                    return b.name == block.name;
+                });
+            if (!already) {
+                p.blocks.push_back(block);
+                p.block_bindings.push_back(0);
+            }
+        }
+    }
     // A VARYING THE FRAGMENT SHADER READS AND THE VERTEX ONE NEVER WRITES is a
     // link error in GL, and a silent black screen without this check.
     for (const glsl::interface_variable & wanted : fragment->second.compiled.interface_) {
@@ -470,6 +498,17 @@ void webgl_context::set_enabled(std::uint32_t capability, bool on) {
     case gl_enum::blend: state_.blend_enabled = on; break;
     case gl_enum::scissor_test: state_.scissor_enabled = on; break;
     case gl_enum::cull_face: state_.cull = on ? cull_mode::back : cull_mode::none; break;
+    // POLYGON_OFFSET_FILL, DITHER and RASTERIZER_DISCARD are not implemented,
+    // and the two directions are NOT the same answer. Turning one OFF is a
+    // no-op that is genuinely correct - it is already off, because this
+    // rasteriser never had it - so refusing that is a false alarm, and Babylon
+    // trips it on its first frame. Turning one ON is a request this engine
+    // cannot honour, and saying nothing would be the silent wrong answer.
+    case gl_enum::polygon_offset_fill:
+    case gl_enum::dither:
+    case gl_enum::rasterizer_discard:
+        if (on) { fail(gl_enum::invalid_enum); }
+        break;
     default: fail(gl_enum::invalid_enum); break;
     }
 }
@@ -688,8 +727,7 @@ bool webgl_context::is_vertex_array(std::uint32_t id) const {
 
 void webgl_context::buffer_sub_data(std::uint32_t target, int offset,
                                     std::span<const std::byte> bytes) {
-    const std::uint32_t which =
-        target == gl_enum::element_array_buffer ? element_buffer_ : array_buffer_;
+    const std::uint32_t which = buffer_for(target);
     const auto found = buffers_.find(which);
     if (found == buffers_.end()) {
         fail(gl_enum::invalid_operation);
@@ -842,9 +880,9 @@ std::size_t webgl_context::draw_arrays(std::uint32_t mode, int first, int count)
     request.fragment_shader = &fragment->second.compiled;
     request.vertices = &vertices;
     request.state = state_;
-    request.uniform = [&program](std::string_view name) -> const glsl::value * {
-        const auto found = program->second.uniforms.find(name);
-        return found == program->second.uniforms.end() ? nullptr : &found->second;
+    uniform_cache block_values;
+    request.uniform = [this, &program, &block_values](std::string_view name) {
+        return uniform_for_draw(program->second, name, block_values);
     };
     request.sample = [this](int unit, float s, float t) {
         const auto bound = texture_units_.find(static_cast<std::uint32_t>(unit));
@@ -883,6 +921,134 @@ std::size_t webgl_context::draw_arrays(std::uint32_t mode, int first, int count)
     const std::size_t drawn = draw_triangles(request, framebuffer_);
     if (!shader_error_.empty()) { fail(gl_enum::invalid_operation); }
     return drawn;
+}
+
+// --- uniform blocks ---------------------------------------------------------
+//
+// WHY THIS EXISTS AT ALL: WebGL 2 delivers uniforms through BUFFERS rather than
+// through `uniform4fv` calls, and Babylon uses them for everything the moment
+// it sees a WebGL 2 context. Without them its shaders link, its draws are
+// issued, and every matrix reads as zero - so the geometry collapses to a point
+// and the canvas keeps the colour it was cleared to. Nothing errors.
+
+int webgl_context::get_uniform_block_index(std::uint32_t program, std::string_view name) const {
+    const auto found = programs_.find(program);
+    if (found == programs_.end()) { return -1; }
+    for (std::size_t i = 0; i < found->second.blocks.size(); ++i) {
+        if (found->second.blocks[i].name == name) { return static_cast<int>(i); }
+    }
+    // INVALID_INDEX, which is what GL returns for a name no block has. It is
+    // 0xFFFFFFFF and not an error: a page may ask about a block its shader
+    // dropped, and Babylon does.
+    return -1;
+}
+
+void webgl_context::uniform_block_binding(std::uint32_t program, std::uint32_t index,
+                                          std::uint32_t binding) {
+    const auto found = programs_.find(program);
+    if (found == programs_.end() || index >= found->second.block_bindings.size()) {
+        fail(gl_enum::invalid_value);
+        return;
+    }
+    found->second.block_bindings[index] = binding;
+}
+
+void webgl_context::bind_buffer_base(std::uint32_t target, std::uint32_t index,
+                                     std::uint32_t buffer) {
+    if (target != gl_enum::uniform_buffer) {
+        // TRANSFORM FEEDBACK also uses bindBufferBase and is not implemented -
+        // refused by name rather than silently binding a uniform block.
+        fail(gl_enum::invalid_enum);
+        return;
+    }
+    uniform_buffer_bindings_[index] = buffer;
+}
+
+namespace {
+
+// ONE VALUE OUT OF A std140 BUFFER.
+//
+// The layout is the specification's and the page fills the buffer to it, so
+// these are not choices: a scalar or a vec2 is packed, a vec3 and a vec4 both
+// occupy 16 bytes, and a matrix is COLUMNS each padded to 16. A mat4 is
+// therefore contiguous and a mat3 is NOT - its three columns sit 16 bytes apart
+// with three floats used out of each four - so reading it as nine contiguous
+// floats gives a rotation built out of the wrong numbers, which looks like a
+// plausible wrong answer rather than a fault.
+[[nodiscard]] float read_float(std::span<const std::byte> bytes, std::size_t at) {
+    float out = 0.0f;
+    if (at + sizeof(float) <= bytes.size()) { std::memcpy(&out, bytes.data() + at, sizeof(float)); }
+    return out;
+}
+
+[[nodiscard]] raster::glsl::value read_std140(std::span<const std::byte> bytes, std::size_t base,
+                                              const raster::glsl::type & t) {
+    raster::glsl::value out;
+    out.t = t;
+    const std::size_t rows = std::max<std::size_t>(1, t.rows);
+    const std::size_t cols = std::max<std::size_t>(1, t.cols);
+    const std::size_t elements = t.array > 0 ? static_cast<std::size_t>(t.array) : 1;
+    // An array's elements stride by 16 however small the element is, and a
+    // matrix's columns do the same.
+    const std::size_t element_stride = t.is_matrix() ? 16 * cols : 16;
+    for (std::size_t e = 0; e < elements; ++e) {
+        const std::size_t element = base + (t.array > 0 ? e * element_stride : 0);
+        for (std::size_t c = 0; c < cols; ++c) {
+            const std::size_t column = element + (t.is_matrix() ? c * 16 : 0);
+            for (std::size_t r = 0; r < rows; ++r) {
+                out.v.push_back(read_float(bytes, column + r * sizeof(float)));
+            }
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+// WHAT A DRAW READS A UNIFORM OUT OF. A name set by `uniform4fv` lives on the
+// program; a name that belongs to a uniform block lives in a BUFFER, and which
+// buffer depends on the block's binding point. Both look the same to the
+// shader, which is the point.
+//
+// BUILT INTO A CACHE THE DRAW OWNS, because the evaluator takes a pointer and
+// the value has to outlive the call that made it.
+const raster::glsl::value * webgl_context::uniform_for_draw(const gl_program & program,
+                                                            std::string_view name,
+                                                            uniform_cache & cache) const {
+    const auto direct = program.uniforms.find(name);
+    if (direct != program.uniforms.end()) { return &direct->second; }
+    if (const auto made = cache.find(name); made != cache.end()) { return &made->second; }
+
+    for (std::size_t i = 0; i < program.blocks.size(); ++i) {
+        const glsl::shader::uniform_block & block = program.blocks[i];
+        const auto point = uniform_buffer_bindings_.find(program.block_bindings[i]);
+        if (point == uniform_buffer_bindings_.end()) { continue; }
+        const auto buffer = buffers_.find(point->second);
+        if (buffer == buffers_.end()) { continue; }
+        const std::span<const std::byte> bytes{buffer->second.bytes};
+
+        // A BLOCK WITH AN INSTANCE NAME is one struct-typed uniform, and the
+        // body reads `light0.member`. The value is the members' floats in
+        // declaration order - which is how the front end built the struct - and
+        // the declared type it is converted to carries the struct index for
+        // whichever shader is asking.
+        if (!block.instance.empty()) {
+            if (block.instance != name) { continue; }
+            glsl::value whole;
+            whole.t = glsl::type{glsl::base::struct_, 1, 1, -1, 0};
+            for (const glsl::shader::uniform_block::member & each : block.members) {
+                const glsl::value part = read_std140(bytes, each.offset, each.t);
+                for (std::size_t k = 0; k < part.v.size(); ++k) { whole.v.push_back(part.v[k]); }
+            }
+            return &cache.emplace(std::string{name}, std::move(whole)).first->second;
+        }
+        for (const glsl::shader::uniform_block::member & each : block.members) {
+            if (each.name != name) { continue; }
+            return &cache.emplace(std::string{name}, read_std140(bytes, each.offset, each.t))
+                        .first->second;
+        }
+    }
+    return nullptr;
 }
 
 std::size_t webgl_context::draw_elements(std::uint32_t mode, int count, std::uint32_t type,
@@ -929,9 +1095,9 @@ std::size_t webgl_context::draw_elements(std::uint32_t mode, int count, std::uin
     request.fragment_shader = &fragment->second.compiled;
     request.vertices = &vertices;
     request.state = state_;
-    request.uniform = [&program](std::string_view name) -> const glsl::value * {
-        const auto found = program->second.uniforms.find(name);
-        return found == program->second.uniforms.end() ? nullptr : &found->second;
+    uniform_cache block_values;
+    request.uniform = [this, &program, &block_values](std::string_view name) {
+        return uniform_for_draw(program->second, name, block_values);
     };
     // A SHADER THAT FAILS AT RUN TIME IS AN ENGINE CONDITION, not a GL one, and
     // it used to be pure silence. INVALID_OPERATION is the closest GL has, and

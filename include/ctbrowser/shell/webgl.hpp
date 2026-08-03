@@ -84,6 +84,15 @@ inline constexpr std::uint32_t float_ = 0x1406;
 
 inline constexpr std::uint32_t array_buffer = 0x8892;
 inline constexpr std::uint32_t element_array_buffer = 0x8893;
+// WebGL 2's buffer for uniform blocks. It needs its own binding: everything
+// that was not the element buffer used to go to `array_buffer_`, so a page
+// filling a uniform buffer overwrote whichever vertex buffer was bound.
+inline constexpr std::uint32_t uniform_buffer = 0x8A11;
+// Capabilities this rasteriser does not have. They are named so that DISABLING
+// one can be a no-op rather than an error - see set_enabled.
+inline constexpr std::uint32_t polygon_offset_fill = 0x8037;
+inline constexpr std::uint32_t dither = 0x0BD0;
+inline constexpr std::uint32_t rasterizer_discard = 0x8C89;
 inline constexpr std::uint32_t static_draw = 0x88E4;
 inline constexpr std::uint32_t dynamic_draw = 0x88E8;
 
@@ -178,6 +187,14 @@ struct gl_program {
     // `useProgram` does not reset them, and a page relies on that.
     std::unordered_map<std::string, raster::glsl::value, raster::glsl::string_hash, std::equal_to<>>
         uniforms;
+    // THE UNIFORM BLOCKS THIS PROGRAM DECLARES, merged from both shaders - a
+    // block named in each is ONE block, exactly as a uniform declared in each
+    // is one uniform. The index into this vector is what getUniformBlockIndex
+    // reports and what uniformBlockBinding takes.
+    std::vector<raster::glsl::shader::uniform_block> blocks;
+    // Which binding POINT each block is attached to, parallel to `blocks`.
+    // Zero until the page says otherwise, which is also GL's default.
+    std::vector<std::uint32_t> block_bindings;
 };
 
 struct gl_texture {
@@ -257,6 +274,18 @@ public:
     void delete_object(std::uint32_t id);
 
     void bind_buffer(std::uint32_t target, std::uint32_t buffer);
+    [[nodiscard]] std::uint32_t buffer_for(std::uint32_t target) const noexcept;
+    // --- uniform blocks (WebGL 2)
+    [[nodiscard]] int get_uniform_block_index(std::uint32_t program, std::string_view name) const;
+    void uniform_block_binding(std::uint32_t program, std::uint32_t index, std::uint32_t binding);
+    void bind_buffer_base(std::uint32_t target, std::uint32_t index, std::uint32_t buffer);
+    // A draw's block values, built on demand and owned by the draw: the
+    // evaluator takes a pointer, so the value has to outlive the call.
+    using uniform_cache = std::unordered_map<std::string, raster::glsl::value,
+                                             raster::glsl::string_hash, std::equal_to<>>;
+    [[nodiscard]] const raster::glsl::value * uniform_for_draw(const gl_program & program,
+                                                               std::string_view name,
+                                                               uniform_cache & cache) const;
     void buffer_data(std::uint32_t target, std::vector<std::byte> bytes, std::uint32_t usage);
 
     void shader_source(std::uint32_t shader, std::string source);
@@ -415,6 +444,14 @@ private:
 
     std::uint32_t array_buffer_ = 0;
     std::uint32_t element_buffer_ = 0;
+    std::uint32_t uniform_buffer_ = 0;
+    // Binding POINT -> buffer, which is what bindBufferBase fills in and what a
+    // draw reads a block's values out of. Separate from the target bindings
+    // above: `bindBuffer(UNIFORM_BUFFER, b)` says which buffer bufferData
+    // writes to, and `bindBufferBase(UNIFORM_BUFFER, i, b)` says which buffer
+    // block-binding i reads from. Conflating them works until a page has two
+    // blocks, which Babylon has on its first frame.
+    std::unordered_map<std::uint32_t, std::uint32_t> uniform_buffer_bindings_;
     std::uint32_t current_program_ = 0;
     std::uint32_t active_unit_ = 0;
     std::unordered_map<std::uint32_t, std::uint32_t> texture_units_; // unit -> texture id

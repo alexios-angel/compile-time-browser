@@ -267,3 +267,40 @@ tools/remote-build.sh                           # and on GCC, without SDL
   and stage 5 is the answer: it must be told, not guessed at.
 * **Scope creep toward "real WebGL 2".** The NOT-in-scope list is the defence,
   written before the temptation arrives rather than after.
+
+
+## Uniform buffer objects are IN SCOPE, and the scoping decision was wrong
+
+This plan put UBOs out of scope on the grounds that p5 does not use them and the
+subset was chosen by measuring p5. That reasoning held for p5 and broke on
+Babylon, which is the corpus the plan added *because* it exercises WebGL 2:
+**WebGL 2 delivers uniforms through buffers, and Babylon uses them for
+everything the moment it sees a WebGL 2 context.**
+
+Refused by name, the failure is the worst available shape. The shaders link, the
+draws are issued, no call errors after the three UBO entry points, and every
+matrix reads as zero - so the scene collapses to a point and the canvas shows
+exactly the colour it was cleared to. "Out of scope" was not a smaller
+implementation; it was a wrong picture with a clean bill of health.
+
+What landed:
+
+* `getUniformBlockIndex`, `uniformBlockBinding`, `bindBufferBase`.
+* `layout(...)` qualifiers, and `uniform Name { ... };` blocks in the GLSL front
+  end. Without an instance name the members are declared as ordinary uniforms,
+  because that is how the body refers to them; with one they become a STRUCT
+  type and a single uniform of it, which is machinery the front end already had.
+* std140 offsets, computed from the member types. The page fills the buffer to
+  that layout, so it is not a choice: a vec3 strides as 16 bytes, a mat4 is four
+  16-byte columns, and a mat3 is three 16-byte columns with one float wasted in
+  each - read as nine contiguous floats it gives a rotation built out of the
+  wrong numbers.
+* `uint`, `uvec2..4` and the `1u` literal suffix, mapped onto signed integers.
+  **The limit is stated rather than hidden**: this evaluator holds every value
+  as a float, so `uint` differs from `int` at the top bit and for `>>`, which is
+  arithmetic here and logical in GLSL.
+
+**Still out of scope and still refused by name:** 3D textures, MRT, sampler
+objects, query objects, sync objects and transform feedback. Babylon calls them
+and degrades; if one of them turns out to be load-bearing the same way UBOs
+were, the fix is to implement it, not to widen the stub.
