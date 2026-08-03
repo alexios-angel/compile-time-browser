@@ -15,8 +15,8 @@
 # graph. Then the graph, where live bindings and cycles live. Then the loader,
 # where a page and a network arrive. Babylon last, because it needs all of it.
 
-level=2
-blocker=not measured yet - rungs 3 to 9 need a module loader
+level=3
+blocker=an imported binding did not update (wanted 1,42 got 1,undefined)
 
 # WHY THIS STARTS AT ZERO, and it is further down than it looks. `import` and
 # `export` are not refused by name in this engine - they are NOT KEYWORDS AT
@@ -94,6 +94,34 @@ blocker=not measured yet - rungs 3 to 9 need a module loader
 # while rungs 2 and 3 went unmeasured. A rung that cannot be reached measures
 # nothing. It asks whether the engine UNDERSTOOD the syntax now: refusing by
 # name counts, treating `import` as an identifier does not.
+#
+# STAGE 3 IS PART DONE (2026-08-02): rung 3 passes - two modules, and the
+# importer sees the export. The machinery is the one docs/modules-plan.md asks
+# for and not the shortcut:
+#
+#   exports are CELLS, published by op::define_export. The importer is handed
+#   the box, not the value, so a later write by the exporter is a write the
+#   importer reads. Publishing the value would pass rung 3 and fail rung 4.
+#   op::load_import binds an imported name to that same cell.
+#   browser::evaluate_module walks the graph depth-first, post-order, once per
+#   specifier, registering a module BEFORE its dependencies so a cycle stops.
+#
+# FOUR BUGS FOUND GETTING HERE, each invisible from the page:
+#
+#   the specifier kept its QUOTES. `'./m.js'` rather than `./m.js`, so every
+#   lookup missed and every import read undefined.
+#   a module's top-level FUNCTIONS were still globals. Only the var path had
+#   been switched, so `export function f` had no local to publish.
+#   compile_program never PRE-DECLARED anything - a classic script's top level
+#   is the global object, so there was nothing to hoist. A module's is a scope,
+#   and `export { f }` could not find `f` without it.
+#   the hoist passes did not look THROUGH `export`. A wrapped function
+#   declaration was compiled in the second pass, after anything that called it.
+#
+# RUNG 4 IS NOT PASSING YET and the symptom is exact: `1,undefined`. The first
+# read is right, so this is NOT the copy the rung was written to catch - a copy
+# would read `1,1`. Something clears the binding across the call instead, and
+# the next attempt starts there rather than from the assumption.
 #
 # RUNG 4 IS THE ONE THAT WILL BE SHORTCUT. An imported binding is LIVE: if the
 # exporter reassigns it, the importer sees the new value. Copying at link time

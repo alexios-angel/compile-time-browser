@@ -136,6 +136,23 @@ struct closure_object final : heap_object {
         : heap_object(heap_kind::function), proto(p) {}
 };
 
+// ONE MODULE, AS THE RUNTIME SEES IT.
+//
+// `exports` maps an exported name to the CELL holding it, not to a value. That
+// is what makes an imported binding live: the importer is handed the same box,
+// so a later write by the exporter is a write the importer reads. Handing over
+// the value instead passes a test that two modules can see each other and fails
+// the one that matters, which is why docs/modules-plan.md names it as the
+// shortcut to refuse.
+struct module_record {
+    std::string specifier;
+    const program * compiled = nullptr;
+    flat_map<std::string, value> exports;
+    // Evaluated ONCE, however many modules import it. The flag is the whole of
+    // "a module is a singleton".
+    bool evaluated = false;
+};
+
 struct run_result {
     value returned = value::undefined();
     bool ok = true;
@@ -206,6 +223,14 @@ public:
     // listener, requestAnimationFrame - dereferences them long after run()
     // returned. Passing a temporary works exactly until the first callback.
     run_result run(const program & prog);
+
+    // --- ES modules --------------------------------------------------------
+    // Run `prog` AS a module: its exports are published into `into`, and its
+    // imports are resolved through the registry the loader filled in.
+    run_result run_module(const program & prog, module_record & into);
+    // Where a module is found by specifier. The loader owns the graph; the VM
+    // only needs to look a name up when `load_import` runs.
+    [[nodiscard]] flat_map<std::string, module_record> & modules() noexcept { return modules_; }
 
     // The receiver of the method call currently running, for natives. JS
     // methods get `this` from the call site; a native has no frame to read it
@@ -875,6 +900,10 @@ private:
     // Set by `op::pass_new_target` and consumed by the very next frame push, so
     // a super() call hands its own new.target to the base constructor.
     value pending_new_target_ = value::undefined();
+    flat_map<std::string, module_record> modules_;
+    // The module being evaluated, so `define_export` knows where to publish and
+    // `load_import` knows who is asking. Null while a classic script runs.
+    module_record * current_module_ = nullptr;
     bool suspended_ = false;
     // Set by `op::yield_value` so generator_resume can tell a body that YIELDED
     // from one that RETURNED - run_loop hands back a value either way, and the

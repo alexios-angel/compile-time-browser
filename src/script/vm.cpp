@@ -693,6 +693,19 @@ value context::call(value callable, std::span<const value> args, value this_valu
     return out;
 }
 
+// A MODULE IS RUN LIKE ANY OTHER PROGRAM, with two differences: it knows which
+// record it is filling in, so `define_export` has somewhere to publish, and its
+// exports outlive the call.
+run_result context::run_module(const program & prog, module_record & into) {
+    module_record * const outer = current_module_;
+    current_module_ = &into;
+    into.compiled = &prog;
+    const run_result result = run(prog);
+    into.evaluated = true;
+    current_module_ = outer;
+    return result;
+}
+
 run_result context::run(const program & prog) {
     run_result result;
     if (!prog.ok) {
@@ -2412,6 +2425,43 @@ value context::run_loop(std::size_t stop_depth) {
                 raise("a generator yielded outside its own resume");
                 break;
             }
+        }
+        while (0);
+        VM_NEXT;
+
+        VM_CASE(define_export) do {
+            // THE CELL, NOT THE VALUE. reg(a) already holds a cell because the
+            // compiler boxes every exported binding, and publishing the box is
+            // what makes the binding LIVE for whoever imports it. Publishing
+            // the value would pass "an importer sees an export" and fail "an
+            // imported binding is live" - the shortcut docs/modules-plan.md
+            // names in advance.
+            if (current_module_ != nullptr) {
+                current_module_->exports[vm_proto->names[in.bx()]] = reg(in.a);
+            }
+            break;
+        }
+        while (0);
+        VM_NEXT;
+
+        VM_CASE(load_import) do {
+            // The exporter has been evaluated already - the loader walks the
+            // graph depth-first - so its cell is there to be taken.
+            reg(in.a) = value::undefined();
+            const std::string & from = vm_proto->names[in.c];
+            const std::string & what = vm_proto->names[in.b];
+            const auto found = modules_.find(from);
+            if (found == modules_.end()) {
+                raise("module `" + from + "` was not loaded");
+                break;
+            }
+            const auto cell = found->second.exports.find(what);
+            if (cell == found->second.exports.end()) {
+                raise("`" + from + "` has no export named `" + what + "`");
+                break;
+            }
+            reg(in.a) = cell->second;
+            break;
         }
         while (0);
         VM_NEXT;

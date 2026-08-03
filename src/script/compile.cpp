@@ -199,6 +199,31 @@ public:
         fn().locals.push_back(local{std::move(name), r, boxed});
         return r;
     }
+    // A NAME THAT IS ALREADY A CELL. An imported binding is the EXPORTER's
+    // cell - that is what makes it live - so unlike declare_local this must not
+    // emit `new_cell`, which would box the cell and leave the importer reading
+    // a box containing a box. It is always boxed, whether or not anything in
+    // this module captures it, because every read has to go through the cell to
+    // see the exporter's later writes.
+    // Publish a local as an export. The binding must be a CELL first, because
+    // an importer holds the box rather than the value - see op::define_export.
+    // A local that nothing captured is not boxed yet, so it is boxed here and
+    // marked, or every later read in this module would bypass the cell the
+    // importer is watching.
+    void publish_export(const std::string & name, std::uint16_t reg) {
+        for (local & each : fn().locals) {
+            if (each.reg == reg && !each.boxed) {
+                proto().emit(instruction{op::new_cell, reg});
+                each.boxed = true;
+            }
+        }
+        proto().emit(instruction::with_bx(op::define_export, reg, name_operand(name)));
+    }
+
+    void declare_imported_local(std::string name, std::uint16_t reg) {
+        fn().locals.push_back(local{std::move(name), reg, true});
+    }
+
     // Bind a name to a register that ALREADY exists. The catch parameter needs
     // it: the handler writes the thrown value into a register chosen when the
     // try block opened, and the name has to refer to that same slot rather than
@@ -644,7 +669,15 @@ public:
     // anything is compiled. Nested function declarations hoist too and are
     // compiled first, so the locals they capture have to exist by then.
     void predeclare_locals(std::int32_t body) {
-        if (body < 0 || at(body).kind != vp::nk::block) { return; }
+        // A PROGRAM'S top level counts too, not only a function's block. It
+        // never used to: a classic script's top-level declarations are globals,
+        // so there was nothing to pre-declare. A MODULE's are locals, and a
+        // function declared there has to be a binding before `export { f }` can
+        // find it - which it could not, and the importer was told the module
+        // had no such export.
+        if (body < 0 || (at(body).kind != vp::nk::block && at(body).kind != vp::nk::program)) {
+            return;
+        }
         const auto hoist = [this](std::string name) {
             if (name.empty() || find_local_entry(fn(), name) != nullptr) { return; }
             const std::uint16_t r = declare_local(name);
@@ -652,7 +685,14 @@ public:
             if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
             fn().predeclared.push_back(std::move(name));
         };
-        for (const std::int32_t stmt : kids(at(body))) {
+        for (const std::int32_t outer : kids(at(body))) {
+            // `export const x = 1` and `export function f() {}` DECLARE, and
+            // the declaration is wrapped. Looking only at the wrapper hoists
+            // nothing, so `export function f` was never a binding here - and
+            // then `export { f }` could not find it to publish, which read as
+            // "has no export named f" on the importing side.
+            const std::int32_t stmt =
+                at(outer).kind == vp::nk::export_decl && at(outer).a >= 0 ? at(outer).a : outer;
             if (at(stmt).kind == vp::nk::var_decl) {
                 for (const std::int32_t d : kids(at(stmt))) {
                     if (at(d).b >= 0) { // a shape: hoist every name inside it
@@ -951,12 +991,23 @@ public:
         build_capture_index();
         fn().captures = range_of(ast_.root);
         collect_declared_names(ast_.root);
+        // A MODULE'S TOP LEVEL IS A SCOPE, so its declarations are pre-declared
+        // exactly as a function body's are. A classic script's are globals and
+        // need none of this, which is why it was never called here before.
+        if (module_scope_) { predeclare_locals(ast_.root); }
         // Function declarations hoist: a script may call one before its text.
+        // THROUGH AN `export` WRAPPER TOO - `export function f() {}` is a
+        // function declaration that hoists like any other, and looking only at
+        // the wrapper left it compiled in the second pass, after anything that
+        // called it.
+        const auto declared_by = [this](std::int32_t s) {
+            return at(s).kind == vp::nk::export_decl && at(s).a >= 0 ? at(s).a : s;
+        };
         for (const std::int32_t s : kids(root)) {
-            if (at(s).kind == vp::nk::func_decl) { compile_function_decl(s); }
+            if (at(declared_by(s)).kind == vp::nk::func_decl) { compile_stmt(s); }
         }
         for (const std::int32_t s : kids(root)) {
-            if (at(s).kind != vp::nk::func_decl) { compile_stmt(s); }
+            if (at(declared_by(s)).kind != vp::nk::func_decl) { compile_stmt(s); }
         }
         proto().emit(instruction{op::ret_undef});
         finish_frame(fn().proto, 0);
@@ -1247,14 +1298,125 @@ public:
         // bindings undefined and fail somewhere else entirely. The syntax
         // parses (ctjs 2026-08-02); the semantics are staged in
         // docs/modules-plan.md.
-        case vp::nk::import_decl:
-            fail("`import` declarations are not implemented yet - ES modules are staged in "
-                 "docs/modules-plan.md");
+        case vp::nk::import_decl: {
+            if (!module_scope_) {
+                fail("`import` is only allowed in a module - a classic <script> cannot use it");
+                break;
+            }
+            // THE SPECIFIER IS RECORDED FOR THE LOADER, which walks the graph
+            // without re-parsing anything.
+            //
+            // DECODED, because the parser hands over the token as written -
+            // quotes included. Recording `'./m.js'` rather than `./m.js` made
+            // every lookup miss and every import read undefined, with the
+            // loader reporting a module it had never been asked for.
+            const std::string specifier = decode_string_literal(n.text);
+            if (std::ranges::find(out_.imports, specifier) == out_.imports.end()) {
+                out_.imports.push_back(specifier);
+            }
+            const std::uint16_t from = name_operand(specifier);
+            for (const std::int32_t spec_index : kids(n)) {
+                const vp::node & spec = at(spec_index);
+                // `c`: 0 named, 1 default, 2 namespace. A namespace import
+                // wants the whole module object, which is stage 4 work - it is
+                // refused by name rather than bound to nothing.
+                if (spec.c == 2) {
+                    fail("`import * as ns` is not implemented yet - ES modules are staged in "
+                         "docs/modules-plan.md");
+                    break;
+                }
+                // The name the EXPORTER knows it by: the original when renamed,
+                // otherwise the same as the local one. `default` for a default
+                // import, which is the name the specification gives it.
+                const std::string exported = spec.c == 1   ? std::string{"default"}
+                                             : spec.a >= 0 ? std::string{at(spec.a).text}
+                                                           : std::string{spec.text};
+                const std::uint16_t what = name_operand(exported);
+                const std::uint16_t r = alloc_reg();
+                proto().emit(instruction{op::load_import, r, what, from});
+                declare_imported_local(std::string{spec.text}, r);
+            }
             break;
-        case vp::nk::export_decl:
-            fail("`export` declarations are not implemented yet - ES modules are staged in "
-                 "docs/modules-plan.md");
+        }
+        case vp::nk::export_decl: {
+            if (!module_scope_) {
+                fail("`export` is only allowed in a module - a classic <script> cannot use it");
+                break;
+            }
+            if (!n.text.empty()) {
+                fail("`export ... from` is not implemented yet - ES modules are staged in "
+                     "docs/modules-plan.md");
+                break;
+            }
+            if (n.c == 2) {
+                fail("`export *` is not implemented yet - ES modules are staged in "
+                     "docs/modules-plan.md");
+                break;
+            }
+            if (n.c == 1) {
+                // `export default <expr>`: no binding to share, so the cell is
+                // made here and published under the name the specification
+                // gives it.
+                const std::uint32_t mark = reg_mark();
+                const std::uint16_t r = alloc_reg();
+                compile_expr(n.a, r);
+                proto().emit(instruction{op::new_cell, r});
+                proto().emit(instruction::with_bx(op::define_export, r, name_operand("default")));
+                release_to(mark);
+                break;
+            }
+            if (n.a >= 0) {
+                // `export const x = 1`, `export function f() {}`. The
+                // declaration compiles as itself, then the names it binds are
+                // published.
+                //
+                // BY NAME, NOT BY DIFFING fn().locals. A module's top-level
+                // declarations are PRE-DECLARED at entry - that is how a
+                // function declared above its own `let` still closes over it -
+                // so the locals list does not grow here and a diff publishes
+                // nothing at all. It read `undefined` on the other side and
+                // said nothing, which is the failure this whole ladder exists
+                // to make loud.
+                compile_stmt(n.a);
+                const vp::node & declared = at(n.a);
+                if (declared.kind == vp::nk::var_decl) {
+                    for (const std::int32_t d : kids(declared)) {
+                        const vp::node & one = at(d);
+                        if (one.text.empty()) {
+                            fail("`export` of a destructuring declaration is not implemented yet - "
+                                 "ES modules are staged in docs/modules-plan.md");
+                            break;
+                        }
+                        const int reg = find_local(one.text);
+                        if (reg >= 0) {
+                            publish_export(std::string{one.text}, static_cast<std::uint16_t>(reg));
+                        }
+                    }
+                } else if (!declared.text.empty()) {
+                    // `export function f() {}` and `export class C {}` bind one
+                    // name, which the declaration carries.
+                    const int reg = find_local(declared.text);
+                    if (reg >= 0) {
+                        publish_export(std::string{declared.text}, static_cast<std::uint16_t>(reg));
+                    }
+                }
+                break;
+            }
+            // `export { a, b as c }`: the names already exist.
+            for (const std::int32_t spec_index : kids(n)) {
+                const vp::node & spec = at(spec_index);
+                const int reg = find_local(spec.text);
+                if (reg < 0) {
+                    fail("`export { " + std::string{spec.text} +
+                         " }` names something this module does not declare");
+                    break;
+                }
+                const std::string exported =
+                    spec.a >= 0 ? std::string{at(spec.a).text} : std::string{spec.text};
+                publish_export(exported, static_cast<std::uint16_t>(reg));
+            }
             break;
+        }
         case vp::nk::expr_stmt: {
             const std::uint16_t r = alloc_reg();
             compile_expr(n.a, r);
@@ -1804,7 +1966,12 @@ public:
         // local read a global instead. In a bundle where every module is an
         // IIFE - which is every bundle - that is the whole point of the IIFE
         // silently undone.
-        if (frames_.size() == 1) {
+        // A MODULE'S TOP LEVEL IS NOT THE GLOBAL SCOPE, so its functions are
+        // locals like any other binding. Leaving them global would leak every
+        // module's helpers into one namespace - and, more visibly, make
+        // `export function f() {}` unpublishable, because find_local would not
+        // know the name.
+        if (frames_.size() == 1 && !module_scope_) {
             proto().emit(
                 instruction::with_bx(op::set_global, r, name_operand(std::string{n.text})));
         } else {

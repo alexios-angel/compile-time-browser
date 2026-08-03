@@ -738,12 +738,52 @@ void browser::run_scripts() {
     // ONE PROGRAM EACH, kept alive: a module's top-level declarations live in
     // its frame, and its functions close over them.
     for (const std::string & module_source : modules) {
-        auto compiled = std::make_unique<script::program>(
-            script::compiler::compile(module_source, script::script_kind::module_));
-        const script::run_result result = script_->run(*compiled);
-        if (!result.ok && script_error_.empty()) { script_error_ = result.error; }
-        module_programs_.push_back(std::move(compiled));
+        evaluate_module(module_source, "<inline>");
     }
+}
+
+// LOAD A MODULE AND EVERYTHING IT NEEDS, depth-first, evaluating each once.
+//
+// Depth-first POST-ORDER is what the specification asks for and what makes an
+// import work at all: a module's dependencies have finished running before its
+// own first statement, so the cells it imports already hold values.
+//
+// `already` breaks cycles - and a cycle is legal JavaScript, not a bug. A
+// module already being loaded is left to finish; what it exports is bound
+// later, which is exactly why an imported binding has to be a CELL rather than
+// a value. Whether the timing of that is right for every cycle is rung 5 of
+// tests/module-ratchet.txt and is not claimed here.
+void browser::evaluate_module(const std::string & source, const std::string & specifier) {
+    if (script_ == nullptr) { return; }
+    auto & registry = script_->modules();
+    if (const auto seen = registry.find(specifier); seen != registry.end()) { return; }
+    // Registered BEFORE its dependencies, so a cycle finds it and stops rather
+    // than descending for ever.
+    script::module_record & record = registry[specifier];
+    record.specifier = specifier;
+
+    auto compiled = std::make_unique<script::program>(
+        script::compiler::compile(source, script::script_kind::module_));
+    if (!compiled->ok) {
+        if (script_error_.empty()) { script_error_ = specifier + ": " + compiled->error; }
+        module_programs_.push_back(std::move(compiled));
+        return;
+    }
+
+    for (const std::string & needed : compiled->imports) {
+        if (registry.find(needed) != registry.end()) { continue; }
+        const std::vector<std::byte> bytes = assets_.load(needed);
+        if (bytes.empty()) {
+            if (script_error_.empty()) { script_error_ = "module `" + needed + "` not found"; }
+            continue;
+        }
+        evaluate_module(std::string{reinterpret_cast<const char *>(bytes.data()), bytes.size()},
+                        needed);
+    }
+
+    const script::run_result result = script_->run_module(*compiled, record);
+    if (!result.ok && script_error_.empty()) { script_error_ = result.error; }
+    module_programs_.push_back(std::move(compiled));
 }
 
 const ctbrowser::raster::font_backend & browser::fonts() const {

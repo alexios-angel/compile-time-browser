@@ -186,6 +186,16 @@ enum class op : std::uint8_t {
     // call look identical by then - so the compiler marks the call and the VM
     // hands the value to the next frame it pushes.
     pass_new_target,
+    // --- ES modules ------------------------------------------------------
+    // `a = the cell exported as names[b] by the module at specifier
+    // names[c]`. A cell, NOT a value: an imported binding is LIVE, so the
+    // importer must hold the very box the exporter writes through. Copying the
+    // value here is the CommonJS behaviour and is observably wrong - it is the
+    // shortcut docs/modules-plan.md names in advance.
+    load_import,
+    // Publish the cell in register a as this module's export named names[bx].
+    define_export,
+
     // a = the CLOSURE running this frame. `var f = function me() { ... me() }`
     // binds `me` inside its own body and nowhere else, and there is no other
     // way to reach it: the enclosing scope has no such name, and the closure
@@ -301,6 +311,11 @@ struct function_proto {
 };
 
 struct program {
+    // WHAT THIS MODULE IMPORTS, in source order, so a loader can fetch the
+    // graph without re-parsing. Empty for a classic script. The specifiers are
+    // exactly as written - resolving them against the importing module's URL is
+    // the loader's job, not the compiler's.
+    std::vector<std::string> imports;
     // THE SOURCE THIS WAS COMPILED FROM, kept so a function can be printed.
     // A 4.5 MB bundle costs 4.5 MB, which it already cost to compile.
     std::string source;

@@ -29,6 +29,7 @@
 
 #include <cstdio>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -174,7 +175,11 @@ struct measurement {
           "import * as ns from './m.js';", "import './m.js';", "export const x = 1;",
           "export function f() {}", "export class C {}", "const a = 1; export { a };",
           "export default 42;", "export * from './m.js';", "export { x } from './m.js';"}) {
-        const ctbrowser::script::program one = ctbrowser::script::compiler::compile(form);
+        // AS A MODULE. `import` in a classic script is an error in every
+        // engine, and this one says so now - so compiling these as classic
+        // scripts would be testing the wrong thing.
+        const ctbrowser::script::program one =
+            ctbrowser::script::compiler::compile(form, ctbrowser::script::script_kind::module_);
         if (!one.ok && one.error.find("not implemented") == std::string::npos) {
             m.fail_at(rung_syntax, std::string{"`"} + form + "` is not understood: " + one.error);
             return m;
@@ -200,7 +205,83 @@ struct measurement {
     m.reached(rung_one_module);
 
     // --- 3: two modules, and the importer sees the export -------------------
-    m.fail_at(rung_graph, "not measured yet - rungs 3 to 9 need a module loader");
+    const auto page_with = [](const char * module_source,
+                              std::initializer_list<std::pair<const char *, const char *>> files) {
+        auto page = std::make_unique<ctbrowser::shell::browser>(
+            ctbrowser::shell::browser_options{200, 200});
+        for (const auto & [name, text] : files) {
+            const std::string_view bytes{text};
+            page->assets().add(
+                name, std::vector<std::byte>{
+                          reinterpret_cast<const std::byte *>(bytes.data()),
+                          reinterpret_cast<const std::byte *>(bytes.data() + bytes.size())});
+        }
+        page->load_html(std::string{R"(<html><body><script type="module">)"} + module_source +
+                        "</script></body></html>");
+        return page;
+    };
+
+    {
+        auto page = page_with("import { greeting } from './m.js';"
+                              "globalThis.__saw = greeting;",
+                              {{"./m.js", "export const greeting = 'hello';"}});
+        const std::string saw = ask(*page, "String(globalThis.__saw)");
+        if (saw != "hello") {
+            m.fail_at(rung_graph,
+                      "an importer did not see the export (got " + saw + ")" +
+                          (page->script_error().empty() ? "" : " | " + page->script_error()));
+            return m;
+        }
+    }
+    m.reached(rung_graph);
+
+    // --- 4: the binding is LIVE, not a copy ---------------------------------
+    // THE RUNG THAT CATCHES THE SHORTCUT. Handing the importer the VALUE at
+    // link time passes rung 3 and fails here: the exporter's later write must
+    // be visible, because an ES import is a binding and not an assignment.
+    // Copying is the CommonJS behaviour and is what docs/modules-plan.md names
+    // in advance as the thing that would look like progress.
+    {
+        auto page = page_with("import { count, bump } from './c.js';"
+                              "globalThis.__before = count;"
+                              "bump();"
+                              "globalThis.__after = count;",
+                              {{"./c.js", "export let count = 1;"
+                                          "export function bump() { count = 42; }"}});
+        const std::string moved = ask(*page, "String(globalThis.__before) + ',' + "
+                                             "String(globalThis.__after)");
+        if (moved != "1,42") {
+            // SAYS WHAT IT SAW, not what it thinks caused it. "1,42" is live;
+            // "1,1" is the copy this rung exists to catch; anything else is a
+            // third thing, and calling that a copy would be a diagnosis the
+            // measurement does not support.
+            m.fail_at(rung_live,
+                      "an imported binding did not update (wanted 1,42 got " + moved + ")" +
+                          (page->script_error().empty() ? "" : " | " + page->script_error()));
+            return m;
+        }
+    }
+    m.reached(rung_live);
+
+    // --- 5: a cycle resolves rather than hanging ----------------------------
+    {
+        auto page = page_with("import { fromA } from './a.js';"
+                              "globalThis.__cycle = fromA();",
+                              {{"./a.js", "import { fromB } from './b.js';"
+                                          "export function fromA() { return 'a' + fromB(); }"},
+                               {"./b.js", "import { fromA } from './a.js';"
+                                          "export function fromB() { return 'b'; }"}});
+        const std::string cycled = ask(*page, "String(globalThis.__cycle)");
+        if (cycled != "ab") {
+            m.fail_at(rung_cycle,
+                      "a cycle did not resolve (wanted ab got " + cycled + ")" +
+                          (page->script_error().empty() ? "" : " | " + page->script_error()));
+            return m;
+        }
+    }
+    m.reached(rung_cycle);
+
+    m.fail_at(rung_page, "not measured yet - rungs 6 to 9 need the loader to fetch and resolve");
     return m;
 }
 
