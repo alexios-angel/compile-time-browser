@@ -211,6 +211,24 @@ blocker=no ES Babylon is vendored to boot - only the UMD build is vendored, and 
 # hypothesis rather than a measurement, and the measurement then showed it was
 # not the fault that mattered. It is still a real bug and the fix stays.
 #
+# RE-EXPORTS LANDED UNDER RUNG 4, because `export { a } from './m.js'` and
+# `export * from './m.js'` are what every ES library's index file is MADE of -
+# an index that says nothing else, and a page that imports the index. They were
+# refused by name until now, so no ES library could have been imported at all.
+#
+# A RE-EXPORT IS AN ALIAS: this module's export slot holds the OTHER module's
+# cell, so the binding stays live through however many index files the name
+# travels. The rung asserts that - `bump()` in the far module, read through the
+# index - because a re-export implemented as a value copy passes everything else
+# on this ladder. Mutation-tested by deleting the star wiring: the ladder drops
+# to 3.
+#
+# WIRED BY THE LOADER AT INSTANTIATE TIME, not by the interpreter. It is the
+# specification's ResolveExport, and it belongs where the graph is known: after
+# the dependencies exist and before anything evaluates, so a chain of index
+# files wires deepest-first and every importer finds the name bound whatever
+# order evaluation takes.
+#
 # RUNG 9 IS BABYLON'S ES BUILD, and it cannot be measured because there is no ES
 # Babylon vendored - only the UMD bundle. That is a corpus question, not an
 # engine one, and the blocker says so.

@@ -1481,6 +1481,9 @@ private:
     void load_module(const std::string & source, const std::string & specifier);
     void instantiate_module(const std::string & source, const std::string & specifier);
     void evaluate_module(const std::string & specifier);
+    // `export ... from` and `export *`: aliases wired once the dependencies are
+    // instantiated and before anything evaluates. See the definition.
+    void wire_reexports(const std::string & specifier);
     // Every program run by run_script AFTER the page's own. They accumulate for
     // the life of the page because a closure from any of them may still be
     // reachable - a listener, a timer, a rAF callback - and a program that

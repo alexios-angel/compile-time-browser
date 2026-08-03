@@ -342,6 +342,21 @@ struct program {
     // That is the specification's instantiate-then-evaluate split, and this
     // vector is the half of it the compiler can answer.
     std::vector<std::string> exports;
+    // AND WHAT IT RE-EXPORTS: `export { a } from './m.js'` and `export * from
+    // './m.js'`, which every ES library's index file is made of and which bind
+    // NO local name at all. They are edges in the graph rather than
+    // instructions, and they are resolved where the graph is known - the loader,
+    // at instantiate time, before anything evaluates. Doing it at run time
+    // instead would hand a cyclic importer a cell that gets replaced later.
+    //
+    // `source` empty means `export *`: every name the other module exports,
+    // except ones this module declares itself.
+    struct reexport {
+        std::string exported;
+        std::string source;
+        std::string from;
+    };
+    std::vector<reexport> reexports;
     // THE SOURCE THIS WAS COMPILED FROM, kept so a function can be printed.
     // A 4.5 MB bundle costs 4.5 MB, which it already cost to compile.
     std::string source;

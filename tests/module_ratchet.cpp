@@ -296,6 +296,30 @@ struct measurement {
             return m;
         }
     }
+    // AND THROUGH AN INDEX FILE, still rung 4, because that is what every real
+    // ES library is: `index.js` says `export * from './thing.js'` and nothing
+    // else, and a page imports the index. Three properties at once - a
+    // re-export by name, a star re-export, and both still LIVE, which a
+    // re-export implemented as a copy fails while passing everything above.
+    {
+        auto page = page_with("import { named, starred, bump } from './index.js';"
+                              "globalThis.__idx = named + ',' + starred;"
+                              "bump();"
+                              "globalThis.__idx2 = starred;",
+                              {{"./index.js", "export { thing as named } from './a.js';"
+                                              "export * from './b.js';"},
+                               {"./a.js", "export const thing = 'A';"},
+                               {"./b.js", "export let starred = 'B';"
+                                          "export function bump() { starred = 'B2'; }"}});
+        const std::string through = ask(*page, "String(globalThis.__idx) + ',' + "
+                                               "String(globalThis.__idx2)");
+        if (through != "A,B,B2") {
+            m.fail_at(rung_live,
+                      "a re-export did not carry the binding (wanted A,B,B2 got " + through + ")" +
+                          (page->script_error().empty() ? "" : " | " + page->script_error()));
+            return m;
+        }
+    }
     m.reached(rung_live);
 
     // --- 5: a cycle resolves rather than hanging ----------------------------

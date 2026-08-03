@@ -181,6 +181,19 @@ nothing thrown.
 ### 5 — Babylon's ES build
 Which is rung 9 of the module ratchet and rung 10 of the WebGL 2 one.
 
+**Re-exports are done and were the prerequisite nobody listed.** `export { a }
+from './m.js'` and `export * from './m.js'` were refused by name, and an ES
+library's index file is made of nothing else - so no ES library could have been
+imported whatever else worked. A re-export is an ALIAS: the export slot holds
+the other module's cell, and the loader wires it at instantiate time, which is
+the specification's ResolveExport done where the graph is known.
+
+**What is still missing for Babylon:** the corpus. `@babylonjs/core` is 9,878
+files and 65.9 MB and there is no single-file ES bundle published - the
+`babylonjs` npm package ships UMD only. Vendoring the reachable subset of a
+minimal scene is the tractable shape, and it is a corpus decision rather than an
+engine one.
+
 ## Verification
 
 * **Classic scripts must not change.** p5 12/12 and Phaser 10/10 are both

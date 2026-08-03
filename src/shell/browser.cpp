@@ -872,6 +872,73 @@ void browser::instantiate_module(const std::string & source, const std::string &
         instantiate_module(std::string{reinterpret_cast<const char *>(bytes.data()), bytes.size()},
                            target);
     }
+
+    wire_reexports(specifier);
+}
+
+// `export { a } from './m.js'` AND `export * from './m.js'`, which is what every
+// ES library's index file is made of and what makes one importable at all.
+//
+// A RE-EXPORT IS AN ALIAS, NOT A COPY: this module's export slot holds the OTHER
+// module's cell, so a write there is a read here, through however many index
+// files the name travels. Copying the value would break for the same reason
+// copying an import does, only further from where anyone would look.
+//
+// AFTER THE DEPENDENCIES, AND BEFORE ANY EVALUATION. After, because the cell
+// being aliased has to exist - and a chain of index files re-exporting each
+// other wires deepest-first because the recursion above has already returned.
+// Before, because a module that imports the name must find it bound whichever
+// order the graph is evaluated in; this is the specification's ResolveExport,
+// done where the graph is known rather than in the interpreter.
+void browser::wire_reexports(const std::string & specifier) {
+    auto & registry = script_->modules();
+    const auto self = registry.find(specifier);
+    if (self == registry.end() || self->second.compiled == nullptr) { return; }
+
+    // GATHERED FIRST, ASSIGNED AFTER: the registry is a flat_map and writing to
+    // one entry while holding a reference into another is how it invalidates.
+    std::vector<std::pair<std::string, script::value>> wire;
+    for (const auto & edge : self->second.compiled->reexports) {
+        const auto mapped = self->second.resolved.find(edge.from);
+        const std::string from = mapped == self->second.resolved.end() ? edge.from : mapped->second;
+        const auto source = registry.find(from);
+        if (source == registry.end()) {
+            if (script_error_.empty()) {
+                script_error_ = "`export ... from '" + edge.from +
+                                "'` names a module that did not "
+                                "load";
+            }
+            continue;
+        }
+        if (edge.source.empty()) {
+            // `export *`, and it does NOT re-export `default` - the
+            // specification is explicit about that, and a page relying on it
+            // would silently get the wrong module's default.
+            for (const auto & [name, cell] : source->second.exports) {
+                if (name != "default") { wire.emplace_back(name, cell); }
+            }
+            continue;
+        }
+        const auto cell = source->second.exports.find(edge.source);
+        if (cell == source->second.exports.end()) {
+            if (script_error_.empty()) {
+                script_error_ = "`" + from + "` has no export named `" + edge.source + "`";
+            }
+            continue;
+        }
+        wire.emplace_back(edge.exported, cell->second);
+    }
+
+    const auto into = registry.find(specifier);
+    if (into == registry.end()) { return; }
+    for (auto & [name, cell] : wire) {
+        // A NAME THIS MODULE DECLARES ITSELF WINS. `export *` is the weakest
+        // claim on a name - an explicit export shadows it, and so does an
+        // earlier explicit re-export.
+        if (into->second.exports.find(name) == into->second.exports.end()) {
+            into->second.exports[name] = cell;
+        }
+    }
 }
 
 // PASS TWO: depth-first POST-ORDER, each module once. A dependency has finished

@@ -322,6 +322,40 @@ public:
     // hoists and binds like any other export.
     static constexpr std::string_view default_binding = "*default*";
 
+    // THE RE-EXPORT EDGES a top-level statement declares. `export { a as b }
+    // from './m.js'` and `export * from './m.js'` introduce no binding in this
+    // module at all - they say that a name of ANOTHER module is also a name of
+    // this one - so there is nothing here for the compiler to emit. It records
+    // the edge and the specifier; the loader wires the cell.
+    void collect_reexports(std::int32_t idx) {
+        const vp::node & n = at(idx);
+        if (n.kind != vp::nk::export_decl || n.text.empty()) { return; }
+        const std::string specifier = decode_string_literal(n.text);
+        if (std::ranges::find(out_.imports, specifier) == out_.imports.end()) {
+            out_.imports.push_back(specifier);
+        }
+        if (n.c == 2) {
+            if (kids(n).empty()) {
+                // `export * from './m.js'`: every name it exports.
+                out_.reexports.push_back(program::reexport{"", "", specifier});
+                return;
+            }
+            // `export * as ns from './m.js'`: ONE name, holding the namespace.
+            // Not built - a namespace is a value rather than a cell, so it does
+            // not fit the alias the loader wires - and refused by name rather
+            // than silently exporting nothing.
+            fail("`export * as ns from` is not implemented yet - ES modules are staged in "
+                 "docs/modules-plan.md");
+            return;
+        }
+        for (const std::int32_t spec_index : kids(n)) {
+            const vp::node & spec = at(spec_index);
+            out_.reexports.push_back(program::reexport{spec.a >= 0 ? std::string{at(spec.a).text}
+                                                                   : std::string{spec.text},
+                                                       std::string{spec.text}, specifier});
+        }
+    }
+
     // The (local, exported) pairs a top-level statement binds. Collected rather
     // than published in place, because the binding pass runs at entry and the
     // statement compiles later.
@@ -1150,6 +1184,10 @@ public:
             // THEN THE IMPORTS, still at entry: a function declared anywhere in
             // this module closes over them, and the closures are made below.
             for (const std::int32_t s : kids(root)) { bind_imports(s); }
+            // AND THE RE-EXPORT EDGES, which are data for the loader rather
+            // than code - collected here because this is where the top level is
+            // walked, not because anything is emitted.
+            for (const std::int32_t s : kids(root)) { collect_reexports(s); }
             // AND THE EXPORTS, likewise before a single statement of the body
             // runs. See bind_export.
             std::vector<std::pair<std::string, std::string>> bindings;
@@ -1483,16 +1521,10 @@ public:
                 fail("`export` is only allowed in a module - a classic <script> cannot use it");
                 break;
             }
-            if (!n.text.empty()) {
-                fail("`export ... from` is not implemented yet - ES modules are staged in "
-                     "docs/modules-plan.md");
-                break;
-            }
-            if (n.c == 2) {
-                fail("`export *` is not implemented yet - ES modules are staged in "
-                     "docs/modules-plan.md");
-                break;
-            }
+            // A RE-EXPORT BINDS NOTHING HERE. It was recorded at module entry
+            // as an edge for the loader to resolve - see collect_reexports -
+            // and there is no local name for it to compile into.
+            if (!n.text.empty()) { break; }
             if (n.c == 1) {
                 // `export default <expr>`: the binding was hoisted and bound at
                 // entry under `*default*`, so this only WRITES it. Making a
