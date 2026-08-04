@@ -357,6 +357,7 @@ add_library(ctbrowser::paint ALIAS ctbrowser-paint)
 add_library(ctbrowser-raster)
 target_sources(ctbrowser-raster
   PRIVATE
+    raster/gl.cpp
     raster/draw.cpp
     raster/ttf.cpp
     raster/svg.cpp
@@ -367,6 +368,7 @@ target_sources(ctbrowser-raster
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
       FILES
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/raster.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/gl.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/surface.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/draw.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/ttf.hpp"
@@ -377,7 +379,7 @@ target_sources(ctbrowser-raster
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/software.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/renderer.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/compositor.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/pipeline.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/pipeline.hpp")
 target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-raster)
 target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)
