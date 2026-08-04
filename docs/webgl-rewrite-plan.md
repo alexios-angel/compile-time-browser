@@ -100,3 +100,102 @@ variable was being thought about.
 `CTBROWSER_GL_LEDGER=1` (what a run failed to forward) and `CTBROWSER_GL_PROBE=1`
 (whether GL itself painted, before the composite can lose it) are keepers from
 that phase and should survive into the new code.
+
+## Step 3: the contract, enumerated from the bindings
+
+`webgl_bindings.cpp` calls **64 distinct methods**. That is the whole of what
+the new `webgl_context` must provide - not a design decision to be made, a fact
+to be read off the caller. Tick them off as they are written; each one is a
+direct GLES call and a return, with no state kept that GL can be asked for.
+
+**context and surface** (12)
+
+- [ ] `surface`
+- [ ] `height`
+- [ ] `set_version`
+- [ ] `clear`
+- [ ] `clear_color`
+- [ ] `clear_depth`
+- [ ] `scissor`
+- [ ] `set_enabled`
+- [ ] `take_error`
+- [ ] `refuse`
+- [ ] `refused`
+- [ ] `shader_error`
+
+**shaders and programs** (16)
+
+- [ ] `create_shader`
+- [ ] `shader_source`
+- [ ] `compile_shader`
+- [ ] `shader_compiled`
+- [ ] `shader_log`
+- [ ] `create_program`
+- [ ] `attach_shader`
+- [ ] `link_program`
+- [ ] `program_linked`
+- [ ] `program_log`
+- [ ] `use_program`
+- [ ] `active_attributes`
+- [ ] `active_uniforms`
+- [ ] `attribute_location`
+- [ ] `get_uniform_block_index`
+- [ ] `set_uniform`
+
+**buffers and attributes** (14)
+
+- [ ] `create_buffer`
+- [ ] `bind_buffer`
+- [ ] `buffer_data`
+- [ ] `buffer_sub_data`
+- [ ] `bind_buffer_base`
+- [ ] `enable_attribute`
+- [ ] `attribute_pointer`
+- [ ] `attribute_at`
+- [ ] `attribute_divisor`
+- [ ] `create_vertex_array`
+- [ ] `bind_vertex_array`
+- [ ] `delete_vertex_array`
+- [ ] `is_vertex_array`
+- [ ] `bound_vertex_array`
+
+**textures and framebuffers** (8)
+
+- [ ] `create_texture`
+- [ ] `bind_texture`
+- [ ] `active_texture`
+- [ ] `texture_image`
+- [ ] `texture_parameter`
+- [ ] `bind_framebuffer`
+- [ ] `framebuffer_texture`
+- [ ] `framebuffer_status`
+
+**draws and pipeline state** (10)
+
+- [ ] `draw_arrays`
+- [ ] `draw_elements`
+- [ ] `draw_arrays_instanced`
+- [ ] `draw_elements_instanced`
+- [ ] `cull_face`
+- [ ] `front_face`
+- [ ] `depth_func`
+- [ ] `depth_mask`
+- [ ] `blend_func`
+- [ ] `delete_object`
+
+**everything else** (4)
+
+- [ ] `texture_from_bitmap`
+- [ ] `uniform_block_binding`
+- [ ] `version`
+- [ ] `viewport`
+
+THE HANDLE TABLE is the only state. A page holds `WebGLBuffer` and
+`WebGLProgram` objects, and those need identity that survives across calls - but
+identity ONLY. The moment the table starts caching what a buffer contains or
+which program is bound, it is the mirror again and the drift is back.
+
+`take_error`, `refuse` and `refused` are the WebGL error contract and stay: a
+page reads `getError`, and the leniency rules in docs/webgl2-plan.md are about
+what this engine refuses BY NAME rather than silently. That is a different thing
+from the silent no-ops this rewrite exists to eliminate, and it is worth keeping.
