@@ -791,6 +791,22 @@ int run_app(std::string_view html, app_options options) {
                 (void)write_ppm(options.screenshot_path, *image);
             }
         }
+        // WHAT THE PAGE ASKED FOR AND THE BACKEND DID NOT DO.
+        //
+        // `webgl_context` records every call it declined to forward to ANGLE
+        // instead of ignoring it, and that ledger has been right every time it
+        // was read and wrong none - while reasoning about which missing call
+        // mattered has now picked wrong three times on the same page. This
+        // makes it readable from a RUN rather than from a grep: the grep lists
+        // what COULD go unforwarded, and only a run says what a given page
+        // actually called.
+        if (last && std::getenv("CTBROWSER_GL_LEDGER") != nullptr) {
+            const auto missing = page.bindings().unforwarded_gl_calls();
+            std::fprintf(stderr, "[gl] %zu unforwarded call(s)\n", missing.size());
+            for (const std::string & call : missing) {
+                std::fprintf(stderr, "[gl]   %s\n", call.c_str());
+            }
+        }
         if (last) { running = false; }
 
         // PACING, and the difference between a browser and a spin loop.

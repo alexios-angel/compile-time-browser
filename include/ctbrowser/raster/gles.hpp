@@ -136,6 +136,12 @@ public:
     void enable_attribute(unsigned location, bool on);
     void attribute_pointer(unsigned location, int size, int type, bool normalised, int stride,
                            std::size_t offset);
+    // WINDING AND CULLING, which decide whether a triangle is drawn at all.
+    // Left at GL's defaults while a page uses the other convention, every
+    // FRONT-facing triangle is culled - so the page draws everything and paints
+    // nothing, with no error and a full draw count.
+    void cull_face(int which);
+    void front_face(int which);
     void depth_func(int how);
     void depth_mask(bool on);
     void blend_func(int source, int destination);

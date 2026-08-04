@@ -471,6 +471,27 @@ a real gap and were NOT the whole cause either, which is the third time on this
 page that a named, plausible, genuinely-missing piece turned out not to be the
 last one.
 
+**The ledger is now EMPTY for this page**, and the pixels still did not change.
+
+Reading it was worth doing anyway, because it refuted the guess above rather
+than confirming it: `bindFramebuffer`, `framebufferTexture2D` and the two
+instanced draws are **never called** by babylonscene, so the RenderTargetTexture
+theory was wrong. The only entry the run produced was `cullFace`.
+
+It also exposed a gap the ledger COULD NOT SEE: `front_face` set software state
+and forwarded nothing while never noting itself unforwarded. Both are forwarded
+now. A ledger only covers the calls that remember to record themselves, so an
+empty ledger is weaker evidence than it looks.
+
+WHERE THIS LEAVES IT: every call the page makes reaches ANGLE, 267 draws issue
+with real index counts, and the canvas is 93,600 pixels of exactly the clear
+colour. The next step must SPLIT the problem rather than name another suspect -
+read pixels straight off the `gles::device` after a draw, bypassing the canvas
+composite. That answers whether GL painted and the readback lost it, or GL
+painted nothing, and no amount of reasoning about the call list will.
+
+The superseded note:
+
 **Six entries remain on the ledger**, and the next attempt should start by
 printing them for the babylonscene page specifically rather than reasoning about
 which matters - that is what the ledger is for, and reasoning has now been wrong

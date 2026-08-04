@@ -701,16 +701,14 @@ void webgl_context::blend_func(std::uint32_t source, std::uint32_t destination) 
 }
 
 void webgl_context::cull_face(std::uint32_t which) {
-    // NOT FORWARDED YET: recorded rather than silently ignored. A page
-    // whose calls quietly do nothing paints something plausible, which is how
-    // a missing uniform cost an afternoon - see tests/webgl_angle.cpp.
-    if (angle_ != nullptr) { note_unforwarded("cullFace"); }
+    if (angle_ != nullptr) { angle_->cull_face(static_cast<int>(which)); }
     if (state_.cull == cull_mode::none) { return; } // enable(CULL_FACE) decides that
     state_.cull = which == gl_enum::front ? cull_mode::front : cull_mode::back;
 }
 
 void webgl_context::front_face(std::uint32_t which) {
     state_.front_face_is_counter_clockwise = which == gl_enum::ccw;
+    if (angle_ != nullptr) { angle_->front_face(static_cast<int>(which)); }
 }
 
 void webgl_context::clear_color(float r, float g, float b, float a) {

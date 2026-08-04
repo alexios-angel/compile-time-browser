@@ -408,6 +408,16 @@ void device::draw_arrays(int mode, int first, int count) {
     glDrawArrays(static_cast<GLenum>(mode), first, count);
 }
 
+void device::cull_face(int which) {
+    if (!ok()) { return; }
+    glCullFace(static_cast<GLenum>(which));
+}
+
+void device::front_face(int which) {
+    if (!ok()) { return; }
+    glFrontFace(static_cast<GLenum>(which));
+}
+
 void device::depth_func(int how) {
     if (!ok()) { return; }
     glDepthFunc(static_cast<GLenum>(how));
@@ -628,6 +638,8 @@ unsigned device::uniform_block_index(unsigned, const std::string &) const {
 }
 void device::uniform_block_binding(unsigned, unsigned, unsigned) {}
 void device::bind_buffer_base(int, unsigned, unsigned) {}
+void device::cull_face(int) {}
+void device::front_face(int) {}
 void device::bind_buffer(int, unsigned) {}
 void device::buffer_data(int, const void *, std::size_t, int) {}
 void device::enable_attribute(unsigned, bool) {}
