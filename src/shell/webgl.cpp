@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 // The WebGL context's state machine. See webgl.hpp for the shape; this is the
@@ -1408,6 +1409,30 @@ std::size_t webgl_context::draw_elements(std::uint32_t mode, int count, std::uin
                               static_cast<std::size_t>(offset < 0 ? 0 : offset));
         // Straight back into the canvas, for the reason draw_arrays gives.
         if (framebuffer_.colour != nullptr) { (void)angle_->read_pixels(*framebuffer_.colour); }
+        // DID GL ITSELF PAINT, asked of the device's own readback before
+        // anything downstream can lose it. Four guesses about WHICH call was
+        // missing were wrong; this splits the question instead of narrowing it,
+        // because "GL painted and the composite dropped it" and "GL painted
+        // nothing" need opposite fixes and look identical from the canvas.
+        if (framebuffer_.colour != nullptr && std::getenv("CTBROWSER_GL_PROBE") != nullptr) {
+            const paint::bitmap & got = *framebuffer_.colour;
+            std::size_t distinct = 0;
+            std::uint32_t seen[4] = {};
+            for (int y = 0; y < got.height && distinct < 4; ++y) {
+                for (int x = 0; x < got.width && distinct < 4; ++x) {
+                    const std::uint32_t pixel = got.at(x, y);
+                    bool known = false;
+                    for (std::size_t i = 0; i < distinct; ++i) {
+                        known = known || seen[i] == pixel;
+                    }
+                    if (!known) { seen[distinct++] = pixel; }
+                }
+            }
+            if (distinct > 1) {
+                std::fprintf(stderr, "[probe] draw %d indices -> device has %zu+ colours (%08x)\n",
+                             count, distinct, seen[1]);
+            }
+        }
         return static_cast<std::size_t>(count);
     }
     if (mode != gl_enum::triangles && mode != gl_enum::triangle_strip &&

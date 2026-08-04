@@ -490,6 +490,25 @@ read pixels straight off the `gles::device` after a draw, bypassing the canvas
 composite. That answers whether GL painted and the readback lost it, or GL
 painted nothing, and no amount of reasoning about the call list will.
 
+**MEASURED: GL ITSELF PAINTS NOTHING.** `CTBROWSER_GL_PROBE=1` reads the device's
+own framebuffer after every `drawElements` and it holds ONE colour throughout, so
+the readback and the canvas composite are exonerated - the draws produce zero
+fragments inside ANGLE.
+
+Put beside a fact already established, that reframes this investigation
+entirely: **the software rasteriser does not paint this page either.** Two
+rasterisers sharing no code fail identically, which means the fault is almost
+certainly UPSTREAM OF BOTH - in what Babylon computes, or in what the bindings
+feed it - and every hour spent on the ANGLE facade was looking in the wrong
+layer. Four wrong guesses in a row is what that looks like from inside.
+
+And there IS a working oracle, which is the cheapest possible next step:
+`tools/webgl2-ratchet.py` reads 10/10 and its rung is "Babylon renders a scene".
+So a Babylon scene DOES paint somewhere in this tree. Diff the ratchet's page
+against `examples/pages/babylon-scene.html` - camera, canvas size, engine
+options, the frame loop - rather than reading any more GL code. The difference
+between a page that works and one that does not beats another suspect.
+
 The superseded note:
 
 **Six entries remain on the ledger**, and the next attempt should start by
