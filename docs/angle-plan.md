@@ -490,7 +490,37 @@ read pixels straight off the `gles::device` after a draw, bypassing the canvas
 composite. That answers whether GL painted and the readback lost it, or GL
 painted nothing, and no amount of reasoning about the call list will.
 
-## CORRECTION: the page was never broken, the EXAMPLE BINARY is
+## THE CONTROL, DONE PROPERLY: it is ANGLE, and only ANGLE
+
+One binary, one page, one variable:
+
+| | |
+|---|---|
+| `babylonscene` | **2200 colours** |
+| `babylonscene` with `CTBROWSER_WEBGL=angle` | **1 colour** |
+
+So Babylon renders correctly on the software path and paints nothing on ANGLE.
+That is a clean A/B with a working oracle, which is what this needed from the
+start.
+
+TWO WRONG CONCLUSIONS GOT HERE, both from the same error - changing more than
+one thing between runs. "Neither backend paints" compared an ANGLE run against a
+remembered software run. "The example binary is broken" compared an ANGLE run
+against `ctbrowse` runs that never set the variable at all. Each time the
+harness, the page and the backend moved together and the difference was
+attributed to whichever one was being thought about.
+
+THE RULE, which is cheap and would have saved all of it: change ONE thing between
+two runs and print both numbers side by side in the SAME command. Not
+"run it a second way" - that was the previous lesson and it was too vague to
+prevent this.
+
+Next: the A/B is stable and reproducible, so bisect the frame. The device probe
+already says GL produces no fragments, so the question is what differs in the
+state ANGLE sees - viewport, depth range, program in use, or attribute buffers -
+at the first `drawElements` of a scene that works and one that does not.
+
+## SUPERSEDED: "the page was never broken, the EXAMPLE BINARY is"
 
 `examples/pages/babylon-scene.html` rendered through `ctbrowse` gives **2200
 distinct colours**. It paints. The same page through the `babylonscene` example
