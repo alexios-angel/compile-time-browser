@@ -445,9 +445,20 @@ its version - narrowly, because `attribute` and `varying` are ES 1.00 spellings
 that ES 3.00 REMOVED, so promoting p5's shaders would break what already works.
 
 **And the babylonscene EXAMPLE still shows only its clear colour**, while the
-same page under a test harness draws 267 times. The scene clears and the
-geometry does not arrive, so the difference is in the example's frame loop
-rather than in the forwarding - which is where the next attempt starts.
+same page under a test harness draws 267 times, is `isReady()`, and reports
+`material.isReady()`. What is known about the gap so far:
+
+* The back end IS ANGLE in the example - `prefer_angle_webgl` is set from
+  `CTBROWSER_WEBGL` before `load_html`, and the software path would have drawn
+  the scene, since that is what the existing golden holds.
+* The canvas resize path was a real bug and is FIXED - an EGL pbuffer is a fixed
+  size, so a canvas resized after its context was made left the two disagreeing
+  and `read_pixels` then replaced the canvas bitmap with one of the device's
+  size. **It was not the cause**: the example still shows one colour.
+* So the difference is between `browser::frame()`/`tick()` driven by a test and
+  the same driven by the app loop. That is where the next attempt starts, and it
+  should begin by asking the EXAMPLE how many draws it issued rather than
+  assuming - the harness answer is already known and is 267.
 
 The order stays p5, then Phaser, then Babylon; the ratchets say where each gets
 to, and anything that goes BACKWARDS is a blocker rather than a note.

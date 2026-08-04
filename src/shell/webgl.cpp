@@ -116,6 +116,20 @@ webgl_context::webgl_context(paint::bitmap * target, int width, int height) {
 void webgl_context::resize(paint::bitmap * target, int width, int height) {
     framebuffer_.colour = target;
     canvas_ = target;
+    // THE DEVICE HAS ITS OWN SURFACE AND IT DOES NOT FOLLOW. An EGL pbuffer is
+    // created at a fixed size, so a canvas that resizes after its context was
+    // made leaves the two disagreeing - and `read_pixels` then REPLACES the
+    // canvas bitmap with one of the device's size, which the compositor draws
+    // at the wrong scale or not at all.
+    //
+    // Remade rather than resized: EGL has no operation for growing a pbuffer,
+    // and a page that resizes a canvas loses its GL state in a browser too.
+    if (angle_ != nullptr && (width != width_ || height != height_)) {
+        angle_.reset();
+        width_ = width;
+        height_ = height;
+        (void)use_angle();
+    }
     width_ = width;
     height_ = height;
     framebuffer_.depth.clear();
