@@ -308,10 +308,30 @@ second against the 1.03 M the interpreter manages. **Then try the same build
 under llvm-mingw for Windows.** If that fails, the answer to this whole document
 is "Linux only", and that has to be known before anything is deleted.
 
-### 1 — the context, behind the existing interface
-An `egl_context` that owns the EGL display, the pbuffer and the readback, behind
-a header that mentions no ANGLE type — the `cpu_time.hpp` pattern. Nothing calls
-it yet.
+### 1 — the context, behind the existing interface — DONE 2026-08-04
+`raster/gles.hpp` + `gles.cpp`: an offscreen ES 3.1 device that owns the EGL
+display, the pbuffer and the readback. **No EGL or GLES type appears in the
+header**, so `tests/api_surface` stays satisfied and nothing that includes it
+inherits them — the `cpu_time.hpp` pattern.
+
+`tests/gles_basics.cpp` is the whole of what it claims: a device comes up,
+reports ES 3, a clear reaches the pixels, a second clear replaces the first
+(which is what catches a stale readback), and two devices coexist with
+`make_current` putting the first one back.
+
+**Nothing in the engine calls it**, deliberately — stage 2 is where a switch
+appears. `77/77 with it OFF and 77/77 with it ON`, which is the point of it being
+optional: `tools/fetch-angle.sh` pulls the pinned release, and a checkout that
+has not run it builds and passes exactly as before.
+
+Two details worth keeping:
+
+* **The bitmap is ARGB and GL hands back RGBA, bottom row first.** Both are
+  fixed in `read_pixels`, and both produce a picture that is *almost* right when
+  they are not - swapped red and blue, or upside down - which survives any test
+  that only counts pixels.
+* **`libvulkan.so.1` and the ICD manifest are found through the link rpath**, so
+  no `VK_ICD_FILENAMES` is needed. Verified by running without it.
 
 ### 2 — one binding at a time
 `webgl_bindings.cpp` gains a switch: forward to ANGLE or to `webgl_context`.

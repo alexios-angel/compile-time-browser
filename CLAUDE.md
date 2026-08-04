@@ -91,6 +91,10 @@ gate and CI runs it.
   `import()` resolves to a live namespace object. Rung 9 is Babylon's ES build,
   which is not vendored. `--advance` records. See
   `docs/modules-plan.md`.
+- `tools/fetch-angle.sh` — downloads the PINNED ANGLE release into
+  `third_party/angle/`. ANGLE is fetched rather than built: it needs GN,
+  depot_tools and, on Windows, clang-cl and the Windows SDK. `-DCTBROWSER_WITH_ANGLE=ON`
+  then gives `raster/gles.hpp` a real GLES 3.1 device. See `docs/angle-plan.md`.
 - `tools/build-cpptrace-mingw.sh` — cpptrace for the Windows sysroot. TESTS
   ONLY and optional: a missing trace makes a failure harder to read, not wrong.
   It is here because llvm-mingw has no `<stacktrace>` at all, so the platform

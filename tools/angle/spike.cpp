@@ -63,18 +63,24 @@ int main() {
     // is both what works and what a deterministic golden would want.
     auto get_platform_display = reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
         eglGetProcAddress("eglGetPlatformDisplayEXT"));
-    if (get_platform_display == nullptr) { std::printf("no eglGetPlatformDisplayEXT\n"); return 1; }
+    if (get_platform_display == nullptr) {
+        std::printf("no eglGetPlatformDisplayEXT\n");
+        return 1;
+    }
     // EGLint, NOT EGLAttrib. eglGetPlatformDisplayEXT takes 32-bit attributes
     // and eglGetPlatformDisplay takes pointer-sized ones; building the 64-bit
     // array and casting it made every second word read as zero, and the only
     // symptom was EGL_NO_DISPLAY with nothing logged.
-    const EGLint display_attrs[] = {
-        EGL_PLATFORM_ANGLE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE,
-        EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_DEVICE_TYPE_SWIFTSHADER_ANGLE,
-        EGL_NONE};
+    const EGLint display_attrs[] = {EGL_PLATFORM_ANGLE_TYPE_ANGLE,
+                                    EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE,
+                                    EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE,
+                                    EGL_PLATFORM_ANGLE_DEVICE_TYPE_SWIFTSHADER_ANGLE, EGL_NONE};
     EGLDisplay display =
         get_platform_display(EGL_PLATFORM_ANGLE_ANGLE, EGL_DEFAULT_DISPLAY, display_attrs);
-    if (display == EGL_NO_DISPLAY) { std::printf("no display\n"); return 1; }
+    if (display == EGL_NO_DISPLAY) {
+        std::printf("no display\n");
+        return 1;
+    }
     EGLint major = 0, minor = 0;
     if (!eglInitialize(display, &major, &minor)) {
         std::printf("eglInitialize failed: 0x%x\n", eglGetError());
@@ -82,10 +88,21 @@ int main() {
     }
     std::printf("EGL %d.%d  vendor=%s\n", major, minor, eglQueryString(display, EGL_VENDOR));
 
-    const EGLint config_attrs[] = {EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
-                                   EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
-                                   EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
-                                   EGL_ALPHA_SIZE, 8, EGL_DEPTH_SIZE, 24, EGL_NONE};
+    const EGLint config_attrs[] = {EGL_SURFACE_TYPE,
+                                   EGL_PBUFFER_BIT,
+                                   EGL_RENDERABLE_TYPE,
+                                   EGL_OPENGL_ES3_BIT,
+                                   EGL_RED_SIZE,
+                                   8,
+                                   EGL_GREEN_SIZE,
+                                   8,
+                                   EGL_BLUE_SIZE,
+                                   8,
+                                   EGL_ALPHA_SIZE,
+                                   8,
+                                   EGL_DEPTH_SIZE,
+                                   24,
+                                   EGL_NONE};
     EGLConfig config{};
     EGLint count = 0;
     if (!eglChooseConfig(display, config_attrs, &config, 1, &count) || count == 0) {
@@ -95,11 +112,17 @@ int main() {
     const int side = 512;
     const EGLint surface_attrs[] = {EGL_WIDTH, side, EGL_HEIGHT, side, EGL_NONE};
     EGLSurface surface = eglCreatePbufferSurface(display, config, surface_attrs);
-    if (surface == EGL_NO_SURFACE) { std::printf("no pbuffer: 0x%x\n", eglGetError()); return 1; }
+    if (surface == EGL_NO_SURFACE) {
+        std::printf("no pbuffer: 0x%x\n", eglGetError());
+        return 1;
+    }
 
     const EGLint context_attrs[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
     EGLContext context = eglCreateContext(display, config, EGL_NO_CONTEXT, context_attrs);
-    if (context == EGL_NO_CONTEXT) { std::printf("no context\n"); return 1; }
+    if (context == EGL_NO_CONTEXT) {
+        std::printf("no context\n");
+        return 1;
+    }
     eglMakeCurrent(display, surface, surface, context);
 
     std::printf("GL_RENDERER = %s\n", glGetString(GL_RENDERER));
@@ -111,7 +134,10 @@ int main() {
     glLinkProgram(program);
     GLint linked = 0;
     glGetProgramiv(program, GL_LINK_STATUS, &linked);
-    if (!linked) { std::printf("link failed\n"); return 1; }
+    if (!linked) {
+        std::printf("link failed\n");
+        return 1;
+    }
     glUseProgram(program);
 
     // A full-screen triangle: three vertices, every pixel covered once.
@@ -160,8 +186,8 @@ int main() {
     glFinish();
     end = std::chrono::steady_clock::now();
     const double with_read = std::chrono::duration<double>(end - start).count();
-    std::printf("WITH READBACK %.2f M frag/s  (%.3f ms per pass)\n",
-                fragments / with_read / 1e6, with_read / rounds * 1000.0);
+    std::printf("WITH READBACK %.2f M frag/s  (%.3f ms per pass)\n", fragments / with_read / 1e6,
+                with_read / rounds * 1000.0);
     std::printf("\nthe software interpreter, for comparison:   1.03 M frag/s\n");
     return 0;
 }

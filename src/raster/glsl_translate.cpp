@@ -225,7 +225,8 @@ private:
             text_ += "layout(std140, binding = " + std::to_string(binding) + ") uniform " +
                      block.name + " {\n";
             for (const shader::uniform_block::member & each : block.members) {
-                text_ += "    " + type_name(each.t) + " " + each.name + array_suffix(each.t) + ";\n";
+                text_ +=
+                    "    " + type_name(each.t) + " " + each.name + array_suffix(each.t) + ";\n";
             }
             text_ += "}";
             if (!block.instance.empty()) { text_ += " " + block.instance; }
@@ -269,7 +270,8 @@ private:
                 // it. Only opaque types take one.
                 if (n.t.is_sampler()) {
                     text_ += "layout(binding = " + std::to_string(binding_for(n.text)) +
-                             ") uniform " + type_name(n.t) + " " + n.text + array_suffix(n.t) + ";\n";
+                             ") uniform " + type_name(n.t) + " " + n.text + array_suffix(n.t) +
+                             ";\n";
                     continue;
                 }
                 // NOT DECLARED HERE. Vulkan GLSL refuses a non-opaque uniform
@@ -295,7 +297,8 @@ private:
             if (n.store == storage::attribute) {
                 location = location_of(n.text);
                 if (location < 0) {
-                    fail("the attribute `" + n.text + "` has no location: the linker did not "
+                    fail("the attribute `" + n.text +
+                         "` has no location: the linker did not "
                          "assign one, so the SPIR-V could not agree with what getAttribLocation "
                          "told the page");
                     return;

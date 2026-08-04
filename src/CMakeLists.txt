@@ -364,6 +364,7 @@ target_sources(ctbrowser-raster
     raster/renderer.cpp
     raster/glsl.cpp
     raster/glsl_translate.cpp
+    raster/gles.cpp
     raster/glsl_preprocess.cpp
     raster/glsl_eval.cpp
     raster/softgl.cpp
@@ -386,11 +387,44 @@ target_sources(ctbrowser-raster
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/pipeline.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/glsl.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/glsl_translate.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/gles.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/softgl.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/spirv.hpp")
 target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-raster)
 target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)
+
+# ANGLE, from the pinned release tools/fetch-angle.sh downloads. PRIVATE, and
+# that is the whole design: raster/gles.hpp names no EGL or GLES type, so
+# nothing that includes it inherits them and tests/api_surface stays satisfied.
+#
+# The definition is PUBLIC because a consumer needs to know whether the device
+# can exist - `gles::available()` answers at run time, but a test still has to
+# compile either way.
+if(CTBROWSER_WITH_ANGLE)
+  if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL Windows)
+    set(angle-dir "${PROJECT_SOURCE_DIR}/third_party/angle/windows-x64")
+    set(angle-libs "${angle-dir}/libEGL.dll.lib" "${angle-dir}/libGLESv2.dll.lib")
+  else()
+    set(angle-dir "${PROJECT_SOURCE_DIR}/third_party/angle/linux-x86_64")
+    set(angle-libs "${angle-dir}/libEGL.so" "${angle-dir}/libGLESv2.so")
+  endif()
+  if(NOT EXISTS "${angle-dir}")
+    message(FATAL_ERROR
+      "CTBROWSER_WITH_ANGLE is ON but ${angle-dir} is missing - run tools/fetch-angle.sh")
+  endif()
+  target_include_directories(ctbrowser-raster PRIVATE "${angle-dir}/include")
+  target_link_libraries(ctbrowser-raster PRIVATE ${angle-libs})
+  target_compile_definitions(ctbrowser-raster PUBLIC CTBROWSER_WITH_ANGLE=1)
+  # THE LIBRARIES HAVE TO BE FOUND AT RUN TIME TOO, and they are not in any
+  # system path: an rpath here is what stops every consumer needing
+  # LD_LIBRARY_PATH set by hand.
+  if(NOT WIN32)
+    set_target_properties(ctbrowser-raster PROPERTIES
+      BUILD_RPATH "${angle-dir}" INSTALL_RPATH "${angle-dir}")
+  endif()
+  message(STATUS "ctbrowser: ANGLE - a real GLES device is available")
+endif()
 # Real fonts, through SDL3_ttf. THE ONE PLACE THE ENGINE LINKS SDL, and a
 # deliberate exception rather than an oversight - see the header of
 # raster/ttf.cppm and the note in tests/api_surface. TTF_Init needs no video

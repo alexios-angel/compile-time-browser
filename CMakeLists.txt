@@ -63,6 +63,14 @@ set(CTBROWSER_BREW_HINTS "$ENV{HOMEBREW_PREFIX}" /home/linuxbrew/.linuxbrew /opt
 
 option(CTBROWSER_USE_MIMALLOC "Back operator new/delete with mimalloc" ON)
 
+# ANGLE: a real OpenGL ES device for the WebGL path. OFF by default and OPTIONAL
+# on purpose - stage 1 of docs/angle-plan.md builds the seam without anything
+# depending on it, so a checkout that has not run tools/fetch-angle.sh builds and
+# passes exactly as before. The libraries are a PINNED RELEASE rather than a
+# build: ANGLE needs GN, depot_tools and, on Windows, clang-cl and the Windows
+# SDK, which is a second toolchain this repository does not otherwise require.
+option(CTBROWSER_WITH_ANGLE "Use ANGLE for the WebGL back end (needs tools/fetch-angle.sh)" OFF)
+
 option(CTBROWSER_COMPUTED_GOTO "Dispatch the script VM with computed gotos (GNU only)" OFF)
 
 # The strict flags every test and example builds with, kept off the exported

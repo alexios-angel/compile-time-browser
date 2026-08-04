@@ -50,8 +50,8 @@ namespace {
 // glslc, if the machine has one. Returns empty when it does not, and the caller
 // says so out loud rather than passing quietly.
 [[nodiscard]] std::string find_glslc() {
-    for (const char * candidate : {"/home/linuxbrew/.linuxbrew/bin/glslc", "/usr/bin/glslc",
-                                   "/usr/local/bin/glslc"}) {
+    for (const char * candidate :
+         {"/home/linuxbrew/.linuxbrew/bin/glslc", "/usr/bin/glslc", "/usr/local/bin/glslc"}) {
         if (std::filesystem::exists(candidate)) { return candidate; }
     }
     return {};
@@ -75,8 +75,8 @@ struct compile_result {
     // -std IS NOT PASSED, deliberately: the translation writes its own
     // `#version 310 es`, and a test that forced the version would not be
     // checking that it did.
-    const std::string command = glslc + " -fshader-stage=" + stage + " " + in.string() +
-                                " -o /dev/null 2>" + log.string();
+    const std::string command =
+        glslc + " -fshader-stage=" + stage + " " + in.string() + " -o /dev/null 2>" + log.string();
     compile_result out;
     out.ok = std::system(command.c_str()) == 0;
     out.log = read_file(log.string());
@@ -130,7 +130,7 @@ int main() {
               gl_FragColor = vec4(vColour.rgb * texel.rgb, uAlpha);
             }
         )",
-                                              how);
+                                                how);
         CHECK(parsed.ok);
         const glsl::translation out = glsl::to_vulkan_glsl(parsed, tables_for(parsed));
         CHECK(out.ok);
@@ -185,7 +185,7 @@ int main() {
               gl_Position = uModelViewProjection * vec4(aPosition, 1.0);
             }
         )",
-                                              how);
+                                                how);
         CHECK(parsed.ok);
         const glsl::binding_tables tables = tables_for(parsed);
         const glsl::translation out = glsl::to_vulkan_glsl(parsed, tables);
@@ -225,7 +225,7 @@ int main() {
               gl_Position = viewProjection * vec4(position, 1.0);
             }
         )",
-                                              how);
+                                                how);
         CHECK(parsed.ok);
         glsl::binding_tables tables = tables_for(parsed);
         // A binding the page chose, so the assertion is that it is CARRIED
@@ -241,8 +241,8 @@ int main() {
         bool reported = false;
         for (const auto & [name, point] : out.vulkan_bindings) {
             if (name == "Scene") {
-                reported = mentions(out.source, "binding = " + std::to_string(point) +
-                                                    ") uniform Scene");
+                reported =
+                    mentions(out.source, "binding = " + std::to_string(point) + ") uniform Scene");
             }
         }
         CHECK(reported);
@@ -298,8 +298,8 @@ int main() {
             // bury the result, so it is behind an environment variable the way
             // REGOLDEN is.
             if (const char * dump = std::getenv("CTBROWSER_DUMP_GLSL");
-                dump != nullptr && entry.path().filename().string().find(dump) !=
-                                       std::string::npos) {
+                dump != nullptr &&
+                entry.path().filename().string().find(dump) != std::string::npos) {
                 std::printf("--- %s ---\n%s\n", entry.path().filename().string().c_str(),
                             out.source.c_str());
             }
