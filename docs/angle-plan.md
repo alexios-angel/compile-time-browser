@@ -360,10 +360,29 @@ Two smaller things worth keeping:
   `draw_arrays` discards every attribute enable and pointer set before it -
   which draws nothing and reports nothing.
 
-### 3 — the goldens
-Pin ANGLE-over-Vulkan-over-lavapipe for the four WebGL goldens and confirm they
-are byte-identical across Linux and Windows. If they are not, the tolerance
-comparison has to be designed before going further.
+### 3 — the goldens — THE QUESTION IS ANSWERED, and it is YES
+**`webgltriangle` rendered through ANGLE is BYTE-IDENTICAL between Linux and the
+Windows cross build.** Not one pixel of a whole scene differs. That was the
+thing this plan was most worried about, and it settles it: ANGLE over
+SwiftShader can be goldened exactly as the software rasteriser is.
+
+Also measured: **ANGLE is deterministic run to run** on the same machine, which
+is the cheaper precondition and worth checking before the expensive one.
+
+**A SECOND GOLDEN, NOT A TOLERANCE.** The two back ends differ on
+`webgltriangle` in 1.0% of pixels - the edges of the triangle, where two
+rasterisers legitimately disagree. Comparing them to each other would need a
+fudge factor, and a fudge factor is a golden that has stopped catching things.
+Each back end holds still against ITSELF instead: `tests/golden/` for software,
+`tests/golden/angle/` for ANGLE, and `CTBROWSER_WEBGL=angle` selects which.
+
+**AND ONLY ONE PAGE IS GOLDENED, because only one renders.** p5webgl,
+babylonscene and babylonorbit were goldened first and the files were OPENED: all
+three were BLANK WHITE. They draw with `drawElements`, which stage 2 records as
+unforwarded and does not forward - so each page runs, reports no error, and
+paints nothing. **A run reporting "100% tests passed" would have committed three
+goldens of an empty canvas.** They come back one at a time as the forwarding
+does.
 
 ### 4 — the corpora
 p5, Phaser and Babylon, in that order. The ratchets say where each one gets to;

@@ -161,8 +161,7 @@ int main() {
         for (const std::string & said : page.bindings().console_output()) {
             std::printf("     gl: %s\n", said.c_str());
         }
-        std::printf("     ANGLE:    %d pixels of geometry, ink %06x\n", angle.painted,
-                    angle.ink);
+        std::printf("     ANGLE:    %d pixels of geometry, ink %06x\n", angle.painted, angle.ink);
     }
 
     // --- EVERY CALL THE PAGE MADE WAS FORWARDED ------------------------------
@@ -184,8 +183,8 @@ int main() {
         // WITHIN 10%, not identical. Two rasterisers disagree at the edges of a
         // triangle by a few pixels and that is not a fault; disagreeing by half
         // is.
-        const double ratio = static_cast<double>(angle.painted) /
-                             static_cast<double>(software.painted);
+        const double ratio =
+            static_cast<double>(angle.painted) / static_cast<double>(software.painted);
         const bool close = ratio > 0.9 && ratio < 1.1;
         if (!close) {
             std::printf("FAIL the two backends drew very different areas: %d against %d\n",

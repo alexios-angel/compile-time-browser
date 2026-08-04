@@ -143,6 +143,35 @@ foreach(source ${example-sources})
                -DWORKDIR=${PROJECT_SOURCE_DIR}
                -DFRAMES=${render-frames}
                -P ${PROJECT_SOURCE_DIR}/tools/check-render.cmake)
+
+      # AND THE SAME PAGE THROUGH ANGLE, where there is one. A SECOND GOLDEN
+      # rather than a tolerance: two rasterisers differ at the edges of a
+      # triangle - measured at 1.0% of pixels on webgltriangle - so comparing
+      # them against each other would need a fudge factor, and a fudge factor is
+      # a golden that stops catching things. Each back end holds still against
+      # ITSELF instead, which is what a golden is for.
+      #
+      # ONLY THE PAGES THE ANGLE PATH ACTUALLY RENDERS, which today is one.
+      #
+      # p5webgl, babylonscene and babylonorbit were goldened first and the files
+      # were LOOKED AT: all three came back BLANK WHITE. They draw with
+      # `drawElements`, which stage 2 records as unforwarded and does not
+      # forward - so the page runs, reports no error, and paints nothing. Three
+      # goldens of an empty canvas would have been committed by a run that
+      # reported "100% tests passed".
+      #
+      # They come back one at a time as the forwarding does, and each one is a
+      # file somebody has to open before it counts.
+      if(CTBROWSER_WITH_ANGLE AND example MATCHES "webgltriangle")
+        add_test(NAME render-angle-${example} COMMAND ${CMAKE_COMMAND}
+                 -DEXE=$<TARGET_FILE:ctbrowser-example-${example}>
+                 -DOUT=${CMAKE_BINARY_DIR}/render-angle-${example}.ppm
+                 -DGOLDEN=${PROJECT_SOURCE_DIR}/tests/golden/angle/${example}.ppm
+                 -DWORKDIR=${PROJECT_SOURCE_DIR}
+                 -DFRAMES=${render-frames}
+                 -DBACKEND=angle
+                 -P ${PROJECT_SOURCE_DIR}/tools/check-render.cmake)
+      endif()
     endif()
   endif()
 endforeach()

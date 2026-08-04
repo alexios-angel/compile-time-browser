@@ -27,6 +27,17 @@ endif()
 set(ENV{CTBROWSER_TEST_FRAMES} ${FRAMES})
 set(ENV{CTBROWSER_NETWORK} 0)
 set(ENV{CTBROWSER_FONTS} font8x8)
+# WHICH WebGL BACK END, when the caller asks for one. The software rasteriser is
+# the default and is what the goldens in tests/golden/ hold; ANGLE gets its own
+# goldens under tests/golden/angle/, because two rasterisers legitimately
+# disagree at the edges of a triangle and pretending otherwise would mean
+# comparing with a tolerance and losing the byte comparison entirely.
+#
+# MEASURED: ANGLE over SwiftShader is byte-identical between Linux and the
+# Windows cross build, which is the property that lets it be goldened at all.
+if(DEFINED BACKEND)
+  set(ENV{CTBROWSER_WEBGL} ${BACKEND})
+endif()
 set(ENV{CTBROWSER_SCREENSHOT} "${OUT}")
 
 file(REMOVE "${OUT}")
