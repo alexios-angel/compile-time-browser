@@ -352,6 +352,22 @@ std::vector<device::active> device::active_uniforms(unsigned program) const {
            char * name) { glGetActiveUniform(p, i, max, written, size, type, name); });
 }
 
+unsigned device::uniform_block_index(unsigned program, const std::string & name) const {
+    // GL_INVALID_INDEX for a name no block has, which is what GL answers and is
+    // NOT an error: a page may ask about a block its shader dropped.
+    return ok() ? glGetUniformBlockIndex(program, name.c_str()) : 0xFFFFFFFFu;
+}
+
+void device::uniform_block_binding(unsigned program, unsigned index, unsigned binding) {
+    if (!ok() || index == 0xFFFFFFFFu) { return; }
+    glUniformBlockBinding(program, index, binding);
+}
+
+void device::bind_buffer_base(int target, unsigned index, unsigned buffer) {
+    if (!ok()) { return; }
+    glBindBufferBase(static_cast<GLenum>(target), index, buffer);
+}
+
 unsigned device::create_buffer() {
     if (!ok()) { return 0; }
     GLuint buffer = 0;
@@ -607,6 +623,11 @@ std::vector<device::active> device::active_attributes(unsigned) const {
 std::vector<device::active> device::active_uniforms(unsigned) const {
     return {};
 }
+unsigned device::uniform_block_index(unsigned, const std::string &) const {
+    return 0xFFFFFFFFu;
+}
+void device::uniform_block_binding(unsigned, unsigned, unsigned) {}
+void device::bind_buffer_base(int, unsigned, unsigned) {}
 void device::bind_buffer(int, unsigned) {}
 void device::buffer_data(int, const void *, std::size_t, int) {}
 void device::enable_attribute(unsigned, bool) {}

@@ -1272,6 +1272,10 @@ std::function<raster::glsl::value(int, float, float)> webgl_context::sampler() c
 // and the canvas keeps the colour it was cleared to. Nothing errors.
 
 int webgl_context::get_uniform_block_index(std::uint32_t program, std::string_view name) const {
+    if (angle_ != nullptr) {
+        const unsigned index = angle_->uniform_block_index(program, std::string{name});
+        return index == 0xFFFFFFFFu ? -1 : static_cast<int>(index);
+    }
     const auto found = programs_.find(program);
     if (found == programs_.end()) { return -1; }
     for (std::size_t i = 0; i < found->second.blocks.size(); ++i) {
@@ -1285,10 +1289,10 @@ int webgl_context::get_uniform_block_index(std::uint32_t program, std::string_vi
 
 void webgl_context::uniform_block_binding(std::uint32_t program, std::uint32_t index,
                                           std::uint32_t binding) {
-    // NOT FORWARDED YET: recorded rather than silently ignored. A page
-    // whose calls quietly do nothing paints something plausible, which is how
-    // a missing uniform cost an afternoon - see tests/webgl_angle.cpp.
-    if (angle_ != nullptr) { note_unforwarded("uniformBlockBinding"); }
+    if (angle_ != nullptr) {
+        angle_->uniform_block_binding(program, index, binding);
+        return;
+    }
     const auto found = programs_.find(program);
     if (found == programs_.end() || index >= found->second.block_bindings.size()) {
         fail(gl_enum::invalid_value);
@@ -1299,10 +1303,10 @@ void webgl_context::uniform_block_binding(std::uint32_t program, std::uint32_t i
 
 void webgl_context::bind_buffer_base(std::uint32_t target, std::uint32_t index,
                                      std::uint32_t buffer) {
-    // NOT FORWARDED YET: recorded rather than silently ignored. A page
-    // whose calls quietly do nothing paints something plausible, which is how
-    // a missing uniform cost an afternoon - see tests/webgl_angle.cpp.
-    if (angle_ != nullptr) { note_unforwarded("bindBufferBase"); }
+    if (angle_ != nullptr) {
+        angle_->bind_buffer_base(static_cast<int>(target), index, buffer);
+        return;
+    }
     if (target != gl_enum::uniform_buffer) {
         // TRANSFORM FEEDBACK also uses bindBufferBase and is not implemented -
         // refused by name rather than silently binding a uniform block.

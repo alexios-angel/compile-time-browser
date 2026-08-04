@@ -120,6 +120,13 @@ public:
     };
     [[nodiscard]] std::vector<active> active_attributes(unsigned program) const;
     [[nodiscard]] std::vector<active> active_uniforms(unsigned program) const;
+
+    // UNIFORM BLOCKS, which is how WebGL 2 delivers uniforms and how Babylon
+    // delivers ALL of them. Unforwarded, every matrix in a block reads zero and
+    // the geometry collapses to a point - with no error anywhere.
+    [[nodiscard]] unsigned uniform_block_index(unsigned program, const std::string & name) const;
+    void uniform_block_binding(unsigned program, unsigned index, unsigned binding);
+    void bind_buffer_base(int target, unsigned index, unsigned buffer);
     [[nodiscard]] int uniform_location(unsigned program, const std::string & name) const;
 
     [[nodiscard]] unsigned create_buffer();

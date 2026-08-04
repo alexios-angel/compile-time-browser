@@ -465,8 +465,19 @@ and it went unread because Babylon could not reach that code until the
 `#version` fix let its shaders compile. **A ledger only helps when it is
 checked after every change that lets a page get further.**
 
-Next: forward `uniformBlockBinding`, `bindBufferBase` and
-`getUniformBlockIndex`, then LOOK AT THE PIXELS rather than the call counts.
+`uniformBlockBinding`, `bindBufferBase` and `getUniformBlockIndex` are forwarded
+now - **and the pixels did not change.** Still one colour. So the UBO calls were
+a real gap and were NOT the whole cause either, which is the third time on this
+page that a named, plausible, genuinely-missing piece turned out not to be the
+last one.
+
+**Six entries remain on the ledger**, and the next attempt should start by
+printing them for the babylonscene page specifically rather than reasoning about
+which matters - that is what the ledger is for, and reasoning has now been wrong
+three times running. The one structural suspicion worth recording: Babylon
+renders through a `RenderTargetTexture` and post-process chain, and
+`bindFramebuffer`/`framebufferTexture2D` are among the six - a scene drawn into a
+framebuffer nobody reads back would look exactly like this.
 
 The order stays p5, then Phaser, then Babylon; the ratchets say where each gets
 to, and anything that goes BACKWARDS is a blocker rather than a note.
