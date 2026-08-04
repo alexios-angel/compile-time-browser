@@ -7,9 +7,14 @@ implements GLES itself, in software, and interprets the shaders. Replacing that
 with ANGLE is the largest single change ever proposed for this tree, and this
 document is what it would cost.
 
-**Status: STAGE 0 IS DONE and it passed.** ANGLE builds here, renders headless,
-and is **186x the software interpreter** — measured, below. The Windows half of
-stage 0 is not answered and is still the thing this whole plan turns on.
+**Status: STAGE 0 IS DONE, BOTH PLATFORMS, and it passed.** ANGLE builds and
+renders headless on Linux and Windows; it is **186x to 322x** the software
+interpreter; an llvm-mingw `.exe` links its DLLs; and **both platforms render the
+identical pixel**, which is the answer to the golden question this plan was most
+worried about.
+
+Published: `github.com/alexios-angel/angle`, release `ctbrowser-angle-25c80ccab4`
+— five files per platform, the headers, and what each of them is for.
 
 ## Stage 0, measured 2026-08-04
 
@@ -56,6 +61,41 @@ differ between a developer's machine and CI.
 * **`eglGetPlatformDisplayEXT` takes `EGLint`**, not `EGLAttrib`. Building the
   64-bit array and casting made every second word read as zero; the only symptom
   was `EGL_NO_DISPLAY` and nothing logged. That one was mine, not ANGLE's.
+
+## Stage 0, the Windows half — DONE 2026-08-04
+
+Built natively with clang-cl and the Windows SDK, then linked from llvm-mingw:
+
+```
+                     Linux x86_64      Windows x64
+draw only            192.76 M frag/s   332.04 M frag/s
+with readback        176.21 M frag/s   235.18 M frag/s
+the interpreter        1.03 M frag/s     1.03 M frag/s
+```
+
+**Both render 162,91,138 from the same shader.** SwiftShader is deterministic
+across platforms, so the four WebGL goldens can survive the move: the stack to
+pin for tests is ANGLE-over-Vulkan-over-SwiftShader, and it ships WITH ANGLE
+rather than depending on the host's Mesa.
+
+### Four things had to be got right, and each cost a build
+
+* **The pinned Windows SDK.** Chromium pins `10.0.28000.0`; the machine had
+  `10.0.26100.0`. `gn gen` fails naming a version nobody chose.
+* **`NTDDI_VERSION=NTDDI_WIN11_BR`** is defined only by that newer SDK. Against
+  an older one it evaluates to nothing and every type behind a version guard
+  disappears — surfacing as `unknown type name 'FILE_INFO_BY_HANDLE_CLASS'` from
+  the SDK's own header. Both are OVERRIDABLE in the fork now, defaults
+  unchanged, as a patch to Chromium's `build/` submodule rather than to ANGLE.
+* **The consumer must link `-static`.** llvm-mingw links its own libc++ and
+  libunwind dynamically, so the exe would not start for want of `libc++.dll` —
+  its runtime, not ANGLE's. `cmake/toolchain-windows-x86_64.cmake` already does
+  this for the engine.
+* **`libvulkan.so.1` / `vulkan-1.dll` is ANGLE's own loader and must ship.**
+  Omitting it fails with `Internal Vulkan error (-3)`, and omitting the ICD
+  manifest fails with `Extension not supported: VK_KHR_surface` — neither names
+  the missing file. This one was caught by testing the SHIPPING set rather than
+  the build directory, which is the only reason it is not in the release.
 
 ## The Windows question — DECIDED 2026-08-04
 
