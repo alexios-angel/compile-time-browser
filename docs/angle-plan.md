@@ -57,7 +57,51 @@ differ between a developer's machine and CI.
   64-bit array and casting made every second word read as zero; the only symptom
   was `EGL_NO_DISPLAY` and nothing logged. That one was mine, not ANGLE's.
 
-## The Windows question, which stage 0 did NOT answer
+## The Windows question — DECIDED 2026-08-04
+
+**ANGLE is built natively on Windows and the llvm-mingw `.exe` links its DLLs
+through the C API, dynamically.** That is the decision; what follows is what it
+means.
+
+### Why it works, and it is the same argument twice
+
+`libEGL.dll` and `libGLESv2.dll` export **C** functions. On x86-64 there is no
+name decoration for C, so an import library generated from the DLL - or the
+`.lib` clang-cl already emits - links from mingw like any other C library, and
+`LoadLibrary`/`GetProcAddress` is the fallback that always works. **The C++ ABI
+never meets the boundary**, which is exactly what made `use_custom_libcxx`
+irrelevant on Linux. One argument, two platforms.
+
+### What it changes about how this repository ships
+
+`docs/build.md` and the mingw scripts say an application should be **one .exe**,
+and that is why Boost, zlib, libpng, libjpeg-turbo, mimalloc, simdutf and
+cpptrace are all static. This relaxes it - but not from nothing: `windows-dist`
+already collects **SDL3.dll** beside the exes and calls it "the ONE runtime
+dependency". It becomes a few.
+
+**A non-component build is what should ship.** The spike used
+`is_component_build=true`, which produces eight or so DLLs - libc++, abseil,
+zlib and the rest as separate objects. With it FALSE those link INTO
+`libGLESv2.dll`, and the dist carries two or three files instead of eight. That
+is a build-argument change and it belongs in the shipping recipe rather than in
+the spike.
+
+### And the build machine changes with it
+
+`tools/remote-build.sh windows` cross-compiles everything on the Linux devbox,
+which is what makes the sixteen verified binaries reproducible from one place.
+ANGLE cannot join that: Chromium's GN has no llvm-mingw toolchain, so **the
+ANGLE DLLs are built on a Windows host and the engine is still cross-compiled on
+the devbox.** Two producers for one dist.
+
+That is a real cost and it should be paid deliberately: the DLLs become a PINNED
+ARTEFACT, built once per ANGLE revision and checked in or published the way
+`clang-std-embed` releases already are - not something every developer rebuilds.
+Otherwise "byte-identical on both platforms" quietly becomes "byte-identical if
+your ANGLE matches mine".
+
+## The Windows question, as it stood before that decision
 
 **It cannot be answered on the devbox**, and that is worth stating rather than
 leaving as an unfinished task. Chromium's GN has no llvm-mingw toolchain at all,
