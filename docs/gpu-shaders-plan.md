@@ -1,5 +1,12 @@
 # Running page shaders on the GPU, with libshaderc
 
+> **See `docs/angle-plan.md` first.** This document plans a translator plus
+> libshaderc, written here. ANGLE's shader translator does that job already —
+> for exactly this dialect, in the browsers this engine is measured against —
+> and its GLES driver would replace far more. The two plans overlap; the ANGLE
+> one is larger, better in what it delivers, and blocked on a build question
+> this one is not. Read both before starting either.
+
 **The question, asked 2026-08-03: compile a page's GLSL to SPIR-V at run time
 with libshaderc so Vulkan can execute it on hardware, instead of interpreting
 it. Measured rather than argued about, and the answer is that it works, the
