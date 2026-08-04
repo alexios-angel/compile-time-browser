@@ -7,8 +7,80 @@ implements GLES itself, in software, and interprets the shaders. Replacing that
 with ANGLE is the largest single change ever proposed for this tree, and this
 document is what it would cost.
 
-**Status: planned, nothing started.** The measurements below are from this tree
-and from ANGLE's own build documentation, taken 2026-08-03.
+**Status: STAGE 0 IS DONE and it passed.** ANGLE builds here, renders headless,
+and is **186x the software interpreter** — measured, below. The Windows half of
+stage 0 is not answered and is still the thing this whole plan turns on.
+
+## Stage 0, measured 2026-08-04
+
+Built from the fork at `alexios-angel/angle`, Vulkan back end only, on the
+devbox. The spike is `tools/angle/spike.cpp` and its recipe is beside it:
+surfaceless EGL, one full-screen triangle with a fragment shader that does real
+per-pixel work, read back into memory the way a canvas would need.
+
+```
+EGL 1.5  vendor=Google Inc. (Google)
+GL_RENDERER = ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), SwiftShader driver-5.0.0)
+GL_VERSION  = OpenGL ES 3.1 (ANGLE 2.1.28528)
+
+DRAW ONLY     191.53 M frag/s   (1.369 ms per 512x512 pass)
+WITH READBACK 176.33 M frag/s   (1.487 ms per pass)
+
+the software interpreter, for comparison:  1.03 M frag/s
+```
+
+**186x, and on SOFTWARE VULKAN.** That is SwiftShader — ANGLE's own CPU
+implementation, no GPU involved at all. The comparison is therefore
+software-against-software, which is the fairest one available on this machine
+and a floor rather than a ceiling: `docs/platform.md` records that a Linux
+binary here sees no GPU, and the Windows build gets an Intel Arc.
+
+**And the readback is NOT the problem this document expected.** It costs 8% -
+0.118 ms of a 1.487 ms pass at 512x512. The plan said it "could eat the win" and
+it does not; that concern is retired.
+
+**SwiftShader also answers the golden question better than lavapipe would.** It
+ships WITH ANGLE rather than with the host's Mesa, so pinning it for the golden
+tests makes the deterministic stack self-contained - one fewer thing that can
+differ between a developer's machine and CI.
+
+### Three things had to be got right, and each cost a build
+
+* **ANGLE's own source fails its own `-Werror`**: `FixedVector.h` trips
+  `-Wunsafe-buffer-usage` under the bundled clang. `treat_warnings_as_errors=false`.
+* **`use_custom_libcxx=false` broke it.** Setting it - to match this tree's
+  libstdc++ - failed in `Color.inc` on `std::strong_order`. It was never
+  necessary: **EGL and GLES are C APIs**, so ANGLE's C++ standard library never
+  crosses the boundary. This retires a risk this document raised, and see the
+  Windows section for how far that reasoning carries.
+* **`eglGetPlatformDisplayEXT` takes `EGLint`**, not `EGLAttrib`. Building the
+  64-bit array and casting made every second word read as zero; the only symptom
+  was `EGL_NO_DISPLAY` and nothing logged. That one was mine, not ANGLE's.
+
+## The Windows question, which stage 0 did NOT answer
+
+**It cannot be answered on the devbox**, and that is worth stating rather than
+leaving as an unfinished task. Chromium's GN has no llvm-mingw toolchain at all,
+and cross-compiling to Windows from Linux needs the MSVC toolchain and the
+Windows SDK, neither of which is here.
+
+**But the C-API argument above changes the shape of the risk.** This document
+originally said llvm-mingw and clang-cl are different C++ ABIs and therefore
+incompatible. That is true of C++ and irrelevant here: `libEGL.dll` and
+`libGLESv2.dll` export **C** functions, and a mingw binary can link an import
+library or `LoadLibrary` them exactly as any other C DLL. The same reasoning
+that made `use_custom_libcxx` a non-issue makes the Windows ABI a non-issue.
+
+So the Windows path is probably:
+
+1. build ANGLE **natively on Windows** with clang-cl and the Windows SDK, or
+   take a prebuilt one, and
+2. link the llvm-mingw `.exe` against the DLLs through their C API.
+
+That is a different pipeline from `tools/remote-build.sh windows`, which builds
+everything on the Linux devbox - so it is real work and a real change to how
+this repository ships. **It is now the only open question in stage 0**, and it
+should be answered before anything is deleted.
 
 ## What it replaces, counted
 
