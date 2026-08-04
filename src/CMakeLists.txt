@@ -362,13 +362,6 @@ target_sources(ctbrowser-raster
     raster/svg.cpp
     raster/software.cpp
     raster/renderer.cpp
-    raster/glsl.cpp
-    raster/glsl_translate.cpp
-    raster/gles.cpp
-    raster/glsl_preprocess.cpp
-    raster/glsl_eval.cpp
-    raster/softgl.cpp
-    raster/spirv.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
@@ -385,17 +378,11 @@ target_sources(ctbrowser-raster
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/renderer.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/compositor.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/pipeline.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/glsl.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/glsl_translate.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/gles.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/softgl.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/spirv.hpp")
 target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-raster)
 target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)
 
 # ANGLE, from the pinned release tools/fetch-angle.sh downloads. PRIVATE, and
-# that is the whole design: raster/gles.hpp names no EGL or GLES type, so
 # nothing that includes it inherits them and tests/api_surface stays satisfied.
 #
 # The definition is PUBLIC because a consumer needs to know whether the device
@@ -493,7 +480,6 @@ find_package(CURL REQUIRED)
 add_library(ctbrowser-shell)
 target_sources(ctbrowser-shell
   PRIVATE
-    shell/webgl.cpp
     shell/webgl_bindings.cpp
     shell/browser.cpp
     shell/bindings.cpp
@@ -520,7 +506,6 @@ target_sources(ctbrowser-shell
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/jpeg.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/net.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/canvas.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/webgl.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/svg.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/forms.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/bindings.hpp"
