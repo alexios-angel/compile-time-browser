@@ -349,6 +349,63 @@ void device::draw_arrays(int mode, int first, int count) {
     glDrawArrays(static_cast<GLenum>(mode), first, count);
 }
 
+void device::depth_func(int how) {
+    if (!ok()) { return; }
+    glDepthFunc(static_cast<GLenum>(how));
+}
+
+void device::depth_mask(bool on) {
+    if (!ok()) { return; }
+    glDepthMask(on ? GL_TRUE : GL_FALSE);
+}
+
+void device::blend_func(int source, int destination) {
+    if (!ok()) { return; }
+    glBlendFunc(static_cast<GLenum>(source), static_cast<GLenum>(destination));
+}
+
+unsigned device::create_texture() {
+    if (!ok()) { return 0; }
+    GLuint texture = 0;
+    glGenTextures(1, &texture);
+    return texture;
+}
+
+void device::bind_texture(int target, unsigned texture) {
+    if (!ok()) { return; }
+    glBindTexture(static_cast<GLenum>(target), texture);
+}
+
+void device::active_texture(int unit) {
+    if (!ok()) { return; }
+    glActiveTexture(static_cast<GLenum>(unit));
+}
+
+void device::texture_image(int target, int width, int height, const void * rgba) {
+    if (!ok()) { return; }
+    glTexImage2D(static_cast<GLenum>(target), 0, GL_RGBA, width, height, 0, GL_RGBA,
+                 GL_UNSIGNED_BYTE, rgba);
+    // NO MIPMAPS AND LINEAR FILTERING, because a WebGL 1 page's default
+    // minification filter needs a full mip chain and this uploads one level.
+    // Left at the default, every texture samples BLACK - which looks like a
+    // missing texture and is really a missing filter setting.
+    glTexParameteri(static_cast<GLenum>(target), GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(static_cast<GLenum>(target), GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(static_cast<GLenum>(target), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(static_cast<GLenum>(target), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
+void device::texture_parameter(int target, int name, int value) {
+    if (!ok()) { return; }
+    glTexParameteri(static_cast<GLenum>(target), static_cast<GLenum>(name), value);
+}
+
+void device::draw_elements(int mode, int count, int type, std::size_t offset) {
+    if (!ok()) { return; }
+    glDrawElements(static_cast<GLenum>(mode), count, static_cast<GLenum>(type),
+                   reinterpret_cast<const void *>(offset));
+}
+
 void device::set_uniform(unsigned program, const std::string & name, const float * values,
                          int count, int rows, int cols, bool integer) {
     if (!ok() || values == nullptr) { return; }
@@ -506,6 +563,17 @@ void device::buffer_data(int, const void *, std::size_t, int) {}
 void device::enable_attribute(unsigned, bool) {}
 void device::attribute_pointer(unsigned, int, int, bool, int, std::size_t) {}
 void device::draw_arrays(int, int, int) {}
+void device::draw_elements(int, int, int, std::size_t) {}
+void device::depth_func(int) {}
+void device::depth_mask(bool) {}
+void device::blend_func(int, int) {}
+unsigned device::create_texture() {
+    return 0;
+}
+void device::bind_texture(int, unsigned) {}
+void device::active_texture(int) {}
+void device::texture_image(int, int, int, const void *) {}
+void device::texture_parameter(int, int, int) {}
 void device::set_uniform(unsigned, const std::string &, const float *, int, int, int, bool) {}
 bool device::read_pixels(paint::bitmap &) const {
     return false;

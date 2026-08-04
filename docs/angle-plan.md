@@ -384,9 +384,41 @@ paints nothing. **A run reporting "100% tests passed" would have committed three
 goldens of an empty canvas.** They come back one at a time as the forwarding
 does.
 
-### 4 — the corpora
-p5, Phaser and Babylon, in that order. The ratchets say where each one gets to;
-anything that goes BACKWARDS is a blocker, not a note.
+### 4 — the corpora — STARTED, and it found the next class of bug
+Forwarded: `drawElements`, textures (`createTexture`, `bindTexture`,
+`activeTexture`, `texImage2D`, `texParameteri`, and the bitmap upload path an
+`<img>` or a canvas takes), `depthFunc`, `depthMask`, `blendFunc`.
+
+**Both p5's and Babylon's ledgers are now EMPTY - every call they make is
+forwarded - and NEITHER DRAWS.** That is the finding, and it is worth more than
+the forwarding was:
+
+```
+p5-webgl        errors={}  draws={}
+babylon-scene   errors={}  draws={"linkProgram":3}
+```
+
+No GL errors. p5 issues no draw at all; Babylon links three programs and then
+issues none. **They are DECIDING not to draw**, and the reason is that
+`getProgramParameter(ACTIVE_ATTRIBUTES)` and its neighbours answer from
+`webgl_context`'s own tables - which ANGLE mode never fills, because the program
+belongs to GL. A library that ENUMERATES a program instead of asking for names
+it already knows is told the shader declares nothing, so it binds nothing and
+draws nothing.
+
+`webgl_bindings.cpp` already carries a comment saying this exact class of bug
+bit once before, for the software path, in the same function.
+
+**THE LEDGER DOES NOT CATCH THIS, and that is a hole in the instrument rather
+than an oversight in the list.** It records ACTIONS that were not forwarded. A
+QUERY that answers from the wrong place is not missing - it returns, promptly,
+with a confident wrong answer. Anything stage 4 does next has to cover the
+introspection calls: `getProgramParameter` for the ACTIVE_* pnames,
+`getActiveAttrib`, `getActiveUniform`, and `getParameter` for the bindings that
+`webgl_angle.cpp` already noticed answering from software state.
+
+The order stays p5, then Phaser, then Babylon; the ratchets say where each gets
+to, and anything that goes BACKWARDS is a blocker rather than a note.
 
 ### 5 — retire the software path
 Only after 2, 3 and 4 are green on both platforms, and only if the readback cost

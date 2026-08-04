@@ -113,7 +113,26 @@ public:
     void enable_attribute(unsigned location, bool on);
     void attribute_pointer(unsigned location, int size, int type, bool normalised, int stride,
                            std::size_t offset);
+    void depth_func(int how);
+    void depth_mask(bool on);
+    void blend_func(int source, int destination);
+
+    // --- textures ------------------------------------------------------------
+    //
+    // RGBA8 ONLY, and by design rather than omission: a page's texture arrives
+    // here as a paint::bitmap or as bytes the bindings already normalised, so
+    // the format zoo stops before this line.
+    [[nodiscard]] unsigned create_texture();
+    void bind_texture(int target, unsigned texture);
+    void active_texture(int unit);
+    void texture_image(int target, int width, int height, const void * rgba);
+    void texture_parameter(int target, int name, int value);
+
     void draw_arrays(int mode, int first, int count);
+    // AN INDEXED DRAW, which is what a MESH is - every library here draws with
+    // one. `offset` is a byte offset into the bound element buffer, which is
+    // what WebGL's drawElements takes and the reason it is not an index.
+    void draw_elements(int mode, int count, int type, std::size_t offset);
 
     // A UNIFORM, BY NAME, because that is what the bindings carry: WebGL hands
     // a page an opaque location object and this engine puts the NAME in it, so
