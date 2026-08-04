@@ -271,9 +271,38 @@ void webgl_context::buffer_data(std::uint32_t target, std::vector<std::byte> byt
 
 // --- shaders and programs --------------------------------------------------
 
+namespace {
+
+// A SHADER THAT USES ES 3.00 SYNTAX AND FORGOT TO SAY SO.
+//
+// This engine's own GLSL front end is LENIENT by design - it accepts `layout(`
+// whatever the `#version` line claims - and a real compiler is not. Babylon's
+// processed vertex shader arrives with fifty lines of `#define`, then
+// `layout(std140, column_major) uniform;`, and NO `#version` directive at all.
+// ANGLE therefore compiles it as ESSL 1.00, where the word does not exist:
+//
+//     VERTEX SHADER ERROR: 0:54: 'layout' : syntax error
+//
+// The page is not wrong to expect this to work - it works in a browser, because
+// a browser's WebGL 2 context defaults differently - so the version is supplied
+// rather than the shader refused. That is the leniency contract this tree
+// already keeps, written out for a compiler that does not keep it.
+//
+// ON `layout(` ALONE, and deliberately narrow: `attribute` and `varying` are ES
+// 1.00 spellings that ES 3.00 REMOVED, so a shader using those must NOT be
+// given a 300 es header - p5's are exactly that, and promoting them would break
+// what currently works.
+[[nodiscard]] std::string versioned(const std::string & source) {
+    if (source.find("#version") != std::string::npos) { return source; }
+    if (source.find("layout(") == std::string::npos) { return source; }
+    return "#version 300 es\n" + source;
+}
+
+} // namespace
+
 void webgl_context::shader_source(std::uint32_t shader, std::string source) {
     if (angle_ != nullptr) {
-        angle_->shader_source(shader, source);
+        angle_->shader_source(shader, versioned(source));
         return;
     }
     if (const auto found = shaders_.find(shader); found != shaders_.end()) {

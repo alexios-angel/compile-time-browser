@@ -427,7 +427,27 @@ which both back ends can answer in and which is what `getActiveUniform` reports
 to a page anyway. That also unpicks one of the threads tying the bindings to the
 software GLSL front end - see stage 5.
 
-**Babylon still draws nothing** and is the next thing to chase.
+**Babylon COMPILES AND DRAWS now** - 267 draw calls, `isReady()` true,
+`material.isReady()` true - and it took one line of translation.
+
+Its processed vertex shader arrives with fifty lines of `#define`, then
+`layout(std140, column_major) uniform;`, and **no `#version` directive at all**.
+ANGLE compiles that as ESSL 1.00, where the word does not exist:
+
+```
+VERTEX SHADER ERROR: 0:54: 'layout' : syntax error
+```
+
+This engine's own front end is LENIENT and accepts `layout(` whatever the
+version claims, which is why the software path never noticed. `webgl.cpp`
+supplies `#version 300 es` when a shader uses `layout(` and says nothing about
+its version - narrowly, because `attribute` and `varying` are ES 1.00 spellings
+that ES 3.00 REMOVED, so promoting p5's shaders would break what already works.
+
+**And the babylonscene EXAMPLE still shows only its clear colour**, while the
+same page under a test harness draws 267 times. The scene clears and the
+geometry does not arrive, so the difference is in the example's frame loop
+rather than in the forwarding - which is where the next attempt starts.
 
 The order stays p5, then Phaser, then Babylon; the ratchets say where each gets
 to, and anything that goes BACKWARDS is a blocker rather than a note.
