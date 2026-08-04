@@ -110,18 +110,18 @@ direct GLES call and a return, with no state kept that GL can be asked for.
 
 **context and surface** (12)
 
-- [ ] `surface`
-- [ ] `height`
-- [ ] `set_version`
-- [ ] `clear`
-- [ ] `clear_color`
-- [ ] `clear_depth`
-- [ ] `scissor`
-- [ ] `set_enabled`
-- [ ] `take_error`
-- [ ] `refuse`
-- [ ] `refused`
-- [ ] `shader_error`
+- [x] `surface`
+- [x] `height`
+- [x] `set_version`
+- [x] `clear`
+- [x] `clear_color`
+- [x] `clear_depth`
+- [x] `scissor`
+- [x] `set_enabled`
+- [x] `take_error`
+- [x] `refuse`
+- [x] `refused`
+- [x] `shader_error`
 
 **shaders and programs** (16)
 
@@ -187,8 +187,8 @@ direct GLES call and a return, with no state kept that GL can be asked for.
 
 - [ ] `texture_from_bitmap`
 - [ ] `uniform_block_binding`
-- [ ] `version`
-- [ ] `viewport`
+- [x] `version`
+- [x] `viewport`
 
 THE HANDLE TABLE is the only state. A page holds `WebGLBuffer` and
 `WebGLProgram` objects, and those need identity that survives across calls - but

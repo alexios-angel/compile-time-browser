@@ -482,6 +482,7 @@ find_package(CURL REQUIRED)
 add_library(ctbrowser-shell)
 target_sources(ctbrowser-shell
   PRIVATE
+    shell/webgl.cpp
     shell/webgl_bindings.cpp
     shell/browser.cpp
     shell/bindings.cpp
@@ -499,6 +500,7 @@ target_sources(ctbrowser-shell
       FILES
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/embedded_fonts.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/shell.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/webgl.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/input.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/metrics.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/assets.hpp"

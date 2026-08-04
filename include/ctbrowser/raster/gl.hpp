@@ -30,7 +30,10 @@ namespace ctbrowser::raster::gl {
 // `fastest` is the default because it is what a user should get; `deterministic`
 // is SwiftShader, which is what the byte-compared goldens need and what a player
 // or a debugging session can select at run time.
-enum class driver { fastest, deterministic };
+enum class driver {
+    fastest,
+    deterministic
+};
 
 // Whether a device can be made AT ALL: built with ANGLE, and the libraries load
 // and initialise. Asked rather than assumed - a build flag reports an intention
@@ -68,7 +71,19 @@ public:
     // something a wrapper can hide.
     bool make_current();
 
+    void viewport(int x, int y, int width, int height);
+    void scissor(int x, int y, int width, int height);
     void clear(float red, float green, float blue, float alpha);
+    // THE MASK A PAGE PASSED, not a fixed set. `gl.clear(COLOR_BUFFER_BIT)`
+    // must not silently clear depth as well - a page that clears colour
+    // per-object and depth per-frame renders inside out if it does.
+    void clear_buffers(std::uint32_t mask);
+    void clear_color(float red, float green, float blue, float alpha);
+    void clear_depth(float depth);
+    void set_capability(int capability, bool on);
+    // GL's own error, reported and cleared. Asked of the driver rather than
+    // tracked here, because tracked state is what drifts.
+    [[nodiscard]] std::uint32_t take_error();
 
     // The pixels, into a bitmap the painter composites.
     //

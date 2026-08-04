@@ -86,14 +86,22 @@ device::device(int width, int height, driver which) : impl_{std::make_unique<imp
         return;
     }
 
-    const EGLint config_attrs[] = {EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
-                                   EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
-                                   EGL_RED_SIZE, 8,
-                                   EGL_GREEN_SIZE, 8,
-                                   EGL_BLUE_SIZE, 8,
-                                   EGL_ALPHA_SIZE, 8,
-                                   EGL_DEPTH_SIZE, 24,
-                                   EGL_STENCIL_SIZE, 8,
+    const EGLint config_attrs[] = {EGL_SURFACE_TYPE,
+                                   EGL_PBUFFER_BIT,
+                                   EGL_RENDERABLE_TYPE,
+                                   EGL_OPENGL_ES3_BIT,
+                                   EGL_RED_SIZE,
+                                   8,
+                                   EGL_GREEN_SIZE,
+                                   8,
+                                   EGL_BLUE_SIZE,
+                                   8,
+                                   EGL_ALPHA_SIZE,
+                                   8,
+                                   EGL_DEPTH_SIZE,
+                                   24,
+                                   EGL_STENCIL_SIZE,
+                                   8,
                                    EGL_NONE};
     EGLConfig config{};
     EGLint configs = 0;
@@ -162,6 +170,44 @@ std::string device::version() const {
     return ok() ? ask(GL_VERSION) : std::string{};
 }
 
+void device::viewport(int x, int y, int w, int h) {
+    if (!ok()) { return; }
+    glViewport(x, y, w, h);
+}
+
+void device::scissor(int x, int y, int w, int h) {
+    if (!ok()) { return; }
+    glScissor(x, y, w, h);
+}
+
+void device::clear_buffers(std::uint32_t mask) {
+    if (!ok()) { return; }
+    glClear(static_cast<GLbitfield>(mask));
+}
+
+void device::clear_color(float red, float green, float blue, float alpha) {
+    if (!ok()) { return; }
+    glClearColor(red, green, blue, alpha);
+}
+
+void device::clear_depth(float depth) {
+    if (!ok()) { return; }
+    glClearDepthf(depth);
+}
+
+void device::set_capability(int capability, bool on) {
+    if (!ok()) { return; }
+    if (on) {
+        glEnable(static_cast<GLenum>(capability));
+    } else {
+        glDisable(static_cast<GLenum>(capability));
+    }
+}
+
+std::uint32_t device::take_error() {
+    return ok() ? static_cast<std::uint32_t>(glGetError()) : 0u;
+}
+
 void device::clear(float red, float green, float blue, float alpha) {
     if (!ok()) { return; }
     glClearColor(red, green, blue, alpha);
@@ -173,7 +219,7 @@ bool device::read_pixels(paint::bitmap & into) const {
     if (!ok()) { return false; }
     const int w = impl_->width;
     const int h = impl_->height;
-    if (into.width != w || into.height != h) { into.resize(w, h); }
+    if (into.width != w || into.height != h) { into = paint::bitmap{w, h}; }
 
     std::vector<std::uint8_t> rgba(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4);
     glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
@@ -184,10 +230,11 @@ bool device::read_pixels(paint::bitmap & into) const {
         for (int x = 0; x < w; ++x) {
             const std::size_t at = (row + static_cast<std::size_t>(x)) * 4;
             // RGBA IN, ARGB OUT.
-            into.at(x, y) = (static_cast<std::uint32_t>(rgba[at + 3]) << 24) |
-                            (static_cast<std::uint32_t>(rgba[at + 0]) << 16) |
-                            (static_cast<std::uint32_t>(rgba[at + 1]) << 8) |
-                            static_cast<std::uint32_t>(rgba[at + 2]);
+            into.put(x, y,
+                     (static_cast<std::uint32_t>(rgba[at + 3]) << 24) |
+                         (static_cast<std::uint32_t>(rgba[at + 0]) << 16) |
+                         (static_cast<std::uint32_t>(rgba[at + 1]) << 8) |
+                         static_cast<std::uint32_t>(rgba[at + 2]));
         }
     }
     return true;
@@ -233,6 +280,15 @@ bool device::make_current() {
     return false;
 }
 void device::clear(float, float, float, float) {}
+void device::viewport(int, int, int, int) {}
+void device::scissor(int, int, int, int) {}
+void device::clear_buffers(std::uint32_t) {}
+void device::clear_color(float, float, float, float) {}
+void device::clear_depth(float) {}
+void device::set_capability(int, bool) {}
+std::uint32_t device::take_error() {
+    return 0u;
+}
 bool device::read_pixels(paint::bitmap &) const {
     return false;
 }
