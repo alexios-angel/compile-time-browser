@@ -444,21 +444,29 @@ supplies `#version 300 es` when a shader uses `layout(` and says nothing about
 its version - narrowly, because `attribute` and `varying` are ES 1.00 spellings
 that ES 3.00 REMOVED, so promoting p5's shaders would break what already works.
 
-**And the babylonscene EXAMPLE still shows only its clear colour**, while the
-same page under a test harness draws 267 times, is `isReady()`, and reports
-`material.isReady()`. What is known about the gap so far:
+**BABYLON ISSUES DRAWS AND THEY PAINT NOTHING**, and the earlier claim here -
+that it "draws" - was about CALL COUNTS and not pixels. Corrected: the example
+issues 150+ `drawElements` with real index counts (36 for the box, 8112 for the
+sphere) and the canvas still shows only the clear colour. Under a test harness
+it issues 267 and reports `material.isReady()`; nobody had looked at that
+harness's pixels either.
 
-* The back end IS ANGLE in the example - `prefer_angle_webgl` is set from
-  `CTBROWSER_WEBGL` before `load_html`, and the software path would have drawn
-  the scene, since that is what the existing golden holds.
-* The canvas resize path was a real bug and is FIXED - an EGL pbuffer is a fixed
-  size, so a canvas resized after its context was made left the two disagreeing
-  and `read_pixels` then replaced the canvas bitmap with one of the device's
-  size. **It was not the cause**: the example still shows one colour.
-* So the difference is between `browser::frame()`/`tick()` driven by a test and
-  the same driven by the app loop. That is where the next attempt starts, and it
-  should begin by asking the EXAMPLE how many draws it issued rather than
-  assuming - the harness answer is already known and is 267.
+**The cause is named and is the same shape as the last two.** Babylon on WebGL 2
+delivers every uniform through UNIFORM BUFFER OBJECTS, and
+`uniformBlockBinding` and `bindBufferBase` are on the unforwarded ledger - they
+record themselves and do nothing. So every matrix in the block reads ZERO and
+the geometry collapses to a point, exactly as it did when `uniformMatrix3fv` was
+missing and exactly as it did before UBOs existed in the software path at all
+(see tests/webgl2-ratchet.txt, which records the same collapse from the other
+side).
+
+The ledger DID name it this time - the entries have been there since stage 2 -
+and it went unread because Babylon could not reach that code until the
+`#version` fix let its shaders compile. **A ledger only helps when it is
+checked after every change that lets a page get further.**
+
+Next: forward `uniformBlockBinding`, `bindBufferBase` and
+`getUniformBlockIndex`, then LOOK AT THE PIXELS rather than the call counts.
 
 The order stays p5, then Phaser, then Babylon; the ratchets say where each gets
 to, and anything that goes BACKWARDS is a blocker rather than a note.
