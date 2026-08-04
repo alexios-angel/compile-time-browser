@@ -662,6 +662,10 @@ void browser::run_scripts() {
     bindings_ = std::make_unique<dom_bindings>(
         *doc_, atoms_, canvases_, forms_, [this] { mark(dirty::paint); },
         [this](node_id id) { (void)focus(id); });
+    // The back end a caller chose before the page loaded - see
+    // browser::prefer_angle_webgl. Applied here because this is the first
+    // moment the object that owns WebGL contexts exists.
+    bindings_->prefer_angle(prefer_angle_webgl_);
     bindings_->observe_viewport(options_.width, options_.height);
     bindings_->observe_resources(assets_, images_);
     bindings_->allow_network(network_allowed_);

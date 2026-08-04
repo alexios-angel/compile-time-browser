@@ -201,6 +201,14 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
     if (!made) {
         made = std::make_unique<webgl_context>(
             const_cast<paint::bitmap *>(surface->surface().get()), width, height);
+        // THE BACKEND IS CHOSEN HERE AND ONLY HERE. A context's programs,
+        // buffers and shader objects belong to whichever implementation made
+        // them, so switching one afterwards would leave a page holding handles
+        // into the other. `use_angle` reports whether it took - a build without
+        // ANGLE, or a machine where the device will not come up, quietly keeps
+        // the software path, which is the behaviour a page cannot tell from
+        // never having asked.
+        if (angle_preferred_) { (void)made->use_angle(); }
     }
     webgl_context * gl = made.get();
     // THE VERSION IS DECIDED ONCE, WHEN THE CONTEXT IS CREATED. A canvas has
@@ -1259,6 +1267,17 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
            [gl](context &, std::span<value>) { return value::number(gl->framebuffer_status()); });
 
     return value::object(obj);
+}
+
+std::vector<std::string> dom_bindings::unforwarded_gl_calls() const {
+    std::vector<std::string> out;
+    for (const auto & [id, context] : webgl_contexts_) {
+        if (context == nullptr) { continue; }
+        for (const std::string & call : context->unforwarded()) {
+            if (std::ranges::find(out, call) == out.end()) { out.push_back(call); }
+        }
+    }
+    return out;
 }
 
 } // namespace ctbrowser::shell

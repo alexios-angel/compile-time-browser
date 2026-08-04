@@ -81,8 +81,8 @@ int main() {
         device.clear(0.0f, 0.0f, 1.0f, 1.0f); // opaque blue
         CHECK(device.read_pixels(into));
         const std::uint32_t pixel = into.at(10, 10);
-        CHECK((pixel & 0xFF) == 255);          // blue
-        CHECK(((pixel >> 16) & 0xFF) == 0);    // red
+        CHECK((pixel & 0xFF) == 255);       // blue
+        CHECK(((pixel >> 16) & 0xFF) == 0); // red
     }
 
     // --- a second device, and the first still works --------------------------

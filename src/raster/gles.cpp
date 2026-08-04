@@ -2,6 +2,7 @@
 
 #include <string>
 #include <utility>
+#include <vector>
 
 // EGL AND GLES LIVE HERE AND NOWHERE ELSE. See gles.hpp: `tests/api_surface`
 // lints that no third-party header reaches a public one, so the whole of ANGLE
@@ -23,6 +24,9 @@ struct device::impl {
     EGLContext context = EGL_NO_CONTEXT;
     int width = 0;
     int height = 0;
+    // See draw_arrays: ES 3 core needs one bound before attributes mean
+    // anything, and WebGL 1 pages never make one.
+    GLuint vao = 0;
     std::string error;
 
     ~impl() {
@@ -55,11 +59,9 @@ namespace {
     // EGLint, NOT EGLAttrib. eglGetPlatformDisplayEXT takes 32-bit attributes;
     // building the 64-bit array and casting makes every second word read as
     // zero, and the only symptom is EGL_NO_DISPLAY with nothing logged.
-    const EGLint attrs[] = {EGL_PLATFORM_ANGLE_TYPE_ANGLE,
-                            EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE,
+    const EGLint attrs[] = {EGL_PLATFORM_ANGLE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE,
                             EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE,
-                            EGL_PLATFORM_ANGLE_DEVICE_TYPE_SWIFTSHADER_ANGLE,
-                            EGL_NONE};
+                            EGL_PLATFORM_ANGLE_DEVICE_TYPE_SWIFTSHADER_ANGLE, EGL_NONE};
     EGLDisplay display = get_platform_display(EGL_PLATFORM_ANGLE_ANGLE, EGL_DEFAULT_DISPLAY, attrs);
     if (display == EGL_NO_DISPLAY) { error = "no ANGLE display for a SwiftShader Vulkan device"; }
     return display;
@@ -81,9 +83,7 @@ std::string unavailable_because() {
     EGLint major = 0;
     EGLint minor = 0;
     const bool ok = eglInitialize(display, &major, &minor) == EGL_TRUE;
-    if (!ok) {
-        error = "eglInitialize failed - is vk_swiftshader_icd.json beside the libraries?";
-    }
+    if (!ok) { error = "eglInitialize failed - is vk_swiftshader_icd.json beside the libraries?"; }
     eglTerminate(display);
     return ok ? std::string{} : error;
 }
@@ -106,10 +106,22 @@ device::device(int width, int height) : impl_(std::make_unique<impl>()) {
         return;
     }
 
-    const EGLint config_attrs[] = {EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
-                                   EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
-                                   EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
-                                   EGL_ALPHA_SIZE, 8, EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 8,
+    const EGLint config_attrs[] = {EGL_SURFACE_TYPE,
+                                   EGL_PBUFFER_BIT,
+                                   EGL_RENDERABLE_TYPE,
+                                   EGL_OPENGL_ES3_BIT,
+                                   EGL_RED_SIZE,
+                                   8,
+                                   EGL_GREEN_SIZE,
+                                   8,
+                                   EGL_BLUE_SIZE,
+                                   8,
+                                   EGL_ALPHA_SIZE,
+                                   8,
+                                   EGL_DEPTH_SIZE,
+                                   24,
+                                   EGL_STENCIL_SIZE,
+                                   8,
                                    EGL_NONE};
     EGLConfig config{};
     EGLint found = 0;
@@ -133,6 +145,19 @@ device::device(int width, int height) : impl_(std::make_unique<impl>()) {
         return;
     }
     if (!make_current()) { return; }
+
+    // A VERTEX ARRAY OBJECT, BOUND ONCE, HERE.
+    //
+    // It was created lazily in `draw_arrays` first, which is wrong in a way
+    // that draws NOTHING and reports nothing: binding a fresh VAO discards
+    // every attribute enable and pointer set before it, and a page sets all of
+    // those long before it draws. The triangle came back empty with no GL error
+    // anywhere.
+    //
+    // Bound at creation it is simply the context's array state, which is what a
+    // WebGL 1 page believes it is using anyway.
+    glGenVertexArrays(1, &impl_->vao);
+    glBindVertexArray(impl_->vao);
 }
 
 device::~device() = default;
@@ -157,7 +182,8 @@ int device::height() const noexcept {
 
 bool device::make_current() {
     if (impl_ == nullptr || impl_->context == EGL_NO_CONTEXT) { return false; }
-    if (eglMakeCurrent(impl_->display, impl_->surface, impl_->surface, impl_->context) != EGL_TRUE) {
+    if (eglMakeCurrent(impl_->display, impl_->surface, impl_->surface, impl_->context) !=
+        EGL_TRUE) {
         impl_->error = "eglMakeCurrent failed";
         return false;
     }
@@ -181,6 +207,190 @@ void device::clear(float red, float green, float blue, float alpha) {
     glViewport(0, 0, impl_->width, impl_->height);
     glClearColor(red, green, blue, alpha);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+}
+
+// --- the facade ------------------------------------------------------------
+//
+// Thin on purpose: every one of these is a GL call with the arguments a page
+// already passed as numbers. The value is not in what they do, it is in where
+// the GLES types stop - which is here.
+
+void device::viewport(int x, int y, int width, int height) {
+    if (!ok()) { return; }
+    glViewport(x, y, width, height);
+}
+
+void device::set_capability(int capability, bool on) {
+    if (!ok()) { return; }
+    if (on) {
+        glEnable(static_cast<GLenum>(capability));
+    } else {
+        glDisable(static_cast<GLenum>(capability));
+    }
+}
+
+unsigned device::create_shader(int kind) {
+    return ok() ? glCreateShader(static_cast<GLenum>(kind)) : 0;
+}
+
+void device::shader_source(unsigned shader, const std::string & source) {
+    if (!ok()) { return; }
+    const char * text = source.c_str();
+    const auto length = static_cast<GLint>(source.size());
+    glShaderSource(shader, 1, &text, &length);
+}
+
+void device::compile_shader(unsigned shader) {
+    if (!ok()) { return; }
+    glCompileShader(shader);
+}
+
+bool device::shader_compiled(unsigned shader) const {
+    if (!ok()) { return false; }
+    GLint status = 0;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
+    return status != 0;
+}
+
+std::string device::shader_log(unsigned shader) const {
+    if (!ok()) { return {}; }
+    GLint length = 0;
+    glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &length);
+    if (length <= 0) { return {}; }
+    std::string log(static_cast<std::size_t>(length), '\0');
+    glGetShaderInfoLog(shader, length, nullptr, log.data());
+    // The driver counts the terminator; a std::string does not.
+    if (!log.empty() && log.back() == '\0') { log.pop_back(); }
+    return log;
+}
+
+unsigned device::create_program() {
+    return ok() ? glCreateProgram() : 0;
+}
+
+void device::attach_shader(unsigned program, unsigned shader) {
+    if (!ok()) { return; }
+    glAttachShader(program, shader);
+}
+
+void device::link_program(unsigned program) {
+    if (!ok()) { return; }
+    glLinkProgram(program);
+}
+
+bool device::program_linked(unsigned program) const {
+    if (!ok()) { return false; }
+    GLint status = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &status);
+    return status != 0;
+}
+
+std::string device::program_log(unsigned program) const {
+    if (!ok()) { return {}; }
+    GLint length = 0;
+    glGetProgramiv(program, GL_INFO_LOG_LENGTH, &length);
+    if (length <= 0) { return {}; }
+    std::string log(static_cast<std::size_t>(length), '\0');
+    glGetProgramInfoLog(program, length, nullptr, log.data());
+    if (!log.empty() && log.back() == '\0') { log.pop_back(); }
+    return log;
+}
+
+void device::use_program(unsigned program) {
+    if (!ok()) { return; }
+    glUseProgram(program);
+}
+
+int device::attribute_location(unsigned program, const std::string & name) const {
+    return ok() ? glGetAttribLocation(program, name.c_str()) : -1;
+}
+
+int device::uniform_location(unsigned program, const std::string & name) const {
+    return ok() ? glGetUniformLocation(program, name.c_str()) : -1;
+}
+
+unsigned device::create_buffer() {
+    if (!ok()) { return 0; }
+    GLuint buffer = 0;
+    glGenBuffers(1, &buffer);
+    return buffer;
+}
+
+void device::bind_buffer(int target, unsigned buffer) {
+    if (!ok()) { return; }
+    glBindBuffer(static_cast<GLenum>(target), buffer);
+}
+
+void device::buffer_data(int target, const void * bytes, std::size_t size, int usage) {
+    if (!ok()) { return; }
+    glBufferData(static_cast<GLenum>(target), static_cast<GLsizeiptr>(size), bytes,
+                 static_cast<GLenum>(usage));
+}
+
+void device::enable_attribute(unsigned location, bool on) {
+    if (!ok()) { return; }
+    if (on) {
+        glEnableVertexAttribArray(location);
+    } else {
+        glDisableVertexAttribArray(location);
+    }
+}
+
+void device::attribute_pointer(unsigned location, int size, int type, bool normalised, int stride,
+                               std::size_t offset) {
+    if (!ok()) { return; }
+    glVertexAttribPointer(location, size, static_cast<GLenum>(type),
+                          normalised ? GL_TRUE : GL_FALSE, stride,
+                          reinterpret_cast<const void *>(offset));
+}
+
+void device::draw_arrays(int mode, int first, int count) {
+    if (!ok()) { return; }
+    glDrawArrays(static_cast<GLenum>(mode), first, count);
+}
+
+void device::set_uniform(unsigned program, const std::string & name, const float * values,
+                         int count, int rows, int cols, bool integer) {
+    if (!ok() || values == nullptr) { return; }
+    const GLint location = glGetUniformLocation(program, name.c_str());
+    // -1 IS NOT AN ERROR. A uniform the shader does not use is optimised out,
+    // and a page setting one is doing nothing wrong - GL ignores it, and so
+    // must this, or every page with a spare uniform reports a fault.
+    if (location < 0) { return; }
+
+    if (cols > 1) {
+        // A MATRIX, AND NEVER TRANSPOSED. WebGL's uniformMatrix*fv takes a
+        // `transpose` flag that ES requires to be false, and the data is
+        // column-major already.
+        switch (cols) {
+        case 2: glUniformMatrix2fv(location, count, GL_FALSE, values); break;
+        case 3: glUniformMatrix3fv(location, count, GL_FALSE, values); break;
+        case 4: glUniformMatrix4fv(location, count, GL_FALSE, values); break;
+        default: break;
+        }
+        return;
+    }
+    if (integer) {
+        // Rebuilt as ints: the software path holds every value as a float, so
+        // an int uniform arrives here as one.
+        std::vector<GLint> whole(static_cast<std::size_t>(rows) * static_cast<std::size_t>(count));
+        for (std::size_t i = 0; i < whole.size(); ++i) { whole[i] = static_cast<GLint>(values[i]); }
+        switch (rows) {
+        case 1: glUniform1iv(location, count, whole.data()); break;
+        case 2: glUniform2iv(location, count, whole.data()); break;
+        case 3: glUniform3iv(location, count, whole.data()); break;
+        case 4: glUniform4iv(location, count, whole.data()); break;
+        default: break;
+        }
+        return;
+    }
+    switch (rows) {
+    case 1: glUniform1fv(location, count, values); break;
+    case 2: glUniform2fv(location, count, values); break;
+    case 3: glUniform3fv(location, count, values); break;
+    case 4: glUniform4fv(location, count, values); break;
+    default: break;
+    }
 }
 
 bool device::read_pixels(paint::bitmap & into) const {
@@ -257,6 +467,46 @@ bool device::make_current() {
     return false;
 }
 void device::clear(float, float, float, float) {}
+void device::viewport(int, int, int, int) {}
+void device::set_capability(int, bool) {}
+unsigned device::create_shader(int) {
+    return 0;
+}
+void device::shader_source(unsigned, const std::string &) {}
+void device::compile_shader(unsigned) {}
+bool device::shader_compiled(unsigned) const {
+    return false;
+}
+std::string device::shader_log(unsigned) const {
+    return {};
+}
+unsigned device::create_program() {
+    return 0;
+}
+void device::attach_shader(unsigned, unsigned) {}
+void device::link_program(unsigned) {}
+bool device::program_linked(unsigned) const {
+    return false;
+}
+std::string device::program_log(unsigned) const {
+    return {};
+}
+void device::use_program(unsigned) {}
+int device::attribute_location(unsigned, const std::string &) const {
+    return -1;
+}
+int device::uniform_location(unsigned, const std::string &) const {
+    return -1;
+}
+unsigned device::create_buffer() {
+    return 0;
+}
+void device::bind_buffer(int, unsigned) {}
+void device::buffer_data(int, const void *, std::size_t, int) {}
+void device::enable_attribute(unsigned, bool) {}
+void device::attribute_pointer(unsigned, int, int, bool, int, std::size_t) {}
+void device::draw_arrays(int, int, int) {}
+void device::set_uniform(unsigned, const std::string &, const float *, int, int, int, bool) {}
 bool device::read_pixels(paint::bitmap &) const {
     return false;
 }

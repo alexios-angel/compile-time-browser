@@ -23,6 +23,7 @@
 #include <ctbrowser/raster/backend.hpp>
 #include <ctbrowser/raster/compositor.hpp>
 #include <ctbrowser/raster/draw.hpp>
+#include <ctbrowser/raster/gles.hpp>
 #include <ctbrowser/raster/glsl.hpp>
 #include <ctbrowser/raster/pipeline.hpp>
 #include <ctbrowser/raster/renderer.hpp>

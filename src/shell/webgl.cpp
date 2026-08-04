@@ -130,18 +130,21 @@ void webgl_context::resize(paint::bitmap * target, int width, int height) {
 // --- objects ---------------------------------------------------------------
 
 std::uint32_t webgl_context::create_buffer() {
+    if (angle_ != nullptr) { return angle_->create_buffer(); }
     const std::uint32_t id = next_id_++;
     buffers_[id] = {};
     return id;
 }
 
 std::uint32_t webgl_context::create_shader(std::uint32_t which) {
+    if (angle_ != nullptr) { return angle_->create_shader(static_cast<int>(which)); }
     const std::uint32_t id = next_id_++;
     shaders_[id] = gl_shader{which, {}, {}, false, {}};
     return id;
 }
 
 std::uint32_t webgl_context::create_program() {
+    if (angle_ != nullptr) { return angle_->create_program(); }
     const std::uint32_t id = next_id_++;
     programs_[id] = {};
     return id;
@@ -195,7 +198,38 @@ bool webgl_context::attached_to_a_program(std::uint32_t shader) const {
     });
 }
 
+// --- the ANGLE backend ------------------------------------------------------
+//
+// Stage 2 of docs/angle-plan.md, first increment. The calls
+// examples/pages/webgl-triangle.html makes are forwarded to a real GLES device;
+// everything else is RECORDED as unforwarded rather than silently ignored,
+// because a silent no-op that leaves a black canvas is the exact failure this
+// corpus keeps finding.
+
+bool webgl_context::use_angle() {
+    if (angle_ != nullptr) { return true; }
+    if (!raster::gles::available()) { return false; }
+    auto device = std::make_unique<raster::gles::device>(width_, height_);
+    if (!device->ok()) { return false; }
+    device->viewport(0, 0, width_, height_);
+    angle_ = std::move(device);
+    return true;
+}
+
+void webgl_context::note_unforwarded(std::string_view call) const {
+    const std::string name{call};
+    // ONCE EACH. A call in a render loop would otherwise be the only thing in
+    // the list, which is the same reason `refuse` deduplicates.
+    if (std::ranges::find(unforwarded_, name) == unforwarded_.end()) {
+        unforwarded_.push_back(name);
+    }
+}
+
 void webgl_context::bind_buffer(std::uint32_t target, std::uint32_t buffer) {
+    if (angle_ != nullptr) {
+        angle_->bind_buffer(static_cast<int>(target), buffer);
+        return;
+    }
     if (target == gl_enum::element_array_buffer) {
         element_buffer_ = buffer;
     } else if (target == gl_enum::uniform_buffer) {
@@ -217,6 +251,11 @@ std::uint32_t webgl_context::buffer_for(std::uint32_t target) const noexcept {
 
 void webgl_context::buffer_data(std::uint32_t target, std::vector<std::byte> bytes,
                                 std::uint32_t usage) {
+    if (angle_ != nullptr) {
+        angle_->buffer_data(static_cast<int>(target), bytes.data(), bytes.size(),
+                            static_cast<int>(usage));
+        return;
+    }
     const std::uint32_t which = buffer_for(target);
     const auto found = buffers_.find(which);
     if (found == buffers_.end()) {
@@ -232,12 +271,20 @@ void webgl_context::buffer_data(std::uint32_t target, std::vector<std::byte> byt
 // --- shaders and programs --------------------------------------------------
 
 void webgl_context::shader_source(std::uint32_t shader, std::string source) {
+    if (angle_ != nullptr) {
+        angle_->shader_source(shader, source);
+        return;
+    }
     if (const auto found = shaders_.find(shader); found != shaders_.end()) {
         found->second.source = std::move(source);
     }
 }
 
 void webgl_context::compile_shader(std::uint32_t shader) {
+    if (angle_ != nullptr) {
+        angle_->compile_shader(shader);
+        return;
+    }
     const auto found = shaders_.find(shader);
     if (found == shaders_.end()) { return; }
     glsl::options how;
@@ -255,16 +302,22 @@ void webgl_context::compile_shader(std::uint32_t shader) {
 }
 
 bool webgl_context::shader_compiled(std::uint32_t shader) const {
+    if (angle_ != nullptr) { return angle_->shader_compiled(shader); }
     const auto found = shaders_.find(shader);
     return found != shaders_.end() && found->second.compiled_ok;
 }
 
 std::string webgl_context::shader_log(std::uint32_t shader) const {
+    if (angle_ != nullptr) { return angle_->shader_log(shader); }
     const auto found = shaders_.find(shader);
     return found == shaders_.end() ? std::string{} : found->second.log;
 }
 
 void webgl_context::attach_shader(std::uint32_t program, std::uint32_t shader) {
+    if (angle_ != nullptr) {
+        angle_->attach_shader(program, shader);
+        return;
+    }
     const auto found = programs_.find(program);
     const auto which = shaders_.find(shader);
     if (found == programs_.end() || which == shaders_.end()) { return; }
@@ -349,6 +402,10 @@ std::vector<webgl_context::active_variable> webgl_context::active_attributes(
 }
 
 void webgl_context::link_program(std::uint32_t program) {
+    if (angle_ != nullptr) {
+        angle_->link_program(program);
+        return;
+    }
     const auto found = programs_.find(program);
     if (found == programs_.end()) { return; }
     gl_program & p = found->second;
@@ -419,20 +476,30 @@ void webgl_context::link_program(std::uint32_t program) {
 }
 
 bool webgl_context::program_linked(std::uint32_t program) const {
+    if (angle_ != nullptr) { return angle_->program_linked(program); }
     const auto found = programs_.find(program);
     return found != programs_.end() && found->second.linked;
 }
 
 std::string webgl_context::program_log(std::uint32_t program) const {
+    if (angle_ != nullptr) { return angle_->program_log(program); }
     const auto found = programs_.find(program);
     return found == programs_.end() ? std::string{} : found->second.log;
 }
 
 void webgl_context::use_program(std::uint32_t program) {
+    // TRACKED IN BOTH MODES. On ANGLE the program object belongs to GL, but
+    // `set_uniform` still needs to know which one is current to look a name up
+    // in it - so this is not software-only state.
     current_program_ = program;
+    if (angle_ != nullptr) {
+        angle_->use_program(program);
+        return;
+    }
 }
 
 int webgl_context::attribute_location(std::uint32_t program, const std::string & name) const {
+    if (angle_ != nullptr) { return angle_->attribute_location(program, name); }
     const auto found = programs_.find(program);
     if (found == programs_.end()) { return -1; }
     for (std::size_t i = 0; i < found->second.attribute_names.size(); ++i) {
@@ -444,12 +511,24 @@ int webgl_context::attribute_location(std::uint32_t program, const std::string &
 }
 
 void webgl_context::enable_attribute(int location, bool on) {
+    if (angle_ != nullptr) {
+        if (location >= 0) { angle_->enable_attribute(static_cast<unsigned>(location), on); }
+        return;
+    }
     if (location < 0 || static_cast<std::size_t>(location) >= attributes_.size()) { return; }
     attributes_[static_cast<std::size_t>(location)].enabled = on;
 }
 
 void webgl_context::attribute_pointer(int location, int size, std::uint32_t type, bool normalized,
                                       int stride, int offset) {
+    if (angle_ != nullptr) {
+        if (location >= 0) {
+            angle_->attribute_pointer(static_cast<unsigned>(location), size, static_cast<int>(type),
+                                      normalized, stride,
+                                      static_cast<std::size_t>(offset < 0 ? 0 : offset));
+        }
+        return;
+    }
     if (location < 0 || static_cast<std::size_t>(location) >= attributes_.size()) { return; }
     vertex_attribute & attribute = attributes_[static_cast<std::size_t>(location)];
     // THE BUFFER BOUND *NOW* IS THE ONE THIS POINTS AT, for the rest of time.
@@ -465,6 +544,17 @@ void webgl_context::attribute_pointer(int location, int size, std::uint32_t type
 }
 
 void webgl_context::set_uniform(const std::string & name, glsl::value v) {
+    if (angle_ != nullptr) {
+        // THE SHAPE COMES FROM THE VALUE, which is how one call covers the
+        // whole uniform family. A mat3 arrives as nine floats with cols == 3.
+        const int rows = v.t.rows > 0 ? v.t.rows : 1;
+        const int cols = v.t.cols > 0 ? v.t.cols : 1;
+        const int per = rows * cols;
+        const int count = per > 0 ? static_cast<int>(v.v.size()) / per : 1;
+        angle_->set_uniform(current_program_, name, v.v.data(), count > 0 ? count : 1, rows, cols,
+                            v.t.kind == glsl::base::i || v.t.kind == glsl::base::b);
+        return;
+    }
     const auto found = programs_.find(current_program_);
     if (found == programs_.end()) {
         fail(gl_enum::invalid_operation);
@@ -476,6 +566,10 @@ void webgl_context::set_uniform(const std::string & name, glsl::value v) {
 // --- state -----------------------------------------------------------------
 
 void webgl_context::viewport(int x, int y, int width, int height) {
+    if (angle_ != nullptr) {
+        angle_->viewport(x, y, width, height);
+        return;
+    }
     state_.viewport_x = x;
     // GL'S ORIGIN IS THE BOTTOM LEFT and a bitmap's is the top left, so a
     // viewport that is not the whole surface has to be flipped too - not just
@@ -494,6 +588,10 @@ void webgl_context::scissor(int x, int y, int width, int height) {
 }
 
 void webgl_context::set_enabled(std::uint32_t capability, bool on) {
+    if (angle_ != nullptr) {
+        angle_->set_capability(static_cast<int>(capability), on);
+        return;
+    }
     switch (capability) {
     case gl_enum::depth_test: state_.depth_enabled = on; break;
     case gl_enum::blend: state_.blend_enabled = on; break;
@@ -515,18 +613,34 @@ void webgl_context::set_enabled(std::uint32_t capability, bool on) {
 }
 
 void webgl_context::depth_func(std::uint32_t how) {
+    // NOT FORWARDED YET: recorded rather than silently ignored. A page
+    // whose calls quietly do nothing paints something plausible, which is how
+    // a missing uniform cost an afternoon - see tests/webgl_angle.cpp.
+    if (angle_ != nullptr) { note_unforwarded("depthFunc"); }
     state_.depth = to_depth(how);
 }
 void webgl_context::depth_mask(bool on) {
+    // NOT FORWARDED YET: recorded rather than silently ignored. A page
+    // whose calls quietly do nothing paints something plausible, which is how
+    // a missing uniform cost an afternoon - see tests/webgl_angle.cpp.
+    if (angle_ != nullptr) { note_unforwarded("depthMask"); }
     state_.depth_write = on;
 }
 
 void webgl_context::blend_func(std::uint32_t source, std::uint32_t destination) {
+    // NOT FORWARDED YET: recorded rather than silently ignored. A page
+    // whose calls quietly do nothing paints something plausible, which is how
+    // a missing uniform cost an afternoon - see tests/webgl_angle.cpp.
+    if (angle_ != nullptr) { note_unforwarded("blendFunc"); }
     state_.source = to_blend(source);
     state_.destination = to_blend(destination);
 }
 
 void webgl_context::cull_face(std::uint32_t which) {
+    // NOT FORWARDED YET: recorded rather than silently ignored. A page
+    // whose calls quietly do nothing paints something plausible, which is how
+    // a missing uniform cost an afternoon - see tests/webgl_angle.cpp.
+    if (angle_ != nullptr) { note_unforwarded("cullFace"); }
     if (state_.cull == cull_mode::none) { return; } // enable(CULL_FACE) decides that
     state_.cull = which == gl_enum::front ? cull_mode::front : cull_mode::back;
 }
@@ -547,6 +661,14 @@ void webgl_context::clear_depth(float depth) {
 }
 
 void webgl_context::clear(std::uint32_t mask) {
+    if (angle_ != nullptr) {
+        // THE COLOUR IS ALREADY SET: `clearColor` stored it in `clear_` above,
+        // and GL keeps it as state exactly the same way, so there is nothing to
+        // pass here beyond the mask - which is why clearColor needs no
+        // forwarding of its own.
+        angle_->clear(clear_[0], clear_[1], clear_[2], clear_[3]);
+        return;
+    }
     if ((mask & gl_enum::color_buffer_bit) != 0 && framebuffer_.colour != nullptr) {
         const auto byte = [](float channel) {
             return static_cast<std::uint32_t>(std::clamp(channel, 0.0f, 1.0f) * 255.0f + 0.5f);
@@ -579,6 +701,10 @@ void webgl_context::clear(std::uint32_t mask) {
 // no GL error anywhere and `checkFramebufferStatus` answering COMPLETE.
 
 void webgl_context::framebuffer_texture(std::uint32_t attachment, std::uint32_t texture) {
+    // NOT FORWARDED YET: recorded rather than silently ignored. A page
+    // whose calls quietly do nothing paints something plausible, which is how
+    // a missing uniform cost an afternoon - see tests/webgl_angle.cpp.
+    if (angle_ != nullptr) { note_unforwarded("framebufferTexture2D"); }
     if (bound_framebuffer_ == 0) {
         // Attaching to the default framebuffer is meaningless and GL says so.
         fail(gl_enum::invalid_operation);
@@ -599,6 +725,10 @@ void webgl_context::framebuffer_texture(std::uint32_t attachment, std::uint32_t 
 }
 
 void webgl_context::bind_framebuffer(std::uint32_t id) {
+    // NOT FORWARDED YET: recorded rather than silently ignored. A page
+    // whose calls quietly do nothing paints something plausible, which is how
+    // a missing uniform cost an afternoon - see tests/webgl_angle.cpp.
+    if (angle_ != nullptr) { note_unforwarded("bindFramebuffer"); }
     bound_framebuffer_ = id;
     if (id == 0) {
         framebuffer_.colour = canvas_;
@@ -637,6 +767,10 @@ std::uint32_t webgl_context::framebuffer_status() const {
 // --- textures --------------------------------------------------------------
 
 void webgl_context::bind_texture(std::uint32_t target, std::uint32_t texture) {
+    // NOT FORWARDED YET: recorded rather than silently ignored. A page
+    // whose calls quietly do nothing paints something plausible, which is how
+    // a missing uniform cost an afternoon - see tests/webgl_angle.cpp.
+    if (angle_ != nullptr) { note_unforwarded("bindTexture"); }
     (void)target; // TEXTURE_2D only; a cube map binds nothing, per glsl.hpp
     texture_units_[active_unit_] = texture;
 }
@@ -649,6 +783,10 @@ void webgl_context::active_texture(std::uint32_t unit) {
 
 void webgl_context::texture_image(std::uint32_t target, int width, int height,
                                   std::vector<std::byte> pixels) {
+    // NOT FORWARDED YET: recorded rather than silently ignored. A page
+    // whose calls quietly do nothing paints something plausible, which is how
+    // a missing uniform cost an afternoon - see tests/webgl_angle.cpp.
+    if (angle_ != nullptr) { note_unforwarded("texImage2D"); }
     (void)target;
     const auto found = textures_.find(texture_units_[active_unit_]);
     if (found == textures_.end()) {
@@ -848,6 +986,10 @@ int webgl_context::attribute_divisor_of(int location) const {
 
 std::size_t webgl_context::draw_arrays_instanced(std::uint32_t mode, int first, int count,
                                                  int instances) {
+    // NOT FORWARDED YET: recorded rather than silently ignored. A page
+    // whose calls quietly do nothing paints something plausible, which is how
+    // a missing uniform cost an afternoon - see tests/webgl_angle.cpp.
+    if (angle_ != nullptr) { note_unforwarded("drawArraysInstanced"); }
     if (instances < 0) {
         fail(gl_enum::invalid_value);
         return 0;
@@ -865,6 +1007,10 @@ std::size_t webgl_context::draw_arrays_instanced(std::uint32_t mode, int first, 
 
 std::size_t webgl_context::draw_elements_instanced(std::uint32_t mode, int count,
                                                    std::uint32_t type, int offset, int instances) {
+    // NOT FORWARDED YET: recorded rather than silently ignored. A page
+    // whose calls quietly do nothing paints something plausible, which is how
+    // a missing uniform cost an afternoon - see tests/webgl_angle.cpp.
+    if (angle_ != nullptr) { note_unforwarded("drawElementsInstanced"); }
     if (instances < 0) {
         fail(gl_enum::invalid_value);
         return 0;
@@ -923,6 +1069,17 @@ std::size_t webgl_context::draw_elements_instanced(std::uint32_t mode, int count
 }
 
 std::size_t webgl_context::draw_arrays(std::uint32_t mode, int first, int count) {
+    if (angle_ != nullptr) {
+        angle_->draw_arrays(static_cast<int>(mode), first, count);
+        // AND STRAIGHT BACK INTO THE CANVAS. The page composites a
+        // paint::bitmap, so a draw that stayed on the device would be invisible
+        // however correct it was. Per draw is wasteful and per FRAME is what
+        // this should become - but the frame boundary is the compositor's and
+        // this is the increment that proves the path, so it is honest about
+        // costing more than it needs to.
+        if (framebuffer_.colour != nullptr) { (void)angle_->read_pixels(*framebuffer_.colour); }
+        return static_cast<std::size_t>(count);
+    }
     if (mode != gl_enum::triangles && mode != gl_enum::triangle_strip &&
         mode != gl_enum::triangle_fan) {
         // POINTS and LINES are named in softgl.hpp as not drawn. Reporting
@@ -1033,6 +1190,10 @@ int webgl_context::get_uniform_block_index(std::uint32_t program, std::string_vi
 
 void webgl_context::uniform_block_binding(std::uint32_t program, std::uint32_t index,
                                           std::uint32_t binding) {
+    // NOT FORWARDED YET: recorded rather than silently ignored. A page
+    // whose calls quietly do nothing paints something plausible, which is how
+    // a missing uniform cost an afternoon - see tests/webgl_angle.cpp.
+    if (angle_ != nullptr) { note_unforwarded("uniformBlockBinding"); }
     const auto found = programs_.find(program);
     if (found == programs_.end() || index >= found->second.block_bindings.size()) {
         fail(gl_enum::invalid_value);
@@ -1043,6 +1204,10 @@ void webgl_context::uniform_block_binding(std::uint32_t program, std::uint32_t i
 
 void webgl_context::bind_buffer_base(std::uint32_t target, std::uint32_t index,
                                      std::uint32_t buffer) {
+    // NOT FORWARDED YET: recorded rather than silently ignored. A page
+    // whose calls quietly do nothing paints something plausible, which is how
+    // a missing uniform cost an afternoon - see tests/webgl_angle.cpp.
+    if (angle_ != nullptr) { note_unforwarded("bindBufferBase"); }
     if (target != gl_enum::uniform_buffer) {
         // TRANSFORM FEEDBACK also uses bindBufferBase and is not implemented -
         // refused by name rather than silently binding a uniform block.
@@ -1141,6 +1306,10 @@ const raster::glsl::value * webgl_context::uniform_for_draw(const gl_program & p
 
 std::size_t webgl_context::draw_elements(std::uint32_t mode, int count, std::uint32_t type,
                                          int offset) {
+    // NOT FORWARDED YET: recorded rather than silently ignored. A page
+    // whose calls quietly do nothing paints something plausible, which is how
+    // a missing uniform cost an afternoon - see tests/webgl_angle.cpp.
+    if (angle_ != nullptr) { note_unforwarded("drawElements"); }
     if (mode != gl_enum::triangles && mode != gl_enum::triangle_strip &&
         mode != gl_enum::triangle_fan) {
         fail(gl_enum::invalid_enum);

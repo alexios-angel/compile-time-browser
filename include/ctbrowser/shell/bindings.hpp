@@ -176,6 +176,19 @@ public:
     // there have been. Empty when the page's callbacks are running cleanly.
     [[nodiscard]] const std::string & callback_error() const noexcept { return callback_error_; }
     [[nodiscard]] std::size_t callback_faults() const noexcept { return callback_faults_; }
+    // --- the WebGL back end, stage 2 of docs/angle-plan.md -------------------
+    //
+    // BEFORE THE PAGE RUNS. A context is made when a page asks for one, and its
+    // backend cannot change underneath programs already compiled into it - so
+    // this decides for contexts made from here on and says nothing about any
+    // that exist.
+    void prefer_angle(bool on) { angle_preferred_ = on; }
+    [[nodiscard]] bool angle_preferred() const noexcept { return angle_preferred_; }
+    // Every GL call a page made that the ANGLE path does not forward yet,
+    // gathered from all its contexts. EMPTY is the claim a test makes; a
+    // backend that silently dropped calls would paint something plausible.
+    [[nodiscard]] std::vector<std::string> unforwarded_gl_calls() const;
+
     [[nodiscard]] const std::vector<std::string> & console_output() const noexcept;
 
 private:
@@ -322,6 +335,9 @@ private:
     // with the same buffers and programs still bound, and a fresh one each time
     // would quietly lose everything it had uploaded.
     flat_map<std::uint64_t, std::unique_ptr<webgl_context>> webgl_contexts_;
+    // Whether a NEW WebGL context should go on the ANGLE backend. Stage 2 of
+    // docs/angle-plan.md keeps both paths alive, and this is the switch.
+    bool angle_preferred_ = false;
     // The JS wrapper for each, so getContext hands back the SAME object - and a
     // GC root, because the page may drop its reference and ask again.
     flat_map<std::uint64_t, script::object_object *> webgl_objects_;

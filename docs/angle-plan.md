@@ -333,11 +333,32 @@ Two details worth keeping:
 * **`libvulkan.so.1` and the ICD manifest are found through the link rpath**, so
   no `VK_ICD_FILENAMES` is needed. Verified by running without it.
 
-### 2 — one binding at a time
-`webgl_bindings.cpp` gains a switch: forward to ANGLE or to `webgl_context`.
-**Both paths live at once**, and the WebGL ratchet runs against each. That is
-what makes this reversible and what turns "is ANGLE better" into a measurement
-rather than a belief.
+### 2 — one binding at a time — FIRST INCREMENT DONE 2026-08-04
+`browser::prefer_angle_webgl` picks the back end before a page loads;
+`webgl_context` forwards to a real GLES device when it is on. **Both paths live
+at once**, which is what makes this reversible.
+
+**The calls `webgl-triangle.html` makes are forwarded, and both back ends draw
+the identical picture** — 8721 pixels of geometry in the identical colour,
+compared by `tests/webgl_angle.cpp`. Not a byte comparison: that is stage 3.
+
+**The ledger is the important half.** Thirteen entry points that ANGLE mode does
+NOT forward record themselves rather than doing nothing, and the test asserts
+the list is empty for the page it runs. That check existed and was VACUOUS for
+an afternoon - `note_unforwarded` was written and never called - which is
+exactly how the real bug survived: the page sets a `mat3` through
+`uniformMatrix3fv`, nothing forwarded it, the uniform stayed all zeros, every
+vertex collapsed to the origin, and the canvas came back a perfectly plausible
+empty scene with `getError` clean.
+
+Two smaller things worth keeping:
+
+* **`getParameter` still reads software state.** On ANGLE, `CURRENT_PROGRAM` and
+  `ARRAY_BUFFER_BINDING` answer from the software context, so a page that asks
+  gets the wrong answer. Not yet forwarded, and on the ledger.
+* **The VAO is bound at context creation, not at draw.** Creating it lazily in
+  `draw_arrays` discards every attribute enable and pointer set before it -
+  which draws nothing and reports nothing.
 
 ### 3 — the goldens
 Pin ANGLE-over-Vulkan-over-lavapipe for the four WebGL goldens and confirm they

@@ -211,7 +211,20 @@ public:
     // codes - that is the only way to get IME, dead keys and non-Latin layouts
     // right, and it is what SDL_EVENT_TEXT_INPUT delivers.
     bool text_input(std::string_view text);
+    // THE BINDINGS DO NOT EXIST UNTIL A PAGE IS LOADED - they are made in
+    // run_scripts - so this dereferences null before then. Worth knowing rather
+    // than discovering: the symptom is a segfault inside what looks like a
+    // getter.
     [[nodiscard]] dom_bindings & bindings() noexcept { return *bindings_; }
+
+    // WHETHER A PAGE'S WebGL SHOULD RUN ON ANGLE, set BEFORE load_html.
+    //
+    // It lives here rather than on the bindings for exactly the reason above: a
+    // caller would have to know that the bindings are built during the load,
+    // which is a detail of when scripts run. Stage 2 of docs/angle-plan.md
+    // keeps both back ends alive, and this is how a caller chooses.
+    void prefer_angle_webgl(bool on) noexcept { prefer_angle_webgl_ = on; }
+    [[nodiscard]] bool angle_webgl_preferred() const noexcept { return prefer_angle_webgl_; }
     [[nodiscard]] const std::string & script_error() const noexcept { return script_error_; }
 
     // Run a snippet in the page's own script context - the same globals, the
@@ -1491,6 +1504,7 @@ private:
     std::vector<std::unique_ptr<script::program>> extra_programs_;
     std::unique_ptr<script::context> script_;
     std::unique_ptr<dom_bindings> bindings_;
+    bool prefer_angle_webgl_ = false;
     std::string script_error_;
     std::string title_;
     float scroll_y_ = 0;

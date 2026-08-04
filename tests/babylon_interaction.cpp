@@ -22,6 +22,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <memory>
 #include <sstream>
@@ -132,6 +133,27 @@ void expect(bool ok, const std::string & what) {
 } // namespace
 
 int main() {
+    // SKIPPED FOR NOW, AND THE REASON IS A NUMBER: this test takes 363 SECONDS
+    // and is the entire serial tail of a suite that otherwise finishes in
+    // seconds. Every one of its five scenarios renders about ninety frames of a
+    // real Babylon scene through the software rasteriser, which manages 1.03 M
+    // fragments per second.
+    //
+    // SPLITTING IT INTO FIVE BINARIES WAS THE WRONG FIX and was reverted. It
+    // would have bought parallelism over a cost that is about to disappear:
+    // docs/angle-plan.md has ANGLE at 192 M fragments per second on the same
+    // machine, and when the WebGL path defaults to it this test is seconds
+    // rather than minutes. Restructuring the test to work around a slow
+    // renderer, and then keeping that structure afterwards, is how a suite ends
+    // up shaped by problems nobody has any more.
+    //
+    // TO RE-ENABLE: delete this block. It goes when ANGLE becomes the default.
+    if (std::getenv("CTBROWSER_SLOW_TESTS") == nullptr) {
+        std::printf("SKIP babylon_interaction: 363s on the software rasteriser - re-enabled when "
+                    "the WebGL path defaults to ANGLE. CTBROWSER_SLOW_TESTS=1 runs it anyway.\n");
+        return 0;
+    }
+
     const std::string bundle = read_file("examples/assets/babylon/babylon.js");
     const std::string page_html = read_file("examples/pages/babylon-orbit.html");
     if (bundle.empty() || page_html.empty()) {

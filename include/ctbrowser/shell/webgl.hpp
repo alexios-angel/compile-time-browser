@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -277,6 +278,30 @@ class webgl_context {
 public:
     webgl_context(paint::bitmap * target, int width, int height);
 
+    // --- the ANGLE backend, stage 2 of docs/angle-plan.md --------------------
+    //
+    // BOTH PATHS LIVE AT ONCE, and that is the design rather than a transition
+    // state: the software rasteriser stays the reference the goldens compare
+    // against, and a page can be run through either to see whether they agree.
+    // "Is ANGLE better" stays a measurement.
+    //
+    // PER CONTEXT, not per call. A page's GL state is one machine; sending
+    // `clear` to one implementation and `drawArrays` to the other would produce
+    // a picture neither of them would.
+    //
+    // Returns whether it took: a build without ANGLE, or a machine where the
+    // device will not come up, keeps the software path and says so.
+    bool use_angle();
+    [[nodiscard]] bool on_angle() const noexcept { return angle_ != nullptr; }
+    // WHAT WAS CALLED AND NOT FORWARDED. Stage 2 forwards the calls one page
+    // needs; the rest are recorded HERE rather than silently ignored, so a test
+    // can print exactly what a page asked for that this backend does not do
+    // yet. A silent no-op is the failure this whole corpus keeps finding.
+    [[nodiscard]] const std::vector<std::string> & unforwarded() const noexcept {
+        return unforwarded_;
+    }
+    void note_unforwarded(std::string_view call) const;
+
     // WHICH WEBGL THIS CONTEXT IS. 1 or 2, decided by the string the page
     // passed to getContext, and it changes exactly two things here: the version
     // strings a page reads, and whether `WEBGL2` is defined for every shader
@@ -495,6 +520,10 @@ private:
     // returns to.
     std::map<std::uint32_t, gl_vertex_array> vertex_arrays_;
     int version_ = 1;
+    // The real GLES device, when this context is on the ANGLE backend.
+    std::unique_ptr<raster::gles::device> angle_;
+    mutable std::vector<std::string> unforwarded_;
+
     std::uint32_t bound_framebuffer_ = 0;
     std::unordered_map<std::uint32_t, gl_framebuffer> framebuffers_;
     // The canvas, kept so binding framebuffer 0 can point back at it.

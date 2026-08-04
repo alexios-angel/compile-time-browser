@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <memory>
 #include <string>
 
@@ -73,6 +74,55 @@ public:
     bool make_current();
 
     void clear(float red, float green, float blue, float alpha);
+
+    // --- the GL a page's calls forward to -----------------------------------
+    //
+    // A TYPED FACADE, not a header full of GLenum. Every parameter here is an
+    // int, a bool or a string, so `gles.hpp` still names no GLES type and the
+    // caller still needs no GLES header - the numbers a page passes are already
+    // plain integers by the time they reach C++, because they came from
+    // JavaScript.
+    //
+    // ONLY WHAT A PAGE HAS BEEN SEEN TO NEED. This is the set
+    // examples/pages/webgl-triangle.html calls, which is stage 2's first
+    // increment; docs/angle-plan.md carries the rest. A call that is NOT here
+    // is refused loudly by the caller rather than silently ignored - see
+    // webgl_context::unforwarded.
+    void viewport(int x, int y, int width, int height);
+    void set_capability(int capability, bool on);
+
+    [[nodiscard]] unsigned create_shader(int kind);
+    void shader_source(unsigned shader, const std::string & source);
+    void compile_shader(unsigned shader);
+    [[nodiscard]] bool shader_compiled(unsigned shader) const;
+    [[nodiscard]] std::string shader_log(unsigned shader) const;
+
+    [[nodiscard]] unsigned create_program();
+    void attach_shader(unsigned program, unsigned shader);
+    void link_program(unsigned program);
+    [[nodiscard]] bool program_linked(unsigned program) const;
+    [[nodiscard]] std::string program_log(unsigned program) const;
+    void use_program(unsigned program);
+    [[nodiscard]] int attribute_location(unsigned program, const std::string & name) const;
+    [[nodiscard]] int uniform_location(unsigned program, const std::string & name) const;
+
+    [[nodiscard]] unsigned create_buffer();
+    void bind_buffer(int target, unsigned buffer);
+    void buffer_data(int target, const void * bytes, std::size_t size, int usage);
+
+    void enable_attribute(unsigned location, bool on);
+    void attribute_pointer(unsigned location, int size, int type, bool normalised, int stride,
+                           std::size_t offset);
+    void draw_arrays(int mode, int first, int count);
+
+    // A UNIFORM, BY NAME, because that is what the bindings carry: WebGL hands
+    // a page an opaque location object and this engine puts the NAME in it, so
+    // the location is looked up here rather than plumbed through.
+    //
+    // `rows`/`cols` are the value's shape - 1x1 is a scalar, 3x1 a vec3, 3x3 a
+    // mat3 - which is how one entry point covers the whole `uniform*` family.
+    void set_uniform(unsigned program, const std::string & name, const float * values, int count,
+                     int rows, int cols, bool integer);
 
     // The pixels, into a bitmap the painter can composite. Resized if it does
     // not already match.
