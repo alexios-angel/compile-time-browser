@@ -490,7 +490,29 @@ read pixels straight off the `gles::device` after a draw, bypassing the canvas
 composite. That answers whether GL painted and the readback lost it, or GL
 painted nothing, and no amount of reasoning about the call list will.
 
-**MEASURED: GL ITSELF PAINTS NOTHING.** `CTBROWSER_GL_PROBE=1` reads the device's
+## CORRECTION: the page was never broken, the EXAMPLE BINARY is
+
+`examples/pages/babylon-scene.html` rendered through `ctbrowse` gives **2200
+distinct colours**. It paints. The same page through the `babylonscene` example
+binary gives ONE.
+
+So Babylon is fine, the bindings are fine, ANGLE is fine, and the software
+rasteriser is fine. Everything below this line was looking in the wrong place,
+and the mistake was methodological rather than technical: the page was only ever
+run through ONE harness, so every "the page does not paint" reading was really
+"that binary does not paint" and nobody had checked which. A second harness costs
+a minute and would have redirected four commits of work.
+
+THE STANDING LESSON, since this is the same shape as the two-URL-parsers and
+two-base64-decoders findings this tree has already paid for: when something does
+not work, run it a second way BEFORE forming a theory about why. The next step is
+to diff `examples/babylonscene.cpp` against `examples/ctbrowse.cpp` - options,
+canvas sizing, frame pumping - not to read any more GL.
+
+The measurements below remain TRUE and are worth keeping; they were just aimed at
+the wrong target.
+
+**MEASURED: GL ITSELF PAINTS NOTHING (in the example binary).** `CTBROWSER_GL_PROBE=1` reads the device's
 own framebuffer after every `drawElements` and it holds ONE colour throughout, so
 the readback and the canvas composite are exonerated - the draws produce zero
 fragments inside ANGLE.
