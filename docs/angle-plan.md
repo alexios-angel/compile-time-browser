@@ -417,10 +417,39 @@ introspection calls: `getProgramParameter` for the ACTIVE_* pnames,
 `getActiveAttrib`, `getActiveUniform`, and `getParameter` for the bindings that
 `webgl_angle.cpp` already noticed answering from software state.
 
+**The introspection is forwarded now and p5 DRAWS.** `getProgramParameter`'s
+ACTIVE_* pnames, `getActiveAttrib` and `getActiveUniform` ask the program
+itself - `glGetActiveAttrib` and friends - instead of tables ANGLE mode never
+fills. p5's WEBGL cube and sphere appear where the canvas was empty.
+
+`active_variable` carries a **GL type code** rather than a `glsl::type` now,
+which both back ends can answer in and which is what `getActiveUniform` reports
+to a page anyway. That also unpicks one of the threads tying the bindings to the
+software GLSL front end - see stage 5.
+
+**Babylon still draws nothing** and is the next thing to chase.
+
 The order stays p5, then Phaser, then Babylon; the ratchets say where each gets
 to, and anything that goes BACKWARDS is a blocker rather than a note.
 
-### 5 — retire the software path
+### 5 — retire the software path — REQUESTED, and blocked on stage 4
+**The decision is made: the software GLSL interpreter goes, ANGLE is the only
+back end, and "safe mode" becomes a runtime choice of SwiftShader over whatever
+device ANGLE would pick.** Worth noting that the current code has this
+backwards - `open_display` asks for SwiftShader unconditionally - so the default
+has to become ANGLE's own choice and SwiftShader the deliberate fallback.
+
+**It cannot happen until stage 4 finishes.** Today p5 draws through ANGLE and
+Babylon does not; deleting the software path now would take p5 12/12, WebGL 2
+10/10 and Babylon 8/12 to zero and leave three goldens with nothing to compare.
+The order is: finish the forwarding, get each corpus rendering, re-golden, THEN
+delete.
+
+What goes when it does: `raster/glsl.cpp`, `glsl_eval.cpp`, `glsl_preprocess.cpp`,
+`softgl.cpp`, `spirv.cpp`, `glsl_translate.cpp` and their headers, plus the
+software half of `webgl.cpp`.
+
+### 5 (original) — retire the software path
 Only after 2, 3 and 4 are green on both platforms, and only if the readback cost
 measured in stage 0 held up at real canvas sizes. **The software rasteriser is
 kept until then, and possibly for ever as the reference the goldens compare

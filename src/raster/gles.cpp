@@ -309,6 +309,49 @@ int device::uniform_location(unsigned program, const std::string & name) const {
     return ok() ? glGetUniformLocation(program, name.c_str()) : -1;
 }
 
+namespace {
+// One glGetActive* loop, parameterised, because the two differ only in which
+// function they call and getting them out of step is a silent wrong answer.
+template <typename Count, typename Get>
+[[nodiscard]] std::vector<device::active> enumerate(unsigned program, Count count, Get get) {
+    std::vector<device::active> out;
+    GLint how_many = 0;
+    count(program, &how_many);
+    GLint longest = 0;
+    for (GLint i = 0; i < how_many; ++i) {
+        std::string name(static_cast<std::size_t>(longest > 0 ? longest : 256), '\0');
+        GLsizei written = 0;
+        GLint size = 0;
+        GLenum type = 0;
+        get(program, static_cast<GLuint>(i), static_cast<GLsizei>(name.size()), &written, &size,
+            &type, name.data());
+        name.resize(static_cast<std::size_t>(written));
+        // GL APPENDS "[0]" TO AN ARRAY'S NAME and WebGL reports it that way, so
+        // it is left alone: a caller that looks the name up again has to get
+        // back what it was given.
+        out.push_back(
+            device::active{std::move(name), static_cast<unsigned>(type), size > 0 ? size : 1});
+    }
+    return out;
+}
+} // namespace
+
+std::vector<device::active> device::active_attributes(unsigned program) const {
+    if (!ok()) { return {}; }
+    return enumerate(
+        program, [](unsigned p, GLint * n) { glGetProgramiv(p, GL_ACTIVE_ATTRIBUTES, n); },
+        [](unsigned p, GLuint i, GLsizei max, GLsizei * written, GLint * size, GLenum * type,
+           char * name) { glGetActiveAttrib(p, i, max, written, size, type, name); });
+}
+
+std::vector<device::active> device::active_uniforms(unsigned program) const {
+    if (!ok()) { return {}; }
+    return enumerate(
+        program, [](unsigned p, GLint * n) { glGetProgramiv(p, GL_ACTIVE_UNIFORMS, n); },
+        [](unsigned p, GLuint i, GLsizei max, GLsizei * written, GLint * size, GLenum * type,
+           char * name) { glGetActiveUniform(p, i, max, written, size, type, name); });
+}
+
 unsigned device::create_buffer() {
     if (!ok()) { return 0; }
     GLuint buffer = 0;
@@ -557,6 +600,12 @@ int device::uniform_location(unsigned, const std::string &) const {
 }
 unsigned device::create_buffer() {
     return 0;
+}
+std::vector<device::active> device::active_attributes(unsigned) const {
+    return {};
+}
+std::vector<device::active> device::active_uniforms(unsigned) const {
+    return {};
 }
 void device::bind_buffer(int, unsigned) {}
 void device::buffer_data(int, const void *, std::size_t, int) {}

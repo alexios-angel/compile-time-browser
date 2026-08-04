@@ -364,6 +364,15 @@ std::uint32_t gl_type_code(const glsl::type & t) noexcept {
 std::vector<webgl_context::active_variable> webgl_context::active_uniforms(
     std::uint32_t program) const {
     std::vector<active_variable> out;
+    if (angle_ != nullptr) {
+        // FROM THE PROGRAM ITSELF. Answering from anywhere else tells a library
+        // that enumerates - p5 and Babylon both do - that the shader declares
+        // nothing, so it binds nothing and draws nothing, silently.
+        for (const raster::gles::device::active & each : angle_->active_uniforms(program)) {
+            out.push_back({each.name, each.type, each.size});
+        }
+        return out;
+    }
     const auto found = programs_.find(program);
     if (found == programs_.end() || !found->second.linked) { return out; }
     // Vertex first, then any the fragment shader adds. GL links the two stages
@@ -376,7 +385,9 @@ std::vector<webgl_context::active_variable> webgl_context::active_uniforms(
             if (v.store != glsl::storage::uniform) { continue; }
             const bool already = std::ranges::any_of(
                 out, [&](const active_variable & seen) { return seen.name == v.name; });
-            if (!already) { out.push_back({v.name, v.t}); }
+            if (!already) {
+                out.push_back({v.name, gl_type_code(v.t), v.t.array > 0 ? v.t.array : 1});
+            }
         }
     }
     return out;
@@ -385,6 +396,15 @@ std::vector<webgl_context::active_variable> webgl_context::active_uniforms(
 std::vector<webgl_context::active_variable> webgl_context::active_attributes(
     std::uint32_t program) const {
     std::vector<active_variable> out;
+    if (angle_ != nullptr) {
+        // FROM THE PROGRAM ITSELF. Answering from anywhere else tells a library
+        // that enumerates - p5 and Babylon both do - that the shader declares
+        // nothing, so it binds nothing and draws nothing, silently.
+        for (const raster::gles::device::active & each : angle_->active_attributes(program)) {
+            out.push_back({each.name, each.type, each.size});
+        }
+        return out;
+    }
     const auto found = programs_.find(program);
     if (found == programs_.end() || !found->second.linked) { return out; }
     const auto shader = shaders_.find(found->second.vertex);
@@ -394,7 +414,7 @@ std::vector<webgl_context::active_variable> webgl_context::active_attributes(
     for (const std::string & name : found->second.attribute_names) {
         for (const glsl::interface_variable & v : shader->second.compiled.interface_) {
             if (v.store == glsl::storage::attribute && v.name == name) {
-                out.push_back({v.name, v.t});
+                out.push_back({v.name, gl_type_code(v.t), v.t.array > 0 ? v.t.array : 1});
                 break;
             }
         }

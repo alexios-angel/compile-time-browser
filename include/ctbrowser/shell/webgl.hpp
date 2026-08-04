@@ -361,7 +361,14 @@ public:
     // correct-looking drawElements, and an empty canvas.
     struct active_variable {
         std::string name;
-        raster::glsl::type t;
+        // THE GL TYPE CODE, not a glsl::type. Both back ends can answer in this
+        // currency - the software path converts through gl_type_code and ANGLE
+        // gets it from glGetActiveUniform directly - and it is what
+        // getActiveUniform reports to a page anyway, so nothing has to be
+        // translated at the binding.
+        std::uint32_t type = 0;
+        // The ARRAY LENGTH, 1 for a plain declaration. `mat4 uColour[2]` is 2.
+        int size = 1;
     };
     // Uniforms from BOTH stages, by name: GL links them into one namespace, and
     // p5's shaders declare the same matrix in each.

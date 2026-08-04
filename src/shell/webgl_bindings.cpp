@@ -570,8 +570,8 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
         // `size` is the ARRAY LENGTH, not the component count - 1 for a plain
         // uniform, and mat4 uColour[2] is size 2. Reporting components here
         // would make a caller loop the wrong number of times.
-        made->set("size", value::number(v.t.array > 0 ? v.t.array : 1));
-        made->set("type", value::number(gl_type_code(v.t)));
+        made->set("size", value::number(v.size));
+        made->set("type", value::number(v.type));
         return out;
     };
     method("getActiveUniform", [gl, active_info](context & c, std::span<value> a) {

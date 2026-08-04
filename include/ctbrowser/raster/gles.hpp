@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <ctbrowser/paint/command.hpp>
 
@@ -104,6 +105,21 @@ public:
     [[nodiscard]] std::string program_log(unsigned program) const;
     void use_program(unsigned program);
     [[nodiscard]] int attribute_location(unsigned program, const std::string & name) const;
+
+    // WHAT A LINKED PROGRAM DECLARES, asked of GL.
+    //
+    // The reason this exists is worth stating: a library that ENUMERATES a
+    // program - rather than asking for names it already knows - is the common
+    // case, and both p5 and Babylon do it. Answering from anywhere but the
+    // program itself tells them the shader declares nothing, so they bind
+    // nothing and draw nothing, with no error at any point.
+    struct active {
+        std::string name;
+        unsigned type = 0; // the GL code, e.g. GL_FLOAT_VEC3
+        int size = 1;      // the ARRAY LENGTH, 1 for a plain declaration
+    };
+    [[nodiscard]] std::vector<active> active_attributes(unsigned program) const;
+    [[nodiscard]] std::vector<active> active_uniforms(unsigned program) const;
     [[nodiscard]] int uniform_location(unsigned program, const std::string & name) const;
 
     [[nodiscard]] unsigned create_buffer();
