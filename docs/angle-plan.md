@@ -118,6 +118,12 @@ Licence: BSD-style, ANGLE Project Authors. Compatible.
 
 ### 1. The build, and it is the top risk
 
+> **Stage 0 answered the Linux half of this and CORRECTED the ABI claim below.**
+> ANGLE builds and runs here; and EGL/GLES being C APIs means the llvm-mingw
+> versus clang-cl ABI difference does not matter. What remains is the build
+> PIPELINE, not the ABI. See "The Windows question" above. The original
+> reasoning is kept because it is why the spike was run.
+
 ANGLE has **no CMake anywhere**. It is GN plus `depot_tools` plus `gclient`,
 which is the Chromium build system. There is no brew formula and no apt package.
 
@@ -155,11 +161,15 @@ That is worth designing for rather than discovering: it decides whether the
 tests keep their teeth. `docs/platform.md` already records that a Linux binary
 here sees only lavapipe, so half of it is the status quo.
 
-### 3. There is no window, and the pixels have to come back
+### 3. There is no window, and the pixels have to come back — MEASURED AT 8%
 
 A page's canvas is a `paint::bitmap` that the software painter composites. ANGLE
 renders into a GL framebuffer, so every frame needs `glReadPixels` into that
 bitmap — a GPU-to-CPU transfer, which is the one direction GPUs are bad at.
+
+**Stage 0 measured this and it does not eat the win: 8%**, 0.118 ms of a
+1.487 ms pass at 512x512. The paragraph below is what was expected beforehand
+and is kept because the expectation was wrong in a useful direction.
 
 **This could eat the win**, and the plan must not assume otherwise. A 420x300
 canvas is 504 KB per frame; at 60 Hz that is 30 MB/s of readback plus a pipeline
