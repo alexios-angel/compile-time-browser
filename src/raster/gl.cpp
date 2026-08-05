@@ -58,7 +58,20 @@ bool available() {
 }
 
 std::string unavailable_because() {
-    const EGLDisplay display = open_display(driver::fastest);
+    // ASKS THE SAME QUESTION THE CONSTRUCTOR DOES, both drivers, or it answers
+    // about a device nobody would have been given. The first version asked only
+    // about `fastest` and reported the whole subsystem missing on a box where
+    // SwiftShader works perfectly - which skipped the one test that would have
+    // said so.
+    for (const driver attempt : {driver::fastest, driver::deterministic}) {
+        const EGLDisplay display = open_display(attempt);
+        if (display == EGL_NO_DISPLAY) { continue; }
+        if (eglInitialize(display, nullptr, nullptr) == EGL_TRUE) {
+            eglTerminate(display);
+            return {};
+        }
+    }
+    const EGLDisplay display = open_display(driver::deterministic);
     if (display == EGL_NO_DISPLAY) { return "no ANGLE platform display"; }
     EGLint major = 0;
     EGLint minor = 0;
@@ -76,13 +89,28 @@ device::device(int width, int height, driver which) : impl_{std::make_unique<imp
     impl_->width = width;
     impl_->height = height;
 
-    impl_->display = open_display(which);
-    if (impl_->display == EGL_NO_DISPLAY) {
-        impl_->error = "no ANGLE platform display";
-        return;
+    // SAFE MODE IS A FLOOR, NOT A CLIFF. `fastest` asks for ANGLE's own device
+    // selection, which on a headless box with no GPU cannot come up at all -
+    // measured: VK_EXT_headless_surface and VK_KHR_surface are simply absent.
+    //
+    // Falling back to SwiftShader is what a browser does and what keeps a page
+    // from getting a null context on a machine that can render perfectly well in
+    // software. Reported through `renderer()` rather than silently, because
+    // "ANGLE (Vulkan ... SwiftShader Device)" and a real GPU are the same code
+    // path and very different numbers.
+    for (const driver attempt : {which, driver::deterministic}) {
+        impl_->display = open_display(attempt);
+        if (impl_->display == EGL_NO_DISPLAY) { continue; }
+        if (eglInitialize(impl_->display, nullptr, nullptr) == EGL_TRUE) {
+            impl_->error.clear();
+            break;
+        }
+        eglTerminate(impl_->display);
+        impl_->display = EGL_NO_DISPLAY;
+        impl_->error = "eglInitialize failed for the requested driver";
     }
-    if (eglInitialize(impl_->display, nullptr, nullptr) != EGL_TRUE) {
-        impl_->error = "eglInitialize failed";
+    if (impl_->display == EGL_NO_DISPLAY) {
+        if (impl_->error.empty()) { impl_->error = "no ANGLE platform display"; }
         return;
     }
 

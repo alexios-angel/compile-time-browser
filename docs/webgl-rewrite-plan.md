@@ -190,7 +190,33 @@ direct GLES call and a return, with no state kept that GL can be asked for.
 - [x] `version`
 - [x] `viewport`
 
-### WITH ANGLE: 59/72, and the likely cause is the driver DEFAULT
+### WORKING TO 5/10, and the remaining blocker is NAMED
+
+Measured, both drivers side by side, by the new `tests/gl_basics.cpp`:
+
+    fastest        ok=yes  ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device ...))
+    deterministic  ok=yes  ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device ...))
+
+`fastest` could not come up at all before that - VK_EXT_headless_surface and
+VK_KHR_surface are simply absent on a box with no GPU - so it now FALLS BACK to
+SwiftShader. Safe mode as a floor rather than a cliff. `available()` had the same
+bug and asked only about `fastest`, which reported the whole subsystem missing on
+a machine where software rendering works perfectly.
+
+webgl2_ratchet now reads **5/10** where it read "WebGL not supported": the
+context comes up, shaders compile, programs link, draws issue.
+
+THE BLOCKER IS present() AND NOTHING ELSE CALLS IT. The rewrite moved the
+readback out of every draw - the old code copied the whole surface 267 times for
+one Babylon frame - and put it in `present()`, once per frame. Nothing invokes
+it. So the device paints correctly and the canvas never receives a pixel, which
+is exactly the "drew but did not paint" symptom this whole rewrite started from,
+now with a known cause instead of five wrong guesses.
+
+Next: call `present()` where a frame ends rather than where a draw ends, and
+confirm with the ratchet rather than the call count.
+
+### SUPERSEDED: WITH ANGLE: 59/72, and the likely cause is the driver DEFAULT
 
 The ANGLE build compiles clean and runs. Thirteen failures, all WebGL-dependent:
 the four render tests, webgl2/babylon/p5 ratchets and API probes, plus
