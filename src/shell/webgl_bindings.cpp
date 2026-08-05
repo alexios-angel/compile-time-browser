@@ -125,28 +125,29 @@ using context = script::context;
 }
 
 // The numbers a page passes to uniform*, as a GLSL value of the given shape.
-[[nodiscard]] raster::glsl::value uniform_value(context & cx, std::span<value> args,
-                                                std::size_t from, std::uint8_t rows,
-                                                std::uint8_t cols, raster::glsl::base kind) {
-    raster::glsl::value made;
-    made.t = raster::glsl::type{kind, rows, cols, -1, 0};
+[[nodiscard]] uniform_value make_uniform(context & cx, std::span<value> args, std::size_t from,
+                                         std::uint8_t rows, std::uint8_t cols, bool integer) {
+    uniform_value made;
+    made.rows = rows;
+    made.cols = cols;
+    made.integer = integer;
     // Either loose numbers - uniform3f(x, y, z) - or one array, which is what
     // the `v` suffix means.
     if (args.size() > from && args[from].is_array()) {
         auto * array = static_cast<script::array_object *>(args[from].as_heap());
         for (const value & each : array->items) {
-            made.v.push_back(static_cast<float>(context::to_number(each)));
+            made.data.push_back(static_cast<float>(context::to_number(each)));
         }
     } else if (args.size() > from && args[from].is_object()) {
         const value held = cx.lookup_property(args[from], "__bytes");
         if (held.is_array()) {
             for (const value & each : static_cast<script::array_object *>(held.as_heap())->items) {
-                made.v.push_back(static_cast<float>(context::to_number(each)));
+                made.data.push_back(static_cast<float>(context::to_number(each)));
             }
         }
     } else {
         for (std::size_t i = from; i < args.size(); ++i) {
-            made.v.push_back(static_cast<float>(context::to_number(args[i])));
+            made.data.push_back(static_cast<float>(context::to_number(args[i])));
         }
     }
     made.v.resize(static_cast<std::size_t>(rows) * cols, 0.0f);
@@ -672,40 +673,32 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
         const char * name;
         std::uint8_t rows;
         std::uint8_t cols;
-        raster::glsl::base kind;
+        bool integer;
     };
-    for (const uniform_shape & shape : {uniform_shape{"uniform1f", 1, 1, raster::glsl::base::f},
-                                        uniform_shape{"uniform2f", 2, 1, raster::glsl::base::f},
-                                        uniform_shape{"uniform3f", 3, 1, raster::glsl::base::f},
-                                        uniform_shape{"uniform4f", 4, 1, raster::glsl::base::f},
-                                        uniform_shape{"uniform1i", 1, 1, raster::glsl::base::i},
-                                        uniform_shape{"uniform2i", 2, 1, raster::glsl::base::i},
-                                        uniform_shape{"uniform3i", 3, 1, raster::glsl::base::i},
-                                        uniform_shape{"uniform4i", 4, 1, raster::glsl::base::i},
-                                        uniform_shape{"uniform1fv", 1, 1, raster::glsl::base::f},
-                                        uniform_shape{"uniform2fv", 2, 1, raster::glsl::base::f},
-                                        uniform_shape{"uniform3fv", 3, 1, raster::glsl::base::f},
-                                        uniform_shape{"uniform4fv", 4, 1, raster::glsl::base::f},
-                                        uniform_shape{"uniform1iv", 1, 1, raster::glsl::base::i},
-                                        uniform_shape{"uniform2iv", 2, 1, raster::glsl::base::i},
-                                        uniform_shape{"uniform3iv", 3, 1, raster::glsl::base::i},
-                                        uniform_shape{"uniform4iv", 4, 1, raster::glsl::base::i}}) {
+    for (const uniform_shape & shape :
+         {uniform_shape{"uniform1f", 1, 1, false}, uniform_shape{"uniform2f", 2, 1, false},
+          uniform_shape{"uniform3f", 3, 1, false}, uniform_shape{"uniform4f", 4, 1, false},
+          uniform_shape{"uniform1i", 1, 1, true}, uniform_shape{"uniform2i", 2, 1, true},
+          uniform_shape{"uniform3i", 3, 1, true}, uniform_shape{"uniform4i", 4, 1, true},
+          uniform_shape{"uniform1fv", 1, 1, false}, uniform_shape{"uniform2fv", 2, 1, false},
+          uniform_shape{"uniform3fv", 3, 1, false}, uniform_shape{"uniform4fv", 4, 1, false},
+          uniform_shape{"uniform1iv", 1, 1, true}, uniform_shape{"uniform2iv", 2, 1, true},
+          uniform_shape{"uniform3iv", 3, 1, true}, uniform_shape{"uniform4iv", 4, 1, true}}) {
         method(shape.name, [gl, shape, uniform_name](context & c, std::span<value> a) {
             gl->set_uniform(uniform_name(c, a),
-                            uniform_value(c, a, 1, shape.rows, shape.cols, shape.kind));
+                            make_uniform(c, a, 1, shape.rows, shape.cols, shape.integer));
             return value::undefined();
         });
     }
-    for (const uniform_shape & shape :
-         {uniform_shape{"uniformMatrix2fv", 2, 2, raster::glsl::base::f},
-          uniform_shape{"uniformMatrix3fv", 3, 3, raster::glsl::base::f},
-          uniform_shape{"uniformMatrix4fv", 4, 4, raster::glsl::base::f}}) {
+    for (const uniform_shape & shape : {uniform_shape{"uniformMatrix2fv", 2, 2, false},
+                                        uniform_shape{"uniformMatrix3fv", 3, 3, false},
+                                        uniform_shape{"uniformMatrix4fv", 4, 4, false}}) {
         method(shape.name, [gl, shape, uniform_name](context & c, std::span<value> a) {
             // ARGUMENT 1 IS `transpose`, and the value is argument 2 - a
             // signature that catches everyone once. WebGL 1 requires transpose to
             // be false, so it is read and ignored rather than honoured.
             gl->set_uniform(uniform_name(c, a),
-                            uniform_value(c, a, 2, shape.rows, shape.cols, shape.kind));
+                            make_uniform(c, a, 2, shape.rows, shape.cols, shape.integer));
             return value::undefined();
         });
     }

@@ -27,6 +27,34 @@
 
 namespace ctbrowser::shell {
 
+// A UNIFORM'S VALUE, as the bindings collect it from JavaScript.
+//
+// This exists because the bindings used to carry `raster::glsl::value` - a type
+// from the GLSL front end the rewrite deleted - which made the JavaScript
+// surface depend on a rasteriser it should know nothing about. A uniform is a
+// shape and some numbers; that is all this is.
+struct uniform_value {
+    int rows = 1; // 1 is a scalar, 3 a vec3, 3 x 3 a mat3
+    int cols = 1;
+    bool integer = false;
+    // FLOATS EVEN FOR INTEGERS. A uniform is at most a mat4, so widening costs
+    // nothing and one path is easier to keep right than two - `integer` says
+    // which GL entry point to call.
+    std::vector<float> data;
+};
+
+// WHAT A LINKED PROGRAM DECLARES, asked of GL and never cached.
+//
+// Both p5 and Babylon ENUMERATE a program rather than asking for names they
+// already know. Answering from anywhere but the program itself tells them the
+// shader declares nothing, so they bind nothing and draw nothing, with no error
+// at any point.
+struct active_variable {
+    std::string name;
+    std::uint32_t type = 0; // the GL code, e.g. GL_FLOAT_VEC3
+    int size = 1;           // the ARRAY LENGTH, 1 for a plain declaration
+};
+
 class webgl_context {
 public:
     webgl_context(int width, int height, raster::gl::driver which = raster::gl::driver::fastest);
@@ -61,6 +89,32 @@ public:
     void clear_color(float red, float green, float blue, float alpha);
     void clear_depth(float depth);
     void set_enabled(std::uint32_t capability, bool on);
+
+    // --- shaders and programs ------------------------------------------------
+
+    [[nodiscard]] std::uint32_t create_shader(std::uint32_t kind);
+    void shader_source(std::uint32_t shader, std::string_view source);
+    void compile_shader(std::uint32_t shader);
+    [[nodiscard]] bool shader_compiled(std::uint32_t shader) const;
+    [[nodiscard]] std::string shader_log(std::uint32_t shader) const;
+
+    [[nodiscard]] std::uint32_t create_program();
+    void attach_shader(std::uint32_t program, std::uint32_t shader);
+    void link_program(std::uint32_t program);
+    [[nodiscard]] bool program_linked(std::uint32_t program) const;
+    [[nodiscard]] std::string program_log(std::uint32_t program) const;
+    void use_program(std::uint32_t program);
+
+    [[nodiscard]] std::vector<active_variable> active_attributes(std::uint32_t program) const;
+    [[nodiscard]] std::vector<active_variable> active_uniforms(std::uint32_t program) const;
+    [[nodiscard]] int attribute_location(std::uint32_t program, std::string_view name) const;
+
+    [[nodiscard]] int get_uniform_block_index(std::uint32_t program, std::string_view name) const;
+    void uniform_block_binding(std::uint32_t program, std::uint32_t index, std::uint32_t binding);
+
+    // BY NAME, because that is what the bindings carry: WebGL hands a page an
+    // opaque location object and this engine puts the NAME in it.
+    void set_uniform(std::string_view name, const uniform_value & value);
 
     // --- the error contract, which is NOT the thing being deleted ------------
     //

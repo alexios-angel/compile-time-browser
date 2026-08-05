@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <ctbrowser/paint/command.hpp>
 
@@ -84,6 +85,43 @@ public:
     // GL's own error, reported and cleared. Asked of the driver rather than
     // tracked here, because tracked state is what drifts.
     [[nodiscard]] std::uint32_t take_error();
+
+    // --- shaders and programs ------------------------------------------------
+
+    [[nodiscard]] unsigned create_shader(int kind);
+    void shader_source(unsigned shader, const std::string & source);
+    void compile_shader(unsigned shader);
+    [[nodiscard]] bool shader_compiled(unsigned shader) const;
+    [[nodiscard]] std::string shader_log(unsigned shader) const;
+
+    [[nodiscard]] unsigned create_program();
+    void attach_shader(unsigned program, unsigned shader);
+    void link_program(unsigned program);
+    [[nodiscard]] bool program_linked(unsigned program) const;
+    [[nodiscard]] std::string program_log(unsigned program) const;
+    void use_program(unsigned program);
+
+    struct active {
+        std::string name;
+        std::uint32_t type = 0;
+        int size = 1;
+    };
+    [[nodiscard]] std::vector<active> active_attributes(unsigned program) const;
+    [[nodiscard]] std::vector<active> active_uniforms(unsigned program) const;
+    [[nodiscard]] int attribute_location(unsigned program, const std::string & name) const;
+    [[nodiscard]] int uniform_location(unsigned program, const std::string & name) const;
+
+    // GL_INVALID_INDEX comes back as -1. A name no block declares is NOT an
+    // error: a page may ask about a block its shader dropped.
+    [[nodiscard]] int uniform_block_index(unsigned program, const std::string & name) const;
+    void uniform_block_binding(unsigned program, unsigned index, unsigned binding);
+
+    // `rows` x `cols` is the shape - 1x1 a scalar, 3x1 a vec3, 4x4 a mat4 -
+    // which is how one entry point covers the whole uniform* family.
+    void set_uniform(int location, const float * values, int count, int rows, int cols,
+                     bool integer);
+
+    [[nodiscard]] unsigned program_in_use() const;
 
     // The pixels, into a bitmap the painter composites.
     //

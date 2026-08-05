@@ -125,22 +125,22 @@ direct GLES call and a return, with no state kept that GL can be asked for.
 
 **shaders and programs** (16)
 
-- [ ] `create_shader`
-- [ ] `shader_source`
-- [ ] `compile_shader`
-- [ ] `shader_compiled`
-- [ ] `shader_log`
-- [ ] `create_program`
-- [ ] `attach_shader`
-- [ ] `link_program`
-- [ ] `program_linked`
-- [ ] `program_log`
-- [ ] `use_program`
-- [ ] `active_attributes`
-- [ ] `active_uniforms`
-- [ ] `attribute_location`
-- [ ] `get_uniform_block_index`
-- [ ] `set_uniform`
+- [x] `create_shader`
+- [x] `shader_source`
+- [x] `compile_shader`
+- [x] `shader_compiled`
+- [x] `shader_log`
+- [x] `create_program`
+- [x] `attach_shader`
+- [x] `link_program`
+- [x] `program_linked`
+- [x] `program_log`
+- [x] `use_program`
+- [x] `active_attributes`
+- [x] `active_uniforms`
+- [x] `attribute_location`
+- [x] `get_uniform_block_index`
+- [x] `set_uniform`
 
 **buffers and attributes** (14)
 
@@ -186,7 +186,7 @@ direct GLES call and a return, with no state kept that GL can be asked for.
 **everything else** (4)
 
 - [ ] `texture_from_bitmap`
-- [ ] `uniform_block_binding`
+- [x] `uniform_block_binding`
 - [x] `version`
 - [x] `viewport`
 

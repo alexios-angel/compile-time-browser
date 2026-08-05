@@ -215,6 +215,172 @@ void device::clear(float red, float green, float blue, float alpha) {
             GL_STENCIL_BUFFER_BIT);
 }
 
+namespace {
+
+[[nodiscard]] std::string log_of(unsigned object, bool is_program) {
+    GLint length = 0;
+    if (is_program) {
+        glGetProgramiv(object, GL_INFO_LOG_LENGTH, &length);
+    } else {
+        glGetShaderiv(object, GL_INFO_LOG_LENGTH, &length);
+    }
+    if (length <= 1) { return {}; }
+    std::string text(static_cast<std::size_t>(length), '\0');
+    GLsizei written = 0;
+    if (is_program) {
+        glGetProgramInfoLog(object, length, &written, text.data());
+    } else {
+        glGetShaderInfoLog(object, length, &written, text.data());
+    }
+    text.resize(static_cast<std::size_t>(written));
+    return text;
+}
+
+// ASKED OF THE PROGRAM, one index at a time, which is the only source that can
+// answer correctly. `enumerate` is shared because glGetActiveAttrib and
+// glGetActiveUniform differ only in which pair of entry points they call.
+template <typename Count, typename Get>
+[[nodiscard]] std::vector<device::active> enumerate(unsigned program, Count count, Get get) {
+    GLint total = 0;
+    count(program, &total);
+    GLint longest = 0;
+    std::vector<device::active> out;
+    for (GLint i = 0; i < total; ++i) {
+        std::string name(256, '\0');
+        GLsizei written = 0;
+        GLint size = 0;
+        GLenum type = 0;
+        get(program, static_cast<GLuint>(i), static_cast<GLsizei>(name.size()), &written, &size,
+            &type, name.data());
+        name.resize(static_cast<std::size_t>(written));
+        out.push_back({name, static_cast<std::uint32_t>(type), static_cast<int>(size)});
+    }
+    (void)longest;
+    return out;
+}
+
+} // namespace
+
+unsigned device::create_shader(int kind) {
+    return ok() ? glCreateShader(static_cast<GLenum>(kind)) : 0u;
+}
+
+void device::shader_source(unsigned shader, const std::string & source) {
+    if (!ok()) { return; }
+    const char * text = source.c_str();
+    const auto length = static_cast<GLint>(source.size());
+    glShaderSource(shader, 1, &text, &length);
+}
+
+void device::compile_shader(unsigned shader) {
+    if (ok()) { glCompileShader(shader); }
+}
+
+bool device::shader_compiled(unsigned shader) const {
+    if (!ok()) { return false; }
+    GLint status = GL_FALSE;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
+    return status == GL_TRUE;
+}
+
+std::string device::shader_log(unsigned shader) const {
+    return ok() ? log_of(shader, false) : std::string{};
+}
+
+unsigned device::create_program() {
+    return ok() ? glCreateProgram() : 0u;
+}
+
+void device::attach_shader(unsigned program, unsigned shader) {
+    if (ok()) { glAttachShader(program, shader); }
+}
+
+void device::link_program(unsigned program) {
+    if (ok()) { glLinkProgram(program); }
+}
+
+bool device::program_linked(unsigned program) const {
+    if (!ok()) { return false; }
+    GLint status = GL_FALSE;
+    glGetProgramiv(program, GL_LINK_STATUS, &status);
+    return status == GL_TRUE;
+}
+
+std::string device::program_log(unsigned program) const {
+    return ok() ? log_of(program, true) : std::string{};
+}
+
+void device::use_program(unsigned program) {
+    if (ok()) { glUseProgram(program); }
+}
+
+unsigned device::program_in_use() const {
+    if (!ok()) { return 0u; }
+    GLint current = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &current);
+    return static_cast<unsigned>(current);
+}
+
+std::vector<device::active> device::active_attributes(unsigned program) const {
+    if (!ok()) { return {}; }
+    return enumerate(
+        program, [](unsigned p, GLint * n) { glGetProgramiv(p, GL_ACTIVE_ATTRIBUTES, n); },
+        glGetActiveAttrib);
+}
+
+std::vector<device::active> device::active_uniforms(unsigned program) const {
+    if (!ok()) { return {}; }
+    return enumerate(
+        program, [](unsigned p, GLint * n) { glGetProgramiv(p, GL_ACTIVE_UNIFORMS, n); },
+        glGetActiveUniform);
+}
+
+int device::attribute_location(unsigned program, const std::string & name) const {
+    return ok() ? glGetAttribLocation(program, name.c_str()) : -1;
+}
+
+int device::uniform_location(unsigned program, const std::string & name) const {
+    return ok() ? glGetUniformLocation(program, name.c_str()) : -1;
+}
+
+int device::uniform_block_index(unsigned program, const std::string & name) const {
+    if (!ok()) { return -1; }
+    const GLuint index = glGetUniformBlockIndex(program, name.c_str());
+    return index == GL_INVALID_INDEX ? -1 : static_cast<int>(index);
+}
+
+void device::uniform_block_binding(unsigned program, unsigned index, unsigned binding) {
+    if (ok()) { glUniformBlockBinding(program, index, binding); }
+}
+
+void device::set_uniform(int location, const float * values, int count, int rows, int cols,
+                         bool integer) {
+    if (!ok() || location < 0 || values == nullptr || count <= 0) { return; }
+    if (cols > 1) {
+        // A MATRIX. Never transposed: WebGL requires the flag to be false and a
+        // page's data is already column-major.
+        const GLsizei n = static_cast<GLsizei>(count);
+        if (rows == 2) { glUniformMatrix2fv(location, n, GL_FALSE, values); }
+        if (rows == 3) { glUniformMatrix3fv(location, n, GL_FALSE, values); }
+        if (rows == 4) { glUniformMatrix4fv(location, n, GL_FALSE, values); }
+        return;
+    }
+    const GLsizei n = static_cast<GLsizei>(count);
+    if (integer) {
+        std::vector<GLint> whole(static_cast<std::size_t>(count) * static_cast<std::size_t>(rows));
+        for (std::size_t i = 0; i < whole.size(); ++i) { whole[i] = static_cast<GLint>(values[i]); }
+        if (rows == 1) { glUniform1iv(location, n, whole.data()); }
+        if (rows == 2) { glUniform2iv(location, n, whole.data()); }
+        if (rows == 3) { glUniform3iv(location, n, whole.data()); }
+        if (rows == 4) { glUniform4iv(location, n, whole.data()); }
+        return;
+    }
+    if (rows == 1) { glUniform1fv(location, n, values); }
+    if (rows == 2) { glUniform2fv(location, n, values); }
+    if (rows == 3) { glUniform3fv(location, n, values); }
+    if (rows == 4) { glUniform4fv(location, n, values); }
+}
+
 bool device::read_pixels(paint::bitmap & into) const {
     if (!ok()) { return false; }
     const int w = impl_->width;
@@ -289,6 +455,51 @@ void device::set_capability(int, bool) {}
 std::uint32_t device::take_error() {
     return 0u;
 }
+
+unsigned device::create_shader(int) {
+    return 0u;
+}
+void device::shader_source(unsigned, const std::string &) {}
+void device::compile_shader(unsigned) {}
+bool device::shader_compiled(unsigned) const {
+    return false;
+}
+std::string device::shader_log(unsigned) const {
+    return {};
+}
+unsigned device::create_program() {
+    return 0u;
+}
+void device::attach_shader(unsigned, unsigned) {}
+void device::link_program(unsigned) {}
+bool device::program_linked(unsigned) const {
+    return false;
+}
+std::string device::program_log(unsigned) const {
+    return {};
+}
+void device::use_program(unsigned) {}
+unsigned device::program_in_use() const {
+    return 0u;
+}
+std::vector<device::active> device::active_attributes(unsigned) const {
+    return {};
+}
+std::vector<device::active> device::active_uniforms(unsigned) const {
+    return {};
+}
+int device::attribute_location(unsigned, const std::string &) const {
+    return -1;
+}
+int device::uniform_location(unsigned, const std::string &) const {
+    return -1;
+}
+int device::uniform_block_index(unsigned, const std::string &) const {
+    return -1;
+}
+void device::uniform_block_binding(unsigned, unsigned, unsigned) {}
+void device::set_uniform(int, const float *, int, int, int, bool) {}
+
 bool device::read_pixels(paint::bitmap &) const {
     return false;
 }
