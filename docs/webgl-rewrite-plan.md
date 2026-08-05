@@ -190,7 +190,29 @@ direct GLES call and a return, with no state kept that GL can be asked for.
 - [x] `version`
 - [x] `viewport`
 
-### IT BUILDS: 62/71, and the 9 failures are ONE cause
+### WITH ANGLE: 59/72, and the likely cause is the driver DEFAULT
+
+The ANGLE build compiles clean and runs. Thirteen failures, all WebGL-dependent:
+the four render tests, webgl2/babylon/p5 ratchets and API probes, plus
+bindings_basics and widgets_basics.
+
+MOST LIKELY CAUSE, and it is a consequence of a deliberate change rather than a
+mystery: `driver::fastest` now asks for ANGLE's own device selection, where the
+deleted code hard-coded SwiftShader. The devbox has no GPU, so a real Vulkan
+device may simply not come up - and since `getContext` now correctly returns null
+when the device fails, every one of these pages takes the "WebGL not supported"
+branch and fails for one reason wearing thirteen names.
+
+THE CHECK, and do it before any other change: construct a `raster::gl::device`
+with each driver in turn and print `ok()` and `renderer()` for both, in ONE
+command, side by side. If `fastest` is false and `deterministic` is true, the fix
+is that `fastest` falls back to SwiftShader rather than failing - which is what a
+browser does and what makes safe mode a floor rather than a cliff.
+
+Do NOT change the driver default and re-run the suite hoping the number moves.
+That is the mistake this document opens by describing.
+
+### SUPERSEDED, and still true of the no-ANGLE build: 62/71, and the 9 failures are ONE cause
 
 The tree compiles and links again. `ctest --preset default` reads **62 of 71**,
 and every failure is the same thing: the default build has no ANGLE, and there is

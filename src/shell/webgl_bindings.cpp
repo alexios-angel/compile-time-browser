@@ -207,6 +207,17 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
         // docs/webgl-rewrite-plan.md. What used to be `use_angle()` is now the
         // only path, and `driver::deterministic` is the runtime switch that
         // replaces it.
+        //
+        // AND IF THE DEVICE WILL NOT COME UP, getContext RETURNS null. That is
+        // what a browser does when there is no driver, and it is the difference
+        // between a page taking its own no-WebGL branch and a page throwing
+        // halfway through its first frame - which is what nine render tests
+        // reported as "Unable to create VAO" the moment the software fallback
+        // was removed.
+        if (!made->ok()) {
+            made.reset();
+            return value::null();
+        }
     }
     webgl_context * gl = made.get();
     // THE VERSION IS DECIDED ONCE, WHEN THE CONTEXT IS CREATED. A canvas has
