@@ -190,7 +190,30 @@ direct GLES call and a return, with no state kept that GL can be asked for.
 - [x] `version`
 - [x] `viewport`
 
-### Rung 10: the three numbers AGREE, and `Mesh` is the odd one
+### Rung 10: the source HAS Mesh, so the -1 is normal GL
+
+`CTBROWSER_GL_SRC=1` prints what `shader_source` actually sends:
+
+    [src] shader=1 bytes=8389  version=1 layout=1 Mesh=1
+    [src] shader=2 bytes=13357 version=1 layout=1 Mesh=1
+
+Babylon's shaders do contain the `Mesh` block and do get the preamble. Reading 1
+is refuted.
+
+WHICH MAKES THE -1 UNREMARKABLE: GL drops a uniform block the shader never
+reads, and `glGetUniformBlockIndex` then answers GL_INVALID_INDEX. That is
+correct behaviour, Babylon binds nothing for it, and ANGLE needs nothing for it.
+So `Mesh` is a red herring - the third dead end on this rung, and worth writing
+down so nobody spends another pass on it.
+
+WHAT IS LEFT, and it fits the stack better than anything so far: ANGLE dies in
+`updateOneUniformBuffer` for a binding point that HAS a buffer bound but whose
+buffer has no STORAGE - `bindBufferBase` before `bufferData`, so the
+`BufferHelper` is null. Light0 binds buffer 1 at binding 3; check whether buffer
+1 ever received `bufferData` before the draw, and in what order.
+
+That is one more log line - buffer name and size at `buffer_data` time, beside
+the existing `[ubo] base` lines - and it is the next thing to run., and `Mesh` is the odd one
 
 Logged with `CTBROWSER_GL_UBO=1`, one program, one run:
 
