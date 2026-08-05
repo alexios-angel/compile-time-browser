@@ -1,6 +1,7 @@
 #include <ctbrowser/shell/webgl.hpp>
 
 #include <algorithm>
+#include <cstddef>
 
 namespace ctbrowser::shell {
 
@@ -187,6 +188,96 @@ void webgl_context::set_uniform(std::string_view name, const uniform_value & val
     const int per = value.rows * value.cols;
     const int count = per > 0 ? static_cast<int>(value.data.size()) / per : 0;
     device_.set_uniform(location, value.data.data(), count, value.rows, value.cols, value.integer);
+}
+
+// --- buffers, attributes and vertex arrays ----------------------------------
+
+std::uint32_t webgl_context::create_buffer() {
+    return device_.create_buffer();
+}
+
+void webgl_context::bind_buffer(std::uint32_t target, std::uint32_t buffer) {
+    device_.bind_buffer(static_cast<int>(target), buffer);
+}
+
+void webgl_context::buffer_data(std::uint32_t target, std::span<const std::byte> bytes,
+                                std::uint32_t usage) {
+    device_.buffer_data(static_cast<int>(target), bytes.data(), bytes.size(),
+                        static_cast<int>(usage));
+}
+
+void webgl_context::buffer_data(std::uint32_t target, int size, std::uint32_t usage) {
+    // SIZE WITHOUT DATA, which is `gl.bufferData(target, 1024, usage)` - a page
+    // reserving room it will fill with bufferSubData.
+    if (size < 0) {
+        fail(gl_invalid_value);
+        return;
+    }
+    device_.buffer_data(static_cast<int>(target), nullptr, static_cast<std::size_t>(size),
+                        static_cast<int>(usage));
+}
+
+void webgl_context::buffer_sub_data(std::uint32_t target, int offset,
+                                    std::span<const std::byte> bytes) {
+    if (offset < 0) {
+        fail(gl_invalid_value);
+        return;
+    }
+    device_.buffer_sub_data(static_cast<int>(target), static_cast<std::size_t>(offset),
+                            bytes.data(), bytes.size());
+}
+
+void webgl_context::bind_buffer_base(std::uint32_t target, std::uint32_t index,
+                                     std::uint32_t buffer) {
+    device_.bind_buffer_base(static_cast<int>(target), index, buffer);
+}
+
+void webgl_context::enable_attribute(int location, bool on) {
+    if (location < 0) { return; }
+    device_.enable_attribute(static_cast<unsigned>(location), on);
+}
+
+void webgl_context::attribute_pointer(int location, int size, std::uint32_t type, bool normalised,
+                                      int stride, int offset) {
+    if (location < 0 || offset < 0) {
+        if (offset < 0) { fail(gl_invalid_value); }
+        return;
+    }
+    device_.attribute_pointer(static_cast<unsigned>(location), size, static_cast<int>(type),
+                              normalised, stride, static_cast<std::size_t>(offset));
+}
+
+void webgl_context::attribute_divisor(int location, std::uint32_t divisor) {
+    if (location < 0) { return; }
+    device_.attribute_divisor(static_cast<unsigned>(location), divisor);
+}
+
+const vertex_attribute * webgl_context::attribute_at(int location) const {
+    if (location < 0) { return nullptr; }
+    const auto got = device_.attribute_at(static_cast<unsigned>(location));
+    scratch_ =
+        vertex_attribute{got.enabled, got.size, got.stride, got.type, got.normalised, got.divisor};
+    return &scratch_;
+}
+
+std::uint32_t webgl_context::create_vertex_array() {
+    return device_.create_vertex_array();
+}
+
+void webgl_context::bind_vertex_array(std::uint32_t array) {
+    device_.bind_vertex_array(array);
+}
+
+void webgl_context::delete_vertex_array(std::uint32_t array) {
+    device_.delete_vertex_array(array);
+}
+
+bool webgl_context::is_vertex_array(std::uint32_t array) const {
+    return device_.is_vertex_array(array);
+}
+
+std::uint32_t webgl_context::bound_vertex_array() const {
+    return device_.bound_vertex_array();
 }
 
 std::uint32_t webgl_context::take_error() {

@@ -381,6 +381,113 @@ void device::set_uniform(int location, const float * values, int count, int rows
     if (rows == 4) { glUniform4fv(location, n, values); }
 }
 
+unsigned device::create_buffer() {
+    if (!ok()) { return 0u; }
+    GLuint name = 0;
+    glGenBuffers(1, &name);
+    return name;
+}
+
+void device::bind_buffer(int target, unsigned buffer) {
+    if (ok()) { glBindBuffer(static_cast<GLenum>(target), buffer); }
+}
+
+void device::buffer_data(int target, const void * bytes, std::size_t size, int usage) {
+    if (!ok()) { return; }
+    glBufferData(static_cast<GLenum>(target), static_cast<GLsizeiptr>(size), bytes,
+                 static_cast<GLenum>(usage));
+}
+
+void device::buffer_sub_data(int target, std::size_t offset, const void * bytes, std::size_t size) {
+    if (!ok() || bytes == nullptr) { return; }
+    glBufferSubData(static_cast<GLenum>(target), static_cast<GLintptr>(offset),
+                    static_cast<GLsizeiptr>(size), bytes);
+}
+
+void device::bind_buffer_base(int target, unsigned index, unsigned buffer) {
+    if (ok()) { glBindBufferBase(static_cast<GLenum>(target), index, buffer); }
+}
+
+void device::delete_object(unsigned name, int kind) {
+    if (!ok() || name == 0) { return; }
+    switch (kind) {
+    case GL_BUFFER: glDeleteBuffers(1, &name); break;
+    case GL_TEXTURE: glDeleteTextures(1, &name); break;
+    case GL_FRAMEBUFFER: glDeleteFramebuffers(1, &name); break;
+    case GL_RENDERBUFFER: glDeleteRenderbuffers(1, &name); break;
+    case GL_PROGRAM: glDeleteProgram(name); break;
+    case GL_SHADER: glDeleteShader(name); break;
+    default: break;
+    }
+}
+
+void device::enable_attribute(unsigned location, bool on) {
+    if (!ok()) { return; }
+    if (on) {
+        glEnableVertexAttribArray(location);
+    } else {
+        glDisableVertexAttribArray(location);
+    }
+}
+
+void device::attribute_pointer(unsigned location, int size, int type, bool normalised, int stride,
+                               std::size_t offset) {
+    if (!ok()) { return; }
+    glVertexAttribPointer(location, size, static_cast<GLenum>(type),
+                          normalised ? GL_TRUE : GL_FALSE, stride,
+                          reinterpret_cast<const void *>(offset));
+}
+
+void device::attribute_divisor(unsigned location, unsigned divisor) {
+    if (ok()) { glVertexAttribDivisor(location, divisor); }
+}
+
+device::attribute_state device::attribute_at(unsigned location) const {
+    attribute_state out;
+    if (!ok()) { return out; }
+    GLint value = 0;
+    glGetVertexAttribiv(location, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &value);
+    out.enabled = value != 0;
+    glGetVertexAttribiv(location, GL_VERTEX_ATTRIB_ARRAY_SIZE, &value);
+    out.size = value;
+    glGetVertexAttribiv(location, GL_VERTEX_ATTRIB_ARRAY_STRIDE, &value);
+    out.stride = value;
+    glGetVertexAttribiv(location, GL_VERTEX_ATTRIB_ARRAY_TYPE, &value);
+    out.type = static_cast<std::uint32_t>(value);
+    glGetVertexAttribiv(location, GL_VERTEX_ATTRIB_ARRAY_NORMALIZED, &value);
+    out.normalised = value != 0;
+    glGetVertexAttribiv(location, GL_VERTEX_ATTRIB_ARRAY_DIVISOR, &value);
+    out.divisor = static_cast<std::uint32_t>(value);
+    return out;
+}
+
+unsigned device::create_vertex_array() {
+    if (!ok()) { return 0u; }
+    GLuint name = 0;
+    glGenVertexArrays(1, &name);
+    return name;
+}
+
+void device::bind_vertex_array(unsigned array) {
+    if (ok()) { glBindVertexArray(array); }
+}
+
+void device::delete_vertex_array(unsigned array) {
+    if (!ok() || array == 0) { return; }
+    glDeleteVertexArrays(1, &array);
+}
+
+bool device::is_vertex_array(unsigned array) const {
+    return ok() && glIsVertexArray(array) == GL_TRUE;
+}
+
+unsigned device::bound_vertex_array() const {
+    if (!ok()) { return 0u; }
+    GLint current = 0;
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &current);
+    return static_cast<unsigned>(current);
+}
+
 bool device::read_pixels(paint::bitmap & into) const {
     if (!ok()) { return false; }
     const int w = impl_->width;
@@ -499,6 +606,32 @@ int device::uniform_block_index(unsigned, const std::string &) const {
 }
 void device::uniform_block_binding(unsigned, unsigned, unsigned) {}
 void device::set_uniform(int, const float *, int, int, int, bool) {}
+
+unsigned device::create_buffer() {
+    return 0u;
+}
+void device::bind_buffer(int, unsigned) {}
+void device::buffer_data(int, const void *, std::size_t, int) {}
+void device::buffer_sub_data(int, std::size_t, const void *, std::size_t) {}
+void device::bind_buffer_base(int, unsigned, unsigned) {}
+void device::delete_object(unsigned, int) {}
+void device::enable_attribute(unsigned, bool) {}
+void device::attribute_pointer(unsigned, int, int, bool, int, std::size_t) {}
+void device::attribute_divisor(unsigned, unsigned) {}
+device::attribute_state device::attribute_at(unsigned) const {
+    return {};
+}
+unsigned device::create_vertex_array() {
+    return 0u;
+}
+void device::bind_vertex_array(unsigned) {}
+void device::delete_vertex_array(unsigned) {}
+bool device::is_vertex_array(unsigned) const {
+    return false;
+}
+unsigned device::bound_vertex_array() const {
+    return 0u;
+}
 
 bool device::read_pixels(paint::bitmap &) const {
     return false;

@@ -123,6 +123,39 @@ public:
 
     [[nodiscard]] unsigned program_in_use() const;
 
+    // --- buffers, attributes and vertex arrays --------------------------------
+
+    [[nodiscard]] unsigned create_buffer();
+    void bind_buffer(int target, unsigned buffer);
+    void buffer_data(int target, const void * bytes, std::size_t size, int usage);
+    void buffer_sub_data(int target, std::size_t offset, const void * bytes, std::size_t size);
+    void bind_buffer_base(int target, unsigned index, unsigned buffer);
+    void delete_object(unsigned name, int kind);
+
+    void enable_attribute(unsigned location, bool on);
+    void attribute_pointer(unsigned location, int size, int type, bool normalised, int stride,
+                           std::size_t offset);
+    void attribute_divisor(unsigned location, unsigned divisor);
+
+    // ONE ATTRIBUTE'S STATE, ASKED OF GL. Not a record of what was set: a page
+    // can change it through a vertex array this layer never saw, so anything
+    // remembered here would be a guess that looks like a fact.
+    struct attribute_state {
+        bool enabled = false;
+        int size = 4;
+        int stride = 0;
+        std::uint32_t type = 0;
+        bool normalised = false;
+        std::uint32_t divisor = 0;
+    };
+    [[nodiscard]] attribute_state attribute_at(unsigned location) const;
+
+    [[nodiscard]] unsigned create_vertex_array();
+    void bind_vertex_array(unsigned array);
+    void delete_vertex_array(unsigned array);
+    [[nodiscard]] bool is_vertex_array(unsigned array) const;
+    [[nodiscard]] unsigned bound_vertex_array() const;
+
     // The pixels, into a bitmap the painter composites.
     //
     // FLIPPED, because GL's origin is bottom-left and a bitmap's is top-left,

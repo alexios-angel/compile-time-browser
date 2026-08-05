@@ -144,20 +144,20 @@ direct GLES call and a return, with no state kept that GL can be asked for.
 
 **buffers and attributes** (14)
 
-- [ ] `create_buffer`
-- [ ] `bind_buffer`
-- [ ] `buffer_data`
-- [ ] `buffer_sub_data`
-- [ ] `bind_buffer_base`
-- [ ] `enable_attribute`
-- [ ] `attribute_pointer`
-- [ ] `attribute_at`
-- [ ] `attribute_divisor`
-- [ ] `create_vertex_array`
-- [ ] `bind_vertex_array`
-- [ ] `delete_vertex_array`
-- [ ] `is_vertex_array`
-- [ ] `bound_vertex_array`
+- [x] `create_buffer`
+- [x] `bind_buffer`
+- [x] `buffer_data`
+- [x] `buffer_sub_data`
+- [x] `bind_buffer_base`
+- [x] `enable_attribute`
+- [x] `attribute_pointer`
+- [x] `attribute_at`
+- [x] `attribute_divisor`
+- [x] `create_vertex_array`
+- [x] `bind_vertex_array`
+- [x] `delete_vertex_array`
+- [x] `is_vertex_array`
+- [x] `bound_vertex_array`
 
 **textures and framebuffers** (8)
 

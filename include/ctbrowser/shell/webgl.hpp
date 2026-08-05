@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -49,6 +50,16 @@ struct uniform_value {
 // already know. Answering from anywhere but the program itself tells them the
 // shader declares nothing, so they bind nothing and draw nothing, with no error
 // at any point.
+// ONE ATTRIBUTE, as `getVertexAttrib` reports it. Filled from GL on each ask.
+struct vertex_attribute {
+    bool enabled = false;
+    int size = 4;
+    int stride = 0;
+    std::uint32_t type = 0;
+    bool normalized = false;
+    std::uint32_t divisor = 0;
+};
+
 struct active_variable {
     std::string name;
     std::uint32_t type = 0; // the GL code, e.g. GL_FLOAT_VEC3
@@ -116,6 +127,32 @@ public:
     // opaque location object and this engine puts the NAME in it.
     void set_uniform(std::string_view name, const uniform_value & value);
 
+    // --- buffers, attributes and vertex arrays --------------------------------
+
+    [[nodiscard]] std::uint32_t create_buffer();
+    void bind_buffer(std::uint32_t target, std::uint32_t buffer);
+    void buffer_data(std::uint32_t target, std::span<const std::byte> bytes, std::uint32_t usage);
+    void buffer_data(std::uint32_t target, int size, std::uint32_t usage);
+    void buffer_sub_data(std::uint32_t target, int offset, std::span<const std::byte> bytes);
+    void bind_buffer_base(std::uint32_t target, std::uint32_t index, std::uint32_t buffer);
+    void delete_object(std::uint32_t name, std::string_view kind);
+
+    void enable_attribute(int location, bool on);
+    void attribute_pointer(int location, int size, std::uint32_t type, bool normalised, int stride,
+                           int offset);
+    void attribute_divisor(int location, std::uint32_t divisor);
+
+    // ASKED OF GL EVERY TIME, into scratch the caller borrows. A page can change
+    // an attribute through a vertex array this layer never saw, so a remembered
+    // answer would be a guess wearing the shape of a fact.
+    [[nodiscard]] const vertex_attribute * attribute_at(int location) const;
+
+    [[nodiscard]] std::uint32_t create_vertex_array();
+    void bind_vertex_array(std::uint32_t array);
+    void delete_vertex_array(std::uint32_t array);
+    [[nodiscard]] bool is_vertex_array(std::uint32_t array) const;
+    [[nodiscard]] std::uint32_t bound_vertex_array() const;
+
     // --- the error contract, which is NOT the thing being deleted ------------
     //
     // Refusing a call BY NAME is the documented leniency contract in
@@ -136,6 +173,10 @@ private:
     std::uint32_t error_ = 0;
     std::string shader_error_;
     std::vector<std::string> refused_;
+    // SCRATCH for attribute_at, refilled from GL on every call. It is a query
+    // result the caller borrows, not state - the distinction that this whole
+    // rewrite turns on.
+    mutable vertex_attribute scratch_;
 };
 
 } // namespace ctbrowser::shell
