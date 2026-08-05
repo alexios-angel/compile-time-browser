@@ -190,6 +190,32 @@ direct GLES call and a return, with no state kept that GL can be asked for.
 - [x] `version`
 - [x] `viewport`
 
+### The blocker group 2 found: the bindings are NOT backend-neutral
+
+`webgl_bindings.cpp` passes uniforms as `raster::glsl::value`, and names
+`raster::glsl::base::f` in its own uniform-shape table - types from the GLSL
+front end that this rewrite deleted. So "the bindings are the specification and
+they stay untouched" was half right: they specify the CALLS correctly, but they
+carry a type from the layer being removed.
+
+That is not a reason to bring the GLSL header back. `set_uniform` needs a shape
+and some floats or ints, which is a small POD that belongs in `shell/webgl.hpp`:
+
+    struct uniform_value {
+        int rows = 1;         // 1 is a scalar, 3 a vec3, 3x3 a mat3
+        int cols = 1;
+        bool integer = false;
+        std::vector<float> data;   // ints widen; a uniform is at most a mat4
+    };
+
+The bindings' `uniform_shape` table and `uniform_value()` helper are retargeted
+to it. That is the ONLY edit the bindings need, it is mechanical, and it removes
+their last dependency on the deleted stack.
+
+DO THIS BEFORE THE REST OF GROUP 2, because the other fifteen methods compile
+against a header that still has to grow this type and there is no sense writing
+them twice.
+
 THE HANDLE TABLE is the only state. A page holds `WebGLBuffer` and
 `WebGLProgram` objects, and those need identity that survives across calls - but
 identity ONLY. The moment the table starts caching what a buffer contains or
