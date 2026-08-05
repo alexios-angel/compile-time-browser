@@ -28,6 +28,132 @@
 
 namespace ctbrowser::shell {
 
+// THE GL CONSTANTS, recovered intact from the deleted header.
+//
+// This is a TABLE, not an implementation - the numbers WebGL gives a page, which
+// are fixed by the specification and identical in every engine. Nothing here can
+// drift out of step with a driver, which is why it survived the rewrite when the
+// code around it did not.
+// use, because `0x8892` in a switch is unreadable and a transposed digit is
+// invisible.
+namespace gl_enum {
+inline constexpr std::uint32_t depth_buffer_bit = 0x00000100;
+inline constexpr std::uint32_t stencil_buffer_bit = 0x00000400;
+inline constexpr std::uint32_t color_buffer_bit = 0x00004000;
+
+inline constexpr std::uint32_t points = 0x0000;
+inline constexpr std::uint32_t lines = 0x0001;
+inline constexpr std::uint32_t triangles = 0x0004;
+inline constexpr std::uint32_t triangle_strip = 0x0005;
+inline constexpr std::uint32_t triangle_fan = 0x0006;
+
+inline constexpr std::uint32_t depth_test = 0x0B71;
+inline constexpr std::uint32_t blend = 0x0BE2;
+inline constexpr std::uint32_t cull_face = 0x0B44;
+inline constexpr std::uint32_t scissor_test = 0x0C11;
+
+inline constexpr std::uint32_t front = 0x0404;
+inline constexpr std::uint32_t back = 0x0405;
+inline constexpr std::uint32_t cw = 0x0900;
+inline constexpr std::uint32_t ccw = 0x0901;
+
+inline constexpr std::uint32_t never = 0x0200;
+inline constexpr std::uint32_t less = 0x0201;
+inline constexpr std::uint32_t equal = 0x0202;
+inline constexpr std::uint32_t lequal = 0x0203;
+inline constexpr std::uint32_t greater = 0x0204;
+inline constexpr std::uint32_t notequal = 0x0205;
+inline constexpr std::uint32_t gequal = 0x0206;
+inline constexpr std::uint32_t always = 0x0207;
+
+inline constexpr std::uint32_t zero = 0;
+inline constexpr std::uint32_t one = 1;
+inline constexpr std::uint32_t src_color = 0x0300;
+inline constexpr std::uint32_t one_minus_src_color = 0x0301;
+inline constexpr std::uint32_t src_alpha = 0x0302;
+inline constexpr std::uint32_t one_minus_src_alpha = 0x0303;
+inline constexpr std::uint32_t dst_alpha = 0x0304;
+inline constexpr std::uint32_t one_minus_dst_alpha = 0x0305;
+inline constexpr std::uint32_t dst_color = 0x0306;
+inline constexpr std::uint32_t one_minus_dst_color = 0x0307;
+
+inline constexpr std::uint32_t byte_ = 0x1400;
+inline constexpr std::uint32_t unsigned_byte = 0x1401;
+inline constexpr std::uint32_t short_ = 0x1402;
+inline constexpr std::uint32_t unsigned_short = 0x1403;
+inline constexpr std::uint32_t int_ = 0x1404;
+inline constexpr std::uint32_t unsigned_int = 0x1405;
+inline constexpr std::uint32_t float_ = 0x1406;
+
+inline constexpr std::uint32_t array_buffer = 0x8892;
+inline constexpr std::uint32_t element_array_buffer = 0x8893;
+// WebGL 2's buffer for uniform blocks. It needs its own binding: everything
+// that was not the element buffer used to go to `array_buffer_`, so a page
+// filling a uniform buffer overwrote whichever vertex buffer was bound.
+inline constexpr std::uint32_t uniform_buffer = 0x8A11;
+inline constexpr std::uint32_t color_attachment0 = 0x8CE0;
+inline constexpr std::uint32_t framebuffer_complete = 0x8CD5;
+inline constexpr std::uint32_t framebuffer_incomplete_attachment = 0x8CD6;
+// Capabilities this rasteriser does not have. They are named so that DISABLING
+// one can be a no-op rather than an error - see set_enabled.
+inline constexpr std::uint32_t polygon_offset_fill = 0x8037;
+inline constexpr std::uint32_t dither = 0x0BD0;
+inline constexpr std::uint32_t rasterizer_discard = 0x8C89;
+inline constexpr std::uint32_t static_draw = 0x88E4;
+inline constexpr std::uint32_t dynamic_draw = 0x88E8;
+
+inline constexpr std::uint32_t texture_2d = 0x0DE1;
+inline constexpr std::uint32_t texture0 = 0x84C0;
+inline constexpr std::uint32_t rgba = 0x1908;
+inline constexpr std::uint32_t rgb = 0x1907;
+inline constexpr std::uint32_t nearest = 0x2600;
+inline constexpr std::uint32_t linear = 0x2601;
+inline constexpr std::uint32_t texture_mag_filter = 0x2800;
+inline constexpr std::uint32_t texture_min_filter = 0x2801;
+inline constexpr std::uint32_t texture_wrap_s = 0x2802;
+inline constexpr std::uint32_t texture_wrap_t = 0x2803;
+inline constexpr std::uint32_t clamp_to_edge = 0x812F;
+inline constexpr std::uint32_t repeat = 0x2901;
+
+inline constexpr std::uint32_t compile_status = 0x8B81;
+inline constexpr std::uint32_t link_status = 0x8B82;
+inline constexpr std::uint32_t active_uniforms = 0x8B86;
+inline constexpr std::uint32_t active_attributes = 0x8B89;
+
+// The type codes getActiveUniform and getActiveAttrib report. A caller
+// SWITCHES on these to decide which uniform* entry point to call, so a wrong
+// one here sends a mat4 through uniform4fv.
+inline constexpr std::uint32_t float_vec2 = 0x8B50;
+inline constexpr std::uint32_t float_vec3 = 0x8B51;
+inline constexpr std::uint32_t float_vec4 = 0x8B52;
+inline constexpr std::uint32_t int_vec2 = 0x8B53;
+inline constexpr std::uint32_t int_vec3 = 0x8B54;
+inline constexpr std::uint32_t int_vec4 = 0x8B55;
+inline constexpr std::uint32_t bool_ = 0x8B56;
+inline constexpr std::uint32_t bool_vec2 = 0x8B57;
+inline constexpr std::uint32_t bool_vec3 = 0x8B58;
+inline constexpr std::uint32_t bool_vec4 = 0x8B59;
+inline constexpr std::uint32_t float_mat2 = 0x8B5A;
+inline constexpr std::uint32_t float_mat3 = 0x8B5B;
+inline constexpr std::uint32_t float_mat4 = 0x8B5C;
+inline constexpr std::uint32_t sampler_2d = 0x8B5E;
+inline constexpr std::uint32_t sampler_cube = 0x8B60;
+inline constexpr std::uint32_t vertex_shader = 0x8B31;
+inline constexpr std::uint32_t fragment_shader = 0x8B30;
+
+inline constexpr std::uint32_t max_texture_size = 0x0D33;
+inline constexpr std::uint32_t max_vertex_attribs = 0x8869;
+inline constexpr std::uint32_t version = 0x1F02;
+inline constexpr std::uint32_t renderer = 0x1F01;
+inline constexpr std::uint32_t vendor = 0x1F00;
+inline constexpr std::uint32_t shading_language_version = 0x8B8C;
+
+inline constexpr std::uint32_t no_error = 0;
+inline constexpr std::uint32_t invalid_enum = 0x0500;
+inline constexpr std::uint32_t invalid_value = 0x0501;
+inline constexpr std::uint32_t invalid_operation = 0x0502;
+} // namespace gl_enum
+
 // A UNIFORM'S VALUE, as the bindings collect it from JavaScript.
 //
 // This exists because the bindings used to carry `raster::glsl::value` - a type
@@ -68,7 +194,25 @@ struct active_variable {
 
 class webgl_context {
 public:
-    webgl_context(int width, int height, raster::gl::driver which = raster::gl::driver::fastest);
+    // THE BINDINGS SPELL THESE AS webgl_context::active_variable, and that is
+    // the right name from a caller's point of view - they are what a context
+    // reports. They live outside the class so the header's readers meet them
+    // before the 64 methods rather than inside them.
+    using active_variable = shell::active_variable;
+    using vertex_attribute = shell::vertex_attribute;
+    using uniform_value = shell::uniform_value;
+
+    // THE CANVAS OWNS THE BITMAP, not this. A page's canvas already has a
+    // surface the painter composites; borrowing it means `present()` writes
+    // where the compositor already looks, with no second copy to keep in step.
+    webgl_context(paint::bitmap * surface, int width, int height,
+                  raster::gl::driver which = raster::gl::driver::fastest);
+
+    // A CANVAS THAT CHANGED SIZE. The device is recreated, because a GL surface
+    // has a fixed size and a context whose drawing buffer no longer matches the
+    // canvas renders into the wrong rectangle - which is invisible until
+    // something is drawn near an edge.
+    void resize(paint::bitmap * surface, int width, int height);
 
     [[nodiscard]] bool ok() const;
     // Why the context could not be made, for a page that asked for one and got
@@ -85,7 +229,7 @@ public:
     // device into it is `present()`, and it is deliberately NOT done per draw:
     // the old context read back after every drawArrays, which is a full surface
     // copy per mesh.
-    [[nodiscard]] paint::bitmap & surface();
+    [[nodiscard]] paint::bitmap * surface();
     void present();
 
     // WHICH WebGL a page asked for. Kept because it is a fact about the PAGE's
@@ -140,7 +284,7 @@ public:
     void enable_attribute(int location, bool on);
     void attribute_pointer(int location, int size, std::uint32_t type, bool normalised, int stride,
                            int offset);
-    void attribute_divisor(int location, std::uint32_t divisor);
+    void attribute_divisor(int location, int divisor);
 
     // ASKED OF GL EVERY TIME, into scratch the caller borrows. A page can change
     // an attribute through a vertex array this layer never saw, so a remembered
@@ -199,7 +343,7 @@ private:
     void fail(std::uint32_t error);
 
     raster::gl::device device_;
-    paint::bitmap surface_;
+    paint::bitmap * surface_ = nullptr;
     int version_ = 1;
     std::uint32_t error_ = 0;
     std::string shader_error_;

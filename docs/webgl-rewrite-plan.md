@@ -190,7 +190,27 @@ direct GLES call and a return, with no state kept that GL can be asked for.
 - [x] `version`
 - [x] `viewport`
 
-### UNVERIFIED: groups 4 and 5 have never been compiled
+### IT BUILDS: 62/71, and the 9 failures are ONE cause
+
+The tree compiles and links again. `ctest --preset default` reads **62 of 71**,
+and every failure is the same thing: the default build has no ANGLE, and there is
+no software fallback any more, so `create_vertex_array` returns 0 and the page
+says "Unable to create VAO".
+
+That is the rewrite's central trade arriving on schedule rather than a defect.
+The old tree answered WebGL calls without a driver because it had a rasteriser of
+its own; this one cannot, and should not pretend to. Two consequences to settle,
+in this order:
+
+1. **A context that cannot come up must return null from `getContext`**, so a
+   page takes its own no-WebGL path instead of throwing halfway through a frame.
+   That is what a real browser does and what these nine failures are really
+   reporting.
+2. **The default build should fetch ANGLE**, or those render tests should skip
+   with a reason the way `svg_basics` does without plutosvg - loudly, never
+   silently.
+
+### SUPERSEDED: groups 4 and 5 have never been compiled
 
 The devbox became unreachable during the group 4-5 build, and `rg "error:"` over
 a failed ssh matches nothing - so an empty result looked exactly like a clean

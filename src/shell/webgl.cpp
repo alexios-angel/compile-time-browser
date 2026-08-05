@@ -15,9 +15,17 @@ constexpr std::uint32_t gl_invalid_value = 0x0501;
 
 } // namespace
 
-webgl_context::webgl_context(int width, int height, raster::gl::driver which)
-    : device_{width, height, which} {
-    surface_ = paint::bitmap{width, height};
+webgl_context::webgl_context(paint::bitmap * surface, int width, int height,
+                             raster::gl::driver which)
+    : device_{width, height, which}, surface_{surface} {}
+
+void webgl_context::resize(paint::bitmap * surface, int width, int height) {
+    surface_ = surface;
+    if (width == device_.width() && height == device_.height()) { return; }
+    // A NEW DEVICE, and the page's GL objects go with the old one. That is what
+    // a real browser does on a context loss, and pretending otherwise would hand
+    // a page handles into a surface that no longer exists.
+    device_ = raster::gl::device{width, height};
 }
 
 bool webgl_context::ok() const {
@@ -36,7 +44,7 @@ int webgl_context::height() const {
     return device_.height();
 }
 
-paint::bitmap & webgl_context::surface() {
+paint::bitmap * webgl_context::surface() {
     return surface_;
 }
 
@@ -45,7 +53,8 @@ void webgl_context::present() {
     // whole surface back after every drawArrays and drawElements - a full copy
     // per mesh, which for Babylon's scene meant 267 of them for one frame.
     if (!device_.ok()) { return; }
-    (void)device_.read_pixels(surface_);
+    if (surface_ == nullptr) { return; }
+    (void)device_.read_pixels(*surface_);
 }
 
 void webgl_context::set_version(int version) {
@@ -251,9 +260,9 @@ void webgl_context::attribute_pointer(int location, int size, std::uint32_t type
                               normalised, stride, static_cast<std::size_t>(offset));
 }
 
-void webgl_context::attribute_divisor(int location, std::uint32_t divisor) {
-    if (location < 0) { return; }
-    device_.attribute_divisor(static_cast<unsigned>(location), divisor);
+void webgl_context::attribute_divisor(int location, int divisor) {
+    if (location < 0 || divisor < 0) { return; }
+    device_.attribute_divisor(static_cast<unsigned>(location), static_cast<unsigned>(divisor));
 }
 
 const vertex_attribute * webgl_context::attribute_at(int location) const {

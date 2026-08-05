@@ -150,7 +150,7 @@ using context = script::context;
             made.data.push_back(static_cast<float>(context::to_number(args[i])));
         }
     }
-    made.v.resize(static_cast<std::size_t>(rows) * cols, 0.0f);
+    made.data.resize(static_cast<std::size_t>(rows) * cols, 0.0f);
     return made;
 }
 
@@ -202,14 +202,11 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
     if (!made) {
         made = std::make_unique<webgl_context>(
             const_cast<paint::bitmap *>(surface->surface().get()), width, height);
-        // THE BACKEND IS CHOSEN HERE AND ONLY HERE. A context's programs,
-        // buffers and shader objects belong to whichever implementation made
-        // them, so switching one afterwards would leave a page holding handles
-        // into the other. `use_angle` reports whether it took - a build without
-        // ANGLE, or a machine where the device will not come up, quietly keeps
-        // the software path, which is the behaviour a page cannot tell from
-        // never having asked.
-        if (angle_preferred_) { (void)made->use_angle(); }
+        // THERE IS NO BACKEND TO CHOOSE ANY MORE. The software rasteriser is
+        // gone, so a context is an ANGLE context or it is nothing - see
+        // docs/webgl-rewrite-plan.md. What used to be `use_angle()` is now the
+        // only path, and `driver::deterministic` is the runtime switch that
+        // replaces it.
     }
     webgl_context * gl = made.get();
     // THE VERSION IS DECIDED ONCE, WHEN THE CONTEXT IS CREATED. A canvas has
@@ -1266,7 +1263,7 @@ std::vector<std::string> dom_bindings::unforwarded_gl_calls() const {
     std::vector<std::string> out;
     for (const auto & [id, context] : webgl_contexts_) {
         if (context == nullptr) { continue; }
-        for (const std::string & call : context->unforwarded()) {
+        for (const std::string & call : context->refused()) {
             if (std::ranges::find(out, call) == out.end()) { out.push_back(call); }
         }
     }
