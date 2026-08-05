@@ -329,6 +329,9 @@ private:
     // context, and only then sets the size, so without this every p5 WEBGL
     // sketch drew into a 300x150 buffer and read back a 20x20 window of nothing.
     void resize_webgl_context(node_id id, int width, int height);
+    // Copy every live WebGL context's surface into its canvas bitmap. Called
+    // once at the end of a frame, never per draw.
+    void present_webgl_contexts();
 
     // ONE CONTEXT PER CANVAS, kept for the document's life. getContext is
     // idempotent in the spec: a page that calls it twice gets the same object

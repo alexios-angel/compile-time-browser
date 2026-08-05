@@ -190,7 +190,32 @@ direct GLES call and a return, with no state kept that GL can be asked for.
 - [x] `version`
 - [x] `viewport`
 
-### WORKING TO 5/10, and the remaining blocker is NAMED
+### 9/10, and the suite is 65/73
+
+Two wires, both of them the same omission in different places: the rewrite moved
+readback out of every draw and then called it from nowhere.
+
+- `present_webgl_contexts()` runs at the END OF A FRAME, after the
+  requestAnimationFrame callbacks, which is the only place that is a frame
+  rather than a draw.
+- `readPixels` presents FIRST. A page calls it in the middle of the frame it
+  just drew, so reading the canvas bitmap returned the previous frame - nothing
+  at all on the first one, which looks exactly like a draw that missed. That one
+  line took the ratchet from 5/10 to 9/10.
+
+REMAINING: rung 10. Babylon clears (the blue reaches the pixels) and draws no
+geometry - `matReady=false`, so its material never becomes ready, which is a
+SHADER COMPILE failure rather than a draw failure.
+
+The known cause is the `#version` preamble the deleted code supplied: a shader
+using `layout(...)` is ES 3.00 and the directive is mandatory, but Babylon
+assembles its bodies without one and relies on the browser's preamble.
+Restoring it in `shader_source` SEGFAULTS, so it is reverted rather than
+committed. Find out why before putting it back - the crash is new information
+about the rewrite, not an obstacle to route around, and a segfaulting tree is
+worse than a 9/10 one.
+
+### SUPERSEDED: WORKING TO 5/10
 
 Measured, both drivers side by side, by the new `tests/gl_basics.cpp`:
 

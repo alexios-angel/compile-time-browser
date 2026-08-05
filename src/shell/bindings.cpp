@@ -391,6 +391,13 @@ std::size_t dom_bindings::run_due_callbacks() {
     }
     cx_->drain_microtasks();
     note_callback_fault("microtask");
+    // THE FRAME IS OVER, SO THE CANVAS GETS ITS PIXELS. A WebGL context draws
+    // into a GL surface the compositor cannot see; this is the one copy back,
+    // and here is the only place that is a FRAME rather than a draw. The old
+    // engine did it after every drawArrays - 267 full-surface copies for one
+    // Babylon frame - and the rewrite moved it here and then, for one commit,
+    // called it from nowhere at all.
+    present_webgl_contexts();
     return ran;
 }
 

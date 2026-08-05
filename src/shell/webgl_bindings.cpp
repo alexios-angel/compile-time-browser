@@ -1202,6 +1202,12 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
         }
         if (!into.is_array()) { return value::undefined(); }
         auto * out = static_cast<script::array_object *>(into.as_heap());
+        // FRESH PIXELS, NOT LAST FRAME'S. readPixels reads the framebuffer AS IT
+        // IS NOW, and a page calls it in the middle of the frame it just drew -
+        // before the end-of-frame present(). Reading the canvas bitmap without
+        // this returns whatever the previous frame left, which for the first
+        // frame is nothing at all and looks exactly like a draw that missed.
+        gl->present();
         const paint::bitmap * from = gl->surface();
         if (from == nullptr) { return value::undefined(); }
         const int x = int_at(a, 0);
@@ -1268,6 +1274,12 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
            [gl](context &, std::span<value>) { return value::number(gl->framebuffer_status()); });
 
     return value::object(obj);
+}
+
+void dom_bindings::present_webgl_contexts() {
+    for (const auto & [id, context] : webgl_contexts_) {
+        if (context != nullptr) { context->present(); }
+    }
 }
 
 std::vector<std::string> dom_bindings::unforwarded_gl_calls() const {
