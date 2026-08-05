@@ -190,6 +190,30 @@ direct GLES call and a return, with no state kept that GL can be asked for.
 - [x] `version`
 - [x] `viewport`
 
+### Rung 10: the #version crash is INSIDE ANGLE, and it is progress
+
+The segfault has a stack now, and it is not in `versioned()`:
+
+    rx::vk::DescriptorSetDescBuilder::updateOneUniformBuffer
+    rx::ProgramExecutableVk::updateUniformBuffersDescInfo
+    rx::ContextVk::handleDirtyGraphicsUniformBuffers
+    rx::ContextVk::setupDraw -> setupIndexedDraw -> drawElements
+    GL_DrawElements
+
+So the preamble WORKS: with it, Babylon's shaders compile as ES 3.00, declare
+their uniform BLOCKS, and reach a real indexed draw. The crash is ANGLE
+dereferencing the buffer for a block that has no buffer bound to its binding
+point - which means `getUniformBlockIndex`, `uniformBlockBinding` and
+`bindBufferBase` are not agreeing on a number, not that any of them is missing.
+All three are forwarded (group 2 and group 3).
+
+That is the LAST rung and it is now a specific, small question: log the block
+index, the binding point and the buffer for one program, in one run, and find
+which of the three disagrees. Not a suspect list - three numbers that must match.
+
+Reverted for now, because a segfaulting tree is worse than a 9/10 one. Put it
+back with the binding bug fixed, not before.
+
 ### 9/10, and the suite is 65/73
 
 Two wires, both of them the same omission in different places: the rewrite moved
