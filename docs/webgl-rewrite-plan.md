@@ -161,34 +161,49 @@ direct GLES call and a return, with no state kept that GL can be asked for.
 
 **textures and framebuffers** (8)
 
-- [ ] `create_texture`
-- [ ] `bind_texture`
-- [ ] `active_texture`
-- [ ] `texture_image`
-- [ ] `texture_parameter`
-- [ ] `bind_framebuffer`
-- [ ] `framebuffer_texture`
-- [ ] `framebuffer_status`
+- [x] `create_texture`
+- [x] `bind_texture`
+- [x] `active_texture`
+- [x] `texture_image`
+- [x] `texture_parameter`
+- [x] `bind_framebuffer`
+- [x] `framebuffer_texture`
+- [x] `framebuffer_status`
 
 **draws and pipeline state** (10)
 
-- [ ] `draw_arrays`
-- [ ] `draw_elements`
-- [ ] `draw_arrays_instanced`
-- [ ] `draw_elements_instanced`
-- [ ] `cull_face`
-- [ ] `front_face`
-- [ ] `depth_func`
-- [ ] `depth_mask`
-- [ ] `blend_func`
-- [ ] `delete_object`
+- [x] `draw_arrays`
+- [x] `draw_elements`
+- [x] `draw_arrays_instanced`
+- [x] `draw_elements_instanced`
+- [x] `cull_face`
+- [x] `front_face`
+- [x] `depth_func`
+- [x] `depth_mask`
+- [x] `blend_func`
+- [x] `delete_object`
 
 **everything else** (4)
 
-- [ ] `texture_from_bitmap`
+- [x] `texture_from_bitmap`
 - [x] `uniform_block_binding`
 - [x] `version`
 - [x] `viewport`
+
+### UNVERIFIED: groups 4 and 5 have never been compiled
+
+The devbox became unreachable during the group 4-5 build, and `rg "error:"` over
+a failed ssh matches nothing - so an empty result looked exactly like a clean
+build and was reported as one. It is not evidence of anything.
+
+BEFORE ANYTHING ELSE next session: `../infra/azure-build-server/server.sh start`
+(then `allow-ip` if the home IP rotated), rebuild, and find out. Expect real
+errors - nineteen methods and a changed `delete_object` signature went in
+untested.
+
+The check that would have caught it is to grep for a POSITIVE result rather than
+the absence of a negative one - "tests passed", a linked binary - because an
+absent failure and an absent run look the same.
 
 ### The blocker group 2 found: the bindings are NOT backend-neutral
 

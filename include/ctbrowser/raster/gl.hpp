@@ -130,7 +130,11 @@ public:
     void buffer_data(int target, const void * bytes, std::size_t size, int usage);
     void buffer_sub_data(int target, std::size_t offset, const void * bytes, std::size_t size);
     void bind_buffer_base(int target, unsigned index, unsigned buffer);
-    void delete_object(unsigned name, int kind);
+    // NO KIND ARGUMENT, because the bindings do not have one to give: a page
+    // calls deleteBuffer/deleteTexture on a handle and WebGL's wrapper object
+    // already knows what it is. GL numbers each class separately, so this ASKS
+    // which class the name belongs to rather than remembering.
+    void delete_object(unsigned name);
 
     void enable_attribute(unsigned location, bool on);
     void attribute_pointer(unsigned location, int size, int type, bool normalised, int stride,
@@ -155,6 +159,37 @@ public:
     void delete_vertex_array(unsigned array);
     [[nodiscard]] bool is_vertex_array(unsigned array) const;
     [[nodiscard]] unsigned bound_vertex_array() const;
+
+    // --- textures and framebuffers --------------------------------------------
+
+    [[nodiscard]] unsigned create_texture();
+    void bind_texture(int target, unsigned texture);
+    void active_texture(int unit);
+    // RGBA8 ONLY, by design rather than omission: a texture arrives here as
+    // bytes the bindings already normalised, so the format zoo stops before
+    // this line.
+    void texture_image(int target, int width, int height, const void * rgba);
+    void texture_parameter(int target, int name, int value);
+
+    [[nodiscard]] unsigned create_framebuffer();
+    void bind_framebuffer(unsigned framebuffer);
+    void framebuffer_texture(int attachment, unsigned texture);
+    [[nodiscard]] std::uint32_t framebuffer_status() const;
+
+    // --- draws and pipeline state ---------------------------------------------
+
+    void draw_arrays(int mode, int first, int count);
+    // `offset` is a BYTE OFFSET into the bound element buffer, which is what
+    // drawElements takes and the reason it is not an index.
+    void draw_elements(int mode, int count, int type, std::size_t offset);
+    void draw_arrays_instanced(int mode, int first, int count, int instances);
+    void draw_elements_instanced(int mode, int count, int type, std::size_t offset, int instances);
+
+    void cull_face(int which);
+    void front_face(int which);
+    void depth_func(int how);
+    void depth_mask(bool on);
+    void blend_func(int source, int destination);
 
     // The pixels, into a bitmap the painter composites.
     //

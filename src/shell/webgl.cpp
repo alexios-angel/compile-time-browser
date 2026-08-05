@@ -232,6 +232,10 @@ void webgl_context::bind_buffer_base(std::uint32_t target, std::uint32_t index,
     device_.bind_buffer_base(static_cast<int>(target), index, buffer);
 }
 
+void webgl_context::delete_object(std::uint32_t name) {
+    device_.delete_object(name);
+}
+
 void webgl_context::enable_attribute(int location, bool on) {
     if (location < 0) { return; }
     device_.enable_attribute(static_cast<unsigned>(location), on);
@@ -278,6 +282,134 @@ bool webgl_context::is_vertex_array(std::uint32_t array) const {
 
 std::uint32_t webgl_context::bound_vertex_array() const {
     return device_.bound_vertex_array();
+}
+
+// --- textures and framebuffers ----------------------------------------------
+
+std::uint32_t webgl_context::create_texture() {
+    return device_.create_texture();
+}
+
+void webgl_context::bind_texture(std::uint32_t target, std::uint32_t texture) {
+    device_.bind_texture(static_cast<int>(target), texture);
+}
+
+void webgl_context::active_texture(std::uint32_t unit) {
+    device_.active_texture(static_cast<int>(unit));
+}
+
+void webgl_context::texture_image(std::uint32_t target, int width, int height,
+                                  std::span<const std::byte> rgba) {
+    if (width < 0 || height < 0) {
+        fail(gl_invalid_value);
+        return;
+    }
+    const auto wanted = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4;
+    // SHORT DATA IS AN ERROR, NOT A PARTIAL UPLOAD. Handing GL a buffer smaller
+    // than the level it was told to make reads past the end.
+    if (!rgba.empty() && rgba.size() < wanted) {
+        fail(gl_invalid_value);
+        return;
+    }
+    device_.texture_image(static_cast<int>(target), width, height,
+                          rgba.empty() ? nullptr : rgba.data());
+}
+
+void webgl_context::texture_from_bitmap(std::uint32_t target, const paint::bitmap & image) {
+    // ARGB IN, RGBA OUT - the same swap read_pixels does in the other direction,
+    // and getting it wrong gives a texture that looks right until something in
+    // it is red.
+    std::vector<std::uint8_t> rgba(static_cast<std::size_t>(image.width) *
+                                   static_cast<std::size_t>(image.height) * 4);
+    std::size_t at = 0;
+    for (int y = 0; y < image.height; ++y) {
+        for (int x = 0; x < image.width; ++x) {
+            const std::uint32_t argb = image.at(x, y);
+            rgba[at++] = static_cast<std::uint8_t>((argb >> 16) & 0xFF);
+            rgba[at++] = static_cast<std::uint8_t>((argb >> 8) & 0xFF);
+            rgba[at++] = static_cast<std::uint8_t>(argb & 0xFF);
+            rgba[at++] = static_cast<std::uint8_t>((argb >> 24) & 0xFF);
+        }
+    }
+    device_.texture_image(static_cast<int>(target), image.width, image.height, rgba.data());
+}
+
+void webgl_context::texture_parameter(std::uint32_t target, std::uint32_t name,
+                                      std::uint32_t value) {
+    device_.texture_parameter(static_cast<int>(target), static_cast<int>(name),
+                              static_cast<int>(value));
+}
+
+void webgl_context::bind_framebuffer(std::uint32_t framebuffer) {
+    device_.bind_framebuffer(framebuffer);
+}
+
+void webgl_context::framebuffer_texture(std::uint32_t attachment, std::uint32_t texture) {
+    device_.framebuffer_texture(static_cast<int>(attachment), texture);
+}
+
+std::uint32_t webgl_context::framebuffer_status() const {
+    return device_.framebuffer_status();
+}
+
+// --- draws and pipeline state -----------------------------------------------
+//
+// NO READBACK HERE. The context this replaces read the whole surface after every
+// draw; `present()` does it once per frame.
+
+void webgl_context::draw_arrays(std::uint32_t mode, int first, int count) {
+    if (count < 0 || first < 0) {
+        fail(gl_invalid_value);
+        return;
+    }
+    device_.draw_arrays(static_cast<int>(mode), first, count);
+}
+
+void webgl_context::draw_elements(std::uint32_t mode, int count, std::uint32_t type, int offset) {
+    if (count < 0 || offset < 0) {
+        fail(gl_invalid_value);
+        return;
+    }
+    device_.draw_elements(static_cast<int>(mode), count, static_cast<int>(type),
+                          static_cast<std::size_t>(offset));
+}
+
+void webgl_context::draw_arrays_instanced(std::uint32_t mode, int first, int count, int instances) {
+    if (count < 0 || first < 0 || instances < 0) {
+        fail(gl_invalid_value);
+        return;
+    }
+    device_.draw_arrays_instanced(static_cast<int>(mode), first, count, instances);
+}
+
+void webgl_context::draw_elements_instanced(std::uint32_t mode, int count, std::uint32_t type,
+                                            int offset, int instances) {
+    if (count < 0 || offset < 0 || instances < 0) {
+        fail(gl_invalid_value);
+        return;
+    }
+    device_.draw_elements_instanced(static_cast<int>(mode), count, static_cast<int>(type),
+                                    static_cast<std::size_t>(offset), instances);
+}
+
+void webgl_context::cull_face(std::uint32_t which) {
+    device_.cull_face(static_cast<int>(which));
+}
+
+void webgl_context::front_face(std::uint32_t which) {
+    device_.front_face(static_cast<int>(which));
+}
+
+void webgl_context::depth_func(std::uint32_t how) {
+    device_.depth_func(static_cast<int>(how));
+}
+
+void webgl_context::depth_mask(bool on) {
+    device_.depth_mask(on);
+}
+
+void webgl_context::blend_func(std::uint32_t source, std::uint32_t destination) {
+    device_.blend_func(static_cast<int>(source), static_cast<int>(destination));
 }
 
 std::uint32_t webgl_context::take_error() {

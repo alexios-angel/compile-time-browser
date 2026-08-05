@@ -135,7 +135,7 @@ public:
     void buffer_data(std::uint32_t target, int size, std::uint32_t usage);
     void buffer_sub_data(std::uint32_t target, int offset, std::span<const std::byte> bytes);
     void bind_buffer_base(std::uint32_t target, std::uint32_t index, std::uint32_t buffer);
-    void delete_object(std::uint32_t name, std::string_view kind);
+    void delete_object(std::uint32_t name);
 
     void enable_attribute(int location, bool on);
     void attribute_pointer(int location, int size, std::uint32_t type, bool normalised, int stride,
@@ -152,6 +152,37 @@ public:
     void delete_vertex_array(std::uint32_t array);
     [[nodiscard]] bool is_vertex_array(std::uint32_t array) const;
     [[nodiscard]] std::uint32_t bound_vertex_array() const;
+
+    // --- textures and framebuffers --------------------------------------------
+
+    [[nodiscard]] std::uint32_t create_texture();
+    void bind_texture(std::uint32_t target, std::uint32_t texture);
+    void active_texture(std::uint32_t unit);
+    void texture_image(std::uint32_t target, int width, int height,
+                       std::span<const std::byte> rgba);
+    // A DECODED IMAGE, straight from the canvas layer. `texImage2D` with an
+    // <img> or a <canvas> is the common case and the bitmap is already ARGB, so
+    // the swap happens once here rather than in every caller.
+    void texture_from_bitmap(std::uint32_t target, const paint::bitmap & image);
+    void texture_parameter(std::uint32_t target, std::uint32_t name, std::uint32_t value);
+
+    void bind_framebuffer(std::uint32_t framebuffer);
+    void framebuffer_texture(std::uint32_t attachment, std::uint32_t texture);
+    [[nodiscard]] std::uint32_t framebuffer_status() const;
+
+    // --- draws and pipeline state ---------------------------------------------
+
+    void draw_arrays(std::uint32_t mode, int first, int count);
+    void draw_elements(std::uint32_t mode, int count, std::uint32_t type, int offset);
+    void draw_arrays_instanced(std::uint32_t mode, int first, int count, int instances);
+    void draw_elements_instanced(std::uint32_t mode, int count, std::uint32_t type, int offset,
+                                 int instances);
+
+    void cull_face(std::uint32_t which);
+    void front_face(std::uint32_t which);
+    void depth_func(std::uint32_t how);
+    void depth_mask(bool on);
+    void blend_func(std::uint32_t source, std::uint32_t destination);
 
     // --- the error contract, which is NOT the thing being deleted ------------
     //

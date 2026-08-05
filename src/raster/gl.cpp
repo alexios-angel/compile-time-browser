@@ -408,17 +408,16 @@ void device::bind_buffer_base(int target, unsigned index, unsigned buffer) {
     if (ok()) { glBindBufferBase(static_cast<GLenum>(target), index, buffer); }
 }
 
-void device::delete_object(unsigned name, int kind) {
+void device::delete_object(unsigned name) {
     if (!ok() || name == 0) { return; }
-    switch (kind) {
-    case GL_BUFFER: glDeleteBuffers(1, &name); break;
-    case GL_TEXTURE: glDeleteTextures(1, &name); break;
-    case GL_FRAMEBUFFER: glDeleteFramebuffers(1, &name); break;
-    case GL_RENDERBUFFER: glDeleteRenderbuffers(1, &name); break;
-    case GL_PROGRAM: glDeleteProgram(name); break;
-    case GL_SHADER: glDeleteShader(name); break;
-    default: break;
-    }
+    // ASK, DO NOT REMEMBER. Each glIs* answers for its own namespace, and a
+    // handle belongs to exactly one of them.
+    if (glIsBuffer(name) == GL_TRUE) { glDeleteBuffers(1, &name); }
+    if (glIsTexture(name) == GL_TRUE) { glDeleteTextures(1, &name); }
+    if (glIsFramebuffer(name) == GL_TRUE) { glDeleteFramebuffers(1, &name); }
+    if (glIsRenderbuffer(name) == GL_TRUE) { glDeleteRenderbuffers(1, &name); }
+    if (glIsProgram(name) == GL_TRUE) { glDeleteProgram(name); }
+    if (glIsShader(name) == GL_TRUE) { glDeleteShader(name); }
 }
 
 void device::enable_attribute(unsigned location, bool on) {
@@ -486,6 +485,93 @@ unsigned device::bound_vertex_array() const {
     GLint current = 0;
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &current);
     return static_cast<unsigned>(current);
+}
+
+unsigned device::create_texture() {
+    if (!ok()) { return 0u; }
+    GLuint name = 0;
+    glGenTextures(1, &name);
+    return name;
+}
+
+void device::bind_texture(int target, unsigned texture) {
+    if (ok()) { glBindTexture(static_cast<GLenum>(target), texture); }
+}
+
+void device::active_texture(int unit) {
+    if (ok()) { glActiveTexture(static_cast<GLenum>(unit)); }
+}
+
+void device::texture_image(int target, int width, int height, const void * rgba) {
+    if (!ok()) { return; }
+    glTexImage2D(static_cast<GLenum>(target), 0, GL_RGBA, width, height, 0, GL_RGBA,
+                 GL_UNSIGNED_BYTE, rgba);
+}
+
+void device::texture_parameter(int target, int name, int value) {
+    if (ok()) { glTexParameteri(static_cast<GLenum>(target), static_cast<GLenum>(name), value); }
+}
+
+unsigned device::create_framebuffer() {
+    if (!ok()) { return 0u; }
+    GLuint name = 0;
+    glGenFramebuffers(1, &name);
+    return name;
+}
+
+void device::bind_framebuffer(unsigned framebuffer) {
+    if (ok()) { glBindFramebuffer(GL_FRAMEBUFFER, framebuffer); }
+}
+
+void device::framebuffer_texture(int attachment, unsigned texture) {
+    if (!ok()) { return; }
+    glFramebufferTexture2D(GL_FRAMEBUFFER, static_cast<GLenum>(attachment), GL_TEXTURE_2D, texture,
+                           0);
+}
+
+std::uint32_t device::framebuffer_status() const {
+    return ok() ? static_cast<std::uint32_t>(glCheckFramebufferStatus(GL_FRAMEBUFFER)) : 0u;
+}
+
+void device::draw_arrays(int mode, int first, int count) {
+    if (ok()) { glDrawArrays(static_cast<GLenum>(mode), first, count); }
+}
+
+void device::draw_elements(int mode, int count, int type, std::size_t offset) {
+    if (!ok()) { return; }
+    glDrawElements(static_cast<GLenum>(mode), count, static_cast<GLenum>(type),
+                   reinterpret_cast<const void *>(offset));
+}
+
+void device::draw_arrays_instanced(int mode, int first, int count, int instances) {
+    if (ok()) { glDrawArraysInstanced(static_cast<GLenum>(mode), first, count, instances); }
+}
+
+void device::draw_elements_instanced(int mode, int count, int type, std::size_t offset,
+                                     int instances) {
+    if (!ok()) { return; }
+    glDrawElementsInstanced(static_cast<GLenum>(mode), count, static_cast<GLenum>(type),
+                            reinterpret_cast<const void *>(offset), instances);
+}
+
+void device::cull_face(int which) {
+    if (ok()) { glCullFace(static_cast<GLenum>(which)); }
+}
+
+void device::front_face(int which) {
+    if (ok()) { glFrontFace(static_cast<GLenum>(which)); }
+}
+
+void device::depth_func(int how) {
+    if (ok()) { glDepthFunc(static_cast<GLenum>(how)); }
+}
+
+void device::depth_mask(bool on) {
+    if (ok()) { glDepthMask(on ? GL_TRUE : GL_FALSE); }
+}
+
+void device::blend_func(int source, int destination) {
+    if (ok()) { glBlendFunc(static_cast<GLenum>(source), static_cast<GLenum>(destination)); }
 }
 
 bool device::read_pixels(paint::bitmap & into) const {
@@ -614,7 +700,31 @@ void device::bind_buffer(int, unsigned) {}
 void device::buffer_data(int, const void *, std::size_t, int) {}
 void device::buffer_sub_data(int, std::size_t, const void *, std::size_t) {}
 void device::bind_buffer_base(int, unsigned, unsigned) {}
-void device::delete_object(unsigned, int) {}
+void device::delete_object(unsigned) {}
+unsigned device::create_texture() {
+    return 0u;
+}
+void device::bind_texture(int, unsigned) {}
+void device::active_texture(int) {}
+void device::texture_image(int, int, int, const void *) {}
+void device::texture_parameter(int, int, int) {}
+unsigned device::create_framebuffer() {
+    return 0u;
+}
+void device::bind_framebuffer(unsigned) {}
+void device::framebuffer_texture(int, unsigned) {}
+std::uint32_t device::framebuffer_status() const {
+    return 0u;
+}
+void device::draw_arrays(int, int, int) {}
+void device::draw_elements(int, int, int, std::size_t) {}
+void device::draw_arrays_instanced(int, int, int, int) {}
+void device::draw_elements_instanced(int, int, int, std::size_t, int) {}
+void device::cull_face(int) {}
+void device::front_face(int) {}
+void device::depth_func(int) {}
+void device::depth_mask(bool) {}
+void device::blend_func(int, int) {}
 void device::enable_attribute(unsigned, bool) {}
 void device::attribute_pointer(unsigned, int, int, bool, int, std::size_t) {}
 void device::attribute_divisor(unsigned, unsigned) {}
