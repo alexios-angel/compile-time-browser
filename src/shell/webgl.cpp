@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 
 namespace ctbrowser::shell {
 
@@ -108,7 +110,39 @@ std::uint32_t webgl_context::create_shader(std::uint32_t kind) {
 }
 
 void webgl_context::shader_source(std::uint32_t shader, std::string_view source) {
-    device_.shader_source(shader, std::string{source});
+    const std::string sent{source};
+    // WHAT ACTUALLY REACHED THE COMPILER. `CTBROWSER_GL_SRC=1`. A shader body
+    // that arrives empty or truncated fails in a way that looks like a draw
+    // problem three layers away - which has happened twice on this page.
+    if (std::getenv("CTBROWSER_GL_SRC") != nullptr) {
+        std::fprintf(stderr, "[src] shader=%u bytes=%zu version=%d layout=%d\n", shader,
+                     sent.size(), sent.find("#version") != std::string::npos ? 1 : 0,
+                     sent.find("layout(") != std::string::npos ? 1 : 0);
+    }
+
+    // TODO(rung 10): BABYLON NEEDS A `#version 300 es` PREAMBLE AND THIS DOES
+    // NOT ADD ONE YET.
+    //
+    // A shader using `layout(...)` is GLSL ES 3.00 and the directive is
+    // mandatory; Babylon assembles its bodies without one and relies on the
+    // browser to supply it. The fix is four lines, and it has been WRITTEN AND
+    // REVERTED THREE TIMES because it is correct and still crashes:
+    //
+    //     if (sent.find("#version") == std::string::npos &&
+    //         sent.find("layout(") != std::string::npos) {
+    //         sent = "#version 300 es\n" + sent;
+    //     }
+    //
+    // With it, Babylon's shaders compile as ES 3.00, declare their uniform
+    // blocks, reach a real indexed draw - and ANGLE segfaults inside
+    // `updateOneUniformBuffer`. That crash is the LAST thing between this engine
+    // and a Babylon scene, and docs/webgl-rewrite-plan.md has the full stack,
+    // the three refuted hypotheses, and the one measurement still to run
+    // (whether `bindBufferBase` precedes `bufferData` for buffer 1).
+    //
+    // DO NOT put the preamble back until that is understood: a segfaulting tree
+    // is worse than one that reads 9/10.
+    device_.shader_source(shader, sent);
 }
 
 void webgl_context::compile_shader(std::uint32_t shader) {
@@ -178,11 +212,27 @@ int webgl_context::attribute_location(std::uint32_t program, std::string_view na
 }
 
 int webgl_context::get_uniform_block_index(std::uint32_t program, std::string_view name) const {
-    return device_.uniform_block_index(program, std::string{name});
+    const int index = device_.uniform_block_index(program, std::string{name});
+    // `CTBROWSER_GL_UBO=1` prints this, the binding and the buffer together.
+    // THE THREE MUST AGREE, and reading them side by side in one run is what
+    // refuted two hypotheses that had each looked obvious on their own.
+    //
+    // -1 IS NORMAL for a block the shader never reads: GL drops it and answers
+    // GL_INVALID_INDEX. Babylon's `Mesh` block does this and it cost a whole
+    // pass to rule out - it is not a bug, do not chase it again.
+    if (std::getenv("CTBROWSER_GL_UBO") != nullptr) {
+        std::fprintf(stderr, "[ubo] index program=%u name=%s -> %d\n", program,
+                     std::string{name}.c_str(), index);
+    }
+    return index;
 }
 
 void webgl_context::uniform_block_binding(std::uint32_t program, std::uint32_t index,
                                           std::uint32_t binding) {
+    if (std::getenv("CTBROWSER_GL_UBO") != nullptr) {
+        std::fprintf(stderr, "[ubo] bind  program=%u index=%u -> binding=%u\n", program, index,
+                     binding);
+    }
     device_.uniform_block_binding(program, index, binding);
 }
 
@@ -238,6 +288,19 @@ void webgl_context::buffer_sub_data(std::uint32_t target, int offset,
 
 void webgl_context::bind_buffer_base(std::uint32_t target, std::uint32_t index,
                                      std::uint32_t buffer) {
+    // TODO(rung 10): THE NEXT MEASUREMENT TO RUN GOES HERE.
+    //
+    // The remaining suspect for the ANGLE crash is a binding point that has a
+    // buffer bound but no STORAGE behind it - `bindBufferBase` before
+    // `buffer_data`, leaving ANGLE a null BufferHelper to dereference. Light0
+    // binds buffer 1 at binding 3.
+    //
+    // Log the buffer name and size in `buffer_data` too, run once with
+    // CTBROWSER_GL_UBO=1, and read the ORDER of the two. One command, one
+    // answer - not another suspect list.
+    if (std::getenv("CTBROWSER_GL_UBO") != nullptr) {
+        std::fprintf(stderr, "[ubo] base  target=%u index=%u buffer=%u\n", target, index, buffer);
+    }
     device_.bind_buffer_base(static_cast<int>(target), index, buffer);
 }
 

@@ -1,5 +1,54 @@
 # WebGL, rebuilt on ANGLE alone
 
+## START HERE
+
+**Where it stands:** the rewrite is done and working. `webgl2_ratchet` reads
+**9 of 10**, the ANGLE suite reads **65 of 73**, and the tree builds clean on
+both presets. All 64 methods of the translator are written.
+
+**The one remaining task** is rung 10: Babylon clears but draws no geometry.
+The cause is understood as far as this - Babylon needs a `#version 300 es`
+preamble (there is a `TODO(rung 10)` in `webgl_context::shader_source` with the
+exact four lines), and adding it gets Babylon all the way to a real indexed draw
+where **ANGLE then segfaults inside `updateOneUniformBuffer`**.
+
+**Do this first**, before reading anything else here:
+
+```bash
+../infra/azure-build-server/server.sh start     # and allow-ip if the IP rotated
+tools/remote-build.sh                            # ALWAYS build on the devbox
+ssh devbox 'cd ~/projects/compile-time-browser &&
+  CTBROWSER_GL_UBO=1 /tmp/build-angle/src/tests/ctbrowser-test-webgl2_ratchet 2>&1 | rg "^\[ubo\]"'
+```
+
+**Three hypotheses are already refuted** - do not spend a pass on any of them:
+
+1. The UBO index/binding/buffer numbers disagree. **They agree.**
+2. Babylon's shader source lacks the `Mesh` block. **It has it.**
+3. `Mesh` answering -1 is a bug. **It is not** - GL drops an unread block and
+   answers GL_INVALID_INDEX, which is correct and needs no buffer.
+
+**The suspect that fits the stack** is a binding point with a buffer bound but no
+storage behind it: `bindBufferBase` before `bufferData`. There is a
+`TODO(rung 10)` in `webgl_context::bind_buffer_base` naming the one measurement
+that settles it.
+
+**Two diagnostics are permanent** and cost nothing when unset:
+`CTBROWSER_GL_UBO=1` (index, binding and buffer together) and
+`CTBROWSER_GL_SRC=1` (what actually reached the compiler).
+
+**The discipline that this work kept failing on**, stated once: change ONE thing
+between two runs and print both numbers side by side in the SAME command. Four
+wrong conclusions in this file came from not doing that. And check a POSITIVE
+signal - "tests passed", a linked binary - because an absent failure and an
+absent run look identical, which turned an unreachable devbox into a reported
+clean build.
+
+**The ratchet records are targets, not scoreboards.** `tests/webgl2-ratchet.txt`
+still says 10 and the test reports going backwards. Do not lower it to match.
+
+---
+
 Decided 2026-08-04, after the ANGLE port spent five commits chasing a Babylon
 scene that drew 267 times and painted nothing. **Delete the whole GL stack and
 write it again against ANGLE only.** Tests and functionality regress on purpose;
