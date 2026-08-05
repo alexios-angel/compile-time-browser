@@ -190,7 +190,32 @@ direct GLES call and a return, with no state kept that GL can be asked for.
 - [x] `version`
 - [x] `viewport`
 
-### Rung 10: the #version crash is INSIDE ANGLE, and it is progress
+### Rung 10: the three numbers AGREE, and `Mesh` is the odd one
+
+Logged with `CTBROWSER_GL_UBO=1`, one program, one run:
+
+    Material -> 0,  bind 0 -> 0,  base index=0 buffer=7
+    Scene    -> 1,  bind 1 -> 1,  base index=1 buffer=6
+    Light0   -> 2,  bind 2 -> 3,  base index=3 buffer=1
+    Mesh     -> -1   (no bind, no buffer)
+
+So the mismatch hypothesis is WRONG: index, binding and buffer line up for every
+block that has one. What stands out instead is `Mesh` answering -1 -
+GL_INVALID_INDEX - while Babylon plainly expects that block to exist, and then
+binds nothing for it.
+
+TWO READINGS, and they need different fixes, so measure before choosing:
+
+1. The shader genuinely has no `Mesh` block, because the preamble made it ES
+   3.00 but something else about the source dropped the declaration. Then the
+   bug is in what reaches the compiler - dump the exact source `shader_source`
+   sends and read it.
+2. `Mesh` exists but the lookup ran against the wrong program, or before the
+   link. Then the -1 is real but premature.
+
+Reading 1 is testable in one command and should be done first.
+
+### SUPERSEDED: the #version crash is INSIDE ANGLE
 
 The segfault has a stack now, and it is not in `versioned()`:
 
