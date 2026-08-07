@@ -110,38 +110,39 @@ std::uint32_t webgl_context::create_shader(std::uint32_t kind) {
 }
 
 void webgl_context::shader_source(std::uint32_t shader, std::string_view source) {
-    const std::string sent{source};
+    std::string sent{source};
+    // MEASURED BEFORE ANYTHING IS ADDED. The previous reading of this could not
+    // tell two different facts apart: a run with the preamble on printed
+    // `version=1` whether the PAGE supplied the directive or this code did, and
+    // "Babylon assembles its bodies without one" was inferred from that number.
+    const bool page_version = sent.find("#version") != std::string::npos;
+    const bool has_layout = sent.find("layout(") != std::string::npos;
+
+    // A shader using `layout(...)` is GLSL ES 3.00 and the `#version 300 es`
+    // directive is then mandatory. Supplying it is the PAGE'S job - a real
+    // browser adds nothing - so this is a repair for a bundle that did not, and
+    // it fires only when the page did not and the source plainly needs it.
+    //
+    // TEMPORARY KNOB, and it comes out with the one in raster/gl.cpp:
+    // `CTBROWSER_GL_PREAMBLE=0` turns it off, so ONE build can be measured both
+    // ways rather than rebuilt between two runs.
+    const char * knob = std::getenv("CTBROWSER_GL_PREAMBLE");
+    const bool add =
+        (knob == nullptr || std::string_view{knob} != "0") && !page_version && has_layout;
+    if (add) { sent.insert(0, "#version 300 es\n"); }
+
     // WHAT ACTUALLY REACHED THE COMPILER. `CTBROWSER_GL_SRC=1`. A shader body
     // that arrives empty or truncated fails in a way that looks like a draw
-    // problem three layers away - which has happened twice on this page.
+    // problem three layers away - which has happened twice on this page. The
+    // FIRST LINE comes too, because that is where a `#version` has to be and
+    // where a body that arrived as nothing but `#define`s is visible at a glance.
     if (std::getenv("CTBROWSER_GL_SRC") != nullptr) {
-        std::fprintf(stderr, "[src] shader=%u bytes=%zu version=%d layout=%d\n", shader,
-                     sent.size(), sent.find("#version") != std::string::npos ? 1 : 0,
-                     sent.find("layout(") != std::string::npos ? 1 : 0);
+        const std::size_t line = std::min(sent.find('\n'), sent.size());
+        const std::string first = sent.substr(0, std::min<std::size_t>(line, 60));
+        std::fprintf(stderr, "[src] shader=%u bytes=%zu page_version=%d layout=%d added=%d | %s\n",
+                     shader, sent.size(), page_version ? 1 : 0, has_layout ? 1 : 0, add ? 1 : 0,
+                     first.c_str());
     }
-
-    // TODO(rung 10): BABYLON NEEDS A `#version 300 es` PREAMBLE AND THIS DOES
-    // NOT ADD ONE YET.
-    //
-    // A shader using `layout(...)` is GLSL ES 3.00 and the directive is
-    // mandatory; Babylon assembles its bodies without one and relies on the
-    // browser to supply it. The fix is four lines, and it has been WRITTEN AND
-    // REVERTED THREE TIMES because it is correct and still crashes:
-    //
-    //     if (sent.find("#version") == std::string::npos &&
-    //         sent.find("layout(") != std::string::npos) {
-    //         sent = "#version 300 es\n" + sent;
-    //     }
-    //
-    // With it, Babylon's shaders compile as ES 3.00, declare their uniform
-    // blocks, reach a real indexed draw - and ANGLE segfaults inside
-    // `updateOneUniformBuffer`. That crash is the LAST thing between this engine
-    // and a Babylon scene, and docs/webgl-rewrite-plan.md has the full stack,
-    // the three refuted hypotheses, and the one measurement still to run
-    // (whether `bindBufferBase` precedes `bufferData` for buffer 1).
-    //
-    // DO NOT put the preamble back until that is understood: a segfaulting tree
-    // is worse than one that reads 9/10.
     device_.shader_source(shader, sent);
 }
 
@@ -261,8 +262,19 @@ void webgl_context::bind_buffer(std::uint32_t target, std::uint32_t buffer) {
 
 void webgl_context::buffer_data(std::uint32_t target, std::span<const std::byte> bytes,
                                 std::uint32_t usage) {
+    note_storage(target, bytes.size());
     device_.buffer_data(static_cast<int>(target), bytes.data(), bytes.size(),
                         static_cast<int>(usage));
+}
+
+void webgl_context::note_storage(std::uint32_t target, std::size_t size) {
+    // WHICH BUFFER GOT STORAGE, AND WHEN. Printed beside the `[ubo] base` lines
+    // so the ORDER of the two is readable in one run: a binding point with a
+    // buffer bound and no storage behind it is the shape that leaves ANGLE a
+    // null BufferHelper to dereference at draw time.
+    if (std::getenv("CTBROWSER_GL_UBO") == nullptr) { return; }
+    std::fprintf(stderr, "[ubo] data  target=%u buffer=%u bytes=%zu\n", target,
+                 device_.bound_buffer(static_cast<int>(target)), size);
 }
 
 void webgl_context::buffer_data(std::uint32_t target, int size, std::uint32_t usage) {
@@ -272,6 +284,7 @@ void webgl_context::buffer_data(std::uint32_t target, int size, std::uint32_t us
         fail(gl_invalid_value);
         return;
     }
+    note_storage(target, static_cast<std::size_t>(size));
     device_.buffer_data(static_cast<int>(target), nullptr, static_cast<std::size_t>(size),
                         static_cast<int>(usage));
 }
@@ -288,16 +301,8 @@ void webgl_context::buffer_sub_data(std::uint32_t target, int offset,
 
 void webgl_context::bind_buffer_base(std::uint32_t target, std::uint32_t index,
                                      std::uint32_t buffer) {
-    // TODO(rung 10): THE NEXT MEASUREMENT TO RUN GOES HERE.
-    //
-    // The remaining suspect for the ANGLE crash is a binding point that has a
-    // buffer bound but no STORAGE behind it - `bindBufferBase` before
-    // `buffer_data`, leaving ANGLE a null BufferHelper to dereference. Light0
-    // binds buffer 1 at binding 3.
-    //
-    // Log the buffer name and size in `buffer_data` too, run once with
-    // CTBROWSER_GL_UBO=1, and read the ORDER of the two. One command, one
-    // answer - not another suspect list.
+    // Printed beside the `[ubo] data` line `buffer_data` writes, so the ORDER
+    // of a binding and its storage is readable in one run.
     if (std::getenv("CTBROWSER_GL_UBO") != nullptr) {
         std::fprintf(stderr, "[ubo] base  target=%u index=%u buffer=%u\n", target, index, buffer);
     }

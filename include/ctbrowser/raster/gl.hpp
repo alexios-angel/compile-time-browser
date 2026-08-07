@@ -64,6 +64,16 @@ public:
     [[nodiscard]] std::string renderer() const;
     [[nodiscard]] std::string version() const;
 
+    // WHETHER THIS IS A BROWSER'S CONTEXT OR A NATIVE APP'S, asked of GL rather
+    // than inferred from the attributes that were requested. ANGLE validates a
+    // whole class of page mistake only in WebGL compatibility mode - a uniform
+    // buffer bound to a binding point with no storage is undefined behaviour to
+    // GLES and an INVALID_OPERATION to WebGL - so a context that quietly came up
+    // without it turns a page's error into a crash in the Vulkan back end. It
+    // is requested when the display advertises it, and this reports what
+    // happened.
+    [[nodiscard]] bool webgl_compatible() const;
+
     [[nodiscard]] int width() const noexcept;
     [[nodiscard]] int height() const noexcept;
 
@@ -130,6 +140,12 @@ public:
     void buffer_data(int target, const void * bytes, std::size_t size, int usage);
     void buffer_sub_data(int target, std::size_t offset, const void * bytes, std::size_t size);
     void bind_buffer_base(int target, unsigned index, unsigned buffer);
+    // WHICH BUFFER IS BOUND TO A TARGET - asked of GL, never remembered. The
+    // uploads a page makes name a target and GL resolves it to a buffer, so
+    // "which buffer did that 3,072 bytes land in" is not answerable from the
+    // call alone, and it is the question a uniform buffer with no storage
+    // behind it is diagnosed by. 0 for a target with no binding query.
+    [[nodiscard]] unsigned bound_buffer(int target) const;
     // NO KIND ARGUMENT, because the bindings do not have one to give: a page
     // calls deleteBuffer/deleteTexture on a handle and WebGL's wrapper object
     // already knows what it is. GL numbers each class separately, so this ASKS

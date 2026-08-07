@@ -341,6 +341,10 @@ public:
 
 private:
     void fail(std::uint32_t error);
+    // The `[ubo] data` half of the CTBROWSER_GL_UBO diagnostic, shared by both
+    // buffer_data overloads so `bufferData(target, size, usage)` - the one a
+    // page uses to RESERVE storage it fills later - cannot go unrecorded.
+    void note_storage(std::uint32_t target, std::size_t size);
 
     raster::gl::device device_;
     paint::bitmap * surface_ = nullptr;

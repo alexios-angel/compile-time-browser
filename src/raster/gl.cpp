@@ -1,6 +1,9 @@
 #include <ctbrowser/raster/gl.hpp>
 
+#include <cstddef>
+#include <cstdlib>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -49,6 +52,28 @@ namespace {
     }
     attrs.push_back(EGL_NONE);
     return get_platform_display(EGL_PLATFORM_ANGLE_ANGLE, EGL_DEFAULT_DISPLAY, attrs.data());
+}
+
+// Does this display advertise an extension? A DISPLAY extension is only
+// queryable after eglInitialize, which is why this is asked at construction
+// rather than folded into a constant attribute list.
+[[nodiscard]] bool has_extension(EGLDisplay display, std::string_view name) {
+    const char * all = eglQueryString(display, EGL_EXTENSIONS);
+    if (all == nullptr) { return false; }
+    // WHOLE WORDS, SPACE SEPARATED. Every name here is a prefix of some other
+    // ANGLE extension - `EGL_ANGLE_robust_resource_initialization` sits beside
+    // `..._initialization_2` in some builds - so a plain substring search
+    // reports an extension the driver does not have and the attribute is then
+    // rejected by eglCreateContext.
+    const std::string_view all_of{all};
+    for (std::size_t at = all_of.find(name); at != std::string_view::npos;
+         at = all_of.find(name, at + 1)) {
+        const std::size_t end = at + name.size();
+        const bool left = at == 0 || all_of[at - 1] == ' ';
+        const bool right = end == all_of.size() || all_of[end] == ' ';
+        if (left && right) { return true; }
+    }
+    return false;
 }
 
 } // namespace
@@ -146,9 +171,36 @@ device::device(int width, int height, driver which) : impl_{std::make_unique<imp
         return;
     }
 
-    const EGLint context_attrs[] = {EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 1,
-                                    EGL_NONE};
-    impl_->context = eglCreateContext(impl_->display, config, EGL_NO_CONTEXT, context_attrs);
+    // THE CONTEXT A BROWSER ASKS FOR, WHICH IS NOT THE ONE A NATIVE APP ASKS
+    // FOR. ANGLE trusts a GLES client: a uniform buffer bound to a binding point
+    // with no storage behind it is undefined behaviour, and the Vulkan back end
+    // dereferences the null BufferHelper rather than complaining. The same
+    // mistake in a WEB PAGE has to be an INVALID_OPERATION, and the switch that
+    // makes it one is the context attribute Chrome sets and this did not.
+    //
+    // Robust resource initialisation is the second half of the same argument and
+    // is load-bearing for a different reason: WebGL requires an untouched buffer
+    // or texture to read as ZERO, and a byte-compared golden cannot survive
+    // reading whatever the last allocation left in device memory.
+    //
+    // TEMPORARY, AND SAY SO: `CTBROWSER_GL_COMPAT=0` turns both off, so one
+    // build can measure with and against - the discipline this work kept failing
+    // on. It comes out when the question is answered.
+    std::vector<EGLint> context_attrs{EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 1};
+    const char * compat = std::getenv("CTBROWSER_GL_COMPAT");
+    if (compat == nullptr || std::string_view{compat} != "0") {
+        if (has_extension(impl_->display, "EGL_ANGLE_create_context_webgl_compatibility")) {
+            context_attrs.push_back(EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE);
+            context_attrs.push_back(EGL_TRUE);
+        }
+        if (has_extension(impl_->display, "EGL_ANGLE_robust_resource_initialization")) {
+            context_attrs.push_back(EGL_ROBUST_RESOURCE_INITIALIZATION_ANGLE);
+            context_attrs.push_back(EGL_TRUE);
+        }
+    }
+    context_attrs.push_back(EGL_NONE);
+    impl_->context =
+        eglCreateContext(impl_->display, config, EGL_NO_CONTEXT, context_attrs.data());
     if (impl_->context == EGL_NO_CONTEXT) {
         impl_->error = "eglCreateContext failed for ES 3.1";
         return;
@@ -196,6 +248,23 @@ std::string device::renderer() const {
 
 std::string device::version() const {
     return ok() ? ask(GL_VERSION) : std::string{};
+}
+
+bool device::webgl_compatible() const {
+    // ASKED OF GL, not remembered from the attribute list. eglCreateContext is
+    // entitled to ignore an attribute it does not implement, so "we requested
+    // it" and "we got it" are two different facts and only the second one is
+    // worth reporting.
+    if (!ok()) { return false; }
+    const std::string all = ask(GL_EXTENSIONS);
+    const std::string_view name{"GL_ANGLE_webgl_compatibility"};
+    for (std::size_t at = all.find(name); at != std::string::npos; at = all.find(name, at + 1)) {
+        const std::size_t end = at + name.size();
+        if ((at == 0 || all[at - 1] == ' ') && (end == all.size() || all[end] == ' ')) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void device::viewport(int x, int y, int w, int h) {
@@ -436,6 +505,28 @@ void device::bind_buffer_base(int target, unsigned index, unsigned buffer) {
     if (ok()) { glBindBufferBase(static_cast<GLenum>(target), index, buffer); }
 }
 
+unsigned device::bound_buffer(int target) const {
+    if (!ok()) { return 0u; }
+    // A TARGET AND ITS BINDING QUERY ARE DIFFERENT NUMBERS, and there is no
+    // arithmetic between them - GL_ARRAY_BUFFER is 0x8892 and its query 0x8894,
+    // but GL_UNIFORM_BUFFER is 0x8A11 and its query 0x8A28. A table, not a
+    // formula.
+    GLenum query = 0;
+    switch (static_cast<GLenum>(target)) {
+        case GL_ARRAY_BUFFER: query = GL_ARRAY_BUFFER_BINDING; break;
+        case GL_ELEMENT_ARRAY_BUFFER: query = GL_ELEMENT_ARRAY_BUFFER_BINDING; break;
+        case GL_UNIFORM_BUFFER: query = GL_UNIFORM_BUFFER_BINDING; break;
+        case GL_COPY_READ_BUFFER: query = GL_COPY_READ_BUFFER_BINDING; break;
+        case GL_COPY_WRITE_BUFFER: query = GL_COPY_WRITE_BUFFER_BINDING; break;
+        case GL_PIXEL_PACK_BUFFER: query = GL_PIXEL_PACK_BUFFER_BINDING; break;
+        case GL_PIXEL_UNPACK_BUFFER: query = GL_PIXEL_UNPACK_BUFFER_BINDING; break;
+        default: return 0u;
+    }
+    GLint bound = 0;
+    glGetIntegerv(query, &bound);
+    return static_cast<unsigned>(bound);
+}
+
 void device::delete_object(unsigned name) {
     if (!ok() || name == 0) { return; }
     // ASK, DO NOT REMEMBER. Each glIs* answers for its own namespace, and a
@@ -657,6 +748,9 @@ std::string device::renderer() const {
 std::string device::version() const {
     return {};
 }
+bool device::webgl_compatible() const {
+    return false;
+}
 int device::width() const noexcept {
     return 0;
 }
@@ -728,6 +822,9 @@ void device::bind_buffer(int, unsigned) {}
 void device::buffer_data(int, const void *, std::size_t, int) {}
 void device::buffer_sub_data(int, std::size_t, const void *, std::size_t) {}
 void device::bind_buffer_base(int, unsigned, unsigned) {}
+unsigned device::bound_buffer(int) const {
+    return 0u;
+}
 void device::delete_object(unsigned) {}
 unsigned device::create_texture() {
     return 0u;

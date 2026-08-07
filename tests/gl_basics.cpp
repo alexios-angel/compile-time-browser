@@ -24,6 +24,7 @@ namespace {
 
 struct outcome {
     bool ok = false;
+    bool webgl = false;
     std::string renderer;
 };
 
@@ -31,10 +32,12 @@ struct outcome {
     raster::gl::device device{64, 48, which};
     outcome out;
     out.ok = device.ok();
+    out.webgl = device.webgl_compatible();
     out.renderer = device.renderer();
     // BOTH, ALWAYS, SIDE BY SIDE. A run that prints only the failure leaves the
     // reader guessing whether the other one was even tried.
-    std::printf("     %-14s ok=%s  %s\n", name, out.ok ? "yes" : "NO ",
+    std::printf("     %-14s ok=%s  webgl=%s  %s\n", name, out.ok ? "yes" : "NO ",
+                out.webgl ? "yes" : "NO ",
                 out.ok ? out.renderer.c_str() : device.error().c_str());
     return out;
 }
@@ -57,6 +60,15 @@ int main() {
     if (deterministic.ok) {
         CHECK(deterministic.renderer.find("SwiftShader") != std::string::npos);
     }
+
+    // THE CONTEXT IS A BROWSER'S, NOT A NATIVE APP'S. Without WebGL
+    // compatibility mode ANGLE skips the validation that makes a page's mistake
+    // an INVALID_OPERATION, and a uniform buffer with no storage behind it
+    // reaches the Vulkan back end as a null dereference - which is what rung 10
+    // spent five commits calling a WebGL bug. Asserted rather than reported,
+    // because a context that quietly comes up without it is a crash waiting for
+    // the right page.
+    CHECK(deterministic.webgl);
 
     // `fastest` MAY legitimately fail: a headless box with no GPU has nothing
     // for it to pick. That is why it is reported rather than asserted - and why
