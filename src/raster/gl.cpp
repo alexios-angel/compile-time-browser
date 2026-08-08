@@ -183,6 +183,27 @@ device::device(int width, int height, driver which) : impl_{std::make_unique<imp
     impl_->width = width;
     impl_->height = height;
 
+    // THE DRIVER, OVERRIDABLE AT RUN TIME.
+    //
+    // `CTBROWSER_GL_DRIVER=deterministic` forces SwiftShader and `=fastest` asks
+    // for whatever the machine has. It matters most where the two actually
+    // differ, which is nowhere the tests run: the devbox has no GPU, so both
+    // land on SwiftShader, and the Windows .exe on real hardware is the only
+    // place a page gets a GPU at all (docs/platform.md). Comparing the two is
+    // otherwise a rebuild rather than a run.
+    //
+    // Named in the old notes as though it existed; it did not, and its absence
+    // is why "is this a driver difference?" was never a question anyone could
+    // answer in one command.
+    if (const char * want = std::getenv("CTBROWSER_GL_DRIVER"); want != nullptr) {
+        const std::string_view asked{want};
+        if (asked == "deterministic" || asked == "swiftshader") {
+            which = driver::deterministic;
+        } else if (asked == "fastest") {
+            which = driver::fastest;
+        }
+    }
+
     // SAFE MODE IS A FLOOR, NOT A CLIFF. `fastest` asks for ANGLE's own device
     // selection, which on a headless box with no GPU cannot come up at all -
     // measured: VK_EXT_headless_surface and VK_KHR_surface are simply absent.

@@ -142,9 +142,27 @@ void webgl_context::shader_source(std::uint32_t shader, std::string_view source)
     // browser adds nothing - so this is a repair for a bundle that did not, and
     // it fires only when the page did not and the source plainly needs it.
     //
-    // TEMPORARY KNOB, and it comes out with the one in raster/gl.cpp:
-    // `CTBROWSER_GL_PREAMBLE=0` turns it off, so ONE build can be measured both
-    // ways rather than rebuilt between two runs.
+    // IT IS LOAD-BEARING, AND THAT IS MEASURED RATHER THAN ASSUMED. Reading
+    // babylon.js says it prepends "#version 300 es\n#define WEBGL2 \n" itself,
+    // which would make this dead code. It does that for its small internal
+    // passes and NOT for the scene shaders:
+    //
+    //     [src] shader=1 bytes=70    page_version=1 layout=0 added=0
+    //     [src] shader=1 bytes=8389  page_version=0 layout=1 added=1
+    //     [src] shader=2 bytes=13357 page_version=0 layout=1 added=1
+    //
+    // and the ratchet, one variable, both numbers in one command:
+    //
+    //     CTBROWSER_GL_PREAMBLE=1  WEBGL2 LEVEL 10/10
+    //     CTBROWSER_GL_PREAMBLE=0  WEBGL2 LEVEL  9/10
+    //
+    // So DO NOT DELETE THIS on the strength of reading the bundle. The knob
+    // stays because it is what settles the question in one run; it costs
+    // nothing unset.
+    //
+    // p5 and Phaser never reach it - neither has `layout(` in a shader body,
+    // only in JS method names - so the ES 3.00 rewrite hazard this would carry
+    // for an ES 1.00 page does not arise on this corpus.
     const char * knob = std::getenv("CTBROWSER_GL_PREAMBLE");
     const bool add =
         (knob == nullptr || std::string_view{knob} != "0") && !page_version && has_layout;
