@@ -121,6 +121,17 @@ foreach(source ${example-sources})
     if(SDL3_image_FOUND OR CTBROWSER_WITH_IMAGE)
       list(APPEND golden-examples imageformats)
     endif()
+    # THE PAGES WHOSE PIXELS COME OUT OF GL. There is no software rasteriser
+    # any more (56bb66f), so `tests/golden/<page>.ppm` for one of these is a
+    # picture with no producer: the plain test renders through ANGLE and
+    # compares against what softgl drew, which can only ever fail. Measured on
+    # p5webgl - 4 pixels of 93,600, all of them triangle edges.
+    #
+    # So these get ONE test, against tests/golden/angle/. The others keep the
+    # plain one; phaserbasic and phaserinvaders match their existing goldens
+    # and are deliberately left alone.
+    set(webgl-examples webgltriangle p5webgl babylonscene babylonorbit)
+
     if(example IN_LIST golden-examples)
       # A GAME NEEDS LONGER THAN A DRAWING. 30 frames is one render; the
       # invaders page has to fire, travel and connect before its frame says
@@ -136,13 +147,15 @@ foreach(source ${example-sources})
       if(example STREQUAL babylonscene OR example STREQUAL babylonorbit)
         set(render-frames 90)
       endif()
-      add_test(NAME render-${example} COMMAND ${CMAKE_COMMAND}
-               -DEXE=$<TARGET_FILE:ctbrowser-example-${example}>
-               -DOUT=${CMAKE_BINARY_DIR}/render-${example}.ppm
-               -DGOLDEN=${PROJECT_SOURCE_DIR}/tests/golden/${example}.ppm
-               -DWORKDIR=${PROJECT_SOURCE_DIR}
-               -DFRAMES=${render-frames}
-               -P ${PROJECT_SOURCE_DIR}/tools/check-render.cmake)
+      if(NOT example IN_LIST webgl-examples)
+        add_test(NAME render-${example} COMMAND ${CMAKE_COMMAND}
+                 -DEXE=$<TARGET_FILE:ctbrowser-example-${example}>
+                 -DOUT=${CMAKE_BINARY_DIR}/render-${example}.ppm
+                 -DGOLDEN=${PROJECT_SOURCE_DIR}/tests/golden/${example}.ppm
+                 -DWORKDIR=${PROJECT_SOURCE_DIR}
+                 -DFRAMES=${render-frames}
+                 -P ${PROJECT_SOURCE_DIR}/tools/check-render.cmake)
+      endif()
 
       # AND THE SAME PAGE THROUGH ANGLE, where there is one. A SECOND GOLDEN
       # rather than a tolerance: two rasterisers differ at the edges of a
@@ -151,18 +164,17 @@ foreach(source ${example-sources})
       # a golden that stops catching things. Each back end holds still against
       # ITSELF instead, which is what a golden is for.
       #
-      # ONLY THE PAGES THE ANGLE PATH ACTUALLY RENDERS, which today is one.
+      # SUPERSEDED: this used to read "only the pages the ANGLE path actually
+      # renders, which today is one", because p5webgl, babylonscene and
+      # babylonorbit were goldened once and the files were LOOKED AT and came
+      # back BLANK WHITE.
       #
-      # p5webgl, babylonscene and babylonorbit were goldened first and the files
-      # were LOOKED AT: all three came back BLANK WHITE. They draw with
-      # `drawElements`, which stage 2 records as unforwarded and does not
-      # forward - so the page runs, reports no error, and paints nothing. Three
-      # goldens of an empty canvas would have been committed by a run that
-      # reported "100% tests passed".
-      #
-      # They come back one at a time as the forwarding does, and each one is a
-      # file somebody has to open before it counts.
-      if(CTBROWSER_WITH_ANGLE AND example MATCHES "webgltriangle")
+      # They are not blank any more. What was blanking them was never
+      # drawElements: it was `deleteShader` destroying live buffers through a
+      # kind-less delete_object, and a canvas resize destroying the whole
+      # context along with the page's depth state. Both are fixed, and each of
+      # these goldens is a file somebody has opened.
+      if(CTBROWSER_WITH_ANGLE AND example IN_LIST webgl-examples)
         add_test(NAME render-angle-${example} COMMAND ${CMAKE_COMMAND}
                  -DEXE=$<TARGET_FILE:ctbrowser-example-${example}>
                  -DOUT=${CMAKE_BINARY_DIR}/render-angle-${example}.ppm

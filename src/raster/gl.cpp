@@ -19,7 +19,9 @@
 // the build; `IncludeBlocks: Preserve` sorts within a block and never across
 // one, so the blank line is what keeps the order.
 //
-// gl31.h rather than gl3.h because the context this file creates is ES 3.1.
+// gl31.h rather than gl3.h so the 3.1 tokens are DECLARED; the context this
+// file creates is ES 3.0 (see eglCreateContext below) and nothing here calls a
+// 3.1 entry point.
 #include <GLES2/gl2ext.h>
 #endif
 
@@ -31,8 +33,11 @@ struct device::impl {
     EGLDisplay display = EGL_NO_DISPLAY;
     EGLContext context = EGL_NO_CONTEXT;
     EGLSurface surface = EGL_NO_SURFACE;
+    // KEPT so a resize can build a matching surface without choosing again.
+    EGLConfig config{};
     int width = 0;
     int height = 0;
+    bool announced_draw = false;
     std::string error;
 
     ~impl() {
@@ -220,13 +225,13 @@ device::device(int width, int height, driver which) : impl_{std::make_unique<imp
                                    EGL_STENCIL_SIZE,
                                    8,
                                    EGL_NONE};
-    EGLConfig config{};
     EGLint configs = 0;
-    if (eglChooseConfig(impl_->display, config_attrs, &config, 1, &configs) != EGL_TRUE ||
+    if (eglChooseConfig(impl_->display, config_attrs, &impl_->config, 1, &configs) != EGL_TRUE ||
         configs == 0) {
         impl_->error = "no EGL config with depth and stencil";
         return;
     }
+    const EGLConfig config = impl_->config;
 
     const EGLint surface_attrs[] = {EGL_WIDTH, width, EGL_HEIGHT, height, EGL_NONE};
     impl_->surface = eglCreatePbufferSurface(impl_->display, config, surface_attrs);
@@ -326,6 +331,31 @@ int device::width() const noexcept {
 
 int device::height() const noexcept {
     return impl_->height;
+}
+
+bool device::resize(int width, int height) {
+    if (!ok()) { return false; }
+    if (width == impl_->width && height == impl_->height) { return true; }
+
+    // THE NEW SURFACE FIRST. If eglCreatePbufferSurface fails - a size beyond
+    // EGL_MAX_PBUFFER_WIDTH, say - the old one is still current and the page
+    // keeps the drawing buffer it had, which is a stale size rather than no
+    // context at all.
+    const EGLint attrs[] = {EGL_WIDTH, width, EGL_HEIGHT, height, EGL_NONE};
+    const EGLSurface fresh = eglCreatePbufferSurface(impl_->display, impl_->config, attrs);
+    if (fresh == EGL_NO_SURFACE) { return false; }
+
+    if (eglMakeCurrent(impl_->display, fresh, fresh, impl_->context) != EGL_TRUE) {
+        eglDestroySurface(impl_->display, fresh);
+        return false;
+    }
+    // ONLY NOW is the old one unreferenced. Destroying a surface while it is
+    // still the read or draw surface is what EGL calls undefined.
+    if (impl_->surface != EGL_NO_SURFACE) { eglDestroySurface(impl_->display, impl_->surface); }
+    impl_->surface = fresh;
+    impl_->width = width;
+    impl_->height = height;
+    return true;
 }
 
 bool device::make_current() {
@@ -779,22 +809,58 @@ std::uint32_t device::framebuffer_status() const {
     return ok() ? static_cast<std::uint32_t>(glCheckFramebufferStatus(GL_FRAMEBUFFER)) : 0u;
 }
 
+// WHAT STATE THE FIRST DRAW WAS MADE IN, once, under CTBROWSER_GL_DEBUG.
+//
+// "The picture is wrong but GL reported nothing" is almost always pipeline
+// state, and every one of those facts is a glGetIntegerv away - but only if
+// somebody asks. Nobody did, and the p5 WEBGL page differed from its golden by
+// exactly one such fact for a whole session.
+void device::note_first_draw() {
+    if (impl_->announced_draw) { return; }
+    const char * want = std::getenv("CTBROWSER_GL_DEBUG");
+    if (want == nullptr || std::string_view{want} == "0") { return; }
+    impl_->announced_draw = true;
+
+    GLint bits = 0;
+    GLint func = 0;
+    GLint write = 0;
+    GLint framebuffer = 0;
+    GLint program = 0;
+    GLint array = 0;
+    glGetIntegerv(GL_DEPTH_BITS, &bits);
+    glGetIntegerv(GL_DEPTH_FUNC, &func);
+    glGetIntegerv(GL_DEPTH_WRITEMASK, &write);
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &framebuffer);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &array);
+    std::fprintf(stderr,
+                 "[draw] depth: test=%d bits=%d func=0x%04X write=%d | blend=%d cull=%d | "
+                 "framebuffer=%d program=%d vao=%d\n",
+                 static_cast<int>(glIsEnabled(GL_DEPTH_TEST)), bits, static_cast<unsigned>(func),
+                 write, static_cast<int>(glIsEnabled(GL_BLEND)),
+                 static_cast<int>(glIsEnabled(GL_CULL_FACE)), framebuffer, program, array);
+}
+
 void device::draw_arrays(int mode, int first, int count) {
+    note_first_draw();
     if (ok()) { glDrawArrays(static_cast<GLenum>(mode), first, count); }
 }
 
 void device::draw_elements(int mode, int count, int type, std::size_t offset) {
+    note_first_draw();
     if (!ok()) { return; }
     glDrawElements(static_cast<GLenum>(mode), count, static_cast<GLenum>(type),
                    reinterpret_cast<const void *>(offset));
 }
 
 void device::draw_arrays_instanced(int mode, int first, int count, int instances) {
+    note_first_draw();
     if (ok()) { glDrawArraysInstanced(static_cast<GLenum>(mode), first, count, instances); }
 }
 
 void device::draw_elements_instanced(int mode, int count, int type, std::size_t offset,
                                      int instances) {
+    note_first_draw();
     if (!ok()) { return; }
     glDrawElementsInstanced(static_cast<GLenum>(mode), count, static_cast<GLenum>(type),
                             reinterpret_cast<const void *>(offset), instances);
@@ -885,6 +951,9 @@ int device::height() const noexcept {
     return 0;
 }
 bool device::make_current() {
+    return false;
+}
+bool device::resize(int, int) {
     return false;
 }
 void device::clear(float, float, float, float) {}

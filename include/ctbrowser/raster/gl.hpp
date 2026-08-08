@@ -77,6 +77,26 @@ public:
     [[nodiscard]] int width() const noexcept;
     [[nodiscard]] int height() const noexcept;
 
+    // A NEW DRAWING BUFFER, THE SAME CONTEXT.
+    //
+    // Constructing a fresh device instead - which is what a canvas resize used
+    // to do - throws away every program, buffer, texture and piece of pipeline
+    // state the page has set up, and GL says nothing about any of it. The page
+    // goes on using handles that name objects in a destroyed context, so its
+    // draws quietly stop working while `glClear` on the new device keeps
+    // painting: "clears, but draws no geometry".
+    //
+    // Measured on p5's WEBGL page. `createCanvas(300, 200, WEBGL)` assigns
+    // canvas.width, which resized; p5 had already run `enable(DEPTH_TEST)` and
+    // `depthFunc(LEQUAL)` on the context it was handed. The first draw then
+    // reported test=0 and func=GL_LESS - both back at their defaults - and the
+    // sphere drew over the box instead of behind it.
+    //
+    // Only the SURFACE is replaced here. GL objects and GL state belong to the
+    // context, so they survive; EGL is explicitly fine with a context being
+    // made current against a different surface.
+    bool resize(int width, int height);
+
     // Every call below assumes this device's context is current. A second device
     // on the same thread makes the first one's stale, which is GL's rule and not
     // something a wrapper can hide.
@@ -241,6 +261,9 @@ public:
     [[nodiscard]] bool read_pixels(paint::bitmap & into) const;
 
 private:
+    // Prints the pipeline state of the FIRST draw under CTBROWSER_GL_DEBUG.
+    void note_first_draw();
+
     struct impl;
     std::unique_ptr<impl> impl_;
 };

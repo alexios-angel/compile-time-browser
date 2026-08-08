@@ -24,10 +24,21 @@ webgl_context::webgl_context(paint::bitmap * surface, int width, int height,
 void webgl_context::resize(paint::bitmap * surface, int width, int height) {
     surface_ = surface;
     if (width == device_.width() && height == device_.height()) { return; }
-    // A NEW DEVICE, and the page's GL objects go with the old one. That is what
-    // a real browser does on a context loss, and pretending otherwise would hand
-    // a page handles into a surface that no longer exists.
-    device_ = raster::gl::device{width, height};
+    // A NEW DRAWING BUFFER, NOT A NEW DEVICE.
+    //
+    // This used to assign a fresh device, on the reasoning that it is "what a
+    // real browser does on a context loss". A CANVAS RESIZE IS NOT A CONTEXT
+    // LOSS: browsers reallocate the drawing buffer and every program, buffer,
+    // texture and piece of pipeline state survives. Throwing the context away
+    // orphaned all of them silently - GL cannot report an object belonging to a
+    // context nobody holds - so the page's draws stopped working while clears
+    // on the new device kept painting.
+    //
+    // Measured: p5's `createCanvas(300, 200, WEBGL)` assigns canvas.width and
+    // lands here, AFTER p5 has run enable(DEPTH_TEST) and depthFunc(LEQUAL) on
+    // the context it was handed. The first draw then reported test=0 and
+    // func=GL_LESS, and the sphere drew over the box instead of behind it.
+    device_.resize(width, height);
 }
 
 bool webgl_context::ok() const {

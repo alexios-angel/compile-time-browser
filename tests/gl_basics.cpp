@@ -211,5 +211,98 @@ int main() {
         }
     }
 
+    // --- AND THE DEVICE HONOURS DEPTH ------------------------------------------
+    //
+    // The triangle above proves a draw lands. It says NOTHING about depth, and
+    // the p5 WEBGL page differs from its golden by exactly that: a sphere the
+    // software rasteriser hid behind a box is drawn over the top of it. A
+    // device-level answer separates "this device cannot depth-test" from "the
+    // engine never asked it to", which are different bugs in different files.
+    //
+    // Order matters here and is the whole point: NEAR-THEN-FAR is the case a
+    // missing depth buffer passes by accident, because painter's order gives
+    // the right answer when the far thing is drawn second only if it is
+    // REJECTED.
+    {
+        constexpr int gl_vertex_shader = 0x8B31;
+        constexpr int gl_fragment_shader = 0x8B30;
+        constexpr int gl_array_buffer = 0x8892;
+        constexpr int gl_static_draw = 0x88E4;
+        constexpr int gl_float = 0x1406;
+        constexpr int gl_triangles = 0x0004;
+        constexpr int gl_depth_test = 0x0B71;
+        constexpr int gl_less = 0x0201;
+
+        raster::gl::device device{64, 48, raster::gl::driver::deterministic};
+        CHECK(device.ok());
+
+        const unsigned vertex = device.create_shader(gl_vertex_shader);
+        device.shader_source(vertex, "#version 300 es\n"
+                                     "in vec3 xyz;\n"
+                                     "void main() { gl_Position = vec4(xyz, 1.0); }\n");
+        device.compile_shader(vertex);
+        const unsigned fragment = device.create_shader(gl_fragment_shader);
+        device.shader_source(fragment, "#version 300 es\n"
+                                       "precision mediump float;\n"
+                                       "uniform vec4 tint;\n"
+                                       "out vec4 colour;\n"
+                                       "void main() { colour = tint; }\n");
+        device.compile_shader(fragment);
+        const unsigned program = device.create_program();
+        device.attach_shader(program, vertex);
+        device.attach_shader(program, fragment);
+        device.link_program(program);
+        CHECK(device.program_linked(program));
+        device.use_program(program);
+
+        const int tint = device.uniform_location(program, "tint");
+        const int location = device.attribute_location(program, "xyz");
+        CHECK(location >= 0);
+        const auto at = static_cast<unsigned>(location);
+
+        const unsigned buffer = device.create_buffer();
+        device.bind_buffer(gl_array_buffer, buffer);
+        device.enable_attribute(at, true);
+
+        const auto triangle_at = [&](float z) {
+            const float xyz[] = {-0.9F, -0.9F, z, 0.9F, -0.9F, z, 0.0F, 0.9F, z};
+            device.buffer_data(gl_array_buffer, xyz, sizeof(xyz), gl_static_draw);
+            device.attribute_pointer(at, 3, gl_float, false, 0, 0);
+            device.draw_arrays(gl_triangles, 0, 3);
+        };
+        const auto green = [&] {
+            const float c[] = {0.0F, 1.0F, 0.0F, 1.0F};
+            device.set_uniform(tint, c, 1, 4, 1, false);
+        };
+        const auto blue = [&] {
+            const float c[] = {0.0F, 0.0F, 1.0F, 1.0F};
+            device.set_uniform(tint, c, 1, 4, 1, false);
+        };
+
+        device.set_capability(gl_depth_test, true);
+        device.depth_func(gl_less);
+        device.depth_mask(true);
+
+        // NEAR FIRST, THEN FAR. The far triangle must be REJECTED; if depth is
+        // not working it paints over and the centre comes back green.
+        device.clear(1.0F, 0.0F, 0.0F, 1.0F);
+        blue();
+        triangle_at(-0.5F);
+        green();
+        triangle_at(0.5F);
+        CHECK(device.take_error() == 0);
+
+        paint::bitmap into;
+        CHECK(device.read_pixels(into));
+        const std::uint32_t centre = into.at(32, 24);
+        const bool is_blue = (centre & 0xFF) == 255 && ((centre >> 8) & 0xFF) == 0;
+        CHECK(is_blue);
+        if (!is_blue) {
+            std::printf("     the far triangle was NOT rejected - centre=%08x, so this device is "
+                        "not depth-testing\n",
+                        centre);
+        }
+    }
+
     REPORT("gl_basics");
 }
