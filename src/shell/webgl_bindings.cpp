@@ -1250,16 +1250,18 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
         return value::undefined();
     });
 
-    // Framebuffers and renderbuffers: created, bound, and NOT honoured - every
-    // draw goes to the canvas. p5 creates them for its filter path and checks
-    // completeness, so refusing outright would stop it starting; drawing into
-    // the canvas instead is wrong in a way the corpus page would show, and is
-    // named in docs/webgl-plan.md rather than hidden here.
+    // FROM THEIR OWN NAMESPACES. Both of these called `create_buffer` -
+    // glGenBuffers - so a "framebuffer" was a buffer name and the two classes
+    // handed out colliding integers. It survived only because ANGLE's default
+    // bindGeneratesResource lets glBindFramebuffer invent the object; what it
+    // cost was a name burned out of the buffer namespace for every render
+    // target, widening the collision the kind-less delete_object was deleting
+    // through.
     method("createFramebuffer", [gl, handle](context & c, std::span<value>) {
-        return handle(c, gl->create_buffer(), "framebuffer");
+        return handle(c, gl->create_framebuffer(), "framebuffer");
     });
     method("createRenderbuffer", [gl, handle](context & c, std::span<value>) {
-        return handle(c, gl->create_buffer(), "renderbuffer");
+        return handle(c, gl->create_renderbuffer(), "renderbuffer");
     });
     // THROUGH id_of, NOT as_number. A framebuffer arrives as a WRAPPED OBJECT
     // like every other GL object, so reading it as a number saw `undefined` and
@@ -1279,9 +1281,31 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
         gl->framebuffer_texture(enum_at(a, 1), id_of(c, a.size() > 3 ? a[3] : value::undefined()));
         return value::undefined();
     });
-    for (const char * name : {"bindRenderbuffer", "framebufferRenderbuffer", "renderbufferStorage",
-                              "renderbufferStorageMultisample", "blitFramebuffer"}) {
-        method(name, [](context &, std::span<value>) { return value::undefined(); });
+    // A RENDER TARGET USUALLY WANTS DEPTH, and these three were no-ops - so an
+    // offscreen target got colour and nothing else, and every draw into it
+    // passed the depth test in arrival order. Babylon's post-processes render
+    // the scene into exactly such a target.
+    method("bindRenderbuffer", [gl](context & c, std::span<value> a) {
+        gl->bind_renderbuffer(id_of(c, a.size() > 1 ? a[1] : value::undefined()));
+        return value::undefined();
+    });
+    method("renderbufferStorage", [gl](context &, std::span<value> a) {
+        gl->renderbuffer_storage(enum_at(a, 1), int_at(a, 2), int_at(a, 3));
+        return value::undefined();
+    });
+    method("framebufferRenderbuffer", [gl](context & c, std::span<value> a) {
+        gl->framebuffer_renderbuffer(enum_at(a, 1),
+                                     id_of(c, a.size() > 3 ? a[3] : value::undefined()));
+        return value::undefined();
+    });
+    // STILL NOT IMPLEMENTED, and now they say so rather than returning quietly.
+    // Multisample storage needs a resolve this engine has nowhere to put, and
+    // blitFramebuffer needs two bound framebuffers it does not track.
+    for (const char * name : {"renderbufferStorageMultisample", "blitFramebuffer"}) {
+        method(name, [gl, name](context &, std::span<value>) {
+            gl->refuse(name);
+            return value::undefined();
+        });
     }
     // ASKED, NOT ASSUMED. This answered FRAMEBUFFER_COMPLETE unconditionally,
     // which is a lie a page acts on - Babylon checks it before deciding a

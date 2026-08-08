@@ -809,6 +809,35 @@ std::uint32_t device::framebuffer_status() const {
     return ok() ? static_cast<std::uint32_t>(glCheckFramebufferStatus(GL_FRAMEBUFFER)) : 0u;
 }
 
+// RENDERBUFFERS, which a render target needs and which were three no-ops.
+//
+// A page attaching depth to an offscreen target got nothing attached, so the
+// target had colour and no depth - every draw into it passed the depth test in
+// whatever order it arrived. Babylon's post-processes render the scene into
+// exactly such a target.
+unsigned device::create_renderbuffer() {
+    if (!ok()) { return 0u; }
+    GLuint name = 0;
+    glGenRenderbuffers(1, &name);
+    return name;
+}
+
+void device::bind_renderbuffer(unsigned renderbuffer) {
+    if (ok()) { glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer); }
+}
+
+void device::renderbuffer_storage(int format, int width, int height) {
+    if (ok()) {
+        glRenderbufferStorage(GL_RENDERBUFFER, static_cast<GLenum>(format), width, height);
+    }
+}
+
+void device::framebuffer_renderbuffer(int attachment, unsigned renderbuffer) {
+    if (!ok()) { return; }
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, static_cast<GLenum>(attachment), GL_RENDERBUFFER,
+                              renderbuffer);
+}
+
 // WHAT STATE THE FIRST DRAW WAS MADE IN, once, under CTBROWSER_GL_DEBUG.
 //
 // "The picture is wrong but GL reported nothing" is almost always pipeline
@@ -1032,6 +1061,12 @@ void device::texture_parameter(int, int, int) {}
 unsigned device::create_framebuffer() {
     return 0u;
 }
+unsigned device::create_renderbuffer() {
+    return 0u;
+}
+void device::bind_renderbuffer(unsigned) {}
+void device::renderbuffer_storage(int, int, int) {}
+void device::framebuffer_renderbuffer(int, unsigned) {}
 void device::bind_framebuffer(unsigned) {}
 void device::framebuffer_texture(int, unsigned) {}
 std::uint32_t device::framebuffer_status() const {

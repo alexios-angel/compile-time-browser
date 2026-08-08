@@ -313,6 +313,11 @@ public:
     void bind_framebuffer(std::uint32_t framebuffer);
     void framebuffer_texture(std::uint32_t attachment, std::uint32_t texture);
     [[nodiscard]] std::uint32_t framebuffer_status() const;
+    [[nodiscard]] std::uint32_t create_framebuffer();
+    [[nodiscard]] std::uint32_t create_renderbuffer();
+    void bind_renderbuffer(std::uint32_t renderbuffer);
+    void renderbuffer_storage(std::uint32_t format, int width, int height);
+    void framebuffer_renderbuffer(std::uint32_t attachment, std::uint32_t renderbuffer);
 
     // --- draws and pipeline state ---------------------------------------------
 

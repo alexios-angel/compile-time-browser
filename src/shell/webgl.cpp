@@ -440,6 +440,29 @@ std::uint32_t webgl_context::framebuffer_status() const {
     return device_.framebuffer_status();
 }
 
+// FROM THE RIGHT NAMESPACE. Both of these used to be minted by glGenBuffers,
+// which is a different GL namespace entirely - so a "framebuffer" was a buffer
+// name, and the two classes handed out colliding integers.
+std::uint32_t webgl_context::create_framebuffer() {
+    return device_.create_framebuffer();
+}
+
+std::uint32_t webgl_context::create_renderbuffer() {
+    return device_.create_renderbuffer();
+}
+
+void webgl_context::bind_renderbuffer(std::uint32_t renderbuffer) {
+    device_.bind_renderbuffer(renderbuffer);
+}
+
+void webgl_context::renderbuffer_storage(std::uint32_t format, int width, int height) {
+    device_.renderbuffer_storage(static_cast<int>(format), width, height);
+}
+
+void webgl_context::framebuffer_renderbuffer(std::uint32_t attachment, std::uint32_t renderbuffer) {
+    device_.framebuffer_renderbuffer(static_cast<int>(attachment), renderbuffer);
+}
+
 // --- draws and pipeline state -----------------------------------------------
 //
 // NO READBACK HERE. The context this replaces read the whole surface after every

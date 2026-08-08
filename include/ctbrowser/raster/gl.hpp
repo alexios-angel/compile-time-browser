@@ -236,6 +236,14 @@ public:
     void framebuffer_texture(int attachment, unsigned texture);
     [[nodiscard]] std::uint32_t framebuffer_status() const;
 
+    // A RENDER TARGET USUALLY WANTS DEPTH, and these were three no-ops in the
+    // bindings, so it never got any: an offscreen target had colour and nothing
+    // else, and every draw into it passed the depth test in arrival order.
+    [[nodiscard]] unsigned create_renderbuffer();
+    void bind_renderbuffer(unsigned renderbuffer);
+    void renderbuffer_storage(int format, int width, int height);
+    void framebuffer_renderbuffer(int attachment, unsigned renderbuffer);
+
     // --- draws and pipeline state ---------------------------------------------
 
     void draw_arrays(int mode, int first, int count);
