@@ -309,8 +309,8 @@ void webgl_context::bind_buffer_base(std::uint32_t target, std::uint32_t index,
     device_.bind_buffer_base(static_cast<int>(target), index, buffer);
 }
 
-void webgl_context::delete_object(std::uint32_t name) {
-    device_.delete_object(name);
+void webgl_context::delete_object(raster::gl::device::object_kind kind, std::uint32_t name) {
+    device_.delete_object(kind, name);
 }
 
 void webgl_context::enable_attribute(int location, bool on) {

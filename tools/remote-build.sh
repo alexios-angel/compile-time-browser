@@ -23,6 +23,15 @@ host="${DEVBOX_HOST:-devbox}"
 CLANG_STD_EMBED_TAG="${CLANG_STD_EMBED_TAG:-clang-std-embed-e3986d225}"
 CLANG_STD_EMBED_RELEASE="${CLANG_STD_EMBED_RELEASE:-https://github.com/alexios-angel/embed/releases/download/${CLANG_STD_EMBED_TAG}/${CLANG_STD_EMBED_TAG}-linux-x86_64.tar.xz}"
 
+# ANGLE IS ON FOR A DEVBOX BUILD, and stays off everywhere else. The option
+# FATAL_ERRORs when third_party/angle/ is missing, which is the right answer for
+# a developer who has not fetched and the wrong one for CI - so it is set HERE,
+# where fetch-angle.sh has just run, rather than in the `default` preset that CI
+# shares. Without it the box builds a binary in which gl_basics prints SKIP and
+# the render-angle-* tests are never registered: a green suite that measured
+# nothing. CTBROWSER_ANGLE=OFF opts out.
+CTBROWSER_ANGLE="${CTBROWSER_ANGLE:-ON}"
+
 if ! ssh -o ConnectTimeout=5 "$host" true 2>/dev/null; then
   cat >&2 <<EOF
 cannot reach '$host' — likely one of:
@@ -46,13 +55,21 @@ repo_root=$(git rev-parse --show-toplevel)
 # rsync the whole tree including submodule checkouts; leave remote build
 # artifacts in place so the PCH bake is reused across syncs.
 # tools/clang-std-embed stays local: the server-side copy is converged below.
+#
+# third_party/angle/ is FETCHED ON THE BOX, never pushed. It is ~34 MB of
+# libraries that tools/fetch-angle.sh downloads from a pinned release, so
+# sending them up every sync is pure wire time - and without the protect
+# filter `--delete` would remove the box's copy on the first run from a
+# checkout that has not fetched, which is a rebuild rather than a re-sync.
 rsync -az --delete \
   --exclude '.git/' \
   --exclude 'build*/' \
   --exclude 'tools/clang-std-embed/' \
+  --exclude 'third_party/angle/' \
   --exclude '*.d' \
   --filter 'protect *.pch' --filter 'protect *.gch' --filter 'protect build*/' \
-  --filter 'protect tools/clang-std-embed/' --filter 'protect *.d' \
+  --filter 'protect tools/clang-std-embed/' --filter 'protect third_party/angle/' \
+  --filter 'protect *.d' \
   "$repo_root"/ "$host:projects/compile-time-browser/"
 
 # Converge project-owned deps on the box: brew-only deps ride in
@@ -82,6 +99,13 @@ if [ "$(cat "$tool/.release" 2>/dev/null)" != "$CLANG_STD_EMBED_RELEASE" ]; then
   curl -fsSL --retry 5 "$CLANG_STD_EMBED_RELEASE" | tar -xJ --strip-components=1 -C "$tool"
   printf '%s' "$CLANG_STD_EMBED_RELEASE" > "$tool/.release"
 fi
+# ANGLE, from the pinned release. Its own guard is keyed on the release stamp,
+# so this is a no-op once the box is at the pin and a re-download when the pin
+# moves. It runs HERE rather than beside the cmake line because the Windows path
+# needs it too, and because a fetch that failed should stop the build before it
+# configures with the option off and reports a green suite that never linked
+# ANGLE at all.
+cd "$HOME/projects/compile-time-browser" && tools/fetch-angle.sh
 REMOTE
 
 if [ "${1:-}" = windows ]; then
@@ -102,11 +126,11 @@ if [ "${1:-}" = windows ]; then
     [ -e "$inc/boost" ] || ln -s /home/linuxbrew/.linuxbrew/include/boost "$inc/boost";
     ls "$inc/boost/version.hpp" >/dev/null'
   ssh "$host" "cd projects/compile-time-browser && tools/build-image-libs-mingw.sh && tools/build-boost-mingw.sh && tools/build-mimalloc-mingw.sh && tools/build-simdutf-mingw.sh && tools/build-cpptrace-mingw.sh"
-  ssh "$host" "cd projects/compile-time-browser && cmake --preset windows && cmake --build --preset windows && cmake --build --preset windows --target windows-dist"
+  ssh "$host" "cd projects/compile-time-browser && cmake --preset windows -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE && cmake --build --preset windows && cmake --build --preset windows --target windows-dist"
   rsync -az "$host:projects/compile-time-browser/examples-windows/" "$repo_root/examples-windows/"
   echo "examples-windows/ refreshed from the devbox"
 elif [ $# -gt 0 ]; then
-  ssh "$host" "cd projects/compile-time-browser && cmake --preset default && cmake --build --preset default --target $*"
+  ssh "$host" "cd projects/compile-time-browser && cmake --preset default -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE && cmake --build --preset default --target $*"
 else
-  ssh "$host" "cd projects/compile-time-browser && cmake --preset default && cmake --build --preset default && ctest --preset default"
+  ssh "$host" "cd projects/compile-time-browser && cmake --preset default -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE && cmake --build --preset default && ctest --preset default"
 fi

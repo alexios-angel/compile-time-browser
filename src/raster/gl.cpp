@@ -1,6 +1,7 @@
 #include <ctbrowser/raster/gl.hpp>
 
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <string_view>
@@ -10,7 +11,16 @@
 #if CTBROWSER_WITH_ANGLE
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
-#include <GLES3/gl3.h>
+#include <GLES3/gl31.h>
+
+// SEPARATE BLOCK ON PURPOSE, and the blank line is load-bearing. gl2ext.h
+// includes NOTHING - it completes a core header rather than standing alone - so
+// it has to come second. `SortIncludes` would put GLES2 before GLES3 and break
+// the build; `IncludeBlocks: Preserve` sorts within a block and never across
+// one, so the blank line is what keeps the order.
+//
+// gl31.h rather than gl3.h because the context this file creates is ES 3.1.
+#include <GLES2/gl2ext.h>
 #endif
 
 namespace ctbrowser::raster::gl {
@@ -54,26 +64,80 @@ namespace {
     return get_platform_display(EGL_PLATFORM_ANGLE_ANGLE, EGL_DEFAULT_DISPLAY, attrs.data());
 }
 
+// WHOLE WORDS, SPACE SEPARATED. Every extension name asked about here is a
+// prefix of some other one - `EGL_ANGLE_robust_resource_initialization` sits
+// beside `..._initialization_2` in some builds - so a plain substring search
+// reports an extension the driver does not have, and the attribute is then
+// rejected by eglCreateContext.
+//
+// One function, because EGL and GL both answer with a space-separated list and
+// two copies of this loop is how they drift.
+[[nodiscard]] bool contains_word(std::string_view all, std::string_view name) {
+    for (std::size_t at = all.find(name); at != std::string_view::npos;
+         at = all.find(name, at + 1)) {
+        const std::size_t end = at + name.size();
+        const bool left = at == 0 || all[at - 1] == ' ';
+        const bool right = end == all.size() || all[end] == ' ';
+        if (left && right) { return true; }
+    }
+    return false;
+}
+
 // Does this display advertise an extension? A DISPLAY extension is only
 // queryable after eglInitialize, which is why this is asked at construction
 // rather than folded into a constant attribute list.
 [[nodiscard]] bool has_extension(EGLDisplay display, std::string_view name) {
     const char * all = eglQueryString(display, EGL_EXTENSIONS);
-    if (all == nullptr) { return false; }
-    // WHOLE WORDS, SPACE SEPARATED. Every name here is a prefix of some other
-    // ANGLE extension - `EGL_ANGLE_robust_resource_initialization` sits beside
-    // `..._initialization_2` in some builds - so a plain substring search
-    // reports an extension the driver does not have and the attribute is then
-    // rejected by eglCreateContext.
-    const std::string_view all_of{all};
-    for (std::size_t at = all_of.find(name); at != std::string_view::npos;
-         at = all_of.find(name, at + 1)) {
-        const std::size_t end = at + name.size();
-        const bool left = at == 0 || all_of[at - 1] == ' ';
-        const bool right = end == all_of.size() || all_of[end] == ' ';
-        if (left && right) { return true; }
+    return all != nullptr && contains_word(all, name);
+}
+
+// ANGLE'S OWN WORDS, NOT A NUMBER.
+//
+// `glGetError` answers 0x0502 for a draw GL dropped, which names the category
+// and not the defect. KHR_debug answers "An enabled vertex array has no
+// buffer." - and the difference between those two strings is the difference
+// between a pass of guessing and a fix. Every silent-draw defect this back end
+// has had would have announced itself here.
+void GL_APIENTRY report_gl_message(GLenum /*source*/, GLenum type, GLuint id, GLenum severity,
+                                   GLsizei length, const GLchar * message, const void * /*user*/) {
+    const std::string text = length < 0 || message == nullptr
+                                 ? std::string{message == nullptr ? "" : message}
+                                 : std::string{message, static_cast<std::size_t>(length)};
+    std::fprintf(stderr, "[gl] type=0x%04X severity=0x%04X id=%u  %s\n",
+                 static_cast<unsigned>(type), static_cast<unsigned>(severity),
+                 static_cast<unsigned>(id), text.c_str());
+}
+
+// OFF unless `CTBROWSER_GL_DEBUG` is set, and free when it is not: with no
+// callback installed ANGLE never formats a string.
+//
+// SYNCHRONOUS on purpose. An asynchronous callback arrives detached from the
+// call that caused it, and a log you cannot attribute to a line is the kind of
+// evidence that produced four wrong conclusions on this branch already.
+//
+// Resolved through eglGetProcAddress rather than linked: KHR_debug is an
+// extension, the entry point is only present when the context has it, and
+// asking is how you find out rather than assuming and failing to link.
+void install_debug_callback() {
+    const char * want = std::getenv("CTBROWSER_GL_DEBUG");
+    if (want == nullptr || std::string_view{want} == "0") { return; }
+
+    const GLubyte * extensions = glGetString(GL_EXTENSIONS);
+    if (extensions == nullptr ||
+        !contains_word(reinterpret_cast<const char *>(extensions), "GL_KHR_debug")) {
+        std::fprintf(stderr, "[gl] CTBROWSER_GL_DEBUG is set but this context has no KHR_debug\n");
+        return;
     }
-    return false;
+    const auto set_callback = reinterpret_cast<PFNGLDEBUGMESSAGECALLBACKKHRPROC>(
+        eglGetProcAddress("glDebugMessageCallbackKHR"));
+    if (set_callback == nullptr) {
+        std::fprintf(stderr, "[gl] KHR_debug is advertised but glDebugMessageCallbackKHR is not\n");
+        return;
+    }
+    glEnable(GL_DEBUG_OUTPUT_KHR);
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS_KHR);
+    set_callback(report_gl_message, nullptr);
+    std::fprintf(stderr, "[gl] KHR_debug is on - ANGLE will name what it rejects\n");
 }
 
 } // namespace
@@ -186,7 +250,28 @@ device::device(int width, int height, driver which) : impl_{std::make_unique<imp
     // TEMPORARY, AND SAY SO: `CTBROWSER_GL_COMPAT=0` turns both off, so one
     // build can measure with and against - the discipline this work kept failing
     // on. It comes out when the question is answered.
-    std::vector<EGLint> context_attrs{EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 1};
+    //
+    // ES 3.0, NOT 3.1, AND THE VERSION IS LOAD-BEARING. Measured on the devbox
+    // against SwiftShader, one attribute changed per run:
+    //
+    //     ES3.1 bare             OK
+    //     ES3.1 +webgl           FAIL (EGL_BAD_MATCH 0x3009)
+    //     ES3.1 +robust          OK
+    //     ES3.0 +webgl           OK
+    //     ES3.0 +webgl +robust   OK
+    //
+    // ANGLE REFUSES WebGL compatibility on an ES 3.1 context. Asking for 3.1
+    // and then adding the attribute produced NO CONTEXT AT ALL - every WebGL
+    // test failing with "eglCreateContext failed", which reads like ANGLE is
+    // missing rather than like one attribute is wrong.
+    //
+    // 3.1 was over-asking in the first place: WebGL 2 is defined against GLES
+    // 3.0, nothing in this file calls a 3.1 entry point, and 3.0 is what Chrome
+    // requests. It also buys correct SHADER validation - ANGLE's
+    // Compiler::SelectShaderSpec answers SH_WEBGL2_SPEC for minor 0 and
+    // SH_GLES3_1_SPEC for minor 1, so 3.1 would have validated page shaders
+    // against the wrong dialect even had the context come up.
+    std::vector<EGLint> context_attrs{EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 0};
     const char * compat = std::getenv("CTBROWSER_GL_COMPAT");
     if (compat == nullptr || std::string_view{compat} != "0") {
         if (has_extension(impl_->display, "EGL_ANGLE_create_context_webgl_compatibility")) {
@@ -199,13 +284,28 @@ device::device(int width, int height, driver which) : impl_{std::make_unique<imp
         }
     }
     context_attrs.push_back(EGL_NONE);
-    impl_->context =
-        eglCreateContext(impl_->display, config, EGL_NO_CONTEXT, context_attrs.data());
+    impl_->context = eglCreateContext(impl_->display, config, EGL_NO_CONTEXT, context_attrs.data());
     if (impl_->context == EGL_NO_CONTEXT) {
-        impl_->error = "eglCreateContext failed for ES 3.1";
+        // THE EGL ERROR CODE, because the attribute list is the thing most
+        // likely to be wrong and the code is the only part that says which way.
+        // Without it this read "eglCreateContext failed" for a whole session
+        // while the cause was one attribute the driver answers EGL_BAD_MATCH
+        // (0x3009) to - indistinguishable, from the message alone, from ANGLE
+        // not being installed.
+        char code[32];
+        std::snprintf(code, sizeof code, " (EGL error 0x%04X)",
+                      static_cast<unsigned>(eglGetError()));
+        impl_->error = "eglCreateContext failed for ES 3.0";
+        impl_->error += code;
         return;
     }
-    if (!make_current()) { impl_->error = "eglMakeCurrent failed"; }
+    if (!make_current()) {
+        impl_->error = "eglMakeCurrent failed";
+        return;
+    }
+    // AFTER make_current, because a debug callback is context state and there
+    // was no current context to attach it to until this line.
+    install_debug_callback();
 }
 
 device::~device() = default;
@@ -256,15 +356,7 @@ bool device::webgl_compatible() const {
     // it" and "we got it" are two different facts and only the second one is
     // worth reporting.
     if (!ok()) { return false; }
-    const std::string all = ask(GL_EXTENSIONS);
-    const std::string_view name{"GL_ANGLE_webgl_compatibility"};
-    for (std::size_t at = all.find(name); at != std::string::npos; at = all.find(name, at + 1)) {
-        const std::size_t end = at + name.size();
-        if ((at == 0 || all[at - 1] == ' ') && (end == all.size() || all[end] == ' ')) {
-            return true;
-        }
-    }
-    return false;
+    return contains_word(ask(GL_EXTENSIONS), "GL_ANGLE_webgl_compatibility");
 }
 
 void device::viewport(int x, int y, int w, int h) {
@@ -513,30 +605,50 @@ unsigned device::bound_buffer(int target) const {
     // formula.
     GLenum query = 0;
     switch (static_cast<GLenum>(target)) {
-        case GL_ARRAY_BUFFER: query = GL_ARRAY_BUFFER_BINDING; break;
-        case GL_ELEMENT_ARRAY_BUFFER: query = GL_ELEMENT_ARRAY_BUFFER_BINDING; break;
-        case GL_UNIFORM_BUFFER: query = GL_UNIFORM_BUFFER_BINDING; break;
-        case GL_COPY_READ_BUFFER: query = GL_COPY_READ_BUFFER_BINDING; break;
-        case GL_COPY_WRITE_BUFFER: query = GL_COPY_WRITE_BUFFER_BINDING; break;
-        case GL_PIXEL_PACK_BUFFER: query = GL_PIXEL_PACK_BUFFER_BINDING; break;
-        case GL_PIXEL_UNPACK_BUFFER: query = GL_PIXEL_UNPACK_BUFFER_BINDING; break;
-        default: return 0u;
+    case GL_ARRAY_BUFFER: query = GL_ARRAY_BUFFER_BINDING; break;
+    case GL_ELEMENT_ARRAY_BUFFER: query = GL_ELEMENT_ARRAY_BUFFER_BINDING; break;
+    case GL_UNIFORM_BUFFER: query = GL_UNIFORM_BUFFER_BINDING; break;
+    case GL_COPY_READ_BUFFER: query = GL_COPY_READ_BUFFER_BINDING; break;
+    case GL_COPY_WRITE_BUFFER: query = GL_COPY_WRITE_BUFFER_BINDING; break;
+    case GL_PIXEL_PACK_BUFFER: query = GL_PIXEL_PACK_BUFFER_BINDING; break;
+    case GL_PIXEL_UNPACK_BUFFER: query = GL_PIXEL_UNPACK_BUFFER_BINDING; break;
+    default: return 0u;
     }
     GLint bound = 0;
     glGetIntegerv(query, &bound);
     return static_cast<unsigned>(bound);
 }
 
-void device::delete_object(unsigned name) {
+void device::delete_object(object_kind kind, unsigned name) {
     if (!ok() || name == 0) { return; }
-    // ASK, DO NOT REMEMBER. Each glIs* answers for its own namespace, and a
-    // handle belongs to exactly one of them.
-    if (glIsBuffer(name) == GL_TRUE) { glDeleteBuffers(1, &name); }
-    if (glIsTexture(name) == GL_TRUE) { glDeleteTextures(1, &name); }
-    if (glIsFramebuffer(name) == GL_TRUE) { glDeleteFramebuffers(1, &name); }
-    if (glIsRenderbuffer(name) == GL_TRUE) { glDeleteRenderbuffers(1, &name); }
-    if (glIsProgram(name) == GL_TRUE) { glDeleteProgram(name); }
-    if (glIsShader(name) == GL_TRUE) { glDeleteShader(name); }
+
+    // WHAT ELSE WEARS THIS NUMBER. Off unless asked for, and it exists because
+    // the bug it documents was invisible for five commits: the collision is
+    // silent, GL raises nothing, and the damage only surfaces later as a
+    // wrongly-sized buffer. One line per delete says whether the namespaces
+    // really do overlap on this page rather than leaving it an argument.
+    const char * trace = std::getenv("CTBROWSER_GL_DELETE");
+    if (trace != nullptr && std::string_view{trace} != "0") {
+        std::fprintf(stderr, "[del] kind=%d name=%u  also:%s%s%s%s%s%s\n", static_cast<int>(kind),
+                     name, glIsBuffer(name) == GL_TRUE ? " buffer" : "",
+                     glIsTexture(name) == GL_TRUE ? " texture" : "",
+                     glIsFramebuffer(name) == GL_TRUE ? " framebuffer" : "",
+                     glIsRenderbuffer(name) == GL_TRUE ? " renderbuffer" : "",
+                     glIsProgram(name) == GL_TRUE ? " program" : "",
+                     glIsShader(name) == GL_TRUE ? " shader" : "");
+    }
+
+    // SWITCH, DO NOT PROBE. The caller named the class; asking GL which classes
+    // the number happens to belong to answers a different question and deletes
+    // whatever else it finds.
+    switch (kind) {
+    case object_kind::buffer: glDeleteBuffers(1, &name); break;
+    case object_kind::texture: glDeleteTextures(1, &name); break;
+    case object_kind::framebuffer: glDeleteFramebuffers(1, &name); break;
+    case object_kind::renderbuffer: glDeleteRenderbuffers(1, &name); break;
+    case object_kind::program: glDeleteProgram(name); break;
+    case object_kind::shader: glDeleteShader(name); break;
+    }
 }
 
 void device::enable_attribute(unsigned location, bool on) {
@@ -825,7 +937,7 @@ void device::bind_buffer_base(int, unsigned, unsigned) {}
 unsigned device::bound_buffer(int) const {
     return 0u;
 }
-void device::delete_object(unsigned) {}
+void device::delete_object(object_kind, unsigned) {}
 unsigned device::create_texture() {
     return 0u;
 }

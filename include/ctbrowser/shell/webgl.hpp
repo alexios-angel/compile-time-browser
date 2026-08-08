@@ -279,7 +279,7 @@ public:
     void buffer_data(std::uint32_t target, int size, std::uint32_t usage);
     void buffer_sub_data(std::uint32_t target, int offset, std::span<const std::byte> bytes);
     void bind_buffer_base(std::uint32_t target, std::uint32_t index, std::uint32_t buffer);
-    void delete_object(std::uint32_t name);
+    void delete_object(raster::gl::device::object_kind kind, std::uint32_t name);
 
     void enable_attribute(int location, bool on);
     void attribute_pointer(int location, int size, std::uint32_t type, bool normalised, int stride,

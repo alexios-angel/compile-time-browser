@@ -1,6 +1,7 @@
 #include <ctbrowser/shell/bindings.hpp>
 
 #include <cstring>
+#include <utility>
 
 // `canvas.getContext('webgl')` - the JavaScript surface over shell/webgl.hpp.
 //
@@ -485,10 +486,26 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
     method("createShader", [gl, handle](context & c, std::span<value> a) {
         return handle(c, gl->create_shader(enum_at(a, 0)), "shader");
     });
-    for (const char * name : {"deleteBuffer", "deleteTexture", "deleteProgram", "deleteShader",
-                              "deleteFramebuffer", "deleteRenderbuffer"}) {
-        method(name, [gl](context & c, std::span<value> a) {
-            gl->delete_object(id_of(c, a.empty() ? value::undefined() : a[0]));
+    // THE ENTRY POINT NAMES THE KIND, and the kind has to travel with the
+    // handle. This loop already knew which of the six it was writing and threw
+    // that away, so the device was left probing every GL namespace for the
+    // number and deleting whatever else answered to it - which recycled live
+    // buffer names under Babylon and cost this branch its geometry.
+    //
+    // Taken from the METHOD rather than from the handle's `__kind`, because
+    // `deleteBuffer(x)` must delete a buffer whatever `x` claims to be. That is
+    // what WebGL specifies and it is the safer of the two readings.
+    using object_kind = raster::gl::device::object_kind;
+    const std::pair<const char *, object_kind> deleters[] = {
+        {"deleteBuffer", object_kind::buffer},
+        {"deleteTexture", object_kind::texture},
+        {"deleteProgram", object_kind::program},
+        {"deleteShader", object_kind::shader},
+        {"deleteFramebuffer", object_kind::framebuffer},
+        {"deleteRenderbuffer", object_kind::renderbuffer}};
+    for (const auto & [name, kind] : deleters) {
+        method(name, [gl, kind = kind](context & c, std::span<value> a) {
+            gl->delete_object(kind, id_of(c, a.empty() ? value::undefined() : a[0]));
             return value::undefined();
         });
     }

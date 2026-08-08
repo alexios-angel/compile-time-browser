@@ -146,11 +146,35 @@ public:
     // call alone, and it is the question a uniform buffer with no storage
     // behind it is diagnosed by. 0 for a target with no binding query.
     [[nodiscard]] unsigned bound_buffer(int target) const;
-    // NO KIND ARGUMENT, because the bindings do not have one to give: a page
-    // calls deleteBuffer/deleteTexture on a handle and WebGL's wrapper object
-    // already knows what it is. GL numbers each class separately, so this ASKS
-    // which class the name belongs to rather than remembering.
-    void delete_object(unsigned name);
+    // WHICH CLASS A HANDLE BELONGS TO. GL numbers each of these SEPARATELY and
+    // every one of them starts at 1, so name 1 routinely exists as a buffer AND
+    // a texture AND a shader at the same time.
+    enum class object_kind {
+        buffer,
+        texture,
+        framebuffer,
+        renderbuffer,
+        program,
+        shader
+    };
+
+    // THE KIND IS AN ARGUMENT, and it has to be.
+    //
+    // This took a kind-less name and asked each `glIs*` in turn, on the stated
+    // premise that "a handle belongs to exactly one of them". That premise is
+    // FALSE - the namespaces are independent - and the six probes had no
+    // `else`, so `deleteShader(1)` also ran `glDeleteBuffers` on buffer 1.
+    //
+    // The damage was not a visible error. GL FREES THE NAME, `glGenBuffers`
+    // hands it straight back, and the next allocation lands on top of live
+    // geometry: measured on Babylon, buffer 7 held 1,835,008 bytes of vertices
+    // and was reissued as a 1,072-byte uniform buffer. What ANGLE finally
+    // reported was "it is undefined behaviour to use a uniform buffer that is
+    // too small" - three layers away from the delete that caused it.
+    //
+    // The caller always knows: `deleteBuffer` deletes a buffer whatever the
+    // handle claims to be, which is also what WebGL specifies.
+    void delete_object(object_kind kind, unsigned name);
 
     void enable_attribute(unsigned location, bool on);
     void attribute_pointer(unsigned location, int size, int type, bool normalised, int stride,

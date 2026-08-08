@@ -37,8 +37,7 @@ struct outcome {
     // BOTH, ALWAYS, SIDE BY SIDE. A run that prints only the failure leaves the
     // reader guessing whether the other one was even tried.
     std::printf("     %-14s ok=%s  webgl=%s  %s\n", name, out.ok ? "yes" : "NO ",
-                out.webgl ? "yes" : "NO ",
-                out.ok ? out.renderer.c_str() : device.error().c_str());
+                out.webgl ? "yes" : "NO ", out.ok ? out.renderer.c_str() : device.error().c_str());
     return out;
 }
 
@@ -78,7 +77,7 @@ int main() {
                     "deterministic is what a page will get\n");
     }
 
-    // --- and the device draws ------------------------------------------------
+    // --- and the device clears -------------------------------------------------
     {
         raster::gl::device device{64, 48, raster::gl::driver::deterministic};
         CHECK(device.ok());
@@ -93,6 +92,123 @@ int main() {
         CHECK(((pixel >> 8) & 0xFF) == 0);
         CHECK((pixel & 0xFF) == 0);
         if (((pixel >> 16) & 0xFF) != 255) { std::printf("     clear came back %08x\n", pixel); }
+    }
+
+    // --- AND THE DEVICE DRAWS --------------------------------------------------
+    //
+    // THIS IS THE INSTRUMENT, and its absence is why "clears but draws no
+    // geometry" survived five commits. The section above was labelled "and the
+    // device draws" and only cleared - so the one unit test of the GL device
+    // asserted exactly the half of the symptom that works, and every defect in
+    // the half that does not was invisible to the suite.
+    //
+    // It is the shape of webgl2_ratchet's rung 10 - a corner pixel and a centre
+    // pixel, the clear and the geometry read separately - but at DEVICE level:
+    // no page, no bindings, no JavaScript, no Babylon. When a corpus stops
+    // painting, this says in one command whether ANGLE draws at all or whether
+    // the engine loses the draw between here and the canvas.
+    //
+    // With the software rasteriser deleted (56bb66f) there is no oracle left to
+    // diff against, so a positive pixel assertion is the whole of the evidence.
+    {
+        // GL's numbers, spelled out. `raster::gl::device` takes plain ints on
+        // purpose - the values a page passes arrive from JavaScript already as
+        // integers - so a caller needs the constants and no GLES header may
+        // appear outside src/raster/gl.cpp.
+        constexpr int gl_vertex_shader = 0x8B31;
+        constexpr int gl_fragment_shader = 0x8B30;
+        constexpr int gl_array_buffer = 0x8892;
+        constexpr int gl_static_draw = 0x88E4;
+        constexpr int gl_float = 0x1406;
+        constexpr int gl_triangles = 0x0004;
+
+        raster::gl::device device{64, 48, raster::gl::driver::deterministic};
+        CHECK(device.ok());
+
+        // ES 3.00, because the context is ES 3.1 and `#version` must be the
+        // first thing in the string. The page corpora supply their own; this
+        // one is ours and says so.
+        const unsigned vertex = device.create_shader(gl_vertex_shader);
+        device.shader_source(vertex, "#version 300 es\n"
+                                     "in vec2 xy;\n"
+                                     "void main() { gl_Position = vec4(xy, 0.0, 1.0); }\n");
+        device.compile_shader(vertex);
+        CHECK(device.shader_compiled(vertex));
+        if (!device.shader_compiled(vertex)) {
+            std::printf("     vertex shader: %s\n", device.shader_log(vertex).c_str());
+        }
+
+        const unsigned fragment = device.create_shader(gl_fragment_shader);
+        device.shader_source(fragment, "#version 300 es\n"
+                                       "precision mediump float;\n"
+                                       "out vec4 colour;\n"
+                                       "void main() { colour = vec4(0.0, 1.0, 0.0, 1.0); }\n");
+        device.compile_shader(fragment);
+        CHECK(device.shader_compiled(fragment));
+        if (!device.shader_compiled(fragment)) {
+            std::printf("     fragment shader: %s\n", device.shader_log(fragment).c_str());
+        }
+
+        const unsigned program = device.create_program();
+        device.attach_shader(program, vertex);
+        device.attach_shader(program, fragment);
+        device.link_program(program);
+        CHECK(device.program_linked(program));
+        if (!device.program_linked(program)) {
+            std::printf("     link: %s\n", device.program_log(program).c_str());
+        }
+        device.use_program(program);
+
+        // A triangle that covers the centre and leaves every corner alone, so
+        // the two pixels below answer different questions.
+        const float xy[] = {-0.9F, -0.9F, 0.9F, -0.9F, 0.0F, 0.9F};
+        const unsigned buffer = device.create_buffer();
+        device.bind_buffer(gl_array_buffer, buffer);
+        device.buffer_data(gl_array_buffer, xy, sizeof(xy), gl_static_draw);
+
+        // ASKED OF THE LINKED PROGRAM. A location the engine invents agrees with
+        // the shader only by coincidence.
+        const int location = device.attribute_location(program, "xy");
+        CHECK(location >= 0);
+        if (location >= 0) {
+            const auto at = static_cast<unsigned>(location);
+            device.enable_attribute(at, true);
+            device.attribute_pointer(at, 2, gl_float, false, 0, 0);
+        }
+
+        // No glViewport: the engine never calls one either, and GL's default is
+        // the pbuffer size. If that ever stops being true this test says so
+        // before a page does.
+        device.clear(1.0F, 0.0F, 0.0F, 1.0F);
+        device.draw_arrays(gl_triangles, 0, 3);
+
+        // NOTHING MAY HAVE GONE WRONG SILENTLY. A draw that GL rejected returns
+        // normally and paints nothing, which is the entire failure mode this
+        // file exists to catch - so the error queue is part of the assertion,
+        // not a diagnostic beside it.
+        const std::uint32_t error = device.take_error();
+        CHECK(error == 0);
+        if (error != 0) { std::printf("     GL error after the draw: 0x%04X\n", error); }
+
+        paint::bitmap into;
+        CHECK(device.read_pixels(into));
+
+        const std::uint32_t corner = into.at(1, 1);
+        const std::uint32_t centre = into.at(32, 24);
+
+        // THE CLEAR REACHED THE PIXELS - the half that already worked.
+        CHECK(((corner >> 16) & 0xFF) == 255);
+        CHECK(((corner >> 8) & 0xFF) == 0);
+
+        // AND THE GEOMETRY DID - the half that did not. Green where the
+        // triangle is, and not the clear colour.
+        CHECK(centre != corner);
+        CHECK(((centre >> 8) & 0xFF) == 255);
+        CHECK(((centre >> 16) & 0xFF) == 0);
+        if (centre == corner) {
+            std::printf("     the device cleared but drew nothing: corner=%08x centre=%08x\n",
+                        corner, centre);
+        }
     }
 
     REPORT("gl_basics");
