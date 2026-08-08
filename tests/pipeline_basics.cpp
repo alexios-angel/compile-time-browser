@@ -12,7 +12,7 @@
 //      fallback, it is a second renderer with its own bugs.
 //
 // This runs on the software backend on purpose: it is the half of stage 6 that
-// needs no GPU, so it is the half CI can enforce.
+// needs no GPU, so it is the half any machine can enforce.
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>

@@ -7,8 +7,8 @@
 // the format. Test 3 is the one that fails if anyone reverts that.
 //
 // Every pixel assertion is behind `raster::svg_available()`, so this file runs
-// and passes on a machine with no plutosvg - which is CI. The last test is the
-// one that MEANS something there: with no rasteriser a page must lay out
+// and passes on a machine with no plutosvg - the devbox, for one. The last test
+// is the one that MEANS something there: with no rasteriser a page must lay out
 // exactly as it would with one, and simply not draw.
 
 #include <ctbrowser.hpp>

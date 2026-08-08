@@ -19,7 +19,7 @@
 // The software backend: the FIRST implementation, on purpose.
 //
 // Writing it before any GPU code means raster and composition are testable
-// headlessly and byte-for-byte from the start, CI needs no GPU, and the golden
+// headlessly and byte-for-byte from the start, the test suite needs no GPU, and the golden
 // image is reproducible on a machine with no fonts installed. When the SDL3 GPU
 // backend arrives it has something to be checked against rather than being the
 // only implementation and therefore correct by definition.

@@ -17,19 +17,20 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 host="${DEVBOX_HOST:-devbox}"
-# Same knob + default as CI (.github/workflows/tests.yml): the embed repo's
-# pinned toolchain release. sync-to-ctbrowser.sh may install a locally-built
-# one instead — the rsync protect filter keeps whichever is on the server.
+# The embed repo's pinned toolchain release. sync-to-ctbrowser.sh may install a
+# locally-built one instead — the rsync protect filter keeps whichever is on the
+# server. This used to say "same knob and default as CI"; there is no CI any
+# more (deleted 2026-08-08), so this script IS the pin.
 CLANG_STD_EMBED_TAG="${CLANG_STD_EMBED_TAG:-clang-std-embed-e3986d225}"
 CLANG_STD_EMBED_RELEASE="${CLANG_STD_EMBED_RELEASE:-https://github.com/alexios-angel/embed/releases/download/${CLANG_STD_EMBED_TAG}/${CLANG_STD_EMBED_TAG}-linux-x86_64.tar.xz}"
 
 # ANGLE IS ON FOR A DEVBOX BUILD, and stays off everywhere else. The option
 # FATAL_ERRORs when third_party/angle/ is missing, which is the right answer for
-# a developer who has not fetched and the wrong one for CI - so it is set HERE,
-# where fetch-angle.sh has just run, rather than in the `default` preset that CI
-# shares. Without it the box builds a binary in which gl_basics prints SKIP and
-# the render-angle-* tests are never registered: a green suite that measured
-# nothing. CTBROWSER_ANGLE=OFF opts out.
+# a developer who has not fetched - so it is set HERE, where fetch-angle.sh has
+# just run, rather than in the `default` preset everyone shares. Without it the
+# box builds a binary in which gl_basics prints SKIP and the render-angle-*
+# tests are never registered: a green suite that measured nothing.
+# CTBROWSER_ANGLE=OFF opts out.
 CTBROWSER_ANGLE="${CTBROWSER_ANGLE:-ON}"
 
 if ! ssh -o ConnectTimeout=5 "$host" true 2>/dev/null; then

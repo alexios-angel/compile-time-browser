@@ -2,7 +2,7 @@
 # Format the sources, or check that they are already formatted.
 #
 #   tools/format.sh          rewrite every file in place
-#   tools/format.sh --check  exit non-zero and print the diff, for CI
+#   tools/format.sh --check  exit non-zero and print the diff
 #
 # The file list is `git ls-files`, so a file that is not tracked is not
 # formatted and a build directory cannot be picked up by accident. What NOT to
@@ -12,9 +12,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# The project's own clang-format, so a run here and a run in CI agree. Falls
-# back to whatever is on PATH, which is fine for a check but can differ by a
-# version.
+# The project's own clang-format, so a run here and a run on the devbox agree.
+# Falls back to whatever is on PATH, which is fine for a check but can differ by
+# a version.
 format=tools/clang-std-embed/bin/clang-format
 if [[ ! -x $format ]]; then
     format=$(command -v clang-format || true)

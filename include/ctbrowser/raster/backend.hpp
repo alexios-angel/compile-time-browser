@@ -16,7 +16,7 @@
 // path - and, more usefully, so that "did I implement all of it" is a compile
 // error. The software backend is written FIRST on purpose: it keeps raster and
 // composition testable headlessly and byte-for-byte before any GPU code exists,
-// and CI has no GPU.
+// and the machines this is built on have no GPU.
 //
 // One part of the contract a concept cannot express, so it is stated here and
 // checked by the tests instead:

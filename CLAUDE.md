@@ -33,7 +33,7 @@ cmake --preset tsan && ctest --preset tsan     # and asan
 # examples build when SDL3 is found; tests are always headless
 # SVG needs plutosvg: `brew bundle --file tools/Brewfile` (PINNED versions -
 # the golden compares across Linux and Windows). Without it everything still
-# builds and passes; svg_basics skips its pixel assertions, as CI does.
+# builds and passes; svg_basics skips its pixel assertions.
 ```
 **mimalloc backs `operator new`/`delete`** and is REQUIRED by default — `brew
 install mimalloc` (v3, pinned in `tools/Brewfile`), or
@@ -46,7 +46,9 @@ global `operator new` in a static archive can be silently dropped by link order.
 
 Flags: `-O2 -pedantic -Wall -Wextra -Werror -Wconversion`. Tests are
 EXECUTABLES, SDL-free, headless. `tools/format.sh --check` is the formatting
-gate and CI runs it.
+gate - **run it yourself before committing**. There is NO CI: the GitHub
+workflow was deleted on 2026-08-08, so nothing checks formatting or runs the
+suite unless a person does. `tools/remote-build.sh` is the whole gate now.
 
 ## Tooling
 - `tools/gen-assets.py` — regenerates `examples/assets/` (sprites.bmp, blip.wav)

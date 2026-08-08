@@ -1,7 +1,7 @@
 # Build speed, formatting, and the profiler
 
-How long a build takes and why, the formatting gate CI runs, and how to
-measure the engine's CPU cost at runtime.
+How long a build takes and why, the formatting gate, and how to measure the
+engine's CPU cost at runtime.
 
 > **The engine stopped being C++ modules on 2026-07-28.** Everything below
 > about BMIs, module interfaces and the import graph is history now; the
@@ -300,9 +300,40 @@ in every TU. Off by default, because the default is meant to be fast to build.
 target that links `Freetype::Freetype` needs a matching `find_dependency` in the
 installed config, and stage 6 shipped without one.
 
+## THERE IS NO CI (2026-08-08)
+
+`.github/workflows/tests.yml` is deleted. Nothing runs the suite, the formatting
+gate or the goldens automatically any more - **a person does, or nobody does.**
+
+It had been **failing since 2026-08-04** and nobody was reading it, which is the
+worst state for a gate to be in: red for a reason unrelated to the code, so
+every real failure after it looked the same. The cause was that the `default`
+preset pins `CMAKE_CXX_COMPILER` to `tools/clang-std-embed/bin/clang++`, which a
+GitHub runner does not have - so it died at `project()` and never reached
+`find_package(Boost)`, let alone a test.
+
+That is also why it could not simply be repaired: the preset the tree actually
+builds with wants a toolchain from a release, mimalloc and simdutf from brew,
+plutosvg pinned to the sysroot's version, and ANGLE fetched - and the goldens
+additionally want SDL3 *and* SwiftShader over Mesa (`docs/platform.md`). A
+runner reproducing that is most of what the devbox already is.
+
+**So the gate is `tools/remote-build.sh`**, and the discipline is manual:
+
+```bash
+./tools/format.sh --check          # formatting
+./tools/remote-build.sh            # GCC 13, ANGLE, 72/72 - no SDL, so no goldens
+# goldens need a box with SDL3; see docs/platform.md for the SwiftShader ICD
+```
+
+The devbox is the second set of assumptions CI used to be - a different compiler
+and a different dependency set - so what was actually load-bearing about CI is
+still there. What is gone is the part that ran without being asked. If that
+matters again, a `pre-commit` hook running `format.sh --check` is the cheap half.
+
 ## FORMATTING (2026-07-27)
 
-**`tools/format.sh`**, and `--check` in CI on its own runner. `.clang-format`
+**`tools/format.sh`**, and `--check` to gate. `.clang-format`
 is **LLVM with five deviations**, and the deviations are not preferences - they
 are what the repository was measured to already be: tabs (30,000 tab-indented
 lines against 2,600), 100 columns, `const rect & box` (881 against 16), one-line
@@ -461,8 +492,8 @@ numbers; and antialiasing and hinting will never match. Fonts are handled —
 Sans/Cousine through `FONTCONFIG_FILE`, since otherwise every glyph differs and
 substitution buries everything else. `--system-fonts` opts out.
 
-Not a ctest and not in CI, for the reason the benchmarks are not: a
-browser-versus-browser diff should be read, not silently failed.
+Not a ctest, for the reason the benchmarks are not: a browser-versus-browser
+diff should be read, not silently failed.
 
 ## FONTS IN THE BINARY (2026-07-28)
 
