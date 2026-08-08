@@ -695,6 +695,21 @@ unsigned device::create_vertex_array() {
     if (!ok()) { return 0u; }
     GLuint name = 0;
     glGenVertexArrays(1, &name);
+
+    // A NAME IS NOT AN OBJECT UNTIL IT IS BOUND. glGenVertexArrays only
+    // RESERVES the number; until the first glBindVertexArray, glIsVertexArray
+    // answers GL_FALSE for it. That is GL's rule and it is not WebGL's -
+    // `createVertexArray` creates the object, and a page that asks
+    // `isVertexArray` about one it just made is told yes by every browser.
+    //
+    // So bind it once and put the previous binding back. Restoring matters:
+    // creating a vertex array must not disturb the one the page is building,
+    // and leaving the new one current would silently retarget every
+    // vertexAttribPointer that followed.
+    GLint previous = 0;
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &previous);
+    glBindVertexArray(name);
+    glBindVertexArray(static_cast<GLuint>(previous));
     return name;
 }
 

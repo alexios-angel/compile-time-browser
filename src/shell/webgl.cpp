@@ -505,6 +505,19 @@ void webgl_context::fail(std::uint32_t error) {
 }
 
 void webgl_context::refuse(std::string_view call) {
+    // AND IT RAISES THE ERROR IT ADVERTISES.
+    //
+    // This recorded the name and stopped there, while the bindings printed
+    // "it raises INVALID_OPERATION" to the page's console - so all fifty-two
+    // refused entry points returned null with getError() still reading
+    // NO_ERROR. A page that checks for the error it was told about was told
+    // nothing was wrong.
+    //
+    // Refusing BY NAME is this engine's contract (docs/webgl2-plan.md); the
+    // point of it is to be loud. A silent refusal is the same defect as a
+    // silent no-op, which is what the whole rewrite exists to eliminate. The
+    // ledger records the name for a developer, `fail` answers the page.
+    fail(gl_enum::invalid_operation);
     const std::string name{call};
     if (std::find(refused_.begin(), refused_.end(), name) == refused_.end()) {
         refused_.push_back(name);
