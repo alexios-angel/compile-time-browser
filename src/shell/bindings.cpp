@@ -1338,9 +1338,11 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         if (id) { listeners_.push_back(make_listener(c, id, args)); }
         return value::undefined();
     });
-    // The other half. The window and the document could both remove a listener
-    // and an element could not, so a page that tidied up after itself - which
-    // p5's Element does when it is removed - threw instead.
+    // The other half. The WINDOW could remove a listener and an element could
+    // not, so a page that tidied up after itself - which p5's Element does when
+    // it is removed - threw instead. (The comment here used to say the document
+    // could too. It could not, and that was found the same way, one corpus
+    // later: see install_document.)
     method("removeEventListener", [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         const std::string type = arg_string(c, args, 0);
@@ -2463,6 +2465,25 @@ void dom_bindings::install_document(context & cx) {
     });
     method("addEventListener", [this](context & c, std::span<value> args) {
         listeners_.push_back(make_listener(c, node_id{}, args));
+        return value::undefined();
+    });
+    // THE OTHER HALF, WHICH THE DOCUMENT DID NOT HAVE.
+    //
+    // The window had both and an element had both; the document could only ADD.
+    // A page that tidied up after itself got
+    // "`removeEventListener` is undefined, not a function" - and because the
+    // fault happened inside an image-load callback, what it actually looked
+    // like was Babylon's PBR material painting nothing, three layers away.
+    //
+    // The body is the window's, and identical on purpose: `listener::target`
+    // empty means document-or-window by design, so the two share a bucket and
+    // removing from one has always been able to remove the other's.
+    method("removeEventListener", [this](context & c, std::span<value> args) {
+        const std::string type = arg_string(c, args, 0);
+        const value callback = arg(args, 1);
+        std::erase_if(listeners_, [&](const listener & l) {
+            return !l.target && l.type == type && l.callback.bits() == callback.bits();
+        });
         return value::undefined();
     });
     method("getElementsByTagName", [this](context & c, std::span<value> args) {

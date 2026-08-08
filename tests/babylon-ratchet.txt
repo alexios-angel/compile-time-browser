@@ -19,8 +19,63 @@
 # canvas showed nothing but the clear colour. A Babylon feature that is missing
 # here fails SILENTLY from JavaScript - that is the character of this corpus.
 
-level=8
-blocker=no shadow on the ground: 0 grey level(s) (3 colours 0,0,255x3220 50,0,0x690 250,0,0x186)
+level=10
+blocker=not measured yet - glTF import and the GUI need corpus additions, see docs/babylon-plan.md
+
+# 9 -> 10 ON A MISSING DOM METHOD, and it was never a graphics problem.
+#
+# `document.removeEventListener` did not exist. The window had both halves and
+# an element had both; the document could only ADD. Babylon's PBR path gates
+# readiness on an environment BRDF texture decoded from a base64 PNG, and the
+# cleanup in that image's load callback threw
+# "`removeEventListener` is undefined, not a function".
+#
+# WHAT IT LOOKED LIKE was "a PBR material painted 0 pixels" - a renderer
+# failure, three layers from a DOM gap. The fault was reported at all only
+# because note_callback_fault exists; before that it would have been a callback
+# that silently stopped.
+#
+# The comment beside the ELEMENT's removeEventListener claimed the window and
+# the document could both already do this. Half of that was untrue and had been
+# since it was written. It is corrected in place.
+#
+# THE LADDER IS NOW AT ITS ENGINE CEILING. Rungs 11 and 12 are glTF import and
+# the GUI, and both need bundles that are not vendored - babylonjs-loaders and
+# babylon.gui.js. That is a corpus decision, not an engine one, and
+# docs/babylon-plan.md has said so from the start.
+#
+# ONE ESTIMATE WORTH DISTRUSTING NEXT TIME: a session was planned for opening up
+# texImage2D so a depth texture could be allocated, on the reasoning that
+# WebGL 2 forces ShadowGenerator down createDepthStencilTexture. The reasoning
+# is correct and rungs 8, 9 and 10 all passed without any of it.
+
+# 7 -> 9 ON ONE TABLE ENTRY, and the number is the least interesting part.
+#
+# `TEXTURE_BINDING_3D` was in no constant table here. Babylon picks the GLSL
+# dialect it emits from whether that property EXISTS -
+# `_webGLVersion: e.TEXTURE_BINDING_3D ? 2 : 1` - so it concluded WebGL 1 and
+# prepended no `#version` to anything, while its shader PROCESSOR read the
+# engine's own version, correctly saw 2, and rewrote every body to ES 3.00.
+#
+# Fragment shaders survived: the processor injects `layout(location = 0)` and
+# this engine's repair keys on `layout(`. `postprocessVertexShader` has none,
+# so it was parsed as ESSL 1.00, rejected, and the fullscreen quad never drew -
+# leaving the canvas exactly as the clear left it, with NO GL ERROR. That is
+# why rung 8 looked like a post-process bug for four days.
+#
+# RUNG 9 CAME FREE WITH IT. A whole session was budgeted for the shadow on the
+# reasoning that WebGL 2 forces `createDepthStencilTexture` and this engine's
+# texImage2D cannot allocate a depth format. That reasoning is still true and
+# the shadow lands anyway. The estimate was wrong; the measurement was one run.
+#
+# THE RECORD WAS ALSO STALE, which is worth knowing before trusting a number
+# here: level 8 was earned on 2026-08-03 against the software rasteriser, which
+# was deleted 24 hours later. Rung 8 had never passed on ANGLE at all, so the
+# "regression" was a comparison against a backend that no longer existed.
+#
+# Rung 10 is now blocked on something small and specific: PBR gates readiness on
+# an environment BRDF texture loaded from a base64 PNG data URL, and the image
+# load path throws because `removeEventListener` does not exist.
 
 # 7/12 ON THE SECOND READING, and one engine bug did most of it.
 #

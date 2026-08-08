@@ -129,58 +129,41 @@ std::uint32_t webgl_context::create_shader(std::uint32_t kind) {
 }
 
 void webgl_context::shader_source(std::uint32_t shader, std::string_view source) {
-    std::string sent{source};
-    // MEASURED BEFORE ANYTHING IS ADDED. The previous reading of this could not
-    // tell two different facts apart: a run with the preamble on printed
-    // `version=1` whether the PAGE supplied the directive or this code did, and
-    // "Babylon assembles its bodies without one" was inferred from that number.
-    const bool page_version = sent.find("#version") != std::string::npos;
-    const bool has_layout = sent.find("layout(") != std::string::npos;
-
-    // A shader using `layout(...)` is GLSL ES 3.00 and the `#version 300 es`
-    // directive is then mandatory. Supplying it is the PAGE'S job - a real
-    // browser adds nothing - so this is a repair for a bundle that did not, and
-    // it fires only when the page did not and the source plainly needs it.
+    // THE PAGE'S BYTES, UNTOUCHED. A browser prepends nothing to a shader, and
+    // neither does this.
     //
-    // IT IS LOAD-BEARING, AND THAT IS MEASURED RATHER THAN ASSUMED. Reading
-    // babylon.js says it prepends "#version 300 es\n#define WEBGL2 \n" itself,
-    // which would make this dead code. It does that for its small internal
-    // passes and NOT for the scene shaders:
+    // There WAS a repair here: a `#version 300 es` inserted when the source
+    // used `layout(` and carried no directive of its own. It existed because
+    // Babylon was sending ES 3.00 bodies with no version - and it was doing
+    // that because `TEXTURE_BINDING_3D` was missing from the constant table, so
+    // it had concluded it was talking to WebGL 1. One table entry fixed the
+    // cause; the repair was a workaround for a defect three layers away.
     //
-    //     [src] shader=1 bytes=70    page_version=1 layout=0 added=0
-    //     [src] shader=1 bytes=8389  page_version=0 layout=1 added=1
-    //     [src] shader=2 bytes=13357 page_version=0 layout=1 added=1
+    // DELETED ON A MEASUREMENT, not on the reasoning. With the constant in
+    // place the repair fired ZERO times across all four corpora, and the
+    // ratchets were identical with it forced off:
     //
-    // and the ratchet, one variable, both numbers in one command:
+    //     PREAMBLE=1  webgl2=10/10  babylon=9/12  p5=12/12
+    //     PREAMBLE=0  webgl2=10/10  babylon=9/12  p5=12/12
+    //     added=1 count: webgl2 0, babylon 0, p5 0, phaser 0
     //
-    //     CTBROWSER_GL_PREAMBLE=1  WEBGL2 LEVEL 10/10
-    //     CTBROWSER_GL_PREAMBLE=0  WEBGL2 LEVEL  9/10
-    //
-    // So DO NOT DELETE THIS on the strength of reading the bundle. The knob
-    // stays because it is what settles the question in one run; it costs
-    // nothing unset.
-    //
-    // p5 and Phaser never reach it - neither has `layout(` in a shader body,
-    // only in JS method names - so the ES 3.00 rewrite hazard this would carry
-    // for an ES 1.00 page does not arise on this corpus.
-    const char * knob = std::getenv("CTBROWSER_GL_PREAMBLE");
-    const bool add =
-        (knob == nullptr || std::string_view{knob} != "0") && !page_version && has_layout;
-    if (add) { sent.insert(0, "#version 300 es\n"); }
-
-    // WHAT ACTUALLY REACHED THE COMPILER. `CTBROWSER_GL_SRC=1`. A shader body
-    // that arrives empty or truncated fails in a way that looks like a draw
-    // problem three layers away - which has happened twice on this page. The
-    // FIRST LINE comes too, because that is where a `#version` has to be and
-    // where a body that arrived as nothing but `#define`s is visible at a glance.
+    // Mutating a page's shader source is not a thing to keep "just in case":
+    // it is a silent divergence from every other engine, and a page that
+    // genuinely needs a directive it did not write is a page that is broken in
+    // Chrome too.
     if (std::getenv("CTBROWSER_GL_SRC") != nullptr) {
-        const std::size_t line = std::min(sent.find('\n'), sent.size());
-        const std::string first = sent.substr(0, std::min<std::size_t>(line, 60));
-        std::fprintf(stderr, "[src] shader=%u bytes=%zu page_version=%d layout=%d added=%d | %s\n",
-                     shader, sent.size(), page_version ? 1 : 0, has_layout ? 1 : 0, add ? 1 : 0,
+        // WHAT ACTUALLY REACHED THE COMPILER. A body that arrives empty or
+        // truncated fails in a way that looks like a draw problem three layers
+        // away - which has happened twice on this page. The FIRST LINE comes
+        // too: that is where a `#version` has to be, and where a body that
+        // arrived as nothing but `#define`s is visible at a glance.
+        const std::size_t line = std::min(source.find('\n'), source.size());
+        const std::string first{source.substr(0, std::min<std::size_t>(line, 60))};
+        std::fprintf(stderr, "[src] shader=%u bytes=%zu page_version=%d | %s\n", shader,
+                     source.size(), source.find("#version") != std::string_view::npos ? 1 : 0,
                      first.c_str());
     }
-    device_.shader_source(shader, sent);
+    device_.shader_source(shader, std::string{source});
 }
 
 void webgl_context::compile_shader(std::uint32_t shader) {
