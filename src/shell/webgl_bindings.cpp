@@ -446,6 +446,28 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
         constant("DEPTH24_STENCIL8", 0x88F0);
         constant("TEXTURE_3D", 0x806F);
         constant("TEXTURE_2D_ARRAY", 0x8C1A);
+        // A CONSTANT THAT IS A FEATURE TEST, and the most expensive omission
+        // this table has had.
+        //
+        // Babylon picks its GLSL dialect from whether this property EXISTS:
+        //
+        //     _webGLVersion: e.TEXTURE_BINDING_3D ? 2 : 1
+        //     const c = l._webGLVersion > 1 ? "#version 300 es\n#define WEBGL2 \n" : ""
+        //
+        // Undefined, so Babylon concluded WebGL 1 and prepended NO `#version`
+        // to anything - while its shader PROCESSOR, which reads the engine's
+        // own version and correctly saw 2, rewrote every body to ES 3.00.
+        // Every shader was then ES 3.00 source with no directive. The fragment
+        // ones survived because the processor injects `layout(location = 0)`
+        // and shell/webgl.cpp's repair keys on `layout(`; the post-process
+        // VERTEX shader has none, so it was parsed as ESSL 1.00 and rejected,
+        // the fullscreen quad never drew, and the canvas kept its clear colour
+        // with NO GL ERROR ANYWHERE. That is Babylon ratchet rung 8.
+        //
+        // It sits inside the webgl2 block for the reason the block exists: it
+        // is precisely the constant a page uses to conclude it has WebGL 2,
+        // and on a WebGL 1 context that conclusion would be wrong.
+        constant("TEXTURE_BINDING_3D", 0x806A);
         constant("UNIFORM_BUFFER", 0x8A11);
         constant("COPY_READ_BUFFER", 0x8F36);
         constant("PIXEL_PACK_BUFFER", 0x88EB);
