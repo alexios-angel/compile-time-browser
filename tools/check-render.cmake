@@ -37,6 +37,23 @@ set(ENV{CTBROWSER_FONTS} font8x8)
 # Windows cross build, which is the property that lets it be goldened at all.
 if(DEFINED BACKEND)
   set(ENV{CTBROWSER_WEBGL} ${BACKEND})
+  # AND PIN THE DEVICE, not just the back end. "ANGLE" is not one rasteriser: it
+  # is whatever Vulkan device the loader hands it, and tests/golden/angle/ was
+  # made on SwiftShader. A machine with something else renders something else -
+  # legitimately, and then the byte comparison fails for a reason that is not a
+  # regression.
+  #
+  # MEASURED BOTH WAYS on 2026-08-08, and it bites on each platform from the
+  # opposite direction. On the Windows exe, which reaches a real Intel Arc:
+  # webgltriangle 54.19% of pixels differ, babylonscene 0.82%, p5webgl 5 pixels
+  # of 93,600. With this set, all four are byte-identical. On a Linux
+  # workstation the thief is Mesa's llvmpipe rather than a GPU - see
+  # docs/platform.md, which also has the VK_ICD_FILENAMES half, because the
+  # Vulkan LOADER picks the ICD before ANGLE's preference applies.
+  #
+  # It has never failed on the devbox or in the old CI for the least reassuring
+  # reason available: neither had any other Vulkan device to lose to.
+  set(ENV{CTBROWSER_GL_DRIVER} deterministic)
 endif()
 set(ENV{CTBROWSER_SCREENSHOT} "${OUT}")
 

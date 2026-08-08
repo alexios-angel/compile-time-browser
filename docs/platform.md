@@ -22,6 +22,75 @@ prints a loud banner on Linux here because its numbers would be two CPU
 implementations racing. Headless GPU runs need `SDL_VIDEODRIVER=offscreen`;
 `dummy` has no Vulkan surface support and fails device creation outright.
 
+## THE ANGLE GOLDENS ARE PINNED TO A SOFTWARE RASTERISER (2026-08-08)
+
+`tests/golden/angle/*.ppm` - babylonscene, babylonorbit, p5webgl, webgltriangle -
+were made on **SwiftShader**. "ANGLE" is not one rasteriser: it is whatever
+Vulkan device the loader hands it, so a machine with something else renders
+something else, legitimately, and the byte comparison fails for a reason that is
+not a regression.
+
+**Measured on 2026-08-08, and the honest version is narrower than the first
+guess.** What actually matters is SOFTWARE versus HARDWARE, not which software:
+
+| device | vs the golden |
+|---|---|
+| SwiftShader (what they were made on) | identical |
+| Mesa **llvmpipe** | **identical** - byte for byte, checked directly |
+| Windows, real **Intel Arc** | webgltriangle **54.19%** of pixels, babylonscene 0.82%, p5webgl **5 of 93,600** |
+
+Two CPU rasterisers doing exact IEEE math with no multisampling agree exactly;
+a GPU does not. The 5-pixel figure is the signature to recognise - single digits
+mean two rasterisers disagreeing at triangle edges, and it is the same number
+`examples/CMakeLists.txt` recorded when the ANGLE goldens were split out.
+
+**The fix is one line in `tools/check-render.cmake`**: it now sets
+`CTBROWSER_GL_DRIVER=deterministic` whenever `BACKEND` is given, so the golden
+runs ask for SwiftShader on every machine. Before that it set the back end and
+never the device. With it, the Windows exes match **all sixteen** goldens
+byte-for-byte - twelve software and four ANGLE - and so does a Linux workstation
+that has Mesa installed.
+
+It had never been caught for a reason that is not reassuring: neither the devbox
+nor the old CI had any other Vulkan device to lose to.
+
+### `gl_basics` is the one that still needs the ICD, and that is correct
+
+`gl_basics` asserts the renderer STRING contains "SwiftShader", which is a
+stricter question than the goldens ask - it is checking WHICH device answered,
+not what it drew. Asking ANGLE for the SwiftShader device type is not enough
+when the Vulkan *loader* only offers Mesa, because the loader enumerates ICDs
+before ANGLE's preference applies. Point it at the bundled one:
+
+```bash
+ICD="$PWD/third_party/angle/linux-x86_64/vk_swiftshader_icd.json"
+VK_ICD_FILENAMES="$ICD" VK_DRIVER_FILES="$ICD" ctest --preset default
+```
+
+Without it this box is **74/75**, the only failure being `gl_basics`; with it,
+75/75. Keep the assertion: it is what turns "four mystery pixel diffs" into one
+line naming the cause, which is exactly how the table above got measured.
+
+### Running the Windows exes from WSL
+
+`WSLENV` or nothing reaches the process - it opens a window instead of rendering
+headlessly. Path variables need the `/p` suffix:
+
+```bash
+cd examples-windows
+WSLENV="CTBROWSER_TEST_FRAMES:CTBROWSER_SCREENSHOT/p:CTBROWSER_FONTS:CTBROWSER_NETWORK:CTBROWSER_WEBGL:CTBROWSER_GL_DRIVER:SDL_VIDEODRIVER:SDL_AUDIODRIVER" \
+CTBROWSER_TEST_FRAMES=150 CTBROWSER_FONTS=font8x8 CTBROWSER_NETWORK=0 \
+SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
+CTBROWSER_SCREENSHOT="$PWD/out.ppm" ./phaserinvaders.exe
+```
+
+**The frame count is per example and it is not optional**: 30 for a drawing,
+**150 for phaserinvaders**, **90 for the two Babylon pages** - a game and a
+promise-driven scene have not reached a comparable state at 30.
+`examples/CMakeLists.txt` holds those numbers. Comparing at the wrong one gives a
+3.4% pixel diff that looks exactly like a regression and is not; that is one of
+the two false alarms this section cost before the numbers above were right.
+
 ## Windows cross-build (2026-07-25)
 
 `cmake --preset windows && cmake --build --preset windows && cmake --build
