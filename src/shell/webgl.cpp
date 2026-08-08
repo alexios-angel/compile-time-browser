@@ -106,6 +106,14 @@ void webgl_context::clear_depth(float depth) {
     device_.clear_depth(depth);
 }
 
+std::string webgl_context::renderer() const {
+    return device_.renderer();
+}
+
+int webgl_context::limit(std::uint32_t name) const {
+    return device_.limit(static_cast<int>(name));
+}
+
 void webgl_context::set_enabled(std::uint32_t capability, bool on) {
     device_.set_capability(static_cast<int>(capability), on);
 }

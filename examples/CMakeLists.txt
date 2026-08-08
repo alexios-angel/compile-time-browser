@@ -228,6 +228,35 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CTBROWSER_SDL3_TTF_DLL}" "${dist-dir}")
     endif()
   endif()
+  # ANGLE, ALL OF IT, BESIDE THE EXES. Five files and every one is load-bearing:
+  # libEGL.dll and libGLESv2.dll are what the exe imports, and vulkan-1.dll,
+  # vk_swiftshader.dll and vk_swiftshader_icd.json are what SwiftShader needs -
+  # ANGLE locates the ICD RELATIVE TO ITS OWN MODULE DIRECTORY, so they have to
+  # sit together or the deterministic driver cannot come up.
+  #
+  # Windows has no rpath. On Linux the BUILD_RPATH in src/CMakeLists.txt is the
+  # whole answer and there is nothing to copy; here the only mechanism is the
+  # directory the exe is in, so an rpath-only solution is a Linux-only solution
+  # and this is the other half of it.
+  #
+  # GLOBBED for the same reason the assets below are - a named list of five
+  # files goes stale the first time the release adds a sixth, and the symptom is
+  # an exe that starts and reports no WebGL.
+  if(CTBROWSER_WITH_ANGLE)
+    file(GLOB angle-runtime CONFIGURE_DEPENDS
+         "${PROJECT_SOURCE_DIR}/third_party/angle/windows-x64/*.dll"
+         "${PROJECT_SOURCE_DIR}/third_party/angle/windows-x64/*.json")
+    if(NOT angle-runtime)
+      message(FATAL_ERROR
+        "windows-dist: CTBROWSER_WITH_ANGLE is ON but third_party/angle/windows-x64 has no "
+        "DLLs - run tools/fetch-angle.sh")
+    endif()
+    foreach(file ${angle-runtime})
+      list(APPEND dist-commands
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${file}" "${dist-dir}")
+    endforeach()
+  endif()
+
   # GLOBBED, NOT NAMED, and that is this list's third lesson rather than a
   # preference.
   #

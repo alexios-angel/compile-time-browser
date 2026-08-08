@@ -340,6 +340,11 @@ public:
     // read `getError`, and a report can list what this engine declined. Keeping
     // it is deliberate.
     [[nodiscard]] std::uint32_t take_error();
+    // One integer cap, asked of GL. See raster::gl::device::limit.
+    [[nodiscard]] int limit(std::uint32_t name) const;
+    // WHAT IS ACTUALLY DRAWING, for getParameter(RENDERER) - the string a
+    // page prints into a bug report, so it has to be the driver's own.
+    [[nodiscard]] std::string renderer() const;
     void refuse(std::string_view call);
     [[nodiscard]] const std::vector<std::string> & refused() const;
     [[nodiscard]] const std::string & shader_error() const;

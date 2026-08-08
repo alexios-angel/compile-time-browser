@@ -1,5 +1,6 @@
 #include <ctbrowser/shell/bindings.hpp>
 
+#include <algorithm>
 #include <cstring>
 #include <utility>
 
@@ -136,8 +137,20 @@ using context = script::context;
     // the `v` suffix means.
     if (args.size() > from && args[from].is_array()) {
         auto * array = static_cast<script::array_object *>(args[from].as_heap());
-        for (const value & each : array->items) {
-            made.data.push_back(static_cast<float>(context::to_number(each)));
+        // THROUGH THE ACCESSORS, because A VIEW'S `items` IS EMPTY BY DESIGN -
+        // script/value.hpp says so at the member, and `typed_proto.set` already
+        // reads both kinds this way.
+        //
+        // Reading `items` directly gave a length-ZERO array for every
+        // view-backed Float32Array, and the resize below then padded it to a
+        // matrix of zeros. `uniformMatrix4fv` with a view over an ArrayBuffer
+        // therefore uploaded a ZERO MATRIX, which collapses every vertex to the
+        // origin - with no GL error anywhere, because a zero matrix is a
+        // perfectly legal one.
+        for (std::size_t i = 0; i < array->length(); ++i) {
+            made.data.push_back(static_cast<float>(array->is_view()
+                                                       ? script::view_get(*array, i)
+                                                       : context::to_number(array->items[i])));
         }
     } else if (args.size() > from && args[from].is_object()) {
         const value held = cx.lookup_property(args[from], "__bytes");
@@ -151,7 +164,21 @@ using context = script::context;
             made.data.push_back(static_cast<float>(context::to_number(args[i])));
         }
     }
-    made.data.resize(static_cast<std::size_t>(rows) * cols, 0.0f);
+    // PAD TO THE SHAPE, NEVER TRUNCATE TO IT.
+    //
+    // This was an unconditional `resize(rows * cols)`, which is right for a
+    // scalar and wrong for an ARRAY uniform: `uniform4fv` with eight floats
+    // kept four, a 32-float bone array kept one matrix, and
+    // webgl_context::set_uniform then computed `count = size / per` as 1 every
+    // time. Every array uniform in the engine was a one-element array uniform.
+    const std::size_t shape = std::max<std::size_t>(1, static_cast<std::size_t>(rows) * cols);
+    if (made.data.size() < shape) {
+        made.data.resize(shape, 0.0f);
+    } else {
+        // A WHOLE NUMBER OF THEM. `count` is size/shape, so a partial trailing
+        // element would be one the driver reads past the end of.
+        made.data.resize(made.data.size() - made.data.size() % shape);
+    }
     return made;
 }
 
@@ -1063,24 +1090,69 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
         // have to say 2.0 / 3.00 on a WebGL 2 context rather than being
         // decoration.
         case gl_enum::version:
-            return c.string(webgl2 ? "WebGL 2.0 (ctbrowser software)"
-                                   : "WebGL 1.0 (ctbrowser software)");
+            return c.string(webgl2 ? "WebGL 2.0 (ctbrowser)" : "WebGL 1.0 (ctbrowser)");
         case gl_enum::shading_language_version:
             return c.string(webgl2 ? "WebGL GLSL ES 3.00" : "WebGL GLSL ES 1.0");
         case gl_enum::vendor: return c.string("ctbrowser");
-        case gl_enum::renderer: return c.string("ctbrowser software rasteriser");
-        case gl_enum::max_texture_size: return value::number(4096);
-        case gl_enum::max_vertex_attribs: return value::number(16);
-        case 0x8872: return value::number(16); // MAX_TEXTURE_IMAGE_UNITS
-        case 0x0D3A: {                         // MAX_VIEWPORT_DIMS
+        // WHAT IS ACTUALLY DRAWING. This said "ctbrowser software rasteriser",
+        // which stopped being true when the software rasteriser was deleted -
+        // and RENDERER is the string a page prints into a bug report, so a
+        // wrong one costs somebody else the afternoon. SwiftShader and an Intel
+        // Arc are the same code path and very different numbers.
+        case gl_enum::renderer: return c.string(gl->renderer());
+        case 0x0D3A: { // MAX_VIEWPORT_DIMS
             const value out = c.make_array();
             auto * items = static_cast<script::array_object *>(out.as_heap());
             items->items.push_back(value::number(width));
             items->items.push_back(value::number(height));
             return out;
         }
-        default: return value::number(0);
+        default: break;
         }
+
+        // ASKED OF GL, from a list of the enums that ARE plain integers.
+        //
+        // This was a hardcoded table ending in `default: return 0`, so ten caps
+        // Babylon reads - MAX_VARYING_VECTORS, MAX_DRAW_BUFFERS, MAX_SAMPLES,
+        // MAX_COMBINED_TEXTURE_IMAGE_UNITS and the rest - came back ZERO. A
+        // page sizes buffers and picks shader permutations from those numbers,
+        // and zero is a plausible-looking answer rather than a missing one:
+        // Babylon's PBR path disables a feature when maxVaryingVectors <= 8,
+        // and it was reading 0.
+        //
+        // A LIST rather than forwarding anything: most GL parameters are not
+        // integers, and glGetIntegerv on a boolean, a float or an unknown enum
+        // is either wrong or an INVALID_ENUM this layer would then have to
+        // swallow out of the page's error queue. An enum that is not here
+        // answers null, which is what WebGL says for one it does not recognise.
+        static constexpr std::uint32_t integer_parameters[] = {
+            0x0D33, // MAX_TEXTURE_SIZE
+            0x8869, // MAX_VERTEX_ATTRIBS
+            0x8872, // MAX_TEXTURE_IMAGE_UNITS
+            0x8B4C, // MAX_VERTEX_TEXTURE_IMAGE_UNITS
+            0x8B4D, // MAX_COMBINED_TEXTURE_IMAGE_UNITS
+            0x8DFB, // MAX_VERTEX_UNIFORM_VECTORS
+            0x8DFC, // MAX_VARYING_VECTORS
+            0x8DFD, // MAX_FRAGMENT_UNIFORM_VECTORS
+            0x851C, // MAX_CUBE_MAP_TEXTURE_SIZE
+            0x84E8, // MAX_RENDERBUFFER_SIZE
+            0x8073, // MAX_3D_TEXTURE_SIZE
+            0x88FF, // MAX_ARRAY_TEXTURE_LAYERS
+            0x8824, // MAX_DRAW_BUFFERS
+            0x8D57, // MAX_SAMPLES
+            0x8A2F, // MAX_UNIFORM_BUFFER_BINDINGS
+            0x8A30, // MAX_UNIFORM_BLOCK_SIZE
+            0x8A34, // UNIFORM_BUFFER_OFFSET_ALIGNMENT
+            0x8B49, // MAX_FRAGMENT_UNIFORM_COMPONENTS
+            0x8B4A, // MAX_VERTEX_UNIFORM_COMPONENTS
+            0x8CDF, // MAX_COLOR_ATTACHMENTS
+            0x84E2, // MAX_TEXTURE_UNITS
+        };
+        const std::uint32_t asked = enum_at(a, 0);
+        for (const std::uint32_t known : integer_parameters) {
+            if (known == asked) { return value::number(gl->limit(asked)); }
+        }
+        return value::null();
     });
     // --- the extensions, which are the WebGL 1 spelling of WebGL 2 ----------
     //

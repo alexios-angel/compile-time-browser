@@ -116,6 +116,15 @@ public:
     // tracked here, because tracked state is what drifts.
     [[nodiscard]] std::uint32_t take_error();
 
+    // ONE INTEGER, ASKED OF GL. `getParameter` answered a hardcoded table with
+    // `default: 0`, so ten of the caps Babylon reads - MAX_VARYING_VECTORS,
+    // MAX_DRAW_BUFFERS, MAX_SAMPLES and the rest - came back as ZERO. A page
+    // sizes buffers and picks shader permutations from those numbers, and zero
+    // is a plausible-looking answer rather than an obviously missing one.
+    //
+    // The CALLER decides which enums are integers; this only asks.
+    [[nodiscard]] int limit(int name) const;
+
     // --- shaders and programs ------------------------------------------------
 
     [[nodiscard]] unsigned create_shader(int kind);

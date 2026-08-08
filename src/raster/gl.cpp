@@ -427,6 +427,13 @@ std::uint32_t device::take_error() {
     return ok() ? static_cast<std::uint32_t>(glGetError()) : 0u;
 }
 
+int device::limit(int name) const {
+    if (!ok()) { return 0; }
+    GLint value = 0;
+    glGetIntegerv(static_cast<GLenum>(name), &value);
+    return value;
+}
+
 void device::clear(float red, float green, float blue, float alpha) {
     if (!ok()) { return; }
     glClearColor(red, green, blue, alpha);
@@ -917,12 +924,36 @@ void device::blend_func(int source, int destination) {
 
 bool device::read_pixels(paint::bitmap & into) const {
     if (!ok()) { return false; }
+
+    // THIS DEVICE'S CONTEXT, not whichever one happens to be current.
+    //
+    // make_current() ran once, at construction. GL's rule is that a second
+    // device on the same thread makes the first one's context stale, and
+    // present() walks EVERY canvas on the page - so with two of them the second
+    // read the first's pixels out of the wrong context. One canvas is the only
+    // case that ever worked, and it worked by coincidence.
+    eglMakeCurrent(impl_->display, impl_->surface, impl_->surface, impl_->context);
+
+    // THE DRAWING BUFFER, not whatever the page left bound. A page that ends a
+    // frame with a render target still bound - which Babylon does routinely -
+    // had that target read into its canvas instead of the picture it drew.
+    //
+    // Put back afterwards: this is a read, and a read that changes the binding
+    // is a state mutation the page never asked for.
+    GLint bound = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &bound);
+    if (bound != 0) { glBindFramebuffer(GL_FRAMEBUFFER, 0); }
+
     const int w = impl_->width;
     const int h = impl_->height;
     if (into.width != w || into.height != h) { into = paint::bitmap{w, h}; }
 
+    // No glFinish: glReadPixels already orders itself after everything that
+    // affects the pixels it reads, and an explicit one would only add a stall
+    // ANGLE is already reporting under KHR_debug.
     std::vector<std::uint8_t> rgba(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4);
     glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    if (bound != 0) { glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(bound)); }
 
     for (int y = 0; y < h; ++y) {
         // BOTTOM-LEFT TO TOP-LEFT. GL's origin is not a bitmap's.
@@ -994,6 +1025,9 @@ void device::clear_depth(float) {}
 void device::set_capability(int, bool) {}
 std::uint32_t device::take_error() {
     return 0u;
+}
+int device::limit(int) const {
+    return 0;
 }
 
 unsigned device::create_shader(int) {
