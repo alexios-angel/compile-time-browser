@@ -4,23 +4,6 @@
 #include <string_view>
 
 #include <boost/container_hash/hash.hpp>
-// SET BEFORE THE INCLUDES BELOW, which is the only place it can go: an
-// undefined macro evaluates to 0 in an #if, so defining the default further
-// down silently selected NO include and then asked for a type nothing had
-// declared.
-#ifndef CTBROWSER_STRING_MAP
-#define CTBROWSER_STRING_MAP 2
-#endif
-
-#if CTBROWSER_STRING_MAP == 1
-#include <ankerl/unordered_dense.h>
-#elif CTBROWSER_STRING_MAP == 2
-#include <tsl/robin_map.h>
-#elif CTBROWSER_STRING_MAP == 3
-#include <absl/container/flat_hash_map.h>
-#elif CTBROWSER_STRING_MAP == 4
-#include <gtl/phmap.hpp>
-#endif
 #include <boost/unordered/unordered_flat_map.hpp>
 #include <boost/unordered/unordered_flat_set.hpp>
 
@@ -118,50 +101,29 @@ struct string_equal {
     }
 };
 
-// THE PROPERTY MAP, SWAPPABLE FOR MEASUREMENT.
+// THE PROPERTY MAP - the VM's per-object property index, and the hottest map in
+// the engine.
 //
-// boost::unordered_flat_map is the default and the one that ships. The
-// alternatives are here because "which open-addressing map is fastest" is not a
-// question to answer from a README - they are all the same shape on paper. Set
-// CTBROWSER_STRING_MAP to compare on a real workload:
+// ONE MAP, AND THE QUESTION IS CLOSED. This was a `CTBROWSER_STRING_MAP` switch
+// over five open-addressing maps, because "which one is fastest" is not a
+// question to answer from a README - on paper they are the same shape. It was
+// answered on a real Phaser frame: ankerl::unordered_dense, tsl::robin_map,
+// absl::flat_hash_map and gtl::flat_hash_map all measured within ~4% of this
+// one, tsl narrowly ahead. docs/performance.md keeps the table.
 //
-//   0  boost::unordered_flat_map   the previous default, still the fallback
-//   1  ankerl::unordered_dense     single header, MIT, insertion-ordered
-//   2  tsl::robin_map              THE DEFAULT. Header-only, MIT, vendored at
-//                                  external/robin-map. -3.6% wall and -8.7%
-//                                  peak RSS against Boost's on a Phaser frame,
-//                                  measured; see the table in that directory's
-//                                  README-ctbrowser.md
-//   3  absl::flat_hash_map         Google's Swiss table - the design
-//                                  boost::unordered_flat_map also implements,
-//                                  so this is the closest real rival. NOT
-//                                  header-only: it links, and shipping it would
-//                                  need the mingw sysroot treatment mimalloc
-//                                  got.
-//   4  gtl::flat_hash_map          Greg's Template Library - the parallel-hashmap
-//                                  successor, header-only, Apache-2.0. Also a
-//                                  Swiss table, and the one that ships a
-//                                  parallel (sharded) variant.
+// The switch is gone anyway, on the deliberate judgement that four extra map
+// libraries are not worth ~4% here. Three of the five branches had no include
+// path in the build at all and could not have compiled; the fourth was a
+// vendored copy of somebody else's header carried for a cache effect that the
+// change most worth making - property names as ATOMS, which turns this key into
+// a uint32_t - removes the reason for entirely. What that cost is measured in
+// docs/performance.md rather than estimated.
 //
-// All three take the same transparent hasher and equality, so the prehashed
-// chain walk works with any of them.
-
-#if CTBROWSER_STRING_MAP == 1
-template <typename Value>
-using string_flat_map = ankerl::unordered_dense::map<std::string, Value, string_hash, string_equal>;
-#elif CTBROWSER_STRING_MAP == 2
-template <typename Value>
-using string_flat_map = tsl::robin_map<std::string, Value, string_hash, string_equal>;
-#elif CTBROWSER_STRING_MAP == 3
-template <typename Value>
-using string_flat_map = absl::flat_hash_map<std::string, Value, string_hash, string_equal>;
-#elif CTBROWSER_STRING_MAP == 4
-template <typename Value>
-using string_flat_map = gtl::flat_hash_map<std::string, Value, string_hash, string_equal>;
-#else
+// boost::unordered_flat_map is also the only one of the five whose heterogeneous
+// lookup this file was already written against: `is_avalanching` below is a
+// Boost.Unordered opt-in that the other four ignore.
 template <typename Value>
 using string_flat_map = boost::unordered_flat_map<std::string, Value, string_hash, string_equal>;
-#endif
 
 // The hash a `prehashed_name` carries, computed the one way the map agrees
 // with. Using anything else here is a lookup that silently never matches.

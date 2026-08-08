@@ -181,6 +181,13 @@ function(ctbrowser_bench name)
   target_link_libraries(ctbrowser-test-${name}
     PRIVATE ctbrowser::core ctbrowser::dom ctbrowser::style ctbrowser::layout ctbrowser::paint ctbrowser::raster ctbrowser::shell ctbrowser::ctbrowser)
   ctbrowser_target(ctbrowser-test-${name})
+  # -g, for the same reason ctbrowser_test() adds it and one more: a benchmark
+  # is the thing most likely to be handed to callgrind, and
+  # `callgrind_annotate --auto=yes` attributes nothing to a line without debug
+  # info. docs/performance.md's whole method is line-level attribution - it is
+  # what found the operator table in the lexer after the function-level number
+  # said "the lexer" and stopped. These are not shipped, so the size is free.
+  target_compile_options(ctbrowser-test-${name} PRIVATE -g)
   # the bricks the engine's style and script parsers come from
   target_include_directories(ctbrowser-test-${name} PRIVATE
     "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"

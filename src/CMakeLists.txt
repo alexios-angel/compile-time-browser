@@ -127,18 +127,6 @@ target_compile_features(ctbrowser-core PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-core)
 target_link_libraries(ctbrowser-core PUBLIC Boost::headers)
 
-# tsl::robin-map, vendored header-only at external/robin-map. It backs
-# ctbrowser::string_flat_map - the VM's property index, the hottest map in the
-# engine - because it measured -3.6% wall and -8.7% peak RSS against
-# boost::unordered_flat_map on a real Phaser frame. Five maps were compared;
-# external/robin-map/README-ctbrowser.md has the table and the reason the
-# instruction count did NOT move.
-#
-# SYSTEM, like every third-party include here: their warnings are not this
-# project's to answer.
-target_include_directories(ctbrowser-core SYSTEM PUBLIC
-  "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/external/robin-map/include>")
-
 find_package(Threads REQUIRED)
 target_link_libraries(ctbrowser-core PUBLIC Threads::Threads)
 
@@ -493,6 +481,7 @@ target_sources(ctbrowser-shell
     shell/url.cpp
     shell/png.cpp
     shell/jpeg.cpp
+    shell/images.cpp
     shell/embedded_fonts.cpp
   PUBLIC
     FILE_SET HEADERS

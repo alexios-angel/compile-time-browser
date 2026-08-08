@@ -453,6 +453,11 @@ implementations of one job is the mistake it keeps citing.
 
 ## Five hash maps, measured rather than compared from their READMEs (2026-08-02)
 
+> **SUPERSEDED 2026-08-08 — the four alternates are gone and there is one map.**
+> The measurement below still stands and is why this section is kept: it is the
+> evidence for what removing them cost. See "One map, and what it cost" at the
+> end of this file for the number. `CTBROWSER_STRING_MAP` no longer exists.
+
 `ctbrowser::string_flat_map` is the VM's property index and the hottest map in
 the engine. Five open-addressing maps were built into it and run on a real
 Phaser frame, because on paper they are all the same shape.
@@ -666,3 +671,183 @@ Combined with the property-lookup fix above, a Phaser frame went from
 **23.815 G to 22.936 G instructions - 3.7% - for two small changes**, neither of
 which needed a library and neither of which was the thing being looked for.
 
+
+
+## One map, and what it cost (2026-08-08)
+
+`CTBROWSER_STRING_MAP` is gone. `string_flat_map` is `boost::unordered_flat_map`
+and nothing else; `external/robin-map` is deleted.
+
+**Three of the five branches could not have compiled.** ankerl, absl and gtl had
+no include path anywhere in the build - no `find_package`, no `FetchContent`, no
+vendored copy. They were benchmarked once, in a tree that had those headers
+somewhere, and had been dead `#elif` arms ever since. Only Boost and the
+vendored tsl were real.
+
+Measured on `phaser_invaders`, same build directory, only the source toggled:
+
+| | instructions | wall (min of 10) | peak RSS |
+|---|---|---|---|
+| `tsl::robin_map` | 14.115 G | **0.99 s** | 297.0 MB |
+| `boost::unordered_flat_map` | 14.199 G (+0.59%) | 1.03 s (+4.0%) | **278.0 MB (-6.4%)** |
+
+**The wall-clock cost reproduced and the RSS finding did NOT - it reversed.**
+2026-08-02 measured tsl 8.7% LIGHTER than Boost; this measures it 6.4% HEAVIER.
+Same question, same machine class, opposite answer, and the difference is the
+binary: ANGLE and SwiftShader are linked into it now, and peak RSS is dominated
+by things that have nothing to do with the property index. The 2026-08-02 number
+was not wrong, it was measuring a smaller program.
+
+That is the useful lesson and it is one this file keeps re-learning: **a
+measurement is about a binary, not about a library.** The -3.6% wall was
+reproducible because it is a property of the map; the -8.7% RSS was not because
+it never was.
+
++4% wall is the honest price of dropping four dependencies, and the section
+below is where most of it comes back.
+
+### What was NOT the answer, this time
+
+`boost::concurrent_flat_map` was the candidate for `atom_table`, whose
+`shared_mutex` guards a read-hot, write-rare intern table - textbook for it. The
+profile settled it instead:
+
+```
+1,584,965 (0.01%)  ctbrowser::atom_table::text(ctbrowser::atom) const
+        -          ctbrowser::atom_table::intern  (below the 99% threshold)
+```
+
+**The atom table is 0.01% of a Phaser frame and interning does not appear at
+all.** A lock-free version of nothing is nothing. The Boost floor stays at 1.80,
+because raising it to 1.89 would buy a library that measurement says not to use.
+
+Boost.Bloom, as a negative filter on the prototype chain, is refused on the same
+grounds: the chain is 2.25 levels and the fix that removes the cost is atoms, not
+a filter in front of the same string compare.
+
+
+## The Babylon profile, which nobody had taken (2026-08-08)
+
+Babylon.js has been a corpus since 2026-08-02 and had never been profiled. It is
+the largest bundle in the tree - 12 MB, 181,222 lines - and it is a **completely
+different program** from the Phaser frame every number above describes.
+
+`babylon_ratchet`, 9.442 G instructions:
+
+| | share |
+|---|---|
+| `__memcmp_avx2_movbe` | **28.94%** |
+| `compiler_impl::compile_ident` | 10.47% |
+| `compiler_impl::resolve_upvalue` (+ recursive) | 13.12% |
+| `ctjs::vp::lex` | 8.61% |
+| `compiler_impl::emit_write` | 3.12% |
+| `compiler_impl::compile_stmt` | 2.90% |
+| `context::run_loop` (+ recursive) | **1.58%** |
+
+**Nearly a third of the run was `memcmp`, and the interpreter was 1.6%.** This is
+the 2026-07 finding again - reading JavaScript costs more than running it - but
+an order of magnitude sharper, because the bundle is three times p5's size.
+
+Its callers named the bug outright:
+
+| caller of `memcmp` | share | calls |
+|---|---|---|
+| `compile_ident` | 8.68% | **35,224,883** |
+| `resolve_upvalue` | 6.18% | |
+| `emit_write` | 3.29% | |
+| `predeclare_locals`'s lambda | 3.23% | |
+| `compile_stmt` | 3.16% | 12,731,131 |
+| `resolve_upvalue` (recursive) | 2.47% | |
+
+**35.2 million string comparisons out of one function.** `find_local_entry`
+scanned the frame's whole `locals` vector backwards comparing names, and
+`resolve_upvalue` did the same to `upvalue_names` at every level of the frame
+chain. Both run once per identifier MENTION, so a function is quadratic in its
+own size - and Babylon's functions are big enough for that to be a third of the
+program.
+
+**This is the third time this exact shape has been found here** - `is_captured`
+linear-scanned a vector, `Array.prototype.sort` was insertion sort, and now scope
+resolution. The lesson is not "look for linear scans"; it is that a linear scan
+only shows up when an input gets big enough, so **a new corpus is a profiling
+instrument**, and the cheapest way to find the next one of these is to run
+something larger than what you have.
+
+### The fix, and what it bought
+
+A per-frame name index beside `locals`: `string_flat_map<small_vector<uint32_t,
+2>>` from name to the positions carrying it, innermost last. A vector per name
+because names SHADOW - two `let x` in sibling scopes are two entries, and popping
+the inner one must uncover the outer rather than erase the name. `upvalue_names`
+gets the simpler kind, since it only grows within a frame.
+
+It is safe because `locals` changes size in exactly two places, and both now go
+through `add_local` / `shrink_locals`. A bare `push_back` would leave a name the
+index cannot find - which is a local that silently reads as a global, the quiet
+kind of wrong this compiler has produced before.
+
+Landed together with the `clip()` fix below:
+
+| | before | after |
+|---|---|---|
+| `babylon_ratchet` | 9.442 G | **4.431 G (-53.1%)** |
+| `phaser_invaders` | 14.199 G | **13.428 G (-5.4%)** |
+| the whole `ctest` suite | 21.3 s | **16.3 s** |
+
+**Babylon compiles in half the instructions.** Phaser gains much less, which is
+the point: its bundle is smaller and its frame is dominated by running rather
+than reading, so the same fix is worth 5% there and 53% here. One number would
+have told either lie on its own.
+
+
+## The clip lambda still had a branch in it (2026-08-08)
+
+`canvas_context::clip`'s per-pixel lambda was hoisted on 2026-08-02, from 9.4% to
+6.13%. It was **6.55% of a Phaser frame** again here - the second largest single
+item after the interpreter - and the hoist had left one thing behind:
+
+```cpp
+if (previous != nullptr && previous[at] == 0) { continue; }
+```
+
+`previous` is the clip being intersected with. It is read ONCE, before
+`for_each_span`, and is the same pointer for every span and every pixel of the
+call. The test was being asked per pixel, and a branch the compiler cannot prove
+invariant is a branch it cannot vectorise around - so the loop stayed scalar,
+byte at a time.
+
+Split at the SPAN, where the answer changes never: with no clip in place the row
+is `std::fill_n`, which is a memset; with one it is a byte-wise AND that no
+longer re-reads the pointer. The arithmetic is unchanged - deliberately, as with
+`blend_span` - and it is the same finding a third time: **the body of the
+per-pixel loop was the cost, not the thing around it.**
+
+The `make_shared<vector>(w * h, 0)` at the top of `clip()` is still there and is
+still an allocation per call. It measures ~0.65% and it is NOT the easy fix it
+looks like: `clip_` is a `shared_ptr<const vector>` that `save()` copies into the
+state stack, so the buffer is genuinely shared and reusing it in place would
+corrupt a saved clip. It needs a `use_count()` check to be correct, which is a
+different change from this one.
+
+### Where the time is now
+
+`phaser_invaders`, 13.428 G:
+
+| | share |
+|---|---|
+| `context::run_loop` | ~22% |
+| `context::lookup_property` + `memcmp` | ~14% |
+| `ctjs::vp::lex` | ~10% |
+| `canvas_context::blend_span` | ~7% |
+
+**And `libc` memory operations are no longer 19.3%.** That entry has been stale
+since mimalloc landed; measured now it is `free` 0.61%, `_mi_theap_malloc_zero`
+0.50%, `malloc` 0.18%, `operator new` 0.18% - **about 1.6% in total.** The
+`std::pmr` arena this file has recommended for layout twice is not justified by
+anything currently measurable, and that recommendation is withdrawn until a
+profile puts it back.
+
+The honest next change is unchanged and is now the biggest thing left:
+**property names as atoms.** `lookup_property` plus `memcmp` is ~14% of a Phaser
+frame, all of it hashing a string and comparing bytes for a name the engine
+already interns elsewhere.

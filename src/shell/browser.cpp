@@ -1,5 +1,7 @@
 #include <ctbrowser/shell/browser.hpp>
 
+#include <chrono>
+
 // The browser's method bodies.
 //
 // browser.hpp was 2,356 lines because the class was defined with every body
@@ -573,12 +575,41 @@ std::expected<void, ctbrowser::raster::gpu_error> browser::frame(scheduler * poo
     }
     if (dirty_ >= dirty::raster) { renderer_.discard(); }
     renderer_.set_clear_color(options_.background);
-    if (dirty_ >= dirty::styles) { resolve_styles(); }
-    if (dirty_ >= dirty::layout) { run_layout(); }
-    if (dirty_ >= dirty::paint) { record(); }
+    // TIMED PER STAGE, because the four of them are what the dirty level exists
+    // to choose between and the profiler could only see their sum. A stage that
+    // is skipped reports 0, which is the number worth looking at: an idle page
+    // or a scroll SHOULD leave three of these at zero, and "it didn't" is the
+    // regression this cannot otherwise catch.
+    //
+    // Four clock reads on a path that then rasterises the viewport. The clock
+    // is not the cost here; guessing which stage was has been, three times.
+    using clock = std::chrono::steady_clock;
+    const auto ms_since = [](clock::time_point from) {
+        return std::chrono::duration<double, std::milli>(clock::now() - from).count();
+    };
+    timing_ = frame_timing{};
+    auto at = clock::now();
+    if (dirty_ >= dirty::styles) {
+        resolve_styles();
+        timing_.styles_ms = ms_since(at);
+        at = clock::now();
+    }
+    if (dirty_ >= dirty::layout) {
+        run_layout();
+        timing_.layout_ms = ms_since(at);
+        at = clock::now();
+    }
+    if (dirty_ >= dirty::paint) {
+        record();
+        timing_.record_ms = ms_since(at);
+        at = clock::now();
+    }
     dirty_ = dirty::nothing;
     ++frames_;
-    return ctbrowser::raster::draw(renderer_, layers_, pool, options_.tile_extent, viewport());
+    auto drawn =
+        ctbrowser::raster::draw(renderer_, layers_, pool, options_.tile_extent, viewport());
+    timing_.raster_ms = ms_since(at);
+    return drawn;
 }
 
 rect browser::viewport() const noexcept {

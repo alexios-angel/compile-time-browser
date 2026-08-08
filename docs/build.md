@@ -224,6 +224,41 @@ turned down rather than overlooked:
 * **Base64** — Boost has it only in `beast::detail`, a private namespace with no
   stability promise.
 
+### Taken since (2026-08-08)
+
+* **Boost.CRC** — `boost::crc_32_type` replaces the 256-entry CRC table
+  `encode_png` rebuilt on every call. It IS the PNG polynomial (CRC-32/ISO-HDLC,
+  0xEDB88320 reflected), so this is the same checksum from a library rather than
+  from memory, and `tools/check-png.py` verifies the bytes with Python's own
+  zlib independently of it. Header-only, so the cross-build needs nothing.
+  **`encode_png` moved to `src/shell/images.cpp` first**: it was `inline` in a
+  public header, which made it the odd one out beside the BMP/PNG/JPEG decoders,
+  and the rule against third-party headers in public ones is the reason the
+  split came before the swap rather than after it.
+* **`boost::hash_combine` / `boost::hash`** — two hand-rolled FNV-1a loops
+  (`style/computed.hpp`'s `hash_declarations`, `shell/svg.cpp`'s content and
+  raster-cache keys, one of which open-coded `hash_combine`'s golden-ratio mix
+  verbatim). FNV walks a string a byte at a time; this is the same argument
+  `core/containers.hpp` already makes for preferring `boost::hash` to
+  `std::hash`, applied where nobody had.
+
+### Rejected AGAIN, on a measurement (2026-08-08)
+
+* **Boost.Unordered's `boost::concurrent_flat_map`** — the obvious answer for
+  `atom_table`, which is read-hot, write-rare and behind a `shared_mutex`. The
+  profile says the atom table is **0.01% of a Phaser frame** and that interning
+  does not appear at all. A lock-free version of nothing is nothing.
+* **Boost.Bloom** — as a negative filter ahead of the prototype-chain walk. The
+  chain is 2.25 levels deep and the change that removes the cost is interning
+  property names as atoms, not putting a filter in front of the same string
+  compare.
+
+**So the version floor stays at 1.80.** Both would have needed it raised (1.84
+and 1.89), and that is nearly free here - `tools/build-boost-mingw.sh` reads the
+tag out of the host's headers and brew ships 1.90 on both machines - but raising
+a floor to admit a library the measurement says not to use is a cost with no
+purchase. It is a one-line change whenever something earns it.
+
 ## BUILD SPEED (2026-07-25)
 
 Measured, then fixed. A clean the engine build was **143.7 s wall / 237.9 s CPU**; it is
@@ -316,6 +351,17 @@ whose parent directory is excluded.
 record per loop iteration (poll / tick / frame / present / asleep, layouts,
 whether it drew), a summary on stdout, and **CPU time against wall time**,
 because "it uses 65% of my CPU" is not the same question as frames per second.
+
+**`frame` is broken into styles / layout / record / raster since 2026-08-08.**
+It was one bucket for all four, so the profiler could say a frame was slow and
+never which part of it was - and those four are exactly what the dirty level
+chooses between, which makes their SUM the least informative way to report them.
+A skipped stage reads 0, and that is the number to look at: a scroll or a caret
+blink should leave three of them at zero, and "it didn't" is a regression in the
+dirty-level design that nothing else in the tree would catch. The engine times
+itself (`browser::last_frame_timing()`); the app layer only copies the numbers
+out, so the split costs four clock reads on a path that then rasterises the
+viewport.
 `tests/bench_interaction` is the headless half: what a mouse move, a hover
 change and a scroll each COST, with the implied CPU at 60 fps printed beside
 them.

@@ -2,6 +2,7 @@
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
 
+#include <boost/container/small_vector.hpp>
 #include <boost/unordered/unordered_flat_set.hpp>
 
 #include <algorithm>
@@ -58,6 +59,24 @@ public:
     struct frame {
         std::uint32_t proto = 0;
         std::vector<local> locals;
+        // NAME -> THE POSITIONS IN `locals` THAT CARRY IT, innermost last.
+        //
+        // `locals` is a stack and `find_local_entry` wanted the LAST entry with
+        // a given name, which it found by scanning the whole vector backwards
+        // and comparing strings. On Babylon's bundle that was 35.2 million
+        // memcmp calls from `compile_ident` alone - the scan is O(locals) and it
+        // runs once per identifier MENTION, so a big function is quadratic in
+        // its own size. See docs/performance.md.
+        //
+        // A vector per name rather than one index because names SHADOW: two
+        // `let x` in sibling scopes are two entries, and popping the inner one
+        // has to uncover the outer rather than erase the name. Entries are
+        // pushed in increasing order, so `pop_scope` unwinding from the top
+        // pops each name's stack from the top too.
+        string_flat_map<boost::container::small_vector<std::uint32_t, 2>> local_index;
+        // The same scan, on the upvalue list. This one only ever grows within a
+        // frame, so it is a plain name -> position.
+        string_flat_map<std::uint32_t> upvalue_index;
         std::vector<std::string> declared; // pre-scanned; see collect_declared_names
         // WHERE THIS FUNCTION SITS IN THE EULER TOUR, which is how
         // is_captured() is answered. Empty (lo >= hi) means nothing is
@@ -191,12 +210,34 @@ public:
     void pop_scope() {
         const std::size_t mark = fn().scope_marks.back();
         fn().scope_marks.pop_back();
-        fn().locals.resize(mark);
+        shrink_locals(fn(), mark);
+    }
+
+    // THE ONLY TWO PLACES `locals` CHANGES SIZE, so that `local_index` cannot
+    // drift out of step with it. Every declaration goes through add_local and
+    // every scope exit through shrink_locals; a bare `locals.push_back` would
+    // leave a name the index cannot find, which is a variable that silently
+    // becomes a global read.
+    void add_local(frame & f, local l) {
+        f.local_index[l.name].push_back(static_cast<std::uint32_t>(f.locals.size()));
+        f.locals.push_back(std::move(l));
+    }
+    // Unwind from the TOP, which is what makes `pop_back` on each name's stack
+    // the right inverse: entries went on in increasing position order, so the
+    // highest position is the last one pushed for its name.
+    static void shrink_locals(frame & f, std::size_t mark) {
+        for (std::size_t i = f.locals.size(); i-- > mark;) {
+            const auto it = f.local_index.find(std::string_view{f.locals[i].name});
+            if (it == f.local_index.end()) { continue; }
+            it->second.pop_back();
+            if (it->second.empty()) { f.local_index.erase(it); }
+        }
+        f.locals.resize(mark);
     }
     [[nodiscard]] std::uint16_t declare_local(std::string name) {
         const std::uint16_t r = alloc_reg();
         const bool boxed = is_captured(name);
-        fn().locals.push_back(local{std::move(name), r, boxed});
+        add_local(fn(), local{std::move(name), r, boxed});
         return r;
     }
     // A NAME THAT IS ALREADY A CELL. An imported binding is the EXPORTER's
@@ -388,7 +429,7 @@ public:
     }
 
     void declare_imported_local(std::string name, std::uint16_t reg) {
-        fn().locals.push_back(local{std::move(name), reg, true});
+        add_local(fn(), local{std::move(name), reg, true});
     }
 
     // Bind a name to a register that ALREADY exists. The catch parameter needs
@@ -398,7 +439,7 @@ public:
     void declare_local_at(std::string name, std::uint16_t reg) {
         const bool boxed = is_captured(name);
         if (boxed) { proto().emit(instruction{op::new_cell, reg}); }
-        fn().locals.push_back(local{std::move(name), reg, boxed});
+        add_local(fn(), local{std::move(name), reg, boxed});
     }
     // -1 when not a local of the CURRENT frame
     [[nodiscard]] int find_local(std::string_view name) const {
@@ -421,20 +462,23 @@ public:
     // replaced by a boolean `true` - and the failure surfaced 25,000
     // instructions later as "a captured variable is boolean (true), not a
     // function".
+    // The index's back() is the INNERMOST entry for the name, which is what the
+    // backward scan this replaced returned. Everything before it is shadowed, so
+    // "is it in the current scope" is one comparison against the scope mark
+    // rather than a walk: if the innermost one is outside, every other one is
+    // further out still.
     [[nodiscard]] local * find_local_in_current_scope(std::string_view name) {
         frame & f = frames_.back();
         const std::size_t from = f.scope_marks.empty() ? 0 : f.scope_marks.back();
-        for (std::size_t i = f.locals.size(); i-- > from;) {
-            if (f.locals[i].name == name) { return &f.locals[i]; }
-        }
-        return nullptr;
+        const auto it = f.local_index.find(name);
+        if (it == f.local_index.end()) { return nullptr; }
+        const std::uint32_t at = it->second.back();
+        return at >= from ? &f.locals[at] : nullptr;
     }
 
     [[nodiscard]] local * find_local_entry(frame & f, std::string_view name) {
-        for (std::size_t i = f.locals.size(); i-- > 0;) {
-            if (f.locals[i].name == name) { return &f.locals[i]; }
-        }
-        return nullptr;
+        const auto it = f.local_index.find(name);
+        return it == f.local_index.end() ? nullptr : &f.locals[it->second.back()];
     }
 
     // Resolve `name` as an upvalue of frame `level`, adding the descriptor
@@ -448,8 +492,11 @@ public:
     [[nodiscard]] int resolve_upvalue(std::size_t level, std::string_view name) {
         if (level == 0) { return -1; }
         frame & f = frames_[level];
-        for (std::size_t i = 0; i < f.upvalue_names.size(); ++i) {
-            if (f.upvalue_names[i] == name) { return static_cast<int>(i); }
+        // Was a linear scan of upvalue_names, and it ran once per level per
+        // identifier mention - 8.65% of a Babylon compile between this and its
+        // recursive self, most of it inside memcmp.
+        if (const auto it = f.upvalue_index.find(name); it != f.upvalue_index.end()) {
+            return static_cast<int>(it->second);
         }
         frame & parent = frames_[level - 1];
         // Frame 0 is the script, and its `var`s are globals rather than locals
@@ -471,6 +518,10 @@ public:
         function_proto & p = out_.functions[f.proto];
         p.upvalues.push_back(desc);
         f.upvalue_names.emplace_back(name);
+        // Kept in step here rather than anywhere else: this is the only place
+        // upvalue_names grows, and it never shrinks within a frame.
+        f.upvalue_index.emplace(std::string{name},
+                                static_cast<std::uint32_t>(p.upvalues.size() - 1));
         return static_cast<int>(p.upvalues.size() - 1);
     }
 

@@ -263,16 +263,34 @@ void canvas_context::clip(fill_rule rule) {
     // The clip being REPLACED. `clip()` intersects with what is already there,
     // which is what clipped_out was being asked per pixel; read directly here.
     const std::uint8_t * previous = clip_ ? clip_->data() : nullptr;
+    // AND THE SAME MISTAKE ONE LEVEL DOWN. The hoist above moved the invariant
+    // work out of the pixel loop and left a TEST in it: `previous != nullptr`
+    // is decided once for the whole call - it is the same pointer for every
+    // span and every pixel - and it was being asked per pixel. That kept the
+    // loop scalar, because a branch on a value the compiler cannot prove
+    // invariant is a branch it cannot vectorise around.
+    //
+    // Split at the span instead, which is where the answer actually changes:
+    // never. With no clip in place the row is a plain fill, which is a memset;
+    // with one it is a byte-wise AND that no longer re-tests the pointer.
+    //
+    // The lambda was 6.55% of a Phaser frame measured this way - bigger than
+    // blend_span, and the third time in this file that the body of a per-pixel
+    // loop was the cost rather than the thing around it.
     for_each_span(rule, [&](int y, float from, float to) {
         if (y < 0 || y >= h) { return; }
         const int left = std::max(0, static_cast<int>(std::ceil(from - 0.5f)));
         const int right = std::min(w - 1, static_cast<int>(std::floor(to - 0.5f)));
+        if (right < left) { return; }
         const auto row = static_cast<std::size_t>(y) * static_cast<std::size_t>(w);
-        for (int x = left; x <= right; ++x) {
-            const std::size_t at = row + static_cast<std::size_t>(x);
-            if (previous != nullptr && previous[at] == 0) { continue; }
-            into[at] = 1;
+        const auto span = static_cast<std::size_t>(right - left) + 1U;
+        std::uint8_t * out = into + row + static_cast<std::size_t>(left);
+        if (previous == nullptr) {
+            std::fill_n(out, span, std::uint8_t{1});
+            return;
         }
+        const std::uint8_t * was = previous + row + static_cast<std::size_t>(left);
+        for (std::size_t i = 0; i < span; ++i) { out[i] = static_cast<std::uint8_t>(was[i] != 0); }
     });
     clip_ = std::move(mask);
 }

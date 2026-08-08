@@ -1,6 +1,7 @@
 #include <ctbrowser/shell/svg.hpp>
 
 #include <algorithm>
+#include <boost/container_hash/hash.hpp>
 #include <cctype>
 #include <charconv>
 #include <utility>
@@ -11,13 +12,15 @@ namespace ctbrowser::shell {
 
 namespace {
 
-[[nodiscard]] std::uint64_t fnv1a(std::string_view text) noexcept {
-    std::uint64_t hash = 1469598103934665603ull;
-    for (const char c : text) {
-        hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(c));
-        hash *= 1099511628211ull;
-    }
-    return hash;
+// `boost::hash`, not a hand-rolled FNV-1a: FNV walks the bytes ONE AT A TIME
+// and this hashes whole SVG documents. Same argument core/containers.hpp makes
+// for preferring it to std::hash, and this is the larger input of the two.
+//
+// The value is an in-memory cache token only - `set_source` compares the source
+// in FULL on a hash hit (see below), nothing persists it, and no golden depends
+// on it - so changing the function changes no observable behaviour.
+[[nodiscard]] std::uint64_t content_hash(std::string_view text) noexcept {
+    return boost::hash<std::string_view>{}(text);
 }
 
 [[nodiscard]] bool is_space(char c) noexcept {
@@ -119,17 +122,19 @@ svg_natural scan_svg_natural(std::string_view source) {
 }
 
 std::size_t svg_store::raster_key_hash::operator()(const raster_key & k) const noexcept {
-    std::uint64_t hash = k.content;
-    hash ^= static_cast<std::uint64_t>(static_cast<std::uint32_t>(k.width)) +
-            0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
-    hash ^= static_cast<std::uint64_t>(static_cast<std::uint32_t>(k.height)) +
-            0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
-    return static_cast<std::size_t>(hash);
+    // This was `0x9e3779b9...`, the golden-ratio mix, open-coded twice - which
+    // is `boost::hash_combine` retyped from memory. Boost is already a
+    // dependency of every target here.
+    std::size_t hash = 0;
+    boost::hash_combine(hash, k.content);
+    boost::hash_combine(hash, k.width);
+    boost::hash_combine(hash, k.height);
+    return hash;
 }
 
 void svg_store::set_source(node_id id, std::string source) {
     if (source.empty()) { return; }
-    const std::uint64_t content = fnv1a(source);
+    const std::uint64_t content = content_hash(source);
 
     // Compare in full on a hash hit. A collision here would hand one graphic's
     // pixels to another element, which is a wrong picture rather than a crash

@@ -237,6 +237,25 @@ public:
     // not increment it.
     [[nodiscard]] std::size_t layout_count() const noexcept { return layouts_; }
 
+    // WHAT THE LAST FRAME SPENT ITS TIME ON, in milliseconds.
+    //
+    // The runtime profiler (`CTBROWSER_PROFILE`) recorded one `frame_ms` for
+    // style, layout, record and raster together, so it could say a frame was
+    // slow and never which part of it was - and those four are exactly the
+    // stages the dirty level decides between. A scroll that re-rasters when it
+    // should only re-composite looked identical to one that did not.
+    //
+    // Zero for a stage the frame SKIPPED, which is the interesting half: the
+    // dirty-level design is about not running these, so a zero is the design
+    // working rather than missing data.
+    struct frame_timing {
+        double styles_ms = 0;
+        double layout_ms = 0;
+        double record_ms = 0;
+        double raster_ms = 0;
+    };
+    [[nodiscard]] const frame_timing & last_frame_timing() const noexcept { return timing_; }
+
     // Collect the script heap now, and how many objects it has. Exposed
     // because "does a collection free what the page is still using" is only
     // answerable from outside, and it is the question that kept the collector
@@ -1444,6 +1463,7 @@ private:
     std::function<void(const std::string &)> navigate_hook_;
     std::string source_html_;
     std::size_t layouts_ = 0;
+    frame_timing timing_;
     double caret_clock_ms_ = 0;
     double caret_base_ms_ = 0;
     std::string location_href_;

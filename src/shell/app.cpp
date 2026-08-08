@@ -498,7 +498,15 @@ struct frame_record {
     double at_ms = 0;    // since the run started
     double poll_ms = 0;  // events in
     double tick_ms = 0;  // timers, rAF, the caret clock
-    double frame_ms = 0; // style, layout, record, raster
+    double frame_ms = 0; // style, layout, record, raster - and the four below
+    // THE SAME FRAME, BROKEN UP. frame_ms is their sum plus whatever the frame
+    // did around them; these say WHICH stage, which is the question a slow page
+    // actually raises. A skipped stage is 0, and on a scroll or a caret blink
+    // three of them SHOULD be - see browser::frame_timing.
+    double styles_ms = 0;
+    double layout_ms = 0;
+    double record_ms = 0;
+    double raster_ms = 0;
     double present_ms = 0;
     double wait_ms = 0; // deliberately asleep
     std::uint32_t layouts = 0;
@@ -543,6 +551,13 @@ inline void report_profile(const std::vector<frame_record> & history, double wal
     std::printf("    poll events   %8.1f\n", total(&frame_record::poll_ms));
     std::printf("    tick clock    %8.1f\n", total(&frame_record::tick_ms));
     std::printf("    frame         %8.1f\n", total(&frame_record::frame_ms));
+    // Indented under `frame` because that is what they add up to. Printed even
+    // when zero: a stage the frame never ran is the dirty-level design working,
+    // and seeing `layout 0.0` on a scroll is the confirmation.
+    std::printf("      styles      %8.1f\n", total(&frame_record::styles_ms));
+    std::printf("      layout      %8.1f\n", total(&frame_record::layout_ms));
+    std::printf("      record      %8.1f\n", total(&frame_record::record_ms));
+    std::printf("      raster      %8.1f\n", total(&frame_record::raster_ms));
     std::printf("    present       %8.1f\n", total(&frame_record::present_ms));
     std::printf("    asleep        %8.1f\n", total(&frame_record::wait_ms));
     if (!frame_times.empty()) {
@@ -558,9 +573,11 @@ inline void report_profile(const std::vector<frame_record> & history, double wal
         std::printf("ctbrowser: cannot write %s\n", path.c_str());
         return;
     }
-    out << "at_ms,poll_ms,tick_ms,frame_ms,present_ms,wait_ms,layouts,rendered\n";
+    out << "at_ms,poll_ms,tick_ms,frame_ms,styles_ms,layout_ms,record_ms,raster_ms,"
+           "present_ms,wait_ms,layouts,rendered\n";
     for (const frame_record & r : history) {
         out << r.at_ms << ',' << r.poll_ms << ',' << r.tick_ms << ',' << r.frame_ms << ','
+            << r.styles_ms << ',' << r.layout_ms << ',' << r.record_ms << ',' << r.raster_ms << ','
             << r.present_ms << ',' << r.wait_ms << ',' << r.layouts << ',' << (r.rendered ? 1 : 0)
             << '\n';
     }
@@ -772,6 +789,12 @@ int run_app(std::string_view html, app_options options) {
             const auto after_frame = clock::now();
             record.frame_ms =
                 std::chrono::duration<double, std::milli>(after_frame - after_tick).count();
+            // The stage split the engine just measured for itself.
+            const auto & stages = page.last_frame_timing();
+            record.styles_ms = stages.styles_ms;
+            record.layout_ms = stages.layout_ms;
+            record.record_ms = stages.record_ms;
+            record.raster_ms = stages.raster_ms;
             host->present(page);
             record.present_ms =
                 std::chrono::duration<double, std::milli>(clock::now() - after_frame).count();

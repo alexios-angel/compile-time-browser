@@ -1,6 +1,7 @@
 #pragma once
 #include <atomic>
 #include <boost/container/small_vector.hpp>
+#include <boost/container_hash/hash.hpp>
 #include <boost/intrusive_ptr.hpp>
 #include <cstddef>
 #include <cstdint>
@@ -49,11 +50,22 @@ using declaration_list = boost::container::small_vector<declaration, 8>;
     return true;
 }
 
+// `boost::hash_combine`, not a hand-rolled FNV-1a, and the reason is the one
+// core/containers.hpp already gives for using `boost::hash` over
+// `std::hash<std::string>`: FNV walks a string a BYTE AT A TIME, and
+// boost::hash mixes over word-sized chunks. This used to be an open-coded FNV
+// over every character of every value - the same weakness `std::_Hash_bytes`
+// was replaced for, three files away, on a measurement.
+//
+// It hashes exactly what `same_declarations` compares - the property atom and
+// the value bytes, in order - because a hash that reads less than equality does
+// is a table that returns wrong answers, and one that reads more is a table
+// that misses.
 [[nodiscard]] inline std::size_t hash_declarations(const declaration_list & d) noexcept {
-    std::size_t h = 1469598103934665603ull;
+    std::size_t h = 0;
     for (const declaration & one : d) {
-        h = (h ^ one.property.id) * 1099511628211ull;
-        for (const char c : one.value) { h = (h ^ static_cast<std::size_t>(c)) * 1099511628211ull; }
+        boost::hash_combine(h, one.property.id);
+        boost::hash_combine(h, std::string_view{one.value});
     }
     return h;
 }
