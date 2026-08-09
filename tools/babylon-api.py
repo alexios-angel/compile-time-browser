@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BUNDLE = ROOT / "examples/assets/phaser/phaser.js"
+BUNDLE = ROOT / "vendor/babylon/babylon.js"
 PROBES = ROOT / "tests/babylon-api-probe.js"
 RECORD = ROOT / "tests/babylon-api.txt"
 TEST = ROOT / "build/src/tests/ctbrowser-test-babylon_api"

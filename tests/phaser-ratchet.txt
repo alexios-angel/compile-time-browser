@@ -1,4 +1,4 @@
-# How far examples/assets/phaser/phaser.js (Phaser 4.2.1) gets through the engine.
+# How far vendor/phaser/phaser.js (Phaser 4.2.1) gets through the engine.
 # tests/phaser_ratchet.cpp measures it; this file records it. The level may not
 # go DOWN, and at the same level the blocker may not CHANGE, without the test
 # failing.

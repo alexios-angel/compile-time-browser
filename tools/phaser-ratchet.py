@@ -34,7 +34,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BUNDLE = ROOT / "examples/assets/phaser/phaser.js"
+BUNDLE = ROOT / "vendor/phaser/phaser.js"
 RECORD = ROOT / "tests/phaser-ratchet.txt"
 TEST = ROOT / "build/src/tests/ctbrowser-test-phaser_ratchet"
 

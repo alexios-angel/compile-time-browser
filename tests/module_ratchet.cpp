@@ -460,7 +460,7 @@ struct measurement {
 // ladder stops at its first failure, and whether the corpus is present at all
 // is a different question from how far the engine gets.
 [[nodiscard]] std::string babylon_es_verdict() {
-    const std::string umd = read_file("examples/assets/babylon/babylon.js");
+    const std::string umd = read_file("vendor/babylon/babylon.js");
     if (umd.empty()) { return "no Babylon vendored at all"; }
     if (umd.find("_BabylonUMDDynamicImportUnsupported") != std::string::npos) {
         return "only the UMD build is vendored, and it REJECTS its own dynamic import() - "

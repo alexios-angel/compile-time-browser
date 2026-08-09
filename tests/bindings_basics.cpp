@@ -628,7 +628,7 @@ void test_image_data() {
 // p5 having installed 200 globals.
 void test_p5_receives_input() {
     browser page{browser_options{300, 300}};
-    page.assets().add("p5.js", read_bytes("examples/assets/p5/p5.js"));
+    page.assets().add("p5.js", read_bytes("vendor/p5/p5.js"));
     page.load_html(R"(<html><head><script>var IS_MINIFIED = true;</script>
         <script src="p5.js"></script></head><body style="margin:0"><script>
         var log = '';
@@ -699,7 +699,7 @@ void test_p5_receives_input() {
 // that hands back an object with no drawing on it.
 void test_webgl_is_constructible_and_refuses() {
     browser page{browser_options{300, 300}};
-    page.assets().add("p5.js", read_bytes("examples/assets/p5/p5.js"));
+    page.assets().add("p5.js", read_bytes("vendor/p5/p5.js"));
     page.load_html(R"(<html><head><script>var IS_MINIFIED = true;</script>
         <script src="p5.js"></script></head><body><script>
         console.log('registered=' + (typeof p5.renderers['webgl']));

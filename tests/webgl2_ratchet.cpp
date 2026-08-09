@@ -125,8 +125,8 @@ struct measurement {
 // reads 1 until getContext('webgl2') returns a context, and the day it reads 2
 // is the day the work landed.
 [[nodiscard]] std::string babylon_verdict() {
-    const std::string source = read_file("examples/assets/babylon/babylon.js");
-    if (source.empty()) { return "examples/assets/babylon/babylon.js is missing"; }
+    const std::string source = read_file("vendor/babylon/babylon.js");
+    if (source.empty()) { return "vendor/babylon/babylon.js is missing"; }
     // THROUGH THE COMPILER FIRST, because a page reports "parse error:
     // expression" with no position and that is half a diagnostic. The compiler
     // names the offset, which is the difference between a finding and a hunt -
@@ -316,9 +316,9 @@ struct measurement {
     // instancing from WebGL 1 extensions), so this rung asks the question that
     // is actually available: does its WebGL renderer boot and paint on this
     // engine at all. That is the claim a corpus can settle and the API cannot.
-    const std::string bundle = read_file("examples/assets/phaser/phaser.js");
+    const std::string bundle = read_file("vendor/phaser/phaser.js");
     if (bundle.empty()) {
-        m.fail_at(rung_phaser, "examples/assets/phaser/phaser.js is missing");
+        m.fail_at(rung_phaser, "vendor/phaser/phaser.js is missing");
         return m;
     }
     ctbrowser::shell::browser game{ctbrowser::shell::browser_options{200, 200}};
@@ -415,9 +415,9 @@ struct measurement {
     // it settled on. That number is the honest headline for this whole plan -
     // it reads 1 until `getContext('webgl2')` returns a context, and the day it
     // reads 2 is the day the work landed.
-    const std::string babylon_source = read_file("examples/assets/babylon/babylon.js");
+    const std::string babylon_source = read_file("vendor/babylon/babylon.js");
     if (babylon_source.empty()) {
-        m.fail_at(rung_babylon, "examples/assets/babylon/babylon.js is missing");
+        m.fail_at(rung_babylon, "vendor/babylon/babylon.js is missing");
         return m;
     }
     ctbrowser::shell::browser babylon{ctbrowser::shell::browser_options{200, 200}};

@@ -88,7 +88,7 @@ namespace {
     auto page =
         std::make_unique<ctbrowser::shell::browser>(ctbrowser::shell::browser_options{420, 360});
     page->assets().add(
-        "../assets/babylon/babylon.js",
+        "../../vendor/babylon/babylon.js",
         std::vector<std::byte>{reinterpret_cast<const std::byte *>(bundle.data()),
                                reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
     page->load_html(page_html);
@@ -154,7 +154,7 @@ int main() {
         return 0;
     }
 
-    const std::string bundle = read_file("examples/assets/babylon/babylon.js");
+    const std::string bundle = read_file("vendor/babylon/babylon.js");
     const std::string page_html = read_file("examples/pages/babylon-orbit.html");
     if (bundle.empty() || page_html.empty()) {
         std::printf("SKIP babylon_interaction: the babylon corpus or the page is missing\n");

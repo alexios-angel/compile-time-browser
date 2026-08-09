@@ -143,9 +143,9 @@ void check_close(const char * what, int got, int wanted, int tolerance) {
 } // namespace
 
 int main() {
-    const std::string bundle = read_file("examples/assets/babylon/babylon.js");
+    const std::string bundle = read_file("vendor/babylon/babylon.js");
     if (bundle.empty()) {
-        std::printf("SKIP babylon_lighting: examples/assets/babylon/babylon.js is missing\n");
+        std::printf("SKIP babylon_lighting: vendor/babylon/babylon.js is missing\n");
         return 0;
     }
 

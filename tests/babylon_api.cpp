@@ -88,9 +88,9 @@ int main() {
     // THE BUNDLE IS OPTIONAL AT BUILD TIME, like plutosvg for the SVG tests: a
     // checkout without the corpus should still build and pass rather than fail
     // for a reason that has nothing to do with the code.
-    const std::string bundle = read_file("examples/assets/babylon/babylon.js");
+    const std::string bundle = read_file("vendor/babylon/babylon.js");
     if (bundle.empty()) {
-        std::printf("SKIP babylon_api: examples/assets/babylon/babylon.js is missing\n");
+        std::printf("SKIP babylon_api: vendor/babylon/babylon.js is missing\n");
         return 0;
     }
 

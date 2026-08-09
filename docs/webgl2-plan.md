@@ -236,7 +236,7 @@ out, and it should be told rather than left to guess.
 
 ## Babylon as the third corpus
 
-**Vendored 2026-08-02**, at `examples/assets/babylon/` with its Apache-2.0
+**Vendored 2026-08-02**, at `vendor/babylon/` with its Apache-2.0
 licence — 11.6 MB against p5's 4.6 and Phaser's 8.8, which is real weight it
 earns by being the only witness to the half of WebGL this engine has never been
 asked for. It degrades cleanly (52 `_webGLVersion` gates), so it can be pointed

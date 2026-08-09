@@ -1,6 +1,6 @@
 // How far does p5.js get?
 //
-// examples/assets/p5/p5.js is p5.js v2.3.1 - 4.5 MB and 138,938 lines of modern
+// vendor/p5/p5.js is p5.js v2.3.1 - 4.5 MB and 138,938 lines of modern
 // JavaScript that nobody wrote for this engine. It is roughly 900x the largest
 // script this tree runs today (examples/pages/pong.html, 5,018 bytes), and
 // unlike an ordinary page nearly all of it must EXECUTE at load: the bundle is
@@ -227,7 +227,7 @@ private:
     stopwatch clock;
 
     if (source.empty()) {
-        m.fail_at(level_read, "examples/assets/p5/p5.js is missing or empty");
+        m.fail_at(level_read, "vendor/p5/p5.js is missing or empty");
         return m;
     }
     m.reached(level_read);
@@ -519,7 +519,7 @@ int main(int argc, char ** argv) {
     // nothing outside the compiler can see. With it, a trace out of 4.5 MB of
     // minified-ish JavaScript points at the exact lines to read.
     if (argc > 2 && std::string{argv[1]} == "--source") {
-        const std::string source = read_file("examples/assets/p5/p5.js");
+        const std::string source = read_file("vendor/p5/p5.js");
         const ctbrowser::script::program prog = ctbrowser::script::compiler::compile(source);
         if (!prog.ok) {
             std::printf("compile failed: %s\n", prog.error.c_str());
@@ -546,7 +546,7 @@ int main(int argc, char ** argv) {
     }
 
     if (argc > 2 && std::string{argv[1]} == "--sketch") {
-        const std::string bundle = read_file("examples/assets/p5/p5.js");
+        const std::string bundle = read_file("vendor/p5/p5.js");
         ctbrowser::shell::browser page{ctbrowser::shell::browser_options{400, 400}};
         // A few assets a --sketch probe can load, so the loaders can be tried
         // without reaching the network.
@@ -581,7 +581,7 @@ int main(int argc, char ** argv) {
     }
 
     const bool bisecting = argc > 1;
-    const std::string path = bisecting ? argv[1] : "examples/assets/p5/p5.js";
+    const std::string path = bisecting ? argv[1] : "vendor/p5/p5.js";
 
     const std::string source = read_file(path);
     std::printf("     %s: %zu bytes\n", path.c_str(), source.size());

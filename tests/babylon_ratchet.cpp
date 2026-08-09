@@ -567,9 +567,9 @@ const std::uint32_t clear_blue = 0x0000ff;
 } // namespace
 
 int main() {
-    const std::string bundle = read_file("examples/assets/babylon/babylon.js");
+    const std::string bundle = read_file("vendor/babylon/babylon.js");
     if (bundle.empty()) {
-        std::printf("SKIP babylon_ratchet: examples/assets/babylon/babylon.js is missing\n");
+        std::printf("SKIP babylon_ratchet: vendor/babylon/babylon.js is missing\n");
         return 0;
     }
 

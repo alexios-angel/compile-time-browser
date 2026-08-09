@@ -281,6 +281,21 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/pages" "${dist-dir}/examples/pages"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${dist-dir}/examples/assets")
+
+  # AND vendor/, AT THE DIST ROOT, which is not a detail. The corpora moved out
+  # of examples/assets/ on 2026-08-09 because they are test data first, and the
+  # pages now ask for `../../vendor/<lib>/<lib>.js`. That resolves against the
+  # PAGE, so the only layout in which it finds anything is one that mirrors the
+  # repository: vendor/ beside examples/, not inside it.
+  #
+  # This is the third instalment of the lesson the comment above records. Both
+  # earlier times the symptom was the same and reads like an engine bug rather
+  # than a packaging one: the Windows goldens differ from the Linux ones on a
+  # cross-build that is meant to be byte-identical, and nothing anywhere says
+  # the page was served without its framework.
+  list(APPEND dist-commands
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${PROJECT_SOURCE_DIR}/vendor" "${dist-dir}/vendor")
   foreach(entry ${asset-entries})
     get_filename_component(asset-name "${entry}" NAME)
     if(IS_DIRECTORY "${entry}")
