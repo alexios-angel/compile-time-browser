@@ -28,6 +28,34 @@ clang's `-fxray-instrument`, `-pg`/gprof. And the Windows cross-build means a
 native profiler on the `.exe` is always an option — which is already how GPU work
 is measured (`docs/platform.md`).
 
+## Splitting the compiler cost 1.52%, and one function was all of it (2026-08-09)
+
+`src/script/compile.cpp` was 3,845 lines of one class. Splitting it into eleven
+files means every member body crosses a translation-unit boundary, and there is
+no LTO in this build - so it was measured before and after rather than hoped
+about. `p5basic`, 30 frames, font8x8, under callgrind:
+
+| | instructions | `compiler_impl` share |
+|---|---|---|
+| one file | 743,467,779 | 31.59% |
+| eleven files | 773,796,001 (+4.08%) | 34.49% |
+| eleven files, `at()` inline | 754,759,353 (**+1.52%**) | 32.80% |
+
+**`compiler_impl::at()` was 19.0 M of the 30.3 M.** Five lines - the accessor
+the whole compiler reads the node pool through. Out of line it appeared in the
+profile at 4.18% and 32.4 M instructions; inlined, it does not appear at all,
+which is why nobody had noticed it was hot. It is defined in
+`src/script/compile/compiler_impl.hpp` with these numbers written beside it.
+
+No other member earned the same treatment. The profile behind `at()` is flat,
+and that was checked rather than assumed - the temptation is to pull back the
+whole list of one-liners, and the measurement says only one of them mattered.
+
+This also corrects the headline table below. `declare_local` at 15.1% and
+`collect_captured_names` at 7.6% are the numbers from BEFORE the memcmp fix
+recorded further down this file. The current hot set in the compiler is the
+capture analysis: `tour` 6.8%, `mentions_arguments` 3.9%, `child_slots` 2.4%.
+
 ## The finding that reorganised the work
 
 Profiling a **whole page render** — `examples/corpus/p5basic`, loading the p5.js bundle

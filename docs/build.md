@@ -30,8 +30,8 @@ stays near half. The rule it comes from: a header declares, its `.cpp` defines,
 and nobody pays to parse a body they do not call.
 
 `script/compile` is the extreme case and the shape to copy - the header
-declares one function, `compile.cpp` holds 1,689 lines of compiler, and no
-consumer parses any of it.
+declares one function, the ~3,800 lines of compiler behind it are spread over
+`src/script/compile/`, and no consumer parses any of it.
 
 **The rule that survives the modules era**: no third-party header in a public
 header. It used to be about BMI size - `<boost/asio.hpp>` in the `:net`

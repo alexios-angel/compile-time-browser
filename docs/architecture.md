@@ -48,9 +48,9 @@ raster/backend/ backend software renderer          an interface, an
 raster/text/    font8x8.hpp ttf.hpp                glyphs
 ```
 
-`src/` mirrors those, and adds two of its own where one header's implementation
-needed more than one file: `src/script/builtins/`, `src/script/vm/` and
-`src/shell/bindings/`.
+`src/` mirrors those, and adds four of its own where one header's implementation
+needed more than one file: `src/script/builtins/`, `src/script/compile/`,
+`src/script/vm/` and `src/shell/bindings/`.
 
 ## The pipeline
 
@@ -73,7 +73,7 @@ script --------- bindings ------------------------------ shell drives all of it
 | `paint` | `ctbrowser::paint` | geometry -> a recorded display list of layers | `command.hpp`, `record.hpp` |
 | `raster` | `ctbrowser::raster` | display list -> pixels, in tiles across the pool | `backend/pipeline.hpp`, `draw.hpp`, `text/ttf.hpp` |
 | `gpu` | `ctbrowser::gpu` | `SDL_GPUDevice` composition, and the fallback when there is no adapter | `device.hpp` 231 |
-| `script` | `ctbrowser::script` | JS -> bytecode -> a register machine over NaN-boxed values, plus the standard library | `src/script/compile.cpp` 3845, `src/script/vm/run_loop.cpp` 1694 |
+| `script` | `ctbrowser::script` | JS -> bytecode -> a register machine over NaN-boxed values, plus the standard library | `src/script/compile/` (eleven files), `src/script/vm/run_loop.cpp` 1694 |
 | `shell` | `ctbrowser::shell` | the assembly: the browser itself, the API a page's script sees, forms, canvas, input, net, images | `browser.hpp` 1539, `bindings.hpp` 685 |
 | `app` | `ctbrowser::app` | the window, the event loop, the clock, screenshots. **The only place that knows SDL exists** | `src/app/app.cpp` 914 |
 
@@ -93,10 +93,11 @@ headers, and no subsystem is header-only. (This document said the opposite until
 the rest INTERFACE libraries. None of that had been true for some time.)
 
 The rule that matters is about the HEADER, not the file behind it.
-`script/compile.hpp` declares one function and `src/script/compile.cpp` holds
-all 3,845 lines of the compiler, so a reader who wants to know what the compiler
-*is* reads 51 lines. That is the shape to aim for; moving definitions out of the
-remaining headers is what pays down the CPU cost measured in `docs/build.md`.
+`script/compile.hpp` declares one function — a reader who wants to know what the
+compiler *is* reads 51 lines — and the 3,800 lines behind it are filed wherever
+they are most legible. That is the shape to aim for; moving definitions out of
+the remaining headers is what pays down the CPU cost measured in
+`docs/build.md`.
 
 Where an implementation outgrew one file it was split into a directory beside
 its header, and the header did not change:
@@ -107,11 +108,45 @@ its header, and the header did not change:
   of one function: splitting it means splitting dispatch, which is what
   `docs/history/computed-goto.md` is about.
 - `src/shell/bindings/` — seven, from 3,926 plus a stray 1,431 filed elsewhere.
+- `src/script/compile/` — eleven, from 3,845, with the class declared in
+  `compiler_impl.hpp` beside them. See below; it was the hardest of the four.
 
-`compile.cpp` is deliberately NOT split. It is a single class with 101 members
-defined inline inside an anonymous namespace, so splitting it means hoisting the
-class into an internal header and relocating every body — a large mechanical
-change against a header that is already the right size.
+### What splitting the compiler cost, measured
+
+`compile.cpp` was one class, `compiler_impl`, with every member defined inline
+in its body inside an **anonymous** namespace. Two things follow, and both are
+the reason this one was left until last:
+
+**The class had to gain external linkage.** An anonymous namespace cannot be
+shared through a header — each `.cpp` would get its own distinct class, and a
+member defined in one file would belong to a different type from the one another
+file calls. It lives in `ctbrowser::script::detail` now. Its seven nested types
+stay NESTED: `frame` reads like a VM call frame, which `vm.hpp` really has, and
+`local`, `interval` and `reference` are generic enough to collide with anything.
+
+**Out-of-lining costs inlining, and here that is measurable.** There is no LTO
+in this build. On a whole-page render of `p5basic`:
+
+| | instructions | `compiler_impl` share |
+|---|---|---|
+| one file | 743,467,779 | 31.59% |
+| eleven files | 773,796,001 (+4.08%) | 34.49% |
+| eleven files, `at()` back inline | 754,759,353 (**+1.52%**) | 32.80% |
+
+Callgrind attributed nearly the whole cost to **one five-line function**.
+`at()` is how the compiler reads the node pool; out of line it appeared at 4.18%
+and 32.4 M instructions, having been absent from the profile altogether while it
+was inlined into every caller. It is defined in the header for that reason, with
+the numbers written next to it. No other member was worth pulling back — the
+profile is flat behind this one, and that was checked rather than assumed.
+
+The sections are also **mutually recursive in six places**, and
+`compile_expr_inner ↔ compile_function_body ↔ compile_stmt ↔ compile_class ↔
+compile_pattern` form one strongly connected component spanning 2,174 lines. So
+the split buys **no recompilation independence** — every declaration is in the
+one header, and touching it rebuilds all eleven files. The gain is navigability,
+not build parallelism. Decomposing the class into collaborating types was
+investigated and is not available for the same reason.
 
 ## This was C++20 named modules until 2026-07-28
 

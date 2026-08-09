@@ -14,7 +14,7 @@ them. `SDL_GetGPUDeviceDriver` says "vulkan" either way — the adapter name
 what tells you, and `adapter_is_software()` checks it.
 
 **The cross-compiled .exe sees the real GPU.** Run under WSL interop,
-`build-windows/src/tests/ctbrowser-test-gpu_basics.exe` selects
+`build-windows/tests/ctbrowser-test-gpu_basics.exe` selects
 **`Intel(R) Arc(TM) Graphics`** and its render matches the software one exactly
 (0 of 120000 pixels differ). So GPU **correctness** is verifiable both ways, and
 GPU **performance** numbers must come from the Windows build — `bench_gpu`

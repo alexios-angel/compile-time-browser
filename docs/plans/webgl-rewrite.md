@@ -18,7 +18,7 @@ where **ANGLE then segfaults inside `updateOneUniformBuffer`**.
 ../infra/azure-build-server/server.sh start     # and allow-ip if the IP rotated
 tools/remote-build.sh                            # ALWAYS build on the devbox
 ssh devbox 'cd ~/projects/compile-time-browser &&
-  CTBROWSER_GL_UBO=1 /tmp/build-angle/src/tests/ctbrowser-test-webgl2_ratchet 2>&1 | rg "^\[ubo\]"'
+  CTBROWSER_GL_UBO=1 /tmp/build-angle/tests/ctbrowser-test-webgl2_ratchet 2>&1 | rg "^\[ubo\]"'
 ```
 
 **Three hypotheses are already refuted** - do not spend a pass on any of them:
