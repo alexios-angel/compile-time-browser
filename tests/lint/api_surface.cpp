@@ -105,8 +105,8 @@ void check_application_source(const std::string & path) {
 } // namespace
 
 int main() {
-    check_application_source("examples/counter.cpp");
-    check_application_source("examples/ctbrowse.cpp");
+    check_application_source("examples/demos/counter.cpp");
+    check_application_source("examples/cli/ctbrowse.cpp");
     check_application_source("tests/package/main.cpp");
 
     // The engine may use SDL only where it is ALLOWED to. Everywhere else,

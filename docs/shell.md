@@ -10,7 +10,7 @@ browser, `bindings.hpp` the API a page's script sees, plus `forms`, `canvas`,
 **`#include <ctbrowser.hpp>` + `ctbrowser::run_app(html, options)` is
 the whole API.** One include, one link target (`ctbrowser::ctbrowser` in-tree,
 `ctbrowser::ctbrowser` installed), NO SDL header in the application. See
-`examples/counter.cpp` — 40 lines, most of it the page.
+`examples/demos/counter.cpp` — 40 lines, most of it the page.
 
 `run_app` owns the window, the event loop, the clock (it calls `tick()`, so
 timers and rAF actually fire), vsync, fps pacing, screenshots and teardown.

@@ -67,7 +67,7 @@ TLS - worse than one that refuses to configure. `find_package(CURL REQUIRED)`.
 
 That removed it from two more places, which is where a dependency actually
 lives: `tests/net_basics.cpp` stood up its loopback server with Asio, and
-`examples/ctdrive.cpp` ran its command socket on it. Both are plain BSD
+`examples/cli/ctdrive.cpp` ran its command socket on it. Both are plain BSD
 sockets now - roughly fifty lines each, `#if defined(_WIN32)` for the Winsock
 spelling - because a harness that reintroduces the dependency the engine just
 dropped has not dropped it.
@@ -144,7 +144,7 @@ ever built it actually used.
 | `raster/ttf.cpp` defined a class its header did not declare | `ttf.hpp` guards `ttf_backend` behind `#if CTBROWSER_WITH_TTF`; the `.cpp` did not, and CMake compiles it unconditionally |
 | `glsl_eval.cpp` range-for'd over a temporary | a ternary between two `initializer_list`s dangles before C++23; clang implements P2718R0, GCC 13 does not |
 | the JPEG decoder used libjpeg-turbo's `tj3_*` API | that arrived in 3.0 and **Ubuntu 24.04 LTS ships 2.1.5**, so the engine could not build on a current LTS at all |
-| a trailing `\` on a `//` line in `examples/p5events.cpp` | it splices the next line into the comment; GCC's `-Wcomment` + `-Werror` rejects it, clang says nothing |
+| a trailing `\` on a `//` line in `examples/corpus/p5events.cpp` | it splices the next line into the comment; GCC's `-Wcomment` + `-Werror` rejects it, clang says nothing |
 
 Plus one in the suite: three tests in `chrome_basics.cpp` asserted
 `use_real_fonts()` outright, which is false without SDL3_ttf.
@@ -482,7 +482,7 @@ so `start` leaves a daemon holding them and every other verb is a one-line
 client. Loopback TCP and a port file rather than a unix socket: the repo sits on
 a DrvFs mount, which does not support unix sockets at all.
 
-**`examples/ctdrive.cpp` is the ctbrowser half**, and the two engine changes it
+**`examples/cli/ctdrive.cpp` is the ctbrowser half**, and the two engine changes it
 needed are worth knowing. `app_options::on_frame` is called every loop
 iteration — `on_ready` fires once and the loop was otherwise closed, which is
 why `ctbrowse` cannot be scripted — and commands are applied from it, on the

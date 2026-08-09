@@ -45,7 +45,7 @@ int main() {
 
 One include, one link target, no SDL header. `run_app` owns the window, the
 event loop, the clock, frame pacing, screenshots and teardown. See
-[`examples/counter.cpp`](examples/counter.cpp) — forty lines, most of it the
+[`examples/demos/counter.cpp`](examples/demos/counter.cpp) — forty lines, most of it the
 page.
 
 An idle page BLOCKS on the event queue rather than polling, so it costs

@@ -217,7 +217,7 @@ private:
     // differently for a whole stretch: it ran its entire draw loop while
     // `(220).toString(16)` returned "220", so every fill came out white.
     //
-    // Drawn HERE rather than left to examples/phaserbasic.cpp, because that one
+    // Drawn HERE rather than left to examples/corpus/phaserbasic.cpp, because that one
     // needs SDL to build and this test must not. The golden comparison is still
     // that example's job - this rung asks the weaker, unmissable question: did
     // any of it land at all.

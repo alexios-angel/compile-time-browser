@@ -8,7 +8,7 @@ API pages call is not here - that is `shell/bindings.hpp`, in `docs/shell.md`.
 
 ## JAVASCRIPT (2026-07-25)
 
-**The MDN breakout tutorial runs, unmodified** — `examples/pong.cpp` loads
+**The MDN breakout tutorial runs, unmodified** — `examples/demos/pong.cpp` loads
 `examples/pages/pong.html`, a byte-for-byte copy. `examples/fetchboard.html`
 compiles too, and the 66 KB bundled `space-invaders.html` stops at exactly ONE
 thing: a regex literal.

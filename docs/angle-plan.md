@@ -536,7 +536,7 @@ a minute and would have redirected four commits of work.
 THE STANDING LESSON, since this is the same shape as the two-URL-parsers and
 two-base64-decoders findings this tree has already paid for: when something does
 not work, run it a second way BEFORE forming a theory about why. The next step is
-to diff `examples/babylonscene.cpp` against `examples/ctbrowse.cpp` - options,
+to diff `examples/corpus/babylonscene.cpp` against `examples/cli/ctbrowse.cpp` - options,
 canvas sizing, frame pumping - not to read any more GL.
 
 The measurements below remain TRUE and are worth keeping; they were just aimed at

@@ -2170,7 +2170,7 @@ void test_the_breakout_page_survives_its_own_game_over() {
 // centres the paddle on it WITHOUT clamping the resulting rect, so the paddle
 // hangs up to half its width off either edge - in Chrome and Firefox too. The
 // page carries one deviation from the tutorial to fix that (see the comment in
-// examples/pong.cpp); this is what says the deviation is still there.
+// examples/demos/pong.cpp); this is what says the deviation is still there.
 void test_the_breakout_paddle_stays_on_the_canvas() {
     browser page{browser_options{480, 320}};
     std::ifstream in{"examples/pages/pong.html", std::ios::binary};

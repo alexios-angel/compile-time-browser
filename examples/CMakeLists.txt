@@ -8,7 +8,14 @@ if(NOT CTBROWSER_BUILD_EXAMPLES)
   return()
 endif()
 
-file(GLOB example-sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+# GLOB_RECURSE since the examples were foldered on 2026-08-09 into demos/ (the
+# engine showing what it draws), corpus/ (somebody else's library, each with a
+# golden) and cli/ (the two that take arguments and print).
+#
+# Nothing downstream had to change: every use below derives from NAME_WE, so the
+# target names, the OUTPUT_NAMEs, the golden-examples and webgl-examples lists,
+# the -mwindows exclusions and the dist loop all still key on the bare name.
+file(GLOB_RECURSE example-sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
   file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/assets" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
 endif()

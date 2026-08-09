@@ -56,7 +56,7 @@ suite unless a person does. `tools/remote-build.sh` is the whole gate now.
 - `tools/gen/gen-shaders.py` — GLSL -> the SPIR-V in `include/ctbrowser/gpu/shaders/tile_spv.hpp`.
 - `tools/check/compare.py` — drives ctbrowser AND Chrome/Firefox through the same
   clicks and keystrokes, live, so parity can be seen rather than guessed.
-  `--headed --delay` makes it watchable; `examples/ctdrive.cpp` is the
+  `--headed --delay` makes it watchable; `examples/cli/ctdrive.cpp` is the
   ctbrowser half. See `docs/build.md`.
 - `tools/check/check-spirv.py` — runs `spirv-val` over SPIR-V this engine produced,
   given the files. OPTIONAL, and it says plainly when the validator is absent:
