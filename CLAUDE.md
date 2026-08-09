@@ -58,14 +58,12 @@ suite unless a person does. `tools/remote-build.sh` is the whole gate now.
   clicks and keystrokes, live, so parity can be seen rather than guessed.
   `--headed --delay` makes it watchable; `examples/ctdrive.cpp` is the
   ctbrowser half. See `docs/build.md`.
-- `tools/gen-glsl-fixtures.py` — extracts the sixteen shaders p5.js ships into
-  `tests/glsl/`, plus the preamble it prepends. They are the GLSL front end's
-  parse corpus: somebody else's shaders, which is the only kind worth testing a
-  parser against.
-- `tools/check-spirv.py` — runs `spirv-val` over the SPIR-V the WebGL back end
-  emits. OPTIONAL, and it says plainly when the validator is absent: the driver
-  accepting a module proves nothing, which `gpu_basics` measures rather than
-  assumes.
+- `tools/check-spirv.py` — runs `spirv-val` over SPIR-V this engine produced,
+  given the files. OPTIONAL, and it says plainly when the validator is absent:
+  the driver accepting a module proves nothing, which `gpu_basics` measures
+  rather than assumes. What it validates today is the TILE shaders
+  (`gen-shaders.py`'s output); the WebGL front end it was written for went to
+  ANGLE on 2026-08-04 and emits no SPIR-V of its own.
 - `tools/check-png.py` — decodes a PNG this engine wrote using Python's own
   zlib. `encode_png` uses STORED deflate blocks and no compression library, so
   "the chunk names look right" is not evidence; the CRCs and the Adler-32 are
