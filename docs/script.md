@@ -695,3 +695,80 @@ ToPrimitive, so `Math.abs([])` is NaN rather than 0; the JS whitespace set is
 ASCII-only, so `Number(" 1.5")` is NaN; and `Math.f16round` is absent —
 deliberately, since `_Float16` support varies across the aarch64 and armv7 mingw
 targets and no corpus uses it.
+
+
+## Strings, differentially tested against V8 (2026-08-09)
+
+`tests/string_basics.cpp`. The whole of `String.prototype` and the relational
+operators were run against node (V8) over ~1,550 expressions. The sweep found
+**233 differences and 72 hangs**; the fixes below took that to **60 and 0**, and
+8 of the remaining 60 are deliberate. Every fix was planted back individually
+and the test caught it (12, 4, 3 and 3 assertions respectively).
+
+### `"a" < "b"` was `false`
+
+All four relational opcodes were `to_number(a) < to_number(b)`. ToNumber of a
+non-numeric string is NaN and every comparison against NaN is false, so **every
+relational comparison between two strings was false** — `<`, `>`, `<=` and `>=`
+alike. `["b","a","c"].sort((x, y) => x < y ? -1 : 1)` handed back its input
+untouched. `===` was unaffected, and the default `sort()` compares in C++, which
+is why this survived three JS corpora.
+
+`context::compare_relational` is 7.2.13 properly: ToPrimitive both sides with the
+NUMBER hint, compare as TEXT when both are strings, numerically otherwise. It
+returns `std::partial_ordering` so all four operators are one comparison asked
+four ways, and `unordered` — the specification's `undefined` — makes each of them
+false, which is exactly the required NaN behaviour.
+
+### `s.at(undefined)` hung the engine
+
+`"abc".at(NaN)` cast NaN to `std::size_t`, which is undefined behaviour, and the
+engine **hung** — no crash, no error, just a page that stopped. A missing
+argument is `undefined` and ToNumber(undefined) is NaN, so `.at()`,
+`.at(undefined)` and `.at({})` all reached it, as did `.substr(NaN)`.
+
+The cause was that this file had no **ToIntegerOrInfinity** (7.1.5), which is the
+coercion every string index is specified to go through. `index_at` is that, and
+NaN becoming zero is the whole point of it. The range checks were also rewritten
+from `i < 0 || i >= size` — both false for NaN, so it fell through to an
+out-of-bounds read — to `!(i >= 0 && i < size)`, which no NaN survives. That
+belt-and-braces matters: planting the coercion bug back now produces wrong
+answers rather than a hang.
+
+### The rest
+
+| | was | is |
+|---|---|---|
+| `"abc".indexOf("a", 1)` | `0` | `-1` — the position was ignored by all five of indexOf/lastIndexOf/includes/startsWith/endsWith |
+| `"abc".slice(1, undefined)` | `""` | `"bc"` — an explicit `undefined` end means "to the end", and a count test cannot tell it from a supplied 0 |
+| `"abc".charAt(-1)` | `"a"` | `""` — negatives were clamped to 0; that is `at`'s job, not `charAt`'s |
+| `"abc".charCodeAt(-1)` | `97` | `NaN` |
+| `"a-b-c".split("-", 2)` | all three | `["a","b"]` — the limit was ignored entirely |
+| `"abc".indexOf()` | `0` | `-1` — a missing needle is `"undefined"`, not `""` |
+
+### Known and NOT fixed
+
+60 differences remain. Eight are **deliberate**: `core/algorithms.hpp` folds ASCII
+only, so `"Straße".toUpperCase()` is `"STRAßE"` where V8 gives `"STRASSE"`, and
+`localeCompare` orders by byte. That is the same determinism argument the file
+already makes — a table- or locale-driven fold would make a byte-compared golden
+depend on the host.
+
+The rest are real and untouched: `replace`'s `$`-patterns and its empty-pattern
+case (30); `search` with a string argument, which is specified to build a RegExp
+and instead returns -1 (10); `replaceAll` not throwing TypeError for a non-global
+regexp (3); and the absent `String.raw`, string boxing (`typeof new String(1)` is
+`"string"`), `Symbol.iterator`, `isWellFormed`/`toWellFormed`, and string index
+properties (`Object.keys("abc")` is empty).
+
+### The UTF-16 gap
+
+**A JS string is a sequence of UTF-16 code units; this engine stores UTF-8
+bytes.** So `"é".length` is 2 here and 1 in V8, a non-BMP emoji is 4 and 2, and
+`charCodeAt` returns a byte. Closing it means changing `string_object`
+engine-wide and touching every method that takes an index.
+
+`tests/string_basics.cpp` **pins the current (wrong) answers** in a labelled
+section rather than omitting them, with V8's answer in each comment. That is the
+acceptance list for a migration: the day the representation changes, those lines
+fail and say exactly what to update.

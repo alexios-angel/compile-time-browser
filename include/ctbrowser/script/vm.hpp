@@ -2,6 +2,7 @@
 #include <array>
 #include <charconv>
 #include <cmath>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -509,6 +510,15 @@ public:
     [[nodiscard]] std::string to_string(value v);
     [[nodiscard]] static std::string_view type_of(value v);
     [[nodiscard]] static bool loose_equals(value a, value b);
+    // Abstract Relational Comparison, 7.2.13 - the ONE comparison that `<`,
+    // `>`, `<=` and `>=` each ask a different question of.
+    //
+    // It is not a numeric comparison. Two STRINGS compare as text, and coercing
+    // them to numbers instead makes `"a" < "b"` false - along with `>`, `<=`
+    // and `>=`, because ToNumber("a") is NaN and every comparison against NaN
+    // is false. `unordered` is the specification's `undefined` result, which is
+    // what makes all four operators false on a NaN.
+    [[nodiscard]] std::partial_ordering compare_relational(value a, value b);
 
     // --- prototypes ---------------------------------------------------------
     //

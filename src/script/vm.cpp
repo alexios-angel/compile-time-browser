@@ -166,6 +166,47 @@ bool context::loose_equals(value a, value b) {
     return to_number(a) == to_number(b); // the coercing cases
 }
 
+// Abstract Relational Comparison, 7.2.13.
+//
+// THIS USED TO BE `to_number(a) < to_number(b)` AND NOTHING ELSE, which makes
+// every relational comparison between two strings FALSE - `"a" < "b"`, `"b" >
+// "a"`, `"abc" < "abd"`, all of them - because ToNumber of a non-numeric string
+// is NaN and every comparison against NaN is false. It is not a small corner:
+// `["b","a","c"].sort((x, y) => x < y ? -1 : 1)` returned its input untouched,
+// and any page ordering names, keys or dates as text got silence rather than an
+// error. `===` was unaffected, which is why it survived so long.
+//
+// Returning an ordering rather than a bool is what lets all four operators
+// share one comparison: `unordered` is the specification's `undefined` result,
+// and `std::is_lt`/`is_lteq`/`is_gt`/`is_gteq` are each false for it, which is
+// exactly the required NaN behaviour.
+std::partial_ordering context::compare_relational(value a, value b) {
+    // ToPrimitive with the NUMBER hint, LEFT OPERAND FIRST. The order is
+    // observable because `valueOf` can have side effects, and it stays
+    // source-order for `>` and `>=` because the caller passes the operands in
+    // the order they were written.
+    const value pa = to_primitive(a);
+    const value pb = to_primitive(b);
+    if (pa.is_string() && pb.is_string()) {
+        const std::string & x = static_cast<string_object *>(pa.as_heap())->text;
+        const std::string & y = static_cast<string_object *>(pb.as_heap())->text;
+        // Byte order. For ASCII that IS code-unit order, and it parts company
+        // with the specification only on non-BMP text, where UTF-16 sorts
+        // surrogates below U+E000 and UTF-8 does not - the same representation
+        // gap docs/script.md records for `length` and `charCodeAt`.
+        const int r = x.compare(y);
+        return r < 0   ? std::partial_ordering::less
+               : r > 0 ? std::partial_ordering::greater
+                       : std::partial_ordering::equivalent;
+    }
+    const double x = to_number(pa);
+    const double y = to_number(pb);
+    if (std::isnan(x) || std::isnan(y)) { return std::partial_ordering::unordered; }
+    return x < y   ? std::partial_ordering::less
+           : x > y ? std::partial_ordering::greater
+                   : std::partial_ordering::equivalent;
+}
+
 // ===================== gc ================================================
 
 void context::mark_object(heap_object * o) {
@@ -1942,26 +1983,29 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
 
+        // All four are ONE comparison asked four ways - see
+        // context::compare_relational, which is where strings stopped being
+        // coerced to NaN.
         VM_CASE(less) do {
-            reg(in.a) = value::boolean(to_number(reg(in.b)) < to_number(reg(in.c)));
+            reg(in.a) = value::boolean(std::is_lt(compare_relational(reg(in.b), reg(in.c))));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(less_equal) do {
-            reg(in.a) = value::boolean(to_number(reg(in.b)) <= to_number(reg(in.c)));
+            reg(in.a) = value::boolean(std::is_lteq(compare_relational(reg(in.b), reg(in.c))));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(greater) do {
-            reg(in.a) = value::boolean(to_number(reg(in.b)) > to_number(reg(in.c)));
+            reg(in.a) = value::boolean(std::is_gt(compare_relational(reg(in.b), reg(in.c))));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(greater_equal) do {
-            reg(in.a) = value::boolean(to_number(reg(in.b)) >= to_number(reg(in.c)));
+            reg(in.a) = value::boolean(std::is_gteq(compare_relational(reg(in.b), reg(in.c))));
             break;
         }
         while (0);

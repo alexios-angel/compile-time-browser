@@ -49,6 +49,32 @@ namespace ctbrowser::script {
     return i < args.size() ? cx.to_string(args[i]) : std::string{};
 }
 
+// ToIntegerOrInfinity, 7.1.5 - the coercion EVERY string and array index is
+// specified to go through, and the one this file did not have.
+//
+// NaN BECOMES ZERO, and that is the whole point. `"abc".at(NaN)` used to cast
+// NaN straight to `std::size_t`, which is undefined behaviour, and the engine
+// HUNG rather than answering - so a page calling `s.at(x)` with an undefined
+// `x` froze, with no error and nothing in the console. A missing argument is
+// `undefined` and ToNumber(undefined) is NaN, so this path is reached far more
+// often than a literal NaN would suggest: `.at()`, `.at(undefined)` and
+// `.at({})` all landed on it, as did `.substr(NaN)`.
+//
+// Truncation is TOWARD ZERO, not floor: `"abc".at(-0.5)` is `at(0)`, not
+// `at(-1)`.
+[[nodiscard]] inline double index_at(std::span<value> args, std::size_t i) {
+    const double n = i < args.size() ? context::to_number(args[i]) : 0.0;
+    return std::isnan(n) ? 0.0 : std::trunc(n);
+}
+
+// Was an OPTIONAL index supplied at all? Absent and an explicit `undefined`
+// mean the same thing, and testing the argument COUNT alone gets that wrong:
+// `"abc".slice(1, undefined)` is "bc" because the end defaults to the length,
+// but a count test sees two arguments, coerces `undefined` to 0 and returns "".
+[[nodiscard]] inline bool has_index(std::span<value> args, std::size_t i) {
+    return i < args.size() && !args[i].is_undefined();
+}
+
 // Clamp a possibly-negative, possibly-huge index the way the array and string
 // methods all do: negative counts from the end, out of range clamps.
 [[nodiscard]] inline std::size_t clamp_index(double raw, std::size_t length) {
@@ -1269,17 +1295,26 @@ void install_string(context & cx) {
     object_object * string_proto = new_table(cx);
     method(cx, string_proto, "charAt", [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
-        const auto i = static_cast<std::size_t>(std::max(0.0, num_at(a, 0)));
-        return c.string(i < s.size() ? std::string{s[i]} : std::string{});
+        // A NEGATIVE POSITION IS OUT OF RANGE, not clamped to zero - that is
+        // `at`'s job, not `charAt`'s. Clamping made `"abc".charAt(-1)` answer
+        // "a" where the specification says "".
+        const double i = index_at(a, 0);
+        if (!(i >= 0 && i < static_cast<double>(s.size()))) { return c.string(std::string{}); }
+        return c.string(std::string{s[static_cast<std::size_t>(i)]});
     });
     // `at` is charAt that counts from the END for a negative index, which is
     // the whole reason to reach for it - `s.at(-1)` is the last character.
     // Arrays had it and strings did not, and the two are meant to match.
     method(cx, string_proto, "at", [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
-        double i = num_at(a, 0);
+        // index_at, not num_at: a NaN index is 0 here, and casting it to
+        // size_t instead is what hung the engine on `s.at(undefined)`.
+        double i = index_at(a, 0);
         if (i < 0) { i += static_cast<double>(s.size()); }
-        if (i < 0 || i >= static_cast<double>(s.size())) { return value::undefined(); }
+        // Written so a NaN could not survive it even if one arrived: the guard
+        // is now a range CHECK rather than two comparisons that are both false
+        // for NaN and fall through to an out-of-bounds read.
+        if (!(i >= 0 && i < static_cast<double>(s.size()))) { return value::undefined(); }
         return c.string(std::string{s[static_cast<std::size_t>(i)]});
     });
     // `toString` and `valueOf` on a primitive. Both exist so that generic code
@@ -1293,8 +1328,11 @@ void install_string(context & cx) {
            [](context & c, std::span<value>) { return c.string(detail::this_string(c)); });
     method(cx, string_proto, "codePointAt", [](context & c, std::span<value> a) {
         const std::string str = detail::this_string(c);
-        const auto i = static_cast<std::size_t>(std::max(0.0, num_at(a, 0)));
-        if (i >= str.size()) { return value::undefined(); }
+        // Out of range - including NEGATIVE, which used to clamp to zero and
+        // answer with the first character - is undefined.
+        const double raw = index_at(a, 0);
+        if (!(raw >= 0 && raw < static_cast<double>(str.size()))) { return value::undefined(); }
+        const auto i = static_cast<std::size_t>(raw);
         // BYTES, not code points - strings are bytes in this engine
         // (docs/script.md), so this agrees with charCodeAt rather than
         // pretending to a UTF-16 view that nothing else here has.
@@ -1314,42 +1352,83 @@ void install_string(context & cx) {
     });
     method(cx, string_proto, "charCodeAt", [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
-        const auto i = static_cast<std::size_t>(std::max(0.0, num_at(a, 0)));
-        if (i >= s.size()) { return value::number(std::nan("")); }
-        return value::number(static_cast<double>(static_cast<unsigned char>(s[i])));
+        // Out of range - including NEGATIVE - is NaN, not the first character.
+        const double i = index_at(a, 0);
+        if (!(i >= 0 && i < static_cast<double>(s.size()))) { return value::number(std::nan("")); }
+        return value::number(
+            static_cast<double>(static_cast<unsigned char>(s[static_cast<std::size_t>(i)])));
     });
+    // ALL FIVE OF THESE TAKE A POSITION, and all five used to ignore it - so
+    // `"abc".indexOf("a", 1)` answered 0 where the specification says -1, and
+    // the idiom for walking every occurrence,
+    // `while ((i = s.indexOf(x, i + 1)) !== -1)`, either spun on 0 forever or
+    // reported the first hit again and again. Silent in every case.
+    //
+    // The needle is ToString'd through `arg_at` rather than `str_at`, because a
+    // MISSING argument is `undefined` and ToString(undefined) is "undefined" -
+    // `"abc".indexOf()` is -1, not 0 for an empty needle.
     method(cx, string_proto, "indexOf", [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
-        const std::size_t found = s.find(str_at(c, a, 0));
+        const auto from = static_cast<std::size_t>(
+            std::clamp(index_at(a, 1), 0.0, static_cast<double>(s.size())));
+        const std::size_t found = s.find(c.to_string(arg_at(a, 0)), from);
         return value::number(found == std::string::npos ? -1 : static_cast<double>(found));
     });
     method(cx, string_proto, "lastIndexOf", [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
-        const std::size_t found = s.rfind(str_at(c, a, 0));
+        // The position is the LAST index the match may START at, and it
+        // defaults to the end. NaN means the end too, which is why the default
+        // is spelled out rather than reached through index_at's zero.
+        const double raw =
+            has_index(a, 1) ? context::to_number(a[1]) : std::numeric_limits<double>::infinity();
+        const double at = std::isnan(raw) ? std::numeric_limits<double>::infinity() : raw;
+        const auto last = at >= static_cast<double>(s.size())
+                              ? std::string::npos
+                              : static_cast<std::size_t>(std::max(0.0, at));
+        const std::size_t found = s.rfind(c.to_string(arg_at(a, 0)), last);
         return value::number(found == std::string::npos ? -1 : static_cast<double>(found));
     });
     method(cx, string_proto, "includes", [](context & c, std::span<value> a) {
-        return value::boolean(detail::this_string(c).find(str_at(c, a, 0)) != std::string::npos);
+        const std::string s = detail::this_string(c);
+        const auto from = static_cast<std::size_t>(
+            std::clamp(index_at(a, 1), 0.0, static_cast<double>(s.size())));
+        return value::boolean(s.find(c.to_string(arg_at(a, 0)), from) != std::string::npos);
     });
     method(cx, string_proto, "startsWith", [](context & c, std::span<value> a) {
-        return value::boolean(detail::this_string(c).starts_with(str_at(c, a, 0)));
+        const std::string s = detail::this_string(c);
+        const auto from = static_cast<std::size_t>(
+            std::clamp(index_at(a, 1), 0.0, static_cast<double>(s.size())));
+        return value::boolean(
+            std::string_view{s}.substr(from).starts_with(c.to_string(arg_at(a, 0))));
     });
     method(cx, string_proto, "endsWith", [](context & c, std::span<value> a) {
-        return value::boolean(detail::this_string(c).ends_with(str_at(c, a, 0)));
+        const std::string s = detail::this_string(c);
+        // endsWith takes an END position, not a start: `"abc".endsWith("b", 2)`
+        // asks whether the first two characters end in "b".
+        const double end = has_index(a, 1) ? index_at(a, 1) : static_cast<double>(s.size());
+        const auto stop =
+            static_cast<std::size_t>(std::clamp(end, 0.0, static_cast<double>(s.size())));
+        return value::boolean(
+            std::string_view{s}.substr(0, stop).ends_with(c.to_string(arg_at(a, 0))));
     });
     method(cx, string_proto, "slice", [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
-        const std::size_t from = clamp_index(a.empty() ? 0 : num_at(a, 0), s.size());
-        const std::size_t to = a.size() > 1 ? clamp_index(num_at(a, 1), s.size()) : s.size();
+        const std::size_t from = clamp_index(index_at(a, 0), s.size());
+        // has_index: `slice(1, undefined)` ends at the LENGTH, not at 0.
+        const std::size_t to = has_index(a, 1) ? clamp_index(index_at(a, 1), s.size()) : s.size();
         return c.string(to > from ? s.substr(from, to - from) : std::string{});
     });
     method(cx, string_proto, "substring", [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
         // substring CLAMPS negatives to 0 and swaps its arguments if they are
         // backwards, which is the whole difference from slice.
-        std::size_t from = static_cast<std::size_t>(std::max(0.0, num_at(a, 0)));
+        // substring CLAMPS a negative to zero, unlike slice which counts from
+        // the end - that difference between the two is the whole reason both
+        // exist. has_index so an explicit `undefined` end still means "to the
+        // end" rather than zero.
+        std::size_t from = static_cast<std::size_t>(std::max(0.0, index_at(a, 0)));
         std::size_t to =
-            a.size() > 1 ? static_cast<std::size_t>(std::max(0.0, num_at(a, 1))) : s.size();
+            has_index(a, 1) ? static_cast<std::size_t>(std::max(0.0, index_at(a, 1))) : s.size();
         from = std::min(from, s.size());
         to = std::min(to, s.size());
         if (from > to) { std::swap(from, to); }
@@ -1365,12 +1444,15 @@ void install_string(context & cx) {
         // does. `"abcdef".substr(-2)` is "ef", and getting that wrong reads
         // from the front and looks almost right.
         const std::string s = detail::this_string(c);
-        const double raw = num_at(a, 0);
+        // index_at rather than num_at, for the reason `at` above needed it: a
+        // NaN start reached `static_cast<std::size_t>` and the engine hung.
+        const double raw = index_at(a, 0);
         const auto size = static_cast<double>(s.size());
         const double start = raw < 0 ? std::max(size + raw, 0.0) : std::min(raw, size);
         const auto from = static_cast<std::size_t>(start);
         // A missing length means "to the end"; a negative one means nothing.
-        double want = a.size() > 1 ? num_at(a, 1) : size - start;
+        // has_index, so an explicit `undefined` length is also "to the end".
+        double want = has_index(a, 1) ? index_at(a, 1) : size - start;
         if (std::isnan(want) || want < 0) { want = 0; }
         const auto count = static_cast<std::size_t>(std::min(want, size - start));
         return c.string(s.substr(from, count));
@@ -1379,9 +1461,26 @@ void install_string(context & cx) {
         const std::string s = detail::this_string(c);
         value out = c.make_array();
         auto * result = static_cast<array_object *>(out.as_heap());
+        // THE LIMIT, which this used to ignore completely - so
+        // `"a,b,c".split(",", 2)` handed back all three and `split(x, 0)` handed
+        // back everything instead of nothing. `undefined` means unlimited, and
+        // it is ToUint32 rather than an integer, so a negative wraps to a very
+        // large number (which is why 2**32-1 and "no limit" behave alike).
+        const double raw =
+            has_index(a, 1) ? context::to_number(a[1]) : std::numeric_limits<double>::infinity();
+        const std::size_t limit = std::isinf(raw) && raw > 0
+                                      ? std::numeric_limits<std::size_t>::max()
+                                      : static_cast<std::size_t>(context::to_uint32(a[1]));
+        // Every exit goes through here, because the limit truncates whichever
+        // branch produced the parts.
+        const auto finish = [&]() -> value {
+            if (result->items.size() > limit) { result->items.resize(limit); }
+            return out;
+        };
+        if (limit == 0) { return out; }
         if (a.empty() || a[0].is_undefined()) {
             result->items.push_back(c.string(s));
-            return out;
+            return finish();
         }
         // A REGEXP SEPARATOR. `str.split(/\r?\n/)` is how essentially every
         // library splits lines, and coercing the pattern to a string made it a
@@ -1423,12 +1522,12 @@ void install_string(context & cx) {
                 rest = rest.substr(index + std::max<std::size_t>(whole.size(), 1));
             }
             result->items.push_back(c.string(rest));
-            return out;
+            return finish();
         }
         const std::string sep = c.to_string(a[0]);
         if (sep.empty()) {
             for (const char ch : s) { result->items.push_back(c.string(std::string{ch})); }
-            return out;
+            return finish();
         }
         std::size_t at = 0;
         while (true) {
@@ -1440,7 +1539,7 @@ void install_string(context & cx) {
             result->items.push_back(c.string(s.substr(at, found - at)));
             at = found + sep.size();
         }
-        return out;
+        return finish();
     });
     // ONE REPLACEMENT, shared by `replace` and `replaceAll`.
     //
