@@ -4,7 +4,10 @@
 #include <ctbrowser/script/number_format.hpp>
 
 #include <boost/container/small_vector.hpp>
-#include <boost/unordered/unordered_flat_set.hpp>
+// unordered_flat_MAP, for mentions_. The include said _set, for a `name_set`
+// alias nothing used; the map it actually needs was arriving transitively
+// through core/containers.hpp and would have broken the day that stopped.
+#include <boost/unordered/unordered_flat_map.hpp>
 
 #include <algorithm>
 #include <ranges>
@@ -13,7 +16,6 @@
 #include <array>
 #include <charconv>
 #include <cstdint>
-#include <cstdio>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -47,8 +49,6 @@ public:
             return std::hash<std::string_view>{}(s);
         }
     };
-    using name_set = boost::unordered_flat_set<std::string, sv_hash, std::equal_to<>>;
-
     // A HALF-OPEN RANGE OF EULER-TOUR TICKS. A function's descendants are
     // exactly the functions whose tick lies strictly inside its own range.
     struct interval {
@@ -427,10 +427,6 @@ public:
             out.emplace_back(std::string{spec.text},
                              spec.a >= 0 ? std::string{at(spec.a).text} : std::string{spec.text});
         }
-    }
-
-    void declare_imported_local(std::string name, std::uint16_t reg) {
-        add_local(fn(), local{std::move(name), reg, true});
     }
 
     // Bind a name to a register that ALREADY exists. The catch parameter needs
@@ -1297,12 +1293,6 @@ public:
     //
     // `declaring` distinguishes `const {a} = o`, which introduces a binding,
     // from `({a} = o)`, which writes to one that already exists.
-
-    // Is this node a pattern rather than a plain name?
-    [[nodiscard]] static bool is_pattern(vp::nk kind) {
-        return kind == vp::nk::array_pattern || kind == vp::nk::object_pattern ||
-               kind == vp::nk::assign_pattern || kind == vp::nk::rest_element;
-    }
 
     // Every name a pattern binds, so declarations can be hoisted before the
     // pattern is compiled - which is what makes a nested function able to
@@ -2550,26 +2540,14 @@ public:
         }
     }
 
-    // Reading and writing a name are the only two places that need to know
-    // whether it lives in a register, a cell, an upvalue or the global table.
-    // ++/-- goes through them too, so it cannot drift out of agreement.
-    void emit_read(std::string_view name_text, std::uint16_t dst) {
-        if (const local * l = find_local_entry(fn(), name_text)) {
-            if (l->boxed) {
-                proto().emit(instruction{op::cell_get, dst, l->reg});
-            } else {
-                proto().emit(instruction{op::move, dst, l->reg});
-            }
-            return;
-        }
-        const int up = resolve_upvalue(frames_.size() - 1, name_text);
-        if (up >= 0) {
-            proto().emit(instruction{op::get_upvalue, dst, static_cast<std::uint16_t>(up)});
-            return;
-        }
-        proto().emit(
-            instruction::with_bx(op::get_global, dst, intern_name(std::string{name_text})));
-    }
+    // Writing a name has to know whether it lives in a register, a cell, an
+    // upvalue or the global table. ++/-- goes through here too, so it cannot
+    // drift out of agreement with the read side - which is `compile_ident`.
+    //
+    // There was an `emit_read` here saying exactly that about itself, with a
+    // body identical to compile_ident's but for taking a string_view instead of
+    // a node. Nothing called it. Deleted 2026-08-09; the drift it was written to
+    // prevent had already happened to it.
     void emit_write(std::string_view name_text, std::uint16_t src) {
         if (const local * l = find_local_entry(fn(), name_text)) {
             if (l->boxed) {
