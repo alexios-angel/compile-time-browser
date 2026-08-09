@@ -529,6 +529,19 @@ public:
     // what makes all four operators false on a NaN.
     [[nodiscard]] std::partial_ordering compare_relational(value a, value b);
 
+    // BIGINT ARITHMETIC, and the rule that makes it safe.
+    //
+    // A BigInt and a Number CANNOT be mixed in arithmetic - `1n + 1` is a
+    // TypeError - and that is the feature rather than an omission: an engine
+    // that quietly coerced would round exactly where the type exists to stay
+    // exact. So the dispatch is: both bigint, do it; one bigint and one
+    // anything-else, throw.
+    //
+    // Returns true when it HANDLED the operation (including by throwing), so
+    // the caller falls through to the Number path only when neither side is a
+    // bigint. `kind` is the opcode being executed.
+    [[nodiscard]] bool bigint_binary(op kind, value a, value b, value & out);
+
     // --- prototypes ---------------------------------------------------------
     //
     // `"abc".split(...)` and `[1,2].push(...)` resolve to nothing without these:
@@ -549,6 +562,7 @@ public:
         boolean,
         regexp,
         symbol,
+        bigint,
         map,
         set,
         error,
@@ -597,6 +611,12 @@ public:
         }
         if (v.is_number()) {
             return {table(proto_kind::number), table(proto_kind::object), nullptr};
+        }
+        // So `(1n).toString(16)` finds a method at all - a bigint is a
+        // primitive, so it has no own properties and the prototype is the only
+        // place a method can live.
+        if (v.is_kind(heap_kind::bigint)) {
+            return {table(proto_kind::bigint), table(proto_kind::object), nullptr};
         }
         if (v.is_boolean()) {
             return {table(proto_kind::boolean), table(proto_kind::object), nullptr};
@@ -962,6 +982,9 @@ private:
     // being executed. Subtracting its address from the wrong program's
     // functions vector gave a garbage index and read off the end of the cache.
     flat_map<const function_proto *, flat_map<std::uint32_t, value>> string_cache_;
+    // The same idea for BigInt literals: the digits never change, so a site in
+    // a loop parses them once. Keyed the same way and swept the same way.
+    flat_map<const function_proto *, flat_map<std::uint32_t, value>> bigint_cache_;
     // Live try blocks, innermost last. Not per-frame, because a throw has to be
     // able to find a handler several frames up.
     std::vector<handler> handlers_;

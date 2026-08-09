@@ -5,12 +5,14 @@
 #include <cstdint>
 #include <cstdio>
 #include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <vector>
 
+#include <ctbrowser/script/bigint.hpp>
 #include <ctbrowser/script/number_format.hpp>
 #include <ctbrowser/script/vm.hpp>
 
@@ -31,6 +33,10 @@ bool context::truthy(value v) {
         return d != 0 && !std::isnan(d);
     }
     if (v.is_string()) { return !static_cast<string_object *>(v.as_heap())->text.empty(); }
+    // 0n is falsy and every other bigint is truthy, exactly as for Number.
+    if (v.is_kind(heap_kind::bigint)) {
+        return static_cast<bigint_object *>(v.as_heap())->digits != 0;
+    }
     return true; // every other object is truthy
 }
 
@@ -76,6 +82,11 @@ std::string context::to_string(value v) {
     // The KEY, not the description: this is what makes `o[sym]` reach a slot
     // no literal can name, since a computed property goes through here.
     if (v.is_kind(heap_kind::symbol)) { return static_cast<symbol_object *>(v.as_heap())->key; }
+    // The DIGITS, without the trailing `n` - `String(1n)` is "1", and the
+    // suffix is literal syntax rather than part of the value.
+    if (v.is_kind(heap_kind::bigint)) {
+        return bigint_to_string(static_cast<bigint_object *>(v.as_heap())->digits);
+    }
     if (v.is_array()) {
         auto * arr = static_cast<array_object *>(v.as_heap());
         std::string out;
@@ -106,7 +117,18 @@ std::string context::to_string(value v) {
 // `{toString: () => 'x'} + 1` is "x1", and which one it is depends on what the
 // object hands back rather than on the object being an object.
 value context::to_primitive(value v) {
-    if (!v.is_heap() || v.is_string()) { return v; }
+    // A BIGINT IS ALREADY A PRIMITIVE, heap-allocated though it is. Letting it
+    // into the valueOf/toString walk below turns it into a STRING the moment
+    // BigInt.prototype carries those methods - which is exactly what made
+    // `1n + 2n` evaluate to "12" once it did.
+    //
+    // A SYMBOL IS DELIBERATELY NOT LISTED HERE, though it is a primitive too.
+    // It should REFUSE this conversion outright (a TypeError), and it cannot
+    // until ToPropertyKey is separated from ToString - `o[sym]` resolves
+    // through the same call. Until then the toString walk at least yields
+    // "Symbol(x)" rather than the internal key, which is the nearer wrong
+    // answer; tests/symbol_basics.cpp pins that and says so.
+    if (!v.is_heap() || v.is_string() || v.is_kind(heap_kind::bigint)) { return v; }
     for (const char * name : {"valueOf", "toString"}) {
         const value fn = lookup_property(v, name);
         if (!fn.is_callable()) { continue; }
@@ -121,6 +143,14 @@ value context::to_primitive(value v) {
 // defines valueOf means it to be used in arithmetic - that is the only reason to
 // define one - and without this every such object was NaN.
 double context::to_number_value(value v) {
+    // A BIGINT REFUSES IMPLICIT CONVERSION TO A NUMBER, and that refusal is the
+    // type's whole safety property: `+1n`, `Math.abs(1n)` and `1n * 2` all land
+    // here, and each would silently round past 2^53. `Number(1n)` is the
+    // EXPLICIT conversion and does not come through this path.
+    if (v.is_kind(heap_kind::bigint)) {
+        throw_error("TypeError", "Cannot convert a BigInt value to a number");
+        return std::nan("");
+    }
     if (!v.is_heap() || v.is_string()) { return to_number(v); }
     for (const char * name : {"valueOf", "toString"}) {
         const value fn = lookup_property(v, name);
@@ -145,6 +175,7 @@ std::string context::to_primitive_string(value v) {
 
 std::string_view context::type_of(value v) {
     if (v.is_kind(heap_kind::symbol)) { return "symbol"; }
+    if (v.is_kind(heap_kind::bigint)) { return "bigint"; }
     if (v.is_undefined()) { return "undefined"; }
     if (v.is_null()) { return "object"; } // the famous wart, preserved
     if (v.is_boolean()) { return "boolean"; }
@@ -175,6 +206,38 @@ bool context::loose_equals(value a, value b) {
     // object UNCHANGED when neither valueOf nor toString produces a primitive;
     // in that case there is nothing to retry with and the numeric compare below
     // is the right answer.
+    // `1n == 1` IS TRUE while `1n === 1` is false - loose equality compares the
+    // mathematical values across the two numeric types, which is exactly the
+    // distinction the two operators exist to draw.
+    {
+        const bool a_big = a.is_kind(heap_kind::bigint);
+        const bool b_big = b.is_kind(heap_kind::bigint);
+        if (a_big && b_big) {
+            return static_cast<bigint_object *>(a.as_heap())->digits ==
+                   static_cast<bigint_object *>(b.as_heap())->digits;
+        }
+        if (a_big && b.is_number()) {
+            const std::optional<int> o = bigint_compare_double(
+                static_cast<bigint_object *>(a.as_heap())->digits, b.as_number());
+            return o && *o == 0;
+        }
+        if (b_big && a.is_number()) {
+            const std::optional<int> o = bigint_compare_double(
+                static_cast<bigint_object *>(b.as_heap())->digits, a.as_number());
+            return o && *o == 0;
+        }
+        // Against a STRING, the string is converted to a BigInt: `1n == "1"`.
+        if (a_big && b.is_string()) {
+            const std::optional<bigint> parsed =
+                bigint_from_string(static_cast<string_object *>(b.as_heap())->text);
+            return parsed && *parsed == static_cast<bigint_object *>(a.as_heap())->digits;
+        }
+        if (b_big && a.is_string()) {
+            const std::optional<bigint> parsed =
+                bigint_from_string(static_cast<string_object *>(a.as_heap())->text);
+            return parsed && *parsed == static_cast<bigint_object *>(b.as_heap())->digits;
+        }
+    }
     const bool a_object = a.is_heap() && !a.is_string();
     const bool b_object = b.is_heap() && !b.is_string();
     if (a_object && b_object) { return a == b; }
@@ -202,6 +265,54 @@ bool context::loose_equals(value a, value b) {
 // share one comparison: `unordered` is the specification's `undefined` result,
 // and `std::is_lt`/`is_lteq`/`is_gt`/`is_gteq` are each false for it, which is
 // exactly the required NaN behaviour.
+// The bigint half of every arithmetic opcode. See the declaration for why
+// mixing throws rather than coercing.
+bool context::bigint_binary(op kind, value a, value b, value & out) {
+    const bool a_big = a.is_kind(heap_kind::bigint);
+    const bool b_big = b.is_kind(heap_kind::bigint);
+    if (!a_big && !b_big) { return false; }
+    if (a_big != b_big) {
+        // The one message worth getting right, because it is the whole contract:
+        // a page that meant to mix has a real bug and needs to be told so.
+        throw_error("TypeError", "Cannot mix BigInt and other types, use explicit conversions");
+        out = value::undefined();
+        return true;
+    }
+    const bigint & x = static_cast<bigint_object *>(a.as_heap())->digits;
+    const bigint & y = static_cast<bigint_object *>(b.as_heap())->digits;
+    const auto give = [&](const bigint & r) { out = value::object(allocate<bigint_object>(r)); };
+    const auto give_or_throw = [&](const std::optional<bigint> & r, const char * what) {
+        if (!r) {
+            throw_error("RangeError", what);
+            out = value::undefined();
+            return;
+        }
+        give(*r);
+    };
+    switch (kind) {
+    case op::add_generic:
+    case op::add: give(x + y); break;
+    case op::sub: give(x - y); break;
+    case op::mul: give(x * y); break;
+    case op::div: give_or_throw(bigint_div(x, y), "Division by zero"); break;
+    case op::mod: give_or_throw(bigint_rem(x, y), "Division by zero"); break;
+    case op::pow: give_or_throw(bigint_pow(x, y), "Exponent must be non-negative"); break;
+    case op::bit_and: give(x & y); break;
+    case op::bit_or: give(x | y); break;
+    case op::bit_xor: give(x ^ y); break;
+    case op::shl: give_or_throw(bigint_shl(x, y), "BigInt shift is too large"); break;
+    case op::shr: give_or_throw(bigint_shr(x, y), "BigInt shift is too large"); break;
+    default:
+        // An operator with no BigInt meaning at all - `>>>` is the one the
+        // specification names, because an unsigned shift needs a width and a
+        // BigInt has none.
+        throw_error("TypeError", "BigInts have no unsigned right shift");
+        out = value::undefined();
+        break;
+    }
+    return true;
+}
+
 std::partial_ordering context::compare_relational(value a, value b) {
     // ToPrimitive with the NUMBER hint, LEFT OPERAND FIRST. The order is
     // observable because `valueOf` can have side effects, and it stays
@@ -209,6 +320,33 @@ std::partial_ordering context::compare_relational(value a, value b) {
     // the order they were written.
     const value pa = to_primitive(a);
     const value pb = to_primitive(b);
+    // A BIGINT COMPARES AGAINST A NUMBER even though it cannot be added to one:
+    // `1n < 2` is true. The comparison is EXACT rather than going through a
+    // double, because a bigint past 2^53 must not round into equality with the
+    // number beside it - which is the one loss the type exists to prevent.
+    {
+        const bool a_big = pa.is_kind(heap_kind::bigint);
+        const bool b_big = pb.is_kind(heap_kind::bigint);
+        if (a_big || b_big) {
+            std::optional<int> order;
+            if (a_big && b_big) {
+                const bigint & x = static_cast<bigint_object *>(pa.as_heap())->digits;
+                const bigint & y = static_cast<bigint_object *>(pb.as_heap())->digits;
+                order = x < y ? -1 : (x > y ? 1 : 0);
+            } else if (a_big) {
+                order = bigint_compare_double(static_cast<bigint_object *>(pa.as_heap())->digits,
+                                              to_number(pb));
+            } else {
+                const std::optional<int> flipped = bigint_compare_double(
+                    static_cast<bigint_object *>(pb.as_heap())->digits, to_number(pa));
+                if (flipped) { order = -*flipped; }
+            }
+            if (!order) { return std::partial_ordering::unordered; }
+            return *order < 0   ? std::partial_ordering::less
+                   : *order > 0 ? std::partial_ordering::greater
+                                : std::partial_ordering::equivalent;
+        }
+    }
     if (pa.is_string() && pb.is_string()) {
         const std::string & x = static_cast<string_object *>(pa.as_heap())->text;
         const std::string & y = static_cast<string_object *>(pb.as_heap())->text;
@@ -515,6 +653,19 @@ value context::lookup_property(value target, const std::string & name) {
         }
         return value::undefined();
     }
+    // A BigInt is a primitive with methods, exactly as a number is - and it
+    // reaches its prototype the same way, because it has no own properties for
+    // a lookup to find first. Without this `(255n).toString(16)` read
+    // undefined and called it.
+    if (target.is_kind(heap_kind::bigint)) {
+        if (object_object * table = prototype(proto_kind::bigint)) {
+            if (value * found = table->find(name)) { return *found; }
+        }
+        if (object_object * table = prototype(proto_kind::object)) {
+            if (value * found = table->find(name)) { return *found; }
+        }
+        return value::undefined();
+    }
     if (target.is_number()) {
         if (object_object * table = prototype(proto_kind::number)) {
             if (value * found = table->find(name)) { return *found; }
@@ -665,6 +816,12 @@ std::size_t context::collect() {
     // context itself and referenced from nowhere else - a sweep without them
     // frees a string literal that a running loop is about to read again.
     for (auto & [proto, cache] : string_cache_) {
+        for (auto & [index, v] : cache) { mark(v); }
+    }
+    // The BigInt literal cache is a root for exactly the same reason: the
+    // context is the only thing holding those values, so a sweep without this
+    // frees a literal a running loop is about to read again.
+    for (auto & [proto, cache] : bigint_cache_) {
         for (auto & [index, v] : cache) { mark(v); }
     }
     // And whatever the embedder holds: every DOM listener, timer callback and
@@ -896,6 +1053,7 @@ value context::execute(const program & prog, const function_proto & entry) {
     // Per-frame string interning: a literal in a loop should allocate once,
     // not once per iteration.
     string_cache_.clear();
+    bigint_cache_.clear();
     return run_loop(0);
 }
 
@@ -1421,6 +1579,7 @@ void context::resume(value coroutine, value with, bool rejected) {
 #define VM_OPCODES(X)                                                                              \
     X(load_const)                                                                                  \
     X(load_string)                                                                                 \
+    X(load_bigint)                                                                                 \
     X(load_undef)                                                                                  \
     X(load_null)                                                                                   \
     X(load_true)                                                                                   \
@@ -1637,6 +1796,30 @@ value context::run_loop(std::size_t stop_depth) {
         }
         while (0);
         VM_NEXT;
+        VM_CASE(load_bigint) do {
+            {
+                // Parsed ONCE per site and cached beside the string cache: the
+                // digits never change, and a BigInt in a loop should not re-read
+                // them. A literal the lexer accepted but that is not an integer
+                // - `1.5n` - has no value to load, and 0n is the honest answer
+                // for a program that should have been refused at compile time.
+                auto & cache = bigint_cache_[&(*vm_proto)];
+                const auto it = cache.find(in.bx());
+                if (it != cache.end()) {
+                    reg(in.a) = it->second;
+                } else {
+                    const std::optional<bigint> parsed =
+                        bigint_from_literal(vm_proto->strings[in.bx()]);
+                    const value v =
+                        value::object(allocate<bigint_object>(parsed.value_or(bigint{0})));
+                    cache.emplace(in.bx(), v);
+                    reg(in.a) = v;
+                }
+            }
+            break;
+        }
+        while (0);
+        VM_NEXT;
         VM_CASE(load_string) do {
             {
                 auto & cache = string_cache[&(*vm_proto)];
@@ -1701,30 +1884,65 @@ value context::run_loop(std::size_t stop_depth) {
         VM_NEXT;
 
         VM_CASE(add) do {
+            {
+                value made;
+                if (bigint_binary(op::add, reg(in.b), reg(in.c), made)) {
+                    reg(in.a) = made;
+                    break;
+                }
+            }
             reg(in.a) = value::number(to_number(reg(in.b)) + to_number(reg(in.c)));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(sub) do {
+            {
+                value made;
+                if (bigint_binary(op::sub, reg(in.b), reg(in.c), made)) {
+                    reg(in.a) = made;
+                    break;
+                }
+            }
             reg(in.a) = value::number(to_number_value(reg(in.b)) - to_number_value(reg(in.c)));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(mul) do {
+            {
+                value made;
+                if (bigint_binary(op::mul, reg(in.b), reg(in.c), made)) {
+                    reg(in.a) = made;
+                    break;
+                }
+            }
             reg(in.a) = value::number(to_number_value(reg(in.b)) * to_number_value(reg(in.c)));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(div) do {
+            {
+                value made;
+                if (bigint_binary(op::div, reg(in.b), reg(in.c), made)) {
+                    reg(in.a) = made;
+                    break;
+                }
+            }
             reg(in.a) = value::number(to_number_value(reg(in.b)) / to_number_value(reg(in.c)));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(mod) do {
+            {
+                value made;
+                if (bigint_binary(op::mod, reg(in.b), reg(in.c), made)) {
+                    reg(in.a) = made;
+                    break;
+                }
+            }
             reg(in.a) =
                 value::number(std::fmod(to_number_value(reg(in.b)), to_number_value(reg(in.c))));
             break;
@@ -1732,6 +1950,13 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(pow) do {
+            {
+                value made;
+                if (bigint_binary(op::pow, reg(in.b), reg(in.c), made)) {
+                    reg(in.a) = made;
+                    break;
+                }
+            }
             reg(in.a) =
                 value::number(exponentiate(to_number_value(reg(in.b)), to_number_value(reg(in.c))));
             break;
@@ -1749,6 +1974,17 @@ value context::run_loop(std::size_t stop_depth) {
                 // `{toString: () => 'x'} + 1` is "x1".
                 const value l = to_primitive(reg(in.b));
                 const value r = to_primitive(reg(in.c));
+                // BEFORE the string-or-number decision: `1n + 1n` is addition
+                // and `1n + 1` is a TypeError, neither of which is either arm
+                // below. Note `1n + "a"` IS concatenation, so the string test
+                // still gets first refusal.
+                if (!l.is_string() && !r.is_string()) {
+                    value made;
+                    if (bigint_binary(op::add_generic, l, r, made)) {
+                        reg(in.a) = made;
+                        break;
+                    }
+                }
                 if (l.is_string() || r.is_string()) {
                     reg(in.a) = string(to_string(l) + to_string(r));
                 } else {
@@ -1770,6 +2006,12 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(negate) do {
+            // -0n is 0n, not -0: a BigInt has one zero.
+            if (reg(in.b).is_kind(heap_kind::bigint)) {
+                reg(in.a) = value::object(allocate<bigint_object>(
+                    -static_cast<bigint_object *>(reg(in.b).as_heap())->digits));
+                break;
+            }
             reg(in.a) = value::number(-to_number_value(reg(in.b)));
             break;
             // `+x` IS A CONVERSION. It compiled to a plain `move` for a long time,
@@ -1919,24 +2161,52 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(bit_and) do {
+            {
+                value made;
+                if (bigint_binary(op::bit_and, reg(in.b), reg(in.c), made)) {
+                    reg(in.a) = made;
+                    break;
+                }
+            }
             reg(in.a) = value::number(to_int32(reg(in.b)) & to_int32(reg(in.c)));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(bit_or) do {
+            {
+                value made;
+                if (bigint_binary(op::bit_or, reg(in.b), reg(in.c), made)) {
+                    reg(in.a) = made;
+                    break;
+                }
+            }
             reg(in.a) = value::number(to_int32(reg(in.b)) | to_int32(reg(in.c)));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(bit_xor) do {
+            {
+                value made;
+                if (bigint_binary(op::bit_xor, reg(in.b), reg(in.c), made)) {
+                    reg(in.a) = made;
+                    break;
+                }
+            }
             reg(in.a) = value::number(to_int32(reg(in.b)) ^ to_int32(reg(in.c)));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(shl) do {
+            {
+                value made;
+                if (bigint_binary(op::shl, reg(in.b), reg(in.c), made)) {
+                    reg(in.a) = made;
+                    break;
+                }
+            }
             reg(in.a) = value::number(static_cast<std::int32_t>(
                 static_cast<std::uint32_t>(to_int32(reg(in.b))) << (to_uint32(reg(in.c)) & 31U)));
             break;
@@ -1944,12 +2214,29 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(shr) do {
+            {
+                value made;
+                if (bigint_binary(op::shr, reg(in.b), reg(in.c), made)) {
+                    reg(in.a) = made;
+                    break;
+                }
+            }
             reg(in.a) = value::number(to_int32(reg(in.b)) >> (to_uint32(reg(in.c)) & 31U));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(ushr) do {
+            {
+                // NO UNSIGNED SHIFT ON A BIGINT: the operator needs a WIDTH to
+                // fill from, and a BigInt has none. The specification names it
+                // as the one bitwise operator that simply does not apply.
+                value made;
+                if (bigint_binary(op::ushr, reg(in.b), reg(in.c), made)) {
+                    reg(in.a) = made;
+                    break;
+                }
+            }
             reg(in.a) = value::number(
                 static_cast<double>(to_uint32(reg(in.b)) >> (to_uint32(reg(in.c)) & 31U)));
             break;
@@ -1957,6 +2244,13 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(bit_not) do {
+            // ~1n is -2n, on the unbounded two's-complement value - there is no
+            // ToInt32 step, because a BigInt has no width to truncate to.
+            if (reg(in.b).is_kind(heap_kind::bigint)) {
+                reg(in.a) = value::object(allocate<bigint_object>(
+                    ~static_cast<bigint_object *>(reg(in.b).as_heap())->digits));
+                break;
+            }
             reg(in.a) = value::number(~to_int32(reg(in.b)));
             break;
         }

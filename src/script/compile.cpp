@@ -2403,6 +2403,16 @@ public:
         const vp::node & n = at(idx);
         switch (n.kind) {
         case vp::nk::num: {
+            // THE `n` SUFFIX MAKES IT A BigInt. The lexer keeps it on the token
+            // because whether the digits are a valid one is this question, not
+            // a lexing question: `1.5n` and `1e3n` are integers-only failures
+            // and are refused here rather than there.
+            if (n.text.ends_with('n')) {
+                const std::string_view digits = n.text.substr(0, n.text.size() - 1);
+                proto().emit(
+                    instruction::with_bx(op::load_bigint, dst, intern_string(std::string{digits})));
+                break;
+            }
             emit_const(dst, value::number(number_literal(n.text)));
             break;
         }

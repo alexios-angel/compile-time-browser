@@ -878,3 +878,74 @@ Six defects across four areas. Each planted back individually and caught.
 * **No BigInt at all.** `1n` does not lex, and it is a PARSE error, so a bundle
   containing one fails as a whole. That is a type to add, not a bug to fix;
   `tests/bigint_basics.cpp` is the acceptance list.
+
+
+## BigInt (2026-08-09)
+
+The seventh primitive type. 61 expressions differentially tested against node
+(V8) - arithmetic, comparison, conversion and every error the specification
+names - with no differences. `tests/bigint_basics.cpp`, which until today
+recorded the type's ABSENCE and said it should be rewritten as a conformance
+suite the day it arrived; 17 of its assertions failed together and it was.
+
+### The representation
+
+`boost::multiprecision::cpp_int`, held directly in `bigint_object`. Signed and
+unbounded, which is the BigInt semantic exactly: no width, no wrapping, no
+rounding.
+
+**That puts a third-party header in `value.hpp`, which is a documented
+exception rather than an oversight.** The rule exists for compile time, and the
+measured cost is `value.hpp` going from 3271 ms to 3869 ms per translation unit
+(+598 ms - far less than cpp_int's 4691 ms standalone, because value.hpp
+already pulls in much of what it needs), across the 11 TUs that include it. The
+alternative considered was storing decimal TEXT and converting inside one
+`.cpp`: it keeps the header light and makes every operation parse and re-format
+its operands, which is the wrong shape for a numeric type.
+
+**Boost.Multiprecision was turned down for `Math` earlier and is right here**,
+which is not a contradiction. The objections there were 400x slower than
+hardware and, being correctly rounded, further from V8's fdlibm rather than
+nearer. Neither transfers: arbitrary precision has no hardware alternative -
+that is the point of the type - and integer arithmetic is exact, so there is
+nothing to round and no cross-platform question. Header-only, so the
+cross-build needs nothing.
+
+### What it took
+
+* **The lexer** (ctjs submodule): `1n` lexed as `1` then the identifier `n`, so
+  a bundle carrying one BigInt literal anywhere failed to parse AS A WHOLE. The
+  suffix rides on the number token; whether the digits are a valid BigInt is
+  decided where the value is built, so `1.5n` and `1e3n` are refused there.
+* **`op::load_bigint`**, carrying the literal text in the strings table and
+  parsing once per site into a cache beside the string cache - rooted by the
+  collector and cleared per run, or a literal a loop is about to re-read gets
+  swept.
+* **`context::bigint_binary`**, the arithmetic dispatch: both bigint, do it;
+  one bigint and one anything-else, throw.
+* **Comparison crosses types where arithmetic does not**, and does so EXACTLY -
+  `9007199254740993n == 9007199254740992` is false, which going through a
+  double would get wrong, and that is the one loss the type exists to prevent.
+
+### The refusals are the feature
+
+`1n + 1` is a TypeError. An engine that coerced instead would round at exactly
+the point the type was reached for, so the throw is the semantic rather than a
+missing case. Everything reaching ToNumber implicitly refuses the same way -
+`+1n`, `Math.abs(1n)` - while `Number(1n)` is the explicit conversion and is
+allowed. `JSON.stringify(1n)` throws because there is no lossless spelling.
+`>>>` throws because an unsigned shift needs a width.
+
+### One trap this uncovered
+
+Giving `BigInt.prototype` a `toString` immediately broke `1n + 2n`, which began
+evaluating to "12". `to_primitive` walks valueOf/toString for anything on the
+heap, and a bigint IS on the heap though it is a primitive - so the moment the
+method existed, `+` saw two strings and concatenated. A bigint now passes
+through `to_primitive` unchanged.
+
+A symbol has the same shape and is deliberately NOT in that guard: it should
+refuse the conversion outright, and cannot until ToPropertyKey is separated
+from ToString, because `o[sym]` resolves through the same call. Adding it there
+made `"" + Symbol("x")` yield the internal key instead of "Symbol(x)" - a worse
+wrong answer - and `tests/symbol_basics.cpp` caught it.

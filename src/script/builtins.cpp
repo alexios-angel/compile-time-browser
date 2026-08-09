@@ -15,6 +15,7 @@
 #include <vector>
 
 #include <ctbrowser/core/algorithms.hpp>
+#include <ctbrowser/script/bigint.hpp>
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
 #include <ctbrowser/script/number_format.hpp>
@@ -409,6 +410,12 @@ inline void write_json(context & cx, value v, std::string & out) {
     // worth the two lines.
     if (v.is_number() && !std::isfinite(v.as_number())) {
         out += "null";
+        return;
+    }
+    // A BIGINT IS NOT JSON and there is no lossless spelling for one, so 25.5.2
+    // throws rather than picking between a string and a rounded number.
+    if (v.is_kind(heap_kind::bigint)) {
+        cx.throw_error("TypeError", "Do not know how to serialize a BigInt");
         return;
     }
     out += cx.to_string(v);
@@ -2017,6 +2024,12 @@ void install_number(context & cx) {
     // through ToPrimitive. The static form cannot re-enter the VM to call
     // valueOf, so it answered NaN for every object.
     auto * number_ctor = cx.allocate<native_object>("Number", [](context & c, std::span<value> a) {
+        // The EXPLICIT conversion, which a BigInt permits - unlike every
+        // implicit one. Past the double range it saturates to an infinity.
+        if (!a.empty() && a[0].is_kind(heap_kind::bigint)) {
+            return value::number(
+                bigint_to_double(static_cast<bigint_object *>(a[0].as_heap())->digits));
+        }
         return value::number(a.empty() ? 0.0 : c.to_number_value(a[0]));
     });
     // A CONVERSION, not a constructor of wrappers - see context::construct. `new
@@ -3187,6 +3200,56 @@ void install_symbol(context & cx) {
     // built-in's - a page that walks it found undefined.
     symbol->set("prototype", value::object(symbol_proto));
     cx.define_global("Symbol", value::object(symbol));
+
+    // --- BigInt --------------------------------------------------------------
+    // A CONVERSION, like Number and String and unlike Array: `new BigInt(1)` is
+    // a TypeError in the specification because there is no wrapper object to
+    // make. This engine does not box at all, so calling it is the only form.
+    object_object * bigint_proto = new_table(cx);
+    method(cx, bigint_proto, "toString", [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!self.is_kind(heap_kind::bigint)) { return c.string("0"); }
+        const int radix = a.empty() || a[0].is_undefined()
+                              ? 10
+                              : std::clamp(static_cast<int>(context::to_number(a[0])), 2, 36);
+        return c.string(
+            bigint_to_string(static_cast<bigint_object *>(self.as_heap())->digits, radix));
+    });
+    method(cx, bigint_proto, "valueOf",
+           [](context & c, std::span<value>) { return c.current_this(); });
+    cx.set_prototype(context::proto_kind::bigint, bigint_proto);
+
+    auto * bigint_ctor = cx.allocate<native_object>("BigInt", [](context & c, std::span<value> a) {
+        const value v = arg_at(a, 0);
+        if (v.is_kind(heap_kind::bigint)) { return v; }
+        if (v.is_boolean()) {
+            return value::object(c.allocate<bigint_object>(bigint{v.as_boolean() ? 1 : 0}));
+        }
+        if (v.is_string()) {
+            // A STRING THAT IS NOT AN INTEGER IS A SyntaxError, not NaN -
+            // there is no BigInt NaN to return, so the conversion has to
+            // refuse rather than degrade.
+            const std::optional<bigint> parsed =
+                bigint_from_string(static_cast<string_object *>(v.as_heap())->text);
+            if (!parsed) {
+                c.throw_error("SyntaxError", "Cannot convert this string to a BigInt");
+                return value::undefined();
+            }
+            return value::object(c.allocate<bigint_object>(*parsed));
+        }
+        // A NON-INTEGRAL Number is a RangeError - `BigInt(1.5)` refuses
+        // rather than truncating, because losing the fraction silently is
+        // the failure this type exists to make impossible.
+        const std::optional<bigint> parsed = bigint_from_double(context::to_number(v));
+        if (!parsed) {
+            c.throw_error("RangeError", "Cannot convert a non-integer to a BigInt");
+            return value::undefined();
+        }
+        return value::object(c.allocate<bigint_object>(*parsed));
+    });
+    bigint_ctor->set("prototype", value::object(bigint_proto));
+    link_constructor(cx, bigint_proto, "BigInt", value::object(bigint_ctor));
+    cx.define_global("BigInt", value::object(bigint_ctor));
 }
 
 // `Map`, `Set`, `WeakMap`, `WeakSet`. 20 and 59 uses in p5.js, and `new Map()`

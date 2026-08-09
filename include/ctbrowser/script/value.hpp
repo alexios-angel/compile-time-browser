@@ -7,6 +7,8 @@
 #include <string_view>
 #include <vector>
 
+#include <boost/multiprecision/cpp_int.hpp>
+
 #include <ctbrowser/core/core.hpp>
 
 // The JS value, in one 64-bit word.
@@ -56,6 +58,7 @@ enum class heap_kind : std::uint8_t {
     cell,
     symbol,
     proxy,
+    bigint,
     // A SUSPENDED FUNCTION BODY. `await` on a promise that has not settled has
     // to put the frame somewhere and give the caller a promise back; this is
     // where the frame goes. Its definition is in vm.hpp, with the frame and
@@ -194,6 +197,30 @@ struct symbol_object final : heap_object {
         : heap_object(heap_kind::symbol), description(std::move(d)), key(std::move(k)) {}
 };
 
+// AN ARBITRARY-PRECISION INTEGER.
+//
+// `boost::multiprecision::cpp_int` holds it, and the value IS the integer -
+// there is no text form to keep in step, so `===` is an integer compare and
+// arithmetic is linear in the WORD count rather than the digit count.
+//
+// THIS IS A DELIBERATE EXCEPTION to the rule against a third-party header in a
+// public one, taken on the owner's instruction. The rule's reason is compile
+// time: `value.hpp` reaches every translation unit that touches the engine, so
+// each pays for `<boost/multiprecision/cpp_int.hpp>`. The measured cost is in
+// docs/build.md. The alternative considered and rejected was storing decimal
+// TEXT and converting in one `.cpp`, which keeps the header light and makes
+// every operation parse and re-format its operands - correct, and the wrong
+// shape for a numeric type.
+//
+// cpp_int is header-only, so the cross-build needs nothing, and it is signed
+// and unbounded, which is exactly the BigInt semantic: no width, no wrapping,
+// no rounding.
+struct bigint_object final : heap_object {
+    boost::multiprecision::cpp_int digits;
+    explicit bigint_object(boost::multiprecision::cpp_int d)
+        : heap_object(heap_kind::bigint), digits(std::move(d)) {}
+};
+
 // `===` in full.
 //
 // Comparing the raw bits is right for objects (identity), for the singletons
@@ -211,6 +238,14 @@ struct symbol_object final : heap_object {
     if (is_string() && o.is_string()) {
         return static_cast<const string_object *>(as_heap())->text ==
                static_cast<const string_object *>(o.as_heap())->text;
+    }
+    // A BigInt IS ITS VALUE, like a string and unlike an object: `1n === 1n`
+    // is true even though the two are separate allocations. Note it is FALSE
+    // against the Number 1 - `===` never crosses types - which is the whole
+    // reason `1n == 1` and `1n === 1` differ.
+    if (is_kind(heap_kind::bigint) && o.is_kind(heap_kind::bigint)) {
+        return static_cast<const bigint_object *>(as_heap())->digits ==
+               static_cast<const bigint_object *>(o.as_heap())->digits;
     }
     return false;
 }

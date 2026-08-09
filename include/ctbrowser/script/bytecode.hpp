@@ -37,11 +37,16 @@ enum class op : std::uint8_t {
     // --- moves and constants
     load_const,  // a = k[bx]          (number/bool - an immediate, no heap)
     load_string, // a = intern(strings[bx])
-    load_undef,  // a = undefined
-    load_null,   // a = null
-    load_true,   // a = true
-    load_false,  // a = false
-    move,        // a = b
+    // a = the BigInt whose LITERAL TEXT is strings[bx] (without the trailing
+    // `n`). The text rather than a parsed constant, because a bigint has no
+    // fixed width to put in the constant pool - and the VM caches the parse per
+    // slot, so the digits are read once however hot the site is.
+    load_bigint,
+    load_undef, // a = undefined
+    load_null,  // a = null
+    load_true,  // a = true
+    load_false, // a = false
+    move,       // a = b
 
     // --- globals and locals
     get_global, // a = globals[k[bx]]
