@@ -24,7 +24,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 RECORD = ROOT / "tests/corpus/babylon/babylon-ratchet.txt"
-TEST = ROOT / "build/src/tests/ctbrowser-test-babylon_ratchet"
+TEST = ROOT / "build/tests/ctbrowser-test-babylon_ratchet"
 
 RUNGS = ["nothing", "a scene renders", "a texture samples",
          "two meshes with two materials", "an animation moves the picture",

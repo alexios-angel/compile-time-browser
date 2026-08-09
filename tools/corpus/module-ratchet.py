@@ -25,7 +25,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 RECORD = ROOT / "tests/corpus/modules/module-ratchet.txt"
-TEST = ROOT / "build/src/tests/ctbrowser-test-module_ratchet"
+TEST = ROOT / "build/tests/ctbrowser-test-module_ratchet"
 
 RUNGS = ["nothing", "import/export parse", "one module runs in its own scope",
          "an importer sees an export", "imported bindings are live",

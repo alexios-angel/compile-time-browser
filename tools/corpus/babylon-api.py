@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 BUNDLE = ROOT / "vendor/babylon/babylon.js"
 PROBES = ROOT / "tests/corpus/babylon/babylon-api-probe.js"
 RECORD = ROOT / "tests/corpus/babylon/babylon-api.txt"
-TEST = ROOT / "build/src/tests/ctbrowser-test-babylon_api"
+TEST = ROOT / "build/tests/ctbrowser-test-babylon_api"
 
 # The top-level namespaces Babylon hangs off its export object, read from the
 # bundle rather than written down here so the denominator tracks the library

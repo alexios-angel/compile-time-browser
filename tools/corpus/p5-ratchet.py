@@ -28,7 +28,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 BUNDLE = ROOT / "vendor/p5/p5.js"
 RECORD = ROOT / "tests/corpus/p5/p5-ratchet.txt"
-TEST = ROOT / "build/src/tests/ctbrowser-test-p5_ratchet"
+TEST = ROOT / "build/tests/ctbrowser-test-p5_ratchet"
 
 # `  function color$1(p5, fn, lifecycles){` - rollup's module wrappers, at the
 # one indent the bundle uses for them.

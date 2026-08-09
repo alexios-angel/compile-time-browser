@@ -36,7 +36,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 BUNDLE = ROOT / "vendor/phaser/phaser.js"
 RECORD = ROOT / "tests/corpus/phaser/phaser-ratchet.txt"
-TEST = ROOT / "build/src/tests/ctbrowser-test-phaser_ratchet"
+TEST = ROOT / "build/tests/ctbrowser-test-phaser_ratchet"
 
 RUNGS = ["unread", "read", "lexed", "parsed", "compiled", "runs as a page",
          "defines Phaser", "constructs a Game", "runs create()", "runs update()",

@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 BUNDLE = ROOT / "vendor/p5/p5.js"
 PROBES = ROOT / "tests/corpus/p5/p5-api-probe.js"
 RECORD = ROOT / "tests/corpus/p5/p5-api.txt"
-TEST = ROOT / "build/src/tests/ctbrowser-test-p5_api"
+TEST = ROOT / "build/tests/ctbrowser-test-p5_api"
 
 # `    fn.background = function (...)` - p5's public surface, as the bundle
 # itself declares it. Read from the bundle rather than written down here, so the

@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 BUNDLE = ROOT / "vendor/phaser/phaser.js"
 PROBES = ROOT / "tests/corpus/webgl2/webgl2-api-probe.js"
 RECORD = ROOT / "tests/corpus/webgl2/webgl2-api.txt"
-TEST = ROOT / "build/src/tests/ctbrowser-test-webgl2_api"
+TEST = ROOT / "build/tests/ctbrowser-test-webgl2_api"
 
 # The top-level namespaces WebGL 2 hangs off its export object, read from the
 # bundle rather than written down here so the denominator tracks the library

@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 BUNDLE = ROOT / "vendor/phaser/phaser.js"
 PROBES = ROOT / "tests/corpus/phaser/phaser-api-probe.js"
 RECORD = ROOT / "tests/corpus/phaser/phaser-api.txt"
-TEST = ROOT / "build/src/tests/ctbrowser-test-phaser_api"
+TEST = ROOT / "build/tests/ctbrowser-test-phaser_api"
 
 # The top-level namespaces Phaser hangs off its export object, read from the
 # bundle rather than written down here so the denominator tracks the library

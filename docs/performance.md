@@ -9,7 +9,7 @@ them are not in this file.
 the `linux-tools` packages have nothing to read. Use **callgrind**:
 
 ```bash
-valgrind --tool=callgrind --callgrind-out-file=cg.out ./build/src/tests/ctbrowser-test-X
+valgrind --tool=callgrind --callgrind-out-file=cg.out ./build/tests/ctbrowser-test-X
 callgrind_annotate cg.out | head -30
 callgrind_annotate --auto=yes cg.out          # line-level, needs -g (tests have it)
 ```

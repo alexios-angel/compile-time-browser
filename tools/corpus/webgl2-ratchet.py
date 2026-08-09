@@ -25,7 +25,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 RECORD = ROOT / "tests/corpus/webgl2/webgl2-ratchet.txt"
-TEST = ROOT / "build/src/tests/ctbrowser-test-webgl2_ratchet"
+TEST = ROOT / "build/tests/ctbrowser-test-webgl2_ratchet"
 
 RUNGS = ["nothing", "makes a webgl2 context", "has the WebGL 2 constants",
          "compiles #version 300 es", "vertex array objects work",
