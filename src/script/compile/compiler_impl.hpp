@@ -149,7 +149,21 @@ public:
     // past the end of the pool and segfaulted. Returning an empty node makes a
     // missed check compile to nothing instead of crashing, which is the right
     // failure for a compiler to have.
-    [[nodiscard]] const vp::node & at(std::int32_t i) const;
+    // DEFINED HERE, and measured rather than assumed. Splitting compile.cpp
+    // cost +4.08% instructions on a whole page render, and callgrind attributed
+    // essentially all of it to this one function: out of line it appeared at
+    // 4.18% / 32.4 M instructions, having been absent from the profile entirely
+    // while it was inlined into every caller. Every other member moved for free.
+    //
+    // It is five lines and the whole compiler reads the node pool through it.
+    // `static const vp::node nothing` is still one object across all the files
+    // that include this - a function-local static in an inline function is
+    // guaranteed to be.
+    [[nodiscard]] const vp::node & at(std::int32_t i) const {
+        static const vp::node nothing{vp::nk::empty, ""};
+        if (i < 0 || static_cast<std::size_t>(i) >= current_ast_->nodes.size()) { return nothing; }
+        return current_ast_->nodes[static_cast<std::size_t>(i)];
+    }
 
     // Compile an expression parsed from a DIFFERENT source than the program's.
     //

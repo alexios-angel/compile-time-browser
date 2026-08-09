@@ -10,12 +10,6 @@
 
 namespace ctbrowser::script::detail {
 
-const vp::node & compiler_impl::at(std::int32_t i) const {
-    static const vp::node nothing{vp::nk::empty, ""};
-    if (i < 0 || static_cast<std::size_t>(i) >= current_ast_->nodes.size()) { return nothing; }
-    return current_ast_->nodes[static_cast<std::size_t>(i)];
-}
-
 void compiler_impl::compile_owned_expr(std::string source, std::uint16_t dst) {
     owned_sources_.push_back(std::make_unique<std::string>(std::move(source)));
     compile_foreign_expr(*owned_sources_.back(), dst);
