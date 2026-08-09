@@ -26,3 +26,28 @@ mutex:libvulkan.so
 deadlock:libvulkan_lvp.so
 called_from_lib:libvulkan_lvp.so
 called_from_lib:libvulkan.so
+
+# ANGLE AND SWIFTSHADER, which are what a -DCTBROWSER_WITH_ANGLE=ON build
+# loads. This list named lavapipe and libvulkan only, from when lavapipe was
+# the only driver here.
+#
+# ANGLE's is the one that actually fires: `rx::vk::CommandQueue::
+# releaseFinishedCommandsLocked` runs on ANGLE's own command-queue thread and
+# frees allocations the main thread made, and the happens-before that makes
+# that safe is inside libGLESv2 where TSan cannot see it. What gets reported is
+# a bare operator new / operator delete pair, attributed to the test binary
+# because TSan interposes those - the only ctbrowser frame in the report is the
+# allocator interposer itself.
+#
+# By LIBRARY, like everything else here, so a real race in our code is still
+# caught with the driver below it on the stack.
+race:libGLESv2.so
+mutex:libGLESv2.so
+deadlock:libGLESv2.so
+called_from_lib:libGLESv2.so
+race:libEGL.so
+called_from_lib:libEGL.so
+race:libvk_swiftshader.so
+mutex:libvk_swiftshader.so
+deadlock:libvk_swiftshader.so
+called_from_lib:libvk_swiftshader.so

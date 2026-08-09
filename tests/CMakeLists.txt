@@ -206,6 +206,22 @@ endif()
 set_tests_properties(bindings_basics PROPERTIES ENVIRONMENT
   "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/support/tsan.supp;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/support/lsan.supp")
 
+# THE CORPUS TESTS REACH THE DRIVER TOO, once ANGLE is on. gpu_basics and
+# bindings_basics got the suppression file because they were the only tests
+# that touched Vulkan; a WebGL 2 or Babylon ratchet built with
+# -DCTBROWSER_WITH_ANGLE=ON now does as well, and reported races inside
+# SwiftShader's command buffers with no ctbrowser frame on the stack.
+#
+# No preset turns ANGLE on, so this only bites a TSan run configured by hand -
+# which is exactly what the verification steps in docs/ ask for, so it bit.
+foreach(angle-test webgl2_ratchet webgl2_api babylon_ratchet babylon_api
+                   babylon_lighting babylon_interaction p5_ratchet phaser_ratchet)
+  if(TEST ${angle-test})
+    set_tests_properties(${angle-test} PROPERTIES ENVIRONMENT
+      "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/support/tsan.supp")
+  endif()
+endforeach()
+
 # The stress test is the one that must never be skipped: it is the evidence
 # that the lock-free read path is actually sound. Give it room under TSan.
 set_tests_properties(stress_slab PROPERTIES TIMEOUT 300)
