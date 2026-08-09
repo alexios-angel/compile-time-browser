@@ -94,14 +94,24 @@ int main() {
     js_expect("(1234.5).toPrecision(2)", "1.2e+3");
     js_expect("(1.5).toExponential(1)", "1.5e+0");
 
-    // --- KNOWN WRONG, pinned so a fix trips over them --------------------------
-    // NaN and the infinities are NOT representable in JSON, and the
-    // specification says serialise them as null. Emitting the bare words
-    // produces output that no JSON parser will read back - so a page that round
-    // trips through JSON.parse gets a SyntaxError from data this engine wrote.
-    js_expect("JSON.stringify(NaN)", "NaN");           // V8: null
-    js_expect("JSON.stringify(Infinity)", "Infinity"); // V8: null
-    js_expect("typeof Object.is", "undefined");        // V8: "function"
+    // --- JSON, where non-finite numbers become null ---------------------------
+    // NaN and the infinities are not representable in JSON, so 25.5.2
+    // serialises them as null. Emitting the bare words produced output no JSON
+    // parser would read back - a page round-tripping its own data through
+    // JSON.parse got a SyntaxError from bytes this engine wrote.
+    js_expect("JSON.stringify(NaN)", "null");
+    js_expect("JSON.stringify(Infinity)", "null");
+    js_expect("JSON.stringify(-Infinity)", "null");
+    js_expect("JSON.stringify([NaN,Infinity])", "[null,null]");
+    js_expect("JSON.stringify({a:NaN})", "{\"a\":null}");
+
+    // --- Object.is, which is === plus the two questions it cannot answer ------
+    js_expect("typeof Object.is", "function");
+    js_expect("Object.is(0,-0)", "false"); // === says true
+    js_expect("Object.is(-0,-0)", "true");
+    js_expect("Object.is(NaN,NaN)", "true"); // === says false
+    js_expect("Object.is(1,1)", "true");
+    js_expect("Object.is({},{})", "false");
 
     REPORT("number_basics");
 }

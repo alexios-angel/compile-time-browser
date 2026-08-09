@@ -203,10 +203,15 @@ int main() {
     js_expect("parseInt(\"-0x10\")", "-16");
     js_expect("parseInt(\"0x10\", 10)", "0"); // an explicit radix wins
 
-    // --- KNOWN WRONG, pinned so a fix trips over them -------------------------
-    js_expect("typeof Object.is", "undefined");      // V8: "function"
+    // --- Object.is: === plus the two questions it cannot answer ---------------
+    js_expect("typeof Object.is", "function");
+    js_expect("Object.is(0,-0)", "false");   // === says true
+    js_expect("Object.is(NaN,NaN)", "true"); // === says false
+    // And String(sym) describes rather than exposing the internal key.
+    js_expect("String(Symbol(\"s\"))", "Symbol(s)");
+
+    // --- KNOWN WRONG, pinned so a fix trips over it ---------------------------
     js_expect("String((function(){}))", "function"); // V8: the source text
-    js_expect("String(Symbol(\"s\"))", "@@sym:0:s"); // V8: "Symbol(s)"
 
     REPORT("type_basics");
 }

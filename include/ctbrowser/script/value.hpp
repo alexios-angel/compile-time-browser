@@ -170,6 +170,12 @@ struct string_object final : heap_object {
     explicit string_object(std::string s) : heap_object(heap_kind::string), text(std::move(s)) {}
 };
 
+// The spelling that marks a property key as a SYMBOL rather than a string.
+// Declared here beside the reason for it, because three places now have to
+// recognise one: the enumeration walk, the JSON writer, and the code that mints
+// them.
+inline constexpr std::string_view symbol_key_prefix = "@@sym:";
+
 // A SYMBOL IS A PROPERTY KEY NOBODY CAN WRITE BY ACCIDENT.
 //
 // Its identity is `key`, a string chosen so no source literal can collide with
@@ -504,6 +510,22 @@ struct object_object final : heap_object {
             if (i < props.size()) { visit(props[i].first); }
         }
         (void)emitted;
+    }
+
+    // A SYMBOL KEY IS NOT A STRING KEY, and almost nothing that enumerates an
+    // object is supposed to see one: Object.keys, Object.values, for-in,
+    // getOwnPropertyNames and JSON.stringify are all string-only. This engine
+    // spells a symbol key "@@sym:N:description" and keeps it in the same table,
+    // so without a filter the internal spelling appeared in a page's own output.
+    //
+    // It is a SECOND method rather than a filter inside each_own_key because
+    // the two genuinely differ: `Object.assign` and object spread copy symbol
+    // keys as well, and Reflect.ownKeys reports them, so those keep the
+    // unfiltered walk.
+    template <typename Fn> void each_own_string_key(Fn && visit) const {
+        each_own_key([&](const std::string & key) {
+            if (!key.starts_with(symbol_key_prefix)) { visit(key); }
+        });
     }
     void set(std::string_view name, value v) {
         if (value * existing = find(name)) {

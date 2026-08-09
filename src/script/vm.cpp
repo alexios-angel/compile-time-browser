@@ -2476,8 +2476,9 @@ value context::run_loop(std::size_t stop_depth) {
                 if (reg(in.b).is_object()) {
                     // In DEFINITION ORDER, data and accessors interleaved - which
                     // is what a page sees from for-in and has to match Object.keys.
+                    // for-in enumerates STRING keys only.
                     static_cast<object_object *>(reg(in.b).as_heap())
-                        ->each_own_key(
+                        ->each_own_string_key(
                             [&](const std::string & name) { keys->items.push_back(string(name)); });
                 } else if (reg(in.b).is_array()) {
                     const std::size_t n =

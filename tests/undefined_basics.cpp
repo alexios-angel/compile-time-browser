@@ -64,11 +64,14 @@ int main() {
     js_expect("JSON.stringify([undefined])", "[null]"); // but serialises as null
     js_expect("JSON.stringify({a:undefined})", "{}");   // and a property vanishes
 
+    // AT THE TOP LEVEL an unserialisable value yields undefined, not the string
+    // "null" - the difference matters to a caller doing `if (j === undefined)`.
+    // Inside an array the same value becomes null, which is why the caller and
+    // not the writer decides.
+    js_expect("JSON.stringify(undefined)", "undefined");
+    js_expect("JSON.stringify(function(){})", "undefined");
+
     // --- KNOWN WRONG, pinned so a fix trips over them -------------------------
-    // JSON.stringify of undefined ALONE is undefined, not the string "null" -
-    // the value is not serialisable at all, and the difference matters to a
-    // caller doing `if (json === undefined)`.
-    js_expect("JSON.stringify(undefined)", "null"); // V8: undefined
     // ARRAY HOLES. `[,1]` has no element at 0 - `in` says false and Object.keys
     // skips it - where this engine materialises every slot as undefined.
     js_expect("0 in [,1]", "true");             // V8: false

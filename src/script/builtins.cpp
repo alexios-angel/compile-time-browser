@@ -382,6 +382,12 @@ inline void write_json(context & cx, value v, std::string & out) {
             // undefined and functions are OMITTED from an object, per spec -
             // which is why round-tripping a value through JSON can lose fields.
             if (item.is_undefined() || item.is_callable()) { continue; }
+            // A SYMBOL-KEYED PROPERTY IS INVISIBLE TO JSON. This engine spells
+            // a symbol key as "@@sym:N:description" and keeps it in the ordinary
+            // property table, so the prefix is what identifies one here - and
+            // without this the internal spelling was serialised into the page's
+            // own data.
+            if (key.starts_with(symbol_key_prefix)) { continue; }
             if (!first) { out += ','; }
             first = false;
             write_json(cx, cx.string(key), out);
@@ -393,6 +399,16 @@ inline void write_json(context & cx, value v, std::string & out) {
     }
     if (v.is_undefined()) {
         out += "null"; // undefined inside an array becomes null, per spec
+        return;
+    }
+    // NaN AND THE INFINITIES ARE NOT JSON. 25.5.2 serialises every non-finite
+    // number as null, and emitting the bare words instead produces output that
+    // NO JSON PARSER WILL READ BACK - so a page round-tripping its own data
+    // through JSON.parse got a SyntaxError from bytes this engine wrote. That
+    // is a data fault rather than a conformance nicety, which is why it is
+    // worth the two lines.
+    if (v.is_number() && !std::isfinite(v.as_number())) {
+        out += "null";
         return;
     }
     out += cx.to_string(v);
@@ -2391,13 +2407,15 @@ void install_object(context & cx) {
         }
         return of;
     });
+    // NAMES, so string keys only - Reflect.ownKeys is the one that reports
+    // symbols as well, and it keeps the unfiltered walk.
     method(cx, object_ctor, "getOwnPropertyNames", [](context & c, std::span<value> a) {
         value out = c.make_array();
         auto * result = static_cast<array_object *>(out.as_heap());
         if (arg_at(a, 0).is_object()) {
-            static_cast<object_object *>(a[0].as_heap())->each_own_key([&](const std::string & k) {
-                result->items.push_back(c.string(k));
-            });
+            static_cast<object_object *>(a[0].as_heap())
+                ->each_own_string_key(
+                    [&](const std::string & k) { result->items.push_back(c.string(k)); });
         }
         return out;
     });
@@ -2438,14 +2456,33 @@ void install_object(context & cx) {
     method(cx, object_ctor, "freeze", [](context &, std::span<value> a) { return arg_at(a, 0); });
     method(cx, object_ctor, "isFrozen",
            [](context &, std::span<value>) { return value::boolean(false); });
+    // SameValue, 7.2.11 - which is `===` except that it separates the two
+    // zeros and calls NaN equal to itself. Those are exactly the two questions
+    // `===` cannot answer, which is why every test in this directory that cares
+    // about -0 had to spell it `1/x === -Infinity` instead.
+    method(cx, object_ctor, "is", [](context &, std::span<value> a) {
+        const value x = arg_at(a, 0);
+        const value y = arg_at(a, 1);
+        if (x.is_number() && y.is_number()) {
+            const double p = x.as_number();
+            const double q = y.as_number();
+            if (std::isnan(p) && std::isnan(q)) { return value::boolean(true); }
+            // Same magnitude AND same sign: std::signbit is what tells +0 from
+            // -0, since they compare equal under every operator.
+            if (p == q) { return value::boolean(std::signbit(p) == std::signbit(q)); }
+            return value::boolean(false);
+        }
+        return value::boolean(x.strict_equals(y));
+    });
     method(cx, object_ctor, "keys", [](context & c, std::span<value> a) {
         value out = c.make_array();
         auto * result = static_cast<array_object *>(out.as_heap());
         if (arg_at(a, 0).is_object()) {
             // An accessor IS a property, and definition order is observable.
-            static_cast<object_object *>(a[0].as_heap())->each_own_key([&](const std::string & k) {
-                result->items.push_back(c.string(k));
-            });
+            // STRING keys only - a symbol-keyed property is invisible here.
+            static_cast<object_object *>(a[0].as_heap())
+                ->each_own_string_key(
+                    [&](const std::string & k) { result->items.push_back(c.string(k)); });
         }
         return out;
     });
@@ -2454,6 +2491,7 @@ void install_object(context & cx) {
         auto * result = static_cast<array_object *>(out.as_heap());
         if (arg_at(a, 0).is_object()) {
             for (const auto & [key, item] : static_cast<object_object *>(a[0].as_heap())->props) {
+                if (key.starts_with(symbol_key_prefix)) { continue; } // string keys only
                 result->items.push_back(item);
             }
         }
@@ -2495,8 +2533,15 @@ void install_json(context & cx) {
     using detail::new_table;
     object_object * json = new_table(cx);
     method(cx, json, "stringify", [](context & c, std::span<value> a) {
+        // AT THE TOP LEVEL an unserialisable value yields UNDEFINED, not the
+        // string "null" - 25.5.2 step 12. Inside an array the same value
+        // becomes null, which is why write_json cannot decide this and the
+        // caller must. A page testing `if (json === undefined)` was told the
+        // string "null" instead.
+        const value subject = arg_at(a, 0);
+        if (subject.is_undefined() || subject.is_callable()) { return value::undefined(); }
         std::string out;
-        detail::write_json(c, arg_at(a, 0), out);
+        detail::write_json(c, subject, out);
         return c.string(out);
     });
     method(cx, json, "parse", [](context & c, std::span<value> a) {
@@ -2842,10 +2887,23 @@ void install_promise(context & cx) {
     // `String.fromCharCode.apply(null, bytes)` is how a page turns a byte array
     // into text - 27 uses in p5.js - and it read undefined and applied it.
     {
-        auto * string_ctor =
-            cx.allocate<native_object>("String", [](context & c, std::span<value> a) {
-                return c.string(a.empty() ? std::string{} : c.to_string(a[0]));
-            });
+        auto * string_ctor = cx.allocate<native_object>("String", [](context & c,
+                                                                     std::span<value> a) {
+            // A SYMBOL IS DESCRIBED, NOT COERCED. `String(sym)` is the one
+            // conversion the specification allows on a symbol (22.1.1.1
+            // step 2) and it yields "Symbol(description)". Everything else
+            // here goes through `to_string`, which for a symbol returns its
+            // internal KEY - that is deliberate and load-bearing, because
+            // computed property access resolves `o[sym]` through the same
+            // call, so it cannot be changed without separating
+            // ToPropertyKey from ToString. Special-casing the explicit
+            // conversion is the part that can be had cheaply.
+            if (!a.empty() && a[0].is_kind(heap_kind::symbol)) {
+                return c.string("Symbol(" +
+                                static_cast<symbol_object *>(a[0].as_heap())->description + ")");
+            }
+            return c.string(a.empty() ? std::string{} : c.to_string(a[0]));
+        });
         // A CONVERSION, not a constructor of wrappers - see context::construct. `new
         // String(x)` evaluates to the converted value here rather than to a wrapper
         // object; before the flag it evaluated to an empty object and the value was
@@ -3084,7 +3142,8 @@ void install_symbol(context & cx) {
     auto * symbol =
         cx.allocate<native_object>("Symbol", [counter](context & c, std::span<value> a) {
             const std::string description = a.empty() ? std::string{} : c.to_string(a[0]);
-            const std::string key = "@@sym:" + std::to_string((*counter)++) + ":" + description;
+            const std::string key =
+                std::string{symbol_key_prefix} + std::to_string((*counter)++) + ":" + description;
             return value::object(c.allocate<symbol_object>(description, key));
         });
     const auto well_known = [&](const char * name, const char * key) {
@@ -3095,12 +3154,38 @@ void install_symbol(context & cx) {
     well_known("hasInstance", "@@hasInstance");
     well_known("toPrimitive", "@@toPrimitive");
     well_known("toStringTag", "@@toStringTag");
-    // A registry, so `Symbol.for('x')` twice is the same key both times.
-    symbol->set(
-        "for", value::object(cx.allocate<native_object>("for", [](context & c, std::span<value> a) {
-            const std::string d = a.empty() ? std::string{} : c.to_string(a[0]);
-            return value::object(c.allocate<symbol_object>(d, "@@for:" + d));
-        })));
+    // A REGISTRY, and it has to hold the SYMBOLS rather than mint a fresh one
+    // per call. Two `Symbol.for('x')` produced two objects with the same key,
+    // and `===` compares identity - so the one guarantee the registry exists to
+    // give, that a key looked up twice is the same symbol, was the one it did
+    // not keep. The shared_ptr is captured by both `for` and `keyFor`, which is
+    // what lets the second answer questions about the first.
+    auto registry = std::make_shared<std::vector<std::pair<std::string, value>>>();
+    symbol->set("for", value::object(cx.allocate<native_object>(
+                           "for", [registry](context & c, std::span<value> a) {
+                               const std::string d = a.empty() ? std::string{} : c.to_string(a[0]);
+                               for (const auto & [key, made] : *registry) {
+                                   if (key == d) { return made; }
+                               }
+                               const value made =
+                                   value::object(c.allocate<symbol_object>(d, "@@for:" + d));
+                               registry->emplace_back(d, made);
+                               return made;
+                           })));
+    // The inverse: the key a registered symbol was made under, or undefined for
+    // one that never went through the registry.
+    symbol->set("keyFor", value::object(cx.allocate<native_object>(
+                              "keyFor", [registry](context & c, std::span<value> a) {
+                                  const value want = arg_at(a, 0);
+                                  for (const auto & [key, made] : *registry) {
+                                      if (made == want) { return c.string(key); }
+                                  }
+                                  (void)c;
+                                  return value::undefined();
+                              })));
+    // `Symbol.prototype` is reachable from the constructor, like every other
+    // built-in's - a page that walks it found undefined.
+    symbol->set("prototype", value::object(symbol_proto));
     cx.define_global("Symbol", value::object(symbol));
 }
 

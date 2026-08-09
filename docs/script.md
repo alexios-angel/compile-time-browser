@@ -831,3 +831,50 @@ legacy octal (`"\101"`, `017` - Annex B), and the String gaps already listed
 above: `replace`'s `$`-patterns, `search` with a string argument, `replaceAll`'s
 missing TypeError, `String.raw`, boxing, `Symbol.iterator`. All pinned in the
 test files with V8's answer in the comment.
+
+
+## What the per-type suites found, fixed (2026-08-09)
+
+Six defects across four areas. Each planted back individually and caught.
+
+* **`JSON.stringify` emitted invalid JSON.** NaN came out as `NaN` and the
+  infinities as `Infinity`, which no JSON parser will read back - so a page
+  round-tripping its own data through `JSON.parse` got a SyntaxError from bytes
+  this engine wrote. 25.5.2 serialises every non-finite number as `null`.
+* **`JSON.stringify(undefined)` was the string `"null"`.** At the TOP LEVEL an
+  unserialisable value yields `undefined`; inside an array the same value
+  becomes `null`. The writer cannot decide that, so the caller does.
+* **Symbol keys leaked into every enumeration.** A symbol key is spelled
+  `@@sym:N:description` and lives in the ordinary property table, so
+  `Object.keys`, `Object.values`, `for-in`, `getOwnPropertyNames` and
+  `JSON.stringify` all reported the internal spelling. `each_own_string_key`
+  filters it. It is a SECOND method rather than a change to `each_own_key`
+  because `Object.assign`, object spread and `Reflect.ownKeys` are specified to
+  see symbols and keep the unfiltered walk.
+* **`Symbol.for` did not intern.** It minted a fresh symbol per call, so
+  `Symbol.for("k") === Symbol.for("k")` was false - the one guarantee a registry
+  exists to give. It holds the symbols now, and `Symbol.keyFor` reads the same
+  table. `Symbol.prototype` is reachable from the constructor.
+* **`String(sym)` exposed the internal key.** It describes now -
+  `"Symbol(desc)"`. Note `to_string` of a symbol still returns the KEY and must:
+  computed property access resolves `o[sym]` through the same call, so the
+  general conversion cannot change without separating ToPropertyKey from
+  ToString. Special-casing the explicit `String()` is the part available cheaply.
+* **`Object.is` was missing** - SameValue, which is `===` plus the two questions
+  it cannot answer (the two zeros, and NaN against itself).
+
+### Still known, and why
+
+* **`Symbol` does not refuse implicit conversion.** `"" + sym` and `sym + 1` are
+  specified to throw TypeError, and that is the feature - it is what stops a
+  symbol reaching page output by accident. Fixing it needs ToPropertyKey split
+  from ToString, because `o[sym]` goes through the latter today.
+* **`Symbol().description` is `""`, not `undefined`** - an absent description
+  and an empty one are the same `std::string` here.
+* **Array holes are materialised**: `0 in [,1]` is true and `Object.keys([,1])`
+  is empty. Arrays are dense vectors, so a hole needs a representation.
+* **No boxing**: `new Boolean(false)` is the primitive, so it stays falsy where
+  every object is truthy. Deliberate - see `context::construct`.
+* **No BigInt at all.** `1n` does not lex, and it is a PARSE error, so a bundle
+  containing one fails as a whole. That is a type to add, not a bug to fix;
+  `tests/bigint_basics.cpp` is the acceptance list.

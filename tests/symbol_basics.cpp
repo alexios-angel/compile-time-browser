@@ -41,15 +41,35 @@ int main() {
               "return o[a]+\",\"+o[b]})()",
               "1,2"); // same description, different keys - the collision guarantee
 
-    // --- KNOWN WRONG: the representation leaks --------------------------------
-    // A symbol key is stored as the string "@@sym:N:desc", so anything that
-    // enumerates or serialises an object exposes it. In V8 a symbol key is
-    // invisible to both.
+    // --- the representation no longer leaks -----------------------------------
+    // A symbol key is still stored as "@@sym:N:desc" in the ordinary property
+    // table, but every enumeration specified to see STRING keys only now
+    // filters it: Object.keys, Object.values, for-in, getOwnPropertyNames and
+    // JSON.stringify. Object.assign and Reflect.ownKeys keep the UNFILTERED
+    // walk, because those two are specified to see symbols - which is why the
+    // filter is a second method rather than a change to the existing one.
     js_expect("(function(){var s=Symbol(\"p\");var o={};o[s]=1;return Object.keys(o).length})()",
-              "1"); // V8: 0
-    js_expect("(function(){var s=Symbol(\"p\");var o={};o[s]=1;return JSON.stringify(o)})()",
-              "{\"@@sym:0:p\":1}");                  // V8: {}
-    js_expect("String(Symbol(\"x\"))", "@@sym:0:x"); // V8: "Symbol(x)"
+              "0");
+    js_expect("(function(){var s=Symbol(\"p\");var o={a:1};o[s]=2;return JSON.stringify(o)})()",
+              "{\"a\":1}");
+    js_expect("(function(){var s=Symbol(\"p\");var o={a:1};o[s]=2;var r=[];"
+              "for(var k in o)r.push(k);return r.join(\",\")})()",
+              "a");
+    js_expect("(function(){var s=Symbol(\"p\");var o={a:1};o[s]=2;"
+              "return Object.getOwnPropertyNames(o).join(\",\")})()",
+              "a");
+    // String(sym) DESCRIBES rather than coerces - the one conversion the
+    // specification allows on a symbol.
+    js_expect("String(Symbol(\"x\"))", "Symbol(x)");
+    js_expect("String(Symbol())", "Symbol()");
+
+    // --- the registry, which now interns --------------------------------------
+    js_expect("Symbol.for(\"k\") === Symbol.for(\"k\")", "true");
+    js_expect("Symbol.for(\"a\") === Symbol.for(\"b\")", "false");
+    js_expect("typeof Symbol.keyFor", "function");
+    js_expect("Symbol.keyFor(Symbol.for(\"k\"))", "k");
+    js_expect("Symbol.keyFor(Symbol(\"k\"))", "undefined"); // never registered
+    js_expect("typeof Symbol.prototype", "object");
 
     // --- KNOWN WRONG: a symbol must REFUSE implicit conversion ----------------
     // `"" + sym` and `sym + 1` are specified to throw TypeError, and that is a
@@ -60,12 +80,10 @@ int main() {
     js_expect("(function(){try{return Symbol(\"x\")+1}catch(e){return \"THROWS \"+e.name}})()",
               "Symbol(x)1"); // V8: THROWS TypeError
 
-    // --- KNOWN WRONG: the global registry and the prototype -------------------
-    // Symbol.for is supposed to INTERN by key, so two lookups give one symbol.
-    js_expect("Symbol.for(\"k\") === Symbol.for(\"k\")", "false"); // V8: true
-    js_expect("typeof Symbol.keyFor", "undefined");                // V8: "function"
-    js_expect("typeof Symbol.prototype", "undefined");             // V8: "object"
-    js_expect("Symbol().description", "");                         // V8: undefined
+    // --- KNOWN WRONG ----------------------------------------------------------
+    // An ABSENT description is undefined, an empty one is "". This engine
+    // stores a plain std::string and cannot tell them apart.
+    js_expect("Symbol().description", ""); // V8: undefined
 
     REPORT("symbol_basics");
 }
