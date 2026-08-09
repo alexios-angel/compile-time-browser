@@ -141,7 +141,7 @@ ever built it actually used.
 
 | what | why only there |
 |---|---|
-| `raster/ttf.cpp` defined a class its header did not declare | `ttf.hpp` guards `ttf_backend` behind `#if CTBROWSER_WITH_TTF`; the `.cpp` did not, and CMake compiles it unconditionally |
+| `raster/text/ttf.cpp` defined a class its header did not declare | `ttf.hpp` guards `ttf_backend` behind `#if CTBROWSER_WITH_TTF`; the `.cpp` did not, and CMake compiles it unconditionally |
 | `glsl_eval.cpp` range-for'd over a temporary | a ternary between two `initializer_list`s dangles before C++23; clang implements P2718R0, GCC 13 does not |
 | the JPEG decoder used libjpeg-turbo's `tj3_*` API | that arrived in 3.0 and **Ubuntu 24.04 LTS ships 2.1.5**, so the engine could not build on a current LTS at all |
 | a trailing `\` on a `//` line in `examples/corpus/p5events.cpp` | it splices the next line into the comment; GCC's `-Wcomment` + `-Werror` rejects it, clang says nothing |

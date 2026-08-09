@@ -11,7 +11,7 @@
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/paint/paint.hpp>
 
-#include <ctbrowser/raster/backend.hpp>
+#include <ctbrowser/raster/backend/backend.hpp>
 #include <ctbrowser/raster/draw.hpp>
 #include <ctbrowser/raster/surface.hpp>
 #include <ctbrowser/raster/tile.hpp>

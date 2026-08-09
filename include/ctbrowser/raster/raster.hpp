@@ -20,14 +20,14 @@
 //               plutosvg; optional, and the only third-party rasteriser the
 //               engine calls that is not SDL
 
-#include <ctbrowser/raster/backend.hpp>
-#include <ctbrowser/raster/compositor.hpp>
+#include <ctbrowser/raster/backend/backend.hpp>
+#include <ctbrowser/raster/backend/compositor.hpp>
+#include <ctbrowser/raster/backend/pipeline.hpp>
+#include <ctbrowser/raster/backend/renderer.hpp>
+#include <ctbrowser/raster/backend/software.hpp>
 #include <ctbrowser/raster/draw.hpp>
 #include <ctbrowser/raster/gl.hpp>
-#include <ctbrowser/raster/pipeline.hpp>
-#include <ctbrowser/raster/renderer.hpp>
-#include <ctbrowser/raster/software.hpp>
 #include <ctbrowser/raster/surface.hpp>
 #include <ctbrowser/raster/svg.hpp>
+#include <ctbrowser/raster/text/ttf.hpp>
 #include <ctbrowser/raster/tile.hpp>
-#include <ctbrowser/raster/ttf.hpp>

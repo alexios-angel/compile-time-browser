@@ -5,7 +5,7 @@
 
 // SVG, through plutosvg.
 //
-// NOTE WHAT IS NOT INCLUDED ABOVE. Unlike raster/ttf.hpp - which puts
+// NOTE WHAT IS NOT INCLUDED ABOVE. Unlike raster/text/ttf.hpp - which puts
 // <SDL_ttf.h> in a public header and pays for it with an entry in
 // tests/api_surface's allow-list - plutosvg is confined entirely to
 // src/raster/svg.cpp. Two declarations is the whole surface, so no consumer of

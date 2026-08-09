@@ -55,7 +55,7 @@ Attribution for the historical CTLL engine belongs to Hana Dusikova;
 this file preserves it as required by Section 4(c) of the Apache
 License 2.0 for the versions that shipped it.
 
-The embedded 8x8 bitmap font (include/ctbrowser/raster/font8x8.hpp) is
+The embedded 8x8 bitmap font (include/ctbrowser/raster/text/font8x8.hpp) is
 PUBLIC DOMAIN: font8x8 by Daniel Hepper <daniel@hepper.net>
 (https://github.com/dhepper/font8x8), based on public-domain work by
 Marcel Sondaar / International Business Machines.

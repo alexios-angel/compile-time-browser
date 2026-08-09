@@ -120,12 +120,12 @@ int main() {
     // Both trees, since the engine is headers in include/ and implementations
     // in src/: sweeping one of them would leave the other unwatched.
     const std::set<std::string> allowed = {
-        "include/ctbrowser/app/app.hpp",    // the window, the event loop, audio, image decode
-        "src/app/app.cpp",                  //   and its implementation
-        "include/ctbrowser/raster/ttf.hpp", // real fonts, through SDL3_ttf - see its header
-        "src/raster/ttf.cpp",               //   and its implementation
-        "include/ctbrowser/gpu/device.hpp", // the SDL_GPUDevice backend
-        "src/gpu/device.cpp",               //   and its implementation
+        "include/ctbrowser/app/app.hpp",         // the window, the event loop, audio, image decode
+        "src/app/app.cpp",                       //   and its implementation
+        "include/ctbrowser/raster/text/ttf.hpp", // real fonts, through SDL3_ttf - see its header
+        "src/raster/text/ttf.cpp",               //   and its implementation
+        "include/ctbrowser/gpu/device.hpp",      // the SDL_GPUDevice backend
+        "src/gpu/device.cpp",                    //   and its implementation
         "include/ctbrowser/gpu/select.hpp",
         "include/ctbrowser/gpu/gpu.hpp",
     };

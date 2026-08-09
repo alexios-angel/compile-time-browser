@@ -1,5 +1,5 @@
 #include <ctbrowser/core/algorithms.hpp>
-#include <ctbrowser/raster/ttf.hpp>
+#include <ctbrowser/raster/text/ttf.hpp>
 
 // ttf: the method bodies.
 // The header says what these do; this says how.

@@ -15,8 +15,8 @@
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/paint/paint.hpp>
 
-#include <ctbrowser/raster/backend.hpp>
-#include <ctbrowser/raster/compositor.hpp>
+#include <ctbrowser/raster/backend/backend.hpp>
+#include <ctbrowser/raster/backend/compositor.hpp>
 #include <ctbrowser/raster/tile.hpp>
 
 // The frame pipeline: a compositor thread that owns the device, fed by raster

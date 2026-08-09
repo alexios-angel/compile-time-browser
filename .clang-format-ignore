@@ -6,7 +6,7 @@
 # GENERATED. Reformatting these changes nothing that survives the next run of
 # the generator, and makes the diff between "the generator changed" and "the
 # formatter ran" impossible to read.
-include/ctbrowser/raster/font8x8.hpp
+include/ctbrowser/raster/text/font8x8.hpp
 include/ctbrowser/dom/entities.hpp
 include/ctbrowser/gpu/shaders/tile_spv.hpp
 

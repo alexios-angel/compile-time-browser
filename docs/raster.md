@@ -17,7 +17,7 @@ hand-written list could not catch a new file that used SDL, and did not.
 
 `raster/svg.hpp` is two declarations — `svg_available()` and `render_svg(source,
 w, h)` — and `src/raster/svg.cpp` is the only file in the tree that includes a
-**plutosvg** header. Stricter than `raster/ttf.hpp`, which puts `<SDL_ttf.h>` in
+**plutosvg** header. Stricter than `raster/text/ttf.hpp`, which puts `<SDL_ttf.h>` in
 a public header and pays with an `api_surface` allow-list entry; plutosvg hides
 completely and needs no exception.
 

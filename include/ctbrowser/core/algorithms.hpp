@@ -20,7 +20,7 @@ namespace ctbrowser {
 
 // --- case folding ---------------------------------------------------------
 
-// Was: `tokenizer::lower`, and open-coded `std::tolower` in raster/ttf.cpp,
+// Was: `tokenizer::lower`, and open-coded `std::tolower` in raster/text/ttf.cpp,
 // script/builtins.cpp and two places in shell/bindings.
 //
 // NOT `std::tolower`, which takes an int and is undefined for a negative one -

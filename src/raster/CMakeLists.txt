@@ -12,12 +12,16 @@
 add_library(ctbrowser-raster)
 target_sources(ctbrowser-raster
   PRIVATE
-    gl.cpp
+    # the primitives: a surface, its tiles, and the command painter
     draw.cpp
-    ttf.cpp
+    # the GL device
+    gl.cpp
     svg.cpp
-    software.cpp
-    renderer.cpp
+    # the backends and the machinery that drives a frame through one
+    backend/software.cpp
+    backend/renderer.cpp
+    # real fonts
+    text/ttf.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
@@ -26,15 +30,15 @@ target_sources(ctbrowser-raster
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/gl.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/surface.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/draw.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/ttf.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/text/ttf.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/svg.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/font8x8.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/text/font8x8.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/tile.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/software.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/renderer.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/compositor.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/pipeline.hpp")
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend/backend.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend/software.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend/renderer.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend/compositor.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend/pipeline.hpp")
 target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-raster)
 target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)
@@ -71,7 +75,7 @@ if(CTBROWSER_WITH_ANGLE)
 endif()
 # Real fonts, through SDL3_ttf. THE ONE PLACE THE ENGINE LINKS SDL, and a
 # deliberate exception rather than an oversight - see the header of
-# ttf.cppm and the note in tests/api_surface. TTF_Init needs no video
+# text/ttf.hpp and the note in tests/lint/api_surface.cpp. TTF_Init needs no video
 # subsystem, so real text stays testable with no display, which is what makes
 # the exception safe.
 #
