@@ -30,6 +30,21 @@ history. The DOM (its own WHATWG tokenizer and tree builder), the
 style, layout, paint and raster pipeline, the script VM and standard
 library, and the SDL3 shell are original to this repository.
 
+What an INSTALL of this package contains
+----------------------------------------
+`cmake --install` ships compile-time-css's headers alongside this
+project's own, into the same include directory. This is not vendoring
+by preference but by necessity: include/ctbrowser/style/engine.hpp is a
+PUBLIC header and it includes <ctcss.hpp>, so a consumer that cannot
+find ctcss cannot compile against the installed engine at all. Both
+projects are Apache-2.0 with LLVM Exceptions and the licence text is
+the same file, reproduced unmodified; a copy is installed as
+LICENSE-ctcss beside it.
+
+compile-time-javascript's headers are NOT shipped. Nothing public
+names a ctjs type - script/compile.cpp is the only file that includes
+one, and a .cpp is not installed.
+
 The vendored fonts/ directory carries Tinos, Fira Sans and Cousine
 from the Google Fonts collection (github.com/google/fonts), each
 licensed under the SIL Open Font License 1.1 - see fonts/README.md

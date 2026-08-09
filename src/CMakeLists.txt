@@ -248,7 +248,10 @@ target_sources(ctbrowser-script
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/compile.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/number_format.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/vm.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/builtins.hpp")
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/builtins.hpp"
+        # builtins.cpp includes it. Absent from this list until 2026-08-09, so it
+        # was compiled against and never installed.
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/regex.hpp")
 target_compile_features(ctbrowser-script PUBLIC cxx_std_23)
 # PRIVATE: the dispatch strategy is an implementation detail of run_loop and
 # nothing a consumer compiles against can see it.
@@ -310,9 +313,38 @@ target_sources(ctbrowser-style
 target_compile_features(ctbrowser-style PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-style)
 # ctcss's headers are part of style's own headers, so a consumer needs the path.
-# BUILD_INTERFACE only: an exported target may not name a source-tree path.
+# `style/engine.hpp` includes <ctcss.hpp> for one private member's parameter
+# type (`ctcss::value_sheet::selector`), and that is enough: every consumer of
+# the PUBLIC header parses it.
+#
+# TWO INTERFACES, and it took an install to notice the second was missing. An
+# exported target may not name a source-tree path, so the build tree gets
+# BUILD_INTERFACE - and until 2026-08-09 that was the ONLY one, which made the
+# comment above true of the build tree and false of an install. The symptom was
+# not subtle: `find_package(ctbrowser)` succeeded and then the first
+# `#include <ctbrowser.hpp>` died on "ctcss.hpp: No such file or directory".
+# The package had never been compilable, and nothing said so because
+# everything else in this tree consumes the engine through add_subdirectory.
 target_include_directories(ctbrowser-style PUBLIC
-  "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/external/compile-time-css/include>")
+  "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/external/compile-time-css/include>"
+  "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
+
+# ...and the headers themselves have to travel, or the path above points at
+# nothing. ctcss is Apache-2.0 with LLVM Exceptions - the same licence as this
+# repository, which began as a clone of it - so its licence rides along with
+# it, and NOTICE records that this package SHIPS those headers rather than
+# merely building against them.
+#
+# THE SKEW THIS CREATES IS REAL AND IS THE PRICE: an installed prefix now holds
+# a COPY of ctcss's headers, so a consumer that also has its own ctcss can end
+# up with two. `include/` rather than `include/.` on purpose - the trailing
+# slash copies the directory's CONTENTS, so `ctcss.hpp` lands beside
+# `ctbrowser.hpp` exactly as the build tree has it.
+install(DIRECTORY "${PROJECT_SOURCE_DIR}/external/compile-time-css/include/"
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+install(FILES "${PROJECT_SOURCE_DIR}/external/compile-time-css/LICENSE"
+        DESTINATION "${CMAKE_INSTALL_DOCDIR}" RENAME LICENSE-ctcss
+        OPTIONAL)
 target_link_libraries(ctbrowser-style PUBLIC ctbrowser-core ctbrowser-dom Boost::headers)
 
 add_library(ctbrowser::style ALIAS ctbrowser-style)
@@ -528,6 +560,13 @@ target_sources(ctbrowser-shell
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/jpeg.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/net.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/canvas.hpp"
+        # PUBLIC, and it has to be here: canvas.hpp - which IS installed -
+        # includes it. Missing from this list until 2026-08-09, which made the
+        # INSTALLED package unusable while the build tree was fine, because a
+        # build tree finds a header whether or not anything shipped it.
+        # tools/check-package.sh is what proves this, and it is the only thing
+        # that can.
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/composite.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/svg.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/forms.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/bindings.hpp"
@@ -796,6 +835,14 @@ install(EXPORT ctbrowser-targets
 # landed; tools/check-package.sh is what exists to catch exactly this.
 set(CTBROWSER_CONFIG_DEPS
     "find_dependency(Boost 1.80 CONFIG COMPONENTS url)\nfind_dependency(CURL)\nfind_dependency(Threads)")
+# PNG, and it is NOT optional - `find_package(PNG REQUIRED)` above. It was
+# missing from this list until 2026-08-09 and the symptom was exactly what the
+# comment above predicts: `find_package(ctbrowser)` failed at GENERATE time,
+# before a single line compiled, with "the link interface of target
+# ctbrowser::ctbrowser-shell contains PNG::PNG but the target was not found".
+# PRIVATE does not save you here - a STATIC archive carries the dependency into
+# the consumer's link interface regardless.
+string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(PNG)")
 if(SDL3_FOUND)
   string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(SDL3 CONFIG)")
 endif()
@@ -818,6 +865,16 @@ endif()
 # that matters here rather than reasoning about it.
 if(plutosvg_FOUND)
   string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(plutosvg CONFIG)")
+endif()
+# JPEG, and it leaks the same way PNG does - but only in the pkg-config form.
+# `PkgConfig::CTB_TURBOJPEG` is a TARGET NAME in the exported link interface, so
+# the consumer has to be able to recreate it, and the only thing that can is the
+# same pkg_check_modules call under the same prefix. The fallback branch links a
+# resolved library PATH instead, and a path needs nothing found again.
+if(TARGET PkgConfig::CTB_TURBOJPEG)
+  string(APPEND CTBROWSER_CONFIG_DEPS
+         "\nfind_dependency(PkgConfig)"
+         "\npkg_check_modules(CTB_TURBOJPEG REQUIRED IMPORTED_TARGET libturbojpeg)")
 endif()
 file(WRITE "${PROJECT_BINARY_DIR}/ctbrowser-config.cmake"
 "include(CMakeFindDependencyMacro)
