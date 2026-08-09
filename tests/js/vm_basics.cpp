@@ -79,8 +79,20 @@ void diff_vs_v1(std::string_view expression, std::string_view expected) {
 // A whole program, run as written. The stage-2 tests are about STATEMENTS -
 // loops, labels, try blocks - so they are written as programs ending in an
 // explicit `return`, not as expressions to be wrapped.
+//
+// WHICH IS WHY THIS FILE DOES NOT USE `js_expect` from tests/support. That
+// helper wraps its argument as `return (expr);`, which is right for the ten
+// differential suites next door and cannot express a function declaration, a
+// class body or a labelled loop - and 765 of the 768 assertions here are whole
+// statements. `run_vm` also has a second caller this file cannot do without:
+// `diff_vs_v1` needs the same source through ctjs, and needs to know whether
+// each side merely RAN as well as what it returned.
+//
+// There was a second, identical `expect()` beside this until 2026-08-09 - same
+// body, same output, 386 call sites against this one's 385. Two spellings of
+// one assertion in one file is how two halves of a suite drift apart.
 void expect_result(std::string_view source, std::string_view want) {
-    const std::string got = run_vm(std::string{source});
+    const std::string got = run_vm(source);
     if (got != want) {
         std::printf("FAIL     %.70s => %s (want %s)\n", std::string{source}.c_str(), got.c_str(),
                     std::string{want}.c_str());
@@ -102,15 +114,6 @@ void expect_after_turn(std::string_view source, std::string_view want) {
     install_builtins(cx);
     const run_result r = cx.run(prog);
     const std::string got = r.ok ? cx.to_string(cx.global("result")) : "<error: " + r.error + ">";
-    if (got != want) {
-        std::printf("FAIL     %.70s => %s (want %s)\n", std::string{source}.c_str(), got.c_str(),
-                    std::string{want}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
-void expect(std::string_view source, std::string_view want) {
-    const std::string got = run_vm(source);
     if (got != want) {
         std::printf("FAIL     %.70s => %s (want %s)\n", std::string{source}.c_str(), got.c_str(),
                     std::string{want}.c_str());
@@ -150,9 +153,9 @@ void test_comparison_and_logic() {
     diff_vs_v1("true && false", "false");
     diff_vs_v1("false || 'fallback'", "fallback");
     // short-circuit: the right side must not be evaluated at all
-    expect("let hit = 0; function bump() { hit = 1; return true; } "
-           "let r = false && bump(); return hit;",
-           "0");
+    expect_result("let hit = 0; function bump() { hit = 1; return true; } "
+                  "let r = false && bump(); return hit;",
+                  "0");
 }
 
 // `??` ASKS A DIFFERENT QUESTION FROM `||`, and it used to be compiled as one.
@@ -169,13 +172,13 @@ void test_nullish_is_not_falsy() {
     diff_vs_v1("null ?\? 5", "5");
     diff_vs_v1("undefined ?\? 5", "5");
     // and it still short-circuits: the right side is not evaluated at all
-    expect("let hit = 0; function bump() { hit = 1; return 9; } "
-           "let r = 0 ?\? bump(); return hit;",
-           "0");
+    expect_result("let hit = 0; function bump() { hit = 1; return 9; } "
+                  "let r = 0 ?\? bump(); return hit;",
+                  "0");
     // the assignment form asks the same question
-    expect("let a = 0; a ?\?= 5; return a;", "0");
-    expect("let b = null; b ?\?= 5; return b;", "5");
-    expect("let c = ''; c ?\?= 'x'; return c;", "");
+    expect_result("let a = 0; a ?\?= 5; return a;", "0");
+    expect_result("let b = null; b ?\?= 5; return b;", "5");
+    expect_result("let c = ''; c ?\?= 'x'; return c;", "");
 }
 
 // A RADIX PREFIX USED TO EVALUATE TO ZERO.
@@ -203,36 +206,39 @@ void test_radix_literals() {
 // the one positional argument in that slot rather than an array of what was
 // left. Silent in both directions.
 void test_default_parameters() {
-    expect("function f(a, b = 2) { return a + b; } return f(1);", "3");
-    expect("function f(a, b = 2) { return a + b; } return f(1, 10);", "11");
+    expect_result("function f(a, b = 2) { return a + b; } return f(1);", "3");
+    expect_result("function f(a, b = 2) { return a + b; } return f(1, 10);", "11");
     // undefined takes the default; null does NOT - they are different questions
-    expect("function f(a = 5) { return a; } return f(undefined);", "5");
-    expect("function f(a = 5) { return a; } return f(null);", "null");
+    expect_result("function f(a = 5) { return a; } return f(undefined);", "5");
+    expect_result("function f(a = 5) { return a; } return f(null);", "null");
     // a default may be an expression, and may see earlier parameters
-    expect("function f(a, b = a * 2) { return b; } return f(4);", "8");
+    expect_result("function f(a, b = a * 2) { return b; } return f(4);", "8");
     // and it is only evaluated when it is needed
-    expect("let hit = 0; function d() { hit = 1; return 1; } "
-           "function f(a = d()) { return a; } f(9); return hit;",
-           "0");
+    expect_result("let hit = 0; function d() { hit = 1; return 1; } "
+                  "function f(a = d()) { return a; } f(9); return hit;",
+                  "0");
     // arrow functions take the same path
-    expect("const f = (a, b = 3) => a + b; return f(1);", "4");
+    expect_result("const f = (a, b = 3) => a + b; return f(1);", "4");
 }
 
 void test_rest_parameters() {
-    expect("function f(...rest) { return rest.length; } return f(1, 2, 3);", "3");
-    expect("function f(...rest) { return rest[1]; } return f('a', 'b');", "b");
-    expect("function f(a, ...rest) { return rest.join('-'); } return f(1, 2, 3, 4);", "2-3-4");
+    expect_result("function f(...rest) { return rest.length; } return f(1, 2, 3);", "3");
+    expect_result("function f(...rest) { return rest[1]; } return f('a', 'b');", "b");
+    expect_result("function f(a, ...rest) { return rest.join('-'); } return f(1, 2, 3, 4);",
+                  "2-3-4");
     // no extra arguments is an EMPTY array, not undefined
-    expect("function f(a, ...rest) { return rest.length; } return f(1);", "0");
-    expect("function f(...rest) { return Array.isArray(rest) && rest.length === 0; } return f();",
-           "true");
+    expect_result("function f(a, ...rest) { return rest.length; } return f(1);", "0");
+    expect_result(
+        "function f(...rest) { return Array.isArray(rest) && rest.length === 0; } return f();",
+        "true");
     // the rest array is a real array and the locals after it are undisturbed
-    expect("function f(a, ...rest) { let x = 7; return a + rest.length + x; } return f(1, 2, 3);",
-           "10");
+    expect_result(
+        "function f(a, ...rest) { let x = 7; return a + rest.length + x; } return f(1, 2, 3);",
+        "10");
     // and a body long enough to reuse the registers the arguments arrived in
-    expect("function f(a, ...rest) { let p = 1, q = 2, r = 3, s = 4, t = 5; "
-           "return rest.join(',') + '|' + (p + q + r + s + t); } return f(0, 8, 9);",
-           "8,9|15");
+    expect_result("function f(a, ...rest) { let p = 1, q = 2, r = 3, s = 4, t = 5; "
+                  "return rest.join(',') + '|' + (p + q + r + s + t); } return f(0, 8, 9);",
+                  "8,9|15");
 }
 
 // A NESTED FUNCTION DECLARATION IS A BINDING IN ITS SCOPE, and this used to
@@ -242,57 +248,58 @@ void test_rest_parameters() {
 // IIFE, silently undone, in a tree where every bundle is one.
 void test_nested_function_declarations_are_local() {
     // the inner name does not escape
-    expect("function outer() { function helper() { return 1; } return helper(); } "
-           "outer(); return typeof helper;",
-           "undefined");
+    expect_result("function outer() { function helper() { return 1; } return helper(); } "
+                  "outer(); return typeof helper;",
+                  "undefined");
     // two scopes, same name, no collision
-    expect("function a() { function h() { return 'a'; } return h(); } "
-           "function b() { function h() { return 'b'; } return h(); } "
-           "return a() + b();",
-           "ab");
+    expect_result("function a() { function h() { return 'a'; } return h(); } "
+                  "function b() { function h() { return 'b'; } return h(); } "
+                  "return a() + b();",
+                  "ab");
     // and it still captures the enclosing local rather than a global
-    expect("var n = 'global'; "
-           "function outer() { let n = 'local'; function read() { return n; } return read(); } "
-           "return outer();",
-           "local");
+    expect_result(
+        "var n = 'global'; "
+        "function outer() { let n = 'local'; function read() { return n; } return read(); } "
+        "return outer();",
+        "local");
     // recursion resolves to itself, not to a global of the same name
-    expect("function outer() { function fact(k) { return k <= 1 ? 1 : k * fact(k - 1); } "
-           "return fact(5); } return outer();",
-           "120");
+    expect_result("function outer() { function fact(k) { return k <= 1 ? 1 : k * fact(k - 1); } "
+                  "return fact(5); } return outer();",
+                  "120");
     // a top-level declaration is STILL a global - pages define functions the
     // host calls by name, and that is deliberate
-    expect("function top() { return 7; } return typeof top;", "function");
+    expect_result("function top() { return 7; } return typeof top;", "function");
 }
 
 // AN ARROW SEES THE `this` WHERE IT WAS WRITTEN. It used to get its own frame
 // with an undefined receiver, so `this` inside an arrow inside a method - which
 // is where arrows are usually written - was undefined.
 void test_arrow_this_is_lexical() {
-    expect("const o = { n: 5, get() { const f = () => this.n; return f(); } }; return o.get();",
-           "5");
+    expect_result(
+        "const o = { n: 5, get() { const f = () => this.n; return f(); } }; return o.get();", "5");
     // through two levels of arrow
-    expect("const o = { n: 6, get() { const f = () => () => this.n; return f()(); } }; "
-           "return o.get();",
-           "6");
+    expect_result("const o = { n: 6, get() { const f = () => () => this.n; return f()(); } }; "
+                  "return o.get();",
+                  "6");
     // an arrow inside a callback still sees the method's object
-    expect("const o = { n: 3, sum() { return [1, 2].map(x => x * this.n).join(','); } }; "
-           "return o.sum();",
-           "3,6");
+    expect_result("const o = { n: 3, sum() { return [1, 2].map(x => x * this.n).join(','); } }; "
+                  "return o.sum();",
+                  "3,6");
     // an ordinary function still gets its OWN receiver
-    expect("const o = { n: 1, get() { return this.n; } }; return o.get();", "1");
+    expect_result("const o = { n: 1, get() { return this.n; } }; return o.get();", "1");
     // and a class method's arrow sees the instance
-    expect("class C { constructor() { this.v = 9; } read() { const f = () => this.v; "
-           "return f(); } } return new C().read();",
-           "9");
+    expect_result("class C { constructor() { this.v = 9; } read() { const f = () => this.v; "
+                  "return f(); } } return new C().read();",
+                  "9");
 }
 
 void test_bitwise_compound_assignment() {
-    expect("let x = 1; x <<= 3; return x;", "8");
-    expect("let x = 16; x >>= 2; return x;", "4");
-    expect("let x = -1; x >>>= 28; return x;", "15");
-    expect("let x = 0xF0; x &= 0x3C; return x;", "48");
-    expect("let x = 0xF0; x |= 0x0F; return x;", "255");
-    expect("let x = 0xFF; x ^= 0x0F; return x;", "240");
+    expect_result("let x = 1; x <<= 3; return x;", "8");
+    expect_result("let x = 16; x >>= 2; return x;", "4");
+    expect_result("let x = -1; x >>>= 28; return x;", "15");
+    expect_result("let x = 0xF0; x &= 0x3C; return x;", "48");
+    expect_result("let x = 0xF0; x |= 0x0F; return x;", "255");
+    expect_result("let x = 0xFF; x ^= 0x0F; return x;", "240");
 }
 
 // AN INSTANCE FIELD BELONGS TO THE INSTANCE.
@@ -303,69 +310,75 @@ void test_bitwise_compound_assignment() {
 // wrong at any stage. It is the nastiest shape in this batch, because the
 // symptom shows up arbitrarily far from the cause.
 void test_class_fields_are_per_instance() {
-    expect("class A { n = 1; } const x = new A(); const y = new A(); x.n = 99; return y.n;", "1");
+    expect_result("class A { n = 1; } const x = new A(); const y = new A(); x.n = 99; return y.n;",
+                  "1");
     // the case that actually bites: a mutable field
-    expect("class A { items = []; } const x = new A(); const y = new A(); "
-           "x.items.push(1); return y.items.length;",
-           "0");
+    expect_result("class A { items = []; } const x = new A(); const y = new A(); "
+                  "x.items.push(1); return y.items.length;",
+                  "0");
     // a field with no initialiser is still a field
-    expect("class A { x; } const a = new A(); return typeof a.x;", "undefined");
+    expect_result("class A { x; } const a = new A(); return typeof a.x;", "undefined");
     // an initialiser is an expression, evaluated per instance
-    expect("let made = 0; class A { id = ++made; } new A(); new A(); return new A().id;", "3");
+    expect_result("let made = 0; class A { id = ++made; } new A(); new A(); return new A().id;",
+                  "3");
     // it may capture an enclosing local
-    expect("function build(v) { class A { val = v; } return new A().val; } return build(42);",
-           "42");
+    expect_result(
+        "function build(v) { class A { val = v; } return new A().val; } return build(42);", "42");
     // fields arrive before the constructor body, which may then use them
-    expect("class A { n = 2; constructor() { this.n = this.n * 5; } } return new A().n;", "10");
+    expect_result("class A { n = 2; constructor() { this.n = this.n * 5; } } return new A().n;",
+                  "10");
     // INHERITED fields are initialised too, base first
-    expect("class B { b = 'base'; } class D extends B { d = 'derived'; } "
-           "const o = new D(); return o.b + '/' + o.d;",
-           "base/derived");
+    expect_result("class B { b = 'base'; } class D extends B { d = 'derived'; } "
+                  "const o = new D(); return o.b + '/' + o.d;",
+                  "base/derived");
     // and a STATIC field is the opposite case - one value on the class, which
     // is what it should always have been
-    expect("class A { static count = 0; } A.count = 5; return A.count;", "5");
+    expect_result("class A { static count = 0; } A.count = 5; return A.count;", "5");
     // methods still live on the prototype and are shared
-    expect("class A { n = 1; get2() { return 2; } } "
-           "return new A().get2() + new A().get2();",
-           "4");
+    expect_result("class A { n = 1; get2() { return 2; } } "
+                  "return new A().get2() + new A().get2();",
+                  "4");
 }
 
 // `f(...args)` - the single construct that stopped more of p5.js than any
 // other. `nk::spread` was not a case in compile_expr at all, so it reached the
 // default arm and refused the whole call.
 void test_spread_in_a_call() {
-    expect("function f(a, b, c) { return a + b + c; } return f(...[1, 2, 3]);", "6");
+    expect_result("function f(a, b, c) { return a + b + c; } return f(...[1, 2, 3]);", "6");
     // mixed with ordinary arguments, in any position
-    expect("function f(a, b, c) { return a + '-' + b + '-' + c; } "
-           "return f(1, ...[2, 3]);",
-           "1-2-3");
-    expect("function f(a, b, c) { return a + '-' + b + '-' + c; } "
-           "return f(...[1, 2], 3);",
-           "1-2-3");
-    expect("function f(a, b, c, d) { return a + b + c + d; } "
-           "return f(...[1, 2], ...[3, 4]);",
-           "10");
+    expect_result("function f(a, b, c) { return a + '-' + b + '-' + c; } "
+                  "return f(1, ...[2, 3]);",
+                  "1-2-3");
+    expect_result("function f(a, b, c) { return a + '-' + b + '-' + c; } "
+                  "return f(...[1, 2], 3);",
+                  "1-2-3");
+    expect_result("function f(a, b, c, d) { return a + b + c + d; } "
+                  "return f(...[1, 2], ...[3, 4]);",
+                  "10");
     // a METHOD call keeps its receiver
-    expect("const o = { n: 10, add(a, b) { return this.n + a + b; } }; return o.add(...[1, 2]);",
-           "13");
+    expect_result(
+        "const o = { n: 10, add(a, b) { return this.n + a + b; } }; return o.add(...[1, 2]);",
+        "13");
     // and so does a computed one
-    expect("const o = { n: 10, add(a, b) { return this.n + a + b; } }; "
-           "const k = 'add'; return o[k](...[1, 2]);",
-           "13");
+    expect_result("const o = { n: 10, add(a, b) { return this.n + a + b; } }; "
+                  "const k = 'add'; return o[k](...[1, 2]);",
+                  "13");
     // it reaches natives too
-    expect("return Math.max(...[3, 9, 4]);", "9");
+    expect_result("return Math.max(...[3, 9, 4]);", "9");
     // spread of a computed array, not just a literal
-    expect("function f(a, b) { return a * b; } const xs = [3, 4]; return f(...xs);", "12");
+    expect_result("function f(a, b) { return a * b; } const xs = [3, 4]; return f(...xs);", "12");
     // ...and it composes with a rest parameter on the other side
-    expect("function f(...rest) { return rest.length; } return f(...[1, 2, 3], 4);", "4");
-    expect("function f(a, ...rest) { return rest.join(','); } return f(...[1, 2, 3]);", "2,3");
+    expect_result("function f(...rest) { return rest.length; } return f(...[1, 2, 3], 4);", "4");
+    expect_result("function f(a, ...rest) { return rest.join(','); } return f(...[1, 2, 3]);",
+                  "2,3");
     // `new C(...args)`
-    expect("class P { constructor(a, b) { this.v = a + b; } } return new P(...[2, 3]).v;", "5");
-    expect("class P { constructor(a, b, c) { this.v = a + b + c; } } "
-           "return new P(1, ...[2, 3]).v;",
-           "6");
+    expect_result("class P { constructor(a, b) { this.v = a + b; } } return new P(...[2, 3]).v;",
+                  "5");
+    expect_result("class P { constructor(a, b, c) { this.v = a + b + c; } } "
+                  "return new P(1, ...[2, 3]).v;",
+                  "6");
     // a spread of an empty array passes nothing
-    expect("function f(a) { return typeof a; } return f(...[]);", "undefined");
+    expect_result("function f(a) { return typeof a; } return f(...[]);", "undefined");
 }
 
 // A PRIVATE NAME IS A DISTINCT NAME. The `#` used to be skipped as an unknown
@@ -374,18 +387,19 @@ void test_spread_in_a_call() {
 // declares 174 of them. Real brand-check privacy is not modelled - what is
 // fixed is that the two names are no longer the same name.
 void test_private_names_are_distinct() {
-    expect("class C { #n = 1; n = 2; read() { return this.#n + ',' + this.n; } } "
-           "return new C().read();",
-           "1,2");
-    expect("class C { #v = 7; get() { return this.#v; } } return new C().get();", "7");
-    expect("class C { static #hidden = 3; static read() { return C.#hidden; } } return C.read();",
-           "3");
+    expect_result("class C { #n = 1; n = 2; read() { return this.#n + ',' + this.n; } } "
+                  "return new C().read();",
+                  "1,2");
+    expect_result("class C { #v = 7; get() { return this.#v; } } return new C().get();", "7");
+    expect_result(
+        "class C { static #hidden = 3; static read() { return C.#hidden; } } return C.read();",
+        "3");
     // a private method
-    expect("class C { #twice(x) { return x * 2; } run() { return this.#twice(4); } } "
-           "return new C().run();",
-           "8");
+    expect_result("class C { #twice(x) { return x * 2; } run() { return this.#twice(4); } } "
+                  "return new C().run();",
+                  "8");
     // and the public field of the same name is untouched from outside
-    expect("class C { #n = 1; n = 2; } const c = new C(); c.n = 9; return c.n;", "9");
+    expect_result("class C { #n = 1; n = 2; } const c = new C(); c.n = 9; return c.n;", "9");
 }
 
 // DESTRUCTURING. A binding position may hold a SHAPE, and every one of these
@@ -393,67 +407,69 @@ void test_private_names_are_distinct() {
 // the parser desynchronised from there. It stopped seventeen of p5.js's
 // seventy-one modules, each at the first destructuring in the file.
 void test_destructuring_declarations() {
-    expect("const {a, b} = {a: 1, b: 2}; return a + b;", "3");
-    expect("const [x, y] = [3, 4]; return x * y;", "12");
-    expect("const {a: renamed} = {a: 7}; return renamed;", "7");
+    expect_result("const {a, b} = {a: 1, b: 2}; return a + b;", "3");
+    expect_result("const [x, y] = [3, 4]; return x * y;", "12");
+    expect_result("const {a: renamed} = {a: 7}; return renamed;", "7");
     // defaults, and only for undefined
-    expect("const {a = 5} = {}; return a;", "5");
-    expect("const {a = 5} = {a: 0}; return a;", "0");
-    expect("const [p = 1, q = 2] = [9]; return p + ',' + q;", "9,2");
+    expect_result("const {a = 5} = {}; return a;", "5");
+    expect_result("const {a = 5} = {a: 0}; return a;", "0");
+    expect_result("const [p = 1, q = 2] = [9]; return p + ',' + q;", "9,2");
     // holes
-    expect("const [, second] = ['a', 'b']; return second;", "b");
+    expect_result("const [, second] = ['a', 'b']; return second;", "b");
     // rest, in both shapes
-    expect("const [head, ...tail] = [1, 2, 3]; return head + '|' + tail.join(',');", "1|2,3");
-    expect("const {a, ...rest} = {a: 1, b: 2, c: 3}; "
-           "return a + '|' + Object.keys(rest).join(',');",
-           "1|b,c");
+    expect_result("const [head, ...tail] = [1, 2, 3]; return head + '|' + tail.join(',');",
+                  "1|2,3");
+    expect_result("const {a, ...rest} = {a: 1, b: 2, c: 3}; "
+                  "return a + '|' + Object.keys(rest).join(',');",
+                  "1|b,c");
     // nested
-    expect("const {a: {b}} = {a: {b: 'deep'}}; return b;", "deep");
-    expect("const [[m], [n]] = [[1], [2]]; return m + n;", "3");
-    expect("const {list: [first]} = {list: ['x']}; return first;", "x");
+    expect_result("const {a: {b}} = {a: {b: 'deep'}}; return b;", "deep");
+    expect_result("const [[m], [n]] = [[1], [2]]; return m + n;", "3");
+    expect_result("const {list: [first]} = {list: ['x']}; return first;", "x");
     // a computed key
-    expect("const k = 'dyn'; const {[k]: got} = {dyn: 42}; return got;", "42");
+    expect_result("const k = 'dyn'; const {[k]: got} = {dyn: 42}; return got;", "42");
     // a missing property is undefined, not an error
-    expect("const {nope} = {}; return typeof nope;", "undefined");
+    expect_result("const {nope} = {}; return typeof nope;", "undefined");
     // inside a function, so the binding is a local rather than a global
-    expect("function f(o) { const {a, b} = o; return a - b; } return f({a: 9, b: 4});", "5");
+    expect_result("function f(o) { const {a, b} = o; return a - b; } return f({a: 9, b: 4});", "5");
     // and a nested function can capture a name a pattern bound
-    expect("function f(o) { const {v} = o; const get = () => v; return get(); } "
-           "return f({v: 'captured'});",
-           "captured");
+    expect_result("function f(o) { const {v} = o; const get = () => v; return get(); } "
+                  "return f({v: 'captured'});",
+                  "captured");
 }
 
 void test_destructuring_parameters() {
-    expect("function f({x, y}) { return x + y; } return f({x: 1, y: 2});", "3");
-    expect("function f([a, b]) { return a * b; } return f([3, 4]);", "12");
-    expect("function f({x = 10}) { return x; } return f({});", "10");
-    expect("const f = ({n}) => n * 2; return f({n: 21});", "42");
+    expect_result("function f({x, y}) { return x + y; } return f({x: 1, y: 2});", "3");
+    expect_result("function f([a, b]) { return a * b; } return f([3, 4]);", "12");
+    expect_result("function f({x = 10}) { return x; } return f({});", "10");
+    expect_result("const f = ({n}) => n * 2; return f({n: 21});", "42");
     // mixed with ordinary parameters and with a rest
-    expect("function f(a, {b}, ...rest) { return a + b + rest.length; } "
-           "return f(1, {b: 2}, 9, 9);",
-           "5");
+    expect_result("function f(a, {b}, ...rest) { return a + b + rest.length; } "
+                  "return f(1, {b: 2}, 9, 9);",
+                  "5");
     // a whole-parameter default alongside a pattern
-    expect("function f({x} = {x: 'fallback'}) { return x; } return f();", "fallback");
+    expect_result("function f({x} = {x: 'fallback'}) { return x; } return f();", "fallback");
 }
 
 void test_destructuring_assignment() {
-    expect("let a, b; [a, b] = [1, 2]; return a + b;", "3");
-    expect("let a = 1, b = 2; [a, b] = [b, a]; return a + ',' + b;", "2,1");
-    expect("let x; ({x} = {x: 'set'}); return x;", "set");
-    expect("let x, y; ({x, y: y} = {x: 1, y: 2}); return x + y;", "3");
+    expect_result("let a, b; [a, b] = [1, 2]; return a + b;", "3");
+    expect_result("let a = 1, b = 2; [a, b] = [b, a]; return a + ',' + b;", "2,1");
+    expect_result("let x; ({x} = {x: 'set'}); return x;", "set");
+    expect_result("let x, y; ({x, y: y} = {x: 1, y: 2}); return x + y;", "3");
     // a hole skips a position - which is why array literals had to learn them
-    expect("let second; [, second] = ['a', 'b']; return second;", "b");
+    expect_result("let second; [, second] = ['a', 'b']; return second;", "b");
     // a member expression is a legal target
-    expect("const o = {}; [o.first] = ['here']; return o.first;", "here");
+    expect_result("const o = {}; [o.first] = ['here']; return o.first;", "here");
 }
 
 void test_destructuring_in_for_of() {
-    expect("let sum = 0; for (const [a, b] of [[1, 2], [3, 4]]) { sum += a * b; } return sum;",
-           "14");
-    expect("let names = ''; for (const {n} of [{n: 'a'}, {n: 'b'}]) { names += n; } return names;",
-           "ab");
+    expect_result(
+        "let sum = 0; for (const [a, b] of [[1, 2], [3, 4]]) { sum += a * b; } return sum;", "14");
+    expect_result(
+        "let names = ''; for (const {n} of [{n: 'a'}, {n: 'b'}]) { names += n; } return names;",
+        "ab");
     // for-in with no declaration keyword, assigning to an existing binding
-    expect("let k, seen = ''; for (k in {a: 1, b: 2}) { seen += k; } return seen;", "ab");
+    expect_result("let k, seen = ''; for (k in {a: 1, b: 2}) { seen += k; } return seen;", "ab");
 }
 
 // A REGEX ENGINE. Literals were rejected by name; there was none. Ported from
@@ -463,29 +479,29 @@ void test_destructuring_in_for_of() {
 // are REFUSED rather than mis-matched - neither appears in p5.js, and a
 // matcher that silently ignores an assertion is worse than one that says no.
 void test_regex() {
-    expect("return /a(b+)c/.exec('xxabbbcyy')[0];", "abbbc");
-    expect("return /a(b+)c/.exec('xxabbbcyy')[1];", "bbb");
+    expect_result("return /a(b+)c/.exec('xxabbbcyy')[0];", "abbbc");
+    expect_result("return /a(b+)c/.exec('xxabbbcyy')[1];", "bbb");
     // .index is the most-used feature of all, at 143 sites in p5.js
-    expect("return /a(b+)c/.exec('xxabbbcyy').index;", "2");
-    expect("return /nope/.exec('abc') === null;", "true");
-    expect("return /^\\d+$/.test('4711');", "true");
-    expect("return /^\\d+$/.test('47a1');", "false");
-    expect("return /x/i.test('X');", "true");
-    expect("return /[a-f0-9]{2}/i.exec('zz A9 zz')[0];", "A9");
+    expect_result("return /a(b+)c/.exec('xxabbbcyy').index;", "2");
+    expect_result("return /nope/.exec('abc') === null;", "true");
+    expect_result("return /^\\d+$/.test('4711');", "true");
+    expect_result("return /^\\d+$/.test('47a1');", "false");
+    expect_result("return /x/i.test('X');", "true");
+    expect_result("return /[a-f0-9]{2}/i.exec('zz A9 zz')[0];", "A9");
     // the constructor and the literal build the same thing
-    expect("return new RegExp('b+', '').exec('abbbc')[0];", "bbb");
-    expect("return /ab/g.source + '|' + /ab/gi.flags;", "ab|gi");
+    expect_result("return new RegExp('b+', '').exec('abbbc')[0];", "bbb");
+    expect_result("return /ab/g.source + '|' + /ab/gi.flags;", "ab|gi");
     // lookahead, positive and negative
-    expect("return /foo(?=bar)/.test('foobar');", "true");
-    expect("return /foo(?=bar)/.test('foobaz');", "false");
-    expect("return /foo(?!bar)/.test('foobaz');", "true");
+    expect_result("return /foo(?=bar)/.test('foobar');", "true");
+    expect_result("return /foo(?=bar)/.test('foobaz');", "false");
+    expect_result("return /foo(?!bar)/.test('foobaz');", "true");
     // a named group is an ordinary capture that also answers to a name
-    expect("return /(?<n>\\d+)/.exec('x42').groups.n;", "42");
+    expect_result("return /(?<n>\\d+)/.exec('x42').groups.n;", "42");
     // `g` resumes from lastIndex and writes it back
-    expect("const re = /\\d/g; const s = 'a1b2'; re.exec(s); return re.exec(s)[0];", "2");
-    expect("const re = /\\d/g; re.exec('a1'); re.exec('a1'); return re.lastIndex;", "0");
+    expect_result("const re = /\\d/g; const s = 'a1b2'; re.exec(s); return re.exec(s)[0];", "2");
+    expect_result("const re = /\\d/g; re.exec('a1'); re.exec('a1'); return re.lastIndex;", "0");
     // and a pattern that cannot compile does not match rather than crashing
-    expect("return /(?<=x)y/.test('xy');", "false");
+    expect_result("return /(?<=x)y/.test('xy');", "false");
 }
 
 // ACCESSORS. A property that runs code when it is read, which is a different
@@ -498,57 +514,59 @@ void test_regex() {
 // bindings among them - were untouched, and an object with no accessors pays
 // one bool.
 void test_accessors() {
-    expect("const o = { get v() { return 42; } }; return o.v;", "42");
-    expect("const o = { n: 0, set v(x) { this.n = x * 2; } }; o.v = 21; return o.n;", "42");
-    expect("const o = { n: 1, get v() { return this.n; }, set v(x) { this.n = x; } }; "
-           "o.v = 9; return o.v;",
-           "9");
+    expect_result("const o = { get v() { return 42; } }; return o.v;", "42");
+    expect_result("const o = { n: 0, set v(x) { this.n = x * 2; } }; o.v = 21; return o.n;", "42");
+    expect_result("const o = { n: 1, get v() { return this.n; }, set v(x) { this.n = x; } }; "
+                  "o.v = 9; return o.v;",
+                  "9");
     // a getter is CALLED, not returned
-    expect("const o = { get v() { return 1; } }; return typeof o.v;", "number");
+    expect_result("const o = { get v() { return 1; } }; return typeof o.v;", "number");
     // on a class, and on its prototype so every instance sees it
-    expect("class C { constructor() { this.n = 3; } get double() { return this.n * 2; } } "
-           "return new C().double;",
-           "6");
-    expect("class C { constructor() { this.n = 0; } set v(x) { this.n = x + 1; } } "
-           "const c = new C(); c.v = 4; return c.n;",
-           "5");
+    expect_result("class C { constructor() { this.n = 3; } get double() { return this.n * 2; } } "
+                  "return new C().double;",
+                  "6");
+    expect_result("class C { constructor() { this.n = 0; } set v(x) { this.n = x + 1; } } "
+                  "const c = new C(); c.v = 4; return c.n;",
+                  "5");
     // a static accessor lives on the constructor
-    expect("class C { static get name2() { return 'C'; } } return C.name2;", "C");
+    expect_result("class C { static get name2() { return 'C'; } } return C.name2;", "C");
     // an accessor INHERITED through extends still reads the instance
-    expect("class B { get kind() { return 'b:' + this.n; } } "
-           "class D extends B { constructor() { super(); this.n = 7; } } "
-           "return new D().kind;",
-           "b:7");
+    expect_result("class B { get kind() { return 'b:' + this.n; } } "
+                  "class D extends B { constructor() { super(); this.n = 7; } } "
+                  "return new D().kind;",
+                  "b:7");
     // a write with no setter is discarded rather than shadowing the getter
-    expect("const o = { get v() { return 1; } }; o.v = 99; return o.v;", "1");
+    expect_result("const o = { get v() { return 1; } }; o.v = 99; return o.v;", "1");
     // an own DATA property wins over an inherited accessor
-    expect("class B { get v() { return 'proto'; } } class D extends B {} "
-           "const d = new D(); return d.v;",
-           "proto");
+    expect_result("class B { get v() { return 'proto'; } } class D extends B {} "
+                  "const d = new D(); return d.v;",
+                  "proto");
     // and Object.keys sees an accessor, because it is a property
-    expect("const o = { a: 1, get b() { return 2; } }; return Object.keys(o).join(',');", "a,b");
+    expect_result("const o = { a: 1, get b() { return 2; } }; return Object.keys(o).join(',');",
+                  "a,b");
 }
 
 void test_object_descriptors() {
-    expect("const o = {}; Object.defineProperty(o, 'x', { value: 5 }); return o.x;", "5");
-    expect("const o = { n: 2 }; Object.defineProperty(o, 'x', { get() { return this.n * 3; } }); "
-           "return o.x;",
-           "6");
-    expect("const o = {}; Object.defineProperty(o, 'x', { get() { return 1; } }); "
-           "const d = Object.getOwnPropertyDescriptor(o, 'x'); return typeof d.get;",
-           "function");
+    expect_result("const o = {}; Object.defineProperty(o, 'x', { value: 5 }); return o.x;", "5");
+    expect_result(
+        "const o = { n: 2 }; Object.defineProperty(o, 'x', { get() { return this.n * 3; } }); "
+        "return o.x;",
+        "6");
+    expect_result("const o = {}; Object.defineProperty(o, 'x', { get() { return 1; } }); "
+                  "const d = Object.getOwnPropertyDescriptor(o, 'x'); return typeof d.get;",
+                  "function");
     // create + getPrototypeOf round-trip
-    expect("const base = { greet() { return 'hi'; } }; const o = Object.create(base); "
-           "return o.greet();",
-           "hi");
-    expect("const base = {}; const o = Object.create(base); "
-           "return Object.getPrototypeOf(o) === base;",
-           "true");
-    expect("const o = {}; Object.setPrototypeOf(o, { v: 8 }); return o.v;", "8");
-    expect("const o = { a: 1, get b() { return 2; } }; "
-           "return Object.getOwnPropertyNames(o).join(',');",
-           "a,b");
-    expect("return Object.fromEntries([['a', 1], ['b', 2]]).b;", "2");
+    expect_result("const base = { greet() { return 'hi'; } }; const o = Object.create(base); "
+                  "return o.greet();",
+                  "hi");
+    expect_result("const base = {}; const o = Object.create(base); "
+                  "return Object.getPrototypeOf(o) === base;",
+                  "true");
+    expect_result("const o = {}; Object.setPrototypeOf(o, { v: 8 }); return o.v;", "8");
+    expect_result("const o = { a: 1, get b() { return 2; } }; "
+                  "return Object.getOwnPropertyNames(o).join(',');",
+                  "a,b");
+    expect_result("return Object.fromEntries([['a', 1], ['b', 2]]).b;", "2");
 }
 
 // AN OPTIONAL CHAIN SHORT-CIRCUITS THE WHOLE CHAIN, not one link.
@@ -558,36 +576,36 @@ void test_object_descriptors() {
 // undefined. That is how p5.js stopped, four thousand instructions into the
 // bundle.
 void test_optional_chain_short_circuits() {
-    expect("const o = null; return typeof o?.a;", "undefined");
-    expect("const o = null; return typeof o?.a.b.c;", "undefined");
-    expect("const o = null; return typeof o?.m();", "undefined");
-    expect("const o = null; return typeof o?.[0];", "undefined");
-    expect("const o = null; return typeof o?.a[0].b();", "undefined");
+    expect_result("const o = null; return typeof o?.a;", "undefined");
+    expect_result("const o = null; return typeof o?.a.b.c;", "undefined");
+    expect_result("const o = null; return typeof o?.m();", "undefined");
+    expect_result("const o = null; return typeof o?.[0];", "undefined");
+    expect_result("const o = null; return typeof o?.a[0].b();", "undefined");
     // and the present cases still evaluate the whole chain
-    expect("const o = { a: { b: 5 } }; return o?.a.b;", "5");
-    expect("const o = { m() { return 7; } }; return o.m?.();", "7");
-    expect("const o = { a: [9] }; return o?.a[0];", "9");
-    expect("const o = { a: { m() { return 'deep'; } } }; return o?.a.m();", "deep");
+    expect_result("const o = { a: { b: 5 } }; return o?.a.b;", "5");
+    expect_result("const o = { m() { return 7; } }; return o.m?.();", "7");
+    expect_result("const o = { a: [9] }; return o?.a[0];", "9");
+    expect_result("const o = { a: { m() { return 'deep'; } } }; return o?.a.m();", "deep");
     // undefined short-circuits as well as null, and nothing else does
-    expect("const o = undefined; return typeof o?.a;", "undefined");
-    expect("const o = 0; return typeof o?.toFixed;", "function");
+    expect_result("const o = undefined; return typeof o?.a;", "undefined");
+    expect_result("const o = 0; return typeof o?.toFixed;", "function");
     // a chain inside an ARGUMENT is its own chain, not part of the outer one
-    expect("const o = { f(x) { return x === undefined ? 'inner' : x; } }; "
-           "const n = null; return o.f(n?.a);",
-           "inner");
+    expect_result("const o = { f(x) { return x === undefined ? 'inner' : x; } }; "
+                  "const n = null; return o.f(n?.a);",
+                  "inner");
 }
 
 void test_symbol() {
-    expect("return typeof Symbol('x');", "symbol");
-    expect("return typeof Symbol.iterator;", "symbol");
-    expect("return Symbol('tag').description;", "tag");
-    expect("return Symbol('a') === Symbol('a');", "false");
-    expect("return Symbol.iterator === Symbol.iterator;", "true");
+    expect_result("return typeof Symbol('x');", "symbol");
+    expect_result("return typeof Symbol.iterator;", "symbol");
+    expect_result("return Symbol('tag').description;", "tag");
+    expect_result("return Symbol('a') === Symbol('a');", "false");
+    expect_result("return Symbol.iterator === Symbol.iterator;", "true");
     // usable as a property key, which is the whole point
-    expect("const s = Symbol('k'); const o = {}; o[s] = 5; return o[s];", "5");
-    expect("const s = Symbol('k'); const o = {}; o[s] = 5; return o.k;", "undefined");
-    expect("const o = {}; o[Symbol.iterator] = 1; return o[Symbol.iterator];", "1");
-    expect("return Symbol('x').toString();", "Symbol(x)");
+    expect_result("const s = Symbol('k'); const o = {}; o[s] = 5; return o[s];", "5");
+    expect_result("const s = Symbol('k'); const o = {}; o[s] = 5; return o.k;", "undefined");
+    expect_result("const o = {}; o[Symbol.iterator] = 1; return o[Symbol.iterator];", "1");
+    expect_result("return Symbol('x').toString();", "Symbol(x)");
 }
 
 // `a.length = n` RESIZES, and a write that is silently dropped is the kind of
@@ -598,12 +616,12 @@ void test_symbol() {
 // drained was still full and the next frame added the same scene again and
 // threw "Cannot add Scene with duplicate key".
 void test_var_declarators_run_left_to_right() {
-    expect("var a = 1, b = a + 1; return b;", "2");
-    expect("var s = 'ab', n = s.length; return n;", "2");
-    expect("var xs = [3,4], first = xs[0]; return first;", "3");
-    expect("let a = 1, b = a + 1; return b;", "2");
-    expect("const a = 1, b = a + 1; return b;", "2");
-    expect("function f(x) { return x * 2; } var a = 2, b = f(a); return b;", "4");
+    expect_result("var a = 1, b = a + 1; return b;", "2");
+    expect_result("var s = 'ab', n = s.length; return n;", "2");
+    expect_result("var xs = [3,4], first = xs[0]; return first;", "3");
+    expect_result("let a = 1, b = a + 1; return b;", "2");
+    expect_result("const a = 1, b = a + 1; return b;", "2");
+    expect_result("function f(x) { return x * 2; } var a = 2, b = f(a); return b;", "4");
 }
 
 // `+x` IS ToNumber, and it compiled to a plain register copy - so `+"2"` was
@@ -630,18 +648,19 @@ void test_var_declarators_run_left_to_right() {
 // is the first thing in that 11.6 MB bundle this engine's parser stopped on.
 void test_new_target() {
     // Called as a constructor: the function itself.
-    expect("function F() { return typeof new.target; } return new F() && 'made';", "made");
-    expect("function F() { this.t = new.target === F; } return String(new F().t);", "true");
+    expect_result("function F() { return typeof new.target; } return new F() && 'made';", "made");
+    expect_result("function F() { this.t = new.target === F; } return String(new F().t);", "true");
     // Called ordinarily: undefined. THIS is the test real code performs - a
     // guard asks whether it is undefined, not which constructor it is.
-    expect("function F() { return new.target === undefined; } return String(F());", "true");
-    expect("function F() { return typeof new.target; } return F();", "undefined");
+    expect_result("function F() { return new.target === undefined; } return String(F());", "true");
+    expect_result("function F() { return typeof new.target; } return F();", "undefined");
     // The transpiler guard itself, which is the whole reason this exists.
-    expect("function F() { if (new.target === undefined) { return 'needs new'; } return 'ok'; }"
-           "return F() + ',' + (new F() === undefined ? '?' : 'constructed');",
-           "needs new,constructed");
+    expect_result(
+        "function F() { if (new.target === undefined) { return 'needs new'; } return 'ok'; }"
+        "return F() + ',' + (new F() === undefined ? '?' : 'constructed');",
+        "needs new,constructed");
     // At the top level there is no constructor at all.
-    expect("return String(new.target);", "undefined");
+    expect_result("return String(new.target);", "undefined");
     // And it is not a general property of `new`: `new.other` is an error, not
     // a silent undefined, or a typo becomes a value.
     bool ok = true;
@@ -653,149 +672,155 @@ void test_new_target() {
 }
 
 void test_primitives_reach_object_prototype() {
-    expect("return typeof (5).hasOwnProperty;", "function");
-    expect("return String((5).hasOwnProperty('x'));", "false");
-    expect("return typeof true.hasOwnProperty;", "function");
-    expect("return String(true.hasOwnProperty('x'));", "false");
-    expect("return typeof (5).isPrototypeOf;", "function");
-    expect("return typeof (5).propertyIsEnumerable;", "function");
+    expect_result("return typeof (5).hasOwnProperty;", "function");
+    expect_result("return String((5).hasOwnProperty('x'));", "false");
+    expect_result("return typeof true.hasOwnProperty;", "function");
+    expect_result("return String(true.hasOwnProperty('x'));", "false");
+    expect_result("return typeof (5).isPrototypeOf;", "function");
+    expect_result("return typeof (5).propertyIsEnumerable;", "function");
     // The own tables still WIN, or this fix would have shadowed them.
-    expect("return (255).toString(16);", "ff");
-    expect("return (1.5).toFixed(2);", "1.50");
-    expect("return true.toString();", "true");
+    expect_result("return (255).toString(16);", "ff");
+    expect_result("return (1.5).toFixed(2);", "1.50");
+    expect_result("return true.toString();", "true");
     // And the chain arrives at the same place a string's and an array's do.
-    expect("return typeof 'a'.hasOwnProperty;", "function");
-    expect("return typeof [].hasOwnProperty;", "function");
+    expect_result("return typeof 'a'.hasOwnProperty;", "function");
+    expect_result("return typeof [].hasOwnProperty;", "function");
 }
 
 void test_unary_plus_converts() {
-    expect("return typeof (+'2');", "number");
-    expect("return typeof (+'abc');", "number");
-    expect("var xs = [10,20,30]; var i = '1'; return xs[(+i) * 1];", "20");
+    expect_result("return typeof (+'2');", "number");
+    expect_result("return typeof (+'abc');", "number");
+    expect_result("var xs = [10,20,30]; var i = '1'; return xs[(+i) * 1];", "20");
     // The arithmetic a copy would get wrong: `+` on two strings concatenates,
     // so the conversion has to happen before the addition.
-    expect("var a = '2', b = '3'; return (+a) + (+b);", "5");
-    expect("return String(+'');", "0");
-    expect("return String(+'  7  ');", "7");
-    expect("return String(+'0x10');", "16");
-    expect("return String(+true);", "1");
-    expect("return String(+null);", "0");
-    expect("return String(+[]);", "0");
-    expect("return String(+'abc');", "NaN");
-    expect("return String(+undefined);", "NaN");
+    expect_result("var a = '2', b = '3'; return (+a) + (+b);", "5");
+    expect_result("return String(+'');", "0");
+    expect_result("return String(+'  7  ');", "7");
+    expect_result("return String(+'0x10');", "16");
+    expect_result("return String(+true);", "1");
+    expect_result("return String(+null);", "0");
+    expect_result("return String(+[]);", "0");
+    expect_result("return String(+'abc');", "NaN");
+    expect_result("return String(+undefined);", "NaN");
     // Already a number: unchanged, and still a number.
-    expect("return String(+42);", "42");
-    expect("return String(+-3.5);", "-3.5");
+    expect_result("return String(+42);", "42");
+    expect_result("return String(+-3.5);", "-3.5");
     // The idiom that found it, end to end.
-    expect("var d = [0,1,2,3,4,5,6,7,8];"
-           "var k = '1,2', xy = k.split(',');"
-           "return d[+xy[1] * 2 + +xy[0]];",
-           "5");
+    expect_result("var d = [0,1,2,3,4,5,6,7,8];"
+                  "var k = '1,2', xy = k.split(',');"
+                  "return d[+xy[1] * 2 + +xy[0]];",
+                  "5");
 }
 
 void test_array_length_is_writable() {
-    expect("var a = [1,2,3]; a.length = 0; return a.length;", "0");
-    expect("var a = [1,2,3]; a.length = 0; return JSON.stringify(a);", "[]");
+    expect_result("var a = [1,2,3]; a.length = 0; return a.length;", "0");
+    expect_result("var a = [1,2,3]; a.length = 0; return JSON.stringify(a);", "[]");
     // Truncation keeps the front, not the back.
-    expect("var a = [1,2,3,4]; a.length = 2; return JSON.stringify(a);", "[1,2]");
+    expect_result("var a = [1,2,3,4]; a.length = 2; return JSON.stringify(a);", "[1,2]");
     // Growing pads with undefined, which JSON writes as null.
-    expect("var a = [1]; a.length = 3; return a.length;", "3");
-    expect("var a = [1]; a.length = 3; return String(a[2]);", "undefined");
+    expect_result("var a = [1]; a.length = 3; return a.length;", "3");
+    expect_result("var a = [1]; a.length = 3; return String(a[2]);", "undefined");
     // A string coerces, as it does everywhere else.
-    expect("var a = [1,2,3]; a.length = '1'; return JSON.stringify(a);", "[1]");
+    expect_result("var a = [1,2,3]; a.length = '1'; return JSON.stringify(a);", "[1]");
     // NONSENSE LEAVES IT ALONE rather than throwing: the spec says RangeError,
     // and this engine is lenient with pages for the same reason it is elsewhere.
-    expect("var a = [1,2]; a.length = -1; return a.length;", "2");
-    expect("var a = [1,2]; a.length = NaN; return a.length;", "2");
+    expect_result("var a = [1,2]; a.length = -1; return a.length;", "2");
+    expect_result("var a = [1,2]; a.length = NaN; return a.length;", "2");
     // A TYPED array is a view over bytes sized once; resizing it would leave
     // the view and its buffer disagreeing, so the write is a no-op.
-    expect("var t = new Uint8Array(4); t.length = 0; return t.length;", "4");
+    expect_result("var t = new Uint8Array(4); t.length = 0; return t.length;", "4");
     // And the ordinary uses still work either side of it.
-    expect("var a = []; a.push(1); a.push(2); a.length = 0; a.push(9); "
-           "return JSON.stringify(a);",
-           "[9]");
+    expect_result("var a = []; a.push(1); a.push(2); a.length = 0; a.push(9); "
+                  "return JSON.stringify(a);",
+                  "[9]");
 }
 
 void test_collections() {
-    expect("const s = new Set([1, 2, 3]); return s.has(2) + '|' + s.size;", "true|3");
-    expect("const s = new Set(); s.add(1); s.add(1); return s.size;", "1");
-    expect("const s = new Set([1, 2]); s.delete(1); return s.size;", "1");
-    expect("const s = new Set([1, 2]); let sum = 0; s.forEach(v => { sum += v; }); return sum;",
-           "3");
-    expect("const m = new Map([['a', 1]]); m.set('b', 2); return m.get('b') + '|' + m.size;",
-           "2|2");
-    expect("const m = new Map(); m.set('k', 1); m.set('k', 9); return m.get('k') + '|' + m.size;",
-           "9|1");
-    expect("const m = new Map([['a', 1], ['b', 2]]); return m.keys().join(',');", "a,b");
-    expect("const m = new Map([['a', 1]]); return m.has('z');", "false");
+    expect_result("const s = new Set([1, 2, 3]); return s.has(2) + '|' + s.size;", "true|3");
+    expect_result("const s = new Set(); s.add(1); s.add(1); return s.size;", "1");
+    expect_result("const s = new Set([1, 2]); s.delete(1); return s.size;", "1");
+    expect_result(
+        "const s = new Set([1, 2]); let sum = 0; s.forEach(v => { sum += v; }); return sum;", "3");
+    expect_result("const m = new Map([['a', 1]]); m.set('b', 2); return m.get('b') + '|' + m.size;",
+                  "2|2");
+    expect_result(
+        "const m = new Map(); m.set('k', 1); m.set('k', 9); return m.get('k') + '|' + m.size;",
+        "9|1");
+    expect_result("const m = new Map([['a', 1], ['b', 2]]); return m.keys().join(',');", "a,b");
+    expect_result("const m = new Map([['a', 1]]); return m.has('z');", "false");
     // NaN matches NaN as a key, which === does not
-    expect("const s = new Set([NaN]); return s.has(NaN);", "true");
+    expect_result("const s = new Set([NaN]); return s.has(NaN);", "true");
     // and a class may extend one - which means super() has to initialise the
     // RECEIVER rather than making a fresh object
-    expect("class S extends Set {} const s = new S(); s.add(5); return s.has(5) + '|' + s.size;",
-           "true|1");
+    expect_result(
+        "class S extends Set {} const s = new S(); s.add(5); return s.has(5) + '|' + s.size;",
+        "true|1");
 }
 
 void test_errors() {
-    expect("const e = new Error('boom'); return e.message;", "boom");
-    expect("const e = new TypeError('t'); return e.name;", "TypeError");
-    expect("return new RangeError('r') instanceof Error;", "true");
-    expect("try { throw new TypeError('t'); } catch (e) { return e.name + ':' + e.message; }",
-           "TypeError:t");
+    expect_result("const e = new Error('boom'); return e.message;", "boom");
+    expect_result("const e = new TypeError('t'); return e.name;", "TypeError");
+    expect_result("return new RangeError('r') instanceof Error;", "true");
+    expect_result(
+        "try { throw new TypeError('t'); } catch (e) { return e.name + ':' + e.message; }",
+        "TypeError:t");
     // a page's own error type, which is the shape 239 `throw new` in p5 rely on
-    expect("class MyError extends Error { constructor(m) { super(m); this.name = 'MyError'; } } "
-           "try { throw new MyError('x'); } catch (e) { return e.name + '/' + e.message + '/' + "
-           "(e instanceof Error); }",
-           "MyError/x/true");
-    expect("return new Error('z').toString();", "Error: z");
+    expect_result(
+        "class MyError extends Error { constructor(m) { super(m); this.name = 'MyError'; } } "
+        "try { throw new MyError('x'); } catch (e) { return e.name + '/' + e.message + '/' + "
+        "(e instanceof Error); }",
+        "MyError/x/true");
+    expect_result("return new Error('z').toString();", "Error: z");
 }
 
 // A DERIVED CLASS WITH NO CONSTRUCTOR still runs its parent's. An empty one was
 // synthesised instead, so the parent never ran and the instance had none of its
 // state - and the failure surfaced at the first method that needed it.
 void test_implicit_super() {
-    expect("class B { constructor(v) { this.v = v; } } class D extends B {} return new D(7).v;",
-           "7");
-    expect("class B { constructor() { this.n = 1; } } class M extends B {} class D extends M {} "
-           "return new D().n;",
-           "1");
-    expect("class B { constructor(a, b) { this.s = a + b; } } class D extends B {} "
-           "return new D(2, 3).s;",
-           "5");
+    expect_result(
+        "class B { constructor(v) { this.v = v; } } class D extends B {} return new D(7).v;", "7");
+    expect_result(
+        "class B { constructor() { this.n = 1; } } class M extends B {} class D extends M {} "
+        "return new D().n;",
+        "1");
+    expect_result("class B { constructor(a, b) { this.s = a + b; } } class D extends B {} "
+                  "return new D(2, 3).s;",
+                  "5");
 }
 
 // A CLASS EXPRESSION is as ordinary as a function expression. `class` had no
 // case in primary(), so `const X = class {...}` read a global named `class` and
 // the body's members leaked out as top-level statements - silently.
 void test_class_expressions() {
-    expect("const X = class { constructor() { this.v = 1; } }; return new X().v;", "1");
-    expect("const X = class Named { m() { return 'ok'; } }; return new X().m();", "ok");
-    expect("const make = () => class { get v() { return 5; } }; return new (make())().v;", "5");
+    expect_result("const X = class { constructor() { this.v = 1; } }; return new X().v;", "1");
+    expect_result("const X = class Named { m() { return 'ok'; } }; return new X().m();", "ok");
+    expect_result("const make = () => class { get v() { return 5; } }; return new (make())().v;",
+                  "5");
 }
 
 void test_stdlib_additions() {
-    expect("return Array.isArray([]) + '|' + Array.isArray({});", "true|false");
-    expect("return Array.from('abc').join('-');", "a-b-c");
-    expect("return Array.from([1, 2], x => x * 2).join(',');", "2,4");
-    expect("return Array.of(1, 2, 3).length;", "3");
-    expect("return [1, 2, 3].at(-1);", "3");
-    expect("return [1, 2, 3, 4].fill(0, 1, 3).join(',');", "1,0,0,4");
-    expect("return [1, [2, [3]]].flat().length;", "3");
-    expect("return [1, [2, [3]]].flat(2).join(',');", "1,2,3");
-    expect("return [1, 2].flatMap(x => [x, x]).join(',');", "1,1,2,2");
-    expect("return [1, 2, 3].findLast(x => x < 3);", "2");
-    expect("return Math.cbrt(27) + '|' + Math.log2(8) + '|' + Math.log10(1000);", "3|3|3");
+    expect_result("return Array.isArray([]) + '|' + Array.isArray({});", "true|false");
+    expect_result("return Array.from('abc').join('-');", "a-b-c");
+    expect_result("return Array.from([1, 2], x => x * 2).join(',');", "2,4");
+    expect_result("return Array.of(1, 2, 3).length;", "3");
+    expect_result("return [1, 2, 3].at(-1);", "3");
+    expect_result("return [1, 2, 3, 4].fill(0, 1, 3).join(',');", "1,0,0,4");
+    expect_result("return [1, [2, [3]]].flat().length;", "3");
+    expect_result("return [1, [2, [3]]].flat(2).join(',');", "1,2,3");
+    expect_result("return [1, 2].flatMap(x => [x, x]).join(',');", "1,1,2,2");
+    expect_result("return [1, 2, 3].findLast(x => x < 3);", "2");
+    expect_result("return Math.cbrt(27) + '|' + Math.log2(8) + '|' + Math.log10(1000);", "3|3|3");
     // AND IT IS EXACTLY 3, which the line above did not actually establish: it
     // passed for years against 3.0000000000000004, because `to_string` rounded
     // to six decimals and printed "3" either way. glibc's cbrt is an ulp out on
     // a perfect cube. `===` is what asks the question the string never did.
-    expect("return Math.cbrt(27) === 3 && Math.cbrt(216) === 6 && "
-           "Math.cbrt(-27) === -3 && Math.cbrt(1e9) === 1000;",
-           "true");
-    expect("return Number.isInteger(2) + '|' + Number.isInteger(2.5);", "true|false");
+    expect_result("return Math.cbrt(27) === 3 && Math.cbrt(216) === 6 && "
+                  "Math.cbrt(-27) === -3 && Math.cbrt(1e9) === 1000;",
+                  "true");
+    expect_result("return Number.isInteger(2) + '|' + Number.isInteger(2.5);", "true|false");
     // these do NOT coerce, and the difference is used deliberately
-    expect("return Number.isFinite('1') + '|' + isFinite('1');", "false|true");
-    expect("return Number.MAX_SAFE_INTEGER;", "9007199254740991");
+    expect_result("return Number.isFinite('1') + '|' + isFinite('1');", "false|true");
+    expect_result("return Number.MAX_SAFE_INTEGER;", "9007199254740991");
 }
 
 // A NAMED CLASS EXPRESSION BINDS ITS OWN NAME, and its methods see it.
@@ -804,14 +829,14 @@ void test_stdlib_additions() {
 // (`let p5$2 = class p5 {...}`), and without it every static method that named
 // the class read an undefined global.
 void test_named_class_expression_binds_itself() {
-    expect("let X = class Inner { static who() { return typeof Inner; } }; return X.who();",
-           "function");
-    expect("let X = class Inner { static tag = 'i'; static get() { return Inner.tag; } }; "
-           "return X.get();",
-           "i");
-    expect("let X = class Inner { constructor() { this.self = Inner; } }; "
-           "return new X().self === X;",
-           "true");
+    expect_result("let X = class Inner { static who() { return typeof Inner; } }; return X.who();",
+                  "function");
+    expect_result("let X = class Inner { static tag = 'i'; static get() { return Inner.tag; } }; "
+                  "return X.get();",
+                  "i");
+    expect_result("let X = class Inner { constructor() { this.self = Inner; } }; "
+                  "return new X().self === X;",
+                  "true");
     // AND NOWHERE ELSE. This used to read `inner|function`, recorded as a known
     // approximation with a TODO and the note that "nothing in p5.js depends on
     // the difference, and a leaked binding is visible rather than wrong".
@@ -826,15 +851,15 @@ void test_named_class_expression_binds_itself() {
     //
     // The name now lives in a scope of its own, opened before the methods are
     // compiled - so they capture it - and closed after, so nothing else sees it.
-    expect("let Outer = class Inner { static who() { return 'inner'; } }; "
-           "return Outer.who() + '|' + typeof Inner;",
-           "inner|undefined");
+    expect_result("let Outer = class Inner { static who() { return 'inner'; } }; "
+                  "return Outer.who() + '|' + typeof Inner;",
+                  "inner|undefined");
     // The enclosing binding it used to overwrite is left alone, which is the
     // failure that actually bit.
-    expect("var Shared = { tag: 'outer' }; "
-           "var alias = class Shared { static who() { return 'inner'; } }; "
-           "return Shared.tag + '|' + alias.who();",
-           "outer|inner");
+    expect_result("var Shared = { tag: 'outer' }; "
+                  "var alias = class Shared { static who() { return 'inner'; } }; "
+                  "return Shared.tag + '|' + alias.who();",
+                  "outer|inner");
 }
 
 // A function body is not part of the optional chain that encloses it.
@@ -842,15 +867,15 @@ void test_named_class_expression_binds_itself() {
 // arrow's own short-circuit must not be patched into the enclosing function's
 // code - where that index means something else entirely.
 void test_chain_state_does_not_leak_into_a_nested_function() {
-    expect("const o = { m(f) { return f(); } }; const inner = null; "
-           "return typeof o?.m(() => inner?.x);",
-           "undefined");
-    expect("const o = { m(f) { return f(); } }; const inner = { x: 3 }; "
-           "return o?.m(() => inner?.x);",
-           "3");
-    expect("const a = { b: { c(f) { return f(); } } }; const n = null; "
-           "return a?.b.c(() => (n?.p.q ? 'yes' : 'no'));",
-           "no");
+    expect_result("const o = { m(f) { return f(); } }; const inner = null; "
+                  "return typeof o?.m(() => inner?.x);",
+                  "undefined");
+    expect_result("const o = { m(f) { return f(); } }; const inner = { x: 3 }; "
+                  "return o?.m(() => inner?.x);",
+                  "3");
+    expect_result("const a = { b: { c(f) { return f(); } } }; const n = null; "
+                  "return a?.b.c(() => (n?.p.q ? 'yes' : 'no'));",
+                  "no");
 }
 
 // A CLASS DECLARATION IS A HOISTED BINDING, and the reason is register
@@ -860,21 +885,22 @@ void test_chain_state_does_not_leak_into_a_nested_function() {
 // followed by two `new S()` therefore worked once and found an object the
 // second time.
 void test_class_declaration_survives_the_statement() {
-    expect("class S { constructor(x) { this.id = x; } } "
-           "const a = new S('a'); const b = new S('b'); return a.id + b.id;",
-           "ab");
-    expect("function f() { class S { constructor(x) { this.id = x; } } "
-           "const a = new S('a'); const b = new S('b'); const c = new S('c'); "
-           "return a.id + b.id + c.id; } return f();",
-           "abc");
+    expect_result("class S { constructor(x) { this.id = x; } } "
+                  "const a = new S('a'); const b = new S('b'); return a.id + b.id;",
+                  "ab");
+    expect_result("function f() { class S { constructor(x) { this.id = x; } } "
+                  "const a = new S('a'); const b = new S('b'); const c = new S('c'); "
+                  "return a.id + b.id + c.id; } return f();",
+                  "abc");
     // with a static field, which is what put a fresh object in the register
-    expect("function f() { class S { constructor(x) { this.id = x; } static r = new Map(); } "
-           "const a = new S('a'); const b = new S('b'); return a.id + b.id; } return f();",
-           "ab");
+    expect_result(
+        "function f() { class S { constructor(x) { this.id = x; } static r = new Map(); } "
+        "const a = new S('a'); const b = new S('b'); return a.id + b.id; } return f();",
+        "ab");
     // and a class used before its declaration in the same scope still binds
-    expect("function f() { function make() { return new S(1); } class S { constructor(v) "
-           "{ this.v = v; } } return make().v; } return f();",
-           "1");
+    expect_result("function f() { function make() { return new S(1); } class S { constructor(v) "
+                  "{ this.v = v; } } return make().v; } return f();",
+                  "1");
 }
 
 // THE COMMA OPERATOR HAS EFFECTS. It was added to the parser with a test that
@@ -887,20 +913,21 @@ void test_class_declaration_survives_the_statement() {
 // `_createClass(e, r) { return r && _defineProperties(e.prototype, r), ..., e; }`
 // is how one installs its methods.
 void test_comma_operator_evaluates_everything() {
-    expect("let n = 0; function f() { n++; } const x = (f(), f(), 5); return n + '|' + x;", "2|5");
+    expect_result("let n = 0; function f() { n++; } const x = (f(), f(), 5); return n + '|' + x;",
+                  "2|5");
     // the value is the LAST operand
-    expect("return (1, 2, 3);", "3");
+    expect_result("return (1, 2, 3);", "3");
     // it composes with && short-circuits, which is the shape Babel emits
-    expect("let hit = 0; function f() { hit = 1; return 1; } "
-           "function g(a) { return a && f(), 9; } const r = g(1); return hit + '|' + r;",
-           "1|9");
-    expect("let hit = 0; function f() { hit = 1; return 1; } "
-           "function g(a) { return a && f(), 9; } const r = g(0); return hit + '|' + r;",
-           "0|9");
+    expect_result("let hit = 0; function f() { hit = 1; return 1; } "
+                  "function g(a) { return a && f(), 9; } const r = g(1); return hit + '|' + r;",
+                  "1|9");
+    expect_result("let hit = 0; function f() { hit = 1; return 1; } "
+                  "function g(a) { return a && f(), 9; } const r = g(0); return hit + '|' + r;",
+                  "0|9");
     // and in a for-update clause, which is where p5 needed it first
-    expect("let s = ''; for (let i = 0, j = 5; i < 2; i++, j--) { s += i + ':' + j + ' '; } "
-           "return s;",
-           "0:5 1:4 ");
+    expect_result("let s = ''; for (let i = 0, j = 5; i < 2; i++, j--) { s += i + ':' + j + ' '; } "
+                  "return s;",
+                  "0:5 1:4 ");
 }
 
 // EVERY FUNCTION HAS A `prototype`, made on first use. `function F() {}; new F()
@@ -908,35 +935,37 @@ void test_comma_operator_evaluates_everything() {
 // Babel's own `_classCallCheck` guard is exactly that test - and a plain
 // function had none, so `new F()` produced an object with no prototype.
 void test_functions_have_a_prototype() {
-    expect("function F() {} return typeof F.prototype;", "object");
-    expect("function F() {} return F.prototype.constructor === F;", "true");
-    expect("function F() {} return new F() instanceof F;", "true");
+    expect_result("function F() {} return typeof F.prototype;", "object");
+    expect_result("function F() {} return F.prototype.constructor === F;", "true");
+    expect_result("function F() {} return new F() instanceof F;", "true");
     // the same object every time, or nothing built on it would hold
-    expect("function F() {} return F.prototype === F.prototype;", "true");
+    expect_result("function F() {} return F.prototype === F.prototype;", "true");
     // methods installed on it are found by an instance
-    expect("function F() {} F.prototype.m = function () { return 4; }; return new F().m();", "4");
+    expect_result("function F() {} F.prototype.m = function () { return 4; }; return new F().m();",
+                  "4");
     // an arrow is not a constructor and gets none
-    expect("const a = () => 1; return typeof a.prototype;", "undefined");
+    expect_result("const a = () => 1; return typeof a.prototype;", "undefined");
 }
 
 void test_proxy() {
-    expect("const p = new Proxy({ v: 1 }, {}); return p.v;", "1");
-    expect("const p = new Proxy({}, { get(t, k) { return 'got:' + k; } }); return p.anything;",
-           "got:anything");
-    expect("const p = new Proxy({ a: 1 }, { has(t, k) { return k === 'z'; } }); "
-           "return ('z' in p) + '|' + ('a' in p);",
-           "true|false");
+    expect_result("const p = new Proxy({ v: 1 }, {}); return p.v;", "1");
+    expect_result(
+        "const p = new Proxy({}, { get(t, k) { return 'got:' + k; } }); return p.anything;",
+        "got:anything");
+    expect_result("const p = new Proxy({ a: 1 }, { has(t, k) { return k === 'z'; } }); "
+                  "return ('z' in p) + '|' + ('a' in p);",
+                  "true|false");
     // the trap p5.js needs at its top level
-    expect("class B { constructor(v) { this.v = v; } } "
-           "const P = new Proxy(B, { construct(t, args) { return new t(args[0] * 2); } }); "
-           "return new P(4).v;",
-           "8");
+    expect_result("class B { constructor(v) { this.v = v; } } "
+                  "const P = new Proxy(B, { construct(t, args) { return new t(args[0] * 2); } }); "
+                  "return new P(4).v;",
+                  "8");
     // an absent trap falls through to the target rather than being skipped
-    expect("class B { constructor() { this.v = 'base'; } } "
-           "const P = new Proxy(B, {}); return new P().v;",
-           "base");
-    expect("return typeof Reflect.get({ a: 5 }, 'a');", "number");
-    expect("return Reflect.get({ a: 5 }, 'a');", "5");
+    expect_result("class B { constructor() { this.v = 'base'; } } "
+                  "const P = new Proxy(B, {}); return new P().v;",
+                  "base");
+    expect_result("return typeof Reflect.get({ a: 5 }, 'a');", "number");
+    expect_result("return Reflect.get({ a: 5 }, 'a');", "5");
 }
 
 // `Object.defineProperty` with a descriptor that has no value, get or set
@@ -945,26 +974,29 @@ void test_proxy() {
 // {writable: false})` - which every Babel class emits - wiped the prototype it
 // had just filled in.
 void test_define_property_attributes_only() {
-    expect("const o = { v: 1 }; Object.defineProperty(o, 'v', { writable: false }); return o.v;",
-           "1");
-    expect("function F() {} F.prototype.m = function () { return 1; }; "
-           "Object.defineProperty(F, 'prototype', { writable: false }); "
-           "return typeof F.prototype.m;",
-           "function");
+    expect_result(
+        "const o = { v: 1 }; Object.defineProperty(o, 'v', { writable: false }); return o.v;", "1");
+    expect_result("function F() {} F.prototype.m = function () { return 1; }; "
+                  "Object.defineProperty(F, 'prototype', { writable: false }); "
+                  "return typeof F.prototype.m;",
+                  "function");
     // a FUNCTION is an object: Babel defines onto the constructor as well
-    expect("function F() {} Object.defineProperty(F, 'tag', { value: 'x' }); return F.tag;", "x");
+    expect_result("function F() {} Object.defineProperty(F, 'tag', { value: 'x' }); return F.tag;",
+                  "x");
 }
 
 void test_function_prototype() {
-    expect("function f(a) { return this.v + a; } return f.call({ v: 1 }, 2);", "3");
-    expect("function f(a) { return this.v + a; } return f.apply({ v: 1 }, [2]);", "3");
-    expect("function f(a) { return this.v + a; } return f.bind({ v: 1 })(2);", "3");
+    expect_result("function f(a) { return this.v + a; } return f.call({ v: 1 }, 2);", "3");
+    expect_result("function f(a) { return this.v + a; } return f.apply({ v: 1 }, [2]);", "3");
+    expect_result("function f(a) { return this.v + a; } return f.bind({ v: 1 })(2);", "3");
     // bind is a PARTIAL APPLICATION, not just a receiver change
-    expect("function f(a, b) { return this.v + a + b; } return f.bind({ v: 1 }, 10)(2);", "13");
+    expect_result("function f(a, b) { return this.v + a + b; } return f.bind({ v: 1 }, 10)(2);",
+                  "13");
     // the constructor-borrowing pattern every transpiler emits
-    expect("function P() { this.v = 1; } function C() { P.call(this); } return new C().v;", "1");
+    expect_result("function P() { this.v = 1; } function C() { P.call(this); } return new C().v;",
+                  "1");
     // and a native has the same prototype
-    expect("return typeof Math.max.apply;", "function");
+    expect_result("return typeof Math.max.apply;", "function");
 }
 
 // A FUNCTION HAS A [[Prototype]] OF ITS OWN, and it is not its `prototype`
@@ -973,21 +1005,21 @@ void test_function_prototype() {
 // inherited - and answering null for a function broke every transpiled
 // `extends`.
 void test_function_prototype_link() {
-    expect("function B() {} function D() {} Object.setPrototypeOf(D, B); "
-           "return Object.getPrototypeOf(D) === B;",
-           "true");
+    expect_result("function B() {} function D() {} Object.setPrototypeOf(D, B); "
+                  "return Object.getPrototypeOf(D) === B;",
+                  "true");
     // static inheritance through it
-    expect("function B() {} B.tag = 'base'; function D() {} Object.setPrototypeOf(D, B); "
-           "return D.tag;",
-           "base");
+    expect_result("function B() {} B.tag = 'base'; function D() {} Object.setPrototypeOf(D, B); "
+                  "return D.tag;",
+                  "base");
     // two levels
-    expect("function A() {} A.tag = 'a'; function B() {} function C() {} "
-           "Object.setPrototypeOf(B, A); Object.setPrototypeOf(C, B); return C.tag;",
-           "a");
+    expect_result("function A() {} A.tag = 'a'; function B() {} function C() {} "
+                  "Object.setPrototypeOf(B, A); Object.setPrototypeOf(C, B); return C.tag;",
+                  "a");
     // an ordinary object still answers with its own prototype
-    expect("const base = {}; const o = Object.create(base); "
-           "return Object.getPrototypeOf(o) === base;",
-           "true");
+    expect_result("const base = {}; const o = Object.create(base); "
+                  "return Object.getPrototypeOf(o) === base;",
+                  "true");
 }
 
 // TYPED ARRAYS COERCE ON WRITE, which is the whole of what makes them typed.
@@ -995,43 +1027,45 @@ void test_function_prototype_link() {
 // existing array machinery for nothing - but a shortcut on the coercion would
 // have been a silent wrong answer in exactly the place it matters most.
 void test_typed_arrays() {
-    expect("const a = new Uint8Array(3); return a.length + '|' + a[0];", "3|0");
-    expect("const a = new Uint8Array([1, 2, 3]); return a.join(',');", "1,2,3");
+    expect_result("const a = new Uint8Array(3); return a.length + '|' + a[0];", "3|0");
+    expect_result("const a = new Uint8Array([1, 2, 3]); return a.join(',');", "1,2,3");
     // wrapping, and the one type that CLAMPS instead - it is the pixel type
-    expect("const a = new Uint8Array(1); a[0] = 300; return a[0];", "44");
-    expect("const a = new Uint8ClampedArray(1); a[0] = 300; return a[0];", "255");
-    expect("const a = new Uint8ClampedArray(1); a[0] = -5; return a[0];", "0");
-    expect("const a = new Int8Array(1); a[0] = 200; return a[0];", "-56");
-    expect("const a = new Int32Array(1); a[0] = 2147483648; return a[0];", "-2147483648");
+    expect_result("const a = new Uint8Array(1); a[0] = 300; return a[0];", "44");
+    expect_result("const a = new Uint8ClampedArray(1); a[0] = 300; return a[0];", "255");
+    expect_result("const a = new Uint8ClampedArray(1); a[0] = -5; return a[0];", "0");
+    expect_result("const a = new Int8Array(1); a[0] = 200; return a[0];", "-56");
+    expect_result("const a = new Int32Array(1); a[0] = 2147483648; return a[0];", "-2147483648");
     // a float32 loses precision a double would keep, which is observable
-    expect("const a = new Float32Array(1); a[0] = 0.1; return a[0] === 0.1;", "false");
-    expect("const a = new Float64Array(1); a[0] = 0.1; return a[0] === 0.1;", "true");
+    expect_result("const a = new Float32Array(1); a[0] = 0.1; return a[0] === 0.1;", "false");
+    expect_result("const a = new Float64Array(1); a[0] = 0.1; return a[0] === 0.1;", "true");
     // and a typed array does NOT grow: a write past the end is dropped
-    expect("const a = new Uint8Array(2); a[5] = 1; return a.length;", "2");
-    expect("return Uint16Array.BYTES_PER_ELEMENT;", "2");
-    expect("const a = new Uint8Array(4); a.set([9, 8], 1); return a.join(',');", "0,9,8,0");
-    expect("const a = new Uint8Array([1, 2, 3, 4]); return a.subarray(1, 3).join(',');", "2,3");
+    expect_result("const a = new Uint8Array(2); a[5] = 1; return a.length;", "2");
+    expect_result("return Uint16Array.BYTES_PER_ELEMENT;", "2");
+    expect_result("const a = new Uint8Array(4); a.set([9, 8], 1); return a.join(',');", "0,9,8,0");
+    expect_result("const a = new Uint8Array([1, 2, 3, 4]); return a.subarray(1, 3).join(',');",
+                  "2,3");
 }
 
 void test_object_prototype() {
-    expect("const o = { a: 1 }; return o.hasOwnProperty('a') + '|' + o.hasOwnProperty('b');",
-           "true|false");
+    expect_result("const o = { a: 1 }; return o.hasOwnProperty('a') + '|' + o.hasOwnProperty('b');",
+                  "true|false");
     // an INHERITED property is not an own one, which is the whole question
-    expect("const base = { a: 1 }; const o = Object.create(base); "
-           "return o.a + '|' + o.hasOwnProperty('a');",
-           "1|false");
-    expect("const o = { get v() { return 1; } }; return o.hasOwnProperty('v');", "true");
-    expect("const base = {}; const o = Object.create(base); return base.isPrototypeOf(o);", "true");
-    expect("return ({}).toString();", "[object Object]");
-    expect("return [1, 2].hasOwnProperty('length');", "true");
+    expect_result("const base = { a: 1 }; const o = Object.create(base); "
+                  "return o.a + '|' + o.hasOwnProperty('a');",
+                  "1|false");
+    expect_result("const o = { get v() { return 1; } }; return o.hasOwnProperty('v');", "true");
+    expect_result("const base = {}; const o = Object.create(base); return base.isPrototypeOf(o);",
+                  "true");
+    expect_result("return ({}).toString();", "[object Object]");
+    expect_result("return [1, 2].hasOwnProperty('length');", "true");
 }
 
 void test_string_statics() {
-    expect("return String.fromCharCode(104, 105);", "hi");
-    expect("return String.fromCharCode.apply(null, [97, 98, 99]);", "abc");
-    expect("return String(42);", "42");
+    expect_result("return String.fromCharCode(104, 105);", "hi");
+    expect_result("return String.fromCharCode.apply(null, [97, 98, 99]);", "abc");
+    expect_result("return String(42);", "42");
     // above 0x7F encodes as UTF-8, because strings here are bytes
-    expect("return String.fromCharCode(233).length;", "2");
+    expect_result("return String.fromCharCode(233).length;", "2");
 }
 
 // A CODE-POINT ESCAPE IS NOT ITS OWN TEXT.
@@ -1046,19 +1080,19 @@ void test_string_statics() {
 // makes, because strings are bytes.
 void test_string_escapes() {
     expect_result("return '\\x41'.length;", "1");
-    expect("return '\\x41';", "A");
+    expect_result("return '\\x41';", "A");
     expect_result("return '\\x00'.charCodeAt(0);", "0");
     expect_result("return '\\xff'.length;", "2"); // U+00FF is two bytes of UTF-8
-    expect("return '\\u0041';", "A");
-    expect("return '\\u{41}';", "A");
+    expect_result("return '\\u0041';", "A");
+    expect_result("return '\\u{41}';", "A");
     expect_result("return '\\u00e9'.length;", "2");
     // A surrogate PAIR is one code point: an escaped emoji must equal the same
     // emoji written literally, which encoding the halves separately would break.
     expect_result("return '\\ud83d\\ude00'.length;", "4");
     expect_result("return '\\ud83d\\ude00' === '\\u{1f600}';", "true");
     expect_result("return '\\u4e2d'.length;", "3");
-    expect("return '\\q';", "q");     // an unknown escape is the character itself
-    expect("return 'a\\\nb';", "ab"); // a backslash before a real newline joins the lines
+    expect_result("return '\\q';", "q");     // an unknown escape is the character itself
+    expect_result("return 'a\\\nb';", "ab"); // a backslash before a real newline joins the lines
     expect_result("return '\\0'.charCodeAt(0);", "0");
 }
 
@@ -1078,34 +1112,38 @@ void test_string_escapes() {
 // result of its fetch inside a try, so its bytes were a fragment of its own
 // error message and the decode failed with no explanation.
 void test_destructuring_in_a_block() {
-    expect(
+    expect_result(
         "function f() { return { data: 'abc' }; }\n"
         "try { const { data } = f(); return 'len=' + data.length; } catch (e) { return 'threw'; }",
         "len=3");
     // The two-name case, which happened to work and must keep working.
-    expect("function f() { return { a: 'xy', b: 'z' }; }\n"
-           "try { const { a, b } = f(); return a + b + '/' + a.length; } catch (e) { return "
-           "'threw'; }",
-           "xyz/2");
+    expect_result("function f() { return { a: 'xy', b: 'z' }; }\n"
+                  "try { const { a, b } = f(); return a + b + '/' + a.length; } catch (e) { return "
+                  "'threw'; }",
+                  "xyz/2");
     // `var` in a block takes the same path.
-    expect("function f() { return { data: [1, 2, 3] }; }\n"
-           "try { var { data } = f(); return 'n=' + data.length; } catch (e) { return 'threw'; }",
-           "n=3");
+    expect_result(
+        "function f() { return { data: [1, 2, 3] }; }\n"
+        "try { var { data } = f(); return 'n=' + data.length; } catch (e) { return 'threw'; }",
+        "n=3");
     // Nested blocks, and a temporary allocated after the pattern.
-    expect("function f() { return { data: 'abc' }; }\n"
-           "{ { const { data } = f(); const t = 'a longer string'; return data + t.length; } }",
-           "abc15");
+    expect_result(
+        "function f() { return { data: 'abc' }; }\n"
+        "{ { const { data } = f(); const t = 'a longer string'; return data + t.length; } }",
+        "abc15");
     // Array patterns and defaults in a block, for the same reason.
-    expect("try { const [x, y] = ['ab', 'c']; return x + y + '/' + x.length; } catch (e) { return "
-           "'threw'; }",
-           "abc/2");
-    expect("function f() { return {}; }\n"
-           "{ const { missing = 'fallback' } = f(); return missing + '/' + missing.length; }",
-           "fallback/8");
+    expect_result(
+        "try { const [x, y] = ['ab', 'c']; return x + y + '/' + x.length; } catch (e) { return "
+        "'threw'; }",
+        "abc/2");
+    expect_result(
+        "function f() { return {}; }\n"
+        "{ const { missing = 'fallback' } = f(); return missing + '/' + missing.length; }",
+        "fallback/8");
     // Renamed and nested shapes.
-    expect("function f() { return { outer: { inner: 'v' } }; }\n"
-           "{ const { outer: { inner } } = f(); return inner + '/' + inner.length; }",
-           "v/1");
+    expect_result("function f() { return { outer: { inner: 'v' } }; }\n"
+                  "{ const { outer: { inner } } = f(); return inner + '/' + inner.length; }",
+                  "v/1");
 }
 
 // A NAMED CLASS EXPRESSION BINDS ITS NAME INSIDE ITSELF, AND NOWHERE ELSE.
@@ -1126,62 +1164,64 @@ void test_destructuring_in_a_block() {
 void test_a_named_class_expression_does_not_leak() {
     // The reader is a CLASS METHOD, compiled after the expression - the case that
     // failed. A function declaration is hoisted and would pass either way.
-    expect("var Shared = { tag: 'outer' };\n"
-           "var alias = class Shared { static who() { return 'inner'; } };\n"
-           "class Reader { read() { return Shared === undefined ? 'LEAKED' : Shared.tag; } }\n"
-           "return new Reader().read();",
-           "outer");
+    expect_result(
+        "var Shared = { tag: 'outer' };\n"
+        "var alias = class Shared { static who() { return 'inner'; } };\n"
+        "class Reader { read() { return Shared === undefined ? 'LEAKED' : Shared.tag; } }\n"
+        "return new Reader().read();",
+        "outer");
     // A function expression compiled after it, same question.
-    expect("var Shared = { tag: 'outer' };\n"
-           "var alias = class Shared {};\n"
-           "var read = function () { return Shared === undefined ? 'LEAKED' : Shared.tag; };\n"
-           "return read();",
-           "outer");
+    expect_result(
+        "var Shared = { tag: 'outer' };\n"
+        "var alias = class Shared {};\n"
+        "var read = function () { return Shared === undefined ? 'LEAKED' : Shared.tag; };\n"
+        "return read();",
+        "outer");
     // The class can still see its OWN name from inside, which is what the
     // enclosing binding was there for.
-    expect("var alias = class Inner { static me() { return typeof Inner; } };\n"
-           "return alias.me();",
-           "function");
-    expect("var made = class Node { constructor() { this.kind = Node.name || 'Node'; } };\n"
-           "return typeof new made().kind;",
-           "string");
+    expect_result("var alias = class Inner { static me() { return typeof Inner; } };\n"
+                  "return alias.me();",
+                  "function");
+    expect_result("var made = class Node { constructor() { this.kind = Node.name || 'Node'; } };\n"
+                  "return typeof new made().kind;",
+                  "string");
     // A named function expression, for the same reason and the same shape.
-    expect("var Shared = 'outer';\n"
-           "var fn = function Shared() { return 1; };\n"
-           "class Reader { read() { return typeof Shared; } }\n"
-           "return new Reader().read();",
-           "string");
+    expect_result("var Shared = 'outer';\n"
+                  "var fn = function Shared() { return 1; };\n"
+                  "class Reader { read() { return typeof Shared; } }\n"
+                  "return new Reader().read();",
+                  "string");
     // And a class DECLARATION still binds its name in the enclosing scope -
     // that is the whole difference, and breaking it would be the mirror bug.
-    expect("class Kept { static tag() { return 'declared'; } }\n"
-           "class User { read() { return Kept.tag(); } }\n"
-           "return new User().read();",
-           "declared");
+    expect_result("class Kept { static tag() { return 'declared'; } }\n"
+                  "class User { read() { return Kept.tag(); } }\n"
+                  "return new User().read();",
+                  "declared");
     // A declaration inside a function, too.
-    expect("function outer() {\n"
-           "  class Kept { static tag() { return 'nested'; } }\n"
-           "  class User { read() { return Kept.tag(); } }\n"
-           "  return new User().read();\n"
-           "}\n"
-           "return outer();",
-           "nested");
+    expect_result("function outer() {\n"
+                  "  class Kept { static tag() { return 'nested'; } }\n"
+                  "  class User { read() { return Kept.tag(); } }\n"
+                  "  return new User().read();\n"
+                  "}\n"
+                  "return outer();",
+                  "nested");
 }
 
 // btoa and atob are BYTE oriented: btoa's argument is a binary string of values
 // 0-255, not text. Treating it as text is how a page's exported image arrives
 // truncated at the first byte that is not valid UTF-8.
 void test_base64() {
-    expect("return btoa('hello');", "aGVsbG8=");
-    expect("return btoa('hi');", "aGk="); // the padding says how many bytes were real
-    expect("return btoa('abc');", "YWJj");
-    expect("return btoa('');", "");
-    expect("return atob('aGVsbG8=');", "hello");
-    expect("return atob('aGk=');", "hi");
-    expect("return atob(btoa('the quick brown fox'));", "the quick brown fox");
+    expect_result("return btoa('hello');", "aGVsbG8=");
+    expect_result("return btoa('hi');", "aGk="); // the padding says how many bytes were real
+    expect_result("return btoa('abc');", "YWJj");
+    expect_result("return btoa('');", "");
+    expect_result("return atob('aGVsbG8=');", "hello");
+    expect_result("return atob('aGk=');", "hi");
+    expect_result("return atob(btoa('the quick brown fox'));", "the quick brown fox");
     expect_result("return atob(btoa('\\x00\\x01\\x7f')).length;", "3");
     expect_result("return atob(btoa('\\x00\\x00\\x00')).charCodeAt(1);", "0");
     // Whitespace in the encoded text is ignored rather than decoded.
-    expect("return atob('aGVs\\nbG8=');", "hello");
+    expect_result("return atob('aGVs\\nbG8=');", "hello");
 }
 
 // A DECLARATION SHADOWS, IT DOES NOT WRITE THROUGH.
@@ -1197,28 +1237,28 @@ void test_base64() {
 // boolean (true), not a function".
 void test_a_declaration_shadows() {
     // a block-scoped const over a hoisted function of the same name
-    expect("function f() { function v() { return 'fn'; } "
-           "{ const v = 'shadow'; } return v(); } return f();",
-           "fn");
+    expect_result("function f() { function v() { return 'fn'; } "
+                  "{ const v = 'shadow'; } return v(); } return f();",
+                  "fn");
     // ...and the shadow is visible inside the block
-    expect("function f() { function v() { return 'fn'; } "
-           "{ const v = 'shadow'; return v; } } return f();",
-           "shadow");
+    expect_result("function f() { function v() { return 'fn'; } "
+                  "{ const v = 'shadow'; return v; } } return f();",
+                  "shadow");
     // the same through a DESTRUCTURING, which is the shape p5 has
-    expect("function f() { function boolean(x) { return 'fn:' + x; } "
-           "for (const { boolean } of [{ boolean: true }]) { } "
-           "return boolean(1); } return f();",
-           "fn:1");
-    expect("function f() { function boolean() { return 'fn'; } let seen; "
-           "for (const { boolean } of [{ boolean: true }]) { seen = boolean; } "
-           "return seen + '|' + boolean(); } return f();",
-           "true|fn");
+    expect_result("function f() { function boolean(x) { return 'fn:' + x; } "
+                  "for (const { boolean } of [{ boolean: true }]) { } "
+                  "return boolean(1); } return f();",
+                  "fn:1");
+    expect_result("function f() { function boolean() { return 'fn'; } let seen; "
+                  "for (const { boolean } of [{ boolean: true }]) { seen = boolean; } "
+                  "return seen + '|' + boolean(); } return f();",
+                  "true|fn");
     // a captured binding survives a shadow in a sibling block
-    expect("function f() { function v() { return 'fn'; } const get = () => v(); "
-           "{ const v = 1; } return get(); } return f();",
-           "fn");
+    expect_result("function f() { function v() { return 'fn'; } const get = () => v(); "
+                  "{ const v = 1; } return get(); } return f();",
+                  "fn");
     // and a var of the same name at function scope still REUSES its slot
-    expect("function f() { var x = 1; var x = 2; return x; } return f();", "2");
+    expect_result("function f() { var x = 1; var x = 2; return x; } return f();", "2");
 }
 
 // A PROMISE CAN BE PENDING. It was settled-only - created already resolved,
@@ -1275,18 +1315,20 @@ void test_pending_promises() {
 // the program keeps its text, so this is a substring rather than a
 // reconstruction.
 void test_function_to_string() {
-    expect("function hi(x) { return x + 1; } return hi.toString();",
-           "function hi(x) { return x + 1; }");
-    expect("const f = (a, b) => a + b; return f.toString();", "(a, b) => a + b");
-    expect("const g = z => z * 2; return g.toString();", "z => z * 2");
+    expect_result("function hi(x) { return x + 1; } return hi.toString();",
+                  "function hi(x) { return x + 1; }");
+    expect_result("const f = (a, b) => a + b; return f.toString();", "(a, b) => a + b");
+    expect_result("const g = z => z * 2; return g.toString();", "z => z * 2");
     // an expression keeps its own name and body
-    expect("const h = function named() { return 1; }; return h.toString();",
-           "function named() { return 1; }");
+    expect_result("const h = function named() { return 1; }; return h.toString();",
+                  "function named() { return 1; }");
     // a method's span starts at its NAME, which is what a browser returns
-    expect("class C { m(a) { return a; } } return C.prototype.m.toString();", "m(a) { return a; }");
-    expect("const o = { go(n) { return n; } }; return o.go.toString();", "go(n) { return n; }");
+    expect_result("class C { m(a) { return a; } } return C.prototype.m.toString();",
+                  "m(a) { return a; }");
+    expect_result("const o = { go(n) { return n; } }; return o.go.toString();",
+                  "go(n) { return n; }");
     // a native says so rather than returning something a parser would accept
-    expect("return Math.max.toString().indexOf('native code') >= 0;", "true");
+    expect_result("return Math.max.toString().indexOf('native code') >= 0;", "true");
 }
 
 void test_typeof() {
@@ -1298,72 +1340,75 @@ void test_typeof() {
 }
 
 void test_variables_and_control_flow() {
-    expect("let x = 5; return x;", "5");
-    expect("let x = 1; x = x + 41; return x;", "42");
-    expect("let x = 0; if (1 < 2) { x = 10; } else { x = 20; } return x;", "10");
-    expect("let x = 0; if (1 > 2) { x = 10; } else { x = 20; } return x;", "20");
-    expect("let n = 0; while (n < 5) { n = n + 1; } return n;", "5");
-    expect("let s = 0; for (let i = 0; i < 5; i = i + 1) { s = s + i; } return s;", "10");
-    expect("let s = 0; for (let i = 0; i < 10; i++) { s = s + i; } return s;", "45");
-    expect("return 1 < 2 ? 'yes' : 'no';", "yes");
+    expect_result("let x = 5; return x;", "5");
+    expect_result("let x = 1; x = x + 41; return x;", "42");
+    expect_result("let x = 0; if (1 < 2) { x = 10; } else { x = 20; } return x;", "10");
+    expect_result("let x = 0; if (1 > 2) { x = 10; } else { x = 20; } return x;", "20");
+    expect_result("let n = 0; while (n < 5) { n = n + 1; } return n;", "5");
+    expect_result("let s = 0; for (let i = 0; i < 5; i = i + 1) { s = s + i; } return s;", "10");
+    expect_result("let s = 0; for (let i = 0; i < 10; i++) { s = s + i; } return s;", "45");
+    expect_result("return 1 < 2 ? 'yes' : 'no';", "yes");
 }
 
 void test_increment_semantics() {
-    expect("let i = 5; let a = i++; return a;", "5"); // postfix yields the old value
-    expect("let i = 5; let a = i++; return i;", "6");
-    expect("let i = 5; let a = ++i; return a;", "6"); // prefix yields the new one
-    expect("let i = 5; i--; return i;", "4");
+    expect_result("let i = 5; let a = i++; return a;", "5"); // postfix yields the old value
+    expect_result("let i = 5; let a = i++; return i;", "6");
+    expect_result("let i = 5; let a = ++i; return a;", "6"); // prefix yields the new one
+    expect_result("let i = 5; i--; return i;", "4");
 }
 
 void test_functions() {
-    expect("function add(a, b) { return a + b; } return add(2, 3);", "5");
-    expect("function f() { return 7; } return f();", "7");
-    expect("function id(x) { return x; } return id('hi');", "hi");
+    expect_result("function add(a, b) { return a + b; } return add(2, 3);", "5");
+    expect_result("function f() { return 7; } return f();", "7");
+    expect_result("function id(x) { return x; } return id('hi');", "hi");
     // hoisting: callable before its declaration appears
-    expect("let r = twice(21); function twice(n) { return n * 2; } return r;", "42");
+    expect_result("let r = twice(21); function twice(n) { return n * 2; } return r;", "42");
     // recursion, and therefore real frame handling
-    expect(
+    expect_result(
         "function fact(n) { if (n <= 1) { return 1; } return n * fact(n - 1); } return fact(10);",
         "3628800");
-    expect(
+    expect_result(
         "function fib(n) { if (n < 2) { return n; } return fib(n-1) + fib(n-2); } return fib(20);",
         "6765");
     // a missing argument is undefined, not an error
-    expect("function f(a, b) { return typeof b; } return f(1);", "undefined");
+    expect_result("function f(a, b) { return typeof b; } return f(1);", "undefined");
     // function expressions and arrows
-    expect("let f = function(x) { return x * 3; }; return f(4);", "12");
-    expect("let f = (x) => x + 1; return f(41);", "42");
-    expect("let f = x => x * x; return f(9);", "81");
+    expect_result("let f = function(x) { return x * 3; }; return f(4);", "12");
+    expect_result("let f = (x) => x + 1; return f(41);", "42");
+    expect_result("let f = x => x * x; return f(9);", "81");
 }
 
 void test_objects_and_arrays() {
-    expect("let o = { a: 1, b: 2 }; return o.a + o.b;", "3");
-    expect("let o = { name: 'ctbrowser' }; return o.name;", "ctbrowser");
-    expect("let o = {}; o.x = 5; return o.x;", "5");
-    expect("let o = { a: 1 }; return o.missing;", "undefined");
-    expect("let a = [1, 2, 3]; return a[0] + a[2];", "4");
-    expect("let a = [1, 2, 3]; return a.length;", "3");
-    expect("let a = []; a[0] = 'x'; return a[0];", "x");
-    expect("let a = [1,2,3]; a[1] = 9; return a[1];", "9");
-    expect("return 'hello'.length;", "5");
-    expect("let o = { a: 1 }; return o['a'];", "1");
-    expect("let a = [1,2,3]; let s = 0; for (let i = 0; i < a.length; i++) { s = s + a[i]; } "
-           "return s;",
-           "6");
+    expect_result("let o = { a: 1, b: 2 }; return o.a + o.b;", "3");
+    expect_result("let o = { name: 'ctbrowser' }; return o.name;", "ctbrowser");
+    expect_result("let o = {}; o.x = 5; return o.x;", "5");
+    expect_result("let o = { a: 1 }; return o.missing;", "undefined");
+    expect_result("let a = [1, 2, 3]; return a[0] + a[2];", "4");
+    expect_result("let a = [1, 2, 3]; return a.length;", "3");
+    expect_result("let a = []; a[0] = 'x'; return a[0];", "x");
+    expect_result("let a = [1,2,3]; a[1] = 9; return a[1];", "9");
+    expect_result("return 'hello'.length;", "5");
+    expect_result("let o = { a: 1 }; return o['a'];", "1");
+    expect_result(
+        "let a = [1,2,3]; let s = 0; for (let i = 0; i < a.length; i++) { s = s + a[i]; } "
+        "return s;",
+        "6");
     // nested structure
-    expect("let o = { inner: { deep: 42 } }; return o.inner.deep;", "42");
+    expect_result("let o = { inner: { deep: 42 } }; return o.inner.deep;", "42");
 }
 
 // The most common shape in JavaScript: script-level state mutated by a
 // function declared beside it. Script scope is global scope here, so this must
 // simply work rather than hit the enclosing-local refusal.
 void test_script_scope_is_shared_with_functions() {
-    expect("let count = 0; function inc() { count = count + 1; } inc(); inc(); return count;", "2");
-    expect("let name = 'ctbrowser'; function greet() { return 'hi ' + name; } return greet();",
-           "hi ctbrowser");
-    expect("let total = 0; function addAll(a) { for (let i = 0; i < a.length; i++) "
-           "{ total = total + a[i]; } } addAll([1,2,3,4]); return total;",
-           "10");
+    expect_result(
+        "let count = 0; function inc() { count = count + 1; } inc(); inc(); return count;", "2");
+    expect_result(
+        "let name = 'ctbrowser'; function greet() { return 'hi ' + name; } return greet();",
+        "hi ctbrowser");
+    expect_result("let total = 0; function addAll(a) { for (let i = 0; i < a.length; i++) "
+                  "{ total = total + a[i]; } } addAll([1,2,3,4]); return total;",
+                  "10");
 }
 
 // Real closures, via boxed cells. Every case here is one that capture-by-value
@@ -1371,53 +1416,54 @@ void test_script_scope_is_shared_with_functions() {
 // refuse instead of guessing.
 void test_closures() {
     // the counter: the canonical case. Capture-by-value returns 0 forever.
-    expect("function counter() { let n = 0; function inc() { n = n + 1; return n; } return inc; }"
-           "let c = counter(); c(); c(); return c();",
-           "3");
+    expect_result(
+        "function counter() { let n = 0; function inc() { n = n + 1; return n; } return inc; }"
+        "let c = counter(); c(); c(); return c();",
+        "3");
 
     // two closures over the SAME cell must see each other's writes
-    expect("function pair() { let n = 0;"
-           "  return { bump: function() { n = n + 1; }, read: function() { return n; } }; }"
-           "let p = pair(); p.bump(); p.bump(); return p.read();",
-           "2");
+    expect_result("function pair() { let n = 0;"
+                  "  return { bump: function() { n = n + 1; }, read: function() { return n; } }; }"
+                  "let p = pair(); p.bump(); p.bump(); return p.read();",
+                  "2");
 
     // separate invocations must NOT share a cell
-    expect("function counter() { let n = 0; return function() { n = n + 1; return n; }; }"
-           "let a = counter(); let b = counter(); a(); a(); return a() + ',' + b();",
-           "3,1");
+    expect_result("function counter() { let n = 0; return function() { n = n + 1; return n; }; }"
+                  "let a = counter(); let b = counter(); a(); a(); return a() + ',' + b();",
+                  "3,1");
 
     // capture of a parameter, not just a local
-    expect("function adder(x) { return function(y) { return x + y; }; }"
-           "let add5 = adder(5); return add5(37);",
-           "42");
+    expect_result("function adder(x) { return function(y) { return x + y; }; }"
+                  "let add5 = adder(5); return add5(37);",
+                  "42");
 
     // TWO levels of nesting: the innermost function captures a variable from
     // its grandparent, which only works if the middle function re-exports it
     // as its own upvalue
-    expect("function outer() { let v = 'deep';"
-           "  function middle() { function inner() { return v; } return inner(); }"
-           "  return middle(); }"
-           "return outer();",
-           "deep");
+    expect_result("function outer() { let v = 'deep';"
+                  "  function middle() { function inner() { return v; } return inner(); }"
+                  "  return middle(); }"
+                  "return outer();",
+                  "deep");
 
     // mutation from the innermost level, visible at the outermost
-    expect("function outer() { let n = 1;"
-           "  function middle() { function inner() { n = n * 10; } inner(); }"
-           "  middle(); middle(); return n; }"
-           "return outer();",
-           "100");
+    expect_result("function outer() { let n = 1;"
+                  "  function middle() { function inner() { n = n * 10; } inner(); }"
+                  "  middle(); middle(); return n; }"
+                  "return outer();",
+                  "100");
 
     // a closure outliving the frame that created it - the cell must survive
-    expect("function make() { let msg = 'alive'; return function() { return msg; }; }"
-           "let f = make(); return f();",
-           "alive");
+    expect_result("function make() { let msg = 'alive'; return function() { return msg; }; }"
+                  "let f = make(); return f();",
+                  "alive");
 
     // closures in a loop capture the loop's binding
-    expect("function build() { let fns = []; let i = 0;"
-           "  while (i < 3) { fns[i] = function() { return i; }; i = i + 1; }"
-           "  return fns[0](); }"
-           "return build();",
-           "3"); // `let i` outside the loop body is ONE binding, so all three see 3
+    expect_result("function build() { let fns = []; let i = 0;"
+                  "  while (i < 3) { fns[i] = function() { return i; }; i = i + 1; }"
+                  "  return fns[0](); }"
+                  "return build();",
+                  "3"); // `let i` outside the loop body is ONE binding, so all three see 3
 }
 
 // A captured cell is reachable only through the closure holding it, so the
