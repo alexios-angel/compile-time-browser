@@ -120,7 +120,7 @@ suite unless a person does. `tools/remote-build.sh` is the whole gate now.
 
 ## Invariants — the things that are easy to break
 
-- **The engine is SDL-FREE.** `shell/app.hpp` and `src/shell/app.cpp` are the
+- **The engine is SDL-FREE.** `app/app.hpp` and `src/app/app.cpp` are the
   only places that know SDL exists, and SDL3 is optional at build time.
   `tests/api_surface` lints both halves: an application source must contain
   exactly one engine include - the umbrella header - and no SDL symbol, and the

@@ -1,4 +1,4 @@
-#include <ctbrowser/shell/png.hpp>
+#include <ctbrowser/shell/image/png.hpp>
 
 // THE ONLY TRANSLATION UNIT THAT KNOWS LIBPNG EXISTS. png.hpp declares two
 // functions and includes nothing third-party, which is the rule url.cpp follows

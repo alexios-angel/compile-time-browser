@@ -96,7 +96,7 @@ So validation is three things, honestly ranked:
 
 ### The invariant this must not break
 
-**The engine is SDL-free** outside `shell/app.cpp` and `gpu/`, and
+**The engine is SDL-free** outside `app/app.cpp` and `gpu/`, and
 `tests/api_surface` lints it. So the WebGL *context* lives in `shell/` and knows
 nothing about SDL; the GPU back end lives in `gpu/` behind an interface the shell
 calls through. Same shape as `raster::backend` already has for the compositor.

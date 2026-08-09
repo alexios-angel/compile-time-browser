@@ -531,44 +531,50 @@ find_package(CURL REQUIRED)
 add_library(ctbrowser-shell)
 target_sources(ctbrowser-shell
   PRIVATE
-    shell/webgl.cpp
-    shell/webgl_bindings.cpp
+    # the assembly itself
     shell/browser.cpp
     shell/bindings.cpp
-    shell/canvas.cpp
-    shell/svg.cpp
-    shell/forms.cpp
-    shell/net_curl.cpp
-    shell/url.cpp
-    shell/png.cpp
-    shell/jpeg.cpp
-    shell/images.cpp
     shell/embedded_fonts.cpp
+    # resources: where bytes come from. net.cpp was net_curl.cpp until
+    # 2026-08-09; the suffix implied a choice of transport, and the Asio one has
+    # been gone for a while.
+    shell/net/net.cpp
+    shell/net/url.cpp
+    # image codecs, each behind a two-function header, none of them SDL
+    shell/image/png.cpp
+    shell/image/jpeg.cpp
+    shell/image/images.cpp
+    # what a PAGE can do
+    shell/page/canvas.cpp
+    shell/page/forms.cpp
+    shell/page/svg_cache.cpp
+    shell/page/webgl.cpp
+    shell/page/webgl_bindings.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
       FILES
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/embedded_fonts.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/shell.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/webgl.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/page/webgl.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/input.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/metrics.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/assets.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/images.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/url.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/png.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/jpeg.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/net.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/canvas.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/page/assets.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/image/images.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/net/url.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/image/png.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/image/jpeg.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/net/net.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/page/canvas.hpp"
         # PUBLIC, and it has to be here: canvas.hpp - which IS installed -
         # includes it. Missing from this list until 2026-08-09, which made the
         # INSTALLED package unusable while the build tree was fine, because a
         # build tree finds a header whether or not anything shipped it.
         # tools/check/check-package.sh is what proves this, and it is the only thing
         # that can.
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/composite.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/svg.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/forms.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/page/composite.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/page/svg_cache.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/page/forms.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/bindings.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/browser.hpp")
 target_compile_features(ctbrowser-shell PUBLIC cxx_std_23)
@@ -687,12 +693,12 @@ add_library(ctbrowser::shell ALIAS ctbrowser-shell)
 add_library(ctbrowser-app)
 target_sources(ctbrowser-app
   PRIVATE
-    shell/app.cpp
+    app/app.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
       FILES
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/app.hpp")
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/app/app.hpp")
 target_compile_features(ctbrowser-app PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-app)
 target_link_libraries(ctbrowser-app PUBLIC ctbrowser-core ctbrowser-paint ctbrowser-raster

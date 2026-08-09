@@ -30,8 +30,8 @@
 // by a small RAII holder. There is no path out of this function that leaks.
 
 #include <ctbrowser/core/algorithms.hpp>
-#include <ctbrowser/shell/net.hpp>
-#include <ctbrowser/shell/url.hpp>
+#include <ctbrowser/shell/net/net.hpp>
+#include <ctbrowser/shell/net/url.hpp>
 
 #include <curl/curl.h>
 

@@ -23,11 +23,11 @@
 #include <utility>
 #include <vector>
 
+#include <ctbrowser/app/app.hpp>
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/paint/paint.hpp>
 #include <ctbrowser/raster/raster.hpp>
 #include <ctbrowser/script/script.hpp>
-#include <ctbrowser/shell/app.hpp>
 #include <ctbrowser/shell/shell.hpp>
 
 // The window, the event loop and the only place SDL is read. See the note in

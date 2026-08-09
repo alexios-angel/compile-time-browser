@@ -1,7 +1,7 @@
 #pragma once
 #include <string_view>
 
-#include <ctbrowser/shell/assets.hpp>
+#include <ctbrowser/shell/page/assets.hpp>
 
 // The vendored OFL faces, baked into the binary where the toolchain can.
 //

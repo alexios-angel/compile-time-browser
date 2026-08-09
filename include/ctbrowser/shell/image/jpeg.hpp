@@ -16,7 +16,7 @@
 // whether SDL happened to be found is one no golden can compare.
 //
 // NOTHING THIRD-PARTY IS INCLUDED ABOVE, the rule url.hpp states for Boost.URL
-// and net.hpp for curl.h. `src/shell/jpeg.cpp` is the only translation unit
+// and net.hpp for curl.h. `src/shell/image/jpeg.cpp` is the only translation unit
 // that has heard of libjpeg-turbo.
 
 namespace ctbrowser::shell {

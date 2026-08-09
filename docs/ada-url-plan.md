@@ -9,7 +9,7 @@ one and it is worse than the performance question that prompted it.
 3986, via Boost.URL.** They are different specifications, and the difference is
 not academic.
 
-`include/ctbrowser/shell/url.hpp` already records the symptom without naming the
+`include/ctbrowser/shell/net/url.hpp` already records the symptom without naming the
 cause:
 
 > LENIENT, LIKE THE REST OF THIS TREE. Boost.URL is a strict parser and refuses

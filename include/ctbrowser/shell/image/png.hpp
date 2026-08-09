@@ -17,7 +17,7 @@
 // use it load BMPs.
 //
 // NOTHING THIRD-PARTY IS INCLUDED ABOVE, the same rule url.hpp states for
-// Boost.URL and net.hpp for curl.h. `src/shell/png.cpp` is the only translation
+// Boost.URL and net.hpp for curl.h. `src/shell/image/png.cpp` is the only translation
 // unit that has heard of libpng - the format's reference implementation, which
 // is what a decoder full of filter types, palettes, tRNS and interlace passes
 // should be. See docs/build.md for the cross-build.

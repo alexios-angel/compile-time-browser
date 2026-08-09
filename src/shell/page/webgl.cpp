@@ -1,4 +1,4 @@
-#include <ctbrowser/shell/webgl.hpp>
+#include <ctbrowser/shell/page/webgl.hpp>
 
 #include <algorithm>
 #include <cstddef>

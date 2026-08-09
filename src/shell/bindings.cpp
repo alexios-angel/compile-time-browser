@@ -1,6 +1,6 @@
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/bindings.hpp>
-#include <ctbrowser/shell/url.hpp>
+#include <ctbrowser/shell/net/url.hpp>
 
 #include <numbers>
 

@@ -23,15 +23,15 @@
 #include <ctbrowser/script/script.hpp>
 #include <ctbrowser/style/style.hpp>
 
-#include <ctbrowser/shell/assets.hpp>
 #include <ctbrowser/shell/bindings.hpp>
-#include <ctbrowser/shell/canvas.hpp>
 #include <ctbrowser/shell/embedded_fonts.hpp>
-#include <ctbrowser/shell/forms.hpp>
-#include <ctbrowser/shell/images.hpp>
+#include <ctbrowser/shell/image/images.hpp>
 #include <ctbrowser/shell/input.hpp>
 #include <ctbrowser/shell/metrics.hpp>
-#include <ctbrowser/shell/svg.hpp>
+#include <ctbrowser/shell/page/assets.hpp>
+#include <ctbrowser/shell/page/canvas.hpp>
+#include <ctbrowser/shell/page/forms.hpp>
+#include <ctbrowser/shell/page/svg_cache.hpp>
 
 // The engine, assembled.
 //

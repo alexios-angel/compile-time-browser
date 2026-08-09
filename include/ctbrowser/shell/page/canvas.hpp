@@ -14,7 +14,7 @@
 #include <ctbrowser/dom/dom.hpp>
 #include <ctbrowser/paint/paint.hpp>
 #include <ctbrowser/raster/raster.hpp>
-#include <ctbrowser/shell/composite.hpp>
+#include <ctbrowser/shell/page/composite.hpp>
 
 // The 2D canvas.
 //

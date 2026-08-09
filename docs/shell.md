@@ -3,7 +3,7 @@
 `include/ctbrowser/shell/` is the engine assembled: `browser.hpp` is the whole
 browser, `bindings.hpp` the API a page's script sees, plus `forms`, `canvas`,
 `input`, `net`, `images`, `assets`, `metrics`. It is SDL-FREE; `app.hpp` and
-`src/shell/app.cpp` are the only places that know SDL exists.
+`src/app/app.cpp` are the only places that know SDL exists.
 
 ## APPLICATION API (2026-07-25)
 

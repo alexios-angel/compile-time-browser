@@ -1,4 +1,4 @@
-#include <ctbrowser/shell/images.hpp>
+#include <ctbrowser/shell/image/images.hpp>
 
 #include <boost/crc.hpp>
 

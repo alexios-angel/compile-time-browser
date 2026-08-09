@@ -231,7 +231,7 @@ turned down rather than overlooked:
   0xEDB88320 reflected), so this is the same checksum from a library rather than
   from memory, and `tools/check/check-png.py` verifies the bytes with Python's own
   zlib independently of it. Header-only, so the cross-build needs nothing.
-  **`encode_png` moved to `src/shell/images.cpp` first**: it was `inline` in a
+  **`encode_png` moved to `src/shell/image/images.cpp` first**: it was `inline` in a
   public header, which made it the odd one out beside the BMP/PNG/JPEG decoders,
   and the rule against third-party headers in public ones is the reason the
   split came before the swap rather than after it.

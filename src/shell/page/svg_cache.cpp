@@ -1,4 +1,4 @@
-#include <ctbrowser/shell/svg.hpp>
+#include <ctbrowser/shell/page/svg_cache.hpp>
 
 #include <algorithm>
 #include <boost/container_hash/hash.hpp>

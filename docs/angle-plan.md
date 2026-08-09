@@ -170,12 +170,12 @@ should be answered before anything is deleted.
 
 | | lines | what happens to it |
 |---|---|---|
-| `src/shell/webgl.cpp` | 1,202 | **deleted** — the GL state machine, draw paths and framebuffers become ANGLE's |
+| `src/shell/page/webgl.cpp` | 1,202 | **deleted** — the GL state machine, draw paths and framebuffers become ANGLE's |
 | `src/raster/glsl.cpp` + `glsl_eval.cpp` + `glsl_preprocess.cpp` | ~2,900 | **no longer on the WebGL path** — ANGLE compiles the shaders |
 | `src/raster/softgl.cpp` | 377 | **deleted** — its only caller is `webgl.cpp` |
 | `src/raster/spirv.cpp` | 733 | **dead** — it exists to feed a GPU path ANGLE would own |
 | `src/raster/glsl_translate.cpp` | 471 | **dead** — ANGLE's translator does exactly this job |
-| `src/shell/webgl_bindings.cpp` | 1,264 | **stays**, and this is the important row |
+| `src/shell/page/webgl_bindings.cpp` | 1,264 | **stays**, and this is the important row |
 
 **About 5,700 lines go and 1,264 stay**, and the split is not arbitrary.
 `webgl_bindings.cpp` is the JavaScript surface — 72 `method(...)` entry points,
@@ -266,7 +266,7 @@ The context itself needs no window: EGL pbuffer or surfaceless plus an FBO.
 
 ### 4. The SDL-free rule, which is enforced
 
-`tests/api_surface` lints that only `shell/app.cpp` knows SDL exists, and that
+`tests/api_surface` lints that only `app/app.cpp` knows SDL exists, and that
 no third-party header appears in a public header. ANGLE brings EGL and GLES
 headers, and they would have to be confined the same way — one `.cpp` owning
 them behind a two-function header, which is the pattern `core/cpu_time.hpp` and

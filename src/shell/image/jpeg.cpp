@@ -1,4 +1,4 @@
-#include <ctbrowser/shell/jpeg.hpp>
+#include <ctbrowser/shell/image/jpeg.hpp>
 
 // THE ONLY TRANSLATION UNIT THAT KNOWS LIBJPEG-TURBO EXISTS. jpeg.hpp declares
 // two functions and includes nothing third-party, which is the rule url.cpp

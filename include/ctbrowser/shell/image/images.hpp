@@ -13,9 +13,9 @@
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/paint/paint.hpp>
 
-#include <ctbrowser/shell/assets.hpp>
-#include <ctbrowser/shell/jpeg.hpp>
-#include <ctbrowser/shell/png.hpp>
+#include <ctbrowser/shell/image/jpeg.hpp>
+#include <ctbrowser/shell/image/png.hpp>
+#include <ctbrowser/shell/page/assets.hpp>
 
 // Decoding images into the bitmap the display list already carries.
 //

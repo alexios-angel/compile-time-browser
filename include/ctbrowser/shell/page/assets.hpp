@@ -9,7 +9,7 @@
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
-#include <ctbrowser/shell/url.hpp>
+#include <ctbrowser/shell/net/url.hpp>
 
 // Everything a page loads by name - sprites, sounds, JSON, whatever `fetch`
 // asks for - comes through here.

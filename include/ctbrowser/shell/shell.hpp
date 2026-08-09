@@ -19,16 +19,16 @@
 // browser here needs no display, which is what lets tests render whole pages
 // and compare them byte for byte.
 
-#include <ctbrowser/shell/assets.hpp>
 #include <ctbrowser/shell/bindings.hpp>
 #include <ctbrowser/shell/browser.hpp>
-#include <ctbrowser/shell/canvas.hpp>
 #include <ctbrowser/shell/embedded_fonts.hpp>
-#include <ctbrowser/shell/forms.hpp>
-#include <ctbrowser/shell/images.hpp>
+#include <ctbrowser/shell/image/images.hpp>
 #include <ctbrowser/shell/input.hpp>
 #include <ctbrowser/shell/metrics.hpp>
-#include <ctbrowser/shell/net.hpp>
-#include <ctbrowser/shell/svg.hpp>
-#include <ctbrowser/shell/url.hpp>
-#include <ctbrowser/shell/webgl.hpp>
+#include <ctbrowser/shell/net/net.hpp>
+#include <ctbrowser/shell/net/url.hpp>
+#include <ctbrowser/shell/page/assets.hpp>
+#include <ctbrowser/shell/page/canvas.hpp>
+#include <ctbrowser/shell/page/forms.hpp>
+#include <ctbrowser/shell/page/svg_cache.hpp>
+#include <ctbrowser/shell/page/webgl.hpp>

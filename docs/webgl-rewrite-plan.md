@@ -97,9 +97,9 @@ at the binding site rather than a silent no-op.
 src/raster/glsl.cpp glsl_eval.cpp glsl_preprocess.cpp glsl_translate.cpp   3598
 src/raster/softgl.cpp spirv.cpp                                            1110
 src/raster/gles.cpp                                                         666
-src/shell/webgl.cpp                                                        1496
+src/shell/page/webgl.cpp                                                        1496
 include/ctbrowser/raster/{glsl,glsl_translate,softgl,spirv,gles}.hpp        1057
-include/ctbrowser/shell/webgl.hpp                                           560
+include/ctbrowser/shell/page/webgl.hpp                                           560
 tests/{glsl_basics,glsl_translate,softgl_basics,spirv_basics}.cpp
 tests/{gles_basics,webgl_basics,webgl_angle}.cpp
 ```
@@ -109,7 +109,7 @@ only to feed a software rasteriser that is also going.
 
 ## What stays, and why
 
-- **`src/shell/webgl_bindings.cpp`** - the JavaScript surface. It is the
+- **`src/shell/page/webgl_bindings.cpp`** - the JavaScript surface. It is the
   SPECIFICATION of what a page can call and it is not the broken part. It gets
   rewired to the new context, and every call it makes that the context does not
   have becomes a compile error, which is the point.

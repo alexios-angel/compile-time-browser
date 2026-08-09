@@ -1,4 +1,4 @@
-#include <ctbrowser/shell/canvas.hpp>
+#include <ctbrowser/shell/page/canvas.hpp>
 
 // canvas: the method bodies.
 // The header says what these do; this says how.
