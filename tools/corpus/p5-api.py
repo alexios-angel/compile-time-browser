@@ -4,10 +4,10 @@
 tests/p5_api.cpp calls as much of p5's API as can be run headlessly and reports
 which calls pass; tests/corpus/p5/p5-api.txt records them; this drives the loop.
 
-    tools/p5-api.py                 build, run, show the failures
-    tools/p5-api.py --advance       record what is passing now
-    tools/p5-api.py --coverage      which of p5's functions no probe mentions
-    tools/p5-api.py --only shape    run and report one module
+    tools/corpus/p5-api.py                 build, run, show the failures
+    tools/corpus/p5-api.py --advance       record what is passing now
+    tools/corpus/p5-api.py --coverage      which of p5's functions no probe mentions
+    tools/corpus/p5-api.py --only shape    run and report one module
 
 The companion to p5-ratchet.py, and the distinction is the point: the ratchet
 measures how FAR the bundle gets - one number up a ladder - and this measures
@@ -24,7 +24,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 BUNDLE = ROOT / "vendor/p5/p5.js"
 PROBES = ROOT / "tests/corpus/p5/p5-api-probe.js"
 RECORD = ROOT / "tests/corpus/p5/p5-api.txt"

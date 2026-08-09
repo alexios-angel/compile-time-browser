@@ -17,11 +17,11 @@
 # plutosvg that are already there - that sysroot is gitignored and populated
 # out-of-band, which is the established pattern this follows rather than invents.
 #
-#   tools/build-boost-mingw.sh [--clean]
+#   tools/mingw/build-boost-mingw.sh [--clean]
 #
 set -euo pipefail
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 target="x86_64-w64-mingw32"
 
 # --- the cross compiler, looked for where the toolchain file looks ----------

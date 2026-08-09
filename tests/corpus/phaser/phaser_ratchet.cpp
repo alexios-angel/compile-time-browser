@@ -333,7 +333,7 @@ int main() {
     const std::string source = read_file("vendor/phaser/phaser.js");
     const measurement m = measure(source);
 
-    // MACHINE-READABLE FIRST, for tools/phaser-ratchet.py, then the sentence a
+    // MACHINE-READABLE FIRST, for tools/corpus/phaser-ratchet.py, then the sentence a
     // person reads. Same two lines p5_ratchet emits, so one tool shape drives
     // both.
     std::printf("LEVEL %d/%d\n", m.level, rung_paints);
@@ -354,12 +354,12 @@ int main() {
     // matters - a fix that trades one wall for another leaves the number alone
     // and reads as "no change" without it.
     //
-    // Only tools/phaser-ratchet.py --advance writes the record, because a test
+    // Only tools/corpus/phaser-ratchet.py --advance writes the record, because a test
     // that edits its own expectations cannot fail.
     const std::string record = read_file("tests/corpus/phaser/phaser-ratchet.txt");
     if (record.empty()) {
         std::printf("     (no tests/corpus/phaser/phaser-ratchet.txt yet - run "
-                    "tools/phaser-ratchet.py --advance to record this)\n");
+                    "tools/corpus/phaser-ratchet.py --advance to record this)\n");
         REPORT("phaser_ratchet");
     }
     const std::string want_level = recorded(record, "level");
@@ -380,7 +380,7 @@ int main() {
             ++ctbrowser_test_failures;
         } else if (m.level > floor_level) {
             std::printf("     AHEAD of the record (%d > %d) - run "
-                        "tools/phaser-ratchet.py --advance\n",
+                        "tools/corpus/phaser-ratchet.py --advance\n",
                         m.level, floor_level);
         }
     }

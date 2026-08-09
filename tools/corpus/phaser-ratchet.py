@@ -4,8 +4,8 @@
 tests/phaser_ratchet.cpp measures a LEVEL and a BLOCKER; tests/corpus/phaser/phaser-ratchet.txt
 records them; this drives the loop around both.
 
-    tools/phaser-ratchet.py             build, measure, show the blocker in context
-    tools/phaser-ratchet.py --advance   record what was just measured
+    tools/corpus/phaser-ratchet.py             build, measure, show the blocker in context
+    tools/corpus/phaser-ratchet.py --advance   record what was just measured
 
 --advance is the only thing that writes the recorded file. Deliberately: a test
 that edits its own expectations cannot fail.
@@ -17,7 +17,7 @@ without SDL, then unary plus, then `a.length = 0`. A fix that trades one wall
 for another leaves the number alone, and without comparing the blocker that
 reads as no change at all.
 
-NO --bisect HERE, unlike tools/p5-ratchet.py, and that is a deliberate absence
+NO --bisect HERE, unlike tools/corpus/p5-ratchet.py, and that is a deliberate absence
 rather than an omission. p5's carving exists because that bundle failed at the
 LANGUAGE rungs and a 4.5 MB IIFE makes a parse error a needle in a haystack.
 Phaser clears lexing, parsing and compiling outright, so every failure it has
@@ -33,7 +33,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 BUNDLE = ROOT / "vendor/phaser/phaser.js"
 RECORD = ROOT / "tests/corpus/phaser/phaser-ratchet.txt"
 TEST = ROOT / "build/src/tests/ctbrowser-test-phaser_ratchet"
@@ -143,7 +143,7 @@ def main():
     show_context(blocker)
     if code != 0:
         print("The ratchet is not satisfied. If this is progress, "
-              "run tools/phaser-ratchet.py --advance")
+              "run tools/corpus/phaser-ratchet.py --advance")
     sys.exit(code)
 
 

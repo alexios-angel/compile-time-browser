@@ -115,7 +115,7 @@ a technical one.
 
 **Packaging (2026-07-25):** v2 is now installable. `find_package(ctbrowser-v2)`
 yields `ctbrowser::ctbrowser-v2`, and an application writes `import ctbrowser;`
-and links that one target — verified by `tools/check-package.sh`, which installs
+and links that one target — verified by `tools/check/check-package.sh`, which installs
 into a temp prefix and builds `tests-v2/package/` against it. GLM and the git
 submodules are no longer configure-time requirements for a v2-only build.
 

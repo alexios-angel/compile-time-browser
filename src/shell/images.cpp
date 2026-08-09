@@ -21,7 +21,7 @@ std::vector<std::byte> encode_png(const paint::bitmap & image) {
     // IS the PNG polynomial - CRC-32/ISO-HDLC, 0x04C11DB7 reflected, which is
     // 0xEDB88320 the way the old loop spelled it, init and final xor 0xFFFFFFFF -
     // so this is the same checksum from a library rather than from memory.
-    // tools/check-png.py verifies the bytes with Python's own zlib, which is
+    // tools/check/check-png.py verifies the bytes with Python's own zlib, which is
     // what says so independently of this file.
     const auto crc_of = [](std::span<const unsigned char> bytes) {
         boost::crc_32_type crc;

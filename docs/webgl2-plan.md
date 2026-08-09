@@ -198,8 +198,8 @@ section below asks for.
 
 ### 0 — the harness, before any engine work — DONE
 `tests/webgl2_ratchet.cpp` + `tests/corpus/webgl2/webgl2-ratchet.txt` +
-`tools/webgl2-ratchet.py` for how FAR; `tests/webgl2_api.cpp` +
-`tests/corpus/webgl2/webgl2-api-probe.js` + `tests/corpus/webgl2/webgl2-api.txt` + `tools/webgl2-api.py`
+`tools/corpus/webgl2-ratchet.py` for how FAR; `tests/webgl2_api.cpp` +
+`tests/corpus/webgl2/webgl2-api-probe.js` + `tests/corpus/webgl2/webgl2-api.txt` + `tools/corpus/webgl2-api.py`
 for how WIDE. Its first reading is the scoping measurement, the way stage 0 was
 for the lexer and Phaser plans — both of which cancelled their own later stages,
 which is the outcome to hope for rather than fear.
@@ -249,9 +249,9 @@ The p5 and Phaser ratchets and probes **must not move**, and the twelve goldens
 stay byte-identical on Linux and on the Windows cross-build.
 
 ```bash
-tools/webgl2-ratchet.py && tools/webgl2-api.py
-tools/p5-ratchet.py && tools/p5-api.py          # 12/12, 179 probes: unchanged
-tools/phaser-ratchet.py && tools/phaser-api.py  # 10/10, 114 probes: unchanged
+tools/corpus/webgl2-ratchet.py && tools/corpus/webgl2-api.py
+tools/corpus/p5-ratchet.py && tools/corpus/p5-api.py          # 12/12, 179 probes: unchanged
+tools/corpus/phaser-ratchet.py && tools/corpus/phaser-api.py  # 10/10, 114 probes: unchanged
 tools/remote-build.sh                           # and on GCC, without SDL
 ```
 

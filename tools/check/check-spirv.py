@@ -4,7 +4,7 @@
 WHAT IS LEFT TO VALIDATE (2026-08-09). This was written for the WebGL back
 end's own SPIR-V emitter, and that emitter is gone - WebGL went to ANGLE on
 2026-08-04, and ANGLE's translator produces what the driver sees now. The
-remaining producer is `tools/gen-shaders.py`, which compiles the tile shaders
+remaining producer is `tools/gen/gen-shaders.py`, which compiles the tile shaders
 offline into `include/ctbrowser/gpu/shaders/tile_spv.hpp`. Point this at those
 bytes. `tests/spirv_basics.cpp`, named here until this note replaced it, went
 with the emitter.
@@ -19,7 +19,7 @@ rules a structural pass cannot: that an OpFAdd's operands have the same type,
 that an entry point lists the variables it uses, that a decoration is legal
 where it appears.
 
-    tools/check-spirv.py build/spirv/*.spv
+    tools/check/check-spirv.py build/spirv/*.spv
 
 OPTIONAL, like plutosvg and SDL3_image: without spirv-val everything still
 builds and passes, and this says plainly that it did not check rather than

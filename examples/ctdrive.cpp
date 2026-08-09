@@ -8,7 +8,7 @@
 // it to a PROGRAM: one line of JSON per command over a loopback socket, one
 // line of JSON back. It exists so ctbrowser can be driven through the same
 // scripted interaction as a real browser and the two compared - see
-// tools/compare.py, which drives this and Playwright side by side.
+// tools/check/compare.py, which drives this and Playwright side by side.
 //
 // The window is REAL by default rather than an afterthought. Watching the
 // engine take a click at human speed beside Chrome doing the same is the point;
@@ -103,7 +103,7 @@ struct winsock_once {};
 }
 
 // The commands, applied to the live page. One function so the vocabulary is in
-// one place - tools/compare.py speaks exactly this and nothing else.
+// one place - tools/check/compare.py speaks exactly this and nothing else.
 class session {
 public:
     explicit session(unsigned short port) {

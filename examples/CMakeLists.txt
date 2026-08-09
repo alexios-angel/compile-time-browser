@@ -154,7 +154,7 @@ foreach(source ${example-sources})
                  -DGOLDEN=${PROJECT_SOURCE_DIR}/tests/golden/${example}.ppm
                  -DWORKDIR=${PROJECT_SOURCE_DIR}
                  -DFRAMES=${render-frames}
-                 -P ${PROJECT_SOURCE_DIR}/tools/check-render.cmake)
+                 -P ${PROJECT_SOURCE_DIR}/tools/check/check-render.cmake)
       endif()
 
       # AND THE SAME PAGE THROUGH ANGLE, where there is one. A SECOND GOLDEN
@@ -182,7 +182,7 @@ foreach(source ${example-sources})
                  -DWORKDIR=${PROJECT_SOURCE_DIR}
                  -DFRAMES=${render-frames}
                  -DBACKEND=angle
-                 -P ${PROJECT_SOURCE_DIR}/tools/check-render.cmake)
+                 -P ${PROJECT_SOURCE_DIR}/tools/check/check-render.cmake)
       endif()
     endif()
   endif()

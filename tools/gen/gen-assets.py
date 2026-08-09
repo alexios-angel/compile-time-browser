@@ -4,13 +4,13 @@ and a blip sound (16-bit mono WAV). Everything is generated
 deterministically by this script - no binary blobs of unknown origin
 in the repository.
 
-Usage:  python3 tools/gen-assets.py
+Usage:  python3 tools/gen/gen-assets.py
 """
 
 import struct
 from pathlib import Path
 
-ASSETS = Path(__file__).resolve().parent.parent / "examples" / "assets"
+ASSETS = Path(__file__).resolve().parent.parent.parent / "examples" / "assets"
 
 # --- the sprite sheet: three 8x8 sprites side by side (24x8):
 #     alien frame A, alien frame B, player ship

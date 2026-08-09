@@ -11,7 +11,7 @@
 // tests/corpus/phaser/phaser-api-probe.js, the runner reports JSON, this parses it by hand,
 // and tests/corpus/phaser/phaser-api.txt records which probes pass. A probe that used to pass
 // and now does not fails the test; a newly passing one is reported and recorded
-// only by tools/phaser-api.py --advance.
+// only by tools/corpus/phaser-api.py --advance.
 //
 // THE JSON IS PARSED BY HAND rather than through the JSON builtin, for the
 // reason the p5 harness states: this is the test harness, and a harness that
@@ -219,7 +219,7 @@ int main() {
         if (!recorded.contains(name)) { gained.push_back(name); }
     }
     if (!gained.empty()) {
-        std::printf("     ADVANCE: %zu newly passing. Run tools/phaser-api.py --advance\n",
+        std::printf("     ADVANCE: %zu newly passing. Run tools/corpus/phaser-api.py --advance\n",
                     gained.size());
         for (const std::string & name : gained) { std::printf("       + %s\n", name.c_str()); }
     }

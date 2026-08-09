@@ -1,7 +1,7 @@
 # Which Phaser 4 probes pass. tests/phaser_api.cpp measures it; this file
 # records it. A probe that used to pass and now does not FAILS the test.
 #
-# Only tools/phaser-api.py --advance writes this file. A test that edits its
+# Only tools/corpus/phaser-api.py --advance writes this file. A test that edits its
 # own expectations cannot fail, so advancing is a deliberate act.
 #
 # The probes themselves are tests/corpus/phaser/phaser-api-probe.js, one per line here as

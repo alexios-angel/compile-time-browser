@@ -34,7 +34,7 @@ if(CTBROWSER_BOOST_INCLUDE_DIR)
     message(FATAL_ERROR
       "ctbrowser: no libboost_url for this target. It is not header-only and cannot be "
       "(boost/url/src.hpp is discontinued upstream). Build it into the mingw sysroot - "
-      "tools/build-boost-mingw.sh does exactly that - and configure again.")
+      "tools/mingw/build-boost-mingw.sh does exactly that - and configure again.")
   endif()
   if(NOT TARGET Boost::url)
     add_library(Boost::url UNKNOWN IMPORTED)
@@ -141,7 +141,7 @@ target_link_libraries(ctbrowser-core PUBLIC Threads::Threads)
 # silently run on the system allocator. tests/core_basics asks
 # ctbrowser::allocator_name() so that mistake is a test failure.
 #
-# The Windows sysroot gets it from tools/build-mimalloc-mingw.sh.
+# The Windows sysroot gets it from tools/mingw/build-mimalloc-mingw.sh.
 # BY PATH, NOT BY find_package. mimalloc's exported config advertises a
 # `mimalloc-static` target on distributions that ship only the shared library,
 # so taking the config's word for it fails at link time with a target that
@@ -161,7 +161,7 @@ find_path(CTBROWSER_MIMALLOC_INCLUDE mimalloc.h
 if(CTBROWSER_USE_MIMALLOC AND (NOT CTBROWSER_MIMALLOC OR NOT CTBROWSER_MIMALLOC_INCLUDE))
   message(FATAL_ERROR
     "mimalloc not found. Linux: brew install mimalloc. "
-    "Windows cross: run tools/build-mimalloc-mingw.sh. "
+    "Windows cross: run tools/mingw/build-mimalloc-mingw.sh. "
     "Or configure with -DCTBROWSER_USE_MIMALLOC=OFF to use the system allocator.")
 endif()
 # simdutf. It backs base64_decode's fast path - 42x on well-formed input, with
@@ -173,7 +173,7 @@ find_path(CTBROWSER_SIMDUTF_INCLUDE simdutf.h HINTS ${CTBROWSER_BREW_HINTS} PATH
 if(NOT CTBROWSER_SIMDUTF OR NOT CTBROWSER_SIMDUTF_INCLUDE)
   message(FATAL_ERROR
     "simdutf not found. Linux: brew install simdutf. "
-    "Windows cross: run tools/build-simdutf-mingw.sh")
+    "Windows cross: run tools/mingw/build-simdutf-mingw.sh")
 endif()
 target_link_libraries(ctbrowser-core PUBLIC "${CTBROWSER_SIMDUTF}")
 target_include_directories(ctbrowser-core SYSTEM PUBLIC "${CTBROWSER_SIMDUTF_INCLUDE}")
@@ -273,7 +273,7 @@ if(CTBROWSER_WITH_GMP)
   if(NOT CTBROWSER_GMP_INCLUDE_DIR OR NOT CTBROWSER_GMP_LIBRARY)
     message(FATAL_ERROR
       "ctbrowser: CTBROWSER_WITH_GMP=ON but no GMP for this target. Install it "
-      "(brew install gmp) or, for the Windows presets, run tools/build-gmp-mingw.sh "
+      "(brew install gmp) or, for the Windows presets, run tools/mingw/build-gmp-mingw.sh "
       "to put it in the mingw sysroot. Or leave the option OFF and use cpp_int, "
       "which is the faster default for BigInt-sized numbers anyway.")
   endif()
@@ -564,7 +564,7 @@ target_sources(ctbrowser-shell
         # includes it. Missing from this list until 2026-08-09, which made the
         # INSTALLED package unusable while the build tree was fine, because a
         # build tree finds a header whether or not anything shipped it.
-        # tools/check-package.sh is what proves this, and it is the only thing
+        # tools/check/check-package.sh is what proves this, and it is the only thing
         # that can.
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/composite.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/svg.hpp"
@@ -832,7 +832,7 @@ install(EXPORT ctbrowser-targets
 # STATIC library still puts them on a consumer's link line - so a consumer that
 # cannot find them fails to link with no idea why. The Boost line said no
 # component at all until 2026-07-31, which was a gap from the day Boost.URL
-# landed; tools/check-package.sh is what exists to catch exactly this.
+# landed; tools/check/check-package.sh is what exists to catch exactly this.
 set(CTBROWSER_CONFIG_DEPS
     "find_dependency(Boost 1.80 CONFIG COMPONENTS url)\nfind_dependency(CURL)\nfind_dependency(Threads)")
 # PNG, and it is NOT optional - `find_package(PNG REQUIRED)` above. It was
@@ -849,7 +849,7 @@ endif()
 # EVERY package an exported target links has to be findable by the consumer,
 # or find_package(ctbrowser) fails on a target it cannot resolve. Adding an
 # optional dependency to a library and forgetting this line is exactly the kind
-# of break tools/check-package.sh exists to catch - it caught these two.
+# of break tools/check/check-package.sh exists to catch - it caught these two.
 if(Freetype_FOUND)
   string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(Freetype)")
 endif()

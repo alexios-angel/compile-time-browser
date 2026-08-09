@@ -28,7 +28,7 @@ Canvas 2D corners, and every one of those already worked.
 The harness is what the plan got right, and it is all in place:
 `tests/phaser_ratchet.cpp` (the ladder), `tests/corpus/phaser/phaser-ratchet.txt` (the record,
 with a pawl that fails on a regression AND on a silently changed blocker),
-`tools/phaser-ratchet.py --advance` (the only writer), and
+`tools/corpus/phaser-ratchet.py --advance` (the only writer), and
 `examples/pages/phaser-basic.html` + `tests/golden/phaserbasic.ppm` for rung 10
 — byte-identical on Linux and on the Windows cross-build.
 
@@ -112,7 +112,7 @@ Two things the p5 harness learned the hard way, to be built in from the start:
 * **`--advance` is the only writer.** A test that edits its own expectations
   cannot fail.
 
-`tools/phaser-ratchet.py` and `tools/phaser-api.py` drive them, as their p5
+`tools/corpus/phaser-ratchet.py` and `tools/corpus/phaser-api.py` drive them, as their p5
 counterparts do.
 
 ## Stage 0 — get the bundle and find the wall — DONE
@@ -162,8 +162,8 @@ having if the first stays honest — and a change made for Phaser that quietly
 costs p5 a rung is a regression, whatever the Phaser number does.
 
 ```bash
-tools/p5-ratchet.py && tools/p5-api.py       # 12/12, 179 probes: unchanged
-tools/phaser-ratchet.py                      # the new number
+tools/corpus/p5-ratchet.py && tools/corpus/p5-api.py       # 12/12, 179 probes: unchanged
+tools/corpus/phaser-ratchet.py                      # the new number
 ctest --preset default                       # and asan
 ```
 

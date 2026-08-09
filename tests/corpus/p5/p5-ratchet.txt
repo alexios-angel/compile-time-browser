@@ -2,7 +2,7 @@
 # measures it; this file records it. The level may not go DOWN, and at the same
 # level the blocker may not CHANGE, without the test failing.
 #
-# Only tools/p5-ratchet.py --advance writes this file. A test that edits its own
+# Only tools/corpus/p5-ratchet.py --advance writes this file. A test that edits its own
 # expectations cannot fail, so advancing is a deliberate act.
 #
 # The ladder: 1 read, 2 lexed, 3 parsed, 4 compiled, 5 fits the bytecode,

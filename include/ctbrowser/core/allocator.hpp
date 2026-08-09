@@ -24,7 +24,7 @@ namespace ctbrowser {
 // tests/core_basics against the major version this tree pins.
 //
 // IT IS A PIN, NOT TRIVIA. The Linux side comes from brew and the Windows side
-// from tools/build-mimalloc-mingw.sh, and v2 and v3 are different allocators
+// from tools/mingw/build-mimalloc-mingw.sh, and v2 and v3 are different allocators
 // with the same header name - a box with both installed can compile against one
 // and link the other, which is undefined behaviour that starts as a
 // hard-to-place crash. Asking the library what it is turns that into a test

@@ -80,7 +80,7 @@ minified build does, and `full-level` is the same ladder with the flag left
 undefined - the Friendly Error System and i18next's setup both in play. Both
 read 12, and neither reaches the network. "p5 runs" is a different claim when
 half of p5 is switched off, which is why the second one is measured rather than
-assumed. `tools/p5-ratchet.py --survey` measures each of
+assumed. `tools/corpus/p5-ratchet.py --survey` measures each of
 the bundle's 71 rollup modules independently, `--bisect NAME` carves one out as
 a reproducer, and `--source N` prints the text of compiled function N - a stack
 trace names functions as `fn#3778`, and most of a bundle's functions are
@@ -944,7 +944,7 @@ with LLVM exceptions. That is a distribution obligation, so the option is
 explicit opt-in rather than "on when GMP is found" — the latter would attach it
 to anyone who happened to have GMP installed. `NOTICE` states the position.
 
-**The cross-build works, including the assembly.** `tools/build-gmp-mingw.sh`
+**The cross-build works, including the assembly.** `tools/mingw/build-gmp-mingw.sh`
 builds it for llvm-mingw; the common advice that clang needs
 `--disable-assembly` for GMP is not true on this toolchain, and a static
 `.exe` linking it runs. Two autotools traps are worth knowing, both in that

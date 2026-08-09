@@ -5,7 +5,7 @@
 # else in the tree consumes the engine through add_subdirectory, which cannot fail the
 # way an install can.
 set -e
-root=$(cd "$(dirname "$0")/.." && pwd)
+root=$(cd "$(dirname "$0")/../.." && pwd)
 prefix=${1:-$(mktemp -d)}
 build=$(mktemp -d)
 consumer=$(mktemp -d)

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""How much of Phaser 4 works, and what to write a probe for next.
+"""How much of WebGL 2 works, and what to write a probe for next.
 
-tests/phaser_api.cpp calls as much of Phaser's API as can be run headlessly and
-reports which calls pass; tests/corpus/phaser/phaser-api.txt records them; this drives the
+tests/webgl2_api.cpp calls as much of WebGL 2's API as can be run headlessly and
+reports which calls pass; tests/corpus/webgl2/webgl2-api.txt records them; this drives the
 loop.
 
-    tools/phaser-api.py                 build, run, show the failures
-    tools/phaser-api.py --advance       record what is passing now
-    tools/phaser-api.py --coverage      which Phaser namespaces no probe mentions
-    tools/phaser-api.py --only textures run and report one module
+    tools/corpus/webgl2-api.py                 build, run, show the failures
+    tools/corpus/webgl2-api.py --advance       record what is passing now
+    tools/corpus/webgl2-api.py --coverage      which WebGL 2 namespaces no probe mentions
+    tools/corpus/webgl2-api.py --only textures run and report one module
 
-The companion to phaser-ratchet.py, and the distinction is the point: the
+The companion to webgl2-ratchet.py, and the distinction is the point: the
 ratchet measures how FAR the bundle gets - one number up a ladder - and this
-measures how WIDE the working surface is. Phaser's ratchet read 10/10 while
+measures how WIDE the working surface is. WebGL 2's ratchet read 10/10 while
 `(5).hasOwnProperty` was undefined, because nothing on the ladder asked a
 number for a property.
 
@@ -26,32 +26,32 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 BUNDLE = ROOT / "vendor/phaser/phaser.js"
-PROBES = ROOT / "tests/corpus/phaser/phaser-api-probe.js"
-RECORD = ROOT / "tests/corpus/phaser/phaser-api.txt"
-TEST = ROOT / "build/src/tests/ctbrowser-test-phaser_api"
+PROBES = ROOT / "tests/corpus/webgl2/webgl2-api-probe.js"
+RECORD = ROOT / "tests/corpus/webgl2/webgl2-api.txt"
+TEST = ROOT / "build/src/tests/ctbrowser-test-webgl2_api"
 
-# The top-level namespaces Phaser hangs off its export object, read from the
+# The top-level namespaces WebGL 2 hangs off its export object, read from the
 # bundle rather than written down here so the denominator tracks the library
 # instead of drifting behind it. `    GameObjects: __webpack_require__(77856),`
 #
-# ANCHORED TO `var Phaser = {`, and it has to be. The same line shape appears in
+# ANCHORED TO `var WebGL 2 = {`, and it has to be. The same line shape appears in
 # every one of the 1763 webpack modules' export objects, so an unanchored match
 # counted 1131 "namespaces" - event constants, XHR settings, anything - and
 # reported 17/1131, a denominator that makes the work queue meaningless. The
 # root object is the only one this question is about.
-ROOT_EXPORT = re.compile(r"^var Phaser = \{(.*?)^\};", re.M | re.S)
+ROOT_EXPORT = re.compile(r"^var WebGL 2 = \{(.*?)^\};", re.M | re.S)
 NAMESPACE = re.compile(r"^    ([A-Z][A-Za-z0-9_$]*): __webpack_require__\(\d+\),?$", re.M)
 
 
 def build():
     r = subprocess.run(["cmake", "--build", "--preset", "default", "--target",
-                        "ctbrowser-test-phaser_api"],
+                        "ctbrowser-test-webgl2_api"],
                        cwd=ROOT, capture_output=True, text=True)
     if r.returncode != 0:
         sys.stderr.write(r.stdout + r.stderr)
-        sys.exit("phaser-api: build failed")
+        sys.exit("webgl2-api: build failed")
 
 
 def run():
@@ -83,73 +83,62 @@ def passing_from(out):
 
 def do_advance():
     out, _ = run()
-    if "Phaser API:" not in out:
-        sys.exit("phaser-api: the probes did not report:\n" + out)
+    if "WebGL 2 API:" not in out:
+        sys.exit("webgl2-api: the probes did not report:\n" + out)
     names = sorted(passing_from(out))
     if not names:
-        sys.exit("phaser-api: nothing is passing - refusing to record an empty surface")
+        sys.exit("webgl2-api: nothing is passing - refusing to record an empty surface")
     header = (
-        "# Which Phaser 4 probes pass. tests/phaser_api.cpp measures it; this file\n"
+        "# Which WebGL 2 probes pass. tests/webgl2_api.cpp measures it; this file\n"
         "# records it. A probe that used to pass and now does not FAILS the test.\n"
         "#\n"
-        "# Only tools/phaser-api.py --advance writes this file. A test that edits its\n"
+        "# Only tools/corpus/webgl2-api.py --advance writes this file. A test that edits its\n"
         "# own expectations cannot fail, so advancing is a deliberate act.\n"
         "#\n"
-        "# The probes themselves are tests/corpus/phaser/phaser-api-probe.js, one per line here as\n"
+        "# The probes themselves are tests/corpus/webgl2/webgl2-api-probe.js, one per line here as\n"
         "# `module/name`. A probe that is SKIPPED is not recorded - it is not a claim\n"
         "# about anything working.\n"
     )
     RECORD.write_text(header + "\n".join(names) + "\n")
-    print(f"phaser-api: recorded {len(names)} passing probes")
+    print(f"webgl2-api: recorded {len(names)} passing probes")
 
 
 def do_coverage():
-    """Which of Phaser's namespaces no probe mentions - the work queue."""
-    text = BUNDLE.read_text(errors="replace")
-    root = ROOT_EXPORT.search(text)
-    if not root:
-        sys.exit("phaser-api: no `var Phaser = {` in the bundle - has its shape changed?")
-    namespaces = sorted(set(NAMESPACE.findall(root.group(1))))
-    if not namespaces:
-        sys.exit("phaser-api: found no namespaces in the bundle - has its shape changed?")
-    probes = PROBES.read_text(errors="replace")
-    # WHERE A PROBE'S MODULE TAG DOES NOT MATCH PHASER'S NAMESPACE NAME. Written
-    # out rather than matched fuzzily: a prefix rule that turned `Animations`
-    # into `anims` would also turn something else into a false positive, and a
-    # coverage tool that overstates itself is worse than one that understates.
-    # Anything not listed here is matched on its own name.
-    aliases = {
-        "Animations": ["anims"],
-        "GameObjects": ["add", "gameobject", "displaylist"],
-        "Scenes": ["scene"],
-    }
-    covered, missing = [], []
-    for name in namespaces:
-        tags = aliases.get(name, [name.lower()])
-        if f"Phaser.{name}" in probes or any(f"['{tag}'," in probes for tag in tags):
-            covered.append(name)
-        else:
-            missing.append(name)
-    print(f"\n  {len(covered)}/{len(namespaces)} Phaser namespaces have at least one probe\n")
-    for name in missing:
-        print(f"    no probe mentions  Phaser.{name}")
-    print("\n  A namespace with one probe is not a namespace that works - this is a\n"
-          "  list of what has NOTHING pointed at it, not a coverage percentage.\n")
+    """Which probe modules exist, and how many probes each one carries.
+
+    NO BUNDLE TO COUNT AGAINST, unlike p5-api.py and phaser-api.py: WebGL 2 is a
+    specification rather than a library, so there is no file to grep for the
+    denominator. What is useful instead is the shape of the probe set itself -
+    and in particular how much of it is the `unscoped` module, which is the part
+    docs/webgl2-plan.md has deliberately NOT committed to and which Babylon.js
+    calls in full.
+    """
+    text = PROBES.read_text(errors="replace")
+    modules = {}
+    for tag in re.findall(r"^  \['([a-z0-9]+)',", text, re.M):
+        modules[tag] = modules.get(tag, 0) + 1
+    total = sum(modules.values())
+    print(f"\n  {total} probes across {len(modules)} modules\n")
+    for tag in sorted(modules, key=lambda t: -modules[t]):
+        note = "  <- deliberately not implemented; see docs/webgl2-plan.md" \
+               if tag == "unscoped" else ""
+        print(f"    {modules[tag]:>3}  {tag}{note}")
+    print()
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--advance", action="store_true",
-                    help="record the passing probes in tests/corpus/phaser/phaser-api.txt")
+                    help="record the passing probes in tests/corpus/webgl2/webgl2-api.txt")
     ap.add_argument("--coverage", action="store_true",
-                    help="list Phaser namespaces no probe mentions")
+                    help="list WebGL 2 namespaces no probe mentions")
     ap.add_argument("--only", metavar="MODULE",
                     help="report only probes in one module, e.g. textures")
     args = ap.parse_args()
 
     if not BUNDLE.exists() or not PROBES.exists():
-        sys.exit("phaser-api: the bundle or the probe file is missing")
+        sys.exit("webgl2-api: the bundle or the probe file is missing")
 
     if args.coverage:
         do_coverage()
@@ -163,13 +152,13 @@ def main():
     out, code = run()
     if args.only:
         for line in out.splitlines():
-            if args.only in line or "Phaser API:" in line:
+            if args.only in line or "WebGL 2 API:" in line:
                 print(line)
     else:
         print(out)
     if code != 0:
         print("The recorded surface is not satisfied. If this is progress, "
-              "run tools/phaser-api.py --advance")
+              "run tools/corpus/webgl2-api.py --advance")
     sys.exit(code)
 
 

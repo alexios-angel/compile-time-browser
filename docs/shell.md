@@ -25,7 +25,7 @@ code in it.
 `CTBROWSER_WITH_SDL3` selects an SDL host or a headless one at runtime. Without
 SDL3 the engine still renders and `run_app` still works.
 
-**Installing:** `tools/check-package.sh` is the proof — installs the engine to a temp
+**Installing:** `tools/check/check-package.sh` is the proof — installs the engine to a temp
 prefix, builds `tests/package/` against it via `find_package`.
 
 `tests/api_surface` lints the claim: application sources must contain exactly
@@ -302,7 +302,7 @@ checkbox draws none, which is what keeps it from looking like a radio.
 
 ## WHAT A REAL BROWSER DOES DIFFERENTLY (2026-07-28)
 
-Found by pointing `tools/compare.py` at `widgets.html` and reading the answers,
+Found by pointing `tools/check/compare.py` at `widgets.html` and reading the answers,
 which is what that rig is for. Each of these was a measured difference, not a
 suspicion:
 
@@ -671,7 +671,7 @@ canvas 8px off, and the 8px was the margin the page had asked to remove.
 
 **The corpus** is `examples/pages/p5-*.html`: basic, text, transform, shape and
 pixels each render against a committed golden, and `p5-events.html` has none
-because what it draws is a function of input — it is driven by `tools/compare.py`
+because what it draws is a function of input — it is driven by `tools/check/compare.py`
 through ctbrowser and Chrome at once. Both engines agree on the same clicks.
 
 **`clip()` and `addPath`'s transform (2026-07-29).** The clip region is a
@@ -784,7 +784,7 @@ bytes of header and the bytes verbatim. Valid deflate, so every decoder reads it
 and the file is about 1.05x the raw pixels. That is the whole cost, and it buys
 one fewer dependency in a header belonging to the SDL-free core.
 
-`tools/check-png.py` decodes what the engine wrote with Python's own zlib. "It
+`tools/check/check-png.py` decodes what the engine wrote with Python's own zlib. "It
 has the right chunk names" is not evidence: the CRCs, the Adler-32 and the block
 headers are all silent when wrong.
 

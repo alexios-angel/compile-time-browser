@@ -59,7 +59,7 @@ std::string ascii_upper_copy(std::string_view text) {
 // function reloads the table pointer and branches on `*in != '='` per character.
 //
 // HEADER-ONLY, which is what makes borrowing affordable: Beast needs no library
-// to link and no addition to tools/build-boost-mingw.sh, so the Windows
+// to link and no addition to tools/mingw/build-boost-mingw.sh, so the Windows
 // cross-build gets the table from the same include tree that already supplies
 // Boost.URL's headers. Beast's HTTP and WebSocket halves stay uncompiled.
 //

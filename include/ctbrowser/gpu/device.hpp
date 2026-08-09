@@ -33,7 +33,7 @@
 //
 // PORTABILITY. The shaders ship as SPIR-V, so this runs on SDL's Vulkan driver.
 // D3D12 wants DXIL and Metal wants MSL; both need their own compiler in
-// tools/gen-shaders.py and belong with the Windows and macOS platform work.
+// tools/gen/gen-shaders.py and belong with the Windows and macOS platform work.
 // SDL_GPUSupportsShaderFormats is checked at construction rather than assumed.
 
 namespace ctbrowser::gpu {

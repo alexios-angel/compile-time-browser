@@ -37,7 +37,7 @@ cmake --preset tsan && ctest --preset tsan     # and asan
 ```
 **mimalloc backs `operator new`/`delete`** and is REQUIRED by default — `brew
 install mimalloc` (v3, pinned in `tools/Brewfile`), or
-`tools/build-mimalloc-mingw.sh` for the Windows sysroot. It measured -4.2%
+`tools/mingw/build-mimalloc-mingw.sh` for the Windows sysroot. It measured -4.2%
 instructions on Linux and **-11.7% wall on the Windows .exe**, because Windows'
 CRT allocator is much further behind than glibc's. Opt out with
 `-DCTBROWSER_USE_MIMALLOC=OFF`; `tests/core_basics` asks
@@ -51,41 +51,41 @@ workflow was deleted on 2026-08-08, so nothing checks formatting or runs the
 suite unless a person does. `tools/remote-build.sh` is the whole gate now.
 
 ## Tooling
-- `tools/gen-assets.py` — regenerates `examples/assets/` (sprites.bmp, blip.wav)
+- `tools/gen/gen-assets.py` — regenerates `examples/assets/` (sprites.bmp, blip.wav)
   deterministically, so no foreign binary is committed.
-- `tools/gen-shaders.py` — GLSL -> the SPIR-V in `include/ctbrowser/gpu/shaders/tile_spv.hpp`.
-- `tools/compare.py` — drives ctbrowser AND Chrome/Firefox through the same
+- `tools/gen/gen-shaders.py` — GLSL -> the SPIR-V in `include/ctbrowser/gpu/shaders/tile_spv.hpp`.
+- `tools/check/compare.py` — drives ctbrowser AND Chrome/Firefox through the same
   clicks and keystrokes, live, so parity can be seen rather than guessed.
   `--headed --delay` makes it watchable; `examples/ctdrive.cpp` is the
   ctbrowser half. See `docs/build.md`.
-- `tools/check-spirv.py` — runs `spirv-val` over SPIR-V this engine produced,
+- `tools/check/check-spirv.py` — runs `spirv-val` over SPIR-V this engine produced,
   given the files. OPTIONAL, and it says plainly when the validator is absent:
   the driver accepting a module proves nothing, which `gpu_basics` measures
   rather than assumes. What it validates today is the TILE shaders
   (`gen-shaders.py`'s output); the WebGL front end it was written for went to
   ANGLE on 2026-08-04 and emits no SPIR-V of its own.
-- `tools/check-png.py` — decodes a PNG this engine wrote using Python's own
+- `tools/check/check-png.py` — decodes a PNG this engine wrote using Python's own
   zlib. `encode_png` uses STORED deflate blocks and no compression library, so
   "the chunk names look right" is not evidence; the CRCs and the Adler-32 are
   silent when wrong.
-- `tools/build-boost-mingw.sh` — compiles Boost.URL for the llvm-mingw target
+- `tools/mingw/build-boost-mingw.sh` — compiles Boost.URL for the llvm-mingw target
   into the cross sysroot. Boost.URL is the one COMPILED Boost library the engine
   links (it cannot be header-only), so the Windows presets need this run once.
   See `docs/build.md` for what else was considered and turned down.
-- `tools/phaser-ratchet.py` — the same loop for Phaser 4 that `p5-ratchet.py`
+- `tools/corpus/phaser-ratchet.py` — the same loop for Phaser 4 that `p5-ratchet.py`
   runs for p5.js: build, measure, `--advance` to record. A SECOND CORPUS, and
   it earned its keep in a day — see `docs/script.md`. No `--bisect`: Phaser
   clears every language rung, so there is nothing to carve.
-- `tools/phaser-api.py` — how WIDE the Phaser surface is, to `p5-api.py`'s
+- `tools/corpus/phaser-api.py` — how WIDE the Phaser surface is, to `p5-api.py`'s
   shape. `--coverage` lists the namespaces no probe mentions, which is the work
   queue. The ratchet read 10/10 while `(5).hasOwnProperty` was undefined,
   because nothing on the ladder asked a number for a property.
-- `tools/babylon-ratchet.py` — the ladder for BABYLON.JS, the third corpus, and
+- `tools/corpus/babylon-ratchet.py` — the ladder for BABYLON.JS, the third corpus, and
   the second ladder over the same bundle: `webgl2-ratchet.py` asks whether
   Babylon draws AT ALL (10/10) and this asks what a scene can CONTAIN. Reads
-  **8/12** — through post-processes; shadows are next. `tools/babylon-api.py`
+  **8/12** — through post-processes; shadows are next. `tools/corpus/babylon-api.py`
   is its width counterpart, 39/43 probes. See `docs/babylon-plan.md`.
-- `tools/module-ratchet.py` — the same loop for ES MODULES. Reads **8/9**: a
+- `tools/corpus/module-ratchet.py` — the same loop for ES MODULES. Reads **8/9**: a
   graph links, bindings are LIVE, cycles resolve, module scripts defer like page
   scripts and relative specifiers resolve against the importer, and dynamic
   `import()` resolves to a live namespace object. Rung 9 is Babylon's ES build,
@@ -95,15 +95,15 @@ suite unless a person does. `tools/remote-build.sh` is the whole gate now.
   `third_party/angle/`. ANGLE is fetched rather than built: it needs GN,
   depot_tools and, on Windows, clang-cl and the Windows SDK. `-DCTBROWSER_WITH_ANGLE=ON`
   then gives `raster/gles.hpp` a real GLES 3.1 device. See `docs/angle-plan.md`.
-- `tools/build-cpptrace-mingw.sh` — cpptrace for the Windows sysroot. TESTS
+- `tools/mingw/build-cpptrace-mingw.sh` — cpptrace for the Windows sysroot. TESTS
   ONLY and optional: a missing trace makes a failure harder to read, not wrong.
   It is here because llvm-mingw has no `<stacktrace>` at all, so the platform
   where most of this project's expensive bugs have lived had no trace when a
   test died.
-- `tools/build-mimalloc-mingw.sh` — mimalloc v3 for the Windows sysroot. The
+- `tools/mingw/build-mimalloc-mingw.sh` — mimalloc v3 for the Windows sysroot. The
   allocator is not optional in the default build, so the cross build needs this
   run once; `tools/remote-build.sh windows` runs it.
-- `tools/build-gmp-mingw.sh` — GNU GMP for the Windows sysroot, for the
+- `tools/mingw/build-gmp-mingw.sh` — GNU GMP for the Windows sysroot, for the
   OPTIONAL BigInt backend (`-DCTBROWSER_WITH_GMP=ON`). **Nothing needs it**:
   BigInt runs on header-only `cpp_int` by default. It is off because GMP is
   LGPL and this engine links statically (see `NOTICE`), and because it is
@@ -111,11 +111,11 @@ suite unless a person does. `tools/remote-build.sh` is the whole gate now.
   JavaScript BigInt actually has, and tuning it for a modern CPU does not
   change that. `docs/script.md` has the table. It does cross-compile, assembly
   and all.
-- `tools/build-image-libs-mingw.sh` — its sibling, for zlib, libpng and
+- `tools/mingw/build-image-libs-mingw.sh` — its sibling, for zlib, libpng and
   libjpeg-turbo. PNG and JPEG decode in the SDL-FREE engine, so the Windows
   presets need this run once too. Versions are pinned on purpose; see
   `docs/build.md`.
-- `tools/format.sh`, `tools/check-package.sh`, `tools/check-render.cmake`,
+- `tools/format.sh`, `tools/check/check-package.sh`, `tools/check/check-render.cmake`,
   `tools/remote-build.sh`.
 
 ## Invariants — the things that are easy to break
@@ -210,7 +210,7 @@ Read the one that matches what you are touching — not all of them.
 | | |
 |---|---|
 | `docs/architecture.md` | where everything lives, and how to add a file to a subsystem. **Start here if you do not know where something lives.** |
-| `docs/script.md` | the JS compiler, the VM, the standard library — what the language supports and what it rejects by name. **p5.js v2.3.1 runs**: `tests/p5_ratchet.cpp` records how FAR the bundle gets and `tests/p5_api.cpp` how WIDE the working surface is; `tools/p5-ratchet.py` and `tools/p5-api.py` drive them. **Phaser 4.2.1 runs too** — a second corpus, 10/10, and the four engine bugs it found that p5 could not |
+| `docs/script.md` | the JS compiler, the VM, the standard library — what the language supports and what it rejects by name. **p5.js v2.3.1 runs**: `tests/p5_ratchet.cpp` records how FAR the bundle gets and `tests/p5_api.cpp` how WIDE the working surface is; `tools/corpus/p5-ratchet.py` and `tools/corpus/p5-api.py` drive them. **Phaser 4.2.1 runs too** — a second corpus, 10/10, and the four engine bugs it found that p5 could not |
 | `docs/shell.md` | the application API, form controls, editing, input, navigation, resources — anything a page can do |
 | `docs/style-layout.md` | the cascade and the `style` attribute; tables, generated content, whitespace collapsing |
 | `docs/raster.md` | fonts, glyph rasterisation, the font8x8 fallback, **SVG**, and **WebGL** — note that `glsl.hpp` and `softgl.hpp` were DELETED on 2026-08-04 and WebGL now goes through `raster/gl.hpp` to ANGLE. **p5.js WEBGL mode works**: `examples/pages/p5-webgl.html` draws a cube and a sphere through p5's own shaders, with a golden. `docs/webgl-plan.md` is the design and the staging |

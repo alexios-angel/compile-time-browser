@@ -91,7 +91,7 @@ option(CTBROWSER_COMPUTED_GOTO "Dispatch the script VM with computed gotos (GNU 
 #
 # It builds and passes on both backends - tests/bigint_basics.cpp is the gate -
 # and the Windows cross-build works with GMP's assembly enabled
-# (tools/build-gmp-mingw.sh).
+# (tools/mingw/build-gmp-mingw.sh).
 option(CTBROWSER_WITH_GMP "Use GNU GMP as the Boost.Multiprecision BigInt backend (LGPL)" OFF)
 
 # The strict flags every test and example builds with, kept off the exported

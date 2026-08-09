@@ -555,7 +555,7 @@ feed it - and every hour spent on the ANGLE facade was looking in the wrong
 layer. Four wrong guesses in a row is what that looks like from inside.
 
 And there IS a working oracle, which is the cheapest possible next step:
-`tools/webgl2-ratchet.py` reads 10/10 and its rung is "Babylon renders a scene".
+`tools/corpus/webgl2-ratchet.py` reads 10/10 and its rung is "Babylon renders a scene".
 So a Babylon scene DOES paint somewhere in this tree. Diff the ratchet's page
 against `examples/pages/babylon-scene.html` - camera, canvas size, engine
 options, the frame loop - rather than reading any more GL code. The difference

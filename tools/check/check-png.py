@@ -9,7 +9,7 @@ be right, and every one of those is silent when wrong.
 
 So this decodes the file with Python's zlib and reports the pixels.
 
-    tools/check-png.py build/render-encode.png [--expect AARRGGBB]
+    tools/check/check-png.py build/render-encode.png [--expect AARRGGBB]
 """
 
 import argparse

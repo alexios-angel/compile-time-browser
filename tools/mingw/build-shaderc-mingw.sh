@@ -21,11 +21,11 @@
 # are a real compiler - so this takes minutes rather than seconds, and it is
 # skipped when the pin has not moved.
 #
-#   tools/build-shaderc-mingw.sh [--clean]
+#   tools/mingw/build-shaderc-mingw.sh [--clean]
 #
 set -euo pipefail
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 target="x86_64-w64-mingw32"
 
 for root in "${LLVM_MINGW:-}" "$HOME/projects/llvm-mingw/install/llvm-mingw-native" \

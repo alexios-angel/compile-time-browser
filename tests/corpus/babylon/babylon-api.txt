@@ -1,7 +1,7 @@
 # Which Babylon probes pass. tests/babylon_api.cpp measures it; this file
 # records it. A probe that used to pass and now does not FAILS the test.
 #
-# Only tools/babylon-api.py --advance writes this file. A test that edits its
+# Only tools/corpus/babylon-api.py --advance writes this file. A test that edits its
 # own expectations cannot fail, so advancing is a deliberate act.
 #
 # The probes themselves are tests/corpus/babylon/babylon-api-probe.js, one per line here as

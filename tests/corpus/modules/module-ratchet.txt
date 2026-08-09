@@ -2,7 +2,7 @@
 # measures it; this file records it. The level may not go DOWN, and at the same
 # level the blocker may not CHANGE, without the test failing.
 #
-# Only tools/module-ratchet.py --advance writes this file. A test that edits its
+# Only tools/corpus/module-ratchet.py --advance writes this file. A test that edits its
 # own expectations cannot fail, so advancing is a deliberate act.
 #
 # The ladder: 1 import/export parse, 2 one module runs in its own scope, 3 an

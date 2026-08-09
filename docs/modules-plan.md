@@ -200,7 +200,7 @@ engine one.
   classic-script corpora; if either moves, the concatenation replacement is
   wrong. This is the main regression risk of the whole plan.
 * The thirteen goldens byte-identical, on Linux and the Windows cross-build.
-* `tools/compare.py` against Chrome for module ORDER, which is observable and
+* `tools/check/compare.py` against Chrome for module ORDER, which is observable and
   easy to get subtly wrong.
 
 ## The honest cost

@@ -13,14 +13,14 @@
 #
 # The result lands in the mingw sysroot beside them. That sysroot is gitignored
 # and populated out-of-band, which is the established pattern this follows
-# rather than invents - tools/build-mimalloc-mingw.sh is its sibling and this
+# rather than invents - tools/mingw/build-mimalloc-mingw.sh is its sibling and this
 # file is deliberately shaped like it.
 #
-#   tools/build-simdutf-mingw.sh [--clean]
+#   tools/mingw/build-simdutf-mingw.sh [--clean]
 #
 set -euo pipefail
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 target="x86_64-w64-mingw32"
 
 for root in "${LLVM_MINGW:-}" "$HOME/projects/llvm-mingw/install/llvm-mingw-native" \

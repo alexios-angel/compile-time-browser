@@ -20,7 +20,7 @@
 // function that runs and returns garbage is the failure mode this whole file
 // exists to catch.
 //
-// tools/p5-api.py lists which `fn.*` in the bundle no probe here mentions -
+// tools/corpus/p5-api.py lists which `fn.*` in the bundle no probe here mentions -
 // that list is the work queue, and it is why probe names match p5's own.
 //
 // A CORRECTION worth keeping, because it is the failure mode of a harness. An
@@ -641,7 +641,7 @@ globalThis.__probes = [
 
   // --- the unmeasured P2D surface -----------------------------------------
   //
-  // tools/p5-api.py --coverage listed 190 functions no probe mentioned. Most are
+  // tools/corpus/p5-api.py --coverage listed 190 functions no probe mentioned. Most are
   // WEBGL, audio, video or motion sensors and are out of scope by name. These are
   // the ones that are NOT: they run in P2D, headless, with no hardware - so
   // nothing excuses them being unmeasured, and unmeasured is the state every bug

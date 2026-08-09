@@ -46,8 +46,8 @@ Replace the `.js`, update `NOTICE` and the table above, and then **run the
 ratchets** — do not assume a newer bundle clears the same rungs:
 
 ```
-tools/p5-ratchet.py        # and phaser-, babylon-, webgl2-, module-
-tools/p5-api.py --coverage
+tools/corpus/p5-ratchet.py        # and phaser-, babylon-, webgl2-, module-
+tools/corpus/p5-api.py --coverage
 ```
 
 A drop is a real finding, not a reason to reach for `--advance`. `--advance` is

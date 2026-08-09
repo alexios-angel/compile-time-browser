@@ -3,7 +3,7 @@
 # go DOWN, and at the same level the blocker may not CHANGE, without the test
 # failing.
 #
-# Only tools/babylon-ratchet.py --advance writes this file. A test that edits its
+# Only tools/corpus/babylon-ratchet.py --advance writes this file. A test that edits its
 # own expectations cannot fail, so advancing is a deliberate act.
 #
 # The ladder: 1 a scene renders, 2 a texture samples, 3 two meshes with two

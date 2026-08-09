@@ -156,7 +156,7 @@ be.
 * **Pinned dependencies.** Upstream's build runs `git-sync-deps`, a Python
   script that fetches glslang, SPIRV-Tools and SPIRV-Headers from the network at
   configure time. This tree pins everything and builds it into a sysroot —
-  `tools/build-boost-mingw.sh` and its four siblings — and a fork that vendors
+  `tools/mingw/build-boost-mingw.sh` and its four siblings — and a fork that vendors
   those at fixed revisions fits that exactly.
 * **A trimmed build.** HLSL, the `glslc` command line, tests, examples and the
   fuzzers are all build options, not code changes: `SHADERC_SKIP_TESTS`,

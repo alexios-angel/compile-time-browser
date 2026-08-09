@@ -7,9 +7,9 @@
 // one thing that is not a web API is `playSound`, because there is no <audio> element yet; run_app
 // installs it as an embedder native, which is at least honest about being an extension.
 //
-// Assets are the the previous engine ones (tools/gen-assets.py generates them, deterministically)
-// and are resolved relative to the repository root, which is where the test
-// runs from.
+// Assets are the the previous engine ones (tools/gen/gen-assets.py generates them,
+// deterministically) and are resolved relative to the repository root, which is where the test runs
+// from.
 
 #include <ctbrowser.hpp>
 

@@ -337,7 +337,7 @@ story has been unmaintained for years. This tree ships Windows binaries and
 byte-compares 13 goldens on them, so an allocator that does not cross-compile is
 not a candidate whatever it scores.
 
-**Not adopted yet, deliberately.** It needs a `tools/build-mimalloc-mingw.sh`
+**Not adopted yet, deliberately.** It needs a `tools/mingw/build-mimalloc-mingw.sh`
 alongside the three that already build zlib, libpng, libjpeg-turbo and Boost.URL
 into the cross sysroot, and that is a build-matrix commitment rather than a code
 change. The measurement is here so the decision can be made on numbers.
@@ -365,7 +365,7 @@ llvm-mingw, jemalloc's mingw support is an afterthought. This tree ships Windows
 binaries and byte-compares thirteen goldens on them.
 
 **Adopted as v3.4.3**, pinned identically on both platforms - brew on Linux
-(`tools/Brewfile`), `tools/build-mimalloc-mingw.sh` into the mingw sysroot.
+(`tools/Brewfile`), `tools/mingw/build-mimalloc-mingw.sh` into the mingw sysroot.
 
 | | Linux (instructions) | Windows `.exe` (600 frames, min of 7) |
 |---|---|---|

@@ -4,13 +4,13 @@
 tests/babylon_ratchet.cpp measures a LEVEL and a BLOCKER; tests/corpus/babylon/babylon-ratchet.txt
 records them; this drives the loop around both.
 
-    tools/babylon-ratchet.py             build, measure, show the blocker
-    tools/babylon-ratchet.py --advance   record what was just measured
+    tools/corpus/babylon-ratchet.py             build, measure, show the blocker
+    tools/corpus/babylon-ratchet.py --advance   record what was just measured
 
 --advance is the only thing that writes the recorded file. Deliberately: a test
 that edits its own expectations cannot fail.
 
-THIS IS THE SECOND LADDER OVER THE SAME CORPUS. tools/webgl2-ratchet.py asks
+THIS IS THE SECOND LADDER OVER THE SAME CORPUS. tools/corpus/webgl2-ratchet.py asks
 whether Babylon draws AT ALL and reads 10/10; this asks what a scene can
 contain. Two ladders over one bundle is not duplication - the first is about
 WebGL 2 and stops at the first pixel, and this one is about Babylon.
@@ -22,7 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 RECORD = ROOT / "tests/corpus/babylon/babylon-ratchet.txt"
 TEST = ROOT / "build/src/tests/ctbrowser-test-babylon_ratchet"
 

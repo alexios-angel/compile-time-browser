@@ -4,10 +4,10 @@
 tests/p5_ratchet.cpp measures a LEVEL and a BLOCKER; tests/corpus/p5/p5-ratchet.txt
 records them; this drives the loop around both.
 
-    tools/p5-ratchet.py                 build, measure, show the blocker in context
-    tools/p5-ratchet.py --advance       record what was just measured
-    tools/p5-ratchet.py --bisect color  carve one rollup module out and measure THAT
-    tools/p5-ratchet.py --survey        every module, ranked by what is blocking it
+    tools/corpus/p5-ratchet.py                 build, measure, show the blocker in context
+    tools/corpus/p5-ratchet.py --advance       record what was just measured
+    tools/corpus/p5-ratchet.py --bisect color  carve one rollup module out and measure THAT
+    tools/corpus/p5-ratchet.py --survey        every module, ranked by what is blocking it
 
 The bundle is 4.5 MB in one IIFE, so a failure reported against it is a needle
 in a haystack. --bisect extracts a single module - p5 is a rollup bundle, so
@@ -25,7 +25,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 BUNDLE = ROOT / "vendor/p5/p5.js"
 RECORD = ROOT / "tests/corpus/p5/p5-ratchet.txt"
 TEST = ROOT / "build/src/tests/ctbrowser-test-p5_ratchet"
@@ -276,7 +276,7 @@ def main():
     show_context(blocker)
     if code != 0:
         print("The ratchet is not satisfied. If this is progress, "
-              "run tools/p5-ratchet.py --advance")
+              "run tools/corpus/p5-ratchet.py --advance")
     sys.exit(code)
 
 

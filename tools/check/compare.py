@@ -8,13 +8,13 @@ and keystrokes ONE COMMAND AT A TIME, and screenshots either on demand - so an
 AI can drive it, and a human can watch the windows and say "that click missed"
 while it is still happening.
 
-    tools/compare.py setup                     # once: a venv with Playwright
-    tools/compare.py start --headed --delay 400 examples/pages/widgets.html
-    tools/compare.py click 120 200
-    tools/compare.py type Claude
-    tools/compare.py key Tab
-    tools/compare.py shot after-tab            # PNGs, one per engine
-    tools/compare.py stop
+    tools/check/compare.py setup                     # once: a venv with Playwright
+    tools/check/compare.py start --headed --delay 400 examples/pages/widgets.html
+    tools/check/compare.py click 120 200
+    tools/check/compare.py type Claude
+    tools/check/compare.py key Tab
+    tools/check/compare.py shot after-tab            # PNGs, one per engine
+    tools/check/compare.py stop
 
 The browsers cannot live inside one invocation - the caller is a shell, and
 every command is a new process - so `start` leaves a DAEMON holding them and
@@ -43,7 +43,7 @@ import time
 import zlib
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 OUT = ROOT / "build" / "compare"
 # TCP on loopback rather than a unix socket, and a file holding the port. The
 # repo lives on a DrvFs mount under WSL, which does not support unix sockets at
@@ -506,7 +506,7 @@ def serve(args) -> int:
 
 def ask(payload: dict) -> int:
     if not PORTFILE.exists():
-        print("compare.py: no session; run `tools/compare.py start <page.html>`", file=sys.stderr)
+        print("compare.py: no session; run `tools/check/compare.py start <page.html>`", file=sys.stderr)
         return 1
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -563,7 +563,7 @@ def reexec_in_venv() -> None:
     """Re-run under the venv when a real browser is wanted and Playwright is not here."""
     python = VENV / "bin" / "python3"
     if not python.exists():
-        print("compare.py: playwright not installed; run `tools/compare.py setup`", file=sys.stderr)
+        print("compare.py: playwright not installed; run `tools/check/compare.py setup`", file=sys.stderr)
         raise SystemExit(1)
     os.execv(str(python), [str(python), str(Path(__file__).resolve()), *sys.argv[1:]])
 

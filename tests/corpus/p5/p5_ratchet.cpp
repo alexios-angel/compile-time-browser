@@ -16,7 +16,7 @@
 //                         because the same rung with a different blocker means
 //                         something moved sideways and that is worth hearing.
 //   measured > recorded   pass, and say so. Advancing the file is a deliberate
-//                         act (tools/p5-ratchet.py --advance): a test that
+//                         act (tools/corpus/p5-ratchet.py --advance): a test that
 //                         edits its own expectations cannot fail.
 //
 // That is the same reasoning as page_scripts.cpp's must_stop_at_source, which
@@ -506,7 +506,7 @@ struct recorded {
 
 int main(int argc, char ** argv) {
     // With a path, measure THAT and report - no pawl, no recorded file. This is
-    // what tools/p5-ratchet.py --bisect drives: one rollup module carved out of
+    // what tools/corpus/p5-ratchet.py --bisect drives: one rollup module carved out of
     // the bundle is a 3,000-line reproducer instead of a needle in 4.5 MB.
     // `--sketch FILE`: load p5 as a page, then run FILE against it and print
     // whatever it alerts. The ladder answers one question; this answers any of
@@ -627,13 +627,13 @@ int main(int argc, char ** argv) {
         ++ctbrowser_test_failures;
     } else if (m.level > r.level) {
         // Not a failure - but not silent either, and not self-applied.
-        std::printf("     ADVANCE: level %d -> %d (%s). Run tools/p5-ratchet.py --advance\n",
+        std::printf("     ADVANCE: level %d -> %d (%s). Run tools/corpus/p5-ratchet.py --advance\n",
                     r.level, m.level, level_name(m.level));
     } else if (m.blocker != r.blocker) {
         std::printf("FAIL same level %d, different blocker\n", m.level);
         std::printf("     now:      %s\n", m.blocker.c_str());
         std::printf("     recorded: %s\n", r.blocker.c_str());
-        std::printf("     If this is progress, run tools/p5-ratchet.py --advance\n");
+        std::printf("     If this is progress, run tools/corpus/p5-ratchet.py --advance\n");
         ++ctbrowser_test_failures;
     }
 
@@ -644,7 +644,7 @@ int main(int argc, char ** argv) {
         std::printf("     now stops at: %s\n", full.blocker.c_str());
         ++ctbrowser_test_failures;
     } else if (full.level > r.full_level) {
-        std::printf("     ADVANCE: p5-full level %d -> %d (%s). Run tools/p5-ratchet.py "
+        std::printf("     ADVANCE: p5-full level %d -> %d (%s). Run tools/corpus/p5-ratchet.py "
                     "--advance\n",
                     r.full_level, full.level, level_name(full.level));
     } else if (full.blocker != r.full_blocker) {

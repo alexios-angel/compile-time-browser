@@ -44,7 +44,7 @@ a GPU does not. The 5-pixel figure is the signature to recognise - single digits
 mean two rasterisers disagreeing at triangle edges, and it is the same number
 `examples/CMakeLists.txt` recorded when the ANGLE goldens were split out.
 
-**The fix is one line in `tools/check-render.cmake`**: it now sets
+**The fix is one line in `tools/check/check-render.cmake`**: it now sets
 `CTBROWSER_GL_DRIVER=deterministic` whenever `BACKEND` is given, so the golden
 runs ask for SwiftShader on every machine. Before that it set the back end and
 never the device. With it, the Windows exes match **all sixteen** goldens

@@ -53,7 +53,7 @@ reference, the fallback, and the oracle, for four reasons:
 ### What the GPU path actually requires
 
 The existing GPU code compiles its shaders to SPIR-V **at build time**, with
-`glslc`, and commits the result (`tools/gen-shaders.py`). **WebGL cannot do
+`glslc`, and commits the result (`tools/gen/gen-shaders.py`). **WebGL cannot do
 that**: the shaders arrive from the page at run time, and shelling out to a
 compiler that may not be installed is not an option for a browser engine.
 
@@ -90,7 +90,7 @@ So validation is three things, honestly ranked:
     use. Calibrated by requiring it to accept `glslc`'s own committed output,
     which is what stops a checker that passes everything.
   * **reaching the driver**, in `gpu_basics` - a smoke test, and labelled as one.
-  * **real validation**, by `tools/check-spirv.py`, which runs `spirv-val` when
+  * **real validation**, by `tools/check/check-spirv.py`, which runs `spirv-val` when
     it is installed and says plainly that it did not when it is not. Optional in
     the same way plutosvg and SDL3_image are.
 
@@ -109,7 +109,7 @@ back with a message rather than silently when there is no device or no SPIR-V
 support — a renderer that quietly is not the one you asked for is the failure
 this whole document is about.
 
-`tools/check-render.cmake` forces software, so every committed golden means
+`tools/check/check-render.cmake` forces software, so every committed golden means
 software and says so.
 
 **Version: WebGL 1 only.** p5 asks for `webgl2` first and falls back to `webgl`
@@ -587,7 +587,7 @@ There are three places GLSL is consumed here, and they want different things:
 |---|---|---|
 | `raster/glsl.cpp` + `glsl_eval.cpp`, 2,571 lines | parses and **interprets** GLSL ES for the software rasteriser | **No.** shaderc compiles GLSL to SPIR-V; it does not execute anything. Replacing this means also writing a SPIR-V interpreter, which is strictly more work than what is here |
 | `raster/spirv.cpp`, 733 lines | GLSL AST → SPIR-V at run time, for the GPU back end | **This is the one it is for** — and it still cannot, see below |
-| `tools/gen-shaders.py` | the tile shaders, offline | **It already does.** That script shells out to `glslc`, which IS shaderc's command-line front end |
+| `tools/gen/gen-shaders.py` | the tile shaders, offline | **It already does.** That script shells out to `glslc`, which IS shaderc's command-line front end |
 
 ### Why it cannot replace `raster/spirv.cpp`
 
@@ -619,7 +619,7 @@ run.
 them, so it can answer "would a real compiler accept this shader?" — which is a
 differential ORACLE for the front end, the same shape as `spirv-val` for the
 SPIR-V bytes, v8diff for ctjs and Chrome for layout. It would be optional and
-test-only, like `tools/check-spirv.py`, and it would catch the front end
+test-only, like `tools/check/check-spirv.py`, and it would catch the front end
 accepting something no driver would.
 
 **That is a real gap and this file does not claim it is filled.** What is

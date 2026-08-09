@@ -333,7 +333,7 @@ void test_a_constructed_image_is_an_element() {
 
 // The PNG this engine writes must be readable by things that are not this
 // engine, so the check is structural AND independent: the file is written out
-// and tools/check-png.py decodes it with Python's own zlib.
+// and tools/check/check-png.py decodes it with Python's own zlib.
 void test_encode_png() {
     const auto image = decode_bmp(make_bmp(4, 3, 0xFF3366CCU));
     const std::vector<std::byte> png = ctbrowser::shell::encode_png(image);
@@ -353,7 +353,7 @@ void test_encode_png() {
     // reject and which would look like a corrupt file rather than no file.
     CHECK(ctbrowser::shell::encode_png(ctbrowser::paint::bitmap{}).empty());
 
-    // Written for tools/check-png.py, which is what proves the deflate stream
+    // Written for tools/check/check-png.py, which is what proves the deflate stream
     // and both checksums are right rather than merely well-shaped.
     std::ofstream out{"build/render-encode.png", std::ios::binary};
     out.write(reinterpret_cast<const char *>(png.data()), static_cast<std::streamsize>(png.size()));

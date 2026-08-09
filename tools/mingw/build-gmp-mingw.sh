@@ -44,11 +44,11 @@
 # It is the wrong default for JavaScript's BigInt, and this script says so
 # rather than leaving the next person to find out.
 #
-#   tools/build-gmp-mingw.sh [--clean]
+#   tools/mingw/build-gmp-mingw.sh [--clean]
 #
 set -euo pipefail
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 target="x86_64-w64-mingw32"
 
 # --- the cross compiler, looked for where the toolchain file looks ----------

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""How much of WebGL 2 works, and what to write a probe for next.
+"""How much of Babylon works, and what to write a probe for next.
 
-tests/webgl2_api.cpp calls as much of WebGL 2's API as can be run headlessly and
-reports which calls pass; tests/corpus/webgl2/webgl2-api.txt records them; this drives the
+tests/babylon_api.cpp calls as much of Babylon's API as can be run headlessly and
+reports which calls pass; tests/corpus/babylon/babylon-api.txt records them; this drives the
 loop.
 
-    tools/webgl2-api.py                 build, run, show the failures
-    tools/webgl2-api.py --advance       record what is passing now
-    tools/webgl2-api.py --coverage      which WebGL 2 namespaces no probe mentions
-    tools/webgl2-api.py --only textures run and report one module
+    tools/corpus/babylon-api.py                 build, run, show the failures
+    tools/corpus/babylon-api.py --advance       record what is passing now
+    tools/corpus/babylon-api.py --coverage      which Babylon namespaces no probe mentions
+    tools/corpus/babylon-api.py --only textures run and report one module
 
-The companion to webgl2-ratchet.py, and the distinction is the point: the
+The companion to babylon-ratchet.py, and the distinction is the point: the
 ratchet measures how FAR the bundle gets - one number up a ladder - and this
-measures how WIDE the working surface is. WebGL 2's ratchet read 10/10 while
+measures how WIDE the working surface is. Babylon's ratchet read 10/10 while
 `(5).hasOwnProperty` was undefined, because nothing on the ladder asked a
 number for a property.
 
@@ -26,32 +26,32 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-BUNDLE = ROOT / "vendor/phaser/phaser.js"
-PROBES = ROOT / "tests/corpus/webgl2/webgl2-api-probe.js"
-RECORD = ROOT / "tests/corpus/webgl2/webgl2-api.txt"
-TEST = ROOT / "build/src/tests/ctbrowser-test-webgl2_api"
+ROOT = Path(__file__).resolve().parent.parent.parent
+BUNDLE = ROOT / "vendor/babylon/babylon.js"
+PROBES = ROOT / "tests/corpus/babylon/babylon-api-probe.js"
+RECORD = ROOT / "tests/corpus/babylon/babylon-api.txt"
+TEST = ROOT / "build/src/tests/ctbrowser-test-babylon_api"
 
-# The top-level namespaces WebGL 2 hangs off its export object, read from the
+# The top-level namespaces Babylon hangs off its export object, read from the
 # bundle rather than written down here so the denominator tracks the library
 # instead of drifting behind it. `    GameObjects: __webpack_require__(77856),`
 #
-# ANCHORED TO `var WebGL 2 = {`, and it has to be. The same line shape appears in
+# ANCHORED TO `var Babylon = {`, and it has to be. The same line shape appears in
 # every one of the 1763 webpack modules' export objects, so an unanchored match
 # counted 1131 "namespaces" - event constants, XHR settings, anything - and
 # reported 17/1131, a denominator that makes the work queue meaningless. The
 # root object is the only one this question is about.
-ROOT_EXPORT = re.compile(r"^var WebGL 2 = \{(.*?)^\};", re.M | re.S)
+ROOT_EXPORT = re.compile(r"^var Babylon = \{(.*?)^\};", re.M | re.S)
 NAMESPACE = re.compile(r"^    ([A-Z][A-Za-z0-9_$]*): __webpack_require__\(\d+\),?$", re.M)
 
 
 def build():
     r = subprocess.run(["cmake", "--build", "--preset", "default", "--target",
-                        "ctbrowser-test-webgl2_api"],
+                        "ctbrowser-test-babylon_api"],
                        cwd=ROOT, capture_output=True, text=True)
     if r.returncode != 0:
         sys.stderr.write(r.stdout + r.stderr)
-        sys.exit("webgl2-api: build failed")
+        sys.exit("babylon-api: build failed")
 
 
 def run():
@@ -83,34 +83,34 @@ def passing_from(out):
 
 def do_advance():
     out, _ = run()
-    if "WebGL 2 API:" not in out:
-        sys.exit("webgl2-api: the probes did not report:\n" + out)
+    if "Babylon API:" not in out:
+        sys.exit("babylon-api: the probes did not report:\n" + out)
     names = sorted(passing_from(out))
     if not names:
-        sys.exit("webgl2-api: nothing is passing - refusing to record an empty surface")
+        sys.exit("babylon-api: nothing is passing - refusing to record an empty surface")
     header = (
-        "# Which WebGL 2 probes pass. tests/webgl2_api.cpp measures it; this file\n"
+        "# Which Babylon probes pass. tests/babylon_api.cpp measures it; this file\n"
         "# records it. A probe that used to pass and now does not FAILS the test.\n"
         "#\n"
-        "# Only tools/webgl2-api.py --advance writes this file. A test that edits its\n"
+        "# Only tools/corpus/babylon-api.py --advance writes this file. A test that edits its\n"
         "# own expectations cannot fail, so advancing is a deliberate act.\n"
         "#\n"
-        "# The probes themselves are tests/corpus/webgl2/webgl2-api-probe.js, one per line here as\n"
+        "# The probes themselves are tests/corpus/babylon/babylon-api-probe.js, one per line here as\n"
         "# `module/name`. A probe that is SKIPPED is not recorded - it is not a claim\n"
         "# about anything working.\n"
     )
     RECORD.write_text(header + "\n".join(names) + "\n")
-    print(f"webgl2-api: recorded {len(names)} passing probes")
+    print(f"babylon-api: recorded {len(names)} passing probes")
 
 
 def do_coverage():
     """Which probe modules exist, and how many probes each one carries.
 
-    NO BUNDLE TO COUNT AGAINST, unlike p5-api.py and phaser-api.py: WebGL 2 is a
+    NO BUNDLE TO COUNT AGAINST, unlike p5-api.py and phaser-api.py: Babylon is a
     specification rather than a library, so there is no file to grep for the
     denominator. What is useful instead is the shape of the probe set itself -
     and in particular how much of it is the `unscoped` module, which is the part
-    docs/webgl2-plan.md has deliberately NOT committed to and which Babylon.js
+    docs/babylon-plan.md has deliberately NOT committed to and which Babylon.js
     calls in full.
     """
     text = PROBES.read_text(errors="replace")
@@ -120,7 +120,7 @@ def do_coverage():
     total = sum(modules.values())
     print(f"\n  {total} probes across {len(modules)} modules\n")
     for tag in sorted(modules, key=lambda t: -modules[t]):
-        note = "  <- deliberately not implemented; see docs/webgl2-plan.md" \
+        note = "  <- deliberately not implemented; see docs/babylon-plan.md" \
                if tag == "unscoped" else ""
         print(f"    {modules[tag]:>3}  {tag}{note}")
     print()
@@ -130,15 +130,15 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--advance", action="store_true",
-                    help="record the passing probes in tests/corpus/webgl2/webgl2-api.txt")
+                    help="record the passing probes in tests/corpus/babylon/babylon-api.txt")
     ap.add_argument("--coverage", action="store_true",
-                    help="list WebGL 2 namespaces no probe mentions")
+                    help="list Babylon namespaces no probe mentions")
     ap.add_argument("--only", metavar="MODULE",
                     help="report only probes in one module, e.g. textures")
     args = ap.parse_args()
 
     if not BUNDLE.exists() or not PROBES.exists():
-        sys.exit("webgl2-api: the bundle or the probe file is missing")
+        sys.exit("babylon-api: the bundle or the probe file is missing")
 
     if args.coverage:
         do_coverage()
@@ -152,13 +152,13 @@ def main():
     out, code = run()
     if args.only:
         for line in out.splitlines():
-            if args.only in line or "WebGL 2 API:" in line:
+            if args.only in line or "Babylon API:" in line:
                 print(line)
     else:
         print(out)
     if code != 0:
         print("The recorded surface is not satisfied. If this is progress, "
-              "run tools/webgl2-api.py --advance")
+              "run tools/corpus/babylon-api.py --advance")
     sys.exit(code)
 
 

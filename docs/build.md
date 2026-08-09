@@ -95,7 +95,7 @@ it, and the engine was carrying **two hand-written URL parsers that disagreed** 
 reported hostname `[:` and port `1]` for `http://[::1]/` because it reached for
 the last colon with no bracket guard.
 
-**How it reaches the cross-build.** `tools/build-boost-mingw.sh` compiles
+**How it reaches the cross-build.** `tools/mingw/build-boost-mingw.sh` compiles
 Boost.URL's 66 sources with the llvm-mingw compiler into
 `tools/llvm-mingw/x86_64-w64-mingw32/lib/libboost_url.a`, beside the static SDL3,
 SDL3_ttf and plutosvg already living there. **No b2** - Boost's build system is
@@ -157,7 +157,7 @@ long as there was only one.
 
 ## THE IMAGE CODECS REACH IT THE SAME WAY (2026-08-01)
 
-`tools/build-image-libs-mingw.sh` is that script's sibling and builds **zlib,
+`tools/mingw/build-image-libs-mingw.sh` is that script's sibling and builds **zlib,
 libpng and libjpeg-turbo** into the same sysroot. PNG and JPEG moved out of the
 optional SDL3_image hook and into the SDL-free engine, so the cross build needs
 them; `docs/shell.md` has why, and the short version is that `tests/` is
@@ -229,7 +229,7 @@ turned down rather than overlooked:
 * **Boost.CRC** — `boost::crc_32_type` replaces the 256-entry CRC table
   `encode_png` rebuilt on every call. It IS the PNG polynomial (CRC-32/ISO-HDLC,
   0xEDB88320 reflected), so this is the same checksum from a library rather than
-  from memory, and `tools/check-png.py` verifies the bytes with Python's own
+  from memory, and `tools/check/check-png.py` verifies the bytes with Python's own
   zlib independently of it. Header-only, so the cross-build needs nothing.
   **`encode_png` moved to `src/shell/images.cpp` first**: it was `inline` in a
   public header, which made it the odd one out beside the BMP/PNG/JPEG decoders,
@@ -266,7 +266,7 @@ turned down rather than overlooked:
   whose `<charconv>` is incomplete.
 
 **So the version floor stays at 1.80.** All three would have needed it raised
-(1.84, 1.89 and 1.85), and that is nearly free here - `tools/build-boost-mingw.sh` reads the
+(1.84, 1.89 and 1.85), and that is nearly free here - `tools/mingw/build-boost-mingw.sh` reads the
 tag out of the host's headers and brew ships 1.90 on both machines - but raising
 a floor to admit a library the measurement says not to use is a cost with no
 purchase. It is a one-line change whenever something earns it.
@@ -308,7 +308,7 @@ buys back what an all-inline engine gave is `CTBROWSER_LTO=ON` — inlining
 across the library boundary at LINK time rather than by recompiling the engine
 in every TU. Off by default, because the default is meant to be fast to build.
 
-`tools/check-package.sh` is what catches the other half of this: an exported
+`tools/check/check-package.sh` is what catches the other half of this: an exported
 target that links `Freetype::Freetype` needs a matching `find_dependency` in the
 installed config, and stage 6 shipped without one.
 
@@ -451,19 +451,19 @@ loop that has gone wrong is exactly when it explodes.
 
 The goldens prove ctbrowser renders the same as it did yesterday. They say
 nothing about whether it matches a browser, and parity with Chrome/Firefox is
-the goal — so `tools/compare.py` opens the same page in ctbrowser AND a real
+the goal — so `tools/check/compare.py` opens the same page in ctbrowser AND a real
 browser and sends both the same clicks and keystrokes, **one command at a
 time**.
 
 ```bash
-tools/compare.py setup                       # once: a venv holding Playwright
-tools/compare.py start --engine=ctbrowse --engine=chrome \
+tools/check/compare.py setup                       # once: a venv holding Playwright
+tools/check/compare.py start --engine=ctbrowse --engine=chrome \
                  --headed --delay 400 examples/pages/widgets.html
-tools/compare.py click 132 99
-tools/compare.py type Claude
-tools/compare.py key Tab
-tools/compare.py shot after-tab              # build/compare/shots/after-tab/*.png
-tools/compare.py stop
+tools/check/compare.py click 132 99
+tools/check/compare.py type Claude
+tools/check/compare.py key Tab
+tools/check/compare.py shot after-tab              # build/compare/shots/after-tab/*.png
+tools/check/compare.py stop
 ```
 
 `--headed --delay` is the point rather than a debugging aid: both windows are

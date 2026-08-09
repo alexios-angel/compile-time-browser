@@ -104,7 +104,7 @@ byte-compare their render against a golden in `tests/golden/`, with
 `CTBROWSER_FONTS=font8x8` so the comparison pins layout rather than moving with
 FreeType. `REGOLDEN=1` regenerates them.
 
-`tools/format.sh --check` is the formatting gate; `tools/check-package.sh`
+`tools/format.sh --check` is the formatting gate; `tools/check/check-package.sh`
 installs to a temp prefix and builds a consumer against it with `find_package`,
 which is the only proof the install actually works.
 

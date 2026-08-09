@@ -93,7 +93,7 @@ ladder rather than the middle.
 ## The ladder
 
 `tests/babylon_ratchet.cpp` measures, `tests/corpus/babylon/babylon-ratchet.txt` records,
-`tools/babylon-ratchet.py` drives — the shape used four times now (p5, Phaser,
+`tools/corpus/babylon-ratchet.py` drives — the shape used four times now (p5, Phaser,
 WebGL 2, modules).
 
 **It starts where the WebGL 2 ratchet stops.** That one asks "does Babylon draw
@@ -206,7 +206,7 @@ angles, and a sphere carrying the specular highlight.
   touches the sampler path, and `p5-webgl.html` and the Phaser pages draw
   through it. If one of those moves, the change is wrong.
 * p5 12/12, Phaser 10/10, invaders, and every API surface unmoved.
-* `tools/compare.py` against Chrome for anything where the right answer is a
+* `tools/check/compare.py` against Chrome for anything where the right answer is a
   judgement call rather than a fact — shading in particular. There is an oracle
   and it is already in the repository.
 

@@ -185,7 +185,7 @@ int main() {
         if (!recorded.contains(name)) { gained.push_back(name); }
     }
     if (!gained.empty()) {
-        std::printf("     ADVANCE: %zu newly passing. Run tools/webgl2-api.py --advance\n",
+        std::printf("     ADVANCE: %zu newly passing. Run tools/corpus/webgl2-api.py --advance\n",
                     gained.size());
         for (const std::string & name : gained) { std::printf("       + %s\n", name.c_str()); }
     }

@@ -1,5 +1,5 @@
 # Which p5.js probes pass, one per line. tests/p5_api.cpp measures them and
-# tools/p5-api.py --advance is the only thing that writes this file - a test
+# tools/corpus/p5-api.py --advance is the only thing that writes this file - a test
 # that edits its own expectations cannot fail.
 #
 # A name here that stops passing FAILS the test. A name that starts passing is

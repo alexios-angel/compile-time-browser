@@ -140,7 +140,7 @@ That path had **never been exercised by a test**. `<img src=x.png>` could have
 been blank on every build and nothing would have said so, which is the same
 shape of gap the p5 API probe exists to close. `examples/pages/image-formats.html`
 now draws a generated 16x16 PNG at three sizes against a golden, and
-`tools/gen-assets.py` writes that PNG — by hand, from `zlib` and `struct`, so the
+`tools/gen/gen-assets.py` writes that PNG — by hand, from `zlib` and `struct`, so the
 script stays dependency-free and no foreign binary is committed.
 
 **PNG is goldened and JPEG is not**, and the reason is byte-exactness rather

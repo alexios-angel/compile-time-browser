@@ -309,7 +309,7 @@ void test_gpu_through_the_compositor_thread() {
 // Intel Arc rejects invalid SPIR-V at shader OR pipeline creation - measured by
 // deliberately breaking the emitter's operand broadcast and watching the
 // pipeline build anyway - so a driver accepting a module proves the bytes
-// survived and never that they are valid. Validation is tools/check-spirv.py
+// survived and never that they are valid. Validation is tools/check/check-spirv.py
 // and spirv-val. If page shaders ever come back through a compiler this tree
 // owns, this test comes back with them.
 

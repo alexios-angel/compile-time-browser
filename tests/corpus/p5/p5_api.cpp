@@ -16,11 +16,11 @@
 //   a new pass                       print ADVANCE; recording is deliberate.
 //   a failure that was already known listed, not fatal - it is the work queue.
 //
-// A test that edits its own expectations cannot fail, so `tools/p5-api.py
+// A test that edits its own expectations cannot fail, so `tools/corpus/p5-api.py
 // --advance` is the only thing that writes tests/corpus/p5/p5-api.txt.
 //
 // The probes live in tests/corpus/p5/p5-api-probe.js rather than in a string here, so
-// adding one needs no rebuild and `tools/p5-api.py --coverage` can list which
+// adding one needs no rebuild and `tools/corpus/p5-api.py --coverage` can list which
 // of the bundle's `fn.*` no probe mentions - that list is what to write next.
 
 #include <ctbrowser.hpp>
@@ -255,7 +255,7 @@ int main() {
         if (!recorded.contains(name)) { gained.push_back(name); }
     }
     if (!gained.empty()) {
-        std::printf("     ADVANCE: %zu newly passing. Run tools/p5-api.py --advance\n",
+        std::printf("     ADVANCE: %zu newly passing. Run tools/corpus/p5-api.py --advance\n",
                     gained.size());
         for (const std::string & name : gained) { std::printf("       + %s\n", name.c_str()); }
     }

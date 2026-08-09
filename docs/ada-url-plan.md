@@ -65,7 +65,7 @@ parser; a browser does not want one.
 * **It is what Node.js uses**, so it is exercised far beyond this tree.
 * Same authors as simdutf, already adopted here, and the same shape of
   dependency - a compiled library that needs the mingw sysroot treatment
-  `tools/build-mimalloc-mingw.sh` and `tools/build-simdutf-mingw.sh` already
+  `tools/mingw/build-mimalloc-mingw.sh` and `tools/mingw/build-simdutf-mingw.sh` already
   establish. That path is now well worn.
 * Speed is real but is NOT the argument: URL parsing does not appear in any
   profile in `docs/performance.md`. **Adopt it for the eight rows above.**
@@ -85,7 +85,7 @@ and the reason to be careful:
 * `tests/url_basics` (and `data_url`) pin today's answers. Cases that change are
   changing TOWARD the browser, and each one should be re-recorded deliberately,
   with the WHATWG rule named in the diff - not bulk-updated.
-* `tools/compare.py` drives ctbrowser and Chrome through the same page. It is
+* `tools/check/compare.py` drives ctbrowser and Chrome through the same page. It is
   the right instrument here: for URL behaviour there is an oracle, and it is
   sitting in the repository already.
 * The thirteen goldens should not move at all. If one does, that is a finding.

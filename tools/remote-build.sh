@@ -126,7 +126,7 @@ if [ "${1:-}" = windows ]; then
   ssh "$host" 'inc="$HOME/projects/boost-inc"; mkdir -p "$inc";
     [ -e "$inc/boost" ] || ln -s /home/linuxbrew/.linuxbrew/include/boost "$inc/boost";
     ls "$inc/boost/version.hpp" >/dev/null'
-  ssh "$host" "cd projects/compile-time-browser && tools/build-image-libs-mingw.sh && tools/build-boost-mingw.sh && tools/build-mimalloc-mingw.sh && tools/build-simdutf-mingw.sh && tools/build-cpptrace-mingw.sh"
+  ssh "$host" "cd projects/compile-time-browser && tools/mingw/build-image-libs-mingw.sh && tools/mingw/build-boost-mingw.sh && tools/mingw/build-mimalloc-mingw.sh && tools/mingw/build-simdutf-mingw.sh && tools/mingw/build-cpptrace-mingw.sh"
   ssh "$host" "cd projects/compile-time-browser && cmake --preset windows -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE && cmake --build --preset windows && cmake --build --preset windows --target windows-dist"
   rsync -az "$host:projects/compile-time-browser/examples-windows/" "$repo_root/examples-windows/"
   echo "examples-windows/ refreshed from the devbox"

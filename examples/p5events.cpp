@@ -1,11 +1,11 @@
 // p5.js input: pointer and keyboard, reaching a sketch.
 //
 // The one p5 page here with no golden, deliberately: what it draws is a
-// function of input, and input is what tools/compare.py supplies - the same
+// function of input, and input is what tools/check/compare.py supplies - the same
 // clicks and keystrokes through this and through Chrome, side by side, so the
 // two can be watched rather than guessed at.
 //
-//   tools/compare.py start --engine=ctbrowse --engine=chrome --headed
+//   tools/check/compare.py start --engine=ctbrowse --engine=chrome --headed
 //       --delay 400 examples/pages/p5-events.html
 //
 // (written without a trailing backslash on purpose: a `\` at the end of a `//`
