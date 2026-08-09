@@ -16,225 +16,197 @@
 // without meaning to: `if (x)`, `x + ""`, `x == null` and `+x` are in every
 // bundle, and each is a different conversion with different rules.
 
-#include <ctbrowser/script/script.hpp>
-
-#include "check.hpp"
-#include <string>
-#include <string_view>
-
-using namespace ctbrowser::script;
-
-namespace {
-
-[[nodiscard]] std::string run(std::string_view expression) {
-    const program prog = compiler::compile("return (" + std::string{expression} + ");");
-    context cx;
-    install_builtins(cx);
-    const run_result r = cx.run(prog);
-    if (!r.ok) { return "THREW"; }
-    return cx.to_string(r.returned);
-}
-
-void expect(std::string_view expression, std::string_view want) {
-    const std::string got = run(expression);
-    if (got != want) {
-        std::printf("FAIL     %-52s => %s (want %s)\n", std::string{expression}.c_str(),
-                    got.c_str(), std::string{want}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
-} // namespace
+#include "js_expect.hpp"
 
 int main() {
     // --- typeof --------------------------------------------------------------
     // `typeof null` is "object" and always will be - it is the oldest bug in
     // the language and pages branch on it.
-    expect("typeof undefined", "undefined");
-    expect("typeof null", "object");
-    expect("typeof true", "boolean");
-    expect("typeof 0", "number");
-    expect("typeof NaN", "number");
-    expect("typeof Infinity", "number");
-    expect("typeof \"\"", "string");
-    expect("typeof []", "object");
-    expect("typeof ({})", "object");
-    expect("typeof (function(){})", "function");
-    expect("typeof Symbol(\"s\")", "symbol");
+    js_expect("typeof undefined", "undefined");
+    js_expect("typeof null", "object");
+    js_expect("typeof true", "boolean");
+    js_expect("typeof 0", "number");
+    js_expect("typeof NaN", "number");
+    js_expect("typeof Infinity", "number");
+    js_expect("typeof \"\"", "string");
+    js_expect("typeof []", "object");
+    js_expect("typeof ({})", "object");
+    js_expect("typeof (function(){})", "function");
+    js_expect("typeof Symbol(\"s\")", "symbol");
     // typeof is the ONE operator that does not throw on an undeclared name -
     // which is why `typeof x === "undefined"` is the guard every bundle uses.
-    expect("typeof undeclaredThing", "undefined");
-    expect("typeof typeof 1", "string");
-    expect("typeof void 0", "undefined");
+    js_expect("typeof undeclaredThing", "undefined");
+    js_expect("typeof typeof 1", "string");
+    js_expect("typeof void 0", "undefined");
 
     // --- ToBoolean -----------------------------------------------------------
     // Exactly seven falsy values, and everything else is true - including "0",
     // "false", [] and {}, which is what surprises people.
     for (const char * falsy : {"undefined", "null", "false", "0", "-0", "NaN", "\"\""}) {
-        expect(std::string{"Boolean("} + falsy + ")", "false");
-        expect(std::string{"!!"} + falsy, "false");
+        js_expect(std::string{"Boolean("} + falsy + ")", "false");
+        js_expect(std::string{"!!"} + falsy, "false");
     }
     for (const char * truthy :
          {"true", "1", "-1", "\"0\"", "\"false\"", "[]", "({})", "Infinity"}) {
-        expect(std::string{"Boolean("} + truthy + ")", "true");
+        js_expect(std::string{"Boolean("} + truthy + ")", "true");
     }
 
     // --- ToNumber ------------------------------------------------------------
-    expect("Number(undefined)", "NaN");
-    expect("Number(null)", "0"); // null is 0, undefined is NaN - they differ here
-    expect("Number(true)", "1");
-    expect("Number(false)", "0");
-    expect("Number(\"\")", "0");
-    expect("Number(\" \")", "0");
-    expect("Number(\"1\")", "1");
-    expect("Number(\"1a\")", "NaN");
-    expect("+\"2\"", "2");
-    expect("+true", "1");
-    expect("+null", "0");
-    expect("+undefined", "NaN");
+    js_expect("Number(undefined)", "NaN");
+    js_expect("Number(null)", "0"); // null is 0, undefined is NaN - they differ here
+    js_expect("Number(true)", "1");
+    js_expect("Number(false)", "0");
+    js_expect("Number(\"\")", "0");
+    js_expect("Number(\" \")", "0");
+    js_expect("Number(\"1\")", "1");
+    js_expect("Number(\"1a\")", "NaN");
+    js_expect("+\"2\"", "2");
+    js_expect("+true", "1");
+    js_expect("+null", "0");
+    js_expect("+undefined", "NaN");
 
     // --- ToString ------------------------------------------------------------
-    expect("String(undefined)", "undefined");
-    expect("String(null)", "null");
-    expect("String(true)", "true");
-    expect("String(0)", "0");
-    expect("String(-0)", "0"); // the sign is not shown
-    expect("String(NaN)", "NaN");
-    expect("String([])", "");
-    expect("String([1])", "1");
-    expect("String([1,2])", "1,2");
-    expect("String([1,[2,[3]]])", "1,2,3"); // join is recursive
-    expect("String([null])", "");           // null and undefined join as empty
-    expect("String([undefined])", "");
-    expect("String({})", "[object Object]");
+    js_expect("String(undefined)", "undefined");
+    js_expect("String(null)", "null");
+    js_expect("String(true)", "true");
+    js_expect("String(0)", "0");
+    js_expect("String(-0)", "0"); // the sign is not shown
+    js_expect("String(NaN)", "NaN");
+    js_expect("String([])", "");
+    js_expect("String([1])", "1");
+    js_expect("String([1,2])", "1,2");
+    js_expect("String([1,[2,[3]]])", "1,2,3"); // join is recursive
+    js_expect("String([null])", "");           // null and undefined join as empty
+    js_expect("String([undefined])", "");
+    js_expect("String({})", "[object Object]");
 
     // --- the + operator, which is two operators -----------------------------
     // If either side is a string after ToPrimitive it CONCATENATES; otherwise
     // it adds. That single rule explains every surprising line below.
-    expect("1 + 1", "2");
-    expect("1 + \"1\"", "11");
-    expect("\"1\" + 1", "11");
-    expect("1 + null", "1");
-    expect("1 + undefined", "NaN");
-    expect("1 + true", "2");
-    expect("true + true", "2");
-    expect("\"\" + null", "null");
-    expect("\"\" + undefined", "undefined");
-    expect("[] + []", "");
-    expect("[1] + [2]", "12"); // both join to strings, so this concatenates
+    js_expect("1 + 1", "2");
+    js_expect("1 + \"1\"", "11");
+    js_expect("\"1\" + 1", "11");
+    js_expect("1 + null", "1");
+    js_expect("1 + undefined", "NaN");
+    js_expect("1 + true", "2");
+    js_expect("true + true", "2");
+    js_expect("\"\" + null", "null");
+    js_expect("\"\" + undefined", "undefined");
+    js_expect("[] + []", "");
+    js_expect("[1] + [2]", "12"); // both join to strings, so this concatenates
     // The other arithmetic operators have no string mode, so they coerce.
-    expect("\"3\" - 1", "2");
-    expect("\"3\" * \"2\"", "6");
-    expect("\"6\" / \"2\"", "3");
-    expect("1 + +\"2\"", "3"); // the unary + a minifier writes to force a number
+    js_expect("\"3\" - 1", "2");
+    js_expect("\"3\" * \"2\"", "6");
+    js_expect("\"6\" / \"2\"", "3");
+    js_expect("1 + +\"2\"", "3"); // the unary + a minifier writes to force a number
 
     // --- == against === ------------------------------------------------------
     // `==` coerces and `===` does not. The rows below are the ones bundles
     // actually depend on.
-    expect("null == undefined", "true");
-    expect("null === undefined", "false");
-    expect("null == 0", "false"); // null is ONLY loosely equal to undefined
-    expect("null == false", "false");
-    expect("undefined == 0", "false");
-    expect("0 == \"\"", "true");
-    expect("0 == \"0\"", "true");
-    expect("\"\" == \"0\"", "false"); // two strings never coerce
-    expect("0 == false", "true");
-    expect("1 == true", "true");
-    expect("2 == true", "false");
-    expect("\"1\" == 1", "true");
-    expect("NaN == NaN", "false");
-    expect("NaN === NaN", "false");
-    expect("0 === -0", "true"); // === cannot tell the zeros apart
-    expect("1 === 1", "true");
-    expect("\"a\" === \"a\"", "true");
+    js_expect("null == undefined", "true");
+    js_expect("null === undefined", "false");
+    js_expect("null == 0", "false"); // null is ONLY loosely equal to undefined
+    js_expect("null == false", "false");
+    js_expect("undefined == 0", "false");
+    js_expect("0 == \"\"", "true");
+    js_expect("0 == \"0\"", "true");
+    js_expect("\"\" == \"0\"", "false"); // two strings never coerce
+    js_expect("0 == false", "true");
+    js_expect("1 == true", "true");
+    js_expect("2 == true", "false");
+    js_expect("\"1\" == 1", "true");
+    js_expect("NaN == NaN", "false");
+    js_expect("NaN === NaN", "false");
+    js_expect("0 === -0", "true"); // === cannot tell the zeros apart
+    js_expect("1 === 1", "true");
+    js_expect("\"a\" === \"a\"", "true");
 
     // --- numbers -------------------------------------------------------------
-    expect("1/0", "Infinity");
-    expect("-1/0", "-Infinity");
-    expect("0/0", "NaN");
-    expect("NaN !== NaN", "true");
-    expect("0.1 + 0.2 === 0.3", "false"); // binary floating point, as everywhere
-    expect("Number.isInteger(1)", "true");
-    expect("Number.isInteger(1.5)", "false");
-    expect("Number.isNaN(NaN)", "true");
-    expect("Number.isNaN(\"NaN\")", "false"); // isNaN COERCES, Number.isNaN does not
-    expect("isNaN(\"NaN\")", "true");
-    expect("Number.MAX_SAFE_INTEGER", "9007199254740991");
-    expect("Number.EPSILON > 0", "true");
-    expect("parseInt(\"08\")", "8"); // not octal, despite the leading zero
-    expect("parseInt(\"10\", 2)", "2");
-    expect("parseFloat(\".5\")", "0.5");
+    js_expect("1/0", "Infinity");
+    js_expect("-1/0", "-Infinity");
+    js_expect("0/0", "NaN");
+    js_expect("NaN !== NaN", "true");
+    js_expect("0.1 + 0.2 === 0.3", "false"); // binary floating point, as everywhere
+    js_expect("Number.isInteger(1)", "true");
+    js_expect("Number.isInteger(1.5)", "false");
+    js_expect("Number.isNaN(NaN)", "true");
+    js_expect("Number.isNaN(\"NaN\")", "false"); // isNaN COERCES, Number.isNaN does not
+    js_expect("isNaN(\"NaN\")", "true");
+    js_expect("Number.MAX_SAFE_INTEGER", "9007199254740991");
+    js_expect("Number.EPSILON > 0", "true");
+    js_expect("parseInt(\"08\")", "8"); // not octal, despite the leading zero
+    js_expect("parseInt(\"10\", 2)", "2");
+    js_expect("parseFloat(\".5\")", "0.5");
 
     // --- null, undefined and the nullish operators ---------------------------
-    expect("null ?? \"d\"", "d");
-    expect("undefined ?? \"d\"", "d");
-    expect("0 ?? \"d\"", "0");   // ?? only catches null and undefined...
-    expect("\"\" ?? \"d\"", ""); // ...unlike ||, which catches every falsy value
-    expect("0 || \"d\"", "d");
-    expect("\"\" || \"d\"", "d");
-    expect("1 && 2", "2");
-    expect("0 && 2", "0");
-    expect("void 0 === undefined", "true");
+    js_expect("null ?? \"d\"", "d");
+    js_expect("undefined ?? \"d\"", "d");
+    js_expect("0 ?? \"d\"", "0");   // ?? only catches null and undefined...
+    js_expect("\"\" ?? \"d\"", ""); // ...unlike ||, which catches every falsy value
+    js_expect("0 || \"d\"", "d");
+    js_expect("\"\" || \"d\"", "d");
+    js_expect("1 && 2", "2");
+    js_expect("0 && 2", "0");
+    js_expect("void 0 === undefined", "true");
 
     // --- objects, prototypes, identity ---------------------------------------
-    expect("[] instanceof Array", "true");
-    expect("({}) instanceof Object", "true");
-    expect("(function(){}) instanceof Function", "true");
-    expect("\"a\" instanceof String", "false"); // a primitive is not an instance
-    expect("Array.isArray([])", "true");
-    expect("Array.isArray({})", "false");
-    expect("[].constructor === Array", "true");
-    expect("(1).constructor === Number", "true");
-    expect("typeof \"\".constructor", "function");
-    expect("({a:1}).a", "1");
-    expect("({a:1}).b", "undefined");
-    expect("\"a\" in {a:1}", "true");
-    expect("\"b\" in {a:1}", "false");
-    expect("(function(){var o={a:1};delete o.a;return o.a})()", "undefined");
+    js_expect("[] instanceof Array", "true");
+    js_expect("({}) instanceof Object", "true");
+    js_expect("(function(){}) instanceof Function", "true");
+    js_expect("\"a\" instanceof String", "false"); // a primitive is not an instance
+    js_expect("Array.isArray([])", "true");
+    js_expect("Array.isArray({})", "false");
+    js_expect("[].constructor === Array", "true");
+    js_expect("(1).constructor === Number", "true");
+    js_expect("typeof \"\".constructor", "function");
+    js_expect("({a:1}).a", "1");
+    js_expect("({a:1}).b", "undefined");
+    js_expect("\"a\" in {a:1}", "true");
+    js_expect("\"b\" in {a:1}", "false");
+    js_expect("(function(){var o={a:1};delete o.a;return o.a})()", "undefined");
 
     // --- ToPrimitive on objects that define it -------------------------------
     // valueOf is tried first for a numeric hint, toString for a string one.
-    expect("({valueOf:function(){return 42}}) + 1", "43");
-    expect("({toString:function(){return \"x\"}}) + 1", "x1");
-    expect("String({toString:function(){return \"T\"}})", "T");
-    expect("(new Date(0)) instanceof Date", "true");
+    js_expect("({valueOf:function(){return 42}}) + 1", "43");
+    js_expect("({toString:function(){return \"x\"}}) + 1", "x1");
+    js_expect("String({toString:function(){return \"T\"}})", "T");
+    js_expect("(new Date(0)) instanceof Date", "true");
 
     // --- ToNumber of an object, which goes through ToPrimitive ---------------
     // These were the sweep's biggest cluster: `context::to_number` is static
     // and cannot re-enter the VM to call `valueOf`, so it answered NaN for
     // every object - which made `Number([])` NaN and every `==` between an
     // object and a primitive false. The built-ins use `to_number_value` now.
-    expect("Number([])", "0");
-    expect("Number([1])", "1");
-    expect("Number({valueOf:function(){return 7}})", "7");
-    expect("Math.abs([])", "0");
-    expect("Math.abs([-2.5])", "2.5");
-    expect("Math.max([1],[2])", "2");
+    js_expect("Number([])", "0");
+    js_expect("Number([1])", "1");
+    js_expect("Number({valueOf:function(){return 7}})", "7");
+    js_expect("Math.abs([])", "0");
+    js_expect("Math.abs([-2.5])", "2.5");
+    js_expect("Math.max([1],[2])", "2");
     // And `==` retries after ToPrimitive - 7.2.15 steps 10 and 11.
-    expect("0 == []", "true");
-    expect("\"\" == []", "true");
-    expect("false == []", "true");
-    expect("1 == [1]", "true");
-    expect("\"1\" == [1]", "true");
-    expect("\"abc\" == [\"abc\"]", "true");
+    js_expect("0 == []", "true");
+    js_expect("\"\" == []", "true");
+    js_expect("false == []", "true");
+    js_expect("1 == [1]", "true");
+    js_expect("\"1\" == [1]", "true");
+    js_expect("\"abc\" == [\"abc\"]", "true");
     // Two OBJECTS still compare by identity, and a string is on the heap here
     // too - which is why "both on the heap" was the wrong test for that.
-    expect("[] == []", "false");
-    expect("({}) == ({})", "false");
-    expect("null == []", "false");
-    expect("0 == {}", "false");
-    expect("NaN == [NaN]", "false");
+    js_expect("[] == []", "false");
+    js_expect("({}) == ({})", "false");
+    js_expect("null == []", "false");
+    js_expect("0 == {}", "false");
+    js_expect("NaN == [NaN]", "false");
     // A leading 0x is hexadecimal when no radix is given, 19.2.5 step 8.
-    expect("parseInt(\"0x10\")", "16");
-    expect("parseInt(\"0xFF\")", "255");
-    expect("parseInt(\"-0x10\")", "-16");
-    expect("parseInt(\"0x10\", 10)", "0"); // an explicit radix wins
+    js_expect("parseInt(\"0x10\")", "16");
+    js_expect("parseInt(\"0xFF\")", "255");
+    js_expect("parseInt(\"-0x10\")", "-16");
+    js_expect("parseInt(\"0x10\", 10)", "0"); // an explicit radix wins
 
     // --- KNOWN WRONG, pinned so a fix trips over them -------------------------
-    expect("typeof Object.is", "undefined");      // V8: "function"
-    expect("String((function(){}))", "function"); // V8: the source text
-    expect("String(Symbol(\"s\"))", "@@sym:0:s"); // V8: "Symbol(s)"
+    js_expect("typeof Object.is", "undefined");      // V8: "function"
+    js_expect("String((function(){}))", "function"); // V8: the source text
+    js_expect("String(Symbol(\"s\"))", "@@sym:0:s"); // V8: "Symbol(s)"
 
     REPORT("type_basics");
 }
