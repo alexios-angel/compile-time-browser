@@ -28,7 +28,12 @@ target_sources(ctbrowser-script
     builtins/async.cpp
     bigint.cpp
     number_format.cpp
-    vm.cpp
+    # The interpreter. run_loop.cpp is the dispatch loop and stays whole: it is
+    # ONE function, and the thing docs/computed-goto-plan.md is about.
+    vm/coerce.cpp
+    vm/objects.cpp
+    vm/call.cpp
+    vm/run_loop.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
