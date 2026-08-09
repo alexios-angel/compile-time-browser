@@ -17,7 +17,15 @@ target_sources(ctbrowser-script
     # translation unit that uses it. compile.cpp holds the whole compiler -
     # only compiler::compile() is declared in the header.
     compile.cpp
+    # The standard library. builtins.cpp is now just install_builtins() calling
+    # the five files beside it; builtins/internal.hpp is private to them and is
+    # deliberately in NO file set - builtins.hpp still declares one function.
     builtins.cpp
+    builtins/values.cpp
+    builtins/collections.cpp
+    builtins/text.cpp
+    builtins/objects.cpp
+    builtins/async.cpp
     bigint.cpp
     number_format.cpp
     vm.cpp
