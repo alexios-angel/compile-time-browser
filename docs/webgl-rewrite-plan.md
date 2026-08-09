@@ -109,7 +109,7 @@ only to feed a software rasteriser that is also going.
 
 ## What stays, and why
 
-- **`src/shell/page/webgl_bindings.cpp`** - the JavaScript surface. It is the
+- **`src/shell/webgl_bindings.cpp`** - the JavaScript surface. It is the
   SPECIFICATION of what a page can call and it is not the broken part. It gets
   rewired to the new context, and every call it makes that the context does not
   have becomes a compile error, which is the point.
@@ -428,7 +428,7 @@ they stay untouched" was half right: they specify the CALLS correctly, but they
 carry a type from the layer being removed.
 
 That is not a reason to bring the GLSL header back. `set_uniform` needs a shape
-and some floats or ints, which is a small POD that belongs in `shell/webgl.hpp`:
+and some floats or ints, which is a small POD that belongs in `shell/page/webgl.hpp`:
 
     struct uniform_value {
         int rows = 1;         // 1 is a scalar, 3 a vec3, 3x3 a mat3

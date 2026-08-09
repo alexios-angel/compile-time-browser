@@ -1,6 +1,6 @@
 // URL parsing, in ONE place.
 //
-// There used to be two: `detail::parse_url` in shell/net.cpp for the HTTP client
+// There used to be two: `detail::parse_url` in shell/net/net.cpp for the HTTP client
 // and `split_url` in shell/bindings.cpp for `location.*`. They were written
 // separately, and they disagreed - which is the whole reason this file exists.
 //

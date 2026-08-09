@@ -478,7 +478,7 @@ shader corpus with randomised inputs.
 ### 4. Rasteriser — `raster/softgl.hpp`
 
 Triangle setup, viewport transform, perspective-correct interpolation, depth
-buffer, culling, scissor, blending (the equations `shell/composite.hpp` already
+buffer, culling, scissor, blending (the equations `shell/page/composite.hpp` already
 has — same maths, different caller). Quad shading, early-Z, tile binning,
 `parallel_for`.
 
@@ -487,7 +487,7 @@ resolved by `depthFunc`, a culled back face, a blended overlap. Perspective
 correction gets its own test with a strongly perspective quad, because
 interpolating in screen space looks *almost* right.
 
-### 5. The context — `shell/webgl.hpp`, bound in `bindings.cpp`
+### 5. The context — `shell/page/webgl.hpp`, bound in `bindings.cpp`
 
 The 79 methods, the constant table, and the objects: buffers, textures, programs,
 shaders, framebuffers, renderbuffers. `getContext('webgl')` returns it instead of

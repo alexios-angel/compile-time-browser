@@ -1493,7 +1493,7 @@ private:
         images_by_node_;
     bool network_allowed_ = true;
     // SVG sources and the rasters made from them. Beside images_ rather than
-    // inside it: see shell/svg.hpp for why a vector graphic cannot share a
+    // inside it: see shell/page/svg_cache.hpp for why a vector graphic cannot share a
     // decode-once-by-name cache.
     svg_store svg_;
     canvas_store canvases_;

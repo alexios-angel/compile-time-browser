@@ -1,4 +1,4 @@
-// HTTP over libcurl - the transport behind shell/net.hpp.
+// HTTP over libcurl - the transport behind shell/net/net.hpp.
 //
 // WHY libcurl AND NOT THE ASIO IT REPLACES. Asio is a socket; everything above
 // it - the request line, header folding, chunked decoding, redirects - was
@@ -164,7 +164,7 @@ http_response fetch(const http_request & request, http_options options) {
     // PARSED AND REFUSED HERE rather than by libcurl, and deliberately. libcurl
     // speaks ftp, file, smtp and a dozen others; this client does http and
     // https, and a `file://` reaching a network transport is a bug in the
-    // caller rather than a request. shell/url.hpp is also what drops credentials
+    // caller rather than a request. shell/net/url.hpp is also what drops credentials
     // and the fragment, which must not travel.
     const fetch_url target = parse_absolute(request.url);
     if (!target.valid) {

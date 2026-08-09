@@ -151,7 +151,7 @@ game framework needs that a sketch library does not:
 * **Input state**: `KeyboardEvent.code` as well as `.key`, pointer capture,
   `document.hidden` / visibility.
 * **Canvas 2D corners** p5 never used — `globalCompositeOperation` beyond what
-  `shell/composite.hpp` covers, `createPattern`, `ImageData` round-trips.
+  `shell/page/composite.hpp` covers, `createPattern`, `ImageData` round-trips.
 * **WebGL** — Phaser's renderer is its own; it may want WebGL 2, which
   `docs/webgl2-plan.md` covers, and it will certainly enumerate programs.
 

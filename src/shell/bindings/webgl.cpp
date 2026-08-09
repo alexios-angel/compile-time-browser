@@ -4,7 +4,7 @@
 #include <cstring>
 #include <utility>
 
-// `canvas.getContext('webgl')` - the JavaScript surface over shell/webgl.hpp.
+// `canvas.getContext('webgl')` - the JavaScript surface over shell/page/webgl.hpp.
 //
 // IN ITS OWN FILE because it is a different kind of code from the rest of the
 // bindings: seventy-nine methods that almost all do one thing, plus a constant
@@ -459,7 +459,7 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
         // own version and correctly saw 2, rewrote every body to ES 3.00.
         // Every shader was then ES 3.00 source with no directive. The fragment
         // ones survived because the processor injects `layout(location = 0)`
-        // and shell/webgl.cpp's repair keys on `layout(`; the post-process
+        // and shell/page/webgl.cpp's repair keys on `layout(`; the post-process
         // VERTEX shader has none, so it was parsed as ESSL 1.00 and rejected,
         // the fullscreen quad never drew, and the canvas kept its clear colour
         // with NO GL ERROR ANYWHERE. That is Babylon ratchet rung 8.

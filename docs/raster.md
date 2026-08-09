@@ -24,7 +24,7 @@ completely and needs no exception.
 **It rasterises at the size asked for**, and that is the whole point.
 `draw_image` scales nearest-neighbour, so a vector graphic decoded once at its
 natural size and then enlarged looks WORSE than a PNG — stair-stepped along every
-diagonal. `shell/svg.hpp` caches by `(content, width, height)` and the painter
+diagonal. `shell/page/svg_cache.hpp` caches by `(content, width, height)` and the painter
 passes the *snapped* box, so the blit is 1:1.
 
 The bitmap is **unpremultiplied** on the way in: plutovg stores premultiplied
@@ -44,7 +44,7 @@ PINNED to the Windows sysroot's, `tools/Brewfile` names them, and
 `src/CMakeLists.txt` warns on a mismatch.
 
 Optional, like SDL3_ttf: without plutosvg a page lays out IDENTICALLY (the
-natural-size scan in `shell/svg.hpp` is in-engine and never asks plutosvg) and
+natural-size scan in `shell/page/svg_cache.hpp` is in-engine and never asks plutosvg) and
 simply draws no graphics.
 
 ## Fonts on Windows

@@ -175,7 +175,7 @@ should be answered before anything is deleted.
 | `src/raster/softgl.cpp` | 377 | **deleted** — its only caller is `webgl.cpp` |
 | `src/raster/spirv.cpp` | 733 | **dead** — it exists to feed a GPU path ANGLE would own |
 | `src/raster/glsl_translate.cpp` | 471 | **dead** — ANGLE's translator does exactly this job |
-| `src/shell/page/webgl_bindings.cpp` | 1,264 | **stays**, and this is the important row |
+| `src/shell/webgl_bindings.cpp` | 1,264 | **stays**, and this is the important row |
 
 **About 5,700 lines go and 1,264 stay**, and the split is not arbitrary.
 `webgl_bindings.cpp` is the JavaScript surface — 72 `method(...)` entry points,

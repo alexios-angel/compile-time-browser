@@ -154,7 +154,7 @@ exists to carry `WEBGL2`:
 **LENIENTLY, accepting the union rather than enforcing the split.** Strict ES
 3.00 removes `texture2D`, `attribute` and `varying`; strict ES 1.00 has no
 `in`/`out`. Enforcing that would reject shaders that work in browsers — the
-lesson `shell/url.hpp` records for Boost.URL and ctcss/ctjs record as their
+lesson `shell/net/url.hpp` records for Boost.URL and ctcss/ctjs record as their
 leniency contract.
 
 Derivatives (`dFdx`, `dFdy`, `fwidth`) are core in ES 3.00 rather than an

@@ -778,7 +778,7 @@ a tree walk and not a decode.
 ### PNG with no compression library
 
 `canvas.toDataURL()` and `canvas.toBlob()` mean PNG. `encode_png`
-(`shell/images.hpp`) writes one with no zlib: a PNG's pixel data is a zlib
+(`shell/image/images.hpp`) writes one with no zlib: a PNG's pixel data is a zlib
 stream, and a zlib stream may be made entirely of STORED deflate blocks - five
 bytes of header and the bytes verbatim. Valid deflate, so every decoder reads it,
 and the file is about 1.05x the raw pixels. That is the whole cost, and it buys
@@ -858,7 +858,7 @@ top of it. Nothing reported anything, and the page still drew a picture.
 It is also all of `blendMode()`: p5's sixteen constants ARE the CSS strings
 (`DARKEST === 'darken'`), so every one of them was a no-op.
 
-`shell/composite.hpp` implements the W3C Compositing and Blending Level 1 formula
+`shell/page/composite.hpp` implements the W3C Compositing and Blending Level 1 formula
 rather than an approximation of it:
 
     Cs' = (1 - ab) x Cs + ab x B(Cb, Cs)      the blend, weighted by backdrop

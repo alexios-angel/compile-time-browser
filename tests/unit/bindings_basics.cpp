@@ -472,7 +472,7 @@ void test_fill_rule() {
 // wrong answer and half-implementing it would be another.
 //
 // The maths is the W3C Compositing and Blending Level 1 formula (see
-// shell/composite.hpp), so the expectations here are computed from the spec by
+// shell/page/composite.hpp), so the expectations here are computed from the spec by
 // hand rather than recorded from a run - a test that records what the code did
 // cannot tell you the code is right.
 void test_composite_operations() {

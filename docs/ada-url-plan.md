@@ -5,7 +5,7 @@ one and it is worse than the performance question that prompted it.
 
 ## The problem, in one line
 
-**Browsers implement the WHATWG URL Standard. `shell/url.cpp` implements RFC
+**Browsers implement the WHATWG URL Standard. `shell/net/url.cpp` implements RFC
 3986, via Boost.URL.** They are different specifications, and the difference is
 not academic.
 
@@ -72,7 +72,7 @@ parser; a browser does not want one.
 
 ## What it would touch, and what it must not break
 
-`shell/url.cpp` is the only implementation - `url.hpp` deliberately keeps
+`shell/net/url.cpp` is the only implementation - `url.hpp` deliberately keeps
 Boost out of every consumer, so the blast radius is one file behind three
 functions: `parse_absolute`, `location_parts`, `resolve`.
 

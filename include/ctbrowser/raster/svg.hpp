@@ -16,13 +16,13 @@
 // draw_image scales nearest-neighbour (paint/command.hpp), so a vector graphic
 // decoded once at its natural size and then blown up looks WORSE than a PNG -
 // stair-stepped along every diagonal. The caller passes the size the box
-// actually got and gets pixels for that size; shell/svg.hpp is where the
+// actually got and gets pixels for that size; shell/page/svg_cache.hpp is where the
 // resulting bitmaps are cached so this is not paid per frame.
 //
 // OPTIONAL, like SDL3_ttf and everything else here: without plutosvg this still
 // compiles, `svg_available()` is false, `render_svg` returns an empty bitmap,
 // and display_list::draw_image already ignores those. A page lays out
-// identically either way - the natural-size scan in shell/svg.hpp is in-engine
+// identically either way - the natural-size scan in shell/page/svg_cache.hpp is in-engine
 // and does not go through plutosvg - it simply draws nothing where the graphic
 // would be.
 

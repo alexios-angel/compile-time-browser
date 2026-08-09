@@ -166,7 +166,7 @@ suite unless a person does. `tools/remote-build.sh` is the whole gate now.
   Reaching for a full relayout is almost always the wrong fix.
 - **An SVG is rasterised at the size its box got**, never decoded once and
   scaled — `draw_image` is nearest-neighbour, so the scaled version looks worse
-  than a PNG. `shell/svg.hpp` caches by `(content, width, height)` and the
+  than a PNG. `shell/page/svg_cache.hpp` caches by `(content, width, height)` and the
   painter passes the *snapped* rect. Optional: with no plutosvg a page lays out
   IDENTICALLY and simply draws no graphics.
 - **`<svg>` keeps its capitals.** The tokenizer preserves case inside foreign
@@ -222,7 +222,7 @@ Read the one that matches what you are touching — not all of them.
 | `docs/performance.md` | **where the time actually goes, measured** — how to profile on WSL2 (callgrind, because `perf` cannot work), what landed, and the three confident hypotheses that measured wrong. **Read before optimising anything.** |
 | `docs/modules-plan.md` | **ES modules — running ordinary JavaScript with nothing shimmed.** `import`/`export` are not even keywords in ctjs today, and `run_scripts` concatenates every `<script>` into ONE program, which is what modules cannot be. Babylon's UMD build rejects its own dynamic `import()`, which is what blocks webgl2 rung 10 |
 | `docs/babylon-plan.md` | **Babylon.js, from "renders a box" to functional** — what a scene can contain, measured one feature at a time rather than listed. Textures sample BLACK, a post-process blanks the canvas, `wireframe` draws nothing, `PBRMaterial` throws on one missing string method, and the GUI is a separate bundle. The twelve-rung ladder, the surface probe and the example page |
-| `docs/ada-url-plan.md` | **this engine parses URLs by the wrong standard** — `shell/url.cpp` is RFC 3986 (Boost.URL) where browsers are WHATWG. Measured against ada: 8 of 15 cases differ, including backslash URLs losing the host and IDNA hosts never resolving. Read before touching `shell/url` |
+| `docs/ada-url-plan.md` | **this engine parses URLs by the wrong standard** — `shell/net/url.cpp` is RFC 3986 (Boost.URL) where browsers are WHATWG. Measured against ada: 8 of 15 cases differ, including backslash URLs losing the host and IDNA hosts never resolving. Read before touching `shell/net/url` |
 | `docs/computed-goto-plan.md` | replacing the VM's `switch` dispatch with computed gotos: the macro layer that falls back to `switch` off GNU, the pragmas that make it survive `-pedantic -Werror` on clang AND gcc, and **the measurement that will probably cancel it** — the whole interpreter is 1.4% of a page render |
 | `docs/lexer-plan.md` | the JS lexer this engine is writing to replace ctjs's, why, and how it is verified. **Read before touching `script/lexer`** |
 | `docs/build.md` | why the build takes as long as it does, the formatting gate, the runtime profiler |

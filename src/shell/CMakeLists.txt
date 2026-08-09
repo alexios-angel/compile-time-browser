@@ -10,7 +10,16 @@ target_sources(ctbrowser-shell
   PRIVATE
     # the assembly itself
     browser.cpp
-    bindings.cpp
+    # The web platform bound to the VM. bindings.cpp was 3,926 lines and
+    # webgl_bindings.cpp another 1,431, filed under page/ although it is the
+    # same job as its five siblings here.
+    bindings/document.cpp
+    bindings/element.cpp
+    bindings/events.cpp
+    bindings/window.cpp
+    bindings/canvas.cpp
+    bindings/resources.cpp
+    bindings/webgl.cpp
     embedded_fonts.cpp
     # resources: where bytes come from. net.cpp was net_curl.cpp until
     # 2026-08-09; the suffix implied a choice of transport, and the Asio one has
@@ -26,7 +35,6 @@ target_sources(ctbrowser-shell
     page/forms.cpp
     page/svg_cache.cpp
     page/webgl.cpp
-    page/webgl_bindings.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"

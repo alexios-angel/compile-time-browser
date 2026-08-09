@@ -102,7 +102,7 @@ public:
     color stroke_style = color::rgba(0, 0, 0);
     float line_width = 1;
     float global_alpha = 1;
-    // `globalCompositeOperation`. See shell/composite.hpp for why every mode is
+    // `globalCompositeOperation`. See shell/page/composite.hpp for why every mode is
     // implemented rather than the two that look common: p5's tint() alone needs
     // four of them, and blendMode() is fourteen more names for these.
     composite composite_mode = composite::source_over;
