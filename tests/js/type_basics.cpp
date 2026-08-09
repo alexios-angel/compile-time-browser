@@ -3,7 +3,7 @@
 // `typeof`, the four abstract conversions (ToBoolean, ToNumber, ToString,
 // ToPrimitive), the `+` operator's double life, and the `==` coercion table -
 // differentially tested against node (V8, the engine Chrome ships) over ~370
-// expressions. As with tests/math_basics.cpp and tests/string_basics.cpp the
+// expressions. As with tests/js/math_basics.cpp and tests/js/string_basics.cpp the
 // expectations came out of V8, not out of this engine.
 //
 // The sweep found 19 differences, and ELEVEN OF THEM WERE ONE DEFECT: ToNumber

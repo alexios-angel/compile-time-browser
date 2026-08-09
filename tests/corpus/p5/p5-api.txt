@@ -1,4 +1,4 @@
-# Which p5.js probes pass, one per line. tests/p5_api.cpp measures them and
+# Which p5.js probes pass, one per line. tests/corpus/p5/p5_api.cpp measures them and
 # tools/corpus/p5-api.py --advance is the only thing that writes this file - a test
 # that edits its own expectations cannot fail.
 #

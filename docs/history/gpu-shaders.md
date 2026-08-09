@@ -1,6 +1,20 @@
 # Running page shaders on the GPU, with libshaderc
 
-> **See `docs/angle-plan.md` first.** This document plans a translator plus
+> **SUPERSEDED, and it describes code that no longer exists.** This plans a
+> translator plus libshaderc to replace an interpreter that was deleted on
+> 2026-08-04; `raster/spirv.cpp`, `raster/glsl.cpp` and `glsl_eval.cpp` are
+> gone, and WebGL goes through ANGLE, whose shader translator does this job.
+> `tests/glsl_basics.cpp`, cited below, went with them.
+>
+> Kept for the measurement that decided it: `libshaderc_combined.a` carries
+> 18,841 glslang and SPIRV-Tools symbols, and the "ES shaders for SPIR-V require
+> version 310" rule lives in glslang's version checking rather than in shaderc —
+> so "modify shaderc" means "modify glslang". That is the reason this was not
+> the way, and it is still true.
+>
+> This banner was in `CLAUDE.md` and not in this file until 2026-08-09.
+
+> **See `plans/angle.md` first.** This document plans a translator plus
 > libshaderc, written here. ANGLE's shader translator does that job already —
 > for exactly this dialect, in the browsers this engine is measured against —
 > and its GLES driver would replace far more. The two plans overlap; the ANGLE
@@ -12,7 +26,7 @@ with libshaderc so Vulkan can execute it on hardware, instead of interpreting
 it. Measured rather than argued about, and the answer is that it works, the
 translation is small, and the compiler is the easy part.**
 
-An earlier note in `docs/webgl-plan.md` answered a narrower question — could
+An earlier note in `docs/history/webgl.md` answered a narrower question — could
 shaderc replace `raster/spirv.cpp` or the interpreter as-is — and concluded no
 because glslang refuses `#version 300 es`. That is true and it is not the
 obstacle it looked like: **the version line is an input-dialect problem with a

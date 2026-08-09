@@ -8,7 +8,7 @@
 # Rendered with CTBROWSER_FONTS=font8x8 on purpose. The bitmap font is part of
 # the engine, so the golden does not move when FreeType, HarfBuzz or the
 # vendored faces do - it pins LAYOUT and what is drawn, which is what regressed,
-# and leaves glyph rasterisation to tests/fonts_basics.
+# and leaves glyph rasterisation to tests/unit/fonts_basics.
 #
 # REGOLDEN=1 ctest ... regenerates instead of comparing.
 #

@@ -172,7 +172,7 @@ struct closure_object final : heap_object {
 // is what makes an imported binding live: the importer is handed the same box,
 // so a later write by the exporter is a write the importer reads. Handing over
 // the value instead passes a test that two modules can see each other and fails
-// the one that matters, which is why docs/modules-plan.md names it as the
+// the one that matters, which is why docs/plans/modules.md names it as the
 // shortcut to refuse.
 struct module_record {
     std::string specifier;

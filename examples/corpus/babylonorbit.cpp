@@ -6,7 +6,7 @@
 // light is a directional one and is nowhere in the picture: what you see is the
 // shading, which is the point.
 //
-// tests/babylon_interaction.cpp drives the same page with a synthetic drag.
+// tests/corpus/babylon/babylon_interaction.cpp drives the same page with a synthetic drag.
 
 #include <ctbrowser.hpp>
 

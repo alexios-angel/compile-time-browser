@@ -1,5 +1,5 @@
 # How much of a Babylon.js SCENE this engine can render.
-# tests/babylon_ratchet.cpp measures it; this file records it. The level may not
+# tests/corpus/babylon/babylon_ratchet.cpp measures it; this file records it. The level may not
 # go DOWN, and at the same level the blocker may not CHANGE, without the test
 # failing.
 #
@@ -20,7 +20,7 @@
 # here fails SILENTLY from JavaScript - that is the character of this corpus.
 
 level=10
-blocker=not measured yet - glTF import and the GUI need corpus additions, see docs/babylon-plan.md
+blocker=not measured yet - glTF import and the GUI need corpus additions, see docs/plans/babylon.md
 
 # 9 -> 10 ON A MISSING DOM METHOD, and it was never a graphics problem.
 #
@@ -42,7 +42,7 @@ blocker=not measured yet - glTF import and the GUI need corpus additions, see do
 # THE LADDER IS NOW AT ITS ENGINE CEILING. Rungs 11 and 12 are glTF import and
 # the GUI, and both need bundles that are not vendored - babylonjs-loaders and
 # babylon.gui.js. That is a corpus decision, not an engine one, and
-# docs/babylon-plan.md has said so from the start.
+# docs/plans/babylon.md has said so from the start.
 #
 # ONE ESTIMATE WORTH DISTRUSTING NEXT TIME: a session was planned for opening up
 # texImage2D so a depth texture could be allocated, on the reasoning that

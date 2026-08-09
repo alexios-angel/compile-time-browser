@@ -9,7 +9,7 @@
 //
 // The engine decoded BMP itself and got every other format from a hook only the
 // application layer fills in from SDL3_image. `tests/` is SDL-free by an
-// invariant `tests/api_surface` lints for, so the entire suite saw a JPEG as a
+// invariant `tests/lint/api_surface` lints for, so the entire suite saw a JPEG as a
 // zero-sized image. PNG came out of that hook first because Phaser's boot
 // textures are PNGs and the framework stopped dead without them; JPEG follows
 // because the argument is not about PNG. A format whose result depends on

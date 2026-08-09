@@ -1,6 +1,6 @@
 // What of Phaser 4 actually works.
 //
-// tests/phaser_ratchet.cpp asks how FAR the bundle gets - it reaches 10/10, so
+// tests/corpus/phaser/phaser_ratchet.cpp asks how FAR the bundle gets - it reaches 10/10, so
 // a scene boots, runs and paints. This asks the much broader and duller
 // question: does each part of the surface DO something, rather than throw or
 // answer garbage.

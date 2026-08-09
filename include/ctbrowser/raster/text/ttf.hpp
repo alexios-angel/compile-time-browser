@@ -27,7 +27,7 @@
 // THIS IS THE ONE PLACE THE ENGINE KNOWS ABOUT SDL, and it is a deliberate
 // exception rather than an oversight. Everything else in ctbrowser.raster,
 // .shell and below is SDL-free so the browser can be driven headlessly, and
-// tests/api_surface enforces that - with this module named as the exception.
+// tests/lint/api_surface enforces that - with this module named as the exception.
 //
 // The trade: SDL3_ttf is one dependency where FreeType plus a glyph pipeline
 // was two, and it is the same library the window and the audio already come

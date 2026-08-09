@@ -1,7 +1,7 @@
 // Space Invaders, in Phaser 4, on this engine.
 //
-// THE POINT OF THE WHOLE PHASER CORPUS. tests/phaser_ratchet.cpp says how far
-// the bundle gets and tests/phaser_api.cpp says how wide the surface is;
+// THE POINT OF THE WHOLE PHASER CORPUS. tests/corpus/phaser/phaser_ratchet.cpp says how far
+// the bundle gets and tests/corpus/phaser/phaser_api.cpp says how wide the surface is;
 // neither is a game. This runs the combination only a real game exercises -
 // sprites under arcade physics, a formation stepping on a timer, bullets,
 // overlap callbacks destroying objects mid-frame, a score that updates and a

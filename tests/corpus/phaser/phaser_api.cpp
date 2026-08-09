@@ -1,13 +1,13 @@
 // How WIDE the working Phaser surface is.
 //
-// tests/phaser_ratchet.cpp asks how FAR the bundle gets - it reaches 10/10, so
+// tests/corpus/phaser/phaser_ratchet.cpp asks how FAR the bundle gets - it reaches 10/10, so
 // a scene boots, runs and paints. One number hides a great deal: every corpus
 // page in this tree rendered for months while `getProgramParameter` answered 0
 // to ACTIVE_UNIFORMS, because a hand-written page asks for uniforms by name and
 // only a library enumerates. This is the second question, and the p5 side of it
 // found five real bugs in one run.
 //
-// SAME SHAPE AS tests/p5_api.cpp, deliberately: the probes live in
+// SAME SHAPE AS tests/corpus/p5/p5_api.cpp, deliberately: the probes live in
 // tests/corpus/phaser/phaser-api-probe.js, the runner reports JSON, this parses it by hand,
 // and tests/corpus/phaser/phaser-api.txt records which probes pass. A probe that used to pass
 // and now does not fails the test; a newly passing one is reported and recorded

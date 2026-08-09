@@ -154,12 +154,12 @@ static_assert(0 VM_OPCODES(VM_COUNT_OPCODE) == static_cast<std::size_t>(op::halt
 // --- INSTRUCTION DISPATCH: computed goto, or a switch ------------------------
 //
 // The dispatch loop is 15% of a Phaser frame (measured - callgrind on
-// tests/phaser_invaders) and 77% of tests/bench_script. A `switch` compiles to
+// tests/corpus/phaser/phaser_invaders) and 77% of tests/bench/bench_script. A `switch` compiles to
 // ONE indirect branch that all 88 opcodes share, so the predictor sees a single
 // site with 88 targets and mispredicts constantly. Replicating the jump into
 // every handler gives it 88 sites, each of which can learn the PAIRS this
 // bytecode actually emits - `less` then `jump_if_false`, `get_prop` then
-// `call_method`. docs/computed-goto-plan.md has the measurement that justified
+// `call_method`. docs/history/computed-goto.md has the measurement that justified
 // trying it and the numbers it actually produced.
 //
 // GNU ONLY, and the switch is not a poor relation - it is the fallback that
@@ -1385,7 +1385,7 @@ value context::run_loop(std::size_t stop_depth) {
             // THE CELL, NOT THE VALUE, either way: an importer holds the box,
             // which is what makes the binding LIVE. Handing over the value
             // passes "an importer sees an export" and fails "an imported
-            // binding is live" - the shortcut docs/modules-plan.md names in
+            // binding is live" - the shortcut docs/plans/modules.md names in
             // advance.
             if (current_module_ != nullptr) {
                 value & slot = current_module_->exports[vm_proto->names[in.bx()]];

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How much of WebGL 2 works, and what to write a probe for next.
 
-tests/webgl2_api.cpp calls as much of WebGL 2's API as can be run headlessly and
+tests/corpus/webgl2/webgl2_api.cpp calls as much of WebGL 2's API as can be run headlessly and
 reports which calls pass; tests/corpus/webgl2/webgl2-api.txt records them; this drives the
 loop.
 
@@ -89,7 +89,7 @@ def do_advance():
     if not names:
         sys.exit("webgl2-api: nothing is passing - refusing to record an empty surface")
     header = (
-        "# Which WebGL 2 probes pass. tests/webgl2_api.cpp measures it; this file\n"
+        "# Which WebGL 2 probes pass. tests/corpus/webgl2/webgl2_api.cpp measures it; this file\n"
         "# records it. A probe that used to pass and now does not FAILS the test.\n"
         "#\n"
         "# Only tools/corpus/webgl2-api.py --advance writes this file. A test that edits its\n"
@@ -110,7 +110,7 @@ def do_coverage():
     specification rather than a library, so there is no file to grep for the
     denominator. What is useful instead is the shape of the probe set itself -
     and in particular how much of it is the `unscoped` module, which is the part
-    docs/webgl2-plan.md has deliberately NOT committed to and which Babylon.js
+    docs/history/webgl2.md has deliberately NOT committed to and which Babylon.js
     calls in full.
     """
     text = PROBES.read_text(errors="replace")
@@ -120,7 +120,7 @@ def do_coverage():
     total = sum(modules.values())
     print(f"\n  {total} probes across {len(modules)} modules\n")
     for tag in sorted(modules, key=lambda t: -modules[t]):
-        note = "  <- deliberately not implemented; see docs/webgl2-plan.md" \
+        note = "  <- deliberately not implemented; see docs/history/webgl2.md" \
                if tag == "unscoped" else ""
         print(f"    {modules[tag]:>3}  {tag}{note}")
     print()

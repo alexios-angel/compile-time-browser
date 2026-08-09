@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How much of Phaser 4 works, and what to write a probe for next.
 
-tests/phaser_api.cpp calls as much of Phaser's API as can be run headlessly and
+tests/corpus/phaser/phaser_api.cpp calls as much of Phaser's API as can be run headlessly and
 reports which calls pass; tests/corpus/phaser/phaser-api.txt records them; this drives the
 loop.
 
@@ -89,7 +89,7 @@ def do_advance():
     if not names:
         sys.exit("phaser-api: nothing is passing - refusing to record an empty surface")
     header = (
-        "# Which Phaser 4 probes pass. tests/phaser_api.cpp measures it; this file\n"
+        "# Which Phaser 4 probes pass. tests/corpus/phaser/phaser_api.cpp measures it; this file\n"
         "# records it. A probe that used to pass and now does not FAILS the test.\n"
         "#\n"
         "# Only tools/corpus/phaser-api.py --advance writes this file. A test that edits its\n"

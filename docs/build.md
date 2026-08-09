@@ -66,7 +66,7 @@ took, and meant an engine that could silently fall back to a transport with NO
 TLS - worse than one that refuses to configure. `find_package(CURL REQUIRED)`.
 
 That removed it from two more places, which is where a dependency actually
-lives: `tests/net_basics.cpp` stood up its loopback server with Asio, and
+lives: `tests/unit/net_basics.cpp` stood up its loopback server with Asio, and
 `examples/cli/ctdrive.cpp` ran its command socket on it. Both are plain BSD
 sockets now - roughly fifty lines each, `#if defined(_WIN32)` for the Winsock
 spelling - because a harness that reintroduces the dependency the engine just
@@ -405,7 +405,7 @@ dirty-level design that nothing else in the tree would catch. The engine times
 itself (`browser::last_frame_timing()`); the app layer only copies the numbers
 out, so the split costs four clock reads on a path that then rasterises the
 viewport.
-`tests/bench_interaction` is the headless half: what a mouse move, a hover
+`tests/bench/bench_interaction` is the headless half: what a mouse move, a hover
 change and a scroll each COST, with the implied CPU at 60 fps printed beside
 them.
 

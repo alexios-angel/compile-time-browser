@@ -13,12 +13,12 @@
 // by hand, forwarded some calls to ANGLE. Nineteen methods never forwarded at
 // all, and because a call that never learned to forward also never learned to
 // record that it hadn't, the ledger could not see them. See
-// docs/webgl-rewrite-plan.md.
+// docs/plans/webgl-rewrite.md.
 //
 // So there is nothing here but a handle onto ANGLE. No state is remembered that
 // GL can be asked for, because remembered state is the thing that drifts.
 //
-// NO EGL OR GLES TYPE APPEARS IN THIS HEADER, and `tests/api_surface` enforces
+// NO EGL OR GLES TYPE APPEARS IN THIS HEADER, and `tests/lint/api_surface` enforces
 // it: every consumer pays for what a header includes. Parameters are plain
 // integers because the numbers a page passes came from JavaScript and are
 // already plain integers by the time they arrive.

@@ -1,4 +1,4 @@
-# Which Babylon probes pass. tests/babylon_api.cpp measures it; this file
+# Which Babylon probes pass. tests/corpus/babylon/babylon_api.cpp measures it; this file
 # records it. A probe that used to pass and now does not FAILS the test.
 #
 # Only tools/corpus/babylon-api.py --advance writes this file. A test that edits its

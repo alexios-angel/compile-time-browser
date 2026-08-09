@@ -1,6 +1,6 @@
 // What of WebGL 2 actually works.
 //
-// tests/webgl2_ratchet.cpp asks how FAR a WebGL 2 page gets - one number up a
+// tests/corpus/webgl2/webgl2_ratchet.cpp asks how FAR a WebGL 2 page gets - one number up a
 // ladder. This asks the much broader and duller question: does each entry point
 // DO something, rather than throw or answer garbage.
 //
@@ -18,7 +18,7 @@
 // in an engine that returns undefined for everything; binding it and reading
 // VERTEX_ARRAY_BINDING back does not.
 //
-// WHAT IS DELIBERATELY PROBED AND EXPECTED TO FAIL. docs/webgl2-plan.md puts
+// WHAT IS DELIBERATELY PROBED AND EXPECTED TO FAIL. docs/history/webgl2.md puts
 // uniform buffer objects, 3D textures, MRT, samplers, queries, sync and
 // transform feedback OUT of scope - and Babylon.js calls every one of them. A
 // probe for each is here anyway, because "not implemented" is a fact worth
@@ -181,7 +181,7 @@ globalThis.__probes = [
   }],
 
   // --- the WebGL 1 extension spelling of the same thing --------------------
-  // ONE IMPLEMENTATION, TWO NAMES is the decision in docs/webgl2-plan.md, and
+  // ONE IMPLEMENTATION, TWO NAMES is the decision in docs/history/webgl2.md, and
   // these probes are what make it checkable. Phaser reaches VAOs and instancing
   // ONLY through here.
   ['extensions', 'getSupportedExtensions lists them', function (gl) {
@@ -224,7 +224,7 @@ globalThis.__probes = [
   }],
 
   // --- OUT OF SCOPE, and REFUSING BY NAME ---------------------------------
-  // Babylon.js calls every one of these. Stage 5 of docs/webgl2-plan.md: they
+  // Babylon.js calls every one of these. Stage 5 of docs/history/webgl2.md: they
   // are PRESENT on a WebGL 2 context, because a page that got one calls them
   // rather than feature-detecting them, and an absent method is a TypeError
   // that says nothing about why. Each raises INVALID_OPERATION and names itself

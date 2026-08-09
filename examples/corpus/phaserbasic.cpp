@@ -5,7 +5,7 @@
 // and Canvas renderer - and what comes out is compared against a golden, byte
 // for byte.
 //
-// tests/phaser_ratchet.cpp measures how far the bundle GETS; this measures what
+// tests/corpus/phaser/phaser_ratchet.cpp measures how far the bundle GETS; this measures what
 // it DRAWS, which is a different question and the one that actually matters. A
 // scene whose create() is called and paints nothing passes the ratchet and
 // fails here. That is exactly the relationship p5basic has with p5_ratchet, and

@@ -387,7 +387,7 @@ public:
             // not fit the alias the loader wires - and refused by name rather
             // than silently exporting nothing.
             fail("`export * as ns from` is not implemented yet - ES modules are staged in "
-                 "docs/modules-plan.md");
+                 "docs/plans/modules.md");
             return;
         }
         for (const std::int32_t spec_index : kids(n)) {
@@ -1568,7 +1568,7 @@ public:
         // page whose `import` silently did nothing would run with half its
         // bindings undefined and fail somewhere else entirely. The syntax
         // parses (ctjs 2026-08-02); the semantics are staged in
-        // docs/modules-plan.md.
+        // docs/plans/modules.md.
         case vp::nk::import_decl: {
             if (!module_scope_) {
                 fail("`import` is only allowed in a module - a classic <script> cannot use it");
@@ -1621,7 +1621,7 @@ public:
                     for (const std::int32_t d : kids(at(n.a))) {
                         if (at(d).text.empty()) {
                             fail("`export` of a destructuring declaration is not implemented yet - "
-                                 "ES modules are staged in docs/modules-plan.md");
+                                 "ES modules are staged in docs/plans/modules.md");
                             break;
                         }
                     }
@@ -1946,7 +1946,7 @@ public:
         // no observer. `var` is hoisted to the function scope and so never
         // appears among the locals this scope opened - which is what keeps the
         // two loops apart without the compiler having to track declaration
-        // kinds. tests/obfuscated.cpp pins BOTH shapes, so getting that
+        // kinds. tests/js/obfuscated.cpp pins BOTH shapes, so getting that
         // backwards fails immediately.
         std::vector<std::uint16_t> per_iteration;
         for (std::size_t k = init_mark; k < fn().locals.size(); ++k) {
@@ -2512,7 +2512,7 @@ public:
         // ES MODULES ARE REFUSED BY NAME, not mis-compiled. The syntax parses
         // now (ctjs 2026-08-02); the semantics - a scope per module, live
         // bindings, a dependency graph, a loader - are staged in
-        // docs/modules-plan.md and measured by tests/module_ratchet.cpp.
+        // docs/plans/modules.md and measured by tests/corpus/modules/module_ratchet.cpp.
         //
         // Refusing beats accepting: a page whose `import` silently did nothing
         // would run with half its bindings undefined and fail somewhere else
@@ -2532,7 +2532,7 @@ public:
         }
         case vp::nk::import_meta:
             fail("`import.meta` is not implemented yet - ES modules are staged in "
-                 "docs/modules-plan.md");
+                 "docs/plans/modules.md");
             proto().emit(instruction{op::load_undef, dst});
             break;
         case vp::nk::tagged:

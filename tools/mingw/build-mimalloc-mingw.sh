@@ -112,7 +112,7 @@ cmake --install "$work/build" >/dev/null
 # for first. It picked the stale v2, and the Windows build quietly linked the
 # old allocator across a major version while the Linux one used v3.
 #
-# tests/core_basics asks ctbrowser::allocator_version() and caught it, which is
+# tests/unit/core_basics asks ctbrowser::allocator_version() and caught it, which is
 # the entire reason that check exists.
 rm -f "$sysroot"/lib/libmimalloc*.a
 

@@ -1,13 +1,13 @@
 // HOW WIDE THE WORKING BABYLON SURFACE IS - the companion to
-// tests/babylon_ratchet.cpp, which measures how FAR one scene gets.
+// tests/corpus/babylon/babylon_ratchet.cpp, which measures how FAR one scene gets.
 //
-// SAME SHAPE AS tests/p5_api.cpp, tests/phaser_api.cpp AND tests/webgl2_api.cpp:
-// probes in a .js file, a JSON report parsed BY HAND here, and a recorded
-// surface that may not shrink. Parsed by hand because this is the test harness,
-// and a harness that depends on the thing under test to report its own results
-// can pass because two bugs cancelled.
+// SAME SHAPE AS tests/corpus/p5/p5_api.cpp, tests/corpus/phaser/phaser_api.cpp AND
+// tests/corpus/webgl2/webgl2_api.cpp: probes in a .js file, a JSON report parsed BY HAND here, and
+// a recorded surface that may not shrink. Parsed by hand because this is the test harness, and a
+// harness that depends on the thing under test to report its own results can pass because two bugs
+// cancelled.
 //
-// THE PROBES INCLUDE THINGS EXPECTED TO FAIL, deliberately. docs/babylon-plan.md
+// THE PROBES INCLUDE THINGS EXPECTED TO FAIL, deliberately. docs/plans/babylon.md
 // measured five of them - textures sampling black, post-processes blanking the
 // canvas, wireframe drawing nothing, PBRMaterial throwing, and no GUI in the
 // bundle - and recording "not implemented" as a fact beats discovering it later

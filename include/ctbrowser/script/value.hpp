@@ -244,7 +244,7 @@ struct symbol_object final : heap_object {
 //     that a default-on flag would attach silently. See NOTICE.
 //
 // The two backends agree on every operation this engine performs -
-// tests/bigint_basics.cpp is the gate and passes identically on both - so the
+// tests/js/bigint_basics.cpp is the gate and passes identically on both - so the
 // switch moves no observable JavaScript result.
 #if defined(CTBROWSER_WITH_GMP)
 using bigint = boost::multiprecision::mpz_int;

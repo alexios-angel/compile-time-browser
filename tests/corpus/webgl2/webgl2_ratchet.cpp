@@ -1,14 +1,14 @@
 // How far a WebGL 2 page gets through the engine.
 //
-// SAME SHAPE AS tests/p5_ratchet.cpp AND tests/phaser_ratchet.cpp - a ladder, a
-// recorded rung, and a blocker that may not change silently - because that
-// shape has earned it three times now.
+// SAME SHAPE AS tests/corpus/p5/p5_ratchet.cpp AND tests/corpus/phaser/phaser_ratchet.cpp - a
+// ladder, a recorded rung, and a blocker that may not change silently - because that shape has
+// earned it three times now.
 //
 // WHAT IS DIFFERENT HERE is that the corpus is not somebody else's library. p5
 // and Phaser both run on WebGL 1 today, so neither can measure a WebGL 2 gap:
 // p5's RendererGL asks for `webgl2` first and falls back without complaint, and
 // PHASER NEVER ASKS FOR IT AT ALL - it requests `getContext('webgl')` and takes
-// its extras from WebGL 1 extensions (see docs/webgl2-plan.md, which was
+// its extras from WebGL 1 extensions (see docs/history/webgl2.md, which was
 // rewritten around that measurement). So the rungs below drive the API
 // directly, and the last one hands the finished context to Phaser's own
 // renderer, which is the only part a library can answer.
@@ -130,7 +130,7 @@ struct measurement {
     // THROUGH THE COMPILER FIRST, because a page reports "parse error:
     // expression" with no position and that is half a diagnostic. The compiler
     // names the offset, which is the difference between a finding and a hunt -
-    // the same reason tests/phaser_ratchet.cpp measures its language rungs
+    // the same reason tests/corpus/phaser/phaser_ratchet.cpp measures its language rungs
     // before it opens a page.
     const ctbrowser::script::program program = ctbrowser::script::compiler::compile(source);
     if (!program.ok) { return "does not compile: " + program.error; }
@@ -272,7 +272,7 @@ struct measurement {
     m.reached(rung_draws);
 
     // --- 7: the same capability, spelled the WebGL 1 way --------------------
-    // THE DECISION IN docs/webgl2-plan.md MADE CHECKABLE. VAOs and instancing
+    // THE DECISION IN docs/history/webgl2.md MADE CHECKABLE. VAOs and instancing
     // are implemented once and exposed twice, because Phaser reaches them only
     // through the extensions and would otherwise never touch the code the
     // WebGL 2 rungs above just proved. If these two ever disagree, there are
@@ -351,7 +351,7 @@ struct measurement {
     // Drew is not painted: the pixels are the claim.
     //
     // ASK PHASER WHICH CANVAS IS ITS OWN. Taking the first `canvas` in the
-    // document is what tests/phaser_ratchet.cpp does and it is right there,
+    // document is what tests/corpus/phaser/phaser_ratchet.cpp does and it is right there,
     // because a CANVAS-mode game makes one. A WEBGL game makes SEVERAL - the
     // texture manager builds canvases for its base64 textures - so the first in
     // document order is a texture, and reading it finds black however well the

@@ -31,7 +31,7 @@ using surface_ptr = std::unique_ptr<plutovg_surface_t, decltype(&plutovg_surface
 // broken - it looks slightly DARK wherever alpha is partial, which on an
 // antialiased edge is every edge pixel and nowhere else. That is the kind of
 // wrong that survives a review and a golden regeneration, so it is undone here
-// explicitly and tests/svg_basics.cpp asserts a half-transparent red stays
+// explicitly and tests/unit/svg_basics.cpp asserts a half-transparent red stays
 // r=255 rather than becoming r=128.
 [[nodiscard]] std::uint32_t unpremultiply(std::uint32_t argb) noexcept {
     const std::uint32_t a = argb >> 24;

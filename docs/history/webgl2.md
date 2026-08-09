@@ -197,8 +197,8 @@ section below asks for.
 ## Stages
 
 ### 0 — the harness, before any engine work — DONE
-`tests/webgl2_ratchet.cpp` + `tests/corpus/webgl2/webgl2-ratchet.txt` +
-`tools/corpus/webgl2-ratchet.py` for how FAR; `tests/webgl2_api.cpp` +
+`tests/corpus/webgl2/webgl2_ratchet.cpp` + `tests/corpus/webgl2/webgl2-ratchet.txt` +
+`tools/corpus/webgl2-ratchet.py` for how FAR; `tests/corpus/webgl2/webgl2_api.cpp` +
 `tests/corpus/webgl2/webgl2-api-probe.js` + `tests/corpus/webgl2/webgl2-api.txt` + `tools/corpus/webgl2-api.py`
 for how WIDE. Its first reading is the scoping measurement, the way stage 0 was
 for the lexer and Phaser plans — both of which cancelled their own later stages,

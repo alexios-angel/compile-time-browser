@@ -66,7 +66,7 @@ public:
 
     // Below this many boxes, distributing the work costs more than doing it.
     //
-    // MEASURED (tests/bench_layout.cpp, 22-core WSL2), parallel vs sequential
+    // MEASURED (tests/bench/bench_layout.cpp, 22-core WSL2), parallel vs sequential
     // by box count: 0.08x at 60 boxes, 0.26x at 244, 0.70x at 2164, 1.15x at
     // 4764, 1.72x at 10084, 1.84x at 37204. The crossover is between 2164 and
     // 4764, which is where this is set.

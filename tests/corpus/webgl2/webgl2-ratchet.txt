@@ -1,4 +1,4 @@
-# How far a WebGL 2 page gets through the engine. tests/webgl2_ratchet.cpp
+# How far a WebGL 2 page gets through the engine. tests/corpus/webgl2/webgl2_ratchet.cpp
 # measures it; this file records it. The level may not go DOWN, and at the same
 # level the blocker may not CHANGE, without the test failing.
 #
@@ -11,7 +11,7 @@
 # names, 8 Phaser's own WebGL renderer paints on it, 9 Babylon runs and reports
 # its WebGL version, 10 Babylon renders a scene to the pixels.
 #
-# RUNG 7 IS THE DESIGN DECISION MADE CHECKABLE. docs/webgl2-plan.md commits to
+# RUNG 7 IS THE DESIGN DECISION MADE CHECKABLE. docs/history/webgl2.md commits to
 # ONE implementation of VAOs and instancing exposed under TWO spellings, because
 # Phaser reaches them only through the WebGL 1 extensions and would otherwise
 # never touch the code the WebGL 2 rungs prove. If 6 passes and 7 fails, there
@@ -74,7 +74,7 @@ blocker=
 # some shaders ship; the default material's does not.
 #
 # SO THE NEXT STEP IS ES MODULES, and it has its own plan now:
-# docs/modules-plan.md. The alternative - vendor a different Babylon build and
+# docs/plans/modules.md. The alternative - vendor a different Babylon build and
 # hope its shaders are inlined - is the shim this tree was told not to build.
 # Babylon ships as modules first and a UMD bundle as a courtesy, and that
 # courtesy is what rung 10 currently depends on.
@@ -186,7 +186,7 @@ blocker=
 #      than hidden.
 #
 #   3. UNIFORM BUFFER OBJECTS WERE REFUSED BY NAME. That was a deliberate
-#      scoping decision in docs/webgl2-plan.md and it was the wrong one: WebGL 2
+#      scoping decision in docs/history/webgl2.md and it was the wrong one: WebGL 2
 #      delivers uniforms through buffers and Babylon uses them for everything the
 #      moment it sees a WebGL 2 context. Refused, its shaders linked, its draws
 #      were issued, and every matrix read as ZERO - a scene collapsed to a point

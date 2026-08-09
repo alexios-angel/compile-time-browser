@@ -82,7 +82,7 @@ by specification, so there is nothing to work around.
 **This changes observable behaviour, on purpose.** That is the reason to do it
 and the reason to be careful:
 
-* `tests/url_basics` (and `data_url`) pin today's answers. Cases that change are
+* `tests/unit/url_basics` (and `data_url`) pin today's answers. Cases that change are
   changing TOWARD the browser, and each one should be re-recorded deliberately,
   with the WHATWG rule named in the diff - not bulk-updated.
 * `tools/check/compare.py` drives ctbrowser and Chrome through the same page. It is

@@ -51,7 +51,7 @@ enum class node_kind : std::uint8_t {
 //
 // FREE, in the literal sense: `node` is kind(1) + tag(4) with three bytes of
 // padding between them, so this occupies padding that already existed.
-// tests/dom_basics asserts sizeof(node) did not move.
+// tests/unit/dom_basics asserts sizeof(node) did not move.
 enum class node_ns : std::uint8_t {
     html,
     svg

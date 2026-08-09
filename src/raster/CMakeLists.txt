@@ -44,7 +44,7 @@ ctbrowser_target(ctbrowser-raster)
 target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)
 
 # ANGLE, from the pinned release tools/fetch-angle.sh downloads. PRIVATE, and
-# nothing that includes it inherits them and tests/api_surface stays satisfied.
+# nothing that includes it inherits them and tests/lint/api_surface stays satisfied.
 #
 # The definition is PUBLIC because a consumer needs to know whether the device
 # can exist - `gles::available()` answers at run time, but a test still has to

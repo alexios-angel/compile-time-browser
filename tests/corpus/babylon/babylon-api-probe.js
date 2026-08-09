@@ -1,6 +1,6 @@
 // HOW WIDE THE WORKING BABYLON SURFACE IS, as opposed to how far one scene gets.
 //
-// tests/babylon_ratchet.cpp climbs a ladder and stops at the first failure,
+// tests/corpus/babylon/babylon_ratchet.cpp climbs a ladder and stops at the first failure,
 // which tells you ONE thing. This runs everything and tells you the shape of the
 // gap. Both are needed, and the reason is recorded in tests/corpus/phaser/phaser-api.txt: the
 // Phaser ratchet read 10/10 while `(5).hasOwnProperty` was undefined, because
@@ -261,7 +261,7 @@ globalThis.__probes = [
 // A FRESH SCENE PER PROBE, disposed after. Sharing one would let a probe that
 // leaves the scene in a strange state - and several deliberately do, adding
 // lights or post-processes - decide the verdict for every probe after it. That
-// is the same reason tests/babylon_ratchet.cpp builds a page per rung.
+// is the same reason tests/corpus/babylon/babylon_ratchet.cpp builds a page per rung.
 globalThis.__runProbes = function (canvas) {
   const passed = [];
   const failed = [];

@@ -727,7 +727,7 @@ void test_webgl_is_constructible_and_refuses() {
           "the WebGL renderer is still a constructible function: " + registered);
     // THE ENGINE'S OWN GUARANTEE, tested directly rather than through p5: a
     // canvas hands out a real webgl context, and answers NULL for `webgl2`
-    // because this is a WebGL 1 implementation (docs/webgl-plan.md). Null is
+    // because this is a WebGL 1 implementation (docs/history/webgl.md). Null is
     // what an unsupported context id returns, and what feature detection - p5's
     // included - is built on; this asserted a throw until that was measured.
     (void)page.run_script(R"(
@@ -737,7 +737,7 @@ void test_webgl_is_constructible_and_refuses() {
     )");
     check(said("direct=") == "direct=true", "a webgl context exists: " + said("direct="));
     // WAS `=== null`; `webgl2` returns a context since 2026-08-02 - see
-    // docs/webgl2-plan.md stage 4. Replaced rather than removed, so the shape
+    // docs/history/webgl2.md stage 4. Replaced rather than removed, so the shape
     // of the answer is still pinned.
     check(said("two=") == "two=true", "and webgl2 hands back a context: " + said("two="));
 

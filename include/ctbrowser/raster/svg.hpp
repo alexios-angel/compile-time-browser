@@ -7,7 +7,7 @@
 //
 // NOTE WHAT IS NOT INCLUDED ABOVE. Unlike raster/text/ttf.hpp - which puts
 // <SDL_ttf.h> in a public header and pays for it with an entry in
-// tests/api_surface's allow-list - plutosvg is confined entirely to
+// tests/lint/api_surface's allow-list - plutosvg is confined entirely to
 // src/raster/svg.cpp. Two declarations is the whole surface, so no consumer of
 // this header parses a third-party one and no allow-list entry is needed.
 // core/cpu_time.hpp is the same pattern for the same reason.

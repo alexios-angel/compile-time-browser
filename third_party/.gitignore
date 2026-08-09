@@ -7,5 +7,5 @@
 # angle/ is what tools/fetch-angle.sh unpacks - a pinned release from
 # github.com/alexios-angel/angle, about 40 MB of libraries and headers. It is
 # fetched rather than built because ANGLE needs GN, depot_tools and, on Windows,
-# clang-cl and the Windows SDK; see docs/angle-plan.md.
+# clang-cl and the Windows SDK; see docs/plans/angle.md.
 angle/

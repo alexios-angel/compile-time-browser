@@ -514,7 +514,7 @@ globalThis.__probes = [
   // --- loading ------------------------------------------------------------
   //
   // These are ASYNC and the runner is not, so each returns its promise and the
-  // runner awaits it. The assets are baked by tests/p5_api.cpp, so the whole
+  // runner awaits it. The assets are baked by tests/corpus/p5/p5_api.cpp, so the whole
   // fetch-and-parse path runs without reaching the network.
   ['load', 'loadJSON', function (s) {
     return s.loadJSON('probe-data.json').then(function (j) {
@@ -1123,7 +1123,7 @@ globalThis.__probes = [
   //
   // Every p5 save() ends in downloadFile: a Blob, an object URL, an <a href
   // download> built entirely from script, and click(). A probe can only see that
-  // it did not throw - whether a file appeared is tests/image_basics.cpp's
+  // it did not throw - whether a file appeared is tests/unit/image_basics.cpp's
   // question, because only the embedder can see the disk.
   ['save', 'saveCanvas', function (s) {
     s.saveCanvas('probe-out', 'png');
@@ -1170,7 +1170,7 @@ globalThis.__probes = [
     //      `getContext('webgl2') || getContext('webgl')` - the throw escaped
     //      the constructor and left the sketch on Renderer2D, which is exactly
     //      what throwing was meant to prevent;
-    //   3. it asserts a CONTEXT, because there is one - docs/webgl2-plan.md
+    //   3. it asserts a CONTEXT, because there is one - docs/history/webgl2.md
     //      stage 4 - and p5 now takes that path first.
     //
     // Replaced rather than deleted at each step: what is asserted changed,

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How far a of the ES module system this engine has, and what is stopping it.
 
-tests/module_ratchet.cpp measures a LEVEL and a BLOCKER; tests/corpus/modules/module-ratchet.txt
+tests/corpus/modules/module_ratchet.cpp measures a LEVEL and a BLOCKER; tests/corpus/modules/module-ratchet.txt
 records them; this drives the loop around both.
 
     tools/corpus/module-ratchet.py             build, measure, show the blocker
@@ -11,7 +11,7 @@ records them; this drives the loop around both.
 that edits its own expectations cannot fail.
 
 NO CORPUS BUNDLE BEHIND THIS ONE, unlike p5-ratchet.py and phaser-ratchet.py.
-The measurement in docs/module-plan.md is why: p5 asks for `module` and falls
+The measurement in docs/plans/modules.md is why: p5 asks for `module` and falls
 back silently, Phaser never asks at all, and Babylon - which does use nearly the
 whole specification - is not vendored here. So the ladder drives the API
 directly and only its last rung hands the result to a real renderer.

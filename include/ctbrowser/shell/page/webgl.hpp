@@ -12,7 +12,7 @@
 //
 // The context this replaces kept a software mirror of GL state and separately,
 // by hand, forwarded some calls to ANGLE; nineteen methods never forwarded at
-// all and no test could see it. See docs/webgl-rewrite-plan.md - this file
+// all and no test could see it. See docs/plans/webgl-rewrite.md - this file
 // exists to make that shape impossible rather than to make it less likely.
 //
 // THE RULE: a method here translates and returns. It does not remember anything
@@ -22,7 +22,7 @@
 // program is bound, it is the mirror again.
 //
 // BUILT GROUP BY GROUP against the 64 methods `webgl_bindings.cpp` calls, which
-// is the checklist in docs/webgl-rewrite-plan.md. A method that is not written
+// is the checklist in docs/plans/webgl-rewrite.md. A method that is not written
 // yet is a COMPILE ERROR at the binding site - which is the whole point, and the
 // opposite of the silent no-op this replaces.
 
@@ -336,7 +336,7 @@ public:
     // --- the error contract, which is NOT the thing being deleted ------------
     //
     // Refusing a call BY NAME is the documented leniency contract in
-    // docs/webgl2-plan.md, and it is the opposite of a silent no-op: a page can
+    // docs/history/webgl2.md, and it is the opposite of a silent no-op: a page can
     // read `getError`, and a report can list what this engine declined. Keeping
     // it is deliberate.
     [[nodiscard]] std::uint32_t take_error();

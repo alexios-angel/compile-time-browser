@@ -1,4 +1,4 @@
-# How much of the ES module system this engine has. tests/module_ratchet.cpp
+# How much of the ES module system this engine has. tests/corpus/modules/module_ratchet.cpp
 # measures it; this file records it. The level may not go DOWN, and at the same
 # level the blocker may not CHANGE, without the test failing.
 #
@@ -16,7 +16,7 @@
 # where a page and a network arrive. Babylon last, because it needs all of it.
 
 level=8
-blocker=no ES Babylon is vendored to boot - only the UMD build is vendored, and it REJECTS its own dynamic import() - see docs/modules-plan.md
+blocker=no ES Babylon is vendored to boot - only the UMD build is vendored, and it REJECTS its own dynamic import() - see docs/plans/modules.md
 
 # WHY THIS STARTS AT ZERO, and it is further down than it looks. `import` and
 # `export` are not refused by name in this engine - they are NOT KEYWORDS AT
@@ -39,11 +39,11 @@ blocker=no ES Babylon is vendored to boot - only the UMD build is vendored, and 
 # answers.
 #
 # (That the parser accepts arbitrary text is a finding in its own right and is
-# not this ladder's to fix. docs/lexer-plan.md is where it belongs.)
+# not this ladder's to fix. docs/history/lexer.md is where it belongs.)
 #
 # STAGE 1 IS DONE (2026-08-02): the syntax parses and the compiler REFUSES IT BY
 # NAME, the way `yield` was refused before generators existed. `import` and
-# `export` are keywords in ctjs now, every form in docs/modules-plan.md parses,
+# `export` are keywords in ctjs now, every form in docs/plans/modules.md parses,
 # and the blocker moved from "parsed as an identifier" to "not implemented yet",
 # which is the whole of what stage 1 was for.
 #
@@ -96,7 +96,7 @@ blocker=no ES Babylon is vendored to boot - only the UMD build is vendored, and 
 # name counts, treating `import` as an identifier does not.
 #
 # STAGE 3 IS PART DONE (2026-08-02): rung 3 passes - two modules, and the
-# importer sees the export. The machinery is the one docs/modules-plan.md asks
+# importer sees the export. The machinery is the one docs/plans/modules.md asks
 # for and not the shortcut:
 #
 #   exports are CELLS, published by op::define_export. The importer is handed

@@ -44,7 +44,7 @@ option(CTBROWSER_WINDOWS_CONSOLE "Keep the console window behind a Windows exe" 
 
 # COMPUTED-GOTO DISPATCH IN THE SCRIPT VM. Off, because it MEASURED SLOWER here:
 # +3.0% instructions and +3.3% wall against the switch on the dispatch-bound
-# benchmark (docs/performance.md has the table, tests/bench_script is the
+# benchmark (docs/performance.md has the table, tests/bench/bench_script is the
 # measurement). It is kept and switchable rather than deleted because that
 # result is a property of the branch predictor rather than of this code - the
 # technique still wins on some microarchitectures, and on those it is one flag
@@ -64,7 +64,7 @@ set(CTBROWSER_BREW_HINTS "$ENV{HOMEBREW_PREFIX}" /home/linuxbrew/.linuxbrew /opt
 option(CTBROWSER_USE_MIMALLOC "Back operator new/delete with mimalloc" ON)
 
 # ANGLE: a real OpenGL ES device for the WebGL path. OFF by default and OPTIONAL
-# on purpose - stage 1 of docs/angle-plan.md builds the seam without anything
+# on purpose - stage 1 of docs/plans/angle.md builds the seam without anything
 # depending on it, so a checkout that has not run tools/fetch-angle.sh builds and
 # passes exactly as before. The libraries are a PINNED RELEASE rather than a
 # build: ANGLE needs GN, depot_tools and, on Windows, clang-cl and the Windows
@@ -89,7 +89,7 @@ option(CTBROWSER_COMPUTED_GOTO "Dispatch the script VM with computed gotos (GNU 
 #     and auto-detection would attach them to anyone who happened to have GMP
 #     installed, silently. See NOTICE and docs/script.md.
 #
-# It builds and passes on both backends - tests/bigint_basics.cpp is the gate -
+# It builds and passes on both backends - tests/js/bigint_basics.cpp is the gate -
 # and the Windows cross-build works with GMP's assembly enabled
 # (tools/mingw/build-gmp-mingw.sh).
 option(CTBROWSER_WITH_GMP "Use GNU GMP as the Boost.Multiprecision BigInt backend (LGPL)" OFF)

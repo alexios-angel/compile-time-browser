@@ -2,7 +2,7 @@
 //
 // Written by differentially testing String.prototype and the relational
 // operators against node (V8, the engine Chrome ships) over ~1,550 expressions.
-// As with tests/math_basics.cpp the expectations came out of V8 BEFORE the
+// As with tests/js/math_basics.cpp the expectations came out of V8 BEFORE the
 // fixes were written, so this file failed on the day it was committed rather
 // than agreeing with the bug. The sweep found 233 differences; the fixes below
 // took that to 60, of which 8 are deliberate (see the case-folding note).

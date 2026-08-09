@@ -7,7 +7,7 @@
 //
 // The character of null is that it coerces to ZERO where undefined coerces to
 // NaN, and that its `typeof` is a forty-year-old bug that every page depends
-// on. tests/undefined_basics.cpp is the other half.
+// on. tests/js/undefined_basics.cpp is the other half.
 
 #include "js_expect.hpp"
 

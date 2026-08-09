@@ -196,7 +196,7 @@ enum class op : std::uint8_t {
     // names[c]`. A cell, NOT a value: an imported binding is LIVE, so the
     // importer must hold the very box the exporter writes through. Copying the
     // value here is the CommonJS behaviour and is observably wrong - it is the
-    // shortcut docs/modules-plan.md names in advance.
+    // shortcut docs/plans/modules.md names in advance.
     load_import,
     // Publish the cell in register a as this module's export named names[bx].
     bind_export,

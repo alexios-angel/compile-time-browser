@@ -1,6 +1,6 @@
 // HOW MUCH OF A BABYLON SCENE THIS ENGINE CAN ACTUALLY RENDER.
 //
-// tests/webgl2_ratchet.cpp asks whether Babylon draws AT ALL and is answered:
+// tests/corpus/webgl2/webgl2_ratchet.cpp asks whether Babylon draws AT ALL and is answered:
 // rung 10 there is a box on the canvas. This asks what a scene can CONTAIN, and
 // it starts where that one stops.
 //
@@ -253,7 +253,7 @@ const std::uint32_t clear_blue = 0x0000ff;
     //
     // GREEN ON DAY ONE, deliberately. A ladder whose first rung fails cannot
     // tell a broken engine from a broken harness, and this one was written
-    // after tests/webgl2_ratchet.cpp already proved the same scene lands.
+    // after tests/corpus/webgl2/webgl2_ratchet.cpp already proved the same scene lands.
     {
         auto page = babylon_page(bundle);
         const render_result r = render(*page, R"JS(
@@ -560,7 +560,7 @@ const std::uint32_t clear_blue = 0x0000ff;
     m.reached(rung_pbr);
 
     m.fail_at(rung_gltf, "not measured yet - glTF import and the GUI need corpus additions, "
-                         "see docs/babylon-plan.md");
+                         "see docs/plans/babylon.md");
     return m;
 }
 

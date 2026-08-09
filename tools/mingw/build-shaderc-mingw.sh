@@ -5,7 +5,7 @@
 # execute it instead of the software interpreter. The interpreter is 1.03 M
 # fragments per second (tests/glsl_basics --bench, on p5's own lightTextureFrag),
 # which is about 120 ms for one full-screen pass at 420x300 - a ceiling no amount
-# of tuning lifts. docs/gpu-shaders-plan.md has the measurements and the staging.
+# of tuning lifts. docs/history/gpu-shaders.md has the measurements and the staging.
 #
 # FROM A PACKAGING FORK, github.com/alexios-angel/shaderc, and the distinction
 # matters: that fork carries NO compiler changes. Stock shaderc compiles a

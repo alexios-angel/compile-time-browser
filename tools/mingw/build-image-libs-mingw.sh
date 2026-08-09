@@ -3,7 +3,7 @@
 #
 # WHY THIS EXISTS. PNG and JPEG used to arrive through SDL3_image, a hook only
 # `ctbrowser.app` installs - so `tests/`, which is SDL-free by an invariant
-# `tests/api_surface` lints for, saw every PNG as a zero-sized image and nothing
+# `tests/lint/api_surface` lints for, saw every PNG as a zero-sized image and nothing
 # in the suite said so. Phaser found it: its texture manager loads three base64
 # PNGs during boot and will not start until all three settle. Both decoders moved
 # into the SDL-free engine on 2026-08-01, which means the Windows cross build

@@ -1,6 +1,6 @@
 // A REAL GLES DEVICE, AND WHICH DRIVERS ANSWER.
 //
-// The first test of the rewritten stack (docs/webgl-rewrite-plan.md). It asks
+// The first test of the rewritten stack (docs/plans/webgl-rewrite.md). It asks
 // the question the plan queued rather than guessing at it: construct a device
 // with EACH driver in turn and print `ok()` and `renderer()` for both, side by
 // side, in one run. Thirteen WebGL tests fail on a box with no GPU, and the

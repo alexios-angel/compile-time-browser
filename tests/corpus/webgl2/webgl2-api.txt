@@ -1,4 +1,4 @@
-# Which WebGL 2 probes pass. tests/webgl2_api.cpp measures it; this file
+# Which WebGL 2 probes pass. tests/corpus/webgl2/webgl2_api.cpp measures it; this file
 # records it. A probe that used to pass and now does not FAILS the test.
 #
 # Only tools/corpus/webgl2-api.py --advance writes this file. A test that edits its

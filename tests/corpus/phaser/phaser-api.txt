@@ -1,4 +1,4 @@
-# Which Phaser 4 probes pass. tests/phaser_api.cpp measures it; this file
+# Which Phaser 4 probes pass. tests/corpus/phaser/phaser_api.cpp measures it; this file
 # records it. A probe that used to pass and now does not FAILS the test.
 #
 # Only tools/corpus/phaser-api.py --advance writes this file. A test that edits its

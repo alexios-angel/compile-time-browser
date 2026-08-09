@@ -92,7 +92,7 @@ ladder rather than the middle.
 
 ## The ladder
 
-`tests/babylon_ratchet.cpp` measures, `tests/corpus/babylon/babylon-ratchet.txt` records,
+`tests/corpus/babylon/babylon_ratchet.cpp` measures, `tests/corpus/babylon/babylon-ratchet.txt` records,
 `tools/corpus/babylon-ratchet.py` drives — the shape used four times now (p5, Phaser,
 WebGL 2, modules).
 
@@ -124,7 +124,7 @@ does not have to be rewritten when they arrive.
 
 ## The surface probe
 
-`tests/babylon_api.cpp` + `tests/corpus/babylon/babylon-api-probe.js` + `tests/corpus/babylon/babylon-api.txt`,
+`tests/corpus/babylon/babylon_api.cpp` + `tests/corpus/babylon/babylon-api-probe.js` + `tests/corpus/babylon/babylon-api.txt`,
 to `p5_api.cpp`'s shape: **how WIDE the working surface is, as opposed to how
 far one scene gets.** The ratchet stops at its first failure and tells you one
 thing; the probe runs everything and tells you the shape of the gap.
@@ -145,7 +145,7 @@ wheel to zoom**, with nothing in the page handling a mouse — the camera is an
 ArcRotateCamera with `attachControl`, so the whole path is Babylon's own input
 manager reading DOM events off the canvas.
 
-`tests/babylon_interaction.cpp` is the claim behind it, and it asserts TWO
+`tests/corpus/babylon/babylon_interaction.cpp` is the claim behind it, and it asserts TWO
 things every time: the camera moved AND the picture changed. Those are not the
 same — a camera whose angle updates while the render does not follow is exactly
 the half-working this corpus keeps producing.
@@ -182,7 +182,7 @@ exercises what the ladder has reached rather than what it has not.
 
 ## Lighting, which is measured rather than eyeballed
 
-`tests/babylon_lighting.cpp` computes what a Lambert surface should be and
+`tests/corpus/babylon/babylon_lighting.cpp` computes what a Lambert surface should be and
 compares: a plane whose normal is exactly `(0, 0, -1)` under one directional
 light, with no specular, no emissive and no ambient, so
 

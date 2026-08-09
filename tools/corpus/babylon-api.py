@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How much of Babylon works, and what to write a probe for next.
 
-tests/babylon_api.cpp calls as much of Babylon's API as can be run headlessly and
+tests/corpus/babylon/babylon_api.cpp calls as much of Babylon's API as can be run headlessly and
 reports which calls pass; tests/corpus/babylon/babylon-api.txt records them; this drives the
 loop.
 
@@ -89,7 +89,7 @@ def do_advance():
     if not names:
         sys.exit("babylon-api: nothing is passing - refusing to record an empty surface")
     header = (
-        "# Which Babylon probes pass. tests/babylon_api.cpp measures it; this file\n"
+        "# Which Babylon probes pass. tests/corpus/babylon/babylon_api.cpp measures it; this file\n"
         "# records it. A probe that used to pass and now does not FAILS the test.\n"
         "#\n"
         "# Only tools/corpus/babylon-api.py --advance writes this file. A test that edits its\n"
@@ -110,7 +110,7 @@ def do_coverage():
     specification rather than a library, so there is no file to grep for the
     denominator. What is useful instead is the shape of the probe set itself -
     and in particular how much of it is the `unscoped` module, which is the part
-    docs/babylon-plan.md has deliberately NOT committed to and which Babylon.js
+    docs/plans/babylon.md has deliberately NOT committed to and which Babylon.js
     calls in full.
     """
     text = PROBES.read_text(errors="replace")
@@ -120,7 +120,7 @@ def do_coverage():
     total = sum(modules.values())
     print(f"\n  {total} probes across {len(modules)} modules\n")
     for tag in sorted(modules, key=lambda t: -modules[t]):
-        note = "  <- deliberately not implemented; see docs/babylon-plan.md" \
+        note = "  <- deliberately not implemented; see docs/plans/babylon.md" \
                if tag == "unscoped" else ""
         print(f"    {modules[tag]:>3}  {tag}{note}")
     print()

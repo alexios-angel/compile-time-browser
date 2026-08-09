@@ -175,7 +175,7 @@ should be answered before anything is deleted.
 | `src/raster/softgl.cpp` | 377 | **deleted** — its only caller is `webgl.cpp` |
 | `src/raster/spirv.cpp` | 733 | **dead** — it exists to feed a GPU path ANGLE would own |
 | `src/raster/glsl_translate.cpp` | 471 | **dead** — ANGLE's translator does exactly this job |
-| `src/shell/webgl_bindings.cpp` | 1,264 | **stays**, and this is the important row |
+| `src/shell/bindings/webgl.cpp` | 1,264 | **stays**, and this is the important row |
 
 **About 5,700 lines go and 1,264 stay**, and the split is not arbitrary.
 `webgl_bindings.cpp` is the JavaScript surface — 72 `method(...)` entry points,
@@ -189,7 +189,7 @@ except by getting further.
 
 OpenGL ES **3.0 complete** on D3D11, desktop GL, GL ES, Vulkan and Metal; **3.1
 complete** on desktop GL, GL ES and Vulkan; 3.2 in progress. This engine's
-WebGL 2 support is a measured subset — `docs/webgl2-plan.md` records what was
+WebGL 2 support is a measured subset — `docs/history/webgl2.md` records what was
 scoped out and `tests/corpus/webgl2/webgl2-api.txt` records that transform feedback, 3D
 textures, MRT, samplers, queries and sync are all still refused by name.
 
@@ -266,7 +266,7 @@ The context itself needs no window: EGL pbuffer or surfaceless plus an FBO.
 
 ### 4. The SDL-free rule, which is enforced
 
-`tests/api_surface` lints that only `app/app.cpp` knows SDL exists, and that
+`tests/lint/api_surface` lints that only `app/app.cpp` knows SDL exists, and that
 no third-party header appears in a public header. ANGLE brings EGL and GLES
 headers, and they would have to be confined the same way — one `.cpp` owning
 them behind a two-function header, which is the pattern `core/cpu_time.hpp` and
@@ -276,7 +276,7 @@ for rather than a problem, but the lint will fail loudly if it is ignored.
 ## What this buys that the current path cannot
 
 * **The whole of GLES 3.1**, including everything `webgl2-api.txt` records as
-  refused. Babylon's ratchet stops at 8/12 partly on features that are simply
+  refused. Babylon's ratchet stops at 10/12 partly on features that are simply
   not implemented here; several would arrive at once.
 * **Correctness by delegation.** Every shader-language question — precision,
   built-in behaviour, integer semantics, the `uint` mapping this tree currently
@@ -293,7 +293,7 @@ for rather than a problem, but the lint will fail loudly if it is ignored.
   trade for a browser and it should be made with eyes open rather than as a
   refactor.
 * **The measuring apparatus survives, which is the saving grace.** p5 12/12,
-  Phaser 10/10, WebGL 2 10/10, Babylon 8/12, four API surfaces and sixteen
+  Phaser 10/10, WebGL 2 10/10, Babylon 10/12, four API surfaces and sixteen
   goldens are all backend-agnostic: they drive pages and read pixels. They would
   re-run against ANGLE unchanged and say immediately whether it is better. **Very
   little of this tree's testing is wasted by this change**, which is the
@@ -311,7 +311,7 @@ is "Linux only", and that has to be known before anything is deleted.
 ### 1 — the context, behind the existing interface — DONE 2026-08-04
 `raster/gles.hpp` + `gles.cpp`: an offscreen ES 3.1 device that owns the EGL
 display, the pbuffer and the readback. **No EGL or GLES type appears in the
-header**, so `tests/api_surface` stays satisfied and nothing that includes it
+header**, so `tests/lint/api_surface` stays satisfied and nothing that includes it
 inherits them — the `cpu_time.hpp` pattern.
 
 `tests/gles_basics.cpp` is the whole of what it claims: a device comes up,
@@ -583,7 +583,7 @@ has to become ANGLE's own choice and SwiftShader the deliberate fallback.
 
 **It cannot happen until stage 4 finishes.** Today p5 draws through ANGLE and
 Babylon does not; deleting the software path now would take p5 12/12, WebGL 2
-10/10 and Babylon 8/12 to zero and leave three goldens with nothing to compare.
+10/10 and Babylon 10/12 to zero and leave three goldens with nothing to compare.
 The order is: finish the forwarding, get each corpus rendering, re-golden, THEN
 delete.
 

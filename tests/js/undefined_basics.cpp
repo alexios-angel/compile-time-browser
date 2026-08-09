@@ -7,7 +7,7 @@
 //
 // Its whole character is that it is DISTINCT FROM null while being loosely
 // equal to it, and that it poisons arithmetic rather than defaulting to zero -
-// which is exactly what `null` does not do. tests/null_basics.cpp is the other
+// which is exactly what `null` does not do. tests/js/null_basics.cpp is the other
 // half of that comparison and the two are meant to be read together.
 
 #include "js_expect.hpp"

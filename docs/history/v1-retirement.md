@@ -1,8 +1,17 @@
-# Retiring v1: what is left
+# Retiring v1: what it had that this does not
 
-Stage 7 of the v2 plan says "delete v1". Two of its three parts are done — the
-new shell exists, and `__builtin_std_embed` is no longer required to configure.
-The deletion is **not** done, and this is the list of why.
+> **THE DELETION IS DONE — 2026-07-27.** The compile-time engine this repository
+> is named for is gone from the tree and lives in git history: the page was a
+> structural NTTP and the parsers ran in constant evaluation. This file said
+> "the deletion is **not** done" until 2026-08-09, which was six weeks stale.
+>
+> It is kept as the record of what was given up, which is the part that does not
+> expire. Note that its examples still show `import ctbrowser;` and
+> `find_package(ctbrowser-v2)`; C++20 named modules were removed on 2026-07-28
+> and neither has worked since. They are left as written for the same reason the
+> rest is.
+
+Stage 7 of the v2 plan said "delete v1". This is the list of what that cost.
 
 ## What v2 replaced
 

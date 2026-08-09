@@ -1,18 +1,17 @@
 // How WIDE the working WebGL 2 surface is.
 //
-// tests/webgl2_ratchet.cpp asks how FAR a WebGL 2 page gets - one number up a
+// tests/corpus/webgl2/webgl2_ratchet.cpp asks how FAR a WebGL 2 page gets - one number up a
 // ladder, and it stops at the first thing missing. This asks the broader
 // question: of everything WebGL 2 offers, what works, what does not, and what
 // is deliberately not implemented.
 //
-// SAME SHAPE AS tests/p5_api.cpp AND tests/phaser_api.cpp: probes in a .js file,
-// a JSON report parsed BY HAND here, and a recorded surface that may not shrink.
-// Parsed by hand because this is the test harness, and a harness that depends on
-// the thing under test to report its own results can pass because two bugs
-// cancelled.
+// SAME SHAPE AS tests/corpus/p5/p5_api.cpp AND tests/corpus/phaser/phaser_api.cpp: probes in a .js
+// file, a JSON report parsed BY HAND here, and a recorded surface that may not shrink. Parsed by
+// hand because this is the test harness, and a harness that depends on the thing under test to
+// report its own results can pass because two bugs cancelled.
 //
 // THE PROBES INCLUDE THINGS EXPECTED TO FAIL, which is unusual and deliberate.
-// docs/webgl2-plan.md puts uniform buffer objects, 3D textures, MRT, samplers,
+// docs/history/webgl2.md puts uniform buffer objects, 3D textures, MRT, samplers,
 // queries, sync and transform feedback OUT of scope - and Babylon.js calls every
 // one of them. Recording "not implemented" as a fact is better than discovering
 // it later as a wrong answer, and the probe is then already written for the day

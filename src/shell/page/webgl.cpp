@@ -556,7 +556,7 @@ void webgl_context::refuse(std::string_view call) {
     // NO_ERROR. A page that checks for the error it was told about was told
     // nothing was wrong.
     //
-    // Refusing BY NAME is this engine's contract (docs/webgl2-plan.md); the
+    // Refusing BY NAME is this engine's contract (docs/history/webgl2.md); the
     // point of it is to be loud. A silent refusal is the same defect as a
     // silent no-op, which is what the whole rewrite exists to eliminate. The
     // ledger records the name for a developer, `fail` answers the page.

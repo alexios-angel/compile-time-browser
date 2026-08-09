@@ -38,7 +38,7 @@
 // cross-build script and a Boost floor raise for nothing the standard library
 // does not already do.
 //
-// `tests/number_format.cpp` pins every one of these against V8, and the
+// `tests/js/number_format.cpp` pins every one of these against V8, and the
 // round-trip property against the engine itself.
 
 namespace ctbrowser::script {

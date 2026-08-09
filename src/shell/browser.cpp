@@ -717,7 +717,7 @@ void browser::run_scripts() {
     // global scope and theirs is not. Concatenating them all - which is what
     // this did, and what makes the classic path cheap and correct - would put
     // every module's declarations on the global object and let them overwrite
-    // each other. See docs/modules-plan.md.
+    // each other. See docs/plans/modules.md.
     // WITH A SPECIFIER EACH, because the specifier is the registry key and two
     // module scripts sharing one means the second is taken for a module already
     // loaded and never runs at all. It also decides what `./dep.js` INSIDE the
@@ -827,7 +827,7 @@ void browser::load_module(const std::string & source, const std::string & specif
 //
 // PATHS, NOT URLS, DELIBERATELY. These are asset-registry keys: nothing here
 // fetches, so there is no base URL to resolve against yet. When the loader does
-// fetch, this becomes real URL resolution - and `docs/ada-url-plan.md` is about
+// fetch, this becomes real URL resolution - and `docs/plans/ada-url.md` is about
 // which standard that should be by. Bare and absolute specifiers pass through
 // untouched: a bare one is an import map's business, which is not built.
 namespace {

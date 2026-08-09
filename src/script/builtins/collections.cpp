@@ -1016,7 +1016,7 @@ void install_typed_arrays(context & cx) {
     // One method, and without it the whole of Babylon's physically-based
     // material path was unreachable: PBRMaterial and
     // PBRMetallicRoughnessMaterial both threw `isView is not a function` in
-    // their constructors. It is the cheapest item docs/babylon-plan.md
+    // their constructors. It is the cheapest item docs/plans/babylon.md
     // measured, by a wide margin.
     //
     // THE ANSWER IS THE OBJECT'S OWN, not a guess from its shape: an

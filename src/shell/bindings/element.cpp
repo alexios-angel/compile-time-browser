@@ -1004,7 +1004,7 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         // `webgl2` RETURNS A CONTEXT NOW (2026-08-02). Everything above is the
         // history of it returning null, and every word of it was right at the
         // time; what changed is that the language and the two capabilities
-        // behind it exist - see docs/webgl2-plan.md stages 1 to 3.
+        // behind it exist - see docs/history/webgl2.md stages 1 to 3.
         //
         // p5's RendererGL asks for this FIRST, so from here on every p5 WEBGL
         // sketch takes a path it has never taken in this engine.

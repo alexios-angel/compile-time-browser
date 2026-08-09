@@ -536,7 +536,7 @@ void test_a_textarea_draws_its_lines_separately() {
 //
 // value_lines split on '\n' and nothing else, so a paragraph with no newline in
 // it was one line however long, drawn straight through the right edge of the
-// box and clipped. This is the last thing on docs/v1-retirement.md's list that
+// box and clipped. This is the last thing on docs/history/v1-retirement.md's list that
 // the deleted engine had and this one did not.
 //
 // Deliberately NOT use_real_fonts(): font8x8's advance is exactly

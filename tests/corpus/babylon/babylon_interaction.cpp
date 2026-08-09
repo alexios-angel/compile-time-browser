@@ -61,7 +61,7 @@ namespace {
 // changed" means, and the only thing that can tell an orbit from a still frame:
 // a rotation preserves area, so counting painted pixels reads a turning camera
 // as a stationary one - which is a mistake this tree has already made once, in
-// tests/babylon_ratchet.cpp rung 4.
+// tests/corpus/babylon/babylon_ratchet.cpp rung 4.
 [[nodiscard]] std::uint64_t canvas_digest(ctbrowser::shell::browser & page) {
     const auto txn = page.doc().read();
     ctbrowser::node_id canvas{};
@@ -141,7 +141,7 @@ int main() {
     //
     // SPLITTING IT INTO FIVE BINARIES WAS THE WRONG FIX and was reverted. It
     // would have bought parallelism over a cost that is about to disappear:
-    // docs/angle-plan.md has ANGLE at 192 M fragments per second on the same
+    // docs/plans/angle.md has ANGLE at 192 M fragments per second on the same
     // machine, and when the WebGL path defaults to it this test is seconds
     // rather than minutes. Restructuring the test to work around a slow
     // renderer, and then keeping that structure afterwards, is how a suite ends

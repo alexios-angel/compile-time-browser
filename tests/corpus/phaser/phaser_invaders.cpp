@@ -1,7 +1,7 @@
 // Is the game PLAYABLE?
 //
-// A question no rung of tests/phaser_ratchet.cpp and no probe in
-// tests/phaser_api.cpp asks. The ratchet says the bundle reaches update() and
+// A question no rung of tests/corpus/phaser/phaser_ratchet.cpp and no probe in
+// tests/corpus/phaser/phaser_api.cpp asks. The ratchet says the bundle reaches update() and
 // paints; the probes say each call works on its own; the golden says the frame
 // is right. All three were true while every arrow key in a Phaser game did
 // nothing at all, because Phaser matches keys on the legacy `keyCode` and the

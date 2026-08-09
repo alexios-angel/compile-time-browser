@@ -30,7 +30,7 @@ is measured (`docs/platform.md`).
 
 ## The finding that reorganised the work
 
-Profiling a **whole page render** — `examples/p5basic`, loading the p5.js bundle
+Profiling a **whole page render** — `examples/corpus/p5basic`, loading the p5.js bundle
 and drawing a sketch — rather than one subsystem:
 
 ```
@@ -112,7 +112,7 @@ refactor makes the question disappear rather than trading correctness for it.
  3.4%  function_proto::add_name
 ```
 
-* **The lexer** — `docs/lexer-plan.md` has the design for a runtime-only
+* **The lexer** — `docs/history/lexer.md` has the design for a runtime-only
   replacement, and the header saying stage 0 cancelled it for now. Re-measure
   before spending a week.
 * **`libc` memory operations at 19.3%** are not attributed to a caller yet and
@@ -156,8 +156,8 @@ identically, and `std::hash<std::string>` is not required to agree with
 
 | | `object_object::find` | total |
 |---|---|---|
-| `tests/bench_script` before | 2.658 G (6.59%) | 40.345 G |
-| `tests/bench_script` after | **1.462 G (3.67%)** | **39.839 G (-1.26%)** |
+| `tests/bench/bench_script` before | 2.658 G (6.59%) | 40.345 G |
+| `tests/bench/bench_script` after | **1.462 G (3.67%)** | **39.839 G (-1.26%)** |
 | `phaser_invaders` before | 2.558 G (**10.74%**) | 23.815 G |
 | `phaser_invaders` after | **1.350 G (5.78%)** | **23.342 G (-1.99%)** |
 
@@ -384,7 +384,7 @@ case.
   archive is pulled in only to satisfy an undefined symbol; if link order lets
   libstdc++ answer first, the binary uses the system allocator and looks
   identical. `ctbrowser::allocator_name()` ASKS mimalloc whether a fresh
-  allocation came from its own regions, and `tests/core_basics` asserts it.
+  allocation came from its own regions, and `tests/unit/core_basics` asserts it.
 * **The wrong major version.** apt ships v2, this tree pins v3, and they are
   different allocators behind the same header name - compile against one and
   link the other and the result is undefined behaviour that starts as a crash
@@ -651,7 +651,7 @@ through `call()`, so `add`, `sub` and every comparison can re-enter the VM.
 same name, off by default).** The result is a property of the branch predictor
 rather than of this code - the devbox is Zen-class with a modern indirect
 predictor, and the technique still wins on some microarchitectures. Measure it
-on yours; `tests/bench_script` is how.
+on yours; `tests/bench/bench_script` is how.
 
 **The real win was one line, and it had nothing to do with dispatch.** D is the
 whole of the restructuring's benefit reproduced by a six-line change: the loop
@@ -949,7 +949,7 @@ attributable to the two lines above.
 
 ### And it exposed a bug in `Math.cbrt`
 
-`tests/vm_basics` asserted `Math.cbrt(27)` printed "3" and had been passing
+`tests/js/vm_basics` asserted `Math.cbrt(27)` printed "3" and had been passing
 against **3.0000000000000004** for as long as it existed, because six-decimal
 formatting printed "3" either way. glibc's `cbrt` is up to an ulp out on a
 perfect cube; V8 returns the exact root. Corrected for the exact case only - a

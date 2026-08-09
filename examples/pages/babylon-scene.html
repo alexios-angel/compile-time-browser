@@ -25,7 +25,7 @@
      That means the picture depends on the whole lighting path being right - the
      normal matrix, the light's direction in world space, the Lambert term and
      the specular exponent - and a fault in any of them shows up as a face that
-     is the wrong brightness rather than as an error. tests/babylon_lighting.cpp
+     is the wrong brightness rather than as an error. tests/corpus/babylon/babylon_lighting.cpp
      checks those numbers against the arithmetic; this page is what a human
      looks at, and it is where a wrong one is OBVIOUS: the three box faces are
      lit differently on purpose, so a normal matrix that stopped arriving would
@@ -40,7 +40,7 @@
        - a ground plane, the only large flat area, so a change in the projection
          or the depth test shows up as a shape rather than as a few edge pixels
 
-     tests/babylon_ratchet.cpp is the ladder and tests/babylon_api.cpp is the
+     tests/corpus/babylon/babylon_ratchet.cpp is the ladder and tests/corpus/babylon/babylon_api.cpp is the
      surface; this is what a HUMAN looks at, and the golden is what catches the
      render changing by accident. -->
 <html>

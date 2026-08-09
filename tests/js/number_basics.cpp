@@ -6,7 +6,7 @@
 //
 // This is the type's shape - limits, the two zeros, NaN, the statics and the
 // prototype. How a number turns into TEXT is a different question with its own
-// suite, tests/number_format.cpp, which pins Number::toString, toFixed,
+// suite, tests/js/number_format.cpp, which pins Number::toString, toFixed,
 // toExponential and toPrecision against V8 in far more detail than here.
 
 #include "js_expect.hpp"

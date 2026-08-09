@@ -58,7 +58,7 @@ void install_math(context & cx, std::uint64_t seed) {
     // THE EXACT ROOT WHEN THERE IS ONE. glibc's `cbrt` is up to an ulp out on a
     // perfect cube - `cbrt(27)` is 3.0000000000000004 and `cbrt(216)` is
     // 6.0000000000000009 - where V8 returns 3 and 6. That was invisible while
-    // this engine printed numbers to six decimals, and `tests/vm_basics` was
+    // this engine printed numbers to six decimals, and `tests/js/vm_basics` was
     // asserting "3" against a value that was never 3; full-precision printing
     // is what exposed it.
     //

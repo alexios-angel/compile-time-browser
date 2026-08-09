@@ -176,7 +176,7 @@ public:
     // there have been. Empty when the page's callbacks are running cleanly.
     [[nodiscard]] const std::string & callback_error() const noexcept { return callback_error_; }
     [[nodiscard]] std::size_t callback_faults() const noexcept { return callback_faults_; }
-    // --- the WebGL back end, stage 2 of docs/angle-plan.md -------------------
+    // --- the WebGL back end, stage 2 of docs/plans/angle.md -------------------
     //
     // BEFORE THE PAGE RUNS. A context is made when a page asks for one, and its
     // backend cannot change underneath programs already compiled into it - so
@@ -339,7 +339,7 @@ private:
     // would quietly lose everything it had uploaded.
     flat_map<std::uint64_t, std::unique_ptr<webgl_context>> webgl_contexts_;
     // Whether a NEW WebGL context should go on the ANGLE backend. Stage 2 of
-    // docs/angle-plan.md keeps both paths alive, and this is the switch.
+    // docs/plans/angle.md keeps both paths alive, and this is the switch.
     bool angle_preferred_ = false;
     // The JS wrapper for each, so getContext hands back the SAME object - and a
     // GC root, because the page may drop its reference and ask again.

@@ -197,7 +197,7 @@ void test_a_scripted_image() {
 // PNG, THROUGH LIBPNG, IN A BUILD WITH NO SDL. This is the gap Phaser found:
 // the engine decoded BMP itself and got PNG from a hook only the application
 // layer fills in, so `tests/` - which is SDL-free by an invariant
-// `tests/api_surface` lints for - saw every PNG as a zero-sized image and
+// `tests/lint/api_surface` lints for - saw every PNG as a zero-sized image and
 // nothing in the suite said so, because the pages in this tree load BMPs.
 //
 // ASSERTED AGAINST THE BMP, pixel for pixel, rather than against itself: two

@@ -16,7 +16,7 @@ specificity above every selector, which puts it in the cascade at
 so `engine::resolve` SPLICES the attribute's normal declarations in at the
 importance boundary rather than appending them at the end. Appending is the
 easy mistake and it is invisible until a page uses `!important` to override a
-widget's inline style; `tests/style_basics` has a test per step, verified by
+widget's inline style; `tests/unit/style_basics` has a test per step, verified by
 planting the mistake and watching exactly those two fail.
 
 Parsed through the SHEET parser wrapped in `*{...}`, not ctcss's declaration
@@ -87,7 +87,7 @@ one, and neither may name the other: paint and raster sit downstream of layout.
 
 **font8x8 hides this bug**: it quantises 13px, 16px and 19px to the same 8x8
 cell, so all three have the same ascent and every alignment looks identical.
-`tests/chrome_basics` therefore tests it with REAL fonts, and the test is
+`tests/unit/chrome_basics` therefore tests it with REAL fonts, and the test is
 verified against BOTH wrong alignments — top and bottom each fail it.
 
 **`white-space: pre` breaks lines.** A preserved newline is a LINE BREAK, not a

@@ -12,7 +12,7 @@
 // loader with queues and progress events, and input polled as state rather than
 // delivered as callbacks.
 //
-// SAME SHAPE AS tests/p5_ratchet.cpp - a ladder, a recorded rung, and a blocker
+// SAME SHAPE AS tests/corpus/p5/p5_ratchet.cpp - a ladder, a recorded rung, and a blocker
 // that may not change silently - because that shape has earned it. The rungs
 // differ past the language ones because the lifecycle differs: Phaser has
 // preload/create/update where p5 has setup/draw.

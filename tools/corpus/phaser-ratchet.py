@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How far Phaser 4 gets through the engine, and what is stopping it.
 
-tests/phaser_ratchet.cpp measures a LEVEL and a BLOCKER; tests/corpus/phaser/phaser-ratchet.txt
+tests/corpus/phaser/phaser_ratchet.cpp measures a LEVEL and a BLOCKER; tests/corpus/phaser/phaser-ratchet.txt
 records them; this drives the loop around both.
 
     tools/corpus/phaser-ratchet.py             build, measure, show the blocker in context

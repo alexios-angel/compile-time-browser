@@ -3,7 +3,7 @@
 // Written by differentially testing every Math function against node (V8, the
 // engine Chrome ships) over ~27,000 expressions; the ~90 differences it found
 // collapsed to seven defects, and every one of them is pinned below. As with
-// tests/number_format.cpp the expectations were taken from V8 BEFORE the fixes
+// tests/js/number_format.cpp the expectations were taken from V8 BEFORE the fixes
 // were written, so this file failed on the day it was committed rather than
 // agreeing with the bug.
 //

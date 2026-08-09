@@ -2,7 +2,7 @@
 #
 # Registration is a glob - dropping a .cpp in here is the whole process, the way
 # the previous engine's examples worked. Each one links ONE target and imports ONE module; that
-# claim is enforced by tests/api_surface, not just asserted here.
+# claim is enforced by tests/lint/api_surface, not just asserted here.
 
 if(NOT CTBROWSER_BUILD_EXAMPLES)
   return()
@@ -112,7 +112,7 @@ foreach(source ${example-sources})
     # the frame depend on timing.
     # babylonorbit is the INTERACTIVE one, and its golden is the frame before
     # anybody touches it: the scene does not move on its own, so the picture is
-    # stable, and tests/babylon_interaction.cpp is what drives a drag through it.
+    # stable, and tests/corpus/babylon/babylon_interaction.cpp is what drives a drag through it.
     set(golden-examples widgets elements p5basic p5text p5transform p5shape p5pixels
         p5image webgltriangle p5webgl phaserbasic phaserinvaders babylonscene
         babylonorbit)

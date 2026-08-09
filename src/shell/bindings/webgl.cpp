@@ -232,7 +232,7 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
             const_cast<paint::bitmap *>(surface->surface().get()), width, height);
         // THERE IS NO BACKEND TO CHOOSE ANY MORE. The software rasteriser is
         // gone, so a context is an ANGLE context or it is nothing - see
-        // docs/webgl-rewrite-plan.md. What used to be `use_angle()` is now the
+        // docs/plans/webgl-rewrite.md. What used to be `use_angle()` is now the
         // only path, and `driver::deterministic` is the runtime switch that
         // replaces it.
         //
@@ -913,7 +913,7 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
     // --- drawing
     // --- WebGL 2's spelling of what the extensions already expose -----------
     // THE SAME webgl_context METHODS the OES/ANGLE objects call. That is the
-    // decision docs/webgl2-plan.md records, and it is why this arrives already
+    // decision docs/history/webgl2.md records, and it is why this arrives already
     // exercised: Phaser has been driving VAOs and instancing through the
     // extension names since stage 2, so this binds names to code a real
     // renderer has been using rather than to code written for a test.
@@ -992,7 +992,7 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
                    return value::undefined();
                }));
 
-        // STAGE 5 of docs/webgl2-plan.md: THE HALF THIS ENGINE DOES NOT
+        // STAGE 5 of docs/history/webgl2.md: THE HALF THIS ENGINE DOES NOT
         // IMPLEMENT, present by name and refusing loudly.
         //
         // A page that asked for `webgl2` and got one does not feature-detect
@@ -1069,7 +1069,7 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
                 if (gl->refused().size() != before) {
                     console_.push_back(std::string{"WebGL: gl."} + name +
                                        " is not implemented by this engine "
-                                       "(see docs/webgl2-plan.md); it raises INVALID_OPERATION");
+                                       "(see docs/history/webgl2.md); it raises INVALID_OPERATION");
                 }
                 return value::null();
             });
@@ -1180,7 +1180,7 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
     //
     // ONE IMPLEMENTATION, TWO NAMES. `createVertexArrayOES` here and
     // `createVertexArray` on a WebGL 2 context call the SAME webgl_context
-    // method, which is the decision docs/webgl2-plan.md records - and the
+    // method, which is the decision docs/history/webgl2.md records - and the
     // reason a corpus can check it. Phaser reaches VAOs and instancing ONLY
     // through these objects, so this is the machinery getting a workout from
     // somebody else's renderer rather than from a page written to test it.

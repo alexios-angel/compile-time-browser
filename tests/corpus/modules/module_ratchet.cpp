@@ -4,7 +4,7 @@
 // recorded rung, and a blocker that may not change silently - because that
 // shape has earned it three times.
 //
-// WHY IT EXISTS. docs/modules-plan.md: this engine runs ONE flavour of
+// WHY IT EXISTS. docs/plans/modules.md: this engine runs ONE flavour of
 // JavaScript, the classic script, and every script on a page is concatenated
 // into a single program. Modules are not something that can be bent into -
 // each has its own scope, its own binding namespace, and an execution order
@@ -135,7 +135,7 @@ struct measurement {
     //
     // AND NOT "does it work" either, which was the second version and was too
     // strict in the other direction: it demanded dynamic import RETURN a
-    // Promise, which is stage 4 of docs/modules-plan.md, so the whole ladder
+    // Promise, which is stage 4 of docs/plans/modules.md, so the whole ladder
     // sat at 0 while rungs 2 and 3 went unmeasured. A rung that cannot be
     // reached measures nothing.
     //
@@ -250,7 +250,7 @@ struct measurement {
     // THE RUNG THAT CATCHES THE SHORTCUT. Handing the importer the VALUE at
     // link time passes rung 3 and fails here: the exporter's later write must
     // be visible, because an ES import is a binding and not an assignment.
-    // Copying is the CommonJS behaviour and is what docs/modules-plan.md names
+    // Copying is the CommonJS behaviour and is what docs/plans/modules.md names
     // in advance as the thing that would look like progress.
     {
         auto page = page_with("import { count, bump } from './c.js';"
@@ -464,7 +464,7 @@ struct measurement {
     if (umd.empty()) { return "no Babylon vendored at all"; }
     if (umd.find("_BabylonUMDDynamicImportUnsupported") != std::string::npos) {
         return "only the UMD build is vendored, and it REJECTS its own dynamic import() - "
-               "see docs/modules-plan.md";
+               "see docs/plans/modules.md";
     }
     return "a non-UMD Babylon is vendored";
 }

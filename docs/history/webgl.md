@@ -1,5 +1,21 @@
 # WebGL in ctbrowser — the plan
 
+> **STALE ON PURPOSE since 2026-08-04, and KEPT for the measurements.** The
+> software rasteriser and the GLSL front end this describes — `glsl.hpp`,
+> `softgl.hpp`, `raster/spirv.cpp`, `glsl_eval.cpp`, about 8,500 lines — were
+> DELETED when WebGL was rewritten onto ANGLE. Read `history/webgl2.md` and
+> `plans/webgl-rewrite.md` for what exists.
+>
+> **Do not "fix" the paths in this file.** They point at things that are gone
+> because the file describes a design that is gone. What is worth keeping is the
+> reasoning and the numbers: the interpreter at 1.03 M frag/s, why one front end
+> and two back ends looked right, and the measured answer to whether libshaderc
+> could be dropped in (it could not). Those were expensive to obtain and are the
+> main defence against attempting the same thing twice.
+>
+> This banner was in `CLAUDE.md` and not in this file until 2026-08-09, which
+> meant rebuilding that index would have silently removed the only warning.
+
 Written 2026-07-30, before any of it exists. Every measurement below is from
 `examples/assets/p5/p5.js` (v2.3.1) and this tree, not from memory.
 
@@ -97,7 +113,7 @@ So validation is three things, honestly ranked:
 ### The invariant this must not break
 
 **The engine is SDL-free** outside `app/app.cpp` and `gpu/`, and
-`tests/api_surface` lints it. So the WebGL *context* lives in `shell/` and knows
+`tests/lint/api_surface` lints it. So the WebGL *context* lives in `shell/` and knows
 nothing about SDL; the GPU back end lives in `gpu/` behind an interface the shell
 calls through. Same shape as `raster::backend` already has for the compositor.
 
@@ -562,14 +578,14 @@ triangle cannot draw a sphere, and finding out which of six stages is wrong is
 much easier with five of them already pinned.
 
 
-## libshaderc: this section answered the NARROW question — see docs/gpu-shaders-plan.md
+## libshaderc: this section answered the NARROW question — see docs/history/gpu-shaders.md
 
 **What follows asks whether shaderc could be a drop-in for `raster/spirv.cpp` or
 for the interpreter AS THEY STAND, and answers no. That was the wrong question.**
 The one worth asking is whether page shaders should be compiled to SPIR-V and
 run on the GPU *instead of being interpreted*, which is the only route to
 hardware acceleration — and the version obstacle below turns out to be a
-mechanical translation, not a wall. `docs/gpu-shaders-plan.md` has the
+mechanical translation, not a wall. `docs/history/gpu-shaders.md` has the
 measurements: the three things glslang wants are all numbers this engine already
 assigns at link time, and a translated Babylon-shaped shader compiles.
 

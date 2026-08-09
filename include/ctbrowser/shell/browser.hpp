@@ -221,7 +221,7 @@ public:
     //
     // It lives here rather than on the bindings for exactly the reason above: a
     // caller would have to know that the bindings are built during the load,
-    // which is a detail of when scripts run. Stage 2 of docs/angle-plan.md
+    // which is a detail of when scripts run. Stage 2 of docs/plans/angle.md
     // keeps both back ends alive, and this is how a caller chooses.
     void prefer_angle_webgl(bool on) noexcept { prefer_angle_webgl_ = on; }
     [[nodiscard]] bool angle_webgl_preferred() const noexcept { return prefer_angle_webgl_; }
@@ -1505,7 +1505,7 @@ private:
     // ONE PROGRAM PER MODULE, kept alive for the page's lifetime. A module's
     // top-level declarations live in its own frame and its functions close over
     // them, so the program cannot be a temporary the way a classic script's
-    // could be. See docs/modules-plan.md.
+    // could be. See docs/plans/modules.md.
     std::vector<std::unique_ptr<script::program>> module_programs_;
     // Load a module and everything it imports, depth-first, evaluating each
     // once. See the definition for why post-order is the only order that works.

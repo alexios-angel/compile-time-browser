@@ -1,6 +1,6 @@
 // How much of p5.js works.
 //
-// tests/p5_ratchet.cpp measures how FAR the bundle gets: it climbs a ladder and
+// tests/corpus/p5/p5_ratchet.cpp measures how FAR the bundle gets: it climbs a ladder and
 // records one number. This measures how WIDE the working surface is - it calls
 // as much of p5's 417-function API as can be run headlessly and records which
 // calls pass.

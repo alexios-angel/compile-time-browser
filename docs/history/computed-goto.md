@@ -21,7 +21,7 @@ the single opcode that reads it. Moving it into that handler is -5.6%
 instructions on the benchmark and -1.7% on a real Phaser frame, from six lines.
 `docs/performance.md` has the table.
 
-What also survives is `tests/bench_script`, which should have existed years ago.
+What also survives is `tests/bench/bench_script`, which should have existed years ago.
 
 ---
 
@@ -129,7 +129,7 @@ the whole decision.
 `bench_style` — and nothing for the VM, which is why the only number anyone has
 for `run_loop` came from a page-load profile where it was noise.
 
-1. `tests/bench_script.cpp`, registered with `ctbrowser_bench` like the other
+1. `tests/bench/bench_script.cpp`, registered with `ctbrowser_bench` like the other
    six. It should run **bytecode-heavy loops that do not allocate** — integer
    arithmetic, property access on a fixed shape, method calls, a tight
    `for` — so the number is dispatch and not the garbage collector. Report

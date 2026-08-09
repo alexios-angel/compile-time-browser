@@ -12,7 +12,7 @@
 // symbol; if the link order lets libstdc++ answer first, the override is
 // silently dropped and the binary uses the system allocator while looking
 // identical. Anything that must have mimalloc references this, and
-// tests/core_basics asserts the answer - so "we forgot to link it" is a test
+// tests/unit/core_basics asserts the answer - so "we forgot to link it" is a test
 // failure rather than a performance mystery six months later.
 namespace ctbrowser {
 
@@ -21,7 +21,7 @@ namespace ctbrowser {
 [[nodiscard]] const char * allocator_name() noexcept;
 
 // mimalloc's own version, as it reports it - 3.4.3 is 343. Checked by
-// tests/core_basics against the major version this tree pins.
+// tests/unit/core_basics against the major version this tree pins.
 //
 // IT IS A PIN, NOT TRIVIA. The Linux side comes from brew and the Windows side
 // from tools/mingw/build-mimalloc-mingw.sh, and v2 and v3 are different allocators

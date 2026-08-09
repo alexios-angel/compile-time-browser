@@ -9,7 +9,7 @@ offline into `include/ctbrowser/gpu/shaders/tile_spv.hpp`. Point this at those
 bytes. `tests/spirv_basics.cpp`, named here until this note replaced it, went
 with the emitter.
 
-`tests/gpu_basics.cpp` hands shaders to SDL_CreateGPUShader and MEASURES what
+`tests/unit/gpu_basics.cpp` hands shaders to SDL_CreateGPUShader and MEASURES what
 that is worth: on this machine the driver accepts deliberate garbage, so
 acceptance proves the bytes reached it and nothing more. That is not
 validation, which is why this exists.

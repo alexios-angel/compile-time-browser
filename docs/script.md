@@ -9,7 +9,7 @@ API pages call is not here - that is `shell/bindings.hpp`, in `docs/shell.md`.
 ## JAVASCRIPT (2026-07-25)
 
 **The MDN breakout tutorial runs, unmodified** — `examples/demos/pong.cpp` loads
-`examples/pages/pong.html`, a byte-for-byte copy. `examples/fetchboard.html`
+`examples/pages/pong.html`, a byte-for-byte copy. `examples/pages/fetchboard.html`
 compiles too, and the 66 KB bundled `space-invaders.html` stops at exactly ONE
 thing: a regex literal.
 
@@ -64,15 +64,15 @@ name), so the only frame-0 locals are for..of items and catch parameters — and
 those ARE capturable, which is what makes `for (const x of xs) fns.push(() => x)`
 close over each element at the top level.
 
-`tests/page_scripts` compiles the real example pages and asserts what each
-one does; `tests/vm_basics` has a test per language feature.
+`tests/unit/page_scripts` compiles the real example pages and asserts what each
+one does; `tests/js/vm_basics` has a test per language feature.
 
 ## WHAT p5.js NEEDED (2026-07-29)
 
 **p5.js v2.3.1 runs, in BOTH builds** — 4.5 MB and 138,938 lines that nobody
 wrote for this engine. It lexes, parses (282,028 nodes), compiles (4,754 functions), executes
 its whole top-level IIFE, builds a sketch, runs `setup()`, drives `draw()` from
-`requestAnimationFrame`, and paints. `tests/p5_ratchet.cpp` measures how far it
+`requestAnimationFrame`, and paints. `tests/corpus/p5/p5_ratchet.cpp` measures how far it
 gets on a ladder of 12 rungs and `tests/corpus/p5/p5-ratchet.txt` records the high-water
 mark; the level may not go down. TWO numbers are recorded, each with its own
 pawl: `level` is p5-min, where the page defines `IS_MINIFIED` as p5's own
@@ -313,7 +313,7 @@ and `kids()` built a vector per AST node visit for children already contiguous
 in the pool (3.9%). Together **-26.5% instructions** on that render and -33% on
 the p5 bundle compile.
 
-The lexer is next and has its own document: `docs/lexer-plan.md`.
+The lexer is next and has its own document: `docs/history/lexer.md`.
 
 ### CAN THE SCRIPT ENGINE USE THREADS? Yes - the front end, not the runtime (2026-07-31)
 
@@ -422,7 +422,7 @@ For three of those, the diagnosis blamed p5 first and p5 was innocent each time.
 A second corpus, and it earned its keep in an afternoon. Phaser stopped at
 `new Phaser.Game()` with `isBooted` true, `isRunning` false and **no error any
 page could see** — the throw happened four callbacks deep inside an image
-handler. `tests/phaser_ratchet.cpp` went 7/10 → 9/10; the tenth rung is
+handler. `tests/corpus/phaser/phaser_ratchet.cpp` went 7/10 → 9/10; the tenth rung is
 honestly unreached, because no corpus page draws through Phaser yet.
 
 Four engine bugs, none of them about games, and **p5.js could not have found
@@ -597,7 +597,7 @@ cosmetic:
 | `Number("inf")` | `Infinity` | `NaN` |
 
 `script/number_format.hpp` is the whole of it - five functions, each named for
-its clause - and `tests/number_format.cpp` pins every case against **V8**, plus
+its clause - and `tests/js/number_format.cpp` pins every case against **V8**, plus
 the round-trip property `Number(String(x)) === x` over twenty literals. The
 expectations were taken from node before the code was written, which is the only
 reason the file failed on the day it was committed rather than agreeing with the
@@ -622,7 +622,7 @@ Three things worth knowing:
 
 ## Math, differentially tested against V8 (2026-08-08)
 
-`tests/math_basics.cpp`. Every Math function was run against node (V8) over
+`tests/js/math_basics.cpp`. Every Math function was run against node (V8) over
 ~27,000 expressions; the ~90 differences collapsed to **seven defects**, all now
 fixed and pinned. Each was planted back individually and the test caught it —
 10, 8, 8, 2, 30, 7 and 7 assertions respectively.
@@ -699,7 +699,7 @@ targets and no corpus uses it.
 
 ## Strings, differentially tested against V8 (2026-08-09)
 
-`tests/string_basics.cpp`. The whole of `String.prototype` and the relational
+`tests/js/string_basics.cpp`. The whole of `String.prototype` and the relational
 operators were run against node (V8) over ~1,550 expressions. The sweep found
 **233 differences and 72 hangs**; the fixes below took that to **60 and 0**, and
 8 of the remaining 60 are deliberate. Every fix was planted back individually
@@ -768,7 +768,7 @@ bytes.** So `"é".length` is 2 here and 1 in V8, a non-BMP emoji is 4 and 2, and
 `charCodeAt` returns a byte. Closing it means changing `string_object`
 engine-wide and touching every method that takes an index.
 
-`tests/string_basics.cpp` **pins the current (wrong) answers** in a labelled
+`tests/js/string_basics.cpp` **pins the current (wrong) answers** in a labelled
 section rather than omitting them, with V8's answer in each comment. That is the
 acceptance list for a migration: the day the representation changes, those lines
 fail and say exactly what to update.
@@ -877,14 +877,14 @@ Six defects across four areas. Each planted back individually and caught.
   every object is truthy. Deliberate - see `context::construct`.
 * **No BigInt at all.** `1n` does not lex, and it is a PARSE error, so a bundle
   containing one fails as a whole. That is a type to add, not a bug to fix;
-  `tests/bigint_basics.cpp` is the acceptance list.
+  `tests/js/bigint_basics.cpp` is the acceptance list.
 
 
 ## BigInt (2026-08-09)
 
 The seventh primitive type. 61 expressions differentially tested against node
 (V8) - arithmetic, comparison, conversion and every error the specification
-names - with no differences. `tests/bigint_basics.cpp`, which until today
+names - with no differences. `tests/js/bigint_basics.cpp`, which until today
 recorded the type's ABSENCE and said it should be rewritten as a conformance
 suite the day it arrived; 17 of its assertions failed together and it was.
 
@@ -953,7 +953,7 @@ script: under WSL, `binfmt_misc` runs `.exe` files, so configure decides it is
 (pass `--build` explicitly); and `CC_FOR_BUILD` must be a native compiler or
 the build tries to execute the Windows helper programs it just produced.
 
-Both backends are held to `tests/bigint_basics.cpp`, and it passes on both, as
+Both backends are held to `tests/js/bigint_basics.cpp`, and it passes on both, as
 do `number_basics`, `type_basics`, `number_format`, `symbol_basics`,
 `boolean_basics` and `obfuscated`. The switch is a performance choice, not a
 semantic one — and `bigint.hpp` may therefore use nothing backend-specific.
@@ -1003,4 +1003,4 @@ A symbol has the same shape and is deliberately NOT in that guard: it should
 refuse the conversion outright, and cannot until ToPropertyKey is separated
 from ToString, because `o[sym]` resolves through the same call. Adding it there
 made `"" + Symbol("x")` yield the internal key instead of "Symbol(x)" - a worse
-wrong answer - and `tests/symbol_basics.cpp` caught it.
+wrong answer - and `tests/js/symbol_basics.cpp` caught it.

@@ -1,16 +1,17 @@
 # Raster — tiles, backends, and real fonts
 
-`include/ctbrowser/raster/` — `pipeline.hpp`, `tile.hpp`, `software.hpp`,
-`draw.hpp`, `compositor.hpp`, `ttf.hpp` (SDL3_ttf) and `font8x8.hpp` (the
-built-in bitmap fallback the goldens are rendered with).
+`include/ctbrowser/raster/` — `draw.hpp`, `surface.hpp` and `tile.hpp` at the
+top; `backend/` holds `backend.hpp`, `software.hpp`, `renderer.hpp`,
+`compositor.hpp` and `pipeline.hpp`; `text/` holds `ttf.hpp` (SDL3_ttf) and
+`font8x8.hpp`, the built-in bitmap fallback the goldens are rendered with.
 
 ## FONTS: real ones (stage 6, 2026-07-25)
 
-**Text is drawn with outline faces.** `ctbrowser.raster:ttf` is a `font_backend`
+**Text is drawn with outline faces.** `raster/text/ttf.hpp` is a `font_backend`
 over **SDL3_ttf** — the one place the engine knows about SDL, and a deliberate
 exception rather than an oversight. `TTF_Init` needs no video subsystem, so real
 text is still TESTABLE with no display, which is what makes the exception safe.
-`tests/api_surface` SWEEPS `src/` and names the exceptions; the old
+`tests/lint/api_surface` SWEEPS `src/` and names the exceptions; the old
 hand-written list could not catch a new file that used SDL, and did not.
 
 ## SVG
@@ -117,7 +118,7 @@ upright one.
 
 **The glyph cache is the only shared mutable state in the text path** — tiles
 raster in parallel and an FT_Face is not reentrant — so it is mutex-guarded and
-`tests/fonts_basics` drives it from twelve threads on COLD glyphs. Going
+`tests/unit/fonts_basics` drives it from twelve threads on COLD glyphs. Going
 through the browser does not test it: layout measures every run before raster
 draws it, so the parallel path only ever reads. Removing the lock and watching
 TSan stay silent is what showed that up.
@@ -150,7 +151,7 @@ platform-dependent for a reason that is not a regression. JPEG is verified by
 hand through `ctbrowse` and works.
 
 **A headless `shell::browser` has no decoder.** `install_image_decoder` is
-called by `run_app`, so a unit test - which `tests/api_surface` requires to be
+called by `run_app`, so a unit test - which `tests/lint/api_surface` requires to be
 SDL-free - reads BMP only. That is why the coverage here is an EXAMPLE with a
 golden rather than a test in `tests/`.
 
@@ -160,12 +161,26 @@ lays out identically and draws nothing, and comparing then fails for the wrong
 reason.
 
 
-## WEBGL: GLSL AND A SOFTWARE RASTERISER (2026-07-30)
+## WEBGL: GLSL AND A SOFTWARE RASTERISER (2026-07-30) — DELETED 2026-08-04
+
+> **Everything from here to the end of this file describes code that no longer
+> exists.** `glsl.hpp`, `softgl.hpp` and the SPIR-V emitter were deleted when
+> WebGL was rewritten onto ANGLE; `tests/glsl_basics.cpp` went with them, and
+> `raster/gl.hpp` is the GL device now. The rest of this document — fonts,
+> glyph rasterisation, the font8x8 fallback, SVG — is current.
+>
+> This section is kept rather than cut because its numbers are the argument for
+> the rewrite: an interpreter at 1.03 M frag/s, 60 ms for a 200x200 full-screen
+> draw, and a `webgl-triangle.html` sized at 160x160 to stay under it. See
+> `history/webgl.md` for the design and `plans/webgl-rewrite.md` for what
+> replaced it.
+>
+> Marked here on 2026-08-09. Until then the only warning lived in `CLAUDE.md`.
 
 `raster/` grew a language. `glsl.hpp` is GLSL ES 1.00 - preprocessor, parser,
 type model and a reference evaluator - and `softgl.hpp` is a triangle rasteriser
 that runs it. Together they are what makes `canvas.getContext('webgl')` return
-something real. `docs/webgl-plan.md` has the whole design and the staging; this
+something real. `docs/history/webgl.md` has the whole design and the staging; this
 is what a reader of `raster/` needs to know.
 
 **Why it is here.** WebGL has no fixed pipeline: `drawArrays` runs a vertex

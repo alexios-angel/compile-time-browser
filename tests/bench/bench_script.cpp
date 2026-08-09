@@ -17,7 +17,7 @@
 //             a page load, here so the two can be compared honestly rather than
 //             argued about.
 //   run       bytecode -> answer, on a program compiled ONCE. This is dispatch
-//             plus the handlers, and it is the number docs/computed-goto-plan.md
+//             plus the handlers, and it is the number docs/history/computed-goto.md
 //             needs.
 //
 // THE WORKLOADS AVOID THE ALLOCATOR ON PURPOSE. A loop that builds strings or

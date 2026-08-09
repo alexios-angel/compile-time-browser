@@ -28,7 +28,7 @@ SDL3 the engine still renders and `run_app` still works.
 **Installing:** `tools/check/check-package.sh` is the proof — installs the engine to a temp
 prefix, builds `tests/package/` against it via `find_package`.
 
-`tests/api_surface` lints the claim: application sources must contain exactly
+`tests/lint/api_surface` lints the claim: application sources must contain exactly
 one engine include - the umbrella header - and no SDL symbol, and the engine must stay
 SDL-free.
 
@@ -40,7 +40,7 @@ is 37, and a `Key` object matches by number — so every arrow key in a Phaser g
 did nothing at all: the listener fired, the event arrived, `code` was right, and
 no key ever matched. A game that renders and cannot be played. `dom_key_code` in
 `shell/input.hpp` is the table; the values are the well-known ones every browser
-reports, which is the whole point of having them, and `tests/phaser_ratchet.cpp`
+reports, which is the whole point of having them, and `tests/corpus/phaser/phaser_ratchet.cpp`
 now holds ArrowLeft down for several frames and asserts a Phaser scene sees it.
 
 **A PAGE THAT DIES NOW SAYS SO (2026-08-01).** `run_app` ticked the clock and
@@ -122,7 +122,7 @@ is the run box TOP, not the baseline: both backends add their own ascent.
 
 **THE PREVIOUS ENGINE IS DELETED.** What it still has that the engine does not: the BabylonJS shim
 and its software 3D rasterizer, and canvas gradients. See
-`docs/v1-retirement.md`. (Textarea soft-wrap was the last item on that list and
+`docs/history/v1-retirement.md`. (Textarea soft-wrap was the last item on that list and
 landed 2026-07-28 — see below.)
 
 ## EDITING, DISABLED, AND THE COLLECTOR (2026-07-27)
@@ -529,7 +529,7 @@ Three things the SDL layer was missing and now has:
   coordinates under letterboxed presentation. invaders is 320x240 in a 960x720
   window, so every pointer event arrived at three times its true position.
 
-`tests/bindings_basics` drives all of it, and finishes by holding a key
+`tests/unit/bindings_basics` drives all of it, and finishes by holding a key
 through MDN's breakout and asserting the frames differ — with a key the page
 ignores as the control, so "the frames differ" cannot pass by nondeterminism.
 
@@ -549,7 +549,7 @@ registry still wins, so a page may override one by name. The engine could
 *write* these long before it could read them (`toDataURL`, FileReader), and
 nothing noticed, because a page that makes a data URL hands it back to itself; a
 library ships its images *inside itself*, which is how Phaser's texture manager
-found it. `tests/data_url.cpp` asserts on the decoded bytes and on a real
+found it. `tests/unit/data_url.cpp` asserts on the decoded bytes and on a real
 `<img>` — a BMP, so the whole path is provable in a headless build.
 `ctbrowser::base64_decode` (`core/algorithms.hpp`) is shared with `atob`.
 
@@ -561,14 +561,14 @@ found it. `tests/data_url.cpp` asserts on the decoded bytes and on a real
 images are allowed to meet, since the shell stays SDL-free.
 
 **PNG AND JPEG CAME OUT OF THAT HOOK on 2026-08-01**, and the reason is a gap
-nothing could see: `tests/` is SDL-free by an invariant `tests/api_surface`
+nothing could see: `tests/` is SDL-free by an invariant `tests/lint/api_surface`
 lints for, so the whole suite saw a PNG as a zero-sized image and *nothing said
 so*, because every page in this tree loads BMPs. Phaser found it — its texture
 manager loads three base64 PNGs during boot and will not start until all three
 settle. A format whose result depends on whether SDL happened to be found is
 also one no golden can compare, so the built-in decoders run **before** the
 hook and a headless test and a real application now decode the same file with
-the same library. `tests/data_url.cpp` asserts PNG against BMP pixel for pixel
+the same library. `tests/unit/data_url.cpp` asserts PNG against BMP pixel for pixel
 (that comparison caught a row-order bug in the *test data*, not the engine),
 and JPEG within a tolerance — with the alpha byte asserted exactly, since
 TurboJPEG leaves it undefined and an image that decodes and then draws as fully
@@ -595,7 +595,7 @@ no SDL3_mixer, and a build without SDL3 makes it a no-op returning false.
 **Requests BLOCK the frame** — promises here are settled when they are made, so
 `await fetch(url)` must have the bytes by the time fetch returns. That is the
 honest cost of the settled-promise subset, and it is why the registry is
-consulted first. `tests/net_basics` proves the client against a loopback
+consulted first. `tests/unit/net_basics` proves the client against a loopback
 server it stands up itself; no test in the suite touches the internet.
 
 Examples: `invaders` (sprite sheet through the 9-argument `drawImage`, keys via
@@ -703,7 +703,7 @@ to scope a store to.
 `fetch()` used to do the work and hand back an already-settled promise. That was
 the only option while `await` could not suspend - a pending promise would have
 evaluated to `undefined` and the rest of the function would have run with it -
-and it is why `tests/image_basics` read a fetch's result before `load_html`
+and it is why `tests/unit/image_basics` read a fetch's result before `load_html`
 returned.
 
 It queues now. `fetch()` makes a PENDING promise, records the request, and the
@@ -730,7 +730,7 @@ Those bodies are settled promises: the bytes are in hand by the time a Response
 exists, so there is nothing to wait for. It is the fetch that is asynchronous.
 
 **p5's data loaders work as a result** - `loadJSON`, `loadStrings` and
-`loadTable` are p5's own code over `fetch`, and `tests/p5_api.cpp` bakes three
+`loadTable` are p5's own code over `fetch`, and `tests/corpus/p5/p5_api.cpp` bakes three
 assets so the probes exercise the whole path hermetically.
 
 

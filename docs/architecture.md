@@ -1,43 +1,56 @@
 # Architecture — where everything lives
 
-~21,000 lines in nine subsystems, behind one public header — `include/ctbrowser.hpp`,
+45,000 lines in ten subsystems, behind one public header — `include/ctbrowser.hpp`,
 which sits BESIDE the subsystem tree rather than inside it, so the include an
 application writes is `<ctbrowser.hpp>`. Headers are `include/ctbrowser/<sub>/`,
-implementations are `src/<sub>/`.
+implementations are `src/<sub>/`, and the two trees mirror each other exactly.
 
 ## The shape
 
-One directory per subsystem, one aggregate header, one CMake target:
+One directory per subsystem, one aggregate header, one CMake target, one
+`CMakeLists.txt`:
 
 ```
 include/ctbrowser/layout/values.hpp      a piece of the subsystem
 include/ctbrowser/layout/box.hpp
 include/ctbrowser/layout/layout.hpp      the aggregate: includes its siblings
-src/layout/*.cpp                         definitions, where there are any
+src/layout/*.cpp                         definitions
+src/layout/CMakeLists.txt                the target, its sources and its headers
 ```
 
 `#include <ctbrowser/layout/layout.hpp>` gets you the whole subsystem;
 including one piece directly is fine when that is all you want. At the top,
-`include/ctbrowser.hpp` includes all nine plus `app/app.hpp`, which
-is why one include is the entire API.
+`include/ctbrowser.hpp` includes nine of the ten — `gpu` is optional and an
+application reaches it directly — which is why one include is the entire API.
 
 **Adding a file** means: the header in `include/ctbrowser/<sub>/`, an
 `#include` in that subsystem's aggregate header, and — if it has definitions to
-compile — a `.cpp` in `src/<sub>/` listed in `src/CMakeLists.txt`.
+compile — a `.cpp` in `src/<sub>/` listed in **`src/<sub>/CMakeLists.txt`**.
+That last file is small and local on purpose. It used to be a 900-line
+`src/CMakeLists.txt` where a subsystem's source list and its installed-header
+list were four hundred lines apart, and forgetting the first silently stopped
+compiling the file.
 
-This was C++20 named modules until 2026-07-28: `module;` fragments,
-`export module ctbrowser.layout:box;`, partitions, and a build that needed
-CMake 3.28 and a compiler able to report its import graph. `git log` has it.
-Two things worth knowing from that, because the code still shows the marks:
+### Three subsystems have subdirectories
 
-- a header does **not** re-export what it includes. Modules did, so several
-  files used to get `node_id` or `font8x8_advance` through somebody else's
-  import. They include what they use now.
-- `core/containers.hpp` exists because boost::unordered defines `static inline`
-  functions, which under modules got internal linkage per global module
-  fragment and collided when two of them met in one translation unit. Include
-  guards make that impossible, so the file is now just the seam for swapping in
-  `std::flat_map` later.
+Most subsystems are a flat directory because a listing is already the map. Three
+were big enough that it stopped being one:
+
+```
+shell/net/      net.hpp url.hpp                    where bytes come from
+shell/image/    png.hpp jpeg.hpp images.hpp        codecs, none of them SDL
+shell/page/     canvas composite forms webgl       what a page can do
+                assets svg_cache
+raster/backend/ backend software renderer          an interface, an
+                compositor pipeline                implementation, the choice
+                                                   made at startup, and the
+                                                   thread that drives a frame
+raster/text/    font8x8.hpp ttf.hpp                glyphs
+```
+
+`src/` mirrors those, and adds two of its own where one header's implementation
+needed more than one file: `src/script/builtins/`, `src/script/vm/` and
+`src/shell/bindings/`.
 
 ## The pipeline
 
@@ -49,20 +62,20 @@ HTML  -> dom     -> style   -> layout  -> paint   -> raster  -> pixels
 script --------- bindings ------------------------------ shell drives all of it
 ```
 
-## The nine, and where to start reading
+## The ten, and where to start reading
 
 | subsystem | target | owns | start in |
 |---|---|---|---|
 | `core` | `ctbrowser::core` | the foundation; knows nothing about browsers. Slab allocation, generation-tagged handles, epochs, atoms, the thread pool, geometry, CPU time | `scheduler.hpp`, `slab.hpp`, `epoch.hpp` |
-| `dom` | `ctbrowser::dom` | the WHATWG tokenizer and tree builder, and the document as a slab addressed by handles | `treebuilder.hpp` 569, `document.hpp` 485, `tokenizer.hpp` 450 |
-| `style` | `ctbrowser::style` | selector matching, the cascade, computed values, the UA sheet | `engine.hpp` 496 |
-| `layout` | `ctbrowser::layout` | styled elements -> placed geometry: block, inline and table formatting contexts | `box.hpp` 610, `algorithm.hpp` 598 |
+| `dom` | `ctbrowser::dom` | the WHATWG tokenizer and tree builder, and the document as a slab addressed by handles | `treebuilder.hpp` 318, `document.hpp` 213 |
+| `style` | `ctbrowser::style` | selector matching, the cascade, computed values, the UA sheet | `engine.hpp` 333 |
+| `layout` | `ctbrowser::layout` | styled elements -> placed geometry: block, inline and table formatting contexts | `algorithm.hpp` 561, `box.hpp` 530 |
 | `paint` | `ctbrowser::paint` | geometry -> a recorded display list of layers | `command.hpp`, `record.hpp` |
-| `raster` | `ctbrowser::raster` | display list -> pixels, in tiles across the pool; software always, fonts via SDL3_ttf | `ttf.hpp`, `draw.hpp`, `pipeline.hpp` |
-| `gpu` | `ctbrowser::gpu` | `SDL_GPUDevice` composition, and the fallback when there is no adapter | `device.hpp` 557 |
-| `script` | `ctbrowser::script` | JS -> bytecode -> a register machine over NaN-boxed values, plus the standard library | `compile.cpp` 1689, `builtins.cpp` 1009, `vm.cpp` 859 |
-| `shell` | `ctbrowser::shell` | the assembly: the browser itself, the API a page's script sees, forms, canvas, input, net, images | `browser.hpp` 2356, `bindings.hpp` 1185 |
-| `app` | `ctbrowser::app` | the window, the event loop, the clock, screenshots. **The only place that knows SDL exists** | `src/app/app.cpp` 779 |
+| `raster` | `ctbrowser::raster` | display list -> pixels, in tiles across the pool | `backend/pipeline.hpp`, `draw.hpp`, `text/ttf.hpp` |
+| `gpu` | `ctbrowser::gpu` | `SDL_GPUDevice` composition, and the fallback when there is no adapter | `device.hpp` 231 |
+| `script` | `ctbrowser::script` | JS -> bytecode -> a register machine over NaN-boxed values, plus the standard library | `src/script/compile.cpp` 3845, `src/script/vm/run_loop.cpp` 1694 |
+| `shell` | `ctbrowser::shell` | the assembly: the browser itself, the API a page's script sees, forms, canvas, input, net, images | `browser.hpp` 1539, `bindings.hpp` 685 |
+| `app` | `ctbrowser::app` | the window, the event loop, the clock, screenshots. **The only place that knows SDL exists** | `src/app/app.cpp` 914 |
 
 Two files nobody should read: `dom/entities.hpp` (2172 lines, the HTML entity
 table carried over from cthtml) and `gpu/shaders/tile_spv.hpp` (generated by
@@ -72,25 +85,63 @@ table carried over from cthtml) and `gpu/shaders/tile_spv.hpp` (generated by
 application never names them: the browser's own signatures mention `scheduler`,
 `surface`, `rect` and `node_id`.
 
-## Which subsystems have a .cpp
+## How big a .cpp is allowed to get
 
-Only `core`, `script`, `shell` and `app`. The rest are header-only, so their
-CMake targets are `INTERFACE` libraries — which is also why the single-archive
-merge skips them: a target with no objects has no archive to merge.
+Every subsystem has implementation files — there are 53 of them against 79
+headers, and no subsystem is header-only. (This document said the opposite until
+2026-08-09, listing four subsystems as the only ones with a `.cpp` and calling
+the rest INTERFACE libraries. None of that had been true for some time.)
 
-That is the current state, not the intended end state. `script` shows what the
-rest should look like: `compile.hpp` declares one function and `compile.cpp`
-holds all 1,689 lines of the compiler, so a reader who wants to know what the
-compiler *is* reads 51 lines. Moving definitions out of the remaining headers
-is what pays down the CPU cost measured in `docs/build.md`.
+The rule that matters is about the HEADER, not the file behind it.
+`script/compile.hpp` declares one function and `src/script/compile.cpp` holds
+all 3,845 lines of the compiler, so a reader who wants to know what the compiler
+*is* reads 51 lines. That is the shape to aim for; moving definitions out of the
+remaining headers is what pays down the CPU cost measured in `docs/build.md`.
 
-## external/
+Where an implementation outgrew one file it was split into a directory beside
+its header, and the header did not change:
 
-Two submodules, both doing **runtime** work:
+- `src/script/builtins/` — five files, from one of 4,118 lines. `builtins.hpp`
+  still declares exactly `install_builtins()`.
+- `src/script/vm/` — four, from 3,232. `run_loop.cpp` stays whole at 1,466 lines
+  of one function: splitting it means splitting dispatch, which is what
+  `docs/history/computed-goto.md` is about.
+- `src/shell/bindings/` — seven, from 3,926 plus a stray 1,431 filed elsewhere.
 
-- `external/compile-time-css` — ctcss, the CSS parser and value resolver
-- `external/compile-time-javascript` — ctjs, the JS parser (`tests/vm_basics`
+`compile.cpp` is deliberately NOT split. It is a single class with 101 members
+defined inline inside an anonymous namespace, so splitting it means hoisting the
+class into an internal header and relocating every body — a large mechanical
+change against a header that is already the right size.
+
+## This was C++20 named modules until 2026-07-28
+
+`module;` fragments, `export module ctbrowser.layout:box;`, partitions, and a
+build that needed CMake 3.28 and a compiler able to report its import graph.
+`git log` has it. Two things worth knowing, because the code still shows the
+marks:
+
+- a header does **not** re-export what it includes. Modules did, so several
+  files used to get `node_id` or `font8x8_advance` through somebody else's
+  import. They include what they use now.
+- `core/containers.hpp` exists because boost::unordered defines `static inline`
+  functions, which under modules got internal linkage per global module
+  fragment and collided when two of them met in one translation unit. Include
+  guards make that impossible, so the file is now just the seam for swapping in
+  `std::flat_map` later.
+
+## external/ and vendor/
+
+Two submodules under `external/`, both doing **runtime** work:
+
+- `external/compile-time-css` — ctcss, the CSS parser and value resolver.
+  `style/engine.hpp` is a public header and includes `<ctcss.hpp>`, so an
+  install ships ctcss's headers too; see `NOTICE`.
+- `external/compile-time-javascript` — ctjs, the JS parser (`tests/js/vm_basics`
   also differentially tests the VM against ctjs's own interpreter)
 
 `compile-time-containers` sits under ctjs, nested. **cthtml is gone** — the DOM
 has its own tokenizer and tree builder.
+
+`vendor/` is different and is not a dependency: p5.js, Phaser and Babylon.js,
+committed because they are the engine's primary evidence that it runs real
+JavaScript. See `vendor/README.md`.

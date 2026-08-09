@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How much of a Babylon.js scene this engine renders, and what is stopping it.
 
-tests/babylon_ratchet.cpp measures a LEVEL and a BLOCKER; tests/corpus/babylon/babylon-ratchet.txt
+tests/corpus/babylon/babylon_ratchet.cpp measures a LEVEL and a BLOCKER; tests/corpus/babylon/babylon-ratchet.txt
 records them; this drives the loop around both.
 
     tools/corpus/babylon-ratchet.py             build, measure, show the blocker

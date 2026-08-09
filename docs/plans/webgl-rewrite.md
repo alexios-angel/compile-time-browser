@@ -109,11 +109,11 @@ only to feed a software rasteriser that is also going.
 
 ## What stays, and why
 
-- **`src/shell/webgl_bindings.cpp`** - the JavaScript surface. It is the
+- **`src/shell/bindings/webgl.cpp`** - the JavaScript surface. It is the
   SPECIFICATION of what a page can call and it is not the broken part. It gets
   rewired to the new context, and every call it makes that the context does not
   have becomes a compile error, which is the point.
-- **`tests/corpus/webgl2/webgl2-ratchet.txt`, `tests/corpus/webgl2/webgl2-api.txt`, `tests/babylon-*.txt`,
+- **`tests/corpus/webgl2/webgl2-ratchet.txt`, `tests/corpus/webgl2/webgl2-api.txt`, `tests/corpus/babylon/babylon-*.txt`,
   the goldens** - these are the TARGETS TO RE-EARN, and deleting them would
   destroy the only record of what used to work. The ratchets will read lower for
   a while and that is honest; what must not happen is quietly lowering the
@@ -127,7 +127,7 @@ only to feed a software rasteriser that is also going.
 1. **Delete, and let the build break.** One commit, nothing else in it, so the
    revert is a single `git revert`.
 2. **A minimal `raster/gl.hpp`** - the ANGLE device, no software twin. Still no
-   EGL or GLES type in a public header; `tests/api_surface` enforces it.
+   EGL or GLES type in a public header; `tests/lint/api_surface` enforces it.
 3. **`webgl_context` as a pure translator**, rebuilt call by call from what
    `webgl_bindings.cpp` needs. Handle table only.
 4. **Re-earn the ratchets in order**: `webgl_basics`, then p5's WEBGL cube, then
@@ -338,7 +338,7 @@ worse than a 9/10 one.
 
 ### SUPERSEDED: WORKING TO 5/10
 
-Measured, both drivers side by side, by the new `tests/gl_basics.cpp`:
+Measured, both drivers side by side, by the new `tests/unit/gl_basics.cpp`:
 
     fastest        ok=yes  ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device ...))
     deterministic  ok=yes  ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device ...))
@@ -451,6 +451,6 @@ identity ONLY. The moment the table starts caching what a buffer contains or
 which program is bound, it is the mirror again and the drift is back.
 
 `take_error`, `refuse` and `refused` are the WebGL error contract and stay: a
-page reads `getError`, and the leniency rules in docs/webgl2-plan.md are about
+page reads `getError`, and the leniency rules in docs/history/webgl2.md are about
 what this engine refuses BY NAME rather than silently. That is a different thing
 from the silent no-ops this rewrite exists to eliminate, and it is worth keeping.

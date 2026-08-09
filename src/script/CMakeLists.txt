@@ -29,7 +29,7 @@ target_sources(ctbrowser-script
     bigint.cpp
     number_format.cpp
     # The interpreter. run_loop.cpp is the dispatch loop and stays whole: it is
-    # ONE function, and the thing docs/computed-goto-plan.md is about.
+    # ONE function, and the thing docs/history/computed-goto.md is about.
     vm/coerce.cpp
     vm/objects.cpp
     vm/call.cpp

@@ -2,7 +2,7 @@
 
 ## Why — the number, and how it was arrived at
 
-Callgrind on a **whole page render** (`examples/p5basic`, loading the p5.js
+Callgrind on a **whole page render** (`examples/corpus/p5basic`, loading the p5.js
 bundle and drawing a sketch) says the cost of showing a page is JavaScript
 front-end work, and after two compiler fixes the single biggest item in the
 engine is the lexer this repository does not own:
@@ -35,7 +35,7 @@ and anything resembling SIMD, and it is not a limitation worth arguing with
 upstream about — it is the point of the library.
 
 **This engine no longer needs a constexpr lexer.** The compile-time engine was
-deleted in 2026-07-27 (`docs/v1-retirement.md`); scripts arrive from pages at
+deleted in 2026-07-27 (`docs/history/v1-retirement.md`); scripts arrive from pages at
 run time. Paying constant-evaluation constraints for a runtime-only workload is
 the whole cost.
 
@@ -174,7 +174,7 @@ page in `examples/pages/`. Somebody else's 7,000 lines is the only input worth
 trusting a lexer against, which is the same reasoning that made p5's own
 shaders the GLSL parser's corpus.
 
-This is cheap, decisive, and mirrors `tests/vm_basics`, which already
+This is cheap, decisive, and mirrors `tests/js/vm_basics`, which already
 differentially tests the VM against ctjs's interpreter.
 
 ### 4. Switch over, behind a measurement

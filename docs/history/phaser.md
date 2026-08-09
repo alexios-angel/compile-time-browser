@@ -26,13 +26,13 @@ which named `requestAnimationFrame`, delta timing, the loader, input state and
 Canvas 2D corners, and every one of those already worked.
 
 The harness is what the plan got right, and it is all in place:
-`tests/phaser_ratchet.cpp` (the ladder), `tests/corpus/phaser/phaser-ratchet.txt` (the record,
+`tests/corpus/phaser/phaser_ratchet.cpp` (the ladder), `tests/corpus/phaser/phaser-ratchet.txt` (the record,
 with a pawl that fails on a regression AND on a silently changed blocker),
 `tools/corpus/phaser-ratchet.py --advance` (the only writer), and
 `examples/pages/phaser-basic.html` + `tests/golden/phaserbasic.ppm` for rung 10
 — byte-identical on Linux and on the Windows cross-build.
 
-`tests/phaser_api.cpp` is built too — **114 probes, 33/33 namespaces**, and it
+`tests/corpus/phaser/phaser_api.cpp` is built too — **114 probes, 33/33 namespaces**, and it
 found a fifth engine bug the ratchet could not: `(5).hasOwnProperty` was
 undefined, because numbers, booleans *and* strings never chained to
 `Object.prototype`. Only arrays did.
@@ -51,7 +51,7 @@ every arrow key did nothing** — Phaser matches keys on the legacy `keyCode`, a
 the engine set only `code` and `key`. It took asking "is it playable?" to see
 it, which is a question none of the three instruments asks.
 
-`tests/phaser_invaders.cpp` asks both halves of it: that a held key moves the
+`tests/corpus/phaser/phaser_invaders.cpp` asks both halves of it: that a held key moves the
 ship *differently from the scripted sweep*, and that 700 unattended frames raise
 the score and cost a life. The second is the one that would notice the loop
 dying halfway — every other test here stops before frame 200.
@@ -85,8 +85,8 @@ Phaser is a good second because it is unlike p5 in the ways that matter:
 Modelled directly on the p5 one, because that shape has earned it: two
 questions, two files, and a record only a tool may write.
 
-**How FAR it gets** — `tests/phaser_ratchet.cpp` + `tests/corpus/phaser/phaser-ratchet.txt`,
-the same ladder p5 climbs (`tests/p5_ratchet.cpp`):
+**How FAR it gets** — `tests/corpus/phaser/phaser_ratchet.cpp` + `tests/corpus/phaser/phaser-ratchet.txt`,
+the same ladder p5 climbs (`tests/corpus/p5/p5_ratchet.cpp`):
 
 ```
 1 read   2 lexed   3 parsed   4 compiled   5 operands fit   6 ran
@@ -99,8 +99,8 @@ The rungs past 7 differ from p5's because the lifecycle differs — Phaser's is
 level **and the blocker**, so the same rung with a different cause fails: that
 is what stops a fix that trades one wall for another from reading as progress.
 
-**How WIDE the surface is** — `tests/phaser_api.cpp` + a probe script, matching
-`tests/p5_api.cpp`. Each probe calls one thing and **asserts on the result**,
+**How WIDE the surface is** — `tests/corpus/phaser/phaser_api.cpp` + a probe script, matching
+`tests/corpus/p5/p5_api.cpp`. Each probe calls one thing and **asserts on the result**,
 because "it did not throw" passes in an engine that draws nothing.
 
 Two things the p5 harness learned the hard way, to be built in from the start:
@@ -153,7 +153,7 @@ game framework needs that a sketch library does not:
 * **Canvas 2D corners** p5 never used — `globalCompositeOperation` beyond what
   `shell/page/composite.hpp` covers, `createPattern`, `ImageData` round-trips.
 * **WebGL** — Phaser's renderer is its own; it may want WebGL 2, which
-  `docs/webgl2-plan.md` covers, and it will certainly enumerate programs.
+  `docs/history/webgl2.md` covers, and it will certainly enumerate programs.
 
 ## Verification
 

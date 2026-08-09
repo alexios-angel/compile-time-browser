@@ -133,7 +133,7 @@ value context::to_primitive(value v) {
     // until ToPropertyKey is separated from ToString - `o[sym]` resolves
     // through the same call. Until then the toString walk at least yields
     // "Symbol(x)" rather than the internal key, which is the nearer wrong
-    // answer; tests/symbol_basics.cpp pins that and says so.
+    // answer; tests/js/symbol_basics.cpp pins that and says so.
     if (!v.is_heap() || v.is_string() || v.is_kind(heap_kind::bigint)) { return v; }
     for (const char * name : {"valueOf", "toString"}) {
         const value fn = lookup_property(v, name);

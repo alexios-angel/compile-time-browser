@@ -26,7 +26,7 @@
 // application layer fills in from SDL3_image when it was found.
 //
 // PNG MOVED OUT OF THAT HOOK on 2026-08-01. Leaving it there meant `tests/`,
-// which is SDL-free by an invariant `tests/api_surface` lints for, saw every
+// which is SDL-free by an invariant `tests/lint/api_surface` lints for, saw every
 // PNG as a zero-sized image - and nothing in the suite said so, because the
 // pages in this tree load BMPs. Phaser found it: its texture manager loads
 // three base64 PNGs during boot and will not start until all three settle.

@@ -1,6 +1,6 @@
 // IS THE LIGHTING ARITHMETIC RIGHT, not merely present.
 //
-// tests/babylon_ratchet.cpp rung 5 asks whether a directional light produces
+// tests/corpus/babylon/babylon_ratchet.cpp rung 5 asks whether a directional light produces
 // two different shades on a turned box. That catches a light being ignored
 // entirely and nothing else: a normal matrix that transposed, an intensity
 // applied twice, or a Lambert term clamped in the wrong place would all still

@@ -66,7 +66,7 @@ find_package(Threads REQUIRED)
 #
 # REQUIRED once found, and PUBLIC on purpose: an executable that links the
 # engine but not mimalloc would resolve operator new from libstdc++ instead and
-# silently run on the system allocator. tests/core_basics asks
+# silently run on the system allocator. tests/unit/core_basics asks
 # ctbrowser::allocator_name() so that mistake is a test failure.
 #
 # The Windows sysroot gets it from tools/mingw/build-mimalloc-mingw.sh.
@@ -121,7 +121,7 @@ find_package(CURL REQUIRED)
 # --- PNG, WITHOUT SDL ----------------------------------------------------
 # The engine decoded BMP itself and got every other format from a hook the
 # application layer fills in from SDL3_image. That split held until `tests/`
-# needed a PNG: the suite is SDL-FREE by an invariant `tests/api_surface`
+# needed a PNG: the suite is SDL-FREE by an invariant `tests/lint/api_surface`
 # lints for, so every test saw a PNG as a zero-sized image and nothing said so.
 # Phaser's texture manager loads three base64 PNGs during boot and waits for
 # all three, which is how it was found.

@@ -614,7 +614,7 @@ int run_app(std::string_view html, app_options options) {
     // WHICH WebGL BACK END, chosen from the environment because an example
     // program should not have to know there is a choice.
     //
-    // Stage 3 of docs/angle-plan.md needs the SAME example rendered both ways -
+    // Stage 3 of docs/plans/angle.md needs the SAME example rendered both ways -
     // once through the software rasteriser, which is what the goldens hold, and
     // once through ANGLE - so the switch has to be reachable without editing
     // fourteen example programs. `CTBROWSER_CLOCK` is the same shape: a knob a

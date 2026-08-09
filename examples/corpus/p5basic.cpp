@@ -4,7 +4,7 @@
 // sketch, runs its setup() and drives its draw() from requestAnimationFrame -
 // and what comes out is compared against a golden, byte for byte.
 //
-// tests/p5_ratchet.cpp measures how far the bundle GETS; this measures what it
+// tests/corpus/p5/p5_ratchet.cpp measures how far the bundle GETS; this measures what it
 // DRAWS, which is a different question and the one that actually matters. A
 // sketch whose draw() is called and paints nothing passes the ratchet and fails
 // here.

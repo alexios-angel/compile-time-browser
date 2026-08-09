@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How much of p5.js works, and what to write a probe for next.
 
-tests/p5_api.cpp calls as much of p5's API as can be run headlessly and reports
+tests/corpus/p5/p5_api.cpp calls as much of p5's API as can be run headlessly and reports
 which calls pass; tests/corpus/p5/p5-api.txt records them; this drives the loop.
 
     tools/corpus/p5-api.py                 build, run, show the failures

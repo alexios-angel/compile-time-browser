@@ -4,8 +4,16 @@
 "shim-like things".** Today this engine runs one flavour of JavaScript — the
 classic script — and Babylon is the corpus that proves the gap.
 
-**Status: planned, not started.** Measured first, as the lexer, Phaser and
-WebGL 2 plans were.
+**Status: STAGES 3 AND 4 ARE DONE; the ratchet reads 8 of 9.** A graph links,
+bindings are LIVE, cycles resolve, module scripts defer like page scripts,
+relative specifiers resolve against the importer, and dynamic `import()` gives
+back a live namespace object. Rung 9 is Babylon's ES build, which is not
+vendored.
+
+*(This header said "planned, not started" until 2026-08-09, while sections 3 and
+4 below both said DONE. The header was the stale half.)*
+
+Measured first, as the lexer, Phaser and WebGL 2 plans were.
 
 ## What exists today: nothing, and the architecture is the reason
 
@@ -104,7 +112,7 @@ The hard half, and the part where a shortcut becomes a shim:
   it sits.
 * **Specifier resolution.** Relative (`./x.js`, `../y.js`) against the importing
   module's URL — `shell/net/url.cpp` resolves URLs already, though see
-  `docs/ada-url-plan.md` about which standard it resolves them by. Bare
+  `docs/plans/ada-url.md` about which standard it resolves them by. Bare
   specifiers (`import "@babylonjs/core"`) need **import maps**, which is a small
   JSON document in the page and is the standards-track answer rather than a
   bundler.
@@ -126,7 +134,7 @@ The hard half, and the part where a shortcut becomes a shim:
 ## Staging
 
 ### 0 — a ratchet, before any of it
-`tests/module_ratchet.cpp` + `tests/corpus/modules/module-ratchet.txt`, the shape used three
+`tests/corpus/modules/module_ratchet.cpp` + `tests/corpus/modules/module-ratchet.txt`, the shape used three
 times now: 1 `import`/`export` parse, 2 a two-module program runs, 3 live
 bindings observed, 4 a cycle resolves, 5 `<script type="module">` on a page,
 6 relative specifiers, 7 dynamic `import()`, 8 an import map, 9 Babylon's ES
