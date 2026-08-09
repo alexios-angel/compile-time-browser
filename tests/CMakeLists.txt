@@ -212,8 +212,8 @@ set_tests_properties(bindings_basics PROPERTIES ENVIRONMENT
 # -DCTBROWSER_WITH_ANGLE=ON now does as well, and reported races inside
 # SwiftShader's command buffers with no ctbrowser frame on the stack.
 #
-# No preset turns ANGLE on, so this only bites a TSan run configured by hand -
-# which is exactly what the verification steps in docs/ ask for, so it bit.
+# ANGLE is on by default since 2026-08-09, so every TSan run gets these now;
+# before that it took a build configured by hand, which is why it went unseen.
 foreach(angle-test webgl2_ratchet webgl2_api babylon_ratchet babylon_api
                    babylon_lighting babylon_interaction p5_ratchet phaser_ratchet)
   if(TEST ${angle-test})

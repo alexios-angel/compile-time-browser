@@ -996,15 +996,14 @@ bool device::read_pixels(paint::bitmap & into) const {
 
 // WITHOUT ANGLE the device does not exist, and says so rather than pretending.
 struct device::impl {
-    std::string error = "built without ANGLE - run tools/fetch-angle.sh and set "
-                        "-DCTBROWSER_WITH_ANGLE=ON";
+    std::string error = "built without ANGLE - run tools/fetch-angle.sh and configure again";
 };
 
 bool available() {
     return false;
 }
 std::string unavailable_because() {
-    return "built without ANGLE - run tools/fetch-angle.sh and set -DCTBROWSER_WITH_ANGLE=ON";
+    return "built without ANGLE - run tools/fetch-angle.sh and configure again";
 }
 device::device(int, int, driver) : impl_{std::make_unique<impl>()} {}
 device::~device() = default;

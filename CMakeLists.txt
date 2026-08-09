@@ -63,13 +63,53 @@ set(CTBROWSER_BREW_HINTS "$ENV{HOMEBREW_PREFIX}" /home/linuxbrew/.linuxbrew /opt
 
 option(CTBROWSER_USE_MIMALLOC "Back operator new/delete with mimalloc" ON)
 
-# ANGLE: a real OpenGL ES device for the WebGL path. OFF by default and OPTIONAL
-# on purpose - stage 1 of docs/plans/angle.md builds the seam without anything
-# depending on it, so a checkout that has not run tools/fetch-angle.sh builds and
-# passes exactly as before. The libraries are a PINNED RELEASE rather than a
-# build: ANGLE needs GN, depot_tools and, on Windows, clang-cl and the Windows
-# SDK, which is a second toolchain this repository does not otherwise require.
-option(CTBROWSER_WITH_ANGLE "Use ANGLE for the WebGL back end (needs tools/fetch-angle.sh)" OFF)
+# ANGLE: a real OpenGL ES device for the WebGL path. ON since 2026-08-09, and
+# ON *WHEN PRESENT* rather than ON unconditionally - the same contract plutosvg,
+# SDL3_ttf and SDL3_image already have here.
+#
+# The distinction matters because ANGLE is FETCHED, not built:
+# tools/fetch-angle.sh downloads a pinned release into third_party/angle/, which
+# is gitignored, so a fresh checkout has none. It is a pinned release rather than
+# a build because ANGLE needs GN, depot_tools and, on Windows, clang-cl and the
+# Windows SDK - a second toolchain this repository does not otherwise require.
+#
+# So a clone that has not fetched still configures, builds and passes: it gets
+# exactly the build the OFF default used to give, and tests/unit/gl_basics skips
+# itself with a reason when no device comes up.
+#
+# ASKING for it explicitly is a REQUIREMENT and still fails loudly. Someone who
+# typed -DCTBROWSER_WITH_ANGLE=ON wants a GLES device, not a quiet downgrade to
+# the software path - and would otherwise find out from a golden.
+#
+# Recorded in its own cache entry because `option()` writes CTBROWSER_WITH_ANGLE
+# itself: on the second configure the variable is always defined, so "did the
+# user pass -D" cannot be asked again and has to be remembered.
+if(NOT DEFINED CTBROWSER_ANGLE_REQUESTED)
+  if(DEFINED CTBROWSER_WITH_ANGLE)
+    set(CTBROWSER_ANGLE_REQUESTED ON CACHE INTERNAL "ANGLE was asked for explicitly")
+  else()
+    set(CTBROWSER_ANGLE_REQUESTED OFF CACHE INTERNAL "ANGLE was asked for explicitly")
+  endif()
+endif()
+
+option(CTBROWSER_WITH_ANGLE "Use ANGLE for the WebGL back end (tools/fetch-angle.sh fetches it)" ON)
+
+# Resolved HERE, above add_subdirectory, so src/raster and examples/ - which
+# wires the four ANGLE goldens on this variable - both see the same answer.
+if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL Windows)
+  set(CTBROWSER_ANGLE_DIR "${PROJECT_SOURCE_DIR}/third_party/angle/windows-x64")
+else()
+  set(CTBROWSER_ANGLE_DIR "${PROJECT_SOURCE_DIR}/third_party/angle/linux-x86_64")
+endif()
+if(CTBROWSER_WITH_ANGLE AND NOT EXISTS "${CTBROWSER_ANGLE_DIR}")
+  if(CTBROWSER_ANGLE_REQUESTED)
+    message(FATAL_ERROR
+      "CTBROWSER_WITH_ANGLE is ON but ${CTBROWSER_ANGLE_DIR} is missing - run tools/fetch-angle.sh")
+  endif()
+  message(STATUS "ctbrowser: no third_party/angle - WebGL has no device. "
+                 "tools/fetch-angle.sh downloads one.")
+  set(CTBROWSER_WITH_ANGLE OFF)
+endif()
 
 option(CTBROWSER_COMPUTED_GOTO "Dispatch the script VM with computed gotos (GNU only)" OFF)
 

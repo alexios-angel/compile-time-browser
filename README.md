@@ -101,8 +101,6 @@ renders — `run_app` runs headless.
 # TSan's own in libclang_rt.tsan_cxx.a, and the link fails without this.
 cmake --preset tsan -DCTBROWSER_USE_MIMALLOC=OFF && ctest --preset tsan
 cmake --preset asan && ctest --preset asan
-# WebGL tests need a GLES device; no preset turns ANGLE on for you.
-cmake --preset asan -DCTBROWSER_WITH_ANGLE=ON && ctest --preset asan
 cmake --preset windows && cmake --build --preset windows    # llvm-mingw cross-build
 cmake --build --preset windows --target windows-dist        # -> examples-windows/
 ```

@@ -49,17 +49,16 @@ target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)
 # The definition is PUBLIC because a consumer needs to know whether the device
 # can exist - `gles::available()` answers at run time, but a test still has to
 # compile either way.
+# The root CMakeLists owns whether ANGLE is on: it is ON by default but only
+# when third_party/angle is actually there, and it resolves that above
+# add_subdirectory so this file and examples/ cannot disagree. By the time we
+# get here, CTBROWSER_WITH_ANGLE means "the directory exists".
 if(CTBROWSER_WITH_ANGLE)
+  set(angle-dir "${CTBROWSER_ANGLE_DIR}")
   if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL Windows)
-    set(angle-dir "${PROJECT_SOURCE_DIR}/third_party/angle/windows-x64")
     set(angle-libs "${angle-dir}/libEGL.dll.lib" "${angle-dir}/libGLESv2.dll.lib")
   else()
-    set(angle-dir "${PROJECT_SOURCE_DIR}/third_party/angle/linux-x86_64")
     set(angle-libs "${angle-dir}/libEGL.so" "${angle-dir}/libGLESv2.so")
-  endif()
-  if(NOT EXISTS "${angle-dir}")
-    message(FATAL_ERROR
-      "CTBROWSER_WITH_ANGLE is ON but ${angle-dir} is missing - run tools/fetch-angle.sh")
   endif()
   target_include_directories(ctbrowser-raster PRIVATE "${angle-dir}/include")
   target_link_libraries(ctbrowser-raster PRIVATE ${angle-libs})
