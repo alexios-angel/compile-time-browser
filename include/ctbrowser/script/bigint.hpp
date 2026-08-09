@@ -5,12 +5,19 @@
 
 #include <ctbrowser/script/value.hpp>
 
-// ARBITRARY-PRECISION INTEGER ARITHMETIC, on boost::multiprecision::cpp_int.
+// ARBITRARY-PRECISION INTEGER ARITHMETIC, on Boost.Multiprecision.
 //
 // The type is signed and unbounded, which is exactly the BigInt semantic: no
-// width, no wrapping, no rounding. `value.hpp` already carries the include
-// because `bigint_object` stores one, so this header adds nothing to a
-// consumer's cost.
+// width, no wrapping, no rounding. `value.hpp` already carries the include and
+// declares `bigint` itself, because `bigint_object` stores one, so this header
+// adds nothing to a consumer's cost.
+//
+// `bigint` is `cpp_int` by default and `mpz_int` (GNU GMP) under
+// `-DCTBROWSER_WITH_GMP=ON`. value.hpp says why the default is what it is; the
+// functions below are written against the shared Boost interface and are
+// identical on both. NOTHING IN THIS HEADER MAY USE A BACKEND-SPECIFIC
+// operation - the two must stay interchangeable or the switch becomes a
+// semantic change rather than a performance one.
 //
 // WHY BOOST HERE, having turned Boost.Multiprecision down for `Math` earlier:
 // the objections there were that it is 400x slower than hardware and that being
@@ -26,7 +33,7 @@
 
 namespace ctbrowser::script {
 
-using bigint = boost::multiprecision::cpp_int;
+// `bigint` itself is declared in value.hpp, beside the object that stores one.
 
 // --- construction ------------------------------------------------------------
 

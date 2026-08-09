@@ -105,6 +105,14 @@ suite unless a person does. `tools/remote-build.sh` is the whole gate now.
 - `tools/build-mimalloc-mingw.sh` — mimalloc v3 for the Windows sysroot. The
   allocator is not optional in the default build, so the cross build needs this
   run once; `tools/remote-build.sh windows` runs it.
+- `tools/build-gmp-mingw.sh` — GNU GMP for the Windows sysroot, for the
+  OPTIONAL BigInt backend (`-DCTBROWSER_WITH_GMP=ON`). **Nothing needs it**:
+  BigInt runs on header-only `cpp_int` by default. It is off because GMP is
+  LGPL and this engine links statically (see `NOTICE`), and because it is
+  SLOWER here — 2.9x on Linux and 5.5x on Windows at 64 bits, the width a
+  JavaScript BigInt actually has, and tuning it for a modern CPU does not
+  change that. `docs/script.md` has the table. It does cross-compile, assembly
+  and all.
 - `tools/build-image-libs-mingw.sh` — its sibling, for zlib, libpng and
   libjpeg-turbo. PNG and JPEG decode in the SDL-FREE engine, so the Windows
   presets need this run once too. Versions are pinned on purpose; see

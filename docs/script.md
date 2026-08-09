@@ -903,6 +903,61 @@ alternative considered was storing decimal TEXT and converting inside one
 `.cpp`: it keeps the header light and makes every operation parse and re-format
 its operands, which is the wrong shape for a numeric type.
 
+### The GMP backend, and why it is off (2026-08-09)
+
+`-DCTBROWSER_WITH_GMP=ON` swaps `cpp_int` for `mpz_int` — the same
+Boost.Multiprecision interface over GNU GMP. It works, on both platforms, and
+it is **off by default for two independent reasons**.
+
+**It is slower for this workload.** cpp_int against GMP, both compiled for the
+same modern arch, on a Core Ultra 9 185H. `>1` means GMP wins:
+
+| op | 64 bits | 256 | 1024 | 8192 | 65536 |
+|---|---|---|---|---|---|
+| multiply (Linux) | **0.34x** | 1.15x | 1.84x | 1.09x | 0.53x |
+| add (Linux) | **0.42x** | 0.91x | 1.68x | 2.51x | 3.21x |
+| to string (Linux) | 1.00x | 1.50x | 2.19x | 7.28x | 20.1x |
+| multiply (Windows) | **0.18x** | 1.17x | 1.65x | 1.21x | 0.59x |
+| add (Windows) | **0.18x** | 0.80x | 0.78x | 1.40x | 2.55x |
+| to string (Windows) | 0.95x | 1.99x | 3.42x | 14.7x | 39.0x |
+
+GMP is emphatically the better library *on the right*. The left column is the
+one that describes JavaScript: a BigInt is reached for to hold an id, a
+nanosecond timestamp or a 64-bit hash exactly, and those are one or two limbs.
+There GMP is 2.9x slower on Linux and **5.5x slower on Windows**, because every
+`mpz_t` is a heap allocation while cpp_int keeps a small value inline. The
+Windows gap is the wider one for the reason `docs/build.md` already records
+about mimalloc: that platform's allocator is the further behind.
+
+**Tuning does not rescue it, which was measured rather than assumed.** GMP
+6.3.0's own `config.guess` reads this CPU as `nehalem` — a 2008 part — so the
+obvious build is badly mistuned; brew's is built for `core2`. Rebuilding it
+correctly for `alderlake` (the `x86_64/alderlake → icelake → skylake` path,
+with the `mulx`/`adcx`/`adox` code) moved the 64-bit numbers *not at all*. The
+cost there is allocation, not instruction selection, and no assembly fixes
+that. Where the tuned build did help — 1024-bit add went 0.87x → 1.68x — it
+helped in the column this engine does not live in.
+
+**It changes the licence of the binary.** GMP is LGPLv3+ or GPLv2+, and this
+engine ships statically linked self-contained `.exe` files under Apache-2.0
+with LLVM exceptions. That is a distribution obligation, so the option is
+explicit opt-in rather than "on when GMP is found" — the latter would attach it
+to anyone who happened to have GMP installed. `NOTICE` states the position.
+
+**The cross-build works, including the assembly.** `tools/build-gmp-mingw.sh`
+builds it for llvm-mingw; the common advice that clang needs
+`--disable-assembly` for GMP is not true on this toolchain, and a static
+`.exe` linking it runs. Two autotools traps are worth knowing, both in that
+script: under WSL, `binfmt_misc` runs `.exe` files, so configure decides it is
+**not** cross-compiling and then dies on "cannot determine executable suffix"
+(pass `--build` explicitly); and `CC_FOR_BUILD` must be a native compiler or
+the build tries to execute the Windows helper programs it just produced.
+
+Both backends are held to `tests/bigint_basics.cpp`, and it passes on both, as
+do `number_basics`, `type_basics`, `number_format`, `symbol_basics`,
+`boolean_basics` and `obfuscated`. The switch is a performance choice, not a
+semantic one — and `bigint.hpp` may therefore use nothing backend-specific.
+
 **Boost.Multiprecision was turned down for `Math` earlier and is right here**,
 which is not a contradiction. The objections there were 400x slower than
 hardware and, being correctly rounded, further from V8's fdlibm rather than

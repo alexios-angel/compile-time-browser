@@ -73,6 +73,27 @@ option(CTBROWSER_WITH_ANGLE "Use ANGLE for the WebGL back end (needs tools/fetch
 
 option(CTBROWSER_COMPUTED_GOTO "Dispatch the script VM with computed gotos (GNU only)" OFF)
 
+# GMP behind Boost.Multiprecision, for the BigInt type. OFF BY DEFAULT AND
+# DELIBERATELY NOT "on when GMP is found", which is the obvious spelling and the
+# wrong one, for two reasons measured rather than assumed:
+#
+#   - GMP IS SLOWER FOR THIS WORKLOAD. It wins on numbers thousands of bits
+#     wide; a JavaScript BigInt is an id, a timestamp or a 64-bit hash. At 64
+#     bits GMP measured 2.9x slower than cpp_int on Linux and 5.5x on Windows,
+#     because cpp_int keeps a small value inline and every mpz_t is a heap
+#     allocation. Tuning GMP for a modern CPU does not close it - the cost is
+#     allocation, not instruction selection. Numbers in docs/script.md.
+#   - IT CHANGES THE LICENCE OF THE BINARY. GMP is LGPLv3+ or GPLv2+ and this
+#     engine ships statically linked, self-contained .exe files under Apache-2.0
+#     with LLVM exceptions. Static LGPL linking carries relinking obligations,
+#     and auto-detection would attach them to anyone who happened to have GMP
+#     installed, silently. See NOTICE and docs/script.md.
+#
+# It builds and passes on both backends - tests/bigint_basics.cpp is the gate -
+# and the Windows cross-build works with GMP's assembly enabled
+# (tools/build-gmp-mingw.sh).
+option(CTBROWSER_WITH_GMP "Use GNU GMP as the Boost.Multiprecision BigInt backend (LGPL)" OFF)
+
 # The strict flags every test and example builds with, kept off the exported
 # interface: a consumer's warnings are their own business.
 set(CTBROWSER_WARNING_OPTIONS

@@ -255,6 +255,31 @@ target_compile_features(ctbrowser-script PUBLIC cxx_std_23)
 if(CTBROWSER_COMPUTED_GOTO)
   target_compile_definitions(ctbrowser-script PRIVATE CTBROWSER_COMPUTED_GOTO)
 endif()
+
+# PUBLIC, unlike the one above, and it MUST be: CTBROWSER_WITH_GMP selects the
+# type of `ctbrowser::script::bigint` inside value.hpp, which is a PUBLIC
+# header. A private definition would compile this library against mpz_int and
+# every consumer against cpp_int - one ODR violation per translation unit, and
+# the kind that links cleanly and then reads a bigint through the wrong layout.
+#
+# The root CMakeLists says why this is opt-in rather than on-when-found. GMP is
+# LGPL and this engine links statically; see NOTICE.
+if(CTBROWSER_WITH_GMP)
+  find_path(CTBROWSER_GMP_INCLUDE_DIR gmp.h)
+  find_library(CTBROWSER_GMP_LIBRARY NAMES gmp libgmp)
+  if(NOT CTBROWSER_GMP_INCLUDE_DIR OR NOT CTBROWSER_GMP_LIBRARY)
+    message(FATAL_ERROR
+      "ctbrowser: CTBROWSER_WITH_GMP=ON but no GMP for this target. Install it "
+      "(brew install gmp) or, for the Windows presets, run tools/build-gmp-mingw.sh "
+      "to put it in the mingw sysroot. Or leave the option OFF and use cpp_int, "
+      "which is the faster default for BigInt-sized numbers anyway.")
+  endif()
+  target_compile_definitions(ctbrowser-script PUBLIC CTBROWSER_WITH_GMP)
+  target_include_directories(ctbrowser-script PUBLIC "${CTBROWSER_GMP_INCLUDE_DIR}")
+  target_link_libraries(ctbrowser-script PUBLIC "${CTBROWSER_GMP_LIBRARY}")
+  message(STATUS "ctbrowser: BigInt backend GMP ${CTBROWSER_GMP_LIBRARY} (LGPL - see NOTICE)")
+endif()
+
 ctbrowser_target(ctbrowser-script)
 target_include_directories(ctbrowser-script PRIVATE
   "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"
