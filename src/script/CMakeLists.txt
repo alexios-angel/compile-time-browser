@@ -21,6 +21,13 @@ target_sources(ctbrowser-script
     compile/limits.cpp
     compile/entry.cpp
     compile/helpers.cpp
+    compile/destructuring.cpp
+    compile/statements.cpp
+    compile/expressions.cpp
+    compile/classes.cpp
+    compile/frames.cpp
+    compile/capture.cpp
+    compile/strings.cpp
     # The standard library. builtins.cpp is now just install_builtins() calling
     # the five files beside it; builtins/internal.hpp is private to them and is
     # deliberately in NO file set - builtins.hpp still declares one function.
