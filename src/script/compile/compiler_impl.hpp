@@ -149,11 +149,7 @@ public:
     // past the end of the pool and segfaulted. Returning an empty node makes a
     // missed check compile to nothing instead of crashing, which is the right
     // failure for a compiler to have.
-    [[nodiscard]] const vp::node & at(std::int32_t i) const {
-        static const vp::node nothing{vp::nk::empty, ""};
-        if (i < 0 || static_cast<std::size_t>(i) >= current_ast_->nodes.size()) { return nothing; }
-        return current_ast_->nodes[static_cast<std::size_t>(i)];
-    }
+    [[nodiscard]] const vp::node & at(std::int32_t i) const;
 
     // Compile an expression parsed from a DIFFERENT source than the program's.
     //
@@ -163,37 +159,9 @@ public:
     // and every `at()` follows it.
     // The same, for source the compiler BUILT rather than one pointing into the
     // program. The text is kept because the AST borrows it.
-    void compile_owned_expr(std::string source, std::uint16_t dst) {
-        owned_sources_.push_back(std::make_unique<std::string>(std::move(source)));
-        compile_foreign_expr(*owned_sources_.back(), dst);
-    }
+    void compile_owned_expr(std::string source, std::uint16_t dst);
 
-    void compile_foreign_expr(std::string_view source, std::uint16_t dst) {
-        auto tree = std::make_unique<vp::ast>(vp::parse(source));
-        if (!tree->ok || tree->root < 0) {
-            proto().emit(instruction{op::load_undef, dst});
-            return;
-        }
-        const vp::ast * saved = current_ast_;
-        current_ast_ = tree.get();
-        // The parse produces a program node; its single expression statement is
-        // what we want.
-        std::int32_t expression = tree->root;
-        if (at(expression).kind == vp::nk::program) {
-            const auto statements = kids(at(expression));
-            expression = statements.empty() ? -1 : statements.front();
-        }
-        if (expression >= 0 && at(expression).kind == vp::nk::expr_stmt) {
-            expression = at(expression).a;
-        }
-        if (expression >= 0) {
-            compile_expr(expression, dst);
-        } else {
-            proto().emit(instruction{op::load_undef, dst});
-        }
-        current_ast_ = saved;
-        owned_asts_.push_back(std::move(tree));
-    }
+    void compile_foreign_expr(std::string_view source, std::uint16_t dst);
     // A VIEW, NOT A COPY. This built and returned a std::vector on every call,
     // so every walk of the AST - and there are several, over every node - paid a
     // malloc and a free per node visit. Callgrind put it at 3.9% of rendering a
@@ -206,11 +174,7 @@ public:
     // Safe because compilation only READS the AST - nothing pushes to the pool
     // while a span into it is alive, and a template's sub-AST is a separate
     // object whose pool this one never reallocates.
-    [[nodiscard]] std::span<const std::int32_t> kids(const vp::node & n) const {
-        if (n.list < 0 || n.list_len <= 0) { return {}; }
-        return std::span<const std::int32_t>{current_ast_->pool.data() + n.list,
-                                             static_cast<std::size_t>(n.list_len)};
-    }
+    [[nodiscard]] std::span<const std::int32_t> kids(const vp::node & n) const;
 
     // --- frames and registers ----------------------------------------------
     [[nodiscard]] frame & fn() { return frames_.back(); }
@@ -1159,10 +1123,7 @@ public:
     static constexpr std::size_t operand_limit = 65535;    // a uint16 field
     static constexpr std::int32_t jump_limit = 2147483647; // the signed bx half
 
-    [[nodiscard]] std::string frame_name(std::size_t index) const {
-        const std::string & name = out_.functions[index].name;
-        return "`" + (name.empty() ? std::string{"<anonymous>"} : name) + "`";
-    }
+    [[nodiscard]] std::string frame_name(std::size_t index) const;
 
     // The seam every property-name operand goes through. It was the place the
     // 256-name cap was reported; now it is the place the widening paid off, and
@@ -1185,123 +1146,22 @@ public:
 
     [[nodiscard]] static std::uint32_t intern_into(std::vector<std::string> & pool,
                                                    flat_map<std::string, std::uint32_t> & index,
-                                                   std::string text) {
-        if (pool.size() < small_pool) {
-            for (std::size_t i = 0; i < pool.size(); ++i) {
-                if (pool[i] == text) { return static_cast<std::uint32_t>(i); }
-            }
-            pool.push_back(std::move(text));
-            return static_cast<std::uint32_t>(pool.size() - 1);
-        }
-        if (index.empty()) { // crossing the threshold: catch the index up
-            for (std::size_t i = 0; i < pool.size(); ++i) {
-                index.emplace(pool[i], static_cast<std::uint32_t>(i));
-            }
-        }
-        if (const auto it = index.find(text); it != index.end()) { return it->second; }
-        const auto at = static_cast<std::uint32_t>(pool.size());
-        pool.push_back(text);
-        index.emplace(std::move(text), at);
-        return at;
-    }
+                                                   std::string text);
 
     // The same answers add_name and add_string give, without the quadratic
     // scan. The NUMBERING IS IDENTICAL either way - an unseen entry is appended
     // and takes the next index - so the bytecode is byte-for-byte the same.
-    [[nodiscard]] std::uint32_t intern_name(std::string text) {
-        return intern_into(proto().names, fn().name_index, std::move(text));
-    }
-    [[nodiscard]] std::uint32_t intern_string(std::string text) {
-        return intern_into(proto().strings, fn().string_index, std::move(text));
-    }
+    [[nodiscard]] std::uint32_t intern_name(std::string text);
+    [[nodiscard]] std::uint32_t intern_string(std::string text);
 
-    [[nodiscard]] std::uint16_t name_operand(std::string text) {
-        const std::uint32_t index = intern_name(std::move(text));
-        if (index > operand_limit) {
-            fail(frame_name(fn().proto) + " mentions more than " +
-                 std::to_string(operand_limit + 1) +
-                 " distinct property names; the operand that selects one holds " +
-                 std::to_string(operand_limit + 1) + ". Past that it reads a DIFFERENT property.");
-        }
-        return static_cast<std::uint16_t>(index);
-    }
+    [[nodiscard]] std::uint16_t name_operand(std::string text);
 
     // Called where a frame's size is finally written, because that is the only
     // point at which high_water is the truth rather than a running total.
-    void finish_frame(std::size_t index, std::size_t params) {
-        function_proto & fp = out_.functions[index];
-        const std::uint32_t wanted = fn().high_water;
-        fp.frame_size = static_cast<std::uint16_t>(wanted);
-        fp.param_count = static_cast<std::uint16_t>(params);
-        if (wanted > operand_limit) {
-            fail(frame_name(index) + " needs " + std::to_string(wanted) +
-                 " registers; a frame holds " + std::to_string(operand_limit + 1) +
-                 ". Past that its locals alias each other.");
-        }
-        if (params > operand_limit) {
-            fail(frame_name(index) + " takes " + std::to_string(params) +
-                 " parameters; the limit is " + std::to_string(operand_limit) + ".");
-        }
-    }
+    void finish_frame(std::size_t index, std::size_t params);
 
     // --- entry --------------------------------------------------------------
-    void compile_program() {
-        out_.functions.emplace_back();
-        out_.functions[0].name = "<script>";
-        frames_.emplace_back();
-        frames_.back().proto = 0;
-        push_scope();
-
-        const vp::node & root = at(ast_.root);
-        build_capture_index();
-        fn().captures = range_of(ast_.root);
-        collect_declared_names(ast_.root);
-        // A MODULE'S TOP LEVEL IS A SCOPE, so its declarations are pre-declared
-        // exactly as a function body's are. A classic script's are globals and
-        // need none of this, which is why it was never called here before.
-        if (module_scope_) {
-            predeclare_locals(ast_.root);
-            // THEN THE IMPORTS, still at entry: a function declared anywhere in
-            // this module closes over them, and the closures are made below.
-            for (const std::int32_t s : kids(root)) { bind_imports(s); }
-            // AND THE RE-EXPORT EDGES, which are data for the loader rather
-            // than code - collected here because this is where the top level is
-            // walked, not because anything is emitted.
-            for (const std::int32_t s : kids(root)) { collect_reexports(s); }
-            // AND THE EXPORTS, likewise before a single statement of the body
-            // runs. See bind_export.
-            std::vector<std::pair<std::string, std::string>> bindings;
-            for (const std::int32_t s : kids(root)) { export_bindings(s, bindings); }
-            for (const auto & [local_name, exported] : bindings) {
-                const int r = find_local(local_name);
-                if (r < 0) {
-                    fail("`export { " + local_name +
-                         " }` names something this module does not "
-                         "declare");
-                    continue;
-                }
-                bind_export(exported, static_cast<std::uint16_t>(r));
-            }
-        }
-        // Function declarations hoist: a script may call one before its text.
-        // THROUGH AN `export` WRAPPER TOO - `export function f() {}` is a
-        // function declaration that hoists like any other, and looking only at
-        // the wrapper left it compiled in the second pass, after anything that
-        // called it.
-        const auto declared_by = [this](std::int32_t s) {
-            return at(s).kind == vp::nk::export_decl && at(s).c != 1 && at(s).a >= 0 ? at(s).a : s;
-        };
-        for (const std::int32_t s : kids(root)) {
-            if (at(declared_by(s)).kind == vp::nk::func_decl) { compile_stmt(s); }
-        }
-        for (const std::int32_t s : kids(root)) {
-            if (at(declared_by(s)).kind != vp::nk::func_decl) { compile_stmt(s); }
-        }
-        proto().emit(instruction{op::ret_undef});
-        finish_frame(fn().proto, 0);
-        pop_scope();
-        frames_.pop_back();
-    }
+    void compile_program();
 
     // --- destructuring -------------------------------------------------------
     //
@@ -3749,32 +3609,11 @@ public:
     }
 
     // --- helpers -------------------------------------------------------------
-    void emit_string(std::uint16_t dst, std::string text) {
-        proto().emit(instruction::with_bx(op::load_string, dst, intern_string(std::move(text))));
-    }
-    void emit_const(std::uint16_t dst, value v) {
-        proto().emit(instruction::with_bx(op::load_const, dst, proto().add_constant(v)));
-    }
+    void emit_string(std::uint16_t dst, std::string text);
+    void emit_const(std::uint16_t dst, value v);
 
-    void patch_here(std::size_t at_index) { patch_jump(at_index, proto().code.size()); }
-    void patch_jump(std::size_t at_index, std::size_t target) {
-        const auto offset =
-            static_cast<std::int32_t>(target) - static_cast<std::int32_t>(at_index) - 1;
-        if (offset > jump_limit || offset < -jump_limit - 1) {
-            fail(frame_name(fn().proto) + " needs a jump of " + std::to_string(offset) +
-                 " instructions; the displacement holds " + std::to_string(jump_limit) +
-                 ". Past that it branches to the WRONG address.");
-        }
-        instruction & jump = proto().code[at_index];
-        // The SAME split with_bx uses, and it has to stay that way: sbx() reads
-        // b and c back as one 32-bit field. Widening the operands without
-        // widening this shift left every jump encoded 8/8 into 16-bit halves,
-        // so every branch went somewhere else - and the symptom was an `if`
-        // body silently not running, not a crash.
-        const auto wide = static_cast<std::uint32_t>(offset);
-        jump.b = static_cast<std::uint16_t>(wide >> 16);
-        jump.c = static_cast<std::uint16_t>(wide & 0xFFFF);
-    }
+    void patch_here(std::size_t at_index);
+    void patch_jump(std::size_t at_index, std::size_t target);
 
     const vp::ast & ast_;
     const vp::ast * current_ast_ = &ast_;

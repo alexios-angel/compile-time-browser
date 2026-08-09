@@ -13,10 +13,14 @@
 add_library(ctbrowser-script)
 target_sources(ctbrowser-script
   PRIVATE
-    # Where the code lives: compiled ONCE into the library rather than in every
-    # translation unit that uses it. compile.cpp holds the whole compiler -
-    # only compiler::compile() is declared in the header.
+    # The compiler. compile.cpp is `compiler::compile()` alone; the class is
+    # declared in compile/compiler_impl.hpp and its bodies live beside it.
+    # compile.hpp still declares exactly one function.
     compile.cpp
+    compile/ast.cpp
+    compile/limits.cpp
+    compile/entry.cpp
+    compile/helpers.cpp
     # The standard library. builtins.cpp is now just install_builtins() calling
     # the five files beside it; builtins/internal.hpp is private to them and is
     # deliberately in NO file set - builtins.hpp still declares one function.
