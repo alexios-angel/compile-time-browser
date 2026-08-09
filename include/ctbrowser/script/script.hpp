@@ -20,5 +20,6 @@
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/bytecode.hpp>
 #include <ctbrowser/script/compile.hpp>
+#include <ctbrowser/script/number_format.hpp>
 #include <ctbrowser/script/value.hpp>
 #include <ctbrowser/script/vm.hpp>

@@ -245,7 +245,14 @@ private:
     [[nodiscard]] const inline_block & inline_style_of(const read_txn & txn, node_id id);
     [[nodiscard]] atom style_name() const { return atoms_->intern("style"); }
 
-    flat_map<std::string, inline_block> inline_cache_;
+    // string_flat_map, so the lookup can be asked with the attribute's
+    // string_view. The plain flat_map's hasher is not transparent, so `find`
+    // took the key type - and the key here is the WHOLE `style="..."` text,
+    // well past any small-string buffer, so that temporary was a heap
+    // allocation per styled element per resolve. A hover re-resolves the entire
+    // document (browser::resolve_styles -> resolve_all), so it was one per
+    // element per interaction.
+    string_flat_map<inline_block> inline_cache_;
 
     // `src: url("x.ttf") format("truetype")` -> `x.ttf`. Only the first url is
     // taken: this loads one file per face, and a list of alternatives is about

@@ -574,3 +574,124 @@ A ratchet at its ceiling says nothing about width, and this is not theoretical
 in either corpus: p5's read 12/12 for days while `colorMode(HSB)` was broken,
 and Phaser's read 10/10 while primitives could not reach `Object.prototype`.
 Both were found by the wide, shallow instrument within one run of writing it.
+
+
+## Numbers print as the specification says, since 2026-08-08
+
+`context::to_string` was `std::to_string(double)` and `to_number` was
+`std::stod`. Neither is the function ECMA-262 names, and the gap was not
+cosmetic:
+
+| | was | is |
+|---|---|---|
+| `String(1/3)` | `"0.333333"` | `"0.3333333333333333"` |
+| `String(0.1+0.2)` | `"0.3"` | `"0.30000000000000004"` |
+| `String(1e-7)` | `"0"` — as was **everything smaller** | `"1e-7"` |
+| `String(1e21)` | `"1000000000000000000000"` | `"1e+21"` |
+| `String(Number.MAX_VALUE)` | 309 literal digits | `"1.7976931348623157e+308"` |
+| `(0.5).toFixed(0)` | `"0"` | `"1"` |
+| `(5).toExponential()` | `"5.000000e+0"` | `"5e+0"` |
+| `(1.5).toPrecision(3)` | `"1.5"` | `"1.50"` |
+| `(1234.5).toPrecision(2)` | `"1.2e+03"` | `"1.2e+3"` |
+| `Number("+5")` | `5` (via `strtod`) | `5` |
+| `Number("inf")` | `Infinity` | `NaN` |
+
+`script/number_format.hpp` is the whole of it - five functions, each named for
+its clause - and `tests/number_format.cpp` pins every case against **V8**, plus
+the round-trip property `Number(String(x)) === x` over twenty literals. The
+expectations were taken from node before the code was written, which is the only
+reason the file failed on the day it was committed rather than agreeing with the
+bug.
+
+Three things worth knowing:
+
+* **`Number::toString` is not `%g`.** The switch to exponential is a rule about
+  the decimal exponent - positional while `-6 < n <= 21` - so `1e20` prints
+  twenty-one digits and `0.000001` prints in full. `std::to_chars` supplies the
+  shortest round-tripping DIGITS; the notation is decided here.
+* **`toFixed` rounds a tie away from zero** where correctly-rounded conversion
+  rounds to even, so `to_chars` alone gives the wrong answer for `0.5`, `8.5`,
+  `0.25` and `0.0625`. The tie is detected exactly rather than approximately:
+  writing the magnitude as `m * 2^e` with `m` odd, `m * 10^f` is a half-integer
+  precisely when `e + f == -1`.
+* **`Math.cbrt` was an ulp out and nothing noticed**, because six-decimal
+  printing rendered 3.0000000000000004 as "3" and `vm_basics` asserted the
+  string. It asks with `===` now. Full-precision printing makes libm
+  discrepancies visible in general - see `docs/performance.md`.
+
+
+## Math, differentially tested against V8 (2026-08-08)
+
+`tests/math_basics.cpp`. Every Math function was run against node (V8) over
+~27,000 expressions; the ~90 differences collapsed to **seven defects**, all now
+fixed and pinned. Each was planted back individually and the test caught it —
+10, 8, 8, 2, 30, 7 and 7 assertions respectively.
+
+| | was | is |
+|---|---|---|
+| `Math.round(0.49999999999999994)` | `1` | `0` |
+| `Math.round(-0.5)`, `(-0.1)`, `(-0)` | `+0` | `-0` |
+| `Math.round(2**53-1)` | `9007199254740992` | `9007199254740991` |
+| `Math.min(1,NaN)` / `Math.max(1,NaN)` | `1` | `NaN` |
+| `Math.min(0,-0)` | `+0` | `-0` |
+| `Math.hypot(1e300,1e300)` | `Infinity` | `1.4142135623730952e+300` |
+| `Math.hypot(3e-300,4e-300)` | `0` | `5e-300` |
+| `Math.hypot(Infinity,NaN)` | `NaN` | `Infinity` |
+| `Math.pow(1,NaN)`, `1 ** NaN` | `1` | `NaN` |
+| `Math.SQRT1_2` | `0.7071067811865475` | `0.7071067811865476` |
+| `Math.sin()`, `Math.cos()`, … (27 of them) | `sin(0)`, `1`, … | `NaN` |
+| `1e400` | `0` | `Infinity` |
+
+The root causes are worth knowing because six of the seven are a *correct-looking
+line*:
+
+* **`floor(x + 0.5)` is not `Math.round`** and fails three separate clauses. The
+  addition rounds (`0.49999999999999994 + 0.5` is exactly halfway and ties-to-even
+  lifts it to 1.0); it destroys the sign of zero; and above 2^52 it is inexact, so
+  an integral Number gets *moved* where the spec returns it unchanged.
+* **`std::min`/`std::max` are the wrong function.** Both are written on `<`, which
+  is false for every comparison involving NaN — so the NaN silently vanished —
+  and `-0 < +0` is false, so which zero came back depended on argument order.
+* **`sqrt(Σx²)` overflows and underflows.** Squaring passes 1.8e308 above ~1.34e154
+  and flushes to zero below ~1e-162. Scaling by the largest magnitude fixes both
+  and keeps `hypot(3,4)` exactly 5.
+* **C99 says `pow(±1, y)` is 1 for every `y`**; `Number::exponentiate` says NaN
+  when the exponent is NaN or infinite. `context::exponentiate` now owns that, and
+  the `**` opcode shares it — it had the same bug in a second place.
+* **`1/sqrt2` rounds twice.** `sqrt2/2` rounds once, because halving is exact.
+  The engine used to disagree with its own `Math.sqrt(0.5)`.
+* **A missing argument is `undefined`, so `ToNumber` gives NaN**, not 0. The
+  shared `num_at` defaults to 0 — correct for `"abc".slice()` — so Math got its
+  own accessor rather than thirty other call sites changing underneath.
+* **`std::from_chars` reports overflow without writing the value**, and the error
+  was unchecked, so `1e400` compiled to `0`. `out_of_range_value` decides which
+  way it went and is shared with `ToNumber`, which had the identical hole.
+
+### What the test deliberately does NOT assert
+
+21.3.2 marks the *value* of `sin cos tan asin acos atan atan2 exp expm1 log log1p
+log2 log10 pow cbrt sinh cosh tanh asinh acosh atanh hypot` **implementation-
+approximated**. Ours is libm's answer, and Linux links glibc while the Windows
+cross-build links Microsoft's UCRT — so no decimal string for any of those values
+appears in the file. Asserting `Math.sin(1) === 0.8414709848078965` would be
+asserting which libc the machine has, and would fail the cross-build for a reason
+that is not a bug. What is asserted instead: the mandated special cases (NaN, ±0,
+±Infinity, domain edges), the exact-by-spec functions in full, results that are
+exactly representable (`sqrt(16)`, `cbrt(27)`, `log2(8)`, `hypot(3,4)`), and for
+`Math.random` a *contract* — range and finiteness — never a value.
+
+**Boost.Math was considered for the same reason and turned down** — see
+`docs/build.md`.
+
+### Known and NOT fixed here
+
+Found by the same sweep, left alone because none is a Math defect and each is its
+own piece of work: natives carry no `length` or `name` (engine-wide); `Math` has
+no property attributes, so `Object.keys(Math)` is 43 rather than 0 and `Math.PI =
+42` sticks; `Object.is`, `Object.seal`, `Object.isExtensible` and `globalThis` do
+not exist; `Object.prototype.toString` ignores `@@toStringTag`; every native is
+constructible (`new Math.abs(1)` does not throw); `ToNumber` on an object skips
+ToPrimitive, so `Math.abs([])` is NaN rather than 0; the JS whitespace set is
+ASCII-only, so `Number(" 1.5")` is NaN; and `Math.f16round` is absent —
+deliberately, since `_Float16` support varies across the aarch64 and armv7 mingw
+targets and no corpus uses it.

@@ -17,6 +17,7 @@
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
+#include <ctbrowser/script/number_format.hpp>
 #include <ctbrowser/script/regex.hpp>
 
 #include <map>
@@ -571,20 +572,57 @@ void install_math(context & cx, std::uint64_t seed) {
     // and disagrees with the real one by an amount that accumulates.
     math->set("PI", value::number(std::numbers::pi));
     math->set("E", value::number(std::numbers::e));
+    // A MATH ARGUMENT, WHERE A MISSING ONE IS NaN AND NOT ZERO.
+    //
+    // Every Math function's step 1 is `Let n be ? ToNumber(x)`, an absent
+    // argument is `undefined`, and ToNumber(undefined) is NaN - so `Math.sin()`
+    // is NaN, not sin(0). The shared `num_at` substitutes 0.0 instead, and that
+    // is RIGHT for its other callers: `"abc".slice()` and `[1,2].indexOf(x)`
+    // want a zero default. So Math gets its own accessor rather than the shared
+    // one changing under thirty-odd call sites that depend on the zero.
+    const auto math_arg = [](std::span<value> a, std::size_t i) {
+        return i < a.size() ? context::to_number(a[i]) : std::nan("");
+    };
     const auto unary = [&](std::string name, double (*fn)(double)) {
-        method(cx, math, name,
-               [fn](context &, std::span<value> a) { return value::number(fn(num_at(a, 0))); });
+        method(cx, math, name, [fn, math_arg](context &, std::span<value> a) {
+            return value::number(fn(math_arg(a, 0)));
+        });
     };
     math->set("SQRT2", value::number(std::numbers::sqrt2));
     // <numbers> has no SQRT1_2 or LN10, so those two are DERIVED rather than
-    // transcribed - which is exact for the reciprocal and one division for the
-    // other, and neither can be typed wrong.
-    math->set("SQRT1_2", value::number(1.0 / std::numbers::sqrt2));
+    // transcribed - neither can be typed wrong.
+    //
+    // SQRT1_2 IS sqrt2/2 AND NOT 1/sqrt2, which is not the same double. The
+    // reciprocal was one ulp low - 0.7071067811865475 where the correctly
+    // rounded value is 0.7071067811865476 - because it rounds twice, once in
+    // sqrt2 and again in the division. Halving is EXACT (it decrements the
+    // binary exponent and touches no bit of the mantissa), so this rounds once.
+    // 21.3.1.8 asks for the Number value NEAREST the true root, which makes it
+    // an exact requirement rather than an approximation; the engine used to
+    // disagree with its own `Math.sqrt(0.5)`.
+    math->set("SQRT1_2", value::number(std::numbers::sqrt2 / 2.0));
     math->set("LN2", value::number(std::numbers::ln2));
     math->set("LN10", value::number(std::numbers::ln10));
     math->set("LOG2E", value::number(std::numbers::log2e));
     math->set("LOG10E", value::number(std::numbers::log10e));
-    unary("cbrt", [](double x) { return std::cbrt(x); });
+    // THE EXACT ROOT WHEN THERE IS ONE. glibc's `cbrt` is up to an ulp out on a
+    // perfect cube - `cbrt(27)` is 3.0000000000000004 and `cbrt(216)` is
+    // 6.0000000000000009 - where V8 returns 3 and 6. That was invisible while
+    // this engine printed numbers to six decimals, and `tests/vm_basics` was
+    // asserting "3" against a value that was never 3; full-precision printing
+    // is what exposed it.
+    //
+    // Only the exact case is corrected, and deliberately so: a Newton step
+    // refines 27 and 216 and makes `cbrt(0.001)` a worse answer than the one
+    // libm already gives. Non-cubes still come from the host's libm and may sit
+    // an ulp from V8.
+    unary("cbrt", [](double x) {
+        const double y = std::cbrt(x);
+        const double whole = std::nearbyint(y);
+        // Overflow in the cube just fails the comparison, which is the right
+        // answer anyway: a finite x never equals an infinity.
+        return whole * whole * whole == x ? whole : y;
+    });
     unary("log2", [](double x) { return std::log2(x); });
     unary("log10", [](double x) { return std::log10(x); });
     unary("log1p", [](double x) { return std::log1p(x); });
@@ -622,36 +660,110 @@ void install_math(context & cx, std::uint64_t seed) {
     unary("sign", [](double x) { return x > 0 ? 1.0 : (x < 0 ? -1.0 : x); });
     // JS rounds .5 toward POSITIVE infinity, so Math.round(-0.5) is -0 and not
     // -1. std::round rounds away from zero and gets that wrong.
-    method(cx, math, "round", [](context &, std::span<value> a) {
-        return value::number(std::floor(num_at(a, 0) + 0.5));
+    //
+    // AND `std::floor(x + 0.5)` GETS IT WRONG THREE OTHER WAYS, all of which
+    // this used to have and none of which is visible from reading it:
+    //
+    //  * `x + 0.5` ROUNDS. For x = 0.49999999999999994 the sum is exactly
+    //    halfway between 1-2^-53 and 1, ties-to-even lifts it to 1.0, and floor
+    //    then answers 1 where 21.3.2.28 step 3 requires +0.
+    //  * `+ 0.5` DESTROYS THE SIGN OF ZERO. Steps 2 and 4 require -0 back from
+    //    every x in [-0.5, -0], and floor(-0.5 + 0.5) is +0. The comment above
+    //    claimed this case worked; only the -1 half of it did.
+    //  * ABOVE 2^52 the addition is inexact, so an integral Number is MOVED
+    //    where step 2 requires it returned unchanged - Math.round(2**53-1) came
+    //    back as 2**53, out of the safe-integer range entirely.
+    //
+    // Splitting on floor(x) instead adds nothing to x, so none of the three can
+    // happen: an integral value is already its own floor, and the zero cases are
+    // handled before any arithmetic.
+    method(cx, math, "round", [math_arg](context &, std::span<value> a) {
+        const double x = math_arg(a, 0);
+        // NaN, the infinities and every integral value (including both zeros)
+        // come straight back - step 2.
+        if (!std::isfinite(x) || x == std::floor(x)) { return value::number(x); }
+        if (x > 0 && x < 0.5) { return value::number(0.0); }
+        if (x < 0 && x >= -0.5) { return value::number(-0.0); }
+        const double down = std::floor(x);
+        return value::number(x - down >= 0.5 ? down + 1.0 : down);
     });
-    method(cx, math, "pow", [](context &, std::span<value> a) {
-        return value::number(std::pow(num_at(a, 0), num_at(a, 1)));
+    // C99 says pow(+-1, y) is 1 for EVERY y, including NaN and the infinities;
+    // Number::exponentiate says NaN for exactly those. Three lines of special
+    // case, and without them `Math.pow(1, NaN)` was 1 - a value a page will
+    // happily do arithmetic on rather than checking with isNaN.
+    method(cx, math, "pow", [math_arg](context &, std::span<value> a) {
+        return value::number(context::exponentiate(math_arg(a, 0), math_arg(a, 1)));
     });
-    method(cx, math, "atan2", [](context &, std::span<value> a) {
-        return value::number(std::atan2(num_at(a, 0), num_at(a, 1)));
+    method(cx, math, "atan2", [math_arg](context &, std::span<value> a) {
+        return value::number(std::atan2(math_arg(a, 0), math_arg(a, 1)));
     });
+    // SCALED, AND INFINITY BEATS NaN. `sqrt(sum of squares)` is the obvious
+    // shape and is wrong at both ends of the range:
+    //
+    //  * it OVERFLOWS. `v * v` passes 1.8e308 once |v| is over about 1.34e154,
+    //    so `Math.hypot(1e300, 1e300)` was Infinity where the true answer,
+    //    1.41e300, is a perfectly ordinary double. Dividing through by the
+    //    largest magnitude first makes every term at most 1.
+    //  * it UNDERFLOWS. Below about 1e-162 the squares flush to zero and the
+    //    answer came back 0 - `Math.hypot(3e-300, 4e-300)` was 0 rather than
+    //    5e-300 - and just above that the denormals cost real precision:
+    //    hypot(2e-162, 3e-162) was out by 6.8%.
+    //
+    // 21.3.2.18 also ORDERS the special cases: step 3 returns +Infinity for an
+    // infinite argument BEFORE step 5 looks at NaN, so `Math.hypot(Infinity,
+    // NaN)` is Infinity and not NaN. A single accumulating loop cannot express
+    // that ordering, which is why the scan comes first.
+    //
+    // The scale factor is the largest magnitude rather than a power of two, and
+    // that is deliberate: it keeps `hypot(3, 4)` exactly 5 and leaves the
+    // already-correct mid-range answers bit-identical.
     method(cx, math, "hypot", [](context &, std::span<value> a) {
-        double total = 0;
-        for (std::size_t i = 0; i < a.size(); ++i) {
-            const double v = context::to_number(a[i]);
-            total += v * v;
+        bool saw_nan = false;
+        double largest = 0;
+        for (const value & v : a) {
+            const double x = context::to_number(v);
+            if (std::isinf(x)) { return value::number(std::numeric_limits<double>::infinity()); }
+            if (std::isnan(x)) {
+                saw_nan = true;
+                continue;
+            }
+            largest = std::max(largest, std::fabs(x));
         }
-        return value::number(std::sqrt(total));
+        if (saw_nan) { return value::number(std::nan("")); }
+        // Every argument was a zero, or there were none at all.
+        if (largest == 0) { return value::number(0.0); }
+        double total = 0;
+        for (const value & v : a) {
+            const double scaled = context::to_number(v) / largest;
+            total += scaled * scaled;
+        }
+        return value::number(largest * std::sqrt(total));
     });
     // min/max with no arguments are Infinity and -Infinity, which is what makes
     // `Math.max(...list)` on an empty list behave.
+    //
+    // NOT std::min/std::max, which are the wrong function twice over. Both are
+    // written in terms of `<`, and IEEE comparison says NO to everything
+    // involving NaN - so `std::min(1.0, NaN)` is 1 and the NaN vanishes, where
+    // 21.3.2.24 step 4.a returns NaN the moment it sees one. And `-0 < +0` is
+    // false, so which zero came back depended on ARGUMENT ORDER: `Math.min(0,
+    // -0)` gave +0 while `Math.min(-0, 0)` was accidentally right. Steps 4.b
+    // make the zero ordering explicit, and so does this.
     method(cx, math, "min", [](context &, std::span<value> a) {
         double best = std::numeric_limits<double>::infinity();
-        for (std::size_t i = 0; i < a.size(); ++i) {
-            best = std::min(best, context::to_number(a[i]));
+        for (const value & v : a) {
+            const double x = context::to_number(v);
+            if (std::isnan(x)) { return value::number(std::nan("")); }
+            if (x < best || (x == 0 && best == 0 && std::signbit(x))) { best = x; }
         }
         return value::number(best);
     });
     method(cx, math, "max", [](context &, std::span<value> a) {
         double best = -std::numeric_limits<double>::infinity();
-        for (std::size_t i = 0; i < a.size(); ++i) {
-            best = std::max(best, context::to_number(a[i]));
+        for (const value & v : a) {
+            const double x = context::to_number(v);
+            if (std::isnan(x)) { return value::number(std::nan("")); }
+            if (x > best || (x == 0 && best == 0 && std::signbit(best))) { best = x; }
         }
         return value::number(best);
     });
@@ -1828,10 +1940,11 @@ void install_number(context & cx) {
     method(cx, number_proto, "toFixed", [](context & c, std::span<value> a) {
         const double self = context::to_number(c.current_this());
         const auto digits = static_cast<int>(std::clamp(num_at(a, 0), 0.0, 20.0));
-        std::string out(64, '\0');
-        const int written = std::snprintf(out.data(), out.size(), "%.*f", digits, self);
-        out.resize(written > 0 ? static_cast<std::size_t>(written) : 0);
-        return c.string(out);
+        // NOT snprintf("%.*f"): it is locale-dependent, it prints a thousand
+        // digits past 1e21 where the specification hands back ToString, and it
+        // rounds a tie to EVEN where toFixed rounds away from zero - so
+        // `(0.5).toFixed(0)` came out "0" and `(8.5).toFixed(0)` came out "8".
+        return c.string(number_to_fixed(self, digits));
     });
     // `toString(radix)` HONOURS ITS RADIX. Ignoring it is not a small gap:
     // `n.toString(16)` is how essentially every program turns a colour channel
@@ -1879,29 +1992,22 @@ void install_number(context & cx) {
     });
     method(cx, number_proto, "toExponential", [](context & c, std::span<value> a) {
         const double v = context::to_number(c.current_this());
+        // NO ARGUMENT IS NOT SIX. The specification asks for as many digits as
+        // uniquely specify the value, so `(5).toExponential()` is "5e+0" and
+        // not "5.000000e+0"; -1 is how number_to_exponential is told that.
         const int places = a.empty() || a[0].is_undefined()
-                               ? 6
+                               ? -1
                                : std::clamp(static_cast<int>(context::to_number(a[0])), 0, 100);
-        std::array<char, 64> out{};
-        const int written = std::snprintf(out.data(), out.size(), "%.*e", places, v);
-        std::string text{out.data(), static_cast<std::size_t>(std::max(0, written))};
-        // C prints at least two exponent digits and JavaScript prints the
-        // fewest that suffice: 1e+2, not 1e+02.
-        const std::size_t e = text.find('e');
-        if (e != std::string::npos && e + 2 < text.size()) {
-            std::size_t digits = e + 2;
-            while (digits + 1 < text.size() && text[digits] == '0') { text.erase(digits, 1); }
-        }
-        return c.string(text);
+        return c.string(number_to_exponential(v, places));
     });
     method(cx, number_proto, "toPrecision", [](context & c, std::span<value> a) {
         const double v = context::to_number(c.current_this());
         // No argument at all is toString, not zero significant digits.
         if (a.empty() || a[0].is_undefined()) { return c.string(c.to_string(c.current_this())); }
         const int digits = std::clamp(static_cast<int>(context::to_number(a[0])), 1, 100);
-        std::array<char, 64> out{};
-        const int written = std::snprintf(out.data(), out.size(), "%.*g", digits, v);
-        return c.string(std::string{out.data(), static_cast<std::size_t>(std::max(0, written))});
+        // NOT "%.*g", which drops trailing zeros where toPrecision keeps them -
+        // `(1.5).toPrecision(3)` is "1.50" - and writes two exponent digits.
+        return c.string(number_to_precision(v, digits));
     });
     number_ctor->set("prototype", value::object(number_proto));
     link_constructor(cx, number_proto, "Number", value::object(number_ctor));
@@ -2490,12 +2596,11 @@ void install_globals(context & cx) {
         }
     });
     cx.define_native("parseFloat", [](context & c, std::span<value> a) {
-        const std::string s = str_at(c, a, 0);
-        try {
-            std::size_t used = 0;
-            const double out = std::stod(s, &used);
-            return used == 0 ? value::number(std::nan("")) : value::number(out);
-        } catch (...) { return value::number(std::nan("")); }
+        // string_to_number_prefix, not std::stod: stod reads LC_NUMERIC for the
+        // decimal separator, so `parseFloat("1.5")` would answer 1 on a host
+        // whose locale writes a comma - and this repository byte-compares
+        // rendered output across two platforms.
+        return value::number(string_to_number_prefix(str_at(c, a, 0)));
     });
 
     // The value globals. Missing entirely before, so `NaN` was an undefined

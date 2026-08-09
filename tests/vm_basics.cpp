@@ -785,6 +785,13 @@ void test_stdlib_additions() {
     expect("return [1, 2].flatMap(x => [x, x]).join(',');", "1,1,2,2");
     expect("return [1, 2, 3].findLast(x => x < 3);", "2");
     expect("return Math.cbrt(27) + '|' + Math.log2(8) + '|' + Math.log10(1000);", "3|3|3");
+    // AND IT IS EXACTLY 3, which the line above did not actually establish: it
+    // passed for years against 3.0000000000000004, because `to_string` rounded
+    // to six decimals and printed "3" either way. glibc's cbrt is an ulp out on
+    // a perfect cube. `===` is what asks the question the string never did.
+    expect("return Math.cbrt(27) === 3 && Math.cbrt(216) === 6 && "
+           "Math.cbrt(-27) === -3 && Math.cbrt(1e9) === 1000;",
+           "true");
     expect("return Number.isInteger(2) + '|' + Number.isInteger(2.5);", "true|false");
     // these do NOT coerce, and the difference is used deliberately
     expect("return Number.isFinite('1') + '|' + isFinite('1');", "false|true");

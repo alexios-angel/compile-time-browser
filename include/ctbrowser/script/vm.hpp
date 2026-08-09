@@ -42,6 +42,33 @@ struct closure_object;
 
 using native_fn = std::function<value(class context &, std::span<value>)>;
 
+// THE LINEAR SCAN ON `native_object` AND `closure_object` BELOW IS DELIBERATE,
+// AND IT WAS MEASURED (2026-08-08).
+//
+// It looks exactly like the bug this engine has found three times - a linear
+// scan comparing std::strings, once per property MENTION - and a class compiles
+// to a `closure_object`, so every static, every `C.prototype` and every Babel
+// `_inherits` hop comes through here. Babylon is 181,222 lines of class-heavy
+// code and was the corpus expected to show it.
+//
+// It does not. Callgrind, `babylon_ratchet` at 46.577 G instructions:
+//
+//   closure_object::find    64,466,020   0.14%
+//   native_object::find      2,666,456   0.01%
+//
+// 0.15% together, and 0.04% of a `phaser_invaders` frame. A perfect fix cannot
+// win more than that, and the fix that was tried LOST: folding both into one
+// table with a `string_flat_map` index built past a threshold took the pair
+// from 5.14 M to 9.54 M instructions - nearly 2x - because the branch selecting
+// scan-or-index touches the map's header before the scan, and because two
+// bodies the compiler had been inlining into their callers became one
+// out-of-line call. `phaser_invaders` went 13.646 G -> 13.699 G, +0.39%.
+//
+// The reason the scan is already right: `ensure_prototype` is lazy on the
+// stated grounds that "a program allocates far more functions than it
+// constructs", so MOST CLOSURES HOLD NOTHING AT ALL and the loop exits on an
+// empty vector. Do not re-propose a hash table here without a corpus that
+// puts these two functions somewhere near the top of a profile.
 struct native_object final : heap_object {
     std::string name;
     native_fn fn;
@@ -82,6 +109,8 @@ struct closure_object final : heap_object {
     // statics and its `prototype` live here. Without a property table on a
     // closure, `class C { static make() {} }` had nowhere to put `make` and
     // `C.prototype` could not be read back, so `extends` found nothing.
+    //
+    // Linear on purpose - see the note above `native_object`.
     std::vector<std::pair<std::string, value>> props;
 
     [[nodiscard]] value * find(std::string_view name) {
@@ -213,7 +242,7 @@ public:
         globals_[std::move(name)] = v;
     }
     [[nodiscard]] value global(std::string_view name) const {
-        const auto it = globals_.find(std::string{name});
+        const auto it = globals_.find(name);
         return it == globals_.end() ? value::undefined() : it->second;
     }
     // Whether the name is DEFINED, which is not whether it is truthy or even
@@ -221,10 +250,10 @@ public:
     // undefined must still report the global as present, or `'foo' in window`
     // and a window that proxies to the globals disagree with `typeof foo`.
     [[nodiscard]] bool has_global(std::string_view name) const {
-        return globals_.find(std::string{name}) != globals_.end();
+        return globals_.find(name) != globals_.end();
     }
     // Every global, for a window that enumerates itself.
-    [[nodiscard]] const flat_map<std::string, value> & globals() const noexcept { return globals_; }
+    [[nodiscard]] const string_flat_map<value> & globals() const noexcept { return globals_; }
 
     // --- execution ---------------------------------------------------------
     //
@@ -472,6 +501,11 @@ public:
             static_cast<std::int64_t>(std::fmod(truncated, 4294967296.0)));
     }
     [[nodiscard]] static double to_number(value v);
+    // Number::exponentiate (6.1.6.1.3), which is NOT C's `pow`. C99 F.10.4.4
+    // defines pow(+-1, y) as 1 for EVERY y - including NaN and both infinities -
+    // where the specification requires NaN for exactly those. Shared by
+    // `Math.pow` and the `**` opcode, which had the same bug in two places.
+    [[nodiscard]] static double exponentiate(double base, double exponent);
     [[nodiscard]] std::string to_string(value v);
     [[nodiscard]] static std::string_view type_of(value v);
     [[nodiscard]] static bool loose_equals(value a, value b);
@@ -961,7 +995,12 @@ private:
     std::deque<microtask> microtasks_;
     value thrown_ = value::undefined();
 
-    flat_map<std::string, value> globals_;
+    // string_flat_map, NOT flat_map<std::string, value>: the plain one's hasher
+    // and equality are not transparent, so `find(string_view)` cannot exist and
+    // every caller had to build a std::string to throw away. That is the bug
+    // docs/performance.md measured at -47% on object_object::find, and this map
+    // is the one the whole shell binding layer reads through.
+    string_flat_map<value> globals_;
     std::vector<value> registers_;
     std::vector<call_frame> frames_;
     heap_object * heap_ = nullptr;

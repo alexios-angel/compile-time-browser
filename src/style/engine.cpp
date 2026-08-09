@@ -88,7 +88,7 @@ const engine::inline_block & engine::inline_style_of(const read_txn & txn, node_
     static const inline_block none;
     const std::string_view text = txn.attribute_value(id, style_name());
     if (text.empty()) { return none; }
-    const auto cached = inline_cache_.find(std::string{text});
+    const auto cached = inline_cache_.find(text);
     if (cached != inline_cache_.end()) { return cached->second; }
 
     // Through the SHEET parser, wrapped in a dummy rule, rather than

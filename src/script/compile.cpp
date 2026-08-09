@@ -1,6 +1,7 @@
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
+#include <ctbrowser/script/number_format.hpp>
 
 #include <boost/container/small_vector.hpp>
 #include <boost/unordered/unordered_flat_set.hpp>
@@ -1092,7 +1093,13 @@ public:
             }
         }
         double d = 0;
-        std::from_chars(lex.data(), lex.data() + lex.size(), d);
+        // A LITERAL TOO BIG FOR A DOUBLE IS Infinity, NOT ZERO. from_chars
+        // reports result_out_of_range and leaves `d` UNTOUCHED, so ignoring the
+        // error made `1e400` compile to 0 - silently, and at the opposite end of
+        // the number line from the truth. Runtime overflow was always right
+        // (`1e308 * 10` is Infinity); only the lexer disagreed.
+        const auto failed = std::from_chars(lex.data(), lex.data() + lex.size(), d).ec;
+        if (failed == std::errc::result_out_of_range) { return out_of_range_value(lex); }
         return d;
     }
 

@@ -11,6 +11,7 @@
 #include <system_error>
 #include <vector>
 
+#include <ctbrowser/script/number_format.hpp>
 #include <ctbrowser/script/vm.hpp>
 
 // The VM's implementation.
@@ -39,38 +40,38 @@ double context::to_number(value v) {
     if (v.is_null()) { return 0; }
     if (v.is_undefined()) { return std::nan(""); }
     if (v.is_string()) {
-        const std::string & s = static_cast<string_object *>(v.as_heap())->text;
-        try {
-            std::size_t consumed = 0;
-            const double d = std::stod(s, &consumed);
-            while (consumed < s.size() && (s[consumed] == ' ' || s[consumed] == '\t')) {
-                ++consumed;
-            }
-            return consumed == s.size() ? d : std::nan("");
-        } catch (...) {
-            return s.find_first_not_of(" \t\n\r") == std::string::npos ? 0.0 : std::nan("");
-        }
+        // string_to_number, not std::stod: stod reads LC_NUMERIC for the decimal
+        // separator, throws to report a failure this VM then had to catch, and
+        // accepted neither "+5" nor the radix prefixes. See script/number_format.hpp.
+        return string_to_number(static_cast<string_object *>(v.as_heap())->text);
     }
     return std::nan("");
+}
+
+// Number::exponentiate, 6.1.6.1.3. Three special cases and then libm.
+//
+// C99 F.10.4.4 makes `pow(+-1, y)` exactly 1 for EVERY y, on the reasoning that
+// 1 to any power is 1 even when the power is unknown. JavaScript takes the
+// opposite view for an unknown or infinite exponent, and it matters: `1 ** NaN`
+// coming back as 1 is a number a page will keep computing with, where NaN is a
+// value `isNaN` can catch.
+double context::exponentiate(double base, double exponent) {
+    if (std::isnan(exponent)) { return std::nan(""); }
+    // Even NaN to the zeroth power is 1 - this is checked before the base.
+    if (exponent == 0) { return 1; }
+    if (std::isinf(exponent) && std::fabs(base) == 1) { return std::nan(""); }
+    return std::pow(base, exponent);
 }
 
 std::string context::to_string(value v) {
     if (v.is_undefined()) { return "undefined"; }
     if (v.is_null()) { return "null"; }
     if (v.is_boolean()) { return v.as_boolean() ? "true" : "false"; }
-    if (v.is_number()) {
-        const double d = v.as_number();
-        if (std::isnan(d)) { return "NaN"; }
-        if (std::isinf(d)) { return d > 0 ? "Infinity" : "-Infinity"; }
-        // integral doubles print without a decimal point, as JS does
-        if (d == static_cast<double>(static_cast<std::int64_t>(d)) && std::abs(d) < 1e15) {
-            return std::to_string(static_cast<std::int64_t>(d));
-        }
-        std::string out = std::to_string(d);
-        while (out.size() > 1 && out.back() == '0') { out.pop_back(); }
-        if (!out.empty() && out.back() == '.') { out.pop_back(); }
-        return out;
-    }
+    // number_to_string, not std::to_string(double), which is `%f` to six
+    // decimals - so this returned "0.333333" for 1/3, "0" for anything smaller
+    // than about 1e-7, and 309 literal digits for the largest double. It is also
+    // locale-dependent. See script/number_format.hpp.
+    if (v.is_number()) { return number_to_string(v.as_number()); }
     if (v.is_string()) { return static_cast<string_object *>(v.as_heap())->text; }
     // The KEY, not the description: this is what makes `o[sym]` reach a slot
     // no literal can name, since a computed property goes through here.
@@ -1669,7 +1670,7 @@ value context::run_loop(std::size_t stop_depth) {
         VM_NEXT;
         VM_CASE(pow) do {
             reg(in.a) =
-                value::number(std::pow(to_number_value(reg(in.b)), to_number_value(reg(in.c))));
+                value::number(exponentiate(to_number_value(reg(in.b)), to_number_value(reg(in.c))));
             break;
         }
         while (0);

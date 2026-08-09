@@ -851,3 +851,114 @@ The honest next change is unchanged and is now the biggest thing left:
 **property names as atoms.** `lookup_property` plus `memcmp` is ~14% of a Phaser
 frame, all of it hashing a string and comparing bytes for a name the engine
 already interns elsewhere.
+
+
+## Three Boost-shaped candidates, and only one of them was real (2026-08-08)
+
+Asked of the tree directly: what is left that a Boost container answers? The
+answer turned out to be "almost nothing", and the two negative results are worth
+more than the positive one.
+
+### `globals_` and `inline_cache_` still built a temporary - and it measured NEUTRAL
+
+Both were `flat_map<std::string, V>` asked with a `string_view`, which is exactly
+the shape that cost 10.7% in `object_object::find` and paid **-47%** to fix. Both
+are `string_flat_map` now.
+
+| | |
+|---|---|
+| `phaser_invaders` before | 13.646 G |
+| after | 13.648 G (**+0.016%, noise**) |
+
+**The bug is real and no corpus in this tree exercises it.** `widgets.html` has
+ZERO inline `style=` attributes and `phaser-invaders.html` has one, so
+`inline_style_of` returns at `if (text.empty())` before it ever reaches the
+cache; and Phaser's hot path reaches globals through the opcode, which passes a
+`std::string` and so never built the temporary. `context::global()` is the
+embedder path, which the corpora do not hammer.
+
+Kept as a strict cleanup with no performance claim attached. The lesson is the
+one this file keeps re-learning from the other side: **a bug that looks identical
+to a measured one is not therefore worth the same**, and which corpus exercises
+the line decides that, not how the line reads.
+
+### Indexing the closure and native property tables was REFUSED on a measurement
+
+`closure_object::find` and `native_object::find` linear-scan a
+`vector<pair<string, value>>`, once per property mention. A class compiles to a
+`closure_object`, so every static, every `C.prototype` and every Babel
+`_inherits` hop goes through one - and Babylon is 181,222 lines of class-heavy
+code, so it was the corpus expected to show it.
+
+It does not:
+
+| | `babylon_ratchet`, 46.577 G |
+|---|---|
+| `closure_object::find` | 64,466,020 (**0.14%**) |
+| `native_object::find` | 2,666,456 (**0.01%**) |
+
+0.15% together, 0.04% of a Phaser frame. **And the fix lost anyway.** Folding
+both into one table with a `string_flat_map` index built past a threshold:
+
+| | before | after |
+|---|---|---|
+| the two `find`s | 5.14 M | **9.54 M (merged, ~1.9x)** |
+| `phaser_invaders` | 13.646 G | 13.699 G (**+0.39%**) |
+
+Two causes, both instructive. The branch selecting scan-or-index reads the map's
+header before the scan, on a path where the scan itself touches one cache line;
+and two small bodies the compiler had been inlining into their callers became one
+out-of-line call. The comment above `native_object` in `script/vm.hpp` carries
+the numbers so this is not re-proposed.
+
+Why the scan is already right: `ensure_prototype` is lazy on the stated grounds
+that "a program allocates far more functions than it constructs", so **most
+closures hold nothing at all** and the loop exits on an empty vector.
+
+### Numbers: the one that paid, and it is `std` rather than Boost
+
+`context::to_string` was `std::to_string(double)` - `%f` to six decimals - and
+`to_number` was `std::stod` inside a `try`/`catch`. See `script/number_format.hpp`
+for what was wrong with each; the short version is that `String(1/3)` was
+"0.333333", everything below about 1e-7 printed as "0", and all of it read
+`LC_NUMERIC` in a repository that byte-compares goldens across two toolchains.
+
+`std::to_chars`/`from_chars`, with the specification's own notation rule on top:
+
+| | before | after |
+|---|---|---|
+| `context::to_number` | 173.8 M (1.27%) | **11.6 M (0.09%), -93%** |
+| the conversion cluster | 306.8 M | **169.8 M, -44.6%** |
+| `phaser_invaders` | 13.646 G | **13.525 G (-0.89%)** |
+| `babylon_ratchet`: `to_number` | 121.3 M | **5.6 M, -95%** |
+
+Read the CLUSTER: `to_number`'s own line falls 162 M while `to_number_value`
+rises 24 M and `run_loop` 14 M, because what is left inlines into them. That is
+the fourth time in this file.
+
+**`babylon_ratchet`'s total moved -3.9% and that number is NOT claimed.** The
+rest of the delta is LLVM and SwiftShader symbols - ANGLE's shader JIT - and the
+cause is real but is not a speedup: Babylon interpolates numbers into GLSL
+source, so a constant that used to print as "0" now prints as "1e-7" and a
+DIFFERENT shader gets compiled. Two runs of one binary agree to 0.0016%, so it is
+not run-to-run noise; it is a change in what work is done. `phaser_invaders`
+draws through the 2D canvas, has no such path, and its -0.89% is fully
+attributable to the two lines above.
+
+**Boost.Charconv was considered and turned down** - see `docs/build.md`.
+
+### And it exposed a bug in `Math.cbrt`
+
+`tests/vm_basics` asserted `Math.cbrt(27)` printed "3" and had been passing
+against **3.0000000000000004** for as long as it existed, because six-decimal
+formatting printed "3" either way. glibc's `cbrt` is up to an ulp out on a
+perfect cube; V8 returns the exact root. Corrected for the exact case only - a
+Newton step fixes 27 and 216 and makes `cbrt(0.001)` worse - and `vm_basics` now
+asks with `===` instead of a string.
+
+**Full-precision printing makes every libm discrepancy visible.** That is a
+determinism question this file should flag rather than settle: a page printing
+`Math.sin(x)` now shows all 17 digits, and glibc and the mingw CRT are not
+obliged to agree on the last one. No golden moved here, and none of them prints
+a computed transcendental. A corpus that does would need checking on both
+platforms.

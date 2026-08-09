@@ -252,9 +252,21 @@ turned down rather than overlooked:
   chain is 2.25 levels deep and the change that removes the cost is interning
   property names as atoms, not putting a filter in front of the same string
   compare.
+* **Boost.Charconv** — the obvious answer when `script/number_format.cpp`
+  retired `std::to_string(double)`, `std::stod` and three printf conversions.
+  It loses on the only ground that matters here: **the standard library already
+  does this on both toolchains.** Every floating-point `std::to_chars` overload,
+  including the format-and-precision forms, is present in libstdc++ (since GCC
+  11) and exported from llvm-mingw's libc++ — verified in the cross toolchain's
+  own `__charconv/to_chars_floating_point.h`, all nine of them
+  `_LIBCPP_EXPORTED_FROM_ABI`. Boost.Charconv is a COMPILED library, so taking
+  it would have meant a sixth `tools/build-*-mingw.sh`, another
+  `find_package` component, a `CTBROWSER_CONFIG_DEPS` entry and raising the
+  floor 1.80 -> 1.85, to buy nothing. Its case would return only on a toolchain
+  whose `<charconv>` is incomplete.
 
-**So the version floor stays at 1.80.** Both would have needed it raised (1.84
-and 1.89), and that is nearly free here - `tools/build-boost-mingw.sh` reads the
+**So the version floor stays at 1.80.** All three would have needed it raised
+(1.84, 1.89 and 1.85), and that is nearly free here - `tools/build-boost-mingw.sh` reads the
 tag out of the host's headers and brew ships 1.90 on both machines - but raising
 a floor to admit a library the measurement says not to use is a cost with no
 purchase. It is a one-line change whenever something earns it.

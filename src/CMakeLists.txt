@@ -234,6 +234,7 @@ target_sources(ctbrowser-script
     # only compiler::compile() is declared in the header.
     script/compile.cpp
     script/builtins.cpp
+    script/number_format.cpp
     script/vm.cpp
   PUBLIC
     FILE_SET HEADERS
@@ -243,6 +244,7 @@ target_sources(ctbrowser-script
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/value.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/bytecode.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/compile.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/number_format.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/vm.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/builtins.hpp")
 target_compile_features(ctbrowser-script PUBLIC cxx_std_23)
