@@ -191,3 +191,13 @@ else()
 endif()
 
 add_subdirectory(src)
+
+# examples/ and tests/ ARE ROOT-LEVEL, and until 2026-08-09 they were not:
+# src/CMakeLists.txt ended by reaching back out to `../examples` and `../tests`,
+# so the engine subtree pulled in its own siblings. They only need
+# ctbrowser_target() and the targets, both of which exist by now.
+add_subdirectory(examples)
+
+if(CTBROWSER_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()
