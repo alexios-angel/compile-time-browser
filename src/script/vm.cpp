@@ -162,7 +162,29 @@ bool context::loose_equals(value a, value b) {
         return static_cast<string_object *>(a.as_heap())->text ==
                static_cast<string_object *>(b.as_heap())->text;
     }
-    if (a.is_heap() && b.is_heap()) { return a == b; }
+    // A STRING IS ON THE HEAP TOO, so "both heap means compare identity" is not
+    // the test - it caught `"" == []` and answered false before ToPrimitive ever
+    // ran. Only two genuine OBJECTS compare by identity.
+    // AN OBJECT AGAINST A PRIMITIVE COERCES THROUGH ToPrimitive - 7.2.15 steps
+    // 10 and 11 - and then the comparison is retried on the result. Falling
+    // straight through to ToNumber instead makes the object NaN, so the answer
+    // was always false: `0 == []`, `1 == [1]` and `"" == []` are all TRUE in
+    // every browser and were all false here.
+    //
+    // The guard against re-entering forever is that to_primitive hands back the
+    // object UNCHANGED when neither valueOf nor toString produces a primitive;
+    // in that case there is nothing to retry with and the numeric compare below
+    // is the right answer.
+    const bool a_object = a.is_heap() && !a.is_string();
+    const bool b_object = b.is_heap() && !b.is_string();
+    if (a_object && b_object) { return a == b; }
+    if (a_object != b_object) {
+        const value primitive = a_object ? to_primitive(a) : to_primitive(b);
+        const bool progressed = a_object ? !(primitive == a) : !(primitive == b);
+        if (progressed) {
+            return a_object ? loose_equals(primitive, b) : loose_equals(a, primitive);
+        }
+    }
     return to_number(a) == to_number(b); // the coercing cases
 }
 

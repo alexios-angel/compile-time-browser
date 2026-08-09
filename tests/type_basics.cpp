@@ -6,11 +6,11 @@
 // expressions. As with tests/math_basics.cpp and tests/string_basics.cpp the
 // expectations came out of V8, not out of this engine.
 //
-// The sweep found 19 differences, and ELEVEN OF THEM ARE ONE DEFECT: ToNumber
-// of an OBJECT does not go through ToPrimitive, so `Number([])` is NaN rather
-// than 0 and every `==` between an object and a primitive answers false. That
-// is pinned in a labelled section at the bottom rather than omitted - see the
-// note there - because a silent gap is worse than a recorded one.
+// The sweep found 19 differences, and ELEVEN OF THEM WERE ONE DEFECT: ToNumber
+// of an OBJECT did not go through ToPrimitive, so `Number([])` was NaN rather
+// than 0 and every `==` between an object and a primitive answered false.
+// Fixed - the built-ins use `to_number_value` now - and pinned below. Three
+// differences remain and are labelled at the bottom.
 //
 // The coercion tables here are the part of the language that pages rely on
 // without meaning to: `if (x)`, `x + ""`, `x == null` and `+x` are in every
@@ -200,29 +200,41 @@ int main() {
     expect("String({toString:function(){return \"T\"}})", "T");
     expect("(new Date(0)) instanceof Date", "true");
 
-    // --- KNOWN WRONG: ToNumber of an object skips ToPrimitive ----------------
-    //
-    // `context::to_number` returns NaN for any object instead of coercing
-    // through valueOf/toString. `to_number_value` DOES do it and is what the
-    // arithmetic opcodes use, which is why `({valueOf:()=>42}) + 1` above is 43
-    // while `Number(...)` of the same object is NaN - two coercion paths, one
-    // of them incomplete.
-    //
-    // It is the same defect `Math.abs([])` has, and it is what makes every `==`
-    // between an object and a primitive answer false. Pinned here with V8's
-    // answer in each comment, so this section fails the day it is fixed and
-    // says exactly what to update.
-    expect("Number([])", "NaN");                             // V8: 0
-    expect("Number([1])", "NaN");                            // V8: 1
-    expect("Number({valueOf:function(){return 7}})", "NaN"); // V8: 7
-    expect("0 == []", "false");                              // V8: true
-    expect("\"\" == []", "false");                           // V8: true
-    expect("false == []", "false");                          // V8: true
-    expect("1 == [1]", "false");                             // V8: true
-    expect("\"1\" == [1]", "false");                         // V8: true
-    // And two smaller ones from the same sweep.
-    expect("parseInt(\"0x10\")", "0");       // V8: 16
-    expect("typeof Object.is", "undefined"); // V8: "function"
+    // --- ToNumber of an object, which goes through ToPrimitive ---------------
+    // These were the sweep's biggest cluster: `context::to_number` is static
+    // and cannot re-enter the VM to call `valueOf`, so it answered NaN for
+    // every object - which made `Number([])` NaN and every `==` between an
+    // object and a primitive false. The built-ins use `to_number_value` now.
+    expect("Number([])", "0");
+    expect("Number([1])", "1");
+    expect("Number({valueOf:function(){return 7}})", "7");
+    expect("Math.abs([])", "0");
+    expect("Math.abs([-2.5])", "2.5");
+    expect("Math.max([1],[2])", "2");
+    // And `==` retries after ToPrimitive - 7.2.15 steps 10 and 11.
+    expect("0 == []", "true");
+    expect("\"\" == []", "true");
+    expect("false == []", "true");
+    expect("1 == [1]", "true");
+    expect("\"1\" == [1]", "true");
+    expect("\"abc\" == [\"abc\"]", "true");
+    // Two OBJECTS still compare by identity, and a string is on the heap here
+    // too - which is why "both on the heap" was the wrong test for that.
+    expect("[] == []", "false");
+    expect("({}) == ({})", "false");
+    expect("null == []", "false");
+    expect("0 == {}", "false");
+    expect("NaN == [NaN]", "false");
+    // A leading 0x is hexadecimal when no radix is given, 19.2.5 step 8.
+    expect("parseInt(\"0x10\")", "16");
+    expect("parseInt(\"0xFF\")", "255");
+    expect("parseInt(\"-0x10\")", "-16");
+    expect("parseInt(\"0x10\", 10)", "0"); // an explicit radix wins
+
+    // --- KNOWN WRONG, pinned so a fix trips over them -------------------------
+    expect("typeof Object.is", "undefined");      // V8: "function"
+    expect("String((function(){}))", "function"); // V8: the source text
+    expect("String(Symbol(\"s\"))", "@@sym:0:s"); // V8: "Symbol(s)"
 
     REPORT("type_basics");
 }

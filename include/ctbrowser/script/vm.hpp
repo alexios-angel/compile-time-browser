@@ -509,7 +509,16 @@ public:
     [[nodiscard]] static double exponentiate(double base, double exponent);
     [[nodiscard]] std::string to_string(value v);
     [[nodiscard]] static std::string_view type_of(value v);
-    [[nodiscard]] static bool loose_equals(value a, value b);
+    // ToNumber, 7.1.4, INCLUDING the object case - an object coerces through
+    // its own valueOf and then toString, which the static `to_number` cannot do
+    // because it cannot call back into the VM. PUBLIC because that is the one
+    // every built-in whose spec text reads `? ToNumber(x)` must use: `Number([])`
+    // is 0 and `Math.abs([])` is 0 precisely because of it, and reaching for the
+    // static form instead is what made both NaN.
+    [[nodiscard]] double to_number_value(value v);
+    // IsLooselyEqual, 7.2.15. NOT static: an object compared against a
+    // primitive has to go through ToPrimitive, which re-enters the VM.
+    [[nodiscard]] bool loose_equals(value a, value b);
     // Abstract Relational Comparison, 7.2.13 - the ONE comparison that `<`,
     // `>`, `<=` and `>=` each ask a different question of.
     //
@@ -891,8 +900,6 @@ private:
     [[nodiscard]] std::string describe_thrown(value thrown);
     // ToPrimitive for the string case: an object's own toString, then valueOf.
     [[nodiscard]] std::string to_primitive_string(value v);
-    // ToPrimitive for the numeric case: an object's own valueOf, then toString.
-    [[nodiscard]] double to_number_value(value v);
     // ToPrimitive with the default hint, for `+`.
     [[nodiscard]] value to_primitive(value v);
     // A function's `prototype`, made on first use. See the definition.

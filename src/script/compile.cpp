@@ -1074,7 +1074,12 @@ public:
     // The radix prefixes take the integer overload and then widen; a double is
     // exact up to 2^53, which is further than any of these literals reach.
     [[nodiscard]] static double number_literal(std::string_view text) {
-        const std::string lex{text};
+        // NUMERIC SEPARATORS COME OFF FIRST. `1_000_000` is one token from the
+        // lexer, and `std::from_chars` accepts no underscore in either overload
+        // - it would stop at the first one and read 1. Removing them here keeps
+        // that knowledge in one place rather than in both parse paths below.
+        std::string lex{text};
+        std::erase(lex, '_');
         const auto radix_of = [](char c) -> int {
             if (c == 'x' || c == 'X') { return 16; }
             if (c == 'o' || c == 'O') { return 8; }
@@ -1928,7 +1933,25 @@ public:
     void compile_for(const vp::node & n) {
         push_scope();
         const std::string label = take_label();
+        const std::size_t init_mark = fn().scope_marks.back();
         if (n.a >= 0) { compile_stmt(n.a); }
+        // THE PER-ITERATION BINDINGS. `for (let i = 0; ...)` gives every
+        // iteration its OWN `i`, so closures made in the body capture 0, 1, 2 -
+        // where `for (var i = ...)` shares one binding and they all capture 3.
+        // This engine had only the `var` behaviour, silently, and modern
+        // minified output leans on the difference constantly.
+        //
+        // Only a BOXED local can tell: an unboxed one lives in a register that
+        // nothing outside the frame can reach, so copying it would be work with
+        // no observer. `var` is hoisted to the function scope and so never
+        // appears among the locals this scope opened - which is what keeps the
+        // two loops apart without the compiler having to track declaration
+        // kinds. tests/obfuscated.cpp pins BOTH shapes, so getting that
+        // backwards fails immediately.
+        std::vector<std::uint16_t> per_iteration;
+        for (std::size_t k = init_mark; k < fn().locals.size(); ++k) {
+            if (fn().locals[k].boxed) { per_iteration.push_back(fn().locals[k].reg); }
+        }
         const std::size_t top = proto().code.size();
         loops_.push_back(loop_context{label, {}, {}, handler_depth_});
         std::size_t exit = 0;
@@ -1946,6 +1969,24 @@ public:
         // not skip back to the condition. Getting this wrong turns every
         // `for (...; i++) { ... continue; }` into an infinite loop.
         patch_continues(loops_.back(), proto().code.size());
+        // BETWEEN THE BODY AND THE UPDATE, which is where the specification puts
+        // it (ForBodyEvaluation step 3.e): the fresh binding takes the value the
+        // body left, and the increment then applies to the NEW one. Doing it
+        // after the update instead would shift every captured value by one.
+        //
+        // `continue` lands on the instruction above, so it flows through here
+        // too - which is correct, and is why this sits after patch_continues
+        // rather than before it.
+        if (!per_iteration.empty()) {
+            const std::uint32_t mark = reg_mark();
+            const std::uint16_t scratch = alloc_reg();
+            for (const std::uint16_t r : per_iteration) {
+                proto().emit(instruction{op::cell_get, scratch, r});
+                proto().emit(instruction{op::move, r, scratch});
+                proto().emit(instruction{op::new_cell, r});
+            }
+            release_to(mark);
+        }
         if (n.c >= 0) {
             const std::uint32_t mark = reg_mark();
             const std::uint16_t tmp = alloc_reg();

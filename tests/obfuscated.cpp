@@ -175,26 +175,31 @@ int main() {
     expect("(function(){var m={exports:{}};(function(e){e.v=1})(m.exports);return m.exports.v})()",
            "1");
 
-    // --- KNOWN WRONG, pinned so a fix trips over them -------------------------
+    // --- fixed, and pinned so a regression trips over them --------------------
     //
-    // `for (let i = ...)` MUST create a fresh binding per iteration, so the
-    // closures capture 0, 1 and 2. This engine shares one binding, exactly as
-    // `var` does, so all three capture the final value. `for (let x of ...)`
-    // above is correct, so it is specifically the C-style loop. Modern minified
-    // code relies on this constantly, and getting it wrong is silent.
+    // `for (let i = ...)` gives every iteration its OWN binding, so these
+    // capture 0, 1 and 2 where the `var` loop above captures 3 three times.
+    // This engine shared one binding - silently, and modern minified output
+    // leans on the difference constantly. compile_for copies the boxed loop
+    // bindings between the body and the update, which is where
+    // ForBodyEvaluation puts it.
     expect("(function(){var f=[];for(let i=0;i<3;i++){f.push(function(){return i})}"
            "return f[0]()+\",\"+f[1]()+\",\"+f[2]()})()",
-           "3,3,3"); // V8: 0,1,2
+           "0,1,2");
     //
-    // The lexer does not tokenise these literal forms. Note that
-    // `src/script/compile.cpp`'s `radix_of` ALREADY handles 0o and 0b - the gap
-    // is in ctjs's lexer (external/compile-time-javascript), which never emits
-    // the token, so the fix belongs in the submodule.
-    expect("0o17", "THREW");  // V8: 15
-    expect("0b101", "THREW"); // V8: 5
-    expect("1_000", "THREW"); // V8: 1000 - numeric separators, ES2021
-    //
-    // Legacy octal escapes and literals, Annex B sloppy mode.
+    // These forms did not lex at all: ctjs special-cased 0x and stopped a
+    // number token at `_`, so `0o17` came through as `0` then the identifier
+    // `o17`. compile.cpp's radix_of already handled 0o and 0b, so the fix was
+    // in the submodule's lexer plus stripping the separators before from_chars,
+    // which accepts none.
+    expect("0o17", "15");
+    expect("0b101", "5");
+    expect("1_000", "1000"); // numeric separators, ES2021
+    expect("1_000_000", "1000000");
+    expect("0xFF_FF", "65535"); // separators inside a radix literal too
+    expect("1e1_0", "10000000000");
+
+    // --- KNOWN WRONG: legacy octal, Annex B sloppy mode ----------------------
     expect("\"\\101\"", "101"); // V8: "A"
     expect("017", "17");        // V8: 15
 

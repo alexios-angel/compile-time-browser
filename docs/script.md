@@ -772,3 +772,62 @@ engine-wide and touching every method that takes an index.
 section rather than omitting them, with V8's answer in each comment. That is the
 acceptance list for a migration: the day the representation changes, those lines
 fail and say exactly what to update.
+
+
+## The bugs those suites found, fixed (2026-08-09)
+
+Six defects, one of them in the ctjs submodule. Each was planted back and the
+tests caught it.
+
+### `for (let i = ...)` now binds per iteration
+
+A C-style `for` with a `let` head gives every iteration its own binding, so
+closures made in the body capture 0, 1, 2 - where `var` shares one and they all
+capture 3. This engine had only the `var` behaviour. `for (let x of ...)` was
+already correct, so it was specifically the C-style loop, and modern minified
+output leans on the difference constantly.
+
+`compile_for` collects the BOXED locals the init opened - only a boxed one can
+be observed by a closure, and `var` is hoisted to the function scope so it never
+appears among them, which keeps the two loops apart without tracking declaration
+kinds. Between the body and the update (ForBodyEvaluation step 3.e) it reads
+each cell, moves the value to a raw register and re-boxes it. Putting it after
+the update instead would shift every captured value by one. `continue` lands on
+that instruction, so it flows through the copy too.
+
+### ToNumber of an object goes through ToPrimitive
+
+`context::to_number` is static and cannot re-enter the VM to call `valueOf`, so
+it answered NaN for every object. `to_number_value` always did it properly and
+was private. It is public now, and the built-ins whose spec text reads
+`? ToNumber(x)` use it: `Number([])` is 0, `Math.abs([])` is 0,
+`Math.max([1],[2])` is 2.
+
+`loose_equals` needed the same and became a member to get it. Two subtleties
+worth keeping: an object compared against a primitive is ToPrimitive'd and the
+comparison RETRIED (7.2.15 steps 10-11), guarded against re-entering forever by
+the fact that `to_primitive` hands the object back unchanged when neither
+`valueOf` nor `toString` yields a primitive; and **a string is on the heap in
+this engine too**, so "both on the heap means compare identity" was the wrong
+test - it caught `"" == []` and answered false before ToPrimitive ever ran.
+
+That one defect was eleven of the type sweep's nineteen differences; the sweep
+now reads 4.
+
+### The rest
+
+* **`0o17`, `0b101`, `1_000`** did not lex. ctjs special-cased 0x alone and
+  stopped a number token at `_`. Fixed in the submodule, with cases in its own
+  `tests/vparse.cpp`; `number_literal` strips the separators here, because
+  `std::from_chars` accepts none.
+* **`parseInt("0xFF")` was 0** - it stopped at the `x`, which is how a colour
+  parser reads black without erroring. A leading 0x is hexadecimal when no
+  radix is demanded (19.2.5 step 8).
+
+### Still known and not fixed
+
+`Object.is`, `String(function)` returning source text, `String(Symbol)`,
+legacy octal (`"\101"`, `017` - Annex B), and the String gaps already listed
+above: `replace`'s `$`-patterns, `search` with a string argument, `replaceAll`'s
+missing TypeError, `String.raw`, boxing, `Symbol.iterator`. All pinned in the
+test files with V8's answer in the comment.

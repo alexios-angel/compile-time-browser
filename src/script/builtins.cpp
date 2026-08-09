@@ -606,12 +606,15 @@ void install_math(context & cx, std::uint64_t seed) {
     // is RIGHT for its other callers: `"abc".slice()` and `[1,2].indexOf(x)`
     // want a zero default. So Math gets its own accessor rather than the shared
     // one changing under thirty-odd call sites that depend on the zero.
-    const auto math_arg = [](std::span<value> a, std::size_t i) {
-        return i < a.size() ? context::to_number(a[i]) : std::nan("");
+    // The context is threaded through so an OBJECT argument coerces through
+    // ToPrimitive: `Math.abs([])` is 0 and `Math.max([1],[2])` is 2, where the
+    // static to_number answers NaN for anything on the heap.
+    const auto math_arg = [](context & c, std::span<value> a, std::size_t i) {
+        return i < a.size() ? c.to_number_value(a[i]) : std::nan("");
     };
     const auto unary = [&](std::string name, double (*fn)(double)) {
-        method(cx, math, name, [fn, math_arg](context &, std::span<value> a) {
-            return value::number(fn(math_arg(a, 0)));
+        method(cx, math, name, [fn, math_arg](context & c, std::span<value> a) {
+            return value::number(fn(math_arg(c, a, 0)));
         });
     };
     math->set("SQRT2", value::number(std::numbers::sqrt2));
@@ -703,8 +706,8 @@ void install_math(context & cx, std::uint64_t seed) {
     // Splitting on floor(x) instead adds nothing to x, so none of the three can
     // happen: an integral value is already its own floor, and the zero cases are
     // handled before any arithmetic.
-    method(cx, math, "round", [math_arg](context &, std::span<value> a) {
-        const double x = math_arg(a, 0);
+    method(cx, math, "round", [math_arg](context & c, std::span<value> a) {
+        const double x = math_arg(c, a, 0);
         // NaN, the infinities and every integral value (including both zeros)
         // come straight back - step 2.
         if (!std::isfinite(x) || x == std::floor(x)) { return value::number(x); }
@@ -717,11 +720,11 @@ void install_math(context & cx, std::uint64_t seed) {
     // Number::exponentiate says NaN for exactly those. Three lines of special
     // case, and without them `Math.pow(1, NaN)` was 1 - a value a page will
     // happily do arithmetic on rather than checking with isNaN.
-    method(cx, math, "pow", [math_arg](context &, std::span<value> a) {
-        return value::number(context::exponentiate(math_arg(a, 0), math_arg(a, 1)));
+    method(cx, math, "pow", [math_arg](context & c, std::span<value> a) {
+        return value::number(context::exponentiate(math_arg(c, a, 0), math_arg(c, a, 1)));
     });
-    method(cx, math, "atan2", [math_arg](context &, std::span<value> a) {
-        return value::number(std::atan2(math_arg(a, 0), math_arg(a, 1)));
+    method(cx, math, "atan2", [math_arg](context & c, std::span<value> a) {
+        return value::number(std::atan2(math_arg(c, a, 0), math_arg(c, a, 1)));
     });
     // SCALED, AND INFINITY BEATS NaN. `sqrt(sum of squares)` is the obvious
     // shape and is wrong at both ends of the range:
@@ -743,11 +746,11 @@ void install_math(context & cx, std::uint64_t seed) {
     // The scale factor is the largest magnitude rather than a power of two, and
     // that is deliberate: it keeps `hypot(3, 4)` exactly 5 and leaves the
     // already-correct mid-range answers bit-identical.
-    method(cx, math, "hypot", [](context &, std::span<value> a) {
+    method(cx, math, "hypot", [](context & c, std::span<value> a) {
         bool saw_nan = false;
         double largest = 0;
         for (const value & v : a) {
-            const double x = context::to_number(v);
+            const double x = c.to_number_value(v);
             if (std::isinf(x)) { return value::number(std::numeric_limits<double>::infinity()); }
             if (std::isnan(x)) {
                 saw_nan = true;
@@ -760,7 +763,7 @@ void install_math(context & cx, std::uint64_t seed) {
         if (largest == 0) { return value::number(0.0); }
         double total = 0;
         for (const value & v : a) {
-            const double scaled = context::to_number(v) / largest;
+            const double scaled = c.to_number_value(v) / largest;
             total += scaled * scaled;
         }
         return value::number(largest * std::sqrt(total));
@@ -775,19 +778,19 @@ void install_math(context & cx, std::uint64_t seed) {
     // false, so which zero came back depended on ARGUMENT ORDER: `Math.min(0,
     // -0)` gave +0 while `Math.min(-0, 0)` was accidentally right. Steps 4.b
     // make the zero ordering explicit, and so does this.
-    method(cx, math, "min", [](context &, std::span<value> a) {
+    method(cx, math, "min", [](context & c, std::span<value> a) {
         double best = std::numeric_limits<double>::infinity();
         for (const value & v : a) {
-            const double x = context::to_number(v);
+            const double x = c.to_number_value(v);
             if (std::isnan(x)) { return value::number(std::nan("")); }
             if (x < best || (x == 0 && best == 0 && std::signbit(x))) { best = x; }
         }
         return value::number(best);
     });
-    method(cx, math, "max", [](context &, std::span<value> a) {
+    method(cx, math, "max", [](context & c, std::span<value> a) {
         double best = -std::numeric_limits<double>::infinity();
         for (const value & v : a) {
-            const double x = context::to_number(v);
+            const double x = c.to_number_value(v);
             if (std::isnan(x)) { return value::number(std::nan("")); }
             if (x > best || (x == 0 && best == 0 && std::signbit(best))) { best = x; }
         }
@@ -1993,8 +1996,12 @@ void install_number(context & cx) {
     // `Number` as a namespace as well as a coercion. It was only the latter,
     // so every `Number.isFinite(x)` guard in a page read undefined and called
     // it - the failure landing well away from the test that caused it.
-    auto * number_ctor = cx.allocate<native_object>("Number", [](context &, std::span<value> a) {
-        return value::number(a.empty() ? 0.0 : context::to_number(a[0]));
+    // to_number_value, not the static to_number: `Number([])` is 0 and
+    // `Number({valueOf(){return 7}})` is 7, because ToNumber of an object goes
+    // through ToPrimitive. The static form cannot re-enter the VM to call
+    // valueOf, so it answered NaN for every object.
+    auto * number_ctor = cx.allocate<native_object>("Number", [](context & c, std::span<value> a) {
+        return value::number(a.empty() ? 0.0 : c.to_number_value(a[0]));
     });
     // A CONVERSION, not a constructor of wrappers - see context::construct. `new
     // Number(x)` evaluates to the converted value here rather than to a wrapper
@@ -2682,7 +2689,18 @@ void install_globals(context & cx) {
     using detail::new_table;
     cx.define_native("parseInt", [](context & c, std::span<value> a) {
         const std::string s = str_at(c, a, 0);
-        const int base = a.size() > 1 ? static_cast<int>(num_at(a, 1)) : 10;
+        const int given = a.size() > 1 ? static_cast<int>(num_at(a, 1)) : 0;
+        int base = given == 0 ? 10 : given;
+        // A LEADING 0x IS HEXADECIMAL when no radix was demanded - 19.2.5 step
+        // 8. Defaulting to 10 made `parseInt("0xFF")` stop at the `x` and
+        // answer 0, which is how a colour parser reads black without erroring.
+        const std::string_view body = trim(s, js_whitespace);
+        const std::string_view digits =
+            !body.empty() && (body.front() == '+' || body.front() == '-') ? body.substr(1) : body;
+        if ((given == 0 || given == 16) && digits.size() > 1 && digits[0] == '0' &&
+            (digits[1] == 'x' || digits[1] == 'X')) {
+            base = 16;
+        }
         try {
             std::size_t used = 0;
             const long long out = std::stoll(s, &used, base == 0 ? 10 : base);
