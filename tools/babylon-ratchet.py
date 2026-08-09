@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How much of a Babylon.js scene this engine renders, and what is stopping it.
 
-tests/babylon_ratchet.cpp measures a LEVEL and a BLOCKER; tests/babylon-ratchet.txt
+tests/babylon_ratchet.cpp measures a LEVEL and a BLOCKER; tests/corpus/babylon/babylon-ratchet.txt
 records them; this drives the loop around both.
 
     tools/babylon-ratchet.py             build, measure, show the blocker
@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-RECORD = ROOT / "tests/babylon-ratchet.txt"
+RECORD = ROOT / "tests/corpus/babylon/babylon-ratchet.txt"
 TEST = ROOT / "build/src/tests/ctbrowser-test-babylon_ratchet"
 
 RUNGS = ["nothing", "a scene renders", "a texture samples",
@@ -74,7 +74,7 @@ def advance(level, blocker):
     print(f"babylon-ratchet: recorded level {level} ({RUNGS[level]})")
     if blocker:
         print(f"  blocked by: {blocker}")
-    print("\nNow write DOWN what changed, in tests/babylon-ratchet.txt itself.")
+    print("\nNow write DOWN what changed, in tests/corpus/babylon/babylon-ratchet.txt itself.")
     print("The number is the smaller half of the record; why it moved is the rest.")
 
 

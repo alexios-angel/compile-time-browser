@@ -2,7 +2,7 @@
 """How much of Babylon works, and what to write a probe for next.
 
 tests/babylon_api.cpp calls as much of Babylon's API as can be run headlessly and
-reports which calls pass; tests/babylon-api.txt records them; this drives the
+reports which calls pass; tests/corpus/babylon/babylon-api.txt records them; this drives the
 loop.
 
     tools/babylon-api.py                 build, run, show the failures
@@ -28,8 +28,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BUNDLE = ROOT / "vendor/babylon/babylon.js"
-PROBES = ROOT / "tests/babylon-api-probe.js"
-RECORD = ROOT / "tests/babylon-api.txt"
+PROBES = ROOT / "tests/corpus/babylon/babylon-api-probe.js"
+RECORD = ROOT / "tests/corpus/babylon/babylon-api.txt"
 TEST = ROOT / "build/src/tests/ctbrowser-test-babylon_api"
 
 # The top-level namespaces Babylon hangs off its export object, read from the
@@ -95,7 +95,7 @@ def do_advance():
         "# Only tools/babylon-api.py --advance writes this file. A test that edits its\n"
         "# own expectations cannot fail, so advancing is a deliberate act.\n"
         "#\n"
-        "# The probes themselves are tests/babylon-api-probe.js, one per line here as\n"
+        "# The probes themselves are tests/corpus/babylon/babylon-api-probe.js, one per line here as\n"
         "# `module/name`. A probe that is SKIPPED is not recorded - it is not a claim\n"
         "# about anything working.\n"
     )
@@ -130,7 +130,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--advance", action="store_true",
-                    help="record the passing probes in tests/babylon-api.txt")
+                    help="record the passing probes in tests/corpus/babylon/babylon-api.txt")
     ap.add_argument("--coverage", action="store_true",
                     help="list Babylon namespaces no probe mentions")
     ap.add_argument("--only", metavar="MODULE",

@@ -9,7 +9,7 @@
 // Getting there is a long program of work, so this test exists to make that
 // program legible. It pushes the bundle up a LADDER - lex, parse, compile, fit
 // the bytecode, run, produce p5 - and records the highest rung reached plus the
-// blocker that stopped it, in tests/p5-ratchet.txt. The rules are a pawl:
+// blocker that stopped it, in tests/corpus/p5/p5-ratchet.txt. The rules are a pawl:
 //
 //   measured < recorded   FAIL. Something regressed.
 //   measured = recorded   pass, unless the blocker STRING changed - then FAIL,
@@ -603,7 +603,7 @@ int main(int argc, char ** argv) {
     std::printf("\n     --- p5-full (IS_MINIFIED undefined) ---\n");
     const measurement full = measure(source, false);
 
-    const recorded r = read_ratchet("tests/p5-ratchet.txt");
+    const recorded r = read_ratchet("tests/corpus/p5/p5-ratchet.txt");
 
     std::printf("\n     LEVEL %d/%d (%s)\n", m.level, level_ceiling, level_name(m.level));
     if (!m.blocker.empty()) { std::printf("     BLOCKER %s\n", m.blocker.c_str()); }
@@ -613,7 +613,8 @@ int main(int argc, char ** argv) {
     std::printf("\n");
 
     if (!r.found) {
-        std::printf("FAIL tests/p5-ratchet.txt is missing - it is the recorded high-water mark\n");
+        std::printf("FAIL tests/corpus/p5/p5-ratchet.txt is missing - it is the recorded "
+                    "high-water mark\n");
         ++ctbrowser_test_failures;
         REPORT("p5_ratchet");
     }

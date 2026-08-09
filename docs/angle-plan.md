@@ -180,7 +180,7 @@ should be answered before anything is deleted.
 **About 5,700 lines go and 1,264 stay**, and the split is not arbitrary.
 `webgl_bindings.cpp` is the JavaScript surface — 72 `method(...)` entry points,
 the argument coercions, the wrapper objects, and the refusal lists that
-`tests/webgl2-api.txt` pins. None of that is about how GL is implemented; all of
+`tests/corpus/webgl2/webgl2-api.txt` pins. None of that is about how GL is implemented; all of
 it is about what a page can call. It would forward to real GLES instead of to
 `webgl_context`, and the ratchets that measure it would not know the difference
 except by getting further.
@@ -190,7 +190,7 @@ except by getting further.
 OpenGL ES **3.0 complete** on D3D11, desktop GL, GL ES, Vulkan and Metal; **3.1
 complete** on desktop GL, GL ES and Vulkan; 3.2 in progress. This engine's
 WebGL 2 support is a measured subset — `docs/webgl2-plan.md` records what was
-scoped out and `tests/webgl2-api.txt` records that transform feedback, 3D
+scoped out and `tests/corpus/webgl2/webgl2-api.txt` records that transform feedback, 3D
 textures, MRT, samplers, queries and sync are all still refused by name.
 
 **ANGLE would close all of those at once**, and it is the reason the proposal is
@@ -457,7 +457,7 @@ delivers every uniform through UNIFORM BUFFER OBJECTS, and
 record themselves and do nothing. So every matrix in the block reads ZERO and
 the geometry collapses to a point, exactly as it did when `uniformMatrix3fv` was
 missing and exactly as it did before UBOs existed in the software path at all
-(see tests/webgl2-ratchet.txt, which records the same collapse from the other
+(see tests/corpus/webgl2/webgl2-ratchet.txt, which records the same collapse from the other
 side).
 
 The ledger DID name it this time - the entries have been there since stage 2 -

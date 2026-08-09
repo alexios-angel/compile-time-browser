@@ -197,9 +197,9 @@ section below asks for.
 ## Stages
 
 ### 0 — the harness, before any engine work — DONE
-`tests/webgl2_ratchet.cpp` + `tests/webgl2-ratchet.txt` +
+`tests/webgl2_ratchet.cpp` + `tests/corpus/webgl2/webgl2-ratchet.txt` +
 `tools/webgl2-ratchet.py` for how FAR; `tests/webgl2_api.cpp` +
-`tests/webgl2-api-probe.js` + `tests/webgl2-api.txt` + `tools/webgl2-api.py`
+`tests/corpus/webgl2/webgl2-api-probe.js` + `tests/corpus/webgl2/webgl2-api.txt` + `tools/webgl2-api.py`
 for how WIDE. Its first reading is the scoping measurement, the way stage 0 was
 for the lexer and Phaser plans — both of which cancelled their own later stages,
 which is the outcome to hope for rather than fear.
@@ -224,7 +224,7 @@ enables — which the context already holds in one place.
 ### 4 — `getContext('webgl2')` returns a context — DONE
 `WEBGL2` into `glsl::options::defines`, which flips p5's preamble.
 `getParameter(VERSION)` and `SHADING_LANGUAGE_VERSION` must say ES 3.0 / 3.00 —
-p5 reads them. `tests/p5-api-probe.js` asserts `webgl2` is null today and that
+p5 reads them. `tests/corpus/p5/p5-api-probe.js` asserts `webgl2` is null today and that
 assertion is correct until this stage; it gets REPLACED, not deleted.
 
 ### 5 — refuse the rest, by name — DONE

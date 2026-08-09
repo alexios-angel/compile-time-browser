@@ -4,7 +4,7 @@
 # Only tools/webgl2-api.py --advance writes this file. A test that edits its
 # own expectations cannot fail, so advancing is a deliberate act.
 #
-# The probes themselves are tests/webgl2-api-probe.js, one per line here as
+# The probes themselves are tests/corpus/webgl2/webgl2-api-probe.js, one per line here as
 # `module/name`. A probe that is SKIPPED is not recorded - it is not a claim
 # about anything working.
 blocks/uniform buffer objects

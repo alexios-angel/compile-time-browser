@@ -310,7 +310,7 @@ private:
     return "<no answer>";
 }
 
-// The recorded floor: `key=value` lines, the same shape tests/p5-ratchet.txt
+// The recorded floor: `key=value` lines, the same shape tests/corpus/p5/p5-ratchet.txt
 // uses. A missing file is not an error - it is the state this test shipped in
 // for one day, and it reports the number rather than inventing a floor.
 [[nodiscard]] std::string recorded(const std::string & text, std::string_view key) {
@@ -356,9 +356,9 @@ int main() {
     //
     // Only tools/phaser-ratchet.py --advance writes the record, because a test
     // that edits its own expectations cannot fail.
-    const std::string record = read_file("tests/phaser-ratchet.txt");
+    const std::string record = read_file("tests/corpus/phaser/phaser-ratchet.txt");
     if (record.empty()) {
-        std::printf("     (no tests/phaser-ratchet.txt yet - run "
+        std::printf("     (no tests/corpus/phaser/phaser-ratchet.txt yet - run "
                     "tools/phaser-ratchet.py --advance to record this)\n");
         REPORT("phaser_ratchet");
     }

@@ -2,7 +2,7 @@
 """How much of p5.js works, and what to write a probe for next.
 
 tests/p5_api.cpp calls as much of p5's API as can be run headlessly and reports
-which calls pass; tests/p5-api.txt records them; this drives the loop.
+which calls pass; tests/corpus/p5/p5-api.txt records them; this drives the loop.
 
     tools/p5-api.py                 build, run, show the failures
     tools/p5-api.py --advance       record what is passing now
@@ -26,8 +26,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BUNDLE = ROOT / "vendor/p5/p5.js"
-PROBES = ROOT / "tests/p5-api-probe.js"
-RECORD = ROOT / "tests/p5-api.txt"
+PROBES = ROOT / "tests/corpus/p5/p5-api-probe.js"
+RECORD = ROOT / "tests/corpus/p5/p5-api.txt"
 TEST = ROOT / "build/src/tests/ctbrowser-test-p5_api"
 
 # `    fn.background = function (...)` - p5's public surface, as the bundle
@@ -118,7 +118,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--advance", action="store_true",
-                    help="record what is passing now in tests/p5-api.txt")
+                    help="record what is passing now in tests/corpus/p5/p5-api.txt")
     ap.add_argument("--coverage", action="store_true",
                     help="list p5 functions no probe mentions - the work queue")
     ap.add_argument("--only", metavar="MODULE", help="show only one module's results")

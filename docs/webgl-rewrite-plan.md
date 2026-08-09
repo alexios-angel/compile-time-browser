@@ -44,7 +44,7 @@ signal - "tests passed", a linked binary - because an absent failure and an
 absent run look identical, which turned an unreachable devbox into a reported
 clean build.
 
-**The ratchet records are targets, not scoreboards.** `tests/webgl2-ratchet.txt`
+**The ratchet records are targets, not scoreboards.** `tests/corpus/webgl2/webgl2-ratchet.txt`
 still says 10 and the test reports going backwards. Do not lower it to match.
 
 ---
@@ -113,7 +113,7 @@ only to feed a software rasteriser that is also going.
   SPECIFICATION of what a page can call and it is not the broken part. It gets
   rewired to the new context, and every call it makes that the context does not
   have becomes a compile error, which is the point.
-- **`tests/webgl2-ratchet.txt`, `tests/webgl2-api.txt`, `tests/babylon-*.txt`,
+- **`tests/corpus/webgl2/webgl2-ratchet.txt`, `tests/corpus/webgl2/webgl2-api.txt`, `tests/babylon-*.txt`,
   the goldens** - these are the TARGETS TO RE-EARN, and deleting them would
   destroy the only record of what used to work. The ratchets will read lower for
   a while and that is honest; what must not happen is quietly lowering the

@@ -26,7 +26,7 @@ which named `requestAnimationFrame`, delta timing, the loader, input state and
 Canvas 2D corners, and every one of those already worked.
 
 The harness is what the plan got right, and it is all in place:
-`tests/phaser_ratchet.cpp` (the ladder), `tests/phaser-ratchet.txt` (the record,
+`tests/phaser_ratchet.cpp` (the ladder), `tests/corpus/phaser/phaser-ratchet.txt` (the record,
 with a pawl that fails on a regression AND on a silently changed blocker),
 `tools/phaser-ratchet.py --advance` (the only writer), and
 `examples/pages/phaser-basic.html` + `tests/golden/phaserbasic.ppm` for rung 10
@@ -85,7 +85,7 @@ Phaser is a good second because it is unlike p5 in the ways that matter:
 Modelled directly on the p5 one, because that shape has earned it: two
 questions, two files, and a record only a tool may write.
 
-**How FAR it gets** — `tests/phaser_ratchet.cpp` + `tests/phaser-ratchet.txt`,
+**How FAR it gets** — `tests/phaser_ratchet.cpp` + `tests/corpus/phaser/phaser-ratchet.txt`,
 the same ladder p5 climbs (`tests/p5_ratchet.cpp`):
 
 ```

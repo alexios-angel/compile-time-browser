@@ -11,7 +11,7 @@
 # 6 specular, 7 alpha blending, 8 a post-process runs, 9 a shadow lands, 10 PBR,
 # 11 glTF import, 12 the GUI.
 #
-# IT STARTS WHERE tests/webgl2-ratchet.txt STOPS. That ladder asks whether
+# IT STARTS WHERE tests/corpus/webgl2/webgl2-ratchet.txt STOPS. That ladder asks whether
 # Babylon draws AT ALL and reads 10/10; this one asks what a scene can CONTAIN.
 #
 # EVERY RUNG ASKS THE CANVAS, and that is not a stylistic choice. `isReady()`,

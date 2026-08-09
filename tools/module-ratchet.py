@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How far a of the ES module system this engine has, and what is stopping it.
 
-tests/module_ratchet.cpp measures a LEVEL and a BLOCKER; tests/module-ratchet.txt
+tests/module_ratchet.cpp measures a LEVEL and a BLOCKER; tests/corpus/modules/module-ratchet.txt
 records them; this drives the loop around both.
 
     tools/module-ratchet.py             build, measure, show the blocker
@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-RECORD = ROOT / "tests/module-ratchet.txt"
+RECORD = ROOT / "tests/corpus/modules/module-ratchet.txt"
 TEST = ROOT / "build/src/tests/ctbrowser-test-module_ratchet"
 
 RUNGS = ["nothing", "import/export parse", "one module runs in its own scope",
@@ -90,7 +90,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--advance", action="store_true",
-                    help="record the measured level and blocker in tests/module-ratchet.txt")
+                    help="record the measured level and blocker in tests/corpus/modules/module-ratchet.txt")
     args = ap.parse_args()
 
     build()

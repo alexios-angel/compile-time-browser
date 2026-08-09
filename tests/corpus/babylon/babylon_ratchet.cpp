@@ -5,7 +5,7 @@
 // it starts where that one stops.
 //
 // SAME SHAPE AS THE OTHER FOUR LADDERS: a level and a blocker, measured here and
-// recorded in tests/babylon-ratchet.txt. The level may not go DOWN, and at the
+// recorded in tests/corpus/babylon/babylon-ratchet.txt. The level may not go DOWN, and at the
 // same level the blocker may not CHANGE, without this test failing. Only
 // tools/babylon-ratchet.py --advance writes the record, because a test that
 // edits its own expectations cannot fail.
@@ -574,7 +574,7 @@ int main() {
     }
 
     const measurement now = measure(bundle);
-    const std::string record = read_file("tests/babylon-ratchet.txt");
+    const std::string record = read_file("tests/corpus/babylon/babylon-ratchet.txt");
     const std::string recorded_level = recorded(record, "level");
     const std::string recorded_blocker = recorded(record, "blocker");
     const int was = recorded_level.empty() ? 0 : std::atoi(recorded_level.c_str());

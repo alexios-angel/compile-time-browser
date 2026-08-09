@@ -1,6 +1,6 @@
 # Babylon.js, from "renders a box" to functional
 
-**Where it stands: `tests/webgl2-ratchet.txt` reads 10/10 — Babylon builds an
+**Where it stands: `tests/corpus/webgl2/webgl2-ratchet.txt` reads 10/10 — Babylon builds an
 engine, a scene, a camera, a light and a mesh, and the box lands on the canvas
 in the right colour.** That is one rung. It is not a working renderer, and this
 plan is about the distance between the two.
@@ -92,7 +92,7 @@ ladder rather than the middle.
 
 ## The ladder
 
-`tests/babylon_ratchet.cpp` measures, `tests/babylon-ratchet.txt` records,
+`tests/babylon_ratchet.cpp` measures, `tests/corpus/babylon/babylon-ratchet.txt` records,
 `tools/babylon-ratchet.py` drives — the shape used four times now (p5, Phaser,
 WebGL 2, modules).
 
@@ -124,7 +124,7 @@ does not have to be rewritten when they arrive.
 
 ## The surface probe
 
-`tests/babylon_api.cpp` + `tests/babylon-api-probe.js` + `tests/babylon-api.txt`,
+`tests/babylon_api.cpp` + `tests/corpus/babylon/babylon-api-probe.js` + `tests/corpus/babylon/babylon-api.txt`,
 to `p5_api.cpp`'s shape: **how WIDE the working surface is, as opposed to how
 far one scene gets.** The ratchet stops at its first failure and tells you one
 thing; the probe runs everything and tells you the shape of the gap.

@@ -483,9 +483,9 @@ int main() {
     // THE PAWL, identical in rule to the other three: the level may not go
     // down, and at the same level the blocker may not change. Only
     // tools/module-ratchet.py --advance writes the record.
-    const std::string record = read_file("tests/module-ratchet.txt");
+    const std::string record = read_file("tests/corpus/modules/module-ratchet.txt");
     if (record.empty()) {
-        std::printf("     (no tests/module-ratchet.txt yet - run "
+        std::printf("     (no tests/corpus/modules/module-ratchet.txt yet - run "
                     "tools/module-ratchet.py --advance to record this)\n");
         REPORT("module_ratchet");
     }

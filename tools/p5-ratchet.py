@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How far p5.js gets through the engine, and what is stopping it.
 
-tests/p5_ratchet.cpp measures a LEVEL and a BLOCKER; tests/p5-ratchet.txt
+tests/p5_ratchet.cpp measures a LEVEL and a BLOCKER; tests/corpus/p5/p5-ratchet.txt
 records them; this drives the loop around both.
 
     tools/p5-ratchet.py                 build, measure, show the blocker in context
@@ -27,7 +27,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BUNDLE = ROOT / "vendor/p5/p5.js"
-RECORD = ROOT / "tests/p5-ratchet.txt"
+RECORD = ROOT / "tests/corpus/p5/p5-ratchet.txt"
 TEST = ROOT / "build/src/tests/ctbrowser-test-p5_ratchet"
 
 # `  function color$1(p5, fn, lifecycles){` - rollup's module wrappers, at the
@@ -249,7 +249,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--advance", action="store_true",
-                    help="record the measured level and blocker in tests/p5-ratchet.txt")
+                    help="record the measured level and blocker in tests/corpus/p5/p5-ratchet.txt")
     ap.add_argument("--bisect", metavar="MODULE",
                     help="measure one rollup module instead of the whole bundle")
     ap.add_argument("--survey", action="store_true",

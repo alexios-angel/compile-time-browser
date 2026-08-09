@@ -24,7 +24,7 @@
 // probe for each is here anyway, because "not implemented" is a fact worth
 // recording and worth being told about deliberately rather than discovering as
 // a wrong answer. They are expected to fail until the plan says otherwise; the
-// recorded surface in tests/webgl2-api.txt is what says which.
+// recorded surface in tests/corpus/webgl2/webgl2-api.txt is what says which.
 
 // Calls `body` and insists it REFUSED: raised INVALID_OPERATION and threw
 // nothing. Shared by every out-of-scope probe, because `typeof x === 'function'`

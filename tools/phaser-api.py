@@ -2,7 +2,7 @@
 """How much of Phaser 4 works, and what to write a probe for next.
 
 tests/phaser_api.cpp calls as much of Phaser's API as can be run headlessly and
-reports which calls pass; tests/phaser-api.txt records them; this drives the
+reports which calls pass; tests/corpus/phaser/phaser-api.txt records them; this drives the
 loop.
 
     tools/phaser-api.py                 build, run, show the failures
@@ -28,8 +28,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BUNDLE = ROOT / "vendor/phaser/phaser.js"
-PROBES = ROOT / "tests/phaser-api-probe.js"
-RECORD = ROOT / "tests/phaser-api.txt"
+PROBES = ROOT / "tests/corpus/phaser/phaser-api-probe.js"
+RECORD = ROOT / "tests/corpus/phaser/phaser-api.txt"
 TEST = ROOT / "build/src/tests/ctbrowser-test-phaser_api"
 
 # The top-level namespaces Phaser hangs off its export object, read from the
@@ -95,7 +95,7 @@ def do_advance():
         "# Only tools/phaser-api.py --advance writes this file. A test that edits its\n"
         "# own expectations cannot fail, so advancing is a deliberate act.\n"
         "#\n"
-        "# The probes themselves are tests/phaser-api-probe.js, one per line here as\n"
+        "# The probes themselves are tests/corpus/phaser/phaser-api-probe.js, one per line here as\n"
         "# `module/name`. A probe that is SKIPPED is not recorded - it is not a claim\n"
         "# about anything working.\n"
     )
@@ -141,7 +141,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--advance", action="store_true",
-                    help="record the passing probes in tests/phaser-api.txt")
+                    help="record the passing probes in tests/corpus/phaser/phaser-api.txt")
     ap.add_argument("--coverage", action="store_true",
                     help="list Phaser namespaces no probe mentions")
     ap.add_argument("--only", metavar="MODULE",

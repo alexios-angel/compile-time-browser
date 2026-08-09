@@ -36,7 +36,7 @@ half.
 
 ## Why Babylon is the right corpus for it
 
-`tests/webgl2-ratchet.txt` records where rung 10 stops. The vendored UMD build
+`tests/corpus/webgl2/webgl2-ratchet.txt` records where rung 10 stops. The vendored UMD build
 opens with:
 
 ```js
@@ -126,7 +126,7 @@ The hard half, and the part where a shortcut becomes a shim:
 ## Staging
 
 ### 0 — a ratchet, before any of it
-`tests/module_ratchet.cpp` + `tests/module-ratchet.txt`, the shape used three
+`tests/module_ratchet.cpp` + `tests/corpus/modules/module-ratchet.txt`, the shape used three
 times now: 1 `import`/`export` parse, 2 a two-module program runs, 3 live
 bindings observed, 4 a cycle resolves, 5 `<script type="module">` on a page,
 6 relative specifiers, 7 dynamic `import()`, 8 an import map, 9 Babylon's ES

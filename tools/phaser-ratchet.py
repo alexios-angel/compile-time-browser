@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How far Phaser 4 gets through the engine, and what is stopping it.
 
-tests/phaser_ratchet.cpp measures a LEVEL and a BLOCKER; tests/phaser-ratchet.txt
+tests/phaser_ratchet.cpp measures a LEVEL and a BLOCKER; tests/corpus/phaser/phaser-ratchet.txt
 records them; this drives the loop around both.
 
     tools/phaser-ratchet.py             build, measure, show the blocker in context
@@ -35,7 +35,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BUNDLE = ROOT / "vendor/phaser/phaser.js"
-RECORD = ROOT / "tests/phaser-ratchet.txt"
+RECORD = ROOT / "tests/corpus/phaser/phaser-ratchet.txt"
 TEST = ROOT / "build/src/tests/ctbrowser-test-phaser_ratchet"
 
 RUNGS = ["unread", "read", "lexed", "parsed", "compiled", "runs as a page",
@@ -126,7 +126,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--advance", action="store_true",
-                    help="record the measured level and blocker in tests/phaser-ratchet.txt")
+                    help="record the measured level and blocker in tests/corpus/phaser/phaser-ratchet.txt")
     args = ap.parse_args()
 
     if not BUNDLE.exists():

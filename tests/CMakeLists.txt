@@ -49,8 +49,14 @@ if(NOT CTBROWSER_CPPTRACE OR NOT CTBROWSER_CPPTRACE_INCLUDE)
                  "brew install cpptrace, or tools/build-cpptrace-mingw.sh for the cross build.")
 endif()
 
-function(ctbrowser_test name)
-  add_executable(ctbrowser-test-${name} ${name}.cpp)
+# `ctbrowser_test(<bucket>/<name>)`. The argument is a PATH and everything
+# derived from it is the BASENAME - the target, and more importantly the ctest
+# name. `ctest -R vm_basics` has to keep working: it is in docs/build.md's
+# command blocks and in what the ratchet tools pass through. So the suite gained
+# directories on 2026-08-09 and the test names did not change at all.
+function(ctbrowser_test path)
+  get_filename_component(name "${path}" NAME_WE)
+  add_executable(ctbrowser-test-${name} ${path}.cpp)
   if(CTBROWSER_CPPTRACE AND CTBROWSER_CPPTRACE_INCLUDE)
     target_link_libraries(ctbrowser-test-${name} PRIVATE "${CTBROWSER_CPPTRACE}")
     target_include_directories(ctbrowser-test-${name} SYSTEM PRIVATE
@@ -98,73 +104,98 @@ function(ctbrowser_test name)
   if(CTBROWSER_TEST_BACKTRACE_LIBRARY)
     target_link_libraries(ctbrowser-test-${name} PRIVATE ${CTBROWSER_TEST_BACKTRACE_LIBRARY})
   endif()
-  target_include_directories(ctbrowser-test-${name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  # support/, not this directory. That one word is why bucketing the suite
+  # changed NO #include line in any of the 48 sources that say "check.hpp".
+  target_include_directories(ctbrowser-test-${name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/support")
   add_dependencies(ctbrowser-tests ctbrowser-test-${name})
   # The source root, so goldens and other repo-relative paths resolve.
   add_test(NAME ${name} COMMAND ctbrowser-test-${name}
            WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 endfunction()
 
-ctbrowser_test(api_surface)
-ctbrowser_test(core_basics)
-ctbrowser_test(stress_slab)
-ctbrowser_test(dom_basics)
-ctbrowser_test(html_parse)
-ctbrowser_test(stress_dom)
-ctbrowser_test(vm_basics)
-ctbrowser_test(number_format)
-ctbrowser_test(math_basics)
-ctbrowser_test(string_basics)
-ctbrowser_test(type_basics)
-ctbrowser_test(obfuscated)
-ctbrowser_test(undefined_basics)
-ctbrowser_test(null_basics)
-ctbrowser_test(boolean_basics)
-ctbrowser_test(number_basics)
-ctbrowser_test(symbol_basics)
-ctbrowser_test(bigint_basics)
-ctbrowser_test(page_scripts)
-ctbrowser_test(p5_ratchet)
-ctbrowser_test(phaser_ratchet)
-ctbrowser_test(phaser_api)
-ctbrowser_test(phaser_invaders)
-ctbrowser_test(gl_basics)
-ctbrowser_test(webgl2_ratchet)
-ctbrowser_test(babylon_ratchet)
-ctbrowser_test(babylon_api)
-ctbrowser_test(babylon_lighting)
-ctbrowser_test(babylon_interaction)
-ctbrowser_test(module_ratchet)
-ctbrowser_test(webgl2_api)
-ctbrowser_test(p5_api)
-ctbrowser_test(net_basics)
-ctbrowser_test(data_url)
-ctbrowser_test(url_basics)
-ctbrowser_test(image_basics)
-ctbrowser_test(style_basics)
-ctbrowser_test(layout_basics)
-ctbrowser_test(paint_basics)
-ctbrowser_test(raster_basics)
-ctbrowser_test(fonts_basics)
-ctbrowser_test(svg_basics)
-ctbrowser_test(pipeline_basics)
-ctbrowser_test(shell_basics)
-ctbrowser_test(bindings_basics)
-ctbrowser_test(widgets_basics)
-ctbrowser_test(chrome_basics)
+# The API-surface lint. Not a behaviour test - it sweeps include/, src/
+# and the application sources and fails on an engine include or an SDL symbol
+# that is not on its allow-list.
+ctbrowser_test(lint/api_surface)
 
+# The subsystems, one file each.
+ctbrowser_test(unit/core_basics)
+ctbrowser_test(unit/dom_basics)
+ctbrowser_test(unit/html_parse)
+ctbrowser_test(unit/page_scripts)
+ctbrowser_test(unit/gl_basics)
+ctbrowser_test(unit/net_basics)
+ctbrowser_test(unit/data_url)
+ctbrowser_test(unit/url_basics)
+ctbrowser_test(unit/image_basics)
+ctbrowser_test(unit/style_basics)
+ctbrowser_test(unit/layout_basics)
+ctbrowser_test(unit/paint_basics)
+ctbrowser_test(unit/raster_basics)
+ctbrowser_test(unit/fonts_basics)
+ctbrowser_test(unit/svg_basics)
+ctbrowser_test(unit/pipeline_basics)
+ctbrowser_test(unit/shell_basics)
+ctbrowser_test(unit/bindings_basics)
+ctbrowser_test(unit/widgets_basics)
+ctbrowser_test(unit/chrome_basics)
+# unit/gpu_basics is registered below, inside if(SDL3_FOUND) - it needs SDL3 to
+# BUILD, though not to pass.
+
+# The language, against V8. The nine per-type suites were carved out of
+# vm_basics and share js_expect.hpp; number_format and obfuscated ask the
+# same question of real minifier output.
+ctbrowser_test(js/vm_basics)
+ctbrowser_test(js/number_format)
+ctbrowser_test(js/math_basics)
+ctbrowser_test(js/string_basics)
+ctbrowser_test(js/type_basics)
+ctbrowser_test(js/obfuscated)
+ctbrowser_test(js/undefined_basics)
+ctbrowser_test(js/null_basics)
+ctbrowser_test(js/boolean_basics)
+ctbrowser_test(js/number_basics)
+ctbrowser_test(js/symbol_basics)
+ctbrowser_test(js/bigint_basics)
+
+# p5.js - how FAR the bundle gets, and how WIDE the surface is.
+ctbrowser_test(corpus/p5/p5_ratchet)
+ctbrowser_test(corpus/p5/p5_api)
+
+# Phaser 4. invaders asks a third question: is the GAME playable?
+ctbrowser_test(corpus/phaser/phaser_ratchet)
+ctbrowser_test(corpus/phaser/phaser_api)
+ctbrowser_test(corpus/phaser/phaser_invaders)
+
+# Babylon.js, the only corpus that exercises WebGL 2 properly.
+ctbrowser_test(corpus/babylon/babylon_ratchet)
+ctbrowser_test(corpus/babylon/babylon_api)
+ctbrowser_test(corpus/babylon/babylon_lighting)
+ctbrowser_test(corpus/babylon/babylon_interaction)
+
+# WebGL 2 itself, measured through the bundles above.
+ctbrowser_test(corpus/webgl2/webgl2_ratchet)
+ctbrowser_test(corpus/webgl2/webgl2_api)
+
+# ES modules - the same ratchet shape over the engine's own corpus.
+ctbrowser_test(corpus/modules/module_ratchet)
+
+# The lock-free read paths under contention. stress_slab is the one that
+# must never be skipped: it is the evidence the path is sound.
+ctbrowser_test(stress/stress_slab)
+ctbrowser_test(stress/stress_dom)
 # The GPU test needs SDL3 to BUILD; it does not need a GPU to PASS. Where there
 # is no device it skips the hardware half and still checks the fallback, which
 # is the path such a machine actually takes.
 if(SDL3_FOUND)
-  ctbrowser_test(gpu_basics)
+  ctbrowser_test(unit/gpu_basics)
   target_link_libraries(ctbrowser-test-gpu_basics PRIVATE ctbrowser::gpu SDL3::SDL3)
   # `offscreen` rather than `dummy`: dummy has no Vulkan surface support, so a
   # device cannot be created under it even where the driver is fine.
   # The Vulkan driver is not TSan-instrumented, so its internal locking is
-  # reported as races. Suppressed by library only - see tests/tsan.supp.
+  # reported as races. Suppressed by library only - see tests/support/tsan.supp.
   set_tests_properties(gpu_basics PROPERTIES ENVIRONMENT
-    "SDL_VIDEODRIVER=offscreen;TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tsan.supp")
+    "SDL_VIDEODRIVER=offscreen;TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/support/tsan.supp")
 endif()
 
 # bindings_basics drives run_app, which initialises SDL - and SDL reaches
@@ -173,7 +204,7 @@ endif()
 # ...and its offscreen video driver initialises EGL without releasing it, which
 # LeakSanitizer reports. Both suppressed by LIBRARY - see the files.
 set_tests_properties(bindings_basics PROPERTIES ENVIRONMENT
-  "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tsan.supp;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan.supp")
+  "SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/support/tsan.supp;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/support/lsan.supp")
 
 # The stress test is the one that must never be skipped: it is the evidence
 # that the lock-free read path is actually sound. Give it room under TSan.
@@ -187,8 +218,9 @@ set_tests_properties(stress_slab PROPERTIES TIMEOUT 300)
 #
 # Benchmarks are NOT ctest gates - the numbers move with the machine, and a
 # perf regression should be read, not silently failed. Build and run by hand.
-function(ctbrowser_bench name)
-  add_executable(ctbrowser-test-${name} EXCLUDE_FROM_ALL ${name}.cpp ${ARGN})
+function(ctbrowser_bench path)
+  get_filename_component(name "${path}" NAME_WE)
+  add_executable(ctbrowser-test-${name} EXCLUDE_FROM_ALL ${path}.cpp ${ARGN})
   target_link_libraries(ctbrowser-test-${name}
     PRIVATE ctbrowser::core ctbrowser::dom ctbrowser::style ctbrowser::layout ctbrowser::paint ctbrowser::raster ctbrowser::shell ctbrowser::ctbrowser)
   ctbrowser_target(ctbrowser-test-${name})
@@ -206,13 +238,13 @@ function(ctbrowser_bench name)
     "${PROJECT_SOURCE_DIR}/external/compile-time-css/include")
 endfunction()
 
-ctbrowser_bench(bench_script)
-ctbrowser_bench(bench_reads)
-ctbrowser_bench(bench_style)
-ctbrowser_bench(bench_interaction)
-ctbrowser_bench(bench_layout)
-ctbrowser_bench(bench_raster)
+ctbrowser_bench(bench/bench_script)
+ctbrowser_bench(bench/bench_reads)
+ctbrowser_bench(bench/bench_style)
+ctbrowser_bench(bench/bench_interaction)
+ctbrowser_bench(bench/bench_layout)
+ctbrowser_bench(bench/bench_raster)
 if(SDL3_FOUND)
-  ctbrowser_bench(bench_gpu)
+  ctbrowser_bench(bench/bench_gpu)
   target_link_libraries(ctbrowser-test-bench_gpu PRIVATE ctbrowser::gpu SDL3::SDL3)
 endif()

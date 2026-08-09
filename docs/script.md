@@ -73,7 +73,7 @@ one does; `tests/vm_basics` has a test per language feature.
 wrote for this engine. It lexes, parses (282,028 nodes), compiles (4,754 functions), executes
 its whole top-level IIFE, builds a sketch, runs `setup()`, drives `draw()` from
 `requestAnimationFrame`, and paints. `tests/p5_ratchet.cpp` measures how far it
-gets on a ladder of 12 rungs and `tests/p5-ratchet.txt` records the high-water
+gets on a ladder of 12 rungs and `tests/corpus/p5/p5-ratchet.txt` records the high-water
 mark; the level may not go down. TWO numbers are recorded, each with its own
 pawl: `level` is p5-min, where the page defines `IS_MINIFIED` as p5's own
 minified build does, and `full-level` is the same ladder with the flag left

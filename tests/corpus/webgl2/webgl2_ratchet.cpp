@@ -559,9 +559,9 @@ int main() {
     // THE PAWL, identical in rule to the other two: the level may not go down,
     // and at the same level the blocker may not change. Only
     // tools/webgl2-ratchet.py --advance writes the record.
-    const std::string record = read_file("tests/webgl2-ratchet.txt");
+    const std::string record = read_file("tests/corpus/webgl2/webgl2-ratchet.txt");
     if (record.empty()) {
-        std::printf("     (no tests/webgl2-ratchet.txt yet - run "
+        std::printf("     (no tests/corpus/webgl2/webgl2-ratchet.txt yet - run "
                     "tools/webgl2-ratchet.py --advance to record this)\n");
         REPORT("webgl2_ratchet");
     }

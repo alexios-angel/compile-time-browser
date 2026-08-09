@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How far a WebGL 2 page gets through the engine, and what is stopping it.
 
-tests/webgl2_ratchet.cpp measures a LEVEL and a BLOCKER; tests/webgl2-ratchet.txt
+tests/webgl2_ratchet.cpp measures a LEVEL and a BLOCKER; tests/corpus/webgl2/webgl2-ratchet.txt
 records them; this drives the loop around both.
 
     tools/webgl2-ratchet.py             build, measure, show the blocker
@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-RECORD = ROOT / "tests/webgl2-ratchet.txt"
+RECORD = ROOT / "tests/corpus/webgl2/webgl2-ratchet.txt"
 TEST = ROOT / "build/src/tests/ctbrowser-test-webgl2_ratchet"
 
 RUNGS = ["nothing", "makes a webgl2 context", "has the WebGL 2 constants",
@@ -90,7 +90,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--advance", action="store_true",
-                    help="record the measured level and blocker in tests/webgl2-ratchet.txt")
+                    help="record the measured level and blocker in tests/corpus/webgl2/webgl2-ratchet.txt")
     args = ap.parse_args()
 
     build()

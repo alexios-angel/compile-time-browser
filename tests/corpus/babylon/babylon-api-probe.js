@@ -2,7 +2,7 @@
 //
 // tests/babylon_ratchet.cpp climbs a ladder and stops at the first failure,
 // which tells you ONE thing. This runs everything and tells you the shape of the
-// gap. Both are needed, and the reason is recorded in tests/phaser-api.txt: the
+// gap. Both are needed, and the reason is recorded in tests/corpus/phaser/phaser-api.txt: the
 // Phaser ratchet read 10/10 while `(5).hasOwnProperty` was undefined, because
 // nothing on the ladder happened to ask a number for a property.
 //
@@ -14,7 +14,7 @@
 // PROBES EXPECTED TO FAIL ARE INCLUDED ON PURPOSE, the way
 // webgl2-api-probe.js does it. "Not implemented" is a fact worth recording and
 // worth being told about deliberately rather than discovering as a wrong answer
-// three months later. tests/babylon-api.txt is what says which are which.
+// three months later. tests/corpus/babylon/babylon-api.txt is what says which are which.
 
 globalThis.__probes = [
   // --- the objects a scene is made of -------------------------------------

@@ -1,7 +1,18 @@
 # Scratch output from running a test by hand; the binaries themselves are in
-# build*/. Anchored to THIS directory so it cannot reach golden/, which is test
-# data rather than output - a bare `*.ppm` matches golden/ too, and then every
-# new golden is silently unaddable.
-/*.ppm
-/*.log
-/*.csv
+# build*/.
+#
+# UNANCHORED, since the suite gained subdirectories on 2026-08-09. These were
+# `/*.ppm` so they could not reach golden/, which is test DATA rather than
+# output - but an anchored pattern also cannot reach unit/, corpus/ or js/,
+# which is where a stray screenshot now lands. So: match at every depth, and
+# then put golden/ back explicitly.
+*.ppm
+*.log
+*.csv
+
+# `!/golden/**`, NOT `!/golden/`. A pattern ending in a slash matches the
+# DIRECTORY, and golden/ was never ignored - its FILES were, by `*.ppm` above.
+# Re-including the directory would change nothing about them, and every new
+# golden would still be silently unaddable, which is the exact failure the old
+# anchoring existed to prevent.
+!/golden/**
