@@ -58,7 +58,7 @@ struct calc_result {
 // between an honest gap and a wrong number. An empty unit is a plain number and
 // answers with itself, because that is what a calc term needs.
 [[nodiscard]] std::optional<float> unit_to_px(float value, std::string_view unit,
-                                             const length_context & ctx);
+                                              const length_context & ctx);
 
 // Evaluate one expression - the inside of a calc(), or a whole `calc(...)`.
 // `nullopt` when it is not valid arithmetic: mismatched types (`1px + 2`),
@@ -83,14 +83,14 @@ struct calc_result {
 // anything else without a single answer - which is what lets a caller tell "this
 // is 24px" from "this is not a length at all" without a second parse.
 [[nodiscard]] std::optional<float> length_text_to_px(std::string_view text,
-                                                    const length_context & ctx);
+                                                     const length_context & ctx);
 
 // Like length_text_to_px, but a BARE NUMBER IS NOT A LENGTH. That distinction is
 // the difference between folding `padding: 1rem` to `16px` and destroying
 // `line-height: 1.5` by calling it `1.5px`, so the two callers get two functions
 // rather than a flag nobody remembers to pass.
 [[nodiscard]] std::optional<float> dimension_text_to_px(std::string_view text,
-                                                       const length_context & ctx);
+                                                        const length_context & ctx);
 
 // A folded result as CSS text: `12px`, `50%`, or `calc(50% + 12px)`.
 [[nodiscard]] std::string serialize_calc(const calc_result & value);

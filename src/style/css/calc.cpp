@@ -2,8 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <optional>
 #include <cstddef>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -224,7 +224,9 @@ std::optional<float> unit_to_px(float value, std::string_view unit, const length
     // ch and ex need font metrics the style engine deliberately cannot see -
     // layout/values.hpp is explicit that measurement is injected - so both take
     // CSS's own fallback of half an em. Bootstrap uses neither.
-    if (ascii_iequals(unit, "ch") || ascii_iequals(unit, "ex")) { return value * ctx.font_size / 2; }
+    if (ascii_iequals(unit, "ch") || ascii_iequals(unit, "ex")) {
+        return value * ctx.font_size / 2;
+    }
     if (ascii_iequals(unit, "vw")) { return value * ctx.viewport_width / 100.0f; }
     if (ascii_iequals(unit, "vh")) { return value * ctx.viewport_height / 100.0f; }
     if (ascii_iequals(unit, "vmin")) {
@@ -325,8 +327,11 @@ std::string fold_calc(std::string_view value, const length_context & ctx) {
         while (scan < value.size() && depth > 0) {
             const char c = value[scan];
             if (quote != 0) {
-                if (c == '\\' && scan + 1 < value.size()) { ++scan; }
-                else if (c == quote) { quote = 0; }
+                if (c == '\\' && scan + 1 < value.size()) {
+                    ++scan;
+                } else if (c == quote) {
+                    quote = 0;
+                }
             } else if (c == '"' || c == '\'') {
                 quote = c;
             } else if (c == '(') {

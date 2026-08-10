@@ -138,8 +138,21 @@ if [ "${1:-}" = windows ]; then
   ssh "$host" "cd projects/compile-time-browser && cmake --preset windows -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE && cmake --build --preset windows && cmake --build --preset windows --target windows-dist"
   rsync -az "$host:projects/compile-time-browser/examples-windows/" "$repo_root/examples-windows/"
   echo "examples-windows/ refreshed from the devbox"
-elif [ $# -gt 0 ]; then
-  ssh "$host" "cd projects/compile-time-browser && cmake --preset default -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE && cmake --build --preset default --target $*"
 else
-  ssh "$host" "cd projects/compile-time-browser && cmake --preset default -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE && cmake --build --preset default && ctest --preset default"
+  # THE BREW PREFIX AS A CMAKE PREFIX PATH. The compiled libraries this box gets
+  # from brew are found through an -isystem include path, which is enough for a
+  # header and a -l - but SDL3 and SDL3_ttf ship CMake config packages, and
+  # find_package cannot see one without this. Without it `brew install sdl3_ttf`
+  # changed nothing and the box kept reporting "no SDL3_ttf - text renders with
+  # font8x8 only", which is a silent 2.5x error in every text measurement.
+  prefix=""
+  if ssh "$host" '[ -d /home/linuxbrew/.linuxbrew ]'; then
+    prefix="-DCMAKE_PREFIX_PATH=/home/linuxbrew/.linuxbrew"
+  fi
+  configure="cmake --preset default -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE $prefix"
+  if [ $# -gt 0 ]; then
+    ssh "$host" "cd projects/compile-time-browser && $configure && cmake --build --preset default --target $*"
+  else
+    ssh "$host" "cd projects/compile-time-browser && $configure && cmake --build --preset default && ctest --preset default"
+  fi
 fi

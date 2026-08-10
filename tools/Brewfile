@@ -49,3 +49,19 @@ brew "mimalloc"       # 3.4.3
 # PIN IT TO THE WINDOWS SYSROOT'S, as with mimalloc and plutosvg:
 # tools/mingw/build-simdutf-mingw.sh builds the same version there.
 brew "simdutf"        # 9.0.0
+
+# REAL FONT METRICS, which is a PARITY dependency rather than a rendering one.
+# Text measurement lives behind SDL3_ttf (include/ctbrowser/raster/text/ttf.hpp,
+# the one deliberate SDL exception), and without it every glyph advances a full em
+# in the 8x8 bitmap font - 2.5x Chrome's width. That does not just look different,
+# it WRAPS differently: Chrome fits `width 200, p-3, border` on one line in 166px
+# and the bitmap font takes three, so every height and every @y below it differs
+# for a reason that has nothing to do with layout. It was the single largest
+# remaining cause in tools/check/css-parity.py, and compare.py already points
+# Chrome at this repository's own faces so the two sides can agree.
+#
+# The goldens are unaffected: tools/check/check-render.cmake sets
+# CTBROWSER_FONTS=font8x8 explicitly, because two FreeType versions do not
+# rasterize identically and a byte comparison across Linux and Windows has to ask
+# for the bitmap font. This makes real text AVAILABLE, not mandatory.
+brew "sdl3_ttf"   # and sdl3 beneath it, as a dependency
