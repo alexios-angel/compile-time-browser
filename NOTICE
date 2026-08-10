@@ -101,6 +101,18 @@ WebGL 2: p5.js asks for it and barely uses it, Phaser never asks at all,
 and Babylon uses nearly the whole specification while degrading cleanly
 when it is absent. See docs/history/webgl2.md.
 
+vendor/bootstrap/bootstrap.css and vendor/bootstrap/bootstrap.bundle.js
+are Bootstrap 5.3.8 (https://getbootstrap.com,
+https://github.com/twbs/bootstrap), Copyright (c) 2011-2025 The
+Bootstrap Authors, redistributed UNMODIFIED under the MIT License; the
+licence text is alongside them at vendor/bootstrap/LICENSE. The
+stylesheet is kept unminified deliberately, so a parity finding can name
+a line number a person can go and read. It is test DATA on the same
+terms as the three above - nothing links, includes or embeds it - and it
+is the FOURTH corpus and the first one that is CSS: the other three
+exercise the script engine through a canvas and say almost nothing about
+the cascade and nothing at all about layout. See docs/plans/bootstrap.md.
+
 Simple DirectMedia Layer (SDL3, https://libsdl.org) and its optional
 satellite libraries SDL3_image, SDL3_mixer and SDL3_ttf are used as
 external dependencies and are NOT bundled; all are distributed under
