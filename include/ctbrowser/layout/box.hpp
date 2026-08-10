@@ -67,6 +67,14 @@ struct box_node {
     length width{}, height{};
     side_lengths margin{}, padding{};
     float font_size = 16;
+    // THE LINE BOX'S HEIGHT, absolute, resolved once here for the same reason
+    // font_size is: layout would otherwise re-parse a string per line.
+    //
+    // It was `font_size * 1.25` everywhere, hardcoded, so `line-height` did
+    // nothing at all - and it is Bootstrap's most globally consequential
+    // declaration, since `body { line-height: 1.5 }` moves the baseline of every
+    // text box on the page.
+    float line_height = 16 * 1.25f;
     // Resolved here for the same reason the lengths are: once per element,
     // rather than per glyph in the rasterizer, which has no cascade to ask.
     text_face face{};
@@ -156,7 +164,38 @@ public:
           font_family_(atoms.intern("font-family")), font_weight_(atoms.intern("font-weight")),
           font_style_(atoms.intern("font-style")),
           text_decoration_(atoms.intern("text-decoration")),
-          white_space_(atoms.intern("white-space")) {}
+          white_space_(atoms.intern("white-space")), line_height_(atoms.intern("line-height")) {}
+
+    // `line-height`, to an absolute px.
+    //
+    //   normal          the fallback factor. NOT the font's own metrics: those
+    //                   come from the measure function, which is injected and
+    //                   which a golden pins to font8x8 - so deriving `normal`
+    //                   from them would make every existing render move for a
+    //                   reason that has nothing to do with the sheet.
+    //   <number>        a factor on THIS element's font size, which is why a
+    //                   unitless value is the one that inherits usefully
+    //   <length>        itself
+    //   <percentage>    a factor, resolved against this element's font size
+    //
+    // NOT MODELLED: a PERCENTAGE computes to a length in CSS, so a child should
+    // inherit the resolved px rather than the percentage. Inheriting the text
+    // re-resolves it against the child's own size. The same is true of `em`, and
+    // both go away when the cascade folds units.
+    [[nodiscard]] static float resolve_line_height(std::string_view text, float font_size) {
+        constexpr float normal_factor = 1.25f;
+        const std::string_view value = trimmed(text);
+        if (value.empty() || value == "normal") { return font_size * normal_factor; }
+        const length parsed = parse_length(value);
+        // A bare number is not a length: parse_length calls a unitless value
+        // `unit::none` and treats it as px, which is right for `width: 5` and
+        // wrong here - `line-height: 1.5` is one and a half times the font size,
+        // not one and a half pixels.
+        if (parsed.u == unit::none) { return parsed.value * font_size; }
+        if (parsed.u == unit::percent) { return parsed.value / 100.0f * font_size; }
+        if (parsed.is_auto()) { return font_size * normal_factor; }
+        return parsed.resolve(font_size, font_size);
+    }
 
     [[nodiscard]] box_node build(const read_txn & txn, node_id root);
 
@@ -191,6 +230,7 @@ private:
                     space.text = " ";
                     space.collapsible_space = true;
                     space.font_size = inherited_font;
+                    space.line_height = into.line_height;
                     space.face = inherited_face;
                     space.underline = inherited_underline;
                     space.line_through = inherited_line_through;
@@ -212,6 +252,7 @@ private:
                 t.text = preserve_whitespace ? std::string{text} : collapse_whitespace(text);
                 t.preformatted = preserve_whitespace;
                 t.font_size = inherited_font;
+                t.line_height = into.line_height;
                 // A text box has no style of its own; it is drawn in whatever
                 // its parent element resolved to.
                 t.face = inherited_face;
@@ -288,6 +329,7 @@ private:
             const length fs = parse_length(prop(style, font_size_));
             b.font_size =
                 fs.is_auto() ? inherited_font : fs.resolve(inherited_font, inherited_font);
+            b.line_height = resolve_line_height(prop(style, line_height_), b.font_size);
             b.face = face_of(style, inherited_face);
             b.underline = inherited_underline;
             b.line_through = inherited_line_through;
@@ -525,6 +567,7 @@ private:
     atom display_, width_, height_, margin_, padding_, font_size_;
     side_atoms margin_sides_, padding_sides_;
     atom font_family_, font_weight_, font_style_, text_decoration_, white_space_;
+    atom line_height_;
 };
 
 } // namespace ctbrowser::layout

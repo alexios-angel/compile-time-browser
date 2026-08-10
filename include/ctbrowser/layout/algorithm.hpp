@@ -120,6 +120,10 @@ struct precomputed {
 // ordinary text; the interesting cases it does not handle (hyphenation,
 // bidi, shaping across an inline boundary) all belong to a text shaper.
 struct inline_flow {
+    // The factor `line-height: normal` falls back to. box_builder owns the
+    // resolution now (see resolve_line_height); this is only the default, and it
+    // stays a constant rather than becoming the font's own ascent+descent because
+    // the measure function is injected and the goldens pin it to font8x8.
     static constexpr float line_height_factor = 1.25f;
 
     [[nodiscard]] intrinsic_sizes measure(const box_node & b, const constraints & c,
@@ -148,7 +152,10 @@ struct inline_flow {
         fragment out;
         out.box = &b;
         out.source = b.source;
-        const float line_height = b.font_size * line_height_factor;
+        // THE BOX'S OWN line height, resolved by box_builder. This was
+        // `font_size * 1.25` for every box on every page, which is why
+        // `line-height` did nothing.
+        const float line_height = b.line_height;
 
         float pen_x = 0;
         float pen_y = 0;

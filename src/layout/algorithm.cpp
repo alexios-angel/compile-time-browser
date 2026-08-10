@@ -30,8 +30,7 @@ fragment layout_box(const box_node & b, const constraints & c, const measure_tex
         f.box = &b;
         f.source = b.source;
         f.text = b.text;
-        f.bounds = rect{0, 0, measure(b.text, b.font_size, b.face),
-                        b.font_size * inline_flow::line_height_factor};
+        f.bounds = rect{0, 0, measure(b.text, b.font_size, b.face), b.line_height};
         return f;
     }
     // Dispatch on what the box IS, not on what its children are. An inline box
