@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <functional>
 #include <memory>
 #include <string>
@@ -40,7 +41,10 @@ public:
     explicit recorder(atom_table & atoms)
         : background_(atoms.intern("background-color")), color_(atoms.intern("color")),
           border_color_(atoms.intern("border-color")), border_width_(atoms.intern("border-width")),
-          overflow_(atoms.intern("overflow")) {}
+          overflow_(atoms.intern("overflow")),
+          radius_{atoms.intern("border-top-left-radius"), atoms.intern("border-top-right-radius"),
+                  atoms.intern("border-bottom-right-radius"),
+                  atoms.intern("border-bottom-left-radius")} {}
 
     // The default text colour, when nothing in the cascade says otherwise.
     color default_text_color = color::rgba(0, 0, 0);
@@ -114,10 +118,19 @@ private:
             return;
         }
 
+        // THE BACKGROUND AND THE BORDER SHARE A SHAPE, so the radius is resolved
+        // once and both are drawn against it. A square box takes the same two
+        // calls it always did - `radii.empty()` is the fast path all the way down
+        // to the rasterizer - so nothing that has no radius moves.
+        const corner_radii radii = radii_of(style, box);
         if (const auto bg = parse_color(prop(style, background_))) {
-            into.fill(box, *bg, f.source);
+            if (radii.empty()) {
+                into.fill(box, *bg, f.source);
+            } else {
+                into.fill_rounded(box, *bg, radii, 0, f.source);
+            }
         }
-        emit_border(box, style, f.source, into);
+        emit_border(box, style, radii, f.source, into);
         emit_marker(f, box, text_color, into);
         // `<table border=1>`: a presentational attribute, not CSS, and one that
         // draws a frame around the table AND around every cell - which is what
@@ -189,18 +202,43 @@ private:
     // A rectangle's four edges, `t` thick.
     static void stroke(const rect & box, float t, color c, node_id source, display_list & into);
 
-    void emit_border(const rect & box, const computed_style_ptr & style, node_id source,
-                     display_list & into) const {
+    void emit_border(const rect & box, const computed_style_ptr & style, const corner_radii & radii,
+                     node_id source, display_list & into) const {
         const auto c = parse_color(prop(style, border_color_));
         if (!c) { return; }
         const std::string_view width_text = prop(style, border_width_);
         const layout::length w = layout::parse_length(width_text);
         const float t = w.is_auto() ? 0 : w.resolve(box.width, 16);
         if (t <= 0) { return; }
+        // A ROUNDED BORDER IS A RING, not four rectangles: the corners are where
+        // the four would have to meet, and they meet on a curve. One command
+        // rather than four also gets the transparent case right, which the
+        // obvious alternative does not - `.btn-outline-primary` is a 1px ring
+        // around NOTHING, and "fill the box in the border colour, then fill the
+        // inside in the background colour" would flood the button.
+        if (!radii.empty()) {
+            into.fill_rounded(box, *c, radii, t, source);
+            return;
+        }
         stroke(box, t, *c, source, into);
     }
 
+    // The four corner radii, resolved against the box. A percentage is against
+    // the box's own WIDTH here, where CSS resolves the horizontal radius against
+    // the width and the vertical against the height - the difference only shows
+    // on an elliptical corner, which is the same thing the shorthand's `/` form
+    // asks for and the same known difference.
+    [[nodiscard]] corner_radii radii_of(const computed_style_ptr & style, const rect & box) const {
+        const auto one = [&](atom name) {
+            const layout::length len = layout::parse_length(prop(style, name));
+            return len.is_auto() ? 0.0f : std::max(0.0f, len.resolve(box.width, 16));
+        };
+        return corner_radii{one(radius_[0]), one(radius_[1]), one(radius_[2]), one(radius_[3])};
+    }
+
     atom background_, color_, border_color_, border_width_, overflow_;
+    // Clockwise from the top left, which is the order border-radius names them.
+    std::array<atom, 4> radius_;
 };
 
 } // namespace ctbrowser::paint

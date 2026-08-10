@@ -89,6 +89,65 @@ void expect_value(fixture & f, node_id n, std::string_view property, std::string
 //
 // Before this, only the shorthand was read, so every per-side longhand in every
 // sheet did nothing - including the UA sheet's own `ul { padding-left: 40px }`.
+// `border-radius` and `gap`, which are shorthands over CORNERS and over AXES
+// rather than over the four sides - so neither can reuse the side expansion and
+// each gets the order wrong in its own way if it tries.
+void test_corner_and_axis_shorthands_expand() {
+    {
+        // FOUR VALUES GO CLOCKWISE FROM THE TOP LEFT, not top/right/bottom/left:
+        // these name corners. The two-value form is the two DIAGONALS, which has
+        // no analogue at all among the edge shorthands.
+        fixture f;
+        f.load("<div id=a></div>", "#a { border-radius: 1px 2px 3px 4px }");
+        const node_id a = f.find("div");
+        expect_value(f, a, "border-top-left-radius", "1px", "clockwise: top left");
+        expect_value(f, a, "border-top-right-radius", "2px", "clockwise: top right");
+        expect_value(f, a, "border-bottom-right-radius", "3px", "clockwise: bottom right");
+        expect_value(f, a, "border-bottom-left-radius", "4px", "clockwise: bottom left");
+    }
+    {
+        fixture f;
+        f.load("<div id=a></div>", "#a { border-radius: 5px 6px }");
+        const node_id a = f.find("div");
+        expect_value(f, a, "border-top-left-radius", "5px", "two values: one diagonal");
+        expect_value(f, a, "border-bottom-right-radius", "5px", "...both of its corners");
+        expect_value(f, a, "border-top-right-radius", "6px", "two values: the other diagonal");
+        expect_value(f, a, "border-bottom-left-radius", "6px", "...both of its corners");
+    }
+    {
+        // `.rounded-pill { border-radius: 50rem }`, which is what makes this
+        // matter: the value survives as a real length and the SCALING to the box
+        // happens at paint time, where the box's size is known.
+        fixture f;
+        f.load("<div id=a></div>", "#a { border-radius: 50rem }");
+        expect_value(f, f.find("div"), "border-top-left-radius", "800px",
+                     "a rem radius folds like any other length");
+    }
+    {
+        // The elliptical `a / b` form keeps the horizontal half and makes every
+        // corner circular. Bootstrap writes none; half an answer beats dropping
+        // the declaration, and it is a recorded known difference.
+        fixture f;
+        f.load("<div id=a></div>", "#a { border-radius: 10px / 20px }");
+        expect_value(f, f.find("div"), "border-top-left-radius", "10px",
+                     "the horizontal group is kept");
+    }
+    {
+        // `gap` is ROW then COLUMN - the block axis first, which is the opposite
+        // of how every other two-value shorthand here reads.
+        fixture f;
+        f.load("<div id=a></div>", "#a { gap: 1px 2px }");
+        expect_value(f, f.find("div"), "row-gap", "1px", "the FIRST value is the row gap");
+        expect_value(f, f.find("div"), "column-gap", "2px", "and the second the column gap");
+    }
+    {
+        fixture f;
+        f.load("<div id=a></div>", "#a { gap: 3px }");
+        expect_value(f, f.find("div"), "row-gap", "3px", "one value sets both");
+        expect_value(f, f.find("div"), "column-gap", "3px", "...");
+    }
+}
+
 void test_shorthands_expand() {
     {
         fixture f;
@@ -1646,6 +1705,7 @@ void test_flex_shorthand() {
 
 int main() {
     test_shorthands_expand();
+    test_corner_and_axis_shorthands_expand();
     test_simple_selectors();
     test_bucketing_uses_the_rightmost_compound();
     test_descendant_and_child_combinators();

@@ -73,6 +73,75 @@ void fill_ellipse(const rect & where, color c, const pixel_rect & clip, surface 
     }
 }
 
+namespace {
+
+// The signed distance from a point to a rounded rectangle, in PIXELS: negative
+// inside, zero on the edge. The standard rounded-box field, with the corner
+// radius chosen by which quadrant the point is in - which is what makes four
+// different radii cost nothing over one.
+[[nodiscard]] float round_rect_distance(float px, float py, const rect & box,
+                                        const paint::corner_radii & radii) noexcept {
+    const float half_w = box.width / 2;
+    const float half_h = box.height / 2;
+    const float cx = box.x + half_w;
+    const float cy = box.y + half_h;
+    const float r = px < cx ? (py < cy ? radii.top_left : radii.bottom_left)
+                            : (py < cy ? radii.top_right : radii.bottom_right);
+    // Distance from the box shrunk by r on every side; adding r back turns that
+    // rectangle's field into the rounded one's.
+    const float qx = std::fabs(px - cx) - (half_w - r);
+    const float qy = std::fabs(py - cy) - (half_h - r);
+    const float outside = std::sqrt(std::max(qx, 0.0f) * std::max(qx, 0.0f) +
+                                    std::max(qy, 0.0f) * std::max(qy, 0.0f));
+    return outside + std::min(std::max(qx, qy), 0.0f) - r;
+}
+
+// One pixel of falloff centred on the boundary, which is what `0.5 - d` is.
+[[nodiscard]] float coverage_of(float distance) noexcept {
+    return std::clamp(0.5f - distance, 0.0f, 1.0f);
+}
+
+} // namespace
+
+void fill_round_rect(const rect & where, const paint::corner_radii & radii, float ring, color c,
+                     const pixel_rect & clip, surface & into) {
+    // AN ORDINARY RECTANGLE TAKES THE ORDINARY PATH. Every fill on a page with no
+    // radius anywhere - which is every golden this repository already has - must
+    // stay byte-identical, and a distance field evaluated per pixel would not be.
+    if (radii.empty() && ring <= 0) {
+        fill_rect(where, c, clip, into);
+        return;
+    }
+    pixel_rect p = to_pixels(where, into.width(), into.height());
+    p.left = std::max(p.left, clip.left);
+    p.top = std::max(p.top, clip.top);
+    p.right = std::min(p.right, clip.right);
+    p.bottom = std::min(p.bottom, clip.bottom);
+    if (p.empty() || where.width <= 0 || where.height <= 0) { return; }
+
+    const bool hollow = ring > 0;
+    const rect inner{where.x + ring, where.y + ring, std::max(0.0f, where.width - 2 * ring),
+                     std::max(0.0f, where.height - 2 * ring)};
+    const paint::corner_radii inner_radii = radii.inset(ring);
+    for (int y = p.top; y < p.bottom; ++y) {
+        const std::span<std::uint32_t> row = into.row(y);
+        const float py = static_cast<float>(y) + 0.5f;
+        for (int x = p.left; x < p.right; ++x) {
+            const float px = static_cast<float>(x) + 0.5f;
+            float coverage = coverage_of(round_rect_distance(px, py, where, radii));
+            if (hollow && inner.width > 0 && inner.height > 0) {
+                coverage -= coverage_of(round_rect_distance(px, py, inner, inner_radii));
+            }
+            if (coverage <= 0) { continue; }
+            const color shade =
+                color::rgba(c.red(), c.green(), c.blue(),
+                            static_cast<std::uint8_t>(
+                                static_cast<float>(c.alpha()) * std::min(coverage, 1.0f) + 0.5f));
+            row[static_cast<std::size_t>(x)] = blend_over(row[static_cast<std::size_t>(x)], shade);
+        }
+    }
+}
+
 void fill_band(float x, float y, float width, float thickness, color c, const pixel_rect & clip,
                surface & into) {
     fill_rect(rect{x, y, width, thickness < 1 ? 1.0f : thickness}, c, clip, into);
@@ -221,7 +290,12 @@ void draw_commands(const std::vector<paint_command> & commands, const rect & are
                 clips.pop_back();
             }
             break;
-        case paint_op::fill_rect: fill_rect(local, c.fill, clip, into); break;
+        case paint_op::fill_rect:
+            // Through the rounded path always: it falls back to fill_rect for a
+            // square, un-ringed fill, which is every fill this engine recorded
+            // before border-radius existed - so no existing render moves.
+            fill_round_rect(local, c.radii, c.ring, c.fill, clip, into);
+            break;
         case paint_op::fill_ellipse: fill_ellipse(local, c.fill, clip, into); break;
         case paint_op::text_run: draw_text_run(local, c, clip, into, faces); break;
         case paint_op::image: draw_image(local, c, clip, into); break;

@@ -89,6 +89,23 @@ void fill_rect(const rect & where, color c, const pixel_rect & clip, surface & i
 // normalised ellipse space, one pixel wide at the boundary.
 void fill_ellipse(const rect & where, color c, const pixel_rect & clip, surface & into);
 
+// A rounded rectangle, or - with `ring` above zero - the band that thick along
+// its inside edge, which is what a rounded BORDER is.
+//
+// ANTIALIASED by the same means as the ellipse and for the same reason: a hard
+// edge on a 4px corner reads as a staircase, and Bootstrap puts one on every
+// button, badge, card and alert on the page. The coverage comes from a signed
+// distance to the shape, in pixels, so one implementation serves every radius
+// from a 2px input corner to a 20px pill.
+//
+// A RING IS A DIFFERENCE OF TWO COVERAGES rather than a stroked path: the outer
+// shape less the shape inset by `ring`. That antialiases both edges of the band
+// for free and needs no path machinery, and it is exact for the uniform borders
+// this engine models. Per-side widths and dashes are not this function's job -
+// see the note on emit_border.
+void fill_round_rect(const rect & where, const paint::corner_radii & radii, float ring, color c,
+                     const pixel_rect & clip, surface & into);
+
 // One horizontal band of `thickness` at `y`, for underline and line-through.
 void fill_band(float x, float y, float width, float thickness, color c, const pixel_rect & clip,
                surface & into);

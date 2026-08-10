@@ -299,6 +299,32 @@ public:
             if (parts.size() > 2) { basis = parts[2]; }
             return {{"flex-grow", parts[0]}, {"flex-shrink", shrink}, {"flex-basis", basis}};
         }
+        // `border-radius`, whose four values go round the box CLOCKWISE FROM THE
+        // TOP LEFT - not the top/right/bottom/left of the edge shorthands, because
+        // these name corners rather than sides. A two-value form is the two
+        // diagonals, which has no analogue at all in `margin`.
+        //
+        // The elliptical `a / b` form gives horizontal radii before the slash and
+        // vertical after. Only the first group is kept, which makes every corner
+        // circular; Bootstrap writes no elliptical radius, and half of one is a
+        // better answer than dropping the declaration. Recorded as a known
+        // difference in docs/plans/bootstrap.md.
+        if (property == "border-radius") {
+            std::string_view circular = value;
+            if (const std::size_t slash = circular.find('/'); slash != std::string_view::npos) {
+                circular = circular.substr(0, slash);
+            }
+            const std::vector<std::string_view> parts = value_parts(circular, 4);
+            if (parts.empty()) { return {}; }
+            const std::string_view tl = parts[0];
+            const std::string_view tr = parts.size() > 1 ? parts[1] : tl;
+            const std::string_view br = parts.size() > 2 ? parts[2] : tl;
+            const std::string_view bl = parts.size() > 3 ? parts[3] : tr;
+            return {{"border-top-left-radius", tl},
+                    {"border-top-right-radius", tr},
+                    {"border-bottom-right-radius", br},
+                    {"border-bottom-left-radius", bl}};
+        }
         // `gap`, which is ROW then COLUMN - the opposite order to everything else
         // here, and the opposite order to how it reads. It is the one shorthand
         // whose two values are not left-to-right: `gap: 1rem 2rem` is a 1rem gap

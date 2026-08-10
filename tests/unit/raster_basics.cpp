@@ -107,6 +107,68 @@ void test_fill_and_clip() {
     check(pixel_at(backend.target(), 20, 20) != 0xFFFF0000u, "outside the clip is not");
 }
 
+// `border-radius`, at the pixel. Bootstrap puts one on every button, badge, card
+// and alert, so "the corner is empty and the middle is full" is the single most
+// visible property of a real page after the geometry is right.
+void test_rounded_corners_are_cut_away() {
+    auto list = std::make_shared<display_list>();
+    list->fill_rounded(rect{0, 0, 40, 40}, color::rgba(255, 0, 0),
+                       paint::corner_radii{10, 10, 10, 10});
+
+    software_backend backend{64, 64, 64};
+    layer_tree tree;
+    tree.layers.push_back(layer{list, point{}, rect{}, true});
+    check(draw(backend, tree).has_value(), "a rounded fill draws without error");
+
+    check(pixel_at(backend.target(), 20, 20) == 0xFFFF0000u, "the middle is filled");
+    check(pixel_at(backend.target(), 20, 1) == 0xFFFF0000u, "so is the middle of an edge");
+    // (1,1) is well inside the 10px corner's arc, so it is outside the shape.
+    check(pixel_at(backend.target(), 1, 1) != 0xFFFF0000u, "the corner is cut away");
+    check(pixel_at(backend.target(), 38, 1) != 0xFFFF0000u, "all four of them");
+    check(pixel_at(backend.target(), 1, 38) != 0xFFFF0000u, "...");
+    check(pixel_at(backend.target(), 38, 38) != 0xFFFF0000u, "...");
+}
+
+void test_a_radius_is_scaled_to_fit_its_box() {
+    // `.rounded-pill` asks for 50rem - 800px - on a 20px-tall badge. CSS
+    // Backgrounds 3 §5.1 scales every radius by the smallest factor that makes
+    // the two on each side fit, which turns that into half the height and gives a
+    // pill. Clamping per corner instead would give a circle at each end of a
+    // rectangle, and ignoring it would draw a square.
+    auto list = std::make_shared<display_list>();
+    list->fill_rounded(rect{0, 0, 60, 20}, color::rgba(0, 0, 255),
+                       paint::corner_radii{800, 800, 800, 800});
+    const paint::paint_command & cmd = list->commands().front();
+    check(cmd.radii.top_left > 9.9f && cmd.radii.top_left < 10.1f,
+          "800px on a 20px box scales to half its height");
+    check(cmd.radii.bottom_right > 9.9f && cmd.radii.bottom_right < 10.1f,
+          "on every corner, by the same factor");
+
+    software_backend backend{64, 64, 64};
+    layer_tree tree;
+    tree.layers.push_back(layer{list, point{}, rect{}, true});
+    check(draw(backend, tree).has_value(), "the pill draws");
+    check(pixel_at(backend.target(), 30, 10) == 0xFF0000FFu, "its middle is filled");
+    check(pixel_at(backend.target(), 0, 0) != 0xFF0000FFu, "and its ends are round");
+}
+
+void test_a_ring_is_hollow() {
+    // A rounded BORDER. Four rectangles cannot make one - the corners are where
+    // they would have to meet, and they meet on a curve - and "fill the box in
+    // the border colour then fill the inside in the background colour" floods a
+    // transparent element, which is exactly what `.btn-outline-primary` is.
+    auto list = std::make_shared<display_list>();
+    list->fill_rounded(rect{0, 0, 40, 40}, color::rgba(0, 128, 0), paint::corner_radii{8, 8, 8, 8},
+                       4);
+
+    software_backend backend{64, 64, 64};
+    layer_tree tree;
+    tree.layers.push_back(layer{list, point{}, rect{}, true});
+    check(draw(backend, tree).has_value(), "a ring draws without error");
+    check(pixel_at(backend.target(), 20, 1) == 0xFF008000u, "the band itself is painted");
+    check(pixel_at(backend.target(), 20, 20) != 0xFF008000u, "and the middle is left alone");
+}
+
 void test_frame_bracketing_is_enforced() {
     software_backend backend{16, 16, 16};
     // Calling into a backend outside a frame is a programming error the
@@ -409,6 +471,9 @@ void test_golden_page() {
 int main() {
     test_blend_over();
     test_fill_and_clip();
+    test_rounded_corners_are_cut_away();
+    test_a_radius_is_scaled_to_fit_its_box();
+    test_a_ring_is_hollow();
     test_frame_bracketing_is_enforced();
 
     test_tiling_does_not_change_the_image();

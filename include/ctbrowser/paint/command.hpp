@@ -96,6 +96,28 @@ enum class text_decoration : std::uint8_t {
     line_through
 };
 
+// `border-radius`, per corner, already resolved to px and already SCALED so that
+// two radii on one side cannot exceed it (CSS Backgrounds 3 §5.1). The scaling is
+// not an edge case here: Bootstrap's `.rounded-pill` asks for 50rem - 800px - on
+// a 20px-tall badge, and the whole visual effect depends on that being cut down
+// to half the height rather than clamped per corner or ignored.
+struct corner_radii {
+    float top_left = 0, top_right = 0, bottom_right = 0, bottom_left = 0;
+
+    [[nodiscard]] bool empty() const noexcept {
+        return top_left <= 0 && top_right <= 0 && bottom_right <= 0 && bottom_left <= 0;
+    }
+    // Every radius reduced by `by`, floored at zero - the inner edge of a border
+    // that thick. CSS Backgrounds 3 §5.2: the inner curve's radius is the outer
+    // one less the border width, and a border thicker than its radius squares the
+    // corner off rather than curving it the other way.
+    [[nodiscard]] corner_radii inset(float by) const noexcept {
+        const auto less = [by](float r) { return r - by > 0 ? r - by : 0.0f; };
+        return corner_radii{less(top_left), less(top_right), less(bottom_right), less(bottom_left)};
+    }
+    [[nodiscard]] friend bool operator==(const corner_radii &, const corner_radii &) = default;
+};
+
 struct paint_command {
     paint_op op = paint_op::fill_rect;
     rect bounds;          // fill: the box. text: the run's box. clip: the region.
@@ -105,6 +127,24 @@ struct paint_command {
     text_decoration decoration = text_decoration::none; // text only
     std::string text;                                   // text only, UTF-8
     std::shared_ptr<const bitmap> pixels;               // image only
+    // FILL ONLY, and both default to "an ordinary rectangle" so every existing
+    // producer and every existing test is unaffected.
+    //
+    // Radii ride on fill_rect rather than arriving as a second op, the way
+    // `decoration` rides on text_run: a rounded fill IS a fill, every consumer
+    // that ignores the radii still draws the right rectangle in the right place,
+    // and the rasterizer takes a fast path when they are zero. A parallel
+    // `fill_round_rect` would make every switch two cases wide forever.
+    corner_radii radii;
+    // A RING that thick along the inside edge, hollow within - which is what a
+    // rounded border is, and what four edge rectangles cannot be. Zero means a
+    // solid fill.
+    //
+    // One op for both because a border and a background differ only in where the
+    // paint stops: `.btn-outline-primary` is a transparent background with a 1px
+    // ring, and drawing that as "fill the whole box in the border colour, then
+    // fill the inside in the background colour" would flood the button.
+    float ring = 0;
     node_id source; // provenance, for hit testing and for debugging goldens
 
     [[nodiscard]] friend bool operator==(const paint_command &, const paint_command &) = default;
@@ -118,6 +158,42 @@ public:
         cmd.op = paint_op::fill_rect;
         cmd.bounds = where;
         cmd.fill = c;
+        cmd.source = source;
+        commands_.push_back(std::move(cmd));
+        bounds_ = bounds_.united(where);
+    }
+
+    // The rounded form, and optionally a RING rather than a solid: a rounded
+    // background is `ring = 0`, a rounded border is `ring = the border width`.
+    //
+    // THE SCALING HAPPENS HERE, in the one place every producer goes through, so
+    // no caller can record radii the rasterizer would have to defend itself
+    // against. CSS Backgrounds 3 §5.1: if the two radii on any side add up to
+    // more than that side, every radius is multiplied by the smallest factor
+    // that makes them all fit. That is what turns `.rounded-pill`'s 800px into
+    // half the box's height, and doing it per corner instead would round a wide
+    // pill into a circle.
+    void fill_rounded(const rect & where, color c, corner_radii radii, float ring = 0,
+                      node_id source = {}) {
+        if (where.empty() || c.transparent()) { return; }
+        float scale = 1.0f;
+        const auto limit = [&scale](float side, float a, float b) {
+            if (a + b > 0 && a + b > side) { scale = std::min(scale, side / (a + b)); }
+        };
+        limit(where.width, radii.top_left, radii.top_right);
+        limit(where.width, radii.bottom_left, radii.bottom_right);
+        limit(where.height, radii.top_left, radii.bottom_left);
+        limit(where.height, radii.top_right, radii.bottom_right);
+        if (scale < 1.0f) {
+            radii = corner_radii{radii.top_left * scale, radii.top_right * scale,
+                                 radii.bottom_right * scale, radii.bottom_left * scale};
+        }
+        paint_command cmd;
+        cmd.op = paint_op::fill_rect;
+        cmd.bounds = where;
+        cmd.fill = c;
+        cmd.radii = radii;
+        cmd.ring = ring > 0 ? ring : 0.0f;
         cmd.source = source;
         commands_.push_back(std::move(cmd));
         bounds_ = bounds_.united(where);
