@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bootstrap parity: the flex grid</title>
+<link rel="stylesheet" href="../../vendor/bootstrap/bootstrap.css">
+<style>
+/* See bootstrap-box.html for why every fixture pins this. */
+*, *::before, *::after { transition: none !important; animation: none !important; }
+</style>
+</head>
+<body>
+<!-- The grid, which is flexbox and nothing but. Every row here is a
+     `display: flex; flex-wrap: wrap` container whose children are
+     `flex-shrink: 0; width: 100%; max-width: 100%` plus a gutter, so this page
+     is simultaneously the flex fixture and the box-model fixture: get
+     box-sizing wrong and every column is 24px too wide.
+
+     The two cases the flex rung is gated on:
+       .col     -> flex: 1 0 0  + width:100% + max-width:100%   (grow from zero)
+       .col-6   -> flex: 0 0 auto + width:50%                    (stated basis)
+     and .row's -12px side margins, which must widen the row to 960 inside a
+     936 container rather than narrowing it. -->
+<div class="container">
+  <h1 class="fs-4">Grid</h1>
+
+  <!-- equal columns: the flex: 1 0 0 case, at one, two, three and four up -->
+  <div class="row">
+    <div class="col">1 of 1</div>
+  </div>
+  <div class="row">
+    <div class="col">1 of 2</div>
+    <div class="col">2 of 2</div>
+  </div>
+  <div class="row">
+    <div class="col">1 of 3</div>
+    <div class="col">2 of 3</div>
+    <div class="col">3 of 3</div>
+  </div>
+  <div class="row">
+    <div class="col">1 of 4</div>
+    <div class="col">2 of 4</div>
+    <div class="col">3 of 4</div>
+    <div class="col">4 of 4</div>
+  </div>
+
+  <!-- stated twelfths: the flex: 0 0 auto + width case -->
+  <div class="row">
+    <div class="col-6">col-6</div>
+    <div class="col-6">col-6</div>
+  </div>
+  <div class="row">
+    <div class="col-4">col-4</div>
+    <div class="col-4">col-4</div>
+    <div class="col-4">col-4</div>
+  </div>
+  <div class="row">
+    <div class="col-3">col-3</div>
+    <div class="col-9">col-9</div>
+  </div>
+  <div class="row">
+    <div class="col-1">1</div>
+    <div class="col-11">col-11</div>
+  </div>
+
+  <!-- mixed stated and flexible, which is where the freeze loop earns itself:
+       the .col must take exactly what the .col-N left behind -->
+  <div class="row">
+    <div class="col-4">col-4</div>
+    <div class="col">col fills the rest</div>
+  </div>
+  <div class="row">
+    <div class="col">col</div>
+    <div class="col-6">col-6</div>
+    <div class="col">col</div>
+  </div>
+
+  <!-- col-auto: shrink to content, so the intrinsic min/max-content
+       contribution has to be right, not just the free-space split -->
+  <div class="row">
+    <div class="col-auto">auto</div>
+    <div class="col-auto">a wider auto column</div>
+    <div class="col">the remainder</div>
+  </div>
+
+  <!-- WRAPPING. Thirteen twelfths cannot share a line, so this is the
+       collect-into-flex-lines step, and the second line's cross position
+       depends on the first line's cross size. -->
+  <div class="row">
+    <div class="col-8">col-8</div>
+    <div class="col-8">col-8 wraps onto line two</div>
+  </div>
+  <div class="row">
+    <div class="col-5">col-5</div>
+    <div class="col-5">col-5</div>
+    <div class="col-5">col-5 wraps</div>
+  </div>
+
+  <!-- gutters. .g-* sets --bs-gutter-x/y, which the columns read through
+       calc(var(--bs-gutter-x) * .5) - so a gutter is a var() AND a calc() AND a
+       negative margin, all three in one number. -->
+  <div class="row g-0">
+    <div class="col">g-0</div>
+    <div class="col">g-0</div>
+  </div>
+  <div class="row g-1">
+    <div class="col">g-1</div>
+    <div class="col">g-1</div>
+  </div>
+  <div class="row g-3">
+    <div class="col">g-3</div>
+    <div class="col">g-3</div>
+  </div>
+  <div class="row g-5">
+    <div class="col">g-5</div>
+    <div class="col">g-5</div>
+  </div>
+  <div class="row gx-0 gy-4">
+    <div class="col">gx-0 gy-4</div>
+    <div class="col">gx-0 gy-4</div>
+  </div>
+
+  <!-- order, which is a stable sort of item indices and renders silently wrong
+       if skipped rather than failing -->
+  <div class="row">
+    <div class="col order-3">first in source, order-3</div>
+    <div class="col order-1">second in source, order-1</div>
+    <div class="col order-2">third in source, order-2</div>
+  </div>
+
+  <!-- offsets, which are margin-left percentages inside a flex line -->
+  <div class="row">
+    <div class="col-4 offset-4">col-4 offset-4</div>
+  </div>
+
+  <!-- alignment: justify-content on the row, align-items across a line whose
+       items have different cross sizes -->
+  <div class="row justify-content-center">
+    <div class="col-3">justify-center</div>
+    <div class="col-3">justify-center</div>
+  </div>
+  <div class="row justify-content-between">
+    <div class="col-3">between</div>
+    <div class="col-3">between</div>
+  </div>
+  <div class="row align-items-center" style="height: 120px">
+    <div class="col">align-items-center</div>
+    <div class="col">a taller column, with enough text in it to occupy more than
+      one line and so force a cross size the shorter ones must align within</div>
+  </div>
+  <div class="row align-items-end" style="height: 120px">
+    <div class="col">align-items-end</div>
+    <div class="col align-self-start">align-self-start</div>
+  </div>
+
+  <!-- nested rows: a flex item that is itself a flex container, and a
+       percentage resolved against a definite main size one level down -->
+  <div class="row">
+    <div class="col-6">
+      <div class="row">
+        <div class="col">nested a</div>
+        <div class="col">nested b</div>
+      </div>
+    </div>
+    <div class="col-6">outer right</div>
+  </div>
+
+  <!-- the automatic minimum size. .col's min-width is auto, so a long
+       unbreakable token sets a floor the freeze loop must respect; the second
+       row defeats it with min-width: 0, which is exactly why Bootstrap's .card
+       carries that declaration. -->
+  <div class="row">
+    <div class="col">Averyveryverylongunbreakabletokenindeed</div>
+    <div class="col">short</div>
+  </div>
+  <div class="row">
+    <div class="col" style="min-width: 0">Averyveryverylongunbreakabletokenindeed</div>
+    <div class="col">short</div>
+  </div>
+
+  <!-- plain flex utilities, without the grid's width/max-width pair -->
+  <div class="d-flex">
+    <div>d-flex a</div>
+    <div>d-flex b</div>
+  </div>
+  <div class="d-flex flex-column" style="height: 90px">
+    <div>column a</div>
+    <div>column b</div>
+  </div>
+  <div class="d-flex gap-3">
+    <div>gap-3 a</div>
+    <div>gap-3 b</div>
+  </div>
+  <div class="d-inline-flex">
+    <div>inline-flex a</div>
+    <div>inline-flex b</div>
+  </div>
+</div>
+</body>
+</html>

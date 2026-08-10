@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bootstrap parity: the box model</title>
+<link rel="stylesheet" href="../../vendor/bootstrap/bootstrap.css">
+<style>
+/* Every fixture pins this until the transform/transition rung lands. A
+   transition makes the rendered frame time-dependent, and the parity harness
+   asks each engine one question at a time - so an element still easing toward
+   its final geometry answers a different question in each engine. */
+*, *::before, *::after { transition: none !important; animation: none !important; }
+/* Marks the areas the report talks about without introducing a second box
+   model to reason about: outline does not participate in layout. */
+.probe { outline: 1px dashed #adb5bd; }
+</style>
+</head>
+<body>
+<!-- The box model, and nothing else: containers, spacing utilities, widths,
+     borders, and auto-margin centring. No flex, no position, no components.
+     ~40 elements, so the parity report is readable in one screen. -->
+<div class="container probe">
+  <h1 class="fs-4">Box model</h1>
+
+  <!-- box-sizing: Bootstrap sets border-box on *, so a stated width with
+       padding and a border must NOT grow. This is the pair the box-model rung
+       is gated on. -->
+  <div class="p-3 border probe" style="width: 200px">width 200, p-3, border</div>
+  <div class="p-0 border probe" style="width: 200px">width 200, p-0, border</div>
+  <div class="p-3 probe" style="width: 200px">width 200, p-3, no border</div>
+
+  <!-- padding, one scale step at a time. .p-3 is 1rem, which is var()-free -->
+  <div class="p-0 probe">p-0</div>
+  <div class="p-1 probe">p-1</div>
+  <div class="p-2 probe">p-2</div>
+  <div class="p-3 probe">p-3</div>
+  <div class="p-4 probe">p-4</div>
+  <div class="p-5 probe">p-5</div>
+
+  <!-- asymmetric padding, so a 1-to-4-value shorthand expansion that drops a
+       side shows up as a geometry difference rather than as nothing -->
+  <div class="pt-4 pe-1 pb-2 ps-5 probe">pt-4 pe-1 pb-2 ps-5</div>
+  <div class="px-4 py-1 probe">px-4 py-1</div>
+
+  <!-- margins, including the negative ones the grid depends on -->
+  <div class="m-3 probe">m-3</div>
+  <div class="mt-0 mb-4 probe">mt-0 mb-4</div>
+  <div class="ms-5 probe">ms-5</div>
+
+  <!-- auto-margin centring: `margin: 0 auto` on a stated width. Today both
+       autos resolve to 0 and this sits hard left where Chrome centres it. -->
+  <div class="mx-auto probe" style="width: 120px">mx-auto 120px</div>
+  <div class="mx-auto probe" style="width: 50%">mx-auto 50%</div>
+  <div class="ms-auto probe" style="width: 120px">ms-auto 120px</div>
+
+  <!-- percentage widths against a definite containing block -->
+  <div class="w-25 probe">w-25</div>
+  <div class="w-50 probe">w-50</div>
+  <div class="w-75 probe">w-75</div>
+  <div class="w-100 probe">w-100</div>
+
+  <!-- min/max clamping. .container's own max-width is per-breakpoint and lives
+       inside @media, so it is the harness's canary for media evaluation. -->
+  <div class="mw-100 probe" style="width: 4000px">mw-100 over a 4000px width</div>
+  <div class="probe" style="width: 50px; min-width: 300px">min-width 300 over 50</div>
+  <div class="probe" style="width: 900px; max-width: 250px">max-width 250 under 900</div>
+
+  <!-- borders: `border: 1px solid` is Bootstrap's commonest form and produces
+       neither border-width nor border-color without shorthand expansion -->
+  <div class="border probe">border</div>
+  <div class="border border-3 probe">border border-3</div>
+  <div class="border-top border-bottom probe">border-top border-bottom</div>
+  <div class="border-0 probe">border-0</div>
+
+  <!-- a nested containing block, so a percentage resolves against something
+       other than the viewport -->
+  <div class="p-3 border probe" style="width: 400px">
+    <div class="w-50 p-2 border probe">w-50 inside 400px</div>
+    <div class="w-100 p-2 border probe">w-100 inside 400px</div>
+  </div>
+</div>
+</body>
+</html>

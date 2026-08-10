@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bootstrap parity: text metrics</title>
+<link rel="stylesheet" href="../../vendor/bootstrap/bootstrap.css">
+<style>
+/* See bootstrap-box.html for why every fixture pins this. */
+*, *::before, *::after { transition: none !important; animation: none !important; }
+</style>
+</head>
+<body>
+<!-- Text metrics, and as little else as possible: line-height, text-align,
+     vertical-align, font-size, and the inherited half of the cascade.
+     `body { line-height: 1.5 }` is Bootstrap's single most globally
+     consequential declaration - it moves the baseline of every text box on
+     every page - and line_height_factor is hardcoded to 1.25 today. So the @y
+     of nearly every element on this page is expected to differ until the text
+     rung lands, and that is the point: this is the fixture that measures it. -->
+<div class="container">
+
+  <!-- the heading scale. Bootstrap's h1-h6 font sizes are literals, but their
+       margins are `margin-bottom: .5rem` and their line-height comes from
+       $headings-line-height through the inherited chain. -->
+  <h1>h1 heading</h1>
+  <h2>h2 heading</h2>
+  <h3>h3 heading</h3>
+  <h4>h4 heading</h4>
+  <h5>h5 heading</h5>
+  <h6>h6 heading</h6>
+
+  <!-- the display headings, which restate font-size AND line-height -->
+  <p class="display-6">display-6</p>
+  <p class="lead">A lead paragraph, which restates font-size and font-weight.</p>
+
+  <!-- explicit line-height utilities, one per value, so a wrong inherited
+       line-height and a wrong stated one cannot cancel each other out -->
+  <p class="lh-1">lh-1 over two lines of text so the second line's baseline is
+    observable rather than inferred.</p>
+  <p class="lh-sm">lh-sm over two lines of text so the second line's baseline is
+    observable rather than inferred.</p>
+  <p class="lh-base">lh-base over two lines of text so the second line's baseline
+    is observable rather than inferred.</p>
+  <p class="lh-lg">lh-lg over two lines of text so the second line's baseline is
+    observable rather than inferred.</p>
+
+  <!-- text-align, which is declared in the UA sheet (caption) and never read -->
+  <p class="text-start">text-start</p>
+  <p class="text-center">text-center</p>
+  <p class="text-end">text-end</p>
+  <div style="width: 300px">
+    <p class="text-center">text-center in a 300px block, where the difference
+      between centring on the content box and on the border box is visible.</p>
+  </div>
+
+  <!-- font-size utilities: literals, so these should agree early -->
+  <p class="fs-1">fs-1</p>
+  <p class="fs-3">fs-3</p>
+  <p class="fs-6">fs-6</p>
+
+  <!-- font-weight and style, which inherit -->
+  <p class="fw-bold">fw-bold <span class="fw-normal">nested fw-normal</span></p>
+  <p class="fst-italic">fst-italic</p>
+  <p class="text-decoration-underline">text-decoration-underline</p>
+  <p class="text-decoration-line-through">line-through</p>
+
+  <!-- inline-level boxes on a shared baseline. vertical-align is what .btn and
+       .badge need, and inline_flow already knows how to share a baseline. -->
+  <p>
+    baseline
+    <span class="align-baseline">align-baseline</span>
+    <span class="align-top">align-top</span>
+    <span class="align-middle">align-middle</span>
+    <span class="align-bottom">align-bottom</span>
+    <sub>sub</sub><sup>sup</sup>
+  </p>
+
+  <!-- small, mark, code, kbd: UA-sheet text-level defaults crossed with
+       Bootstrap's Reboot overrides -->
+  <p><small>small</small> <mark>mark</mark> <code>code</code> <kbd>kbd</kbd>
+    <abbr title="abbreviation">abbr</abbr></p>
+
+  <!-- colour, which inherits, and is the one inherited property paint threads
+       by hand today -->
+  <div class="text-body-secondary">
+    text-body-secondary, and <span>a nested span that inherits it</span>.
+  </div>
+
+  <!-- block-level text containers with UA margins -->
+  <blockquote class="blockquote"><p>A blockquote.</p></blockquote>
+  <pre>  preformatted, where white-space: pre must survive</pre>
+  <hr>
+
+  <!-- lists: UA padding-left 40px vs Bootstrap's Reboot reset -->
+  <ul>
+    <li>unordered one</li>
+    <li>unordered two</li>
+  </ul>
+  <ol>
+    <li>ordered one</li>
+    <li>ordered two</li>
+  </ol>
+  <ul class="list-unstyled">
+    <li>list-unstyled</li>
+  </ul>
+
+  <!-- a wrapping paragraph, so the line-breaking position itself is compared.
+       This is the assertion most sensitive to text measurement, which is why
+       the harness pins the fonts on both sides. -->
+  <div style="width: 360px">
+    <p>A paragraph set in a 360 pixel column, long enough to wrap several times,
+      so that where each line breaks is part of what the comparison sees rather
+      than something it has to take on trust.</p>
+  </div>
+</div>
+</body>
+</html>

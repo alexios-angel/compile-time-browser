@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bootstrap parity: components</title>
+<link rel="stylesheet" href="../../vendor/bootstrap/bootstrap.css">
+<style>
+/* See bootstrap-box.html for why every fixture pins this. */
+*, *::before, *::after { transition: none !important; animation: none !important; }
+</style>
+</head>
+<body>
+<!-- The component layer, which is where Bootstrap 5.3 is ALL custom
+     properties: `.btn { --bs-btn-color: ...; color: var(--bs-btn-color) }` and
+     thirty more per component. Nothing here can look right until var() resolves,
+     and nothing here can be the right SIZE until the border and border-radius
+     shorthands expand and <button> stops being a replaced element.
+
+     Everything is static and forced open (.show) - no script runs on this page,
+     so a dropdown or a modal is only visible if the class does it. That is
+     deliberate: bootstrap.bundle.js is vendored but out of scope, and a
+     component that needs JS to be visible cannot be compared. -->
+<div class="container">
+  <h1 class="fs-4">Components</h1>
+
+  <!-- BUTTONS. <button> is a replaced element here, sized text+16 x
+       font_size*1.25+6, so none of these can match Chrome until that changes:
+       .btn is an inline-block with .375rem/.75rem padding, a 1px border and
+       line-height 1.5. -->
+  <div class="mb-3">
+    <button type="button" class="btn btn-primary">Primary</button>
+    <button type="button" class="btn btn-secondary">Secondary</button>
+    <button type="button" class="btn btn-success">Success</button>
+    <button type="button" class="btn btn-danger">Danger</button>
+    <button type="button" class="btn btn-warning">Warning</button>
+    <button type="button" class="btn btn-info">Info</button>
+    <button type="button" class="btn btn-light">Light</button>
+    <button type="button" class="btn btn-dark">Dark</button>
+    <button type="button" class="btn btn-link">Link</button>
+  </div>
+  <div class="mb-3">
+    <button type="button" class="btn btn-outline-primary">Outline primary</button>
+    <button type="button" class="btn btn-outline-danger">Outline danger</button>
+  </div>
+  <div class="mb-3">
+    <button type="button" class="btn btn-primary btn-sm">Small</button>
+    <button type="button" class="btn btn-primary">Default</button>
+    <button type="button" class="btn btn-primary btn-lg">Large</button>
+  </div>
+  <div class="mb-3">
+    <!-- :disabled parses today and is never set, so this is the fixture entry
+         that proves it started being set. -->
+    <button type="button" class="btn btn-primary" disabled>Disabled</button>
+    <button type="button" class="btn btn-primary active">Active</button>
+    <a href="#" class="btn btn-primary" role="button">An anchor button</a>
+    <!-- an <a> is NOT replaced, so this one can be right long before the
+         <button>s above are: same rules, different box generation. -->
+  </div>
+  <div class="mb-3">
+    <button type="button" class="btn btn-primary w-100">Full width</button>
+  </div>
+
+  <!-- BUTTON GROUP: display: inline-flex, and the radius collapsing between
+       adjacent children uses :not() and :first-child/:last-child -->
+  <div class="btn-group mb-3" role="group">
+    <button type="button" class="btn btn-outline-secondary">Left</button>
+    <button type="button" class="btn btn-outline-secondary">Middle</button>
+    <button type="button" class="btn btn-outline-secondary">Right</button>
+  </div>
+  <div class="btn-group-vertical mb-3" role="group">
+    <button type="button" class="btn btn-outline-secondary">Top</button>
+    <button type="button" class="btn btn-outline-secondary">Bottom</button>
+  </div>
+
+  <!-- BADGES: inline-block, tiny padding, a radius, and a font-size in em -->
+  <p class="mb-3">
+    <span class="badge text-bg-primary">Primary</span>
+    <span class="badge text-bg-secondary">Secondary</span>
+    <span class="badge rounded-pill text-bg-success">Pill</span>
+    <h6 class="d-inline">Heading <span class="badge text-bg-danger">4</span></h6>
+  </p>
+
+  <!-- ALERTS: a bordered, rounded, padded block whose colours are all var() -->
+  <div class="alert alert-primary" role="alert">A primary alert.</div>
+  <div class="alert alert-warning" role="alert">A warning alert.</div>
+  <div class="alert alert-success" role="alert">
+    <h4 class="alert-heading">Well done</h4>
+    <p>An alert with a heading and a paragraph, so the internal margins are
+      compared and not just the outer box.</p>
+    <hr>
+    <p class="mb-0">And a rule.</p>
+  </div>
+
+  <!-- CARDS: display: flex; flex-direction: column, min-width: 0 (which exists
+       to defeat the automatic minimum size), a border, a radius, and header,
+       body and footer children with their own padding. -->
+  <div class="card mb-3" style="width: 320px">
+    <div class="card-header">Header</div>
+    <div class="card-body">
+      <h5 class="card-title">Card title</h5>
+      <h6 class="card-subtitle mb-2 text-body-secondary">Card subtitle</h6>
+      <p class="card-text">Some card text, long enough to wrap inside a 320
+        pixel card so the content width is observable.</p>
+      <a href="#" class="card-link">A link</a>
+      <a href="#" class="card-link">Another link</a>
+    </div>
+    <div class="card-footer text-body-secondary">Footer</div>
+  </div>
+  <div class="card mb-3" style="width: 320px">
+    <ul class="list-group list-group-flush">
+      <li class="list-group-item">An item</li>
+      <li class="list-group-item">A second item</li>
+      <li class="list-group-item">A third item</li>
+    </ul>
+  </div>
+
+  <!-- LIST GROUP: flex column, per-item borders that collapse at the ends -->
+  <ul class="list-group mb-3" style="width: 320px">
+    <li class="list-group-item active">An active item</li>
+    <li class="list-group-item">A second item</li>
+    <li class="list-group-item disabled">A disabled item</li>
+  </ul>
+  <div class="list-group mb-3" style="width: 320px">
+    <a href="#" class="list-group-item list-group-item-action">An action item</a>
+    <a href="#" class="list-group-item list-group-item-action active">Active</a>
+  </div>
+
+  <!-- FORMS. <input>, <select> and <textarea> stay replaced elements - only
+       <button> is being de-replaced - so these are the control the comparison
+       measures against, not the thing under test. .form-control's padding,
+       border and radius still have to arrive. -->
+  <div class="mb-3" style="width: 320px">
+    <label for="a" class="form-label">A label</label>
+    <input type="text" class="form-control" id="a" value="text">
+    <div class="form-text">Some help text below the field.</div>
+  </div>
+  <div class="mb-3" style="width: 320px">
+    <input type="text" class="form-control form-control-sm" value="small">
+    <input type="text" class="form-control" value="default">
+    <input type="text" class="form-control form-control-lg" value="large">
+  </div>
+  <div class="mb-3" style="width: 320px">
+    <select class="form-select">
+      <option>One</option>
+      <option>Two</option>
+    </select>
+  </div>
+  <div class="mb-3" style="width: 320px">
+    <textarea class="form-control" rows="3">textarea</textarea>
+  </div>
+  <!-- .form-check-input draws its tick with a background-image on a ::before in
+       some variants and relies on :checked, which parses and is never set -->
+  <div class="form-check">
+    <input class="form-check-input" type="checkbox" id="c1" checked>
+    <label class="form-check-label" for="c1">A checked checkbox</label>
+  </div>
+  <div class="form-check">
+    <input class="form-check-input" type="checkbox" id="c2">
+    <label class="form-check-label" for="c2">An unchecked checkbox</label>
+  </div>
+  <div class="form-check">
+    <input class="form-check-input" type="radio" name="r" id="r1" checked>
+    <label class="form-check-label" for="r1">A radio</label>
+  </div>
+  <div class="form-check form-switch mb-3">
+    <input class="form-check-input" type="checkbox" id="s1">
+    <label class="form-check-label" for="s1">A switch</label>
+  </div>
+
+  <!-- INPUT GROUP: display: flex; flex-wrap: wrap, with the children's radii
+       collapsing across the seams -->
+  <div class="input-group mb-3" style="width: 320px">
+    <span class="input-group-text">@</span>
+    <input type="text" class="form-control" value="username">
+  </div>
+  <div class="input-group mb-3" style="width: 320px">
+    <input type="text" class="form-control" value="amount">
+    <span class="input-group-text">.00</span>
+    <button class="btn btn-outline-secondary" type="button">Go</button>
+  </div>
+
+  <!-- NAV and NAVBAR: flex containers with wrapping, and the navbar's
+       collapse behaviour is a max-width media query fighting a min-width one -->
+  <ul class="nav mb-3">
+    <li class="nav-item"><a class="nav-link active" href="#">Active</a></li>
+    <li class="nav-item"><a class="nav-link" href="#">Link</a></li>
+    <li class="nav-item"><a class="nav-link disabled" href="#">Disabled</a></li>
+  </ul>
+  <ul class="nav nav-tabs mb-3">
+    <li class="nav-item"><a class="nav-link active" href="#">Tab one</a></li>
+    <li class="nav-item"><a class="nav-link" href="#">Tab two</a></li>
+  </ul>
+  <ul class="nav nav-pills mb-3">
+    <li class="nav-item"><a class="nav-link active" href="#">Pill one</a></li>
+    <li class="nav-item"><a class="nav-link" href="#">Pill two</a></li>
+  </ul>
+  <nav class="navbar navbar-expand-lg bg-body-tertiary mb-3">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="#">Brand</a>
+      <div class="collapse navbar-collapse show">
+        <ul class="navbar-nav">
+          <li class="nav-item"><a class="nav-link active" href="#">Home</a></li>
+          <li class="nav-item"><a class="nav-link" href="#">Features</a></li>
+        </ul>
+      </div>
+    </div>
+  </nav>
+
+  <!-- TABLES: the UA sheet forces table parts to display:block here, which is
+       load-bearing per docs/style-layout.md, so these numbers are expected to
+       differ from Chrome for a structural reason rather than a cascade one. -->
+  <table class="table mb-3">
+    <thead>
+      <tr><th scope="col">#</th><th scope="col">Name</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">1</th><td>One</td></tr>
+      <tr class="table-active"><th scope="row">2</th><td>Two</td></tr>
+    </tbody>
+  </table>
+  <table class="table table-bordered table-striped table-sm mb-3">
+    <tbody>
+      <tr><td>Bordered</td><td>striped</td></tr>
+      <tr><td>and</td><td>small</td></tr>
+    </tbody>
+  </table>
+
+  <!-- PROGRESS and SPINNERS: the animated ones are pinned off at the top of
+       this file, so what is measured is the static geometry. -->
+  <div class="progress mb-3" role="progressbar" style="width: 320px">
+    <div class="progress-bar" style="width: 50%">50%</div>
+  </div>
+  <div class="progress mb-3" style="width: 320px">
+    <div class="progress-bar progress-bar-striped" style="width: 25%"></div>
+  </div>
+  <div class="spinner-border" role="status"><span class="visually-hidden">Loading</span></div>
+  <div class="spinner-grow" role="status"><span class="visually-hidden">Loading</span></div>
+
+  <!-- BREADCRUMB and PAGINATION: flex rows whose separators are ::before -->
+  <nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+      <li class="breadcrumb-item"><a href="#">Home</a></li>
+      <li class="breadcrumb-item"><a href="#">Library</a></li>
+      <li class="breadcrumb-item active">Data</li>
+    </ol>
+  </nav>
+  <nav>
+    <ul class="pagination">
+      <li class="page-item"><a class="page-link" href="#">Previous</a></li>
+      <li class="page-item active"><a class="page-link" href="#">1</a></li>
+      <li class="page-item"><a class="page-link" href="#">2</a></li>
+      <li class="page-item"><a class="page-link" href="#">Next</a></li>
+    </ul>
+  </nav>
+
+  <!-- ACCORDION, forced open. Its caret is a ::after with a background-image. -->
+  <div class="accordion mb-3" id="acc">
+    <div class="accordion-item">
+      <h2 class="accordion-header">
+        <button class="accordion-button" type="button">An open section</button>
+      </h2>
+      <div class="accordion-collapse collapse show">
+        <div class="accordion-body">The body of the open section.</div>
+      </div>
+    </div>
+    <div class="accordion-item">
+      <h2 class="accordion-header">
+        <button class="accordion-button collapsed" type="button">A closed section</button>
+      </h2>
+      <div class="accordion-collapse collapse">
+        <div class="accordion-body">Hidden, so it must generate no box.</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

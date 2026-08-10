@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bootstrap parity: position and stacking</title>
+<link rel="stylesheet" href="../../vendor/bootstrap/bootstrap.css">
+<style>
+/* See bootstrap-box.html for why every fixture pins this. */
+*, *::before, *::after { transition: none !important; animation: none !important; }
+/* The relative parents need a visible extent for an absolute child's offsets to
+   mean anything, and `position` itself is what is under test - so the sizes are
+   stated here rather than borrowed from a component. */
+.frame { width: 300px; height: 120px; background-color: #f8f9fa; }
+</style>
+</head>
+<body>
+<!-- position, offsets, stacking. Nothing in `layout/` reads `position` today, so
+     every element on this page is expected to sit in normal flow where Chrome
+     takes it out of flow - which makes this the fixture with the largest @x/@y
+     differences at the start and the sharpest collapse when the rung lands.
+
+     It is also the fixture that decides how much of the stacking work is
+     needed: paint::recorder returns ONE layer on purpose and says so, so
+     z-index among siblings (R4a) and fixed/sticky as their own layers (R4b) are
+     separately measurable here. -->
+<div class="container">
+  <h1 class="fs-4">Position</h1>
+
+  <!-- the utilities, one per value -->
+  <div class="frame mb-3 position-static">position-static</div>
+  <div class="frame mb-3 position-relative">position-relative</div>
+
+  <!-- absolute inside a relative parent: the containing-block chain. Each
+       child names the offsets it sets, so a missing `inset` shorthand
+       expansion and a missing `position` are distinguishable in the report. -->
+  <div class="frame mb-3 position-relative">
+    relative parent
+    <div class="position-absolute top-0 start-0 bg-primary text-white">top-0 start-0</div>
+    <div class="position-absolute top-0 end-0 bg-primary text-white">top-0 end-0</div>
+    <div class="position-absolute bottom-0 start-0 bg-primary text-white">bottom-0 start-0</div>
+    <div class="position-absolute bottom-0 end-0 bg-primary text-white">bottom-0 end-0</div>
+    <div class="position-absolute top-50 start-50 bg-danger text-white">top-50 start-50</div>
+  </div>
+
+  <!-- translate-middle: a STATIC transform, which is why the transform work
+       splits - this half is needed at the position rung, and only transitions
+       and keyframes wait for the animation rung. -->
+  <div class="frame mb-3 position-relative">
+    <div class="position-absolute top-50 start-50 translate-middle bg-success text-white">
+      translate-middle
+    </div>
+    <div class="position-absolute top-0 start-50 translate-middle-x bg-success text-white">
+      translate-middle-x
+    </div>
+  </div>
+
+  <!-- an absolute child with NO offsets, which must sit at its static position
+       rather than at the padding-box origin -->
+  <div class="frame mb-3 position-relative p-4">
+    <div class="position-absolute bg-warning">no offsets: static position</div>
+  </div>
+
+  <!-- explicit inset values, so the shorthand and the longhands are both seen -->
+  <div class="frame mb-3 position-relative">
+    <div class="position-absolute bg-info" style="top: 10px; left: 20px">top/left longhands</div>
+    <div class="position-absolute bg-info" style="inset: 60px 20px 10px 120px">inset shorthand</div>
+  </div>
+
+  <!-- nesting: the inner absolute resolves against the inner relative, not the
+       outer one. Getting the chain wrong puts it in the right place for the
+       wrong reason on a single-level test. -->
+  <div class="frame mb-3 position-relative p-3">
+    outer relative
+    <div class="position-relative" style="width: 160px; height: 60px; background-color: #e9ecef">
+      inner relative
+      <div class="position-absolute top-0 end-0 bg-dark text-white">inner top-0 end-0</div>
+    </div>
+  </div>
+
+  <!-- relative offsets, which SHIFT a box without taking it out of flow: the
+       following sibling must not move. That distinction is the whole difference
+       between relative and absolute and it is invisible on a one-box test. -->
+  <div class="mb-3">
+    <div>a sibling before</div>
+    <div class="position-relative" style="top: 20px; left: 30px">relative, offset 20/30</div>
+    <div>a sibling after, which must NOT have moved</div>
+  </div>
+
+  <!-- Z-INDEX among siblings: R4a, in-layer paint order. Source order says
+       first-then-second; z-index says the opposite. -->
+  <div class="frame mb-3 position-relative">
+    <div class="position-absolute top-0 start-0 bg-primary text-white"
+         style="width: 200px; height: 80px; z-index: 1">z-index 1, first in source</div>
+    <div class="position-absolute bg-danger text-white"
+         style="top: 20px; left: 40px; width: 200px; height: 80px; z-index: 3">z-index 3</div>
+    <div class="position-absolute bg-success text-white"
+         style="top: 40px; left: 80px; width: 200px; height: 80px; z-index: 2">z-index 2</div>
+  </div>
+
+  <!-- a stacking context created by z-index on a positioned box, so a child's
+       z-index cannot escape it -->
+  <div class="frame mb-3 position-relative" style="z-index: 0">
+    <div class="position-absolute bg-warning" style="z-index: 999; width: 120px">
+      z-index 999, trapped in a z-index 0 context
+    </div>
+  </div>
+
+  <!-- DROPDOWN, forced open: absolutely positioned, with a radius, a shadow and
+       a caret drawn by ::after -->
+  <div class="dropdown mb-3">
+    <button class="btn btn-secondary dropdown-toggle" type="button">Dropdown</button>
+    <ul class="dropdown-menu show">
+      <li><a class="dropdown-item active" href="#">An action</a></li>
+      <li><a class="dropdown-item" href="#">Another action</a></li>
+      <li><hr class="dropdown-divider"></li>
+      <li><a class="dropdown-item disabled" href="#">A disabled action</a></li>
+    </ul>
+  </div>
+
+  <!-- a MODAL, forced open. position: fixed against the viewport, so its @x/@y
+       do not depend on where it sits in the document - which is exactly the
+       property R4b has to get right, and the one a single layer cannot express.
+       The backdrop is left out: it is a full-viewport fixed box that would
+       cover every other element's pixels without changing any geometry. -->
+  <div class="modal show d-block" tabindex="-1" style="position: relative">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">A modal</h5>
+        </div>
+        <div class="modal-body"><p>Its body.</p></div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary">Close</button>
+          <button type="button" class="btn btn-primary">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FIXED and STICKY. Both are measured at scroll_y = 0, so a fixed box and
+       an absolute one agree here by construction; the harness scrolls and asks
+       again, which is the only way to tell them apart. -->
+  <div class="mb-3" style="height: 200px; overflow: hidden; position: relative">
+    <div class="sticky-top bg-body-tertiary">sticky-top</div>
+    <div style="height: 400px">tall content, so there is somewhere to scroll</div>
+  </div>
+
+  <!-- fixed-top and fixed-bottom last in the document, because they leave flow
+       entirely and everything after them in source order would otherwise be
+       compared against a shifted baseline -->
+  <div class="fixed-top bg-primary text-white">fixed-top</div>
+  <div class="fixed-bottom bg-primary text-white">fixed-bottom</div>
+</div>
+</body>
+</html>

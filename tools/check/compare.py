@@ -180,9 +180,17 @@ class Ctbrowse:
     name = "ctbrowse"
 
     def __init__(self, page: Path, size: tuple[int, int], headed: bool):
-        exe = ROOT / "build" / "src" / "examples" / "ctdrive"
-        if not exe.exists():
-            raise FileNotFoundError(f"{exe} not built; cmake --build --preset default")
+        # build/examples/, not build/src/examples/: the tree was bucketed on
+        # 2026-08-09 and examples/ moved out from under src/. Both spellings are
+        # tried because a build directory configured before that reorg still has
+        # the old layout, and "not built" is a much worse thing to say to someone
+        # whose binary is sitting right there.
+        candidates = [ROOT / "build" / "examples" / "ctdrive",
+                      ROOT / "build" / "src" / "examples" / "ctdrive"]
+        exe = next((p for p in candidates if p.exists()), None)
+        if exe is None:
+            raise FileNotFoundError(
+                f"{candidates[0]} not built; cmake --build --preset default --target ctdrive")
         env = dict(os.environ)
         if not headed:
             env["SDL_VIDEODRIVER"] = "offscreen"
@@ -504,20 +512,26 @@ def serve(args) -> int:
     return 0
 
 
-def ask(payload: dict) -> int:
+class NoSession(Exception):
+    """No daemon is listening. Raised by request() so a caller can say so itself."""
+
+
+def request(payload: dict) -> dict:
+    """One round trip to the daemon, as a dict.
+
+    Split out of ask() so another tool can drive a session without shelling out
+    to this file and re-parsing its stdout - css-parity.py imports this module
+    and calls request() directly. One client, one protocol, one place where the
+    port file and the stop handshake are understood.
+    """
     if not PORTFILE.exists():
-        print("compare.py: no session; run `tools/check/compare.py start <page.html>`", file=sys.stderr)
-        return 1
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect(("127.0.0.1", int(PORTFILE.read_text())))
-            with s.makefile("rw") as io:
-                io.write(json.dumps(payload) + "\n")
-                io.flush()
-                answer = json.loads(io.readline())
-    except OSError as e:
-        print(f"compare.py: cannot reach the session: {e}", file=sys.stderr)
-        return 1
+        raise NoSession("no session; run `tools/check/compare.py start <page.html>`")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.connect(("127.0.0.1", int(PORTFILE.read_text())))
+        with s.makefile("rw") as io:
+            io.write(json.dumps(payload) + "\n")
+            io.flush()
+            answer = json.loads(io.readline())
     # WAIT FOR IT TO ACTUALLY GO. The daemon answers `stop` and only then
     # closes the browsers and drops the port file; returning immediately means
     # the next `start` finds a file whose port is already dead, which is what
@@ -527,6 +541,18 @@ def ask(payload: dict) -> int:
             if not PORTFILE.exists():
                 break
             time.sleep(0.1)
+    return answer
+
+
+def ask(payload: dict) -> int:
+    try:
+        answer = request(payload)
+    except NoSession as why:
+        print(f"compare.py: {why}", file=sys.stderr)
+        return 1
+    except OSError as e:
+        print(f"compare.py: cannot reach the session: {e}", file=sys.stderr)
+        return 1
     print(json.dumps(answer, indent=2))
     return 0 if answer.get("ok") else 1
 
