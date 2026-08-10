@@ -128,6 +128,14 @@ public:
     // browser after each layout; null until the first one, and the natives
     // return 0 then rather than pretending.
     void observe_layout(const layout::fragment * fragments) { fragments_ = fragments; }
+    // The cascade's output and the box tree, for getComputedStyle. Three sources
+    // are needed rather than one because `style::computed_style` is not a
+    // computed style: it holds only the declarations that MATCHED, as text, with
+    // no inheritance and no initial values. So a keyword comes from the style
+    // map, a resolved length from the box tree, and a used size from the
+    // fragment - see src/shell/bindings/computed_style.cpp.
+    void observe_styles(const style::style_map * styles) { styles_ = styles; }
+    void observe_boxes(const layout::box_node * boxes) { boxes_ = boxes; }
     void observe_viewport(int width, int height);
     // Milliseconds since the page loaded, for performance.now and the timers.
     void advance_clock(double ms) { now_ms_ += ms; }
@@ -301,6 +309,12 @@ private:
     // element as `this`: `el.classList.add(...)` has the CLASS LIST as the
     // receiver, so `receiver(cx)` finds no handle.
     void install_element_views(context & cx, script::object_object & obj, node_id id);
+
+    // `getComputedStyle`, on `window` and as a bare global. A SNAPSHOT rather
+    // than the spec's live object: a live one needs an invalidation hook, and
+    // nothing but a diff reads this today.
+    void install_computed_style(context & cx);
+    [[nodiscard]] value computed_style_object(context & cx, node_id id);
 
     [[nodiscard]] node_id id_or_nothing(context & c) { return receiver(c); }
 
@@ -671,6 +685,8 @@ private:
     bool network_allowed_ = true;
     context * cx_ = nullptr;
     const layout::fragment * fragments_ = nullptr;
+    const style::style_map * styles_ = nullptr;
+    const layout::box_node * boxes_ = nullptr;
     int viewport_width_ = 0;
     int viewport_height_ = 0;
     double now_ms_ = 0;

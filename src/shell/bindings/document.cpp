@@ -119,6 +119,10 @@ void dom_bindings::install(context & cx) {
     location_ = make_location(cx);
     install_document(cx);
     install_window(cx);
+    // AFTER install_window: it defines the `window` proxy whose handler falls
+    // back to the globals, which is what makes one bare global answer both
+    // `getComputedStyle(el)` and `window.getComputedStyle(el)`.
+    install_computed_style(cx);
     install_timers(cx);
     install_resources(cx);
     install_navigation(cx);
