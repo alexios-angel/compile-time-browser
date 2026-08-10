@@ -60,6 +60,23 @@ struct constraints {
     float available_width = 0;
     float available_height = 0; // 0 means "as tall as it needs to be"
     float font_size = 16;
+    // THE USED WIDTH THIS BOX MUST TAKE, because its parent's formatting context
+    // has already decided it. Negative means "work it out from the block rules",
+    // which is every case but one today.
+    //
+    // Flex needs it and cannot be written without it: an item's main size comes
+    // out of the freeze loop over its whole LINE, so it cannot be re-derived from
+    // the item's own `width` afterwards - and `.row > * { width: 100% }` sitting
+    // on every Bootstrap column is the proof, because 100% of the row is not what
+    // any column gets. The item still has to know its width BEFORE its children
+    // are laid out, or its text wraps at the wrong place, so this cannot be a
+    // post-hoc correction to the fragment either.
+    //
+    // `available_width` stays the CONTAINING BLOCK's width alongside it, because
+    // that is what a percentage margin or padding on this box resolves against.
+    // Only outer_width_of reads this, and nothing propagates it downward: every
+    // formatting context builds its children's constraints fresh.
+    float forced_width = -1;
 };
 
 // Intrinsic sizes, for the shrink-to-fit and table-column cases that need to

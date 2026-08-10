@@ -1,5 +1,7 @@
 #include <ctbrowser/layout/algorithm.hpp>
 
+#include <ctbrowser/layout/flex.hpp>
+
 // algorithm: the function bodies.
 // The header says what these compute; this says how.
 
@@ -15,6 +17,12 @@ resolved_edges resolve_edges(const box_node & b, const constraints & c) {
 }
 
 float outer_width_of(const box_node & b, const constraints & c, const resolved_edges & e) {
+    // A WIDTH THE PARENT ALREADY DECIDED is used verbatim, and is not re-clamped
+    // here: flex applied min/max-width inside its freeze loop, where the clamp
+    // interacts with every other item on the line. Clamping a second time would
+    // be right only for the items that never hit a constraint, which is the
+    // subset for which it does nothing.
+    if (c.forced_width >= 0) { return c.forced_width; }
     const float unclamped = b.width.is_auto() ? c.available_width - e.horizontal_margin()
                                               : b.width.resolve(c.available_width, b.font_size);
     // MAX FIRST, THEN MIN, because min wins: a box whose min-width exceeds its
@@ -56,6 +64,23 @@ float content_width_of(const box_node & b, const constraints & c, const resolved
     return std::max(0.0f, outer_width_of(b, c, e) - e.horizontal_padding());
 }
 
+intrinsic_sizes measure_box(const box_node & b, const constraints & c,
+                            const measure_text_fn & measure) {
+    if (b.kind == box_kind::text) {
+        return intrinsic_sizes{inline_flow::longest_word(b, measure),
+                               measure(b.text, b.font_size, b.face)};
+    }
+    if (b.is_replaced()) {
+        // Its size is the ELEMENT's. A replaced box's children are not laid out
+        // at all, so measuring them answers zero for a 300px canvas.
+        return intrinsic_sizes{b.intrinsic_width, b.intrinsic_width};
+    }
+    if (b.kind == box_kind::flex) { return flex_flow{}.measure(b, c, measure); }
+    if (b.kind == box_kind::table) { return table_flow{}.measure(b, c, measure); }
+    if (b.establishes_inline_context()) { return inline_flow{}.measure(b, c, measure); }
+    return block_flow{}.measure(b, c, measure);
+}
+
 fragment layout_box(const box_node & b, const constraints & c, const measure_text_fn & measure,
                     precomputed * ready) {
     if (b.kind == box_kind::text) {
@@ -85,6 +110,7 @@ fragment layout_box(const box_node & b, const constraints & c, const measure_tex
         return f;
     }
     if (b.kind == box_kind::table) { return table_flow{}.arrange(b, c, measure, ready); }
+    if (b.kind == box_kind::flex) { return flex_flow{}.arrange(b, c, measure, ready); }
     if (b.kind == box_kind::inline_) { return inline_flow{}.arrange(b, c, measure, ready); }
     return block_flow{}.arrange(b, c, measure, ready);
 }

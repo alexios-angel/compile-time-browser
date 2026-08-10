@@ -133,6 +133,11 @@ struct probe {
     const layout::fragment * frag = nullptr;
     float basis = 0; // the containing block's content width
     float font_size = 16;
+    // Is this element a FLEX ITEM? A fact about its parent rather than about it,
+    // and the two properties whose reported value depends on it - `min-width`
+    // and `min-height` - are answered nowhere else, so it is gathered with the
+    // rest of the parent lookup rather than costing a second tree walk.
+    bool flex_item = false;
     std::vector<node_id> chain; // self first, then ancestors
 };
 
@@ -175,9 +180,11 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
         at.basis = static_cast<float>(viewport_width_);
         if (at.chain.size() >= 2) {
             const node_id parent = at.chain[1];
+            const layout::box_node * up_box = box_for(boxes_, parent);
+            at.flex_item = up_box != nullptr && up_box->kind == layout::box_kind::flex;
             if (const layout::fragment * up = fragment_for(fragments_, parent)) {
                 at.basis = up->bounds.width;
-                if (const layout::box_node * up_box = box_for(boxes_, parent)) {
+                if (up_box != nullptr) {
                     at.basis -= up_box->padding.left.resolve(at.basis, up_box->font_size) +
                                 up_box->padding.right.resolve(at.basis, up_box->font_size);
                 }
@@ -275,10 +282,27 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
             case layout::box_kind::anonymous: return "block";
             case layout::box_kind::inline_: return "inline";
             case layout::box_kind::table: return "table";
+            case layout::box_kind::flex: return at.box->inline_level ? "inline-flex" : "flex";
             case layout::box_kind::text:
             case layout::box_kind::replaced: break; // no display to report
             }
             return {};
+        }
+        // 2c. THE AUTOMATIC MINIMUM SIZE, reported the way Chrome reports it. The
+        //     initial value of `min-width`/`min-height` is `auto`, and Chrome
+        //     answers that verbatim for a FLEX ITEM - where `auto` means the
+        //     content-based minimum and really is not a length - while resolving
+        //     it to `0px` everywhere else, because outside a flex or grid
+        //     container `auto` behaves as zero.
+        //
+        //     Answering one of the two for both is not a small error: it was 139
+        //     of the grid fixture's 490 differences, every one of them about
+        //     which parent the element has rather than about the element. Nor can
+        //     the harness's initial-value table fix it - substituting `auto`
+        //     there moved 566 differences the WRONG way, because most elements on
+        //     most pages are not flex items.
+        if (text.empty() && (property == "min-width" || property == "min-height")) {
+            return at.flex_item ? "auto" : "0px";
         }
         if (text.empty()) { return {}; }
         // 3. LENGTHS, through layout's own parser against layout's own basis.

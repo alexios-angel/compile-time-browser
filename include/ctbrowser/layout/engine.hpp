@@ -86,7 +86,19 @@ public:
         // An inline container's children share lines, so they are not
         // independent and must not be split. normalise() guarantees a box's
         // children are all inline or all block, so this one test covers it.
-        if (split == nullptr || split->children.size() < 2 || split->establishes_inline_context()) {
+        //
+        // A FLEX CONTAINER'S CHILDREN ARE NOT INDEPENDENT EITHER, and for a
+        // stronger reason: an inline container's children merely share a line,
+        // where a flex container's share FREE SPACE, so one item's width is a
+        // function of every other item's. split_point already refuses to return
+        // one; this is where the invariant is stated, and it is the difference
+        // between the two being a fact about the code rather than about one
+        // function. Wrong only above parallel_min_boxes, which every real
+        // Bootstrap page exceeds and no unit test does unless it sets the
+        // threshold to zero on purpose - which the parallel-equals-sequential
+        // test does, with a flex case, in the commit that added this.
+        if (split == nullptr || split->children.size() < 2 || split->kind == box_kind::flex ||
+            split->establishes_inline_context()) {
             return run(root, viewport_width); // nothing worth distributing
         }
         return arrange_parallel(root, constraints{viewport_width, 0, root.font_size}, split, pool);

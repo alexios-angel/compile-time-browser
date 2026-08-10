@@ -1,15 +1,21 @@
 # Bootstrap 5.3.8 at Chrome parity
 
-**Where it is: S0 and S1 DONE. The harness measures (numbers in
-`tools/check/css-parity.txt`) and `bootstrap_layout` pins the same table without a
-browser. The CSS front end is ours: `style/css/` is a real CSS Syntax Level 3
-tokenizer and grammar, and no public header includes `<ctcss.hpp>` any more. 85/85
-green. S2 is DONE: **93.8% of Bootstrap's selectors can match**, up from 86.4%, and the
-Chrome diff has fallen for the first time - 7,820 -> 7,703. S3a is done too:
-**inheritance is a real cascade stage**. And S4a: **`var()` resolves** - every one of
-Bootstrap's 1,370 calls, the Chrome diff down 30.4% to 5,355, and the page now looks
-like Bootstrap. S4b: the cascade is TWO PASSES and the `border` shorthand expands, so
-borders draw. `calc()` and S3b (typed values, unit folding) are next.**
+**Where it is. The Chrome diff over the six fixtures is 2,532, down from 7,820 when
+this started; 88/88 green; the numbers are in `tools/check/css-parity.txt` and
+`bootstrap_layout` pins the same table without a browser.**
+
+**Done:** S0 the harness · S1 the CSS front end (`style/css/` is a real Syntax Level 3
+tokenizer and grammar; no public header includes `<ctcss.hpp>`) · S2 the selector engine
+(**93.8% of Bootstrap's selectors can match**, up from 86.4%) · S3a **inheritance as a
+real cascade stage** · S4a **`var()`** - all 1,370 of Bootstrap's calls, and the page
+started looking like Bootstrap · S4b the two-pass cascade, so the `border` shorthand
+expands and borders draw · `calc()`, real `@media` evaluation, `line-height`, S7a
+min/max-width and auto-margin centring · **S9 flex**, which took the grid fixture from
+490 differences to 173 and is where most of the remaining geometry was.
+
+**Next:** S3b (typed values and unit folding), S10 (de-replace `<button>`, blocked on
+inline-block shrink-to-fit), S7b (box-sizing, borders in `resolved_edges`,
+min/max-height), S11 position and stacking, S12 paint decoration.
 
 `vendor/bootstrap/bootstrap.css` is the first real-world stylesheet this engine
 has been pointed at. Every CSS test before it was a hand-written inline literal
@@ -421,6 +427,89 @@ used to be. And `min_width_`/`max_width_` never reached the constructor's initia
 list, so they were null atoms reading empty strings and the clamping was dead code that
 compiled, linked and passed everything except its own test.
 
+### S9: flex, and the grid stops being a stack of full-width blocks
+
+The remainder really was concentrated in one feature. On the grid fixture 102 of 111
+elements differed on `@y` for a single reason - every `.col` was a block, so every
+column sat below the one before it.
+
+| fixture | differ before | after | substituted before | after |
+|---|---|---|---|---|
+| box | 69 | 69 | 1,387 | 1,308 |
+| type | 136 | 136 | 2,093 | 1,969 |
+| **grid** | **490** | **173** | 3,457 | 3,234 |
+| components | 1,091 | 977 | 5,921 | 5,554 |
+| position | 303 | 291 | 2,078 | 1,951 |
+| kitchen | 1,051 | 886 | 5,243 | 4,915 |
+| **total** | **3,140** | **2,532** | 20,179 | 18,931 |
+
+The grid fixture is where the rung is gated and it fell **65%**. What is left on it is
+no longer flex: 102 of its 173 are one `@y` offset of **-0.0156px** - a single 1/64
+rounding difference on `h1.fs-4`'s height, propagated down the page by the report's
+own ranking rule - 24 are `.row`'s `margin-top: calc(-1 * var(--bs-gutter-y))`
+answering `auto` where Chrome reports the initial `0px`, and most of the rest are
+Chrome's `LayoutUnit` flooring `33.333333%` of 960 to 319.984375 where this answers 320.
+
+The traced case works exactly as predicted: `.container` 960 with 12px padding gives
+936, `.row`'s -12px margins widen it back to **960**, three `.col`s take **320** each.
+So does the case that needs the real §9.7 loop rather than one proportional pass - a
+`.col` holding one unbreakable 624px token takes 648 and its sibling the remaining 312,
+and the row below it with `min-width: 0` splits 480/480, which is why Bootstrap's
+`.card` carries that declaration.
+
+**`min-width`/`min-height` are answered rather than left blank, and the answer depends
+on the parent.** Chrome reports `auto` for a flex item - where `auto` means the
+content-based minimum and genuinely is not a length - and resolves it to `0px`
+everywhere else. That was 139 of the grid fixture's 490 differences, every one about
+which parent an element has rather than about the element. The harness's initial-value
+table cannot fix it: forcing `auto` there moved 566 differences the *wrong* way,
+because most elements on most pages are not flex items.
+
+**Two things landed with flex because flex cannot be correct without them.**
+`display` is *blockified* on a flex item (CSS Display 3 §2.7), which is why
+`<a class="nav-link">` inside a `.nav` reports `block`; and anonymous item generation
+wraps **text runs only** - an `<img>` between two text nodes is an item in its own
+right, and wrapping it would make two images one item.
+
+**The parallel driver was the thing most likely to ship broken, and it did not.**
+`engine::run_parallel`'s guard existed for inline containers, whose children merely
+share a line. A flex container's children share *free space*, so item i's width is a
+function of item j's - the exact opposite of the independence the driver rests on.
+Both halves are closed: `split_point` refuses to descend into a flex container, and the
+guard refuses to split at one. Two cases in the parallel-equals-sequential test landed
+in the same commit, at `parallel_min_boxes = 0`: 64 flex rows (the driver must split
+*above* them) and one flex container holding 64 items (it must refuse and fall back).
+
+**An 18-claim adversarial review of the freeze loop found six real spec bugs that 25
+passing tests could not see**, all of them latent on Bootstrap - `bootstrap_layout` came
+back byte-identical after fixing them, which is the evidence that they were latent
+rather than that the fixes were nothing:
+
+- **§9.7.4's sub-one factor share is of the INITIAL free space**, not of what is left
+  after some other item froze. `flex-grow: .25` beside an item that hit its `max-width`
+  came out 225 where Chrome says 250. Invisible with one item or with factors summing
+  past one, which is every other test here.
+- **A shrink is weighted by the item's INNER (content-box) base size.** Two 200px items
+  shrinking into 300px are 150/150 only if neither is padded; give one 100px of padding
+  and it gives up a third of the deficit rather than half.
+- **"Single-line" means `flex-wrap: nowrap`** (§5.2), not "produced one line". The two
+  agree for the default `align-content`, which stretches the one line to fill the
+  container anyway - which is why the Bootstrap rows do not move.
+- **Stretch is clamped by the item's own min/max cross size** (§9.4.11). The column axis
+  already clamped and the row axis did not, so the two disagreed about one rule.
+- **A percentage maximum that cannot resolve behaves as `none`.** Resolved against zero
+  it became a definite maximum of 0, which clamped the automatic minimum to 0 too and
+  collapsed the item - `max-height: 100%` in a column with no stated height gave 0.
+- **The leading margin is the one at the flex-START edge**, which under `row-reverse` is
+  `margin-right`. Naming them physically offset every reversed item by exactly
+  (trailing - leading), which is invisible whenever the two are equal.
+
+Recorded as known differences rather than approximated: `flex-basis: content`, baseline
+alignment, absolutely-positioned items, a `%` basis against an indefinite main size, and
+§9.9.1's max-content flex fraction (a growable item's max-content contribution is the
+larger of its base and its content size, which is the same answer when one item
+dominates and an under-estimate otherwise).
+
 ### Two findings that were NOT predicted
 
 1. **`clientWidth` disagrees with the width layout actually used.**
@@ -518,7 +607,7 @@ document** — inlining for ctbrowser only would destroy the comparison. Viewpor
 | **S5** | **`@media` with a real environment** — now the BOTTLENECK, see below | `.container` takes the breakpoint's max-width, which then clamps, which then centres |
 | **S7b** | `box-sizing`, borders in `resolved_edges`, `min/max-height`, and the `clientWidth`/layout-width inconsistency | `bootstrap-box.html` → near zero; **zero golden movement expected — verify** |
 | **S8** | **Text metrics.** `line-height` (replacing the hardcoded `line_height_factor = 1.25f`), `text-align`, `vertical-align` | `bootstrap-type.html`; **moves every text golden** — taken early on purpose |
-| **S9** | **Flex**, including the `run_parallel` independence guard | `bootstrap-grid.html` → near zero; ~20 tests in a new `flex_basics.cpp`; parallel-equals-sequential extended with a flex case |
+| **S9** | **Flex**, including the `run_parallel` independence guard | **DONE.** `bootstrap-grid.html` **490 → 173**, the whole Chrome diff 3,140 → **2,532**, and what is left on the grid fixture is not flex. 30 tests in a new `flex_basics.cpp`, two flex cases in parallel-equals-sequential, and six spec bugs found by an adversarial review that the 25 original tests could not see. **No image golden moved** |
 | **S10** | **De-replace `<button>`** — out of `is_replaced_tag`, its intrinsic sizing moved into the UA sheet as real `padding`/`border` so the cascade can override it | `bootstrap-components.html`; **moves `widgets`, `elements`** |
 | **S11** | **Position and stacking**, in two sub-rungs: in-layer `z-index`, then fixed/sticky as their own layers | `bootstrap-position.html`; new `position_basics.cpp` |
 | **S12** | **Paint decoration.** Per-side `border-{width,style,color}`, `border-radius`, `box-shadow`, `opacity`, `visibility`, `outline` | Screenshots **by eye**; `bootstrap.ppm`; new `raster_basics` coverage cases. **Moves `widgets`, `elements`, `page.ppm`** |

@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -44,6 +45,11 @@ enum class box_kind : std::uint8_t {
                // reason it cannot be laid out as blocks - a block sizes itself
                // from its own content, and a cell has to size itself from a
                // column its siblings in other rows also occupy
+    flex,      // a flex container. Like a table and for the same reason: its
+               // children's sizes are not their own business, because free
+               // space is distributed ACROSS them. `display: inline-flex` is
+               // this kind too, with inline_level set - the inside and the
+               // outside of a display value are two independent questions
     replaced,  // a box whose size comes from the ELEMENT, not its children:
                // <canvas>, <input>, <select>, <textarea>, <img>. CSS calls
                // these replaced elements, and the distinction is load bearing -
@@ -70,6 +76,12 @@ struct box_node {
     // max-width - and every child of it was then measured against the wrong
     // basis, so one missing property moved 27 elements on one fixture.
     length min_width{}, max_width{};
+    // `min-height` / `max-height`. Read here but consumed ONLY by flex, where a
+    // `column` container's main axis is the vertical one and the freeze loop has
+    // to clamp against them exactly as the row case clamps against min/max-width.
+    // block_flow still ignores them; that is S7b's rung, and the fields being
+    // here already is what stops it having to touch this file again.
+    length min_height{}, max_height{};
     // Was the horizontal margin written as the WORD `auto`?
     //
     // It cannot be read off `margin.left.is_auto()`, and that is a trap rather than
@@ -80,7 +92,29 @@ struct box_node {
     // at all. CSS says an unspecified margin is 0; only the keyword means auto.
     bool margin_left_auto = false;
     bool margin_right_auto = false;
+    // The vertical pair, for the same reason and read by flex only. An auto
+    // margin on a flex item absorbs the line's free space (§9.5) on WHICHEVER
+    // axis it is on, and a `column` container's main axis is the vertical one -
+    // so a row-only pair would have made the two axes asymmetric in the one place
+    // they have to behave identically. block_flow still ignores them, which is
+    // correct: a vertical auto margin outside a flex container really is zero.
+    bool margin_top_auto = false;
+    bool margin_bottom_auto = false;
+    // `display: inline-flex` - and, at the button rung, `inline-block`. The box
+    // runs a BLOCK-KIND formatting context inside while participating in its
+    // parent's INLINE one outside, which is the whole of what the two-value
+    // `display` syntax says: the inside and the outside are separate questions.
+    //
+    // A bool rather than a fifth box_kind, because `inline-flex` and `flex` are
+    // the same formatting context and would otherwise duplicate every branch that
+    // dispatches on kind. Consulted ONLY for kinds that would otherwise be
+    // block-level: `inline_`, `text` and `replaced` are inline-level by kind and
+    // leave this false.
+    bool inline_level = false;
     side_lengths margin{}, padding{};
+    // Every flex property, resolved. See flex_spec: a box carries both the
+    // container half and the item half because it may be both at once.
+    flex_spec flex{};
     float font_size = 16;
     // THE LINE BOX'S HEIGHT, absolute, resolved once here for the same reason
     // font_size is: layout would otherwise re-parse a string per line.
@@ -127,10 +161,16 @@ struct box_node {
     [[nodiscard]] bool is_cell() const noexcept { return tag == "td" || tag == "th"; }
 
     [[nodiscard]] bool is_block_level() const noexcept {
+        // `inline-flex` FIRST: the box is one of the kinds below, at an inline
+        // level. Testing the kind first would make an inline-flex container
+        // block-level and break the line it is supposed to sit on.
+        if (inline_level) { return false; }
         // A TABLE is block-level. Left out of this, a table shared a line with
         // whatever came before it - two tables sat side by side, and a table sat
-        // beside the paragraph above it.
-        return kind == box_kind::block || kind == box_kind::anonymous || kind == box_kind::table;
+        // beside the paragraph above it. A FLEX container is block-level for the
+        // same reason.
+        return kind == box_kind::block || kind == box_kind::anonymous || kind == box_kind::table ||
+               kind == box_kind::flex;
     }
     [[nodiscard]] bool is_replaced() const noexcept { return kind == box_kind::replaced; }
     [[nodiscard]] bool establishes_inline_context() const noexcept {
@@ -138,6 +178,13 @@ struct box_node {
         // context; a block with block children runs a block one. Mixed content
         // never reaches here - the builder wraps it.
         if (kind == box_kind::replaced) { return false; } // its children are not laid out
+        // A FLEX CONTAINER'S CHILDREN ARE FLEX ITEMS, never line participants,
+        // whatever they are made of. Without this a `.d-flex` holding text would
+        // run the inline algorithm - and worse, the parallel driver's guard
+        // (engine.hpp) would read "shares lines: not independent" as false and
+        // hand the items to different workers, which is the one place this whole
+        // rung could ship silently broken.
+        if (kind == box_kind::flex) { return false; }
         if (children.empty()) { return false; }
         for (const box_node & c : children) {
             if (c.is_block_level()) { return false; }
@@ -180,7 +227,14 @@ public:
           font_style_(atoms.intern("font-style")),
           text_decoration_(atoms.intern("text-decoration")),
           white_space_(atoms.intern("white-space")), line_height_(atoms.intern("line-height")),
-          min_width_(atoms.intern("min-width")), max_width_(atoms.intern("max-width")) {}
+          min_width_(atoms.intern("min-width")), max_width_(atoms.intern("max-width")),
+          min_height_(atoms.intern("min-height")), max_height_(atoms.intern("max-height")),
+          flex_{atoms.intern("flex-direction"),  atoms.intern("flex-wrap"),
+                atoms.intern("justify-content"), atoms.intern("align-items"),
+                atoms.intern("align-content"),   atoms.intern("align-self"),
+                atoms.intern("flex-grow"),       atoms.intern("flex-shrink"),
+                atoms.intern("flex-basis"),      atoms.intern("order"),
+                atoms.intern("row-gap"),         atoms.intern("column-gap")} {}
 
     // `line-height`, to an absolute px.
     //
@@ -281,9 +335,13 @@ private:
 
             const computed_style_ptr style = style_of(child);
             const atom tag = txn.tag(child).value_or(atom{});
-            const display_kind d =
+            display_kind d =
                 parse_display(prop(style, display_), default_display_for(atoms_->text(tag)));
             if (d == display_kind::none) { continue; } // pruned: no box at all
+            // A FLEX ITEM'S DISPLAY IS BLOCKIFIED. `into` already has its kind by
+            // the time it recurses, so the parent's formatting context is known
+            // here and this needs no second pass. See blockify().
+            if (into.kind == box_kind::flex) { d = blockify(d); }
             // A CLOSED <details> shows its <summary> AND NOTHING ELSE. This
             // cannot be a UA rule: `details > :not(summary) { display: none }`
             // needs a selector the cascade does not have, and the state lives on
@@ -293,9 +351,15 @@ private:
             box_node b;
             const std::string_view tag_text = atoms_->text(tag);
             b.kind = is_replaced_tag(tag_text) ? box_kind::replaced
-                     : tag_text == "table"
-                         ? box_kind::table
+                     : tag_text == "table"     ? box_kind::table
+                     : (d == display_kind::flex || d == display_kind::inline_flex)
+                         ? box_kind::flex
                          : (d == display_kind::inline_level ? box_kind::inline_ : box_kind::block);
+            // `inline-flex` is the flex kind at an inline LEVEL. Set from the
+            // display value rather than inferred from the kind, because the two
+            // are independent and the button rung adds `inline-block`, which is
+            // the block kind at an inline level.
+            b.inline_level = d == display_kind::inline_flex;
             b.source = child;
             b.tag = tag_text;
             b.style = style;
@@ -344,8 +408,13 @@ private:
             b.padding = sides_of(style, padding_sides_);
             b.min_width = parse_length(prop(style, min_width_));
             b.max_width = parse_length(prop(style, max_width_));
+            b.min_height = parse_length(prop(style, min_height_));
+            b.max_height = parse_length(prop(style, max_height_));
+            b.flex = flex_of(style);
             b.margin_left_auto = trimmed(prop(style, margin_sides_.left)) == "auto";
             b.margin_right_auto = trimmed(prop(style, margin_sides_.right)) == "auto";
+            b.margin_top_auto = trimmed(prop(style, margin_sides_.top)) == "auto";
+            b.margin_bottom_auto = trimmed(prop(style, margin_sides_.bottom)) == "auto";
             const length fs = parse_length(prop(style, font_size_));
             b.font_size =
                 fs.is_auto() ? inherited_font : fs.resolve(inherited_font, inherited_font);
@@ -512,9 +581,58 @@ private:
 
     static void normalise(box_node & parent);
 
+    // One anonymous box around a run of inline-level children. Shared by the
+    // block rule and the flex one, which differ in WHEN they wrap rather than in
+    // what they produce.
+    [[nodiscard]] static box_node wrap_run(const box_node & parent, std::vector<box_node> & run);
+
+    // THE LONGHANDS AND NOTHING ELSE. `flex: 1 0 0` and `gap: 1rem` are expanded
+    // by the cascade (style/engine.hpp), at the shorthand's own position in the
+    // sorted fold, which is what lets a `.flex-grow-0` utility written after
+    // `.col` win. Reading the shorthand here instead would reintroduce exactly
+    // the source-order bug that mechanism exists to prevent, so flex never sees
+    // one.
+    //
+    // A negative grow or shrink factor is invalid and takes the initial value,
+    // per Flexbox 1 §7.2 - not clamped to zero, which would make `flex-shrink:
+    // -1` mean "never shrink" instead of "the declaration is ignored".
+    [[nodiscard]] flex_spec flex_of(const computed_style_ptr & style) const {
+        flex_spec out;
+        out.direction = parse_flex_direction(trimmed(prop(style, flex_.direction)));
+        out.wrap = parse_flex_wrap(trimmed(prop(style, flex_.wrap)));
+        out.justify = parse_flex_align(trimmed(prop(style, flex_.justify)), flex_align::normal);
+        out.items = parse_flex_align(trimmed(prop(style, flex_.items)), flex_align::normal);
+        out.line_align = parse_flex_align(trimmed(prop(style, flex_.content)), flex_align::normal);
+        out.self = parse_flex_align(trimmed(prop(style, flex_.self)), flex_align::auto_);
+        out.row_gap = parse_gap(trimmed(prop(style, flex_.row_gap)));
+        out.column_gap = parse_gap(trimmed(prop(style, flex_.column_gap)));
+        // `>= 0` rather than a clamp, so an invalid value takes the INITIAL one -
+        // clamping `flex-shrink: -1` to 0 would make it mean "never shrink" where
+        // CSS says the declaration is simply ignored. It also sends a NaN to the
+        // initial value, which the freeze loop's arithmetic depends on.
+        const float grow = parse_flex_number(prop(style, flex_.grow), 0);
+        const float shrink = parse_flex_number(prop(style, flex_.shrink), 1);
+        out.grow = grow >= 0 ? grow : 0.0f;
+        out.shrink = shrink >= 0 ? shrink : 1.0f;
+        const std::string_view basis = trimmed(prop(style, flex_.basis));
+        // `content` is out of scope for this rung and recorded as a known
+        // difference. Bootstrap never writes it; treating it as `auto` is the
+        // nearest honest answer, since both size the item from its content when
+        // no other size is given.
+        out.basis = basis == "content" ? length{} : parse_length(basis);
+        out.order = static_cast<int>(parse_flex_number(prop(style, flex_.order), 0));
+        return out;
+    }
+
     // The four longhands of one box-edge property.
     struct side_atoms {
         atom top, right, bottom, left;
+    };
+    // The twelve flex longhands, grouped rather than added to an already long
+    // member list one at a time.
+    struct flex_atoms {
+        atom direction, wrap, justify, items, content, self;
+        atom grow, shrink, basis, order, row_gap, column_gap;
     };
     [[nodiscard]] side_lengths sides_of(const computed_style_ptr & style,
                                         const side_atoms & names) const {
@@ -588,7 +706,8 @@ private:
     side_atoms margin_sides_, padding_sides_;
     atom font_family_, font_weight_, font_style_, text_decoration_, white_space_;
     atom line_height_;
-    atom min_width_, max_width_;
+    atom min_width_, max_width_, min_height_, max_height_;
+    flex_atoms flex_;
 };
 
 } // namespace ctbrowser::layout

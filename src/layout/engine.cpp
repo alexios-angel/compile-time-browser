@@ -12,6 +12,18 @@ fragment engine::run(const box_node & root, float viewport_width) const {
 const box_node * engine::split_point(const box_node * at) {
     constexpr std::size_t dominant_percent = 80;
     while (at != nullptr && !at->children.empty()) {
+        // A FLEX CONTAINER'S CHILDREN ARE NOT INDEPENDENT. Free space is shared
+        // out across the whole line, so item i's width is a function of item j's
+        // - which is the exact opposite of the property the parallel driver rests
+        // on. Descending here would hand a worker a subtree whose constraints
+        // cannot be derived from the path above it, and the answer would depend
+        // on the interleaving.
+        //
+        // Nothing to split, so the driver falls back to a sequential pass. Note
+        // that this cannot be left to run_parallel's own guard: the guard tests
+        // the box that is RETURNED, and a descent that walked through a flex
+        // container would return something below it.
+        if (at->kind == box_kind::flex) { return nullptr; }
         if (at->children.size() == 1) {
             at = &at->children.front();
             continue;
@@ -30,7 +42,12 @@ const box_node * engine::split_point(const box_node * at) {
         // One child holding nearly everything means this level is a chain
         // wearing a disguise. Descend. This terminates because biggest_n is
         // strictly less than total, so the subtree shrinks every step.
-        if (biggest != nullptr && biggest_n * 100 >= total * dominant_percent) {
+        //
+        // A dominant FLEX child stops the descent here instead, and splitting at
+        // THIS level is still legal: its children are ordinary block siblings, one
+        // of which happens to be a flex container that each worker lays out whole.
+        if (biggest != nullptr && biggest->kind != box_kind::flex &&
+            biggest_n * 100 >= total * dominant_percent) {
             at = biggest;
             continue;
         }

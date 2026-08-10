@@ -47,7 +47,71 @@ void box_builder::drop_collapsible_spaces(box_node & parent) {
     parent.children = std::move(kept);
 }
 
+// One anonymous box wrapping a run of inline-level children, in its parent's
+// inherited context.
+//
+// THE LINE HEIGHT IS THE PARENT'S. It was left at the default, so a wrapper
+// inside a `<p style="line-height: 2">` laid its lines out at 20px - because
+// inline_flow::arrange reads the CONTAINER's line_height, not each text run's,
+// which is what a line box means. The text boxes already carried the right
+// value and nothing read it.
+box_node box_builder::wrap_run(const box_node & parent, std::vector<box_node> & run) {
+    box_node wrapper;
+    wrapper.kind = box_kind::anonymous;
+    wrapper.style = parent.style; // anonymous boxes inherit, per spec
+    wrapper.font_size = parent.font_size;
+    wrapper.line_height = parent.line_height;
+    wrapper.children = std::move(run);
+    run.clear();
+    return wrapper;
+}
+
 void box_builder::normalise(box_node & parent) {
+    // A FLEX CONTAINER'S CHILDREN ARE ALL FLEX ITEMS, and its rule is not the
+    // block one below. Flexbox 1 §4: EVERY in-flow child ELEMENT is a flex item
+    // whatever its display, and each contiguous sequence of child TEXT RUNS is
+    // wrapped in one anonymous block container that is then a flex item.
+    //
+    // Two differences from the block rule, and both bite.
+    //
+    // It runs UNCONDITIONALLY, where the block rule fires only on mixed content -
+    // because a block whose children are all inline simply runs an inline
+    // formatting context instead, and a flex container has none to fall back on.
+    // `<div class=d-flex>text</div>` is homogeneous and still needs wrapping.
+    //
+    // And it wraps TEXT, not "everything inline-level". A replaced element is
+    // inline-level and is nonetheless an item in its own right: wrapping `<img>`
+    // in an anonymous box would make two images one item and lay them out on a
+    // line inside it. Every other element child is already block-level, because
+    // being a flex item blockified it.
+    if (parent.kind == box_kind::flex) {
+        std::vector<box_node> rebuilt;
+        std::vector<box_node> run;
+        // A run that is ONLY WHITESPACE is not rendered at all (§4 again), which
+        // is what stops the newline between two `<img>`s becoming a third column.
+        // drop_collapsible_spaces has already removed the ones between block-level
+        // siblings; this is the same rule for the ones it could not see.
+        const auto flush = [&] {
+            if (run.empty()) { return; }
+            const bool blank = std::all_of(run.begin(), run.end(), [](const box_node & t) {
+                return t.collapsible_space || trimmed(t.text).empty();
+            });
+            if (!blank) { rebuilt.push_back(wrap_run(parent, run)); }
+            run.clear();
+        };
+        for (box_node & c : parent.children) {
+            if (c.kind == box_kind::text) {
+                run.push_back(std::move(c));
+            } else {
+                flush();
+                rebuilt.push_back(std::move(c));
+            }
+        }
+        flush();
+        parent.children = std::move(rebuilt);
+        return;
+    }
+
     bool has_block = false;
     bool has_inline = false;
     for (const box_node & c : parent.children) {
@@ -57,25 +121,15 @@ void box_builder::normalise(box_node & parent) {
 
     std::vector<box_node> rebuilt;
     std::vector<box_node> run;
-    const auto flush = [&] {
-        if (run.empty()) { return; }
-        box_node wrapper;
-        wrapper.kind = box_kind::anonymous;
-        wrapper.style = parent.style; // anonymous boxes inherit, per spec
-        wrapper.font_size = parent.font_size;
-        wrapper.children = std::move(run);
-        run.clear();
-        rebuilt.push_back(std::move(wrapper));
-    };
     for (box_node & c : parent.children) {
         if (c.is_block_level()) {
-            flush();
+            if (!run.empty()) { rebuilt.push_back(wrap_run(parent, run)); }
             rebuilt.push_back(std::move(c));
         } else {
             run.push_back(std::move(c));
         }
     }
-    flush();
+    if (!run.empty()) { rebuilt.push_back(wrap_run(parent, run)); }
     parent.children = std::move(rebuilt);
 }
 

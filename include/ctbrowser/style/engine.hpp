@@ -299,6 +299,17 @@ public:
             if (parts.size() > 2) { basis = parts[2]; }
             return {{"flex-grow", parts[0]}, {"flex-shrink", shrink}, {"flex-basis", basis}};
         }
+        // `gap`, which is ROW then COLUMN - the opposite order to everything else
+        // here, and the opposite order to how it reads. It is the one shorthand
+        // whose two values are not left-to-right: `gap: 1rem 2rem` is a 1rem gap
+        // BETWEEN ROWS and a 2rem one between columns, because the block axis
+        // comes first in every Box Alignment shorthand. One value sets both.
+        if (property == "gap") {
+            const std::vector<std::string_view> parts = value_parts(value, 2);
+            if (parts.empty()) { return {}; }
+            const std::string_view row = parts[0];
+            return {{"row-gap", row}, {"column-gap", parts.size() > 1 ? parts[1] : row}};
+        }
         if (property != "margin" && property != "padding") { return {}; }
         const std::vector<std::string_view> parts = value_parts(value, 4);
         if (parts.empty()) { return {}; }

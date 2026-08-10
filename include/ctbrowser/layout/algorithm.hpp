@@ -80,6 +80,24 @@ struct precomputed {
 [[nodiscard]] fragment layout_box(const box_node & b, const constraints & c,
                                   const measure_text_fn & measure, precomputed * ready = nullptr);
 
+// THE MEASURE-SIDE TWIN OF layout_box: how wide a box's content wants to be,
+// dispatched on what the box IS.
+//
+// block_flow::measure used to hand-roll this dispatch inline, and got three
+// cases wrong because they were invisible from where it was written: a REPLACED
+// child measured as zero (its children are not laid out, so asking them gives
+// nothing), a nested TABLE measured as a block, and - once one existed - a FLEX
+// container measured as the widest of its items rather than the sum. The first
+// two were latent: block_flow::measure is only reached from a table cell, and no
+// page in the suite puts an image or a table in one. Flex reaches it on every
+// item of every row, which is what made the third one worth fixing all three.
+//
+// Declared before the contexts and defined in the .cpp, so flex - which lives in
+// its own header to keep this one readable - can be one of the cases without
+// this header having to know the type.
+[[nodiscard]] intrinsic_sizes measure_box(const box_node & b, const constraints & c,
+                                          const measure_text_fn & measure);
+
 // How much of `text` fits in `available`, measured in whole words. A break
 // opportunity is AFTER a run of spaces, and a LEADING run of spaces belongs
 // to the first candidate rather than being a zero-width candidate of its
@@ -137,13 +155,12 @@ struct inline_flow {
         float line = 0;
         for (const box_node & child : b.children) {
             // A replaced child's width is its OWN, not something derived from
-            // content it does not have. Without this an <img> or a <canvas>
-            // measures as zero wide and never wraps - it just runs off the line.
-            const float w =
-                child.kind == box_kind::text
-                    ? measure_text(child.text, child.font_size, child.face)
-                    : (child.is_replaced() ? child.intrinsic_width
-                                           : measure(child, c, measure_text).max_content);
+            // content it does not have - without that an <img> or a <canvas>
+            // measures as zero wide and never wraps, it just runs off the line.
+            // measure_box knows that, and knows what an inline-flex child is too.
+            const float w = child.kind == box_kind::text
+                                ? measure_text(child.text, child.font_size, child.face)
+                                : measure_box(child, c, measure_text).max_content;
             line += w;
             out.min_content = std::max(out.min_content, longest_word(child, measure_text));
         }
@@ -214,8 +231,7 @@ struct inline_flow {
             }
             // an inline box: measured whole, wrapped to the next line if it
             // does not fit beside what is already there
-            const float w = child.is_replaced() ? child.intrinsic_width
-                                                : measure(child, c, measure_text).max_content;
+            const float w = measure_box(child, c, measure_text).max_content;
             if (pen_x > 0 && pen_x + w > c.available_width) {
                 align_line(pen_y);
                 pen_x = 0;
@@ -345,17 +361,13 @@ struct block_flow {
                                           const measure_text_fn & measure_text) const {
         intrinsic_sizes out;
         for (const box_node & child : b.children) {
-            // A TEXT child is measured directly. Handing it to inline_flow -
-            // which measures a box's CHILDREN - asked a text box what its
-            // children were, and a text box has none, so every block whose
-            // content is text measured as ZERO WIDE. Nothing noticed until a
-            // table asked how wide its columns wanted to be and got 0.
-            const intrinsic_sizes child_sizes =
-                child.kind == box_kind::text
-                    ? intrinsic_sizes{inline_flow::longest_word(child, measure_text),
-                                      measure_text(child.text, child.font_size, child.face)}
-                : child.establishes_inline_context() ? inline_flow{}.measure(child, c, measure_text)
-                                                     : measure(child, c, measure_text);
+            // A TEXT child is measured directly, not handed to inline_flow -
+            // which measures a box's CHILDREN, so it asked a text box what its
+            // children were, got none, and every block whose content is text
+            // measured as ZERO WIDE. Nothing noticed until a table asked how wide
+            // its columns wanted to be and got 0. measure_box owns that
+            // distinction now, along with the three cases this loop got wrong.
+            const intrinsic_sizes child_sizes = measure_box(child, c, measure_text);
             out.min_content = std::max(out.min_content, child_sizes.min_content);
             out.max_content = std::max(out.max_content, child_sizes.max_content);
         }
@@ -461,7 +473,7 @@ struct table_flow {
             for (const box_node & cell : row->children) {
                 if (!cell.is_cell()) { continue; }
                 if (column >= widths.size()) { widths.push_back(0); }
-                const intrinsic_sizes wants = block_flow{}.measure(cell, c, measure_text);
+                const intrinsic_sizes wants = measure_box(cell, c, measure_text);
                 widths[column] = std::max(widths[column], wants.max_content + 2 * cell_padding);
                 ++column;
             }
@@ -532,7 +544,12 @@ struct table_flow {
                 // The cell is laid out INSIDE its column: its text wraps to the
                 // column, which is what makes a narrow column tall instead of
                 // making the table wide.
-                fragment placed = block_flow{}.arrange(
+                //
+                // Through layout_box rather than straight to block_flow, because a
+                // `<td class="d-flex">` is a flex container and naming the
+                // algorithm here would silently lay it out as a block. Identical
+                // for every ordinary cell, which is what layout_box dispatches to.
+                fragment placed = layout_box(
                     cell, constraints{column_width - 2 * cell_padding, 0, cell.font_size},
                     measure_text);
                 placed.bounds.x = x + cell_padding;

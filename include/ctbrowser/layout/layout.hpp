@@ -8,6 +8,8 @@
 //              pass runs
 //   algorithm  formatting contexts as types behind a concept, so flex and
 //              grid arrive as new types rather than new if-statements
+//   flex       the fourth of those, in its own file because §9's freeze
+//              loop is as long as the other three contexts together
 //   engine     the driver, sequential and parallel
 //
 // the previous engine wrote geometry back onto the DOM node. That single decision is what made
@@ -17,5 +19,6 @@
 #include <ctbrowser/layout/algorithm.hpp>
 #include <ctbrowser/layout/box.hpp>
 #include <ctbrowser/layout/engine.hpp>
+#include <ctbrowser/layout/flex.hpp>
 #include <ctbrowser/layout/fragment.hpp>
 #include <ctbrowser/layout/values.hpp>

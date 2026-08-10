@@ -183,14 +183,15 @@ struct length {
 }
 
 // The `display` values the box tree distinguishes. Everything else collapses
-// into one of these for now - a box tree that models `display` exhaustively
-// before there is a flex or grid algorithm to consume it would be modelling
-// nothing.
+// into one of these - a box tree that models `display` exhaustively before there
+// is an algorithm to consume it would be modelling nothing.
 enum class display_kind : std::uint8_t {
     none,
     block,
     inline_level,
-    inline_block
+    inline_block,
+    flex,
+    inline_flex
 };
 
 [[nodiscard]] inline display_kind parse_display(std::string_view text, display_kind fallback) {
@@ -198,8 +199,174 @@ enum class display_kind : std::uint8_t {
     if (text == "block") { return display_kind::block; }
     if (text == "inline") { return display_kind::inline_level; }
     if (text == "inline-block") { return display_kind::inline_block; }
-    if (!text.empty()) { return display_kind::block; } // flex/grid/table: block for now
+    if (text == "flex") { return display_kind::flex; }
+    if (text == "inline-flex") { return display_kind::inline_flex; }
+    // `grid` and `inline-grid` fall through to `block` DELIBERATELY, and the
+    // comment is the point rather than the code: there is no grid formatting
+    // context, so naming the value here would be a promise the pipeline cannot
+    // keep. A grid container degrades to a block, which is what a grid with every
+    // item full width looks like - Bootstrap's `.d-grid` is one utility and that
+    // is exactly its shape. `table` is decided by the TAG, above this.
+    if (!text.empty()) { return display_kind::block; }
     return fallback;
+}
+
+// BLOCKIFICATION, CSS Display 3 §2.7: a flex item's own `display` is blockified,
+// because there are no lines inside a flex container for an inline-level box to
+// sit on. `inline` and `inline-block` become `block`; `inline-flex` becomes
+// `flex`; everything else is already block-level and is left alone.
+//
+// It is not cosmetic. `<a class="nav-link">` inside a `.nav` is an inline element
+// in a formatting context with no inline algorithm, and Chrome reports `block`
+// for it - on 50 of one fixture's 189 elements.
+[[nodiscard]] inline display_kind blockify(display_kind d) {
+    switch (d) {
+    case display_kind::inline_level:
+    case display_kind::inline_block: return display_kind::block;
+    case display_kind::inline_flex: return display_kind::flex;
+    case display_kind::none:
+    case display_kind::block:
+    case display_kind::flex: break;
+    }
+    return d;
+}
+
+// --- flex -----------------------------------------------------------------
+
+enum class flex_direction : std::uint8_t {
+    row,
+    row_reverse,
+    column,
+    column_reverse
+};
+
+enum class flex_wrap : std::uint8_t {
+    nowrap,
+    wrap,
+    wrap_reverse
+};
+
+// `justify-content`, `align-content`, `align-items` and `align-self` spell
+// overlapping value sets, so they share ONE enum rather than four that have to
+// be kept in step. Which values are legal differs per property, and that is the
+// parser's business rather than the type's: `justify-content: baseline` is not a
+// thing, and neither is `align-items: space-between`.
+enum class flex_align : std::uint8_t {
+    auto_,  // `align-self` only: whatever the container's `align-items` says
+    normal, // the initial value: stretch for the align-* trio, start for justify
+    flex_start,
+    flex_end,
+    center,
+    baseline,
+    stretch,
+    space_between,
+    space_around,
+    space_evenly
+};
+
+// Every flex property one box needs, resolved once for the same reason the
+// lengths are: layout would otherwise re-parse eleven strings per box per pass.
+//
+// BY VALUE on box_node, and deliberately: box_node is copyable today, and
+// normalise() and the parallel driver move whole subtrees around. Making it
+// move-only to save these ~60 bytes on a ~250-byte struct is the wrong trade.
+// If this ever grows a container - a `flex-flow` list, say - that changes.
+//
+// Every box carries both halves, container and item, because every box is
+// potentially both: a `.col` is an item of its `.row` and the container of the
+// nested row inside it.
+struct flex_spec {
+    // The CONTAINER half.
+    flex_direction direction = flex_direction::row;
+    flex_wrap wrap = flex_wrap::nowrap;
+    flex_align justify = flex_align::normal;    // justify-content
+    flex_align items = flex_align::normal;      // align-items
+    flex_align line_align = flex_align::normal; // align-content
+    length row_gap{0, unit::px};
+    length column_gap{0, unit::px};
+    // The ITEM half.
+    float grow = 0;
+    float shrink = 1;
+    length basis{}; // `auto`
+    flex_align self = flex_align::auto_;
+    int order = 0;
+
+    // The main axis is horizontal for `row`, vertical for `column`. Asked often
+    // enough that spelling the comparison at each site would be four chances to
+    // forget `row-reverse`.
+    [[nodiscard]] constexpr bool horizontal() const noexcept {
+        return direction == flex_direction::row || direction == flex_direction::row_reverse;
+    }
+    [[nodiscard]] constexpr bool reversed() const noexcept {
+        return direction == flex_direction::row_reverse ||
+               direction == flex_direction::column_reverse;
+    }
+};
+
+[[nodiscard]] inline flex_direction parse_flex_direction(std::string_view text) {
+    if (text == "row-reverse") { return flex_direction::row_reverse; }
+    if (text == "column") { return flex_direction::column; }
+    if (text == "column-reverse") { return flex_direction::column_reverse; }
+    return flex_direction::row;
+}
+
+[[nodiscard]] inline flex_wrap parse_flex_wrap(std::string_view text) {
+    if (text == "wrap") { return flex_wrap::wrap; }
+    if (text == "wrap-reverse") { return flex_wrap::wrap_reverse; }
+    return flex_wrap::nowrap;
+}
+
+// The Box Alignment spellings as well as the flex ones. `start`/`end` are the
+// axis-relative keywords and `left`/`right` the physical ones; in a
+// left-to-right row they mean what `flex-start`/`flex-end` mean, and this engine
+// has no writing modes for them to differ in. Saying so here rather than
+// answering `normal` to them is what stops a page written in the newer spelling
+// silently losing its alignment.
+//
+// `safe`/`unsafe` prefixes and `first`/`last baseline` are consumed by taking the
+// LAST word, which is the keyword in every one of those forms.
+[[nodiscard]] inline flex_align parse_flex_align(std::string_view text, flex_align fallback) {
+    if (text.empty()) { return fallback; }
+    if (const std::size_t space = text.find_last_of(' '); space != std::string_view::npos) {
+        text = text.substr(space + 1);
+    }
+    if (text == "auto") { return flex_align::auto_; }
+    if (text == "normal") { return flex_align::normal; }
+    if (text == "flex-start" || text == "start" || text == "left") {
+        return flex_align::flex_start;
+    }
+    if (text == "flex-end" || text == "end" || text == "right") { return flex_align::flex_end; }
+    if (text == "center") { return flex_align::center; }
+    if (text == "baseline") { return flex_align::baseline; }
+    if (text == "stretch") { return flex_align::stretch; }
+    if (text == "space-between") { return flex_align::space_between; }
+    if (text == "space-around") { return flex_align::space_around; }
+    if (text == "space-evenly") { return flex_align::space_evenly; }
+    return fallback;
+}
+
+// A `<number>`, for `flex-grow`/`flex-shrink`/`order`. Negative values are
+// invalid for the two factors and the caller clamps; `order` may be negative,
+// which is how a utility pulls an item in front of its source-order siblings.
+[[nodiscard]] inline float parse_flex_number(std::string_view text, float fallback) {
+    std::size_t i = 0;
+    while (i < text.size() && (text[i] == ' ' || text[i] == '\t')) { ++i; }
+    text.remove_prefix(i);
+    if (text.empty()) { return fallback; }
+    float value = 0;
+    if (std::from_chars(text.data(), text.data() + text.size(), value).ec != std::errc{}) {
+        return fallback;
+    }
+    return value;
+}
+
+// `row-gap`/`column-gap`. `normal` is zero for a flex container, which is the
+// spec's own wording rather than a simplification: `normal` only means something
+// other than zero for multi-column.
+[[nodiscard]] inline length parse_gap(std::string_view text) {
+    if (text.empty() || text == "normal") { return length{0, unit::px}; }
+    const length parsed = parse_length(text);
+    return parsed.is_auto() ? length{0, unit::px} : parsed;
 }
 
 // The CSS box sides, from a 1-to-4-value shorthand plus per-side overrides.

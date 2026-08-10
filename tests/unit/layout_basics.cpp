@@ -396,6 +396,77 @@ void test_parallel_falls_back_when_there_is_nothing_to_split() {
           "a chain document falls back to sequential and still matches");
 }
 
+// THE CASE THIS RUNG COULD HAVE SHIPPED BROKEN.
+//
+// The driver's whole licence to fan out is that a block child's layout depends
+// on exactly one thing from its siblings - the content width they share. A FLEX
+// container's children are not independent at all: free space is distributed
+// across the line, so item i's width is a function of item j's. Handing them to
+// different workers would give an answer that depends on the interleaving.
+//
+// Wrong only above parallel_min_boxes, which every real Bootstrap page exceeds
+// and no test does unless it sets the threshold to zero on purpose - which is
+// exactly what these do.
+void test_parallel_matches_sequential_with_flex() {
+    // Sixty-four flex rows under <body>: the split is at body, and each row is
+    // laid out WHOLE by one worker. That is the legal split, and it is the one
+    // the driver must find.
+    std::string html = "<html><body>";
+    for (int i = 0; i < 64; ++i) {
+        html += "<div class=row><div class=col>alpha beta gamma</div>"
+                "<div class=col>one two three</div><div class=col>x</div></div>";
+    }
+    html += "</body></html>";
+    fixture f;
+    f.load(html, "body { margin: 0; padding: 0 } "
+                 ".row { display: flex; flex-wrap: wrap; margin-left: -12px; margin-right: -12px } "
+                 ".col { flex-grow: 1; flex-shrink: 0; flex-basis: 0; "
+                 "       padding-left: 12px; padding-right: 12px }");
+    engine eng{monospace_measure()};
+    eng.parallel_min_boxes = 0;
+    scheduler pool;
+    const fragment sequential = eng.run(f.root, 960);
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        const fragment parallel_result = eng.run_parallel(f.root, 960, pool);
+        std::string where;
+        if (!identical(sequential, parallel_result, where)) {
+            std::printf("FAIL parallel flex layout diverged on attempt %d at %s\n", attempt,
+                        where.c_str());
+            ++ctbrowser_test_failures;
+            return;
+        }
+    }
+    const box_node * split = engine::split_point(&f.root);
+    check(split != nullptr && split->children.size() == 64,
+          "the driver split at the 64 flex rows, not inside one");
+    check(split != nullptr && split->kind != box_kind::flex,
+          "and the split point is not itself a flex container");
+}
+
+void test_parallel_refuses_to_split_inside_a_flex_container() {
+    // The other shape: ONE flex container holding everything. The dominant-child
+    // descent would walk straight into it, so split_point has to stop and the
+    // driver has to fall back to a sequential pass rather than fan out over items
+    // that share free space.
+    std::string html = "<html><body><div class=row>";
+    for (int i = 0; i < 64; ++i) { html += "<div class=col>item " + std::to_string(i) + "</div>"; }
+    html += "</div></body></html>";
+    fixture f;
+    f.load(html, "body { margin: 0; padding: 0 } "
+                 ".row { display: flex; flex-wrap: wrap } "
+                 ".col { flex-grow: 1; flex-shrink: 1; flex-basis: 0; min-width: 0 }");
+    engine eng{monospace_measure()};
+    eng.parallel_min_boxes = 0;
+    scheduler pool;
+    check(engine::split_point(&f.root) == nullptr,
+          "split_point refuses to descend into a flex container");
+    const fragment sequential = eng.run(f.root, 960);
+    const fragment parallel_result = eng.run_parallel(f.root, 960, pool);
+    std::string where;
+    check(identical(sequential, parallel_result, where),
+          "so run_parallel falls back and still matches sequential");
+}
+
 void test_parallel_survives_a_document_that_is_all_one_subtree() {
     fixture f;
     // One wrapper holding everything: the split point has to be found BELOW
@@ -587,6 +658,8 @@ int main() {
 
     test_parallel_matches_sequential();
     test_parallel_falls_back_when_there_is_nothing_to_split();
+    test_parallel_matches_sequential_with_flex();
+    test_parallel_refuses_to_split_inside_a_flex_container();
     test_parallel_survives_a_document_that_is_all_one_subtree();
 
     REPORT("layout_basics");
