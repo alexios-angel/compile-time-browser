@@ -13,7 +13,9 @@ resolved_edges resolve_edges(const box_node & b, const constraints & c) {
         b.margin.top.resolve(basis, b.font_size),     b.margin.right.resolve(basis, b.font_size),
         b.margin.bottom.resolve(basis, b.font_size),  b.margin.left.resolve(basis, b.font_size),
         b.padding.top.resolve(basis, b.font_size),    b.padding.right.resolve(basis, b.font_size),
-        b.padding.bottom.resolve(basis, b.font_size), b.padding.left.resolve(basis, b.font_size)};
+        b.padding.bottom.resolve(basis, b.font_size), b.padding.left.resolve(basis, b.font_size),
+        b.border.top.resolve(basis, b.font_size),     b.border.right.resolve(basis, b.font_size),
+        b.border.bottom.resolve(basis, b.font_size),  b.border.left.resolve(basis, b.font_size)};
 }
 
 float outer_width_of(const box_node & b, const constraints & c, const resolved_edges & e) {
@@ -61,7 +63,7 @@ float auto_margin_left(const box_node & b, const constraints & c, const resolved
 }
 
 float content_width_of(const box_node & b, const constraints & c, const resolved_edges & e) {
-    return std::max(0.0f, outer_width_of(b, c, e) - e.horizontal_padding());
+    return std::max(0.0f, outer_width_of(b, c, e) - e.horizontal_inner());
 }
 
 intrinsic_sizes measure_box(const box_node & b, const constraints & c,
@@ -85,8 +87,8 @@ intrinsic_sizes outer_intrinsic(const box_node & child, const constraints & c,
                                 const measure_text_fn & measure) {
     const resolved_edges edges = resolve_edges(child, c);
     intrinsic_sizes out = measure_box(child, c, measure);
-    out.min_content += edges.horizontal_padding();
-    out.max_content += edges.horizontal_padding();
+    out.min_content += edges.horizontal_inner();
+    out.max_content += edges.horizontal_inner();
     // A STATED WIDTH IS THE CONTRIBUTION whatever the content wants, and it names
     // the BORDER box like every other size here. A PERCENTAGE has no answer while
     // the containing block's own width is the question being asked, so there the
@@ -118,11 +120,11 @@ float shrink_to_fit_width(const box_node & b, const constraints & c, const resol
                           const measure_text_fn & measure) {
     const intrinsic_sizes wants = measure_box(b, c, measure);
     const float room =
-        std::max(0.0f, c.available_width - e.horizontal_margin() - e.horizontal_padding());
+        std::max(0.0f, c.available_width - e.horizontal_margin() - e.horizontal_inner());
     // The measured sizes are the CONTENT's; the answer is a border box, like every
     // other width here.
     float out =
-        std::max(wants.min_content, std::min(room, wants.max_content)) + e.horizontal_padding();
+        std::max(wants.min_content, std::min(room, wants.max_content)) + e.horizontal_inner();
     // MAX FIRST, THEN MIN, the same order and the same reason as outer_width_of.
     if (!b.max_width.is_auto()) {
         out = std::min(out, b.max_width.resolve(c.available_width, b.font_size));
@@ -157,8 +159,8 @@ fragment layout_box(const box_node & b, const constraints & c, const measure_tex
             b.width.is_auto() ? b.intrinsic_width : b.width.resolve(c.available_width, b.font_size);
         f.bounds.height = b.height.is_auto() ? b.intrinsic_height
                                              : b.height.resolve(c.available_height, b.font_size);
-        f.bounds.width += edges.horizontal_padding();
-        f.bounds.height += edges.vertical_padding();
+        f.bounds.width += edges.horizontal_inner();
+        f.bounds.height += edges.vertical_inner();
         return f;
     }
     if (b.kind == box_kind::table) { return table_flow{}.arrange(b, c, measure, ready); }

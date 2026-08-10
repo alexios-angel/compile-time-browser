@@ -13,9 +13,13 @@ expands and borders draw · `calc()`, real `@media` evaluation, `line-height`, S
 min/max-width and auto-margin centring · **S9 flex**, which took the grid fixture from
 490 differences to 173 and is where most of the remaining geometry was.
 
-**Next:** S3b (typed values and unit folding), S10 (de-replace `<button>`, blocked on
-inline-block shrink-to-fit), S7b (box-sizing, borders in `resolved_edges`,
-min/max-height), S11 position and stacking, S12 paint decoration.
+· **S10** inline-block shrink-to-fit and `<button>` out of `is_replaced_tag` · the
+border half of **S7b** · `border-radius` from **S12**.
+
+**Next:** S11 position and stacking (the whole of `bootstrap-position.html`'s 272 and
+every `top`/`left` on the other two), the rest of S12 (`box-shadow`, `opacity`,
+per-side borders), S3b (typed values and unit folding), and `text-align`, which no
+formatting context reads yet.
 
 `vendor/bootstrap/bootstrap.css` is the first real-world stylesheet this engine
 has been pointed at. Every CSS test before it was a hand-written inline literal
@@ -551,6 +555,62 @@ beat; one that never contained a `var()` is invalid at parse time, so the earlie
 declaration simply wins. Both are pinned. grid 173 → **137**, kitchen 862 → **859**,
 and `substituted` rose by exactly the same count - the S4a effect again, a wrong value
 replaced by a correct absence.
+
+### S10 and S12a: the rung a SCREENSHOT chose, not the harness
+
+The computed-style gate said components was the biggest number left, but not why.
+`tools/check/compare.py shot` said why in one image, once it could screenshot a remote
+engine at all - and the answer was three things the property diff was blind to or
+quiet about.
+
+**Every `.text-bg-*` element painted nothing.** `parse_color` matched `rgb(`
+case-SENSITIVELY and Bootstrap writes `RGBA(...)` in capitals 62 times, so every badge
+and every coloured label was laid out at the right size, reported the right computed
+value, and drew a blank rectangle. **The parity numbers did not move by one when it was
+fixed**: css-parity.py normalises both sides' text, so the two spellings already
+compared equal. The harness measures computed values and this lived entirely
+downstream of them - the plan's "the front end will outrun layout" warning, arriving
+from the other end.
+
+**`inline-block` was parsed and thrown away.** Every `.badge` was a full-width bar and
+`.btn` on an `<a>` spanned the row. `inline_level` already existed for `inline-flex`;
+`shrink_to_fit_width` moved beside the other width functions and flex's private copy
+went. Its BASELINE is its last line's, not its font ascent (§10.8.1) - a difference of
+exactly the top padding, which is what hangs a badge above the sentence it is in.
+
+**`border-radius`**, as radii on `fill_rect` rather than a second op, with `ring` for
+the border. A ring is the difference of two coverages of a signed distance field, which
+antialiases both edges for free and gets `.btn-outline-primary` right - a 1px ring
+around nothing, which "fill the box then fill the inside" would flood. The §5.1 scaling
+is in `display_list::fill_rounded`, the one place every producer goes through: it is
+what turns `.rounded-pill`'s 50rem into half a badge's height.
+
+**`<button>` left `is_replaced_tag`** and its size moved into the UA sheet as real
+`padding: 3px 8px; border: 1px solid`, chosen to reproduce the old intrinsic numbers
+exactly - so the widgets golden moved by a 1px label shift and nothing else. Being
+replaced was the only reason it shrink-wrapped, and also the reason a `.btn`'s padding,
+border and radius did nothing at all.
+
+That last one put the ratchet UP - components 906 → 964 - because a `.btn` is
+`border: 1px solid transparent` and **borders were not in the box model at all**. Every
+button came out 2px narrower and 2px shorter, and over fifty button rows that is a
+hundred pixels of drift. Rather than record the regression, the border half of S7b
+landed with it: `resolved_edges` carries four border floats, `horizontal_inner()` and
+`content_top()` replace the padding-only accessors at every one of the twenty call
+sites, and `border-style: none` means a used width of zero.
+
+| fixture | before S10 | after |
+|---|---|---|
+| box | 69 | **49** |
+| grid | 137 | 137 |
+| components | 906 | **704** |
+| position | 291 | **272** |
+| kitchen | 835 | **738** |
+| **total** | 2,458 | **2,036** |
+
+`bootstrap-components.html` now reads as Bootstrap: rounded buttons at Chrome's
+widths, outline buttons as rings, pills, and alerts with their rule and their last
+line. What is left on it is `position`, `box-shadow` and `text-align`.
 
 ### Two findings that were NOT predicted
 

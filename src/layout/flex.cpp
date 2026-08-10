@@ -114,9 +114,9 @@ struct flex_item {
         // it has.
         const intrinsic_sizes wants = measure_box(child, it.c, measure_text);
         const float room =
-            std::max(0.0f, content_width - it.cross_margin - it.edges.horizontal_padding());
+            std::max(0.0f, content_width - it.cross_margin - it.edges.horizontal_inner());
         size = std::max(wants.min_content, std::min(room, wants.max_content)) +
-               it.edges.horizontal_padding();
+               it.edges.horizontal_inner();
     }
     const float min =
         child.min_width.is_auto() ? 0.0f : child.min_width.resolve(content_width, child.font_size);
@@ -308,7 +308,7 @@ intrinsic_sizes flex_flow::measure(const box_node & b, const constraints & c,
     // The basis an item's own percentages resolve against. Approximate when the
     // container's width is itself being measured, which is what makes a
     // percentage-sized item contribute its content size instead - see below.
-    const float basis = std::max(0.0f, c.available_width - edges.horizontal_padding());
+    const float basis = std::max(0.0f, c.available_width - edges.horizontal_inner());
     const bool horizontal = b.flex.horizontal();
     const float gap = std::max(
         0.0f, (horizontal ? b.flex.column_gap : b.flex.row_gap).resolve(basis, b.font_size));
@@ -353,8 +353,8 @@ intrinsic_sizes flex_flow::measure(const box_node & b, const constraints & c,
         // known difference rather than left as a zero.
         if (horizontal && child.flex.grow > 0) {
             const intrinsic_sizes content = measure_box(child, child_c, measure_text);
-            item_max = std::max(item_max,
-                                content.max_content + child_edges.horizontal_padding() + outside);
+            item_max =
+                std::max(item_max, content.max_content + child_edges.horizontal_inner() + outside);
         }
         sum_min += item_min;
         sum_max += item_max;
@@ -393,7 +393,7 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
     } else {
         outer_width = outer_width_of(b, c, edges);
     }
-    const float content_width = std::max(0.0f, outer_width - edges.horizontal_padding());
+    const float content_width = std::max(0.0f, outer_width - edges.horizontal_inner());
     // A STATED HEIGHT IS THE BORDER BOX, the same as a stated width - which is
     // what block_flow::arrange already means when it assigns the resolved height
     // straight to the fragment and starts its cursor at pad_top.
@@ -401,7 +401,7 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         b.height.is_auto() ? indefinite
                            : std::max(0.0f, b.height.resolve(c.available_height, b.font_size));
     const float content_height = is_definite(outer_height)
-                                     ? std::max(0.0f, outer_height - edges.vertical_padding())
+                                     ? std::max(0.0f, outer_height - edges.vertical_inner())
                                      : indefinite;
 
     const float inner_main = horizontal ? content_width : content_height;
@@ -430,7 +430,7 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
                                     : it.edges.margin_top + it.edges.margin_bottom;
         it.cross_margin = horizontal ? it.edges.margin_top + it.edges.margin_bottom
                                      : it.edges.horizontal_margin();
-        it.main_padding = horizontal ? it.edges.horizontal_padding() : it.edges.vertical_padding();
+        it.main_padding = horizontal ? it.edges.horizontal_inner() : it.edges.vertical_inner();
         // THE LEADING MARGIN IS THE ONE AT THE FLEX-START EDGE, which under
         // `row-reverse` is the RIGHT margin and under `wrap-reverse` the BOTTOM
         // one. Naming them physically instead put the free space an auto margin
@@ -731,8 +731,8 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
             const float cross_final = b.flex.wrap == flex_wrap::wrap_reverse
                                           ? used_cross_size - cross_position - it.cross
                                           : cross_position;
-            it.placed.bounds.x = edges.pad_left + (horizontal ? main_final : cross_final);
-            it.placed.bounds.y = edges.pad_top + (horizontal ? cross_final : main_final);
+            it.placed.bounds.x = edges.content_left() + (horizontal ? main_final : cross_final);
+            it.placed.bounds.y = edges.content_top() + (horizontal ? cross_final : main_final);
 
             main_at += it.target + it.main_margin;
             if (it.main_end_auto) { main_at += auto_share; }
@@ -752,7 +752,7 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
     // down a column it is the longest line along the main axis.
     const float block_extent = horizontal ? used_cross_size : main_extent;
     out.bounds.height =
-        is_definite(outer_height) ? outer_height : block_extent + edges.vertical_padding();
+        is_definite(outer_height) ? outer_height : block_extent + edges.vertical_inner();
     return out;
 }
 

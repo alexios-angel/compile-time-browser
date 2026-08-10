@@ -41,10 +41,27 @@ concept LayoutAlgorithm =
 struct resolved_edges {
     float margin_top = 0, margin_right = 0, margin_bottom = 0, margin_left = 0;
     float pad_top = 0, pad_right = 0, pad_bottom = 0, pad_left = 0;
+    float border_top = 0, border_right = 0, border_bottom = 0, border_left = 0;
 
     [[nodiscard]] float horizontal_margin() const noexcept { return margin_left + margin_right; }
-    [[nodiscard]] float horizontal_padding() const noexcept { return pad_left + pad_right; }
-    [[nodiscard]] float vertical_padding() const noexcept { return pad_top + pad_bottom; }
+    // PADDING AND BORDER TOGETHER, because every caller wants the pair: they are
+    // the two things between a box's outer edge and its content, and asking for
+    // one without the other is the bug this replaced - a `.btn`'s 1px border was
+    // simply not in the arithmetic, so every button was two pixels narrower and
+    // two shorter than Chrome's.
+    //
+    // Named `inner` rather than `padding` so that a call site which really does
+    // want the padding alone - the recorder's background inset, one day - has to
+    // say so.
+    [[nodiscard]] float horizontal_inner() const noexcept {
+        return pad_left + pad_right + border_left + border_right;
+    }
+    [[nodiscard]] float vertical_inner() const noexcept {
+        return pad_top + pad_bottom + border_top + border_bottom;
+    }
+    // Where a box's CONTENT starts, in from its own top left corner.
+    [[nodiscard]] float content_left() const noexcept { return pad_left + border_left; }
+    [[nodiscard]] float content_top() const noexcept { return pad_top + border_top; }
 };
 
 [[nodiscard]] resolved_edges resolve_edges(const box_node & b, const constraints & c);
@@ -448,7 +465,7 @@ struct block_flow {
         const float outer_width = b.inline_level && b.width.is_auto() && c.forced_width < 0
                                       ? shrink_to_fit_width(b, c, edges, measure_text)
                                       : outer_width_of(b, c, edges);
-        const float content_width = std::max(0.0f, outer_width - edges.horizontal_padding());
+        const float content_width = std::max(0.0f, outer_width - edges.horizontal_inner());
         const bool use_ready =
             ready != nullptr && ready->parent == &b && ready->children.size() == b.children.size();
 
@@ -456,7 +473,7 @@ struct block_flow {
         out.box = &b;
         out.source = b.source;
 
-        float cursor = edges.pad_top;
+        float cursor = edges.content_top();
         if (b.establishes_inline_context()) {
             // The box is STILL BLOCK-LEVEL. Only its children share lines.
             // Conflating the two is what made a block box containing text ignore
@@ -466,7 +483,7 @@ struct block_flow {
             fragment lines =
                 inline_flow{}.arrange(b, constraints{content_width, 0, b.font_size}, measure_text);
             for (fragment & line : lines.children) {
-                line.bounds.x += edges.pad_left;
+                line.bounds.x += edges.content_left();
                 line.bounds.y += cursor;
                 out.children.push_back(std::move(line));
             }
@@ -481,14 +498,14 @@ struct block_flow {
                 // auto_margin_left, not child_edges.margin_left: `margin: 0 auto`
                 // centres a box with a definite width, and that is the whole of how
                 // a page is centred.
-                f.bounds.x =
-                    edges.pad_left + auto_margin_left(child, child_c, child_edges, f.bounds.width);
+                f.bounds.x = edges.content_left() +
+                             auto_margin_left(child, child_c, child_edges, f.bounds.width);
                 f.bounds.y = cursor + child_edges.margin_top;
                 cursor = f.bounds.y + f.bounds.height + child_edges.margin_bottom;
                 out.children.push_back(std::move(f));
             }
         }
-        cursor += edges.pad_bottom;
+        cursor += edges.pad_bottom + edges.border_bottom;
 
         out.bounds.width = outer_width;
         out.bounds.height =
@@ -585,7 +602,7 @@ struct table_flow {
         fragment out;
         out.box = &b;
         out.source = b.source;
-        float y = edges.pad_top + cell_spacing;
+        float y = edges.content_top() + cell_spacing;
 
         // THE CAPTION, above the grid and as wide as it. It is a child of the
         // table that is neither a row nor a row group, so a table that only
@@ -594,7 +611,7 @@ struct table_flow {
             if (child.tag != "caption") { continue; }
             fragment caption =
                 block_flow{}.arrange(child, constraints{natural, 0, child.font_size}, measure_text);
-            caption.bounds.x = edges.pad_left;
+            caption.bounds.x = edges.content_left();
             caption.bounds.y = y;
             caption.bounds.width = natural;
             y += caption.bounds.height;
@@ -603,7 +620,7 @@ struct table_flow {
         }
 
         for (const box_node * row : rows_of(b)) {
-            float x = edges.pad_left + cell_spacing;
+            float x = edges.content_left() + cell_spacing;
             float row_height = 0;
             std::vector<fragment> cells;
             std::size_t column = 0;
@@ -640,14 +657,14 @@ struct table_flow {
             fragment row_fragment;
             row_fragment.box = row;
             row_fragment.source = row->source;
-            row_fragment.bounds =
-                rect{edges.pad_left + cell_spacing, y, natural - 2 * cell_spacing, row_height};
+            row_fragment.bounds = rect{edges.content_left() + cell_spacing, y,
+                                       natural - 2 * cell_spacing, row_height};
             out.children.push_back(std::move(row_fragment));
             y += row_height + cell_spacing;
         }
 
-        out.bounds.width = natural + edges.horizontal_padding();
-        out.bounds.height = y + edges.pad_bottom;
+        out.bounds.width = natural + edges.horizontal_inner();
+        out.bounds.height = y + edges.pad_bottom + edges.border_bottom;
         return out;
     }
 };

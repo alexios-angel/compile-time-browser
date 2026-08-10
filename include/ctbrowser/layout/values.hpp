@@ -413,9 +413,16 @@ struct side_lengths {
     // replaced is what stops build_children descending into it, so the shapes
     // inside a graphic stop generating boxes. Before that, an <svg><text> put
     // its words in the document flow at body font size.
-    constexpr std::string_view names[] = {"canvas",   "img",    "input", "select",
-                                          "textarea", "button", "video", "iframe",
-                                          "embed",    "object", "svg"};
+    // <button> IS NOT HERE ANY MORE. It was, and being replaced was the only
+    // reason it shrink-wrapped - a replaced element takes its size from the
+    // element rather than from its content - but it also meant the cascade had
+    // no say in that size, so a `.btn`'s padding, border and radius did nothing
+    // at all. Its box now comes from the UA sheet's real padding and border
+    // (style/ua.hpp) and its label from the ordinary text path, which is what
+    // lets a stylesheet override either. `<input type=button|submit|reset>`
+    // stays replaced and keeps the widget painter's arm.
+    constexpr std::string_view names[] = {"canvas", "img",    "input", "select", "textarea",
+                                          "video",  "iframe", "embed", "object", "svg"};
     for (const std::string_view t : names) {
         if (t == tag) { return true; }
     }

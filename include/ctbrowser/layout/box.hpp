@@ -112,6 +112,17 @@ struct box_node {
     // leave this false.
     bool inline_level = false;
     side_lengths margin{}, padding{};
+    // THE BORDER, which is part of the box and was not in the arithmetic at all.
+    // A `.btn` is `border: 1px solid transparent`, so every button came out two
+    // pixels narrower and two shorter than Chrome's - and over fifty button rows
+    // that is a hundred pixels of accumulated drift down the page.
+    //
+    // Four sides because that is the shape the rule has, even though the SOURCE
+    // is currently one uniform `border-width`: paint reads a uniform border too,
+    // and when the per-side longhands arrive only box_builder has to change.
+    // Zero when `border-style` is `none` or absent, which is the CSS rule and
+    // also why `border-width: 1px` on its own draws and measures nothing.
+    side_lengths border{};
     // Every flex property, resolved. See flex_spec: a box carries both the
     // container half and the item half because it may be both at once.
     flex_spec flex{};
@@ -229,6 +240,7 @@ public:
           white_space_(atoms.intern("white-space")), line_height_(atoms.intern("line-height")),
           min_width_(atoms.intern("min-width")), max_width_(atoms.intern("max-width")),
           min_height_(atoms.intern("min-height")), max_height_(atoms.intern("max-height")),
+          border_width_(atoms.intern("border-width")), border_style_(atoms.intern("border-style")),
           flex_{atoms.intern("flex-direction"),  atoms.intern("flex-wrap"),
                 atoms.intern("justify-content"), atoms.intern("align-items"),
                 atoms.intern("align-content"),   atoms.intern("align-self"),
@@ -409,6 +421,7 @@ private:
             // `ul { padding-left: 40px }` and `summary { padding-left: 18px }`.
             b.margin = sides_of(style, margin_sides_);
             b.padding = sides_of(style, padding_sides_);
+            b.border = border_of(style);
             b.min_width = parse_length(prop(style, min_width_));
             b.max_width = parse_length(prop(style, max_width_));
             b.min_height = parse_length(prop(style, min_height_));
@@ -627,6 +640,25 @@ private:
         return out;
     }
 
+    // The used border width, on all four sides.
+    //
+    // `border-style` DECIDES WHETHER THERE IS ONE. A `border-width` with no style
+    // is a used width of zero, per CSS 2.1 §8.5.3 - which is what makes
+    // `border: 0` and a bare `border-width: 2px` behave differently, and what
+    // stops a sheet that names only a colour from silently insetting every box.
+    [[nodiscard]] side_lengths border_of(const computed_style_ptr & style) const {
+        const std::string_view drawn = trimmed(prop(style, border_style_));
+        if (drawn.empty() || drawn == "none" || drawn == "hidden") { return {}; }
+        const length w = parse_length(prop(style, border_width_));
+        // `medium` is the initial value and the one keyword Bootstrap's shorthand
+        // expansion can produce; CSS puts it at 3px and so does every browser.
+        const length used =
+            w.is_auto()
+                ? (trimmed(prop(style, border_width_)) == "medium" ? length{3, unit::px} : length{})
+                : w;
+        return side_lengths{used, used, used, used};
+    }
+
     // The four longhands of one box-edge property.
     struct side_atoms {
         atom top, right, bottom, left;
@@ -710,6 +742,7 @@ private:
     atom font_family_, font_weight_, font_style_, text_decoration_, white_space_;
     atom line_height_;
     atom min_width_, max_width_, min_height_, max_height_;
+    atom border_width_, border_style_;
     flex_atoms flex_;
 };
 

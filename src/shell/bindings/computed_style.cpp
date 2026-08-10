@@ -279,7 +279,11 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
             if (at.box == nullptr) { return "none"; } // display:none generates no box
             switch (at.box->kind) {
             case layout::box_kind::block:
-            case layout::box_kind::anonymous: return "block";
+            case layout::box_kind::anonymous:
+                // `inline_level` is the OUTSIDE of the display value, and it is
+                // what makes a `<button>` report `inline-block` rather than
+                // `block` now that it is not a replaced element.
+                return at.box->inline_level ? "inline-block" : "block";
             case layout::box_kind::inline_: return "inline";
             case layout::box_kind::table: return "table";
             case layout::box_kind::flex: return at.box->inline_level ? "inline-flex" : "flex";
