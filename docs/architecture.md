@@ -168,9 +168,12 @@ marks:
 
 Two submodules under `external/`, both doing **runtime** work:
 
-- `external/compile-time-css` — ctcss, the CSS parser and value resolver.
-  `style/engine.hpp` is a public header and includes `<ctcss.hpp>`, so an
-  install ships ctcss's headers too; see `NOTICE`.
+- `external/compile-time-css` — ctcss. NO LONGER THE CSS PARSER: `style/css/` is,
+  since the front-end rung in `docs/plans/bootstrap.md`. No public header includes
+  `<ctcss.hpp>` any more, so an install no longer ships a copy of its include tree
+  - which also ends the skew of a consumer with its own ctcss having two. It stays
+  checked out only because `tests/bench/bench_style.cpp` measures the engine
+  against it as a second implementation.
 - `external/compile-time-javascript` — ctjs, the JS parser (`tests/js/vm_basics`
   also differentially tests the VM against ctjs's own interpreter)
 

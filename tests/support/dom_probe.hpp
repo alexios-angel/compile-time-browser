@@ -20,8 +20,7 @@
 namespace ctbrowser_test {
 
 // The first element whose `id` attribute is `want`, in document order.
-[[nodiscard]] inline ctbrowser::node_id find_id(ctbrowser::browser & page,
-                                                std::string_view want) {
+[[nodiscard]] inline ctbrowser::node_id find_id(ctbrowser::browser & page, std::string_view want) {
     const auto txn = page.doc().read();
     const ctbrowser::atom key = page.atoms().intern("id");
     ctbrowser::node_id found{};

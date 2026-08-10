@@ -1,9 +1,10 @@
 # Bootstrap 5.3.8 at Chrome parity
 
-**Where it is: S0 DONE, both halves. The Chrome comparison measures and its
-numbers are recorded in `tools/check/css-parity.txt`; `bootstrap_layout` pins the
-same table without a browser and is in the suite (84/84). S1, the CSS front end,
-is next.**
+**Where it is: S0 and S1 DONE. The harness measures (numbers in
+`tools/check/css-parity.txt`) and `bootstrap_layout` pins the same table without a
+browser. The CSS front end is ours: `style/css/` is a real CSS Syntax Level 3
+tokenizer and grammar, and no public header includes `<ctcss.hpp>` any more. 85/85
+green. S2, the selector engine, is next.**
 
 `vendor/bootstrap/bootstrap.css` is the first real-world stylesheet this engine
 has been pointed at. Every CSS test before it was a hand-written inline literal
@@ -78,6 +79,33 @@ first evidence that the harness measures what it claims to:
 - **`substituted=1354` of 1920** — 70% of compared values ctbrowser did not
   answer at all. This is the number that stops "no difference" being mistaken
   for "implemented", and it is ratcheted alongside `differ`.
+
+### What S1 measured
+
+`style/css/` is ~1,000 lines: a §4 tokenizer, a §5 grammar over component values,
+and a selector parser that writes `compiled_selector` directly - so
+`engine::compile_selector` is gone, and with it the bug where a selector was
+compiled once per DECLARATION and pushed before being checked.
+
+| | |
+|---|---|
+| Bootstrap: rules / selectors / declarations | 2,539 / 2,950 / 5,524 |
+| tokens / component values | 68,584 / 53,097, both dropped after parsing |
+| compiled selectors RETAINED | **2,550** - exactly the 2,950 parsed less the 400 that cannot match. Was ~6,289 with ~650 permanently dead |
+| `add_sheet` (parse + compile + index) | **3.5 ms**; the parse alone is 2.4 ms, about 124 MB/s |
+
+The selector subset was deliberately NOT widened, which is what makes those
+numbers trustworthy: the resolved styles are byte-identical to the old front end's
+on all six fixtures, so the only thing that changed is how they were arrived at.
+Two spec details corrected a wrong assumption along the way, both recorded in
+`tests/unit/css_syntax.cpp`: a `<hash-token>`'s id flag does not distinguish a
+colour from a selector (`#fff` is id-like, and `#fff {}` really does select
+`id="fff"`), and a `<percentage-token>` carries no type flag at all.
+
+The one real bug the gate caught was worth the gate: a component value's extent
+was being inferred from its last CHILD, so `var(--x)` came back as `var(--x` and
+every `rgba(...)` lost its `)` - the colour then failed to parse and the element
+was painted with nothing. `component_value` records `[token, end_token)` now.
 
 ### Two findings that were NOT predicted
 
@@ -163,7 +191,7 @@ document** — inlining for ctbrowser only would destroy the comparison. Viewpor
 | # | Rung | Gate |
 |---|---|---|
 | **S0** | **Harness.** `getComputedStyle`; `<link rel=stylesheet>` + a `style_error` channel; `css-dump.js`; `css-parity.py` + ratchet; six fixtures; `bootstrap_layout.cpp` + `tests/baseline/`; the `ctdrive` `reply()` fix; `compare.py`'s `request()` extraction; `box_of`/`find_id` → `tests/support/dom_probe.hpp` | **DONE.** 84/84 green, formatting clean, numbers recorded. Both halves verified able to FAIL: the ratchet exits 1 when a count rises, and `bootstrap_layout` exits 1 naming the element and property that moved |
-| **S1** | **Tokenizer + component values + grammar**, feeding the existing cascade unchanged. ctcss leaves `engine.hpp`. Plus the perf fixes everything depends on: one rule per declaration *block*, O(1) `put()`, values as views, `specificity` in `rule`, the ancestor-facts stack | All 15 `style_basics` tests pass **unchanged**; rule count 6,289 → 2,965. A pure front-end substitution, so a regression is unambiguous |
+| **S1** | **Tokenizer + component values + grammar**, feeding the existing cascade unchanged. ctcss out of `engine.hpp`, out of style's public interface, and out of the install | **DONE.** All 15 `style_basics` tests pass **verbatim**, the `bootstrap_layout` baselines and `tests/golden/page.ppm` are **byte-unchanged**, `check-package.sh` green. Retained compiled selectors 6,289 → **2,550**, dead ones 650 → **0**. `add_sheet` on 297 KB: **3.5 ms** against a 15 ms target. The remaining perf items - O(1) `put()`, values as views, packed specificity in `rule`, the ancestor-facts stack - are deferred to the rungs that need them, so this one stayed a pure substitution |
 | **S2** | **Selector engine.** Attributes (6 ops + `i`/`s`), `+`/`~`, `:not`/`:is`/`:where`, `:root`, structural pseudos, `nth-child(An+B)`, sibling-facts stack, bucketing, packed specificity, drop-the-rule for unknown pseudo-elements | Bootstrap selectors that can match: ~89% → **~100%** |
 | **S3** | **Computed values.** `style::value`, the property table, **real inheritance**, `inherit`/`initial`/`unset`/`revert`, split interning. `layout/values.hpp` and `paint/values.hpp` lose their parsers; the five inheritance channels collapse into one — and `computed_style.cpp`'s ancestor walk becomes a straight read | Sharing rate per half; **goldens must not move** — that is the test. Riskiest rung: run both paths with an equality assertion for its duration |
 | **S4** | **`var()` + `calc()` + units.** Custom-property cascade, substitution, IACVT, cycles, the two-pass order; `em`/`rem`/`vh`/`vw`/`pt` folding against a real root font-size; shorthand expansion moved to cascade time | All 1,370 `var()` resolve; the hardcoded 16 is gone; `test_shorthands_expand` passes verbatim |

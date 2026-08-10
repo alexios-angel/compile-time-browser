@@ -84,30 +84,13 @@ add_subdirectory(shell)
 add_subdirectory(app)
 add_subdirectory(gpu)
 
-# --- ctcss's headers ship WITH this package ------------------------------
-# src/style/CMakeLists.txt gives ctbrowser-style an INSTALL_INTERFACE include
-# path, because style/engine.hpp is PUBLIC and includes <ctcss.hpp>. This is the
-# other half: without it that path points at nothing, and `find_package` used to
-# succeed and then die on the first `#include <ctbrowser.hpp>`.
-#
-# It lives HERE rather than beside the target because it is a property of the
-# PACKAGE - what an install contains - not of a library.
-#
-# ctcss is Apache-2.0 with LLVM Exceptions, the same licence as this repository,
-# which began as a clone of it; the licence travels with the headers and NOTICE
-# records that the package SHIPS them rather than merely building against them.
-#
-# THE SKEW THIS CREATES IS REAL AND IS THE PRICE: an installed prefix now holds
-# a COPY of ctcss's headers, so a consumer that also has its own ctcss can end
-# up with two. `include/` rather than `include/.` on purpose - the trailing
-# slash copies the directory's CONTENTS, so `ctcss.hpp` lands beside
-# `ctbrowser.hpp` exactly as the build tree has it.
-install(DIRECTORY "${PROJECT_SOURCE_DIR}/external/compile-time-css/include/"
-        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
-install(FILES "${PROJECT_SOURCE_DIR}/external/compile-time-css/LICENSE"
-        DESTINATION "${CMAKE_INSTALL_DOCDIR}" RENAME LICENSE-ctcss
-        OPTIONAL)
 
+# NOTHING OF ctcss'S IS INSTALLED any more. This shipped a copy of its include
+# tree because `style/engine.hpp` - a public header - included <ctcss.hpp>, so any
+# consumer of the umbrella header parsed it. The CSS front end is ours now, no
+# public header names it, and the copy (and the skew of a consumer ending up with
+# two ctcss trees) goes with it. tools/check/check-package.sh proves an install
+# still compiles.
 # --- ctbrowser (umbrella) ------------------------------------------------
 # What an application imports and links. One of each.
 add_library(ctbrowser INTERFACE)

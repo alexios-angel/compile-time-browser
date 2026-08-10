@@ -19,7 +19,8 @@ easy mistake and it is invisible until a page uses `!important` to override a
 widget's inline style; `tests/unit/style_basics` has a test per step, verified by
 planting the mistake and watching exactly those two fail.
 
-Parsed through the SHEET parser wrapped in `*{...}`, not ctcss's declaration
+Parsed as a declaration list by `style/css/`. It used to go through the SHEET
+parser wrapped in `*{...}`, to avoid a declaration
 splitter — the latter peels `!important` off and discards the flag, which is
 the entire question. Cached by attribute TEXT, so a table styling forty rows
 identically parses once and a re-resolve after a hover parses nothing.

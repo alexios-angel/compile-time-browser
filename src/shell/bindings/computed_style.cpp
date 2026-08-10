@@ -45,13 +45,30 @@ namespace {
 // `text-decoration` is here although CSS 3 says decoration PROPAGATES to in-flow
 // descendants rather than inheriting: the distinction is invisible for anything
 // this engine draws, and box_builder already threads it as though it inherited.
-constexpr std::array<std::string_view, 24> inherited_properties{
-    "border-collapse", "border-spacing", "caption-side",        "color",
-    "cursor",          "direction",      "empty-cells",         "font",
-    "font-family",     "font-size",      "font-style",          "font-variant",
-    "font-weight",     "letter-spacing", "line-height",         "list-style",
-    "list-style-position", "list-style-type", "text-align",     "text-decoration",
-    "text-indent",     "text-transform", "visibility",          "white-space"};
+constexpr std::array<std::string_view, 24> inherited_properties{"border-collapse",
+                                                                "border-spacing",
+                                                                "caption-side",
+                                                                "color",
+                                                                "cursor",
+                                                                "direction",
+                                                                "empty-cells",
+                                                                "font",
+                                                                "font-family",
+                                                                "font-size",
+                                                                "font-style",
+                                                                "font-variant",
+                                                                "font-weight",
+                                                                "letter-spacing",
+                                                                "line-height",
+                                                                "list-style",
+                                                                "list-style-position",
+                                                                "list-style-type",
+                                                                "text-align",
+                                                                "text-decoration",
+                                                                "text-indent",
+                                                                "text-transform",
+                                                                "visibility",
+                                                                "white-space"};
 
 [[nodiscard]] bool inherits(std::string_view property) {
     if (property.starts_with("--")) { return true; }
@@ -146,7 +163,7 @@ constexpr std::array<std::string_view, 16> length_properties{
 struct probe {
     const layout::box_node * box = nullptr;
     const layout::fragment * frag = nullptr;
-    float basis = 0;    // the containing block's content width
+    float basis = 0; // the containing block's content width
     float font_size = 16;
     std::vector<node_id> chain; // self first, then ancestors
 };
@@ -237,11 +254,10 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
             float used = horizontal ? at.frag->bounds.width : at.frag->bounds.height;
             if (at.box != nullptr) {
                 const layout::side_lengths & pad = at.box->padding;
-                used -= horizontal
-                            ? pad.left.resolve(at.basis, at.font_size) +
-                                  pad.right.resolve(at.basis, at.font_size)
-                            : pad.top.resolve(at.basis, at.font_size) +
-                                  pad.bottom.resolve(at.basis, at.font_size);
+                used -= horizontal ? pad.left.resolve(at.basis, at.font_size) +
+                                         pad.right.resolve(at.basis, at.font_size)
+                                   : pad.top.resolve(at.basis, at.font_size) +
+                                         pad.bottom.resolve(at.basis, at.font_size);
             }
             return px_text(std::max(0.0f, used));
         }
