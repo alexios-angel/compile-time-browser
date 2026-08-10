@@ -64,21 +64,16 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
             const std::uint32_t sel_index = static_cast<std::uint32_t>(selectors_.size() - 1);
 
             for (const css::raw_declaration & d : sheet.declarations_of(r)) {
-                const std::string_view property = atoms_->text(d.property);
-                const std::string_view value = sheet.text_of(d);
-                const auto add = [&](std::string_view name, std::string_view text) {
-                    declarations_.push_back(
-                        declaration{atoms_->intern_lower(name), std::string{text}});
-                    index_.add(selectors_[sel_index],
-                               rule{sel_index, static_cast<std::uint32_t>(declarations_.size() - 1),
-                                    d.order, origin, d.important});
-                };
-                const auto expanded = expand_shorthand(property, value);
-                if (expanded.empty()) {
-                    add(property, value);
-                } else {
-                    for (const auto & [name, text] : expanded) { add(name, text); }
-                }
+                // NOT EXPANDED HERE, and that is the point of the two-pass cascade. A
+                // shorthand's component count is unknowable before var() substitution -
+                // `border: var(--all)` is ONE token that becomes three - and
+                // substitution needs the element. So the shorthand is recorded whole
+                // and expanded when it is applied, which also keeps its source order:
+                // its longhands land at the shorthand's position in the fold.
+                declarations_.push_back(declaration{d.property, std::string{sheet.text_of(d)}});
+                index_.add(selectors_[sel_index],
+                           rule{sel_index, static_cast<std::uint32_t>(declarations_.size() - 1),
+                                d.order, origin, d.important});
             }
         }
     }
@@ -160,16 +155,8 @@ const engine::inline_block & engine::inline_style_of(const read_txn & txn, node_
     const css::stylesheet sheet = css::parse_declaration_list(text, *atoms_);
     for (const css::raw_declaration & d : sheet.declarations) {
         auto & into = d.important ? parsed.important : parsed.normal;
-        const std::string_view property = atoms_->text(d.property);
-        const std::string_view value = sheet.text_of(d);
-        const auto expanded = expand_shorthand(property, value);
-        if (expanded.empty()) {
-            into.push_back(declaration{atoms_->intern_lower(property), std::string{value}});
-        } else {
-            for (const auto & [name, text_of] : expanded) {
-                into.push_back(declaration{atoms_->intern_lower(name), std::string{text_of}});
-            }
-        }
+        // Not expanded here either - the cascade does it, after substitution.
+        into.push_back(declaration{d.property, std::string{sheet.text_of(d)}});
     }
     return inline_cache_.emplace(std::string{text}, std::move(parsed)).first->second;
 }

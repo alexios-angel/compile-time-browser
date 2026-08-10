@@ -8,7 +8,8 @@ green. S2 is DONE: **93.8% of Bootstrap's selectors can match**, up from 86.4%, 
 Chrome diff has fallen for the first time - 7,820 -> 7,703. S3a is done too:
 **inheritance is a real cascade stage**. And S4a: **`var()` resolves** - every one of
 Bootstrap's 1,370 calls, the Chrome diff down 30.4% to 5,355, and the page now looks
-like Bootstrap. S4b (`calc()`) and S3b (typed values, unit folding) are next.**
+like Bootstrap. S4b: the cascade is TWO PASSES and the `border` shorthand expands, so
+borders draw. `calc()` and S3b (typed values, unit folding) are next.**
 
 `vendor/bootstrap/bootstrap.css` is the first real-world stylesheet this engine
 has been pointed at. Every CSS test before it was a hand-written inline literal
@@ -324,6 +325,36 @@ var(--missing)` renders as the INHERITED colour in Chrome, not red. And `!import
 a custom property is the DECLARATION's importance, so it is peeled where every other
 declaration's is and a var() cannot smuggle it into the property that reads it - the
 obvious guess is that the value keeps it.
+
+### S4b: why the cascade needs two passes
+
+Custom properties are themselves cascaded, so substitution cannot run inside the fold
+that produces the values it needs to read. Pass one applies ONLY custom properties; pass
+two substitutes everything else against them, expands shorthands, and folds. Both passes
+walk the same sorted list with the same inline-style splice, so priority is identical -
+and expansion in pass two keeps source order for free, because a shorthand's longhands
+land at the shorthand's position in the fold. That is exactly what
+`test_shorthands_expand` pins, and it passes verbatim.
+
+Expansion HAD to move there. `border: var(--all)` is one token that becomes three, so a
+shorthand's component count is unknowable before substitution - which is why the `border`
+shorthand had never been expandable and had therefore never been expanded. Paint reads
+`border-width` and `border-color`; the shorthand set neither; every card, alert and table
+border was invisible. Bootstrap writes it 34 times.
+
+`border` is `<width> || <style> || <color>` in ANY ORDER, so its parts are classified by
+what they are rather than by where they sit - unlike the positional side lists. And a
+shorthand sets every longhand it governs including the ones it did not mention, which is
+what makes `border: 0` reset a style set elsewhere.
+
+**I added this without a test first, and it was wrong in a way the render hid.** The page
+came back byte-identical, which I nearly accepted: `<button>` is a REPLACED element whose
+border is drawn by the widget painter rather than from CSS, so the buttons that fill the
+visible region looked right either way. Querying the computed values instead showed
+`.alert` reporting `border-color: "1px solid #9ec5fe"` - the whole shorthand in the
+colour - because a stale expansion site was still running BEFORE substitution. The
+lesson is the ordinary one: the test would have said so in one second, and the render
+could not.
 
 ### Two findings that were NOT predicted
 

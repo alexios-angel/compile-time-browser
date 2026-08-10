@@ -1186,6 +1186,66 @@ void test_var_substitution() {
     }
 }
 
+// THE `border` SHORTHAND, which is `<width> || <style> || <color>` in ANY order - so
+// its parts are classified by WHAT THEY ARE, unlike the positional side lists.
+//
+// It produced nothing at all before: paint reads `border-width` and `border-color`,
+// the shorthand set neither, and every card, table and list-group border was
+// invisible. It could not be expanded before var() resolved either, because
+// `border: var(--w) solid var(--c)` has an unknowable component count until then.
+void test_border_shorthand() {
+    {
+        fixture f;
+        f.load("<p id=a></p>", "p { border: 1px solid #dee2e6 }");
+        expect_value(f, f.find_id("a"), "border-width", "1px", "width from the shorthand");
+        expect_value(f, f.find_id("a"), "border-style", "solid", "style from the shorthand");
+        expect_value(f, f.find_id("a"), "border-color", "#dee2e6", "colour from the shorthand");
+    }
+    {
+        // ANY ORDER. This is the case that positional splitting gets wrong.
+        fixture f;
+        f.load("<p id=a></p>", "p { border: #dee2e6 1px solid }");
+        expect_value(f, f.find_id("a"), "border-width", "1px", "width, written last but one");
+        expect_value(f, f.find_id("a"), "border-style", "solid", "style, written last");
+        expect_value(f, f.find_id("a"), "border-color", "#dee2e6", "colour, written first");
+    }
+    {
+        // Through a var(), which is how Bootstrap writes every one of them.
+        fixture f;
+        f.load("<html><body><p id=a></p></body></html>",
+               ":root { --w: 2px; --c: #010101 } p { border: var(--w) solid var(--c) }");
+        expect_value(f, f.find_id("a"), "border-width", "2px", "width through a var");
+        expect_value(f, f.find_id("a"), "border-color", "#010101", "colour through a var");
+    }
+    {
+        // ONE var() EXPANDING TO THE WHOLE SHORTHAND - `.alert` does exactly this, via
+        // `--bs-alert-border: 1px solid #9ec5fe`. Expansion has to happen AFTER
+        // substitution or the single token becomes one unclassifiable part.
+        fixture f;
+        f.load("<html><body><p id=a></p></body></html>",
+               ":root { --all: 1px solid #9ec5fe } p { border: var(--all) }");
+        expect_value(f, f.find_id("a"), "border-width", "1px", "width from a whole-value var");
+        expect_value(f, f.find_id("a"), "border-style", "solid", "style from a whole-value var");
+        expect_value(f, f.find_id("a"), "border-color", "#9ec5fe", "colour from a whole-value var");
+    }
+    {
+        // `border: 0` sets every longhand it governs, including the ones it did not
+        // mention - which is what makes it RESET a style set elsewhere.
+        fixture f;
+        f.load("<p id=a></p>", "p { border-style: dashed } p { border: 0 }");
+        expect_value(f, f.find_id("a"), "border-width", "0", "width zero");
+        expect_value(f, f.find_id("a"), "border-style", "none", "and the style is reset");
+    }
+    {
+        // A longhand written AFTER the shorthand still wins, which is the source-order
+        // property that moving expansion into the cascade had to preserve.
+        fixture f;
+        f.load("<p id=a></p>", "p { border: 1px solid red; border-color: #020202 }");
+        expect_value(f, f.find_id("a"), "border-color", "#020202", "a longhand after wins");
+        expect_value(f, f.find_id("a"), "border-width", "1px", "and leaves the rest alone");
+    }
+}
+
 int main() {
     test_shorthands_expand();
     test_simple_selectors();
@@ -1206,6 +1266,7 @@ int main() {
     test_inheritance();
     test_explicit_defaulting_keywords();
     test_var_substitution();
+    test_border_shorthand();
     test_deep_nesting_still_matches();
     test_unmatched_element_gets_empty_style();
     test_inline_style_applies();

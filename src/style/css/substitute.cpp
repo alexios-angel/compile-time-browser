@@ -19,10 +19,10 @@ constexpr std::size_t max_bytes = 64 * 1024;
 
 // One `var()` call, located inside a token stream.
 struct var_call {
-    std::size_t open = 0;      // the `var(` token
-    std::size_t close = 0;     // the matching `)`
-    std::size_t name_at = 0;   // the `--x` ident
-    std::size_t comma_at = 0;  // the first top-level comma, or `close` if none
+    std::size_t open = 0;     // the `var(` token
+    std::size_t close = 0;    // the matching `)`
+    std::size_t name_at = 0;  // the `--x` ident
+    std::size_t comma_at = 0; // the first top-level comma, or `close` if none
 };
 
 [[nodiscard]] bool is_var_function(const token_stream & s, const css_token & t) {
@@ -119,8 +119,8 @@ public:
         // CYCLE DETECTION. `--a: var(--b); --b: var(--a)` must make BOTH invalid rather
         // than recursing to the depth limit, and a set of the properties currently
         // being resolved is what says so.
-        const bool cyclic = std::find(resolving_.begin(), resolving_.end(), name.id) !=
-                            resolving_.end();
+        const bool cyclic =
+            std::find(resolving_.begin(), resolving_.end(), name.id) != resolving_.end();
         std::string expansion;
         bool ok = false;
         if (!cyclic) {
@@ -172,7 +172,7 @@ bool may_have_var(std::string_view value) noexcept {
 }
 
 std::optional<std::string> substitute_var(std::string_view value, const custom_lookup & lookup,
-                                         atom_table & atoms) {
+                                          atom_table & atoms) {
     substituter engine{lookup, atoms};
     std::string out;
     if (!engine.run(value, out, 0)) { return std::nullopt; }

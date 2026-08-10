@@ -146,12 +146,13 @@ public:
     // 18px }` and `ul { padding-left: 40px }` were in the UA sheet and did
     // nothing, so a disclosure triangle was drawn on top of its own label and
     // list markers sat outside the page.
-    [[nodiscard]] static std::vector<std::pair<std::string_view, std::string_view>>
-    expand_shorthand(std::string_view property, std::string_view value) {
-        if (property != "margin" && property != "padding") { return {}; }
+    // Split a value on top-level whitespace. `at most four` because that is the
+    // longest side list; `border` asks for three and takes them in any order.
+    [[nodiscard]] static std::vector<std::string_view> value_parts(std::string_view value,
+                                                                   std::size_t limit) {
         std::vector<std::string_view> parts;
         std::size_t at = 0;
-        while (at < value.size() && parts.size() < 4) {
+        while (at < value.size() && parts.size() < limit) {
             const std::size_t begin = value.find_first_not_of(" \t\n\r\f", at);
             if (begin == std::string_view::npos) { break; }
             const std::size_t end = value.find_first_of(" \t\n\r\f", begin);
@@ -159,6 +160,65 @@ public:
                 begin, end == std::string_view::npos ? std::string_view::npos : end - begin));
             at = end == std::string_view::npos ? value.size() : end;
         }
+        return parts;
+    }
+
+    // Is this part of a `border` shorthand a STYLE keyword? The `border` grammar is
+    // `<width> || <style> || <color>` in ANY order, so its parts are classified by
+    // what they are rather than by where they sit - unlike the side lists, which are
+    // positional.
+    [[nodiscard]] static bool is_border_style(std::string_view part) {
+        for (const std::string_view name : {"none", "hidden", "dotted", "dashed", "solid", "double",
+                                            "groove", "ridge", "inset", "outset"}) {
+            if (ascii_iequals(part, name)) { return true; }
+        }
+        return false;
+    }
+    [[nodiscard]] static bool is_border_width(std::string_view part) {
+        if (ascii_iequals(part, "thin") || ascii_iequals(part, "medium") ||
+            ascii_iequals(part, "thick")) {
+            return true;
+        }
+        return !part.empty() &&
+               (part.front() == '.' || part.front() == '-' || part.front() == '+' ||
+                (part.front() >= '0' && part.front() <= '9'));
+    }
+
+    [[nodiscard]] static std::vector<std::pair<std::string_view, std::string_view>>
+    expand_shorthand(std::string_view property, std::string_view value) {
+        // `border` FIRST, because it is the one Bootstrap actually writes - 34 times -
+        // and it produced NOTHING before: paint reads `border-width` and
+        // `border-color`, and the shorthand set neither, so every card, input, table
+        // and button border was invisible.
+        //
+        // It could not be expanded at all until var() resolved: `border:
+        // var(--bs-border-width) solid var(--bs-border-color)` has an unknowable
+        // component count before substitution, which is why this now runs at cascade
+        // time rather than when a rule is recorded.
+        if (property == "border") {
+            const std::vector<std::string_view> parts = value_parts(value, 3);
+            if (parts.empty()) { return {}; }
+            std::string_view width, style, colour;
+            for (const std::string_view part : parts) {
+                if (style.empty() && is_border_style(part)) {
+                    style = part;
+                } else if (width.empty() && is_border_width(part)) {
+                    width = part;
+                } else if (colour.empty()) {
+                    colour = part;
+                }
+            }
+            // A shorthand sets every longhand it governs, including the ones it did not
+            // mention - so an omitted part becomes its initial value rather than being
+            // left alone. That is what makes `border: 0` reset a style set elsewhere.
+            std::vector<std::pair<std::string_view, std::string_view>> out;
+            out.emplace_back("border-width", width.empty() ? "medium" : width);
+            out.emplace_back("border-style", style.empty() ? "none" : style);
+            out.emplace_back("border-color", colour.empty() ? "currentcolor" : colour);
+            return out;
+        }
+        if (property != "margin" && property != "padding") { return {}; }
+        const std::vector<std::string_view> parts = value_parts(value, 4);
         if (parts.empty()) { return {}; }
         // 1 value: all four. 2: vertical, horizontal. 3: top, horizontal,
         // bottom. 4: top, right, bottom, left.
@@ -308,72 +368,95 @@ public:
         // boundary rather than simply appended at the end - `!important` in a
         // stylesheet has to be able to beat a style attribute.
         const inline_block & own = inline_style_of(txn, node);
-        bool spliced = false;
-        for (const rule & r : matches_) {
-            if (r.important && !spliced) {
-                for (const declaration & d : own.normal) { put(d); }
-                spliced = true;
-            }
-            put(declarations_[r.declaration]);
-        }
-        if (!spliced) {
-            for (const declaration & d : own.normal) { put(d); }
-        }
-        for (const declaration & d : own.important) { put(d); }
 
-        // `var()` SUBSTITUTION, after the fold and before anything interprets a value.
+        // TWO PASSES, and the reason is that custom properties are themselves
+        // cascaded: substitution cannot run inside the fold that produces the values
+        // it needs to read. So pass one applies ONLY custom properties, and pass two
+        // substitutes everything else against them.
         //
-        // Here rather than where a value is read, for the reason the whole rung
-        // exists: substitution is a TOKEN-STREAM operation whose result may be a comma
-        // list, a fragment, or nothing - `rgba(var(--bs-body-color-rgb), .5)` expands
-        // one argument into three - so it has to happen before any grammar looks at
-        // the value.
-        //
-        // The lookup reads THIS element's own custom properties first and then the
-        // inherited ones, which is what makes a component's own `--bs-btn-color`
-        // override a theme's while still seeing everything the theme defined.
-        {
-            const auto lookup = [&out, &parent](atom name) -> std::optional<std::string_view> {
-                for (const declaration & d : out) {
+        // Both passes walk the same sorted list with the same inline-style splice, so
+        // priority is identical between them - and expansion happening in pass two
+        // keeps source order for free: a shorthand's longhands land at the shorthand's
+        // position in the fold, so a longhand written after it still wins and one
+        // written before it is still overwritten. That is the property
+        // test_shorthands_expand exists to pin, and it is why expansion used to happen
+        // when a rule was RECORDED. It has to move here now, because a shorthand's
+        // component count is unknowable before substitution:
+        // `border: var(--w) solid var(--c)` cannot be split into longhands until the
+        // var()s are gone.
+        const auto fold = [&](const auto & apply) {
+            bool spliced = false;
+            for (const rule & r : matches_) {
+                if (r.important && !spliced) {
+                    for (const declaration & d : own.normal) { apply(d); }
+                    spliced = true;
+                }
+                apply(declarations_[r.declaration]);
+            }
+            if (!spliced) {
+                for (const declaration & d : own.normal) { apply(d); }
+            }
+            for (const declaration & d : own.important) { apply(d); }
+        };
+
+        // PASS ONE: the custom properties, stored verbatim. A custom property's value
+        // is never parsed and never validated - it is a token stream that means
+        // whatever the var() reading it makes of it.
+        fold([&](const declaration & d) {
+            if (!atoms_->text(d.property).starts_with("--")) { return; }
+            put(d);
+        });
+
+        const auto lookup = [&out, &parent](atom name) -> std::optional<std::string_view> {
+            for (const declaration & d : out) {
+                if (d.property == name) { return std::string_view{d.value}; }
+            }
+            if (parent && parent->inherited) {
+                for (const declaration & d : parent->inherited->declarations) {
                     if (d.property == name) { return std::string_view{d.value}; }
                 }
-                if (parent && parent->inherited) {
-                    for (const declaration & d : parent->inherited->declarations) {
-                        if (d.property == name) { return std::string_view{d.value}; }
-                    }
-                }
-                return std::nullopt;
-            };
-            for (std::size_t i = 0; i < out.size();) {
-                const std::string_view property = atoms_->text(out[i].property);
-                if (property.starts_with("--") || !css::may_have_var(out[i].value)) {
-                    ++i;
-                    continue;
-                }
-                const std::optional<std::string> done =
-                    css::substitute_var(out[i].value, lookup, *atoms_);
-                // AN EMPTY RESULT IS ALSO INVALID at computed-value time, and this is
-                // the case Bootstrap actually hits rather than a missing property: it
-                // ships seventeen empty-but-valid custom properties, and
-                // `body { text-align: var(--bs-body-text-align) }` reads one of them.
-                // An empty token stream is a valid substitution but not a valid VALUE
-                // for an ordinary property, so the declaration is `unset` - which for
-                // an inherited property means the inherited value shows through. That
-                // is the difference from storing an empty value, which would shadow it
-                // and behave like `initial` on 405 elements of a Bootstrap page.
-                if (done && !trim(*done, html_whitespace).empty()) {
-                    out[i].value = *done;
-                    ++i;
-                    continue;
-                }
-                // INVALID AT COMPUTED-VALUE TIME means `unset`, which for an inherited
-                // property lets the inherited value through and for any other means
-                // absent. NOT "drop it and let an earlier declaration win" - that is
-                // the classic wrong reading, and it is observable: `color: red; color:
-                // var(--missing)` renders as the INHERITED colour in Chrome, not red.
-                out.erase(out.begin() + static_cast<std::ptrdiff_t>(i));
             }
-        }
+            return std::nullopt;
+        };
+
+        // PASS TWO: everything else. Substitute, then expand, then put.
+        fold([&](const declaration & d) {
+            const std::string_view property = atoms_->text(d.property);
+            if (property.starts_with("--")) { return; }
+            std::string value{d.value};
+            if (css::may_have_var(value)) {
+                const std::optional<std::string> done = css::substitute_var(value, lookup, *atoms_);
+                // INVALID AT COMPUTED-VALUE TIME means `unset`, which for an inherited
+                // property lets the inherited value through and otherwise means absent.
+                // NOT "drop it and let an earlier declaration win" - that is the classic
+                // wrong reading, and it is observable: `color: red; color: var(--x)`
+                // renders as the INHERITED colour in Chrome, not red. So the property is
+                // actively removed from what has been folded so far.
+                //
+                // AN EMPTY RESULT is invalid too, and it is the case Bootstrap hits:
+                // it ships seventeen empty-but-valid custom properties, and
+                // `body { text-align: var(--bs-body-text-align) }` reads one. An empty
+                // token stream is a valid substitution but not a valid VALUE.
+                if (!done || trim(*done, html_whitespace).empty()) {
+                    for (std::size_t i = 0; i < out.size(); ++i) {
+                        if (out[i].property == d.property) {
+                            out.erase(out.begin() + static_cast<std::ptrdiff_t>(i));
+                            break;
+                        }
+                    }
+                    return;
+                }
+                value = *done;
+            }
+            const auto expanded = expand_shorthand(property, value);
+            if (expanded.empty()) {
+                put(declaration{d.property, std::move(value)});
+                return;
+            }
+            for (const auto & [name, text] : expanded) {
+                put(declaration{atoms_->intern_lower(name), std::string{text}});
+            }
+        });
 
         // SPLIT THE RESULT. Anything inherited goes into a fresh inherited half built
         // on top of the parent's; everything else stays the element's own.
