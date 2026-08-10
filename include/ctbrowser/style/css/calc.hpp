@@ -68,11 +68,25 @@ struct calc_result {
 [[nodiscard]] std::optional<calc_result> evaluate_calc(std::string_view expression,
                                                        const length_context & ctx);
 
+// A folded value, and whether every calc() in it actually evaluated.
+//
+// The flag is not a nicety. `.row { margin-top: calc(-1 * var(--bs-gutter-y)) }`
+// with a gutter of `0` multiplies a number by a number and gets a NUMBER, which
+// is not a length - so the declaration is invalid and `margin-top` takes its
+// initial 0, which is what Chrome reports. Leaving the text in place instead put
+// the string `calc(-1 * 0)` in front of layout, whose parse_length cannot read it
+// and answers `auto`; that was 24 differences on one fixture, and `auto` is a
+// worse answer than nothing because nothing at least means "initial value".
+struct folded_value {
+    std::string text;
+    bool ok = true;
+};
+
 // Every calc() in a declaration value, replaced by its answer. A value with no
-// calc comes back unchanged, and so does one whose calc is invalid - leaving the
-// text in place means the property is dropped later by whoever cannot read it,
-// which is the same outcome as before this existed and never a wrong number.
-[[nodiscard]] std::string fold_calc(std::string_view value, const length_context & ctx);
+// calc comes back unchanged and `ok`. One whose calc did not evaluate comes back
+// with its text UNCHANGED and `ok` false, so a caller that has no better answer
+// can still use the text and one that does can drop the declaration.
+[[nodiscard]] folded_value fold_calc(std::string_view value, const length_context & ctx);
 
 // Worth a look at all? A substring test, so a `--custom: calc-ish-name` costs
 // one wasted parse and nothing else.

@@ -562,7 +562,10 @@ public:
                     if (!done) { return; }
                     value = *done;
                 }
-                if (css::may_have_calc(value)) { value = css::fold_calc(value, ctx); }
+                // A calc that does not evaluate keeps its text here, and falls
+                // through to the keyword branch below - which is right for a font
+                // size, because a keyword is a real answer for one.
+                if (css::may_have_calc(value)) { value = css::fold_calc(value, ctx).text; }
                 const std::optional<float> px = css::length_text_to_px(value, ctx);
                 // A percentage font size is the parent's, scaled - the one relative
                 // form that is not a length and still has an answer here.
@@ -595,7 +598,20 @@ public:
             const std::string_view property = atoms_->text(d.property);
             if (property.starts_with("--")) { return; }
             std::string value{d.value};
-            if (css::may_have_var(value)) {
+            // `unset`: actively REMOVE the property from what has been folded so
+            // far, rather than merely declining to add it. The two are different
+            // whenever an earlier declaration set the same property, and which one
+            // is right depends on when the value became invalid - see both callers.
+            const auto unset = [&] {
+                for (std::size_t i = 0; i < out.size(); ++i) {
+                    if (out[i].property == d.property) {
+                        out.erase(out.begin() + static_cast<std::ptrdiff_t>(i));
+                        break;
+                    }
+                }
+            };
+            const bool had_var = css::may_have_var(value);
+            if (had_var) {
                 const std::optional<std::string> done = css::substitute_var(value, lookup, *atoms_);
                 // INVALID AT COMPUTED-VALUE TIME means `unset`, which for an inherited
                 // property lets the inherited value through and otherwise means absent.
@@ -609,12 +625,7 @@ public:
                 // `body { text-align: var(--bs-body-text-align) }` reads one. An empty
                 // token stream is a valid substitution but not a valid VALUE.
                 if (!done || trim(*done, html_whitespace).empty()) {
-                    for (std::size_t i = 0; i < out.size(); ++i) {
-                        if (out[i].property == d.property) {
-                            out.erase(out.begin() + static_cast<std::ptrdiff_t>(i));
-                            break;
-                        }
-                    }
+                    unset();
                     return;
                 }
                 value = *done;
@@ -624,7 +635,29 @@ public:
             // Bootstrap's calcs are `-1 * var(x)`, so before substitution there is
             // no arithmetic to do, and `border: calc(var(w) * 2) solid red` cannot
             // be split into longhands until its components are single tokens.
-            if (css::may_have_calc(value)) { value = css::fold_calc(value, lengths); }
+            if (css::may_have_calc(value)) {
+                css::folded_value done = css::fold_calc(value, lengths);
+                if (!done.ok) {
+                    // A CALC THAT DOES NOT EVALUATE IS NOT A VALUE, and the
+                    // declaration is invalid. WHICH KIND of invalid depends on where
+                    // the value came from, which is why `had_var` is remembered: a
+                    // value that went through substitution is invalid at
+                    // COMPUTED-VALUE time, and §3 spells that `unset`, so it must
+                    // also remove the earlier declaration it beat. One that never
+                    // contained a var() is invalid at PARSE time, so the earlier
+                    // declaration simply wins and this one is dropped.
+                    //
+                    // Bootstrap hits the first case on every `.row`:
+                    // `margin-top: calc(-1 * var(--bs-gutter-y))` with a gutter of
+                    // `0` is a number times a number, which is a NUMBER, and a
+                    // number is not a length. Chrome reports the initial `0px`;
+                    // keeping the text reported `auto`, on 24 elements of one
+                    // fixture.
+                    if (had_var) { unset(); }
+                    return;
+                }
+                value = std::move(done.text);
+            }
             // FONT SIZE IS ALREADY RESOLVED - the pre-pass above did it, because
             // every `em` in every other declaration needed the answer first. Emit
             // that number rather than re-deriving it here, so there is exactly one

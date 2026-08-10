@@ -1,6 +1,6 @@
 # Bootstrap 5.3.8 at Chrome parity
 
-**Where it is. The Chrome diff over the six fixtures is 2,458, down from 7,820 when
+**Where it is. The Chrome diff over the six fixtures is 2,419, down from 7,820 when
 this started; 88/88 green; the numbers are in `tools/check/css-parity.txt` and
 `bootstrap_layout` pins the same table without a browser.**
 
@@ -528,6 +528,29 @@ base size comes from its content, and the visible symptom was every Bootstrap
 is now the one function that answers "what does this child contribute", and flex asks it
 too rather than keeping a second copy: components 977 → **927**, kitchen 886 → **862**,
 no image golden moved.
+
+### An invalid calc() is an invalid declaration, not a string nobody can read
+
+`fold_calc` left an unevaluable `calc()` as text, on the stated reasoning that
+"whoever reads the value next cannot parse it and drops the declaration". That was
+wrong, and only the Chrome diff could show it: layout's `parse_length` answers
+**`auto`** for a string it cannot read, and `auto` is not the same as absent. Chrome
+reports the property's *initial* value, which is what an absent declaration produces
+here.
+
+Bootstrap hits it on every `.row`: `margin-top: calc(-1 * var(--bs-gutter-y))` with a
+gutter of `0` multiplies a number by a number and gets a **number**, which is not a
+length. 24 elements of the grid fixture, and 36 differences once the rows below moved
+with them.
+
+Which *kind* of invalid it is decides what happens to an earlier declaration, and the
+two are observably different - so `fold_calc` reports failure and the cascade
+remembers whether the value went through `var()`. A substituted value is invalid at
+computed-value time, which §3 spells `unset`, so it removes the earlier declaration it
+beat; one that never contained a `var()` is invalid at parse time, so the earlier
+declaration simply wins. Both are pinned. grid 173 → **137**, kitchen 862 → **859**,
+and `substituted` rose by exactly the same count - the S4a effect again, a wrong value
+replaced by a correct absence.
 
 ### Two findings that were NOT predicted
 

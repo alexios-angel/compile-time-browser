@@ -1464,19 +1464,31 @@ void test_calc() {
 
     // A percentage has no answer until a containing block exists, so it survives as
     // the canonical two-term form layout::parse_length knows how to read.
-    CHECK(fold_calc("calc(100% - 12px)", ctx) == "calc(100% - 12px)");
-    CHECK(fold_calc("calc(50% + 1rem)", ctx) == "calc(50% + 16px)");
-    CHECK(fold_calc("calc(100% * .5)", ctx) == "50%");
-    CHECK(fold_calc("calc(2rem)", ctx) == "32px");
+    CHECK(fold_calc("calc(100% - 12px)", ctx).text == "calc(100% - 12px)");
+    CHECK(fold_calc("calc(50% + 1rem)", ctx).text == "calc(50% + 16px)");
+    CHECK(fold_calc("calc(100% * .5)", ctx).text == "50%");
+    CHECK(fold_calc("calc(2rem)", ctx).text == "32px");
 
-    // fold_calc leaves everything else alone, including a calc it could not read -
-    // whoever consumes the value drops it, which is what happened before this
-    // existed. The failure mode is a missing property, never a wrong number.
-    CHECK(fold_calc("1px solid red", ctx) == "1px solid red");
-    CHECK(fold_calc("calc(1px + 2)", ctx) == "calc(1px + 2)");
-    CHECK(fold_calc("-webkit-calc(1px + 1px)", ctx) == "-webkit-calc(1px + 1px)");
+    // fold_calc leaves everything else alone, AND SAYS WHETHER IT COULD READ IT.
+    // The text is what a caller with no better answer carries on with; the flag is
+    // what lets the cascade treat the declaration as invalid instead, which is the
+    // difference between `margin-top` taking its initial 0 and layout being handed
+    // a string it answers `auto` to.
+    CHECK(fold_calc("1px solid red", ctx).text == "1px solid red");
+    CHECK(fold_calc("1px solid red", ctx).ok);
+    CHECK(fold_calc("calc(1px + 2)", ctx).text == "calc(1px + 2)");
+    CHECK(!fold_calc("calc(1px + 2)", ctx).ok);
+    // A NUMBER IS NOT A LENGTH, and this is the one Bootstrap writes: `.row`'s
+    // `margin-top: calc(-1 * var(--bs-gutter-y))` with a gutter of `0` multiplies
+    // two numbers and gets a number.
+    CHECK(!fold_calc("calc(-1 * 0)", ctx).ok);
+    // A vendor-prefixed one is not a calc at all, so there is nothing to fail.
+    CHECK(fold_calc("-webkit-calc(1px + 1px)", ctx).text == "-webkit-calc(1px + 1px)");
+    CHECK(fold_calc("-webkit-calc(1px + 1px)", ctx).ok);
     // Two of them in one value, which is how Bootstrap writes `.row` gutters.
-    CHECK(fold_calc("calc(2rem * .5) calc(1rem + 1rem)", ctx) == "16px 32px");
+    CHECK(fold_calc("calc(2rem * .5) calc(1rem + 1rem)", ctx).text == "16px 32px");
+    // One good and one bad is still a bad VALUE.
+    CHECK(!fold_calc("calc(1rem) calc(1px + 2)", ctx).ok);
 }
 
 // The cascade end of the same thing: a calc reaches an element as a number, an em
@@ -1528,11 +1540,36 @@ void test_calc_in_the_cascade() {
         expect_value(f, f.find_id("a"), "font-size", "37px", "22px + 15px");
     }
     {
-        // An invalid calc leaves the declaration unreadable rather than wrong. The
-        // value survives as text, and every consumer of a length rejects it.
+        // AN INVALID CALC IS AN INVALID DECLARATION, not a value nobody can read.
+        //
+        // This assertion used to say the opposite - that the text survived and
+        // every consumer of a length would reject it - and that was wrong in a way
+        // only the Chrome diff could show. layout's parse_length answers `auto` for
+        // a string it cannot read, and `auto` is not the same as absent: Chrome
+        // reports the property's INITIAL value, which is what an absent declaration
+        // produces here. On the grid fixture the difference was 24 elements, every
+        // `.row`'s `margin-top: calc(-1 * var(--bs-gutter-y))` with a gutter of 0.
         fixture f;
         f.load("<p id=a></p>", "p { width: calc(1px + 2) }");
-        expect_value(f, f.find_id("a"), "width", "calc(1px + 2)", "kept verbatim, unreadable");
+        expect_value(f, f.find_id("a"), "width", "", "an invalid calc is dropped");
+    }
+    {
+        // WHICH KIND of invalid decides what happens to an EARLIER declaration, and
+        // the two cases are observably different. A value that went through var()
+        // substitution is invalid at COMPUTED-VALUE time, and §3 spells that
+        // `unset` - so it removes the earlier declaration it beat...
+        fixture f;
+        f.load("<p id=a></p>", "p { --g: 0; width: 5px; width: calc(-1 * var(--g)) }");
+        expect_value(f, f.find_id("a"), "width", "", "IACVT is unset, not 'the earlier one wins'");
+    }
+    {
+        // ...while one that never contained a var() is invalid at PARSE time, so
+        // the earlier declaration simply wins. Getting these two the same way round
+        // is the same distinction `color: red; color: var(--missing)` pins.
+        fixture f;
+        f.load("<p id=a></p>", "p { width: 5px; width: calc(1px + 2) }");
+        expect_value(f, f.find_id("a"), "width", "5px",
+                     "a parse-time invalid lets the earlier win");
     }
 }
 

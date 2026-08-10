@@ -302,8 +302,9 @@ bool may_have_calc(std::string_view value) noexcept {
     return false;
 }
 
-std::string fold_calc(std::string_view value, const length_context & ctx) {
+folded_value fold_calc(std::string_view value, const length_context & ctx) {
     std::string out;
+    bool ok = true;
     std::size_t at = 0;
     while (at < value.size()) {
         // A `calc(` that starts a FUNCTION, which means it is not preceded by an
@@ -343,18 +344,22 @@ std::string fold_calc(std::string_view value, const length_context & ctx) {
         }
         if (depth != 0) { // unterminated: leave the rest of the value alone
             out.append(value.substr(at));
+            ok = false;
             break;
         }
         const std::string_view body = value.substr(at + 5, scan - at - 6);
         const std::optional<calc_result> answer = evaluate_calc(body, ctx);
-        // AN INVALID CALC KEEPS ITS TEXT. Whoever reads the value next cannot
-        // parse it and drops the declaration, which is what happened before this
-        // function existed - the failure mode is a missing property, never a
-        // wrong number.
+        // AN INVALID CALC KEEPS ITS TEXT AND SAYS SO. Keeping the text is what
+        // lets a caller with no better answer carry on; saying so is what lets the
+        // cascade do the right thing instead, which is to treat the declaration as
+        // invalid. Layout reading the text was the wrong outcome: parse_length
+        // cannot read `calc(-1 * 0)` and answers `auto`, where CSS says the
+        // property takes its initial value.
+        if (!answer) { ok = false; }
         out.append(answer ? serialize_calc(*answer) : std::string{value.substr(at, scan - at)});
         at = scan;
     }
-    return out;
+    return folded_value{std::move(out), ok};
 }
 
 } // namespace ctbrowser::style::css
