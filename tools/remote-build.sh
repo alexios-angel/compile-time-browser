@@ -62,14 +62,22 @@ repo_root=$(git rev-parse --show-toplevel)
 # sending them up every sync is pure wire time - and without the protect
 # filter `--delete` would remove the box's copy on the first run from a
 # checkout that has not fetched, which is a rebuild rather than a re-sync.
+# tools/.venv/ is the same story as angle/: created ON THE BOX by
+# `tools/check/compare.py setup`, ~400 MB with Playwright's browsers behind it,
+# and gitignored - so it exists on one side or the other but never both. Without
+# the protect filter `--delete` removed it on the next sync, and the failure lands
+# nowhere near the cause: the build succeeds and then css-parity.py says
+# "playwright not installed" about a venv that was there a minute ago.
 rsync -az --delete \
   --exclude '.git/' \
   --exclude 'build*/' \
   --exclude 'tools/clang-std-embed/' \
+  --exclude 'tools/.venv/' \
   --exclude 'third_party/angle/' \
   --exclude '*.d' \
   --filter 'protect *.pch' --filter 'protect *.gch' --filter 'protect build*/' \
   --filter 'protect tools/clang-std-embed/' --filter 'protect third_party/angle/' \
+  --filter 'protect tools/.venv/' \
   --filter 'protect *.d' \
   "$repo_root"/ "$host:projects/compile-time-browser/"
 
