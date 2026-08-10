@@ -16,6 +16,10 @@ bool ascii_iequals(std::string_view a, std::string_view b) noexcept {
     return boost::algorithm::iequals(a, b, std::locale::classic());
 }
 
+bool ascii_istarts_with(std::string_view text, std::string_view prefix) noexcept {
+    return text.size() >= prefix.size() && ascii_iequals(text.substr(0, prefix.size()), prefix);
+}
+
 // Boost's, with the classic locale for the same reason as above - and the same
 // trap avoided: the default overloads take std::locale(), the global one.
 void ascii_lower_in_place(std::string & text) noexcept {

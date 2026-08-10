@@ -95,6 +95,18 @@ void test_color_syntaxes() {
     is("rgba(255, 0, 0, 0.5)", 0x80FF0000, "rgba() with a fractional alpha");
     is("transparent", 0x00000000, "transparent");
 
+    // ASCII CASE-INSENSITIVE, which is not pedantry about the spec. Bootstrap's
+    // `.text-bg-*` utilities write `RGBA(...)` in CAPITALS, 62 times, so a
+    // case-sensitive prefix test dropped the background colour of every badge and
+    // every coloured label on the page - and dropped it INVISIBLY to the parity
+    // harness, which normalises both sides' text and so compared the two spellings
+    // equal. The box was laid out, reported the right computed value, and painted
+    // nothing. Only a screenshot could see it.
+    is("RGBA(255, 0, 0, 0.5)", 0x80FF0000, "an uppercase function name is the same function");
+    is("RGB(255, 0, 0)", 0xFFFF0000, "...and so is RGB()");
+    is("Red", 0xFFFF0000, "a capitalised colour name");
+    is("TRANSPARENT", 0x00000000, "and a shouted transparent");
+
     // The failure case matters as much: an unparseable colour must not become
     // black, or every typo in a stylesheet paints a black box.
     check(!parse_color("").has_value(), "empty is not a colour");

@@ -49,10 +49,12 @@ using ctbrowser::color;
         {"gainsboro", 0xDCDCDC},  {"tomato", 0xFF6347},    {"salmon", 0xFA8072},
         {"indigo", 0x4B0082},     {"violet", 0xEE82EE},    {"turquoise", 0x40E0D0},
     };
+    // ASCII CASE-INSENSITIVE, like every CSS keyword. `Red` and `RED` are the
+    // same colour, and a page that capitalises one is not asking for nothing.
     for (const entry & e : table) {
-        if (e.name == name) { return color{0xFF000000u | e.rgb}; }
+        if (ascii_iequals(e.name, name)) { return color{0xFF000000u | e.rgb}; }
     }
-    if (name == "transparent") { return color{0}; }
+    if (ascii_iequals(name, "transparent")) { return color{0}; }
     return std::nullopt;
 }
 
@@ -91,7 +93,13 @@ using ctbrowser::color;
         return color::rgba(byte(0), byte(2), byte(4), a);
     }
 
-    if (text.starts_with("rgb(") || text.starts_with("rgba(")) {
+    // CSS FUNCTION NAMES ARE ASCII CASE-INSENSITIVE, and this is not pedantry:
+    // Bootstrap's `.text-bg-*` utilities write `RGBA(var(--bs-primary-rgb), ...)`
+    // in capitals, 62 times, so a case-sensitive test dropped the background of
+    // every badge and every coloured label on the page. The box was laid out and
+    // then painted nothing at all, which is the hardest kind of wrong to see:
+    // there is no misplaced pixel to notice, only an absence.
+    if (ascii_istarts_with(text, "rgb(") || ascii_istarts_with(text, "rgba(")) {
         const std::size_t open = text.find('(');
         if (text.back() != ')') { return std::nullopt; }
         std::string_view args = text.substr(open + 1, text.size() - open - 2);

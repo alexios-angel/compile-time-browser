@@ -44,7 +44,7 @@ enum class at_kind {
     // writes both would otherwise have the prefixed one skipped by a different
     // branch than the unprefixed one.
     for (const std::string_view prefix : {"-webkit-", "-moz-", "-ms-", "-o-"}) {
-        if (name.size() > prefix.size() && ascii_iequals(name.substr(0, prefix.size()), prefix)) {
+        if (name.size() > prefix.size() && ascii_istarts_with(name, prefix)) {
             name.remove_prefix(prefix.size());
             break;
         }

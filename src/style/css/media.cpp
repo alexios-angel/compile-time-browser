@@ -65,10 +65,10 @@ namespace {
     out.op = media_feature::compare::boolean;
     // The `min-`/`max-` prefixes. Stripped here so the evaluator only knows about
     // twelve features and three comparisons.
-    if (feature.size() > 4 && ascii_iequals(feature.substr(0, 4), "min-")) {
+    if (ascii_istarts_with(feature, "min-")) {
         out.op = media_feature::compare::at_least;
         feature.remove_prefix(4);
-    } else if (feature.size() > 4 && ascii_iequals(feature.substr(0, 4), "max-")) {
+    } else if (ascii_istarts_with(feature, "max-")) {
         out.op = media_feature::compare::at_most;
         feature.remove_prefix(4);
     }

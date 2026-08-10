@@ -62,6 +62,20 @@ void ascii_upper_in_place(std::string & text) noexcept;
 // <windows.h>.
 [[nodiscard]] bool ascii_iequals(std::string_view a, std::string_view b) noexcept;
 
+// The prefix form, which had three hand-spelled copies of
+// `ascii_iequals(text.substr(0, n), prefix)` - style/css/parser.cpp for at-rule
+// vendor prefixes and style/css/media.cpp for `min-`/`max-`, twice. Three is
+// this file's own trigger, and paint/values.hpp needed a fourth: CSS FUNCTION
+// NAMES ARE ASCII CASE-INSENSITIVE, and Bootstrap writes `RGBA(...)` in capitals
+// 62 times, so a case-sensitive prefix test dropped the background colour of
+// every `.text-bg-*` element on the page.
+//
+// The substr spelling is also subtly wrong at the edge: `substr` clamps, so
+// `ascii_iequals(short.substr(0, 4), "min-")` compares a shorter string and
+// answers false, which is right by accident rather than by construction. This
+// checks the length first.
+[[nodiscard]] bool ascii_istarts_with(std::string_view text, std::string_view prefix) noexcept;
+
 // --- hex ------------------------------------------------------------------
 
 // Was: paint/values.hpp for `#rrggbb`, dom/tokenizer.cpp for `&#x41;`, and
