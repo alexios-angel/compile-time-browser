@@ -103,6 +103,12 @@ element_facts engine::facts_of(const read_txn & txn, node_id id) const {
 style_map engine::resolve_all(const read_txn & txn) {
     style_map out;
     ancestor_filter ancestors;
+    // CLEARED, not merely reused. levels_ persists across calls so its capacity
+    // does, but its CONTENTS are the previous traversal's elements - and depth 0
+    // accumulates, so a second resolve would find the old document's <html> sitting
+    // before the new one and `html ~ x` would match across two documents. clear()
+    // on the inner vectors keeps the capacity that makes the reuse worth having.
+    for (std::vector<visited_element> & level : levels_) { level.clear(); }
     resolve_subtree(txn, txn.root(), ancestors, out);
     return out;
 }

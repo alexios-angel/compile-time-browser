@@ -518,6 +518,122 @@ void test_root_selector() {
     }
 }
 
+// SIBLING COMBINATORS. 48 `+` and 27 `~` in Bootstrap, all dead before: the old
+// front end split a selector on whitespace and `>` only, so `.a + .b` became three
+// steps whose middle one asked for a tag literally called "+".
+//
+// These need the traversal's memory rather than the tree: there is no
+// previous-sibling link to walk back along, so matching reads the siblings the DFS
+// has already visited at that depth.
+void test_sibling_combinators() {
+    {
+        // `+` is the IMMEDIATELY preceding element sibling, and only it.
+        fixture f;
+        f.load("<p class=a></p><p id=hit class=b></p><p id=miss class=b></p>",
+               ".a + .b { color: #010101 }");
+        expect_value(f, f.find_id("hit"), "color", "#010101", "+ matches the next sibling");
+        CHECK(f.value_of(f.find_id("miss"), "color").empty()); // not the one after that
+    }
+    {
+        // `~` is ANY following sibling, however far.
+        fixture f;
+        f.load("<p class=a></p><p id=one class=b></p><em></em><p id=two class=b></p>",
+               ".a ~ .b { color: #010101 }");
+        expect_value(f, f.find_id("one"), "color", "#010101", "~ matches the next");
+        expect_value(f, f.find_id("two"), "color", "#010101", "~ matches a later one too");
+    }
+    {
+        // A TEXT NODE between two elements is not a sibling as far as `+` is
+        // concerned - the combinator is about elements. This is the case a
+        // node-walking implementation gets wrong first.
+        fixture f;
+        f.load("<p class=a></p> some text <p id=hit class=b></p>", ".a + .b { color: #010101 }");
+        expect_value(f, f.find_id("hit"), "color", "#010101", "+ steps over a text node");
+    }
+    {
+        // An INTERVENING ELEMENT breaks `+` and does not break `~`.
+        fixture f;
+        f.load("<p class=a></p><em></em><p id=x class=b></p>",
+               ".a + .b { color: #010101 } .a ~ .b { background-color: #020202 }");
+        CHECK(f.value_of(f.find_id("x"), "color").empty()); // + needs adjacency
+        expect_value(f, f.find_id("x"), "background-color", "#020202", "~ does not");
+    }
+    {
+        // The FIRST element has no previous sibling, so a sibling combinator must
+        // fail rather than reading off the front of the list.
+        fixture f;
+        f.load("<p id=first class=b></p><p class=a></p>", ".a + .b { color: #010101 }");
+        CHECK(f.value_of(f.find_id("first"), "color").empty());
+    }
+    {
+        // Siblings do not cross a parent boundary: `.a` in one div cannot be the
+        // sibling of `.b` in another.
+        fixture f;
+        f.load("<div><p class=a></p></div><div><p id=x class=b></p></div>",
+               ".a + .b { color: #010101 } .a ~ .b { background-color: #020202 }");
+        CHECK(f.value_of(f.find_id("x"), "color").empty());
+        CHECK(f.value_of(f.find_id("x"), "background-color").empty());
+    }
+    {
+        // Chained with the other combinators, in both orders. After `+` has matched,
+        // the walk continues from the SIBLING - so `.wrap .a + .b` has to find
+        // `.wrap` above `.a`, not above `.b` only.
+        fixture f;
+        f.load("<div class=wrap><p class=a></p><p id=x class=b></p></div>",
+               ".wrap .a + .b { color: #010101 }");
+        expect_value(f, f.find_id("x"), "color", "#010101", "descendant then sibling");
+    }
+    {
+        fixture f;
+        f.load("<div class=wrap><p class=a></p><p class=b><em id=x></em></p></div>",
+               ".a + .b em { color: #010101 }");
+        expect_value(f, f.find_id("x"), "color", "#010101", "sibling then descendant");
+    }
+    {
+        // Two sibling steps in one selector.
+        fixture f;
+        f.load("<p class=a></p><p class=b></p><p id=x class=c></p>",
+               ".a + .b + .c { color: #010101 }");
+        expect_value(f, f.find_id("x"), "color", "#010101", "two + steps");
+    }
+    {
+        // `>` and `+` together, which is where a cursor that only tracked depth
+        // would lose the index and match the wrong sibling.
+        fixture f;
+        f.load("<div class=wrap><p class=a></p><p id=x class=b></p></div>",
+               ".wrap > .a + .b { color: #010101 }");
+        expect_value(f, f.find_id("x"), "color", "#010101", "child then sibling");
+    }
+    {
+        // Specificity is unaffected by a combinator: `.a + .b` and `.b` are both
+        // (0,1,0) for the SUBJECT plus (0,1,0) for the other compound, so the
+        // two-compound one wins on class count.
+        fixture f;
+        f.load("<p class=a></p><p id=x class=b></p>",
+               ".b { color: #010101 } .a + .b { color: #020202 }");
+        expect_value(f, f.find_id("x"), "color", "#020202", "two compounds outrank one");
+    }
+}
+
+// A SECOND resolve_all must not see the first document's elements as siblings.
+// levels_ is reused for its capacity, so its contents have to be cleared - without
+// that, the new <html> lands at index 1 behind the old one and `html ~ x` matches
+// across two documents.
+void test_resolving_twice_does_not_leak_siblings() {
+    fixture f;
+    f.load("<p class=a></p><p id=x class=b></p>", ".a + .b { color: #010101 }");
+    expect_value(f, f.find_id("x"), "color", "#010101", "first pass");
+    const auto txn = f.doc.read();
+    f.resolved = f.styles.resolve_all(txn);
+    expect_value(f, f.find_id("x"), "color", "#010101", "second pass agrees");
+    // And the FIRST element still has no previous sibling on the second pass.
+    fixture g;
+    g.load("<p id=first class=b></p><p class=a></p>", ".a + .b { color: #010101 }");
+    const auto gtxn = g.doc.read();
+    g.resolved = g.styles.resolve_all(gtxn);
+    CHECK(g.value_of(g.find_id("first"), "color").empty());
+}
+
 int main() {
     test_shorthands_expand();
     test_simple_selectors();
@@ -529,6 +645,8 @@ int main() {
     test_a_selector_is_compiled_once_per_selector();
     test_attribute_selectors();
     test_root_selector();
+    test_sibling_combinators();
+    test_resolving_twice_does_not_leak_siblings();
     test_deep_nesting_still_matches();
     test_unmatched_element_gets_empty_style();
     test_inline_style_applies();

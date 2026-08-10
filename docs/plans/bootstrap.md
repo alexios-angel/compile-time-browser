@@ -4,8 +4,8 @@
 `tools/check/css-parity.txt`) and `bootstrap_layout` pins the same table without a
 browser. The CSS front end is ours: `style/css/` is a real CSS Syntax Level 3
 tokenizer and grammar, and no public header includes `<ctcss.hpp>` any more. 85/85
-green. S2a (attribute selectors, `:root`, packed specificity) is done; S2b and S2c
-finish the selector engine.**
+green. S2a (attribute selectors, `:root`, packed specificity) and S2b (`+`, `~`, and
+the facts stack) are done; S2c finishes the selector engine.**
 
 `vendor/bootstrap/bootstrap.css` is the first real-world stylesheet this engine
 has been pointed at. Every CSS test before it was a hand-written inline literal
@@ -128,7 +128,8 @@ that widens the grammar and does not move that number has not done what it claim
 |  | matchable | unmatchable |
 |---|---|---|
 | after S1 (tag/id/class, descendant/child) | 2,550 (86.4%) | 400 |
-| after S2a (+ attributes, `:root`) | **2,603 (88.2%)** | 347 |
+| after S2a (+ attributes, `:root`) | 2,603 (88.2%) | 347 |
+| after S2b (+ `+` and `~`) | **2,651 (89.9%)** | 299 |
 
 `:root` is worth more than its 5 selectors suggest: it and
 `[data-bs-theme=light]` are the two alternatives on the rule carrying every global
@@ -139,6 +140,38 @@ answers `--bs-blue: #0d6efd`, and `body` inherits it — which is the input S4's
 Of Bootstrap's 93 attribute selectors, 48 are now in selectors that can match; the
 other 45 sit in selectors still dead for a second reason (`+`, `~`, `:not()`), which
 is what S2b and S2c clear.
+
+### S2b, and what a sibling combinator costs
+
+`+` and `~` cannot be answered from the tree: there is no previous-sibling link to
+walk back along. So the traversal keeps what it has already seen - `levels_[d]` is
+every element visited so far at depth d, `path_[d]` says which of them the current
+chain runs through - and the matcher's cursor becomes a `(depth, index)` pair rather
+than a node, because a sibling combinator moves SIDEWAYS.
+
+That same structure removes the thing the plan named as probably the hottest single
+cost in the engine: `matches` used to call `facts_of` for every ancestor of every
+candidate rule, and `facts_of` interns the element's id and each of its classes,
+each intern taking a `shared_mutex`. For an element twelve deep with four classes
+against forty candidates that is up to 2,400 lock acquisitions to re-answer what the
+DFS already knew on its way down. **Matching now asks the tree nothing.**
+
+Three details that a node-walking implementation gets wrong, each with a test: a
+TEXT node between two elements is not a sibling (`+` is about elements); siblings do
+not cross a parent boundary; and the first element of a level has nothing before it,
+so the cursor must fail rather than read off the front of the list. A fourth is
+about reuse rather than CSS - `levels_` is kept for its capacity across
+`resolve_all` calls, so its CONTENTS have to be cleared, or a second document finds
+the first one's `<html>` sitting before its own and `html ~ x` matches across two
+documents.
+
+The measured effect on the render is honest and small: five values across two
+fixtures now arrive that did not before - `.breadcrumb-item+.breadcrumb-item`'s
+`padding-left`, `.card-link+.card-link`'s `margin-left`,
+`.list-group-item+.list-group-item.active`'s `margin-top` - so `substituted` falls
+by 5 and `differ` does not move at all, because every one of them arrives as `auto`:
+their values are `var()` and `calc()`, which is S4's business. S2b fixed the
+MATCHING. No geometry moved.
 
 ### Two findings that were NOT predicted
 
@@ -226,7 +259,7 @@ document** — inlining for ctbrowser only would destroy the comparison. Viewpor
 | **S0** | **Harness.** `getComputedStyle`; `<link rel=stylesheet>` + a `style_error` channel; `css-dump.js`; `css-parity.py` + ratchet; six fixtures; `bootstrap_layout.cpp` + `tests/baseline/`; the `ctdrive` `reply()` fix; `compare.py`'s `request()` extraction; `box_of`/`find_id` → `tests/support/dom_probe.hpp` | **DONE.** 84/84 green, formatting clean, numbers recorded. Both halves verified able to FAIL: the ratchet exits 1 when a count rises, and `bootstrap_layout` exits 1 naming the element and property that moved |
 | **S1** | **Tokenizer + component values + grammar**, feeding the existing cascade unchanged. ctcss out of `engine.hpp`, out of style's public interface, and out of the install | **DONE.** All 15 `style_basics` tests pass **verbatim**, the `bootstrap_layout` baselines and `tests/golden/page.ppm` are **byte-unchanged**, `check-package.sh` green. Retained compiled selectors 6,289 → **2,550**, dead ones 650 → **0**. `add_sheet` on 297 KB: **3.5 ms** against a 15 ms target. The remaining perf items - O(1) `put()`, values as views, packed specificity in `rule`, the ancestor-facts stack - are deferred to the rungs that need them, so this one stayed a pure substitution |
 | **S2a** | Attribute selectors (all 6 operators + `i`/`s`), `:root`, packed (a,b,c) specificity | **DONE.** Bootstrap's matchable selectors 2,550 → **2,603 of 2,950 (86.4% → 88.2%)**, and the 128 global `--bs-*` are reachable at last. 85/85 |
-| **S2b** | `+` and `~`, on an ancestor/sibling FACTS stack rather than re-deriving facts per candidate | Matchable count rises; `facts_of` stops being called per ancestor per candidate |
+| **S2b** | `+` and `~`, on an ancestor/sibling FACTS stack rather than re-deriving facts per candidate | **DONE.** Matchable 2,603 → **2,651 (89.9%)**; `facts_of` is no longer called during matching at all. 85/85 |
 | **S2c** | `:not`/`:is`/`:where`, structural pseudos, `nth-child(An+B)`; drop-the-rule for unknown pseudo-elements and separate indices for the known ones | Matchable count → **~100%** |
 | **S3** | **Computed values.** `style::value`, the property table, **real inheritance**, `inherit`/`initial`/`unset`/`revert`, split interning. `layout/values.hpp` and `paint/values.hpp` lose their parsers; the five inheritance channels collapse into one — and `computed_style.cpp`'s ancestor walk becomes a straight read | Sharing rate per half; **goldens must not move** — that is the test. Riskiest rung: run both paths with an equality assertion for its duration |
 | **S4** | **`var()` + `calc()` + units.** Custom-property cascade, substitution, IACVT, cycles, the two-pass order; `em`/`rem`/`vh`/`vw`/`pt` folding against a real root font-size; shorthand expansion moved to cascade time | All 1,370 `var()` resolve; the hardcoded 16 is gone; `test_shorthands_expand` passes verbatim |

@@ -282,19 +282,22 @@ private:
                     // specificity - an empty tag atom IS universal here.
                     continue;
                 }
-                if (d == ">") {
-                    // A child combinator. Whitespace either side is irrelevant, so
-                    // the pending relation is simply overwritten.
+                // The three explicit combinators. Whitespace either side is
+                // irrelevant, so the pending relation is simply overwritten - which
+                // is what makes `a > b`, `a>b` and `a >b` one selector.
+                if (d == ">" || d == "+" || d == "~") {
                     if (compounds.empty()) {
-                        dead = true;
+                        dead = true; // a combinator with nothing on its left
                         continue;
                     }
-                    pending = combinator::child;
+                    pending = d == ">"   ? combinator::child
+                              : d == "+" ? combinator::next_sibling
+                                         : combinator::subsequent_sibling;
                     want_new_compound = true;
                     continue;
                 }
-                // `+` and `~` are sibling combinators, `|` is a namespace
-                // separator. All valid CSS, none of them representable yet.
+                // `|` is a namespace separator, and the rest cannot appear in a
+                // selector at all.
                 dead = true;
                 continue;
             }

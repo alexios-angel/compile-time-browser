@@ -394,7 +394,8 @@ void test_how_much_of_bootstrap_can_match() {
     // THE FLOOR. Raise it when a rung widens the grammar; never lower it.
     //   2550  the front-end substitution (tag/#id/.class, descendant/child)
     //   2603  + attribute selectors and :root
-    constexpr std::size_t floor = 2603;
+    //   2651  + the sibling combinators, + and ~
+    constexpr std::size_t floor = 2651;
     if (live < floor) {
         std::printf("FAIL bootstrap census: %zu selectors can match, was at least %zu\n", live,
                     floor);

@@ -49,9 +49,11 @@ inline constexpr std::uint32_t state_checked = 1u << 3;
 inline constexpr std::uint32_t state_disabled = 1u << 4;
 
 enum class combinator : std::uint8_t {
-    none,       // the rightmost compound
-    descendant, // A B
-    child,      // A > B
+    none,               // the rightmost compound
+    descendant,         // A B
+    child,              // A > B
+    next_sibling,       // A + B
+    subsequent_sibling, // A ~ B
 };
 
 // `[name]`, `[name=value]` and the four substring forms. The value is OWNED
