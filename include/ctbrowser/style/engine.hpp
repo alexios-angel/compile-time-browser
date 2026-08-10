@@ -8,12 +8,11 @@
 #include <string_view>
 #include <vector>
 
-#include <ctcss.hpp>
-
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
 
 #include <ctbrowser/style/computed.hpp>
+#include <ctbrowser/style/css/parser.hpp>
 #include <ctbrowser/style/selector.hpp>
 
 // Style resolution.
@@ -50,11 +49,11 @@ public:
     // Interactive state, matching ctcss's pseudo_state bits so a compiled
     // selector's requirement and an element's actual state are the same
     // vocabulary.
-    static constexpr std::uint32_t state_hover = 1u;
-    static constexpr std::uint32_t state_active = 2u;
-    static constexpr std::uint32_t state_focus = 4u;
-    static constexpr std::uint32_t state_checked = 8u;
-    static constexpr std::uint32_t state_disabled = 16u;
+    static constexpr std::uint32_t state_hover = style::state_hover;
+    static constexpr std::uint32_t state_active = style::state_active;
+    static constexpr std::uint32_t state_focus = style::state_focus;
+    static constexpr std::uint32_t state_checked = style::state_checked;
+    static constexpr std::uint32_t state_disabled = style::state_disabled;
 
     // Set or clear one element's interactive bits. Returns whether anything
     // changed, so a caller can skip re-resolving when a mouse move lands on the
@@ -130,6 +129,11 @@ public:
     }
 
     [[nodiscard]] std::size_t rule_count() const noexcept { return index_.rule_count(); }
+    // How many COMPILED SELECTORS are retained. Observable because the count is a
+    // correctness property, not just a size: it must be one per selector that can
+    // match, and the front end this replaced compiled one per DECLARATION and kept
+    // the dead ones. On Bootstrap that was 6,289 where 2,965 exist.
+    [[nodiscard]] std::size_t selector_count() const noexcept { return selectors_.size(); }
     [[nodiscard]] style_table & styles() noexcept { return table_; }
 
     // --- element facts -----------------------------------------------------
@@ -316,8 +320,6 @@ private:
         }
         return true;
     }
-
-    [[nodiscard]] std::uint32_t compile_selector(const ctcss::value_sheet::selector & src);
 
     // Sparse on purpose: at most a handful of elements are hovered, pressed or
     // focused at once, so a per-node field would be megabytes of zeroes.

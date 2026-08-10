@@ -26,43 +26,58 @@ std::uint32_t engine::state_of(node_id id) const {
 }
 
 void engine::add_sheet(std::string_view css, std::uint8_t origin) {
-    const ctcss::value_sheet sheet = ctcss::parse_value(css);
-    for (const ctcss::value_sheet::font_face & face : sheet.font_faces) {
+    const css::stylesheet sheet = css::parse_stylesheet(css, *atoms_);
+    for (const css::font_face & face : sheet.font_faces) {
+        const auto value_of = [&](std::string_view property) -> std::string_view {
+            const atom want = atoms_->intern_lower(property);
+            for (const css::raw_declaration & d : sheet.declarations_of(face)) {
+                if (d.property == want) { return sheet.text_of(d); }
+            }
+            return {};
+        };
         page_font entry;
-        // UNQUOTED here: ctcss leaves `font-family: 'Press Start 2P'` with
-        // its quotes on, so registering the name as it comes back files the
-        // face under a name no element can ever ask for.
-        entry.family = std::string{unquoted(face.get("font-family"))};
-        entry.source = std::string{url_of(face.get("src"))};
-        const std::string_view weight = face.get("font-weight");
+        // UNQUOTED here: `font-family: 'Press Start 2P'` arrives with its quotes
+        // on, so registering the name as it comes back files the face under a name
+        // no element can ever ask for.
+        entry.family = std::string{unquoted(value_of("font-family"))};
+        entry.source = std::string{url_of(value_of("src"))};
+        const std::string_view weight = value_of("font-weight");
         entry.bold = weight == "bold" || weight == "700" || weight == "800" || weight == "900" ||
                      weight == "600";
-        const std::string_view style = face.get("font-style");
+        const std::string_view style = value_of("font-style");
         entry.italic = style == "italic" || style == "oblique";
         if (!entry.family.empty() && !entry.source.empty()) { fonts_.push_back(std::move(entry)); }
     }
-    for (const ctcss::value_sheet::entry & e : sheet.entries) {
-        if (e.selector < 0 || static_cast<std::size_t>(e.selector) >= sheet.selectors.size()) {
-            continue;
-        }
-        const ctcss::value_sheet::selector & src =
-            sheet.selectors[static_cast<std::size_t>(e.selector)];
-        const std::uint32_t sel_index = compile_selector(src);
-        if (selectors_[sel_index].parts.empty()) { continue; }
-        if (selectors_[sel_index].parts.front().never_matches) { continue; }
 
-        const auto add = [&](std::string_view property, std::string_view value) {
-            declarations_.push_back(
-                declaration{atoms_->intern_lower(property), std::string{value}});
-            index_.add(selectors_[sel_index],
-                       rule{sel_index, static_cast<std::uint32_t>(declarations_.size() - 1),
-                            e.order, origin, e.important});
-        };
-        const auto expanded = expand_shorthand(e.property, e.value);
-        if (expanded.empty()) {
-            add(e.property, e.value);
-        } else {
-            for (const auto & [property, value] : expanded) { add(property, value); }
+    // ONE COMPILED SELECTOR PER SELECTOR, and one rule per (selector,
+    // declaration). The old path compiled a selector once per DECLARATION - and
+    // pushed it before deciding whether to keep it - so Bootstrap produced ~6,289
+    // compiled selectors where ~2,965 exist, ~650 of them permanently retained for
+    // rules that were then rejected. Hoisting the push out of the declaration loop
+    // is the whole fix; the dead ones are simply never pushed.
+    for (const css::raw_rule & r : sheet.rules) {
+        for (const compiled_selector & compiled : sheet.selectors_of(r)) {
+            if (compiled.parts.empty() || compiled.parts.front().never_matches) { continue; }
+            selectors_.push_back(compiled);
+            const std::uint32_t sel_index = static_cast<std::uint32_t>(selectors_.size() - 1);
+
+            for (const css::raw_declaration & d : sheet.declarations_of(r)) {
+                const std::string_view property = atoms_->text(d.property);
+                const std::string_view value = sheet.text_of(d);
+                const auto add = [&](std::string_view name, std::string_view text) {
+                    declarations_.push_back(
+                        declaration{atoms_->intern_lower(name), std::string{text}});
+                    index_.add(selectors_[sel_index],
+                               rule{sel_index, static_cast<std::uint32_t>(declarations_.size() - 1),
+                                    d.order, origin, d.important});
+                };
+                const auto expanded = expand_shorthand(property, value);
+                if (expanded.empty()) {
+                    add(property, value);
+                } else {
+                    for (const auto & [name, text] : expanded) { add(name, text); }
+                }
+            }
         }
     }
 }
@@ -91,20 +106,24 @@ const engine::inline_block & engine::inline_style_of(const read_txn & txn, node_
     const auto cached = inline_cache_.find(text);
     if (cached != inline_cache_.end()) { return cached->second; }
 
-    // Through the SHEET parser, wrapped in a dummy rule, rather than
-    // ctcss's declaration splitter: the latter peels `!important` off and
-    // throws the flag away, and that flag is the entire question of what a
-    // style attribute beats.
+    // A declaration list directly, no `*{...}` wrap. The wrap existed to avoid a
+    // declaration splitter that peeled `!important` off and threw the flag away -
+    // and that flag is the entire question of what a style attribute beats, which
+    // docs/style-layout.md spells out. The flag survives here either way, so the
+    // wrap is gone and a `}` inside an attribute value can no longer end the dummy
+    // rule early.
     inline_block parsed;
-    const ctcss::value_sheet sheet = ctcss::parse_value("*{" + std::string{text} + "}");
-    for (const ctcss::value_sheet::entry & e : sheet.entries) {
-        auto & into = e.important ? parsed.important : parsed.normal;
-        const auto expanded = expand_shorthand(e.property, e.value);
+    const css::stylesheet sheet = css::parse_declaration_list(text, *atoms_);
+    for (const css::raw_declaration & d : sheet.declarations) {
+        auto & into = d.important ? parsed.important : parsed.normal;
+        const std::string_view property = atoms_->text(d.property);
+        const std::string_view value = sheet.text_of(d);
+        const auto expanded = expand_shorthand(property, value);
         if (expanded.empty()) {
-            into.push_back(declaration{atoms_->intern_lower(e.property), e.value});
+            into.push_back(declaration{atoms_->intern_lower(property), std::string{value}});
         } else {
-            for (const auto & [property, value] : expanded) {
-                into.push_back(declaration{atoms_->intern_lower(property), std::string{value}});
+            for (const auto & [name, text_of] : expanded) {
+                into.push_back(declaration{atoms_->intern_lower(name), std::string{text_of}});
             }
         }
     }
@@ -160,30 +179,6 @@ bool engine::compound_matches(const element_facts & f, const compound & c) const
     }
     if ((c.states & f.states) != c.states) { return false; }
     return true;
-}
-
-std::uint32_t engine::compile_selector(const ctcss::value_sheet::selector & src) {
-    compiled_selector out;
-    out.specificity = src.spec;
-    // ctcss stores steps left to right; matching wants right to left.
-    for (std::size_t i = src.steps.size(); i-- > 0;) {
-        const ctcss::value_sheet::step & s = src.steps[i];
-        compound c;
-        if (!s.comp.tag.empty() && s.comp.tag != "*") { c.tag = atoms_->intern_lower(s.comp.tag); }
-        if (!s.comp.id.empty()) { c.id = atoms_->intern(s.comp.id); }
-        for (const std::string & cls : s.comp.classes) { c.classes.push_back(atoms_->intern(cls)); }
-        c.states = s.comp.states;
-        c.never_matches = s.comp.impossible;
-        out.parts.push_back(std::move(c));
-        // The relation belongs to the step on its LEFT, so reversing the
-        // list means each link is read from the step we just left.
-        if (i > 0) {
-            out.links.push_back(s.relation == ctcss::rel::child ? combinator::child
-                                                                : combinator::descendant);
-        }
-    }
-    selectors_.push_back(std::move(out));
-    return static_cast<std::uint32_t>(selectors_.size() - 1);
 }
 
 } // namespace ctbrowser::style

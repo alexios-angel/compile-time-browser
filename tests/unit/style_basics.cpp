@@ -363,6 +363,51 @@ void test_inline_style_is_per_element() {
 
 } // namespace
 
+// ONE COMPILED SELECTOR PER SELECTOR, not per declaration.
+//
+// The front end this replaced compiled the selector again for every declaration in
+// the block, and pushed it BEFORE deciding whether to keep it - so a sheet of one
+// rule with three declarations retained three identical compiled selectors, and a
+// rule whose selector could never match left a dead one behind for ever. On
+// Bootstrap that was 6,289 retained where 2,965 selectors exist, roughly 650 of
+// them permanently dead.
+//
+// Asserted rather than measured, because the cost is invisible: nothing renders
+// differently, the matcher just tests the same selector several times and the
+// buckets carry entries that can never fire.
+void test_a_selector_is_compiled_once_per_selector() {
+    {
+        fixture f;
+        f.load("<div id=a></div>", "#a { color: #010101; background-color: #020202; width: 3px }");
+        // Three declarations, ONE selector.
+        CHECK(f.styles.selector_count() == 1);
+    }
+    {
+        fixture f;
+        f.load("<div id=a></div>", "#a, .b, div { color: #010101; width: 3px }");
+        CHECK(f.styles.selector_count() == 3); // three selectors, one compiled each
+    }
+    {
+        // An UNSUPPORTED selector leaves nothing behind. `[data-x]` is valid CSS
+        // this engine cannot match yet; the old path forged a tag atom out of it
+        // and filed a rule under it, so the bucket grew an entry that could never
+        // fire and the selector was retained anyway.
+        fixture f;
+        f.load("<div id=a></div>", "[data-x] { color: #010101 }");
+        CHECK(f.styles.selector_count() == 0); // not retained
+        CHECK(f.styles.rule_count() == 0);     // and files no rule
+    }
+    {
+        // Its SIBLINGS in the list are unaffected, which is what keeps
+        // `.a, [data-x] { ... }` colouring `.a`. An unsupported-but-valid selector
+        // is not a syntax error, and Chrome does not drop the rule for one.
+        fixture f;
+        f.load("<div class=a></div>", ".a, [data-x] { color: #010101 }");
+        CHECK(f.styles.selector_count() == 1); // the supported alternative, alone
+        expect_value(f, f.find("div"), "color", "#010101", "and still applies");
+    }
+}
+
 int main() {
     test_shorthands_expand();
     test_simple_selectors();
@@ -371,6 +416,7 @@ int main() {
     test_specificity_and_source_order();
     test_author_beats_user_agent();
     test_identical_styles_are_shared();
+    test_a_selector_is_compiled_once_per_selector();
     test_deep_nesting_still_matches();
     test_unmatched_element_gets_empty_style();
     test_inline_style_applies();
