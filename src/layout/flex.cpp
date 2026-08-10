@@ -113,14 +113,13 @@ struct flex_item {
         // that is not stretched is as wide as its content wants within the room
         // it has.
         const intrinsic_sizes wants = measure_box(child, it.c, measure_text);
-        const float room = std::max(0.0f, content_width - it.cross_margin -
-                                              it.edges.horizontal_padding());
+        const float room =
+            std::max(0.0f, content_width - it.cross_margin - it.edges.horizontal_padding());
         size = std::max(wants.min_content, std::min(room, wants.max_content)) +
                it.edges.horizontal_padding();
     }
-    const float min = child.min_width.is_auto()
-                          ? 0.0f
-                          : child.min_width.resolve(content_width, child.font_size);
+    const float min =
+        child.min_width.is_auto() ? 0.0f : child.min_width.resolve(content_width, child.font_size);
     const float max = child.max_width.is_auto()
                           ? indefinite
                           : child.max_width.resolve(content_width, child.font_size);
@@ -311,8 +310,8 @@ intrinsic_sizes flex_flow::measure(const box_node & b, const constraints & c,
     // percentage-sized item contribute its content size instead - see below.
     const float basis = std::max(0.0f, c.available_width - edges.horizontal_padding());
     const bool horizontal = b.flex.horizontal();
-    const float gap =
-        std::max(0.0f, (horizontal ? b.flex.column_gap : b.flex.row_gap).resolve(basis, b.font_size));
+    const float gap = std::max(
+        0.0f, (horizontal ? b.flex.column_gap : b.flex.row_gap).resolve(basis, b.font_size));
 
     intrinsic_sizes out;
     float sum_min = 0;
@@ -321,63 +320,41 @@ intrinsic_sizes flex_flow::measure(const box_node & b, const constraints & c,
     for (const box_node & child : b.children) {
         const constraints child_c{basis, c.available_height, child.font_size};
         const resolved_edges child_edges = resolve_edges(child, child_c);
-        const intrinsic_sizes wants = measure_box(child, child_c, measure_text);
-        // The item's own padding and margins are part of what it contributes.
-        // measure_box answers for CONTENT, because that is the question every
-        // other caller asks it.
+        // WHAT THE ITEM CONTRIBUTES, asked in the one place that answers it for
+        // every parent: its own border box plus its margins, with a stated `width`
+        // and its min/max clamps already applied.
+        intrinsic_sizes item = outer_intrinsic(child, child_c, measure_text);
+        float item_min = item.min_content;
+        float item_max = item.max_content;
         const float outside = child_edges.horizontal_margin();
-        const float content_min = wants.min_content + child_edges.horizontal_padding();
-        const float content_max = wants.max_content + child_edges.horizontal_padding();
-        float item_min = content_min + outside;
-        float item_max = content_max + outside;
-        // A DEFINITE SIZE IS THE CONTRIBUTION, not what the content wants - and
-        // WHICH property says so depends on the axis. Across a row it is the flex
-        // base size, `flex-basis` before `width`, exactly the order the freeze
-        // loop will start from; reading only `width` made a `flex: 0 0 100px` item
-        // contribute its TEXT width, so an inline-flex container shrank to its
-        // words rather than to its items. Down a COLUMN the width is the CROSS
-        // size, so `flex-basis` is a height and says nothing here - only `width`
-        // does, which is exactly what column_cross_size will honour.
+        // A DEFINITE FLEX BASIS OVERRIDES THE `width` outer_intrinsic honoured,
+        // because that is where the freeze loop will start - `flex: 0 0 100px` on
+        // a `width: 50%` item is 100px wide. Only across a ROW: down a column the
+        // basis is a HEIGHT and says nothing about the width, which is the cross
+        // size column_cross_size will take from `width` instead.
         //
         // A percentage has no answer while the container's own width is the
         // question being asked, so there the content size stands.
-        float stated = indefinite;
         if (horizontal && !child.flex.basis.is_auto() && child.flex.basis.u != unit::percent) {
-            stated = child.flex.basis.resolve(basis, child.font_size);
-        } else if (!child.width.is_auto() && child.width.u != unit::percent) {
-            stated = child.width.resolve(basis, child.font_size);
-        }
-        if (is_definite(stated)) {
+            const float stated = std::max(0.0f, child.flex.basis.resolve(basis, child.font_size));
             item_max = stated + outside;
-            // A GROWABLE item is not capped by its base size: `flex: 1 0 0` has a
-            // base of ZERO and would otherwise contribute nothing at all, which
-            // collapsed an inline-flex container full of `.col`s to width 0. The
-            // spec's own answer (§9.9.1) is the line's max-content flex fraction,
-            // which needs a second pass over the line; the max of the two is the
-            // same answer whenever one item dominates and an under-estimate
-            // otherwise, and it is recorded as a known difference rather than left
-            // as a zero.
-            if (child.flex.grow > 0) { item_max = std::max(item_max, content_max + outside); }
             // A SHRINKABLE item can still give back everything down to its
-            // automatic minimum, so its minimum contribution is the smaller of
-            // the two. An inflexible one is its base size and nothing else.
-            item_min = (child.flex.shrink > 0 ? std::min(stated, content_min) : stated) + outside;
+            // automatic minimum, so its minimum contribution is the smaller of the
+            // two. An inflexible one is its base size and nothing else.
+            item_min =
+                child.flex.shrink > 0 ? std::min(item_min, stated + outside) : stated + outside;
         }
-        // THE ITEM'S OWN min/max, which the freeze loop will apply and which this
-        // has to apply too - or the container is sized for an item that then comes
-        // out a different width. `.row > * { max-width: 100% }` is on every
-        // Bootstrap column.
-        const length & min_len = horizontal ? child.min_width : child.min_height;
-        const length & max_len = horizontal ? child.max_width : child.max_height;
-        if (horizontal) {
-            const float lo = min_len.is_auto() || min_len.u == unit::percent
-                                 ? 0.0f
-                                 : min_len.resolve(basis, child.font_size);
-            const float hi = max_len.is_auto() || max_len.u == unit::percent
-                                 ? indefinite
-                                 : max_len.resolve(basis, child.font_size);
-            item_min = clamp_extent(item_min - outside, lo, hi) + outside;
-            item_max = clamp_extent(item_max - outside, lo, hi) + outside;
+        // A GROWABLE item is not capped by its base size: `flex: 1 0 0` has a base
+        // of ZERO and would otherwise contribute nothing at all, which collapsed an
+        // inline-flex container full of `.col`s to width 0. The spec's own answer
+        // (§9.9.1) is the LINE's max-content flex fraction, which needs a second
+        // pass over the line; the larger of the two is the same answer whenever one
+        // item dominates and an under-estimate otherwise, and it is recorded as a
+        // known difference rather than left as a zero.
+        if (horizontal && child.flex.grow > 0) {
+            const intrinsic_sizes content = measure_box(child, child_c, measure_text);
+            item_max = std::max(item_max,
+                                content.max_content + child_edges.horizontal_padding() + outside);
         }
         sum_min += item_min;
         sum_max += item_max;
@@ -418,10 +395,11 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
                       edges.horizontal_padding();
         outer_width = std::max(
             0.0f,
-            clamp_extent(outer_width,
-                         b.min_width.is_auto() ? 0 : b.min_width.resolve(c.available_width, b.font_size),
-                         b.max_width.is_auto() ? indefinite
-                                               : b.max_width.resolve(c.available_width, b.font_size)));
+            clamp_extent(
+                outer_width,
+                b.min_width.is_auto() ? 0 : b.min_width.resolve(c.available_width, b.font_size),
+                b.max_width.is_auto() ? indefinite
+                                      : b.max_width.resolve(c.available_width, b.font_size)));
     } else {
         outer_width = outer_width_of(b, c, edges);
     }
@@ -438,12 +416,12 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
 
     const float inner_main = horizontal ? content_width : content_height;
     const float inner_cross = horizontal ? content_height : content_width;
-    const float main_gap = std::max(
-        0.0f, (horizontal ? b.flex.column_gap : b.flex.row_gap)
-                  .resolve(is_definite(inner_main) ? inner_main : 0, b.font_size));
-    const float cross_gap = std::max(
-        0.0f, (horizontal ? b.flex.row_gap : b.flex.column_gap)
-                  .resolve(is_definite(inner_cross) ? inner_cross : 0, b.font_size));
+    const float main_gap =
+        std::max(0.0f, (horizontal ? b.flex.column_gap : b.flex.row_gap)
+                           .resolve(is_definite(inner_main) ? inner_main : 0, b.font_size));
+    const float cross_gap =
+        std::max(0.0f, (horizontal ? b.flex.row_gap : b.flex.column_gap)
+                           .resolve(is_definite(inner_cross) ? inner_cross : 0, b.font_size));
 
     fragment out;
     out.box = &b;
@@ -476,21 +454,18 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         it.cross_lead = horizontal
                             ? (cross_reversed ? it.edges.margin_bottom : it.edges.margin_top)
                             : (cross_reversed ? it.edges.margin_right : it.edges.margin_left);
-        it.main_start_auto = horizontal ? (reversed ? child.margin_right_auto
-                                                    : child.margin_left_auto)
-                                        : (reversed ? child.margin_bottom_auto
-                                                    : child.margin_top_auto);
+        it.main_start_auto = horizontal
+                                 ? (reversed ? child.margin_right_auto : child.margin_left_auto)
+                                 : (reversed ? child.margin_bottom_auto : child.margin_top_auto);
         it.main_end_auto = horizontal
                                ? (reversed ? child.margin_left_auto : child.margin_right_auto)
                                : (reversed ? child.margin_top_auto : child.margin_bottom_auto);
-        it.cross_start_auto = horizontal ? (cross_reversed ? child.margin_bottom_auto
-                                                           : child.margin_top_auto)
-                                         : (cross_reversed ? child.margin_right_auto
-                                                           : child.margin_left_auto);
-        it.cross_end_auto = horizontal ? (cross_reversed ? child.margin_top_auto
-                                                         : child.margin_bottom_auto)
-                                       : (cross_reversed ? child.margin_left_auto
-                                                         : child.margin_right_auto);
+        it.cross_start_auto =
+            horizontal ? (cross_reversed ? child.margin_bottom_auto : child.margin_top_auto)
+                       : (cross_reversed ? child.margin_right_auto : child.margin_left_auto);
+        it.cross_end_auto =
+            horizontal ? (cross_reversed ? child.margin_top_auto : child.margin_bottom_auto)
+                       : (cross_reversed ? child.margin_left_auto : child.margin_right_auto);
         it.grow = child.flex.grow;
         it.shrink = child.flex.shrink;
         items.push_back(std::move(it));
@@ -656,13 +631,12 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         for (const std::size_t i : line) {
             tallest = std::max(tallest, items[i].cross + items[i].cross_margin);
         }
-        line_cross[l] = b.flex.wrap == flex_wrap::nowrap && is_definite(inner_cross) ? inner_cross
-                                                                                    : tallest;
+        line_cross[l] =
+            b.flex.wrap == flex_wrap::nowrap && is_definite(inner_cross) ? inner_cross : tallest;
     }
 
     // --- 6. ALIGN THE LINES (§9.6) -----------------------------------------
-    float cross_extent = lines.empty() ? 0.0f
-                                       : cross_gap * static_cast<float>(lines.size() - 1);
+    float cross_extent = lines.empty() ? 0.0f : cross_gap * static_cast<float>(lines.size() - 1);
     for (const float size : line_cross) { cross_extent += size; }
     const float cross_free = is_definite(inner_cross) ? inner_cross - cross_extent : 0.0f;
     flex_align line_align = b.flex.line_align;
@@ -745,8 +719,8 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
                 // Auto CROSS margins centre or push, exactly as on the main axis.
                 if (cross_free_here > 0) {
                     cross_offset = it.cross_start_auto && it.cross_end_auto ? cross_free_here / 2
-                                   : it.cross_start_auto                   ? cross_free_here
-                                                                           : 0.0f;
+                                   : it.cross_start_auto                    ? cross_free_here
+                                                                            : 0.0f;
                 }
             } else {
                 switch (align) {
@@ -762,9 +736,8 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
             // main axis and `wrap-reverse` the cross one, and mirroring the final
             // position flips the item ORDER and the alignment together, which is
             // exactly what both keywords mean.
-            const float main_final = b.flex.reversed()
-                                         ? used_main_size - main_position - it.target
-                                         : main_position;
+            const float main_final =
+                b.flex.reversed() ? used_main_size - main_position - it.target : main_position;
             const float cross_final = b.flex.wrap == flex_wrap::wrap_reverse
                                           ? used_cross_size - cross_position - it.cross
                                           : cross_position;

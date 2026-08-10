@@ -1,6 +1,6 @@
 # Bootstrap 5.3.8 at Chrome parity
 
-**Where it is. The Chrome diff over the six fixtures is 2,532, down from 7,820 when
+**Where it is. The Chrome diff over the six fixtures is 2,458, down from 7,820 when
 this started; 88/88 green; the numbers are in `tools/check/css-parity.txt` and
 `bootstrap_layout` pins the same table without a browser.**
 
@@ -443,6 +443,8 @@ column sat below the one before it.
 | kitchen | 1,051 | 886 | 5,243 | 4,915 |
 | **total** | **3,140** | **2,532** | 20,179 | 18,931 |
 
+(and 2,458 after the intrinsic-sizing bug flex uncovered in `block_flow::measure`, below)
+
 The grid fixture is where the rung is gated and it fell **65%**. What is left on it is
 no longer flex: 102 of its 173 are one `@y` offset of **-0.0156px** - a single 1/64
 rounding difference on `h1.fs-4`'s height, propagated down the page by the report's
@@ -509,6 +511,23 @@ alignment, absolutely-positioned items, a `%` basis against an indefinite main s
 §9.9.1's max-content flex fraction (a growable item's max-content contribution is the
 larger of its base and its content size, which is the same answer when one item
 dominates and an under-estimate otherwise).
+
+### And one bug flex found in code eight rungs older than it
+
+`block_flow::measure` and `inline_flow::measure` asked how wide a child's CONTENT
+wanted to be and then added nothing - so a child's own padding, margins and stated
+width were dropped from every intrinsic size in the engine. A `<td>` holding a
+`<div style="padding: 50px">hello</div>` measured 19px wide, and the div was then laid
+out at a content width of `max(0, 19 - 100) = 0`, where `words_that_fit` answers 0 for a
+non-positive width and **the text produced no fragment at all**.
+
+Before flex that path was reachable only from a table cell, and no page in the suite
+puts a padded box in one, which is why it sat there. Flex reaches it on every item whose
+base size comes from its content, and the visible symptom was every Bootstrap
+`.nav-item` measuring exactly its `.nav-link` child's padding too narrow. `outer_intrinsic`
+is now the one function that answers "what does this child contribute", and flex asks it
+too rather than keeping a second copy: components 977 → **927**, kitchen 886 → **862**,
+no image golden moved.
 
 ### Two findings that were NOT predicted
 
@@ -607,7 +626,7 @@ document** — inlining for ctbrowser only would destroy the comparison. Viewpor
 | **S5** | **`@media` with a real environment** — now the BOTTLENECK, see below | `.container` takes the breakpoint's max-width, which then clamps, which then centres |
 | **S7b** | `box-sizing`, borders in `resolved_edges`, `min/max-height`, and the `clientWidth`/layout-width inconsistency | `bootstrap-box.html` → near zero; **zero golden movement expected — verify** |
 | **S8** | **Text metrics.** `line-height` (replacing the hardcoded `line_height_factor = 1.25f`), `text-align`, `vertical-align` | `bootstrap-type.html`; **moves every text golden** — taken early on purpose |
-| **S9** | **Flex**, including the `run_parallel` independence guard | **DONE.** `bootstrap-grid.html` **490 → 173**, the whole Chrome diff 3,140 → **2,532**, and what is left on the grid fixture is not flex. 30 tests in a new `flex_basics.cpp`, two flex cases in parallel-equals-sequential, and six spec bugs found by an adversarial review that the 25 original tests could not see. **No image golden moved** |
+| **S9** | **Flex**, including the `run_parallel` independence guard | **DONE.** `bootstrap-grid.html` **490 → 173**, the whole Chrome diff 3,140 → **2,458**, and what is left on the grid fixture is not flex. 30 tests in a new `flex_basics.cpp`, two flex cases in parallel-equals-sequential, and six spec bugs found by an adversarial review that the 25 original tests could not see. **No image golden moved** |
 | **S10** | **De-replace `<button>`** — out of `is_replaced_tag`, its intrinsic sizing moved into the UA sheet as real `padding`/`border` so the cascade can override it | `bootstrap-components.html`; **moves `widgets`, `elements`** |
 | **S11** | **Position and stacking**, in two sub-rungs: in-layer `z-index`, then fixed/sticky as their own layers | `bootstrap-position.html`; new `position_basics.cpp` |
 | **S12** | **Paint decoration.** Per-side `border-{width,style,color}`, `border-radius`, `box-shadow`, `opacity`, `visibility`, `outline` | Screenshots **by eye**; `bootstrap.ppm`; new `raster_basics` coverage cases. **Moves `widgets`, `elements`, `page.ppm`** |

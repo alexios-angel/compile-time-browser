@@ -15,6 +15,6 @@ viewport=1024x768
 [bootstrap-box.html]  elements=40  differ=69  substituted=1308
 [bootstrap-type.html]  elements=62  differ=136  substituted=1969
 [bootstrap-grid.html]  elements=111  differ=173  substituted=3234
-[bootstrap-components.html]  elements=189  differ=977  substituted=5554
+[bootstrap-components.html]  elements=189  differ=927  substituted=5554
 [bootstrap-position.html]  elements=64  differ=291  substituted=1951
-[bootstrap-kitchen.html]  elements=165  differ=886  substituted=4915
+[bootstrap-kitchen.html]  elements=165  differ=862  substituted=4915

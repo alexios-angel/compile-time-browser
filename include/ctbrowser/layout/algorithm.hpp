@@ -98,6 +98,24 @@ struct precomputed {
 [[nodiscard]] intrinsic_sizes measure_box(const box_node & b, const constraints & c,
                                           const measure_text_fn & measure);
 
+// What a CHILD contributes to the intrinsic size of the box that holds it: its
+// own BORDER box plus its margins, with a stated `width` and the min/max clamps
+// applied.
+//
+// A different question from measure_box, which answers for a box's CONTENT
+// because that is what its own formatting context asks. block_flow::measure and
+// inline_flow::measure asked measure_box and then added nothing, so everything
+// outside a child's content box was silently dropped - a `<td>` holding a
+// `<div style="padding: 50px">hello</div>` measured 19px wide, and the div was
+// then laid out at a content width of max(0, 19 - 100) = 0, where words_that_fit
+// answers 0 for a non-positive width and THE TEXT DISAPPEARED. Before flex that
+// path was reachable only from a table cell, which is why it went unnoticed; flex
+// reaches it on every item whose base size comes from its content, and the
+// visible symptom there was a Bootstrap `.nav-item` measuring exactly its
+// `.nav-link` child's 32px of padding too narrow.
+[[nodiscard]] intrinsic_sizes outer_intrinsic(const box_node & child, const constraints & c,
+                                              const measure_text_fn & measure);
+
 // How much of `text` fits in `available`, measured in whole words. A break
 // opportunity is AFTER a run of spaces, and a LEADING run of spaces belongs
 // to the first candidate rather than being a zero-width candidate of its
@@ -160,7 +178,7 @@ struct inline_flow {
             // measure_box knows that, and knows what an inline-flex child is too.
             const float w = child.kind == box_kind::text
                                 ? measure_text(child.text, child.font_size, child.face)
-                                : measure_box(child, c, measure_text).max_content;
+                                : outer_intrinsic(child, c, measure_text).max_content;
             line += w;
             out.min_content = std::max(out.min_content, longest_word(child, measure_text));
         }
@@ -231,7 +249,7 @@ struct inline_flow {
             }
             // an inline box: measured whole, wrapped to the next line if it
             // does not fit beside what is already there
-            const float w = measure_box(child, c, measure_text).max_content;
+            const float w = outer_intrinsic(child, c, measure_text).max_content;
             if (pen_x > 0 && pen_x + w > c.available_width) {
                 align_line(pen_y);
                 pen_x = 0;
@@ -367,7 +385,7 @@ struct block_flow {
             // measured as ZERO WIDE. Nothing noticed until a table asked how wide
             // its columns wanted to be and got 0. measure_box owns that
             // distinction now, along with the three cases this loop got wrong.
-            const intrinsic_sizes child_sizes = measure_box(child, c, measure_text);
+            const intrinsic_sizes child_sizes = outer_intrinsic(child, c, measure_text);
             out.min_content = std::max(out.min_content, child_sizes.min_content);
             out.max_content = std::max(out.max_content, child_sizes.max_content);
         }

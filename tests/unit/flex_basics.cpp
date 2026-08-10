@@ -141,8 +141,7 @@ constexpr std::string_view reset = "body { margin: 0; padding: 0 } ";
 
 void test_display_flex_makes_a_flex_container() {
     fixture f;
-    f.load("<html><body><div id=a><div id=b>x</div></div></body></html>",
-           "#a { display: flex }");
+    f.load("<html><body><div id=a><div id=b>x</div></div></body></html>", "#a { display: flex }");
     const box_node * a = box_for(f.root, f.find_id("a"));
     check(a != nullptr && a->kind == box_kind::flex, "display:flex makes a flex box");
     check(a != nullptr && a->is_block_level(), "a flex container is block-level");
@@ -171,8 +170,7 @@ void test_inline_runs_become_anonymous_items() {
         fixture f;
         f.load("<html><body><div id=a>plain text</div></body></html>", "#a { display: flex }");
         const box_node * a = box_for(f.root, f.find_id("a"));
-        check(a != nullptr && a->children.size() == 1 &&
-                  a->children[0].kind == box_kind::anonymous,
+        check(a != nullptr && a->children.size() == 1 && a->children[0].kind == box_kind::anonymous,
               "text alone in a flex container becomes one anonymous item");
     }
     {
@@ -301,7 +299,9 @@ void test_a_flexible_item_takes_what_the_stated_ones_leave() {
                       "#b { flex-grow: 1; flex-shrink: 1; flex-basis: 0; min-width: 0 }")
               .c_str());
     const fragment * b = t.at("b");
-    if (b != nullptr) { expect_near(b->bounds.width, 600, "the flexible item takes the remainder"); }
+    if (b != nullptr) {
+        expect_near(b->bounds.width, 600, "the flexible item takes the remainder");
+    }
     expect_near(t.x_of("b"), 300, "starting after the stated one");
 }
 
@@ -377,7 +377,9 @@ void test_shrinking_is_weighted_by_the_INNER_base_size() {
               .c_str());
     const fragment * a = t.at("a");
     const fragment * b = t.at("b");
-    if (a != nullptr) { expect_near(a->bounds.width, 200 - 100.0f / 3, "the padded item gives 1/3"); }
+    if (a != nullptr) {
+        expect_near(a->bounds.width, 200 - 100.0f / 3, "the padded item gives 1/3");
+    }
     if (b != nullptr) { expect_near(b->bounds.width, 200 - 200.0f / 3, "the bare one gives 2/3"); }
 }
 
@@ -406,7 +408,9 @@ void test_a_percentage_maximum_that_cannot_resolve_is_no_maximum() {
                       "#a { height: 20px; max-height: 100% }")
               .c_str());
     const fragment * a = t.at("a");
-    if (a != nullptr) { expect_near(a->bounds.height, 20, "an unresolvable percentage max is none"); }
+    if (a != nullptr) {
+        expect_near(a->bounds.height, 20, "an unresolvable percentage max is none");
+    }
 }
 
 void test_reverse_puts_the_leading_margin_at_the_flex_start_edge() {
@@ -761,6 +765,36 @@ void test_a_flex_container_can_be_a_flex_item() {
     expect_near(t.x_of("b"), 400, "while the outer row is unaffected");
 }
 
+void test_a_descendants_padding_counts_toward_the_item() {
+    // An auto-basis item is as wide as its content WANTS, and what its content
+    // wants includes its own children's padding, margins and stated widths.
+    // Dropping them did not just make the item narrow: the child was then laid out
+    // at a content width of max(0, 48 - 100) = 0, words_that_fit answers 0 for a
+    // non-positive width, and THE TEXT PRODUCED NO FRAGMENT AT ALL.
+    //
+    // The path existed before flex and was reachable only from a table cell, which
+    // is why nothing caught it; flex reaches it on every content-sized item, and
+    // the visible symptom was a Bootstrap `.nav-item` measuring exactly its
+    // `.nav-link` child's 32px of padding too narrow.
+    laid_out t;
+    t.run("<html><body><div id=r><div id=a><div id=i>hello</div></div></div></body></html>",
+          std::string{reset}
+              .append("#r { display: flex; width: 600px } "
+                      "#a { flex-grow: 0; flex-shrink: 0; flex-basis: auto; min-width: 0 } "
+                      "#i { padding-left: 50px; padding-right: 50px }")
+              .c_str());
+    const fragment * a = t.at("a");
+    // "hello" is five characters at 9.6 apiece, plus the child's 100px of padding.
+    if (a != nullptr) { expect_near(a->bounds.width, 148, "a descendant's padding counts"); }
+    std::size_t runs = 0;
+    const auto walk = [&](auto && self, const fragment & at) -> void {
+        if (!at.text.empty()) { ++runs; }
+        for (const fragment & c : at.children) { self(self, c); }
+    };
+    walk(walk, t.out);
+    check(runs == 1, "and the text inside it is still drawn");
+}
+
 void test_padding_is_inside_the_flex_base_size() {
     // The engine's convention throughout is that a stated size is the BORDER box
     // - `box-sizing: border-box`, which Bootstrap sets on `*`. An item's padding
@@ -813,6 +847,7 @@ int main() {
     test_flex_direction();
     test_inline_flex_shrinks_to_fit();
     test_a_flex_container_can_be_a_flex_item();
+    test_a_descendants_padding_counts_toward_the_item();
     test_padding_is_inside_the_flex_base_size();
 
     REPORT("flex_basics");

@@ -81,6 +81,39 @@ intrinsic_sizes measure_box(const box_node & b, const constraints & c,
     return block_flow{}.measure(b, c, measure);
 }
 
+intrinsic_sizes outer_intrinsic(const box_node & child, const constraints & c,
+                                const measure_text_fn & measure) {
+    const resolved_edges edges = resolve_edges(child, c);
+    intrinsic_sizes out = measure_box(child, c, measure);
+    out.min_content += edges.horizontal_padding();
+    out.max_content += edges.horizontal_padding();
+    // A STATED WIDTH IS THE CONTRIBUTION whatever the content wants, and it names
+    // the BORDER box like every other size here. A PERCENTAGE has no answer while
+    // the containing block's own width is the question being asked, so there the
+    // content size stands - which is also why `.row > * { max-width: 100% }` never
+    // reaches the clamp below.
+    if (!child.width.is_auto() && child.width.u != unit::percent) {
+        const float stated =
+            std::max(0.0f, child.width.resolve(c.available_width, child.font_size));
+        out.min_content = stated;
+        out.max_content = stated;
+    }
+    // MAX FIRST, THEN MIN, the same order and the same reason as outer_width_of.
+    if (!child.max_width.is_auto() && child.max_width.u != unit::percent) {
+        const float hi = child.max_width.resolve(c.available_width, child.font_size);
+        out.min_content = std::min(out.min_content, hi);
+        out.max_content = std::min(out.max_content, hi);
+    }
+    if (!child.min_width.is_auto() && child.min_width.u != unit::percent) {
+        const float lo = child.min_width.resolve(c.available_width, child.font_size);
+        out.min_content = std::max(out.min_content, lo);
+        out.max_content = std::max(out.max_content, lo);
+    }
+    out.min_content = std::max(0.0f, out.min_content) + edges.horizontal_margin();
+    out.max_content = std::max(0.0f, out.max_content) + edges.horizontal_margin();
+    return out;
+}
+
 fragment layout_box(const box_node & b, const constraints & c, const measure_text_fn & measure,
                     precomputed * ready) {
     if (b.kind == box_kind::text) {
