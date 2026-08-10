@@ -442,6 +442,11 @@ private:
     // beside it, which is what every fixture and every real local page is.
     void load_author_styles();
 
+    // Push the window size and the user's preferences into the style engine, and say
+    // whether any media query's truth moved. A resize calls it and only re-resolves the
+    // cascade when the answer is yes.
+    bool media_environment_changed();
+
     [[nodiscard]] std::string extract_title();
 
     void resolve_styles();
@@ -1543,6 +1548,18 @@ private:
     std::string title_;
     float scroll_y_ = 0;
     float content_height_ = 0;
+    // The width the last layout ran at: the window's, less the scrollbar when the
+    // page overflows. `clientWidth` and getComputedStyle percentages are relative
+    // to this and not to options_.width.
+    float layout_width_ = 0;
+    // The layout viewport as an integer, falling back to the window before the
+    // first layout has run. Both callers of observe_viewport go through this:
+    // bindings are installed LAZILY, the first time a page runs script, which is
+    // after run_layout - so a setup path that reported options_.width silently
+    // clobbered the narrower number layout had already used.
+    [[nodiscard]] int layout_viewport_width() const noexcept {
+        return layout_width_ > 0 ? static_cast<int>(layout_width_) : options_.width;
+    }
     node_id hovered_;
     node_id pressed_;
     dirty dirty_ = dirty::everything;

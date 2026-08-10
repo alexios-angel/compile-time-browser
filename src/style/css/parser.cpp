@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <ctbrowser/core/algorithms.hpp>
+#include <ctbrowser/style/css/media.hpp>
 #include <ctbrowser/style/css/selector.hpp>
 
 // CSS Syntax Level 3 §5, over the §4 tokens.
@@ -30,6 +31,7 @@ namespace {
 // The at-rules this recognises. Everything else with a block has its block
 // skipped, and everything else without one is consumed to the `;`.
 enum class at_kind {
+    media,
     media_like,
     font_face,
     statement,
@@ -47,8 +49,9 @@ enum class at_kind {
             break;
         }
     }
-    if (ascii_iequals(name, "media") || ascii_iequals(name, "supports") ||
-        ascii_iequals(name, "document") || ascii_iequals(name, "layer")) {
+    if (ascii_iequals(name, "media")) { return at_kind::media; }
+    if (ascii_iequals(name, "supports") || ascii_iequals(name, "document") ||
+        ascii_iequals(name, "layer")) {
         // "media-like" = a conditional group whose contents are rules. `@layer`
         // with a block is one too; `@layer a;` is a statement and falls out below
         // because it has no block.
@@ -152,6 +155,7 @@ private:
         r.first_selector = first_selector;
         r.selector_count = count;
         r.first_declaration = first_declaration;
+        r.condition = condition_;
         r.declaration_count =
             static_cast<std::uint32_t>(sheet_.declarations.size()) - first_declaration;
         // A rule with no declarations is kept out: it can never contribute to the
@@ -180,25 +184,30 @@ private:
             (void)consume_component_value();
             return;
         }
+        if (kind == at_kind::media && here().type == token_type::open_curly) {
+            // A REAL CONDITION. The prelude becomes a query list, the list becomes an
+            // entry in the sheet's condition table with the enclosing condition as its
+            // parent, and every rule inside records that index. Nothing is evaluated
+            // here: a sheet is parsed once and the viewport changes, so the truth of a
+            // condition belongs to the engine and not to the parse.
+            media_condition condition;
+            condition.parent = condition_;
+            condition.queries = parse_media_query_list(sheet_, span_of(prelude));
+            sheet_.conditions.push_back(std::move(condition));
+            const std::uint32_t saved = condition_;
+            condition_ = static_cast<std::uint32_t>(sheet_.conditions.size() - 1);
+            ++at_; // the `{`
+            consume_rule_list(/*top_level=*/false);
+            if (here().type == token_type::close_curly) { ++at_; }
+            condition_ = saved;
+            return;
+        }
         if (kind == at_kind::media_like) {
-            // THE CONDITION IS NOT EVALUATED - see the note at the top of this
-            // file. `print` or `portrait` anywhere in the prelude skips the block,
-            // which is what the previous front end did by substring search; doing
-            // it on IDENT tokens instead means a `print` inside a string or a
-            // comment no longer counts.
-            bool skip = false;
-            for (const component_value & v : prelude) {
-                if (v.kind != cv_kind::token) { continue; }
-                const css_token & t = sheet_.tokens[v.token];
-                if (t.type != token_type::ident) { continue; }
-                if (ascii_iequals(text(t), "print") || ascii_iequals(text(t), "portrait")) {
-                    skip = true;
-                }
-            }
-            if (skip) {
-                (void)consume_component_value();
-                return;
-            }
+            // `@supports`, `@document` and `@layer`: the CONTENTS are rules, and the
+            // condition is still ignored. `@supports` needs a property table to answer
+            // honestly - and answering `true` for `display: grid` would be worse than
+            // answering nothing, because a feature-detecting page would then pick the
+            // grid path. That is its own rung.
             ++at_; // the `{`, so the nested rules are parsed in place
             consume_rule_list(/*top_level=*/false);
             if (here().type == token_type::close_curly) { ++at_; }
@@ -438,6 +447,8 @@ private:
     atom_table * atoms_;
     std::size_t at_ = 0;
     std::int32_t order_ = 0;
+    // The `@media` a rule being parsed sits inside. 0 is the unconditional entry.
+    std::uint32_t condition_ = 0;
 };
 
 } // namespace

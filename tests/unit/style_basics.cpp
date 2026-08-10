@@ -1246,6 +1246,156 @@ void test_border_shorthand() {
     }
 }
 
+// @media, EVALUATED. Every block used to flatten in unconditionally - the prelude was
+// substring-matched for `print` and `portrait` and nothing else - so all of Bootstrap's
+// breakpoints applied at once and the last in source order won. `.container` therefore
+// took the xxl breakpoint's max-width at every viewport, which clamps nothing.
+void test_media_queries() {
+    const auto at = [](fixture & f, float w, float h) {
+        ctbrowser::style::css::media_environment env;
+        env.viewport_width = w;
+        env.viewport_height = h;
+        (void)f.styles.set_environment(env);
+        const auto txn = f.doc.read();
+        f.resolved = f.styles.resolve_all(txn);
+    };
+    {
+        // min-width: the rule applies at and above the breakpoint, and not below.
+        fixture f;
+        f.load("<p id=a></p>", "@media (min-width: 600px) { p { color: #010101 } }");
+        at(f, 800, 600);
+        expect_value(f, f.find_id("a"), "color", "#010101", "min-width above");
+        at(f, 500, 600);
+        CHECK(f.value_of(f.find_id("a"), "color").empty()); // below
+        at(f, 600, 600);
+        expect_value(f, f.find_id("a"), "color", "#010101", "min-width is inclusive");
+    }
+    {
+        // max-width, and the pair of them together - which is how a breakpoint RANGE is
+        // written and the case that flattening got most wrong.
+        fixture f;
+        f.load("<p id=a></p>", "@media (max-width: 599.98px) { p { color: #010101 } }"
+                               "@media (min-width: 600px) { p { color: #020202 } }");
+        at(f, 500, 600);
+        expect_value(f, f.find_id("a"), "color", "#010101", "the small breakpoint");
+        at(f, 800, 600);
+        expect_value(f, f.find_id("a"), "color", "#020202", "the large one, exclusively");
+    }
+    {
+        // The BOOTSTRAP SHAPE: ascending mobile-first breakpoints, where flattening made
+        // the widest one win at every size.
+        fixture f;
+        f.load("<p id=a></p>", "p { width: 100px }"
+                               "@media (min-width: 576px) { p { width: 540px } }"
+                               "@media (min-width: 768px) { p { width: 720px } }"
+                               "@media (min-width: 1200px) { p { width: 1140px } }");
+        at(f, 400, 600);
+        expect_value(f, f.find_id("a"), "width", "100px", "below every breakpoint");
+        at(f, 700, 600);
+        expect_value(f, f.find_id("a"), "width", "540px", "the sm breakpoint");
+        at(f, 1000, 600);
+        expect_value(f, f.find_id("a"), "width", "720px", "the md one");
+        at(f, 1400, 600);
+        expect_value(f, f.find_id("a"), "width", "1140px", "and the xl one");
+    }
+    {
+        // A media TYPE. `print` must not apply on screen, and `screen` must.
+        fixture f;
+        f.load("<p id=a></p>", "@media print { p { color: #010101 } }"
+                               "@media screen { p { background-color: #020202 } }");
+        at(f, 800, 600);
+        CHECK(f.value_of(f.find_id("a"), "color").empty());
+        expect_value(f, f.find_id("a"), "background-color", "#020202", "screen applies");
+    }
+    {
+        // `not`, which applies to the WHOLE query rather than per feature.
+        fixture f;
+        f.load("<p id=a></p>", "@media not print { p { color: #010101 } }");
+        at(f, 800, 600);
+        expect_value(f, f.find_id("a"), "color", "#010101", "not print, on screen");
+    }
+    {
+        // A COMMA LIST is an OR: either arm matching is enough.
+        fixture f;
+        f.load("<p id=a></p>",
+               "@media (min-width: 2000px), (max-width: 900px) { p { color: #010101 } }");
+        at(f, 800, 600);
+        expect_value(f, f.find_id("a"), "color", "#010101", "the second arm matched");
+        at(f, 1200, 600);
+        CHECK(f.value_of(f.find_id("a"), "color").empty()); // neither arm
+    }
+    {
+        // `and` is a conjunction, so BOTH have to hold.
+        fixture f;
+        f.load("<p id=a></p>",
+               "@media (min-width: 600px) and (max-width: 900px) { p { color: #010101 } }");
+        at(f, 800, 600);
+        expect_value(f, f.find_id("a"), "color", "#010101", "inside the range");
+        at(f, 1000, 600);
+        CHECK(f.value_of(f.find_id("a"), "color").empty()); // above it
+    }
+    {
+        // orientation, which is DERIVED from the viewport rather than stored.
+        fixture f;
+        f.load("<p id=a></p>",
+               "@media (orientation: portrait) { p { color: #010101 } }"
+               "@media (orientation: landscape) { p { background-color: #020202 } }");
+        at(f, 400, 800);
+        expect_value(f, f.find_id("a"), "color", "#010101", "taller than wide");
+        CHECK(f.value_of(f.find_id("a"), "background-color").empty());
+        at(f, 800, 400);
+        expect_value(f, f.find_id("a"), "background-color", "#020202", "wider than tall");
+    }
+    {
+        // NESTING: the inner condition ANDs with the outer, which the parent index is
+        // what makes work without flattening the tree at parse time.
+        fixture f;
+        f.load("<p id=a></p>",
+               "@media (min-width: 600px) { @media (max-width: 900px) { p { color: #010101 } } }");
+        at(f, 800, 600);
+        expect_value(f, f.find_id("a"), "color", "#010101", "both hold");
+        at(f, 1000, 600);
+        CHECK(f.value_of(f.find_id("a"), "color").empty()); // the inner fails
+        at(f, 500, 600);
+        CHECK(f.value_of(f.find_id("a"), "color").empty()); // the outer fails
+    }
+    {
+        // AN UNMODELLED FEATURE makes the query FALSE rather than being skipped.
+        // Skipping would apply rules the author gated on something the engine does not
+        // understand, which is the wrong direction to fail in.
+        fixture f;
+        f.load("<p id=a></p>", "@media (device-aspect-ratio: 16/9) { p { color: #010101 } }");
+        at(f, 800, 600);
+        CHECK(f.value_of(f.find_id("a"), "color").empty());
+    }
+    {
+        // prefers-reduced-motion, which 26 of Bootstrap's blocks are gated on.
+        fixture f;
+        f.load(
+            "<p id=a></p>",
+            "@media (prefers-reduced-motion: reduce) { p { color: #010101 } }"
+            "@media (prefers-reduced-motion: no-preference) { p { background-color: #020202 } }");
+        at(f, 800, 600);
+        CHECK(f.value_of(f.find_id("a"), "color").empty()); // not reduced by default
+        expect_value(f, f.find_id("a"), "background-color", "#020202", "no-preference");
+        ctbrowser::style::css::media_environment env;
+        env.reduced_motion = true;
+        CHECK(f.styles.set_environment(env)); // and it reports that truth FLIPPED
+        const auto txn = f.doc.read();
+        f.resolved = f.styles.resolve_all(txn);
+        expect_value(f, f.find_id("a"), "color", "#010101", "reduce, once asked for");
+    }
+    {
+        // set_environment reports whether anything MOVED, which is what lets a resize
+        // skip the cascade. A page with no @media never re-resolves.
+        fixture f;
+        f.load("<p id=a></p>", "p { color: #010101 }");
+        ctbrowser::style::css::media_environment env;
+        env.viewport_width = 300;
+        CHECK(!f.styles.set_environment(env)); // nothing to flip
+    }
+}
+
 int main() {
     test_shorthands_expand();
     test_simple_selectors();
@@ -1267,6 +1417,7 @@ int main() {
     test_explicit_defaulting_keywords();
     test_var_substitution();
     test_border_shorthand();
+    test_media_queries();
     test_deep_nesting_still_matches();
     test_unmatched_element_gets_empty_style();
     test_inline_style_applies();

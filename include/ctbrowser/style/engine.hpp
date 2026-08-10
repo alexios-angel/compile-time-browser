@@ -13,6 +13,7 @@
 #include <ctbrowser/dom/dom.hpp>
 
 #include <ctbrowser/style/computed.hpp>
+#include <ctbrowser/style/css/media.hpp>
 #include <ctbrowser/style/css/parser.hpp>
 #include <ctbrowser/style/css/substitute.hpp>
 #include <ctbrowser/style/selector.hpp>
@@ -132,6 +133,30 @@ public:
 
     // origin 0 = user agent, 1 = author. Author wins ties, per the cascade.
     void add_sheet(std::string_view css, std::uint8_t origin = 1);
+
+    // WHAT THE MEDIA QUERIES ARE ASKED ABOUT. It lives on the engine rather than in
+    // the shell because a test needs to be able to pin the viewport and
+    // `prefers-reduced-motion` without a browser, and because the cascade is the thing
+    // that consumes it.
+    //
+    // Returns whether any condition's truth actually FLIPPED. That is the whole point:
+    // a resize on a page with no `@media` returns false, and the caller can then skip
+    // re-resolving the cascade entirely and just re-lay-out.
+    bool set_environment(const css::media_environment & env) {
+        environment_ = env;
+        bool flipped = false;
+        for (std::size_t i = 0; i < conditions_.size(); ++i) {
+            const bool now = condition_holds(i);
+            if (condition_truth_[i] != now) {
+                condition_truth_[i] = now;
+                flipped = true;
+            }
+        }
+        return flipped;
+    }
+    [[nodiscard]] const css::media_environment & environment() const noexcept {
+        return environment_;
+    }
 
     // SHORTHAND EXPANSION. `margin: 1px 2px` becomes four longhand
     // declarations, emitted in place of the shorthand.
@@ -292,6 +317,7 @@ public:
         for (const atom c : self.classes) { collect(index_.by_class, c, txn, ancestors, depth); }
         collect(index_.by_tag, self.tag, txn, ancestors, depth);
         for (const rule & r : index_.universal) {
+            if (!condition_truth_[r.condition]) { continue; }
             if (matches(txn, ancestors, selectors_[r.selector], depth)) { matches_.push_back(r); }
         }
 
@@ -638,6 +664,9 @@ private:
         const auto it = bucket.find(key.id);
         if (it == bucket.end()) { return; }
         for (const rule & r : it->second) {
+            // ONE BOOL, before any selector work. A false condition is the cheapest
+            // possible rejection and it is checked first for that reason.
+            if (!condition_truth_[r.condition]) { continue; }
             if (matches(txn, ancestors, selectors_[r.selector], depth)) { matches_.push_back(r); }
         }
     }
@@ -773,6 +802,20 @@ private:
         }
     };
     std::vector<level_totals> totals_;
+    // Every `@media` from every sheet, flattened into one table with parent links, plus
+    // their current truth. Entry 0 is the unconditional one and is always true.
+    css::media_environment environment_{};
+    std::vector<css::media_condition> conditions_{css::media_condition{}};
+    std::vector<bool> condition_truth_{true};
+
+    // Truth of one condition: its own query list, ANDed with its parent's - which is
+    // how a nested `@media` works without the tree being flattened at parse time.
+    [[nodiscard]] bool condition_holds(std::size_t at) const {
+        if (at == 0) { return true; }
+        const css::media_condition & c = conditions_[at];
+        if (!css::evaluate(c.queries, environment_)) { return false; }
+        return c.parent == 0 || condition_holds(c.parent);
+    }
     // A null inherited pointer to hand out at the root, so `from` can be a reference.
     const inherited_ptr no_inherited_{};
 };

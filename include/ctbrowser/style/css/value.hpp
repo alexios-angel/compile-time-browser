@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/style/css/media_fwd.hpp>
 #include <ctbrowser/style/css/token.hpp>
 #include <ctbrowser/style/selector.hpp>
 
@@ -87,6 +88,10 @@ struct raw_rule {
     std::uint32_t selector_count = 0;
     std::uint32_t first_declaration = 0; // into stylesheet::declarations
     std::uint32_t declaration_count = 0;
+    // Which `@media` this rule sits inside, as an index into
+    // stylesheet::conditions. 0 is the UNCONDITIONAL entry, always present and
+    // always true, so a rule outside any at-rule needs no special case.
+    std::uint32_t condition = 0;
 };
 
 // @font-face, the one at-rule whose product the cascade does not touch: it is a
@@ -113,9 +118,19 @@ struct stylesheet {
     std::vector<raw_declaration> declarations;
     std::vector<raw_rule> rules;
     std::vector<font_face> font_faces;
+    // The `@media` conditions this sheet's rules are gated on. Entry 0 is the
+    // unconditional one; nesting is a parent index, so truth ANDs up the chain
+    // without the tree being flattened.
+    std::vector<media_condition> conditions{media_condition{}};
 
     [[nodiscard]] std::string_view text_of(const css_token & t) const noexcept {
         return std::string_view{pool}.substr(t.text, t.length);
+    }
+    // A dimension's unit. The same accessor token_stream has, because the tokens moved
+    // here after parsing and a consumer that needs a unit should not have to know that.
+    [[nodiscard]] std::string_view unit_of(const css_token & t) const noexcept {
+        if (t.type != token_type::dimension || t.unit_length == 0) { return {}; }
+        return std::string_view{pool}.substr(t.text + t.length - t.unit_length, t.unit_length);
     }
     [[nodiscard]] std::string_view text_of(const raw_declaration & d) const noexcept {
         return std::string_view{pool}.substr(d.text, d.length);

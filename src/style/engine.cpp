@@ -51,6 +51,27 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
         if (!entry.family.empty() && !entry.source.empty()) { fonts_.push_back(std::move(entry)); }
     }
 
+    // THE SHEET'S CONDITIONS, remapped into the engine's table. A sheet numbers its
+    // own `@media` blocks from 1; the engine holds every sheet's, so index 0 stays the
+    // shared unconditional entry and the rest are offset. Their parent links are
+    // remapped the same way, so nesting survives the move.
+    const std::size_t condition_base = conditions_.size();
+    for (std::size_t i = 1; i < sheet.conditions.size(); ++i) {
+        css::media_condition moved = sheet.conditions[i];
+        if (moved.parent != 0) {
+            moved.parent = static_cast<std::uint32_t>(condition_base + moved.parent - 1);
+        }
+        conditions_.push_back(std::move(moved));
+        condition_truth_.push_back(false);
+    }
+    const auto engine_condition = [&](std::uint32_t sheet_local) -> std::uint32_t {
+        return sheet_local == 0 ? 0u : static_cast<std::uint32_t>(condition_base + sheet_local - 1);
+    };
+    // Evaluate what was just added, against the environment as it stands.
+    for (std::size_t i = condition_base; i < conditions_.size(); ++i) {
+        condition_truth_[i] = condition_holds(i);
+    }
+
     // ONE COMPILED SELECTOR PER SELECTOR, and one rule per (selector,
     // declaration). The old path compiled a selector once per DECLARATION - and
     // pushed it before deciding whether to keep it - so Bootstrap produced ~6,289
@@ -73,7 +94,7 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
                 declarations_.push_back(declaration{d.property, std::string{sheet.text_of(d)}});
                 index_.add(selectors_[sel_index],
                            rule{sel_index, static_cast<std::uint32_t>(declarations_.size() - 1),
-                                d.order, origin, d.important});
+                                d.order, engine_condition(r.condition), origin, d.important});
             }
         }
     }

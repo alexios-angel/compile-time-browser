@@ -25,6 +25,7 @@ target_sources(ctbrowser-style
     css/parser.cpp
     css/selector.cpp
     css/substitute.cpp
+    css/media.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
@@ -35,6 +36,8 @@ target_sources(ctbrowser-style
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/selector.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/parser.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/substitute.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/media_fwd.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/media.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/computed.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/selector.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/engine.hpp"

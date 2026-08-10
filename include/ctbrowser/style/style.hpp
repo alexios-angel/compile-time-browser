@@ -15,6 +15,7 @@
 // another thread can see - which is what makes it safe to run in parallel.
 
 #include <ctbrowser/style/computed.hpp>
+#include <ctbrowser/style/css/media.hpp>
 #include <ctbrowser/style/css/parser.hpp>
 #include <ctbrowser/style/css/substitute.hpp>
 #include <ctbrowser/style/css/token.hpp>

@@ -12,9 +12,9 @@ props-version=1
 epsilon-px=0.015625
 viewport=1024x768
 
-[bootstrap-box.html]  elements=40  differ=176  substituted=1387
-[bootstrap-type.html]  elements=62  differ=316  substituted=2093
-[bootstrap-grid.html]  elements=111  differ=976  substituted=3581
-[bootstrap-components.html]  elements=189  differ=1315  substituted=5945
-[bootstrap-position.html]  elements=64  differ=387  substituted=2081
-[bootstrap-kitchen.html]  elements=165  differ=1275  substituted=5277
+[bootstrap-box.html]  elements=40  differ=167  substituted=1387
+[bootstrap-type.html]  elements=62  differ=308  substituted=2093
+[bootstrap-grid.html]  elements=111  differ=844  substituted=3581
+[bootstrap-components.html]  elements=189  differ=1304  substituted=5945
+[bootstrap-position.html]  elements=64  differ=381  substituted=2081
+[bootstrap-kitchen.html]  elements=165  differ=1232  substituted=5277

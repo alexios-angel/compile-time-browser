@@ -101,14 +101,43 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
     // `document.documentElement.clientWidth`, so both of them read `undefined`
     // and every sketch that sizes itself to the window got NaN.
     //
-    // On the root element and the body they are the viewport, which is what the
-    // spec says and what makes the p5 case work. There are no scrollbars and no
-    // borders here, so for anything else the content box IS the border box.
-    const bool is_viewport = tag_text == "html" || tag_text == "body";
+    // THE ROOT'S CLIENT RECTANGLE IS THE VIEWPORT, and its two axes come from
+    // different places on purpose:
+    //
+    //   width  - the root element's own box. That box fills the initial
+    //            containing block, so its width IS the layout viewport: 15px
+    //            narrower than the window when the page overflows and a
+    //            scrollbar appears. Reading it from the box rather than from a
+    //            number the shell pushes in removes an ordering hazard - script
+    //            bindings are installed lazily, so whichever of layout and
+    //            install ran last decided the answer, and the wrong one won.
+    //            Bootstrap's `.container` centred itself in 1009px while the
+    //            page was told it had 1024.
+    //   height - the VIEWPORT's, not the box's. The root box is as tall as the
+    //            document, and `document.documentElement.clientHeight` means
+    //            "how tall is the window", which is what p5's windowHeight and
+    //            every self-sizing sketch is asking.
+    //
+    // The body is an ordinary element here: its client box is its own, which is
+    // what Chrome reports and differs from the root's whenever the UA margin is
+    // in play. For anything else the content box is the border box - nothing
+    // here has a scrollbar of its own, and borders are not yet in the box
+    // arithmetic.
+    //
+    // Before the first layout the root has no box, and a sketch that sizes itself
+    // in `setup()` would read zero - which is how p5's windowWidth broke when
+    // this moved off the number the shell pushes in. The window stands in, FOR
+    // THE ROOT ONLY: an ordinary element with no box has a client width of zero,
+    // and handing it the viewport instead told Babylon its canvas was
+    // window-sized before layout had given it any size at all, which failed
+    // WebGL setup outright. "No box" and "as wide as the window" are the same
+    // thing for the root and nothing else.
+    const bool is_root = tag_text == "html";
     obj.set("clientWidth",
-            value::number(is_viewport ? viewport_width_ : static_cast<double>(box.width)));
+            value::number(is_root && box.width <= 0 ? viewport_width_
+                                                    : static_cast<double>(box.width)));
     obj.set("clientHeight",
-            value::number(is_viewport ? viewport_height_ : static_cast<double>(box.height)));
+            value::number(is_root ? viewport_height_ : static_cast<double>(box.height)));
     // `element.attributes` - a live-ish NamedNodeMap, as an array of {name,
     // value} with the aliases a page reads. p5's XML module walks it for
     // getAttributeCount, listAttributes and setName, so an absent one made every

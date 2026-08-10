@@ -396,12 +396,16 @@ void test_how_much_of_bootstrap_can_match() {
     //   2603  + attribute selectors and :root
     //   2651  + the sibling combinators, + and ~
     //   2767  + :not/:is/:where, the structural pseudos and nth-child(An+B)
+    //   2778  + @media print's rules, which are now RECORDED AND GATED rather than
+    //         discarded. Note what this shows about the metric: those eleven selectors
+    //         did not become more matchable, they became present. The census counts
+    //         what PARSES.
     //
     // WHAT THIS NUMBER CANNOT SEE: a selector counts as matchable if it PARSES into
     // something the matcher will consider. `:disabled` counted from the very first
     // rung, as a state bit that nothing ever set - so it parsed, was counted, and
     // never matched. Countable is not correct, and the tests are where correct lives.
-    constexpr std::size_t floor = 2767;
+    constexpr std::size_t floor = 2778;
     if (live < floor) {
         std::printf("FAIL bootstrap census: %zu selectors can match, was at least %zu\n", live,
                     floor);
@@ -409,8 +413,13 @@ void test_how_much_of_bootstrap_can_match() {
     }
     // The sheet's SHAPE is pinned too, so a parser change that quietly dropped
     // rules could not hide behind a selector count that happened to hold.
-    CHECK(sheet.rules.size() == 2539);
-    CHECK(total == 2950);
+    // 2,550 rather than 2,539, and 2,961 selectors rather than 2,950, since `@media`
+    // became real: the one `@media print` block used to be CONSUMED AND DISCARDED and
+    // is now recorded with a condition that evaluates false. The rules exist, gated,
+    // and would apply to a print target - which is why the count went up while nothing
+    // on screen changed.
+    CHECK(sheet.rules.size() == 2550);
+    CHECK(total == 2961);
 }
 
 } // namespace

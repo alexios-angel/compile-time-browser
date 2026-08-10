@@ -37,6 +37,7 @@ import json
 import os
 import socket
 import struct
+import shlex
 import subprocess
 import sys
 import time
@@ -49,6 +50,9 @@ OUT = ROOT / "build" / "compare"
 # repo lives on a DrvFs mount under WSL, which does not support unix sockets at
 # all - bind() there fails with EOPNOTSUPP. ctdrive is reached the same way.
 PORTFILE = OUT / "session.port"
+# Where tools/remote-build.sh puts the tree on the build box, so --remote can
+# find the binary it just built. Same relative layout, so page paths carry over.
+REMOTE_DIR = "$HOME/projects/compile-time-browser"
 VENV = ROOT / "tools" / ".venv"
 
 # ctbrowse first so it is the left-hand image, which is the one being judged.
@@ -179,7 +183,21 @@ class Ctbrowse:
 
     name = "ctbrowse"
 
-    def __init__(self, page: Path, size: tuple[int, int], headed: bool):
+    def __init__(self, page: Path, size: tuple[int, int], headed: bool, remote: str = ""):
+        self.proc = (self._spawn_remote(page, size, remote) if remote
+                     else self._spawn_local(page, size, headed))
+        # It prints the port it got before doing anything else; asking for 0
+        # means the OS chose one and this is the only way to learn it.
+        assert self.proc.stdout is not None
+        line = self.proc.stdout.readline()
+        if "listening on" not in line:
+            tail = "" if self.proc.poll() is None else " (it exited)"
+            raise RuntimeError(f"ctdrive did not start{tail}: {line.strip()}")
+        port = self.port if remote else int(line.rsplit(":", 1)[1])
+        self.sock = socket.create_connection(("127.0.0.1", port), timeout=10)
+        self.io = self.sock.makefile("rw")
+
+    def _spawn_local(self, page: Path, size, headed: bool):
         # build/examples/, not build/src/examples/: the tree was bucketed on
         # 2026-08-09 and examples/ moved out from under src/. Both spellings are
         # tried because a build directory configured before that reorg still has
@@ -190,27 +208,53 @@ class Ctbrowse:
         exe = next((p for p in candidates if p.exists()), None)
         if exe is None:
             raise FileNotFoundError(
-                f"{candidates[0]} not built; cmake --build --preset default --target ctdrive")
+                f"{candidates[0]} not built; cmake --build --preset default --target ctdrive"
+                " - or pass --remote to drive the one on the build box")
         env = dict(os.environ)
         if not headed:
             env["SDL_VIDEODRIVER"] = "offscreen"
             env["SDL_AUDIODRIVER"] = "dummy"
-        self.proc = subprocess.Popen(
+        self.port = 0
+        return subprocess.Popen(
             [str(exe), str(page), "--port", "0", "--size", str(size[0]), str(size[1])],
             cwd=ROOT,
             env=env,
             stdout=subprocess.PIPE,
             text=True,
         )
-        # It prints the port it got before doing anything else; asking for 0
-        # means the OS chose one and this is the only way to learn it.
-        assert self.proc.stdout is not None
-        line = self.proc.stdout.readline()
-        if "listening on" not in line:
-            raise RuntimeError(f"ctdrive did not start: {line.strip()}")
-        port = int(line.rsplit(":", 1)[1])
-        self.sock = socket.create_connection(("127.0.0.1", port), timeout=10)
-        self.io = self.sock.makefile("rw")
+
+    def _spawn_remote(self, page: Path, size, host: str):
+        """ctdrive on the BUILD BOX, over an ssh-forwarded port.
+
+        This exists because this machine is not allowed to build: a full build
+        of the engine takes the WSL instance down (CLAUDE.md), so the only
+        trustworthy ctdrive is the one the devbox just built. Chrome still runs
+        here, and the two halves meet over loopback.
+
+        The port is chosen HERE rather than by the remote OS. `ssh -L` sets its
+        forward up at connection time, before ctdrive has bound anything, so
+        there is no way to learn a remote port-zero assignment through the
+        tunnel - it would have to be read from stdout and then forwarded, which
+        is a second ssh. Binding and closing a socket to pick a free number
+        races with any other process on this machine, and losing that race is a
+        clear connection refusal rather than a wrong answer.
+        """
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            self.port = probe.getsockname()[1]
+        # The repo is synced to the same path by tools/remote-build.sh, so a
+        # relative page path resolves there exactly as it does here - including
+        # the ../../vendor/bootstrap/bootstrap.css that the fixtures <link>.
+        rel = page.resolve().relative_to(ROOT)
+        remote_cmd = (
+            f"cd {REMOTE_DIR} && exec ./build/examples/ctdrive {shlex.quote(str(rel))}"
+            f" --port {self.port} --size {size[0]} {size[1]}")
+        return subprocess.Popen(
+            ["ssh", "-o", "BatchMode=yes", "-L",
+             f"127.0.0.1:{self.port}:127.0.0.1:{self.port}", host, remote_cmd],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
 
     def send(self, **cmd) -> dict:
         self.io.write(json.dumps(cmd) + "\n")
@@ -310,7 +354,18 @@ class Reference:
     def __init__(self, name: str, pw, page_path: Path, size, headed: bool):
         self.name = name
         kind = pw.chromium if name == "chrome" else pw.firefox
-        self.browser = kind.launch(headless=not headed)
+        # CLASSIC SCROLLBARS, DELIBERATELY. Headless Chromium defaults to overlay
+        # scrollbars, which take no space from the initial containing block, so a
+        # 1024-wide viewport lays out at 1024. A real Chrome or Firefox on a Linux
+        # desktop reserves ~15px and lays out at 1009 - which is what ctbrowser
+        # does. Left alone, that disagreement shifts every @x and every width on
+        # every element by 15px, and no amount of engine work would close it: the
+        # reference would be measuring a browser nobody uses. Firefox's own
+        # scrollbar is already classic, so only Chromium needs the argument.
+        # Playwright adds `--hide-scrollbars` to every headless Chromium launch,
+        # and a hidden scrollbar is an overlay one - it takes no space.
+        skip = ["--hide-scrollbars"] if name == "chrome" else []
+        self.browser = kind.launch(headless=not headed, ignore_default_args=skip)
         self.page = self.browser.new_page(viewport={"width": size[0], "height": size[1]})
         if Reference.served is None:
             Reference.served = serve_repo()
@@ -402,7 +457,8 @@ class Session:
 
         wanted = args.engines
         if "ctbrowse" in wanted:
-            self.engines.append(Ctbrowse(page, size, args.headed))
+            self.engines.append(Ctbrowse(page, size, args.headed,
+                                         getattr(args, "remote", "") or ""))
         real = [e for e in wanted if e != "ctbrowse"]
         if real:
             from playwright.sync_api import sync_playwright
@@ -616,6 +672,10 @@ def main() -> int:
     start.add_argument("page")
     start.add_argument("--engine", action="append", dest="engine_values", metavar="NAME")
     start.add_argument("--headed", action="store_true", help="real windows, so a human can watch")
+    start.add_argument("--remote", nargs="?", const="devbox", default="",
+                       metavar="HOST",
+                       help="run ctdrive on HOST (default devbox) over an ssh-forwarded "
+                            "port, because this machine cannot build the engine")
     start.add_argument("--delay", type=float, default=0, metavar="MS", help="pause before an input")
     start.add_argument("--size", type=int, nargs=2, default=[800, 600], metavar=("W", "H"))
     start.add_argument("--system-fonts", action="store_true", help="do not force ctbrowser's faces")

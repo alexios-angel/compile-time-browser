@@ -196,7 +196,11 @@ struct rule {
     std::uint32_t selector = 0;    // index into selectors
     std::uint32_t declaration = 0; // index into the sheet's declaration list
     std::int32_t order = 0;        // source order, the final cascade tiebreak
-    std::uint8_t origin = 0;       // 0 = user agent, 1 = author. Author wins.
+    // Which `@media` gated this rule, as an index into the engine's condition table.
+    // 0 is the unconditional entry. Matching tests one bool rather than evaluating
+    // anything, which is what makes a media query cost nothing per candidate.
+    std::uint32_t condition = 0;
+    std::uint8_t origin = 0; // 0 = user agent, 1 = author. Author wins.
     bool important = false;
 };
 

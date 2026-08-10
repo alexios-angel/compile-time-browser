@@ -460,6 +460,8 @@ def main() -> int:
                     help="write css-parity-props.txt for the C++ test and exit")
     ap.add_argument("--engine", default="chrome", help="the reference engine")
     ap.add_argument("--keep", action="store_true", help="leave the session running")
+    ap.add_argument("--remote", nargs="?", const="devbox", default="", metavar="HOST",
+                    help="drive ctdrive on HOST rather than a local build (see compare.py)")
     args = ap.parse_args()
 
     if args.emit_props:
@@ -486,7 +488,8 @@ def main() -> int:
         start = subprocess.run(
             [sys.executable, str(HERE / "compare.py"), "start", page,
              "--engine", f"ctbrowse,{args.engine}",
-             "--size", str(VIEWPORT[0]), str(VIEWPORT[1])],
+             "--size", str(VIEWPORT[0]), str(VIEWPORT[1])]
+            + (["--remote", args.remote] if args.remote else []),
             capture_output=True, text=True, check=False)
         if start.returncode != 0:
             print(f"css-parity: could not start a session for {page}:\n{start.stderr}",

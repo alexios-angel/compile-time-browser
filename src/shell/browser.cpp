@@ -323,7 +323,22 @@ void browser::resize(int width, int height) {
     // software backend, so an app that chose the GPU silently dropped to
     // software on its first window resize and never came back.
     renderer_.resize(options_.width, options_.height);
-    mark(dirty::layout);
+    // RE-EVALUATE THE MEDIA QUERIES, and mark the cascade dirty only if one of them
+    // actually FLIPPED. That distinction is the whole reason set_environment reports
+    // it: dragging a window across Bootstrap's 576px breakpoint is one `dirty::styles`
+    // frame and hundreds of `dirty::layout` ones, which is what Chrome does too - and a
+    // page with no `@media` at all never re-resolves, which is the invariant
+    // browser.hpp states about a resize.
+    mark(media_environment_changed() ? dirty::styles : dirty::layout);
+}
+
+// Push the window's size and the user's preferences into the style engine. Returns
+// whether any media query's truth moved as a result.
+bool browser::media_environment_changed() {
+    ctbrowser::style::css::media_environment env = styles_->environment();
+    env.viewport_width = static_cast<float>(options_.width);
+    env.viewport_height = static_cast<float>(options_.height);
+    return styles_->set_environment(env);
 }
 
 void browser::scroll_to(float y) {
@@ -755,7 +770,7 @@ void browser::run_scripts() {
     // browser::prefer_angle_webgl. Applied here because this is the first
     // moment the object that owns WebGL contexts exists.
     bindings_->prefer_angle(prefer_angle_webgl_);
-    bindings_->observe_viewport(options_.width, options_.height);
+    bindings_->observe_viewport(layout_viewport_width(), options_.height);
     bindings_->observe_resources(assets_, images_);
     bindings_->allow_network(network_allowed_);
     // `element.click()` performs the default action, which is the browser's half.
@@ -1250,8 +1265,10 @@ void browser::run_layout() {
     // under it. This terminates because narrowing a page can only make it
     // TALLER, so a page that overflowed still overflows - it never
     // oscillates between needing a bar and not.
+    layout_width_ = static_cast<float>(options_.width);
     if (options_.scrollbar_width > 0 && content_height_ > static_cast<float>(options_.height)) {
-        fragments_ = eng.run(boxes_, static_cast<float>(options_.width) - options_.scrollbar_width);
+        layout_width_ = static_cast<float>(options_.width) - options_.scrollbar_width;
+        fragments_ = eng.run(boxes_, layout_width_);
         content_height_ = fragments_.bounds.height;
     }
     scroll_y_ = std::clamp(scroll_y_, 0.0f, max_scroll());
@@ -1265,7 +1282,23 @@ void browser::run_layout() {
         // this layout's geometry beside the previous layout's styles.
         bindings_->observe_boxes(&boxes_);
         bindings_->observe_styles(&resolved_);
-        bindings_->observe_viewport(options_.width, options_.height);
+        // The width LAYOUT RAN AT, not the window's. When the page overflows the
+        // scrollbar takes 15px from the initial containing block, and a
+        // `clientWidth` that answered with the window would tell a page it had
+        // room the layout did not give it - Bootstrap's `.container` centred
+        // itself in 1009px while the page was told 1024, so every script-driven
+        // measurement was 15px out. This is the layout viewport, which is what
+        // the spec means by the root element's client rectangle.
+        bindings_->observe_viewport(layout_viewport_width(), options_.height);
+        // AND PUSH THE NEW GEOMETRY INTO THE WRAPPERS. An element object holds
+        // offsetWidth and friends as data properties, refreshed on access and
+        // before an event dispatches - but `document.documentElement` and
+        // `document.body` are wrapped once at install time and a page that only
+        // reads them, never dispatching an event, saw the geometry from before
+        // the first layout: offsetWidth 0 on the root of every page, forever.
+        // Re-pointing the fragment tree without re-reading it is what left them
+        // stale, so the two go together.
+        (void)bindings_->refresh_wrappers();
     }
 }
 
@@ -1872,6 +1905,9 @@ node_id browser::body_node() {
 void browser::reset_document() {
     doc_ = std::make_unique<document>(atoms_);
     styles_ = std::make_unique<ctbrowser::style::engine>(atoms_);
+    // BEFORE the first sheet, so its conditions are evaluated against the real
+    // viewport rather than against the 1024x768 default and then corrected.
+    (void)media_environment_changed();
     styles_->add_sheet(ctbrowser::style::ua_css, ctbrowser::style::ua_origin);
     resolved_.clear();
 }
