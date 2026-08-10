@@ -245,6 +245,60 @@ public:
             out.emplace_back("border-color", colour.empty() ? "currentcolor" : colour);
             return out;
         }
+        // `flex`, WHICH MUST BE EXPANDED RATHER THAN READ. Bootstrap's grid is built
+        // on it - `.col { flex: 1 0 0 }` - and a `.flex-grow-0` utility written after
+        // it has to win. A flex algorithm reading the shorthand directly would
+        // reintroduce exactly the source-order bug this whole expansion mechanism
+        // exists to prevent, so the longhands are produced here and flex will only
+        // ever see those.
+        //
+        // THE SHORTHAND'S DEFAULTS ARE NOT THE LONGHANDS' INITIAL VALUES, which is
+        // the part that is easy to get wrong: `flex-basis` initial is `auto`, but
+        // `flex: 1` means `1 1 0%`. Flexbox 1 §7.1.1 is explicit that the omitted
+        // components take these values and not the initial ones, because `flex: 1`
+        // is meant to make an item flexible from nothing rather than from its
+        // content.
+        if (property == "flex") {
+            const std::vector<std::string_view> parts = value_parts(value, 3);
+            if (parts.empty()) { return {}; }
+            const auto is_number = [](std::string_view part) {
+                if (part.empty()) { return false; }
+                std::size_t at = part.front() == '-' || part.front() == '+' ? 1 : 0;
+                bool digits = false;
+                for (; at < part.size(); ++at) {
+                    if (part[at] >= '0' && part[at] <= '9') {
+                        digits = true;
+                        continue;
+                    }
+                    if (part[at] == '.') { continue; }
+                    return false; // a unit or a `%`, so a width and not a number
+                }
+                return digits;
+            };
+            if (parts.size() == 1) {
+                // The three keywords, each of which sets all three longhands.
+                if (ascii_iequals(parts[0], "none")) {
+                    return {{"flex-grow", "0"}, {"flex-shrink", "0"}, {"flex-basis", "auto"}};
+                }
+                if (ascii_iequals(parts[0], "auto")) {
+                    return {{"flex-grow", "1"}, {"flex-shrink", "1"}, {"flex-basis", "auto"}};
+                }
+                if (ascii_iequals(parts[0], "initial")) {
+                    return {{"flex-grow", "0"}, {"flex-shrink", "1"}, {"flex-basis", "auto"}};
+                }
+                if (is_number(parts[0])) {
+                    return {{"flex-grow", parts[0]}, {"flex-shrink", "1"}, {"flex-basis", "0%"}};
+                }
+                return {{"flex-grow", "1"}, {"flex-shrink", "1"}, {"flex-basis", parts[0]}};
+            }
+            // Two or three. The first is always the grow factor; a second NUMBER is
+            // the shrink factor and a second anything-else is the basis.
+            const bool second_is_shrink = is_number(parts[1]);
+            const std::string_view shrink = second_is_shrink ? parts[1] : "1";
+            std::string_view basis = second_is_shrink ? std::string_view{"0%"} : parts[1];
+            if (parts.size() > 2) { basis = parts[2]; }
+            return {{"flex-grow", parts[0]}, {"flex-shrink", shrink}, {"flex-basis", basis}};
+        }
         if (property != "margin" && property != "padding") { return {}; }
         const std::vector<std::string_view> parts = value_parts(value, 4);
         if (parts.empty()) { return {}; }

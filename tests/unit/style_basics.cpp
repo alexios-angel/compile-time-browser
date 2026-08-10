@@ -1536,6 +1536,77 @@ void test_calc_in_the_cascade() {
     }
 }
 
+// The `flex` shorthand. Bootstrap's grid is `.col { flex: 1 0 0 }`, and a
+// `.flex-grow-0` utility written after it has to win - which only works if the
+// shorthand becomes longhands in the cascade rather than being read by the flex
+// algorithm later.
+void test_flex_shorthand() {
+    const auto three = [](fixture & f, std::string_view grow, std::string_view shrink,
+                          std::string_view basis, std::string_view why) {
+        expect_value(f, f.find_id("a"), "flex-grow", grow, why);
+        expect_value(f, f.find_id("a"), "flex-shrink", shrink, why);
+        expect_value(f, f.find_id("a"), "flex-basis", basis, why);
+    };
+    {
+        fixture f;
+        f.load("<div id=a></div>", "div { flex: 1 0 0 }");
+        three(f, "1", "0", "0", ".col's own declaration");
+    }
+    {
+        // ONE NUMBER takes the shorthand's defaults, which are NOT the longhands'
+        // initial values: flex-basis initial is `auto`, but `flex: 1` is `1 1 0%`.
+        fixture f;
+        f.load("<div id=a></div>", "div { flex: 1 }");
+        three(f, "1", "1", "0%", "a bare grow factor");
+    }
+    {
+        fixture f;
+        f.load("<div id=a></div>", "div { flex: none }");
+        three(f, "0", "0", "auto", "none");
+    }
+    {
+        fixture f;
+        f.load("<div id=a></div>", "div { flex: auto }");
+        three(f, "1", "1", "auto", "auto");
+    }
+    {
+        // A single WIDTH is a basis, not a grow factor - the two one-value forms are
+        // told apart by whether the value carries a unit.
+        fixture f;
+        f.load("<div id=a></div>", "div { flex: 200px }");
+        three(f, "1", "1", "200px", "a bare basis");
+    }
+    {
+        fixture f;
+        f.load("<div id=a></div>", "div { flex: 2 3 }");
+        three(f, "2", "3", "0%", "grow and shrink");
+    }
+    {
+        // ...and a second value with a unit is the BASIS, leaving shrink at 1.
+        fixture f;
+        f.load("<div id=a></div>", "div { flex: 2 30% }");
+        three(f, "2", "1", "30%", "grow and basis");
+    }
+    {
+        // THE POINT OF EXPANDING AT ALL: a longhand written after the shorthand
+        // wins, and one written before it is overwritten. Bootstrap's `.col` plus a
+        // `.flex-grow-0` utility is exactly this pair.
+        fixture f;
+        // Both selectors are one class, so SOURCE ORDER decides - which is the
+        // property under test. A tag selector here would have lost to `.col` on
+        // specificity and proved nothing.
+        f.load("<div id=a class=\"col flex-grow-0\"></div>",
+               ".col { flex: 1 0 0 } .flex-grow-0 { flex-grow: 0 }");
+        expect_value(f, f.find_id("a"), "flex-grow", "0", "the later longhand wins");
+        expect_value(f, f.find_id("a"), "flex-shrink", "0", "and the rest survive");
+    }
+    {
+        fixture f;
+        f.load("<div id=a></div>", "div { flex-grow: 7; flex: 1 0 0 }");
+        expect_value(f, f.find_id("a"), "flex-grow", "1", "the shorthand overwrites");
+    }
+}
+
 int main() {
     test_shorthands_expand();
     test_simple_selectors();
@@ -1560,6 +1631,7 @@ int main() {
     test_media_queries();
     test_calc();
     test_calc_in_the_cascade();
+    test_flex_shorthand();
     test_deep_nesting_still_matches();
     test_unmatched_element_gets_empty_style();
     test_inline_style_applies();
