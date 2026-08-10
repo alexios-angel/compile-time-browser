@@ -16,13 +16,11 @@
 // wide is 50%" twice, in two places, is how the two answers start to differ.
 // What layout used IS the computed value here.
 //
-// INHERITANCE IS WALKED HERE, TEMPORARILY. There is no inheritance in the
-// cascade, so an inherited property is found by walking DOM ancestors until an
-// element declares it. That is a fifth ad-hoc inheritance mechanism, after the
-// four in box_builder and the one in paint::recorder, and it is deliberately NOT
-// being unified now: the cascade rung (docs/plans/bootstrap.md, S3) replaces all
-// of them with a real inherited half and reduces this file to a straight read.
-// Doing it here first would be work that rung deletes.
+// INHERITANCE IS NOT DONE HERE ANY MORE. This file used to walk DOM ancestors for an
+// inherited property, because the cascade produced only the declarations that MATCHED
+// and inheritance happened in four other places downstream. That made this the fifth
+// ad-hoc mechanism for one idea. The cascade inherits now, so an inherited property is
+// a plain `get` on the element's own style, and the walk is gone.
 
 #include <ctbrowser/shell/bindings.hpp>
 
@@ -37,44 +35,6 @@
 
 namespace ctbrowser::shell {
 namespace {
-
-// Properties that INHERIT. Not the whole CSS list - the ones this engine can
-// produce a value for, plus the ones the parity harness asks about. Custom
-// properties inherit too and are caught by the `--` test rather than by name.
-//
-// `text-decoration` is here although CSS 3 says decoration PROPAGATES to in-flow
-// descendants rather than inheriting: the distinction is invisible for anything
-// this engine draws, and box_builder already threads it as though it inherited.
-constexpr std::array<std::string_view, 24> inherited_properties{"border-collapse",
-                                                                "border-spacing",
-                                                                "caption-side",
-                                                                "color",
-                                                                "cursor",
-                                                                "direction",
-                                                                "empty-cells",
-                                                                "font",
-                                                                "font-family",
-                                                                "font-size",
-                                                                "font-style",
-                                                                "font-variant",
-                                                                "font-weight",
-                                                                "letter-spacing",
-                                                                "line-height",
-                                                                "list-style",
-                                                                "list-style-position",
-                                                                "list-style-type",
-                                                                "text-align",
-                                                                "text-decoration",
-                                                                "text-indent",
-                                                                "text-transform",
-                                                                "visibility",
-                                                                "white-space"};
-
-[[nodiscard]] bool inherits(std::string_view property) {
-    if (property.starts_with("--")) { return true; }
-    return std::find(inherited_properties.begin(), inherited_properties.end(), property) !=
-           inherited_properties.end();
-}
 
 // The properties whose value is a LENGTH resolved against the containing block.
 // Each is resolved with the same parse_length + length::resolve that layout used,
@@ -230,18 +190,16 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
     // exactly the lifetime this object documents itself as having.
     const style::style_map * styles = styles_;
     atom_table * atoms = atoms_;
+    // ONE LOOKUP. This used to walk DOM ancestors for an inherited property, because
+    // the cascade produced only the declarations that matched and inheritance happened
+    // in four other places downstream. The cascade inherits now, so `get` on the
+    // element's own style is the whole answer - and the fifth ad-hoc inheritance
+    // mechanism this file used to be is gone.
     const auto declared = [styles, atoms, at](std::string_view property) -> std::string_view {
-        if (styles == nullptr) { return {}; }
-        const atom name = atoms->intern(property);
-        const bool walk = inherits(property);
-        for (const node_id node : at.chain) {
-            const auto found = styles->find(style::engine::key_of(node));
-            if (found != styles->end() && found->second) {
-                if (const std::string_view v = found->second->get(name); !v.empty()) { return v; }
-            }
-            if (!walk) { break; }
-        }
-        return {};
+        if (styles == nullptr || at.chain.empty()) { return {}; }
+        const auto found = styles->find(style::engine::key_of(at.chain.front()));
+        if (found == styles->end() || !found->second) { return {}; }
+        return found->second->get(atoms->intern(property));
     };
 
     const auto value_of = [at, declared](std::string_view property) -> std::string {

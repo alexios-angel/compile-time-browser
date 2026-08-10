@@ -496,11 +496,21 @@ void test_attribute_selectors() {
 void test_root_selector() {
     {
         fixture f;
-        f.load("<html><body><p></p></body></html>", ":root { color: #010101 }");
-        // The document element, not the body and not a paragraph.
+        f.load("<html><body><p></p></body></html>",
+               ":root { color: #010101; background-color: #020202 }");
+        // MATCHING and INHERITING are different questions, and this is where the
+        // difference shows. `:root` matches the document element and nothing else -
+        // but `color` inherits, so the body and the paragraph see it anyway, while
+        // `background-color` does not inherit and stops at <html>.
+        //
+        // This assertion used to say the body's colour was empty, which was true only
+        // because there was no inheritance in the cascade at all.
         expect_value(f, f.find("html"), "color", "#010101", ":root is the document element");
-        CHECK(f.value_of(f.find("body"), "color").empty());
-        CHECK(f.value_of(f.find("p"), "color").empty());
+        expect_value(f, f.find("body"), "color", "#010101", "and colour inherits from it");
+        expect_value(f, f.find("p"), "color", "#010101", "all the way down");
+        expect_value(f, f.find("html"), "background-color", "#020202", "a non-inherited one");
+        CHECK(f.value_of(f.find("body"), "background-color").empty()); // stops at the root
+        CHECK(f.value_of(f.find("p"), "background-color").empty());
     }
     {
         // Specificity: `:root` is class-level, so it beats a bare type selector.
@@ -933,6 +943,121 @@ void test_element_state_pseudos() {
     }
 }
 
+// INHERITANCE AS A CASCADE STAGE, and the interning that has to survive it.
+//
+// Before this, `resolve` produced only the declarations that MATCHED and inheritance
+// was done five separate ad-hoc ways downstream - font-size, the face, text
+// decoration and white-space threaded as parameters through box_builder, and `color`
+// threaded through the recorder. Every one of them was a different mechanism for the
+// same idea, and none of them was reachable from the cascade.
+void test_inheritance() {
+    {
+        fixture f;
+        f.load("<div><p><em id=deep></em></p></div>", "div { color: #010101 }");
+        expect_value(f, f.find_id("deep"), "color", "#010101", "inherits through two levels");
+    }
+    {
+        // A NON-inherited property does not travel.
+        fixture f;
+        f.load("<div><p id=child></p></div>", "div { background-color: #010101 }");
+        CHECK(f.value_of(f.find_id("child"), "background-color").empty());
+    }
+    {
+        // An element's OWN declaration beats what came down to it, whatever their
+        // specificities: this is `own` before `inherited` in get(), not the cascade.
+        fixture f;
+        f.load("<div><p id=child></p></div>",
+               "#nothing { color: #030303 } div { color: #010101 } p { color: #020202 }");
+        expect_value(f, f.find_id("child"), "color", "#020202", "own beats inherited");
+    }
+    {
+        // CUSTOM PROPERTIES INHERIT, which is the entire point of this rung: it is
+        // what makes Bootstrap's 128 `--bs-*` on `:root` readable from a button.
+        fixture f;
+        f.load("<html><body><button id=b></button></body></html>", ":root { --bs-blue: #0d6efd }");
+        expect_value(f, f.find_id("b"), "--bs-blue", "#0d6efd", "a custom property inherits");
+    }
+    {
+        // ...and a nearer definition wins, which is how a component overrides a theme.
+        fixture f;
+        f.load("<html><body><button id=b class=btn></button></body></html>",
+               ":root { --x: #010101 } .btn { --x: #020202 }");
+        expect_value(f, f.find_id("b"), "--x", "#020202", "the nearer definition wins");
+    }
+    {
+        // THE SHARING INVARIANT. Four <li> that declare nothing inherited must share
+        // their parent's inherited half BY POINTER - not copy it - or a 128-entry
+        // object would be duplicated per element and the interning would be a
+        // regression rather than an optimisation.
+        fixture f;
+        f.load("<ul><li></li><li></li><li></li><li></li></ul>", "ul { color: #010101 }");
+        const auto txn = f.doc.read();
+        std::vector<node_id> items;
+        const auto walk = [&](auto && self, node_id at) -> void {
+            if (txn.tag(at).value_or(atom{}) == f.atoms.intern_lower("li")) { items.push_back(at); }
+            for (const node_id c : txn.children(at)) { self(self, c); }
+        };
+        walk(walk, txn.root());
+        CHECK(items.size() == 4);
+        const auto first = f.style_of(items.front());
+        CHECK(static_cast<bool>(first));
+        for (const node_id item : items) {
+            CHECK(f.style_of(item)->inherited == first->inherited); // pointer equality
+        }
+        // One inheritance CONTEXT for the whole document: the root's, and the <ul>'s.
+        std::printf("  4 <li> under a coloured <ul> -> %zu inherited halves\n",
+                    f.styles.styles().distinct_inherited());
+        CHECK(f.styles.styles().distinct_inherited() <= 2);
+    }
+}
+
+// `inherit`, `initial`, `unset` and `revert`. They used to reach layout as the
+// literal strings, and `display: inherit` silently became `block` because
+// parse_display mapped everything it did not recognise to that.
+void test_explicit_defaulting_keywords() {
+    {
+        fixture f;
+        f.load("<div><p id=child></p></div>", "div { color: #010101 } p { color: inherit }");
+        expect_value(f, f.find_id("child"), "color", "#010101", "inherit takes the parent's");
+    }
+    {
+        // `inherit` works on a NON-inherited property too - that is what makes it
+        // different from `unset`.
+        fixture f;
+        f.load("<div><p id=child></p></div>",
+               "div { background-color: #010101 } p { background-color: inherit }");
+        expect_value(f, f.find_id("child"), "background-color", "#010101",
+                     "inherit works on a non-inherited property");
+    }
+    {
+        // `initial` must BLOCK inheritance, not fall through to it.
+        fixture f;
+        f.load("<div><p id=child></p></div>", "div { color: #010101 } p { color: initial }");
+        CHECK(f.value_of(f.find_id("child"), "color").empty());
+    }
+    {
+        // `unset` on an INHERITED property lets the inherited value through, which is
+        // exactly what the spec says it does.
+        fixture f;
+        f.load("<div><p id=child></p></div>",
+               "div { color: #010101 } p { color: #020202 } p { color: unset }");
+        expect_value(f, f.find_id("child"), "color", "#010101", "unset falls back to inherited");
+    }
+    {
+        // ...and on a non-inherited one it is the same as initial.
+        fixture f;
+        f.load("<p id=a></p>", "p { background-color: #020202 } p { background-color: unset }");
+        CHECK(f.value_of(f.find_id("a"), "background-color").empty());
+    }
+    {
+        // `display: inherit` must not become `block`. It is the value the parent has,
+        // and an absent one reads as absent rather than as a wrong keyword.
+        fixture f;
+        f.load("<div><p id=child></p></div>", "div { display: inline } p { display: inherit }");
+        expect_value(f, f.find_id("child"), "display", "inline", "display: inherit");
+    }
+}
+
 int main() {
     test_shorthands_expand();
     test_simple_selectors();
@@ -950,6 +1075,8 @@ int main() {
     test_nth_child();
     test_functional_pseudos();
     test_element_state_pseudos();
+    test_inheritance();
+    test_explicit_defaulting_keywords();
     test_deep_nesting_still_matches();
     test_unmatched_element_gets_empty_style();
     test_inline_style_applies();

@@ -187,10 +187,43 @@ public:
     // --- element facts -----------------------------------------------------
     [[nodiscard]] element_facts facts_of(const read_txn & txn, node_id id) const;
 
+    // Which properties INHERIT. Not the whole CSS list - the ones a consumer in this
+    // tree can produce a value for, plus custom properties, caught by the `--` prefix
+    // rather than by name.
+    //
+    // `font-size` IS ABSENT ON PURPOSE, and it is the one real gap here. Its computed
+    // value is an absolute length, so inheriting the TEXT would let `1.5em` compound
+    // against each descendant's own size instead of being resolved once. box_builder
+    // already resolves it correctly against the parent's px as it builds the box tree,
+    // so leaving it there is right until the unit-folding rung moves that resolution
+    // into the cascade - at which point this list gains it and box_builder loses a
+    // parameter. The same argument covers any inherited property carrying a relative
+    // unit: `letter-spacing: 0.1em` would compound, and nothing reads it.
+    [[nodiscard]] static bool inherits(std::string_view property) {
+        if (property.starts_with("--")) { return true; }
+        static constexpr std::string_view names[] = {
+            "border-collapse", "border-spacing",  "caption-side",        "color",
+            "cursor",          "direction",       "empty-cells",         "font-family",
+            "font-style",      "font-variant",    "font-weight",         "letter-spacing",
+            "line-height",     "list-style",      "list-style-position", "list-style-type",
+            "text-align",      "text-decoration", "text-indent",         "text-transform",
+            "visibility",      "white-space",     "word-spacing"};
+        for (const std::string_view name : names) {
+            if (name == property) { return true; }
+        }
+        return false;
+    }
+
     // --- the single-element path -------------------------------------------
     [[nodiscard]] computed_style_ptr resolve(const read_txn & txn, node_id node,
                                              const element_facts & self,
-                                             const ancestor_filter & ancestors, std::size_t depth) {
+                                             const ancestor_filter & ancestors, std::size_t depth,
+                                             const computed_style_ptr & parent) {
+        // THE PARENT'S WHOLE STYLE, not just its inherited half, and the difference is
+        // `inherit` itself: the keyword takes the parent's value for ANY property,
+        // inherited or not, so `display: inherit` has to be able to read a property
+        // that never travels on its own. The inherited half alone cannot answer that.
+        const inherited_ptr & from = parent ? parent->inherited : no_inherited_;
         // Gather only the rules whose RIGHTMOST compound could possibly match.
         matches_.clear();
         collect(index_.by_id, self.id, txn, ancestors, depth);
@@ -216,14 +249,50 @@ public:
         // Applying a declaration means REPLACING the property if it is already
         // there - the later write wins, which is what "the cascade" reduces to
         // once the sort has put everything in priority order.
-        const auto put = [&out](const declaration & d) {
+        //
+        // THE EXPLICIT-DEFAULTING KEYWORDS are resolved here, because here is where
+        // the parent's value is in hand:
+        //
+        //   inherit   take the parent's value, whether or not the property inherits
+        //   initial   an EMPTY value, which shadows anything inherited and reads as
+        //             "nothing said" to every consumer - the closest thing to a real
+        //             initial value until the property table carries them
+        //   unset     drop the declaration: for an inherited property the inherited
+        //             value then shows through, and for a non-inherited one absence
+        //             already means initial, so dropping is correct for both
+        //   revert    treated as `unset`. Doing it properly needs the value the
+        //             PREVIOUS origin would have produced, which means keeping the
+        //             cascade's intermediate states rather than folding as it goes
+        //
+        // Before this they reached layout as the literal strings, and
+        // `display: inherit` silently became `block` because parse_display mapped
+        // everything it did not know to that.
+        const auto put = [&out, &parent, this](const declaration & d) {
+            std::string value = d.value;
+            const std::string_view property = atoms_->text(d.property);
+            if (value == "inherit") {
+                value = std::string{parent ? parent->get(d.property) : std::string_view{}};
+            } else if (value == "unset" || value == "revert") {
+                for (std::size_t i = 0; i < out.size(); ++i) {
+                    if (out[i].property == d.property) {
+                        out.erase(out.begin() + static_cast<std::ptrdiff_t>(i));
+                        break;
+                    }
+                }
+                if (!inherits(property)) { return; }
+                // An inherited property must be actively removed from the own half so
+                // the inherited value shows through; it already is.
+                return;
+            } else if (value == "initial") {
+                value.clear();
+            }
             for (declaration & existing : out) {
                 if (existing.property == d.property) {
-                    existing.value = d.value;
+                    existing.value = std::move(value);
                     return;
                 }
             }
-            out.push_back(d);
+            out.push_back(declaration{d.property, std::move(value)});
         };
 
         // The style ATTRIBUTE. Not a separate origin: it is author-level with a
@@ -249,7 +318,42 @@ public:
             for (const declaration & d : own.normal) { put(d); }
         }
         for (const declaration & d : own.important) { put(d); }
-        return table_.intern(std::move(out));
+
+        // SPLIT THE RESULT. Anything inherited goes into a fresh inherited half built
+        // on top of the parent's; everything else stays the element's own.
+        //
+        // THE LOAD-BEARING SHORTCUT: an element that declared nothing inherited keeps
+        // its PARENT'S POINTER verbatim - no copy, no hash, no intern. That is what
+        // makes a 128-entry inherited object free for the thousands of elements that
+        // share one, and it is the difference between this being an optimisation and
+        // being a regression.
+        declaration_list inherited_here;
+        bool any_inherited = false;
+        for (const declaration & d : out) {
+            if (inherits(atoms_->text(d.property))) { any_inherited = true; }
+        }
+        inherited_ptr result_inherited = from;
+        if (any_inherited) {
+            if (from) { inherited_here = from->declarations; }
+            for (const declaration & d : out) {
+                if (!inherits(atoms_->text(d.property))) { continue; }
+                bool replaced = false;
+                for (declaration & existing : inherited_here) {
+                    if (existing.property == d.property) {
+                        existing.value = d.value;
+                        replaced = true;
+                        break;
+                    }
+                }
+                if (!replaced) { inherited_here.push_back(d); }
+            }
+            result_inherited = table_.intern_inherited(std::move(inherited_here));
+        }
+        // The own half keeps the inherited properties too. They are redundant with the
+        // inherited half - `get` would find them there - but removing them would make
+        // an element's own `color: red` invisible to anything that enumerates its own
+        // declarations, which is what getComputedStyle's key list is.
+        return table_.intern(std::move(out), std::move(result_inherited));
     }
 
     // --- whole-document resolution ------------------------------------------
@@ -268,10 +372,11 @@ public:
     // ancestor anything can select. Both recurse at the SAME depth, which is what
     // makes `<html>` depth 0.
     void resolve_subtree(const read_txn & txn, node_id node, ancestor_filter & ancestors,
-                         style_map & out, std::size_t depth = 0) {
+                         style_map & out, std::size_t depth = 0,
+                         const computed_style_ptr & parent = {}) {
         if (txn.kind(node).value_or(node_kind::text) != node_kind::element) {
             for (const node_id child : txn.children(node)) {
-                resolve_subtree(txn, child, ancestors, out, depth);
+                resolve_subtree(txn, child, ancestors, out, depth, parent);
             }
             return;
         }
@@ -290,7 +395,8 @@ public:
         path_[depth] = levels_[depth].size() - 1;
         const element_facts & self = levels_[depth].back().facts;
 
-        out[key_of(node)] = resolve(txn, node, self, ancestors, depth);
+        const computed_style_ptr resolved = resolve(txn, node, self, ancestors, depth, parent);
+        out[key_of(node)] = resolved;
 
         // The tag, id and classes are read from the stored facts rather than from
         // `self`, because resolve() may have grown levels_ and reallocated it.
@@ -305,7 +411,7 @@ public:
         // stops allocating after the widest level it has seen.
         enter_level(txn, node, depth + 1);
         for (const node_id child : txn.children(node)) {
-            resolve_subtree(txn, child, ancestors, out, depth + 1);
+            resolve_subtree(txn, child, ancestors, out, depth + 1, resolved);
         }
         ancestors.pop(my_tag, my_id, my_classes);
     }
@@ -528,6 +634,8 @@ private:
         }
     };
     std::vector<level_totals> totals_;
+    // A null inherited pointer to hand out at the root, so `from` can be a reference.
+    const inherited_ptr no_inherited_{};
 };
 
 } // namespace ctbrowser::style
