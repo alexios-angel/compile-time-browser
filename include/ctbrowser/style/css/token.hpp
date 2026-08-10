@@ -108,7 +108,9 @@ struct token_stream {
     // string that is the body; for a url it is already the body.
     [[nodiscard]] std::string_view value_of(const css_token & t) const noexcept {
         const std::string_view raw = text_of(t);
-        if (t.type == token_type::string && raw.size() >= 2) { return raw.substr(1, raw.size() - 2); }
+        if (t.type == token_type::string && raw.size() >= 2) {
+            return raw.substr(1, raw.size() - 2);
+        }
         if (t.type == token_type::hash && !raw.empty()) { return raw.substr(1); }
         if (t.type == token_type::at_keyword && !raw.empty()) { return raw.substr(1); }
         return raw;

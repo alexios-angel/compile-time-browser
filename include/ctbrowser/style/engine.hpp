@@ -38,6 +38,9 @@ struct element_facts {
     atom id;
     boost::container::small_vector<atom, 4> classes;
     std::uint32_t states = 0;
+    // `:root`. A position fact rather than a name one, and the cheapest of them -
+    // one parent lookup, no sibling walk - which is why it lands before the rest.
+    bool is_root = false;
 };
 
 using style_map = flat_map<std::uint64_t, computed_style_ptr>;
@@ -162,8 +165,8 @@ public:
         std::ranges::stable_sort(matches_, [this](const rule & a, const rule & b) {
             if (a.important != b.important) { return !a.important; }
             if (a.origin != b.origin) { return a.origin < b.origin; }
-            const std::int32_t sa = selectors_[a.selector].specificity;
-            const std::int32_t sb = selectors_[b.selector].specificity;
+            const specificity sa = selectors_[a.selector].spec;
+            const specificity sb = selectors_[b.selector].spec;
             if (sa != sb) { return sa < sb; }
             return a.order < b.order;
         });
@@ -285,14 +288,20 @@ private:
         }
     }
 
-    [[nodiscard]] bool compound_matches(const element_facts & f, const compound & c) const;
+    // The txn and node come in because an ATTRIBUTE requirement and a STRUCTURAL
+    // one are questions about the element itself rather than about the handful of
+    // facts gathered for it. Attributes cannot go in element_facts - there are
+    // arbitrarily many and almost none are ever asked about - so they are read on
+    // demand, from the element that a candidate rule has already been narrowed to.
+    [[nodiscard]] bool compound_matches(const read_txn & txn, node_id node, const element_facts & f,
+                                        const compound & c) const;
 
     // Right to left, which is the whole reason bucketing works: the rightmost
     // compound is checked first and fails immediately for most candidates.
     [[nodiscard]] bool matches(const read_txn & txn, node_id node, const element_facts & self,
                                const ancestor_filter & ancestors,
                                const compiled_selector & sel) const {
-        if (!compound_matches(self, sel.parts.front())) { return false; }
+        if (!compound_matches(txn, node, self, sel.parts.front())) { return false; }
         node_id current = node;
         for (std::size_t i = 1; i < sel.parts.size(); ++i) {
             const compound & want = sel.parts[i];
@@ -305,12 +314,14 @@ private:
 
             if (link == combinator::child) {
                 current = txn.parent(current);
-                if (!current || !compound_matches(facts_of(txn, current), want)) { return false; }
+                if (!current || !compound_matches(txn, current, facts_of(txn, current), want)) {
+                    return false;
+                }
                 continue;
             }
             bool found = false;
             for (node_id at = txn.parent(current); at; at = txn.parent(at)) {
-                if (compound_matches(facts_of(txn, at), want)) {
+                if (compound_matches(txn, at, facts_of(txn, at), want)) {
                     current = at;
                     found = true;
                     break;

@@ -388,23 +388,133 @@ void test_a_selector_is_compiled_once_per_selector() {
         CHECK(f.styles.selector_count() == 3); // three selectors, one compiled each
     }
     {
-        // An UNSUPPORTED selector leaves nothing behind. `[data-x]` is valid CSS
-        // this engine cannot match yet; the old path forged a tag atom out of it
-        // and filed a rule under it, so the bucket grew an entry that could never
-        // fire and the selector was retained anyway.
+        // An UNSUPPORTED selector leaves nothing behind. A VENDOR pseudo-element is
+        // the example on purpose: it will still be unsupported when everything else
+        // here is implemented, so this assertion does not have to move every rung.
+        // It used to be `[data-x]`, and attribute selectors landing is what moved
+        // it - which is this test doing its job. The old front end forged a tag atom
+        // out of such a selector and filed a rule under it, so the bucket grew an
+        // entry that could never fire and the selector was retained anyway.
         fixture f;
-        f.load("<div id=a></div>", "[data-x] { color: #010101 }");
+        f.load("<div id=a></div>", "::-webkit-slider-thumb { color: #010101 }");
         CHECK(f.styles.selector_count() == 0); // not retained
         CHECK(f.styles.rule_count() == 0);     // and files no rule
     }
     {
         // Its SIBLINGS in the list are unaffected, which is what keeps
-        // `.a, [data-x] { ... }` colouring `.a`. An unsupported-but-valid selector
-        // is not a syntax error, and Chrome does not drop the rule for one.
+        // `.a, ::-webkit-x { ... }` colouring `.a`. One alternative this engine
+        // cannot represent is not a reason to drop the whole rule.
         fixture f;
-        f.load("<div class=a></div>", ".a, [data-x] { color: #010101 }");
+        f.load("<div class=a></div>", ".a, ::-webkit-slider-thumb { color: #010101 }");
         CHECK(f.styles.selector_count() == 1); // the supported alternative, alone
         expect_value(f, f.find("div"), "color", "#010101", "and still applies");
+    }
+}
+
+// ATTRIBUTE SELECTORS, one operator at a time.
+//
+// 93 of Bootstrap's selectors are attribute selectors and every one of them was
+// dead: the old front end split a compound on `.`, `#` and `:` only, so `[` was
+// swallowed into whatever name it landed in and `input[type=checkbox]` became a
+// request for a tag literally called `input[type=checkbox]`.
+void test_attribute_selectors() {
+    {
+        fixture f;
+        f.load("<div data-x=hello></div><div></div>", "[data-x] { color: #010101 }"
+                                                      "[data-x=hello] { background-color: #020202 }"
+                                                      "[data-x^=hel] { border-color: #030303 }"
+                                                      "[data-x$=llo] { border-width: 4px }"
+                                                      "[data-x*=ell] { width: 5px }");
+        const node_id div = f.find("div");
+        expect_value(f, div, "color", "#010101", "[a] presence");
+        expect_value(f, div, "background-color", "#020202", "[a=v] exact");
+        expect_value(f, div, "border-color", "#030303", "[a^=v] prefix");
+        expect_value(f, div, "border-width", "4px", "[a$=v] suffix");
+        expect_value(f, div, "width", "5px", "[a*=v] substring");
+    }
+    {
+        // `~=` is a whitespace-separated LIST, not a substring - `[class~=b]` must
+        // match `a b c` and must not match `abc`.
+        fixture f;
+        f.load("<p id=hit class='a b c'></p><p id=miss class='abc'></p>",
+               "[class~=b] { color: #010101 }");
+        expect_value(f, f.find_id("hit"), "color", "#010101", "~= matches a list item");
+        CHECK(f.value_of(f.find_id("miss"), "color").empty()); // not a substring match
+    }
+    {
+        // `|=` is the language-subtag form: `en` matches `en` and `en-GB`, never
+        // `english`.
+        fixture f;
+        f.load("<p id=bare lang=en></p><p id=sub lang=en-GB></p><p id=word lang=english></p>",
+               "[lang|=en] { color: #010101 }");
+        expect_value(f, f.find_id("bare"), "color", "#010101", "|= exact");
+        expect_value(f, f.find_id("sub"), "color", "#010101", "|= hyphen form");
+        CHECK(f.value_of(f.find_id("word"), "color").empty()); // english is not en-*
+    }
+    {
+        // The `i` flag, and its absence. Case sensitivity is the DEFAULT.
+        fixture f;
+        f.load("<p id=a data-v=HeLLo></p>", "[data-v=hello] { color: #010101 }"
+                                            "[data-v=hello i] { background-color: #020202 }");
+        CHECK(f.value_of(f.find_id("a"), "color").empty()); // case matters by default
+        expect_value(f, f.find_id("a"), "background-color", "#020202", "the i flag folds");
+    }
+    {
+        // The three substring forms match NOTHING against an empty value, per the
+        // spec - otherwise `[a^=""]` would match every element that has the
+        // attribute, since every string starts with the empty string.
+        fixture f;
+        f.load("<p id=a data-v=x></p>", "[data-v^=''] { color: #010101 }");
+        CHECK(f.value_of(f.find_id("a"), "color").empty());
+    }
+    {
+        // A `]` inside a quoted value cannot end the selector early, because the
+        // tokenizer delimited the block before the selector parser saw it.
+        fixture f;
+        f.load("<p id=a data-v='a]b'></p>", "[data-v='a]b'] { color: #010101 }");
+        expect_value(f, f.find_id("a"), "color", "#010101", "a ] inside a string");
+    }
+    {
+        // Attribute NAMES fold - HTML attribute names are ASCII case-insensitive
+        // and the DOM interns them lowercased.
+        fixture f;
+        f.load("<p id=a data-v=x></p>", "[DATA-V=x] { color: #010101 }");
+        expect_value(f, f.find_id("a"), "color", "#010101", "the name folds");
+    }
+    {
+        // Combined with everything else in a compound, and with a combinator.
+        fixture f;
+        f.load("<div class=box><input id=c type=checkbox></div>",
+               "div.box input[type=checkbox] { color: #010101 }");
+        expect_value(f, f.find_id("c"), "color", "#010101", "attribute inside a complex selector");
+    }
+}
+
+// `:root`, which is what makes Bootstrap's 128 global custom properties reachable
+// at all: they live on `:root, [data-bs-theme=light]`, and BOTH alternatives were
+// dead - the first an unknown pseudo, the second an attribute selector.
+void test_root_selector() {
+    {
+        fixture f;
+        f.load("<html><body><p></p></body></html>", ":root { color: #010101 }");
+        // The document element, not the body and not a paragraph.
+        expect_value(f, f.find("html"), "color", "#010101", ":root is the document element");
+        CHECK(f.value_of(f.find("body"), "color").empty());
+        CHECK(f.value_of(f.find("p"), "color").empty());
+    }
+    {
+        // Specificity: `:root` is class-level, so it beats a bare type selector.
+        fixture f;
+        f.load("<html><body></body></html>", "html { color: #010101 } :root { color: #020202 }");
+        expect_value(f, f.find("html"), "color", "#020202", ":root outranks html");
+    }
+    {
+        // A custom property on :root is stored like any other declaration. Nothing
+        // READS it yet - var() is a later rung - but it has to arrive, because
+        // being unreachable was the reason the whole block was invisible.
+        fixture f;
+        f.load("<html><body></body></html>", ":root { --bs-blue: #0d6efd }");
+        expect_value(f, f.find("html"), "--bs-blue", "#0d6efd", "a custom property arrives");
     }
 }
 
@@ -417,6 +527,8 @@ int main() {
     test_author_beats_user_agent();
     test_identical_styles_are_shared();
     test_a_selector_is_compiled_once_per_selector();
+    test_attribute_selectors();
+    test_root_selector();
     test_deep_nesting_still_matches();
     test_unmatched_element_gets_empty_style();
     test_inline_style_applies();

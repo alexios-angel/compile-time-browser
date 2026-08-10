@@ -39,9 +39,9 @@
 namespace ctbrowser::style::css {
 
 enum class cv_kind : std::uint8_t {
-    token, // a preserved token
+    token,    // a preserved token
     function, // `name(` ... `)`
-    block, // `(` `[` or `{` ... its closer
+    block,    // `(` `[` or `{` ... its closer
 };
 
 struct component_value {
@@ -131,17 +131,17 @@ struct stylesheet {
     [[nodiscard]] std::span<const raw_declaration> declarations_of(const raw_rule & r) const {
         if (r.declaration_count == 0) { return {}; }
         return std::span<const raw_declaration>{declarations}.subspan(r.first_declaration,
-                                                                     r.declaration_count);
+                                                                      r.declaration_count);
     }
     [[nodiscard]] std::span<const raw_declaration> declarations_of(const font_face & f) const {
         if (f.declaration_count == 0) { return {}; }
         return std::span<const raw_declaration>{declarations}.subspan(f.first_declaration,
-                                                                     f.declaration_count);
+                                                                      f.declaration_count);
     }
     [[nodiscard]] std::span<const compiled_selector> selectors_of(const raw_rule & r) const {
         if (r.selector_count == 0) { return {}; }
         return std::span<const compiled_selector>{selectors}.subspan(r.first_selector,
-                                                                    r.selector_count);
+                                                                     r.selector_count);
     }
 };
 

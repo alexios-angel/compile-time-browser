@@ -54,21 +54,87 @@ enum class combinator : std::uint8_t {
     child,      // A > B
 };
 
-// One compound selector: `div#id.a.b` - a tag, an id and some classes, all
-// optional, plus any required pseudo-state bits.
+// `[name]`, `[name=value]` and the four substring forms. The value is OWNED
+// rather than interned or referenced: an attribute value is not an identifier -
+// `[class~="a b"]` has a space in it - and the sheet it was parsed from does not
+// outlive the compiled selector.
+enum class attr_op : std::uint8_t {
+    present,   // [a]        - the attribute exists, whatever it holds
+    exact,     // [a=v]
+    includes,  // [a~=v]     - v is one of a whitespace-separated list
+    dash,      // [a|=v]     - v, or v followed by a hyphen. For lang subtags
+    prefix,    // [a^=v]
+    suffix,    // [a$=v]
+    substring, // [a*=v]
+};
+
+struct attribute_match {
+    atom name;
+    std::string value;
+    attr_op op = attr_op::present;
+    // The `i` flag. `s` is the default and needs no bit; both are CSS Selectors
+    // Level 4 and Bootstrap uses neither, but they are two lines here and a
+    // silent wrong answer without them.
+    bool case_insensitive = false;
+};
+
+// Structural requirements that are a question about the element's POSITION rather
+// than about its name or its attributes. A bitfield rather than a list because
+// each is a single yes/no and they compose - `:root:empty` is both.
+inline constexpr std::uint32_t structural_root = 1u << 0;
+
+// One compound selector: `div#id.a.b[x=y]:hover` - a tag, an id, some classes,
+// some attribute requirements, any required pseudo-state bits, and any structural
+// requirements. All optional.
 struct compound {
     atom tag; // empty => universal
     atom id;  // empty => unconstrained
     boost::container::small_vector<atom, 2> classes;
-    std::uint32_t states = 0;   // :hover, :focus, ... as bits
-    bool never_matches = false; // an unrecognised pseudo makes the rule dead
+    // Sized 1 rather than 2: an attribute selector is uncommon, and the ones that
+    // appear almost always appear alone (`[type=checkbox]`, `[disabled]`).
+    boost::container::small_vector<attribute_match, 1> attributes;
+    std::uint32_t states = 0;     // :hover, :focus, ... as bits
+    std::uint32_t structural = 0; // :root, ... as bits
+    bool never_matches = false;   // a construct this engine cannot represent
+};
+
+// Specificity as the spec's (a, b, c) triple, packed so the cascade's comparison
+// stays one integer compare.
+//
+// Ten bits each, which is 1023 of any category before it saturates. The previous
+// arithmetic was `id*10000 + classes*100 + tag` and collapsed at a HUNDRED classes
+// - a selector with a hundred class conditions would have outranked one with an id.
+// No real sheet reaches either bound; the difference is that this one says where
+// its bound is.
+struct specificity {
+    std::uint32_t packed = 0;
+
+    static constexpr std::uint32_t cap = (1u << 10) - 1;
+    [[nodiscard]] static constexpr specificity of(std::uint32_t ids, std::uint32_t classes,
+                                                  std::uint32_t types) noexcept {
+        const auto clamp = [](std::uint32_t v) { return v > cap ? cap : v; };
+        return specificity{(clamp(ids) << 20) | (clamp(classes) << 10) | clamp(types)};
+    }
+    [[nodiscard]] constexpr specificity operator+(specificity o) const noexcept {
+        // Per-field addition, because the packed values would carry between
+        // fields: two compounds each with one class must be (0,2,0), not (0,1,0)
+        // twice added as integers with a possible carry into the id field.
+        return of(ids() + o.ids(), classes() + o.classes(), types() + o.types());
+    }
+    [[nodiscard]] constexpr std::uint32_t ids() const noexcept { return packed >> 20; }
+    [[nodiscard]] constexpr std::uint32_t classes() const noexcept { return (packed >> 10) & cap; }
+    [[nodiscard]] constexpr std::uint32_t types() const noexcept { return packed & cap; }
+    [[nodiscard]] friend constexpr bool operator==(specificity, specificity) = default;
+    [[nodiscard]] friend constexpr auto operator<=>(specificity a, specificity b) noexcept {
+        return a.packed <=> b.packed;
+    }
 };
 
 struct compiled_selector {
     // stored RIGHTMOST FIRST, because that is the order matching walks them
     boost::container::small_vector<compound, 2> parts;
     boost::container::small_vector<combinator, 2> links; // links[i] joins parts[i] to parts[i+1]
-    std::int32_t specificity = 0;
+    specificity spec;
 };
 
 struct rule {

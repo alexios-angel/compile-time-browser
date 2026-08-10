@@ -1,5 +1,7 @@
 #include <ctbrowser/style/engine.hpp>
 
+#include <ctbrowser/core/algorithms.hpp>
+
 // engine: the method bodies.
 // The header says what these do; this says how.
 
@@ -89,6 +91,12 @@ element_facts engine::facts_of(const read_txn & txn, node_id id) const {
     if (!id_attr.empty()) { f.id = atoms_->intern(id_attr); }
     split_classes(txn.attribute_value(id, class_name()), f.classes);
     f.states = state_of(id);
+    // The document element: no ELEMENT parent. Asked here rather than by comparing
+    // against the document root, because the root node is the document itself and
+    // <html>'s parent is that - so "parent is not an element" is the test that does
+    // not depend on how the tree is rooted.
+    const node_id parent = txn.parent(id);
+    f.is_root = !parent || txn.kind(parent).value_or(node_kind::element) != node_kind::element;
     return f;
 }
 
@@ -170,7 +178,67 @@ void engine::split_classes(std::string_view list,
     }
 }
 
-bool engine::compound_matches(const element_facts & f, const compound & c) const {
+namespace {
+
+// One `[name op value]` requirement against one element's attribute value.
+//
+// ORDERED CHEAPEST FIRST inside the compound below: the tag, the id and the classes
+// are interned atoms and compare as integers, so an attribute - which reads the
+// element's attribute list and then compares strings - is tested last.
+[[nodiscard]] bool attribute_matches(std::string_view have, const attribute_match & want) {
+    const auto same = [&](std::string_view a, std::string_view b) {
+        return want.case_insensitive ? ascii_iequals(a, b) : a == b;
+    };
+    switch (want.op) {
+    case attr_op::present: return true; // the caller has already established it exists
+    case attr_op::exact: return same(have, want.value);
+    case attr_op::includes: {
+        // A whitespace-separated list. An EMPTY value can never be one of the
+        // items, because the items are non-empty by construction.
+        if (want.value.empty()) { return false; }
+        std::size_t at = 0;
+        while (at < have.size()) {
+            const std::size_t start = have.find_first_not_of(html_whitespace, at);
+            if (start == std::string_view::npos) { break; }
+            std::size_t end = have.find_first_of(html_whitespace, start);
+            if (end == std::string_view::npos) { end = have.size(); }
+            if (same(have.substr(start, end - start), want.value)) { return true; }
+            at = end;
+        }
+        return false;
+    }
+    case attr_op::dash:
+        // `[lang|=en]` matches `en` and `en-GB` but not `english`. The hyphen form
+        // is the whole point - it is how a language subtag is selected.
+        if (same(have, want.value)) { return true; }
+        return have.size() > want.value.size() && have[want.value.size()] == '-' &&
+               same(have.substr(0, want.value.size()), want.value);
+    // The three substring forms match NOTHING when the value is empty, per the
+    // spec. Without that, `[a^=""]` would match every element with the attribute,
+    // since every string starts with the empty string.
+    case attr_op::prefix:
+        return !want.value.empty() && have.size() >= want.value.size() &&
+               same(have.substr(0, want.value.size()), want.value);
+    case attr_op::suffix:
+        return !want.value.empty() && have.size() >= want.value.size() &&
+               same(have.substr(have.size() - want.value.size()), want.value);
+    case attr_op::substring: {
+        if (want.value.empty()) { return false; }
+        if (!want.case_insensitive) { return have.find(want.value) != std::string_view::npos; }
+        if (want.value.size() > have.size()) { return false; }
+        for (std::size_t at = 0; at + want.value.size() <= have.size(); ++at) {
+            if (ascii_iequals(have.substr(at, want.value.size()), want.value)) { return true; }
+        }
+        return false;
+    }
+    }
+    return false;
+}
+
+} // namespace
+
+bool engine::compound_matches(const read_txn & txn, node_id node, const element_facts & f,
+                              const compound & c) const {
     if (c.never_matches) { return false; }
     if (c.tag && c.tag != f.tag) { return false; }
     if (c.id && c.id != f.id) { return false; }
@@ -178,6 +246,16 @@ bool engine::compound_matches(const element_facts & f, const compound & c) const
         if (std::ranges::find(f.classes, want) == f.classes.end()) { return false; }
     }
     if ((c.states & f.states) != c.states) { return false; }
+    // STRUCTURAL requirements. `:root` is the document element - the one with no
+    // element parent - which is `<html>` for every page this engine loads.
+    if ((c.structural & structural_root) != 0 && !f.is_root) { return false; }
+    // ATTRIBUTES LAST: everything above compares interned integers, and this reads
+    // the element's attribute list and then compares strings.
+    for (const attribute_match & want : c.attributes) {
+        if (!txn.has_attribute(node, want.name)) { return false; }
+        if (want.op == attr_op::present) { continue; }
+        if (!attribute_matches(txn.attribute_value(node, want.name), want)) { return false; }
+    }
     return true;
 }
 

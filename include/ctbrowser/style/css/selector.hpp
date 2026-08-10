@@ -34,7 +34,7 @@ namespace ctbrowser::style::css {
 // never match, so the count always equals the number of alternatives written and
 // a caller does not have to reconcile them.
 [[nodiscard]] std::uint32_t parse_selector_list(stylesheet & sheet,
-                                               std::span<const component_value> prelude,
-                                               atom_table & atoms);
+                                                std::span<const component_value> prelude,
+                                                atom_table & atoms);
 
 } // namespace ctbrowser::style::css

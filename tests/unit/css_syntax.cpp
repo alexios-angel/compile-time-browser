@@ -12,6 +12,8 @@
 #include "check.hpp"
 
 #include <cstdio>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -156,7 +158,8 @@ void test_numbers_dimensions_and_percentages() {
 
     const token_stream d = tokenize("12.5px");
     if (d.unit_of(d.tokens.front()) != "px") {
-        std::printf("FAIL unit of 12.5px: [%s]\n", std::string{d.unit_of(d.tokens.front())}.c_str());
+        std::printf("FAIL unit of 12.5px: [%s]\n",
+                    std::string{d.unit_of(d.tokens.front())}.c_str());
         ++ctbrowser_test_failures;
     }
 }
@@ -313,8 +316,8 @@ void test_important_and_the_delims_around_it() {
 
 void test_unbalanced_input_terminates() {
     // None of these may hang or read out of bounds; the shapes are secondary.
-    for (const std::string_view css : {"a{", "a{b:c", "}", "((((", "url(", "\"", "\\",
-                                       "/*", "a{b:url(", "@", "#", "-", "+", ".", "<!--"}) {
+    for (const std::string_view css : {"a{", "a{b:c", "}", "((((", "url(", "\"", "\\", "/*",
+                                       "a{b:url(", "@", "#", "-", "+", ".", "<!--"}) {
         const token_stream s = tokenize(css);
         CHECK(!s.tokens.empty());
         CHECK(s.tokens.back().type == token_type::eof);
@@ -333,9 +336,8 @@ void test_preprocessing_folds_line_endings() {
 }
 
 void test_a_real_bootstrap_shaped_rule() {
-    const std::string_view css =
-        ".btn{--bs-btn-padding-x:0.75rem;color:var(--bs-btn-color);"
-        "border:var(--bs-btn-border-width) solid transparent}";
+    const std::string_view css = ".btn{--bs-btn-padding-x:0.75rem;color:var(--bs-btn-color);"
+                                 "border:var(--bs-btn-border-width) solid transparent}";
     const token_stream s = tokenize(css);
     CHECK(s.tokens.back().type == token_type::eof);
     // The custom property is ONE ident: `--bs-btn-padding-x`. A tokenizer that
@@ -352,6 +354,56 @@ void test_a_real_bootstrap_shaped_rule() {
         if (t.type == token_type::function) { ++functions; }
     }
     CHECK(functions == 2);
+}
+
+// --- the front end's own score ---------------------------------------------
+
+// HOW MANY OF BOOTSTRAP'S SELECTORS CAN MATCH AT ALL.
+//
+// This exists because the Chrome parity harness cannot see a front-end rung. Its
+// compared set is 48 properties that layout and paint consume; a selector that
+// starts matching delivers custom properties nothing reads yet, or properties not
+// in the set, so `differ` does not move by one. Attribute selectors and `:root`
+// landing changed the parity numbers by exactly zero - and unlocked the 128 global
+// custom properties every Bootstrap component reads.
+//
+// So the front end is scored here instead, and the floor is the ratchet: it may
+// only ever be raised, and raising it is a deliberate line in a commit. A rung that
+// widens the selector grammar and does NOT move this number has not done what it
+// claimed.
+void test_how_much_of_bootstrap_can_match() {
+    std::ifstream in{"vendor/bootstrap/bootstrap.css", std::ios::binary};
+    if (!in) {
+        std::printf("SKIP bootstrap census: vendor/bootstrap/bootstrap.css not readable\n");
+        return;
+    }
+    std::ostringstream all;
+    all << in.rdbuf();
+    ctbrowser::atom_table atoms;
+    const auto sheet = ctbrowser::style::css::parse_stylesheet(all.str(), atoms);
+
+    std::size_t live = 0;
+    for (const auto & sel : sheet.selectors) {
+        if (!sel.parts.empty() && !sel.parts.front().never_matches) { ++live; }
+    }
+    const std::size_t total = sheet.selectors.size();
+    std::printf("  bootstrap: %zu/%zu selectors can match (%.1f%%), %zu rules, %zu declarations\n",
+                live, total, 100.0 * static_cast<double>(live) / static_cast<double>(total),
+                sheet.rules.size(), sheet.declarations.size());
+
+    // THE FLOOR. Raise it when a rung widens the grammar; never lower it.
+    //   2550  the front-end substitution (tag/#id/.class, descendant/child)
+    //   2603  + attribute selectors and :root
+    constexpr std::size_t floor = 2603;
+    if (live < floor) {
+        std::printf("FAIL bootstrap census: %zu selectors can match, was at least %zu\n", live,
+                    floor);
+        ++ctbrowser_test_failures;
+    }
+    // The sheet's SHAPE is pinned too, so a parser change that quietly dropped
+    // rules could not hide behind a selector count that happened to hold.
+    CHECK(sheet.rules.size() == 2539);
+    CHECK(total == 2950);
 }
 
 } // namespace
@@ -374,5 +426,6 @@ int main() {
     test_unbalanced_input_terminates();
     test_preprocessing_folds_line_endings();
     test_a_real_bootstrap_shaped_rule();
+    test_how_much_of_bootstrap_can_match();
     REPORT("css_syntax");
 }

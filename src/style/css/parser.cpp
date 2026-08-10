@@ -29,7 +29,12 @@ namespace {
 
 // The at-rules this recognises. Everything else with a block has its block
 // skipped, and everything else without one is consumed to the `;`.
-enum class at_kind { media_like, font_face, statement, skip };
+enum class at_kind {
+    media_like,
+    font_face,
+    statement,
+    skip
+};
 
 [[nodiscard]] at_kind at_kind_of(std::string_view name) {
     // Vendor prefixes are stripped before the comparison, so `@-webkit-keyframes`
@@ -285,8 +290,8 @@ private:
         sheet_.values.insert(sheet_.values.end(), children.begin(), children.end());
     }
 
-    [[nodiscard]] std::span<const component_value>
-    span_of(const std::vector<component_value> & v) const {
+    [[nodiscard]] std::span<const component_value> span_of(
+        const std::vector<component_value> & v) const {
         return std::span<const component_value>{v};
     }
 
@@ -407,8 +412,8 @@ private:
     // contiguous slice of the pool only when every token came from the SOURCE half -
     // an escape was rebuilt into the tail and appears nowhere in order - and that is
     // rare enough (Bootstrap: never) that the fallback simply concatenates.
-    [[nodiscard]] std::pair<std::uint32_t, std::uint32_t>
-    source_span(std::span<const component_value> value) {
+    [[nodiscard]] std::pair<std::uint32_t, std::uint32_t> source_span(
+        std::span<const component_value> value) {
         if (value.empty()) { return {0, 0}; }
         const std::uint32_t first_index = value.front().token;
         const std::uint32_t last_index = value.back().end_token - 1;

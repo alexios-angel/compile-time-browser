@@ -3,8 +3,8 @@
 #include <charconv>
 #include <cstdint>
 #include <string>
-#include <system_error>
 #include <string_view>
+#include <system_error>
 
 // CSS Syntax Level 3 §4.3, the consume-a-token algorithms.
 //
@@ -548,11 +548,11 @@ private:
         if (peek() != '(') { return name; }
         // ASCII case-insensitive, and measured on the token's VALUE so an escaped
         // spelling like `u\rl(` is recognised too.
-        std::string_view text = name.length == 0 ? std::string_view{}
-                                : name.text >= s_.size()
-                                    ? std::string_view{decoded_}.substr(name.text - s_.size(),
-                                                                        name.length)
-                                    : s_.substr(name.text, name.length);
+        std::string_view text =
+            name.length == 0 ? std::string_view{}
+            : name.text >= s_.size()
+                ? std::string_view{decoded_}.substr(name.text - s_.size(), name.length)
+                : s_.substr(name.text, name.length);
         bool is_url = text.size() == 3;
         if (is_url) {
             const auto lower = [](char c) {

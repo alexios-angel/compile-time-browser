@@ -25,6 +25,102 @@ namespace {
     return 0;
 }
 
+// The structural pseudo-classes, which are a question about POSITION rather than
+// about UI state - so they need no bit set on the element and no invalidation when
+// one changes. `:root` is the whole set at this rung; the rest arrive with the
+// facts stack that makes them cheap to answer.
+[[nodiscard]] std::uint32_t structural_bit_of(std::string_view name) {
+    if (ascii_iequals(name, "root")) { return structural_root; }
+    return 0;
+}
+
+// `[name op "value" i]`, from the component values INSIDE the square block. The
+// block itself was already delimited by the tokenizer, so there is no scanning for
+// a `]` here and a `]` inside a quoted value cannot end it early.
+[[nodiscard]] bool parse_attribute(const stylesheet & sheet, std::span<const component_value> inner,
+                                   atom_table & atoms, attribute_match & out) {
+    const auto tok = [&](const component_value & v) -> const css_token & {
+        return sheet.tokens[v.token];
+    };
+    const auto is_ws = [&](const component_value & v) {
+        return v.kind == cv_kind::token && tok(v).type == token_type::whitespace;
+    };
+    // Trim, then read: name, then optionally an operator and a value, then
+    // optionally a flag.
+    while (!inner.empty() && is_ws(inner.front())) { inner = inner.subspan(1); }
+    while (!inner.empty() && is_ws(inner.back())) { inner = inner.subspan(0, inner.size() - 1); }
+    if (inner.empty() || inner.front().kind != cv_kind::token) { return false; }
+    if (tok(inner.front()).type != token_type::ident) { return false; }
+    // Attribute names are ASCII case-insensitive in HTML, and the DOM interns them
+    // lowercased - so folding here is what makes `[HREF]` match `href`.
+    out.name = atoms.intern_lower(sheet.text_of(tok(inner.front())));
+    inner = inner.subspan(1);
+    while (!inner.empty() && is_ws(inner.front())) { inner = inner.subspan(1); }
+    if (inner.empty()) {
+        out.op = attr_op::present;
+        return true;
+    }
+    // The operator. `=` is one delim; the others are a delim followed by `=`,
+    // because the tokenizer has no compound-operator tokens - `~=` is `~` then `=`.
+    if (inner.front().kind != cv_kind::token) { return false; }
+    const std::string_view first = sheet.text_of(tok(inner.front()));
+    if (first == "=") {
+        out.op = attr_op::exact;
+        inner = inner.subspan(1);
+    } else {
+        if (inner.size() < 2 || inner[1].kind != cv_kind::token ||
+            sheet.text_of(tok(inner[1])) != "=") {
+            return false;
+        }
+        if (first == "~") {
+            out.op = attr_op::includes;
+        } else if (first == "|") {
+            out.op = attr_op::dash;
+        } else if (first == "^") {
+            out.op = attr_op::prefix;
+        } else if (first == "$") {
+            out.op = attr_op::suffix;
+        } else if (first == "*") {
+            out.op = attr_op::substring;
+        } else {
+            return false;
+        }
+        inner = inner.subspan(2);
+    }
+    while (!inner.empty() && is_ws(inner.front())) { inner = inner.subspan(1); }
+    if (inner.empty() || inner.front().kind != cv_kind::token) { return false; }
+    // The value is a string or an ident. `[href$=.pdf]` is legal unquoted, and
+    // arrives as a dimension-ish run rather than one ident - so anything that is
+    // not plainly one token of the right kind is refused rather than guessed at.
+    const css_token & value = tok(inner.front());
+    if (value.type == token_type::string) {
+        out.value = std::string{sheet.text_of(value).substr(1, sheet.text_of(value).size() - 2)};
+    } else if (value.type == token_type::ident) {
+        out.value = std::string{sheet.text_of(value)};
+    } else {
+        return false;
+    }
+    inner = inner.subspan(1);
+    // An `i` or `s` flag. `s` is the default, so only `i` changes anything.
+    while (!inner.empty() && is_ws(inner.front())) { inner = inner.subspan(1); }
+    if (!inner.empty()) {
+        if (inner.size() != 1 || inner.front().kind != cv_kind::token ||
+            tok(inner.front()).type != token_type::ident) {
+            return false;
+        }
+        const std::string_view flag = sheet.text_of(tok(inner.front()));
+        if (ascii_iequals(flag, "i")) {
+            out.case_insensitive = true;
+        } else if (!ascii_iequals(flag, "s")) {
+            return false;
+        }
+    }
+    // An EMPTY value is not the same as no value: `[a=""]` matches an attribute
+    // whose value is empty, which `[a]` also does - but `[a^=""]` matches nothing
+    // at all, per the spec, and that is the matcher's business rather than ours.
+    return true;
+}
+
 // One compound selector under construction, plus how it contributes to
 // specificity.
 struct building {
@@ -34,16 +130,12 @@ struct building {
     int tags = 0;
 };
 
-// The specificity arithmetic the previous front end used, kept BIT-FOR-BIT at this
-// rung so a cascade ordering cannot change underneath the substitution:
-//
-//     id * 10000 + (classes + pseudos) * 100 + tag
-//
-// summed over every compound. It collapses at 100 classes to one id, which no
-// realistic sheet reaches. The next rung replaces it with a properly packed
-// (a, b, c) triple, and that is a behaviour change worth making on its own.
-[[nodiscard]] std::int32_t specificity_of(const building & b) {
-    return (b.ids != 0 ? 10000 : 0) + (b.classes * 100) + (b.tags != 0 ? 1 : 0);
+// The spec's (a, b, c): ids, then class-level conditions, then type-level ones.
+// An ATTRIBUTE selector and a pseudo-class are both class-level, which is why they
+// share the counter.
+[[nodiscard]] specificity specificity_of(const building & b) {
+    return specificity::of(static_cast<std::uint32_t>(b.ids), static_cast<std::uint32_t>(b.classes),
+                           static_cast<std::uint32_t>(b.tags));
 }
 
 class selector_parser {
@@ -106,11 +198,22 @@ private:
         for (std::size_t i = 0; i < run.size(); ++i) {
             const component_value & v = run[i];
             if (v.kind == cv_kind::block) {
-                // `[attr]`, or a stray `(`/`{` in a prelude. An attribute selector
-                // arrives here as ONE block because the prelude was parsed as
-                // component values - so it is recognised rather than mangled into
-                // whatever name it happened to touch.
-                dead = true;
+                // An attribute selector arrives as ONE block, because the prelude
+                // was parsed as component values - so a `]` inside a quoted value
+                // cannot end it early and there is nothing to scan for.
+                if (v.open != '[') {
+                    dead = true; // a stray `(` or `{` in a prelude
+                    continue;
+                }
+                if (want_new_compound || compounds.empty()) { start_compound(); }
+                attribute_match match;
+                if (!parse_attribute(*sheet_, sheet_->children_of(v), *atoms_, match)) {
+                    dead = true;
+                    continue;
+                }
+                building & b = compounds.back();
+                b.part.attributes.push_back(std::move(match));
+                ++b.classes; // an attribute selector is class-level for specificity
                 continue;
             }
             if (v.kind == cv_kind::function) {
@@ -211,15 +314,20 @@ private:
                     dead = true; // `:` alone, or `:not(` which arrived as a function
                     continue;
                 }
-                const std::uint32_t bit = state_bit_of(text(run[i + 1]));
+                const std::string_view name = text(run[i + 1]);
                 ++i;
-                if (bit == 0) {
-                    dead = true;
+                building & b = compounds.back();
+                if (const std::uint32_t bit = state_bit_of(name); bit != 0) {
+                    b.part.states |= bit;
+                    ++b.classes; // a pseudo-class is class-level for specificity
                     continue;
                 }
-                building & b = compounds.back();
-                b.part.states |= bit;
-                ++b.classes; // a pseudo-class counts as a class for specificity
+                if (const std::uint32_t bit = structural_bit_of(name); bit != 0) {
+                    b.part.structural |= bit;
+                    ++b.classes;
+                    continue;
+                }
+                dead = true;
                 continue;
             }
             default:
@@ -236,9 +344,9 @@ private:
         }
 
         compiled_selector out;
-        std::int32_t spec = 0;
-        for (const building & b : compounds) { spec += specificity_of(b); }
-        out.specificity = spec;
+        specificity spec;
+        for (const building & b : compounds) { spec = spec + specificity_of(b); }
+        out.spec = spec;
         // RIGHTMOST FIRST, because that is the order matching walks them. `links`
         // was built left-to-right, and reversing means each link is read from the
         // compound to its right - which is the direction the walk moves.
