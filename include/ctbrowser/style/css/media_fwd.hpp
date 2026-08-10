@@ -10,17 +10,21 @@
 
 namespace ctbrowser::style::css {
 
-enum class media_type : std::uint8_t { all, screen, print };
+enum class media_type : std::uint8_t {
+    all,
+    screen,
+    print
+};
 
 struct media_environment {
     float viewport_width = 1024;
     float viewport_height = 768;
     media_type type = media_type::screen;
-    bool dark = false;            // prefers-color-scheme
-    bool reduced_motion = false;  // prefers-reduced-motion
+    bool dark = false;           // prefers-color-scheme
+    bool reduced_motion = false; // prefers-reduced-motion
     float resolution_dppx = 1;
-    bool hover = true;            // a pointer that can hover
-    bool fine_pointer = true;     // a mouse rather than a finger
+    bool hover = true;        // a pointer that can hover
+    bool fine_pointer = true; // a mouse rather than a finger
     bool monochrome = false;
 
     // DERIVED, never stored. Two sources of truth for one fact is how a resize leaves
@@ -48,7 +52,12 @@ struct media_feature {
     };
     // `min-` and `max-` are prefixes on a range feature rather than features of their
     // own, which is why they are an operator here and not thirty more enumerators.
-    enum class compare : std::uint8_t { equal, at_least, at_most, boolean };
+    enum class compare : std::uint8_t {
+        equal,
+        at_least,
+        at_most,
+        boolean
+    };
 
     name which = name::unknown;
     compare op = compare::boolean;

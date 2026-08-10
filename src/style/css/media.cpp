@@ -47,7 +47,7 @@ namespace {
 
 // One `(...)` block: `(min-width: 576px)`, `(hover)`, `(orientation: portrait)`.
 [[nodiscard]] media_feature parse_feature(const stylesheet & sheet,
-                                         std::span<const component_value> inner) {
+                                          std::span<const component_value> inner) {
     media_feature out;
     out.which = media_feature::name::unknown;
     const auto tok = [&](const component_value & v) -> const css_token & {
@@ -84,8 +84,7 @@ namespace {
         if (out.op != media_feature::compare::boolean) { out.which = media_feature::name::unknown; }
         return out;
     }
-    if (inner.front().kind != cv_kind::token ||
-        tok(inner.front()).type != token_type::colon) {
+    if (inner.front().kind != cv_kind::token || tok(inner.front()).type != token_type::colon) {
         out.which = media_feature::name::unknown; // range syntax (`width <= 700px`) is not read
         return out;
     }
@@ -112,7 +111,7 @@ namespace {
 } // namespace
 
 std::vector<media_query> parse_media_query_list(const stylesheet & sheet,
-                                              std::span<const component_value> prelude) {
+                                                std::span<const component_value> prelude) {
     std::vector<media_query> out;
     const auto tok = [&](const component_value & v) -> const css_token & {
         return sheet.tokens[v.token];

@@ -89,6 +89,13 @@ GEOMETRY = ["@x", "@y", "@w", "@h"]
 INITIAL = {
     "box-sizing": "content-box",
     "width": "auto", "height": "auto",
+    # 0px, THOUGH CSS SIZING 3 SAYS THE INITIAL VALUE IS `auto`. Chrome reports
+    # `auto` for a FLEX ITEM and `0px` for everything else, because `min-width:
+    # auto` only has a meaning - the automatic minimum size - inside a flex or grid
+    # container. Setting `auto` here to match the spec moved 566 differences the
+    # wrong way, which is a good measurement of how much of Bootstrap is flex: the
+    # remaining min-width differences are flex items and they close at the flex
+    # rung, not in this table.
     "min-width": "0px", "max-width": "none", "min-height": "0px", "max-height": "none",
     "margin-top": "0px", "margin-right": "0px", "margin-bottom": "0px", "margin-left": "0px",
     "padding-top": "0px", "padding-right": "0px", "padding-bottom": "0px", "padding-left": "0px",

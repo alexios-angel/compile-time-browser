@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <boost/container/small_vector.hpp>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -13,6 +14,7 @@
 #include <ctbrowser/dom/dom.hpp>
 
 #include <ctbrowser/style/computed.hpp>
+#include <ctbrowser/style/css/calc.hpp>
 #include <ctbrowser/style/css/media.hpp>
 #include <ctbrowser/style/css/parser.hpp>
 #include <ctbrowser/style/css/substitute.hpp>
@@ -95,7 +97,8 @@ using style_map = flat_map<std::uint64_t, computed_style_ptr>;
 
 class engine {
 public:
-    explicit engine(atom_table & atoms) : atoms_(&atoms) {}
+    explicit engine(atom_table & atoms)
+        : atoms_(&atoms), font_size_(atoms.intern_lower("font-size")) {}
 
     // Interactive state, matching ctcss's pseudo_state bits so a compiled
     // selector's requirement and an element's actual state are the same
@@ -288,13 +291,18 @@ public:
     // unit: `letter-spacing: 0.1em` would compound, and nothing reads it.
     [[nodiscard]] static bool inherits(std::string_view property) {
         if (property.starts_with("--")) { return true; }
+        // `font-size` was missing from this list, and its absence was invisible for
+        // as long as nothing in the cascade needed it: layout threaded the inherited
+        // size through box_builder as a function parameter instead. It stopped being
+        // invisible the moment `em` had to resolve, because `p { font-size: 2em }`
+        // inside a 20px parent doubled 16 rather than 20.
         static constexpr std::string_view names[] = {
-            "border-collapse", "border-spacing",  "caption-side",        "color",
-            "cursor",          "direction",       "empty-cells",         "font-family",
-            "font-style",      "font-variant",    "font-weight",         "letter-spacing",
-            "line-height",     "list-style",      "list-style-position", "list-style-type",
-            "text-align",      "text-decoration", "text-indent",         "text-transform",
-            "visibility",      "white-space",     "word-spacing"};
+            "border-collapse", "border-spacing", "caption-side",    "color",
+            "cursor",          "direction",      "empty-cells",     "font-family",
+            "font-size",       "font-style",     "font-variant",    "font-weight",
+            "letter-spacing",  "line-height",    "list-style",      "list-style-position",
+            "list-style-type", "text-align",     "text-decoration", "text-indent",
+            "text-transform",  "visibility",     "white-space",     "word-spacing"};
         for (const std::string_view name : names) {
             if (name == property) { return true; }
         }
@@ -445,6 +453,78 @@ public:
             return std::nullopt;
         };
 
+        // PASS ONE AND A HALF: FONT SIZE, ALONE, BEFORE ANYTHING ELSE READS IT.
+        //
+        // `em` means the element's own font size on every property except font-size
+        // itself, where it means the parent's - so the one value everything else is
+        // relative to has to be known before the general fold runs. That is not a
+        // convenience: `padding: calc(.5em + 1rem)` and `font-size: 1.25em` in the
+        // same rule resolve their `em` against different numbers, and a single pass
+        // cannot produce both.
+        //
+        // Bootstrap makes this load-bearing rather than theoretical: 14 of its
+        // font-size declarations are in `em`, 15 are `calc(Nrem + Nvw)` fluid type,
+        // and both were previously unreadable - parse_length gave up on the `c` and
+        // the element silently kept its parent's size.
+        float parent_font_size = 16.0f;
+        if (parent && parent->inherited) {
+            for (const declaration & d : parent->inherited->declarations) {
+                if (d.property != font_size_) { continue; }
+                if (const auto px = css::length_text_to_px(d.value, font_context(16.0f))) {
+                    parent_font_size = *px;
+                }
+                break;
+            }
+        }
+        float own_font_size = parent_font_size;
+        // Whether the WINNING font-size declaration actually resolved to a length.
+        // `font-size: larger` and the other relative keywords are not modelled, and
+        // rewriting one to a pixel value would be inventing an answer - so the text
+        // survives and whoever reads it decides.
+        bool font_size_resolved = false;
+        {
+            // The em basis for resolving font-size is the PARENT's; the rem basis is
+            // the root's, which for the root element is its own answer and so is
+            // seeded from the parent's - a root `font-size: 2rem` is circular and CSS
+            // resolves it against the initial 16px.
+            const css::length_context ctx = font_context(parent_font_size);
+            fold([&](const declaration & d) {
+                if (d.property != font_size_) { return; }
+                std::string value{d.value};
+                if (css::may_have_var(value)) {
+                    const std::optional<std::string> done =
+                        css::substitute_var(value, lookup, *atoms_);
+                    if (!done) { return; }
+                    value = *done;
+                }
+                if (css::may_have_calc(value)) { value = css::fold_calc(value, ctx); }
+                const std::optional<float> px = css::length_text_to_px(value, ctx);
+                // A percentage font size is the parent's, scaled - the one relative
+                // form that is not a length and still has an answer here.
+                const std::string_view text = trim(value, html_whitespace);
+                if (px) {
+                    own_font_size = *px;
+                    font_size_resolved = true;
+                } else if (text.ends_with('%')) {
+                    float share = 0;
+                    const char * begin = text.data();
+                    if (std::from_chars(begin, begin + text.size() - 1, share).ec == std::errc{}) {
+                        own_font_size = parent_font_size * share / 100.0f;
+                        font_size_resolved = true;
+                    }
+                } else if (ascii_iequals(text, "inherit")) {
+                    own_font_size = parent_font_size;
+                    font_size_resolved = true;
+                } else {
+                    font_size_resolved = false; // a keyword: leave the text alone
+                }
+            });
+        }
+        // The root's size is what every `rem` in the document resolves against, so it
+        // is recorded as the tree is descended rather than looked up per element.
+        if (!parent) { root_font_size_ = own_font_size; }
+        const css::length_context lengths = font_context(own_font_size);
+
         // PASS TWO: everything else. Substitute, then expand, then put.
         fold([&](const declaration & d) {
             const std::string_view property = atoms_->text(d.property);
@@ -474,13 +554,44 @@ public:
                 }
                 value = *done;
             }
+            // CALC, AFTER SUBSTITUTION AND BEFORE EXPANSION - the same ordering
+            // argument as the shorthands, and for a sharper reason: 34 of
+            // Bootstrap's calcs are `-1 * var(x)`, so before substitution there is
+            // no arithmetic to do, and `border: calc(var(w) * 2) solid red` cannot
+            // be split into longhands until its components are single tokens.
+            if (css::may_have_calc(value)) { value = css::fold_calc(value, lengths); }
+            // FONT SIZE IS ALREADY RESOLVED - the pre-pass above did it, because
+            // every `em` in every other declaration needed the answer first. Emit
+            // that number rather than re-deriving it here, so there is exactly one
+            // place a font size is computed and no way for the two to disagree.
+            if (d.property == font_size_ && font_size_resolved) {
+                value = css::serialize_calc(css::calc_result{own_font_size, 0.0f, false});
+            }
+            // EVERY RELATIVE LENGTH FOLDS TO PIXELS HERE, after expansion so a
+            // shorthand's components each get their own answer. `padding: 1rem 2em`
+            // becomes four px longhands, which is what a computed value is.
+            //
+            // It happens here rather than in layout because this is the only place
+            // that knows all three bases at once: the element's own font size, the
+            // ROOT's, and the viewport. layout/values.hpp multiplied every `rem` by
+            // a hardcoded 16 and treated `vh`, `vw` and `pt` as pixels outright,
+            // because a length arriving as text had nothing else to go on.
+            //
+            // A BARE NUMBER IS LEFT ALONE, which is the case that makes this need
+            // its own function rather than a flag: `line-height: 1.5` is not 1.5px.
+            const auto folded = [&](std::string text) {
+                if (const auto px = css::dimension_text_to_px(text, lengths)) {
+                    return css::serialize_calc(css::calc_result{*px, 0.0f, false});
+                }
+                return text;
+            };
             const auto expanded = expand_shorthand(property, value);
             if (expanded.empty()) {
-                put(declaration{d.property, std::move(value)});
+                put(declaration{d.property, folded(std::move(value))});
                 return;
             }
             for (const auto & [name, text] : expanded) {
-                put(declaration{atoms_->intern_lower(name), std::string{text}});
+                put(declaration{atoms_->intern_lower(name), folded(std::string{text})});
             }
         });
 
@@ -519,6 +630,18 @@ public:
         // an element's own `color: red` invisible to anything that enumerates its own
         // declarations, which is what getComputedStyle's key list is.
         return table_.intern(std::move(out), std::move(result_inherited));
+    }
+
+    // The bases every relative length in this document resolves against. `em` is
+    // the caller's, because it differs between font-size and everything else; the
+    // rest are facts about the document and the window.
+    [[nodiscard]] css::length_context font_context(float em_basis) const noexcept {
+        css::length_context ctx;
+        ctx.font_size = em_basis;
+        ctx.root_font_size = root_font_size_;
+        ctx.viewport_width = environment_.viewport_width;
+        ctx.viewport_height = environment_.viewport_height;
+        return ctx;
     }
 
     // --- whole-document resolution ------------------------------------------
@@ -767,6 +890,15 @@ private:
     // focused at once, so a per-node field would be megabytes of zeroes.
     flat_map<std::uint64_t, std::uint32_t> states_;
     atom_table * atoms_;
+    // Interned once. The font-size pre-pass compares against it per element per
+    // declaration, and interning takes a shared_mutex - doing it in the loop was
+    // measurably the wrong shape when the ancestor facts did the same thing.
+    atom font_size_;
+    // The ROOT element's computed font size, which is what every `rem` in the
+    // document resolves against. Recorded as the tree is descended - the root is
+    // resolved first, so by the time anything else asks, it is right. It replaces
+    // a hardcoded 16 in layout/values.hpp.
+    float root_font_size_ = 16.0f;
     std::vector<compiled_selector> selectors_;
     std::vector<declaration> declarations_;
     rule_index index_;

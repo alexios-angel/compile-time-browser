@@ -1396,6 +1396,146 @@ void test_media_queries() {
     }
 }
 
+// calc(), which is 134 expressions in Bootstrap and used to be 134 dropped
+// declarations - parse_length gave up on the leading `c` and the property was
+// silently nothing.
+void test_calc() {
+    using ctbrowser::style::css::evaluate_calc;
+    using ctbrowser::style::css::fold_calc;
+    using ctbrowser::style::css::length_context;
+    length_context ctx;
+    ctx.font_size = 20.0f;
+    ctx.root_font_size = 16.0f;
+    ctx.viewport_width = 1000.0f;
+    ctx.viewport_height = 800.0f;
+
+    const auto px = [&](std::string_view expression) {
+        const auto answer = evaluate_calc(expression, ctx);
+        CHECK(answer.has_value());
+        CHECK(!answer->has_percent);
+        return answer ? answer->px : -1.0f;
+    };
+    const auto invalid = [&](std::string_view expression) {
+        CHECK(!evaluate_calc(expression, ctx).has_value());
+    };
+
+    CHECK(px("1px + 2px") == 3.0f);
+    CHECK(px("10px - 4px") == 6.0f);
+    // The shape 34 of Bootstrap's calcs have: a length scaled by a number, either
+    // way round, and with the number negative.
+    CHECK(px("2rem * .5") == 16.0f);
+    CHECK(px(".5 * 2rem") == 16.0f);
+    CHECK(px("-1 * 1.5rem") == -24.0f);
+    CHECK(px("-.5 * 3rem") == -24.0f);
+    CHECK(px("10px / 4") == 2.5f);
+    // Units. `em` is the element's own size, `rem` the root's - the distinction the
+    // font-size pre-pass exists to make available.
+    CHECK(px("2em") == 40.0f);
+    CHECK(px("2rem") == 32.0f);
+    CHECK(px("10vw") == 100.0f);
+    CHECK(px("10vh") == 80.0f);
+    CHECK(px("10vmin") == 80.0f);
+    CHECK(px("10vmax") == 100.0f);
+    CHECK(px("1in") == 96.0f);
+    CHECK(px("72pt") == 96.0f);
+    // Bootstrap's fluid heading size, mixing two different bases in one sum.
+    CHECK(px("1.375rem + 1.5vw") == 22.0f + 15.0f);
+    // Precedence, parentheses, and a nested calc - which Bootstrap writes eight
+    // times over.
+    CHECK(px("1px + 2px * 3") == 7.0f);
+    CHECK(px("(1px + 2px) * 3") == 9.0f);
+    CHECK(px("1em + .5rem + calc(1rem * 2)") == 20.0f + 8.0f + 32.0f);
+    CHECK(px("calc(calc(1px))") == 1.0f);
+
+    // THE TYPE RULES, which are the point of not just adding numbers up.
+    invalid("1px + 2");      // a length and a number
+    invalid("2px * 3px");    // an area, which calc has no type for
+    invalid("2px / 3px");    // the divisor has to be a number
+    invalid("2px / 0");      // and a nonzero one
+    invalid("1px 2px");      // no operator
+    invalid("1px +");        // nothing after one
+    invalid("(1px");         // unclosed
+    invalid("5");            // a bare number is not a length
+    invalid("1frobs + 2px"); // an unmodelled unit, rather than a silent zero
+    // `+` and `-` REQUIRE surrounding whitespace, and this gets that for free: the
+    // tokenizer makes `-12px` one dimension, so there is no operator between the
+    // two terms. Chrome rejects it too.
+    invalid("100% -12px");
+
+    // A percentage has no answer until a containing block exists, so it survives as
+    // the canonical two-term form layout::parse_length knows how to read.
+    CHECK(fold_calc("calc(100% - 12px)", ctx) == "calc(100% - 12px)");
+    CHECK(fold_calc("calc(50% + 1rem)", ctx) == "calc(50% + 16px)");
+    CHECK(fold_calc("calc(100% * .5)", ctx) == "50%");
+    CHECK(fold_calc("calc(2rem)", ctx) == "32px");
+
+    // fold_calc leaves everything else alone, including a calc it could not read -
+    // whoever consumes the value drops it, which is what happened before this
+    // existed. The failure mode is a missing property, never a wrong number.
+    CHECK(fold_calc("1px solid red", ctx) == "1px solid red");
+    CHECK(fold_calc("calc(1px + 2)", ctx) == "calc(1px + 2)");
+    CHECK(fold_calc("-webkit-calc(1px + 1px)", ctx) == "-webkit-calc(1px + 1px)");
+    // Two of them in one value, which is how Bootstrap writes `.row` gutters.
+    CHECK(fold_calc("calc(2rem * .5) calc(1rem + 1rem)", ctx) == "16px 32px");
+}
+
+// The cascade end of the same thing: a calc reaches an element as a number, an em
+// resolves against the element's own font size, and a rem against the root's.
+void test_calc_in_the_cascade() {
+    {
+        fixture f;
+        f.load("<p id=a></p>", ":root { --gap: 24px } p { padding-left: calc(var(--gap) * .5) }");
+        expect_value(f, f.find_id("a"), "padding-left", "12px", "a var inside a calc");
+    }
+    {
+        // `.container`'s actual declaration, which the parity report named as the
+        // cause of a +12px shift on 27 of 40 elements.
+        fixture f;
+        f.load("<div id=a></div>", ":root { --bs-gutter-x: 1.5rem }"
+                                   "div { padding-right: calc(var(--bs-gutter-x) * .5);"
+                                   "      padding-left: calc(var(--bs-gutter-x) * .5) }");
+        expect_value(f, f.find_id("a"), "padding-left", "12px", "the container's gutter");
+        expect_value(f, f.find_id("a"), "padding-right", "12px", "on both sides");
+    }
+    {
+        // `em` IS THE ELEMENT'S OWN SIZE, which is the whole reason font-size is
+        // folded before anything else reads it. 2em of a 32px font is 64px, not 32.
+        fixture f;
+        f.load("<p id=a></p>", "p { font-size: 32px; margin-top: calc(1em + 4px) }");
+        expect_value(f, f.find_id("a"), "margin-top", "36px", "em against its own size");
+    }
+    {
+        // ...and in font-size itself it is the PARENT's, which is CSS's asymmetry
+        // and not a convenience: `font-size: 2em` doubles rather than recursing.
+        fixture f;
+        f.load("<div id=o><p id=a></p></div>", "div { font-size: 20px } p { font-size: 2em }");
+        expect_value(f, f.find_id("a"), "font-size", "40px", "em in font-size is the parent's");
+    }
+    {
+        // A REM IS THE ROOT'S SIZE, not a hardcoded 16.
+        fixture f;
+        f.load("<p id=a></p>", "html { font-size: 20px } p { width: calc(2rem) }");
+        expect_value(f, f.find_id("a"), "width", "40px", "rem against a root that moved");
+    }
+    {
+        // Bootstrap's fluid type, which needs the viewport as well as the root.
+        fixture f;
+        ctbrowser::style::css::media_environment env;
+        env.viewport_width = 1000;
+        env.viewport_height = 800;
+        (void)f.styles.set_environment(env);
+        f.load("<h1 id=a></h1>", "h1 { font-size: calc(1.375rem + 1.5vw) }");
+        expect_value(f, f.find_id("a"), "font-size", "37px", "22px + 15px");
+    }
+    {
+        // An invalid calc leaves the declaration unreadable rather than wrong. The
+        // value survives as text, and every consumer of a length rejects it.
+        fixture f;
+        f.load("<p id=a></p>", "p { width: calc(1px + 2) }");
+        expect_value(f, f.find_id("a"), "width", "calc(1px + 2)", "kept verbatim, unreadable");
+    }
+}
+
 int main() {
     test_shorthands_expand();
     test_simple_selectors();
@@ -1418,6 +1558,8 @@ int main() {
     test_var_substitution();
     test_border_shorthand();
     test_media_queries();
+    test_calc();
+    test_calc_in_the_cascade();
     test_deep_nesting_still_matches();
     test_unmatched_element_gets_empty_style();
     test_inline_style_applies();

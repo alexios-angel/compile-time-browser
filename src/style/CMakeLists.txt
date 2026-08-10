@@ -26,12 +26,14 @@ target_sources(ctbrowser-style
     css/selector.cpp
     css/substitute.cpp
     css/media.cpp
+    css/calc.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
       FILES
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/style.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/token.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/calc.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/value.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/selector.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/parser.hpp"

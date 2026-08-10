@@ -24,6 +24,8 @@
 
 #include <ctbrowser/shell/bindings.hpp>
 
+#include <ctbrowser/core/algorithms.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -203,14 +205,24 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
     };
 
     const auto value_of = [at, declared](std::string_view property) -> std::string {
-        // 1. USED SIZES, from the fragment. Chrome's getComputedStyle returns the
-        //    CONTENT box for width and height, so the padding comes back off.
-        //    When this box model grows borders, they come off here too.
+        // 1. USED SIZES, from the fragment - and WHICH BOX depends on box-sizing.
+        //
+        //    `width` names the content box by default and the border box under
+        //    `box-sizing: border-box`, and getComputedStyle reports the used value
+        //    of `width` - so the same element answers with a different rectangle
+        //    depending on one other property. Measured rather than assumed: Chrome
+        //    answers 960 for a `.container` whose fragment is 960 wide and whose
+        //    horizontal padding is 12 a side, and 936 would be the content box.
+        //
+        //    Bootstrap sets `box-sizing: border-box` on `*`, so this is not an edge
+        //    case on any page that uses it - it was 399 of 3,518 differences, all of
+        //    them exactly the padding.
         if (property == "width" || property == "height") {
             if (at.frag == nullptr) { return {}; }
             const bool horizontal = property == "width";
             float used = horizontal ? at.frag->bounds.width : at.frag->bounds.height;
-            if (at.box != nullptr) {
+            const bool border_box = ascii_iequals(declared("box-sizing"), "border-box");
+            if (at.box != nullptr && !border_box) {
                 const layout::side_lengths & pad = at.box->padding;
                 used -= horizontal ? pad.left.resolve(at.basis, at.font_size) +
                                          pad.right.resolve(at.basis, at.font_size)

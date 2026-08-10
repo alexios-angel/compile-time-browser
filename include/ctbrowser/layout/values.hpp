@@ -99,9 +99,32 @@ enum class unit : std::uint8_t {
     none
 };
 
+// The `+ 12px` half of a `calc(50% + 12px)`, read on its own so parse_length stays
+// a straight line. Anything unexpected answers zero, which degrades the value to a
+// plain percentage rather than dropping it - the percentage is the part that
+// matters for the two places Bootstrap writes one.
+[[nodiscard]] inline float parse_calc_offset(std::string_view rest) {
+    std::size_t at = 0;
+    while (at < rest.size() && (rest[at] == ' ' || rest[at] == '\t')) { ++at; }
+    if (at >= rest.size() || (rest[at] != '+' && rest[at] != '-')) { return 0; }
+    const float sign = rest[at] == '-' ? -1.0f : 1.0f;
+    ++at;
+    while (at < rest.size() && (rest[at] == ' ' || rest[at] == '\t')) { ++at; }
+    float px = 0;
+    if (std::from_chars(rest.data() + at, rest.data() + rest.size(), px).ec != std::errc{}) {
+        return 0;
+    }
+    return sign * px;
+}
+
 struct length {
     float value = 0;
     unit u = unit::auto_;
+    // A FIXED OFFSET ADDED AFTER the percentage resolves, and zero for every value
+    // that is not a two-term calc. It sits here rather than in a separate type
+    // because every consumer of `length` would otherwise have to learn about a
+    // second one, and `resolve()` is the only place it is read.
+    float offset_px = 0;
 
     // `auto` is the ONLY value a caller has to special-case. Every other unit
     // answers resolve() given a basis, so there is deliberately no
@@ -115,7 +138,7 @@ struct length {
         switch (u) {
         case unit::px:
         case unit::none: return value;
-        case unit::percent: return value / 100.0f * basis;
+        case unit::percent: return value / 100.0f * basis + offset_px;
         case unit::em: return value * font_size;
         case unit::rem: return value * 16.0f;
         case unit::auto_: return 0;
@@ -130,6 +153,23 @@ struct length {
     text.remove_prefix(i);
     if (text.empty()) { return length{}; }
     if (text == "auto") { return length{0, unit::auto_}; }
+    // `calc(50% + 12px)` - THE ONE CALC FORM THAT REACHES LAYOUT. The cascade folds
+    // every calc it can into a single px value, so anything still spelled calc()
+    // here carries a percentage: it had no answer at computed-value time because it
+    // needed a containing block, which is a used-value question and this is where
+    // the answer lives. style/css/calc.cpp serialises exactly this two-term shape,
+    // percentage first, so there is one form to read rather than an expression
+    // grammar in two places.
+    if (text.starts_with("calc(") && text.ends_with(')')) {
+        const std::string_view body = text.substr(5, text.size() - 6);
+        const std::size_t percent = body.find('%');
+        if (percent == std::string_view::npos) { return length{}; }
+        float share = 0;
+        if (std::from_chars(body.data(), body.data() + percent, share).ec != std::errc{}) {
+            return length{};
+        }
+        return length{share, unit::percent, parse_calc_offset(body.substr(percent + 1))};
+    }
 
     float value = 0;
     const auto [rest, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
