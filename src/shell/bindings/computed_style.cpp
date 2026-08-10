@@ -219,10 +219,20 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
             }
             return px_text(std::max(0.0f, used));
         }
-        // 2. FONT SIZE, already absolute on the box - the one length this engine
-        //    resolves eagerly, and the basis every `em` here resolves against.
+        // 2. FONT SIZE and LINE HEIGHT, already absolute on the box - the two
+        //    lengths this engine resolves eagerly, and font-size is the basis every
+        //    `em` here resolves against.
+        //
+        //    LINE HEIGHT MUST COME FROM THE BOX, not from the cascade. Chrome always
+        //    reports it as a length, so a unitless `line-height: 1.5` answered as
+        //    `1.5` differs from `24px` on every text-bearing element on the page -
+        //    which it did, on 34 of 40 elements of one fixture, for a reason that had
+        //    nothing to do with layout being wrong.
         if (property == "font-size") {
             return at.box != nullptr ? px_text(at.box->font_size) : std::string{};
+        }
+        if (property == "line-height") {
+            return at.box != nullptr ? px_text(at.box->line_height) : std::string{};
         }
         const std::string_view text = declared(property);
         // 2b. DISPLAY, from the box tree when nothing declared it. The CSS initial
@@ -289,6 +299,7 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
     offer("width");
     offer("height");
     offer("font-size");
+    offer("line-height");
     for (const std::string_view property : length_properties) { offer(property); }
     if (styles_ != nullptr) {
         const auto found = styles_->find(style::engine::key_of(id));
