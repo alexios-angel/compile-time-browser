@@ -13,6 +13,7 @@
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
+#include "dom_probe.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -24,6 +25,9 @@ using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
 using ctbrowser::shell::input_event;
+// Shared with widgets_basics and bootstrap_layout - tests/support/dom_probe.hpp.
+using ctbrowser_test::box_of;
+using ctbrowser_test::find_id;
 
 namespace {
 
@@ -32,32 +36,6 @@ void check(bool ok, std::string_view what) {
         std::printf("FAIL %s\n", std::string{what}.c_str());
         ++ctbrowser_test_failures;
     }
-}
-
-[[nodiscard]] node_id find_id(browser & page, std::string_view want) {
-    const auto txn = page.doc().read();
-    const atom key = page.atoms().intern("id");
-    node_id found{};
-    const auto walk = [&](auto && self, node_id at) -> void {
-        if (!found && txn.attribute_value(at, key) == want) { found = at; }
-        for (const node_id c : txn.children(at)) { self(self, c); }
-    };
-    walk(walk, txn.root());
-    return found;
-}
-
-// Absolute box of the first fragment for `id`.
-[[nodiscard]] rect box_of(browser & page, std::string_view id) {
-    const node_id want = find_id(page, id);
-    const auto walk = [&](auto && self, const layout::fragment & f, float dx, float dy) -> rect {
-        const rect box{f.bounds.x + dx, f.bounds.y + dy, f.bounds.width, f.bounds.height};
-        if (f.source == want && !box.empty()) { return box; }
-        for (const auto & child : f.children) {
-            if (const rect hit = self(self, child, box.x, box.y); !hit.empty()) { return hit; }
-        }
-        return rect{};
-    };
-    return walk(walk, page.fragments(), 0, 0);
 }
 
 [[nodiscard]] std::vector<paint::paint_command> commands(browser & page) {

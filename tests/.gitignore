@@ -16,3 +16,9 @@
 # golden would still be silently unaddable, which is the exact failure the old
 # anchoring existed to prevent.
 !/golden/**
+
+# baseline/ is test DATA too - the Bootstrap parity tables
+# (tests/unit/bootstrap_layout.cpp, docs/plans/bootstrap.md). Nothing above
+# ignores a .txt today, so there is nothing to re-include; this note is here
+# because adding `*.txt` to the list would make every new baseline silently
+# unaddable, which is the same trap the golden/ comment is about.

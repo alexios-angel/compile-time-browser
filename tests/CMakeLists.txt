@@ -139,6 +139,10 @@ ctbrowser_test(unit/shell_basics)
 ctbrowser_test(unit/bindings_basics)
 ctbrowser_test(unit/widgets_basics)
 ctbrowser_test(unit/chrome_basics)
+# The Bootstrap fixtures against tests/baseline/. The Chrome half of that harness
+# is tools/check/css-parity.py and is deliberately not a ctest; this is the half
+# that catches a regression without a browser download. See docs/plans/bootstrap.md.
+ctbrowser_test(unit/bootstrap_layout)
 # unit/gpu_basics is registered below, inside if(SDL3_FOUND) - it needs SDL3 to
 # BUILD, though not to pass.
 
