@@ -30,6 +30,23 @@ with it.
   rather than assumes. What it validates today is the TILE shaders
   (`gen-shaders.py`'s output); the WebGL front end it was written for went to
   ANGLE on 2026-08-04 and emits no SPIR-V of its own.
+- `tools/check/css-parity.py` — **how far a Bootstrap page is from Chrome, per
+  element and per property.** Drives both engines through `compare.py`'s daemon,
+  runs `css-dump.js` in each, normalises both sides identically and ranks the
+  differences so the biggest CAUSE surfaces first rather than its consequences.
+  Two ratcheted numbers per fixture in `css-parity.txt`: `differ` falls as layout
+  gets right, `substituted` falls as properties get modelled — the second is what
+  stops "no difference" being mistaken for "implemented". `--advance` is the only
+  writer. NOT a ctest, deliberately; see `docs/plans/bootstrap.md`.
+- `tools/check/css-dump.js` — the dump both engines run, prepended with `PROPS`
+  by the above. Walks `documentElement.children` and never a complex selector,
+  because ctbrowser's selector engine is the thing under test.
+- `tools/check/ctdrive-reply.py` — does `ctdrive` return a large `eval` reply
+  intact? Two cases, and the second is the only one that can fail: a client that
+  reads continuously keeps the kernel buffer draining, so an unlooped `send()`
+  gets 262 KB out in one call and looks correct, while a client that sleeps
+  before reading lost 4 MB down to 2,588,672 bytes and no newline. Keep both —
+  `stall` alone is a test with no explanation, `drain` alone cannot fail.
 - `tools/check/check-png.py` — decodes a PNG this engine wrote using Python's own
   zlib. `encode_png` uses STORED deflate blocks and no compression library, so
   "the chunk names look right" is not evidence; the CRCs and the Adler-32 are

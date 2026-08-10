@@ -334,8 +334,11 @@ runner reproducing that is most of what the devbox already is.
 
 ```bash
 ./tools/format.sh --check          # formatting
-./tools/remote-build.sh            # GCC 13, ANGLE, 72/72 - no SDL, so no goldens
-# goldens need a box with SDL3; see docs/platform.md for the SwiftShader ICD
+./tools/remote-build.sh            # GCC 13, ANGLE, 83/83 - no SDL, so no goldens
+# goldens need a box with SDL3; see docs/platform.md for the SwiftShader ICD.
+# The EXAMPLES do build there - ctdrive and ctbrowse are how the Chrome parity
+# harness runs on the devbox (docs/plans/bootstrap.md); it is the window that is
+# missing, not the binaries.
 ```
 
 The devbox is the second set of assumptions CI used to be - a different compiler

@@ -22,6 +22,7 @@ something lives.**
 
 | | |
 |---|---|
+| [`plans/bootstrap.md`](plans/bootstrap.md) | **Bootstrap 5.3.8 at Chrome parity, and the CSS front end rewritten to get there.** The harness measures (S0 done); 7,820 of 30,288 compared values differ today. **Start here for anything CSS** |
 | [`plans/webgl-rewrite.md`](plans/webgl-rewrite.md) | **the WebGL stack rebuilt on ANGLE.** Ratchet 9/10, one rung left. **Start here for anything WebGL** |
 | [`plans/angle.md`](plans/angle.md) | **ANGLE as the WebGL back end** — stop implementing GLES and call the one Chrome ships. Stage 0 is DONE on both platforms: 192 M frag/s on Linux, 332 M on Windows, against the interpreter's 1.03 M, and both render the identical pixel |
 | [`plans/babylon.md`](plans/babylon.md) | **Babylon.js, from "renders a box" to functional** — the twelve-rung ladder, measured one feature at a time. Reads 10/12 |

@@ -156,7 +156,11 @@ The devbox is still the faster machine for a full matrix. `rsync` from `/mnt/c`
 into it is flaky (symlink + DrvFs). The devbox
 (github.com/alexios-angel/infra, sibling checkout `../infra`) replaced the old
 per-project build server: 8 vCPU / 32 GB, Ubuntu 24.04, apt toolchain (GLM,
-cmake 3.28, LLVM 18 suite), **no SDL3** (so examples skip there). It
+cmake 3.28, LLVM 18 suite), **no SDL3** - which does NOT stop the examples building: `CTBROWSER_BUILD_EXAMPLES` is
+gated on being the top-level project, not on SDL3, and `src/app/` compiles a
+`headless_host` when SDL3 is absent. So `ctbrowse` and `ctdrive` run there, and
+with them the whole Chrome parity harness. What is missing is a WINDOW, so the
+image goldens still need a box with SDL3. It
 **deallocates itself after 30 idle min** — `../infra/azure-build-server/
 server.sh start` wakes it (lifecycle: `server.sh
 {start|stop|status|ip|ssh|ssh-config|allow-ip}`; ssh timeout after a network

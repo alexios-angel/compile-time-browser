@@ -31,7 +31,7 @@ include(CTest)
 
 cmake_dependent_option(CTBROWSER_BUILD_TESTS "Build ctbrowser tests" ON
   "BUILD_TESTING;CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR" OFF)
-cmake_dependent_option(CTBROWSER_BUILD_EXAMPLES "Build ctbrowser examples (need SDL3)" ON
+cmake_dependent_option(CTBROWSER_BUILD_EXAMPLES "Build ctbrowser examples" ON
   "CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR" OFF)
 
 # A Windows exe is a CONSOLE application unless told otherwise, so double
