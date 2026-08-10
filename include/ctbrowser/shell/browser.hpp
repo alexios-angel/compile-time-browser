@@ -227,6 +227,14 @@ public:
     [[nodiscard]] bool angle_webgl_preferred() const noexcept { return prefer_angle_webgl_; }
     [[nodiscard]] const std::string & script_error() const noexcept { return script_error_; }
 
+    // A <link rel=stylesheet> that did not resolve. Separate from
+    // script_error() because it is a different failure with a different cause,
+    // and NOT silent the way a real browser's is: a fixture whose href has a
+    // typo lays out as if the stylesheet were empty, which reads as thousands
+    // of engine differences rather than as one broken path. The parity harness
+    // asks this first and reports a rig failure instead of a diff.
+    [[nodiscard]] const std::string & style_error() const noexcept { return style_error_; }
+
     // Run a snippet in the page's own script context - the same globals, the
     // same document. This is what a devtools console types into, and what a
     // test uses to ask a page a question. Returns whether it ran.
@@ -424,10 +432,15 @@ private:
     // dirty level from silently forgetting to.
     void mark(dirty d) { dirty_ = worse(dirty_, d); }
 
-    // <style> elements in the document. A real browser also fetches <link
-    // rel=stylesheet>; there is no network here yet, and pretending otherwise
-    // would mean silently rendering pages wrong.
-    void load_inline_styles();
+    // The author's sheets: <style> elements AND <link rel=stylesheet>, in
+    // DOCUMENT ORDER, because the cascade's last tie-break is source order and
+    // a <style> after a <link> has to be able to override it.
+    //
+    // <link> resolves through the same asset_registry as <script src> and
+    // <img src> - registry, then data:, then the filesystem - so there is still
+    // no socket here. That is enough for a page that ships its own stylesheet
+    // beside it, which is what every fixture and every real local page is.
+    void load_author_styles();
 
     [[nodiscard]] std::string extract_title();
 
@@ -1526,6 +1539,7 @@ private:
     std::unique_ptr<dom_bindings> bindings_;
     bool prefer_angle_webgl_ = false;
     std::string script_error_;
+    std::string style_error_;
     std::string title_;
     float scroll_y_ = 0;
     float content_height_ = 0;

@@ -2,6 +2,8 @@
 
 #include <chrono>
 
+#include <ctbrowser/core/algorithms.hpp>
+
 // The browser's method bodies.
 //
 // browser.hpp was 2,356 lines because the class was defined with every body
@@ -26,7 +28,8 @@ void browser::load_html(std::string_view html) {
     title_ = extract_title();
     scroll_y_ = 0;
     author_sheet_loaded_ = false;
-    load_inline_styles();
+    style_error_.clear();
+    load_author_styles();
     // Images are resolved BEFORE layout, because an <img> with no width
     // attribute takes its size from the decoded bitmap and layout has no
     // way to ask. The page's @font-face files, for the same reason: layout
@@ -616,20 +619,75 @@ rect browser::viewport() const noexcept {
     return rect{0, 0, static_cast<float>(options_.width), static_cast<float>(options_.height)};
 }
 
-void browser::load_inline_styles() {
+namespace {
+
+// Does this `rel` make the link a stylesheet? The attribute is a
+// space-separated token list matched ASCII case-insensitively, so `stylesheet`,
+// `StyleSheet` and `stylesheet preload` are all one.
+//
+// `alternate stylesheet` is NOT one: it is a user-selectable alternative and a
+// browser leaves it disabled until something picks it. Applying it would make a
+// page that offers a light and a dark sheet render both.
+[[nodiscard]] bool rel_is_stylesheet(std::string_view rel) {
+    bool stylesheet = false;
+    std::size_t at = 0;
+    while (at < rel.size()) {
+        const std::size_t start = rel.find_first_not_of(ctbrowser::html_whitespace, at);
+        if (start == std::string_view::npos) { break; }
+        std::size_t end = rel.find_first_of(ctbrowser::html_whitespace, start);
+        if (end == std::string_view::npos) { end = rel.size(); }
+        const std::string_view token = rel.substr(start, end - start);
+        if (ctbrowser::ascii_iequals(token, "alternate")) { return false; }
+        if (ctbrowser::ascii_iequals(token, "stylesheet")) { stylesheet = true; }
+        at = end;
+    }
+    return stylesheet;
+}
+
+} // namespace
+
+void browser::load_author_styles() {
     if (author_sheet_loaded_) { return; }
     const auto txn = doc_->read();
     const atom style_tag = atoms_.intern_lower("style");
+    const atom link_tag = atoms_.intern_lower("link");
+    const atom rel_attribute = atoms_.intern_lower("rel");
+    const atom href_attribute = atoms_.intern_lower("href");
+    // ONE sheet, concatenated in document order, rather than one add_sheet per
+    // <style> and <link>. Both preserve source order; this one also cannot get
+    // it wrong, because ctcss numbers a declaration's `order` from zero on every
+    // parse_value call - so two author-origin add_sheet calls would tie on
+    // source order and resolve by whichever the sort happened to see first.
     std::string css;
     const auto walk = [&](auto && self, node_id at) -> void {
-        // HTML <style> ONLY. An SVG carries its own <style>, scoped to the
+        // HTML ONLY, for both. An SVG carries its own <style>, scoped to the
         // graphic, and it interns to the same atom - so without the namespace
         // check an `<svg><style>p { color: red }</style>` restyles every
         // paragraph on the page.
-        if (txn.tag(at).value_or(atom{}) == style_tag &&
-            txn.element_ns(at) == ctbrowser::node_ns::html) {
-            for (const node_id child : txn.children(at)) { css += txn.text(child); }
-            css += '\n';
+        if (txn.element_ns(at) == ctbrowser::node_ns::html) {
+            const atom tag = txn.tag(at).value_or(atom{});
+            if (tag == style_tag) {
+                for (const node_id child : txn.children(at)) { css += txn.text(child); }
+                css += '\n';
+            } else if (tag == link_tag &&
+                       rel_is_stylesheet(txn.attribute_value(at, rel_attribute))) {
+                // Resolved by the asset registry exactly as <script src> is
+                // (see load_page_scripts): registry, then data:, then the
+                // filesystem from three roots. A miss is RECORDED, not passed
+                // over - a stylesheet that silently does not load is a page
+                // that lays out as though it had no author styles at all, and
+                // that reads as an engine fault rather than a bad path.
+                const std::string href{txn.attribute_value(at, href_attribute)};
+                const std::vector<std::byte> bytes = assets_.load(href);
+                if (bytes.empty()) {
+                    if (style_error_.empty()) {
+                        style_error_ = "<link rel=stylesheet href=\"" + href + "\"> not found";
+                    }
+                } else {
+                    css.append(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+                    css += '\n';
+                }
+            }
         }
         for (const node_id child : txn.children(at)) { self(self, child); }
     };
@@ -1201,6 +1259,12 @@ void browser::run_layout() {
     // THIS layout rather than the one before it.
     if (bindings_) {
         bindings_->observe_layout(&fragments_);
+        // getComputedStyle needs the box tree and the cascade as well as the
+        // fragments: a resolved length comes from the box, a keyword from the
+        // style map. All three are re-pointed together so a page can never read
+        // this layout's geometry beside the previous layout's styles.
+        bindings_->observe_boxes(&boxes_);
+        bindings_->observe_styles(&resolved_);
         bindings_->observe_viewport(options_.width, options_.height);
     }
 }

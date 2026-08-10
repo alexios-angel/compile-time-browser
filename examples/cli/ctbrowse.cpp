@@ -55,6 +55,13 @@ int main(int argc, char ** argv) {
         if (!page.script_error().empty()) {
             std::printf("script error: %s\n", page.script_error().c_str());
         }
+        // A <link rel=stylesheet> that did not resolve, for the same reason and
+        // once only - it is decided during the load and cannot change later.
+        // Silence here is worse than for a script: an unstyled page still draws
+        // its text, so it looks like a rendering bug rather than a missing file.
+        if (!page.style_error().empty()) {
+            std::printf("style error: %s\n", page.style_error().c_str());
+        }
     };
     // AND EVERY FRAME, once each. A page's scripts can fail long after it
     // loads - a timer or an animation frame that throws is a script error too,
