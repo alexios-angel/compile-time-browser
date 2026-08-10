@@ -57,6 +57,11 @@ struct resolved_edges {
                                    const resolved_edges & e);
 [[nodiscard]] float content_width_of(const box_node & b, const constraints & c,
                                      const resolved_edges & e);
+// The left offset an `auto` margin contributes. Beside the other two rather than
+// inside block_flow because flex will want the same arithmetic, and two copies of
+// it would be two things to keep in agreement forever.
+[[nodiscard]] float auto_margin_left(const box_node & b, const constraints & c,
+                                     const resolved_edges & e, float outer_width);
 
 // Fragments already laid out for ONE box's children.
 //
@@ -392,7 +397,11 @@ struct block_flow {
                 const resolved_edges child_edges = resolve_edges(child, child_c);
                 fragment f = use_ready ? std::move(ready->children[i])
                                        : layout_box(child, child_c, measure_text, ready);
-                f.bounds.x = edges.pad_left + child_edges.margin_left;
+                // auto_margin_left, not child_edges.margin_left: `margin: 0 auto`
+                // centres a box with a definite width, and that is the whole of how
+                // a page is centred.
+                f.bounds.x =
+                    edges.pad_left + auto_margin_left(child, child_c, child_edges, f.bounds.width);
                 f.bounds.y = cursor + child_edges.margin_top;
                 cursor = f.bounds.y + f.bounds.height + child_edges.margin_bottom;
                 out.children.push_back(std::move(f));

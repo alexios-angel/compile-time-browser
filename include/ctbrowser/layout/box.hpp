@@ -65,6 +65,21 @@ struct box_node {
     // for every layout pass. The style is interned and shared, so this is also
     // shared work in practice.
     length width{}, height{};
+    // `min-width` / `max-width`. Ignored entirely before, which is why
+    // `.container` filled its parent instead of stopping at the breakpoint's
+    // max-width - and every child of it was then measured against the wrong
+    // basis, so one missing property moved 27 elements on one fixture.
+    length min_width{}, max_width{};
+    // Was the horizontal margin written as the WORD `auto`?
+    //
+    // It cannot be read off `margin.left.is_auto()`, and that is a trap rather than
+    // an inconvenience: `length{}` defaults to `unit::auto_`, so an UNSET margin and
+    // an explicit `auto` are the same value. resolve() answers 0 for both, which is
+    // right for an unset one and is why nothing noticed - until auto-margin centring
+    // arrived and started centring every box with a definite width and no margins
+    // at all. CSS says an unspecified margin is 0; only the keyword means auto.
+    bool margin_left_auto = false;
+    bool margin_right_auto = false;
     side_lengths margin{}, padding{};
     float font_size = 16;
     // THE LINE BOX'S HEIGHT, absolute, resolved once here for the same reason
@@ -164,7 +179,8 @@ public:
           font_family_(atoms.intern("font-family")), font_weight_(atoms.intern("font-weight")),
           font_style_(atoms.intern("font-style")),
           text_decoration_(atoms.intern("text-decoration")),
-          white_space_(atoms.intern("white-space")), line_height_(atoms.intern("line-height")) {}
+          white_space_(atoms.intern("white-space")), line_height_(atoms.intern("line-height")),
+          min_width_(atoms.intern("min-width")), max_width_(atoms.intern("max-width")) {}
 
     // `line-height`, to an absolute px.
     //
@@ -326,6 +342,10 @@ private:
             // `ul { padding-left: 40px }` and `summary { padding-left: 18px }`.
             b.margin = sides_of(style, margin_sides_);
             b.padding = sides_of(style, padding_sides_);
+            b.min_width = parse_length(prop(style, min_width_));
+            b.max_width = parse_length(prop(style, max_width_));
+            b.margin_left_auto = trimmed(prop(style, margin_sides_.left)) == "auto";
+            b.margin_right_auto = trimmed(prop(style, margin_sides_.right)) == "auto";
             const length fs = parse_length(prop(style, font_size_));
             b.font_size =
                 fs.is_auto() ? inherited_font : fs.resolve(inherited_font, inherited_font);
@@ -568,6 +588,7 @@ private:
     side_atoms margin_sides_, padding_sides_;
     atom font_family_, font_weight_, font_style_, text_decoration_, white_space_;
     atom line_height_;
+    atom min_width_, max_width_;
 };
 
 } // namespace ctbrowser::layout

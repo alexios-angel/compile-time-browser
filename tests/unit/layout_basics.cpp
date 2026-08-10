@@ -425,7 +425,152 @@ void test_parallel_survives_a_document_that_is_all_one_subtree() {
 
 } // namespace
 
+// --- min/max-width, and auto-margin centring ------------------------------
+
+// `max-width` and `min-width` were ignored ENTIRELY, and `margin: 0 auto` resolved
+// both margins to 0 - so a page could not be centred at all and `.container` filled
+// its parent instead of stopping at a breakpoint's width.
+void test_min_and_max_width_clamp() {
+    {
+        fixture f;
+        f.load("<html><body><div id=a></div></body></html>",
+               "div { height: 10px; max-width: 300px } body { padding: 0; margin: 0 }");
+        engine eng;
+        const fragment out = eng.run(f.root, 800);
+        const fragment * a = out.find(f.find_id("a"));
+        check(a != nullptr, "the block produced a fragment");
+        if (a != nullptr) { expect_near(a->bounds.width, 300, "max-width clamps a fill"); }
+    }
+    {
+        fixture f;
+        f.load(
+            "<html><body><div id=a></div></body></html>",
+            "div { height: 10px; width: 50px; min-width: 200px } body { padding: 0; margin: 0 }");
+        engine eng;
+        const fragment out = eng.run(f.root, 800);
+        const fragment * a = out.find(f.find_id("a"));
+        if (a != nullptr) { expect_near(a->bounds.width, 200, "min-width raises a stated width"); }
+    }
+    {
+        // MIN WINS over max, which is what CSS 2.1 says and what applying max first
+        // and min second produces without a special case.
+        fixture f;
+        f.load("<html><body><div id=a></div></body></html>",
+               "div { height: 10px; min-width: 400px; max-width: 100px } "
+               "body { padding: 0; margin: 0 }");
+        engine eng;
+        const fragment out = eng.run(f.root, 800);
+        const fragment * a = out.find(f.find_id("a"));
+        if (a != nullptr) { expect_near(a->bounds.width, 400, "min beats max"); }
+    }
+}
+
+void test_auto_margins_centre() {
+    {
+        fixture f;
+        f.load("<html><body><div id=a></div></body></html>",
+               "div { height: 10px; width: 200px; margin-left: auto; margin-right: auto } "
+               "body { padding: 0; margin: 0 }");
+        engine eng;
+        const fragment out = eng.run(f.root, 800);
+        const fragment * a = out.find(f.find_id("a"));
+        check(a != nullptr, "the block produced a fragment");
+        if (a != nullptr) { expect_near(a->bounds.x, 300, "both autos centre it"); }
+    }
+    {
+        // ONE auto takes the whole remainder, which is how a box is pushed right.
+        fixture f;
+        f.load("<html><body><div id=a></div></body></html>",
+               "div { height: 10px; width: 200px; margin-left: auto } "
+               "body { padding: 0; margin: 0 }");
+        engine eng;
+        const fragment out = eng.run(f.root, 800);
+        const fragment * a = out.find(f.find_id("a"));
+        if (a != nullptr) { expect_near(a->bounds.x, 600, "one auto pushes it right"); }
+    }
+    {
+        // AN UNSET MARGIN IS NOT auto, and this is the case that matters most: a
+        // `length{}` defaults to unit::auto_, so an unset margin and an explicit
+        // `auto` are the same VALUE. Reading the length rather than a flag centred
+        // every definite-width box that declared no margins at all - which the
+        // event tests caught by clicking where an element used to be.
+        fixture f;
+        f.load("<html><body><div id=a></div></body></html>",
+               "div { height: 10px; width: 200px } body { padding: 0; margin: 0 }");
+        engine eng;
+        const fragment out = eng.run(f.root, 800);
+        const fragment * a = out.find(f.find_id("a"));
+        if (a != nullptr) { expect_near(a->bounds.x, 0, "no margins means no centring"); }
+    }
+    {
+        // An AUTO WIDTH absorbs the remainder itself, so the margins stay at zero.
+        fixture f;
+        f.load("<html><body><div id=a></div></body></html>",
+               "div { height: 10px; margin-left: auto; margin-right: auto } "
+               "body { padding: 0; margin: 0 }");
+        engine eng;
+        const fragment out = eng.run(f.root, 800);
+        const fragment * a = out.find(f.find_id("a"));
+        if (a != nullptr) {
+            expect_near(a->bounds.x, 0, "an auto width is not centred");
+            expect_near(a->bounds.width, 800, "it fills instead");
+        }
+    }
+}
+
+// line-height, which was a hardcoded 1.25 for every box on every page.
+void test_line_height() {
+    {
+        fixture f;
+        f.load("<html><body><p id=a>hi</p></body></html>",
+               "p { font-size: 20px; line-height: 2; margin: 0 } body { padding: 0; margin: 0 }");
+        engine eng;
+        const fragment out = eng.run(f.root, 800);
+        const fragment * a = out.find(f.find_id("a"));
+        check(a != nullptr, "the paragraph produced a fragment");
+        if (a != nullptr) {
+            expect_near(a->bounds.height, 40, "a unitless factor times font-size");
+        }
+    }
+    {
+        // A LENGTH is itself, not a factor - the case a naive implementation gets
+        // backwards because parse_length calls a unitless value px.
+        fixture f;
+        f.load(
+            "<html><body><p id=a>hi</p></body></html>",
+            "p { font-size: 20px; line-height: 30px; margin: 0 } body { padding: 0; margin: 0 }");
+        engine eng;
+        const fragment out = eng.run(f.root, 800);
+        const fragment * a = out.find(f.find_id("a"));
+        if (a != nullptr) { expect_near(a->bounds.height, 30, "a length is absolute"); }
+    }
+    {
+        fixture f;
+        f.load(
+            "<html><body><p id=a>hi</p></body></html>",
+            "p { font-size: 20px; line-height: 150%; margin: 0 } body { padding: 0; margin: 0 }");
+        engine eng;
+        const fragment out = eng.run(f.root, 800);
+        const fragment * a = out.find(f.find_id("a"));
+        if (a != nullptr) { expect_near(a->bounds.height, 30, "a percentage is a factor"); }
+    }
+    {
+        // `normal` keeps the 1.25 fallback, which is what stops every existing
+        // render moving for a reason no stylesheet asked for.
+        fixture f;
+        f.load("<html><body><p id=a>hi</p></body></html>",
+               "p { font-size: 20px; margin: 0 } body { padding: 0; margin: 0 }");
+        engine eng;
+        const fragment out = eng.run(f.root, 800);
+        const fragment * a = out.find(f.find_id("a"));
+        if (a != nullptr) { expect_near(a->bounds.height, 25, "normal is the fallback factor"); }
+    }
+}
+
 int main() {
+    test_min_and_max_width_clamp();
+    test_auto_margins_centre();
+    test_line_height();
     test_display_none_produces_no_box();
     test_whitespace_between_blocks_produces_no_box();
     test_mixed_content_generates_anonymous_boxes();

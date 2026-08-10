@@ -15,8 +15,41 @@ resolved_edges resolve_edges(const box_node & b, const constraints & c) {
 }
 
 float outer_width_of(const box_node & b, const constraints & c, const resolved_edges & e) {
-    return b.width.is_auto() ? c.available_width - e.horizontal_margin()
-                             : b.width.resolve(c.available_width, b.font_size);
+    const float unclamped = b.width.is_auto() ? c.available_width - e.horizontal_margin()
+                                              : b.width.resolve(c.available_width, b.font_size);
+    // MAX FIRST, THEN MIN, because min wins: a box whose min-width exceeds its
+    // max-width takes the min, which is what CSS 2.1 §10.4 says and the order
+    // that produces it without a special case.
+    float out = unclamped;
+    if (!b.max_width.is_auto()) {
+        out = std::min(out, b.max_width.resolve(c.available_width, b.font_size));
+    }
+    if (!b.min_width.is_auto()) {
+        out = std::max(out, b.min_width.resolve(c.available_width, b.font_size));
+    }
+    return std::max(0.0f, out);
+}
+
+float auto_margin_left(const box_node & b, const constraints & c, const resolved_edges & e,
+                       float outer_width) {
+    // `margin: 0 auto` on a box with a definite width CENTRES it, and that is the
+    // whole of how a page is centred. Both autos resolved to 0 before
+    // (length::resolve has no answer for auto), so `.container` sat hard against
+    // the left edge.
+    //
+    // An AUTO WIDTH leaves both margins at zero, per CSS: the width absorbs the
+    // remainder instead. That is why adding this moves nothing that was not
+    // already asking to be centred.
+    if (b.width.is_auto()) { return e.margin_left; }
+    // The FLAGS, not is_auto(): an unset margin is also `unit::auto_`, so asking the
+    // length would centre every definite-width box that declared no margins.
+    const bool left_auto = b.margin_left_auto;
+    const bool right_auto = b.margin_right_auto;
+    if (!left_auto && !right_auto) { return e.margin_left; }
+    const float remainder = c.available_width - outer_width;
+    if (remainder <= 0) { return left_auto ? 0.0f : e.margin_left; }
+    if (left_auto && right_auto) { return remainder / 2.0f; }
+    return left_auto ? remainder : e.margin_left;
 }
 
 float content_width_of(const box_node & b, const constraints & c, const resolved_edges & e) {

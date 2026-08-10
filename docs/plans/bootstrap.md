@@ -390,6 +390,37 @@ with no SDL and no display, because `check-render.cmake` pins `CTBROWSER_FONTS=f
 and the software rasteriser is deterministic. So a golden-moving rung can be verified
 in the ordinary loop after all, rather than needing a machine with SDL.
 
+### @media is now the bottleneck, and that reorders the plan
+
+The biggest single cluster left is a `+44px` `@x` shift on 27 of 40 elements of the
+smallest fixture: `.container`'s auto-margin centring (32px) plus its padding (12px).
+`min/max-width` and auto margins are implemented and tested now - and they buy **six**
+differences, because:
+
+    .container  max-width=1320px      ctbrowser
+    .container  max-width=960px       Chrome at a 1024 viewport
+
+Every `@media` block flattens in, so the `xxl` breakpoint's 1320px wins by source
+order, and 1320 does not clamp 1009. Auto margins then have no remainder to centre
+with, because `.container` is `width: 100%` and only a clamped max-width creates one.
+So the whole cluster - the shift, the widths, and everything measured against the
+wrong basis - is one missing feature: **real media-query evaluation**. It should move
+ahead of the rest of the box model.
+
+`line-height` was the other half of the text work and it did pay: 5,355 → 4,451
+across two changes, because it needed BOTH the layout fix and a reporting fix -
+`getComputedStyle` answered the cascade's factor `1.5` where Chrome reports the
+resolved `24px`, which differed on every text-bearing element for a reason that had
+nothing to do with layout.
+
+**Two bugs in this rung were caught by tests that did not exist an hour earlier**, and
+both would have shipped silently. An unset margin is `unit::auto_` exactly like an
+explicit `auto`, so reading the length rather than a flag centred every definite-width
+box that declared no margins - the event tests found it by clicking where an element
+used to be. And `min_width_`/`max_width_` never reached the constructor's initialiser
+list, so they were null atoms reading empty strings and the clamping was dead code that
+compiled, linked and passed everything except its own test.
+
 ### Two findings that were NOT predicted
 
 1. **`clientWidth` disagrees with the width layout actually used.**
@@ -483,7 +514,9 @@ document** — inlining for ctbrowser only would destroy the comparison. Viewpor
 | **S4** | **`var()` + `calc()` + units.** Custom-property cascade, substitution, IACVT, cycles, the two-pass order; `em`/`rem`/`vh`/`vw`/`pt` folding against a real root font-size; shorthand expansion moved to cascade time | All 1,370 `var()` resolve; the hardcoded 16 is gone; `test_shorthands_expand` passes verbatim |
 | **S5** | **`@media` with a real environment** + resize re-evaluation; `@supports`, `@layer`, `@charset`, `@import` | The page at 375px and at 1400px differs the way Chrome's does; `dirty::styles` marked on resize **only** when a query flipped |
 | **S6** | **The rest of the shorthand table**; **`::before`/`::after` + `content`**; **retire ctcss** | Shorthand coverage count; form-check marks and dropdown carets appear; `check-package.sh` green |
-| **S7** | **Box model.** `box-sizing`, borders in `resolved_edges`, `min/max-width`, `min/max-height`, auto-margin centring — and the `clientWidth`/layout-width inconsistency above | `bootstrap-box.html` → near zero; the amended `layout_basics` **pair**; **zero golden movement expected — verify** |
+| **S7a** | `min/max-width` clamping and auto-margin centring | **DONE and TESTED, but LATENT** - it buys 6 differences, because `.container` gets `max-width: 1320px` from the flattened `@media` and 1320 does not clamp 1009. It cannot pay until S5 |
+| **S5** | **`@media` with a real environment** — now the BOTTLENECK, see below | `.container` takes the breakpoint's max-width, which then clamps, which then centres |
+| **S7b** | `box-sizing`, borders in `resolved_edges`, `min/max-height`, and the `clientWidth`/layout-width inconsistency | `bootstrap-box.html` → near zero; **zero golden movement expected — verify** |
 | **S8** | **Text metrics.** `line-height` (replacing the hardcoded `line_height_factor = 1.25f`), `text-align`, `vertical-align` | `bootstrap-type.html`; **moves every text golden** — taken early on purpose |
 | **S9** | **Flex**, including the `run_parallel` independence guard | `bootstrap-grid.html` → near zero; ~20 tests in a new `flex_basics.cpp`; parallel-equals-sequential extended with a flex case |
 | **S10** | **De-replace `<button>`** — out of `is_replaced_tag`, its intrinsic sizing moved into the UA sheet as real `padding`/`border` so the cascade can override it | `bootstrap-components.html`; **moves `widgets`, `elements`** |
