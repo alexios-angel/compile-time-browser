@@ -97,6 +97,31 @@ element_facts engine::facts_of(const read_txn & txn, node_id id) const {
     // not depend on how the tree is rooted.
     const node_id parent = txn.parent(id);
     f.is_root = !parent || txn.kind(parent).value_or(node_kind::element) != node_kind::element;
+    // The form-control facts. `disabled` is an attribute, so `:disabled` is a
+    // question about the document rather than about UI state.
+    const std::string_view tag_text = atoms_->text(f.tag);
+    f.can_be_disabled = tag_text == "button" || tag_text == "input" || tag_text == "select" ||
+                        tag_text == "textarea" || tag_text == "optgroup" || tag_text == "option" ||
+                        tag_text == "fieldset";
+    f.is_disabled = f.can_be_disabled && txn.has_attribute(id, atoms_->intern("disabled"));
+    f.is_checked =
+        txn.has_attribute(id, atoms_->intern("checked")) || (f.states & state_checked) != 0;
+    f.is_link = (tag_text == "a" || tag_text == "area" || tag_text == "link") &&
+                txn.has_attribute(id, atoms_->intern("href"));
+    // `:empty` - no element children and no text. WHITESPACE COUNTS as content per
+    // the spec, so `<p> </p>` is not empty; a comment does not.
+    f.is_empty = true;
+    for (const node_id child : txn.children(id)) {
+        const node_kind kind = txn.kind(child).value_or(node_kind::comment);
+        if (kind == node_kind::element) {
+            f.is_empty = false;
+            break;
+        }
+        if (kind == node_kind::text && !txn.text(child).empty()) {
+            f.is_empty = false;
+            break;
+        }
+    }
     return f;
 }
 
@@ -109,6 +134,11 @@ style_map engine::resolve_all(const read_txn & txn) {
     // before the new one and `html ~ x` would match across two documents. clear()
     // on the inner vectors keeps the capacity that makes the reuse worth having.
     for (std::vector<visited_element> & level : levels_) { level.clear(); }
+    // DEPTH 0 HAS NO ELEMENT PARENT to set it up. Every other level is entered by
+    // the element whose children occupy it; the document element's level is entered
+    // here, from the document node - which is what gives <html> a sibling count and
+    // makes `:only-child` true of it.
+    enter_level(txn, txn.root(), 0);
     resolve_subtree(txn, txn.root(), ancestors, out);
     return out;
 }
@@ -241,26 +271,103 @@ namespace {
     return false;
 }
 
+// The structural pseudo-classes. Every one is arithmetic on four numbers the
+// traversal already counted, which is the point of counting them there.
+//
+// `:root` is the document element - the one with no ELEMENT parent - which is
+// <html> for every page this engine loads.
+[[nodiscard]] bool structural_matches(const element_facts & f, std::uint32_t want) {
+    if ((want & structural_root) != 0 && !f.is_root) { return false; }
+    if ((want & structural_empty) != 0 && !f.is_empty) { return false; }
+    if ((want & structural_first_child) != 0 && f.sibling_index != 1) { return false; }
+    if ((want & structural_last_child) != 0 && f.sibling_index != f.sibling_count) { return false; }
+    if ((want & structural_only_child) != 0 && f.sibling_count != 1) { return false; }
+    if ((want & structural_first_of_type) != 0 && f.type_index != 1) { return false; }
+    if ((want & structural_last_of_type) != 0 && f.type_index != f.type_count) { return false; }
+    if ((want & structural_only_of_type) != 0 && f.type_count != 1) { return false; }
+    if ((want & structural_disabled) != 0 && !f.is_disabled) { return false; }
+    // `:enabled` is NOT the negation of `:disabled`: it applies only to elements that
+    // could be disabled, so it is false of a <div> rather than true.
+    if ((want & structural_enabled) != 0 && (!f.can_be_disabled || f.is_disabled)) { return false; }
+    if ((want & structural_checked) != 0 && !f.is_checked) { return false; }
+    if ((want & structural_link) != 0 && !f.is_link) { return false; }
+    if ((want & structural_visited) != 0) { return false; } // always, on purpose
+    return true;
+}
+
+// `An+B`: does `index` appear in the series for some non-negative n?
+//
+// The spec's series is An+B for n = 0, 1, 2, ..., and only POSITIVE results count -
+// an index is one-based. The two degenerate cases are the ones to get right: a == 0
+// is a single index rather than a series, and a negative step counts DOWN from B, so
+// `:nth-child(-n+3)` is the first three.
+[[nodiscard]] bool nth_matches(std::int32_t a, std::int32_t b, std::uint32_t index_u) {
+    const auto index = static_cast<std::int32_t>(index_u);
+    if (index <= 0) { return false; }
+    if (a == 0) { return index == b; }
+    const std::int32_t offset = index - b;
+    if (offset % a != 0) { return false; }
+    return offset / a >= 0;
+}
+
 } // namespace
 
-bool engine::compound_matches(const read_txn & txn, node_id node, const element_facts & f,
-                              const compound & c) const {
+bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ancestors,
+                              const compound & c, std::size_t depth, std::size_t index) const {
     if (c.never_matches) { return false; }
+    const visited_element & subject = levels_[depth][index];
+    const node_id node = subject.node;
+    const element_facts & f = subject.facts;
     if (c.tag && c.tag != f.tag) { return false; }
     if (c.id && c.id != f.id) { return false; }
     for (const atom want : c.classes) {
         if (std::ranges::find(f.classes, want) == f.classes.end()) { return false; }
     }
     if ((c.states & f.states) != c.states) { return false; }
-    // STRUCTURAL requirements. `:root` is the document element - the one with no
-    // element parent - which is `<html>` for every page this engine loads.
-    if ((c.structural & structural_root) != 0 && !f.is_root) { return false; }
-    // ATTRIBUTES LAST: everything above compares interned integers, and this reads
-    // the element's attribute list and then compares strings.
+    // STRUCTURAL requirements, all answered from facts the traversal gathered.
+    if (c.structural != 0 && !structural_matches(f, c.structural)) { return false; }
+    // ATTRIBUTES: everything above compares interned integers, and this reads the
+    // element's attribute list and then compares strings.
     for (const attribute_match & want : c.attributes) {
         if (!txn.has_attribute(node, want.name)) { return false; }
         if (want.op == attr_op::present) { continue; }
         if (!attribute_matches(txn.attribute_value(node, want.name), want)) { return false; }
+    }
+    // AND THE ARGUMENT-CARRYING PSEUDO-CLASSES LAST OF ALL, because a nested
+    // selector list runs the matcher again - possibly with combinators of its own.
+    for (const pseudo_ref & want : c.pseudos) {
+        switch (want.kind) {
+        case pseudo_kind::nth_child:
+            if (!nth_matches(want.a, want.b, f.sibling_index)) { return false; }
+            break;
+        case pseudo_kind::nth_last_child:
+            if (!nth_matches(want.a, want.b, f.sibling_count + 1 - f.sibling_index)) {
+                return false;
+            }
+            break;
+        case pseudo_kind::nth_of_type:
+            if (!nth_matches(want.a, want.b, f.type_index)) { return false; }
+            break;
+        case pseudo_kind::nth_last_of_type:
+            if (!nth_matches(want.a, want.b, f.type_count + 1 - f.type_index)) { return false; }
+            break;
+        case pseudo_kind::not_:
+        case pseudo_kind::is_:
+        case pseudo_kind::where_: {
+            // A nested selector's SUBJECT is this element, so each argument is run
+            // from the same cursor the outer selector is at. `:is()` and `:where()`
+            // pass if any argument matches; `:not()` passes only if none does.
+            bool any = false;
+            for (const compiled_selector & arg : want.args) {
+                if (matches_from(txn, ancestors, arg, depth, index)) {
+                    any = true;
+                    break;
+                }
+            }
+            if (want.kind == pseudo_kind::not_ ? any : !any) { return false; }
+            break;
+        }
+        }
     }
     return true;
 }

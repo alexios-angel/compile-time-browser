@@ -41,6 +41,33 @@ struct element_facts {
     // `:root`. A position fact rather than a name one, and the cheapest of them -
     // one parent lookup, no sibling walk - which is why it lands before the rest.
     bool is_root = false;
+    // `:empty` - no element children and no non-whitespace text. A property of the
+    // element's own children, so it is answered where they are already being walked.
+    bool is_empty = false;
+    // WHERE THIS ELEMENT SITS AMONG ITS SIBLINGS, one-based, as `:nth-child` counts.
+    // The totals are what `:last-child` and `:nth-last-child` need, and they cannot
+    // come from the traversal - it has only seen the earlier siblings - so they are
+    // counted ONCE when the level is entered rather than per element, which is the
+    // difference between O(n) and O(n^2) on a wide level.
+    std::uint32_t sibling_index = 0;
+    std::uint32_t sibling_count = 0;
+    // The same, counting only siblings with the SAME TAG, for the `-of-type` family.
+    std::uint32_t type_index = 0;
+    std::uint32_t type_count = 0;
+    // `:disabled` / `:enabled`, from the `disabled` ATTRIBUTE. Only elements that can
+    // carry it are `:enabled` at all - `:enabled` is false of a <div>, not true.
+    //
+    // NOT MODELLED: a disabled <fieldset> or <optgroup> disables its descendants, so
+    // a control inside one is `:disabled` without the attribute of its own. That
+    // needs an inherited flag, which the cascade rung is already building.
+    bool can_be_disabled = false;
+    bool is_disabled = false;
+    // `:checked`, from the `checked` attribute OR the live control state. The
+    // attribute is the initial render; the state bit is what a click would set, and
+    // nothing sets it yet - so this is right on load and stale after an interaction.
+    bool is_checked = false;
+    // `:link` / `:any-link` - an <a>, <area> or <link> with an href.
+    bool is_link = false;
 };
 
 // One element the traversal has already reached, kept so that matching can ask
@@ -166,15 +193,11 @@ public:
                                              const ancestor_filter & ancestors, std::size_t depth) {
         // Gather only the rules whose RIGHTMOST compound could possibly match.
         matches_.clear();
-        collect(index_.by_id, self.id, txn, node, self, ancestors, depth);
-        for (const atom c : self.classes) {
-            collect(index_.by_class, c, txn, node, self, ancestors, depth);
-        }
-        collect(index_.by_tag, self.tag, txn, node, self, ancestors, depth);
+        collect(index_.by_id, self.id, txn, ancestors, depth);
+        for (const atom c : self.classes) { collect(index_.by_class, c, txn, ancestors, depth); }
+        collect(index_.by_tag, self.tag, txn, ancestors, depth);
         for (const rule & r : index_.universal) {
-            if (matches(txn, node, self, ancestors, selectors_[r.selector], depth)) {
-                matches_.push_back(r);
-            }
+            if (matches(txn, ancestors, selectors_[r.selector], depth)) { matches_.push_back(r); }
         }
 
         // The cascade: origin, then importance, then specificity, then source
@@ -254,10 +277,16 @@ public:
         }
         if (levels_.size() <= depth) { levels_.resize(depth + 1); }
         if (path_.size() <= depth) { path_.resize(depth + 1); }
+        if (totals_.size() <= depth) { totals_.resize(depth + 1); }
         // APPENDED BEFORE RESOLVING, so the chain and the sibling list agree about
         // where this element is. Only earlier indices are ever read - a sibling
         // combinator looks backwards only - so being in the list already is safe.
-        levels_[depth].push_back(visited_element{node, facts_of(txn, node)});
+        element_facts my_facts = facts_of(txn, node);
+        my_facts.sibling_index = static_cast<std::uint32_t>(levels_[depth].size()) + 1;
+        my_facts.sibling_count = totals_[depth].elements;
+        my_facts.type_index = totals_[depth].next_for(my_facts.tag);
+        my_facts.type_count = totals_[depth].total_for(my_facts.tag);
+        levels_[depth].push_back(visited_element{node, std::move(my_facts)});
         path_[depth] = levels_[depth].size() - 1;
         const element_facts & self = levels_[depth].back().facts;
 
@@ -274,7 +303,7 @@ public:
         // loop: the children accumulate into it as they are visited, which is
         // exactly what `~` needs, and clear() keeps the capacity so a wide document
         // stops allocating after the widest level it has seen.
-        if (levels_.size() > depth + 1) { levels_[depth + 1].clear(); }
+        enter_level(txn, node, depth + 1);
         for (const node_id child : txn.children(node)) {
             resolve_subtree(txn, child, ancestors, out, depth + 1);
         }
@@ -282,6 +311,41 @@ public:
     }
 
     [[nodiscard]] style_map resolve_all(const read_txn & txn);
+
+    // Start a level: clear the siblings seen at that depth and count what the
+    // traversal cannot know from them alone - the level's element total and its
+    // per-tag totals, which `:last-child` and the `-of-type` family need.
+    //
+    // ONE PASS over the children, here, rather than a walk per element: doing it per
+    // element would make a level of n siblings cost O(n^2), and a `<body>` with a
+    // few thousand children is an ordinary page.
+    //
+    // Called ONLY from the element branch, for its children. Calling it from the
+    // non-element branch would clear the level a text node happens to sit in and
+    // lose every sibling before it.
+    void enter_level(const read_txn & txn, node_id parent, std::size_t depth) {
+        if (levels_.size() <= depth) { levels_.resize(depth + 1); }
+        if (totals_.size() <= depth) { totals_.resize(depth + 1); }
+        levels_[depth].clear();
+        level_totals & t = totals_[depth];
+        t.elements = 0;
+        t.per_tag.clear();
+        t.seen_per_tag.clear();
+        for (const node_id child : txn.children(parent)) {
+            if (txn.kind(child).value_or(node_kind::text) != node_kind::element) { continue; }
+            ++t.elements;
+            const atom tag = txn.tag(child).value_or(atom{});
+            bool found = false;
+            for (auto & [seen, n] : t.per_tag) {
+                if (seen == tag) {
+                    ++n;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) { t.per_tag.emplace_back(tag, 1u); }
+        }
+    }
 
     [[nodiscard]] static constexpr std::uint64_t key_of(node_id id) noexcept { return id.key(); }
 
@@ -323,43 +387,50 @@ private:
     void split_classes(std::string_view list, boost::container::small_vector<atom, 4> & out) const;
 
     template <typename Map>
-    void collect(const Map & bucket, atom key, const read_txn & txn, node_id node,
-                 const element_facts & self, const ancestor_filter & ancestors, std::size_t depth) {
+    void collect(const Map & bucket, atom key, const read_txn & txn,
+                 const ancestor_filter & ancestors, std::size_t depth) {
         if (!key) { return; }
         const auto it = bucket.find(key.id);
         if (it == bucket.end()) { return; }
         for (const rule & r : it->second) {
-            if (matches(txn, node, self, ancestors, selectors_[r.selector], depth)) {
-                matches_.push_back(r);
-            }
+            if (matches(txn, ancestors, selectors_[r.selector], depth)) { matches_.push_back(r); }
         }
     }
 
-    // The txn and node come in because an ATTRIBUTE requirement and a STRUCTURAL
-    // one are questions about the element itself rather than about the handful of
-    // facts gathered for it. Attributes cannot go in element_facts - there are
-    // arbitrarily many and almost none are ever asked about - so they are read on
-    // demand, from the element that a candidate rule has already been narrowed to.
-    [[nodiscard]] bool compound_matches(const read_txn & txn, node_id node, const element_facts & f,
-                                        const compound & c) const;
+    // Everything a compound can require, of the element at (depth, index).
+    //
+    // THE CURSOR RATHER THAN A NODE, because a nested selector list - the argument
+    // of `:not()` or `:is()` - runs the whole matcher again from this same position,
+    // and that needs the position rather than just the element. Every element this
+    // is ever asked about is one the traversal has visited, so it is always in
+    // `levels_`.
+    //
+    // Attributes are read on demand rather than gathered into element_facts: there
+    // are arbitrarily many and almost none are ever asked about.
+    [[nodiscard]] bool compound_matches(const read_txn & txn, const ancestor_filter & ancestors,
+                                        const compound & c, std::size_t depth,
+                                        std::size_t index) const;
 
     // Right to left, which is the whole reason bucketing works: the rightmost
     // compound is checked first and fails immediately for most candidates.
+    [[nodiscard]] bool matches(const read_txn & txn, const ancestor_filter & ancestors,
+                               const compiled_selector & sel, std::size_t depth) const {
+        return matches_from(txn, ancestors, sel, depth, path_[depth]);
+    }
+
+    // The walk, from an arbitrary cursor - which is what lets a nested selector list
+    // re-enter it. `:not(.a > .b)` has the same subject as the compound it sits in,
+    // so its combinators walk from that same position.
     //
     // The CURSOR is a (depth, index) pair into `levels_` rather than a node_id,
-    // because a sibling combinator moves sideways: after `.a + .b` has matched
-    // `.b`, the next compound is measured from `.a`, at the same depth and a lower
-    // index. A node_id alone cannot express that without a previous-sibling link
-    // the document does not have.
-    [[nodiscard]] bool matches(const read_txn & txn, node_id node, const element_facts & self,
-                               const ancestor_filter & ancestors, const compiled_selector & sel,
-                               std::size_t depth) const {
-        if (!compound_matches(txn, node, self, sel.parts.front())) { return false; }
-        std::size_t at_depth = depth;
-        std::size_t at_index = path_[depth];
-        const auto test = [&](const visited_element & v, const compound & want) {
-            return compound_matches(txn, v.node, v.facts, want);
-        };
+    // because a sibling combinator moves sideways: after `.a + .b` has matched `.b`,
+    // the next compound is measured from `.a`, at the same depth and a lower index.
+    [[nodiscard]] bool matches_from(const read_txn & txn, const ancestor_filter & ancestors,
+                                    const compiled_selector & sel, std::size_t at_depth,
+                                    std::size_t at_index) const {
+        if (!compound_matches(txn, ancestors, sel.parts.front(), at_depth, at_index)) {
+            return false;
+        }
         for (std::size_t i = 1; i < sel.parts.size(); ++i) {
             const compound & want = sel.parts[i];
             switch (sel.links[i - 1]) {
@@ -367,24 +438,24 @@ private:
                 if (at_depth == 0) { return false; }
                 --at_depth;
                 at_index = path_[at_depth];
-                if (!test(levels_[at_depth][at_index], want)) { return false; }
+                if (!compound_matches(txn, ancestors, want, at_depth, at_index)) { return false; }
                 break;
             }
             case combinator::descendant: {
-                // The filter's whole job: reject a descendant selector before
-                // walking a single ancestor. It has no false negatives, so a
-                // `false` here is conclusive.
+                // The filter's whole job: reject a descendant selector before walking
+                // a single ancestor. It has no false negatives, so a `false` here is
+                // conclusive.
                 //
                 // CONSULTED FOR DESCENDANT ONLY, and that is not an oversight. The
-                // filter holds the SUBJECT's ancestors; a sibling is not one of
-                // them, so asking it about a sibling combinator would be a false
-                // NEGATIVE - it would reject a selector that does match, and the
-                // page would render wrong. The saturating counters exist to prevent
-                // exactly that class of error from the other direction.
+                // filter holds the SUBJECT's ancestors; a sibling is not one of them,
+                // so asking it about a sibling combinator would be a false NEGATIVE -
+                // it would reject a selector that does match, and the page would
+                // render wrong. The saturating counters exist to prevent exactly that
+                // class of error from the other direction.
                 if (!ancestors.may_match(want)) { return false; }
                 bool found = false;
                 for (std::size_t up = at_depth; up-- > 0;) {
-                    if (test(levels_[up][path_[up]], want)) {
+                    if (compound_matches(txn, ancestors, want, up, path_[up])) {
                         at_depth = up;
                         at_index = path_[up];
                         found = true;
@@ -397,13 +468,13 @@ private:
             case combinator::next_sibling: {
                 if (at_index == 0) { return false; } // nothing precedes it
                 --at_index;
-                if (!test(levels_[at_depth][at_index], want)) { return false; }
+                if (!compound_matches(txn, ancestors, want, at_depth, at_index)) { return false; }
                 break;
             }
             case combinator::subsequent_sibling: {
                 bool found = false;
                 for (std::size_t k = at_index; k-- > 0;) {
-                    if (test(levels_[at_depth][k], want)) {
+                    if (compound_matches(txn, ancestors, want, at_depth, k)) {
                         at_index = k;
                         found = true;
                         break;
@@ -434,6 +505,29 @@ private:
     // elements and across documents, so a steady-state resolve allocates nothing.
     std::vector<std::vector<visited_element>> levels_;
     std::vector<std::size_t> path_;
+    // Per level, the totals the traversal cannot know from what it has already seen:
+    // how many element children the level has in all, and how many of each tag.
+    // Counted once when the level is entered.
+    struct level_totals {
+        std::uint32_t elements = 0;
+        boost::container::small_vector<std::pair<atom, std::uint32_t>, 8> per_tag;
+        boost::container::small_vector<std::pair<atom, std::uint32_t>, 8> seen_per_tag;
+
+        [[nodiscard]] std::uint32_t total_for(atom tag) const {
+            for (const auto & [t, n] : per_tag) {
+                if (t == tag) { return n; }
+            }
+            return 0;
+        }
+        [[nodiscard]] std::uint32_t next_for(atom tag) {
+            for (auto & [t, n] : seen_per_tag) {
+                if (t == tag) { return ++n; }
+            }
+            seen_per_tag.emplace_back(tag, 1u);
+            return 1;
+        }
+    };
+    std::vector<level_totals> totals_;
 };
 
 } // namespace ctbrowser::style

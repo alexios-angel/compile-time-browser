@@ -395,7 +395,13 @@ void test_how_much_of_bootstrap_can_match() {
     //   2550  the front-end substitution (tag/#id/.class, descendant/child)
     //   2603  + attribute selectors and :root
     //   2651  + the sibling combinators, + and ~
-    constexpr std::size_t floor = 2651;
+    //   2767  + :not/:is/:where, the structural pseudos and nth-child(An+B)
+    //
+    // WHAT THIS NUMBER CANNOT SEE: a selector counts as matchable if it PARSES into
+    // something the matcher will consider. `:disabled` counted from the very first
+    // rung, as a state bit that nothing ever set - so it parsed, was counted, and
+    // never matched. Countable is not correct, and the tests are where correct lives.
+    constexpr std::size_t floor = 2767;
     if (live < floor) {
         std::printf("FAIL bootstrap census: %zu selectors can match, was at least %zu\n", live,
                     floor);

@@ -84,6 +84,55 @@ struct attribute_match {
 // than about its name or its attributes. A bitfield rather than a list because
 // each is a single yes/no and they compose - `:root:empty` is both.
 inline constexpr std::uint32_t structural_root = 1u << 0;
+inline constexpr std::uint32_t structural_empty = 1u << 1;
+inline constexpr std::uint32_t structural_first_child = 1u << 2;
+inline constexpr std::uint32_t structural_last_child = 1u << 3;
+inline constexpr std::uint32_t structural_only_child = 1u << 4;
+inline constexpr std::uint32_t structural_first_of_type = 1u << 5;
+inline constexpr std::uint32_t structural_last_of_type = 1u << 6;
+inline constexpr std::uint32_t structural_only_of_type = 1u << 7;
+// Not positional, but the same KIND of thing: a predicate on the element answered
+// from facts the traversal gathered, rather than from its name, its attributes or
+// transient UI state.
+//
+// `:disabled` and `:checked` used to be state bits alongside `:hover` - and NOTHING
+// EVER SET THEM. That was invisible while `:not()` was unsupported: the selector
+// simply never matched. Implementing `:not()` turned it into a wrong render, because
+// `.btn:not(:disabled)` then matched disabled buttons too, and Bootstrap writes that
+// eight times.
+inline constexpr std::uint32_t structural_disabled = 1u << 8;
+inline constexpr std::uint32_t structural_enabled = 1u << 9;
+inline constexpr std::uint32_t structural_checked = 1u << 10;
+inline constexpr std::uint32_t structural_link = 1u << 11;
+// `:visited` is always FALSE and will stay that way. Chrome restricts it to colour
+// for privacy reasons; never matching is the honest subset rather than a gap.
+inline constexpr std::uint32_t structural_visited = 1u << 12;
+
+struct compiled_selector;
+
+// The pseudo-classes that carry an ARGUMENT, so a bit will not do: an `An+B`
+// pattern, or a nested selector list.
+enum class pseudo_kind : std::uint8_t {
+    nth_child,
+    nth_last_child,
+    nth_of_type,
+    nth_last_of_type,
+    not_,
+    is_,
+    where_,
+};
+
+struct pseudo_ref {
+    pseudo_kind kind = pseudo_kind::nth_child;
+    // `An+B`. `:nth-child(2n+1)` is a=2 b=1; `:nth-child(3)` is a=0 b=3.
+    std::int32_t a = 0;
+    std::int32_t b = 0;
+    // The argument of `:not()`, `:is()` or `:where()`. A vector rather than a
+    // small_vector because the type is mutually recursive with compiled_selector -
+    // `:not(:is(.a))` is legal - and std::vector is the container that may name an
+    // incomplete type.
+    std::vector<compiled_selector> args;
+};
 
 // One compound selector: `div#id.a.b[x=y]:hover` - a tag, an id, some classes,
 // some attribute requirements, any required pseudo-state bits, and any structural
@@ -96,8 +145,12 @@ struct compound {
     // appear almost always appear alone (`[type=checkbox]`, `[disabled]`).
     boost::container::small_vector<attribute_match, 1> attributes;
     std::uint32_t states = 0;     // :hover, :focus, ... as bits
-    std::uint32_t structural = 0; // :root, ... as bits
-    bool never_matches = false;   // a construct this engine cannot represent
+    std::uint32_t structural = 0; // :root, :first-child, ... as bits
+    // The argument-carrying pseudo-classes. A vector because it is almost always
+    // empty and because the type is recursive; tested LAST of everything in a
+    // compound, since a nested selector list runs the matcher again.
+    std::vector<pseudo_ref> pseudos;
+    bool never_matches = false; // a construct this engine cannot represent
 };
 
 // Specificity as the spec's (a, b, c) triple, packed so the cascade's comparison
