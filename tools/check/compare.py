@@ -184,6 +184,7 @@ class Ctbrowse:
     name = "ctbrowse"
 
     def __init__(self, page: Path, size: tuple[int, int], headed: bool, remote: str = ""):
+        self.remote = remote
         self.proc = (self._spawn_remote(page, size, remote) if remote
                      else self._spawn_local(page, size, headed))
         # It prints the port it got before doing anything else; asking for 0
@@ -291,6 +292,35 @@ class Ctbrowse:
         # ctbrowser writes PPM and has no PNG encoder; convert here and report
         # the file that actually exists, so a caller can open what it is told.
         ppm = path.with_suffix(".ppm")
+        if self.remote:
+            # A REMOTE ENGINE WRITES TO A REMOTE DISK. Handing ctdrive this
+            # machine's absolute path asked the build box to write to a directory
+            # it does not have, and the whole verb failed with a message about a
+            # file - which made "does it LOOK right?", a step in the documented
+            # per-rung loop, impossible on the only machine that can run Chrome.
+            # The socket carries JSON and not bytes, so the image comes back the
+            # way the tree got there: over ssh.
+            # RELATIVE, because REMOTE_DIR is a shell expression ($HOME/...)
+            # that only a shell expands and this path travels over the socket as
+            # JSON. ctdrive's working directory is already REMOTE_DIR - the spawn
+            # cds there so the fixtures' `../../vendor/bootstrap/bootstrap.css`
+            # resolves - so a relative path lands in the right place and the fetch
+            # below runs through a shell that can expand the rest.
+            there = f"build/compare/{ppm.name}"
+            answer = self.send(cmd="shot", path=there)
+            if answer.get("ok"):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                fetched = subprocess.run(
+                    ["ssh", "-o", "BatchMode=yes", self.remote,
+                     f"cd {REMOTE_DIR} && cat {shlex.quote(there)} && rm -f {shlex.quote(there)}"],
+                    stdout=subprocess.PIPE, check=False)
+                if fetched.returncode != 0 or not fetched.stdout:
+                    return {"ok": False, "error": f"could not fetch {there} from {self.remote}"}
+                ppm.write_bytes(fetched.stdout)
+                ppm_to_png(ppm, path)
+                ppm.unlink()
+                answer["path"] = str(path)
+            return answer
         answer = self.send(cmd="shot", path=str(ppm))
         if answer.get("ok"):
             ppm_to_png(ppm, path)
