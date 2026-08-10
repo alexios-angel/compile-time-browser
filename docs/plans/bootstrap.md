@@ -6,8 +6,9 @@ browser. The CSS front end is ours: `style/css/` is a real CSS Syntax Level 3
 tokenizer and grammar, and no public header includes `<ctcss.hpp>` any more. 85/85
 green. S2 is DONE: **93.8% of Bootstrap's selectors can match**, up from 86.4%, and the
 Chrome diff has fallen for the first time - 7,820 -> 7,703. S3a is done too:
-**inheritance is a real cascade stage** and custom properties reach descendants, which
-is what S4's `var()` needs. S3b (typed values and unit folding) and then S4 are next.**
+**inheritance is a real cascade stage**. And S4a: **`var()` resolves** - every one of
+Bootstrap's 1,370 calls, the Chrome diff down 30.4% to 5,355, and the page now looks
+like Bootstrap. S4b (`calc()`) and S3b (typed values, unit folding) are next.**
 
 `vendor/bootstrap/bootstrap.css` is the first real-world stylesheet this engine
 has been pointed at. Every CSS test before it was a hand-written inline literal
@@ -282,6 +283,47 @@ The render effect: 24 lines across four fixtures, all of one shape - the literal
 `.form-check-input { line-height: inherit }` used to reach paint as the word "inherit",
 where `parse_color` simply failed. The Chrome diff falls 7,703 -> 7,695, and only that
 much because the values those now resolve to are themselves unresolved `var()`.
+
+### S4a: the rung where Bootstrap starts looking like Bootstrap
+
+Substitution is a TOKEN-STREAM operation, and `rgba(var(--bs-body-color-rgb), .5)` is
+the case that settles why: the var() expands to `33, 37, 41`, three arguments where the
+source had one. So it runs on text, at computed-value time, before any grammar looks at
+a value - which is also what will let `border: var(--w) solid var(--c)` be expanded into
+longhands once S4b can count its components.
+
+**753 unresolved `var()` in the baselines became 0**, and `.btn` came alive:
+`padding: auto auto` became `6px 12px`, `line-height` became `1.5`, and the button grew
+from 128x26 to 152x38 as its padding finally applied.
+
+| | differ | substituted |
+|---|---|---|
+| after S3a | 7,695 | 19,848 |
+| after S4a | **5,355 (-30.4%)** | 20,364 (+516) |
+
+**`substituted` went UP, and that is the metric being honest about something rather
+than a regression.** Bootstrap ships seventeen EMPTY custom properties, and
+`body { text-align: var(--bs-body-text-align) }` reads one of them. An empty token
+stream is a valid substitution but not a valid value for an ordinary property, so per
+§3 the declaration is invalid at computed-value time and therefore `unset` - which is
+why ctbrowser now answers nothing where it used to answer the literal string
+`var(--bs-body-text-align)`. The harness substitutes the CSS initial value, `start`,
+Chrome says `start`, and the difference disappears. So `differ` fell *because*
+`substituted` rose: garbage was replaced by a correct absence. The ratchet treats a
+rising `substituted` as a regression and it is right to in general - but not across a
+rung that makes wrong values correctly absent, and it needed `--advance` for that
+reason.
+
+Getting that right was worth the detour. Storing the empty value instead of unsetting
+would have SHADOWED the inherited one - behaving like `initial` rather than `unset` - on
+405 elements of a single fixture.
+
+Two spec details that are easy to get backwards, both now pinned by tests. IACVT means
+`unset`, NOT "drop the declaration and let the earlier one win": `color: red; color:
+var(--missing)` renders as the INHERITED colour in Chrome, not red. And `!important` on
+a custom property is the DECLARATION's importance, so it is peeled where every other
+declaration's is and a var() cannot smuggle it into the property that reads it - the
+obvious guess is that the value keeps it.
 
 ### Two findings that were NOT predicted
 

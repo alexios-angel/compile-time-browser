@@ -16,6 +16,7 @@
 
 #include <ctbrowser/style/computed.hpp>
 #include <ctbrowser/style/css/parser.hpp>
+#include <ctbrowser/style/css/substitute.hpp>
 #include <ctbrowser/style/css/token.hpp>
 #include <ctbrowser/style/engine.hpp>
 #include <ctbrowser/style/selector.hpp>

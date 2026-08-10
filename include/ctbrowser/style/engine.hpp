@@ -8,11 +8,13 @@
 #include <string_view>
 #include <vector>
 
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
 
 #include <ctbrowser/style/computed.hpp>
 #include <ctbrowser/style/css/parser.hpp>
+#include <ctbrowser/style/css/substitute.hpp>
 #include <ctbrowser/style/selector.hpp>
 
 // Style resolution.
@@ -318,6 +320,60 @@ public:
             for (const declaration & d : own.normal) { put(d); }
         }
         for (const declaration & d : own.important) { put(d); }
+
+        // `var()` SUBSTITUTION, after the fold and before anything interprets a value.
+        //
+        // Here rather than where a value is read, for the reason the whole rung
+        // exists: substitution is a TOKEN-STREAM operation whose result may be a comma
+        // list, a fragment, or nothing - `rgba(var(--bs-body-color-rgb), .5)` expands
+        // one argument into three - so it has to happen before any grammar looks at
+        // the value.
+        //
+        // The lookup reads THIS element's own custom properties first and then the
+        // inherited ones, which is what makes a component's own `--bs-btn-color`
+        // override a theme's while still seeing everything the theme defined.
+        {
+            const auto lookup = [&out, &parent](atom name) -> std::optional<std::string_view> {
+                for (const declaration & d : out) {
+                    if (d.property == name) { return std::string_view{d.value}; }
+                }
+                if (parent && parent->inherited) {
+                    for (const declaration & d : parent->inherited->declarations) {
+                        if (d.property == name) { return std::string_view{d.value}; }
+                    }
+                }
+                return std::nullopt;
+            };
+            for (std::size_t i = 0; i < out.size();) {
+                const std::string_view property = atoms_->text(out[i].property);
+                if (property.starts_with("--") || !css::may_have_var(out[i].value)) {
+                    ++i;
+                    continue;
+                }
+                const std::optional<std::string> done =
+                    css::substitute_var(out[i].value, lookup, *atoms_);
+                // AN EMPTY RESULT IS ALSO INVALID at computed-value time, and this is
+                // the case Bootstrap actually hits rather than a missing property: it
+                // ships seventeen empty-but-valid custom properties, and
+                // `body { text-align: var(--bs-body-text-align) }` reads one of them.
+                // An empty token stream is a valid substitution but not a valid VALUE
+                // for an ordinary property, so the declaration is `unset` - which for
+                // an inherited property means the inherited value shows through. That
+                // is the difference from storing an empty value, which would shadow it
+                // and behave like `initial` on 405 elements of a Bootstrap page.
+                if (done && !trim(*done, html_whitespace).empty()) {
+                    out[i].value = *done;
+                    ++i;
+                    continue;
+                }
+                // INVALID AT COMPUTED-VALUE TIME means `unset`, which for an inherited
+                // property lets the inherited value through and for any other means
+                // absent. NOT "drop it and let an earlier declaration win" - that is
+                // the classic wrong reading, and it is observable: `color: red; color:
+                // var(--missing)` renders as the INHERITED colour in Chrome, not red.
+                out.erase(out.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+        }
 
         // SPLIT THE RESULT. Anything inherited goes into a fresh inherited half built
         // on top of the parent's; everything else stays the element's own.
