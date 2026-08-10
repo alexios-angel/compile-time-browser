@@ -356,6 +356,40 @@ colour - because a stale expansion site was still running BEFORE substitution. T
 lesson is the ordinary one: the test would have said so in one second, and the render
 could not.
 
+### S10 has a dependency the plan did not record: inline-block shrink-to-fit
+
+`display: inline-block` is PARSED and then never used. `parse_display` returns
+`display_kind::inline_block`, and `box_builder` maps everything that is not
+`inline_level` to `box_kind::block` (`include/ctbrowser/layout/box.hpp`), so an
+inline-block box fills its containing block. That is already visible: `.btn` on an
+`<a>`, and `.btn` with `.d-grid`, span the whole row in the components render.
+
+So de-replacing `<button>` cannot come first. Today a button's width is
+`text_width(label) + 16`, which shrink-wraps by accident because it is a REPLACED
+element sized from its content; take that away and every button becomes full-width.
+The order has to be:
+
+1. **inline-block as an inline-LEVEL box with shrink-to-fit width** -
+   `clamp(min-content, available, max-content)`. The machinery is already there:
+   `intrinsic_sizes` with `min_content`/`max_content`, and `inline_flow` already
+   measures children that way. The likely shape is a `bool inline_level` on
+   `box_node` - `kind = block` for the inside, inline-level for the outside - which
+   is the same field S9 needs for `inline-flex`, so it should be added once.
+2. **then** `<button>` out of `is_replaced_tag`, with its size coming from the UA
+   sheet's padding and border rather than from `intrinsic_size_of`.
+
+Worth knowing before starting: the button branch of `browser::paint_replaced` draws
+only a frame and the label - the FACE already comes from the UA sheet's
+`button, select { background-color: #e9e9ed }` through the ordinary paint path. And
+`<input type=button|submit|reset>` stays replaced and keeps using that branch, so it
+does not move.
+
+**AND THE IMAGE GOLDENS DO RUN ON THE DEVBOX**, which S0 left as unverified and
+`docs/build.md` still denies: `ctest -R "render-widgets|render-elements"` passes there
+with no SDL and no display, because `check-render.cmake` pins `CTBROWSER_FONTS=font8x8`
+and the software rasteriser is deterministic. So a golden-moving rung can be verified
+in the ordinary loop after all, rather than needing a machine with SDL.
+
 ### Two findings that were NOT predicted
 
 1. **`clientWidth` disagrees with the width layout actually used.**
