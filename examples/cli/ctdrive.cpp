@@ -41,6 +41,8 @@
 // nothing else - so this is the only way to have a real parser.
 #include <boost/json/src.hpp>
 
+#include <cerrno>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -62,6 +64,9 @@ inline void set_non_blocking(socket_t s) {
     // one, so the cast is required rather than cosmetic under -Wconversion.
     ::ioctlsocket(s, static_cast<long>(FIONBIO), &on);
 }
+inline bool would_block() {
+    return ::WSAGetLastError() == WSAEWOULDBLOCK;
+}
 using socklen_arg = int;
 using iolen_t = int;
 struct winsock_once {
@@ -78,6 +83,9 @@ inline void close_socket(socket_t s) {
 }
 inline void set_non_blocking(socket_t s) {
     ::fcntl(s, F_SETFL, ::fcntl(s, F_GETFL, 0) | O_NONBLOCK);
+}
+inline bool would_block() {
+    return errno == EWOULDBLOCK || errno == EAGAIN || errno == EINTR;
 }
 using socklen_arg = socklen_t;
 using iolen_t = std::size_t;
@@ -183,13 +191,44 @@ private:
     void reply(const json::value & answer) {
         if (peer_ == invalid_socket) { return; }
         const std::string text = json::serialize(answer) + "\n";
-        // BLOCKING-ish write, deliberately: the reply is one short line and the
-        // client is waiting on it. Sending is allowed to fail on a socket that
-        // went away, which drops the client rather than the process.
-        if (::send(peer_, text.data(), static_cast<iolen_t>(text.size()), 0) < 0) {
+        // WRITE EVERY BYTE. The peer socket is non-blocking (set_non_blocking at
+        // accept), so send() is entitled to accept a PREFIX and return how much
+        // it took. One send() that only checked for a negative result therefore
+        // discarded the tail, and the client - which reads until '\n' - then
+        // either blocked forever or parsed half a JSON object.
+        //
+        // MEASURED, because the size at which this bites is not the obvious one.
+        // A client that reads continuously keeps the kernel buffer draining as
+        // fast as it fills, and a 262 KB reply then survives the single-send
+        // version intact - so "the reply got big" is NOT sufficient to trigger
+        // it and the parity dump would probably never have found it. What
+        // triggers it is a client that does not read promptly: request, then
+        // sleep, and 4 MB came back as 2,588,672 bytes with no newline. Both
+        // numbers are tools/check/ctdrive-reply.py, whose two cases are exactly
+        // those two clients - run it against this file with and without the loop.
+        //
+        // So this is a latent bug fixed on its own terms rather than a fix for
+        // a failure that was being seen. The header comment used to say "the
+        // reply is one short line", which was true when every verb was `click`
+        // or `info`; `eval` returning a page's computed styles ended that, and
+        // an unchecked short write is wrong at any size.
+        std::size_t sent = 0;
+        while (sent < text.size()) {
+            const auto took =
+                ::send(peer_, text.data() + sent, static_cast<iolen_t>(text.size() - sent), 0);
+            if (took > 0) {
+                sent += static_cast<std::size_t>(took);
+                continue;
+            }
+            // A full send buffer is not an error - the client is reading, it
+            // just has not caught up. Spin rather than drop: the client is
+            // synchronously waiting on this exact reply, so there is nothing
+            // else for this thread to usefully do and no deadlock to reach.
+            if (took < 0 && would_block()) { continue; }
             close_socket(peer_);
             peer_ = invalid_socket;
             pending_.clear();
+            return;
         }
     }
 
@@ -316,6 +355,11 @@ private:
                                {"title", page.title()},
                                {"scroll_y", page.scroll_y()},
                                {"script_error", page.script_error()},
+                               // A <link rel=stylesheet> that did not resolve. Reported here so
+                               // tools/check/css-parity.py can call a bad href what it is - a
+                               // RIG failure - instead of reporting the thousands of property
+                               // differences that an accidentally unstyled page produces.
+                               {"style_error", page.style_error()},
                                {"alerts", static_cast<std::int64_t>(page.alerts().size())}};
         }
         if (cmd == "quit") {
@@ -389,6 +433,13 @@ int main(int argc, char ** argv) {
     options.on_ready = [](ctbrowser::browser & page) {
         if (!page.script_error().empty()) {
             std::printf("script error: %s\n", page.script_error().c_str());
+            std::fflush(stdout);
+        }
+        // LOUD, because the alternative is silent: a page whose stylesheet did
+        // not resolve lays out as if the author wrote none, which looks like a
+        // broken engine rather than a broken path.
+        if (!page.style_error().empty()) {
+            std::printf("style error: %s\n", page.style_error().c_str());
             std::fflush(stdout);
         }
     };
