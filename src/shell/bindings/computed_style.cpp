@@ -50,6 +50,12 @@ constexpr std::array<std::string_view, 16> length_properties{
     "top",         "right",         "bottom",         "left",
     "min-width",   "max-width",     "min-height",     "max-height"};
 
+// The four sizing constraints, whose percentages survive into the computed value.
+[[nodiscard]] bool is_min_or_max_property(std::string_view property) {
+    return property == "min-width" || property == "max-width" || property == "min-height" ||
+           property == "max-height";
+}
+
 [[nodiscard]] bool is_length_property(std::string_view property) {
     return std::find(length_properties.begin(), length_properties.end(), property) !=
            length_properties.end();
@@ -281,6 +287,20 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
         if (is_length_property(property)) {
             const layout::length len = layout::parse_length(text);
             if (len.is_auto()) { return "auto"; }
+            // A PERCENTAGE MIN OR MAX STAYS A PERCENTAGE. Their computed value is the
+            // percentage as specified - resolving it needs a containing block, which
+            // is a used-value question, and unlike width there is no used value to
+            // report because a max is a constraint rather than a size. Chrome answers
+            // `100%` for `.row > * { max-width: 100% }` and this answered 960px, on
+            // 62 of the grid fixture's 111 elements.
+            //
+            // Margin and padding are NOT in this exception, deliberately: Chrome
+            // resolves their percentages to pixels, because there a percentage does
+            // have a used value and reporting it is what makes an auto margin
+            // comparable at all.
+            if (len.u == layout::unit::percent && is_min_or_max_property(property)) {
+                return std::string{text};
+            }
             return px_text(len.resolve(at.basis, at.font_size));
         }
         // 4. COLOURS, resolved so the two engines' spellings converge.
