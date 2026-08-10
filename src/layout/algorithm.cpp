@@ -114,6 +114,25 @@ intrinsic_sizes outer_intrinsic(const box_node & child, const constraints & c,
     return out;
 }
 
+float shrink_to_fit_width(const box_node & b, const constraints & c, const resolved_edges & e,
+                          const measure_text_fn & measure) {
+    const intrinsic_sizes wants = measure_box(b, c, measure);
+    const float room =
+        std::max(0.0f, c.available_width - e.horizontal_margin() - e.horizontal_padding());
+    // The measured sizes are the CONTENT's; the answer is a border box, like every
+    // other width here.
+    float out =
+        std::max(wants.min_content, std::min(room, wants.max_content)) + e.horizontal_padding();
+    // MAX FIRST, THEN MIN, the same order and the same reason as outer_width_of.
+    if (!b.max_width.is_auto()) {
+        out = std::min(out, b.max_width.resolve(c.available_width, b.font_size));
+    }
+    if (!b.min_width.is_auto()) {
+        out = std::max(out, b.min_width.resolve(c.available_width, b.font_size));
+    }
+    return std::max(0.0f, out);
+}
+
 fragment layout_box(const box_node & b, const constraints & c, const measure_text_fn & measure,
                     precomputed * ready) {
     if (b.kind == box_kind::text) {

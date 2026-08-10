@@ -275,6 +275,87 @@ void test_an_inline_box_shrink_wraps() {
     expect_near(s->bounds.width, 2 * 10 * 0.6f, "the inline shrinks to its two glyphs");
 }
 
+// `display: inline-block` - a BLOCK formatting context inside, at an INLINE level
+// outside. Both halves matter and each is a different bug when it is missing:
+// without the inside it cannot hold block children, and without the outside it
+// fills its containing block, which is what made every Bootstrap `.badge` a
+// full-width bar and `.btn` on an `<a>` span the whole row.
+void test_inline_block_shrinks_to_fit() {
+    fixture f;
+    f.load("<html><body><div id=a><span id=s>hi</span></div></body></html>",
+           "body { margin: 0; padding: 0 } #a { display: inline-block; font-size: 10px } "
+           "#s { font-size: 10px }");
+    engine eng{monospace_measure()};
+    const fragment out = eng.run(f.root, 400);
+    const fragment * a = out.find(f.find_id("a"));
+    if (a != nullptr) {
+        expect_near(a->bounds.width, 2 * 10 * 0.6f, "an inline-block wraps its content");
+    }
+}
+
+void test_inline_blocks_share_a_line() {
+    fixture f;
+    f.load("<html><body><div id=a>hi</div><div id=b>yo</div></body></html>",
+           "body { margin: 0; padding: 0 } div { display: inline-block; font-size: 10px }");
+    engine eng{monospace_measure()};
+    const fragment out = eng.run(f.root, 400);
+    const fragment * a = out.find(f.find_id("a"));
+    const fragment * b = out.find(f.find_id("b"));
+    check(a != nullptr && b != nullptr, "both fragments exist");
+    if (a == nullptr || b == nullptr) { return; }
+    expect_near(a->bounds.y, b->bounds.y, "two inline-blocks sit on the same line");
+    check(b->bounds.x > a->bounds.x, "the second is to the RIGHT of the first, not below");
+}
+
+void test_an_inline_block_still_stacks_its_own_blocks() {
+    // The INSIDE half. An inline BOX would put these on one line; an
+    // inline-BLOCK stacks them, which is the whole reason the two exist.
+    fixture f;
+    f.load("<html><body><div id=a><p id=p>one</p><p id=q>two</p></div></body></html>",
+           "body { margin: 0; padding: 0 } #a { display: inline-block } "
+           "p { margin: 0; font-size: 10px }");
+    engine eng{monospace_measure()};
+    const fragment out = eng.run(f.root, 400);
+    const fragment * p = out.find(f.find_id("p"));
+    const fragment * q = out.find(f.find_id("q"));
+    check(p != nullptr && q != nullptr, "both paragraphs exist");
+    if (p != nullptr && q != nullptr) {
+        check(q->bounds.y > p->bounds.y, "block children of an inline-block still stack");
+    }
+}
+
+void test_an_inline_block_sits_on_its_last_lines_baseline() {
+    // CSS 2.1 §10.8.1, and the padding is the point: a `.badge` is .35em of
+    // padding, a line of text and .35em more. Aligning it by its FONT's ascent -
+    // which is what every other inline box does - hangs the whole pill above the
+    // sentence by exactly its top padding.
+    fixture f;
+    f.load("<html><body><div id=w>text <span id=s>tag</span></div></body></html>",
+           "body { margin: 0; padding: 0 } div { font-size: 10px } "
+           "#s { display: inline-block; padding: 6px; font-size: 10px }");
+    engine eng{monospace_measure()};
+    const fragment out = eng.run(f.root, 400);
+    const fragment * s = out.find(f.find_id("s"));
+    const fragment * w = out.find(f.find_id("w"));
+    check(s != nullptr && w != nullptr, "the inline-block has a fragment");
+    if (s == nullptr || w == nullptr) { return; }
+    // monospace_measure's ascent is 0.8 of the size, so the plain run's baseline
+    // is 8 below its top and the badge's is 6 (its padding) + 8 = 14 below its.
+    // Sharing a baseline therefore leaves the TALLER one where it is and drops the
+    // text by the difference. Using the badge's own font ascent instead would put
+    // both tops at 0, and the badge's text would sit six pixels below the sentence
+    // it is part of.
+    expect_near(s->bounds.y, 0, "the taller inline-block sets the line's baseline");
+    float text_y = -1;
+    for (const fragment & c : w->children) {
+        if (c.box != nullptr && c.box->kind == box_kind::text) {
+            text_y = c.bounds.y;
+            break;
+        }
+    }
+    expect_near(text_y, 6, "and the run beside it drops to meet that baseline");
+}
+
 void test_fragments_carry_no_geometry_back_to_the_dom() {
     fixture f;
     f.load("<html><body><div id=a></div></body></html>", "#a { height: 40px }");
@@ -654,6 +735,10 @@ int main() {
     test_a_word_longer_than_the_line_still_advances();
     test_a_block_with_only_text_still_honours_its_own_box();
     test_an_inline_box_shrink_wraps();
+    test_inline_block_shrinks_to_fit();
+    test_inline_blocks_share_a_line();
+    test_an_inline_block_still_stacks_its_own_blocks();
+    test_an_inline_block_sits_on_its_last_lines_baseline();
     test_fragments_carry_no_geometry_back_to_the_dom();
 
     test_parallel_matches_sequential();

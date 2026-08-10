@@ -385,21 +385,11 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
     // than in a flex-shaped copy of that arithmetic.
     float outer_width = 0;
     if (b.inline_level && b.width.is_auto() && c.forced_width < 0) {
-        // SHRINK TO FIT: clamp(min-content, available, max-content). The one
-        // thing `inline-flex` does differently from `flex`, and the reason
-        // `inline_level` is a field rather than a fifth box_kind.
-        const intrinsic_sizes wants = measure(b, c, measure_text);
-        const float room = std::max(0.0f, c.available_width - edges.horizontal_margin() -
-                                              edges.horizontal_padding());
-        outer_width = std::max(wants.min_content, std::min(room, wants.max_content)) +
-                      edges.horizontal_padding();
-        outer_width = std::max(
-            0.0f,
-            clamp_extent(
-                outer_width,
-                b.min_width.is_auto() ? 0 : b.min_width.resolve(c.available_width, b.font_size),
-                b.max_width.is_auto() ? indefinite
-                                      : b.max_width.resolve(c.available_width, b.font_size)));
+        // SHRINK TO FIT, through the shared helper - the one thing `inline-flex`
+        // does differently from `flex`, and exactly what `inline-block` does
+        // differently from `block`. Two copies of that clamp would be two answers
+        // to one question, and the block one is the same code.
+        outer_width = shrink_to_fit_width(b, c, edges, measure_text);
     } else {
         outer_width = outer_width_of(b, c, edges);
     }

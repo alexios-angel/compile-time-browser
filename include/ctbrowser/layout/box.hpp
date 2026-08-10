@@ -355,11 +355,14 @@ private:
                      : (d == display_kind::flex || d == display_kind::inline_flex)
                          ? box_kind::flex
                          : (d == display_kind::inline_level ? box_kind::inline_ : box_kind::block);
-            // `inline-flex` is the flex kind at an inline LEVEL. Set from the
-            // display value rather than inferred from the kind, because the two
-            // are independent and the button rung adds `inline-block`, which is
-            // the block kind at an inline level.
-            b.inline_level = d == display_kind::inline_flex;
+            // THE OUTSIDE OF THE DISPLAY VALUE, which is a separate question from
+            // the inside: `inline-flex` is the flex kind at an inline level and
+            // `inline-block` is the block kind at one. Set from the display value
+            // rather than inferred from the kind, because neither implies the
+            // other - and both take their width from shrink_to_fit_width instead
+            // of filling the containing block, which is the whole of what being
+            // inline-LEVEL means for a box that is not itself an inline box.
+            b.inline_level = d == display_kind::inline_flex || d == display_kind::inline_block;
             b.source = child;
             b.tag = tag_text;
             b.style = style;

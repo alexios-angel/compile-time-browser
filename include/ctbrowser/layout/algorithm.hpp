@@ -116,6 +116,20 @@ struct precomputed {
 [[nodiscard]] intrinsic_sizes outer_intrinsic(const box_node & child, const constraints & c,
                                               const measure_text_fn & measure);
 
+// SHRINK TO FIT - `clamp(min-content, available, max-content)`, CSS 2.1 §10.3.5.
+//
+// What an INLINE-LEVEL box with an auto width takes, instead of filling its
+// containing block the way a block-level one does. That is the whole difference
+// between `display: block` and `display: inline-block`, and between `flex` and
+// `inline-flex`: same formatting context inside, different width rule outside.
+//
+// Here rather than inside either context because BOTH need exactly this, and two
+// copies would be two answers to one question. It needs the measure function,
+// which is why it cannot live in outer_width_of - that one is also called by the
+// parallel driver, which has no business measuring anything.
+[[nodiscard]] float shrink_to_fit_width(const box_node & b, const constraints & c,
+                                        const resolved_edges & e, const measure_text_fn & measure);
+
 // How much of `text` fits in `available`, measured in whole words. A break
 // opportunity is AFTER a run of spaces, and a LEADING run of spaces belongs
 // to the first candidate rather than being a zero-width candidate of its
@@ -222,6 +236,34 @@ struct inline_flow {
         const auto ascent_of = [&measure_text](const fragment & f) {
             if (f.box == nullptr) { return 0.0f; }
             if (f.box->is_replaced()) { return f.bounds.height; }
+            // AN INLINE-LEVEL BLOCK SITS ON ITS OWN LAST LINE'S BASELINE, not on
+            // its font's ascent (CSS 2.1 §10.8.1). The two are far apart the
+            // moment the box has padding: a `.badge` is .35em of padding, a line
+            // of text and .35em more, so aligning by the font ascent hangs the
+            // whole pill above the sentence it is in by exactly its top padding.
+            //
+            // With no in-flow line box - an empty `inline-block`, or one holding
+            // only other blocks - the spec falls back to the bottom margin edge,
+            // which is what a replaced element does and what the height is here.
+            if (f.box->inline_level) {
+                // The last line box may be inside a descendant - an inline-block
+                // holding blocks takes the last block's last line - so this walks
+                // rather than scanning one level, accumulating offsets as it goes.
+                // The LOWEST baseline is the last one, and asking for that rather
+                // than for document order is also what keeps it right when a float
+                // or an out-of-flow box eventually reorders the children.
+                float lowest = -1;
+                const auto walk = [&](auto && self, const fragment & at, float dy) -> void {
+                    if (at.box != nullptr && at.box->kind == box_kind::text) {
+                        lowest = std::max(lowest,
+                                          dy + at.bounds.y +
+                                              measure_text.ascent(at.box->font_size, at.box->face));
+                    }
+                    for (const fragment & c : at.children) { self(self, c, dy + at.bounds.y); }
+                };
+                for (const fragment & c : f.children) { walk(walk, c, 0); }
+                return lowest < 0 ? f.bounds.height : lowest;
+            }
             return measure_text.ascent(f.box->font_size, f.box->face);
         };
         const auto align_line = [&out, &line_start, &ascent_of](float top) {
@@ -396,8 +438,17 @@ struct block_flow {
                                    const measure_text_fn & measure_text,
                                    precomputed * ready = nullptr) const {
         const resolved_edges edges = resolve_edges(b, c);
-        const float outer_width = outer_width_of(b, c, edges);
-        const float content_width = content_width_of(b, c, edges);
+        // AN INLINE-LEVEL BLOCK SHRINKS TO FIT rather than filling its containing
+        // block - `display: inline-block`, which is what a `.badge` and a `.btn`
+        // on an `<a>` are. Left as the block rule, every badge on a Bootstrap page
+        // was a full-width bar and the anchor button spanned the row.
+        //
+        // `forced_width` still wins: a flex item's main size was decided by its
+        // line, and an inline-block that is also a flex item is blockified anyway.
+        const float outer_width = b.inline_level && b.width.is_auto() && c.forced_width < 0
+                                      ? shrink_to_fit_width(b, c, edges, measure_text)
+                                      : outer_width_of(b, c, edges);
+        const float content_width = std::max(0.0f, outer_width - edges.horizontal_padding());
         const bool use_ready =
             ready != nullptr && ready->parent == &b && ready->children.size() == b.children.size();
 
