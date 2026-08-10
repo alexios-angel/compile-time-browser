@@ -6,6 +6,7 @@
 //   selector   compiled selectors, bucketed by their rightmost simple
 //              selector, plus the counting ancestor filter
 //   engine     matching and the cascade
+//   css/       the CSS front end - the tokenizer, and above it the grammar
 //
 // Two things differ from the previous engine beyond speed. It resolves an element ONCE into a
 // whole computed style rather than answering one property at a time by
@@ -14,6 +15,8 @@
 // another thread can see - which is what makes it safe to run in parallel.
 
 #include <ctbrowser/style/computed.hpp>
+#include <ctbrowser/style/css/parser.hpp>
+#include <ctbrowser/style/css/token.hpp>
 #include <ctbrowser/style/engine.hpp>
 #include <ctbrowser/style/selector.hpp>
 #include <ctbrowser/style/ua.hpp>

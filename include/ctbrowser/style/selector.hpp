@@ -37,6 +37,17 @@ namespace ctbrowser::style {
 
 using ctbrowser::atom;
 
+// The pseudo-class state bits. CANONICAL HERE, because `compound::states` is the
+// field they live in and the selector parser is what writes it; style::engine
+// aliases them so callers can keep saying engine::state_hover. They were declared
+// in the engine and mirrored by hand in two other places, which is one edit away
+// from a selector requiring :hover and an element reporting :focus.
+inline constexpr std::uint32_t state_hover = 1u << 0;
+inline constexpr std::uint32_t state_active = 1u << 1;
+inline constexpr std::uint32_t state_focus = 1u << 2;
+inline constexpr std::uint32_t state_checked = 1u << 3;
+inline constexpr std::uint32_t state_disabled = 1u << 4;
+
 enum class combinator : std::uint8_t {
     none,       // the rightmost compound
     descendant, // A B

@@ -129,6 +129,8 @@ ctbrowser_test(unit/data_url)
 ctbrowser_test(unit/url_basics)
 ctbrowser_test(unit/image_basics)
 ctbrowser_test(unit/style_basics)
+# The CSS tokenizer, against the cases the submodule it replaced got wrong.
+ctbrowser_test(unit/css_syntax)
 ctbrowser_test(unit/layout_basics)
 ctbrowser_test(unit/paint_basics)
 ctbrowser_test(unit/raster_basics)
