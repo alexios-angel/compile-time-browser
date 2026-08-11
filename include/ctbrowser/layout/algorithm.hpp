@@ -203,6 +203,7 @@ struct inline_flow {
         intrinsic_sizes out;
         float line = 0;
         for (const box_node & child : b.children) {
+            if (child.is_out_of_flow()) { continue; } // contributes no width
             // A replaced child's width is its OWN, not something derived from
             // content it does not have - without that an <img> or a <canvas>
             // measures as zero wide and never wraps, it just runs off the line.
@@ -298,6 +299,16 @@ struct inline_flow {
             line_start = out.children.size();
         };
         for (const box_node & child : b.children) {
+            // Out of flow: no space on the line, an empty fragment at the pen for
+            // its static position. See the same case in block_flow.
+            if (child.is_out_of_flow()) {
+                fragment placeholder;
+                placeholder.box = &child;
+                placeholder.source = child.source;
+                placeholder.bounds = rect{pen_x, pen_y, 0, 0};
+                out.children.push_back(std::move(placeholder));
+                continue;
+            }
             if (child.kind == box_kind::text) {
                 if (child.preformatted) {
                     place_preformatted(child, line_height, pen_x, pen_y, out);
@@ -438,6 +449,9 @@ struct block_flow {
                                           const measure_text_fn & measure_text) const {
         intrinsic_sizes out;
         for (const box_node & child : b.children) {
+            // An out-of-flow child contributes nothing to what its parent's
+            // content wants to be: it is not part of that content.
+            if (child.is_out_of_flow()) { continue; }
             // A TEXT child is measured directly, not handed to inline_flow -
             // which measures a box's CHILDREN, so it asked a text box what its
             // children were, got none, and every block whose content is text
@@ -493,6 +507,22 @@ struct block_flow {
                 const box_node & child = b.children[i];
                 const constraints child_c{content_width, 0, child.font_size};
                 const resolved_edges child_edges = resolve_edges(child, child_c);
+                // AN OUT-OF-FLOW CHILD RESERVES NOTHING and is not laid out here:
+                // its size depends on a containing block that is somewhere above,
+                // which this context cannot see. What it leaves behind is an empty
+                // fragment at its STATIC POSITION - where it would have gone - and
+                // that is exactly the number CSS says to use when its offsets are
+                // `auto`. layout::apply_positioning replaces it with the real
+                // thing once the ancestor chain is known.
+                if (child.is_out_of_flow()) {
+                    fragment placeholder;
+                    placeholder.box = &child;
+                    placeholder.source = child.source;
+                    placeholder.bounds = rect{edges.content_left() + child_edges.margin_left,
+                                              cursor + child_edges.margin_top, 0, 0};
+                    out.children.push_back(std::move(placeholder));
+                    continue;
+                }
                 fragment f = use_ready ? std::move(ready->children[i])
                                        : layout_box(child, child_c, measure_text, ready);
                 // auto_margin_left, not child_edges.margin_left: `margin: 0 auto`

@@ -16,6 +16,7 @@ target_sources(ctbrowser-layout
     box.cpp
     algorithm.cpp
     flex.cpp
+    position.cpp
     engine.cpp
   PUBLIC
     FILE_SET HEADERS
@@ -27,6 +28,7 @@ target_sources(ctbrowser-layout
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/layout/fragment.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/layout/algorithm.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/layout/flex.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/layout/position.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/layout/engine.hpp")
 target_compile_features(ctbrowser-layout PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-layout)

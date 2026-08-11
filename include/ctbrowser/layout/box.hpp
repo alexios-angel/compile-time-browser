@@ -112,6 +112,21 @@ struct box_node {
     // leave this false.
     bool inline_level = false;
     side_lengths margin{}, padding{};
+    // WHERE THIS BOX IS PLACED, and by whom.
+    //
+    // `static` is the parent's business and everything else is not: a `relative`
+    // box is laid out in flow and then MOVED, and an `absolute` or `fixed` one is
+    // taken out of flow entirely and placed against an ancestor. That split is
+    // why positioning is its own pass over the fragment tree (layout/position.hpp)
+    // rather than a branch inside each formatting context - the box that decides
+    // where an absolute child goes is not its parent, and a formatting context
+    // only ever knows about its own children.
+    position_kind position = position_kind::static_;
+    side_lengths inset{}; // top / right / bottom / left
+    // `transform: translate(x, y)`, which for a translation alone is a pure
+    // offset. Bootstrap's `.translate-middle` is how every centred overlay in the
+    // framework is anchored, and its percentages are of the box's OWN size.
+    translation translate{};
     // THE BORDER, which is part of the box and was not in the arithmetic at all.
     // A `.btn` is `border: 1px solid transparent`, so every button came out two
     // pixels narrower and two shorter than Chrome's - and over fifty button rows
@@ -184,6 +199,19 @@ struct box_node {
                kind == box_kind::flex;
     }
     [[nodiscard]] bool is_replaced() const noexcept { return kind == box_kind::replaced; }
+    // OUT OF FLOW: it reserves no space among its siblings and its position comes
+    // from an ancestor rather than from its parent's cursor. `relative` is NOT
+    // this - it stays in flow, keeps its slot, and is merely painted elsewhere,
+    // which is the whole difference between the two and the reason a relative box
+    // leaves a hole and an absolute one does not.
+    [[nodiscard]] bool is_out_of_flow() const noexcept {
+        return position == position_kind::absolute || position == position_kind::fixed;
+    }
+    // Does this box establish a containing block for absolutely positioned
+    // descendants? Anything but `static`, per CSS 2.1 §10.1 - which is why
+    // `.position-relative` with no offsets at all is a real and common
+    // declaration: it exists to be an anchor.
+    [[nodiscard]] bool is_positioned() const noexcept { return position != position_kind::static_; }
     [[nodiscard]] bool establishes_inline_context() const noexcept {
         // A block whose children are all inline runs an inline formatting
         // context; a block with block children runs a block one. Mixed content
@@ -241,6 +269,9 @@ public:
           min_width_(atoms.intern("min-width")), max_width_(atoms.intern("max-width")),
           min_height_(atoms.intern("min-height")), max_height_(atoms.intern("max-height")),
           border_width_(atoms.intern("border-width")), border_style_(atoms.intern("border-style")),
+          position_(atoms.intern("position")), transform_(atoms.intern("transform")),
+          inset_sides_{atoms.intern("top"), atoms.intern("right"), atoms.intern("bottom"),
+                       atoms.intern("left")},
           flex_{atoms.intern("flex-direction"),  atoms.intern("flex-wrap"),
                 atoms.intern("justify-content"), atoms.intern("align-items"),
                 atoms.intern("align-content"),   atoms.intern("align-self"),
@@ -419,6 +450,9 @@ private:
             // into. Reading `margin`/`padding` directly meant a sheet that said
             // `padding-left` was ignored outright - including the UA sheet's own
             // `ul { padding-left: 40px }` and `summary { padding-left: 18px }`.
+            b.position = parse_position(trimmed(prop(style, position_)));
+            b.inset = sides_of(style, inset_sides_);
+            b.translate = parse_translate(trimmed(prop(style, transform_)));
             b.margin = sides_of(style, margin_sides_);
             b.padding = sides_of(style, padding_sides_);
             b.border = border_of(style);
@@ -743,6 +777,8 @@ private:
     atom line_height_;
     atom min_width_, max_width_, min_height_, max_height_;
     atom border_width_, border_style_;
+    atom position_, transform_;
+    side_atoms inset_sides_;
     flex_atoms flex_;
 };
 

@@ -10,6 +10,9 @@
 //              grid arrive as new types rather than new if-statements
 //   flex       the fourth of those, in its own file because §9's freeze
 //              loop is as long as the other three contexts together
+//   position   relative and absolute placement, as a PASS over the finished
+//              fragments - the one part of CSS where a box's position is
+//              decided by an ancestor rather than by its parent
 //   engine     the driver, sequential and parallel
 //
 // the previous engine wrote geometry back onto the DOM node. That single decision is what made
@@ -21,4 +24,5 @@
 #include <ctbrowser/layout/engine.hpp>
 #include <ctbrowser/layout/flex.hpp>
 #include <ctbrowser/layout/fragment.hpp>
+#include <ctbrowser/layout/position.hpp>
 #include <ctbrowser/layout/values.hpp>

@@ -422,6 +422,15 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
     std::vector<flex_item> items;
     items.reserve(b.children.size());
     for (const box_node & child : b.children) {
+        // AN OUT-OF-FLOW CHILD IS NOT A FLEX ITEM (§4): it takes no part in the
+        // free-space arithmetic at all. It leaves an empty fragment at its static
+        // position, exactly as it does in a block container, and
+        // layout::apply_positioning places it once the ancestor chain is known.
+        //
+        // Its static position is the flex container's content origin rather than
+        // a cursor, because a flex container has no cursor to be partway along -
+        // §4 says as much, and it is what Chrome does.
+        if (child.is_out_of_flow()) { continue; }
         flex_item it;
         it.box = &child;
         it.c = constraints{content_width, child_height, child.font_size};
@@ -744,8 +753,18 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
     // (CSS Display 3 §3.3): `order` moves an item in front of its siblings for
     // painting as well as for placement. Everything that looks a fragment up does
     // so by node id, so no consumer depends on the source ordering.
-    out.children.reserve(items.size());
+    out.children.reserve(items.size() + 1);
     for (flex_item & it : items) { out.children.push_back(std::move(it.placed)); }
+    // The out-of-flow children, after the items and in document order: markers at
+    // the container's content origin, which is the static position §4 gives them.
+    for (const box_node & child : b.children) {
+        if (!child.is_out_of_flow()) { continue; }
+        fragment placeholder;
+        placeholder.box = &child;
+        placeholder.source = child.source;
+        placeholder.bounds = rect{edges.content_left(), edges.content_top(), 0, 0};
+        out.children.push_back(std::move(placeholder));
+    }
 
     out.bounds.width = outer_width;
     // The block-direction extent: down a row that is the lines stacked across,

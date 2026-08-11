@@ -9,6 +9,7 @@
 #include <ctbrowser/layout/algorithm.hpp>
 #include <ctbrowser/layout/box.hpp>
 #include <ctbrowser/layout/fragment.hpp>
+#include <ctbrowser/layout/position.hpp>
 #include <ctbrowser/layout/values.hpp>
 
 // Driving a layout pass.
@@ -62,7 +63,13 @@ public:
     explicit engine(measure_text_fn measure = monospace_measure()) : measure_(std::move(measure)) {}
 
     // One layout pass, single-threaded.
-    [[nodiscard]] fragment run(const box_node & root, float viewport_width) const;
+    //
+    // `viewport_height` is what a `position: fixed` box is placed against, and
+    // ONLY that - nothing else in layout has any use for it, because a document
+    // is as tall as its content. Zero means "no viewport", and fixed then falls
+    // back to the document, which is what a test with no window wants.
+    [[nodiscard]] fragment run(const box_node & root, float viewport_width,
+                               float viewport_height = 0) const;
 
     // Below this many boxes, distributing the work costs more than doing it.
     //
@@ -80,8 +87,10 @@ public:
 
     // The same pass, with one level's block children arranged across the pool.
     [[nodiscard]] fragment run_parallel(const box_node & root, float viewport_width,
-                                        scheduler & pool) const {
-        if (root.descendant_count() < parallel_min_boxes) { return run(root, viewport_width); }
+                                        scheduler & pool, float viewport_height = 0) const {
+        if (root.descendant_count() < parallel_min_boxes) {
+            return run(root, viewport_width, viewport_height);
+        }
         const box_node * split = split_point(&root);
         // An inline container's children share lines, so they are not
         // independent and must not be split. normalise() guarantees a box's
@@ -99,9 +108,10 @@ public:
         // test does, with a flex case, in the commit that added this.
         if (split == nullptr || split->children.size() < 2 || split->kind == box_kind::flex ||
             split->establishes_inline_context()) {
-            return run(root, viewport_width); // nothing worth distributing
+            return run(root, viewport_width, viewport_height); // nothing worth distributing
         }
-        return arrange_parallel(root, constraints{viewport_width, 0, root.font_size}, split, pool);
+        return arrange_parallel(root, constraints{viewport_width, 0, root.font_size}, split, pool,
+                                viewport_height);
     }
 
     // Where run_parallel will fan out. Public because the granularity decision
@@ -131,13 +141,14 @@ private:
     // stay bit-identical forever, which they will not. Handing the finished
     // children to block_flow instead means there is only ever one.
     [[nodiscard]] fragment arrange_parallel(const box_node & root, const constraints & c,
-                                            const box_node * split, scheduler & pool) const {
+                                            const box_node * split, scheduler & pool,
+                                            float viewport_height) const {
         // Widths flow strictly top-down: the constraints at `split` are a
         // function of the path from the root and nothing else - no sibling and
         // nothing below can affect them. That is what makes it legal to compute
         // them before the pass that will use them.
         std::vector<const box_node *> path;
-        if (!find_path(root, split, path)) { return run(root, c.available_width); }
+        if (!find_path(root, split, path)) { return run(root, c.available_width, viewport_height); }
 
         constraints inner = c;
         for (std::size_t i = 0; i + 1 < path.size(); ++i) {
@@ -167,7 +178,13 @@ private:
         });
 
         precomputed ready{split, pieces};
-        return layout_box(root, c, measure_, &ready);
+        fragment out = layout_box(root, c, measure_, &ready);
+        // The same pass the sequential path runs, for the same reason and with
+        // the same inputs - which is what keeps "parallel equals sequential"
+        // true through positioning as well as through flow.
+        apply_positioning(out, rect{0, 0, c.available_width, out.bounds.height},
+                          viewport_height > 0 ? viewport_height : out.bounds.height, measure_);
+        return out;
     }
 
     // A contiguous run of a box's children, [first, last).

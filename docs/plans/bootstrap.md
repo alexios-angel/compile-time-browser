@@ -16,10 +16,13 @@ min/max-width and auto-margin centring · **S9 flex**, which took the grid fixtu
 · **S10** inline-block shrink-to-fit and `<button>` out of `is_replaced_tag` · the
 border half of **S7b** · `border-radius` from **S12**.
 
-**Next:** S11 position and stacking (the whole of `bootstrap-position.html`'s 272 and
-every `top`/`left` on the other two), the rest of S12 (`box-shadow`, `opacity`,
-per-side borders), S3b (typed values and unit folding), and `text-align`, which no
-formatting context reads yet.
+· **S11a** positioning as a pass over the fragment tree.
+
+**Next:** S11b (`z-index` and CSS 2.1 Appendix E paint order; `fixed` as its own
+non-scrolling layer), the rest of S12 (`box-shadow`, `opacity`, per-side borders),
+`text-align`, which no formatting context reads yet, and Chrome's `LayoutUnit`
+quantisation - 102 of the grid fixture's 137 are one 1/64px rounding difference
+propagating, and the same cluster appears on three other fixtures.
 
 `vendor/bootstrap/bootstrap.css` is the first real-world stylesheet this engine
 has been pointed at. Every CSS test before it was a hand-written inline literal
@@ -611,6 +614,58 @@ sites, and `border-style: none` means a used width of zero.
 `bootstrap-components.html` now reads as Bootstrap: rounded buttons at Chrome's
 widths, outline buttons as rings, pills, and alerts with their rule and their last
 line. What is left on it is `position`, `box-shadow` and `text-align`.
+
+### S11a: positioning is a PASS, not a formatting context
+
+Every other piece of layout here is a box asking about its own children.
+Positioning is the one part of CSS where the box that decides where a child goes is
+**not its parent** - an `absolute` box is placed against the nearest positioned
+ancestor, which may be ten levels up and which finished laying out long before the
+child was reached.
+
+So the flows do the one thing they can: an out-of-flow child reserves no space and
+leaves an **empty fragment where it would have gone**. That marker is not
+bookkeeping - it *is* the static position, which is exactly the number CSS says to
+use for whichever offset is `auto`, and `.position-absolute` with no offsets at all
+relies on it. `layout::apply_positioning` then walks down carrying the ancestor
+chain and by the time it reaches the marker it knows both the containing block and
+the static position. Running after layout also keeps the parallel driver's
+invariant intact: an out-of-flow box affects no sibling, so the concurrent pass
+never has to know it exists.
+
+Three things that look alike and are not, each with a test:
+
+- `relative` **leaves its slot behind** and `absolute` does not.
+- the containing block is a **padding** box, not a content box - invisible until
+  the anchor has padding, and then wrong by exactly that padding on every
+  descendant.
+- **both** offsets on an axis stretch a box where **one** shrink-wraps it, which is
+  why `.position-absolute.top-0.start-0` is the size of its text.
+
+`fixed` is placed against the **window**, not the document, which is what puts
+`.fixed-bottom` on screen rather than after the last paragraph - that needed a
+viewport height threaded into `engine::run`, and it is the only thing in layout
+that uses one. `translateX()` and `translateY()` are separate functions from
+`translate()`, and Bootstrap writes both.
+
+**The insets are reported as USED values**, which is what Chrome does: `auto` only
+for a static element, and for a positioned one the number the box ended up at
+whether or not the sheet wrote it. Answering the declared text was 104 of the
+position fixture's 222 - and it also drops `substituted` by about 2,000 across the
+six fixtures, because four properties on every element stopped being unanswered.
+
+| fixture | before S11a | after |
+|---|---|---|
+| box | 49 | 49 |
+| type | 136 | **132** |
+| grid | 137 | 137 |
+| components | 704 | **574** |
+| position | 272 | **129** |
+| kitchen | 738 | **680** |
+| **total** | 2,036 | **1,701** |
+
+`bootstrap-position.html` now renders the way Chrome renders it, `fixed-top` and
+`fixed-bottom` included. What is left on it is `z-index` and the 1/64px cluster.
 
 ### Two findings that were NOT predicted
 

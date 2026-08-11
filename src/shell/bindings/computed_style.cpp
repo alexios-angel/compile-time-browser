@@ -120,6 +120,28 @@ constexpr std::array<std::string_view, 16> length_properties{
     return nullptr;
 }
 
+// The same lookup, but in ABSOLUTE coordinates. A fragment's bounds are relative
+// to its parent, so "where is this element on the page" is a different question
+// from "which fragment is it" - and it is the question the used value of `top`
+// and `left` is asked against.
+[[nodiscard]] rect absolute_rect_of(const layout::fragment * root, node_id id) {
+    rect found{};
+    bool got = false;
+    const auto walk = [&](auto && self, const layout::fragment & at, float dx, float dy) -> void {
+        if (got) { return; }
+        if (at.source == id) {
+            found = rect{dx + at.bounds.x, dy + at.bounds.y, at.bounds.width, at.bounds.height};
+            got = true;
+            return;
+        }
+        for (const layout::fragment & c : at.children) {
+            self(self, c, dx + at.bounds.x, dy + at.bounds.y);
+        }
+    };
+    if (root != nullptr && id) { walk(walk, *root, 0, 0); }
+    return found;
+}
+
 // Everything about one element that answering a property needs, gathered ONCE.
 // Per-property tree walks would be O(properties x boxes): the harness asks ~48
 // properties of a few hundred elements, which is tens of thousands of walks over
@@ -138,6 +160,15 @@ struct probe {
     // and `min-height` - are answered nowhere else, so it is gathered with the
     // rest of the parent lookup rather than costing a second tree walk.
     bool flex_item = false;
+    // POSITIONING, for the four inset properties. Chrome reports their USED
+    // values for a positioned element - a number, not the `auto` that was
+    // written - and `auto` only for a static one, so answering the declared text
+    // differed on 104 of one fixture's 222 remaining values. Deriving them needs
+    // the element's absolute rectangle and its containing block's, which are two
+    // tree walks, so they are gathered here with everything else.
+    layout::position_kind position = layout::position_kind::static_;
+    rect box_abs{};
+    rect containing{};          // the padding box of the nearest positioned ancestor
     std::vector<node_id> chain; // self first, then ancestors
 };
 
@@ -177,6 +208,27 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
         // CONTENT width, or the viewport at the root. That is the parent's
         // fragment less its padding, which is what content_width_of computes
         // (src/layout/algorithm.cpp) - there are no borders in this box model yet.
+        // The containing block for an absolutely positioned element: the padding
+        // box of the nearest POSITIONED ancestor, or the initial containing block
+        // when there is none. Same rule the layout pass uses (layout/position.hpp),
+        // asked here rather than shared because the two have different inputs -
+        // that one walks the fragment tree once, this one answers about one node.
+        at.position = at.box != nullptr ? at.box->position : layout::position_kind::static_;
+        at.box_abs = absolute_rect_of(fragments_, id);
+        at.containing = rect{0, 0, static_cast<float>(viewport_width_),
+                             fragments_ != nullptr ? fragments_->bounds.height : 0.0f};
+        for (std::size_t up = 1; up < at.chain.size(); ++up) {
+            const layout::box_node * ancestor = box_for(boxes_, at.chain[up]);
+            if (ancestor == nullptr || !ancestor->is_positioned()) { continue; }
+            const rect outer = absolute_rect_of(fragments_, at.chain[up]);
+            const layout::constraints c{outer.width, outer.height, ancestor->font_size};
+            const layout::resolved_edges e = layout::resolve_edges(*ancestor, c);
+            at.containing = rect{outer.x + e.border_left, outer.y + e.border_top,
+                                 std::max(0.0f, outer.width - e.border_left - e.border_right),
+                                 std::max(0.0f, outer.height - e.border_top - e.border_bottom)};
+            break;
+        }
+
         at.basis = static_cast<float>(viewport_width_);
         if (at.chain.size() >= 2) {
             const node_id parent = at.chain[1];
@@ -307,6 +359,39 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
         //     most pages are not flex items.
         if (text.empty() && (property == "min-width" || property == "min-height")) {
             return at.flex_item ? "auto" : "0px";
+        }
+        // 2d. THE INSETS, as USED values. Chrome answers `auto` only for a static
+        //     element; for a positioned one it answers the number the box ended
+        //     up at, whether or not the sheet wrote it. So `position: relative`
+        //     with nothing else reports `0px` on all four sides, and an absolute
+        //     box with only `top` and `left` still reports a `right` and a
+        //     `bottom` - derived from where it is.
+        //
+        //     Derived from the GEOMETRY rather than re-resolved from the text,
+        //     for the same reason `width` is: layout already answered this
+        //     question, and asking it twice is how two answers start to differ.
+        if (property == "top" || property == "right" || property == "bottom" ||
+            property == "left") {
+            if (at.position == layout::position_kind::static_) { return "auto"; }
+            if (at.position == layout::position_kind::relative ||
+                at.position == layout::position_kind::sticky) {
+                // A relative box's used inset is what it was OFFSET by, and an
+                // omitted one is zero - it did not move.
+                if (text.empty()) { return "0px"; }
+                const layout::length len = layout::parse_length(text);
+                if (len.is_auto()) { return "0px"; }
+                const bool horizontal = property == "left" || property == "right";
+                return px_text(len.resolve(horizontal ? at.containing.width : at.containing.height,
+                                           at.font_size));
+            }
+            const float left = at.box_abs.x - at.containing.x;
+            const float top = at.box_abs.y - at.containing.y;
+            if (property == "left") { return px_text(left); }
+            if (property == "top") { return px_text(top); }
+            if (property == "right") {
+                return px_text(at.containing.width - left - at.box_abs.width);
+            }
+            return px_text(at.containing.height - top - at.box_abs.height);
         }
         if (text.empty()) { return {}; }
         // 3. LENGTHS, through layout's own parser against layout's own basis.

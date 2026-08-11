@@ -147,6 +147,15 @@ struct length {
     }
 };
 
+// Leading and trailing ASCII whitespace removed. box_builder has its own copy
+// for computed-style text; this one is for the value parsers here, which are
+// pure functions of a string and cannot reach it.
+[[nodiscard]] inline std::string_view trimmed_view(std::string_view v) noexcept {
+    const std::size_t b = v.find_first_not_of(" \t\n\r\f");
+    if (b == std::string_view::npos) { return {}; }
+    return v.substr(b, v.find_last_not_of(" \t\n\r\f") - b + 1);
+}
+
 [[nodiscard]] inline length parse_length(std::string_view text) {
     std::size_t i = 0;
     while (i < text.size() && (text[i] == ' ' || text[i] == '\t')) { ++i; }
@@ -229,6 +238,70 @@ enum class display_kind : std::uint8_t {
     case display_kind::flex: break;
     }
     return d;
+}
+
+// --- position -------------------------------------------------------------
+
+enum class position_kind : std::uint8_t {
+    static_,
+    relative,
+    absolute,
+    fixed,
+    sticky
+};
+
+[[nodiscard]] inline position_kind parse_position(std::string_view text) {
+    if (text == "relative") { return position_kind::relative; }
+    if (text == "absolute") { return position_kind::absolute; }
+    if (text == "fixed") { return position_kind::fixed; }
+    // STICKY IS TREATED AS RELATIVE, which is exactly what it is until the page
+    // scrolls past it - and this engine has no scroll-driven layout yet. Naming
+    // it rather than falling through to `static` is the difference between a
+    // sticky header sitting where it belongs at rest and sitting in the wrong
+    // place always. Recorded as a known difference.
+    if (text == "sticky") { return position_kind::sticky; }
+    return position_kind::static_;
+}
+
+// `translate(x, y)`, the one transform this engine reads.
+//
+// Bootstrap's `.translate-middle` is `translate(-50%, -50%)` and it is how every
+// centred overlay in the framework is positioned - a percentage of the element's
+// OWN size, which is what makes it centre on its anchor point rather than on
+// anything about its parent. It is a paint-time transform in CSS and a pure
+// offset here, which is identical for a translation and nothing else; a rotation
+// or a scale needs a real transform on the display list and is not modelled.
+struct translation {
+    length x{0, unit::px};
+    length y{0, unit::px};
+};
+
+[[nodiscard]] inline translation parse_translate(std::string_view text) {
+    translation out;
+    const std::size_t open = text.find('(');
+    if (open == std::string_view::npos || !text.ends_with(')')) { return out; }
+    const std::string_view name = trimmed_view(text.substr(0, open));
+    // THE ONE-AXIS FORMS ARE SEPARATE FUNCTIONS, not `translate` with a default.
+    // Bootstrap writes `translateX(-50%)` for `.translate-middle-x` and
+    // `translate(-50%, -50%)` for `.translate-middle`, so reading only the
+    // two-argument spelling centred one of them and left the other where it was -
+    // which looks like a positioning bug and is a parsing one.
+    const bool x_only = name == "translateX";
+    const bool y_only = name == "translateY";
+    if (!x_only && !y_only && name != "translate") { return out; }
+    std::string_view args = text.substr(open + 1, text.size() - open - 2);
+    const std::size_t comma = args.find(',');
+    const length first = parse_length(trimmed_view(args.substr(0, comma)));
+    out.x = y_only ? length{0, unit::px} : first;
+    if (y_only) {
+        out.y = first;
+    } else if (comma != std::string_view::npos) {
+        out.y = parse_length(trimmed_view(args.substr(comma + 1)));
+    }
+    // A missing second argument is zero, not the first one repeated.
+    if (out.x.is_auto()) { out.x = length{0, unit::px}; }
+    if (out.y.is_auto()) { out.y = length{0, unit::px}; }
+    return out;
 }
 
 // --- flex -----------------------------------------------------------------

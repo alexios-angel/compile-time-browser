@@ -336,6 +336,17 @@ public:
             const std::string_view row = parts[0];
             return {{"row-gap", row}, {"column-gap", parts.size() > 1 ? parts[1] : row}};
         }
+        // `inset` IS the four offsets, in the side order - the one shorthand that
+        // shares `margin`'s shape exactly, which is why it can share its code.
+        if (property == "inset") {
+            const std::vector<std::string_view> parts = value_parts(value, 4);
+            if (parts.empty()) { return {}; }
+            const std::string_view top = parts[0];
+            const std::string_view right = parts.size() > 1 ? parts[1] : top;
+            const std::string_view bottom = parts.size() > 2 ? parts[2] : top;
+            const std::string_view left = parts.size() > 3 ? parts[3] : right;
+            return {{"top", top}, {"right", right}, {"bottom", bottom}, {"left", left}};
+        }
         if (property != "margin" && property != "padding") { return {}; }
         const std::vector<std::string_view> parts = value_parts(value, 4);
         if (parts.empty()) { return {}; }

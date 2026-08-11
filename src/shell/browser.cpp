@@ -1257,7 +1257,8 @@ void browser::run_layout() {
     };
     boxes_ = builder.build(txn, txn.root());
     const ctbrowser::layout::engine eng{measure()};
-    fragments_ = eng.run(boxes_, static_cast<float>(options_.width));
+    fragments_ =
+        eng.run(boxes_, static_cast<float>(options_.width), static_cast<float>(options_.height));
     content_height_ = fragments_.bounds.height;
 
     // TWO PASSES when the page overflows: the scrollbar takes width away
@@ -1268,7 +1269,7 @@ void browser::run_layout() {
     layout_width_ = static_cast<float>(options_.width);
     if (options_.scrollbar_width > 0 && content_height_ > static_cast<float>(options_.height)) {
         layout_width_ = static_cast<float>(options_.width) - options_.scrollbar_width;
-        fragments_ = eng.run(boxes_, layout_width_);
+        fragments_ = eng.run(boxes_, layout_width_, static_cast<float>(options_.height));
         content_height_ = fragments_.bounds.height;
     }
     scroll_y_ = std::clamp(scroll_y_, 0.0f, max_scroll());
