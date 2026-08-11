@@ -689,6 +689,57 @@ completely, which is the same lesson as the `RGBA(` case from the other directio
 the computed-style gate scores an element's own properties, and "the box below me
 is drawn on top of me" is not one of them.
 
+### The screen-cell metric, and the largest paint bug this project has had
+
+The property diff scores each element's own computed values, so it cannot see a
+box that reports everything correctly and is never painted, or one drawn on top
+of another. Both had shipped. `css-parity.py` now carries a third ratcheted
+number: both screenshots reduced to a coarse grid of mean colours, counting cells
+that disagree. **Not a pixel diff** - pixel-identical to Chrome is unreachable
+with a different rasteriser, and a metric that can never reach zero is one nobody
+reads. A 32×32 cell is far larger than any rasteriser difference and far smaller
+than any component.
+
+It reordered the work immediately, and not the way `differ` does: the **grid
+fixture is visually identical to Chrome** and still carries 137 property
+differences, which is the 1/64px `LayoutUnit` cluster - worth a great deal
+numerically and nothing at all visually. It also points at a band of rows, which
+is what turns a count into a lead.
+
+Pointed at the kitchen fixture's cards, it found this:
+
+**`value_parts` split inside parentheses.** `border: 1px solid rgba(0, 0, 0, .175)`
+is three parts; split on the spaces inside the colour it is five, of which the
+third - and therefore the whole `border-color` - is the string `rgba(0,`. That
+fails to parse, so **every card, alert, table and input in Bootstrap had a border
+in the box model and nothing drawn**. One function, four lines, and it had been
+there since the `border` shorthand landed.
+
+**The per-side shorthands expanded to nothing.** `border-bottom` is how Bootstrap
+draws every divider it has. Layout and paint both read the twelve per-side
+longhands now, falling back to the uniform trio, and `border` sets all twelve so
+a later `border-bottom-color` can override one edge.
+
+An intermediate version set the uniform trio as well "so it draws", and **that
+put the ratchet up** - a `border-bottom` then inset the box on all four sides and
+painted a full ring, costing 8 differences on one fixture and 18 on another. The
+half-answer was worse than nothing and the numbers said so within one run.
+
+`raster_basics`' own golden page turned out to write `border-color` and
+`border-width` with no `border-style`, which draws nothing in any browser: the
+old painter never asked about style, so the page had a border paint that layout
+did not know about. The page now says `border: 2px solid` - what it meant - and
+the two agree.
+
+    box         49    type 132    grid 137
+    components 574 -> 544
+    position   127 -> 117
+    kitchen    678 -> 602      cells 72 -> 65
+
+Also landed with the metric: `text-align` (read by nothing, so every `.btn` label
+sat hard left in a box that scored as correct), `opacity` applied to what a
+subtree appended rather than per command kind, and `list-style: none`.
+
 ### Two findings that were NOT predicted
 
 1. **`clientWidth` disagrees with the width layout actually used.**

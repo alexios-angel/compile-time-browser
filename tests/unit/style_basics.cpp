@@ -92,6 +92,60 @@ void expect_value(fixture & f, node_id n, std::string_view property, std::string
 // `border-radius` and `gap`, which are shorthands over CORNERS and over AXES
 // rather than over the four sides - so neither can reuse the side expansion and
 // each gets the order wrong in its own way if it tries.
+// A shorthand's parts are separated by whitespace, EXCEPT the whitespace inside
+// a function or a string. That sounds like pedantry and is the single largest
+// paint bug this project has had.
+void test_a_shorthand_does_not_split_inside_a_function() {
+    {
+        // `border: 1px solid rgba(0, 0, 0, 0.175)` is THREE parts. Split on the
+        // spaces inside the colour it is five, of which the third - and therefore
+        // the whole `border-color` - is the string `rgba(0,`. That fails to parse,
+        // so every card, alert, table and input in Bootstrap had a border in the
+        // box model and NOTHING drawn.
+        fixture f;
+        f.load("<div id=a></div>", "#a { border: 1px solid rgba(0, 0, 0, 0.5) }");
+        const node_id a = f.find("div");
+        expect_value(f, a, "border-width", "1px", "the width is still the width");
+        expect_value(f, a, "border-style", "solid", "and the style the style");
+        expect_value(f, a, "border-color", "rgba(0, 0, 0, 0.5)",
+                     "and the colour survives its own commas");
+    }
+    {
+        // A quoted string can hold a bracket or a space too.
+        fixture f;
+        f.load("<div id=a></div>", "#a { margin: 1px 2px }");
+        expect_value(f, f.find("div"), "margin-right", "2px", "and an ordinary split still splits");
+    }
+}
+
+// The per-side form of `border`, which is how Bootstrap draws every divider it
+// has - a card header's rule, a card footer's, the line under a navbar.
+void test_the_per_side_border_shorthands_expand() {
+    {
+        fixture f;
+        f.load("<div id=a></div>", "#a { border-bottom: 2px dashed #123456 }");
+        const node_id a = f.find("div");
+        expect_value(f, a, "border-bottom-width", "2px", "the side's width");
+        expect_value(f, a, "border-bottom-style", "dashed", "its style");
+        expect_value(f, a, "border-bottom-color", "#123456", "and its colour");
+        // AND NOT THE UNIFORM ONES. Setting those "so it draws" was tried: a
+        // `border-bottom` then inset the box on all four sides and painted a full
+        // ring, which cost 8 differences on one fixture and 18 on another.
+        expect_value(f, a, "border-top-width", "", "the other sides are untouched");
+        expect_value(f, a, "border-width", "", "and so is the uniform property");
+    }
+    {
+        // `border` sets all twelve longhands, so a per-side one written after it
+        // can override a single edge - which it cannot do if the first
+        // declaration only wrote a uniform value.
+        fixture f;
+        f.load("<div id=a></div>", "#a { border: 1px solid red; border-bottom-color: blue }");
+        const node_id a = f.find("div");
+        expect_value(f, a, "border-top-color", "red", "three sides keep the shorthand's colour");
+        expect_value(f, a, "border-bottom-color", "blue", "and the fourth takes the longhand's");
+    }
+}
+
 void test_corner_and_axis_shorthands_expand() {
     {
         // FOUR VALUES GO CLOCKWISE FROM THE TOP LEFT, not top/right/bottom/left:
@@ -1706,6 +1760,8 @@ void test_flex_shorthand() {
 int main() {
     test_shorthands_expand();
     test_corner_and_axis_shorthands_expand();
+    test_a_shorthand_does_not_split_inside_a_function();
+    test_the_per_side_border_shorthands_expand();
     test_simple_selectors();
     test_bucketing_uses_the_rightmost_compound();
     test_descendant_and_child_combinators();

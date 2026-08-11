@@ -6,6 +6,7 @@
 #include <string_view>
 #include <utility>
 
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/layout/layout.hpp>
 #include <ctbrowser/style/style.hpp>
@@ -41,7 +42,16 @@ public:
     explicit recorder(atom_table & atoms)
         : background_(atoms.intern("background-color")), color_(atoms.intern("color")),
           border_color_(atoms.intern("border-color")), border_width_(atoms.intern("border-width")),
-          overflow_(atoms.intern("overflow")),
+          border_style_(atoms.intern("border-style")), overflow_(atoms.intern("overflow")),
+          border_width_sides_{atoms.intern("border-top-width"), atoms.intern("border-right-width"),
+                              atoms.intern("border-bottom-width"),
+                              atoms.intern("border-left-width")},
+          border_style_sides_{atoms.intern("border-top-style"), atoms.intern("border-right-style"),
+                              atoms.intern("border-bottom-style"),
+                              atoms.intern("border-left-style")},
+          border_color_sides_{atoms.intern("border-top-color"), atoms.intern("border-right-color"),
+                              atoms.intern("border-bottom-color"),
+                              atoms.intern("border-left-color")},
           radius_{atoms.intern("border-top-left-radius"), atoms.intern("border-top-right-radius"),
                   atoms.intern("border-bottom-right-radius"),
                   atoms.intern("border-bottom-left-radius")} {}
@@ -144,7 +154,7 @@ private:
                 into.fill_rounded(box, *bg, radii, 0, f.source);
             }
         }
-        emit_border(box, style, radii, f.source, into);
+        emit_border(box, style, radii, f.source, text_color, into);
         emit_marker(f, box, text_color, into);
         // `<table border=1>`: a presentational attribute, not CSS, and one that
         // draws a frame around the table AND around every cell - which is what
@@ -220,14 +230,69 @@ private:
     // A rectangle's four edges, `t` thick.
     static void stroke(const rect & box, float t, color c, node_id source, display_list & into);
 
-    void emit_border(const rect & box, const computed_style_ptr & style, const corner_radii & radii,
-                     node_id source, display_list & into) const {
-        const auto c = parse_color(prop(style, border_color_));
-        if (!c) { return; }
-        const std::string_view width_text = prop(style, border_width_);
+    // One edge's used width and colour, per side and falling back to the uniform
+    // property. `border-style: none` means a used width of ZERO whatever the
+    // width says, which is CSS 2.1 §8.5.3 and the same rule layout applies.
+    struct edge {
+        float width = 0;
+        color paint;
+    };
+
+    [[nodiscard]] edge edge_of(const computed_style_ptr & style, const rect & box, std::size_t side,
+                               color text_color) const {
+        std::string_view drawn = trim(prop(style, border_style_sides_[side]), html_whitespace);
+        if (drawn.empty()) { drawn = trim(prop(style, border_style_), html_whitespace); }
+        if (drawn.empty() || drawn == "none" || drawn == "hidden") { return {}; }
+        std::string_view width_text = trim(prop(style, border_width_sides_[side]), html_whitespace);
+        if (width_text.empty()) { width_text = trim(prop(style, border_width_), html_whitespace); }
         const layout::length w = layout::parse_length(width_text);
-        const float t = w.is_auto() ? 0 : w.resolve(box.width, 16);
+        const float t =
+            width_text == "medium" ? 3.0f : (w.is_auto() ? 0 : w.resolve(box.width, 16));
+        if (t <= 0) { return {}; }
+        std::string_view colour = trim(prop(style, border_color_sides_[side]), html_whitespace);
+        if (colour.empty()) { colour = trim(prop(style, border_color_), html_whitespace); }
+        // `currentcolor` is the initial value and what the shorthand fills in for
+        // an omitted colour, so it is the common case rather than an exotic one.
+        if (colour.empty() || colour == "currentcolor") { return edge{t, text_color}; }
+        const auto c = parse_color(colour);
+        return c ? edge{t, *c} : edge{};
+    }
+
+    void emit_border(const rect & box, const computed_style_ptr & style, const corner_radii & radii,
+                     node_id source, color text_color, display_list & into) const {
+        const edge top = edge_of(style, box, 0u, text_color);
+        const edge right = edge_of(style, box, 1u, text_color);
+        const edge bottom = edge_of(style, box, 2u, text_color);
+        const edge left = edge_of(style, box, 3u, text_color);
+        // FOUR DIFFERENT EDGES IS THE GENERAL CASE and one uniform border the
+        // special one - but the special one is the only one that can be a rounded
+        // RING, because a ring has no sides to give different colours to. So it
+        // keeps its own path and everything else is drawn edge by edge, square,
+        // which is what a divider is anyway: Bootstrap's per-side borders are all
+        // on boxes whose radius is zero at that corner or absent entirely.
+        const bool uniform = top.width == right.width && right.width == bottom.width &&
+                             bottom.width == left.width && top.paint == right.paint &&
+                             right.paint == bottom.paint && bottom.paint == left.paint;
+        if (!uniform) {
+            if (top.width > 0) {
+                into.fill(rect{box.x, box.y, box.width, top.width}, top.paint, source);
+            }
+            if (bottom.width > 0) {
+                into.fill(rect{box.x, box.y + box.height - bottom.width, box.width, bottom.width},
+                          bottom.paint, source);
+            }
+            if (left.width > 0) {
+                into.fill(rect{box.x, box.y, left.width, box.height}, left.paint, source);
+            }
+            if (right.width > 0) {
+                into.fill(rect{box.x + box.width - right.width, box.y, right.width, box.height},
+                          right.paint, source);
+            }
+            return;
+        }
+        const float t = top.width;
         if (t <= 0) { return; }
+        const color c = top.paint;
         // A ROUNDED BORDER IS A RING, not four rectangles: the corners are where
         // the four would have to meet, and they meet on a curve. One command
         // rather than four also gets the transparent case right, which the
@@ -235,10 +300,10 @@ private:
         // around NOTHING, and "fill the box in the border colour, then fill the
         // inside in the background colour" would flood the button.
         if (!radii.empty()) {
-            into.fill_rounded(box, *c, radii, t, source);
+            into.fill_rounded(box, c, radii, t, source);
             return;
         }
-        stroke(box, t, *c, source, into);
+        stroke(box, t, c, source, into);
     }
 
     // The four corner radii, resolved against the box. A percentage is against
@@ -254,7 +319,9 @@ private:
         return corner_radii{one(radius_[0]), one(radius_[1]), one(radius_[2]), one(radius_[3])};
     }
 
-    atom background_, color_, border_color_, border_width_, overflow_;
+    atom background_, color_, border_color_, border_width_, border_style_, overflow_;
+    // Clockwise from the top, which is the order the side shorthands name them.
+    std::array<atom, 4> border_width_sides_, border_style_sides_, border_color_sides_;
     // Clockwise from the top left, which is the order border-radius names them.
     std::array<atom, 4> radius_;
 };

@@ -284,6 +284,11 @@ public:
           min_width_(atoms.intern("min-width")), max_width_(atoms.intern("max-width")),
           min_height_(atoms.intern("min-height")), max_height_(atoms.intern("max-height")),
           border_width_(atoms.intern("border-width")), border_style_(atoms.intern("border-style")),
+          border_sides_{atoms.intern("border-top-width"), atoms.intern("border-right-width"),
+                        atoms.intern("border-bottom-width"), atoms.intern("border-left-width")},
+          border_style_sides_{atoms.intern("border-top-style"), atoms.intern("border-right-style"),
+                              atoms.intern("border-bottom-style"),
+                              atoms.intern("border-left-style")},
           position_(atoms.intern("position")), transform_(atoms.intern("transform")),
           text_align_(atoms.intern("text-align")), opacity_(atoms.intern("opacity")),
           list_style_type_(atoms.intern("list-style-type")),
@@ -701,16 +706,30 @@ private:
     // `border: 0` and a bare `border-width: 2px` behave differently, and what
     // stops a sheet that names only a colour from silently insetting every box.
     [[nodiscard]] side_lengths border_of(const computed_style_ptr & style) const {
-        const std::string_view drawn = trimmed(prop(style, border_style_));
-        if (drawn.empty() || drawn == "none" || drawn == "hidden") { return {}; }
-        const length w = parse_length(prop(style, border_width_));
-        // `medium` is the initial value and the one keyword Bootstrap's shorthand
-        // expansion can produce; CSS puts it at 3px and so does every browser.
-        const length used =
-            w.is_auto()
-                ? (trimmed(prop(style, border_width_)) == "medium" ? length{3, unit::px} : length{})
-                : w;
-        return side_lengths{used, used, used, used};
+        // PER SIDE, falling back to the uniform property. `border-bottom: 1px
+        // solid` is how Bootstrap draws every divider it has - a card header's
+        // rule, a navbar's underline - and reading only the uniform value inset
+        // the box on all FOUR sides for it, which is 2px of width and 2px of
+        // height the element never asked for.
+        const auto one = [&](atom width_name, atom style_name) {
+            std::string_view drawn = trimmed(prop(style, style_name));
+            if (drawn.empty()) { drawn = trimmed(prop(style, border_style_)); }
+            // `border-style` DECIDES WHETHER THERE IS ONE: a width with no style
+            // is a used width of zero (CSS 2.1 §8.5.3), which is what makes
+            // `border: 0` and a bare `border-width: 2px` behave differently.
+            if (drawn.empty() || drawn == "none" || drawn == "hidden") { return length{}; }
+            std::string_view text = trimmed(prop(style, width_name));
+            if (text.empty()) { text = trimmed(prop(style, border_width_)); }
+            // `medium` is the initial value and the one keyword the shorthand
+            // expansion can produce; CSS puts it at 3px and so does every browser.
+            if (text == "medium") { return length{3, unit::px}; }
+            const length w = parse_length(text);
+            return w.is_auto() ? length{} : w;
+        };
+        return side_lengths{one(border_sides_.top, border_style_sides_.top),
+                            one(border_sides_.right, border_style_sides_.right),
+                            one(border_sides_.bottom, border_style_sides_.bottom),
+                            one(border_sides_.left, border_style_sides_.left)};
     }
 
     // The four longhands of one box-edge property.
@@ -797,6 +816,7 @@ private:
     atom line_height_;
     atom min_width_, max_width_, min_height_, max_height_;
     atom border_width_, border_style_;
+    side_atoms border_sides_, border_style_sides_;
     atom position_, transform_, text_align_, opacity_, list_style_type_;
     side_atoms inset_sides_;
     flex_atoms flex_;

@@ -415,8 +415,13 @@ void test_golden_page() {
            "body { margin: 0; padding: 8px; background-color: #f0f0f0; color: #202020 } "
            "h1 { font-size: 24px; margin: 4px; color: #103070; background-color: #ffffff } "
            ".note { font-size: 16px; margin: 4px; padding: 4px; background-color: #ffffe0 } "
-           ".box { margin: 4px; padding: 6px; background-color: #d0e0ff; border-color: #3050a0; "
-           "border-width: 2px } "
+           // `solid`, WHICH THIS PAGE USED TO OMIT. A `border-color` and a
+           // `border-width` with no STYLE is a used width of zero in CSS 2.1
+           // §8.5.3 - no browser draws it - and this page relied on a painter
+           // that never asked. Layout and paint now agree that it is nothing, so
+           // saying what was meant is what keeps the page exercising a border.
+           ".box { margin: 4px; padding: 6px; background-color: #d0e0ff; "
+           "border: 2px solid #3050a0 } "
            ".inner { font-size: 16px; background-color: rgba(255, 0, 0, 0.5) } ",
            320);
 

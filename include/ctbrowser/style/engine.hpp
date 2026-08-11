@@ -4,6 +4,8 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
@@ -183,10 +185,40 @@ public:
         while (at < value.size() && parts.size() < limit) {
             const std::size_t begin = value.find_first_not_of(" \t\n\r\f", at);
             if (begin == std::string_view::npos) { break; }
-            const std::size_t end = value.find_first_of(" \t\n\r\f", begin);
-            parts.push_back(value.substr(
-                begin, end == std::string_view::npos ? std::string_view::npos : end - begin));
-            at = end == std::string_view::npos ? value.size() : end;
+            // WHITESPACE INSIDE PARENTHESES IS NOT A SEPARATOR, and this is not a
+            // nicety: `border: 1px solid rgba(0, 0, 0, 0.175)` is THREE parts, and
+            // splitting on the spaces inside the colour made it five - of which
+            // the third, and therefore the whole `border-color`, was the string
+            // `rgba(0,`. That fails to parse, so every card, alert, table and
+            // input in Bootstrap had a border in the box model and NOTHING drawn.
+            // A quoted string can hold a bracket too, so quotes are tracked as
+            // well: `font: 12px "Some, Font"` is one family.
+            std::size_t end = begin;
+            int depth = 0;
+            char quote = 0;
+            for (; end < value.size(); ++end) {
+                const char c = value[end];
+                if (quote != 0) {
+                    if (c == '\\' && end + 1 < value.size()) {
+                        ++end;
+                    } else if (c == quote) {
+                        quote = 0;
+                    }
+                    continue;
+                }
+                if (c == '"' || c == '\'') {
+                    quote = c;
+                } else if (c == '(') {
+                    ++depth;
+                } else if (c == ')') {
+                    if (depth > 0) { --depth; }
+                } else if (depth == 0 &&
+                           (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f')) {
+                    break;
+                }
+            }
+            parts.push_back(value.substr(begin, end - begin));
+            at = end;
         }
         return parts;
     }
@@ -210,6 +242,22 @@ public:
         return !part.empty() &&
                (part.front() == '.' || part.front() == '-' || part.front() == '+' ||
                 (part.front() >= '0' && part.front() <= '9'));
+    }
+
+    // A property NAME that has to outlive this call. expand_shorthand returns
+    // views, and every other name it returns is a string literal with static
+    // storage; the four per-side border groups are the only ones built at
+    // runtime, so they are interned into a set that lives as long as the process
+    // - twelve strings, once.
+    [[nodiscard]] static std::string_view intern_side(const std::string & name) {
+        static std::vector<std::unique_ptr<const std::string>> kept;
+        static std::mutex guard;
+        const std::lock_guard<std::mutex> hold{guard};
+        for (const auto & had : kept) {
+            if (*had == name) { return *had; }
+        }
+        kept.push_back(std::make_unique<const std::string>(name));
+        return *kept.back();
     }
 
     [[nodiscard]] static std::vector<std::pair<std::string_view, std::string_view>>
@@ -240,10 +288,57 @@ public:
             // mention - so an omitted part becomes its initial value rather than being
             // left alone. That is what makes `border: 0` reset a style set elsewhere.
             std::vector<std::pair<std::string_view, std::string_view>> out;
-            out.emplace_back("border-width", width.empty() ? "medium" : width);
-            out.emplace_back("border-style", style.empty() ? "none" : style);
-            out.emplace_back("border-color", colour.empty() ? "currentcolor" : colour);
+            const std::string_view w = width.empty() ? "medium" : width;
+            const std::string_view y = style.empty() ? "none" : style;
+            const std::string_view c = colour.empty() ? "currentcolor" : colour;
+            out.emplace_back("border-width", w);
+            out.emplace_back("border-style", y);
+            out.emplace_back("border-color", c);
+            // AND ALL TWELVE PER-SIDE LONGHANDS, because `border` really does set
+            // them: `border: 1px solid red; border-bottom-color: blue` has to
+            // leave three sides red, and it cannot if the first declaration only
+            // wrote a uniform value that the second does not overwrite.
+            for (const std::string_view side : {"top", "right", "bottom", "left"}) {
+                const std::string prefix = "border-" + std::string{side} + "-";
+                out.emplace_back(intern_side(prefix + "width"), w);
+                out.emplace_back(intern_side(prefix + "style"), y);
+                out.emplace_back(intern_side(prefix + "color"), c);
+            }
             return out;
+        }
+        // THE PER-SIDE FORM, `border-top` and its three siblings, which is the same
+        // grammar aimed at one edge. Bootstrap writes it for every divider it
+        // draws - a `.card-header`'s bottom rule, a `.card-footer`'s top one, the
+        // line under a navbar - and none of them appeared, because a shorthand
+        // that expands to nothing sets nothing.
+        //
+        // Its longhands are `border-<side>-{width,style,color}`, and layout and
+        // paint both read those in preference to the uniform trio - which is the
+        // only honest expansion. Setting the uniform ones as well "so it draws"
+        // was tried and was worse than nothing: a `border-bottom` then inset the
+        // box on all four sides and drew a full ring, which cost 8 differences on
+        // one fixture and 18 on another.
+        for (const std::string_view side : {"top", "right", "bottom", "left"}) {
+            if (property != std::string("border-") + std::string{side}) { continue; }
+            const std::vector<std::string_view> parts = value_parts(value, 3);
+            if (parts.empty()) { return {}; }
+            std::string_view width, style, colour;
+            for (const std::string_view part : parts) {
+                if (style.empty() && is_border_style(part)) {
+                    style = part;
+                } else if (width.empty() && is_border_width(part)) {
+                    width = part;
+                } else if (colour.empty()) {
+                    colour = part;
+                }
+            }
+            if (width.empty()) { width = "medium"; }
+            if (style.empty()) { style = "none"; }
+            if (colour.empty()) { colour = "currentcolor"; }
+            const std::string prefix = "border-" + std::string{side} + "-";
+            return {{intern_side(prefix + "width"), width},
+                    {intern_side(prefix + "style"), style},
+                    {intern_side(prefix + "color"), colour}};
         }
         // `flex`, WHICH MUST BE EXPANDED RATHER THAN READ. Bootstrap's grid is built
         // on it - `.col { flex: 1 0 0 }` - and a `.flex-grow-0` utility written after
