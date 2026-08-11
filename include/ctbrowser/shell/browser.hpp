@@ -559,7 +559,11 @@ private:
     // THE SAME NUMBER layout reserves - see the note on the constant. Two
     // copies is how the painter came to draw text 6 in on a box that had set
     // aside 4.
-    static constexpr float control_padding = ctbrowser::layout::control_text_inset;
+    // GONE, and deliberately not replaced by another constant: a control's text
+    // starts at its CONTENT box, which paint_replaced is now handed. The two
+    // copies of this number - here and in layout - are exactly why a field's text
+    // once started inside its own reserved room, and why Bootstrap's padding did
+    // nothing.
 
     // A vector graphic, rasterised for THIS box rather than scaled into it.
     //
@@ -579,7 +583,12 @@ private:
         return true;
     }
 
-    void paint_replaced(node_id id, const rect & box,
+    // `box` is the BORDER box and `content` the content box - the recorder
+    // resolved the padding and the border to draw them, so it hands over where
+    // they left off rather than the shell keeping a constant of its own. That
+    // constant was `control_padding`, layout had a second copy, and a sheet could
+    // change neither.
+    void paint_replaced(node_id id, const rect & box, const rect & content,
                         const ctbrowser::style::computed_style_ptr & style,
                         ctbrowser::paint::display_list & into) {
         const auto txn = doc_->read();
@@ -651,21 +660,27 @@ private:
             // drop-down arrow and asked selected_option() for its label - which
             // looks for <option> children a button does not have, so every
             // button on the page was an empty box with an arrow in it.
-            outline(box, frame, into, id);
+            //
+            // `<button>` no longer reaches here at all - it is not a replaced
+            // element - so this is `<input type=button|submit|reset>`, whose
+            // border comes from the UA sheet like every other control's.
             const std::string label = button_label(txn, id, control, type);
             if (!label.empty()) { label_text(box, label, id, style, into); }
             break;
         }
         case control_kind::select: {
-            outline(box, frame, into, id);
+            // NO FRAME OF ITS OWN. The UA sheet gives every control a real
+            // border, so the recorder has already drawn one - and drawing a
+            // second here put two lines on every field and made a styled control
+            // impossible to restyle.
             // The SELECTED OPTION'S TEXT. This drew an empty rectangle before -
             // it passed an empty string as the label and never read <option> at
             // all, so a select looked like a bug rather than like a control.
             const std::string label = selected_option(txn, id);
             if (!label.empty()) {
                 const float size = font_size_of(id);
-                into.text(rect{box.x + control_padding, box.y + baseline_inset(box, size),
-                               box.width - control_padding - 20, size * 1.25f},
+                into.text(rect{content.x, box.y + baseline_inset(box, size),
+                               std::max(0.0f, content.width - 20), size * 1.25f},
                           label, size, control_text_colour(id, style), id, paint_face_of(id));
             }
             // The drop-down arrow, in the gutter the intrinsic width reserves.
@@ -679,8 +694,16 @@ private:
         }
         case control_kind::text:
         case control_kind::textarea: {
-            into.fill(box, field, id);
-            outline(box, focused ? accent : frame, into, id);
+            // NO BACKGROUND OF ITS OWN. `input, textarea { background-color:
+            // #ffffff }` is in the UA sheet and the recorder has already painted
+            // it - underneath the border it also painted. Filling the border box
+            // again here covered that border, so every field lost its frame the
+            // moment the frame became a real CSS border.
+            // ONLY THE FOCUS RING. The resting border is the UA sheet's and the
+            // recorder drew it; this is the one line here that is not a CSS
+            // border but a state indicator, and it belongs to the widget.
+            if (focused) { outline(box, accent, into, id); }
+            (void)field;
             paint_field_text(box, id, control, kind, style, focused, into);
             break;
         }
@@ -732,7 +755,8 @@ private:
                     ctbrowser::paint::display_list & into) {
         const float size = font_size_of(id);
         const float width = measure()(label, size, face_of(id));
-        const float x = box.x + std::max(control_padding, (box.width - width) / 2);
+        const rect inner = content_box_of(id, box);
+        const float x = inner.x + std::max(0.0f, (inner.width - width) / 2);
         into.text(rect{x, box.y + baseline_inset(box, size), box.width - (x - box.x), size * 1.25f},
                   label, size, control_text_colour(id, style), id, paint_face_of(id));
     }
@@ -770,17 +794,45 @@ private:
         float content_width = 0;
     };
 
-    [[nodiscard]] field_layout layout_of_field(const rect & box, node_id id,
+    // THE CONTENT BOX OF A CONTROL, in ONE place.
+    //
+    // The caret, the hit test, the selection and the painter all have to agree
+    // about where a field's text starts, and they used to agree only because
+    // each repeated the same `control_padding` constant - which layout had a
+    // second copy of and which no stylesheet could change. They agree now
+    // because they all ask this, and it asks the cascade.
+    [[nodiscard]] rect content_box_of(node_id id, const rect & box) const {
+        const layout::box_node * found = nullptr;
+        const auto walk = [&](auto && self, const layout::box_node & at) -> void {
+            if (found != nullptr) { return; }
+            if (at.source == id) {
+                found = &at;
+                return;
+            }
+            for (const layout::box_node & c : at.children) { self(self, c); }
+        };
+        walk(walk, boxes_);
+        if (found == nullptr) { return box; }
+        const layout::resolved_edges e = layout::resolve_edges(
+            *found, layout::constraints{box.width, box.height, found->font_size});
+        return rect{box.x + e.content_left(), box.y + e.content_top(),
+                    std::max(0.0f, box.width - e.horizontal_inner()),
+                    std::max(0.0f, box.height - e.vertical_inner())};
+    }
+
+    [[nodiscard]] field_layout layout_of_field(const rect & border_box, node_id id,
                                                const control_state & control, control_kind kind) {
+        // EVERY caller hands over the border box and this converts once, which is
+        // what stops the four of them drifting apart again.
+        const rect box = content_box_of(id, border_box);
         field_layout out;
         out.size = font_size_of(id);
         out.metrics_face = face_of(id);
         out.line_height = out.size * 1.25f;
         out.masked = is_password(id);
         const bool multiline = kind == control_kind::textarea;
-        out.inner =
-            rect{box.x + control_padding, box.y + (multiline ? 3 : baseline_inset(box, out.size)),
-                 box.width - 2 * control_padding, box.height - 6};
+        out.inner = rect{box.x, box.y + (multiline ? 0 : baseline_inset(box, out.size)), box.width,
+                         box.height};
         // A single-line field does not wrap - it scrolls horizontally, which it
         // has always done by clipping. Only a textarea gets visual lines.
         out.lines =

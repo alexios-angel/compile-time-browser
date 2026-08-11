@@ -602,17 +602,22 @@ private:
             }
             return;
         }
-        // The room a control keeps around its text is `control_text_inset` per
-        // side, which is what the painter actually insets by - see the note on
-        // the constant. Reserving less than that is why a field's text used to
-        // start inside its own padding.
-        const float chrome_x = 2 * control_text_inset;
-        const float chrome_y = 2 * control_border_inset;
+        // THE INTRINSIC SIZE IS THE CONTENT BOX, and nothing else. A replaced
+        // element's padding and border are added outside it by layout_box, so
+        // reserving room for them here too is counting them twice - and it used
+        // to be the ONLY room a control had, because the UA sheet gave it no
+        // padding and no border at all. That is why every `.form-control` on a
+        // Bootstrap page was 24px tall where Chrome's is 38: its `.375rem` of
+        // padding and its 1px border had nowhere to go.
+        //
+        // The line BOX, not `font_size * 1.25`: `line-height` is a cascaded
+        // property and a control obeys it like anything else. Bootstrap sets 1.5,
+        // which is 4 of those 14 missing pixels.
         if (tag == "textarea") {
             const float columns = attribute_number("cols", 20);
             const float rows = attribute_number("rows", 2);
-            into.intrinsic_width = columns * text_width("0", into.font_size) + chrome_x;
-            into.intrinsic_height = rows * into.font_size * 1.25f + chrome_y;
+            into.intrinsic_width = columns * text_width("0", into.font_size);
+            into.intrinsic_height = rows * into.line_height;
             return;
         }
         if (tag == "input") {
@@ -623,8 +628,8 @@ private:
                 return;
             }
             const float size = attribute_number("size", 20);
-            into.intrinsic_width = size * text_width("0", into.font_size) + chrome_x;
-            into.intrinsic_height = into.font_size * 1.25f + chrome_y;
+            into.intrinsic_width = size * text_width("0", into.font_size);
+            into.intrinsic_height = into.line_height;
             return;
         }
         if (tag == "select") {
@@ -650,8 +655,11 @@ private:
             // The gutter on the right is the drop-down arrow's; the painter
             // draws it 12 in from the edge, so this is what keeps the label
             // from running underneath it.
-            into.intrinsic_width = widest + chrome_x + 20;
-            into.intrinsic_height = into.font_size * 1.25f + chrome_y;
+            // The 20 is the drop-down arrow's gutter, which the painter draws in
+            // and which is not padding - a sheet's `padding-right` is added
+            // outside it.
+            into.intrinsic_width = widest + 20;
+            into.intrinsic_height = into.line_height;
             return;
         }
         if (tag == "button") {

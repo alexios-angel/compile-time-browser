@@ -837,6 +837,55 @@ picture is better - 58 → 55 screen cells - and the mechanism is right.
    `tools/check/compare.py` also still looked for `build/src/examples/ctdrive`,
    a path the 2026-08-09 reorg moved; it now tries both.
 
+### The forms overhaul, and where a stated width stops
+
+A user looked at the rendered page and said the controls were wrong. They were,
+in four independent ways, and none of them was where the symptom pointed.
+
+**A control's chrome was two constants, not CSS.** Layout reserved
+`control_text_inset` around a field's text and the painter reserved the same
+number a second time, and no stylesheet could reach either. So Bootstrap's
+`.form-control` drew its text 6px in where it asks for 12, and stood 24px tall
+where Chrome makes it 38. Both are gone: the UA sheet now says
+`input, textarea, select { padding: 1px 5px; border: 1px solid #8f8f9d }`, which
+reserves exactly what those constants did, and an author sheet can now change it.
+Two exemptions came with it, because a blanket rule is wrong for the controls
+that are GLYPHS rather than fields - a checkbox with a text field's padding is
+25px wide, not 13.
+
+**The painter drew frames the cascade had already drawn.** `replaced_painter`
+took one rect and inferred everything else, so it filled a field's background
+over the CSS background and outlined a border on top of the CSS border. It now
+takes TWO - the border box and the content box - and `content_box_of()` in
+`browser.hpp` is the single place a `node_id` becomes the second. The painter no
+longer owns a control's background or its frame at all; it owns the tick, the
+dot, the thumb and the caret, which is the part no stylesheet describes.
+
+**A stated size on a replaced element was the CONTENT box.** Everywhere else in
+this engine a stated width names the border box - `outer_width_of` has returned
+it unchanged since it was written - and the replaced branch of `layout_box` was
+the one place that disagreed, adding the padding and the border around it. With
+`box-sizing: border-box` on `*`, which is the first thing Bootstrap's Reboot
+does, that counted the 24px of padding and 2px of border twice: every
+`.form-control` came out 346px wide against Chrome's 320. The fix is one
+conditional - an INTRINSIC size is a content size and grows, a STATED one does
+not - and it moved five controls onto Chrome's number exactly.
+
+**An inline-level box's margins were not part of its line.** `inline_flow`
+placed each child at the pen and advanced by its border box, so
+`.form-label`'s `margin-bottom: .5rem` - the thing that separates every
+Bootstrap label from its field - did nothing at all, and two inline-blocks side
+by side touched. The line's extent is the MARGIN box now.
+
+Together: `bootstrap-components.html` went from **48 screen cells different to
+3**, which is the largest single move the cell metric has recorded, and its
+property diff fell 489 to 444. Kitchen went 610 to 590.
+
+Worth recording about the ORDER of that: the property diff barely moved on the
+one that mattered, because a control reporting `@w=346` when Chrome says `320`
+is one property on one element, and a label with no gap under it is zero
+properties on none. The screenshot is what found both.
+
 ## The decisions this plan rests on
 
 1. **The CSS front end gets rewritten inside ctbrowser** as `src/style/css/` — a

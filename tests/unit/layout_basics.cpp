@@ -308,6 +308,48 @@ void test_inline_blocks_share_a_line() {
     check(b->bounds.x > a->bounds.x, "the second is to the RIGHT of the first, not below");
 }
 
+void test_an_inline_levels_margins_belong_to_the_line() {
+    // Bootstrap separates every label from its field with `margin-bottom: .5rem`
+    // on an inline-block, and inline_flow ignored child margins outright - so the
+    // gap was 0 and every form control sat hard against its label.
+    fixture f;
+    f.load("<html><body><span id=a>hi</span><span id=b>yo</span>"
+           "<div id=c>next</div></body></html>",
+           "body { margin: 0; padding: 0; font-size: 10px; line-height: 10px } "
+           "span { display: inline-block; margin: 0 4px 6px 0 }");
+    engine eng{monospace_measure()};
+    const fragment out = eng.run(f.root, 400);
+    const fragment * a_box = out.find(f.find_id("a"));
+    const fragment * b = out.find(f.find_id("b"));
+    const fragment * c = out.find(f.find_id("c"));
+    check(a_box != nullptr && b != nullptr && c != nullptr, "all three fragments exist");
+    if (a_box == nullptr || b == nullptr || c == nullptr) { return; }
+    expect_near(b->bounds.x, a_box->bounds.width + 4, "a right margin separates two on a line");
+    // The margin BELOW extends the line box, so what follows clears it.
+    expect_near(c->bounds.y, 16, "a bottom margin pushes the next line down");
+}
+
+void test_a_stated_size_on_a_replaced_element_is_the_border_box() {
+    // Every other box here treats a stated width as the border box, which is what
+    // `box-sizing: border-box` asks for and what Bootstrap sets on `*`. The
+    // replaced branch used to add the padding and border AROUND it, making every
+    // `.form-control` 26px wider than Chrome's.
+    fixture f;
+    f.load("<html><body><input id=a><input id=b></body></html>",
+           "body { margin: 0; padding: 0 } input { padding: 0 12px; border: 1px solid #000 } "
+           "#a { width: 320px }");
+    engine eng{monospace_measure()};
+    const fragment out = eng.run(f.root, 400);
+    const fragment * a_box = out.find(f.find_id("a"));
+    const fragment * b = out.find(f.find_id("b"));
+    check(a_box != nullptr && b != nullptr, "both fragments exist");
+    if (a_box == nullptr || b == nullptr) { return; }
+    expect_near(a_box->bounds.width, 320, "a stated width IS the border box");
+    // The other half of the same rule: an INTRINSIC width is a content size, so
+    // the padding and the border are added around that one.
+    check(b->bounds.width > 26, "an intrinsic width grows by the padding and border");
+}
+
 void test_an_inline_block_still_stacks_its_own_blocks() {
     // The INSIDE half. An inline BOX would put these on one line; an
     // inline-BLOCK stacks them, which is the whole reason the two exist.
@@ -877,6 +919,8 @@ int main() {
     test_an_inline_box_shrink_wraps();
     test_inline_block_shrinks_to_fit();
     test_inline_blocks_share_a_line();
+    test_an_inline_levels_margins_belong_to_the_line();
+    test_a_stated_size_on_a_replaced_element_is_the_border_box();
     test_an_inline_block_still_stacks_its_own_blocks();
     test_an_inline_block_sits_on_its_last_lines_baseline();
     test_a_percentage_height_needs_a_containing_block_to_be_one();

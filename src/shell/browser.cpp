@@ -1316,9 +1316,12 @@ void browser::record() {
     recorder_.selection_of = [this](const ctbrowser::layout::fragment & f) {
         return highlight_for(f);
     };
-    recorder_.paint_replaced =
-        [this](node_id id, const rect & box, const ctbrowser::style::computed_style_ptr & style,
-               ctbrowser::paint::display_list & into) { paint_replaced(id, box, style, into); };
+    recorder_.paint_replaced = [this](node_id id, const ctbrowser::rect & box,
+                                      const ctbrowser::rect & content,
+                                      const ctbrowser::style::computed_style_ptr & style,
+                                      ctbrowser::paint::display_list & into) {
+        paint_replaced(id, box, content, style, into);
+    };
     layers_ = recorder_.record_layers(fragments_);
     layers_.scroll_to(0, scroll_y_);
     page_layers_ = layers_.layers.size(); // everything after this is chrome

@@ -343,23 +343,46 @@ struct inline_flow {
                 }
                 continue;
             }
-            // an inline box: measured whole, wrapped to the next line if it
-            // does not fit beside what is already there
-            const float w = outer_intrinsic(child, c, measure_text).max_content;
+            // LAID OUT FIRST, THEN ASKED WHETHER IT FITS. The width that decides
+            // a wrap has to be the width the box will actually take, and an
+            // intrinsic estimate is not it: `outer_intrinsic` cannot resolve a
+            // PERCENTAGE width - the containing block is the question it is
+            // usually asked in the middle of - so a `.form-control`, which is
+            // `width: 100%`, measured as its 20-character intrinsic and sat
+            // happily beside its label instead of taking the line to itself.
+            // Every Bootstrap form group was two lines short because of it.
+            //
+            // Laying out first costs nothing: a block or replaced child's layout
+            // depends on the containing block's width and not on where the pen
+            // happens to be, so the answer is the same either way and this call
+            // was going to happen regardless.
+            fragment f = layout_box(child, constraints{c.available_width, 0, child.font_size},
+                                    measure_text, ready);
+            // AN INLINE-LEVEL BOX'S MARGINS ARE PART OF THE LINE. They were
+            // ignored outright, so `.form-label`'s `margin-bottom: .5rem` - which
+            // is what separates every Bootstrap label from its field - did
+            // nothing, and two inline-blocks side by side touched.
+            const resolved_edges child_edges = resolve_edges(child, c);
+            const float w =
+                (f.bounds.width > 0 ? f.bounds.width
+                                    : outer_intrinsic(child, c, measure_text).max_content) +
+                child_edges.horizontal_margin();
             if (pen_x > 0 && pen_x + w > c.available_width) {
                 align_line(pen_y);
                 pen_x = 0;
                 pen_y += line_extent;
                 line_extent = line_height;
             }
-            fragment f = layout_box(child, constraints{c.available_width, 0, child.font_size},
-                                    measure_text, ready);
-            f.bounds.x = pen_x;
+            f.bounds.x = pen_x + child_edges.margin_left;
             f.bounds.y = pen_y;
-            if (f.bounds.width <= 0) { f.bounds.width = w; }
+            if (f.bounds.width <= 0) { f.bounds.width = w - child_edges.horizontal_margin(); }
             if (f.bounds.height <= 0) { f.bounds.height = line_height; }
-            pen_x += f.bounds.width;
-            line_extent = std::max(line_extent, f.bounds.height);
+            pen_x += f.bounds.width + child_edges.horizontal_margin();
+            // The MARGIN box sets the line's extent: a margin below an
+            // inline-block pushes the next line down, which is the whole of what
+            // `margin-bottom` on a label does.
+            line_extent = std::max(line_extent, f.bounds.height + child_edges.margin_top +
+                                                    child_edges.margin_bottom);
             total_height = std::max(total_height, f.bounds.y + f.bounds.height);
             out.children.push_back(std::move(f));
         }

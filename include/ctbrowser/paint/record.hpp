@@ -65,8 +65,15 @@ public:
     // depends on its live value and focus. Rather than teach paint about either,
     // it asks - which keeps this module ignorant of script and of widgets, and
     // keeps the display list the only thing they have to agree on.
-    using replaced_painter =
-        std::function<void(node_id, const rect &, const computed_style_ptr &, display_list &)>;
+    //
+    // TWO RECTS, and that is the whole of the centralisation: the BORDER box, and
+    // the CONTENT box the recorder already worked out to draw the background and
+    // the border in. A control's text sits at its content edge, and until this
+    // was passed the shell had its own constant for that - which layout had a
+    // second copy of, and which no stylesheet could change. Bootstrap's
+    // `.form-control` has 12px of padding where the constant said 6.
+    using replaced_painter = std::function<void(node_id, const rect &, const rect &,
+                                                const computed_style_ptr &, display_list &)>;
     replaced_painter paint_replaced;
 
     // The highlighted part of a text fragment, in the fragment's own space, or
@@ -182,7 +189,14 @@ private:
         // Replaced elements paint themselves and have no laid-out children, so
         // the recursion stops here.
         if (f.box != nullptr && f.box->is_replaced()) {
-            if (paint_replaced) { paint_replaced(f.source, box, style, into); }
+            if (paint_replaced) {
+                const layout::resolved_edges e = layout::resolve_edges(
+                    *f.box, layout::constraints{box.width, box.height, f.box->font_size});
+                const rect content{box.x + e.content_left(), box.y + e.content_top(),
+                                   std::max(0.0f, box.width - e.horizontal_inner()),
+                                   std::max(0.0f, box.height - e.vertical_inner())};
+                paint_replaced(f.source, box, content, style, into);
+            }
             return;
         }
 

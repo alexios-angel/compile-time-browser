@@ -92,6 +92,22 @@ inline constexpr std::string_view ua_css = R"(
        a page can then override it. */
     button:disabled { color: #8f8f9f; background-color: #f0f0f4 }
     input, textarea { background-color: #ffffff }
+    /* THE ROOM A CONTROL KEEPS AROUND ITS TEXT, as real padding and a real
+       border rather than two constants in the engine. It used to be
+       `control_text_inset` in layout and a second copy of the same number in the
+       painter, which no stylesheet could change - so Bootstrap's `.form-control`
+       drew its text 6px in where it asks for 12, and was 24px tall where Chrome
+       makes it 38.
+
+       5 + 1 and 1 + 1 are exactly what those constants reserved, so an unstyled
+       control is the size it always was. */
+    input, textarea, select { padding: 1px 5px; border: 1px solid #8f8f9d }
+    /* A CHECKBOX IS A GLYPH, not a field: its 13x13 IS the whole control, and
+       the padding a text field keeps around its text would make it 25 wide. */
+    input[type=checkbox], input[type=radio] { padding: 0; border-width: 0 }
+    /* The disabled face, in the sheet for the same reason the button's is: the
+       widget painter can no longer apply it to a background it no longer owns. */
+    input:disabled, textarea:disabled, select:disabled { background-color: #f0f0f4 }
 
     /* No width or padding on the controls: they are REPLACED elements, so
        their size comes from the element itself (layout's intrinsic_size_of),

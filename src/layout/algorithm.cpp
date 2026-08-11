@@ -155,13 +155,21 @@ fragment layout_box(const box_node & b, const constraints & c, const measure_tex
         fragment f;
         f.box = &b;
         f.source = b.source;
-        f.bounds.width =
-            b.width.is_auto() ? b.intrinsic_width : b.width.resolve(c.available_width, b.font_size);
+        // A STATED SIZE IS THE BORDER BOX, exactly as it is for every other box
+        // here - only an INTRINSIC one is a content size that the padding and the
+        // border are added around.
+        //
+        // Adding them to a stated width too made every `.form-control` 26px wider
+        // than Chrome's: Bootstrap sets `box-sizing: border-box` on `*`, so its
+        // `width: 100%` already contains the 24px of padding and the 2px of
+        // border, and this counted them a second time. The rest of the engine has
+        // treated a stated width as the border box since outer_width_of was
+        // written; this was the one place that disagreed.
+        f.bounds.width = b.width.is_auto() ? b.intrinsic_width + edges.horizontal_inner()
+                                           : b.width.resolve(c.available_width, b.font_size);
         f.bounds.height = has_definite_height(b, c)
                               ? b.height.resolve(c.available_height, b.font_size)
-                              : b.intrinsic_height;
-        f.bounds.width += edges.horizontal_inner();
-        f.bounds.height += edges.vertical_inner();
+                              : b.intrinsic_height + edges.vertical_inner();
         return f;
     }
     if (b.kind == box_kind::table) { return table_flow{}.arrange(b, c, measure, ready); }
