@@ -133,6 +133,19 @@ struct precomputed {
 [[nodiscard]] intrinsic_sizes outer_intrinsic(const box_node & child, const constraints & c,
                                               const measure_text_fn & measure);
 
+// Is this box's `height` a usable number?
+//
+// A PERCENTAGE AGAINST AN UNKNOWN CONTAINING BLOCK IS NOT ONE. `available_height
+// == 0` means "as tall as it needs to be" (fragment.hpp), so `height: 100%` there
+// has nothing to be a percentage OF, and CSS 2.1 §10.5 says it behaves as `auto`.
+// Resolving it against zero instead COLLAPSES THE BOX - and Bootstrap's `.h-100`
+// is exactly that declaration, so a row of three cards came out zero-high and
+// everything below it drew straight through them.
+[[nodiscard]] inline bool has_definite_height(const box_node & b, const constraints & c) {
+    if (b.height.is_auto()) { return false; }
+    return b.height.u != unit::percent || c.available_height > 0;
+}
+
 // SHRINK TO FIT - `clamp(min-content, available, max-content)`, CSS 2.1 §10.3.5.
 //
 // What an INLINE-LEVEL box with an auto width takes, instead of filling its
@@ -483,6 +496,19 @@ struct block_flow {
         const bool use_ready =
             ready != nullptr && ready->parent == &b && ready->children.size() == b.children.size();
 
+        // THE BOX'S OWN HEIGHT, resolved BEFORE its children are laid out, because
+        // a child's percentage height resolves against it. Left until afterwards -
+        // which is where it used to be - every child was handed an available
+        // height of ZERO, so `height: 50%` had nothing to be a percentage of and
+        // silently became `auto`. Bootstrap's `.h-100` is that declaration, and a
+        // card with a header, a body and a footer is three of them.
+        const float stated_height =
+            has_definite_height(b, c)
+                ? std::max(0.0f, b.height.resolve(c.available_height, b.font_size))
+                : -1.0f;
+        const float inner_height =
+            stated_height >= 0 ? std::max(0.0f, stated_height - edges.vertical_inner()) : 0.0f;
+
         fragment out;
         out.box = &b;
         out.source = b.source;
@@ -505,7 +531,7 @@ struct block_flow {
         } else {
             for (std::size_t i = 0; i < b.children.size(); ++i) {
                 const box_node & child = b.children[i];
-                const constraints child_c{content_width, 0, child.font_size};
+                const constraints child_c{content_width, inner_height, child.font_size};
                 const resolved_edges child_edges = resolve_edges(child, child_c);
                 // AN OUT-OF-FLOW CHILD RESERVES NOTHING and is not laid out here:
                 // its size depends on a containing block that is somewhere above,
@@ -538,8 +564,7 @@ struct block_flow {
         cursor += edges.pad_bottom + edges.border_bottom;
 
         out.bounds.width = outer_width;
-        out.bounds.height =
-            !b.height.is_auto() ? b.height.resolve(c.available_height, b.font_size) : cursor;
+        out.bounds.height = stated_height >= 0 ? stated_height : cursor;
         return out;
     }
 };

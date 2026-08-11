@@ -157,8 +157,9 @@ fragment layout_box(const box_node & b, const constraints & c, const measure_tex
         f.source = b.source;
         f.bounds.width =
             b.width.is_auto() ? b.intrinsic_width : b.width.resolve(c.available_width, b.font_size);
-        f.bounds.height = b.height.is_auto() ? b.intrinsic_height
-                                             : b.height.resolve(c.available_height, b.font_size);
+        f.bounds.height = has_definite_height(b, c)
+                              ? b.height.resolve(c.available_height, b.font_size)
+                              : b.intrinsic_height;
         f.bounds.width += edges.horizontal_inner();
         f.bounds.height += edges.vertical_inner();
         return f;

@@ -173,8 +173,7 @@ void test_an_auto_offset_is_the_static_position() {
 }
 
 void test_both_offsets_stretch_and_one_shrink_wraps() {
-    const std::string html =
-        "<html><body><div id=anchor><div id=a>hi</div></div></body></html>";
+    const std::string html = "<html><body><div id=anchor><div id=a>hi</div></div></body></html>";
     {
         // Both given and the width auto: the box stretches BETWEEN them, which is
         // how a full-width overlay is written.

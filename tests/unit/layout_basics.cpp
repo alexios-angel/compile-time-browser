@@ -356,6 +356,36 @@ void test_an_inline_block_sits_on_its_last_lines_baseline() {
     expect_near(text_y, 6, "and the run beside it drops to meet that baseline");
 }
 
+void test_a_percentage_height_needs_a_containing_block_to_be_one() {
+    // CSS 2.1 §10.5: a percentage height whose containing block's height depends
+    // on its own content behaves as `auto`. Resolving it against zero instead
+    // COLLAPSES the box - and Bootstrap's `.h-100` on a card is exactly that
+    // declaration, so a row of three cards came out zero-high and everything
+    // below drew straight through them.
+    {
+        fixture f;
+        f.load("<html><body><div id=outer><div id=a>x</div></div></body></html>",
+               "body { margin: 0; padding: 0 } #a { height: 100%; font-size: 10px }");
+        engine eng{monospace_measure()};
+        const fragment out = eng.run(f.root, 400);
+        const fragment * a = out.find(f.find_id("a"));
+        if (a != nullptr) {
+            check(a->bounds.height > 0, "a percentage of an auto height is auto, not zero");
+        }
+    }
+    {
+        // And it IS a percentage when the containing block has a real height.
+        fixture f;
+        f.load("<html><body><div id=outer><div id=a>x</div></div></body></html>",
+               "body { margin: 0; padding: 0 } #outer { height: 200px } "
+               "#a { height: 50%; font-size: 10px }");
+        engine eng{monospace_measure()};
+        const fragment out = eng.run(f.root, 400);
+        const fragment * a = out.find(f.find_id("a"));
+        if (a != nullptr) { expect_near(a->bounds.height, 100, "and half of 200 is 100"); }
+    }
+}
+
 void test_fragments_carry_no_geometry_back_to_the_dom() {
     fixture f;
     f.load("<html><body><div id=a></div></body></html>", "#a { height: 40px }");
@@ -739,6 +769,7 @@ int main() {
     test_inline_blocks_share_a_line();
     test_an_inline_block_still_stacks_its_own_blocks();
     test_an_inline_block_sits_on_its_last_lines_baseline();
+    test_a_percentage_height_needs_a_containing_block_to_be_one();
     test_fragments_carry_no_geometry_back_to_the_dom();
 
     test_parallel_matches_sequential();

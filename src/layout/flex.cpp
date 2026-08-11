@@ -398,8 +398,9 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
     // what block_flow::arrange already means when it assigns the resolved height
     // straight to the fragment and starts its cursor at pad_top.
     const float outer_height =
-        b.height.is_auto() ? indefinite
-                           : std::max(0.0f, b.height.resolve(c.available_height, b.font_size));
+        has_definite_height(b, c)
+            ? std::max(0.0f, b.height.resolve(c.available_height, b.font_size))
+            : indefinite;
     const float content_height = is_definite(outer_height)
                                      ? std::max(0.0f, outer_height - edges.vertical_inner())
                                      : indefinite;

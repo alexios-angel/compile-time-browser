@@ -141,8 +141,7 @@ struct positioner {
         if (!b.width.is_auto()) {
             width = std::max(0.0f, b.width.resolve(cb.width, b.font_size));
         } else if (left.given && right.given) {
-            width = std::max(0.0f, cb.width - left.value - right.value -
-                                       edges.horizontal_margin());
+            width = std::max(0.0f, cb.width - left.value - right.value - edges.horizontal_margin());
         } else {
             width = shrink_to_fit_width(b, outer, edges, measure);
         }

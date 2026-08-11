@@ -667,6 +667,28 @@ six fixtures, because four properties on every element stopped being unanswered.
 `bootstrap-position.html` now renders the way Chrome renders it, `fixed-top` and
 `fixed-bottom` included. What is left on it is `z-index` and the 1/64px cluster.
 
+### A percentage height needs a containing block to be a percentage OF
+
+A screenshot of `bootstrap-kitchen.html` showed the three feature cards collapsed
+to their headers with the table below them drawn straight through the wreckage.
+The cause was two halves of one rule, neither of them modelled:
+
+`block_flow::arrange` **never passed its own height down** - every child was handed
+an `available_height` of zero - and a percentage resolved against zero is zero
+rather than `auto`. So `.h-100` on a card resolved to **0**, three times per card
+(header, body, footer), and the `.col` holding it had nothing to be as tall as.
+
+Both halves are the same CSS 2.1 §10.5 sentence: a percentage height whose
+containing block's height depends on its own content behaves as `auto`, and
+otherwise it is a percentage of that height. `has_definite_height` says which, and
+a block resolves its own height *before* laying its children out so there is
+something for them to resolve against.
+
+The numbers barely move - 4 across two fixtures - and the render changes
+completely, which is the same lesson as the `RGBA(` case from the other direction:
+the computed-style gate scores an element's own properties, and "the box below me
+is drawn on top of me" is not one of them.
+
 ### Two findings that were NOT predicted
 
 1. **`clientWidth` disagrees with the width layout actually used.**
