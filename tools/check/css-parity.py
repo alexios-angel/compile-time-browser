@@ -12,6 +12,12 @@ are ratcheted:
 
     differ        values that disagree            -> falls as layout gets right
     substituted   values ctbrowser did not give   -> falls as properties get modelled
+    cells         coarse screen cells that differ -> falls as the RENDER gets right
+
+The third is the guard against mistaking the first two for the picture: they
+score each element's own computed values, so neither can see a box that reports
+everything correctly and is never painted, or one that is drawn on top of
+another. Both of those have shipped here. See the note on CELL_COLUMNS.
 
 The second one is the guard against mistaking silence for success. A property
 ctbrowser cannot answer comes back empty, this tool substitutes the CSS initial
@@ -46,6 +52,40 @@ PROPS_FILE = HERE / "css-parity-props.txt"
 # tolerance". Raising it would be a visible one-line edit to a file whose header
 # says only --advance writes here, which is the point.
 EPSILON_PX = 1.0 / 64.0
+
+# --- the visual instrument ---------------------------------------------------
+#
+# THE PROPERTY DIFF HAS A BLIND SPOT, and it has been walked into twice. It scores
+# each element's own computed values, so it cannot see:
+#
+#   * a box that is the right size, at the right place, reporting the right
+#     colour, and NEVER PAINTED. `parse_color` matched `rgb(` case-sensitively
+#     while Bootstrap writes `RGBA(`, so every badge on the page drew nothing -
+#     and the numbers did not move by one when it was fixed, because this tool
+#     normalises both sides' text and the two spellings already compared equal.
+#   * a box drawn ON TOP OF another. `.h-100` collapsed three cards to their
+#     headers and the table below them drew straight through the wreckage; the
+#     numbers moved by FOUR.
+#
+# So there is a third number, and it measures the pixels.
+#
+# NOT A PIXEL DIFF. Pixel-identical to Chrome is not reachable and never will be -
+# a different text rasteriser is a different set of pixels - and a metric that can
+# never reach zero is a metric nobody reads. Instead both screenshots are reduced
+# to a COARSE GRID of mean colours, and the number is how many cells disagree.
+# That is deliberately blind to glyph antialiasing and deliberately loud about a
+# missing fill, a box in the wrong place, or a colour that is simply wrong: one
+# 32x24 cell is 32x32 pixels, far larger than any rasteriser difference and far
+# smaller than any component.
+#
+# The threshold is a MEAN over the cell, so a handful of differently-antialiased
+# glyph edges move it by a few units where a missing background moves it by
+# hundreds. 24 is about 9% of the channel range, chosen so that the same page
+# rendered by the same engine twice scores 0 and a missing `.badge` scores its
+# whole area.
+CELL_COLUMNS = 32
+CELL_ROWS = 24
+CELL_TOLERANCE = 24
 
 # THE COMPARED SET, and the only copy of it. css-dump.js gets it prepended as a
 # literal, and tests/unit/bootstrap_layout.cpp reads css-parity-props.txt written
@@ -388,6 +428,72 @@ viewport={VIEWPORT[0]}x{VIEWPORT[1]}
 """
 
 
+def cell_means(width: int, height: int, rgb: bytes) -> list:
+    """The mean colour of each cell of a CELL_COLUMNS x CELL_ROWS grid."""
+    out = []
+    for row in range(CELL_ROWS):
+        y0 = row * height // CELL_ROWS
+        y1 = max(y0 + 1, (row + 1) * height // CELL_ROWS)
+        for col in range(CELL_COLUMNS):
+            x0 = col * width // CELL_COLUMNS
+            x1 = max(x0 + 1, (col + 1) * width // CELL_COLUMNS)
+            r = g = b = n = 0
+            # Every fourth row and column: a mean over a 32x32 cell is the same
+            # number to within a rounding either way, and this is 16x less work
+            # on six fixtures' worth of megapixels.
+            for y in range(y0, y1, 4):
+                base = y * width * 3
+                for x in range(x0, x1, 4):
+                    at = base + x * 3
+                    r += rgb[at]
+                    g += rgb[at + 1]
+                    b += rgb[at + 2]
+                    n += 1
+            out.append((r / n, g / n, b / n) if n else (0.0, 0.0, 0.0))
+    return out
+
+
+def cells_that_differ(cmp, name: str, engines: list[str]) -> int:
+    """How many cells of the two renders disagree. See the note on CELL_COLUMNS.
+
+    Screenshots BOTH engines through the running session, which is why this lives
+    in the same loop as the property dump rather than in a tool of its own: the
+    two measurements are of the same page in the same state, and a second session
+    would be a second chance for them to disagree about something that is not the
+    engine.
+    """
+    answer = cmp.request({"verb": "shot", "args": [f"parity-{name}"]})
+    shots = {}
+    for engine in engines:
+        side = answer.get(engine) or {}
+        if not side.get("ok") or not side.get("path"):
+            raise RuntimeError(f"{engine} could not be screenshotted: {side.get('error')}")
+        shots[engine] = Path(side["path"])
+    w1, h1, a = cmp.read_png(shots[engines[0]])
+    w2, h2, b = cmp.read_png(shots[engines[1]])
+    if (w1, h1) != (w2, h2):
+        # Different sizes is a rig failure, not a difference: there is no
+        # meaningful cell-to-cell correspondence between two different viewports.
+        raise RuntimeError(f"screenshots differ in size: {w1}x{h1} vs {w2}x{h2}")
+    ours = cell_means(w1, h1, a)
+    ref = cell_means(w2, h2, b)
+    bad = [i for i, (p, q) in enumerate(zip(ours, ref))
+           if max(abs(p[0] - q[0]), abs(p[1] - q[1]), abs(p[2] - q[2])) > CELL_TOLERANCE]
+    # WHERE, not just how many. A count says there is something to look at; the
+    # band of rows says where to point the screenshot, and that is the difference
+    # between a number and a lead.
+    where = ""
+    if bad:
+        rows = sorted({i // CELL_COLUMNS for i in bad})
+        cols = sorted({i % CELL_COLUMNS for i in bad})
+        top = rows[0] * h1 // CELL_ROWS
+        bottom = (rows[-1] + 1) * h1 // CELL_ROWS
+        left = cols[0] * w1 // CELL_COLUMNS
+        right = (cols[-1] + 1) * w1 // CELL_COLUMNS
+        where = f"y {top}-{bottom}, x {left}-{right}"
+    return len(bad), where
+
+
 def read_record() -> dict:
     if not RECORD.exists():
         return {}
@@ -419,9 +525,10 @@ def write_record(results: dict) -> None:
         got = results.get(name)
         if got is None:
             continue
+        cells = "" if got.get("cells") is None else f"  cells={got['cells']}"
         body.append(
             f"[bootstrap-{name}.html]  elements={got['elements']}  "
-            f"differ={len(got['findings'])}  substituted={got['substituted']}"
+            f"differ={len(got['findings'])}  substituted={got['substituted']}{cells}"
         )
     RECORD.write_text("\n".join(body) + "\n")
 
@@ -455,6 +562,12 @@ def report(name, result, limit, show_all):
             print(f"  ... {len(findings) - limit} more (--all)")
     print(f"\n  {result['elements']} elements, {len(GEOMETRY + PROPS)} properties: "
           f"{len(findings)} differ / {result['compared']}, substituted={result['substituted']}")
+    if result.get("cells") is not None:
+        total = CELL_COLUMNS * CELL_ROWS
+        where = result.get("cells_where") or ""
+        print(f"  {result['cells']} of {total} screen cells look different"
+              + (f", around {where}" if where else "")
+              + " - the number the property diff cannot see")
 
 
 def main() -> int:
@@ -503,9 +616,19 @@ def main() -> int:
                   file=sys.stderr)
             return 2
         time.sleep(1.0)
+        # THE SESSION STAYS OPEN UNTIL BOTH MEASUREMENTS ARE TAKEN. The property
+        # dump and the screenshot must be of the same page in the same state, and
+        # a second session would be a second chance for them to disagree about
+        # something that is not the engine.
+        cells = None
+        cells_where = ""
         try:
             data = collect(cmp, ["ctbrowse", args.engine])
+            cells, cells_where = cells_that_differ(cmp, stem, ["ctbrowse", args.engine])
         except Exception as why:
+            # A screenshot failure is a RIG failure and must not read as parity:
+            # scoring zero cells because no image arrived would be the best
+            # possible number for the worst possible reason.
             print(f"css-parity: RIG FAILURE on {page}: {why}", file=sys.stderr)
             return 2
         finally:
@@ -523,13 +646,16 @@ def main() -> int:
             return 2
 
         result = compare_page(data, "ctbrowse", args.engine)
+        result["cells"] = cells
+        result["cells_where"] = cells_where
         results[stem] = result
         report(stem, result, args.limit, args.all)
 
         was = record.get(f"bootstrap-{stem}.html")
         if was and not args.advance:
             for field, now in (("differ", len(result["findings"])),
-                               ("substituted", result["substituted"])):
+                               ("substituted", result["substituted"]),
+                               ("cells", result["cells"])):
                 if now > was.get(field, now):
                     print(f"  RATCHET: {field} rose {was[field]} -> {now}")
                     rc = 1
