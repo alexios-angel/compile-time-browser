@@ -153,6 +153,11 @@ struct box_node {
     // Resolved here for the same reason the lengths are: once per element,
     // rather than per glyph in the rasterizer, which has no cascade to ask.
     text_face face{};
+    // `text-align`, as the share of a line's leftover space that goes before it -
+    // see parse_text_align. Resolved here for the same reason the lengths are,
+    // and INHERITED by the cascade rather than threaded, which is what makes
+    // `.text-center` on a container centre the text of everything inside it.
+    float text_align = 0;
     bool underline = false;
     bool line_through = false;
     // Generated content the recorder draws: a list item's number (0 = a disc,
@@ -270,6 +275,7 @@ public:
           min_height_(atoms.intern("min-height")), max_height_(atoms.intern("max-height")),
           border_width_(atoms.intern("border-width")), border_style_(atoms.intern("border-style")),
           position_(atoms.intern("position")), transform_(atoms.intern("transform")),
+          text_align_(atoms.intern("text-align")),
           inset_sides_{atoms.intern("top"), atoms.intern("right"), atoms.intern("bottom"),
                        atoms.intern("left")},
           flex_{atoms.intern("flex-direction"),  atoms.intern("flex-wrap"),
@@ -470,6 +476,7 @@ private:
                 fs.is_auto() ? inherited_font : fs.resolve(inherited_font, inherited_font);
             b.line_height = resolve_line_height(prop(style, line_height_), b.font_size);
             b.face = face_of(style, inherited_face);
+            b.text_align = parse_text_align(trimmed(prop(style, text_align_)));
             b.underline = inherited_underline;
             b.line_through = inherited_line_through;
             if (const std::string_view decoration = prop(style, text_decoration_);
@@ -777,7 +784,7 @@ private:
     atom line_height_;
     atom min_width_, max_width_, min_height_, max_height_;
     atom border_width_, border_style_;
-    atom position_, transform_;
+    atom position_, transform_, text_align_;
     side_atoms inset_sides_;
     flex_atoms flex_;
 };

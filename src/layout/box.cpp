@@ -61,6 +61,9 @@ box_node box_builder::wrap_run(const box_node & parent, std::vector<box_node> & 
     wrapper.style = parent.style; // anonymous boxes inherit, per spec
     wrapper.font_size = parent.font_size;
     wrapper.line_height = parent.line_height;
+    // An anonymous box has no style of its own, so it takes its parent's
+    // alignment along with everything else it inherits.
+    wrapper.text_align = parent.text_align;
     wrapper.children = std::move(run);
     run.clear();
     return wrapper;

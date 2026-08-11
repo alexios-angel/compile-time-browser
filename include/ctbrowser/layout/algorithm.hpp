@@ -297,17 +297,30 @@ struct inline_flow {
             }
             return measure_text.ascent(f.box->font_size, f.box->face);
         };
-        const auto align_line = [&out, &line_start, &ascent_of](float top) {
+        // TEXT-ALIGN IS THE SAME PASS. A line is aligned by shifting everything on
+        // it, which is exactly the loop that already runs to put them on a shared
+        // baseline - so it happens there rather than in a second walk that would
+        // have to rediscover which fragments are on which line.
+        //
+        // The shift is measured against `c.available_width`, the CONTENT width the
+        // container handed down, and not against `widest`: the leftover space is
+        // the whole point, and a line that already fills its container has none.
+        const float align = b.text_align;
+        const auto align_line = [&out, &line_start, &ascent_of, align, &c](float top) {
             float line_ascent = 0;
+            float extent = 0;
             for (std::size_t i = line_start; i < out.children.size(); ++i) {
-                if (out.children[i].bounds.y == top) {
-                    line_ascent = std::max(line_ascent, ascent_of(out.children[i]));
-                }
+                if (out.children[i].bounds.y != top) { continue; }
+                line_ascent = std::max(line_ascent, ascent_of(out.children[i]));
+                extent = std::max(extent, out.children[i].bounds.x + out.children[i].bounds.width);
             }
+            const float shift =
+                align > 0 ? std::max(0.0f, c.available_width - extent) * align : 0.0f;
             for (std::size_t i = line_start; i < out.children.size(); ++i) {
                 fragment & f = out.children[i];
                 if (f.bounds.y != top) { continue; } // a later line already
                 f.bounds.y = top + line_ascent - ascent_of(f);
+                f.bounds.x += shift;
             }
             line_start = out.children.size();
         };

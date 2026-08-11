@@ -386,6 +386,46 @@ void test_a_percentage_height_needs_a_containing_block_to_be_one() {
     }
 }
 
+void test_text_align() {
+    // A line is aligned by SHIFTING everything on it, against the content width
+    // the container handed down - not against how wide the line turned out, which
+    // is a number that has no leftover in it by construction.
+    const std::string_view html = "<html><body><div id=a>hi</div></body></html>";
+    const auto run = [&](std::string_view align) {
+        fixture f;
+        f.load(html, std::string{"body { margin: 0; padding: 0 } #a { font-size: 10px; "
+                                 "text-align: "}
+                         .append(align)
+                         .append(" }")
+                         .c_str());
+        engine eng{monospace_measure()};
+        const fragment out = eng.run(f.root, 200);
+        const fragment * a = out.find(f.find_id("a"));
+        // The TEXT run inside, not the block - the block still fills its parent.
+        return a != nullptr && !a->children.empty() ? a->children[0].bounds.x : -1.0f;
+    };
+    const float width = 2 * 10 * 0.6f; // "hi"
+    expect_near(run("left"), 0, "left leaves the line at the start");
+    expect_near(run("start"), 0, "and `start` is the same thing here");
+    expect_near(run("center"), (200 - width) / 2, "center splits the leftover");
+    expect_near(run("right"), 200 - width, "right puts it all before the line");
+    expect_near(run("end"), 200 - width, "and `end` is the same thing here");
+    // INHERITED, which is what makes `.text-center` on a container centre
+    // everything inside it rather than only its own text.
+    {
+        fixture f;
+        f.load("<html><body><div id=outer><p id=a>hi</p></div></body></html>",
+               "body { margin: 0; padding: 0 } #outer { text-align: center } "
+               "p { margin: 0; font-size: 10px }");
+        engine eng{monospace_measure()};
+        const fragment out = eng.run(f.root, 200);
+        const fragment * a = out.find(f.find_id("a"));
+        if (a != nullptr && !a->children.empty()) {
+            expect_near(a->children[0].bounds.x, (200 - width) / 2, "and it inherits");
+        }
+    }
+}
+
 void test_fragments_carry_no_geometry_back_to_the_dom() {
     fixture f;
     f.load("<html><body><div id=a></div></body></html>", "#a { height: 40px }");
@@ -770,6 +810,7 @@ int main() {
     test_an_inline_block_still_stacks_its_own_blocks();
     test_an_inline_block_sits_on_its_last_lines_baseline();
     test_a_percentage_height_needs_a_containing_block_to_be_one();
+    test_text_align();
     test_fragments_carry_no_geometry_back_to_the_dom();
 
     test_parallel_matches_sequential();

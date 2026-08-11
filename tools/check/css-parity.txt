@@ -13,8 +13,8 @@ epsilon-px=0.015625
 viewport=1024x768
 
 [bootstrap-box.html]  elements=40  differ=49  substituted=1148  cells=1
-[bootstrap-type.html]  elements=62  differ=132  substituted=1723  cells=7
+[bootstrap-type.html]  elements=62  differ=132  substituted=1723  cells=5
 [bootstrap-grid.html]  elements=111  differ=137  substituted=2826  cells=0
-[bootstrap-components.html]  elements=189  differ=574  substituted=4798  cells=56
+[bootstrap-components.html]  elements=189  differ=574  substituted=4798  cells=54
 [bootstrap-position.html]  elements=64  differ=127  substituted=1730  cells=4
-[bootstrap-kitchen.html]  elements=165  differ=678  substituted=4262  cells=73
+[bootstrap-kitchen.html]  elements=165  differ=678  substituted=4262  cells=72

@@ -240,6 +240,23 @@ enum class display_kind : std::uint8_t {
     return d;
 }
 
+// `text-align`, as the FRACTION of a line's leftover space that goes before it.
+//
+// A fraction rather than an enum because that is all any consumer wants: a line
+// is shifted by `leftover * factor`, and start/left is 0, center is a half and
+// end/right is 1. `justify` is not modelled - stretching the spaces inside a line
+// is a different operation from moving the line, and answering 0 for it is the
+// honest subset rather than a wrong guess.
+//
+// `start`/`end` are the writing-mode-relative spellings and there is only one
+// writing mode here, so they are `left`/`right`. Bootstrap writes `.text-start`,
+// `.text-center` and `.text-end` and never the physical pair.
+[[nodiscard]] inline float parse_text_align(std::string_view text) {
+    if (text == "center") { return 0.5f; }
+    if (text == "right" || text == "end") { return 1.0f; }
+    return 0.0f; // left, start, justify, and anything unrecognised
+}
+
 // --- position -------------------------------------------------------------
 
 enum class position_kind : std::uint8_t {
