@@ -257,6 +257,21 @@ enum class display_kind : std::uint8_t {
     return 0.0f; // left, start, justify, and anything unrecognised
 }
 
+// `opacity`, clamped to [0, 1]. Anything unreadable is 1 - fully opaque - so a
+// value the parser does not understand leaves the element visible rather than
+// erasing it.
+[[nodiscard]] inline float parse_opacity(std::string_view text) {
+    text = trimmed_view(text);
+    if (text.empty()) { return 1.0f; }
+    float value = 1;
+    if (std::from_chars(text.data(), text.data() + text.size(), value).ec != std::errc{}) {
+        return 1.0f;
+    }
+    // A PERCENTAGE IS ALSO LEGAL - `opacity: 65%` - and is the same number.
+    if (text.ends_with('%')) { value /= 100.0f; }
+    return value < 0 ? 0.0f : (value > 1 ? 1.0f : value);
+}
+
 // --- position -------------------------------------------------------------
 
 enum class position_kind : std::uint8_t {

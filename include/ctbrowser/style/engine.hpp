@@ -336,6 +336,25 @@ public:
             const std::string_view row = parts[0];
             return {{"row-gap", row}, {"column-gap", parts.size() > 1 ? parts[1] : row}};
         }
+        // `list-style` is `<type> || <position> || <image>` in any order, and the
+        // only part with a consumer is the type. `none` is ambiguous between the
+        // type and the image and CSS says it sets whichever is not otherwise
+        // given - which for a lone `none` is both, and the type is the one that
+        // matters here.
+        if (property == "list-style") {
+            const std::vector<std::string_view> parts = value_parts(value, 3);
+            if (parts.empty()) { return {}; }
+            std::string_view type = "disc";
+            std::string_view position = "outside";
+            for (const std::string_view part : parts) {
+                if (ascii_iequals(part, "inside") || ascii_iequals(part, "outside")) {
+                    position = part;
+                } else if (!ascii_istarts_with(part, "url(")) {
+                    type = part;
+                }
+            }
+            return {{"list-style-type", type}, {"list-style-position", position}};
+        }
         // `inset` IS the four offsets, in the side order - the one shorthand that
         // shares `margin`'s shape exactly, which is why it can share its code.
         if (property == "inset") {

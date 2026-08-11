@@ -77,6 +77,40 @@ struct fixture {
 
 // --- colours --------------------------------------------------------------
 
+void test_opacity_fades_a_whole_subtree() {
+    // `opacity` is applied to what a subtree APPENDED rather than to each kind of
+    // command, which is what makes it reach the background, the text and the
+    // border alike. `.btn:disabled` is `opacity: .65` and it is on every disabled
+    // control Bootstrap ships.
+    paint::display_list list;
+    list.fill(rect{0, 0, 10, 10}, color::rgba(255, 0, 0));
+    const std::size_t from = list.size();
+    list.fill(rect{0, 0, 10, 10}, color::rgba(0, 255, 0));
+    list.text(rect{0, 0, 10, 10}, "x", 10, color::rgba(0, 0, 255));
+    list.fade_from(from, 0.5f);
+    const auto cmds = list.commands();
+    check(cmds.size() == 3, "three commands");
+    if (cmds.size() != 3) { return; }
+    check(cmds[0].fill.alpha() == 255, "what came BEFORE the subtree is untouched");
+    check(cmds[1].fill.alpha() == 128, "the fill inside it is faded");
+    check(cmds[2].fill.alpha() == 128, "and so is the text, without knowing about it");
+}
+
+void test_a_list_marker_can_be_turned_off() {
+    // `list-style: none` is on every Bootstrap nav and every `.list-unstyled`.
+    // Left on, a bullet appears beside each item - a stray mark rather than a
+    // wrong number, so no property diff would ever have seen it.
+    const auto bullets = [](std::string_view css) {
+        fixture f;
+        f.load("<html><body><ul><li id=a>one</li></ul></body></html>", css, 200);
+        return count_op(*f.record(), paint_op::fill_rect);
+    };
+    const std::size_t with = bullets("body { margin: 0 }");
+    const std::size_t without = bullets("body { margin: 0 } ul { list-style: none }");
+    check(with > without, "list-style: none removes the marker");
+    check(without == 0, "...and nothing else was drawn to replace it");
+}
+
 void test_color_syntaxes() {
     const auto is = [](std::string_view text, std::uint32_t argb, std::string_view what) {
         const auto got = parse_color(text);
@@ -296,6 +330,8 @@ void test_a_non_scrolling_layer_stays_put() {
 
 int main() {
     test_color_syntaxes();
+    test_opacity_fades_a_whole_subtree();
+    test_a_list_marker_can_be_turned_off();
 
     test_background_is_recorded();
     test_nothing_is_recorded_for_nothing();

@@ -80,6 +80,20 @@ private:
 
     void emit(const fragment & f, float dx, float dy, color inherited_text,
               display_list & into) const {
+        // OPACITY IS APPLIED TO WHAT THIS SUBTREE APPENDS, noted here and folded
+        // in at the end. That is one place rather than one per command kind, and
+        // it is what makes it catch the background, the border, the text, the
+        // list marker and whatever the replaced painter drew - none of which has
+        // to know opacity exists. See display_list::fade_from for what the
+        // approximation is and where it differs from a real group.
+        const float opacity = f.box != nullptr ? f.box->opacity : 1.0f;
+        const std::size_t opaque_from = into.size();
+        emit_opaque(f, dx, dy, inherited_text, into);
+        into.fade_from(opaque_from, opacity);
+    }
+
+    void emit_opaque(const fragment & f, float dx, float dy, color inherited_text,
+                     display_list & into) const {
         const rect box{f.bounds.x + dx, f.bounds.y + dy, f.bounds.width, f.bounds.height};
         const computed_style_ptr style = f.box != nullptr ? f.box->style : computed_style_ptr{};
 
@@ -186,7 +200,11 @@ private:
                       f.source);
             return;
         }
-        if (f.box->tag != "li") { return; }
+        // `list-style: none` on every Bootstrap nav and every `.list-unstyled`.
+        // Without it a bullet appears beside each item - a stray mark rather than
+        // a wrong number, which is exactly the class of difference the property
+        // diff cannot see and the screen-cell metric can.
+        if (f.box->tag != "li" || !f.box->list_marker) { return; }
         if (f.box->list_ordinal <= 0) {
             // Unordered: a disc, which font8x8 has no glyph for, so it is a
             // filled square scaled to the text. A round one needs a shape the

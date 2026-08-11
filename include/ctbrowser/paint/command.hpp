@@ -257,6 +257,34 @@ public:
     }
 
     [[nodiscard]] std::span<const paint_command> commands() const noexcept { return commands_; }
+
+    // Multiply the alpha of everything recorded since `from` - paired with the
+    // existing size(), which a caller notes before recording a subtree so it can
+    // fade exactly what that subtree added - which is what
+    // `opacity` does to a subtree.
+    //
+    // ONE PLACE RATHER THAN ONE PER COMMAND KIND, and that is the reason it is
+    // here rather than at the eight sites in the recorder that pick a colour: it
+    // catches the background, the border, the text, the list marker and whatever
+    // the replaced painter drew, without any of them knowing opacity exists.
+    //
+    // THE APPROXIMATION, stated because it is real: CSS composites the subtree
+    // into a group and fades the GROUP, so where two of its own commands overlap
+    // the lower one shows through the upper. Fading each command instead makes
+    // the overlap darker. The two are identical wherever a subtree does not
+    // overlap itself, which is every disabled control Bootstrap fades; a true
+    // group needs an off-screen surface per opacity, which is a rasterizer
+    // change rather than a recorder one.
+    void fade_from(std::size_t from, float factor) {
+        if (factor >= 1 || from >= commands_.size()) { return; }
+        const float clamped = factor < 0 ? 0.0f : factor;
+        for (std::size_t i = from; i < commands_.size(); ++i) {
+            const color c = commands_[i].fill;
+            commands_[i].fill = color::rgba(
+                c.red(), c.green(), c.blue(),
+                static_cast<std::uint8_t>(static_cast<float>(c.alpha()) * clamped + 0.5f));
+        }
+    }
     [[nodiscard]] std::size_t size() const noexcept { return commands_.size(); }
     [[nodiscard]] bool empty() const noexcept { return commands_.empty(); }
 
