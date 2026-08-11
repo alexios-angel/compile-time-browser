@@ -95,6 +95,40 @@ void expect_value(fixture & f, node_id n, std::string_view property, std::string
 // A shorthand's parts are separated by whitespace, EXCEPT the whitespace inside
 // a function or a string. That sounds like pedantry and is the single largest
 // paint bug this project has had.
+// `initial` on a CUSTOM property is the guaranteed-invalid value, not an empty
+// one - CSS Variables §3 - and the difference is the whole of Bootstrap 5.3's
+// theming layer.
+void test_initial_on_a_custom_property_is_guaranteed_invalid() {
+    {
+        // `--x: initial` is the SENTINEL Bootstrap writes so that a var() reading
+        // it falls through to its fallback, and `.table-striped` then overrides
+        // it with a real colour. Treating it as empty-but-defined made the var()
+        // substitute NOTHING - so every table cell's `box-shadow` lost its colour
+        // and no stripe was ever painted.
+        fixture f;
+        f.load("<div id=a></div>", "#a { --x: initial; color: var(--x, #123456) }");
+        expect_value(f, f.find("div"), "color", "#123456",
+                     "`initial` makes var() take its fallback");
+    }
+    {
+        // AN EMPTY CUSTOM PROPERTY IS A DIFFERENT THING and still substitutes to
+        // nothing. Bootstrap ships seventeen of those, and the declaration that
+        // reads one is invalid at computed-value time rather than falling back.
+        fixture f;
+        f.load("<div id=a></div>", "#a { --x: ; color: var(--x, #123456) }");
+        expect_value(f, f.find("div"), "color", "", "an EMPTY custom property is not invalid");
+    }
+    {
+        // And it is invalid HERE, whatever an ancestor said - `initial` does not
+        // let the inherited value show through.
+        fixture f;
+        f.load("<div id=outer><div id=a></div></div>",
+               "#outer { --x: red } #a { --x: initial; color: var(--x, #123456) }");
+        expect_value(f, f.find_id("a"), "color", "#123456",
+                     "and it beats an inherited value rather than revealing it");
+    }
+}
+
 void test_a_shorthand_does_not_split_inside_a_function() {
     {
         // `border: 1px solid rgba(0, 0, 0, 0.175)` is THREE parts. Split on the
@@ -1760,6 +1794,7 @@ void test_flex_shorthand() {
 int main() {
     test_shorthands_expand();
     test_corner_and_axis_shorthands_expand();
+    test_initial_on_a_custom_property_is_guaranteed_invalid();
     test_a_shorthand_does_not_split_inside_a_function();
     test_the_per_side_border_shorthands_expand();
     test_simple_selectors();

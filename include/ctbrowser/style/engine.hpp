@@ -36,6 +36,16 @@
 
 namespace ctbrowser::style {
 
+// THE GUARANTEED-INVALID VALUE, CSS Variables §3 - the initial value of every
+// custom property, and what `--x: initial` sets one to.
+//
+// It has to be REPRESENTABLE rather than merely absent, because "defined as
+// invalid" and "not defined" differ in one observable way: the first must not
+// let an ancestor's value show through. A byte no stylesheet can contain is the
+// cheapest representation that cannot collide with a real value - a CSS value is
+// filtered for NUL at parse time (§3.3), so this can never be one.
+inline constexpr std::string_view guaranteed_invalid = "\x01invalid";
+
 using ctbrowser::node_id;
 
 // What matching needs to know about an element. Gathered once per element
@@ -178,48 +188,12 @@ public:
     // list markers sat outside the page.
     // Split a value on top-level whitespace. `at most four` because that is the
     // longest side list; `border` asks for three and takes them in any order.
+    // A shorthand's parts, up to `limit`. The splitting itself is
+    // core/algorithms.hpp's, because paint needs the same rule with commas.
     [[nodiscard]] static std::vector<std::string_view> value_parts(std::string_view value,
                                                                    std::size_t limit) {
-        std::vector<std::string_view> parts;
-        std::size_t at = 0;
-        while (at < value.size() && parts.size() < limit) {
-            const std::size_t begin = value.find_first_not_of(" \t\n\r\f", at);
-            if (begin == std::string_view::npos) { break; }
-            // WHITESPACE INSIDE PARENTHESES IS NOT A SEPARATOR, and this is not a
-            // nicety: `border: 1px solid rgba(0, 0, 0, 0.175)` is THREE parts, and
-            // splitting on the spaces inside the colour made it five - of which
-            // the third, and therefore the whole `border-color`, was the string
-            // `rgba(0,`. That fails to parse, so every card, alert, table and
-            // input in Bootstrap had a border in the box model and NOTHING drawn.
-            // A quoted string can hold a bracket too, so quotes are tracked as
-            // well: `font: 12px "Some, Font"` is one family.
-            std::size_t end = begin;
-            int depth = 0;
-            char quote = 0;
-            for (; end < value.size(); ++end) {
-                const char c = value[end];
-                if (quote != 0) {
-                    if (c == '\\' && end + 1 < value.size()) {
-                        ++end;
-                    } else if (c == quote) {
-                        quote = 0;
-                    }
-                    continue;
-                }
-                if (c == '"' || c == '\'') {
-                    quote = c;
-                } else if (c == '(') {
-                    ++depth;
-                } else if (c == ')') {
-                    if (depth > 0) { --depth; }
-                } else if (depth == 0 &&
-                           (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f')) {
-                    break;
-                }
-            }
-            parts.push_back(value.substr(begin, end - begin));
-            at = end;
-        }
+        std::vector<std::string_view> parts = split_top_level(value, " \t\n\r\f");
+        if (parts.size() > limit) { parts.resize(limit); }
         return parts;
     }
 
@@ -596,7 +570,28 @@ public:
                 // the inherited value shows through; it already is.
                 return;
             } else if (value == "initial") {
-                value.clear();
+                // ON A CUSTOM PROPERTY `initial` IS THE GUARANTEED-INVALID VALUE,
+                // not an empty one, and the difference is the whole of Bootstrap
+                // 5.3's theming layer. It writes `--bs-table-bg-type: initial` as
+                // a SENTINEL that `var(--bs-table-bg-type, <fallback>)` has to
+                // fall through, and `.table-striped` then overrides it with a real
+                // colour. Storing an empty string instead made the var() a valid
+                // EMPTY substitution, so every table cell's box-shadow lost its
+                // colour and no stripe, hover or active row was ever painted.
+                //
+                // An empty custom property - `--bs-btn-font-family: ;` - is a
+                // different thing and stays a valid empty substitution. Bootstrap
+                // ships seventeen of those too, and S4a's tests pin them.
+                //
+                // The declaration is KEPT, holding the sentinel, rather than
+                // erased: erasing it would let an ancestor's value show through,
+                // and `initial` means invalid HERE regardless of what was
+                // inherited.
+                if (property.starts_with("--")) {
+                    value = std::string{guaranteed_invalid};
+                } else {
+                    value.clear();
+                }
             }
             for (declaration & existing : out) {
                 if (existing.property == d.property) {
@@ -657,13 +652,22 @@ public:
             put(d);
         });
 
+        // `nullopt` means NOT DEFINED, which is what makes `var()` take its
+        // fallback; an empty string means defined and empty, which substitutes to
+        // nothing. The guaranteed-invalid sentinel reads as the first of those,
+        // which is exactly what CSS Variables §3 says `initial` does to a custom
+        // property.
         const auto lookup = [&out, &parent](atom name) -> std::optional<std::string_view> {
+            const auto answer = [](std::string_view held) -> std::optional<std::string_view> {
+                if (held == guaranteed_invalid) { return std::nullopt; }
+                return held;
+            };
             for (const declaration & d : out) {
-                if (d.property == name) { return std::string_view{d.value}; }
+                if (d.property == name) { return answer(d.value); }
             }
             if (parent && parent->inherited) {
                 for (const declaration & d : parent->inherited->declarations) {
-                    if (d.property == name) { return std::string_view{d.value}; }
+                    if (d.property == name) { return answer(d.value); }
                 }
             }
             return std::nullopt;

@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // THE SMALL THINGS EVERY SUBSYSTEM WAS WRITING FOR ITSELF.
 //
@@ -75,6 +76,24 @@ void ascii_upper_in_place(std::string & text) noexcept;
 // answers false, which is right by accident rather than by construction. This
 // checks the length first.
 [[nodiscard]] bool ascii_istarts_with(std::string_view text, std::string_view prefix) noexcept;
+
+// --- values ---------------------------------------------------------------
+
+// Split at separators that are NOT inside parentheses or a quoted string.
+//
+// Was: style/engine.hpp's value_parts, which split a CSS shorthand on
+// whitespace - and did it naively, so `border: 1px solid rgba(0, 0, 0, .175)`
+// came apart into five pieces of which the third was the string `rgba(0,`. Every
+// bordered box in Bootstrap drew nothing because of it. paint's `box-shadow`
+// needs the same rule with commas instead, which is what makes this shared
+// rather than fixed twice.
+//
+// The SEPARATOR SET is a parameter for the same reason the whitespace set is
+// elsewhere in this file: a shorthand's parts are separated by whitespace and a
+// LIST's by commas, and they are genuinely different questions asked of the same
+// string.
+[[nodiscard]] std::vector<std::string_view> split_top_level(std::string_view text,
+                                                            std::string_view separators);
 
 // --- hex ------------------------------------------------------------------
 

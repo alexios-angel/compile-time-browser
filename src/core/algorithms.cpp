@@ -16,6 +16,41 @@ bool ascii_iequals(std::string_view a, std::string_view b) noexcept {
     return boost::algorithm::iequals(a, b, std::locale::classic());
 }
 
+std::vector<std::string_view> split_top_level(std::string_view text, std::string_view separators) {
+    std::vector<std::string_view> out;
+    std::size_t at = 0;
+    while (at < text.size()) {
+        const std::size_t begin = text.find_first_not_of(separators, at);
+        if (begin == std::string_view::npos) { break; }
+        std::size_t end = begin;
+        int depth = 0;
+        char quote = 0;
+        for (; end < text.size(); ++end) {
+            const char c = text[end];
+            if (quote != 0) {
+                if (c == '\\' && end + 1 < text.size()) {
+                    ++end;
+                } else if (c == quote) {
+                    quote = 0;
+                }
+                continue;
+            }
+            if (c == '"' || c == '\'') {
+                quote = c;
+            } else if (c == '(') {
+                ++depth;
+            } else if (c == ')') {
+                if (depth > 0) { --depth; }
+            } else if (depth == 0 && separators.find(c) != std::string_view::npos) {
+                break;
+            }
+        }
+        out.push_back(text.substr(begin, end - begin));
+        at = end + (end < text.size() ? 1 : 0);
+    }
+    return out;
+}
+
 bool ascii_istarts_with(std::string_view text, std::string_view prefix) noexcept {
     return text.size() >= prefix.size() && ascii_iequals(text.substr(0, prefix.size()), prefix);
 }

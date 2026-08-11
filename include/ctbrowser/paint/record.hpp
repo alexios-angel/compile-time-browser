@@ -43,6 +43,7 @@ public:
         : background_(atoms.intern("background-color")), color_(atoms.intern("color")),
           border_color_(atoms.intern("border-color")), border_width_(atoms.intern("border-width")),
           border_style_(atoms.intern("border-style")), overflow_(atoms.intern("overflow")),
+          box_shadow_(atoms.intern("box-shadow")),
           border_width_sides_{atoms.intern("border-top-width"), atoms.intern("border-right-width"),
                               atoms.intern("border-bottom-width"),
                               atoms.intern("border-left-width")},
@@ -147,12 +148,26 @@ private:
         // calls it always did - `radii.empty()` is the fast path all the way down
         // to the rasterizer - so nothing that has no radius moves.
         const corner_radii radii = radii_of(style, box);
+        // CSS PAINT ORDER: an OUTER shadow is behind everything the box draws, an
+        // INSET one is in front of the background and behind the border. Bootstrap
+        // 5.3 paints every table cell's background with an inset one -
+        // `inset 0 0 0 9999px <colour>` - so a `.table-striped` has no stripes at
+        // all without this, and neither has a `.table-hover` or any themed row.
+        const std::vector<box_shadow> shadows = parse_box_shadow(prop(style, box_shadow_));
+        for (const box_shadow & shadow : shadows) {
+            if (shadow.inset || !shadow.sharp()) { continue; }
+            emit_shadow(box, radii, shadow, f.source, into);
+        }
         if (const auto bg = parse_color(prop(style, background_))) {
             if (radii.empty()) {
                 into.fill(box, *bg, f.source);
             } else {
                 into.fill_rounded(box, *bg, radii, 0, f.source);
             }
+        }
+        for (const box_shadow & shadow : shadows) {
+            if (!shadow.inset || !shadow.sharp()) { continue; }
+            emit_shadow(box, radii, shadow, f.source, into);
         }
         emit_border(box, style, radii, f.source, text_color, into);
         emit_marker(f, box, text_color, into);
@@ -229,6 +244,44 @@ private:
 
     // A rectangle's four edges, `t` thick.
     static void stroke(const rect & box, float t, color c, node_id source, display_list & into);
+
+    // A shadow rectangle. An OUTER one is the border box moved by the offset and
+    // grown by the spread; an INSET one is the border box moved by the offset and
+    // SHRUNK by it, clipped to the box - which for Bootstrap's 9999px spread is
+    // simply the whole box flooded, and that is exactly the effect the framework
+    // is after.
+    //
+    // A BLURRED shadow is skipped by the caller rather than drawn hard-edged: a
+    // sharp black rectangle where a soft one belongs is further from Chrome than
+    // nothing, not closer. A real blur is a rasterizer primitive and is the next
+    // step for `.shadow` and the focus rings.
+    static void emit_shadow(const rect & box, const corner_radii & radii, const box_shadow & shadow,
+                            node_id source, display_list & into) {
+        if (shadow.inset) {
+            // AN INSET SHADOW IS A RING, and the spread makes it THICKER rather
+            // than smaller - the shadow lies between the box's edge and the box
+            // shrunk by the spread. That is why `inset 0 0 0 9999px <colour>`
+            // floods: the inner hole is shrunk out of existence, which is
+            // precisely what Bootstrap 5.3 relies on to colour a table cell.
+            // Reading the spread the other way round drew nothing at all.
+            //
+            // The OFFSET is not modelled - it slides the hole rather than the
+            // ring, so a ring of one thickness cannot express it - and every
+            // inset shadow Bootstrap writes has a zero offset. A recorded known
+            // difference rather than a wrong ring.
+            into.fill_rounded(box, shadow.paint, radii, std::max(0.0f, shadow.spread), source);
+            return;
+        }
+        // An OUTER shadow is the border box moved by the offset and grown by the
+        // spread, drawn behind everything else the box paints.
+        const rect where{box.x + shadow.dx - shadow.spread, box.y + shadow.dy - shadow.spread,
+                         box.width + 2 * shadow.spread, box.height + 2 * shadow.spread};
+        if (radii.empty()) {
+            into.fill(where, shadow.paint, source);
+        } else {
+            into.fill_rounded(where, shadow.paint, radii, 0, source);
+        }
+    }
 
     // One edge's used width and colour, per side and falling back to the uniform
     // property. `border-style: none` means a used width of ZERO whatever the
@@ -320,6 +373,7 @@ private:
     }
 
     atom background_, color_, border_color_, border_width_, border_style_, overflow_;
+    atom box_shadow_;
     // Clockwise from the top, which is the order the side shorthands name them.
     std::array<atom, 4> border_width_sides_, border_style_sides_, border_color_sides_;
     // Clockwise from the top left, which is the order border-radius names them.

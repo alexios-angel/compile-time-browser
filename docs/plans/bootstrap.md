@@ -740,6 +740,39 @@ Also landed with the metric: `text-align` (read by nothing, so every `.btn` labe
 sat hard left in a box that scored as correct), `opacity` applied to what a
 subtree appended rather than per command kind, and `list-style: none`.
 
+### `initial` on a custom property, and the shadow Bootstrap paints tables with
+
+The screen-cell metric pointed at the kitchen table: Chrome stripes it, ctbrowser
+did not. Bootstrap 5.3 paints **every table cell's background** with
+`box-shadow: inset 0 0 0 9999px <colour>` - a spread so large the inner hole
+vanishes and the shadow floods the cell. No stripes, no hover, no themed row
+without it.
+
+Implementing `box-shadow` was not enough, because the colour never arrived. The
+declaration reads
+`var(--bs-table-bg-state, var(--bs-table-bg-type, var(--bs-table-accent-bg)))`,
+and `.table` defines the first two as **`--bs-table-bg-type: initial`**. On a
+custom property `initial` is the *guaranteed-invalid value* (CSS Variables §3),
+which makes `var()` take its fallback - it is the sentinel the whole 5.3 theming
+layer is built on. ctbrowser stored it as an empty string, which is a *valid*
+empty substitution, so the colour was substituted away to nothing.
+
+The two are genuinely different and both occur in Bootstrap: `--x: initial` must
+fall through, `--x: ;` must substitute to nothing, and neither may let an
+inherited value show. The sentinel is a byte no stylesheet can contain, because a
+value is NUL-filtered at parse time.
+
+`box-shadow` covers the cases that need no blur. A blurred shadow is **skipped
+rather than drawn hard-edged** - a sharp black rectangle where a soft one belongs
+is further from Chrome, not closer - and a real blur is a rasteriser primitive,
+which is what `.shadow` and the focus rings still want.
+
+The paren-aware splitter moved to `core/algorithms.hpp`: a shorthand's parts are
+separated by whitespace and a list's by commas, same rule, different separator.
+
+    components 544 -> 536
+    kitchen    602 -> 590,  cells 65 -> 60
+
 ### Two findings that were NOT predicted
 
 1. **`clientWidth` disagrees with the width layout actually used.**

@@ -4,6 +4,7 @@
 #include <ctbrowser/core/algorithms.hpp>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 #include <ctbrowser/core/core.hpp>
 
@@ -133,6 +134,78 @@ using ctbrowser::color;
     }
 
     return named_color(text);
+}
+
+// ONE `box-shadow`, resolved. Bootstrap 5.3 paints EVERY TABLE CELL's background
+// with one - `box-shadow: inset 0 0 0 9999px <colour>` - so this is not a
+// decoration for later: without it a `.table-striped` has no stripes, a
+// `.table-hover` no hover, and every themed table row is plain white.
+//
+// The lengths are already px, which is what lets this be a paint-time struct: by
+// the time the recorder asks, the cascade has folded every `rem` and `em`.
+struct box_shadow {
+    float dx = 0;
+    float dy = 0;
+    float blur = 0;
+    float spread = 0;
+    color paint;
+    bool inset = false;
+
+    // Can it be drawn as a plain rectangle? A blur needs a real rasterizer
+    // primitive and there is none yet, so a blurred shadow is skipped rather
+    // than drawn hard-edged - a sharp black rectangle where a soft one belongs
+    // is further from Chrome than nothing at all, not closer.
+    [[nodiscard]] bool sharp() const noexcept { return blur <= 0; }
+};
+
+// `[inset] <dx> <dy> [blur] [spread] [colour]`, comma-separated, in any order for
+// the colour and the `inset` keyword - which is what CSS actually says, and what
+// Bootstrap relies on when it writes `inset 0 0 0 9999px var(...)`.
+[[nodiscard]] inline std::vector<box_shadow> parse_box_shadow(std::string_view text) {
+    std::vector<box_shadow> out;
+    if (trim(text, html_whitespace).empty()) { return out; }
+    for (const std::string_view one : split_top_level(text, ",")) {
+        box_shadow shadow;
+        float lengths[4] = {0, 0, 0, 0};
+        std::size_t count = 0;
+        bool bad = false;
+        for (const std::string_view part : split_top_level(one, " \t\n\r\f")) {
+            if (ascii_iequals(part, "inset")) {
+                shadow.inset = true;
+                continue;
+            }
+            // A LENGTH OR A COLOUR, told apart by what it starts with rather than
+            // by where it sits: `0 0 0 9999px red` and `red 0 0 0 9999px` are the
+            // same shadow, and CSS allows both.
+            const bool numeric = !part.empty() && (part.front() == '-' || part.front() == '+' ||
+                                                   part.front() == '.' ||
+                                                   (part.front() >= '0' && part.front() <= '9'));
+            if (numeric) {
+                if (count >= 4) {
+                    bad = true;
+                    break;
+                }
+                float value = 0;
+                std::from_chars(part.data(), part.data() + part.size(), value);
+                lengths[count++] = value;
+                continue;
+            }
+            const std::optional<color> c = parse_color(part);
+            if (!c) {
+                bad = true; // an unreadable component makes the whole shadow invalid
+                break;
+            }
+            shadow.paint = *c;
+        }
+        // `none` and anything malformed contribute nothing rather than a black box.
+        if (bad || count < 2) { continue; }
+        shadow.dx = lengths[0];
+        shadow.dy = lengths[1];
+        shadow.blur = count > 2 ? lengths[2] : 0;
+        shadow.spread = count > 3 ? lengths[3] : 0;
+        out.push_back(shadow);
+    }
+    return out;
 }
 
 } // namespace ctbrowser::paint
