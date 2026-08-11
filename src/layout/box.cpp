@@ -58,7 +58,20 @@ void box_builder::drop_collapsible_spaces(box_node & parent) {
 box_node box_builder::wrap_run(const box_node & parent, std::vector<box_node> & run) {
     box_node wrapper;
     wrapper.kind = box_kind::anonymous;
-    wrapper.style = parent.style; // anonymous boxes inherit, per spec
+    // THE INHERITED HALF ONLY. An anonymous box inherits the inherited properties
+    // and takes the INITIAL value for everything else (CSS 2.1 §9.2.1.1) - it has
+    // no rules of its own, because it has no element for a rule to match.
+    //
+    // Sharing the parent's whole style gave it the parent's BACKGROUND, BORDER,
+    // PADDING and SHADOW as well, and it drew all of them: a
+    // `.list-group-item.d-flex` wraps its text in one of these, so every item in
+    // a Bootstrap list group had a second copy of its own border painted around
+    // the words alone. The split halves make this exact rather than a filter over
+    // a list of properties to exclude - which would need the property table to be
+    // right about which ones inherit, twice.
+    wrapper.style = parent.style
+                        ? computed_style_ptr{new style::computed_style{{}, parent.style->inherited}}
+                        : computed_style_ptr{};
     wrapper.font_size = parent.font_size;
     wrapper.line_height = parent.line_height;
     // An anonymous box has no style of its own, so it takes its parent's

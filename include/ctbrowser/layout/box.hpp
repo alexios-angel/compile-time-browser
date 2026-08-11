@@ -121,6 +121,16 @@ struct box_node {
     // rather than a branch inside each formatting context - the box that decides
     // where an absolute child goes is not its parent, and a formatting context
     // only ever knows about its own children.
+    // `border-collapse` and `border-spacing`, on a <table>.
+    //
+    // The browser default is `separate` with 2px of spacing, and Bootstrap's
+    // Reboot sets `collapse` on every table - which is what removes the gap
+    // between cells entirely. These were two hardcoded 2px constants in
+    // table_flow, so every table on every page was drawn as though a sheet had
+    // asked for separated borders, and a striped table showed a sliver of the
+    // table's own background between every pair of cells.
+    bool collapse_borders = false;
+    length border_spacing{2, unit::px};
     position_kind position = position_kind::static_;
     side_lengths inset{}; // top / right / bottom / left
     // `transform: translate(x, y)`, which for a translation alone is a pure
@@ -163,11 +173,13 @@ struct box_node {
     // ask. 1 is opaque, which is both the initial value and what an unreadable
     // one falls back to.
     float opacity = 1;
-    // Does this list item draw a marker? `list-style: none` is on every Bootstrap
-    // nav and every `.list-unstyled`, and without it a bullet appears beside each
-    // one - which is a stray mark on the page rather than a wrong number, so the
-    // property diff never saw it.
-    bool list_marker = true;
+    // Does this box draw a list marker? TWO conditions, and each removes it on
+    // its own: the box's display must be `list-item` - any other display takes
+    // the marker away, which is why `.list-group-item`'s `display: flex` shows no
+    // bullet - and `list-style-type` must not be `none`, which every Bootstrap
+    // nav and every `.list-unstyled` sets. Both are stray marks on the page
+    // rather than wrong numbers, so the property diff saw neither.
+    bool list_marker = false;
     bool underline = false;
     bool line_through = false;
     // Generated content the recorder draws: a list item's number (0 = a disc,
@@ -292,6 +304,8 @@ public:
           position_(atoms.intern("position")), transform_(atoms.intern("transform")),
           text_align_(atoms.intern("text-align")), opacity_(atoms.intern("opacity")),
           list_style_type_(atoms.intern("list-style-type")),
+          border_collapse_(atoms.intern("border-collapse")),
+          border_spacing_(atoms.intern("border-spacing")),
           inset_sides_{atoms.intern("top"), atoms.intern("right"), atoms.intern("bottom"),
                        atoms.intern("left")},
           flex_{atoms.intern("flex-direction"),  atoms.intern("flex-wrap"),
@@ -420,6 +434,8 @@ private:
                      : (d == display_kind::flex || d == display_kind::inline_flex)
                          ? box_kind::flex
                          : (d == display_kind::inline_level ? box_kind::inline_ : box_kind::block);
+            // `list-item` IS a block box; only its marker differs, and that is
+            // paint's business rather than a formatting context's.
             // THE OUTSIDE OF THE DISPLAY VALUE, which is a separate question from
             // the inside: `inline-flex` is the flex kind at an inline level and
             // `inline-block` is the block kind at one. Set from the display value
@@ -472,6 +488,16 @@ private:
             // into. Reading `margin`/`padding` directly meant a sheet that said
             // `padding-left` was ignored outright - including the UA sheet's own
             // `ul { padding-left: 40px }` and `summary { padding-left: 18px }`.
+            b.collapse_borders = trimmed(prop(style, border_collapse_)) == "collapse";
+            if (const std::string_view spacing = trimmed(prop(style, border_spacing_));
+                !spacing.empty()) {
+                // The two-value form gives horizontal then vertical; only the
+                // first is read, because this engine has one spacing rather than
+                // two. Recorded as a known difference; no page in the suite
+                // writes the two-value form.
+                const length parsed = parse_length(spacing);
+                if (!parsed.is_auto()) { b.border_spacing = parsed; }
+            }
             b.position = parse_position(trimmed(prop(style, position_)));
             b.inset = sides_of(style, inset_sides_);
             b.translate = parse_translate(trimmed(prop(style, transform_)));
@@ -494,7 +520,8 @@ private:
             b.face = face_of(style, inherited_face);
             b.text_align = parse_text_align(trimmed(prop(style, text_align_)));
             b.opacity = parse_opacity(prop(style, opacity_));
-            b.list_marker = trimmed(prop(style, list_style_type_)) != "none";
+            b.list_marker =
+                d == display_kind::list_item && trimmed(prop(style, list_style_type_)) != "none";
             b.underline = inherited_underline;
             b.line_through = inherited_line_through;
             if (const std::string_view decoration = prop(style, text_decoration_);
@@ -818,6 +845,7 @@ private:
     atom border_width_, border_style_;
     side_atoms border_sides_, border_style_sides_;
     atom position_, transform_, text_align_, opacity_, list_style_type_;
+    atom border_collapse_, border_spacing_;
     side_atoms inset_sides_;
     flex_atoms flex_;
 };

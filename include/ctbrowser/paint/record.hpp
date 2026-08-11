@@ -225,11 +225,12 @@ private:
                       f.source);
             return;
         }
-        // `list-style: none` on every Bootstrap nav and every `.list-unstyled`.
-        // Without it a bullet appears beside each item - a stray mark rather than
-        // a wrong number, which is exactly the class of difference the property
-        // diff cannot see and the screen-cell metric can.
-        if (f.box->tag != "li" || !f.box->list_marker) { return; }
+        // ONE FLAG, TWO RULES - see box_node::list_marker. The marker belongs to
+        // `display: list-item` and to a `list-style-type` other than `none`, and
+        // neither is a question about the TAG: a `<li class="d-flex">` is a flex
+        // container, not a list item, and Bootstrap's list groups are full of
+        // them.
+        if (!f.box->list_marker) { return; }
         if (f.box->list_ordinal <= 0) {
             // Unordered: a disc, which font8x8 has no glyph for, so it is a
             // filled square scaled to the text. A round one needs a shape the

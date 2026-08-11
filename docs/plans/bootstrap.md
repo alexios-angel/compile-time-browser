@@ -773,6 +773,53 @@ separated by whitespace and a list's by commas, same rule, different separator.
     components 544 -> 536
     kitchen    602 -> 590,  cells 65 -> 60
 
+### The table, and three shorthands that were not shorthands
+
+Reported by eye: the Bundle table showed a separation between rows, a sliver of
+grey in rows that should be white, and slivers of white beside each cell where
+grey belonged - and the list group had sub-boxes drawn around "Harness", "Front
+end" and "Flex".
+
+Four causes, none of them where the description pointed:
+
+**`table_flow` had two hardcoded 2px constants** - `cell_spacing` and
+`cell_padding` - so every table was laid out as though a sheet had asked for
+separated borders, and a cell was inset twice because its CSS padding was applied
+inside it as well. Bootstrap's Reboot collapses every table's borders. Both are
+CSS now: `border-collapse`, `border-spacing`, and the cell's own padding through
+the same `forced_width` channel a flex item's main size uses.
+
+**An anonymous box carried its parent's whole style.** A `.list-group-item.d-flex`
+wraps its text in one, so every list item painted a second copy of its own border
+and background around the words alone. An anonymous box inherits the *inherited*
+properties and takes the initial value for everything else - which the split
+halves express exactly, rather than a list of properties to exclude.
+
+**The list marker keyed off the tag.** It belongs to `display: list-item`, so any
+other display takes it away - which is why Bootstrap's navs and list groups, all
+`display: flex`, show no bullets in Chrome.
+
+**`border-width`, `border-style` and `border-color` are themselves shorthands over
+the four sides.** `.table-bordered` is `border-width: 0 var(--bs-border-width)`,
+read as a single length that is `0`, so every column separator in every bordered
+table was missing - the near-white slivers were the antialiased seam between two
+flooded cells, not a border at all. That seam is gone too: a square ring that
+swallows its own hole is a solid rectangle and is now drawn as one.
+
+Measured at the pixel afterwards: the separators are `(222,226,230)` in both
+engines, at x=37, 230/231, 428/430 and 572/574.
+
+**Still different, and measured rather than guessed:** a collapsed shared edge is
+painted twice, so interior separators are 2px where Chrome's are 1px. Overlapping
+the cells fixes the width and is the *wrong model* - Chrome's cells abut exactly
+(`37.00 + 193.45 = 230.45`) and split the shared border between them - so it moved
+the table's right edge instead. §17.6.2 conflict resolution is the rung.
+
+The kitchen fixture's `differ` rises 570 → 610 and that is not hidden: cells now
+have the 1px side borders they actually have, so their widths include them and the
+remaining disagreement is text measurement rather than a missing border. The
+picture is better - 58 → 55 screen cells - and the mechanism is right.
+
 ### Two findings that were NOT predicted
 
 1. **`clientWidth` disagrees with the width layout actually used.**

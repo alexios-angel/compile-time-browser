@@ -197,6 +197,14 @@ struct length {
 enum class display_kind : std::uint8_t {
     none,
     block,
+    // A BLOCK THAT DRAWS A MARKER. Block-level in every way that matters to
+    // layout, which is why it is not a box_kind - the marker is a paint
+    // question, and the only reason it needs a display value of its own is that
+    // ANY OTHER display takes it away. A `<li class="d-flex">` is a flex
+    // container and not a list item, so Bootstrap's list groups and navs show no
+    // bullets; keying the marker off the TAG instead drew one beside every one
+    // of them.
+    list_item,
     inline_level,
     inline_block,
     flex,
@@ -208,6 +216,7 @@ enum class display_kind : std::uint8_t {
     if (text == "block") { return display_kind::block; }
     if (text == "inline") { return display_kind::inline_level; }
     if (text == "inline-block") { return display_kind::inline_block; }
+    if (text == "list-item") { return display_kind::list_item; }
     if (text == "flex") { return display_kind::flex; }
     if (text == "inline-flex") { return display_kind::inline_flex; }
     // `grid` and `inline-grid` fall through to `block` DELIBERATELY, and the
@@ -235,6 +244,8 @@ enum class display_kind : std::uint8_t {
     case display_kind::inline_flex: return display_kind::flex;
     case display_kind::none:
     case display_kind::block:
+    // `inline list-item` blockifies to `block list-item` - it keeps its marker.
+    case display_kind::list_item:
     case display_kind::flex: break;
     }
     return d;
@@ -537,6 +548,11 @@ struct side_lengths {
 // What `display` a tag has before any sheet speaks.
 [[nodiscard]] inline display_kind default_display_for(std::string_view tag) {
     if (generates_no_box(tag)) { return display_kind::none; }
+    // A LIST ITEM IS ONE BEFORE ANY SHEET SPEAKS. The UA sheet says so too, and
+    // saying it in both places is not redundancy: this function is what a
+    // document with no stylesheet at all gets, and a bare `<li>` has a bullet in
+    // every browser. The sheet's copy is what a page can then override.
+    if (tag == "li") { return display_kind::list_item; }
     return is_inline_by_default(tag) ? display_kind::inline_level : display_kind::block;
 }
 

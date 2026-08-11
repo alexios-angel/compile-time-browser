@@ -57,7 +57,11 @@ inline constexpr std::string_view ua_css = R"(
     blockquote, figure { margin-left: 40px; margin-right: 40px }
     ul, ol { padding-left: 40px }
     dd { margin-left: 40px }
-    li { display: block }
+    /* `list-item`, not `block`: the marker belongs to the DISPLAY, so any sheet
+       that says otherwise - `.list-group-item` is `display: flex` - takes it
+       away, which is what a browser does and what stops a bullet appearing
+       beside every item of every Bootstrap nav. */
+    li { display: list-item }
 
     a { color: #0000ee; text-decoration: underline; cursor: pointer }
     a:active { color: #ee0000 }

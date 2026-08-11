@@ -280,6 +280,29 @@ public:
             }
             return out;
         }
+        // `border-width`, `border-style` and `border-color` are THEMSELVES
+        // shorthands over the four sides, with margin's 1-to-4-value syntax.
+        // Bootstrap's `.table-bordered` is `border-width: 0 var(--bs-border-width)`
+        // - no horizontal edges, a vertical one on each side - and read as a
+        // single length that is `0`, so every column separator in every bordered
+        // table was missing.
+        for (const std::string_view which : {"width", "style", "color"}) {
+            if (property != std::string("border-") + std::string{which}) { continue; }
+            const std::vector<std::string_view> parts = value_parts(value, 4);
+            if (parts.empty()) { return {}; }
+            const std::string_view top = parts[0];
+            const std::string_view right = parts.size() > 1 ? parts[1] : top;
+            const std::string_view bottom = parts.size() > 2 ? parts[2] : top;
+            const std::string_view left = parts.size() > 3 ? parts[3] : right;
+            // The uniform property is kept as well, holding the FIRST value, so
+            // the many readers that ask for it still get an answer - and every
+            // one of them prefers the per-side longhand when there is one.
+            return {{intern_side("border-top-" + std::string{which}), top},
+                    {intern_side("border-right-" + std::string{which}), right},
+                    {intern_side("border-bottom-" + std::string{which}), bottom},
+                    {intern_side("border-left-" + std::string{which}), left},
+                    {property, top}};
+        }
         // THE PER-SIDE FORM, `border-top` and its three siblings, which is the same
         // grammar aimed at one edge. Bootstrap writes it for every divider it
         // draws - a `.card-header`'s bottom rule, a `.card-footer`'s top one, the

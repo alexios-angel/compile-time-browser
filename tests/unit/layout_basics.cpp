@@ -23,6 +23,7 @@
 #include <cmath>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 using namespace ctbrowser;
@@ -426,6 +427,75 @@ void test_text_align() {
     }
 }
 
+// A table's gaps and insets come from CSS, not from two constants. They used to
+// be a hardcoded 2px of spacing and a hardcoded 2px of padding, and both were
+// visible: Bootstrap's Reboot collapses every table's borders, so a striped
+// table drew a sliver of the table's own background between every pair of cells
+// - and the cell's own CSS padding was applied INSIDE it as well, so each cell
+// was inset twice.
+void test_a_tables_spacing_comes_from_css() {
+    const auto cell_x = [](std::string_view css) {
+        fixture f;
+        f.load("<html><body><table><tr><td id=a>xx</td><td id=b>yy</td></tr></table></body></html>",
+               std::string{"body { margin: 0; padding: 0 } td { padding: 0; font-size: 10px } "}
+                   .append(css)
+                   .c_str());
+        engine eng{monospace_measure()};
+        const fragment out = eng.run(f.root, 400);
+        const fragment * a = out.find(f.find_id("a"));
+        const fragment * b = out.find(f.find_id("b"));
+        return std::pair{a != nullptr ? a->bounds.x : -1.0f, b != nullptr ? b->bounds.x : -1.0f};
+    };
+    {
+        // COLLAPSED: no gap anywhere, so the second cell starts exactly where the
+        // first one ends and the first starts at the table's own edge.
+        const auto [a, b] = cell_x("table { border-collapse: collapse }");
+        expect_near(a, 0, "a collapsed table's first cell is flush with its edge");
+        expect_near(b, 2 * 10 * 0.6f, "and the second begins where the first ends");
+    }
+    {
+        // SEPARATE is the browser default and 2px is its default spacing - which
+        // is where the old constant came from, and it is right for this case and
+        // this case only.
+        const auto [a, b] = cell_x("table { border-collapse: separate; border-spacing: 4px }");
+        expect_near(a, 4, "a separated table insets its first cell by the spacing");
+        expect_near(b, 4 + 2 * 10 * 0.6f + 4, "and puts the spacing between them too");
+    }
+    {
+        // A CELL'S PADDING IS APPLIED ONCE. Twice, and every column is four
+        // pixels too wide and every cell's text four pixels in from where it
+        // belongs.
+        fixture f;
+        f.load("<html><body><table><tr><td id=a>xx</td></tr></table></body></html>",
+               "body { margin: 0; padding: 0 } table { border-collapse: collapse } "
+               "td { padding: 5px; font-size: 10px }");
+        engine eng{monospace_measure()};
+        const fragment out = eng.run(f.root, 400);
+        const fragment * a = out.find(f.find_id("a"));
+        if (a != nullptr) {
+            expect_near(a->bounds.width, 2 * 10 * 0.6f + 10,
+                        "the column holds its text plus ONE padding");
+        }
+    }
+}
+
+void test_a_list_marker_belongs_to_the_display() {
+    // Not to the tag. A `<li class="d-flex">` is a flex container and not a list
+    // item, which is why Bootstrap's list groups and navs show no bullets - and
+    // keying the marker off the tag drew one beside every one of them.
+    const auto markers = [](std::string_view css) {
+        fixture f;
+        f.load("<html><body><ul><li id=a>one</li></ul></body></html>", css);
+        const box_node * a = box_for(f.root, f.find_id("a"));
+        return a != nullptr && a->list_marker;
+    };
+    check(markers("body { margin: 0 }"), "a plain <li> draws a marker");
+    check(!markers("body { margin: 0 } li { display: flex }"),
+          "and any other display takes it away");
+    check(!markers("body { margin: 0 } li { display: block }"), "...including block");
+    check(!markers("body { margin: 0 } ul { list-style: none }"), "and so does list-style: none");
+}
+
 void test_fragments_carry_no_geometry_back_to_the_dom() {
     fixture f;
     f.load("<html><body><div id=a></div></body></html>", "#a { height: 40px }");
@@ -811,6 +881,8 @@ int main() {
     test_an_inline_block_sits_on_its_last_lines_baseline();
     test_a_percentage_height_needs_a_containing_block_to_be_one();
     test_text_align();
+    test_a_tables_spacing_comes_from_css();
+    test_a_list_marker_belongs_to_the_display();
     test_fragments_carry_no_geometry_back_to_the_dom();
 
     test_parallel_matches_sequential();

@@ -1232,10 +1232,17 @@ void test_var_substitution() {
     {
         // A var() SURROUNDED by other tokens, and several in one value.
         fixture f;
-        f.load("<p id=a></p>", ":root { --w: 2px; --s: solid } p { border-width: var(--w); "
-                               "border-color: var(--w) var(--s) }");
-        expect_value(f, f.find_id("a"), "border-width", "2px", "one var");
-        expect_value(f, f.find_id("a"), "border-color", "2px solid", "two vars in one value");
+        // THE CARRIER IS NOT A SHORTHAND, deliberately. This used to use
+        // `border-color`, which was fine while nothing expanded it and wrong the
+        // moment it became the four-side shorthand it really is - the test would
+        // then have been asserting an expansion it does not care about.
+        // `background-position` takes two lengths, is expanded by nothing, and is
+        // read by nothing, so it holds exactly what the substitution produced.
+        f.load("<p id=a></p>", ":root { --x: 10px; --y: 20px } p { border-width: var(--x); "
+                               "background-position: var(--x) var(--y) }");
+        expect_value(f, f.find_id("a"), "border-width", "10px", "one var");
+        expect_value(f, f.find_id("a"), "background-position", "10px 20px",
+                     "two vars in one value");
     }
     {
         // A var() EXPANDING TO A COMMA LIST, which is the case that settles why

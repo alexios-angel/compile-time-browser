@@ -122,6 +122,15 @@ void fill_round_rect(const rect & where, const paint::corner_radii & radii, floa
     const bool hollow = ring > 0;
     const rect inner{where.x + ring, where.y + ring, std::max(0.0f, where.width - 2 * ring),
                      std::max(0.0f, where.height - 2 * ring)};
+    // A SQUARE RING THAT SWALLOWS ITS OWN HOLE IS A SOLID RECTANGLE, and drawing
+    // it as one matters: the distance field feathers its edge by a pixel, so two
+    // adjacent flooded cells left a light SEAM between them where they met.
+    // Bootstrap floods every table cell with `inset 0 0 0 9999px`, so that seam
+    // ran down every column boundary of every table.
+    if (radii.empty() && (inner.width <= 0 || inner.height <= 0)) {
+        fill_rect(where, c, clip, into);
+        return;
+    }
     const paint::corner_radii inner_radii = radii.inset(ring);
     for (int y = p.top; y < p.bottom; ++y) {
         const std::span<std::uint32_t> row = into.row(y);
