@@ -1255,18 +1255,6 @@ private:
         into.fill(rect{box.right() - 1, box.y, 1, box.height}, c, id);
     }
 
-    [[nodiscard]] static node_id deepest_at(const fragment & f, float x, float y, float dx,
-                                            float dy) {
-        const rect box{f.bounds.x + dx, f.bounds.y + dy, f.bounds.width, f.bounds.height};
-        if (!box.contains(point{x, y})) { return node_id{}; }
-        // Later children paint on top, so the last one that contains the point
-        // is the one a click lands on.
-        for (auto it = f.children.rbegin(); it != f.children.rend(); ++it) {
-            if (const node_id hit = deepest_at(*it, x, y, box.x, box.y)) { return hit; }
-        }
-        return f.source;
-    }
-
     bool set_hover(node_id at);
 
     // Pseudo-state applies to the whole ancestor chain: hovering a <span>

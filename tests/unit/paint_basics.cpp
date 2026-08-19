@@ -75,6 +75,22 @@ struct fixture {
     return nullptr;
 }
 
+[[nodiscard]] std::size_t first_fill_index(const display_list & list, color want) {
+    const auto commands = list.commands();
+    for (std::size_t i = 0; i < commands.size(); ++i) {
+        if (commands[i].op == paint_op::fill_rect && commands[i].fill == want) { return i; }
+    }
+    return commands.size();
+}
+
+[[nodiscard]] std::size_t first_text_index(const display_list & list, std::string_view want) {
+    const auto commands = list.commands();
+    for (std::size_t i = 0; i < commands.size(); ++i) {
+        if (commands[i].op == paint_op::text_run && commands[i].text == want) { return i; }
+    }
+    return commands.size();
+}
+
 // --- colours --------------------------------------------------------------
 
 void test_opacity_fades_a_whole_subtree() {
@@ -149,6 +165,12 @@ void test_color_syntaxes() {
     check(!parse_color("#gg0000").has_value(), "non-hex digits are not a colour");
 }
 
+void test_z_index_integer_syntax() {
+    const auto positive = layout::parse_z_index("+2");
+    check(positive.has_value() && *positive == 2, "z-index accepts an integer's leading plus");
+    check(!layout::parse_z_index("+-1").has_value(), "z-index rejects two consecutive signs");
+}
+
 // --- recording ------------------------------------------------------------
 
 void test_background_is_recorded() {
@@ -200,9 +222,298 @@ void test_paint_order_is_back_to_front() {
     }
     // The parent's background has to be recorded before the child's, or the
     // child disappears under it. the previous engine needed a separate collect_backgrounds()
-    // pre-pass to get this; emitting in tree order into an ordered list is
-    // enough.
+    // pre-pass to get this; the Appendix E phase walkers now preserve the
+    // parent-before-child decoration order without that separate pass.
     check(red_at < blue_at, "a parent's background is recorded before its child's");
+}
+
+void test_all_block_decorations_precede_normal_inline_content() {
+    fixture f;
+    // Appendix E does not paint each normal subtree atomically. Every in-flow
+    // block decoration in the context comes before the later inline-content
+    // phase, so this later sibling's blue background belongs behind the earlier
+    // sibling's text even though tree recursion would encounter the text first.
+    f.load("<html><body><div id=first><span>front</span></div><div "
+           "id=later></div></body></html>",
+           "body { margin: 0 } #first, #later { width: 40px; height: 20px } "
+           "#later { margin-top: -20px; background-color: blue }");
+    const auto list = f.record();
+    const std::size_t later = first_fill_index(*list, color::rgba(0, 0, 255));
+    const std::size_t text = first_text_index(*list, "front");
+    check(later < text, "a later block background paints behind earlier inline text");
+}
+
+void test_replaced_content_is_in_the_normal_content_phase() {
+    fixture f;
+    f.load("<html><body><div id=first><input></div><div id=later></div></body></html>",
+           "body { margin: 0 } #first, #later { width: 40px; height: 20px } "
+           "input { width: 20px; height: 20px } "
+           "#later { margin-top: -20px; background-color: blue }");
+    recorder rec{f.atoms};
+    rec.paint_replaced = [](node_id source, const rect &, const rect & content,
+                            const style::computed_style_ptr &, display_list & into) {
+        into.fill(content, color::rgba(255, 0, 255), source);
+    };
+    const auto list = rec.record(f.placed);
+    const std::size_t later = first_fill_index(*list, color::rgba(0, 0, 255));
+    const std::size_t control = first_fill_index(*list, color::rgba(255, 0, 255));
+    check(later < control, "a later block background paints behind earlier replaced content");
+}
+
+void test_z_index_orders_positioned_siblings() {
+    fixture f;
+    // Reverse the wanted order in the document. A recorder that still walks the
+    // fragment tree literally paints blue last; z-index says red is in front.
+    f.load("<html><body><div id=high></div><div id=low></div></body></html>",
+           "body { margin: 0 } #high, #low { position: absolute; width: 20px; height: 20px } "
+           "#high { z-index: 3; background-color: red } "
+           "#low { z-index: 1; background-color: blue }");
+    const auto list = f.record();
+    const std::size_t red = first_fill_index(*list, color::rgba(255, 0, 0));
+    const std::size_t blue = first_fill_index(*list, color::rgba(0, 0, 255));
+    check(red < list->size() && blue < list->size(), "both positioned siblings are painted");
+    check(blue < red, "a larger z-index paints in front of a later source sibling");
+}
+
+void test_equal_z_index_keeps_tree_order() {
+    fixture f;
+    f.load("<html><body><div id=first></div><div id=second></div></body></html>",
+           "body { margin: 0 } #first, #second { position: absolute; z-index: 2; "
+           "width: 20px; height: 20px } #first { background-color: red } "
+           "#second { background-color: blue }");
+    const auto list = f.record();
+    const std::size_t red = first_fill_index(*list, color::rgba(255, 0, 0));
+    const std::size_t blue = first_fill_index(*list, color::rgba(0, 0, 255));
+    check(red < blue, "equal z-index contexts keep their tree order");
+}
+
+void test_a_negative_context_stays_above_its_context_background() {
+    fixture f;
+    // The negative child is deliberately last in the tree. Appendix E puts it
+    // after the context's own background but before ordinary in-flow content.
+    f.load("<html><body><div id=context><div id=flow></div><div "
+           "id=negative></div></div></body></html>",
+           "body { margin: 0 } #context { position: relative; z-index: 0; width: 40px; "
+           "height: 40px; background-color: red } #flow { height: 10px; "
+           "background-color: green } #negative { position: absolute; z-index: -1; "
+           "width: 20px; height: 20px; background-color: blue }");
+    const auto list = f.record();
+    const std::size_t context = first_fill_index(*list, color::rgba(255, 0, 0));
+    const std::size_t negative = first_fill_index(*list, color::rgba(0, 0, 255));
+    const std::size_t flow = first_fill_index(*list, color::rgba(0, 128, 0));
+    check(context < negative && negative < flow,
+          "negative z-index paints after its context background and before in-flow content");
+}
+
+void test_a_context_marker_is_content_above_negative_descendants() {
+    fixture f;
+    // A list marker is generated inline content. It must not be bundled into
+    // the context owner's decoration, which is below the negative child.
+    f.load("<html><body><ol><li id=context>word<div id=negative></div></li></ol></body></html>",
+           "body, ol { margin: 0 } #context { position: relative; z-index: 0; "
+           "height: 20px; background-color: red } #negative { position: absolute; "
+           "z-index: -1; width: 20px; height: 20px; background-color: blue }");
+    const auto list = f.record();
+    const std::size_t context = first_fill_index(*list, color::rgba(255, 0, 0));
+    const std::size_t negative = first_fill_index(*list, color::rgba(0, 0, 255));
+    const std::size_t marker = first_text_index(*list, "1.");
+    check(context < negative && negative < marker,
+          "a negative child paints between its context decoration and list marker");
+}
+
+void test_z_auto_descendants_escape_but_z_zero_descendants_do_not() {
+    {
+        fixture f;
+        // `auto` does not establish a context. The blue z=2 descendant therefore
+        // participates in the root context and escapes above the green z=1 sibling.
+        f.load("<html><body><div id=automatic><div id=high></div></div><div "
+               "id=one></div></body></html>",
+               "body { margin: 0 } #automatic { position: relative; z-index: auto; height: 20px } "
+               "#high { position: absolute; z-index: 2; width: 20px; height: 20px; "
+               "background-color: blue } #one { position: relative; z-index: 1; height: 20px; "
+               "background-color: green }");
+        const auto list = f.record();
+        const std::size_t high = first_fill_index(*list, color::rgba(0, 0, 255));
+        const std::size_t one = first_fill_index(*list, color::rgba(0, 128, 0));
+        check(one < high, "a positioned descendant escapes through a z-index:auto ancestor");
+    }
+    {
+        fixture f;
+        // The same tree with z=0 on the parent is a context. Its z=999 child is
+        // trapped as one atomic unit below the later z=1 sibling.
+        f.load("<html><body><div id=zero><div id=high></div></div><div id=one></div></body></html>",
+               "body { margin: 0 } #zero { position: relative; z-index: 0; height: 20px; "
+               "background-color: red } #high { position: absolute; z-index: 999; width: 20px; "
+               "height: 20px; background-color: blue } #one { position: relative; z-index: 1; "
+               "height: 20px; background-color: green }");
+        const auto list = f.record();
+        const std::size_t zero = first_fill_index(*list, color::rgba(255, 0, 0));
+        const std::size_t high = first_fill_index(*list, color::rgba(0, 0, 255));
+        const std::size_t one = first_fill_index(*list, color::rgba(0, 128, 0));
+        check(zero < high && high < one,
+              "a z-index:0 context traps its high-z descendant below a z-index:1 sibling");
+    }
+}
+
+void test_positioned_auto_paints_after_later_in_flow_content() {
+    fixture f;
+    // Positioned z-index:auto content is in Appendix E's zero phase, after ALL
+    // ordinary in-flow content in the context - even content later in the tree.
+    f.load("<html><body><div id=automatic></div><div id=flow></div></body></html>",
+           "body { margin: 0 } #automatic { position: relative; width: 20px; height: 20px; "
+           "background-color: red } #flow { width: 20px; height: 20px; background-color: blue }");
+    const auto list = f.record();
+    const std::size_t automatic = first_fill_index(*list, color::rgba(255, 0, 0));
+    const std::size_t flow = first_fill_index(*list, color::rgba(0, 0, 255));
+    check(flow < automatic, "positioned z-index:auto paints after later in-flow content");
+}
+
+void test_opacity_establishes_one_atomic_context() {
+    fixture f;
+    // Opacity is a context even without position or z-index. The child's 999 is
+    // trapped below the outside 1, and the context's fade reaches it ONCE.
+    f.load("<html><body><div id=faded><div id=high></div></div><div id=one></div></body></html>",
+           "body { margin: 0 } #faded { opacity: .5; height: 20px } "
+           "#high { position: absolute; z-index: 999; width: 20px; height: 20px; "
+           "background-color: red } #one { position: relative; z-index: 1; height: 20px; "
+           "background-color: blue }");
+    const auto list = f.record();
+    const std::size_t high = first_fill_index(*list, color::rgba(255, 0, 0, 128));
+    const std::size_t one = first_fill_index(*list, color::rgba(0, 0, 255));
+    check(high < one, "an opacity context traps z=999 below an outside z=1 context");
+    const paint_command * faded = first_fill_of(*list, color::rgba(255, 0, 0, 128));
+    check(faded != nullptr && faded->fill.alpha() == 128,
+          "the opacity context fades its descendant exactly once");
+}
+
+void test_a_contexts_background_is_outside_its_own_overflow_clip() {
+    fixture f;
+    f.load("<html><body><div id=context><div id=child></div></div></body></html>",
+           "body { margin: 0 } #context { position: relative; z-index: 0; overflow: hidden; "
+           "width: 10px; height: 10px; background-color: red } #child { width: 20px; "
+           "height: 20px; background-color: blue }");
+    const auto list = f.record();
+    int depth = 0, context_depth = -1, child_depth = -1;
+    for (const paint_command & command : list->commands()) {
+        if (command.op == paint_op::push_clip) { ++depth; }
+        if (command.op == paint_op::fill_rect && command.fill == color::rgba(255, 0, 0)) {
+            context_depth = depth;
+        }
+        if (command.op == paint_op::fill_rect && command.fill == color::rgba(0, 0, 255)) {
+            child_depth = depth;
+        }
+        if (command.op == paint_op::pop_clip) { --depth; }
+    }
+    check(context_depth == 0, "a context owner's background is outside its overflow clip");
+    check(child_depth > 0, "the context's child is inside that overflow clip");
+}
+
+void test_transform_establishes_a_context_even_when_it_moves_nothing() {
+    fixture f;
+    // The zero translation is deliberate: context creation depends on the
+    // computed transform being non-none, not on its resolved offset being nonzero.
+    f.load(
+        "<html><body><div id=transformed><div id=high></div></div><div id=one></div></body></html>",
+        "body { margin: 0 } #transformed { transform: translate(0px, 0px); height: 20px } "
+        "#high { position: absolute; z-index: 999; width: 20px; height: 20px; "
+        "background-color: red } #one { position: relative; z-index: 1; height: 20px; "
+        "background-color: blue }");
+    const auto list = f.record();
+    const std::size_t high = first_fill_index(*list, color::rgba(255, 0, 0));
+    const std::size_t one = first_fill_index(*list, color::rgba(0, 0, 255));
+    check(high < one, "a transform context traps z=999 below an outside z=1 context");
+}
+
+void test_z_index_is_ignored_on_an_ordinary_static_box() {
+    fixture f;
+    // The static box is later in the tree and claims a larger z-index. Neither
+    // fact promotes it: ordinary in-flow content paints before positioned z=1.
+    f.load("<html><body><div id=one></div><div id=static></div></body></html>",
+           "body { margin: 0 } #one { position: relative; z-index: 1; width: 20px; height: 20px; "
+           "background-color: red } #static { z-index: 999; width: 20px; height: 20px; "
+           "background-color: blue }");
+    const auto list = f.record();
+    const std::size_t one = first_fill_index(*list, color::rgba(255, 0, 0));
+    const std::size_t ordinary = first_fill_index(*list, color::rgba(0, 0, 255));
+    check(ordinary < one, "z-index is ignored on a non-flex ordinary static box");
+}
+
+void test_z_index_applies_to_static_flex_items() {
+    {
+        fixture f;
+        // A static flex item with integer z-index is a real context: its z=999
+        // child is trapped below the outside z=1 context.
+        f.load("<html><body><div id=flex><div id=item><div id=high></div></div></div><div "
+               "id=one></div></body></html>",
+               "body { margin: 0 } #flex { display: flex } #item { z-index: 0; width: 20px; "
+               "height: 20px; background-color: red } #high { position: absolute; "
+               "z-index: 999; width: 20px; height: 20px; background-color: blue } "
+               "#one { position: relative; z-index: 1; width: 20px; height: 20px; "
+               "background-color: green }");
+        const auto list = f.record();
+        const std::size_t item = first_fill_index(*list, color::rgba(255, 0, 0));
+        const std::size_t high = first_fill_index(*list, color::rgba(0, 0, 255));
+        const std::size_t one = first_fill_index(*list, color::rgba(0, 128, 0));
+        check(item < high && high < one,
+              "a static z=0 flex item traps its high-z child below outside z=1");
+    }
+    {
+        fixture f;
+        // The flex item's own integer is also its stack level, rather than only
+        // a context-creation flag.
+        f.load("<html><body><div id=flex><div id=item></div></div><div id=one></div></body></html>",
+               "body { margin: 0 } #flex { display: flex } #item { z-index: 2; width: 20px; "
+               "height: 20px; background-color: blue } #one { position: relative; "
+               "z-index: 1; width: 20px; height: 20px; background-color: green }");
+        const auto list = f.record();
+        const std::size_t item = first_fill_index(*list, color::rgba(0, 0, 255));
+        const std::size_t one = first_fill_index(*list, color::rgba(0, 128, 0));
+        check(one < item, "a static flex item's integer z-index sets its stack level");
+    }
+}
+
+void test_equal_negative_levels_keep_tree_order() {
+    fixture f;
+    f.load("<html><body><div id=first></div><div id=second></div></body></html>",
+           "body { margin: 0 } #first, #second { position: absolute; z-index: -2; "
+           "width: 20px; height: 20px } #first { background-color: red } "
+           "#second { background-color: blue }");
+    const auto list = f.record();
+    const std::size_t first = first_fill_index(*list, color::rgba(255, 0, 0));
+    const std::size_t second = first_fill_index(*list, color::rgba(0, 0, 255));
+    check(first < second, "equal negative stack levels keep their tree order");
+}
+
+void test_an_escaped_context_keeps_its_ancestor_clip() {
+    fixture f;
+    // The blue child escapes the ancestor's STACKING context (there is none), but
+    // not its overflow clip. The green z=1 sibling paints first and outside that
+    // clip; then blue paints at z=2 while the clip is active.
+    f.load("<html><body><div id=clip><div id=high></div></div><div id=one></div></body></html>",
+           "body { margin: 0 } #clip { position: relative; z-index: auto; overflow: hidden; "
+           "width: 10px; height: 10px } #high { position: absolute; z-index: 2; width: 20px; "
+           "height: 20px; background-color: blue } #one { position: relative; z-index: 1; "
+           "height: 20px; background-color: green }");
+    const auto list = f.record();
+    std::size_t high = list->size(), one = list->size();
+    int clip_depth = 0, high_depth = -1, one_depth = -1;
+    const auto commands = list->commands();
+    for (std::size_t i = 0; i < commands.size(); ++i) {
+        const paint_command & command = commands[i];
+        if (command.op == paint_op::push_clip) { ++clip_depth; }
+        if (command.op == paint_op::fill_rect && command.fill == color::rgba(0, 0, 255)) {
+            high = i;
+            high_depth = clip_depth;
+        }
+        if (command.op == paint_op::fill_rect && command.fill == color::rgba(0, 128, 0)) {
+            one = i;
+            one_depth = clip_depth;
+        }
+        if (command.op == paint_op::pop_clip) { --clip_depth; }
+    }
+    check(one < high, "the escaped z=2 context still paints after the z=1 sibling");
+    check(one_depth == 0, "the outside sibling is not captured by the ancestor clip");
+    check(high_depth > 0, "the escaped descendant remains inside its ancestor overflow clip");
 }
 
 void test_overflow_hidden_brackets_its_subtree() {
@@ -210,8 +521,9 @@ void test_overflow_hidden_brackets_its_subtree() {
     f.load("<html><body><div id=a><div id=b></div></div></body></html>",
            "#a { height: 20px; overflow: hidden } #b { height: 5px; background-color: red }");
     const auto list = f.record();
-    check(count_op(*list, paint_op::push_clip) == 1, "overflow:hidden pushes one clip");
-    check(count_op(*list, paint_op::pop_clip) == 1, "and pops it");
+    check(count_op(*list, paint_op::push_clip) == 2,
+          "overflow:hidden clips both split normal-paint phases");
+    check(count_op(*list, paint_op::pop_clip) == 2, "and pops both clips");
     // Balance is the property that matters - an unbalanced clip corrupts
     // everything recorded after it, not just the subtree that pushed it.
     int depth = 0, worst = 0;
@@ -330,6 +642,7 @@ void test_a_non_scrolling_layer_stays_put() {
 
 int main() {
     test_color_syntaxes();
+    test_z_index_integer_syntax();
     test_opacity_fades_a_whole_subtree();
     test_a_list_marker_can_be_turned_off();
 
@@ -337,6 +650,21 @@ int main() {
     test_nothing_is_recorded_for_nothing();
     test_text_is_recorded_with_the_inherited_colour();
     test_paint_order_is_back_to_front();
+    test_all_block_decorations_precede_normal_inline_content();
+    test_replaced_content_is_in_the_normal_content_phase();
+    test_z_index_orders_positioned_siblings();
+    test_equal_z_index_keeps_tree_order();
+    test_a_negative_context_stays_above_its_context_background();
+    test_a_context_marker_is_content_above_negative_descendants();
+    test_z_auto_descendants_escape_but_z_zero_descendants_do_not();
+    test_positioned_auto_paints_after_later_in_flow_content();
+    test_opacity_establishes_one_atomic_context();
+    test_a_contexts_background_is_outside_its_own_overflow_clip();
+    test_transform_establishes_a_context_even_when_it_moves_nothing();
+    test_z_index_is_ignored_on_an_ordinary_static_box();
+    test_z_index_applies_to_static_flex_items();
+    test_equal_negative_levels_keep_tree_order();
+    test_an_escaped_context_keeps_its_ancestor_clip();
     test_overflow_hidden_brackets_its_subtree();
     test_recording_is_deterministic();
 

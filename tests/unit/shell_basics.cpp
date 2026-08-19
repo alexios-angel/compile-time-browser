@@ -22,6 +22,7 @@
 #include <ctbrowser/style/style.hpp>
 
 #include "check.hpp"
+#include "dom_probe.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -34,6 +35,7 @@ using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
 using ctbrowser::shell::input_event;
+using ctbrowser_test::find_id;
 
 namespace {
 
@@ -238,6 +240,61 @@ void test_hit_testing_follows_the_scroll() {
     check(deeper_unscrolled != top, "...onto a different element than before");
 }
 
+void test_transparent_boxes_are_hit_regions() {
+    browser page{browser_options{100, 100}};
+    page.load_html(R"(<html><head><style>
+        body { margin: 0 }
+        #target { width: 40px; height: 40px }
+        </style></head><body><div id=target></div></body></html>)");
+    check(page.frame().has_value(), "the transparent hit-test frame renders");
+
+    // A transparent box emits no fill command. It remains an event target:
+    // hit regions describe layout participation, independently of visible ink.
+    check(page.hit_test(10, 10) == find_id(page, "target"),
+          "a transparent box remains hit-testable");
+}
+
+void test_hit_testing_follows_stacking_order() {
+    browser page{browser_options{100, 100}};
+    page.load_html(R"(<html><head><style>
+        body { margin: 0 }
+        #stage { position: relative; width: 50px; height: 50px }
+        #high, #low { position: absolute; left: 0; top: 0; width: 40px; height: 40px }
+        #high { z-index: 3 }
+        #low { z-index: 1 }
+        </style></head><body><div id=stage>
+        <div id=high></div><div id=low></div>
+        </div></body></html>)");
+    check(page.frame().has_value(), "the stacked hit-test frame renders");
+
+    // `low` is later in source order but `high` is later in paint order. A
+    // reverse fragment-tree walk therefore gives the wrong event target.
+    check(page.hit_test(10, 10) == find_id(page, "high"),
+          "the frontmost stacking context receives the hit");
+}
+
+void test_hit_testing_respects_escaped_context_clips() {
+    browser page{browser_options{100, 100}};
+    page.load_html(R"(<html><head><style>
+        body { margin: 0 }
+        #clip { position: relative; overflow: hidden; width: 20px; height: 20px }
+        #high, #one { position: absolute; left: 0; top: 0; width: 40px; height: 40px }
+        #high { z-index: 2 }
+        #one { z-index: 1 }
+        </style></head><body>
+        <div id=clip><div id=high></div></div><div id=one></div>
+        </body></html>)");
+    check(page.frame().has_value(), "the clipped hit-test frame renders");
+
+    // The z=2 child escapes its ordinary ancestor into the root stacking
+    // context, but its ancestor's overflow clip still applies. It wins inside
+    // that clip; outside it, the lower z=1 sibling is exposed.
+    check(page.hit_test(10, 10) == find_id(page, "high"),
+          "an escaped context wins inside its ancestor clip");
+    check(page.hit_test(30, 10) == find_id(page, "one"),
+          "an escaped context cannot receive hits outside its ancestor clip");
+}
+
 void test_wheel_and_keys_scroll() {
     browser page{browser_options{400, 200}};
     page.load_html(demo_page);
@@ -361,6 +418,9 @@ int main() {
     test_background_is_honoured();
 
     test_hit_testing_follows_the_scroll();
+    test_transparent_boxes_are_hit_regions();
+    test_hit_testing_follows_stacking_order();
+    test_hit_testing_respects_escaped_context_clips();
     test_wheel_and_keys_scroll();
     test_hover_restyles();
 

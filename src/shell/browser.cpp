@@ -577,7 +577,7 @@ bool browser::handle(const input_event & event) {
 }
 
 node_id browser::hit_test(float x, float y) const {
-    return deepest_at(fragments_, x, y + scroll_y_, 0, 0);
+    return layers_.hit_test(point{x, y});
 }
 
 std::expected<void, ctbrowser::raster::gpu_error> browser::frame(scheduler * pool) {

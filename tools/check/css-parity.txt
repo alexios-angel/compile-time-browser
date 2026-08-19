@@ -1,13 +1,14 @@
 # How far Bootstrap 5.3.8 is from Chrome, per fixture. tools/check/css-parity.py
 # measures it; this file records it.
 #
-# `differ` and `substituted` may not go UP, and `elements` may not CHANGE, without
-# the tool failing. Only --advance writes here, deliberately: a test that edits its
-# own expectations cannot fail.
+# `differ`, `substituted` and `cells` may not go UP, and `elements` may not CHANGE,
+# without the tool failing. Only --advance writes here, deliberately: a test that
+# edits its own expectations cannot fail.
 #
 # elements     compared on both sides
 # differ       values that disagree, at 1/64px for lengths
 # substituted  values ctbrowser did not answer, so the CSS initial value was used
+# cells        32x24 screenshot cells whose mean RGB error exceeds 24
 props-version=1
 epsilon-px=0.015625
 viewport=1024x768

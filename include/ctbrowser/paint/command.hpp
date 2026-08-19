@@ -28,6 +28,7 @@ namespace ctbrowser::paint {
 
 using ctbrowser::color;
 using ctbrowser::node_id;
+using ctbrowser::point;
 using ctbrowser::rect;
 
 enum class paint_op : std::uint8_t {
@@ -145,13 +146,33 @@ struct paint_command {
     // ring, and drawing that as "fill the whole box in the border colour, then
     // fill the inside in the background colour" would flood the button.
     float ring = 0;
-    node_id source; // provenance, for hit testing and for debugging goldens
+    node_id source; // painted-command provenance, for inspection and debugging goldens
 
     [[nodiscard]] friend bool operator==(const paint_command &, const paint_command &) = default;
 };
 
+// A box that participates in pointer hit testing, in the same back-to-front
+// order as the commands beside it.
+//
+// This is deliberately separate from paint_command. A transparent element is
+// still clickable, while `fill()` quite correctly records no command for a
+// transparent colour. Recording the region explicitly keeps hit testing tied
+// to stacking order without inventing invisible drawing operations.
+struct hit_region {
+    rect bounds;
+    node_id source;
+
+    [[nodiscard]] friend bool operator==(const hit_region &, const hit_region &) = default;
+};
+
 class display_list {
 public:
+    void hit(const rect & where, node_id source) {
+        if (where.empty() || !source) { return; }
+        const rect clipped = hit_clips_.empty() ? where : where.intersected(hit_clips_.back());
+        if (!clipped.empty()) { hit_regions_.push_back(hit_region{clipped, source}); }
+    }
+
     void fill(const rect & where, color c, node_id source = {}) {
         if (where.empty() || c.transparent()) { return; } // nothing to draw, nothing to record
         paint_command cmd;
@@ -249,14 +270,24 @@ public:
         cmd.op = paint_op::push_clip;
         cmd.bounds = where;
         commands_.push_back(std::move(cmd));
+        hit_clips_.push_back(hit_clips_.empty() ? where : hit_clips_.back().intersected(where));
     }
     void pop_clip() {
         paint_command cmd;
         cmd.op = paint_op::pop_clip;
         commands_.push_back(std::move(cmd));
+        if (!hit_clips_.empty()) { hit_clips_.pop_back(); }
     }
 
     [[nodiscard]] std::span<const paint_command> commands() const noexcept { return commands_; }
+    [[nodiscard]] std::span<const hit_region> hit_regions() const noexcept { return hit_regions_; }
+
+    [[nodiscard]] node_id hit_test(point at) const noexcept {
+        for (auto it = hit_regions_.rbegin(); it != hit_regions_.rend(); ++it) {
+            if (it->bounds.contains(at)) { return it->source; }
+        }
+        return node_id{};
+    }
 
     // Multiply the alpha of everything recorded since `from` - paired with the
     // existing size(), which a caller notes before recording a subtree so it can
@@ -328,6 +359,11 @@ public:
 
 private:
     std::vector<paint_command> commands_;
+    std::vector<hit_region> hit_regions_;
+    // The effective intersection at each active clip depth while the mutable
+    // list is being recorded. Regions store that intersection directly, so a
+    // shared const list needs no clip-stack replay for every pointer move.
+    std::vector<rect> hit_clips_;
     rect bounds_;
 };
 

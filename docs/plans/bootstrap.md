@@ -19,13 +19,17 @@ border half of **S7b** · `border-radius` from **S12**.
 
 · **S11a** positioning as a pass over the fragment tree.
 
+· **S11b** in-layer stacking contexts: integer `z-index`, the supported CSS 2.1
+Appendix E phases, atomic opacity/transform contexts, and ancestor clips retained
+across reordered paint.
+
 · **CSS 2 block margin collapsing**, including empty collapse-through chains,
 parent/child edges, formatting-context boundaries and the sequential merge of
 parallel layout results · block `min/max-height`, which margin eligibility needs.
 
-**Next:** S11b (`z-index` and CSS 2.1 Appendix E paint order), collapsed-border
-conflict resolution for tables, a real blur for `box-shadow`, and fixed/sticky as
-their own non-scrolling layers. Chrome's `LayoutUnit` quantisation remains LAST:
+**Next:** collapsed-border conflict resolution for tables, a real blur for
+`box-shadow`, and fixed/sticky as their own non-scrolling layers. Chrome's
+`LayoutUnit` quantisation remains LAST:
 102 of the grid fixture's 137 are one 1/64px rounding difference propagating, and
 that work is worth zero screen cells today.
 
@@ -672,6 +676,81 @@ six fixtures, because four properties on every element stopped being unanswered.
 `bootstrap-position.html` now renders the way Chrome renders it, `fixed-top` and
 `fixed-bottom` included. What is left on it is `z-index` and the 1/64px cluster.
 
+### S11b: a stack level belongs to a CONTEXT, not a parent
+
+Sorting each fragment's direct children would pass the three-sibling demo and be
+wrong everywhere that matters. A positioned descendant of an ordinary ancestor
+participates in the nearest *stacking context*, however many DOM levels away it
+is; a descendant of a real context cannot escape it however large its own
+`z-index` is. The fixture states both traps explicitly: siblings arrive in source
+order 1, 3, 2, and a child at 999 sits inside a parent at 0.
+
+The box tree therefore keeps `z-index` as `optional<int>`: absence is the keyword
+`auto`, while integer zero is present and creates a context. Paint collects the
+atomic descendants of each context and emits the subset of CSS 2.1 Appendix E
+that this engine can express:
+
+1. the context owner's background, border and marker;
+2. negative contexts, most negative first and stable in tree order;
+3. ordinary in-flow content;
+4. positioned `auto` pseudo-contexts and level-zero contexts in tree order;
+5. positive contexts, least positive first and stable in tree order.
+
+Floats and outlines do not exist yet, so their Appendix E phases do not exist
+either; block and inline content remain one source-ordered normal stream. This is
+the supported no-float/no-outline subset, not a claim that the rest of Appendix E
+has been approximated. A positioned integer, opacity below one, any non-`none`
+transform, fixed and sticky establish atomic contexts. An ordinary static box's
+`z-index` is ignored. Static flex-item stack levels remain a later extension.
+
+`z-index:auto` is a pseudo-context for its ordinary contents only. Its positioned
+descendants and real descendant contexts are extracted into the nearest real
+context, which is the exact distinction from integer zero. Reordering also has to
+carry every intervening `overflow:hidden` clip: a context can escape an ancestor's
+stacking order without escaping its clip. The collector snapshots those ancestor
+rectangles, reopens them around the moved context, and leaves the context owner's
+own background outside its child clip. Opacity is folded only after the complete
+atomic context has been emitted, so a high-z child is trapped and faded once.
+
+The standard parity ratchet deliberately does **not** move. Computed `z-index` was
+already reported correctly, geometry does not change, and the position fixture's
+overlaps begin below the harness's 768px screenshot. All six fixtures remain at
+**1,443 properties / 29 cells**, with every per-fixture difference, substitution
+and cell count unchanged; no text baseline or image golden moves.
+
+A screenshot supplies the missing number. On a temporary top-of-page copy of the
+fixture's two overlap probes - the three siblings at z 1, 3, 2, and a z-index:999
+child of a z-index:0 frame overlapping a z-index:1 box outside it that comes
+EARLIER in source order - the same tree was screenshotted against Chrome with the
+new recorder and with the one at HEAD. ImageMagick's mean absolute error falls
+**1,094.74 (1.67%) -> 59.20 (0.09%)**, a 94.6% drop. Before, green z=2 covered red
+z=3 and the trapped yellow z=999 covered the outside blue z=1; after, both
+decisions match Chrome pixel for pixel and the remainder is the text
+rasterisation this engine already differs by. The temporary page was removed after
+the paired screenshots.
+
+Sixteen focused paint tests pin sibling levels, equal positive and negative
+stability, negative-vs-flow phases, `auto` escape versus zero trapping,
+normal-flow ordering, opacity, transform, static-box rejection, owner and
+ancestor clipping. The whole ctest suite passes - 89 tests, every render golden
+among them, so no image moved.
+
+**A click has to land where the pixel is.** Paint order stopped being document
+order, which retires `deepest_at`: a reverse walk of the fragment tree returns the
+last box in SOURCE order that contains the point, and that is now the wrong
+answer whenever `z-index` was what decided the top. The display list already
+holds the right sequence, so hit testing moved into it. `display_list::hit`
+records a region per box beside the drawing commands, and `hit_test` scans those
+in reverse. It is a separate vector rather than a paint command because a
+transparent box is still clickable while `fill()` correctly records nothing for a
+transparent colour. Clips travel with it: a region is stored already intersected
+with the clip stack in force when it was recorded, so an escaped context that
+kept its ancestor's `overflow: hidden` cannot be clicked outside that clip
+either, and a shared const list needs no clip replay per pointer move.
+`layer_tree::hit_test` undoes each layer's compositor offset and asks its list
+front to back, which is also what makes a scroll stay one offset rather than a
+second geometry traversal.
+
 ### A percentage height needs a containing block to be a percentage OF
 
 A screenshot of `bootstrap-kitchen.html` showed the three feature cards collapsed
@@ -1052,7 +1131,7 @@ document** — inlining for ctbrowser only would destroy the comparison. Viewpor
 | **S9** | **Flex**, including the `run_parallel` independence guard | **DONE.** `bootstrap-grid.html` **490 → 173**, the whole Chrome diff 3,140 → **2,458**, and what is left on the grid fixture is not flex. 30 tests in a new `flex_basics.cpp`, two flex cases in parallel-equals-sequential, and six spec bugs found by an adversarial review that the 25 original tests could not see. **No image golden moved** |
 | **S10** | **De-replace `<button>`** — out of `is_replaced_tag`, its intrinsic sizing moved into the UA sheet as real `padding`/`border` so the cascade can override it | `bootstrap-components.html`; **moves `widgets`, `elements`** |
 | **CSS2 flow** | Associative vertical-margin groups; sibling, empty-through and parent/child collapse; BFC/flex/table/position boundaries; parallel-result merge | **DONE.** 1,458 → 1,443 properties and **68 → 29 cells**; kitchen alone 55 → 16 |
-| **S11** | **Position and stacking**, in two sub-rungs: in-layer `z-index`, then fixed/sticky as their own layers | `bootstrap-position.html`; new `position_basics.cpp` |
+| **S11** | **Position and stacking.** S11a placement and S11b in-layer contexts are **DONE**; fixed/sticky compositor layers remain | `bootstrap-position.html`; `position_basics.cpp` + Appendix E cases in `paint_basics.cpp` |
 | **S12** | **Paint decoration.** Per-side `border-{width,style,color}`, `border-radius`, `box-shadow`, `opacity`, `visibility`, `outline` | Screenshots **by eye**; `bootstrap.ppm`; new `raster_basics` coverage cases. **Moves `widgets`, `elements`, `page.ppm`** |
 | **S13** | **`float`/`clear`/`overflow`**, then **`transform`/`transition`/animation** last — a transition makes the frame time-dependent, which no byte-compared golden can hold | Fixtures pin `transition: none` until this rung, with a comment saying why |
 

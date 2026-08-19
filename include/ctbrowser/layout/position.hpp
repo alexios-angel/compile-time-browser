@@ -36,7 +36,8 @@
 //                which is the second half of this rung.
 //   sticky       treated as `relative`, which is what it is until the page
 //                scrolls past it. There is no scroll-driven layout here yet.
-//   z-index      paint order is still document order.
+//   z-index      geometry does not read it; paint/record builds the in-layer
+//                stacking-context order after this pass.
 //   transform    only `translate(x, y)`, which for a translation alone is an
 //                exact offset. A rotation or a scale needs a real transform on
 //                the display list.

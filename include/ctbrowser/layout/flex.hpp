@@ -31,8 +31,8 @@
 //   flex-basis: content     Bootstrap never writes it; treated as `auto`
 //   baseline alignment      utility-only, no component uses it. inline_flow
 //                           already shares a baseline, so it is mechanical later
-//   absolutely positioned   there is no `position` in layout yet at all (S11)
-//   flex items
+//   absolutely positioned   excluded from flex sizing, emitted at their static
+//                           marker, then placed by the positioning pass
 //   a % basis against an    it behaves as `auto`, which is what §9.2.3 says to
 //   indefinite main size    do when the percentage cannot resolve
 

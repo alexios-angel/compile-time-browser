@@ -293,6 +293,30 @@ enum class position_kind : std::uint8_t {
     sticky
 };
 
+// `z-index`: either the keyword `auto`, which does NOT create a stacking
+// context on an ordinary positioned box, or an integer stack level. Keeping
+// that distinction is load-bearing: integer zero creates a context and traps
+// every descendant stack level inside it; `auto` lets those descendants
+// participate in the nearest ancestor context.
+[[nodiscard]] inline std::optional<int> parse_z_index(std::string_view text) {
+    text = trimmed_view(text);
+    if (text.empty() || ascii_iequals(text, "auto")) { return std::nullopt; }
+    // `from_chars` does not accept a leading plus on every standard-library
+    // implementation, while CSS integers do.
+    if (text.front() == '+') {
+        text.remove_prefix(1);
+        // The optional sign belongs to the integer token; a second sign does
+        // not start another integer. Without this guard `+-1` became `-1`
+        // after removing the plus and silently created the wrong context.
+        if (!text.empty() && (text.front() == '+' || text.front() == '-')) { return std::nullopt; }
+    }
+    if (text.empty()) { return std::nullopt; }
+    int value = 0;
+    const auto [rest, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (ec != std::errc{} || rest != text.data() + text.size()) { return std::nullopt; }
+    return value;
+}
+
 [[nodiscard]] inline position_kind parse_position(std::string_view text) {
     if (text == "relative") { return position_kind::relative; }
     if (text == "absolute") { return position_kind::absolute; }

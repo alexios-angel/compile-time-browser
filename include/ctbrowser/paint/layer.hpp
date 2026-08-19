@@ -20,6 +20,7 @@
 
 namespace ctbrowser::paint {
 
+using ctbrowser::node_id;
 using ctbrowser::point;
 using ctbrowser::rect;
 
@@ -51,6 +52,22 @@ struct layer_tree {
 
     [[nodiscard]] bool empty() const noexcept { return layers.empty(); }
     [[nodiscard]] std::size_t size() const noexcept { return layers.size(); }
+
+    // Hit-test front to back, in VIEWPORT space. A layer's display list and hit
+    // regions are in content space, so its compositor offset is undone before
+    // asking the list. This is the same transform raster/composite uses and is
+    // what keeps a scroll from requiring a second geometry traversal.
+    [[nodiscard]] node_id hit_test(point viewport_point) const noexcept {
+        for (auto it = layers.rbegin(); it != layers.rend(); ++it) {
+            if (!it->contents || (!it->clip.empty() && !it->clip.contains(viewport_point))) {
+                continue;
+            }
+            const point content_point{viewport_point.x - it->offset.x,
+                                      viewport_point.y - it->offset.y};
+            if (const node_id hit = it->contents->hit_test(content_point)) { return hit; }
+        }
+        return node_id{};
+    }
 
     // Move every scrolling layer. The point of the whole design: a scroll is
     // this function, and then a composite.

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -137,11 +138,18 @@ struct box_node {
     bool collapse_borders = false;
     length border_spacing{2, unit::px};
     position_kind position = position_kind::static_;
+    // `auto` is absence, integer zero is present. Paint uses this to build the
+    // stacking-context tree; layout itself does not change geometry for it.
+    std::optional<int> z_index;
     side_lengths inset{}; // top / right / bottom / left
     // `transform: translate(x, y)`, which for a translation alone is a pure
     // offset. Bootstrap's `.translate-middle` is how every centred overlay in the
     // framework is anchored, and its percentages are of the box's OWN size.
     translation translate{};
+    // Any computed transform establishes a stacking context, including a zero
+    // translation. The translation values alone cannot retain that fact because
+    // both `none` and `translate(0)` resolve to the same pair of offsets.
+    bool transformed = false;
     // THE BORDER, which is part of the box and was not in the arithmetic at all.
     // A `.btn` is `border: 1px solid transparent`, so every button came out two
     // pixels narrower and two shorter than Chrome's - and over fifty button rows
@@ -312,9 +320,10 @@ public:
           border_style_sides_{atoms.intern("border-top-style"), atoms.intern("border-right-style"),
                               atoms.intern("border-bottom-style"),
                               atoms.intern("border-left-style")},
-          position_(atoms.intern("position")), transform_(atoms.intern("transform")),
-          text_align_(atoms.intern("text-align")), opacity_(atoms.intern("opacity")),
-          overflow_x_(atoms.intern("overflow-x")), overflow_y_(atoms.intern("overflow-y")),
+          position_(atoms.intern("position")), z_index_(atoms.intern("z-index")),
+          transform_(atoms.intern("transform")), text_align_(atoms.intern("text-align")),
+          opacity_(atoms.intern("opacity")), overflow_x_(atoms.intern("overflow-x")),
+          overflow_y_(atoms.intern("overflow-y")),
           list_style_type_(atoms.intern("list-style-type")),
           border_collapse_(atoms.intern("border-collapse")),
           border_spacing_(atoms.intern("border-spacing")),
@@ -511,6 +520,7 @@ private:
                 if (!parsed.is_auto()) { b.border_spacing = parsed; }
             }
             b.position = parse_position(trimmed(prop(style, position_)));
+            b.z_index = parse_z_index(prop(style, z_index_));
             const auto scrollable_overflow = [&](atom name) {
                 const std::string_view value = trimmed(prop(style, name));
                 return ascii_iequals(value, "hidden") || ascii_iequals(value, "scroll") ||
@@ -519,7 +529,9 @@ private:
             b.blocks_margin_collapse =
                 scrollable_overflow(overflow_x_) || scrollable_overflow(overflow_y_);
             b.inset = sides_of(style, inset_sides_);
-            b.translate = parse_translate(trimmed(prop(style, transform_)));
+            const std::string_view transform = trimmed(prop(style, transform_));
+            b.transformed = !transform.empty() && !ascii_iequals(transform, "none");
+            b.translate = parse_translate(transform);
             b.margin = sides_of(style, margin_sides_);
             b.padding = sides_of(style, padding_sides_);
             b.border = border_of(style);
@@ -871,7 +883,7 @@ private:
     atom min_width_, max_width_, min_height_, max_height_;
     atom border_width_, border_style_;
     side_atoms border_sides_, border_style_sides_;
-    atom position_, transform_, text_align_, opacity_, overflow_x_, overflow_y_;
+    atom position_, z_index_, transform_, text_align_, opacity_, overflow_x_, overflow_y_;
     atom list_style_type_;
     atom border_collapse_, border_spacing_;
     side_atoms inset_sides_;

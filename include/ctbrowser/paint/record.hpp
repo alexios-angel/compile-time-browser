@@ -2,9 +2,11 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/core.hpp>
@@ -17,17 +19,18 @@
 
 // Recording: fragment tree in, display list out.
 //
-// Paint order here is document order with each box's background emitted before
-// its children, which is already back-to-front for the subset that exists
-// (no z-index, no stacking contexts, no floats). the previous engine needed a separate
-// collect_backgrounds() pre-pass because it wrote into a flat command vector
-// where a parent's background would otherwise land on top of its children's
-// text. Emitting in tree order into a list that is CONSUMED in order gets the
-// same result without the second traversal.
+// Paint order is the CSS 2.1 Appendix E subset the box tree can express:
+// context decoration; negative contexts; in-flow block decorations; inline,
+// text, replaced and marker content; auto/zero positioned entries; positive
+// contexts. There are no floats or outlines to form their two missing phases
+// yet. Positioned integer z-index, integer-z flex items, opacity, transforms,
+// fixed and sticky establish atomic contexts; positioned z-index:auto does not.
 //
-// The parts that are genuinely absent - z-index, opacity groups, transforms,
-// borders as anything but four fills - are absent because they need stacking
-// contexts, and stacking contexts belong with the compositor work in stage 6.
+// The previous engine needed a separate collect_backgrounds() pre-pass because
+// it wrote into a flat command vector where a parent's background would
+// otherwise land on top of its children's text. The context collector retains
+// that parent-first invariant while moving only the atomic chunks Appendix E
+// requires, and the resulting display list is still consumed back-to-front.
 
 namespace ctbrowser::paint {
 
@@ -87,36 +90,110 @@ public:
 
     [[nodiscard]] std::shared_ptr<const display_list> record(const fragment & root) const;
 
-    // One page, one layer, for now. Layer assignment is a stacking-context
-    // question (position:fixed, transforms, will-change, scrollers), and the
-    // tree cannot answer it before stacking contexts exist - so this returns
-    // the honest one-layer answer rather than a guess at the shape.
+    // One page, one COMPOSITOR layer, for now. Stacking-context order is already
+    // resolved inside its display list; assigning fixed/sticky content and
+    // scrollers to independently moving layers is the separate S11c step.
     [[nodiscard]] layer_tree record_layers(const fragment & root) const;
 
 private:
     [[nodiscard]] std::string_view prop(const computed_style_ptr & s, atom name) const;
 
-    void emit(const fragment & f, float dx, float dy, color inherited_text,
-              display_list & into) const {
-        // OPACITY IS APPLIED TO WHAT THIS SUBTREE APPENDS, noted here and folded
-        // in at the end. That is one place rather than one per command kind, and
-        // it is what makes it catch the background, the border, the text, the
-        // list marker and whatever the replaced painter drew - none of which has
-        // to know opacity exists. See display_list::fade_from for what the
-        // approximation is and where it differs from a real group.
-        const float opacity = f.box != nullptr ? f.box->opacity : 1.0f;
-        const std::size_t opaque_from = into.size();
-        emit_opaque(f, dx, dy, inherited_text, into);
-        into.fade_from(opaque_from, opacity);
+    // A fragment together with everything a reordered paint needs to retain.
+    // Bounds remain relative in the fragment tree, so `dx`/`dy` locate its
+    // containing block. A stacking context may escape through several ordinary
+    // ancestors; their overflow clips and inherited text colour have to travel
+    // with it or the reordering silently changes both.
+    struct paint_ref {
+        const fragment * value = nullptr;
+        float dx = 0;
+        float dy = 0;
+        color inherited_text;
+        std::vector<rect> clips;
+        std::size_t order = 0;
+        int level = 0;
+    };
+
+    struct context_contents {
+        std::vector<paint_ref> contexts;
+        std::vector<paint_ref> positioned;
+    };
+
+    [[nodiscard]] color text_color_of(const paint_ref & ref) const;
+    [[nodiscard]] rect box_of(const paint_ref & ref) const;
+    [[nodiscard]] bool clips_children(const fragment & f) const;
+    [[nodiscard]] static bool is_flex_item(const fragment & parent, const fragment & child);
+    [[nodiscard]] bool establishes_stacking_context(const fragment & f,
+                                                    bool flex_item = false) const;
+    [[nodiscard]] static int stack_level(const fragment & f, bool flex_item = false);
+    [[nodiscard]] static bool is_normal_atomic(const fragment & parent, const fragment & child);
+    [[nodiscard]] paint_ref child_ref(const paint_ref & parent, const fragment & child,
+                                      color inherited_text) const;
+
+    void collect_context_contents(const paint_ref & parent, std::span<const rect> clips,
+                                  std::size_t & order, context_contents & out) const;
+    void emit_stacking_context(const paint_ref & root, display_list & into) const;
+    void emit_positioned(const paint_ref & root, display_list & into) const;
+    void emit_normal_backgrounds(const paint_ref & parent, display_list & into) const;
+    void emit_normal_contents(const paint_ref & parent, display_list & into) const;
+    void emit_normal_atomic(const paint_ref & ref, display_list & into) const;
+    static void push_clips(std::span<const rect> clips, display_list & into);
+    static void pop_clips(std::size_t count, display_list & into);
+
+    // One fragment's box decoration only. Text, generated markers and replaced
+    // content are later Appendix E content; descendants are emitted by the
+    // phase walkers above rather than recursively in source order.
+    void emit_decoration(const paint_ref & ref, color text_color, display_list & into) const {
+        const fragment & f = *ref.value;
+        const rect box = box_of(ref);
+        const computed_style_ptr style = f.box != nullptr ? f.box->style : computed_style_ptr{};
+        into.hit(box, f.source);
+
+        if (!f.text.empty()) { return; }
+
+        // THE BACKGROUND AND THE BORDER SHARE A SHAPE, so the radius is resolved
+        // once and both are drawn against it. A square box takes the same two
+        // calls it always did - `radii.empty()` is the fast path all the way down
+        // to the rasterizer - so nothing that has no radius moves.
+        const corner_radii radii = radii_of(style, box);
+        // CSS PAINT ORDER: an OUTER shadow is behind everything the box draws, an
+        // INSET one is in front of the background and behind the border. Bootstrap
+        // 5.3 paints every table cell's background with an inset one -
+        // `inset 0 0 0 9999px <colour>` - so a `.table-striped` has no stripes at
+        // all without this, and neither has a `.table-hover` or any themed row.
+        const std::vector<box_shadow> shadows = parse_box_shadow(prop(style, box_shadow_));
+        for (const box_shadow & shadow : shadows) {
+            if (shadow.inset || !shadow.sharp()) { continue; }
+            emit_shadow(box, radii, shadow, f.source, into);
+        }
+        if (const auto bg = parse_color(prop(style, background_))) {
+            if (radii.empty()) {
+                into.fill(box, *bg, f.source);
+            } else {
+                into.fill_rounded(box, *bg, radii, 0, f.source);
+            }
+        }
+        for (const box_shadow & shadow : shadows) {
+            if (!shadow.inset || !shadow.sharp()) { continue; }
+            emit_shadow(box, radii, shadow, f.source, into);
+        }
+        emit_border(box, style, radii, f.source, text_color, into);
+        // `<table border=1>`: a presentational attribute, not CSS, and one that
+        // draws a frame around the table AND around every cell - which is what
+        // the attribute has always meant and what makes a bordered table read
+        // as a grid.
+        if (f.box != nullptr && f.box->border_px > 0) {
+            stroke(box, f.box->border_px, color{ctbrowser::style::ua_table_border}, f.source, into);
+        }
     }
 
-    void emit_opaque(const fragment & f, float dx, float dy, color inherited_text,
-                     display_list & into) const {
-        const rect box{f.bounds.x + dx, f.bounds.y + dy, f.bounds.width, f.bounds.height};
+    // Content owned by one fragment. A list marker is generated inline-level
+    // content, not part of the list item's background/border phase. Keeping it
+    // here is what lets negative contexts paint above the owner's decoration but
+    // below its marker and text.
+    void emit_own_content(const paint_ref & ref, color text_color, display_list & into) const {
+        const fragment & f = *ref.value;
+        const rect box = box_of(ref);
         const computed_style_ptr style = f.box != nullptr ? f.box->style : computed_style_ptr{};
-
-        color text_color = inherited_text;
-        if (const auto c = parse_color(prop(style, color_))) { text_color = *c; }
 
         if (!f.text.empty()) {
             // A text fragment IS one visual line - layout already broke it - so
@@ -150,41 +227,7 @@ private:
             return;
         }
 
-        // THE BACKGROUND AND THE BORDER SHARE A SHAPE, so the radius is resolved
-        // once and both are drawn against it. A square box takes the same two
-        // calls it always did - `radii.empty()` is the fast path all the way down
-        // to the rasterizer - so nothing that has no radius moves.
-        const corner_radii radii = radii_of(style, box);
-        // CSS PAINT ORDER: an OUTER shadow is behind everything the box draws, an
-        // INSET one is in front of the background and behind the border. Bootstrap
-        // 5.3 paints every table cell's background with an inset one -
-        // `inset 0 0 0 9999px <colour>` - so a `.table-striped` has no stripes at
-        // all without this, and neither has a `.table-hover` or any themed row.
-        const std::vector<box_shadow> shadows = parse_box_shadow(prop(style, box_shadow_));
-        for (const box_shadow & shadow : shadows) {
-            if (shadow.inset || !shadow.sharp()) { continue; }
-            emit_shadow(box, radii, shadow, f.source, into);
-        }
-        if (const auto bg = parse_color(prop(style, background_))) {
-            if (radii.empty()) {
-                into.fill(box, *bg, f.source);
-            } else {
-                into.fill_rounded(box, *bg, radii, 0, f.source);
-            }
-        }
-        for (const box_shadow & shadow : shadows) {
-            if (!shadow.inset || !shadow.sharp()) { continue; }
-            emit_shadow(box, radii, shadow, f.source, into);
-        }
-        emit_border(box, style, radii, f.source, text_color, into);
         emit_marker(f, box, text_color, into);
-        // `<table border=1>`: a presentational attribute, not CSS, and one that
-        // draws a frame around the table AND around every cell - which is what
-        // the attribute has always meant and what makes a bordered table read
-        // as a grid.
-        if (f.box != nullptr && f.box->border_px > 0) {
-            stroke(box, f.box->border_px, color{ctbrowser::style::ua_table_border}, f.source, into);
-        }
 
         // Replaced elements paint themselves and have no laid-out children, so
         // the recursion stops here.
@@ -199,15 +242,6 @@ private:
             }
             return;
         }
-
-        // `overflow: hidden` is the one clip that exists so far. It is here
-        // rather than in a later pass because a clip has to bracket exactly the
-        // subtree it applies to, which only the recursion knows.
-        const bool clips = ascii_iequals(prop(style, overflow_x_), "hidden") ||
-                           ascii_iequals(prop(style, overflow_y_), "hidden");
-        if (clips) { into.push_clip(box); }
-        for (const fragment & child : f.children) { emit(child, box.x, box.y, text_color, into); }
-        if (clips) { into.pop_clip(); }
     }
 
     // Borders as four fills. Not a shortcut that needs apologising for: a solid
