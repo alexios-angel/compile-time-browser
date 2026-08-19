@@ -1,8 +1,9 @@
 # Bootstrap 5.3.8 at Chrome parity
 
-**Where it is. The Chrome diff over the six fixtures is 2,419, down from 7,820 when
-this started; 88/88 green; the numbers are in `tools/check/css-parity.txt` and
-`bootstrap_layout` pins the same table without a browser.**
+**Where it is. The Chrome diff over the six fixtures is 1,443, down from 7,820 when
+this started; 29 coarse screen cells differ, down from 68 at the preceding rung.
+The authoritative per-fixture numbers are in `tools/check/css-parity.txt`, and
+`bootstrap_layout` pins ctbrowser's side of the same table without a browser.**
 
 **Done:** S0 the harness · S1 the CSS front end (`style/css/` is a real Syntax Level 3
 tokenizer and grammar; no public header includes `<ctcss.hpp>`) · S2 the selector engine
@@ -18,11 +19,15 @@ border half of **S7b** · `border-radius` from **S12**.
 
 · **S11a** positioning as a pass over the fragment tree.
 
-**Next:** S11b (`z-index` and CSS 2.1 Appendix E paint order; `fixed` as its own
-non-scrolling layer), the rest of S12 (`box-shadow`, `opacity`, per-side borders),
-`text-align`, which no formatting context reads yet, and Chrome's `LayoutUnit`
-quantisation - 102 of the grid fixture's 137 are one 1/64px rounding difference
-propagating, and the same cluster appears on three other fixtures.
+· **CSS 2 block margin collapsing**, including empty collapse-through chains,
+parent/child edges, formatting-context boundaries and the sequential merge of
+parallel layout results · block `min/max-height`, which margin eligibility needs.
+
+**Next:** S11b (`z-index` and CSS 2.1 Appendix E paint order), collapsed-border
+conflict resolution for tables, a real blur for `box-shadow`, and fixed/sticky as
+their own non-scrolling layers. Chrome's `LayoutUnit` quantisation remains LAST:
+102 of the grid fixture's 137 are one 1/64px rounding difference propagating, and
+that work is worth zero screen cells today.
 
 `vendor/bootstrap/bootstrap.css` is the first real-world stylesheet this engine
 has been pointed at. Every CSS test before it was a hand-written inline literal
@@ -886,6 +891,84 @@ one that mattered, because a control reporting `@w=346` when Chrome says `320`
 is one property on one element, and a label with no gap under it is zero
 properties on none. The screenshot is what found both.
 
+### Margin collapsing, and the rung the screen-cell metric valued far more
+
+Block flow used to add `margin-bottom` and `margin-top` as two independent pieces
+of space. That is not an approximation of CSS margin collapsing: it makes every
+ordinary Bootstrap section too tall, and it cannot represent the chain through
+an empty block at all. A collapsed group is now an associative `margin_strut`
+holding its largest positive and most-negative members. Reducing a group to one
+scalar early is wrong: `10, -20, 15` must retain both extrema and resolve to -5,
+not collapse pairwise to -10 and then become +5.
+
+Each independently arranged fragment returns its before/after struts and whether
+its empty border box collapses through. The existing sequential block assembly
+then merges those results while choosing sibling `y` positions. That distinction
+keeps the parallel claim honest: local subtree layout remains independent, and
+sequential and parallel use the SAME assembly rather than two implementations.
+A definite-height split-point test caught the parallel driver discarding the
+parent's percentage-height basis; it now carries the used content height down the
+dominant path before workers run.
+
+The edge rules are explicit. First/last-child margins can escape only through an
+open parent edge; inline-blocks, flex items, table cells, absolute/fixed boxes,
+roots and independent overflow formatting contexts stop them. Empty descendants
+join both sides, while a real line box stops collapse-through. Non-zero
+`min-height` has the narrow CSS exception rather than blocking every last-child
+collapse, and block flow now applies both `min-height` and `max-height` to its used
+border-box height. An absolutely positioned box's static marker uses the margin
+position it WOULD have occupied in flow without consuming that pending group.
+The effective-line fact is carried separately from geometry: `line-height: 0`
+still makes a line box, while an empty `<span>` does not, and `<br>` must not be
+mistaken for the latter. An indefinite percentage `max-height` is `none`, not a
+zero clamp; the parallel and sequential paths share that used-height helper.
+
+Overflow exposed a cascade prerequisite. Keeping `overflow`, `overflow-x` and
+`overflow-y` as unrelated computed declarations loses source order, so the
+shorthand now expands to its two axes in the cascade. Only hidden/scroll/auto
+(and legacy overlay) create the formatting boundary; `clip` deliberately does
+not. Paint reads the same final axes, so `overflow:hidden` did not regress when
+the shorthand representation changed. A shorthand that becomes invalid only
+after `var()` substitution actively unsets BOTH axes; merely removing a raw
+`overflow` entry would incorrectly uncover an earlier longhand.
+
+One ratchet initially rose for the right layout reason and the wrong API reason.
+The dropdown divider's wrapper became a real zero-height fragment; the DOM
+geometry walk used an empty rectangle as its "not found" sentinel, discarded its
+real x/y/width, and invented zeros. The walk now carries `optional<rect>`, so a
+zero-height element remains found and `getBoundingClientRect()` reports its real
+position. A binding test pins that distinction.
+
+Measured against fresh local Chromium at 1024x768:
+
+```
+                         properties     screen cells
+bootstrap-type             127 -> 123       5 -> 5
+bootstrap-components       444 -> 438       3 -> 3
+bootstrap-position         113 -> 111       4 -> 4
+bootstrap-kitchen          590 -> 587      55 -> 16
+all six fixtures         1,458 -> 1,443    68 -> 29
+```
+
+Box and grid are byte-for-byte unchanged in the text baseline. Type, components,
+position and kitchen moved as predicted; their diffs were read. The current
+kitchen screenshots were stacked with ctbrowser above Chrome and opened: the
+heading/divider/cards/table rhythm in the first viewport now tracks Chrome, and
+the 39-cell fall is visible rather than a number accepted unseen.
+
+Five image goldens moved for the same reason: `page`, `elements`, `widgets`,
+`svg`, and the final eight rows of `angle/babylonorbit`. Old/new stacks were
+opened before accepting them; every change is tighter adjoining block spacing,
+with no missing content or paint movement. The complete 90-test CTest set passes
+after giving `net_basics` its loopback socket and pointing `gl_basics` at the
+bundled SwiftShader ICD, as `docs/platform.md` requires.
+
+Two adjacent model limits remain recorded rather than smuggled into this claim.
+The new height clamp is the ordinary block-flow path; flex CONTAINERS and
+replaced elements still do not apply their own `min/max-height`. Also, overflow
+propagation from `html`/`body` to the viewport and `display: flow-root` are not
+represented, so those two formatting-context boundaries remain future work.
+
 ## The decisions this plan rests on
 
 1. **The CSS front end gets rewritten inside ctbrowser** as `src/style/css/` — a
@@ -964,20 +1047,24 @@ document** — inlining for ctbrowser only would destroy the comparison. Viewpor
 | **S6** | **The rest of the shorthand table**; **`::before`/`::after` + `content`**; **retire ctcss** | Shorthand coverage count; form-check marks and dropdown carets appear; `check-package.sh` green |
 | **S7a** | `min/max-width` clamping and auto-margin centring | **DONE and TESTED, but LATENT** - it buys 6 differences, because `.container` gets `max-width: 1320px` from the flattened `@media` and 1320 does not clamp 1009. It cannot pay until S5 |
 | **S5** | **`@media` with a real environment** — now the BOTTLENECK, see below | `.container` takes the breakpoint's max-width, which then clamps, which then centres |
-| **S7b** | `box-sizing`, borders in `resolved_edges`, `min/max-height`, and the `clientWidth`/layout-width inconsistency | `bootstrap-box.html` → near zero; **zero golden movement expected — verify** |
+| **S7b** | `box-sizing`, borders in `resolved_edges`, `min/max-height`, and the `clientWidth`/layout-width inconsistency | **DONE for Bootstrap's border-box path.** Block `min/max-height` landed with margin collapsing; general author `content-box` sizing remains a wider model change |
 | **S8** | **Text metrics.** `line-height` (replacing the hardcoded `line_height_factor = 1.25f`), `text-align`, `vertical-align` | `bootstrap-type.html`; **moves every text golden** — taken early on purpose |
 | **S9** | **Flex**, including the `run_parallel` independence guard | **DONE.** `bootstrap-grid.html` **490 → 173**, the whole Chrome diff 3,140 → **2,458**, and what is left on the grid fixture is not flex. 30 tests in a new `flex_basics.cpp`, two flex cases in parallel-equals-sequential, and six spec bugs found by an adversarial review that the 25 original tests could not see. **No image golden moved** |
 | **S10** | **De-replace `<button>`** — out of `is_replaced_tag`, its intrinsic sizing moved into the UA sheet as real `padding`/`border` so the cascade can override it | `bootstrap-components.html`; **moves `widgets`, `elements`** |
+| **CSS2 flow** | Associative vertical-margin groups; sibling, empty-through and parent/child collapse; BFC/flex/table/position boundaries; parallel-result merge | **DONE.** 1,458 → 1,443 properties and **68 → 29 cells**; kitchen alone 55 → 16 |
 | **S11** | **Position and stacking**, in two sub-rungs: in-layer `z-index`, then fixed/sticky as their own layers | `bootstrap-position.html`; new `position_basics.cpp` |
 | **S12** | **Paint decoration.** Per-side `border-{width,style,color}`, `border-radius`, `box-shadow`, `opacity`, `visibility`, `outline` | Screenshots **by eye**; `bootstrap.ppm`; new `raster_basics` coverage cases. **Moves `widgets`, `elements`, `page.ppm`** |
 | **S13** | **`float`/`clear`/`overflow`**, then **`transform`/`transition`/animation** last — a transition makes the frame time-dependent, which no byte-compared golden can hold | Fixtures pin `transition: none` until this rung, with a comment saying why |
 
-Three golden-moving events — **S8, S10, S12** — and they are three commits.
+Four golden-moving events — **S8, S10, S12, and CSS2 flow** — and they are
+separate commits.
 Taking the line-height hit at S8 rather than after flex is why it sits there: if
 it lands later, `widgets.ppm` moves once for reasons you cannot separate, and
 "did flex break the heading spacing or did line-height?" stops being answerable
-from the image. Canvas-drawing goldens are unaffected by all three — a canvas is
-a replaced element whose box does not depend on line height.
+from the image. Canvas-drawing pixels were unaffected: a canvas is a replaced
+element whose contents do not depend on line height or block margins. CSS2 flow
+moved the `babylonorbit` page golden only in its final eight rows of page chrome,
+not in the canvas scene.
 
 **Predict first, regolden second.** The commit message names which goldens will
 move *before* the run; an unpredicted golden moving stops the commit. That is the

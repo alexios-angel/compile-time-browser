@@ -10,6 +10,7 @@
 #include <system_error>
 #include <vector>
 
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
 #include <ctbrowser/style/style.hpp>
@@ -76,11 +77,10 @@ struct box_node {
     // max-width - and every child of it was then measured against the wrong
     // basis, so one missing property moved 27 elements on one fixture.
     length min_width{}, max_width{};
-    // `min-height` / `max-height`. Read here but consumed ONLY by flex, where a
-    // `column` container's main axis is the vertical one and the freeze loop has
-    // to clamp against them exactly as the row case clamps against min/max-width.
-    // block_flow still ignores them; that is S7b's rung, and the fields being
-    // here already is what stops it having to touch this file again.
+    // `min-height` / `max-height`. Flex consumes them on either main or cross
+    // axis; block flow clamps its finished border box with the same max-then-min
+    // rule. A non-zero minimum also participates in the narrow empty-block
+    // margin-collapse exception.
     length min_height{}, max_height{};
     // Was the horizontal margin written as the WORD `auto`?
     //
@@ -111,6 +111,11 @@ struct box_node {
     // block-level: `inline_`, `text` and `replaced` are inline-level by kind and
     // leave this false.
     bool inline_level = false;
+    // `overflow` other than visible/clip establishes an independent block
+    // formatting context. Its children's margins still collapse with each
+    // other, but the first/last ones cannot escape through this box's edges -
+    // especially important when the same box clips their paint.
+    bool blocks_margin_collapse = false;
     side_lengths margin{}, padding{};
     // WHERE THIS BOX IS PLACED, and by whom.
     //
@@ -251,11 +256,17 @@ struct box_node {
         // hand the items to different workers, which is the one place this whole
         // rung could ship silently broken.
         if (kind == box_kind::flex) { return false; }
-        if (children.empty()) { return false; }
+        bool has_in_flow_child = false;
         for (const box_node & c : children) {
+            // An out-of-flow child leaves a static-position marker, not a line
+            // box. Counting one made a block containing only `position:absolute`
+            // content one line high, and also stopped its empty vertical margins
+            // collapsing through it.
+            if (c.is_out_of_flow()) { continue; }
+            has_in_flow_child = true;
             if (c.is_block_level()) { return false; }
         }
-        return true;
+        return has_in_flow_child;
     }
     [[nodiscard]] std::size_t descendant_count() const noexcept {
         std::size_t n = 1;
@@ -303,6 +314,7 @@ public:
                               atoms.intern("border-left-style")},
           position_(atoms.intern("position")), transform_(atoms.intern("transform")),
           text_align_(atoms.intern("text-align")), opacity_(atoms.intern("opacity")),
+          overflow_x_(atoms.intern("overflow-x")), overflow_y_(atoms.intern("overflow-y")),
           list_style_type_(atoms.intern("list-style-type")),
           border_collapse_(atoms.intern("border-collapse")),
           border_spacing_(atoms.intern("border-spacing")),
@@ -499,6 +511,13 @@ private:
                 if (!parsed.is_auto()) { b.border_spacing = parsed; }
             }
             b.position = parse_position(trimmed(prop(style, position_)));
+            const auto scrollable_overflow = [&](atom name) {
+                const std::string_view value = trimmed(prop(style, name));
+                return ascii_iequals(value, "hidden") || ascii_iequals(value, "scroll") ||
+                       ascii_iequals(value, "auto") || ascii_iequals(value, "overlay");
+            };
+            b.blocks_margin_collapse =
+                scrollable_overflow(overflow_x_) || scrollable_overflow(overflow_y_);
             b.inset = sides_of(style, inset_sides_);
             b.translate = parse_translate(trimmed(prop(style, transform_)));
             b.margin = sides_of(style, margin_sides_);
@@ -852,7 +871,8 @@ private:
     atom min_width_, max_width_, min_height_, max_height_;
     atom border_width_, border_style_;
     side_atoms border_sides_, border_style_sides_;
-    atom position_, transform_, text_align_, opacity_, list_style_type_;
+    atom position_, transform_, text_align_, opacity_, overflow_x_, overflow_y_;
+    atom list_style_type_;
     atom border_collapse_, border_spacing_;
     side_atoms inset_sides_;
     flex_atoms flex_;

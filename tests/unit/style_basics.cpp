@@ -236,6 +236,50 @@ void test_corner_and_axis_shorthands_expand() {
     }
 }
 
+void test_overflow_shorthand_expands_in_cascade_order() {
+    {
+        fixture f;
+        f.load("<div id=a></div>", "#a { overflow: hidden auto }");
+        const node_id a = f.find("div");
+        expect_value(f, a, "overflow-x", "hidden", "overflow's first value is the x axis");
+        expect_value(f, a, "overflow-y", "auto", "overflow's second value is the y axis");
+    }
+    {
+        fixture f;
+        f.load("<div id=a></div>",
+               "#a { overflow: hidden; overflow-x: visible; overflow-y: visible }");
+        const node_id a = f.find("div");
+        expect_value(f, a, "overflow-x", "visible", "later x longhand beats shorthand");
+        expect_value(f, a, "overflow-y", "visible", "later y longhand beats shorthand");
+    }
+    {
+        fixture f;
+        f.load("<div id=a></div>", "#a { overflow-x: hidden; overflow: visible }");
+        const node_id a = f.find("div");
+        expect_value(f, a, "overflow-x", "visible", "later shorthand resets x");
+        expect_value(f, a, "overflow-y", "visible", "one shorthand value sets both axes");
+    }
+    {
+        // Substitution happens after the cascade. A winning shorthand that
+        // becomes invalid then behaves as unset for BOTH of its longhands,
+        // rather than exposing an earlier axis declaration again.
+        fixture f;
+        f.load("<div id=a></div>",
+               "#a { --bad: potato; overflow-x: hidden; overflow: var(--bad) }");
+        const node_id a = f.find("div");
+        expect_value(f, a, "overflow-x", "", "IACVT overflow resets its x longhand");
+        expect_value(f, a, "overflow-y", "", "IACVT overflow resets its y longhand");
+    }
+    {
+        // The same invalid grammar without var() is invalid at parse time, so it
+        // is ignored and the earlier valid declaration remains the winner.
+        fixture f;
+        f.load("<div id=a></div>", "#a { overflow-x: hidden; overflow: potato }");
+        expect_value(f, f.find("div"), "overflow-x", "hidden",
+                     "parse-time invalid overflow leaves the earlier axis");
+    }
+}
+
 void test_shorthands_expand() {
     {
         fixture f;
@@ -1801,6 +1845,7 @@ void test_flex_shorthand() {
 int main() {
     test_shorthands_expand();
     test_corner_and_axis_shorthands_expand();
+    test_overflow_shorthand_expands_in_cascade_order();
     test_initial_on_a_custom_property_is_guaranteed_invalid();
     test_a_shorthand_does_not_split_inside_a_function();
     test_the_per_side_border_shorthands_expand();

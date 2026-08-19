@@ -428,6 +428,39 @@ public:
             const std::string_view row = parts[0];
             return {{"row-gap", row}, {"column-gap", parts.size() > 1 ? parts[1] : row}};
         }
+        // `overflow` is the two physical axes, X then Y. It has to be expanded
+        // in the cascade rather than interpreted beside its longhands later:
+        //
+        //   overflow: hidden; overflow-x: visible
+        //
+        // leaves Y hidden, while the reverse source order lets the shorthand
+        // replace both. Keeping all three declarations and OR-ing their values
+        // loses that ordering and incorrectly creates a formatting context.
+        if (property == "overflow") {
+            const std::vector<std::string_view> parts = split_top_level(value, " \t\n\r\f");
+            if (parts.empty() || parts.size() > 2) { return {}; }
+            const auto valid = [](std::string_view part) {
+                for (const std::string_view keyword :
+                     {"visible", "hidden", "clip", "scroll", "auto", "overlay", "inherit",
+                      "initial", "unset", "revert"}) {
+                    if (ascii_iequals(part, keyword)) { return true; }
+                }
+                return false;
+            };
+            if (!valid(parts[0]) || (parts.size() == 2 && !valid(parts[1]))) { return {}; }
+            // CSS-wide keywords apply to the whole shorthand and cannot be
+            // paired with a second component. `put()` resolves each expanded
+            // longhand against the parent/initial value afterwards.
+            const auto is_css_wide = [](std::string_view part) {
+                return ascii_iequals(part, "inherit") || ascii_iequals(part, "initial") ||
+                       ascii_iequals(part, "unset") || ascii_iequals(part, "revert");
+            };
+            if (parts.size() == 2 && (is_css_wide(parts[0]) || is_css_wide(parts[1]))) {
+                return {};
+            }
+            const std::string_view y = parts.size() == 2 ? parts[1] : parts[0];
+            return {{"overflow-x", parts[0]}, {"overflow-y", y}};
+        }
         // `list-style` is `<type> || <position> || <image>` in any order, and the
         // only part with a consumer is the type. `none` is ambiguous between the
         // type and the image and CSS says it sets whichever is not otherwise
@@ -781,11 +814,23 @@ public:
             // whenever an earlier declaration set the same property, and which one
             // is right depends on when the value became invalid - see both callers.
             const auto unset = [&] {
-                for (std::size_t i = 0; i < out.size(); ++i) {
-                    if (out[i].property == d.property) {
-                        out.erase(out.begin() + static_cast<std::ptrdiff_t>(i));
-                        break;
+                const auto erase = [&out](atom property_to_erase) {
+                    for (std::size_t i = 0; i < out.size(); ++i) {
+                        if (out[i].property == property_to_erase) {
+                            out.erase(out.begin() + static_cast<std::ptrdiff_t>(i));
+                            break;
+                        }
                     }
+                };
+                // Invalid-at-computed-value time applies to every longhand a
+                // shorthand governs. Removing a raw `overflow` declaration
+                // would leave an earlier overflow-x/y active, even though the
+                // later shorthand won the cascade and became `unset`.
+                if (property == "overflow") {
+                    erase(atoms_->intern("overflow-x"));
+                    erase(atoms_->intern("overflow-y"));
+                } else {
+                    erase(d.property);
                 }
             };
             const bool had_var = css::may_have_var(value);
@@ -863,6 +908,14 @@ public:
             };
             const auto expanded = expand_shorthand(property, value);
             if (expanded.empty()) {
+                // A substituted token stream is validated only now. If it is
+                // not overflow grammar, the winning shorthand is invalid at
+                // computed-value time and resets both axes; a parse-time
+                // invalid declaration still leaves earlier declarations alone.
+                if (had_var && property == "overflow") {
+                    unset();
+                    return;
+                }
                 put(declaration{d.property, folded(std::move(value))});
                 return;
             }

@@ -10,6 +10,7 @@
 #include <ctbrowser/shell/net/url.hpp>
 
 #include <numbers>
+#include <optional>
 
 // dom_bindings' method bodies - the API a page's script actually calls.
 //
@@ -665,15 +666,16 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
 
 rect dom_bindings::box_of(node_id id) const {
     if (fragments_ == nullptr) { return rect{}; }
-    const auto find = [&](auto && self, const layout::fragment & f, float dx, float dy) -> rect {
+    const auto find = [&](auto && self, const layout::fragment & f, float dx,
+                          float dy) -> std::optional<rect> {
         const rect box{f.bounds.x + dx, f.bounds.y + dy, f.bounds.width, f.bounds.height};
         if (f.source == id) { return box; }
         for (const auto & child : f.children) {
-            if (const rect hit = self(self, child, box.x, box.y); !hit.empty()) { return hit; }
+            if (const std::optional<rect> hit = self(self, child, box.x, box.y)) { return hit; }
         }
-        return rect{};
+        return std::nullopt;
     };
-    return find(find, *fragments_, 0, 0);
+    return find(find, *fragments_, 0, 0).value_or(rect{});
 }
 
 void dom_bindings::install_element_methods(context & cx, script::object_object & obj) {

@@ -149,7 +149,8 @@ void test_absolute_is_placed_against_the_nearest_POSITIONED_ancestor() {
            "<div id=a></div></div></div></body></html>",
            std::string{reset}
                .append("#pad { height: 30px } "
-                       "#anchor { position: relative; margin-left: 50px; height: 100px } "
+                       "#anchor { position: relative; margin-left: 50px; height: 100px; "
+                       "          padding-top: 1px } "
                        "#mid { margin-top: 25px } "
                        "#a { position: absolute; top: 0; left: 0; height: 10px }")
                .c_str());
@@ -170,6 +171,24 @@ void test_an_auto_offset_is_the_static_position() {
                .c_str());
     expect_near(f.at("a").y, 60, "with no offsets it stays at its static position");
     expect_near(f.at("a").x, 0, "...on both axes");
+}
+
+void test_a_static_position_collapses_hypothetical_margins() {
+    fixture f;
+    f.load("<html><body><div id=anchor><div id=before></div><div id=a></div>"
+           "<div id=after></div></div></body></html>",
+           std::string{reset}
+               .append("#anchor { position: relative } #before, #after, #a { height: 10px } "
+                       "#before { margin-bottom: 30px } "
+                       "#a { position: absolute; margin-top: 40px } "
+                       "#after { margin-top: 20px }")
+               .c_str());
+    // The marker is the border edge this box would have had in normal flow:
+    // the preceding 30px and its own 40px collapse to 40, not an additive 70.
+    expect_near(f.at("a").y, 50, "the static position uses the collapsed hypothetical margin");
+    // Computing that hypothetical point must not consume the real pending
+    // margin; the following in-flow sibling still collapses against it.
+    expect_near(f.at("after").y, 40, "an absolute marker does not alter normal-flow margins");
 }
 
 void test_both_offsets_stretch_and_one_shrink_wraps() {
@@ -328,6 +347,7 @@ int main() {
     test_absolute_leaves_no_slot_behind();
     test_absolute_is_placed_against_the_nearest_POSITIONED_ancestor();
     test_an_auto_offset_is_the_static_position();
+    test_a_static_position_collapses_hypothetical_margins();
     test_both_offsets_stretch_and_one_shrink_wraps();
     test_right_and_bottom_measure_from_the_far_edge();
     test_the_containing_block_is_the_PADDING_box();

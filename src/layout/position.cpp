@@ -147,7 +147,7 @@ struct positioner {
         }
 
         fragment placed =
-            layout_box(b, constraints{cb.width, cb.height, b.font_size, width}, measure);
+            layout_box(b, constraints{cb.width, cb.height, b.font_size, width, true}, measure);
         placed.box = &b;
         placed.source = b.source;
 

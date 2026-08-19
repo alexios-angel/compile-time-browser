@@ -503,7 +503,7 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         } else {
             it.cross = column_cross_size(b, it, content_width, measure_text);
             it.placed = layout_box(
-                child, constraints{content_width, child_height, child.font_size, it.cross},
+                child, constraints{content_width, child_height, child.font_size, it.cross, true},
                 measure_text);
             content_main = it.placed.bounds.height;
             min_content_main = content_main;
@@ -601,7 +601,8 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
                 // why forced_width exists: the item's own `width` cannot produce
                 // it, and `.row > * { width: 100% }` on every column is the proof.
                 it.placed = layout_box(
-                    child, constraints{content_width, child_height, child.font_size, it.target},
+                    child,
+                    constraints{content_width, child_height, child.font_size, it.target, true},
                     measure_text);
                 it.cross = it.placed.bounds.height;
             } else {

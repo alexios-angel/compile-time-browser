@@ -1546,6 +1546,25 @@ void test_layout_is_visible_to_script() {
           "after layout, offsetWidth/Height report the real box");
 }
 
+void test_zero_height_layout_is_still_visible_to_script() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><head><style>
+      body { margin: 0 }
+      #host { height: 20px; padding: 7px 0 0 5px }
+      #zero { width: 123px; height: 0 }
+    </style></head><body><div id=host><div id=zero></div></div><script>
+      setTimeout(function () {
+        const box = document.getElementById('zero').getBoundingClientRect();
+        console.log('x=' + box.x + ' y=' + box.y + ' w=' + box.width + ' h=' + box.height);
+      }, 0);
+    </script></body></html>)");
+    check(page.frame().has_value(), "the zero-height page lays out");
+    check(page.tick(1) == 1, "the zero-height geometry timer ran after layout");
+    check(page.frame().has_value(), "and the zero-height page renders again");
+    check(!log_of(page).empty() && log_of(page).back() == "x=5 y=7 w=123 h=0",
+          "a zero-height fragment keeps its real position and width");
+}
+
 // --- events ---------------------------------------------------------------
 
 // --- alert, location, and <a href> -------------------------------------
@@ -2359,6 +2378,7 @@ int main() {
     test_remove_child();
     test_a_stale_handle_is_inert();
     test_layout_is_visible_to_script();
+    test_zero_height_layout_is_still_visible_to_script();
 
     test_alert_is_recorded();
     test_alert_reaches_the_hook();

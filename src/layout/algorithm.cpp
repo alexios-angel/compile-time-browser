@@ -172,10 +172,27 @@ fragment layout_box(const box_node & b, const constraints & c, const measure_tex
                               : b.intrinsic_height + edges.vertical_inner();
         return f;
     }
-    if (b.kind == box_kind::table) { return table_flow{}.arrange(b, c, measure, ready); }
-    if (b.kind == box_kind::flex) { return flex_flow{}.arrange(b, c, measure, ready); }
-    if (b.kind == box_kind::inline_) { return inline_flow{}.arrange(b, c, measure, ready); }
-    return block_flow{}.arrange(b, c, measure, ready);
+    fragment out;
+    if (b.kind == box_kind::table) {
+        out = table_flow{}.arrange(b, c, measure, ready);
+    } else if (b.kind == box_kind::flex) {
+        out = flex_flow{}.arrange(b, c, measure, ready);
+    } else if (b.kind == box_kind::inline_) {
+        out = inline_flow{}.arrange(b, c, measure, ready);
+    } else {
+        out = block_flow{}.arrange(b, c, measure, ready);
+    }
+    // A flex or table container does not use block_flow, but it is still a
+    // block-level participant in its PARENT's formatting context and its own
+    // margins collapse with ordinary siblings there. block_flow already added
+    // these for its kinds; append is idempotent, so one common exit keeps every
+    // block-level dispatch on the same rule.
+    if (b.is_block_level()) {
+        const resolved_edges edges = resolve_edges(b, c);
+        out.block_margins.before.append(edges.margin_top);
+        out.block_margins.after.append(edges.margin_bottom);
+    }
+    return out;
 }
 
 } // namespace ctbrowser::layout

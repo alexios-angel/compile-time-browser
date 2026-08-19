@@ -42,8 +42,8 @@ public:
     explicit recorder(atom_table & atoms)
         : background_(atoms.intern("background-color")), color_(atoms.intern("color")),
           border_color_(atoms.intern("border-color")), border_width_(atoms.intern("border-width")),
-          border_style_(atoms.intern("border-style")), overflow_(atoms.intern("overflow")),
-          box_shadow_(atoms.intern("box-shadow")),
+          border_style_(atoms.intern("border-style")), overflow_x_(atoms.intern("overflow-x")),
+          overflow_y_(atoms.intern("overflow-y")), box_shadow_(atoms.intern("box-shadow")),
           border_width_sides_{atoms.intern("border-top-width"), atoms.intern("border-right-width"),
                               atoms.intern("border-bottom-width"),
                               atoms.intern("border-left-width")},
@@ -203,7 +203,8 @@ private:
         // `overflow: hidden` is the one clip that exists so far. It is here
         // rather than in a later pass because a clip has to bracket exactly the
         // subtree it applies to, which only the recursion knows.
-        const bool clips = prop(style, overflow_) == "hidden";
+        const bool clips = ascii_iequals(prop(style, overflow_x_), "hidden") ||
+                           ascii_iequals(prop(style, overflow_y_), "hidden");
         if (clips) { into.push_clip(box); }
         for (const fragment & child : f.children) { emit(child, box.x, box.y, text_color, into); }
         if (clips) { into.pop_clip(); }
@@ -387,7 +388,7 @@ private:
         return corner_radii{one(radius_[0]), one(radius_[1]), one(radius_[2]), one(radius_[3])};
     }
 
-    atom background_, color_, border_color_, border_width_, border_style_, overflow_;
+    atom background_, color_, border_color_, border_width_, border_style_, overflow_x_, overflow_y_;
     atom box_shadow_;
     // Clockwise from the top, which is the order the side shorthands name them.
     std::array<atom, 4> border_width_sides_, border_style_sides_, border_color_sides_;

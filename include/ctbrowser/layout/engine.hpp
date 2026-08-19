@@ -21,17 +21,17 @@
 //   * layout READS the box tree and writes only its own fragments. The box
 //     tree is const throughout; the previous engine wrote geometry back onto shared nodes,
 //     which is what made concurrency impossible there.
-//   * a block child's layout depends on exactly one thing from its siblings:
-//     the content width, which every sibling shares. Its HEIGHT is computed
-//     from its own content.
-//   * so children can be arranged in any order, or at the same time, and only
-//     the final vertical stacking has to be sequential - and that is pure
-//     arithmetic over already-computed heights.
+//   * a block child's LOCAL layout depends on exactly one thing from its
+//     siblings: the content width, which every sibling shares. Its height and
+//     the margin struts it exposes are computed from its own subtree.
+//   * so children can be arranged in any order, or at the same time. The final
+//     vertical stacking and margin collapse are sequential arithmetic over
+//     those already-computed results.
 //
-// That second point is only true because margins do not collapse yet (see
-// block_flow). Collapsing makes a child's offset depend on its siblings'
-// margins, and the honest fix is a sequential margin-resolution pass feeding
-// the parallel arrange - not quietly dropping the parallelism.
+// Margin collapsing is the proof of the LOCAL distinction: a child's absolute
+// `y` depends on its siblings, but nothing inside the child does. Carrying the
+// associative struts on its fragment lets the ordinary assembly resolve that
+// dependency without a second layout implementation or lost parallelism.
 
 namespace ctbrowser::layout {
 
@@ -153,10 +153,27 @@ private:
         constraints inner = c;
         for (std::size_t i = 0; i + 1 < path.size(); ++i) {
             const resolved_edges edges = resolve_edges(*path[i], inner);
-            inner =
-                constraints{content_width_of(*path[i], inner, edges), 0, path[i + 1]->font_size};
+            const float stated_height =
+                has_definite_height(*path[i], inner)
+                    ? clamp_used_height(
+                          *path[i], inner,
+                          std::max(0.0f, path[i]->height.resolve(inner.available_height,
+                                                                 path[i]->font_size)))
+                    : -1.0f;
+            const float content_height =
+                stated_height >= 0 ? std::max(0.0f, stated_height - edges.vertical_inner()) : 0.0f;
+            inner = constraints{content_width_of(*path[i], inner, edges), content_height,
+                                path[i + 1]->font_size};
         }
-        const float content_width = content_width_of(*split, inner, resolve_edges(*split, inner));
+        const resolved_edges split_edges = resolve_edges(*split, inner);
+        const float content_width = content_width_of(*split, inner, split_edges);
+        const float split_height =
+            has_definite_height(*split, inner)
+                ? std::max(0.0f, clamp_used_height(*split, inner,
+                                                   split->height.resolve(inner.available_height,
+                                                                         split->font_size)) -
+                                     split_edges.vertical_inner())
+                : 0.0f;
 
         // THE PARALLEL PART. Each chunk of children is laid out into its own
         // slots against the same content width; the box tree is const and
@@ -172,8 +189,8 @@ private:
         pool.parallel_for(chunks.size(), [&](std::size_t k) {
             for (std::size_t i = chunks[k].first; i < chunks[k].last; ++i) {
                 const box_node & child = split->children[i];
-                pieces[i] =
-                    layout_box(child, constraints{content_width, 0, child.font_size}, measure_);
+                pieces[i] = layout_box(
+                    child, constraints{content_width, split_height, child.font_size}, measure_);
             }
         });
 

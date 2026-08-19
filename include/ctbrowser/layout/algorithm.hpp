@@ -146,6 +146,26 @@ struct precomputed {
     return b.height.u != unit::percent || c.available_height > 0;
 }
 
+// Apply the block used-height constraints. Shared with the parallel driver:
+// it has to derive the SAME content-height basis down to its split point before
+// workers lay out percentage-height descendants.
+[[nodiscard]] inline float clamp_used_height(const box_node & b, const constraints & c,
+                                             float value) {
+    const float min = b.min_height.is_auto()
+                          ? 0.0f
+                          : std::max(0.0f, b.min_height.resolve(c.available_height, b.font_size));
+    // A percentage maximum against an indefinite containing height is `none`,
+    // not zero (CSS 2.2 §10.7). Percentage minimums deliberately keep the
+    // zero basis below: their indefinite answer is zero.
+    const float max =
+        b.max_height.is_auto() || (b.max_height.u == unit::percent && c.available_height <= 0)
+            ? -1.0f
+            : std::max(0.0f, b.max_height.resolve(c.available_height, b.font_size));
+    // MAX FIRST, THEN MIN, so min wins when the two conflict - the same rule as
+    // width and flex, and the one CSS Sizing specifies.
+    return std::max(min, max < 0 ? value : std::min(value, max));
+}
+
 // SHRINK TO FIT - `clamp(min-content, available, max-content)`, CSS 2.1 §10.3.5.
 //
 // What an INLINE-LEVEL box with an auto width takes, instead of filling its
@@ -250,6 +270,11 @@ struct inline_flow {
         // makes everything after it overlap.
         float line_extent = line_height;
         float total_height = 0;
+        // CSS treats a line containing only zero-edge, empty inline boxes as
+        // not existing for height/layout purposes. Keep their zero fragments
+        // for geometry queries, but do not let vector non-emptiness manufacture
+        // a phantom line box.
+        bool has_line_content = false;
         // BASELINE ALIGNMENT. Every item on a line is placed so that
         // `y + ascent` is the same for all of them - which is what sharing a
         // baseline means, and what the rasterizer then draws: it puts each
@@ -310,7 +335,10 @@ struct inline_flow {
             float line_ascent = 0;
             float extent = 0;
             for (std::size_t i = line_start; i < out.children.size(); ++i) {
-                if (out.children[i].bounds.y != top) { continue; }
+                if (out.children[i].bounds.y != top ||
+                    (out.children[i].bounds.width == 0 && out.children[i].bounds.height == 0)) {
+                    continue;
+                }
                 line_ascent = std::max(line_ascent, ascent_of(out.children[i]));
                 extent = std::max(extent, out.children[i].bounds.x + out.children[i].bounds.width);
             }
@@ -336,11 +364,13 @@ struct inline_flow {
                 continue;
             }
             if (child.kind == box_kind::text) {
+                const std::size_t before = out.children.size();
                 if (child.preformatted) {
                     place_preformatted(child, line_height, pen_x, pen_y, out);
                 } else {
                     place_text(child, c, measure_text, line_height, pen_x, pen_y, out);
                 }
+                has_line_content |= out.children.size() != before;
                 continue;
             }
             // LAID OUT FIRST, THEN ASKED WHETHER IT FITS. The width that decides
@@ -363,6 +393,22 @@ struct inline_flow {
             // is what separates every Bootstrap label from its field - did
             // nothing, and two inline-blocks side by side touched.
             const resolved_edges child_edges = resolve_edges(child, c);
+            const bool empty_inline =
+                child.kind == box_kind::inline_ && child.tag != "br" && f.bounds.width == 0 &&
+                f.bounds.height == 0 && child_edges.margin_top == 0 &&
+                child_edges.margin_right == 0 && child_edges.margin_bottom == 0 &&
+                child_edges.margin_left == 0 && child_edges.pad_top == 0 &&
+                child_edges.pad_right == 0 && child_edges.pad_bottom == 0 &&
+                child_edges.pad_left == 0 && child_edges.border_top == 0 &&
+                child_edges.border_right == 0 && child_edges.border_bottom == 0 &&
+                child_edges.border_left == 0;
+            if (empty_inline) {
+                f.bounds.x = pen_x;
+                f.bounds.y = pen_y;
+                out.children.push_back(std::move(f));
+                continue;
+            }
+            has_line_content = true;
             const float w =
                 (f.bounds.width > 0 ? f.bounds.width
                                     : outer_intrinsic(child, c, measure_text).max_content) +
@@ -394,7 +440,8 @@ struct inline_flow {
         // block container replaces this with its own block-rule width; an inline
         // box keeps it, which is what shrink-to-fit means.
         out.bounds.width = widest;
-        out.bounds.height = out.children.empty() ? 0 : std::max(pen_y + line_extent, total_height);
+        out.bounds.height = has_line_content ? std::max(pen_y + line_extent, total_height) : 0;
+        out.has_line_box = has_line_content;
         return out;
     }
 
@@ -487,12 +534,12 @@ public:
 // Children stack vertically, each filling the content width unless it says
 // otherwise.
 //
-// NOTE: margins do not collapse here. That is a real omission and it is load
-// bearing for the parallel driver - collapsing makes a child's position depend
-// on its SIBLINGS' margins, which is exactly the dependency that would stop
-// children being laid out independently. Implementing it means the driver
-// needs a sequential pass to resolve collapsed margins before the parallel
-// one, which is how real engines do it and is the right next step.
+// Vertical margins are resolved in TWO halves. A child lays out its own subtree
+// independently and returns the adjoining margins it exposes; this context then
+// merges those struts while it performs the sequential stacking pass it already
+// needed for child heights. That is why margin collapsing does not cost the
+// parallel driver its independence: a worker never needs a sibling's margin to
+// lay out local coordinates, only the final assembly needs it to choose `y`.
 struct block_flow {
     [[nodiscard]] intrinsic_sizes measure(const box_node & b, const constraints & c,
                                           const measure_text_fn & measure_text) const {
@@ -538,18 +585,42 @@ struct block_flow {
         // height of ZERO, so `height: 50%` had nothing to be a percentage of and
         // silently became `auto`. Bootstrap's `.h-100` is that declaration, and a
         // card with a header, a body and a footer is three of them.
-        const float stated_height =
+        const float declared_height =
             has_definite_height(b, c)
                 ? std::max(0.0f, b.height.resolve(c.available_height, b.font_size))
                 : -1.0f;
+        // An auto height is clamped only after its content is known; a stated
+        // one is known now and supplies the percentage basis for its children
+        // at that used size.
+        const float stated_height =
+            declared_height >= 0 ? clamp_used_height(b, c, declared_height) : -1.0f;
         const float inner_height =
             stated_height >= 0 ? std::max(0.0f, stated_height - edges.vertical_inner()) : 0.0f;
 
         fragment out;
         out.box = &b;
         out.source = b.source;
+        out.block_margins.before.append(edges.margin_top);
+        out.block_margins.after.append(edges.margin_bottom);
+
+        // A formatting-context boundary keeps its first/last child's margins
+        // inside. Siblings within that boundary still collapse with each other.
+        // `html` and the synthetic document box are both stopped: the root
+        // element's margins never collapse (CSS 2.2 §8.3.1).
+        const bool is_document_root = b.tag == "html" || (b.tag.empty() && b.source);
+        const bool suppress_edge_collapse = c.suppress_margin_collapse || b.inline_level ||
+                                            b.blocks_margin_collapse || b.is_out_of_flow() ||
+                                            is_document_root;
+        const bool min_height_is_zero =
+            b.min_height.is_auto() || b.min_height.resolve(c.available_height, b.font_size) <= 0;
+        const bool top_edge_is_open = edges.pad_top == 0 && edges.border_top == 0;
+        const bool bottom_edge_is_open = edges.pad_bottom == 0 && edges.border_bottom == 0;
+        const bool collapse_first_margin = !suppress_edge_collapse && top_edge_is_open;
+        const bool collapse_last_margin =
+            !suppress_edge_collapse && bottom_edge_is_open && !has_definite_height(b, c);
 
         float cursor = edges.content_top();
+        bool content_collapses_through = false;
         if (b.establishes_inline_context()) {
             // The box is STILL BLOCK-LEVEL. Only its children share lines.
             // Conflating the two is what made a block box containing text ignore
@@ -564,7 +635,19 @@ struct block_flow {
                 out.children.push_back(std::move(line));
             }
             cursor += lines.bounds.height;
+            // A line box can have zero used height (`line-height: 0`) and still
+            // separates the block's top and bottom margins. Geometry alone
+            // cannot distinguish it from no line box at all.
+            content_collapses_through = !lines.has_line_box;
         } else {
+            // The margin left after the previous non-empty border box. It stays
+            // as a STRUT until the next one arrives: reducing it to a scalar
+            // early gets a positive/negative/positive chain wrong.
+            margin_strut pending;
+            // Leading margins escape through an open parent top until the first
+            // border box with content closes that edge. Empty blocks do not.
+            bool at_collapsible_top = collapse_first_margin;
+            bool all_in_flow_children_collapse_through = true;
             for (std::size_t i = 0; i < b.children.size(); ++i) {
                 const box_node & child = b.children[i];
                 const constraints child_c{content_width, inner_height, child.font_size};
@@ -580,27 +663,95 @@ struct block_flow {
                     fragment placeholder;
                     placeholder.box = &child;
                     placeholder.source = child.source;
+                    float static_offset = 0;
+                    if (!at_collapsible_top) {
+                        // Its hypothetical in-flow top margin would collapse
+                        // with the preceding pending group. The marker observes
+                        // that position without consuming either margin, because
+                        // the real out-of-flow box still reserves no space.
+                        margin_strut hypothetical = pending;
+                        hypothetical.append(child_edges.margin_top);
+                        static_offset = hypothetical.value();
+                    }
                     placeholder.bounds = rect{edges.content_left() + child_edges.margin_left,
-                                              cursor + child_edges.margin_top, 0, 0};
+                                              cursor + static_offset, 0, 0};
                     out.children.push_back(std::move(placeholder));
                     continue;
                 }
                 fragment f = use_ready ? std::move(ready->children[i])
                                        : layout_box(child, child_c, measure_text, ready);
+                all_in_flow_children_collapse_through &= f.block_margins.through;
                 // auto_margin_left, not child_edges.margin_left: `margin: 0 auto`
                 // centres a box with a definite width, and that is the whole of how
                 // a page is centred.
                 f.bounds.x = edges.content_left() +
                              auto_margin_left(child, child_c, child_edges, f.bounds.width);
-                f.bounds.y = cursor + child_edges.margin_top;
-                cursor = f.bounds.y + f.bounds.height + child_edges.margin_bottom;
+                if (at_collapsible_top) {
+                    // The first child's top border edge is the parent's top
+                    // border edge. A chain of empty children keeps adjoining and
+                    // every one of its margin components escapes with that same
+                    // group.
+                    out.block_margins.before.append(f.block_margins.before);
+                    f.bounds.y = cursor;
+                    if (f.block_margins.through) {
+                        out.block_margins.before.append(f.block_margins.after);
+                    } else {
+                        cursor += f.bounds.height;
+                        pending = f.block_margins.after;
+                        at_collapsible_top = false;
+                    }
+                } else {
+                    margin_strut before = pending;
+                    before.append(f.block_margins.before);
+                    if (f.block_margins.through) {
+                        // Its top border edge is where it would be with a
+                        // non-zero bottom border; its bottom margin then joins
+                        // the same group without advancing the following box.
+                        f.bounds.y = cursor + before.value();
+                        pending = before;
+                        pending.append(f.block_margins.after);
+                    } else {
+                        cursor += before.value();
+                        f.bounds.y = cursor;
+                        cursor += f.bounds.height;
+                        pending = f.block_margins.after;
+                    }
+                }
                 out.children.push_back(std::move(f));
             }
+
+            if (!at_collapsible_top) {
+                // Reaching this branch means a real border box has separated
+                // the last child's margin from the parent's top. The spec's
+                // non-zero min-height exception therefore does not apply; it
+                // matters only to the collapse-through predicate below.
+                if (collapse_last_margin) {
+                    out.block_margins.after.append(pending);
+                } else {
+                    cursor += pending.value();
+                }
+            }
+            content_collapses_through = all_in_flow_children_collapse_through;
+        }
+
+        // A zero/auto-height block with no border, padding or effective line
+        // box can join its own top and bottom margins. All empty descendants
+        // join that SAME set, so both exposed struts must carry the whole group.
+        // The condition is on computed `height`, not on a used height that
+        // max-height happened to clamp to zero.
+        const bool height_allows_through = declared_height < 0 || declared_height == 0;
+        if (!suppress_edge_collapse && top_edge_is_open && bottom_edge_is_open &&
+            min_height_is_zero && height_allows_through && content_collapses_through) {
+            // Keep the edge struts SEPARATE. `through` says they adjoin, and the
+            // parent joins them only after using `before` to place this box's
+            // own top border edge. Replacing both with the joined value would
+            // let a negative bottom margin move that edge.
+            out.block_margins.through = true;
         }
         cursor += edges.pad_bottom + edges.border_bottom;
 
         out.bounds.width = outer_width;
-        out.bounds.height = stated_height >= 0 ? stated_height : cursor;
+        out.bounds.height = clamp_used_height(b, c, stated_height >= 0 ? stated_height : cursor);
         return out;
     }
 };
@@ -758,8 +909,9 @@ struct table_flow {
                 // formatting context it runs, which is where they belong and why
                 // there is no longer a constant here. Through layout_box because
                 // a `<td class="d-flex">` is a flex container.
-                fragment placed = layout_box(
-                    cell, constraints{natural, 0, cell.font_size, column_width}, measure_text);
+                fragment placed =
+                    layout_box(cell, constraints{natural, 0, cell.font_size, column_width, true},
+                               measure_text);
                 placed.bounds.x = x;
                 placed.bounds.y = y;
                 row_height = std::max(row_height, placed.bounds.height);
