@@ -166,7 +166,7 @@ marks:
 
 ## external/ and vendor/
 
-Two submodules under `external/`, both doing **runtime** work:
+Two submodules under `external/`, but only one is an engine dependency:
 
 - `external/compile-time-css` — ctcss. NO LONGER THE CSS PARSER: `style/css/` is,
   since the front-end rung in `docs/plans/bootstrap.md`. No public header includes

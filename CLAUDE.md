@@ -13,16 +13,16 @@ or a `.cppm` anywhere outside git history, it is stale.
 The compile-time engine this repository is named for is GONE from the tree
 (2026-07-27) and lives in the git history: the page was a structural NTTP and
 the parsers ran in constant evaluation. What that cost and what it left behind
-is in `docs/history/v1-retirement.md`. ONE brick still does runtime work: ctjs
-parses script. cthtml never did and is no longer a submodule at all - the DOM has
-its own WHATWG tokenizer and tree builder, and
+is in `docs/history/v1-retirement.md`. ONE brick still does runtime work in the
+engine: ctjs parses script. cthtml did initially, but is no longer a submodule at
+all - the DOM has its own WHATWG tokenizer and tree builder, and
 `include/ctbrowser/dom/entities.hpp` is the entity table carried forward from it.
-**ctcss no longer parses CSS either**: `style/css/` is a real CSS Syntax Level 3
-tokenizer and grammar, for the same reason the DOM grew its own - the submodule had
-no tokenizer, so a `;` inside a string ended a declaration and a `}` inside one
-desynchronised the rest of the file. The submodule is still checked out because
-`tests/bench/bench_style.cpp` measures against it as a second implementation;
-retiring it is a rung in `docs/plans/bootstrap.md`.
+**ctcss no longer parses CSS for the engine either**: `style/css/` is a real CSS
+Syntax Level 3 tokenizer and grammar, for the same reason the DOM grew its own -
+the submodule had no tokenizer, so a `;` inside a string ended a declaration and
+a `}` inside one desynchronised the rest of the file. The submodule is still
+checked out because `tests/bench/bench_style.cpp` measures against it as a second
+implementation; retiring it is a rung in `docs/plans/bootstrap.md`.
 
 ## Build & test
 **BUILD ON THE DEVBOX**, not here: `tools/remote-build.sh` syncs and builds on
@@ -33,7 +33,7 @@ SECOND set of assumptions: GCC 13 rather than clang, and no SDL at all, which
 found four real defects the first time it ran. See `docs/build.md`.
 
 ```bash
-git submodule update --init --recursive    # ctcss + ctjs (+ nested ctc)
+git submodule update --init --recursive    # ctjs (+ ctc) + benchmark-only ctcss
 cmake --preset default && cmake --build --preset default && ctest --preset default
 cmake --preset tsan && ctest --preset tsan     # and asan
 # examples build when SDL3 is found; tests are always headless
@@ -130,7 +130,7 @@ tests/                     support/ unit/ js/ corpus/ stress/ bench/ lint/,
                            plus golden/ which is test DATA, not output
 examples/                  demos/ corpus/ cli/, plus pages/ and assets/
 vendor/                    p5.js, Phaser, Babylon.js - the test corpora
-external/                  ctcss + ctjs submodules (runtime parsing)
+external/                  ctjs runtime parser + ctcss benchmark oracle
 tools/                     mingw/ gen/ corpus/ check/ - see docs/tools.md
 ```
 

@@ -1,8 +1,11 @@
-> **Attribution:** the CSS and JavaScript parsers come from
-> [compile-time-css](https://github.com/alexios-angel/compile-time-css) and
-> [compile-time-javascript](https://github.com/alexios-angel/compile-time-javascript)
-> (with [compile-time-containers](https://github.com/alexios-angel/compile-time-containers)
-> underneath them); rendered with [SDL3](https://libsdl.org), text with
+> **Attribution:** the JavaScript parser comes from
+> [compile-time-javascript](https://github.com/alexios-angel/compile-time-javascript).
+> Its older interpreter, retained as a differential test oracle, uses
+> [compile-time-containers](https://github.com/alexios-angel/compile-time-containers).
+> ctbrowser parses CSS itself;
+> [compile-time-css](https://github.com/alexios-angel/compile-time-css) remains
+> as the comparison oracle for an opt-in benchmark. Presented through optional
+> [SDL3](https://libsdl.org); text can use optional
 > [SDL3_ttf](https://github.com/libsdl-org/SDL_ttf) or the public-domain
 > [font8x8](https://github.com/dhepper/font8x8) fallback.
 > Apache License 2.0 with LLVM Exceptions; see [NOTICE](NOTICE).
@@ -88,7 +91,7 @@ gets.
 ## Building
 
 ```bash
-git submodule update --init --recursive   # ctcss + ctjs
+git submodule update --init --recursive   # ctjs (+ ctc for tests) + benchmark-only ctcss
 cmake --preset default && cmake --build --preset default && ctest --preset default
 ```
 
@@ -133,7 +136,8 @@ hover change and a scroll each cost.
 This repository began as a compile-time browser: the page was a structural
 NTTP and the parsers ran in constant evaluation. That engine is gone from the
 tree and lives in the git history; the CSS and JavaScript parsers it was built
-on remain, as submodules, doing their parsing at runtime.
+on remain as submodules for different reasons. ctjs still parses JavaScript at
+runtime; ctcss is only the comparison implementation in an opt-in benchmark.
 [`docs/history/v1-retirement.md`](docs/history/v1-retirement.md) records what
 the transition left behind.
 

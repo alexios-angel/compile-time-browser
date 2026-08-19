@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Compile the compositor's GLSL to SPIR-V and emit it as a committed header.
 
-The SPIR-V is generated ONCE and checked in, the same way font8x8.hpp and
-cthtml's entities.hpp are. A build-time shader compilation step would put glslc
+The SPIR-V is generated ONCE and checked in, the same way font8x8.hpp and the
+DOM's entities.hpp are. A build-time shader compilation step would put glslc
 on the critical path of every build and every CI runner, for shaders that change
 about never.
 

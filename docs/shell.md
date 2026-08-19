@@ -75,13 +75,14 @@ version, so the root CMakeLists searches for a new-enough clang before
 `project()` locks the toolchain. `CXX=` or `-DCMAKE_CXX_COMPILER=` overrides
 that entirely.
 
-**Script and HTML parsing are the engine's own now.** `ctbrowser.shell:bindings`
+**The HTML parser and script VM are the engine's own now.** `ctbrowser.shell:bindings`
 gives pages `document`/element methods/events/timers/rAF (handles, not
 `node *`, so a stale reference fails a lookup instead of corrupting memory).
 `ctbrowser.dom:tokenizer` + `:treebuilder` replaced the cthtml wrapper with
 the WHATWG algorithms — implied `<html>/<head>/<body>`, unclosed `<p>`/`<li>`,
-table section inference, foster parenting, and the adoption agency. **the engine no
-longer uses `external/compile-time-html`** (ctcss and ctjs's parser remain).
+table section inference, foster parenting, and the adoption agency. **The engine
+no longer uses `external/compile-time-html`**. ctjs remains its script parser;
+ctcss is retained only as the comparison implementation in `bench_style`.
 
 **Form controls and canvas 2D work.** `ctbrowser.shell:forms` holds control
 state (value, caret, selection, checked) keyed by node_id — NOT on the node,

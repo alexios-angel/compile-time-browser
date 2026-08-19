@@ -210,7 +210,12 @@ endforeach()
 # would be silent.
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
   set(dist-dir "${PROJECT_SOURCE_DIR}/examples-windows")
-  set(dist-commands COMMAND ${CMAKE_COMMAND} -E make_directory "${dist-dir}")
+  set(dist-commands
+      COMMAND ${CMAKE_COMMAND} -E make_directory "${dist-dir}"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              "${PROJECT_SOURCE_DIR}/LICENSE" "${dist-dir}"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              "${PROJECT_SOURCE_DIR}/NOTICE" "${dist-dir}")
   foreach(source ${example-sources})
     get_filename_component(example "${source}" NAME_WE)
     list(APPEND dist-commands

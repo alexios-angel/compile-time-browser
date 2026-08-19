@@ -88,12 +88,6 @@ function(ctbrowser_test path)
     endif()
   endif()
   target_link_libraries(ctbrowser-test-${name} PRIVATE ctbrowser::core ctbrowser::dom ctbrowser::script ctbrowser::style ctbrowser::layout ctbrowser::paint ctbrowser::raster ctbrowser::shell ctbrowser::ctbrowser)
-  # vm_basics differentially tests the VM against ctjs's own interpreter, so
-  # the brick's headers have to be reachable.
-  target_include_directories(ctbrowser-test-${name} PRIVATE
-    "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"
-    "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/external/compile-time-containers/include"
-    "${PROJECT_SOURCE_DIR}/external/compile-time-css/include")
   ctbrowser_target(ctbrowser-test-${name})
   # -g AND the backtrace library, so a test that dies without reporting a
   # failure says WHERE. std::stacktrace names nothing without debug info, and
@@ -158,6 +152,11 @@ ctbrowser_test(unit/bootstrap_layout)
 # vm_basics and share js_expect.hpp; number_format and obfuscated ask the
 # same question of real minifier output.
 ctbrowser_test(js/vm_basics)
+# The differential half runs the same expressions through ctjs's old
+# interpreter, whose public header also reaches its nested ctc dependency.
+target_include_directories(ctbrowser-test-vm_basics PRIVATE
+  "${CTBROWSER_CTJS}/include"
+  "${CTBROWSER_CTC}/include")
 ctbrowser_test(js/number_format)
 ctbrowser_test(js/math_basics)
 ctbrowser_test(js/string_basics)
@@ -172,6 +171,10 @@ ctbrowser_test(js/bigint_basics)
 
 # p5.js - how FAR the bundle gets, and how WIDE the surface is.
 ctbrowser_test(corpus/p5/p5_ratchet)
+# This ratchet calls ctjs's lexer and parser directly so it can report which
+# stage rejected the corpus; vparse.hpp itself has no ctc dependency.
+target_include_directories(ctbrowser-test-p5_ratchet PRIVATE
+  "${CTBROWSER_CTJS}/include")
 ctbrowser_test(corpus/p5/p5_api)
 
 # Phaser 4. invaders asks a third question: is the GAME playable?
@@ -259,16 +262,15 @@ function(ctbrowser_bench path)
   # what found the operator table in the lexer after the function-level number
   # said "the lexer" and stopped. These are not shipped, so the size is free.
   target_compile_options(ctbrowser-test-${name} PRIVATE -g)
-  # the bricks the engine's style and script parsers come from
-  target_include_directories(ctbrowser-test-${name} PRIVATE
-    "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"
-    "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/external/compile-time-containers/include"
-    "${PROJECT_SOURCE_DIR}/external/compile-time-css/include")
 endfunction()
 
 ctbrowser_bench(bench/bench_script)
 ctbrowser_bench(bench/bench_reads)
 ctbrowser_bench(bench/bench_style)
+# ctcss is not an engine dependency. Only this opt-in benchmark includes it,
+# as the previous implementation on the other side of the timing comparison.
+target_include_directories(ctbrowser-test-bench_style PRIVATE
+  "${PROJECT_SOURCE_DIR}/external/compile-time-css/include")
 ctbrowser_bench(bench/bench_interaction)
 ctbrowser_bench(bench/bench_layout)
 ctbrowser_bench(bench/bench_raster)

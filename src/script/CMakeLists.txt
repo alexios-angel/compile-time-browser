@@ -84,8 +84,7 @@ endif()
 
 ctbrowser_target(ctbrowser-script)
 target_include_directories(ctbrowser-script PRIVATE
-  "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"
-  "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/external/compile-time-containers/include")
+  "${CTBROWSER_CTJS}/include")
 target_link_libraries(ctbrowser-script PUBLIC ctbrowser-core Boost::headers)
 
 add_library(ctbrowser::script ALIAS ctbrowser-script)

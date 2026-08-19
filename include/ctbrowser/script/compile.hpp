@@ -6,10 +6,11 @@
 // AST to bytecode.
 //
 // The front end is ctjs's existing Pratt parser, reused rather than rewritten
-// for the same reason cthtml's parser is reused in the DOM: it works, and
-// blocking a VM on a fresh JavaScript parser would be the wrong order to
-// build in. What is replaced is everything after it - the previous engine walked this tree on
-// every execution, re-deciding what each node meant each time round a loop.
+// for the same reason cthtml's parser was initially reused in the DOM: it works,
+// and blocking a VM on a fresh JavaScript parser would be the wrong order to
+// build in. What is replaced is everything after it - the previous engine walked
+// this tree on every execution, re-deciding what each node meant each time round
+// a loop.
 // Compiling once and dispatching on 4-byte instructions is the entire point.
 //
 // Register allocation is a high-water mark. Locals take the low registers of

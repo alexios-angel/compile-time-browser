@@ -139,19 +139,23 @@ option(CTBROWSER_WITH_GMP "Use GNU GMP as the Boost.Multiprecision BigInt backen
 set(CTBROWSER_WARNING_OPTIONS
   -O2 -pedantic -Wall -Wextra -Werror -Wconversion -Wno-overlength-strings)
 
-# Two of the compile-time bricks are still submodules: ctcss is the style
-# engine's CSS parser and ctjs is the script parser. cthtml is NOT - the DOM
-# has its own WHATWG tokenizer and tree builder. ctc (compile-time-containers)
-# resolves through ctjs's nested copy, so exactly one is on the include path.
-set(CTBROWSER_CTC "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/external/compile-time-containers")
-set(CTBROWSER_SUBMODULE_INCLUDE_DIRS
-  "${PROJECT_SOURCE_DIR}/external/compile-time-javascript/include"
-  "${PROJECT_SOURCE_DIR}/external/compile-time-css/include"
-  "${CTBROWSER_CTC}/include")
-
-if(NOT EXISTS "${CTBROWSER_CTC}/include/ctc.hpp")
+# Two compile-time bricks are still submodules, for different reasons: ctjs is
+# the script compiler's runtime parser; ctcss is only the comparison oracle for
+# tests/bench/bench_style.cpp. cthtml is NOT one - the DOM has its own WHATWG
+# tokenizer and tree builder. The full ctjs interpreter used by vm_basics also
+# needs ctc (compile-time-containers), resolved through ctjs's nested copy.
+set(CTBROWSER_CTJS "${PROJECT_SOURCE_DIR}/external/compile-time-javascript")
+if(NOT EXISTS "${CTBROWSER_CTJS}/include/ctjs/vparse.hpp")
   message(FATAL_ERROR
-    "ctbrowser: submodules are missing - run `git submodule update --init --recursive`")
+    "ctbrowser: the ctjs submodule is missing - run `git submodule update --init --recursive`")
+endif()
+
+if(CTBROWSER_BUILD_TESTS)
+  set(CTBROWSER_CTC "${CTBROWSER_CTJS}/external/compile-time-containers")
+  if(NOT EXISTS "${CTBROWSER_CTC}/include/ctc.hpp")
+    message(FATAL_ERROR
+      "ctbrowser: ctjs's nested ctc test dependency is missing - run `git submodule update --init --recursive`")
+  endif()
 endif()
 
 # SDL3 and its satellites. The satellites are OPTIONAL and light up richer
