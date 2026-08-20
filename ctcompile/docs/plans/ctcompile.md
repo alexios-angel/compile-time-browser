@@ -400,10 +400,19 @@ EmitC-shaped C++ (`ctcompile/utils/s0-emit.py`), recorded in
   and 2.88 s in 8 — every extra TU re-pays the header. Enough TUs to fill the
   cores, and no more.
 * **`value.hpp` costs 1.175 s per TU, and 0.940 s of that is Boost**, reached
-  only because `bigint_object` holds a `cpp_int` **by value**. Moving that
-  member out of line would remove it from every consumer — *the engine's own
-  translation units included* — while keeping the leaf helpers inlinable, which
-  is the entire irreducible advantage EmitC has over a frozen C ABI.
+  only because `bigint_object` holds a `cpp_int` **by value**.
+
+**DECIDED 2026-08-20: `value.hpp` is not being de-Boosted.** Moving that member
+out of line would have removed 0.940 s from every consumer, the engine's own
+translation units included, and it is not being done — so Phase 10A pays the
+header and partitions coarsely instead. That is affordable and the numbers above
+are why: at 2,000 functions per TU the header is about 10% of the build, and
+Babylon lands near 23 s at 8-way. The generated code therefore INCLUDES THE
+RUNTIME HEADERS rather than a slim prelude, which also keeps the 31 leaf helpers
+— the ones with no throw, no re-entry and no safepoint — inlinable at `-O2`.
+That inlining is the entire irreducible advantage EmitC has over a frozen C ABI,
+and a slim prelude would have traded it away to save a term that coarse
+partitioning already makes small.
 
 What this does **not** decide is the ordering: there is no LLVM arm, and both
 backends run the same optimiser over the same functions. The only term EmitC
