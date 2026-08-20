@@ -21,7 +21,7 @@ repository, reproduced unmodified from upstream).
 
 What is derived
 ---------------
-The two remaining bricks arrive as git submodules under external/ and
+The two remaining bricks arrive as git submodules under third-party/ and
 carry their own NOTICE files (historical CTLL/CTRE lineage, the
 ECMA-262 and W3C CSS semantics; compile-time-containers, MIT, supplies
 the old ctjs interpreter's containers in differential tests). This
@@ -35,7 +35,7 @@ pipeline, the script VM and standard library, and the SDL3 shell are
 original to this repository.
 
 The named character reference data in
-include/ctbrowser/dom/entities.hpp was carried from
+ctbrowser/include/ctbrowser/dom/entities.hpp was carried from
 compile-time-html's include/cthtml/entities.hpp. It is the WHATWG HTML
 Standard's named character references table
 (https://html.spec.whatwg.org/multipage/named-characters.html),
@@ -52,9 +52,9 @@ oracle.
 compile-time-css is used only by the opt-in bench_style differential
 benchmark, which is not built by default and is never installed.
 
-The vendored fonts/ directory carries Tinos, Fira Sans and Cousine
+The vendored ctbrowser/resources/fonts/ directory carries Tinos, Fira Sans and Cousine ... see ctbrowser/resources/fonts/README.md
 from the Google Fonts collection (github.com/google/fonts), each
-licensed under the SIL Open Font License 1.1 - see fonts/README.md
+licensed under the SIL Open Font License 1.1 - see ctbrowser/resources/fonts/README.md
 and the OFL texts there. They are loaded through the asset registry as
 the default serif/sans-serif/monospace faces.
 
@@ -72,7 +72,7 @@ by tools/gen/gen-assets.py in this repository and carry no third-party
 content, with one exception. (There were two: the three JavaScript
 bundles were the other, and they moved to vendor/ on 2026-08-09 - see
 below.) The font
-examples/assets/fonts/PressStart2P-Regular.ttf is "Press Start 2P" by
+ctbrowser/examples/assets/fonts/PressStart2P-Regular.ttf is "Press Start 2P" by
 CodeMan38 (Cody Boisclair), used and redistributed under the SIL Open
 Font License, Version 1.1 (the license text is alongside the font at
 examples/assets/fonts/OFL.txt).
@@ -84,9 +84,9 @@ Public License, version 2.1. It is a distribution bundle and vendors
 several MIT-licensed libraries inside itself - acorn, zod and others -
 whose copyright notices are preserved inline in the file. It is test
 DATA, not a dependency: nothing in the engine links it, includes it or
-embeds it, and it is present so tests/corpus/p5/p5_ratchet.cpp can measure how
+embeds it, and it is present so ctbrowser/test/corpus/p5/p5_ratchet.cpp can measure how
 much of a real, large, modern JavaScript library this engine can take.
-The licence text is alongside it at vendor/p5/LICENSE.
+The licence text is alongside it at ctbrowser/vendor/p5/LICENSE.
 
 vendor/phaser/phaser.js is Phaser 4.2.1
 (https://phaser.io, https://github.com/phaserjs/phaser), Copyright (c)
@@ -106,7 +106,7 @@ the same terms as the two above - nothing links, includes or embeds it -
 and it is a THIRD corpus because it is the only one that exercises
 WebGL 2: p5.js asks for it and barely uses it, Phaser never asks at all,
 and Babylon uses nearly the whole specification while degrading cleanly
-when it is absent. See docs/history/webgl2.md.
+when it is absent. See ctbrowser/docs/history/webgl2.md.
 
 vendor/bootstrap/bootstrap.css and vendor/bootstrap/bootstrap.bundle.js
 are Bootstrap 5.3.8 (https://getbootstrap.com,
@@ -136,7 +136,7 @@ PINNED to the ones in the Windows cross-build sysroot, where SDL3_ttf
 already links plutosvg for colour glyphs, so that one golden image
 compares byte-for-byte on both platforms.
 
---- the engine (src/) ---
+--- the engine (ctbrowser/lib/) ---
 
 The engine uses Boost (Boost Software License 1.0,
 https://www.boost.org/LICENSE_1_0.txt) as an external dependency; nothing

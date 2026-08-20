@@ -3,6 +3,15 @@
 # build there. Usage:
 #   ./remote-build.sh [ninja target ...]   default preset: configure + build
 #                                          + ctest (Ninja)
+#
+# THE CONFIGURE ROOT IS ctbrowser/, NOT THE REPOSITORY ROOT. The repository
+# became a monorepo, the LLVM model - so CMakePresets.json lives in ctbrowser/ and every cmake and ctest
+# invocation below runs from there. The build trees still land at the
+# REPOSITORY root (build/, build-windows/, ...), which is where every tool in
+# here already looks for them.
+#
+# `browser` and `browser-no-llvm` are the engine-only configurations, the second
+# with LLVM and MLIR made unfindable - the runtime-only build, enforced.
 #   ./remote-build.sh windows              windows-fetch preset: cross-compile
 #                                          the examples, collect exes+SDL3.dll
 #                                          via windows-dist, rsync them back
@@ -25,7 +34,7 @@ CLANG_STD_EMBED_TAG="${CLANG_STD_EMBED_TAG:-clang-std-embed-e3986d225}"
 CLANG_STD_EMBED_RELEASE="${CLANG_STD_EMBED_RELEASE:-https://github.com/alexios-angel/embed/releases/download/${CLANG_STD_EMBED_TAG}/${CLANG_STD_EMBED_TAG}-linux-x86_64.tar.xz}"
 
 # ANGLE IS ON FOR A DEVBOX BUILD, and stays off everywhere else. The option
-# FATAL_ERRORs when third_party/angle/ is missing, which is the right answer for
+# FATAL_ERRORs when third-party/angle/ is missing, which is the right answer for
 # a developer who has not fetched - so it is set HERE, where fetch-angle.sh has
 # just run, rather than in the `default` preset everyone shares. Without it the
 # box builds a binary in which gl_basics prints SKIP and the render-angle-*
@@ -57,7 +66,7 @@ repo_root=$(git rev-parse --show-toplevel)
 # artifacts in place so the PCH bake is reused across syncs.
 # tools/clang-std-embed stays local: the server-side copy is converged below.
 #
-# third_party/angle/ is FETCHED ON THE BOX, never pushed. It is ~34 MB of
+# third-party/angle/ is FETCHED ON THE BOX, never pushed. It is ~34 MB of
 # libraries that tools/fetch-angle.sh downloads from a pinned release, so
 # sending them up every sync is pure wire time - and without the protect
 # filter `--delete` would remove the box's copy on the first run from a
@@ -73,10 +82,10 @@ rsync -az --delete \
   --exclude 'build*/' \
   --exclude 'tools/clang-std-embed/' \
   --exclude 'tools/.venv/' \
-  --exclude 'third_party/angle/' \
+  --exclude 'third-party/angle/' \
   --exclude '*.d' \
   --filter 'protect *.pch' --filter 'protect *.gch' --filter 'protect build*/' \
-  --filter 'protect tools/clang-std-embed/' --filter 'protect third_party/angle/' \
+  --filter 'protect tools/clang-std-embed/' --filter 'protect third-party/angle/' \
   --filter 'protect tools/.venv/' \
   --filter 'protect *.d' \
   "$repo_root"/ "$host:projects/compile-time-browser/"
@@ -125,7 +134,7 @@ if [ "${1:-}" = windows ]; then
   # libjpeg-turbo - so the two builder scripts run first. Both are idempotent
   # and skip what is already installed.
   # THE ISOLATED BOOST INCLUDE DIR the cross toolchain wants. It is one
-  # symlink: cmake/toolchain-windows-x86_64.cmake puts this on the cross
+  # symlink: cmake/toolchains/windows-x86_64.cmake puts this on the cross
   # compile's -isystem path, so it must hold boost/ AND NOTHING ELSE - pointing
   # it at brew's whole include/ would put the host's SDL3, libpng and zlib
   # headers in front of a Windows build's. Created here rather than documented
@@ -135,7 +144,7 @@ if [ "${1:-}" = windows ]; then
     [ -e "$inc/boost" ] || ln -s /home/linuxbrew/.linuxbrew/include/boost "$inc/boost";
     ls "$inc/boost/version.hpp" >/dev/null'
   ssh "$host" "cd projects/compile-time-browser && tools/mingw/build-image-libs-mingw.sh && tools/mingw/build-boost-mingw.sh && tools/mingw/build-mimalloc-mingw.sh && tools/mingw/build-simdutf-mingw.sh && tools/mingw/build-cpptrace-mingw.sh"
-  ssh "$host" "cd projects/compile-time-browser && cmake --preset windows -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE && cmake --build --preset windows && cmake --build --preset windows --target windows-dist"
+  ssh "$host" "cd projects/compile-time-browser/ctbrowser && cmake --preset windows -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE && cmake --build --preset windows && cmake --build --preset windows --target windows-dist"
   rsync -az "$host:projects/compile-time-browser/examples-windows/" "$repo_root/examples-windows/"
   echo "examples-windows/ refreshed from the devbox"
 else
@@ -151,8 +160,8 @@ else
   fi
   configure="cmake --preset default -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE $prefix"
   if [ $# -gt 0 ]; then
-    ssh "$host" "cd projects/compile-time-browser && $configure && cmake --build --preset default --target $*"
+    ssh "$host" "cd projects/compile-time-browser/ctbrowser && $configure && cmake --build --preset default --target $*"
   else
-    ssh "$host" "cd projects/compile-time-browser && $configure && cmake --build --preset default && ctest --preset default"
+    ssh "$host" "cd projects/compile-time-browser/ctbrowser && $configure && cmake --build --preset default && ctest --preset default"
   fi
 fi

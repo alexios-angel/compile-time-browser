@@ -1,4 +1,4 @@
-// Stage 0 of docs/plans/angle.md: does ANGLE render here, and how fast.
+// Stage 0 of ctbrowser/docs/plans/angle.md: does ANGLE render here, and how fast.
 //
 // Surfaceless EGL, one full-screen triangle, read back into a bitmap - which is
 // exactly the shape a canvas would need, since a page's canvas is a

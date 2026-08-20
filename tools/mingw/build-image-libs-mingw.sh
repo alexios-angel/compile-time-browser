@@ -3,11 +3,11 @@
 #
 # WHY THIS EXISTS. PNG and JPEG used to arrive through SDL3_image, a hook only
 # `ctbrowser.app` installs - so `tests/`, which is SDL-free by an invariant
-# `tests/lint/api_surface` lints for, saw every PNG as a zero-sized image and nothing
+# `ctbrowser/test/lint/api_surface` lints for, saw every PNG as a zero-sized image and nothing
 # in the suite said so. Phaser found it: its texture manager loads three base64
 # PNGs during boot and will not start until all three settle. Both decoders moved
 # into the SDL-free engine on 2026-08-01, which means the Windows cross build
-# needs them in its sysroot. See docs/build.md and docs/shell.md.
+# needs them in its sysroot. See ctbrowser/docs/build.md and ctbrowser/docs/shell.md.
 #
 # THREE LIBRARIES, and the third is only there for the second: libpng needs
 # zlib, and the sysroot had neither. libjpeg-turbo needs nothing.
@@ -74,8 +74,34 @@ build() {
     local name="$1"
     shift
     echo "build-image-libs-mingw: building $name for $target"
+# A CMake build directory records the TOOLCHAIN FILE BY PATH - in the cache,
+# and again in CMakeFiles/<ver>/CMakeSystem.cmake, which project() re-includes
+# on every reconfigure. When that file MOVES - as it did when the repository
+# became a monorepo and the toolchain went to cmake/toolchains/ - the include
+# fails and the build dies at project() naming a path that no longer exists.
+#
+# CHECKING THE CACHE IS NOT ENOUGH, which is how this was first written and why
+# it did not work: a reconfigure that fails still rewrites CMakeCache.txt with
+# the NEW toolchain while CMakeSystem.cmake keeps the old one, so the two
+# disagree and only the second is consulted. Ask the question that actually
+# fails instead: does every .cmake this build dir says it includes still exist?
+stale_cache() {
+    local dir="$1" named
+    [ -d "$dir" ] || return 1
+    for named in $(grep -rhoE 'include\("[^"]+\.cmake"\)' \
+                       "$dir"/CMakeFiles/*/CMakeSystem.cmake 2>/dev/null \
+                   | sed -E 's/include\("(.*)"\)/\1/'); do
+        [ -f "$named" ] || return 0
+    done
+    return 1
+}
+
+    if stale_cache "$work/$name-build"; then
+        echo "$(basename "$0"): wiping a build dir pinned to a moved toolchain"
+        rm -rf "$work/$name-build"
+    fi
     cmake -S "$work/$name" -B "$work/$name-build" -G Ninja \
-        -DCMAKE_TOOLCHAIN_FILE="$here/cmake/toolchain-windows-x86_64.cmake" \
+        -DCMAKE_TOOLCHAIN_FILE="$here/cmake/toolchains/windows-x86_64.cmake" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="$sysroot" \
         -DCMAKE_PREFIX_PATH="$sysroot" \

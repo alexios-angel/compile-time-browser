@@ -5,7 +5,7 @@
 # so there would be nothing to cross-compile. Boost.URL ended that: it has been
 # compiled-only since 1.87 - `boost/url/src.hpp` hard-errors, "src.hpp is
 # discontinued" - so there is no header-only way to have it, and RFC 3986 is not
-# something to keep hand-rolling. See NOTICE and docs/build.md.
+# something to keep hand-rolling. See NOTICE and ctbrowser/docs/build.md.
 #
 # NOT b2, AND THAT IS THE POINT. Boost's own build system would want a toolset
 # definition for llvm-mingw and a Boost source tree to run from. Boost.URL is 27

@@ -10,7 +10,7 @@
 # cpptrace supports mingw explicitly (StackWalk64, libgcc _Unwind_Backtrace,
 # dbghelp), which is why it is here rather than backward-cpp.
 #
-# TESTS ONLY. Nothing the engine ships links this; tests/CMakeLists.txt attaches
+# TESTS ONLY. Nothing the engine ships links this; ctbrowser/cmake/modules/CTTest.cmake attaches
 # it to the test executables and treats it as OPTIONAL - a missing trace makes a
 # failure harder to read, not wrong.
 #
@@ -68,8 +68,34 @@ if [ "$(cat "$work/.tag" 2>/dev/null)" != "$cpptrace_tag" ]; then
 fi
 
 echo "build-cpptrace-mingw: building cpptrace for $target"
+# A CMake build directory records the TOOLCHAIN FILE BY PATH - in the cache,
+# and again in CMakeFiles/<ver>/CMakeSystem.cmake, which project() re-includes
+# on every reconfigure. When that file MOVES - as it did when the repository
+# became a monorepo and the toolchain went to cmake/toolchains/ - the include
+# fails and the build dies at project() naming a path that no longer exists.
+#
+# CHECKING THE CACHE IS NOT ENOUGH, which is how this was first written and why
+# it did not work: a reconfigure that fails still rewrites CMakeCache.txt with
+# the NEW toolchain while CMakeSystem.cmake keeps the old one, so the two
+# disagree and only the second is consulted. Ask the question that actually
+# fails instead: does every .cmake this build dir says it includes still exist?
+stale_cache() {
+    local dir="$1" named
+    [ -d "$dir" ] || return 1
+    for named in $(grep -rhoE 'include\("[^"]+\.cmake"\)' \
+                       "$dir"/CMakeFiles/*/CMakeSystem.cmake 2>/dev/null \
+                   | sed -E 's/include\("(.*)"\)/\1/'); do
+        [ -f "$named" ] || return 0
+    done
+    return 1
+}
+
+if stale_cache "$work/build"; then
+    echo "$(basename "$0"): wiping a build dir pinned to a moved toolchain"
+    rm -rf "$work/build"
+fi
 cmake -S "$work/cpptrace" -B "$work/build" -G Ninja \
-    -DCMAKE_TOOLCHAIN_FILE="$here/cmake/toolchain-windows-x86_64.cmake" \
+    -DCMAKE_TOOLCHAIN_FILE="$here/cmake/toolchains/windows-x86_64.cmake" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$sysroot" \
     -DBUILD_SHARED_LIBS=OFF \

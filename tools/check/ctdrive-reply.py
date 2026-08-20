@@ -2,7 +2,7 @@
 """Does ctdrive return a large reply intact? Two cases, because only one bites.
 
 ctdrive's peer socket is non-blocking (`set_non_blocking(peer_)` at accept in
-examples/cli/ctdrive.cpp), so `send()` is entitled to accept a PREFIX. `reply()`
+ctbrowser/tools/ctdrive/ctdrive.cpp), so `send()` is entitled to accept a PREFIX. `reply()`
 loops until every byte is written; this measures whether it needs to.
 
     tools/check/ctdrive-reply.py                 # both cases
@@ -38,7 +38,7 @@ BUILD_STRING = "var s = 'x'; while (s.length < {n}) {{ s += s; }} console.log(s.
 
 
 def start(repo: Path, page: Path):
-    exe = repo / "build/examples/ctdrive"
+    exe = repo / "build/tools/ctdrive"
     if not exe.exists():
         sys.exit(f"ctdrive-reply: {exe} not built - cmake --build build --target ctdrive")
     proc = subprocess.Popen(
@@ -100,7 +100,7 @@ def main() -> int:
     ap.add_argument("--case", choices=sorted(CASES) + ["both"], default="both")
     args = ap.parse_args()
 
-    page = args.repo / "examples/pages/bootstrap-box.html"
+    page = args.repo / "ctbrowser/examples/pages/bootstrap-box.html"
     names = sorted(CASES) if args.case == "both" else [args.case]
     failures = 0
     for name in names:

@@ -2,7 +2,7 @@
 # Build mimalloc for the llvm-mingw target.
 #
 # WHY AN ALLOCATOR AT ALL. Allocator traffic is ~4.8% of a Phaser frame
-# (docs/performance.md): _int_malloc, _int_free, malloc, free,
+# (ctbrowser/docs/performance.md): _int_malloc, _int_free, malloc, free,
 # malloc_consolidate and operator new between them. It is the one hot item in
 # this engine where a LIBRARY is the whole answer - a drop-in allocator is a
 # link-line change that cannot alter results, only their cost.
@@ -84,10 +84,36 @@ echo "build-mimalloc-mingw: building mimalloc for $target"
 # MI_OVERRIDE off: on Windows the override machinery patches the CRT's malloc at
 # load time, which is a different and much more invasive thing than linking an
 # allocator. The engine calls mimalloc through operator new/delete instead -
-# see src/core/allocator.cpp - which is explicit, portable, and does not depend
+# see ctbrowser/lib/Core/allocator.cpp - which is explicit, portable, and does not depend
 # on load order.
+# A CMake build directory records the TOOLCHAIN FILE BY PATH - in the cache,
+# and again in CMakeFiles/<ver>/CMakeSystem.cmake, which project() re-includes
+# on every reconfigure. When that file MOVES - as it did when the repository
+# became a monorepo and the toolchain went to cmake/toolchains/ - the include
+# fails and the build dies at project() naming a path that no longer exists.
+#
+# CHECKING THE CACHE IS NOT ENOUGH, which is how this was first written and why
+# it did not work: a reconfigure that fails still rewrites CMakeCache.txt with
+# the NEW toolchain while CMakeSystem.cmake keeps the old one, so the two
+# disagree and only the second is consulted. Ask the question that actually
+# fails instead: does every .cmake this build dir says it includes still exist?
+stale_cache() {
+    local dir="$1" named
+    [ -d "$dir" ] || return 1
+    for named in $(grep -rhoE 'include\("[^"]+\.cmake"\)' \
+                       "$dir"/CMakeFiles/*/CMakeSystem.cmake 2>/dev/null \
+                   | sed -E 's/include\("(.*)"\)/\1/'); do
+        [ -f "$named" ] || return 0
+    done
+    return 1
+}
+
+if stale_cache "$work/build"; then
+    echo "$(basename "$0"): wiping a build dir pinned to a moved toolchain"
+    rm -rf "$work/build"
+fi
 cmake -S "$work/mimalloc" -B "$work/build" -G Ninja \
-    -DCMAKE_TOOLCHAIN_FILE="$here/cmake/toolchain-windows-x86_64.cmake" \
+    -DCMAKE_TOOLCHAIN_FILE="$here/cmake/toolchains/windows-x86_64.cmake" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$sysroot" \
     -DMI_BUILD_SHARED=OFF \
@@ -112,7 +138,7 @@ cmake --install "$work/build" >/dev/null
 # for first. It picked the stale v2, and the Windows build quietly linked the
 # old allocator across a major version while the Linux one used v3.
 #
-# tests/unit/core_basics asks ctbrowser::allocator_version() and caught it, which is
+# ctbrowser/unittests/unit/core_basics asks ctbrowser::allocator_version() and caught it, which is
 # the entire reason that check exists.
 rm -f "$sysroot"/lib/libmimalloc*.a
 

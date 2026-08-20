@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How far p5.js gets through the engine, and what is stopping it.
 
-tests/corpus/p5/p5_ratchet.cpp measures a LEVEL and a BLOCKER; tests/corpus/p5/p5-ratchet.txt
+ctbrowser/test/corpus/p5/p5_ratchet.cpp measures a LEVEL and a BLOCKER; ctbrowser/test/corpus/p5/p5-ratchet.txt
 records them; this drives the loop around both.
 
     tools/corpus/p5-ratchet.py                 build, measure, show the blocker in context
@@ -26,9 +26,13 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-BUNDLE = ROOT / "vendor/p5/p5.js"
-RECORD = ROOT / "tests/corpus/p5/p5-ratchet.txt"
-TEST = ROOT / "build/tests/ctbrowser-test-p5_ratchet"
+# The test binary resolves its inputs against the ctbrowser PROJECT
+# directory, which is where ctest runs it from too. ROOT is the
+# repository root and is one level above that since the monorepo split.
+ENGINE = ROOT / "ctbrowser"
+BUNDLE = ROOT / "ctbrowser/vendor/p5/p5.js"
+RECORD = ROOT / "ctbrowser/test/corpus/p5/p5-ratchet.txt"
+TEST = ROOT / "build/test/ctbrowser-test-p5_ratchet"
 
 # `  function color$1(p5, fn, lifecycles){` - rollup's module wrappers, at the
 # one indent the bundle uses for them.
@@ -44,7 +48,7 @@ def build():
     r = subprocess.run(
         ["cmake", "--build", "--preset", "default",
          "--target", "ctbrowser-test-p5_ratchet"],
-        cwd=ROOT, capture_output=True, text=True)
+        cwd=ENGINE, capture_output=True, text=True)
     if r.returncode != 0:
         sys.stderr.write(r.stdout + r.stderr)
         sys.exit("p5-ratchet: build failed")
@@ -52,7 +56,7 @@ def build():
 
 def run(args=()):
     """Run the measurement. Its exit code is the pawl's verdict, not an error here."""
-    r = subprocess.run([str(TEST), *args], cwd=ROOT, capture_output=True, text=True)
+    r = subprocess.run([str(TEST), *args], cwd=ENGINE, capture_output=True, text=True)
     return r.stdout + r.stderr, r.returncode
 
 
@@ -249,7 +253,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--advance", action="store_true",
-                    help="record the measured level and blocker in tests/corpus/p5/p5-ratchet.txt")
+                    help="record the measured level and blocker in ctbrowser/test/corpus/p5/p5-ratchet.txt")
     ap.add_argument("--bisect", metavar="MODULE",
                     help="measure one rollup module instead of the whole bundle")
     ap.add_argument("--survey", action="store_true",

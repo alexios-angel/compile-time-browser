@@ -5,11 +5,11 @@ WHAT IS LEFT TO VALIDATE (2026-08-09). This was written for the WebGL back
 end's own SPIR-V emitter, and that emitter is gone - WebGL went to ANGLE on
 2026-08-04, and ANGLE's translator produces what the driver sees now. The
 remaining producer is `tools/gen/gen-shaders.py`, which compiles the tile shaders
-offline into `include/ctbrowser/gpu/shaders/tile_spv.hpp`. Point this at those
+offline into `ctbrowser/include/ctbrowser/gpu/shaders/tile_spv.hpp`. Point this at those
 bytes. `tests/spirv_basics.cpp`, named here until this note replaced it, went
 with the emitter.
 
-`tests/unit/gpu_basics.cpp` hands shaders to SDL_CreateGPUShader and MEASURES what
+`ctbrowser/unittests/unit/gpu_basics.cpp` hands shaders to SDL_CreateGPUShader and MEASURES what
 that is worth: on this machine the driver accepts deliberate garbage, so
 acceptance proves the bytes reached it and nothing more. That is not
 validation, which is why this exists.

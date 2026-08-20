@@ -1,4 +1,4 @@
-# The ANGLE spike — stage 0 of `docs/plans/angle.md`
+# The ANGLE spike — stage 0 of `ctbrowser/docs/plans/angle.md`
 
 `spike.cpp` is the measurement that decided whether ANGLE is worth adopting: a
 surfaceless EGL context, one full-screen triangle with a non-trivial fragment

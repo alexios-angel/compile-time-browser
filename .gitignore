@@ -1,13 +1,23 @@
 # Only what lands at the REPO ROOT. Every pattern is anchored with a leading
 # slash on purpose: a bare pattern matches at every depth, which is what made
 # this file a catch-all governing directories that can speak for themselves.
-# tests/, tools/ and examples/ carry their own rules.
+# ctbrowser/ (and its test/, unittests/, benchmarks/ and examples/),
+# third-party/ and tools/ carry their own rules.
 /.claude/
+Keep `/build*/` at the root and add a `build*/` rule to `ctbrowser/.gitignore` (unanchored is wrong there given the file's stated anchoring rule, so: `/build*/`), e.g. after line 8:
+
+# The CONFIGURE root moved here with the monorepo, so `cmake -B build` typed in
+# this directory now makes the build tree HERE. The presets all point at
+# ${sourceParentDir}, which the repository root's /build*/ covers.
 /build*/
+
+and the same three lines in a new ctcompile/.gitignore.
 /examples-*/
 
-# ctest runs every test with WORKING_DIRECTORY = the source root, so a stray
-# screenshot, profile or log lands HERE rather than beside the test.
+# A tool run by hand from the repository root - `tools/check/compare.py`,
+# `ctdrive` - drops its screenshot, profile or log HERE. ctest no longer does:
+# it runs every test with WORKING_DIRECTORY = ctbrowser/ (CTTest.cmake), which
+# ctbrowser/.gitignore covers.
 /*.ppm
 /*.log
 /*.csv

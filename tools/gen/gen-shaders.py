@@ -6,7 +6,7 @@ DOM's entities.hpp are. A build-time shader compilation step would put glslc
 on the critical path of every build and every CI runner, for shaders that change
 about never.
 
-    python3 tools/gen/gen-shaders.py        # regenerate include/ctbrowser/gpu/shaders/tile_spv.hpp
+    python3 tools/gen/gen-shaders.py        # regenerate ctbrowser/include/ctbrowser/gpu/shaders/tile_spv.hpp
 
 Needs glslc (shaderc). SPIR-V means the Vulkan driver; DXIL and MSL need their
 own compilers and belong with the Windows and macOS platform work.
@@ -18,7 +18,7 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent.parent.parent
 # the GLSL sources and the header generated from them live together, under
 # include/ with the rest of the engine
-SHADERS = HERE / "include" / "ctbrowser" / "gpu" / "shaders"
+SHADERS = HERE / "ctbrowser" / "include" / "ctbrowser" / "gpu" / "shaders"
 GENERATED = SHADERS
 
 

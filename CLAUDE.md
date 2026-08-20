@@ -1,8 +1,8 @@
-# CLAUDE.md — ctbrowser
+# CLAUDE.md — compile-time-browser (a monorepo; ctbrowser is the engine)
 
 A browser engine in C++23. `include/ctbrowser.hpp` is the one-include public
-API, `include/ctbrowser/` the engine's headers and `src/` its implementations;
-`tests/` is the suite, `examples/` the programs that use it. Namespace
+API, `ctbrowser/include/ctbrowser/` the engine's headers and `ctbrowser/lib/<Sub>/` its implementations;
+`ctbrowser/unittests/`, `ctbrowser/test/` and `ctbrowser/benchmarks/` are the suite, `ctbrowser/examples/` and `ctbrowser/tools/` the programs that use it. Namespace
 `ctbrowser`. **CMake + Ninja is THE build**, CMake >=
 3.20, an ordinary clang or gcc with C++23 - the system default will do. Work on
 `main`. Prefer `rg`.
@@ -13,15 +13,15 @@ or a `.cppm` anywhere outside git history, it is stale.
 The compile-time engine this repository is named for is GONE from the tree
 (2026-07-27) and lives in the git history: the page was a structural NTTP and
 the parsers ran in constant evaluation. What that cost and what it left behind
-is in `docs/history/v1-retirement.md`. ONE brick still does runtime work in the
+is in `ctbrowser/docs/history/v1-retirement.md`. ONE brick still does runtime work in the
 engine: ctjs parses script. cthtml did initially, but is no longer a submodule at
 all - the DOM has its own WHATWG tokenizer and tree builder, and
-`include/ctbrowser/dom/entities.hpp` is the entity table carried forward from it.
+`ctbrowser/include/ctbrowser/dom/entities.hpp` is the entity table carried forward from it.
 **ctcss no longer parses CSS for the engine either**: `style/css/` is a real CSS
 Syntax Level 3 tokenizer and grammar, for the same reason the DOM grew its own -
 the submodule had no tokenizer, so a `;` inside a string ended a declaration and
 a `}` inside one desynchronised the rest of the file. The submodule is still
-checked out because `tests/bench/bench_style.cpp` measures against it as a second
+checked out because `ctbrowser/benchmarks/bench_style.cpp` measures against it as a second
 implementation; retiring it is a rung in `docs/plans/bootstrap.md`.
 
 ## Build & test
@@ -34,8 +34,9 @@ found four real defects the first time it ran. See `docs/build.md`.
 
 ```bash
 git submodule update --init --recursive    # ctjs (+ ctc) + benchmark-only ctcss
+cd ctbrowser    # the configure root: CMakePresets.json lives here now
 cmake --preset default && cmake --build --preset default && ctest --preset default
-cmake --preset tsan && ctest --preset tsan     # and asan
+cmake --preset tsan -DCTBROWSER_USE_MIMALLOC=OFF && ctest --preset tsan   # and asan
 # examples build when SDL3 is found; tests are always headless
 # SVG needs plutosvg: `brew bundle --file tools/Brewfile` (PINNED versions -
 # the golden compares across Linux and Windows). Without it everything still
@@ -46,7 +47,7 @@ install mimalloc` (v3, pinned in `tools/Brewfile`), or
 `tools/mingw/build-mimalloc-mingw.sh` for the Windows sysroot. It measured -4.2%
 instructions on Linux and **-11.7% wall on the Windows .exe**, because Windows'
 CRT allocator is much further behind than glibc's. Opt out with
-`-DCTBROWSER_USE_MIMALLOC=OFF`; `tests/unit/core_basics` asks
+`-DCTBROWSER_USE_MIMALLOC=OFF`; `ctbrowser/unittests/unit/core_basics` asks
 `ctbrowser::allocator_name()` which allocator is ACTUALLY linked, because a
 global `operator new` in a static archive can be silently dropped by link order.
 
@@ -63,11 +64,11 @@ load-bearing: **`docs/tools.md`**.
 
 ## Invariants — the things that are easy to break
 
-- **The engine is SDL-FREE.** `app/app.hpp` and `src/app/app.cpp` are the
+- **The engine is SDL-FREE.** `ctbrowser/include/ctbrowser/app/app.hpp` and `ctbrowser/lib/App/app.cpp` are the
   only places that know SDL exists, and SDL3 is optional at build time.
-  `tests/lint/api_surface` lints both halves: an application source must contain
+  `ctbrowser/test/lint/api_surface` lints both halves: an application source must contain
   exactly one engine include - the umbrella header - and no SDL symbol, and the
-  rest of `include/` and `src/` must stay clean. That test carries an explicit
+  rest of `ctbrowser/include/` and `ctbrowser/lib/` must stay clean. That test carries an explicit
   allow-list for the files that may include SDL.
 - **Small shared algorithms live in `core/algorithms.hpp`** — ASCII case
   folding, hex digits, whitespace trimming, base64. Everything there had at
@@ -81,7 +82,7 @@ load-bearing: **`docs/tools.md`**.
 - **Images decode WITHOUT SDL**, all the way down: BMP by hand, PNG through
   libpng, JPEG through libjpeg-turbo, each in one `.cpp` behind a two-function
   header. SDL3_image remains an optional hook for the rest. A format that only
-  works when SDL was found is one `tests/` cannot assert on and no golden can
+  works when SDL was found is one the suite cannot assert on and no golden can
   compare — which is exactly how PNG stayed broken until Phaser arrived.
 - **No third-party header in a public header.** Boost/SDL/FreeType includes
   belong in a `.cpp`: every consumer parses what a header includes, and
@@ -90,13 +91,13 @@ load-bearing: **`docs/tools.md`**.
   function and its `.cpp` owns the platform headers. See `docs/build.md`.
 - **`Math.random` is seeded and DETERMINISTIC** by default. Three example pages
   (widgets, elements, svg) byte-compare their render against
-  `tests/golden/*.ppm`; a page drawing with random cannot have a golden
+  `ctbrowser/test/golden/*.ppm`; a page drawing with random cannot have a golden
   otherwise. `REGOLDEN=1` regenerates — then OPEN THE IMAGE AND LOOK AT IT. A
   golden accepted without being seen is how the empty-button and missing-caret
   renders shipped.
 - **Goldens are test data, not build output.** Render output goes to
   `build*/render-*.ppm`. The ignore files are per-directory and the root's
-  patterns are anchored (`/*.ppm`), so nothing reaches into `tests/golden/`.
+  patterns are anchored (`/*.ppm`, in `ctbrowser/.gitignore` since ctest runs from `ctbrowser/`), so nothing reaches into `ctbrowser/test/golden/`.
 - **The build asks nothing unusual of the compiler.** No modules, so no import
   graph to report, no BMI, no CMake 3.28 floor, and no search for a specific
   clang before `project()`. `CXX=` still overrides.
@@ -123,20 +124,30 @@ load-bearing: **`docs/tools.md`**.
 ## The tree
 
 ```
-include/ctbrowser.hpp      the one-include public API
-include/ctbrowser/<sub>/   the engine's headers, one directory per subsystem
-src/<sub>/                 its implementations, mirroring that layout
-tests/                     support/ unit/ js/ corpus/ stress/ bench/ lint/,
-                           plus golden/ which is test DATA, not output
-examples/                  demos/ corpus/ cli/, plus pages/ and assets/
-vendor/                    p5.js, Phaser, Babylon.js - the test corpora
-external/                  ctjs runtime parser + ctcss benchmark oracle
-tools/                     mingw/ gen/ corpus/ check/ - see docs/tools.md
+ctbrowser/                 the engine - and the CMake CONFIGURE ROOT
+  include/ctbrowser.hpp    the one-include public API
+  include/ctbrowser/<sub>/ the engine's headers, one dir per subsystem
+  lib/<Sub>/               its implementations: Core DOM Style Layout Paint
+                           Raster GPU Script Shell App (CamelCase, LLVM-style)
+  unittests/               unit/ and js/ - the focused suite
+  test/                    corpus/ stress/ lint/ package/ support/, plus
+                           golden/ and baseline/ which are test DATA
+  benchmarks/              bench_*.cpp (the old tests/bench/, prefix gone)
+  examples/                demos/ corpus/, plus pages/ and assets/
+  tools/                   ctbrowse/ and ctdrive/, the two CLIs
+  resources/fonts/         the vendored OFL faces (CTBROWSER_FONT_PATH)
+  vendor/                  p5.js, Phaser, Babylon.js, Bootstrap - the corpora
+  cmake/                   dependencies.cmake, modules/CTTest.cmake
+  docs/                    see ctbrowser/docs/README.md
+cmake/                     LLVMVersion.cmake, modules/CTProject.cmake,
+                           toolchains/windows-x86_64.cmake
+third-party/               ctjs + ctcss submodules, and the fetched ANGLE
+tools/                     mingw/ gen/ corpus/ check/ - see ctbrowser/docs/tools.md
 ```
 
 Ten subsystems: core, dom, style, layout, paint, raster, gpu, script, shell,
 app. Every one is one directory, one aggregate header, one CMake target and one
-`src/<sub>/CMakeLists.txt`. **`docs/architecture.md` is the full map** - what
+`ctbrowser/lib/<Sub>/CMakeLists.txt`. **`ctbrowser/docs/architecture.md` is the full map** - what
 each owns, where to start reading in it, and which three have subdirectories.
 
 ## Where to read next

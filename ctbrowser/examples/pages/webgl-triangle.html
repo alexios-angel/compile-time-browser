@@ -1,0 +1,109 @@
+<!doctype html>
+<!-- WebGL, through the real API: compile, link, buffer, uniform, draw.
+
+     THE FIRST POINT AT WHICH THE WHOLE STACK IS PROVABLY REAL. Between this
+     page and its golden sit the GLSL preprocessor and parser, the reference
+     evaluator running a vertex shader per vertex and a fragment shader per
+     fragment, the software rasteriser, the context's state machine, and the
+     binding layer - five pieces, any one of which failing produces a blank
+     canvas rather than an error.
+
+     No p5 here on purpose. p5's own WEBGL path still selects its 2D renderer
+     for reasons inside p5 (see test/corpus/p5/p5-api.txt), and a corpus page that
+     depended on it would be testing the library rather than the engine.
+
+     Deliberately small - 160x160 - because every fragment runs a tree-walking
+     interpreter until stage 3 of docs/history/webgl.md replaces it, and a corpus
+     page is run on every build. -->
+<html>
+  <head><meta charset="utf-8"></head>
+  <body style="margin:0;background:#ffffff">
+    <canvas id="scene" width="160" height="160"></canvas>
+    <script>
+      var gl = document.getElementById('scene').getContext('webgl');
+
+      function compile(kind, source) {
+        var shader = gl.createShader(kind);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+          // A shader that does not compile must SAY so. Drawing nothing and
+          // carrying on is the failure this whole subsystem is written against.
+          throw new Error(gl.getShaderInfoLog(shader));
+        }
+        return shader;
+      }
+
+      // The vertex shader takes a 2D position and a colour, and rotates the
+      // position by a uniform angle - so the golden depends on the uniform
+      // having arrived, on the matrix being read COLUMN-MAJOR, and on the
+      // varying being interpolated. Three things one picture can prove.
+      var program = gl.createProgram();
+      gl.attachShader(program, compile(gl.VERTEX_SHADER,
+        'attribute vec3 aPosition;' +
+        'attribute vec3 aColor;' +
+        'uniform mat3 uTransform;' +
+        'varying vec3 vColor;' +
+        'void main() {' +
+        '  vColor = aColor;' +
+        '  vec3 turned = uTransform * vec3(aPosition.xy, 1.0);' +
+        '  gl_Position = vec4(turned.xy, aPosition.z, 1.0);' +
+        '}'));
+      gl.attachShader(program, compile(gl.FRAGMENT_SHADER,
+        'precision mediump float;' +
+        'varying vec3 vColor;' +
+        'void main() { gl_FragColor = vec4(vColor, 1.0); }'));
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        throw new Error(gl.getProgramInfoLog(program));
+      }
+      gl.useProgram(program);
+
+      // Two triangles: a large one behind and a small one in front, so the
+      // golden shows the depth test resolving them rather than the draw order
+      // doing it.
+      //
+      // THE DEPTHS ARE DISTINCT ON PURPOSE, and the first attempt at this page
+      // is why. With both at z = 0 the depth test compares 0.5 against 0.5,
+      // which `LESS` rejects - but the interpolated depth is a sum of three
+      // barycentric terms, so rounding puts it a hair either side and THREE
+      // pixels out of two thousand went the other way. The rasteriser was
+      // right; the page was asking a question with no answer. A real page gives
+      // its geometry real depths, and then the test means something.
+      var data = new Float32Array([
+        // x      y      z     r    g    b
+        -0.85, -0.75,  0.5, 0.95, 0.25, 0.20,
+         0.85, -0.75,  0.5, 0.20, 0.80, 0.35,
+         0.00,  0.85,  0.5, 0.25, 0.40, 0.95,
+
+        -0.45,  0.10, -0.5, 1.00, 0.85, 0.20,
+         0.45,  0.10, -0.5, 1.00, 0.85, 0.20,
+         0.00, -0.60, -0.5, 0.95, 0.55, 0.10,
+      ]);
+      var buffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+
+      var position = gl.getAttribLocation(program, 'aPosition');
+      var colour = gl.getAttribLocation(program, 'aColor');
+      // Interleaved, stride 24 bytes: six floats a vertex, colour at offset 12.
+      gl.enableVertexAttribArray(position);
+      gl.vertexAttribPointer(position, 3, gl.FLOAT, false, 24, 0);
+      gl.enableVertexAttribArray(colour);
+      gl.vertexAttribPointer(colour, 3, gl.FLOAT, false, 24, 12);
+
+      // A rotation, as a mat3 in COLUMN-MAJOR order - which is what GL means and
+      // what uniformMatrix3fv expects. Transposed, this leans the other way and
+      // still looks like a picture, which is why it is in the golden.
+      var angle = 0.20;
+      var c = Math.cos(angle), s = Math.sin(angle);
+      gl.uniformMatrix3fv(gl.getUniformLocation(program, 'uTransform'), false,
+                          new Float32Array([c, s, 0, -s, c, 0, 0, 0, 1]));
+
+      gl.enable(gl.DEPTH_TEST);
+      gl.clearColor(0.10, 0.11, 0.16, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+    </script>
+  </body>
+</html>

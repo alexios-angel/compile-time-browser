@@ -3,7 +3,7 @@
 #
 # ANGLE is NOT built here and deliberately so: it needs GN, depot_tools and - on
 # Windows - clang-cl and the Windows SDK, which is a second toolchain this
-# repository does not otherwise require. docs/plans/angle.md has the measurements;
+# repository does not otherwise require. ctbrowser/docs/plans/angle.md has the measurements;
 # the fork at alexios-angel/angle has the build recipe and publishes the result.
 #
 # SO IT IS A PINNED ARTEFACT, the way the clang-std-embed toolchain already is.
@@ -14,13 +14,13 @@
 #
 #   tools/fetch-angle.sh [--clean]
 #
-# Leaves the libraries and headers in third_party/angle/<platform>/.
+# Leaves the libraries and headers in third-party/angle/<platform>/.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 release="ctbrowser-angle-25c80ccab4"
 base="https://github.com/alexios-angel/angle/releases/download/${release}"
-dest="$here/third_party/angle"
+dest="$here/third-party/angle"
 
 if [ "${1:-}" = "--clean" ]; then rm -rf "$dest"; fi
 

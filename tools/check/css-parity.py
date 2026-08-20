@@ -3,7 +3,7 @@
 
     tools/check/compare.py setup                 # once: the venv Playwright needs
     tools/check/css-parity.py                     # every fixture
-    tools/check/css-parity.py --all examples/pages/bootstrap-grid.html
+    tools/check/css-parity.py --all ctbrowser/examples/pages/bootstrap-grid.html
     tools/check/css-parity.py --advance           # record the numbers, deliberately
 
 Drives ctbrowser and Chrome through compare.py's daemon, runs ONE dump script
@@ -24,9 +24,9 @@ ctbrowser cannot answer comes back empty, this tool substitutes the CSS initial
 value, and if that happens to equal Chrome's answer there is no diff - which
 would read as "implemented" when nothing is implemented at all.
 
-NOT A CTEST, deliberately: docs/build.md - "a browser-versus-browser diff should
+NOT A CTEST, deliberately: ctbrowser/docs/build.md - "a browser-versus-browser diff should
 be read, not silently failed." The numbers are ratcheted so a regression is
-caught; the READING is a person's job. tests/unit/bootstrap_layout.cpp is the
+caught; the READING is a person's job. ctbrowser/unittests/unit/bootstrap_layout.cpp is the
 automatic half and needs no Chrome.
 """
 import argparse
@@ -88,7 +88,7 @@ CELL_ROWS = 24
 CELL_TOLERANCE = 24
 
 # THE COMPARED SET, and the only copy of it. css-dump.js gets it prepended as a
-# literal, and tests/unit/bootstrap_layout.cpp reads css-parity-props.txt written
+# literal, and ctbrowser/unittests/unit/bootstrap_layout.cpp reads css-parity-props.txt written
 # by --emit-props, so there is no second list to drift.
 #
 # Chosen by four rules: the property appears in bootstrap.css; it is a LONGHAND
@@ -124,7 +124,7 @@ GEOMETRY = ["@x", "@y", "@w", "@h"]
 # The CSS initial value, substituted when ctbrowser answers nothing. `display` is
 # NOT here: its initial value is `inline` but almost nothing renders as that - a
 # div is `block` because a UA sheet says so - so ctbrowser reports display from
-# the box tree instead (src/shell/bindings/computed_style.cpp) and an empty answer
+# the box tree instead (ctbrowser/lib/Shell/bindings/computed_style.cpp) and an empty answer
 # there is a real finding rather than a missing default.
 INITIAL = {
     "box-sizing": "content-box",
@@ -592,7 +592,7 @@ def main() -> int:
         return 0
 
     cmp = load_compare()
-    names = args.pages or [f"examples/pages/bootstrap-{f}.html" for f in FIXTURES]
+    names = args.pages or [f"ctbrowser/examples/pages/bootstrap-{f}.html" for f in FIXTURES]
     record = read_record()
     if record.get("props-version") and int(record["props-version"]) != PROPS_VERSION:
         print(f"css-parity: record file is props-version={record['props-version']}, "

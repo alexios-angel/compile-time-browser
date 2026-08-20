@@ -5,7 +5,7 @@
 # execute it instead of the software interpreter. The interpreter is 1.03 M
 # fragments per second (tests/glsl_basics --bench, on p5's own lightTextureFrag),
 # which is about 120 ms for one full-screen pass at 420x300 - a ceiling no amount
-# of tuning lifts. docs/history/gpu-shaders.md has the measurements and the staging.
+# of tuning lifts. ctbrowser/docs/history/gpu-shaders.md has the measurements and the staging.
 #
 # FROM A PACKAGING FORK, github.com/alexios-angel/shaderc, and the distinction
 # matters: that fork carries NO compiler changes. Stock shaderc compiles a
@@ -69,9 +69,35 @@ if [ "$(cat "$work/.commit" 2>/dev/null)" != "$shaderc_commit" ]; then
 fi
 
 echo "build-shaderc-mingw: building libshaderc for $target (this takes a few minutes)"
+# A CMake build directory records the TOOLCHAIN FILE BY PATH - in the cache,
+# and again in CMakeFiles/<ver>/CMakeSystem.cmake, which project() re-includes
+# on every reconfigure. When that file MOVES - as it did when the repository
+# became a monorepo and the toolchain went to cmake/toolchains/ - the include
+# fails and the build dies at project() naming a path that no longer exists.
+#
+# CHECKING THE CACHE IS NOT ENOUGH, which is how this was first written and why
+# it did not work: a reconfigure that fails still rewrites CMakeCache.txt with
+# the NEW toolchain while CMakeSystem.cmake keeps the old one, so the two
+# disagree and only the second is consulted. Ask the question that actually
+# fails instead: does every .cmake this build dir says it includes still exist?
+stale_cache() {
+    local dir="$1" named
+    [ -d "$dir" ] || return 1
+    for named in $(grep -rhoE 'include\("[^"]+\.cmake"\)' \
+                       "$dir"/CMakeFiles/*/CMakeSystem.cmake 2>/dev/null \
+                   | sed -E 's/include\("(.*)"\)/\1/'); do
+        [ -f "$named" ] || return 0
+    done
+    return 1
+}
+
+if stale_cache "$work/build"; then
+    echo "$(basename "$0"): wiping a build dir pinned to a moved toolchain"
+    rm -rf "$work/build"
+fi
 cmake -S "$work/shaderc" -B "$work/build" -G Ninja \
     -C "$work/shaderc/ctbrowser/static-release.cmake" \
-    -DCMAKE_TOOLCHAIN_FILE="$here/cmake/toolchain-windows-x86_64.cmake" \
+    -DCMAKE_TOOLCHAIN_FILE="$here/cmake/toolchains/windows-x86_64.cmake" \
     -DCMAKE_INSTALL_PREFIX="$sysroot" >/dev/null
 cmake --build "$work/build" --target shaderc >/dev/null
 cmake --install "$work/build" >/dev/null 2>&1 || true

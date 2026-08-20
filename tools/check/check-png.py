@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Decode a PNG this engine wrote, with something that is not this engine.
 
-include/ctbrowser/shell/image/images.hpp writes PNG with no compression library: the
+ctbrowser/include/ctbrowser/shell/image/images.hpp writes PNG with no compression library: the
 zlib stream is made of STORED deflate blocks, which is valid but is a path most
 encoders never take. "It has the right chunk names" is not evidence that a
 decoder can read it - the CRCs, the Adler-32 and the block headers all have to

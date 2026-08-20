@@ -8,7 +8,7 @@
 # Rendered with CTBROWSER_FONTS=font8x8 on purpose. The bitmap font is part of
 # the engine, so the golden does not move when FreeType, HarfBuzz or the
 # vendored faces do - it pins LAYOUT and what is drawn, which is what regressed,
-# and leaves glyph rasterisation to tests/unit/fonts_basics.
+# and leaves glyph rasterisation to ctbrowser/unittests/unit/fonts_basics.
 #
 # REGOLDEN=1 ctest ... regenerates instead of comparing.
 #
@@ -28,8 +28,8 @@ set(ENV{CTBROWSER_TEST_FRAMES} ${FRAMES})
 set(ENV{CTBROWSER_NETWORK} 0)
 set(ENV{CTBROWSER_FONTS} font8x8)
 # WHICH WebGL BACK END, when the caller asks for one. The software rasteriser is
-# the default and is what the goldens in tests/golden/ hold; ANGLE gets its own
-# goldens under tests/golden/angle/, because two rasterisers legitimately
+# the default and is what the goldens in ctbrowser/test/golden/ hold; ANGLE gets its own
+# goldens under ctbrowser/test/golden/angle/, because two rasterisers legitimately
 # disagree at the edges of a triangle and pretending otherwise would mean
 # comparing with a tolerance and losing the byte comparison entirely.
 #
@@ -38,7 +38,7 @@ set(ENV{CTBROWSER_FONTS} font8x8)
 if(DEFINED BACKEND)
   set(ENV{CTBROWSER_WEBGL} ${BACKEND})
   # AND PIN THE DEVICE, not just the back end. "ANGLE" is not one rasteriser: it
-  # is whatever Vulkan device the loader hands it, and tests/golden/angle/ was
+  # is whatever Vulkan device the loader hands it, and ctbrowser/test/golden/angle/ was
   # made on SwiftShader. A machine with something else renders something else -
   # legitimately, and then the byte comparison fails for a reason that is not a
   # regression.
@@ -48,7 +48,7 @@ if(DEFINED BACKEND)
   # webgltriangle 54.19% of pixels differ, babylonscene 0.82%, p5webgl 5 pixels
   # of 93,600. With this set, all four are byte-identical. On a Linux
   # workstation the thief is Mesa's llvmpipe rather than a GPU - see
-  # docs/platform.md, which also has the VK_ICD_FILENAMES half, because the
+  # ctbrowser/docs/platform.md, which also has the VK_ICD_FILENAMES half, because the
   # Vulkan LOADER picks the ICD before ANGLE's preference applies.
   #
   # It has never failed on the devbox or in the old CI for the least reassuring

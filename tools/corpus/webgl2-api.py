@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """How much of WebGL 2 works, and what to write a probe for next.
 
-tests/corpus/webgl2/webgl2_api.cpp calls as much of WebGL 2's API as can be run headlessly and
-reports which calls pass; tests/corpus/webgl2/webgl2-api.txt records them; this drives the
+ctbrowser/test/corpus/webgl2/webgl2_api.cpp calls as much of WebGL 2's API as can be run headlessly and
+reports which calls pass; ctbrowser/test/corpus/webgl2/webgl2-api.txt records them; this drives the
 loop.
 
     tools/corpus/webgl2-api.py                 build, run, show the failures
@@ -27,10 +27,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-BUNDLE = ROOT / "vendor/phaser/phaser.js"
-PROBES = ROOT / "tests/corpus/webgl2/webgl2-api-probe.js"
-RECORD = ROOT / "tests/corpus/webgl2/webgl2-api.txt"
-TEST = ROOT / "build/tests/ctbrowser-test-webgl2_api"
+# The test binary resolves its inputs against the ctbrowser PROJECT
+# directory, which is where ctest runs it from too. ROOT is the
+# repository root and is one level above that since the monorepo split.
+ENGINE = ROOT / "ctbrowser"
+BUNDLE = ROOT / "ctbrowser/vendor/phaser/phaser.js"
+PROBES = ROOT / "ctbrowser/test/corpus/webgl2/webgl2-api-probe.js"
+RECORD = ROOT / "ctbrowser/test/corpus/webgl2/webgl2-api.txt"
+TEST = ROOT / "build/test/ctbrowser-test-webgl2_api"
 
 # The top-level namespaces WebGL 2 hangs off its export object, read from the
 # bundle rather than written down here so the denominator tracks the library
@@ -48,14 +52,14 @@ NAMESPACE = re.compile(r"^    ([A-Z][A-Za-z0-9_$]*): __webpack_require__\(\d+\),
 def build():
     r = subprocess.run(["cmake", "--build", "--preset", "default", "--target",
                         "ctbrowser-test-webgl2_api"],
-                       cwd=ROOT, capture_output=True, text=True)
+                       cwd=ENGINE, capture_output=True, text=True)
     if r.returncode != 0:
         sys.stderr.write(r.stdout + r.stderr)
         sys.exit("webgl2-api: build failed")
 
 
 def run():
-    r = subprocess.run([str(TEST)], cwd=ROOT, capture_output=True, text=True)
+    r = subprocess.run([str(TEST)], cwd=ENGINE, capture_output=True, text=True)
     return r.stdout + r.stderr, r.returncode
 
 
@@ -89,13 +93,13 @@ def do_advance():
     if not names:
         sys.exit("webgl2-api: nothing is passing - refusing to record an empty surface")
     header = (
-        "# Which WebGL 2 probes pass. tests/corpus/webgl2/webgl2_api.cpp measures it; this file\n"
+        "# Which WebGL 2 probes pass. ctbrowser/test/corpus/webgl2/webgl2_api.cpp measures it; this file\n"
         "# records it. A probe that used to pass and now does not FAILS the test.\n"
         "#\n"
         "# Only tools/corpus/webgl2-api.py --advance writes this file. A test that edits its\n"
         "# own expectations cannot fail, so advancing is a deliberate act.\n"
         "#\n"
-        "# The probes themselves are tests/corpus/webgl2/webgl2-api-probe.js, one per line here as\n"
+        "# The probes themselves are ctbrowser/test/corpus/webgl2/webgl2-api-probe.js, one per line here as\n"
         "# `module/name`. A probe that is SKIPPED is not recorded - it is not a claim\n"
         "# about anything working.\n"
     )
@@ -110,7 +114,7 @@ def do_coverage():
     specification rather than a library, so there is no file to grep for the
     denominator. What is useful instead is the shape of the probe set itself -
     and in particular how much of it is the `unscoped` module, which is the part
-    docs/history/webgl2.md has deliberately NOT committed to and which Babylon.js
+    ctbrowser/docs/history/webgl2.md has deliberately NOT committed to and which Babylon.js
     calls in full.
     """
     text = PROBES.read_text(errors="replace")
@@ -120,7 +124,7 @@ def do_coverage():
     total = sum(modules.values())
     print(f"\n  {total} probes across {len(modules)} modules\n")
     for tag in sorted(modules, key=lambda t: -modules[t]):
-        note = "  <- deliberately not implemented; see docs/history/webgl2.md" \
+        note = "  <- deliberately not implemented; see ctbrowser/docs/history/webgl2.md" \
                if tag == "unscoped" else ""
         print(f"    {modules[tag]:>3}  {tag}{note}")
     print()
@@ -130,7 +134,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--advance", action="store_true",
-                    help="record the passing probes in tests/corpus/webgl2/webgl2-api.txt")
+                    help="record the passing probes in ctbrowser/test/corpus/webgl2/webgl2-api.txt")
     ap.add_argument("--coverage", action="store_true",
                     help="list WebGL 2 namespaces no probe mentions")
     ap.add_argument("--only", metavar="MODULE",

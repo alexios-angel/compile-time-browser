@@ -9,7 +9,7 @@ AI can drive it, and a human can watch the windows and say "that click missed"
 while it is still happening.
 
     tools/check/compare.py setup                     # once: a venv with Playwright
-    tools/check/compare.py start --headed --delay 400 examples/pages/widgets.html
+    tools/check/compare.py start --headed --delay 400 ctbrowser/examples/pages/widgets.html
     tools/check/compare.py click 120 200
     tools/check/compare.py type Claude
     tools/check/compare.py key Tab
@@ -209,7 +209,7 @@ def font_conf(path: Path) -> Path:
     Noto. Left alone, EVERY glyph differs and font substitution buries the
     differences that are actually about the engine.
     """
-    fonts = ROOT / "fonts"
+    fonts = ROOT / "ctbrowser" / "resources" / "fonts"
     # The CONCRETE names matter as much as the generics. A browser's default
     # standard font is "Times New Roman", not "serif" - map only the generics
     # and that request falls through to whatever happens to be first in the
@@ -273,12 +273,14 @@ class Ctbrowse:
         self.io = self.sock.makefile("rw")
 
     def _spawn_local(self, page: Path, size, headed: bool):
-        # build/examples/, not build/src/examples/: the tree was bucketed on
-        # 2026-08-09 and examples/ moved out from under src/. Both spellings are
-        # tried because a build directory configured before that reorg still has
-        # the old layout, and "not built" is a much worse thing to say to someone
-        # whose binary is sitting right there.
-        candidates = [ROOT / "build" / "examples" / "ctdrive",
+        # build/tools/, because ctdrive is a TOOL now: the monorepo split moved
+        # it out of examples/cli/ into ctbrowser/tools/ctdrive/, and the build
+        # tree mirrors the source tree. The older spellings are still tried
+        # because a build directory configured before a reorg still has the
+        # layout of its day, and "not built" is a much worse thing to say to
+        # someone whose binary is sitting right there.
+        candidates = [ROOT / "build" / "tools" / "ctdrive",
+                      ROOT / "build" / "examples" / "ctdrive",
                       ROOT / "build" / "src" / "examples" / "ctdrive"]
         exe = next((p for p in candidates if p.exists()), None)
         if exe is None:
@@ -286,6 +288,7 @@ class Ctbrowse:
                 f"{candidates[0]} not built; cmake --build --preset default --target ctdrive"
                 " - or pass --remote to drive the one on the build box")
         env = dict(os.environ)
+        env.setdefault("CTBROWSER_FONT_PATH", str(ROOT / "ctbrowser" / "resources" / "fonts"))
         if not headed:
             env["SDL_VIDEODRIVER"] = "offscreen"
             env["SDL_AUDIODRIVER"] = "dummy"
@@ -322,7 +325,7 @@ class Ctbrowse:
         # the ../../vendor/bootstrap/bootstrap.css that the fixtures <link>.
         rel = page.resolve().relative_to(ROOT)
         remote_cmd = (
-            f"cd {REMOTE_DIR} && exec ./build/examples/ctdrive {shlex.quote(str(rel))}"
+            f"cd {REMOTE_DIR} && exec ./build/tools/ctdrive {shlex.quote(str(rel))}"
             f" --port {self.port} --size {size[0]} {size[1]}")
         return subprocess.Popen(
             ["ssh", "-o", "BatchMode=yes", "-L",

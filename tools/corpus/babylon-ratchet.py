@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How much of a Babylon.js scene this engine renders, and what is stopping it.
 
-tests/corpus/babylon/babylon_ratchet.cpp measures a LEVEL and a BLOCKER; tests/corpus/babylon/babylon-ratchet.txt
+ctbrowser/test/corpus/babylon/babylon_ratchet.cpp measures a LEVEL and a BLOCKER; ctbrowser/test/corpus/babylon/babylon-ratchet.txt
 records them; this drives the loop around both.
 
     tools/corpus/babylon-ratchet.py             build, measure, show the blocker
@@ -23,8 +23,12 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-RECORD = ROOT / "tests/corpus/babylon/babylon-ratchet.txt"
-TEST = ROOT / "build/tests/ctbrowser-test-babylon_ratchet"
+# The test binary resolves its inputs against the ctbrowser PROJECT
+# directory, which is where ctest runs it from too. ROOT is the
+# repository root and is one level above that since the monorepo split.
+ENGINE = ROOT / "ctbrowser"
+RECORD = ROOT / "ctbrowser/test/corpus/babylon/babylon-ratchet.txt"
+TEST = ROOT / "build/test/ctbrowser-test-babylon_ratchet"
 
 RUNGS = ["nothing", "a scene renders", "a texture samples",
          "two meshes with two materials", "an animation moves the picture",
@@ -38,7 +42,7 @@ def build():
     r = subprocess.run(
         ["cmake", "--build", "--preset", "default", "--target",
          "ctbrowser-test-babylon_ratchet"],
-        cwd=ROOT, capture_output=True, text=True)
+        cwd=ENGINE, capture_output=True, text=True)
     if r.returncode != 0:
         sys.stderr.write(r.stdout + r.stderr)
         sys.exit("build failed")
@@ -47,7 +51,7 @@ def build():
 def measure():
     if not TEST.exists():
         sys.exit(f"{TEST} is missing - build first")
-    r = subprocess.run([str(TEST)], cwd=ROOT, capture_output=True, text=True)
+    r = subprocess.run([str(TEST)], cwd=ENGINE, capture_output=True, text=True)
     out = r.stdout + r.stderr
     level = re.search(r"BABYLON LEVEL (\d+)/", out)
     blocker = re.search(r"blocked by: (.*)", out)
@@ -74,7 +78,7 @@ def advance(level, blocker):
     print(f"babylon-ratchet: recorded level {level} ({RUNGS[level]})")
     if blocker:
         print(f"  blocked by: {blocker}")
-    print("\nNow write DOWN what changed, in tests/corpus/babylon/babylon-ratchet.txt itself.")
+    print("\nNow write DOWN what changed, in ctbrowser/test/corpus/babylon/babylon-ratchet.txt itself.")
     print("The number is the smaller half of the record; why it moved is the rest.")
 
 

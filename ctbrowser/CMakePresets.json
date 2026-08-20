@@ -1,0 +1,153 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Ninja Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceParentDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "${sourceParentDir}/tools/clang-std-embed/bin/clang++"
+      }
+    },
+    {
+      "name": "browser",
+      "displayName": "The engine alone",
+      "inherits": "default",
+      "binaryDir": "${sourceParentDir}/build-browser",
+      "cacheVariables": {
+        "CTBROWSER_ENABLE_PROJECTS": ""
+      }
+    },
+    {
+      "name": "browser-no-llvm",
+      "displayName": "The engine, with LLVM and MLIR made unfindable",
+      "inherits": "default",
+      "binaryDir": "${sourceParentDir}/build-no-llvm",
+      "cacheVariables": {
+        "CTBROWSER_ENABLE_PROJECTS": "",
+        "CMAKE_DISABLE_FIND_PACKAGE_LLVM": "ON",
+        "CMAKE_DISABLE_FIND_PACKAGE_MLIR": "ON",
+        "CMAKE_DISABLE_FIND_PACKAGE_LLD": "ON"
+      }
+    },
+    {
+      "name": "tsan",
+      "displayName": "ThreadSanitizer (the thread-safe DOM's real test)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceParentDir}/build-tsan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CTBROWSER_BUILD_EXAMPLES": "OFF",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer -g",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
+        "CMAKE_CXX_COMPILER": "${sourceParentDir}/tools/clang-std-embed/bin/clang++"
+      }
+    },
+    {
+      "name": "asan",
+      "displayName": "Address/UB sanitizers",
+      "generator": "Ninja",
+      "binaryDir": "${sourceParentDir}/build-asan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CTBROWSER_BUILD_EXAMPLES": "OFF",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer -g",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_CXX_COMPILER": "${sourceParentDir}/tools/clang-std-embed/bin/clang++"
+      }
+    },
+    {
+      "name": "windows",
+      "displayName": "Windows x86_64 cross (llvm-mingw)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceParentDir}/build-windows",
+      "toolchainFile": "${sourceParentDir}/cmake/toolchains/windows-x86_64.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CTBROWSER_BUILD_TESTS": "ON",
+        "CTBROWSER_EMBED_FONTS": "ON",
+        "CTBROWSER_WINDOWS_CONSOLE": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default"
+    },
+    {
+      "name": "browser",
+      "configurePreset": "browser"
+    },
+    {
+      "name": "browser-no-llvm",
+      "configurePreset": "browser-no-llvm"
+    },
+    {
+      "name": "windows",
+      "configurePreset": "windows"
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan"
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 0
+      }
+    },
+    {
+      "name": "browser",
+      "configurePreset": "browser",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 0
+      }
+    },
+    {
+      "name": "browser-no-llvm",
+      "configurePreset": "browser-no-llvm",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 0
+      }
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 0
+      }
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 0
+      }
+    }
+  ]
+}

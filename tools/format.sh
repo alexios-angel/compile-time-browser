@@ -5,7 +5,10 @@
 #   tools/format.sh --check  exit non-zero and print the diff
 #
 # The file list is `git ls-files`, so a file that is not tracked is not
-# formatted and a build directory cannot be picked up by accident. What NOT to
+# formatted and a build directory cannot be picked up by accident. It covers
+# the WHOLE monorepo - ctbrowser/ and ctcompile/ both - because there is one
+# .clang-format and one house style, and a second formatter invocation is a
+# second chance to forget one. What NOT to
 # format is in .clang-format-ignore rather than here: one list, and clang-format
 # honours it whether it is invoked through this script or by an editor.
 set -euo pipefail
@@ -25,7 +28,8 @@ if [[ -z $format ]]; then
 fi
 echo "format.sh: using $("$format" --version)"
 
-mapfile -t files < <(git ls-files '*.cpp' '*.cppm' '*.hpp' '*.h' | grep -v '^external/' | grep -v '^build')
+mapfile -t files < <(git ls-files '*.cpp' '*.cppm' '*.hpp' '*.h' \
+                     | grep -v '^third-party/' | grep -v '^build')
 if [[ ${#files[@]} -eq 0 ]]; then
     echo "format.sh: nothing to format" >&2
     exit 1

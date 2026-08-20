@@ -1,0 +1,40 @@
+# Which WebGL 2 probes pass. ctbrowser/test/corpus/webgl2/webgl2_api.cpp measures it; this file
+# records it. A probe that used to pass and now does not FAILS the test.
+#
+# Only tools/corpus/webgl2-api.py --advance writes this file. A test that edits its
+# own expectations cannot fail, so advancing is a deliberate act.
+#
+# The probes themselves are tests/corpus/webgl2/webgl2-api-probe.js, one per line here as
+# `module/name`. A probe that is SKIPPED is not recorded - it is not a claim
+# about anything working.
+blocks/uniform buffer objects
+constants/draw buffers
+constants/targets and bindings
+constants/texture formats
+context/SHADING_LANGUAGE_VERSION says 3.00
+context/VERSION says 2
+context/getContext webgl2
+context/is a WebGL2RenderingContext
+extensions/ANGLE_instanced_arrays
+extensions/OES_vertex_array_object
+extensions/getSupportedExtensions lists them
+extensions/unimplemented ones stay null
+glsl300/ES 1.00 still compiles
+glsl300/compiles in/out
+glsl300/declared fragment output
+glsl300/texture() not texture2D()
+instancing/drawArraysInstanced
+instancing/drawElementsInstanced
+instancing/vertexAttribDivisor
+unscoped/3D textures
+unscoped/blitFramebuffer
+unscoped/multiple render targets
+unscoped/query objects
+unscoped/refusing is loud
+unscoped/sampler objects
+unscoped/sync objects
+unscoped/texStorage2D
+unscoped/transform feedback
+vao/captures attribute state
+vao/create and bind
+vao/isVertexArray

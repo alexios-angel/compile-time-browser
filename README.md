@@ -48,7 +48,7 @@ int main() {
 
 One include, one link target, no SDL header. `run_app` owns the window, the
 event loop, the clock, frame pacing, screenshots and teardown. See
-[`examples/demos/counter.cpp`](examples/demos/counter.cpp) — forty lines, most of it the
+[`ctbrowser/examples/demos/counter.cpp`](ctbrowser/examples/demos/counter.cpp) — forty lines, most of it the
 page.
 
 An idle page BLOCKS on the event queue rather than polling, so it costs
@@ -85,13 +85,19 @@ OpenSSL. There was a hand-written Boost.Asio client here once; it is gone, and
 
 It runs real libraries, which is the claim worth checking: **p5.js 2.3.1**,
 **Phaser 4.2.1** and **Babylon.js 9.18.2** all load and draw. They live in
-[`vendor/`](vendor) and the ratchets in `tests/corpus/` record how far each one
+[`ctbrowser/vendor/`](ctbrowser/vendor) and the ratchets in `ctbrowser/test/corpus/` record how far each one
 gets.
 
 ## Building
 
+The repository is a monorepo and [`ctbrowser/`](ctbrowser) is the engine and the
+CMake configure root. `CMakePresets.json` lives there, so every command below
+runs from there; `CTBROWSER_ENABLE_PROJECTS` names sibling projects to build
+beside it.
+
 ```bash
 git submodule update --init --recursive   # ctjs (+ ctc for tests) + benchmark-only ctcss
+cd ctbrowser                              # the configure root
 cmake --preset default && cmake --build --preset default && ctest --preset default
 ```
 
@@ -99,9 +105,14 @@ Needs CMake 3.20 and a clang or gcc with C++23 — the system default will do.
 SDL3 is found if installed; without it the engine still builds and still
 renders — `run_app` runs headless.
 
+`browser` is the engine alone, and `browser-no-llvm` is that plus
+`CMAKE_DISABLE_FIND_PACKAGE_{LLVM,MLIR,LLD}` — the runtime-only build, enforced
+rather than assumed.
+
 ```bash
 # TSan needs mimalloc OFF: the engine's operator delete overrides collide with
 # TSan's own in libclang_rt.tsan_cxx.a, and the link fails without this.
+# all of these run from ctbrowser/
 cmake --preset tsan -DCTBROWSER_USE_MIMALLOC=OFF && ctest --preset tsan
 cmake --preset asan && ctest --preset asan
 cmake --preset windows && cmake --build --preset windows    # llvm-mingw cross-build
@@ -114,9 +125,9 @@ beside them.
 ## Testing
 
 `ctest` runs the suite headless: 83 tests, of which 48 are executables under
-`tests/` and the rest are the examples, run bounded to a fixed frame count.
+`ctbrowser/unittests/` and `ctbrowser/test/` and the rest are the examples, run bounded to a fixed frame count.
 Fourteen of the example pages additionally byte-compare their render against a
-golden in `tests/golden/` — plus `svg` and `imageformats`, which are gated on an
+golden in `ctbrowser/test/golden/` — plus `svg` and `imageformats`, which are gated on an
 optional dependency and would otherwise fail for a reason that is not a
 regression. `CTBROWSER_FONTS=font8x8` pins layout so the comparison does not
 move with FreeType. `REGOLDEN=1` regenerates a golden — then **open the image
@@ -128,7 +139,7 @@ which is the only proof the install actually works.
 
 Profiling is built in: `CTBROWSER_PROFILE=out.csv CTBROWSER_PROFILE_SECONDS=10
 ./widgets` writes a record per loop iteration and prints CPU time against wall
-time. `tests/bench/bench_interaction` is the headless half — what a mouse move, a
+time. `ctbrowser/benchmarks/bench_interaction` is the headless half — what a mouse move, a
 hover change and a scroll each cost.
 
 ## History
@@ -138,14 +149,14 @@ NTTP and the parsers ran in constant evaluation. That engine is gone from the
 tree and lives in the git history; the CSS and JavaScript parsers it was built
 on remain as submodules for different reasons. ctjs still parses JavaScript at
 runtime; ctcss is only the comparison implementation in an opt-in benchmark.
-[`docs/history/v1-retirement.md`](docs/history/v1-retirement.md) records what
+[`ctbrowser/docs/history/v1-retirement.md`](ctbrowser/docs/history/v1-retirement.md) records what
 the transition left behind.
 
 ## Documentation
 
-[**`docs/README.md`**](docs/README.md) is the index — reference for how the
-engine works today, [`docs/plans/`](docs/plans) for work that is not finished,
-and [`docs/history/`](docs/history) for what was done or superseded. Several of
+[**`ctbrowser/docs/README.md`**](ctbrowser/docs/README.md) is the index — reference for how the
+engine works today, [`ctbrowser/docs/plans/`](ctbrowser/docs/plans) for work that is not finished,
+and [`ctbrowser/docs/history/`](ctbrowser/docs/history) for what was done or superseded. Several of
 those last describe deleted code deliberately, and say so at the top.
 
 [`CLAUDE.md`](CLAUDE.md) carries the invariants: the things that are easy to

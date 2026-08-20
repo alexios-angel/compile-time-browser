@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """How much of p5.js works, and what to write a probe for next.
 
-tests/corpus/p5/p5_api.cpp calls as much of p5's API as can be run headlessly and reports
-which calls pass; tests/corpus/p5/p5-api.txt records them; this drives the loop.
+ctbrowser/test/corpus/p5/p5_api.cpp calls as much of p5's API as can be run headlessly and reports
+which calls pass; ctbrowser/test/corpus/p5/p5-api.txt records them; this drives the loop.
 
     tools/corpus/p5-api.py                 build, run, show the failures
     tools/corpus/p5-api.py --advance       record what is passing now
@@ -25,10 +25,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-BUNDLE = ROOT / "vendor/p5/p5.js"
-PROBES = ROOT / "tests/corpus/p5/p5-api-probe.js"
-RECORD = ROOT / "tests/corpus/p5/p5-api.txt"
-TEST = ROOT / "build/tests/ctbrowser-test-p5_api"
+# The test binary resolves its inputs against the ctbrowser PROJECT
+# directory, which is where ctest runs it from too. ROOT is the
+# repository root and is one level above that since the monorepo split.
+ENGINE = ROOT / "ctbrowser"
+BUNDLE = ROOT / "ctbrowser/vendor/p5/p5.js"
+PROBES = ROOT / "ctbrowser/test/corpus/p5/p5-api-probe.js"
+RECORD = ROOT / "ctbrowser/test/corpus/p5/p5-api.txt"
+TEST = ROOT / "build/test/ctbrowser-test-p5_api"
 
 # `    fn.background = function (...)` - p5's public surface, as the bundle
 # itself declares it. Read from the bundle rather than written down here, so the
@@ -38,14 +42,14 @@ PUBLIC = re.compile(r"^\s+fn\.([a-zA-Z][A-Za-z0-9_$]*)\s*=", re.M)
 
 def build():
     r = subprocess.run(["cmake", "--build", "--preset", "default", "--target",
-                        "ctbrowser-test-p5_api"], cwd=ROOT, capture_output=True, text=True)
+                        "ctbrowser-test-p5_api"], cwd=ENGINE, capture_output=True, text=True)
     if r.returncode != 0:
         sys.stderr.write(r.stdout + r.stderr)
         sys.exit("p5-api: build failed")
 
 
 def run():
-    r = subprocess.run([str(TEST)], cwd=ROOT, capture_output=True, text=True)
+    r = subprocess.run([str(TEST)], cwd=ENGINE, capture_output=True, text=True)
     return r.stdout + r.stderr, r.returncode
 
 
@@ -118,7 +122,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--advance", action="store_true",
-                    help="record what is passing now in tests/corpus/p5/p5-api.txt")
+                    help="record what is passing now in ctbrowser/test/corpus/p5/p5-api.txt")
     ap.add_argument("--coverage", action="store_true",
                     help="list p5 functions no probe mentions - the work queue")
     ap.add_argument("--only", metavar="MODULE", help="show only one module's results")

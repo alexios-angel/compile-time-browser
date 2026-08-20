@@ -7,7 +7,7 @@
 //
 //  1. EVERYTHING GOES THROUGH console.log. ctdrive's `eval` can return nothing
 //     else - it answers with what the page LOGGED, because run_script reports
-//     whether a script ran, not what it produced (examples/cli/ctdrive.cpp). The
+//     whether a script ran, not what it produced (ctbrowser/tools/ctdrive/ctdrive.cpp). The
 //     Playwright side patches console.log into an array to match
 //     (tools/check/compare.py), so this is the one channel both engines share.
 //
@@ -99,8 +99,9 @@
         var line;
         if (typeof COMPACT !== 'undefined' && COMPACT) {
             // ONE LINE PER ELEMENT, EMPTIES OMITTED - the form
-            // tests/unit/bootstrap_layout.cpp byte-compares against
-            // tests/baseline/. Most values are empty today (the engine answers
+            // ctbrowser/unittests/unit/bootstrap_layout.cpp byte-compares against
+            // ctbrowser/test/baseline/. Most values are empty today (the engine answers
+            // ctbrowser/test/baseline/. Most values are empty today (the engine answers
             // for well under half of them), so JSON would make the baselines
             // several times larger and a `git diff` correspondingly harder to
             // read - and reading that diff is the entire reason the text baseline

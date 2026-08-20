@@ -1,0 +1,11 @@
+# Only what lands in the ctbrowser PROJECT ROOT, which is where ctest now runs
+# every test from: `add_test(... WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")`,
+# and PROJECT_SOURCE_DIR became this directory when the repository became a
+# monorepo. A stray screenshot, profile or log from a hand-run test lands here.
+#
+# Anchored with a leading slash, like the repository root's file and for the
+# same reason: test/, unittests/, benchmarks/ and examples/ carry their
+# own rules, and a bare pattern here would reach into all of them.
+/*.ppm
+/*.log
+/*.csv

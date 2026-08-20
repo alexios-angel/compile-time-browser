@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bootstrap parity: one page of everything</title>
+<link rel="stylesheet" href="../../vendor/bootstrap/bootstrap.css">
+<style>
+/* See bootstrap-box.html for why every fixture pins this. */
+*, *::before, *::after { transition: none !important; animation: none !important; }
+</style>
+</head>
+<body>
+<!-- THE GOLDEN-CARRYING FIXTURE, and the only one that is a page rather than a
+     catalogue. The other five isolate one concern each so that a report names a
+     cause; this one composes them the way a real document does, because the bugs
+     that only appear when a flex item is also a positioned containing block for
+     a rounded card with wrapping text are invisible in a catalogue.
+
+     Deterministic by construction: no script, no Math.random, no images, no
+     network, no animation. That is what lets it carry both
+     test/golden/bootstrap.ppm and test/baseline/bootstrap-kitchen.txt.
+
+     Nothing here is forced open with .show except where noted, so what it draws
+     is what a first paint draws. -->
+<nav class="navbar navbar-expand-lg bg-body-tertiary border-bottom">
+  <div class="container">
+    <a class="navbar-brand fw-semibold" href="#">ctbrowser</a>
+    <div class="collapse navbar-collapse show">
+      <ul class="navbar-nav me-auto">
+        <li class="nav-item"><a class="nav-link active" href="#">Overview</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">Engine</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">Corpora</a></li>
+        <li class="nav-item"><a class="nav-link disabled" href="#">Archive</a></li>
+      </ul>
+      <span class="navbar-text">A parity fixture</span>
+    </div>
+  </div>
+</nav>
+
+<main class="container py-4">
+
+  <!-- a header block: headings, lead, and horizontal rules -->
+  <div class="row mb-4">
+    <div class="col-lg-8">
+      <h1>One page of everything</h1>
+      <p class="lead">Composed rather than catalogued, so that the interactions
+        between the pieces are part of what gets compared.</p>
+      <p class="text-body-secondary mb-0">Every number on this page is generated
+        without a clock, a random source, or a network.</p>
+    </div>
+    <div class="col-lg-4">
+      <div class="alert alert-info mb-0" role="alert">
+        <h5 class="alert-heading">A note</h5>
+        <p class="mb-0">This alert sits in a grid column, so its width depends on
+          the flex resolution and its height on the wrapped text.</p>
+      </div>
+    </div>
+  </div>
+  <hr class="mb-4">
+
+  <!-- three cards in a wrapping row: flex inside flex, each card a column-
+       direction flex container with a border, a radius and a footer -->
+  <div class="row g-4 mb-4">
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header fw-semibold">Cascade</div>
+        <div class="card-body">
+          <h5 class="card-title">Specificity</h5>
+          <p class="card-text">Origin, importance, specificity, source order —
+            and the style attribute spliced at the importance boundary.</p>
+          <span class="badge text-bg-primary">four rules</span>
+        </div>
+        <div class="card-footer text-body-secondary">style/engine.hpp</div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header fw-semibold">Layout</div>
+        <div class="card-body">
+          <h5 class="card-title">Formatting contexts</h5>
+          <p class="card-text">A formatting context is a type satisfying a
+            concept, so flex arrives as a new type rather than a new
+            conditional.</p>
+          <span class="badge text-bg-success">three today</span>
+        </div>
+        <div class="card-footer text-body-secondary">layout/algorithm.hpp</div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header fw-semibold">Paint</div>
+        <div class="card-body">
+          <h5 class="card-title">Display list</h5>
+          <p class="card-text">Six commands, and the cases that are not plain
+            fills need their own rather than a wider version of one.</p>
+          <span class="badge text-bg-warning">radii pending</span>
+        </div>
+        <div class="card-footer text-body-secondary">paint/record.hpp</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- a two-column body: a table beside a list group, so a table formatting
+       context and a flex column share a row -->
+  <div class="row g-4 mb-4">
+    <div class="col-lg-7">
+      <h2 class="fs-4">Corpora</h2>
+      <table class="table table-striped table-bordered table-sm">
+        <thead>
+          <tr>
+            <th scope="col">Bundle</th>
+            <th scope="col">Licence</th>
+            <th scope="col" class="text-end">Size</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">p5.js</th><td>LGPL-2.1</td><td class="text-end">4.5 MB</td></tr>
+          <tr><th scope="row">Phaser</th><td>MIT</td><td class="text-end">8.4 MB</td></tr>
+          <tr><th scope="row">Babylon.js</th><td>Apache-2.0</td><td class="text-end">12 MB</td></tr>
+          <tr class="table-active"><th scope="row">Bootstrap</th><td>MIT</td><td class="text-end">291 KB</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col-lg-5">
+      <h2 class="fs-4">Rungs</h2>
+      <ul class="list-group">
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          Harness <span class="badge text-bg-secondary rounded-pill">S0</span>
+        </li>
+        <li class="list-group-item d-flex justify-content-between align-items-center active">
+          Front end <span class="badge text-bg-light rounded-pill">S1</span>
+        </li>
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          Box model <span class="badge text-bg-secondary rounded-pill">S7</span>
+        </li>
+        <li class="list-group-item d-flex justify-content-between align-items-center disabled">
+          Flex <span class="badge text-bg-secondary rounded-pill">S9</span>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- a form, in a bordered panel: replaced controls beside non-replaced
+       labels and help text, plus an input group and a button row -->
+  <div class="row mb-4">
+    <div class="col-lg-6">
+      <div class="p-3 border rounded bg-body-tertiary">
+        <h2 class="fs-4">A form</h2>
+        <div class="mb-3">
+          <label for="name" class="form-label">Name</label>
+          <input type="text" class="form-control" id="name" value="Bootstrap">
+          <div class="form-text">A replaced element beside text that is not.</div>
+        </div>
+        <div class="mb-3">
+          <label for="kind" class="form-label">Kind</label>
+          <select class="form-select" id="kind">
+            <option>Stylesheet</option>
+            <option>Bundle</option>
+          </select>
+        </div>
+        <div class="input-group mb-3">
+          <span class="input-group-text">px</span>
+          <input type="text" class="form-control" value="1024">
+          <span class="input-group-text">wide</span>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="pin" checked>
+          <label class="form-check-label" for="pin">Pin the fonts</label>
+        </div>
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="checkbox" id="eye">
+          <label class="form-check-label" for="eye">Open the image and look at it</label>
+        </div>
+        <div class="d-flex gap-2">
+          <button type="button" class="btn btn-primary">Measure</button>
+          <button type="button" class="btn btn-outline-secondary">Advance</button>
+          <button type="button" class="btn btn-link" disabled>Regolden</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- a positioned column: relative parent, absolute badge, static transform,
+         and a progress bar. The badge overlay is the case that needs position
+         AND translate together. -->
+    <div class="col-lg-6">
+      <h2 class="fs-4">Positioned</h2>
+      <div class="position-relative p-4 mb-3 border rounded" style="height: 140px">
+        <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill text-bg-danger">
+          9
+        </span>
+        <p class="mb-0">A relative box with an absolutely positioned badge
+          overlapping its corner, which is where position, inset and a static
+          transform all have to agree at once.</p>
+        <span class="position-absolute bottom-0 end-0 m-2 text-body-secondary">corner</span>
+      </div>
+      <div class="progress mb-2" role="progressbar">
+        <div class="progress-bar" style="width: 72%">72%</div>
+      </div>
+      <div class="progress" role="progressbar">
+        <div class="progress-bar bg-success" style="width: 33%">33%</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- typography, kept last so its wrapping does not shift the boxes above -->
+  <div class="row">
+    <div class="col-md-8">
+      <h2 class="fs-4">Text</h2>
+      <blockquote class="blockquote">
+        <p>Somebody else's code is the only kind worth measuring an engine
+          against.</p>
+      </blockquote>
+      <p>Body text with <strong>strong</strong>, <em>emphasis</em>,
+        <code>inline code</code>, <mark>a mark</mark>, <small>small</small>, and
+        a <a href="#">link</a> — set wide enough to wrap more than once so the
+        line-breaking positions are compared and not merely the block's height.</p>
+      <pre class="border rounded p-2 bg-body-tertiary">tools/check/css-parity.py --all</pre>
+      <ol>
+        <li>Measure against Chrome.</li>
+        <li>Read the report.</li>
+        <li>Advance the ratchet deliberately.</li>
+      </ol>
+    </div>
+    <div class="col-md-4">
+      <h2 class="fs-4">Buttons</h2>
+      <div class="d-grid gap-2">
+        <button class="btn btn-primary" type="button">Primary block</button>
+        <button class="btn btn-secondary btn-sm" type="button">Small block</button>
+      </div>
+      <nav class="mt-3">
+        <ul class="pagination pagination-sm">
+          <li class="page-item"><a class="page-link" href="#">1</a></li>
+          <li class="page-item active"><a class="page-link" href="#">2</a></li>
+          <li class="page-item"><a class="page-link" href="#">3</a></li>
+        </ul>
+      </nav>
+    </div>
+  </div>
+</main>
+
+<footer class="container border-top py-3 text-body-secondary">
+  <div class="d-flex justify-content-between">
+    <span>A fixture, not a site.</span>
+    <span>Bootstrap 5.3.8</span>
+  </div>
+</footer>
+</body>
+</html>

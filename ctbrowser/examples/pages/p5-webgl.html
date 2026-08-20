@@ -1,0 +1,48 @@
+<!doctype html>
+<!-- p5.js in WEBGL mode, running on this engine.
+     Everything above the canvas is p5's: its RendererGL builds the shaders,
+     the matrices and the geometry, and this engine only has to be a WebGL 1
+     implementation underneath. That is the whole point of the page - a raw
+     WebGL corpus page (webgl-triangle.html) proves the context works when a
+     page drives it by hand, and proves nothing about whether it works when a
+     real library drives it.
+     Getting HERE took two engine bugs that nothing else in the tree could see:
+     getContext('webgl2') threw instead of returning null, which broke p5's
+     `webgl2 || webgl` fallback, and Float32Array.from did not exist, which
+     killed RendererGL's constructor. See test/corpus/p5/p5-api-probe.js. -->
+<html>
+  <head>
+    <!-- UTF-8 for the same reason every other p5 page here says so: the bundle
+         has Greek identifiers, and a guessed Latin-1 splits one in two. -->
+    <meta charset="utf-8">
+    <script>var IS_MINIFIED = true;</script>
+    <script src="../../vendor/p5/p5.js"></script>
+  </head>
+  <body style="margin:0;background:#ffffff">
+    <script>
+      new p5(function (s) {
+        s.setup = function () {
+          s.createCanvas(300, 200, s.WEBGL);
+          // A GOLDEN NEEDS A FIXED FRAME. WEBGL mode is no different from the
+          // 2D pages here - draw once, compare bytes - and a spinning cube
+          // would make the render depend on when the frame was taken.
+          s.noLoop();
+        };
+        s.draw = function () {
+          s.background(30, 30, 50);
+          s.noStroke();
+          // Fixed rotations rather than frameCount, for the same reason.
+          s.rotateX(0.5);
+          s.rotateY(0.7);
+          s.fill(220, 80, 60);
+          s.box(80);
+          s.push();
+          s.translate(90, -40, 0);
+          s.fill(80, 200, 140);
+          s.sphere(30);
+          s.pop();
+        };
+      });
+    </script>
+  </body>
+</html>

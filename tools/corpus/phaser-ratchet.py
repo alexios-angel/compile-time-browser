@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How far Phaser 4 gets through the engine, and what is stopping it.
 
-tests/corpus/phaser/phaser_ratchet.cpp measures a LEVEL and a BLOCKER; tests/corpus/phaser/phaser-ratchet.txt
+ctbrowser/test/corpus/phaser/phaser_ratchet.cpp measures a LEVEL and a BLOCKER; ctbrowser/test/corpus/phaser/phaser-ratchet.txt
 records them; this drives the loop around both.
 
     tools/corpus/phaser-ratchet.py             build, measure, show the blocker in context
@@ -34,9 +34,13 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-BUNDLE = ROOT / "vendor/phaser/phaser.js"
-RECORD = ROOT / "tests/corpus/phaser/phaser-ratchet.txt"
-TEST = ROOT / "build/tests/ctbrowser-test-phaser_ratchet"
+# The test binary resolves its inputs against the ctbrowser PROJECT
+# directory, which is where ctest runs it from too. ROOT is the
+# repository root and is one level above that since the monorepo split.
+ENGINE = ROOT / "ctbrowser"
+BUNDLE = ROOT / "ctbrowser/vendor/phaser/phaser.js"
+RECORD = ROOT / "ctbrowser/test/corpus/phaser/phaser-ratchet.txt"
+TEST = ROOT / "build/test/ctbrowser-test-phaser_ratchet"
 
 RUNGS = ["unread", "read", "lexed", "parsed", "compiled", "runs as a page",
          "defines Phaser", "constructs a Game", "runs create()", "runs update()",
@@ -48,7 +52,7 @@ def build():
     r = subprocess.run(
         ["cmake", "--build", "--preset", "default",
          "--target", "ctbrowser-test-phaser_ratchet"],
-        cwd=ROOT, capture_output=True, text=True)
+        cwd=ENGINE, capture_output=True, text=True)
     if r.returncode != 0:
         sys.stderr.write(r.stdout + r.stderr)
         sys.exit("phaser-ratchet: build failed")
@@ -56,7 +60,7 @@ def build():
 
 def run():
     """Run the measurement. Its exit code is the pawl's verdict, not an error here."""
-    r = subprocess.run([str(TEST)], cwd=ROOT, capture_output=True, text=True)
+    r = subprocess.run([str(TEST)], cwd=ENGINE, capture_output=True, text=True)
     return r.stdout + r.stderr, r.returncode
 
 
@@ -126,7 +130,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--advance", action="store_true",
-                    help="record the measured level and blocker in tests/corpus/phaser/phaser-ratchet.txt")
+                    help="record the measured level and blocker in ctbrowser/test/corpus/phaser/phaser-ratchet.txt")
     args = ap.parse_args()
 
     if not BUNDLE.exists():

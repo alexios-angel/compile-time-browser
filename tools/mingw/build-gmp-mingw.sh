@@ -14,7 +14,7 @@
 #
 # --- THE LICENCE, WHICH IS THE REASON THIS IS OPT-IN ------------------------
 # GMP is LGPLv3+ OR GPLv2+. ctbrowser is Apache-2.0 with LLVM exceptions and
-# ships SELF-CONTAINED, STATICALLY LINKED .exe files (docs/platform.md). Static
+# ships SELF-CONTAINED, STATICALLY LINKED .exe files (ctbrowser/docs/platform.md). Static
 # LGPL linking is permitted but carries obligations the rest of this tree's
 # dependencies do not - notably giving recipients what they need to relink
 # against a modified GMP. That is a distribution decision, not a build flag,
@@ -24,7 +24,7 @@
 #
 # --- AND IT IS SLOWER FOR THIS WORKLOAD -------------------------------------
 # Measured on a Core Ultra 9 185H, cpp_int against GMP, both compiled for the
-# same modern arch (numbers and method in docs/script.md):
+# same modern arch (numbers and method in ctbrowser/docs/script.md):
 #
 #                    64 bits        1024 bits      65536 bits
 #   Linux            2.9x slower    1.8x faster    20x faster (to-string)

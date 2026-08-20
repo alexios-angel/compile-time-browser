@@ -1,0 +1,5 @@
+# Scratch output from running one of these by hand; the binaries are in build*/.
+# Unanchored, so it reaches the buckets below this directory as well.
+*.ppm
+*.log
+*.csv

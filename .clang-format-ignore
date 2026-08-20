@@ -6,15 +6,22 @@
 # GENERATED. Reformatting these changes nothing that survives the next run of
 # the generator, and makes the diff between "the generator changed" and "the
 # formatter ran" impossible to read.
-include/ctbrowser/raster/text/font8x8.hpp
-include/ctbrowser/dom/entities.hpp
-include/ctbrowser/gpu/shaders/tile_spv.hpp
+ctbrowser/include/ctbrowser/raster/text/font8x8.hpp
+ctbrowser/include/ctbrowser/dom/entities.hpp
+ctbrowser/include/ctbrowser/gpu/shaders/tile_spv.hpp
+
+# mlir-tblgen's output, which is generated for the same reason and is not
+# committed either (Principle 10 - generated files are build artifacts). Listed
+# BEFORE the first generator runs rather than after someone reformats a build
+# directory, which is the mistake this entry exists to prevent.
+*.h.inc
+*.cpp.inc
 
 # Submodules and the fetched toolchain are separate projects entirely.
-external/*
+third-party/*
 tools/llvm-mingw/*
 tools/clang-std-embed/*
 
 # A port of ctjs's backtracking matcher. Reformatting it would make "the
 # port changed" and "the formatter ran" indistinguishable in the diff.
-include/ctbrowser/script/regex.hpp
+ctbrowser/include/ctbrowser/script/regex.hpp
