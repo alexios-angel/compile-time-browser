@@ -1,0 +1,111 @@
+{
+  "what": "startup cost per stage, before any of it is compiled ahead of time",
+  "measured_utc": "2026-08-20T17:00:55Z",
+  "commit": "a2ef736",
+  "machine": {
+    "cpu": "AMD EPYC 9V45 96-Core Processor",
+    "cores": 8,
+    "ram_mb": 32092,
+    "os": "Ubuntu 24.04.4 LTS",
+    "compiler": "clang version 24.0.0git (https://github.com/alexios-angel/llvm-project.git e3986d2253e4cf600d9c55badda4ddb0ec0f0ce2)",
+    "build": "cmake --preset default (Release, -O3 -DNDEBUG -O2)",
+    "host": "devbox"
+  },
+  "not_measured": [
+    "style resolution, layout, paint, raster and first frame - these stay runtime work by Principle 6 and a compiler must not freeze them; ctbrowser/benchmarks/ measures them",
+    "js_run_top_level runs in a BARE script::context with no browser globals, so every bundle stops early - see each stage's stopped_because. Measuring real top-level execution needs the shell, and is a later measurement"
+  ],
+  "runs": [
+    {
+      "corpus": "bootstrap-css",
+      "stages": [
+        {
+          "stage": "css_parse",
+          "ms": 2.557,
+          "input_bytes": 297886,
+          "produced": 2550,
+          "completed": true
+        },
+        {
+          "stage": "css_parse_and_file",
+          "ms": 2.933,
+          "input_bytes": 297886,
+          "produced": 6076,
+          "completed": true
+        }
+      ]
+    },
+    {
+      "corpus": "bootstrap-kitchen",
+      "stages": [
+        {
+          "stage": "html_parse_and_dom_build",
+          "ms": 0.074,
+          "input_bytes": 10721,
+          "produced": 459,
+          "completed": true
+        }
+      ]
+    },
+    {
+      "corpus": "p5",
+      "stages": [
+        {
+          "stage": "js_parse_and_compile",
+          "ms": 52.746,
+          "input_bytes": 4574626,
+          "produced": 4754,
+          "completed": true
+        },
+        {
+          "stage": "js_run_top_level",
+          "ms": 0.037,
+          "input_bytes": 4574626,
+          "produced": 4754,
+          "completed": false,
+          "stopped_because": "uncaught TypeError: `Symbol` is undefined, not a function - in <anonymous>\n        at <anonymous> (fn#1 +4210)\n        at <script> (fn#0 +2)"
+        }
+      ]
+    },
+    {
+      "corpus": "phaser",
+      "stages": [
+        {
+          "stage": "js_parse_and_compile",
+          "ms": 69.906,
+          "input_bytes": 8793523,
+          "produced": 7725,
+          "completed": true
+        },
+        {
+          "stage": "js_run_top_level",
+          "ms": 0.228,
+          "input_bytes": 8793523,
+          "produced": 7725,
+          "completed": false,
+          "stopped_because": "uncaught TypeError: `__ctbrowser_regexp` is undefined, not a function - in `init`\n        at init (fn#705 +16)\n        at <anonymous> (fn#704 +50)\n        at __webpack_require__ (fn#4 +27)\n        at <anonymous> (fn#709 +5)\n        at __webpack_require__ (fn#4 +27)\n        at <anonymous> (fn#7642 +18)\n        at __webpack_require__ (fn#4 +27)\n        at <anonymous> (fn#7649 +175)\n        at __webpack_require__ (fn#4 +27)\n        at <anonymous> (fn#1329 +6)\n        at __webpack_require__ (fn#4 +27)\n        at <anonymous> (fn#1555 +30)\n        ... 13 more"
+        }
+      ]
+    },
+    {
+      "corpus": "babylon",
+      "stages": [
+        {
+          "stage": "js_parse_and_compile",
+          "ms": 264.153,
+          "input_bytes": 11585541,
+          "produced": 31905,
+          "completed": true
+        },
+        {
+          "stage": "js_run_top_level",
+          "ms": 0.324,
+          "input_bytes": 11585541,
+          "produced": 31905,
+          "completed": false,
+          "stopped_because": "uncaught TypeError: `sqrt` is undefined, not a function - in <anonymous>, on undefined (undefined) from `Math`\n        at <anonymous> (fn#3 +14614)\n        at <anonymous> (fn#2 +49)\n        at <script> (fn#0 +6)"
+        }
+      ]
+    }
+  ]
+}
