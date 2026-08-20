@@ -25,8 +25,8 @@ struct walker {
     }
     bool count(std::size_t a, std::size_t b, const std::string & where, const char * what) {
         if (a == b) { return true; }
-        return differ(where, std::string{what} + " " + std::to_string(a) + " vs " +
-                                 std::to_string(b));
+        return differ(where,
+                      std::string{what} + " " + std::to_string(a) + " vs " + std::to_string(b));
     }
     bool texts(const std::vector<std::string> & a, const std::vector<std::string> & b,
                const std::string & where, const char * what) {
@@ -106,7 +106,8 @@ std::optional<difference> compare(const program & expected, const program & actu
             // code that built it, so a memcmp here would report differences
             // that do not exist - and would do it intermittently.
             if (x.code != y.code || x.a != y.a || x.b != y.b || x.c != y.c) {
-                return w.differ(where + ", instruction " + std::to_string(ip), "opcode or operands"),
+                return w.differ(where + ", instruction " + std::to_string(ip),
+                                "opcode or operands"),
                        w.found;
             }
         }

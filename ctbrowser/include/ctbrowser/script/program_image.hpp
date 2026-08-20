@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -45,6 +46,16 @@ namespace ctbrowser::script {
 // means the bytes describe a different engine, whatever else they contain.
 [[nodiscard]] std::uint64_t image_fingerprint() noexcept;
 
+// A hash of the JavaScript an image was built from. Written into every image,
+// and a DIFFERENT question from the fingerprint: that one asks "was this built
+// by this engine", this one asks "was this built from this source". A cache
+// that answers only the first will happily run yesterday's code.
+//
+// It is written even when the source itself is dropped from the image, because
+// the question still has to be answerable then - that is exactly the build
+// where nothing else could answer it.
+[[nodiscard]] std::uint64_t image_source_hash(std::string_view source) noexcept;
+
 enum class image_option : std::uint32_t {
     // Keep `program::source`. Retaining it roughly doubles the image - babylon
     // goes to 27 MB against 11.3 MB of source - and dropping it changes
@@ -67,6 +78,8 @@ struct load_result {
     program value;
     bool ok = false;
     std::string error;
+    // What the image says it was built from, whether or not it kept the text.
+    std::uint64_t source_hash = 0;
 };
 
 // Bytes back to a program, or a refusal with a reason.
@@ -76,6 +89,11 @@ struct load_result {
 // run_loop.cpp:1012 - is a WRITE past the register window when `param_count`
 // exceeds `frame_size`. A compiled program cannot express that; an image can,
 // so this is where it stops.
-[[nodiscard]] load_result load_image(std::span<const std::byte> bytes);
+// `expect_source_hash`, when given, is checked against the image's own and a
+// mismatch is a refusal. That is the whole cache-correctness story: an image
+// built from different source is not a slow path, it is WRONG CODE running at
+// full speed, and the only defence is to refuse it here.
+[[nodiscard]] load_result load_image(std::span<const std::byte> bytes,
+                                     std::optional<std::uint64_t> expect_source_hash = {});
 
 } // namespace ctbrowser::script

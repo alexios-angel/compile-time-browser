@@ -61,7 +61,9 @@ constexpr std::string_view rich_source =
     "try { throw new Error(\"x\"); } catch (e) { total += e.message.length; }\n"
     "return total;\n";
 
-[[nodiscard]] program compiled(std::string_view source) { return compiler::compile(source); }
+[[nodiscard]] program compiled(std::string_view source) {
+    return compiler::compile(source);
+}
 
 // Round-trip and require equality. Returns the bytes so a caller can corrupt them.
 std::vector<std::byte> round_trip(const program & from, std::string_view what,

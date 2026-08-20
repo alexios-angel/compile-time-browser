@@ -123,7 +123,20 @@ std::uint64_t image_fingerprint() noexcept {
     return h;
 }
 
-std::string_view write_error() noexcept { return last_write_error; }
+std::uint64_t image_source_hash(std::string_view source) noexcept {
+    // FNV-1a over the bytes. Not a security property - see the header's note on
+    // trust - but enough that a changed script is a different number.
+    std::uint64_t h = 1469598103934665603ull;
+    for (const char c : source) {
+        h ^= static_cast<std::uint8_t>(c);
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+std::string_view write_error() noexcept {
+    return last_write_error;
+}
 
 std::vector<std::byte> write_image(const program & from, image_option option) {
     last_write_error = {};
@@ -176,6 +189,10 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
     out.u32(format_version);
     out.u64(image_fingerprint());
     out.u32(static_cast<std::uint32_t>(option));
+    // FROM THE PROGRAM'S OWN SOURCE, before any decision about keeping it: an
+    // image that drops the text still has to be able to say what it was built
+    // from, and that is precisely the build where nothing else can.
+    out.u64(image_source_hash(from.source));
 
     out.u32(static_cast<std::uint32_t>(names.size()));
     for (const std::string & s : names) { out.text(s); }
@@ -247,7 +264,17 @@ namespace {
 // `fidx` from `kidx` before anything was generated from them: a check built on
 // the old spelling would have bounds-checked a constant pool against a
 // function index.
-enum class slot_kind : std::uint8_t { reg, kidx, sidx, nidx, fidx, jump, count, bx_hi, unused };
+enum class slot_kind : std::uint8_t {
+    reg,
+    kidx,
+    sidx,
+    nidx,
+    fidx,
+    jump,
+    count,
+    bx_hi,
+    unused
+};
 
 [[nodiscard]] constexpr slot_kind kind_of(std::string_view text) {
     if (text == "reg") { return slot_kind::reg; }
@@ -283,7 +310,8 @@ static_assert(std::size(shapes) == opcode_count, "one shape per opcode");
 
 } // namespace
 
-load_result load_image(std::span<const std::byte> bytes) {
+load_result load_image(std::span<const std::byte> bytes,
+                       std::optional<std::uint64_t> expect_source_hash) {
     load_result out;
     source_bytes in{bytes, 0, false, {}};
 
@@ -309,11 +337,19 @@ load_result load_image(std::span<const std::byte> bytes) {
         out.error = "unknown image option " + std::to_string(option);
         return out;
     }
+    out.source_hash = in.u64();
+    if (expect_source_hash && *expect_source_hash != out.source_hash) {
+        // THE REFUSAL THAT MAKES A CACHE SAFE. A stale image is not a slow
+        // path - it is different JavaScript running at full speed, with the
+        // page behaving as it did before an edit nobody can see.
+        out.error = "the image was built from different source";
+        return out;
+    }
 
     const auto read_pool = [&in](const char * what) {
         std::vector<std::string> pool;
         const std::uint32_t n = in.u32();
-        if (!in.need(n)) {           // a count larger than the file cannot be honest
+        if (!in.need(n)) { // a count larger than the file cannot be honest
             in.fail(std::string{"the "} + what + " pool claims more entries than the image holds");
             return pool;
         }
@@ -405,8 +441,10 @@ load_result load_image(std::span<const std::byte> bytes) {
         // first, but an image can, and the result is a heap write past the
         // register vector.
         if (fn.param_count > fn.frame_size) {
-            in.fail(where + "param_count " + std::to_string(fn.param_count) + " exceeds "
-                            "frame_size " + std::to_string(fn.frame_size) +
+            in.fail(where + "param_count " + std::to_string(fn.param_count) +
+                    " exceeds "
+                    "frame_size " +
+                    std::to_string(fn.frame_size) +
                     " - the parameter fill would write past the register window");
             break;
         }
@@ -493,8 +531,9 @@ load_result load_image(std::span<const std::byte> bytes) {
         for (std::uint32_t i = 0; i < upvalue_count && !in.bad; ++i) {
             const std::uint8_t from_local = in.u8();
             if (from_local > 1) {
-                in.fail(where + "upvalue " + std::to_string(i) + " has a boolean that is "
-                                "neither 0 nor 1");
+                in.fail(where + "upvalue " + std::to_string(i) +
+                        " has a boolean that is "
+                        "neither 0 nor 1");
                 break;
             }
             upvalue_desc up;
@@ -560,9 +599,7 @@ load_result load_image(std::span<const std::byte> bytes) {
                     }
                     return;
                 case slot_kind::fidx:
-                    if (operand >= function_count) {
-                        in.fail(at + which + " is not a function");
-                    }
+                    if (operand >= function_count) { in.fail(at + which + " is not a function"); }
                     return;
                 default: return; // count, jump, bx_hi and unused are checked below or not at all
                 }
@@ -574,7 +611,9 @@ load_result load_image(std::span<const std::byte> bytes) {
                 const std::uint32_t wide = one.bx();
                 switch (shape.b) {
                 case slot_kind::kidx:
-                    if (wide >= fn.constants.size()) { in.fail(at + "constant index out of range"); }
+                    if (wide >= fn.constants.size()) {
+                        in.fail(at + "constant index out of range");
+                    }
                     break;
                 case slot_kind::sidx:
                     if (wide >= fn.strings.size()) { in.fail(at + "string index out of range"); }

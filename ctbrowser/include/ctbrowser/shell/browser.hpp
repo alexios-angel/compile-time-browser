@@ -181,6 +181,45 @@ public:
     // stop existing after the first `location.reload()`.
     void define_native(std::string name, script::native_fn fn);
 
+    // HAND THE PAGE ITS SCRIPTS ALREADY COMPILED.
+    //
+    // Parsing and compiling JavaScript is about forty percent of a page load
+    // and running it is 1.4% (docs/performance.md), so this is the largest
+    // saving available to a packaged application: measured on the devbox,
+    // loading babylon from an image is 77 ms against 300 ms to compile it.
+    //
+    // The image is USED ONLY IF IT MATCHES. Every classic <script> on the page
+    // is concatenated into one source, exactly as the compiling path does, and
+    // the image is accepted only when its recorded source hash equals that
+    // text's. A stale image is refused rather than run, because running one is
+    // not a slow path - it is different JavaScript at full speed, with the page
+    // behaving as it did before an edit nobody can see.
+    //
+    // A refusal is silent by design and countable by
+    // scripts_compiled_from_source(): the page still works, it just paid for
+    // the compile. That counter is how a test proves the fast path was taken
+    // rather than assuming it.
+    void set_script_image(std::vector<std::byte> image) { script_image_ = std::move(image); }
+
+    // How many times this browser has compiled page scripts from source. Zero
+    // after a load that used its image; without this a cache that silently
+    // misses looks exactly like one that works.
+    [[nodiscard]] std::size_t scripts_compiled_from_source() const noexcept {
+        return scripts_compiled_from_source_;
+    }
+
+    // THE TEXT THE LAST LOAD COMPILED: every classic <script> on the page in
+    // document order, each followed by a newline, exactly as run_scripts
+    // assembles it.
+    //
+    // This is what a packaging tool needs and the reason it is public. An image
+    // is accepted only when its source hash matches this text, so anything
+    // BUILDING an image has to know precisely what the browser will concatenate
+    // - and a second implementation of that rule, in the packager, would be a
+    // copy free to drift from the one that matters. Load the page once, take
+    // this, compile and write the image; the next load matches by construction.
+    [[nodiscard]] std::string_view script_source() const noexcept { return script_source_; }
+
     // Turn on real fonts. Loads the vendored OFL faces through the asset
     // registry - so an application that baked them in never touches the disk -
     // and leaves font8x8 in place if SDL3_ttf is absent or none of them load.
@@ -1568,6 +1607,11 @@ private:
     std::uint64_t canvas_revision_ = 0;
 
     std::unique_ptr<script::program> script_program_;
+    // A PRECOMPILED IMAGE OF THIS PAGE'S CLASSIC SCRIPTS, if the embedder has
+    // one. See set_script_image.
+    std::vector<std::byte> script_image_;
+    std::string script_source_;
+    std::size_t scripts_compiled_from_source_ = 0;
     // ONE PROGRAM PER MODULE, kept alive for the page's lifetime. A module's
     // top-level declarations live in its own frame and its functions close over
     // them, so the program cannot be a temporary the way a classic script's

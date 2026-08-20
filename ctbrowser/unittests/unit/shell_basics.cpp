@@ -18,6 +18,8 @@
 #include <ctbrowser/layout/layout.hpp>
 #include <ctbrowser/paint/paint.hpp>
 #include <ctbrowser/raster/raster.hpp>
+#include <ctbrowser/script/compile.hpp>
+#include <ctbrowser/script/program_image.hpp>
 #include <ctbrowser/shell/shell.hpp>
 #include <ctbrowser/style/style.hpp>
 
@@ -295,6 +297,79 @@ void test_hit_testing_respects_escaped_context_clips() {
           "an escaped context cannot receive hits outside its ancestor clip");
 }
 
+// The text a node carries, read straight from the document. `find_id` comes
+// from dom_probe.hpp; there is no shared text helper, and one line of read
+// transaction is clearer than another header.
+[[nodiscard]] std::string text_of(browser & page, std::string_view id) {
+    const ctbrowser::node_id want = find_id(page, id);
+    if (!want) { return {}; }
+    const auto txn = page.doc().read();
+    std::string out;
+    for (const ctbrowser::node_id child : txn.children(want)) { out += txn.text(child); }
+    return out;
+}
+
+// A PAGE THAT DOES NOT COMPILE ITS OWN JAVASCRIPT.
+//
+// Compiling is about forty percent of a page load and running is 1.4%
+// (docs/performance.md), so handing the page a precompiled image is the largest
+// saving a packaged application gets. This proves the three things that make it
+// usable rather than merely fast: the page behaves identically, the fast path
+// was actually taken, and an image built from OTHER source is refused instead
+// of run.
+void test_a_page_can_load_its_scripts_from_an_image() {
+    constexpr std::string_view page =
+        "<html><body><div id=out></div><script>"
+        "document.getElementById('out').textContent = 'from ' + (1 + 1);"
+        "</script></body></html>";
+
+    // What the browser will concatenate: every classic script, each followed by
+    // a newline. The image has to be built from exactly that text or its hash
+    // will not match - which is the point of the hash.
+    const std::string concatenated =
+        "document.getElementById('out').textContent = 'from ' + (1 + 1);\n";
+    const auto compiled = ctbrowser::script::compiler::compile(concatenated);
+    check(compiled.ok, "the fixture compiles");
+    const std::vector<std::byte> image = ctbrowser::script::write_image(compiled);
+    check(!image.empty(), "and an image is written for it");
+
+    std::string without;
+    {
+        browser page_browser{browser_options{200, 100}};
+        page_browser.load_html(page);
+        check(page_browser.scripts_compiled_from_source() == 1,
+              "with no image the page compiles its scripts");
+        without = text_of(page_browser, "out");
+    }
+
+    {
+        browser page_browser{browser_options{200, 100}};
+        page_browser.set_script_image(image);
+        page_browser.load_html(page);
+        // THE COUNTER IS THE PROOF. Without it a cache that silently misses
+        // looks exactly like one that works: the page renders either way.
+        check(page_browser.scripts_compiled_from_source() == 0,
+              "with a matching image the page compiles nothing");
+        check(text_of(page_browser, "out") == without && !without.empty(),
+              "and produces the same result it did from source");
+    }
+
+    {
+        // AN IMAGE OF DIFFERENT SOURCE IS REFUSED, NOT RUN. This is the whole
+        // safety property: a stale image is not a slow path, it is yesterday's
+        // JavaScript at full speed.
+        const auto other = ctbrowser::script::compiler::compile(
+            "document.getElementById('out').textContent = 'STALE';\n");
+        browser page_browser{browser_options{200, 100}};
+        page_browser.set_script_image(ctbrowser::script::write_image(other));
+        page_browser.load_html(page);
+        check(page_browser.scripts_compiled_from_source() == 1,
+              "an image from other source is refused and the page compiles");
+        check(text_of(page_browser, "out") == without,
+              "and the page shows what its own script produces, not the image's");
+    }
+}
+
 void test_wheel_and_keys_scroll() {
     browser page{browser_options{400, 200}};
     page.load_html(demo_page);
@@ -421,6 +496,7 @@ int main() {
     test_transparent_boxes_are_hit_regions();
     test_hit_testing_follows_stacking_order();
     test_hit_testing_respects_escaped_context_clips();
+    test_a_page_can_load_its_scripts_from_an_image();
     test_wheel_and_keys_scroll();
     test_hover_restyles();
 
