@@ -541,6 +541,51 @@ number are worth more than the number:
   `rsync -az` preserves mtimes. The tell was that the number matched the A/B's
   old arm exactly, which is not a coincidence a measurement gets to have.
 
+### Validation is 15% of an image load, and a table beat a fast path
+
+The operand pass — every index in every instruction checked against the pool it
+addresses — is **3.0 ms of a 19.9 ms image load**, measured by building the
+loader without it and interleaving the two binaries. That is the third-largest
+number left on this path and the reason it is worth touching at all.
+
+Two things were tried. **The first was wrong and is recorded because it was
+wrong**: the bounds (`fn.constants.size()` and friends) looked loop-invariant
+and reloaded per instruction, since `in.fail` takes a `std::string` and is
+opaque to the optimiser. Hoisting them into locals changed nothing — 19.79 to
+20.17 against 19.62 to 20.47, ranges fully overlapping. The compiler was already
+doing it, and the guess about where the time went was simply wrong.
+
+**What worked was deleting the branch, not the check.** `check_slot` switched on
+the operand's kind three times per instruction, and an opcode's kinds arrive in
+whatever order a program was written, so that is three indirect branches the
+predictor cannot learn, half a million times for p5. One bound per kind in a
+nine-entry array turns the whole thing into a load and a compare: **19.18 ms
+against 19.74, faster in 15 of 15 paired runs**, recovering about a fifth of the
+validation cost. The kind-specific message is still built by a switch, on the
+failure path, where a branch costs nothing.
+
+**Nothing about what is checked changed**, and the point is that this is
+demonstrated rather than asserted. The kinds the switch ignored — `count`,
+`jump`, `bx_hi`, `unused` — get a bound of `UINT32_MAX`, so their compare is
+false by construction rather than by omission; and a wide operand gets its own
+table, because the switch it replaced had no `reg` case and fell through its
+default, so sharing one table would have made the validator quietly *stricter*
+than the code it replaced. That is the kind of change that passes every test and
+starts refusing valid images.
+
+The evidence is differential: 60,000 random one-to-three-byte mutations of the
+real 7.3 MB p5 image, through both builds, digesting **every verdict and every
+error string**. Same digest, `b86379232d75ecb1`, on 36,653 acceptances and
+23,347 refusals. A suite that goes green proves the cases in it still pass; this
+proves the two implementations are the same function.
+
+**The fast path in the handoff was not implemented, and should not be.** The
+proposal was to skip the per-operand switch when a function's tables make every
+index trivially in range — which requires the minimum of five bounds, and that
+minimum is *zero* for any function with an empty constant pool. p5 has 23
+functions with no pools at all. It would have bought nothing on exactly the
+functions it was cheapest to check, and it weakens a validator to do it.
+
 ## The ladder ahead
 
 | phase | what | where |

@@ -656,7 +656,41 @@ load_result load_image(std::span<const std::byte> bytes,
     // gives it - the VM reads these with unchecked operator[].
     for (std::uint32_t fi = 0; fi < function_count; ++fi) {
         const function_proto & fn = result.functions[fi];
-        for (std::size_t ip = 0; ip < fn.code.size(); ++ip) {
+        // ONE BOUND PER KIND, IN A TABLE, so that checking an operand is a load
+        // and a compare rather than a jump table. The switch this replaces ran
+        // three times per instruction on an index the branch predictor cannot
+        // learn - opcode kinds arrive in whatever order the program is written
+        // - and p5 is half a million instructions.
+        //
+        // NOTHING ABOUT WHAT IS CHECKED CHANGES. The kinds the switch did not
+        // check - count, jump, bx_hi, unused - get a bound of UINT32_MAX, and
+        // an operand is a uint16, so their compare is false by construction
+        // rather than by omission. The kind-specific message is still built by
+        // a switch, on the failure path, where a branch costs nothing.
+        const std::uint32_t reg_bound = fn.frame_size;
+        const auto constant_bound = static_cast<std::uint32_t>(fn.constants.size());
+        const auto string_bound = static_cast<std::uint32_t>(fn.strings.size());
+        const auto name_bound = static_cast<std::uint32_t>(fn.names.size());
+        constexpr std::uint32_t unchecked = 0xFFFFFFFFu;
+        std::uint32_t bound_of[static_cast<std::size_t>(slot_kind::unused) + 1];
+        for (std::uint32_t & b : bound_of) { b = unchecked; }
+        bound_of[static_cast<std::size_t>(slot_kind::reg)] = reg_bound;
+        bound_of[static_cast<std::size_t>(slot_kind::kidx)] = constant_bound;
+        bound_of[static_cast<std::size_t>(slot_kind::sidx)] = string_bound;
+        bound_of[static_cast<std::size_t>(slot_kind::nidx)] = name_bound;
+        bound_of[static_cast<std::size_t>(slot_kind::fidx)] = function_count;
+        // A WIDE OPERAND IS CHECKED AGAINST FEWER KINDS than a narrow one -
+        // the switch it replaces had no `reg` case and fell through its
+        // `default` - so it gets its own table rather than sharing one and
+        // quietly becoming stricter than the code it replaced.
+        std::uint32_t wide_bound_of[static_cast<std::size_t>(slot_kind::unused) + 1];
+        for (std::uint32_t & b : wide_bound_of) { b = unchecked; }
+        wide_bound_of[static_cast<std::size_t>(slot_kind::kidx)] = constant_bound;
+        wide_bound_of[static_cast<std::size_t>(slot_kind::sidx)] = string_bound;
+        wide_bound_of[static_cast<std::size_t>(slot_kind::nidx)] = name_bound;
+        wide_bound_of[static_cast<std::size_t>(slot_kind::fidx)] = function_count;
+        const std::size_t code_size = fn.code.size();
+        for (std::size_t ip = 0; ip < code_size; ++ip) {
             const instruction & one = fn.code[ip];
             const opcode_shape & shape = shapes[static_cast<std::size_t>(one.code)];
             // Built on failure only - see the note above. p5 has half a million
@@ -667,33 +701,23 @@ load_result load_image(std::span<const std::byte> bytes,
             };
 
             const auto check_slot = [&](slot_kind kind, std::uint16_t operand, const char * which) {
-                if (in.bad) { return; }
+                if (operand < bound_of[static_cast<std::size_t>(kind)] || in.bad) { return; }
                 switch (kind) {
                 case slot_kind::reg:
-                    if (operand >= fn.frame_size) {
-                        in.fail(at() + which + " names register " + std::to_string(operand) +
-                                " in a frame of " + std::to_string(fn.frame_size));
-                    }
+                    in.fail(at() + which + " names register " + std::to_string(operand) +
+                            " in a frame of " + std::to_string(fn.frame_size));
                     return;
                 case slot_kind::kidx:
-                    if (operand >= fn.constants.size()) {
-                        in.fail(at() + which + " points outside the constant pool");
-                    }
+                    in.fail(at() + which + " points outside the constant pool");
                     return;
                 case slot_kind::sidx:
-                    if (operand >= fn.strings.size()) {
-                        in.fail(at() + which + " points outside the string table");
-                    }
+                    in.fail(at() + which + " points outside the string table");
                     return;
                 case slot_kind::nidx:
-                    if (operand >= fn.names.size()) {
-                        in.fail(at() + which + " points outside the name table");
-                    }
+                    in.fail(at() + which + " points outside the name table");
                     return;
-                case slot_kind::fidx:
-                    if (operand >= function_count) { in.fail(at() + which + " is not a function"); }
-                    return;
-                default: return; // count, jump, bx_hi and unused are checked below or not at all
+                case slot_kind::fidx: in.fail(at() + which + " is not a function"); return;
+                default: return; // unreachable: their bound is UINT32_MAX
                 }
             };
 
@@ -701,23 +725,14 @@ load_result load_image(std::span<const std::byte> bytes,
             // rather than separately when c is the high half.
             if (shape.c == slot_kind::bx_hi) {
                 const std::uint32_t wide = one.bx();
-                switch (shape.b) {
-                case slot_kind::kidx:
-                    if (wide >= fn.constants.size()) {
-                        in.fail(at() + "constant index out of range");
+                if (wide >= wide_bound_of[static_cast<std::size_t>(shape.b)]) {
+                    switch (shape.b) {
+                    case slot_kind::kidx: in.fail(at() + "constant index out of range"); break;
+                    case slot_kind::sidx: in.fail(at() + "string index out of range"); break;
+                    case slot_kind::nidx: in.fail(at() + "name index out of range"); break;
+                    case slot_kind::fidx: in.fail(at() + "function index out of range"); break;
+                    default: break; // unreachable: their bound is UINT32_MAX
                     }
-                    break;
-                case slot_kind::sidx:
-                    if (wide >= fn.strings.size()) { in.fail(at() + "string index out of range"); }
-                    break;
-                case slot_kind::nidx:
-                    if (wide >= fn.names.size()) { in.fail(at() + "name index out of range"); }
-                    break;
-                case slot_kind::fidx:
-                    if (wide >= function_count) { in.fail(at() + "function index out of range"); }
-                    break;
-                case slot_kind::jump: break; // handled below
-                default: break;
                 }
                 check_slot(shape.a, one.a, "operand a");
             } else {
