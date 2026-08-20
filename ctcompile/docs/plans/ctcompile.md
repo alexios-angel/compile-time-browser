@@ -240,10 +240,43 @@ on a pinned environment — cannot distinguish a rule filed in the wrong bucket
 from one that simply never matched, while dragging viewport-dependent state into
 an acceptance test that must not compare viewport-decided things.
 
-**So 16B's first task is a debug enumerator on `engine`** — `for_each_rule(F)`
-yielding (selector ordinal, property, value bytes, order, condition, origin,
-important) — and the comparator is written against that. Building the comparator
-first would produce one that certifies the half that was never in doubt.
+**So the enumerator came first.** `engine::for_each_rule` now yields every filed
+rule with its bucket, bucket key, specificity, property, value bytes, order,
+condition ordinal, origin and importance — ordered by (source order, selector)
+rather than by bucket, because the buckets are unordered maps keyed by atom id
+and an atom id is handed out in first-interning order at run time. Source order
+is a property of the stylesheet and of nothing else.
+
+`ctcompile::css::compare` reads it, and its seven negative cases all share one
+property: **every one leaves `selector_count()` and `rule_count()` untouched**
+while changing what the page looks like. A sheet filed under the wrong origin, a
+changed value, a lost `!important`, a rule whose rightmost compound moves it to
+another bucket, a changed specificity, a rule that lost its `@media` gate, and a
+changed `@font-face` source. The test asserts the counts still agree *before* it
+asserts anything else, so a case that drifted into being caught by a count
+reports itself as no longer testing what it claims.
+
+### A live engine gap, found by writing the test
+
+The `@font-face` case failed at first, and the cause was the fixture rather than
+the comparator:
+
+```css
+@font-face { font-family: Fira; src: url(f.ttf) }        /* records NOTHING */
+@font-face { font-family: "Fira"; src: url("f.ttf") }    /* records one font */
+@font-face { font-family: "Fira"; src: url("f.ttf") format("truetype") }  /* NOTHING */
+```
+
+The engine records a page font only when the family and the `url()` are quoted
+**string tokens**. An unquoted family, an unquoted `url()`, or the `format()`
+descriptor that every real `@font-face` carries each produce an empty
+`page_fonts()`. That is a defect for ordinary pages, not only for the compiler —
+a web font simply does not load — and it is worth fixing in the engine before
+Phase 16B serializes font state that is mostly missing.
+
+The immediate lesson is smaller and sharper: the case had been comparing *no
+fonts against no fonts* and passing while proving nothing, which is the exact
+failure the negative-case discipline exists to prevent.
 
 Three parse-side traps the inventory turned up, all of which a blueprint can get
 wrong silently: the parser appends selectors and condition entries **before** the
