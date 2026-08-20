@@ -368,7 +368,7 @@ load_result load_image(std::span<const std::byte> bytes,
     program result;
     const auto read_list = [&in](std::vector<std::string> & into, const char * what) {
         const std::uint32_t n = in.u32();
-        if (!in.need(n)) {
+        if (!in.need(static_cast<std::size_t>(n) * 4u)) { // see read_pool: a length prefix each
             in.fail(std::string{"the "} + what + " list claims more entries than the image holds");
             return;
         }
@@ -379,7 +379,10 @@ load_result load_image(std::span<const std::byte> bytes,
     read_list(result.exports, "export");
     {
         const std::uint32_t n = in.u32();
-        if (in.need(n)) {
+        // TWELVE BYTES EACH: a re-export is three length-prefixed strings, and
+        // the struct is 96 bytes, so this is the site where a corrupt count
+        // reserves gigabytes.
+        if (in.need(static_cast<std::size_t>(n) * 12u)) {
             result.reexports.reserve(n);
             for (std::uint32_t i = 0; i < n && !in.bad; ++i) {
                 program::reexport r;
@@ -655,6 +658,38 @@ load_result load_image(std::span<const std::byte> bytes,
                 const std::int64_t target = static_cast<std::int64_t>(ip) + 1 + one.sbx();
                 if (target < 0 || target > static_cast<std::int64_t>(fn.code.size())) {
                     in.fail(at() + "jumps outside the function");
+                }
+            }
+            // A CLOSURE'S UPVALUES ARE READ OUT OF THE ENCLOSING FRAME, and
+            // nothing bounded them. run_loop.cpp:904 does
+            // `made->upvalues.push_back(reg(up.index))` where `reg` is
+            // `registers_[base + r]` and is unchecked - the OTHER branch, three
+            // lines below it, does bound its index against the closure's
+            // upvalue count, which makes the gap easy to miss. An image could
+            // therefore name register 65,535 of a frame that has four, read
+            // half a megabyte past the register window, and hand whatever was
+            // there to a cell test that dereferences it.
+            //
+            // The bound is the ENCLOSING function's frame size, which is only
+            // knowable here: the compiler emits `upvalue_desc{true, l->reg}`
+            // where l->reg is a register of the function doing the closing, so
+            // the invariant belongs to the (closer, closed-over) PAIR rather
+            // than to either function alone. This is the only place both are in
+            // hand at once.
+            if (shape.b == slot_kind::fidx && shape.c == slot_kind::bx_hi) {
+                const std::uint32_t target = one.bx();
+                if (target < function_count) {
+                    const function_proto & closed = result.functions[target];
+                    for (std::size_t u = 0; u < closed.upvalues.size(); ++u) {
+                        const upvalue_desc & up = closed.upvalues[u];
+                        if (up.from_parent_local && up.index >= fn.frame_size) {
+                            in.fail(at() + "closes over function " + std::to_string(target) +
+                                    ", whose upvalue " + std::to_string(u) + " captures register " +
+                                    std::to_string(up.index) + " of a frame that has " +
+                                    std::to_string(fn.frame_size));
+                            break;
+                        }
+                    }
                 }
             }
             if (is_call_shape(one.code)) {

@@ -159,14 +159,72 @@ int main() {
     must_refuse("an image with a nonsense option", bytes,
                 [](std::vector<std::byte> & b) { b[16] = std::byte{9}; });
 
-    // AND EVERY SINGLE-BYTE CORRUPTION ON A STRIDE, which is the only way to be
-    // sure the five refusals above are not the only paths anyone tested. The
-    // loader may accept - a flipped byte inside the retained source is
-    // legitimately harmless - but it must never crash, and never hand back a
-    // program whose tables do not agree with its operands.
+    // --- THE TWO THE VALIDATOR USED TO MISS ------------------------------
+    // Both were found by reading the loader against the VM rather than by any
+    // test here, which is why each gets a case that fails without its fix.
+
+    // AN UPVALUE THAT CAPTURES A REGISTER ITS ENCLOSING FRAME DOES NOT HAVE.
+    // run_loop.cpp:904 pushes `reg(up.index)` with no bound - `registers_[base
+    // + index]` - and then a cell test dereferences whatever came back. The
+    // program is mutated rather than the bytes, so the case names the defect
+    // instead of an offset that moves whenever the format does.
+    {
+        program bad = compiled(rich_source);
+        bool patched = false;
+        for (auto & fn : bad.functions) {
+            for (auto & up : fn.upvalues) {
+                if (up.from_parent_local) {
+                    up.index = 60000; // no frame in this fixture is that large
+                    patched = true;
+                    break;
+                }
+            }
+            if (patched) { break; }
+        }
+        check(patched, "the fixture has a closure that captures a local");
+        const auto image = write_image(bad);
+        check(!image.empty(), "and an image can be written for the mutated program");
+        const auto back = load_image(image);
+        check(!back.ok, "an upvalue capturing a register outside the enclosing frame is refused");
+    }
+
+    // A POOL COUNT THAT IS SMALLER THAN THE FILE AND FAR LARGER THAN THE FILE
+    // CAN JUSTIFY. The guard used to compare an ENTRY COUNT against BYTES
+    // REMAINING and then reserve count * sizeof(std::string); on a 25.9 MB
+    // babylon image that reserves up to 828 MB before reading anything.
+    //
+    // WHAT THIS CASE CAN AND CANNOT SHOW, stated because a test that looks
+    // like it covers a bug it does not is worse than no test: both the old
+    // guard and the new one end at `!ok` here, because a count that outruns
+    // the data fails either way once entries are read. What the new guard
+    // buys is BOUNDED ALLOCATION on the way to that refusal, and the
+    // difference is only visible at image sizes a unit test should not build.
+    // So this pins the verdict, and the allocation bound is defended by the
+    // arithmetic in read_pool rather than by this assertion.
+    {
+        constexpr std::size_t name_count_at = 4 + 4 + 8 + 4 + 8;
+        std::vector<std::byte> huge = bytes;
+        const std::uint32_t nearly_the_file = static_cast<std::uint32_t>(bytes.size() - 64);
+        for (std::size_t i = 0; i < 4; ++i) {
+            huge[name_count_at + i] = static_cast<std::byte>((nearly_the_file >> (8 * i)) & 0xFF);
+        }
+        const auto back = load_image(huge);
+        check(!back.ok, "a pool count the image cannot possibly hold is refused");
+    }
+
+    // AND EVERY SINGLE-BYTE CORRUPTION, AT EVERY OFFSET. This used to walk a
+    // stride of 7 to stay quick, and that made it blind in the one place it
+    // most needed to see: a 32-bit count's low byte is worth plus or minus 255,
+    // while its HIGH bytes are worth millions, and a stride reaches one and not
+    // the others. Two reserve-the-world bugs lived behind exactly that gap. The
+    // fixture image is a few kilobytes, so every offset costs nothing.
+    //
+    // The loader may accept - a flipped byte inside the retained source is
+    // legitimately harmless - but it must never crash, never allocate wildly,
+    // and never hand back a program whose tables disagree with its operands.
     {
         std::size_t accepted = 0, tried = 0;
-        for (std::size_t at = 0; at < bytes.size(); at += 7) {
+        for (std::size_t at = 0; at < bytes.size(); ++at) {
             std::vector<std::byte> corrupt = bytes;
             corrupt[at] ^= std::byte{0x5A};
             ++tried;
