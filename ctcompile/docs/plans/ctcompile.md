@@ -343,6 +343,72 @@ decisions is more honest than a document nobody will check:
 
 ---
 
+---
+
+## S0: where the time actually is, and what that means for this project
+
+Phase 10A opens with a measurement that decides the backend ordering. Half of it
+is done, and on the way it turned up the single most important fact about this
+project's premise — which is not about backends at all.
+
+### The interpreter is not where the time goes
+
+This repository's own profiling, in `ctbrowser/docs/performance.md`:
+
+| whole p5 page load | share |
+|---|---|
+| `ctjs::vp::lex` | 17.5% |
+| `compiler_impl::declare_local` | 15.1% |
+| `compiler_impl::collect_captured_names` | 7.6% |
+| **`context::run_loop`** — *the entire interpreter* | **1.4%** |
+
+| `phaser_invaders`, a running game | share |
+|---|---|
+| `context::run_loop` | ~22% |
+| `context::lookup_property` + `memcmp` | ~14% |
+| `ctjs::vp::lex` | ~10% |
+| `canvas_context::blend_span` | ~7% |
+
+**Roughly 40% of a page load is READING JavaScript and 1.4% is executing it.**
+That cuts both ways and it should shape the whole project:
+
+* It is a powerful argument FOR the compiler, and for the half of it nobody
+  argues about. Parsing and compiling is exactly what an image removes
+  completely — 264 ms for Babylon, 70 for Phaser, 53 for p5, every single start.
+* It is a hard CAP on the other half. Compiled code still calls
+  `lookup_property`; on a running game the interpreter's own dispatch is ~22%,
+  so even an impossible zero-cost dispatch buys ~22% of a frame, and ~1.4% of a
+  page load.
+
+So the throughput gate must not be `bench_script`, which is ~100% `run_loop` by
+construction: a 1.5× there is an Amdahl-bounded sub-12% on a real Phaser frame.
+**The value of this compiler is overwhelmingly in what it deletes from startup,
+not in what it speeds up at run time** — which is what the plan's own framing
+("runtime-ready structures", "startup representations") already said, and now
+there are numbers behind it.
+
+### The compile-time half, measured
+
+EmitC carries a build-time risk the LLVM backend does not, because every corpus
+is one bundle and Babylon is 31,905 functions in one program. Measured on
+EmitC-shaped C++ (`ctcompile/utils/s0-emit.py`), recorded in
+`ctcompile/docs/baseline/s0-compile-time.json`:
+
+* **~0.72 ms marginal cost per function**, stable from 4,000 to 16,000, so
+  Babylon extrapolates linearly to **~23 s at 8-way**. Affordable.
+* **Partition coarsely.** 4,000 functions cost 9.09 s in 32 translation units
+  and 2.88 s in 8 — every extra TU re-pays the header. Enough TUs to fill the
+  cores, and no more.
+* **`value.hpp` costs 1.175 s per TU, and 0.940 s of that is Boost**, reached
+  only because `bigint_object` holds a `cpp_int` **by value**. Moving that
+  member out of line would remove it from every consumer — *the engine's own
+  translation units included* — while keeping the leaf helpers inlinable, which
+  is the entire irreducible advantage EmitC has over a frozen C ABI.
+
+What this does **not** decide is the ordering: there is no LLVM arm, and both
+backends run the same optimiser over the same functions. The only term EmitC
+pays alone is the frontend, and `clang -ftime-trace` is what separates it.
+
 ## The ladder ahead
 
 | phase | what | where |
