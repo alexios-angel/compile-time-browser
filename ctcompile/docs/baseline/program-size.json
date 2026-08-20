@@ -1,0 +1,67 @@
+{
+  "what": "how big a compiled program is, per part - the input the image format is designed against",
+  "commit": "e220856",
+  "machine": "devbox, clang 24, -O2",
+  "corpora": [
+    {
+      "name": "p5",
+      "source_kb": 4467,
+      "protos": 4754,
+      "code_kb": 2192,
+      "constants_kb": 139,
+      "strings_kb": 216,
+      "names_kb": 333,
+      "other_kb": 78,
+      "image_kb": 2961,
+      "percent_of_source": 66,
+      "names_entries": 27986,
+      "names_unique": 4711,
+      "names_pooled_kb": 68,
+      "strings_entries": 8693,
+      "strings_unique": 4867,
+      "strings_pooled_kb": 176
+    },
+    {
+      "name": "phaser",
+      "source_kb": 8587,
+      "protos": 7725,
+      "code_kb": 2810,
+      "constants_kb": 182,
+      "strings_kb": 158,
+      "names_kb": 553,
+      "other_kb": 84,
+      "image_kb": 3789,
+      "percent_of_source": 44,
+      "names_entries": 47097,
+      "names_unique": 6565,
+      "names_pooled_kb": 96,
+      "strings_entries": 7299,
+      "strings_unique": 3835,
+      "strings_pooled_kb": 108
+    },
+    {
+      "name": "babylon",
+      "source_kb": 11314,
+      "protos": 31905,
+      "code_kb": 9980,
+      "constants_kb": 599,
+      "strings_kb": 2050,
+      "names_kb": 2686,
+      "other_kb": 395,
+      "image_kb": 15713,
+      "percent_of_source": 139,
+      "names_entries": 166396,
+      "names_unique": 24172,
+      "names_pooled_kb": 495,
+      "strings_entries": 28005,
+      "strings_unique": 12875,
+      "strings_pooled_kb": 1840
+    }
+  ],
+  "findings": [
+    "AN IMAGE IS NOT AUTOMATICALLY SMALLER THAN THE SOURCE IT REPLACES. p5 is 66% and phaser 44%, but BABYLON IS 139% - 15.7 MB of image for 11.3 MB of source, because 31,905 protos carry 9.98 MB of 8-byte instructions. Anyone assuming an image shrinks the application is wrong on the largest corpus.",
+    "AND program::source IS RETAINED ON TOP OF THAT, because f.toString() has to hand back text and p5's own error system reads its source. Keeping it makes babylon 27 MB - 2.4x the source. Whether the image keeps it, drops it, or makes it optional is the format's biggest size lever.",
+    "THE PER-PROTO NAME TABLES ARE 80-83% DUPLICATE and pooling them across the image is a large, cheap win: babylon's 166,396 name entries are 24,172 unique, 2686 KB -> 495 KB. Phaser 553 -> 96 KB, p5 333 -> 68 KB. This is a v1 decision rather than a later optimisation, because it changes the format.",
+    "STRING LITERALS ARE NOT DUPLICATE in the same way - babylon 2050 KB -> 1840 KB - so pooling them buys little and the effort belongs on names."
+  ]
+}
