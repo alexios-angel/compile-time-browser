@@ -1,7 +1,7 @@
 {
   "what": "startup cost per stage, before any of it is compiled ahead of time",
-  "measured_utc": "2026-08-20T21:01:06Z",
-  "commit": "c717017",
+  "measured_utc": "2026-08-20T21:23:47Z",
+  "commit": "8c8a685",
   "machine": {
     "cpu": "AMD EPYC 9V45 96-Core Processor",
     "cores": 8,
@@ -21,14 +21,14 @@
       "stages": [
         {
           "stage": "css_parse",
-          "ms": 2.761,
+          "ms": 2.449,
           "input_bytes": 297886,
           "produced": 2550,
           "completed": true
         },
         {
           "stage": "css_parse_and_file",
-          "ms": 3.165,
+          "ms": 2.81,
           "input_bytes": 297886,
           "produced": 6076,
           "completed": true
@@ -40,7 +40,7 @@
       "stages": [
         {
           "stage": "html_parse_and_dom_build",
-          "ms": 0.081,
+          "ms": 0.072,
           "input_bytes": 10721,
           "produced": 459,
           "completed": true
@@ -52,21 +52,21 @@
       "stages": [
         {
           "stage": "js_parse_and_compile",
-          "ms": 56.937,
+          "ms": 50.49,
           "input_bytes": 4574626,
           "produced": 4754,
           "completed": true
         },
         {
           "stage": "js_image_load",
-          "ms": 14.285,
-          "input_bytes": 7333827,
+          "ms": 5.329,
+          "input_bytes": 7333835,
           "produced": 4754,
           "completed": true
         },
         {
           "stage": "js_run_top_level",
-          "ms": 0.042,
+          "ms": 0.038,
           "input_bytes": 4574626,
           "produced": 4754,
           "completed": false,
@@ -79,21 +79,21 @@
       "stages": [
         {
           "stage": "js_parse_and_compile",
-          "ms": 79.196,
+          "ms": 68.598,
           "input_bytes": 8793523,
           "produced": 7725,
           "completed": true
         },
         {
           "stage": "js_image_load",
-          "ms": 19.482,
-          "input_bytes": 12301660,
+          "ms": 6.718,
+          "input_bytes": 12301668,
           "produced": 7725,
           "completed": true
         },
         {
           "stage": "js_run_top_level",
-          "ms": 0.281,
+          "ms": 0.221,
           "input_bytes": 8793523,
           "produced": 7725,
           "completed": false,
@@ -106,21 +106,21 @@
       "stages": [
         {
           "stage": "js_parse_and_compile",
-          "ms": 300.372,
+          "ms": 254.246,
           "input_bytes": 11585541,
           "produced": 31905,
           "completed": true
         },
         {
           "stage": "js_image_load",
-          "ms": 77.499,
-          "input_bytes": 25893842,
+          "ms": 26.593,
+          "input_bytes": 25893850,
           "produced": 31905,
           "completed": true
         },
         {
           "stage": "js_run_top_level",
-          "ms": 0.238,
+          "ms": 0.289,
           "input_bytes": 11585541,
           "produced": 31905,
           "completed": false,

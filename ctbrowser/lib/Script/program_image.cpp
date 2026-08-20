@@ -76,18 +76,23 @@ struct source_bytes {
         if (!need(1)) { return 0; }
         return static_cast<std::uint8_t>(bytes[at++]);
     }
-    std::uint16_t u16() {
-        const std::uint16_t lo = u8();
-        return static_cast<std::uint16_t>(lo | (static_cast<std::uint16_t>(u8()) << 8));
+    // ONE BOUNDS CHECK AND ONE LOOP PER VALUE, not one per byte. Reading a
+    // 7 MB image a byte at a time through the check cost 13% of the load,
+    // measured with callgrind - a bigger share than validating every operand.
+    // Little-endian by construction rather than by cast, so the format does
+    // not acquire an opinion about the host's byte order.
+    template <typename T> T little() {
+        if (!need(sizeof(T))) { return 0; }
+        T v = 0;
+        for (std::size_t i = 0; i < sizeof(T); ++i) {
+            v |= static_cast<T>(static_cast<std::uint8_t>(bytes[at + i])) << (8 * i);
+        }
+        at += sizeof(T);
+        return v;
     }
-    std::uint32_t u32() {
-        const std::uint32_t lo = u16();
-        return lo | (static_cast<std::uint32_t>(u16()) << 16);
-    }
-    std::uint64_t u64() {
-        const std::uint64_t lo = u32();
-        return lo | (static_cast<std::uint64_t>(u32()) << 32);
-    }
+    std::uint16_t u16() { return little<std::uint16_t>(); }
+    std::uint32_t u32() { return little<std::uint32_t>(); }
+    std::uint64_t u64() { return little<std::uint64_t>(); }
     std::string text() {
         const std::uint32_t n = u32();
         // A length prefix is the classic way to ask a reader to allocate four
@@ -408,7 +413,12 @@ load_result load_image(std::span<const std::byte> bytes,
     result.functions.resize(function_count);
     for (std::uint32_t fi = 0; fi < function_count && !in.bad; ++fi) {
         function_proto & fn = result.functions[fi];
-        const std::string where = "function " + std::to_string(fi) + ": ";
+        // LAZY, because it is almost never used. Building "function N: " for
+        // every function - and, in the operand pass below, a message for every
+        // INSTRUCTION - cost 22% of the load in std::string mutation alone,
+        // measured. An error message that is constructed whether or not there
+        // is an error is a message that costs more than the check it explains.
+        const auto where = [fi] { return "function " + std::to_string(fi) + ": "; };
         fn.module = in.text();
         fn.name = in.text();
         fn.param_count = in.u16();
@@ -416,7 +426,7 @@ load_result load_image(std::span<const std::byte> bytes,
         const std::uint8_t arrow = in.u8();
         const std::uint8_t generator = in.u8();
         if (arrow > 1 || generator > 1) {
-            in.fail(where + "a boolean that is neither 0 nor 1");
+            in.fail(where() + "a boolean that is neither 0 nor 1");
             break;
         }
         fn.is_arrow = arrow != 0;
@@ -441,7 +451,7 @@ load_result load_image(std::span<const std::byte> bytes,
         // first, but an image can, and the result is a heap write past the
         // register vector.
         if (fn.param_count > fn.frame_size) {
-            in.fail(where + "param_count " + std::to_string(fn.param_count) +
+            in.fail(where() + "param_count " + std::to_string(fn.param_count) +
                     " exceeds "
                     "frame_size " +
                     std::to_string(fn.frame_size) +
@@ -451,18 +461,18 @@ load_result load_image(std::span<const std::byte> bytes,
 
         const std::uint32_t code_count = in.u32();
         if (!in.need(static_cast<std::size_t>(code_count) * 7u)) {
-            in.fail(where + "the code array claims more instructions than the image holds");
+            in.fail(where() + "the code array claims more instructions than the image holds");
             break;
         }
         if (code_count == 0) {
-            in.fail(where + "no instructions - a frame entered here would run off the end");
+            in.fail(where() + "no instructions - a frame entered here would run off the end");
             break;
         }
         fn.code.reserve(code_count);
         for (std::uint32_t i = 0; i < code_count && !in.bad; ++i) {
             const std::uint8_t raw = in.u8();
             if (raw >= opcode_count) {
-                in.fail(where + "opcode byte " + std::to_string(raw) + " is not an instruction");
+                in.fail(where() + "opcode byte " + std::to_string(raw) + " is not an instruction");
                 break;
             }
             instruction one;
@@ -476,7 +486,7 @@ load_result load_image(std::span<const std::byte> bytes,
 
         const std::uint32_t constant_count = in.u32();
         if (!in.need(static_cast<std::size_t>(constant_count) * 8u)) {
-            in.fail(where + "the constant pool claims more entries than the image holds");
+            in.fail(where() + "the constant pool claims more entries than the image holds");
             break;
         }
         fn.constants.reserve(constant_count);
@@ -491,7 +501,7 @@ load_result load_image(std::span<const std::byte> bytes,
             // out of a file. is_heap is a pure bit test and is the only one
             // that is safe to run on bytes nobody has validated yet.
             if (v.is_heap()) {
-                in.fail(where + "constant " + std::to_string(i) +
+                in.fail(where() + "constant " + std::to_string(i) +
                         " carries a heap pointer; the pool holds immediates only");
                 break;
             }
@@ -503,15 +513,16 @@ load_result load_image(std::span<const std::byte> bytes,
                                       const std::vector<std::string> & pool, const char * what) {
             const std::uint32_t n = in.u32();
             if (!in.need(static_cast<std::size_t>(n) * 4u)) {
-                in.fail(where + "the " + what + " table claims more entries than the image holds");
+                in.fail(where() + "the " + what +
+                        " table claims more entries than the image holds");
                 return;
             }
             into.reserve(n);
             for (std::uint32_t i = 0; i < n && !in.bad; ++i) {
                 const std::uint32_t id = in.u32();
                 if (id >= pool.size()) {
-                    in.fail(where + what + " entry " + std::to_string(i) + " points outside the " +
-                            what + " pool");
+                    in.fail(where() + what + " entry " + std::to_string(i) +
+                            " points outside the " + what + " pool");
                     return;
                 }
                 into.push_back(pool[id]);
@@ -524,14 +535,14 @@ load_result load_image(std::span<const std::byte> bytes,
 
         const std::uint32_t upvalue_count = in.u32();
         if (!in.need(static_cast<std::size_t>(upvalue_count) * 3u)) {
-            in.fail(where + "the upvalue table claims more entries than the image holds");
+            in.fail(where() + "the upvalue table claims more entries than the image holds");
             break;
         }
         fn.upvalues.reserve(upvalue_count);
         for (std::uint32_t i = 0; i < upvalue_count && !in.bad; ++i) {
             const std::uint8_t from_local = in.u8();
             if (from_local > 1) {
-                in.fail(where + "upvalue " + std::to_string(i) +
+                in.fail(where() + "upvalue " + std::to_string(i) +
                         " has a boolean that is "
                         "neither 0 nor 1");
                 break;
@@ -545,14 +556,14 @@ load_result load_image(std::span<const std::byte> bytes,
 
         const std::uint32_t nested_count = in.u32();
         if (!in.need(static_cast<std::size_t>(nested_count) * 4u)) {
-            in.fail(where + "the nested table claims more entries than the image holds");
+            in.fail(where() + "the nested table claims more entries than the image holds");
             break;
         }
         fn.nested.reserve(nested_count);
         for (std::uint32_t i = 0; i < nested_count && !in.bad; ++i) {
             const std::uint32_t id = in.u32();
             if (id >= function_count) {
-                in.fail(where + "nested entry " + std::to_string(i) + " is not a function");
+                in.fail(where() + "nested entry " + std::to_string(i) + " is not a function");
                 break;
             }
             fn.nested.push_back(id);
@@ -568,38 +579,42 @@ load_result load_image(std::span<const std::byte> bytes,
     // gives it - the VM reads these with unchecked operator[].
     for (std::uint32_t fi = 0; fi < function_count; ++fi) {
         const function_proto & fn = result.functions[fi];
-        const std::string where = "function " + std::to_string(fi) + ", instruction ";
         for (std::size_t ip = 0; ip < fn.code.size(); ++ip) {
             const instruction & one = fn.code[ip];
             const opcode_shape & shape = shapes[static_cast<std::size_t>(one.code)];
-            const std::string at = where + std::to_string(ip) + ": ";
+            // Built on failure only - see the note above. p5 has half a million
+            // instructions and this ran for every one of them.
+            const auto at = [fi, ip] {
+                return "function " + std::to_string(fi) + ", instruction " + std::to_string(ip) +
+                       ": ";
+            };
 
             const auto check_slot = [&](slot_kind kind, std::uint16_t operand, const char * which) {
                 if (in.bad) { return; }
                 switch (kind) {
                 case slot_kind::reg:
                     if (operand >= fn.frame_size) {
-                        in.fail(at + which + " names register " + std::to_string(operand) +
+                        in.fail(at() + which + " names register " + std::to_string(operand) +
                                 " in a frame of " + std::to_string(fn.frame_size));
                     }
                     return;
                 case slot_kind::kidx:
                     if (operand >= fn.constants.size()) {
-                        in.fail(at + which + " points outside the constant pool");
+                        in.fail(at() + which + " points outside the constant pool");
                     }
                     return;
                 case slot_kind::sidx:
                     if (operand >= fn.strings.size()) {
-                        in.fail(at + which + " points outside the string table");
+                        in.fail(at() + which + " points outside the string table");
                     }
                     return;
                 case slot_kind::nidx:
                     if (operand >= fn.names.size()) {
-                        in.fail(at + which + " points outside the name table");
+                        in.fail(at() + which + " points outside the name table");
                     }
                     return;
                 case slot_kind::fidx:
-                    if (operand >= function_count) { in.fail(at + which + " is not a function"); }
+                    if (operand >= function_count) { in.fail(at() + which + " is not a function"); }
                     return;
                 default: return; // count, jump, bx_hi and unused are checked below or not at all
                 }
@@ -612,17 +627,17 @@ load_result load_image(std::span<const std::byte> bytes,
                 switch (shape.b) {
                 case slot_kind::kidx:
                     if (wide >= fn.constants.size()) {
-                        in.fail(at + "constant index out of range");
+                        in.fail(at() + "constant index out of range");
                     }
                     break;
                 case slot_kind::sidx:
-                    if (wide >= fn.strings.size()) { in.fail(at + "string index out of range"); }
+                    if (wide >= fn.strings.size()) { in.fail(at() + "string index out of range"); }
                     break;
                 case slot_kind::nidx:
-                    if (wide >= fn.names.size()) { in.fail(at + "name index out of range"); }
+                    if (wide >= fn.names.size()) { in.fail(at() + "name index out of range"); }
                     break;
                 case slot_kind::fidx:
-                    if (wide >= function_count) { in.fail(at + "function index out of range"); }
+                    if (wide >= function_count) { in.fail(at() + "function index out of range"); }
                     break;
                 case slot_kind::jump: break; // handled below
                 default: break;
@@ -639,7 +654,7 @@ load_result load_image(std::span<const std::byte> bytes,
                 // is what the compiler's patch arithmetic compensates for.
                 const std::int64_t target = static_cast<std::int64_t>(ip) + 1 + one.sbx();
                 if (target < 0 || target > static_cast<std::int64_t>(fn.code.size())) {
-                    in.fail(at + "jumps outside the function");
+                    in.fail(at() + "jumps outside the function");
                 }
             }
             if (is_call_shape(one.code)) {
@@ -647,7 +662,7 @@ load_result load_image(std::span<const std::byte> bytes,
                 // and the arguments are gathered straight out of it.
                 const std::size_t window = static_cast<std::size_t>(one.a) + 1u + one.b;
                 if (window > fn.frame_size) {
-                    in.fail(at + "an argument window of " + std::to_string(window) +
+                    in.fail(at() + "an argument window of " + std::to_string(window) +
                             " does not fit a frame of " + std::to_string(fn.frame_size));
                 }
             }
