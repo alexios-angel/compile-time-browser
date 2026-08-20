@@ -261,15 +261,23 @@ turned down rather than overlooked:
   own `__charconv/to_chars_floating_point.h`, all nine of them
   `_LIBCPP_EXPORTED_FROM_ABI`. Boost.Charconv is a COMPILED library, so taking
   it would have meant a sixth `tools/build-*-mingw.sh`, another
-  `find_package` component, a `CTBROWSER_CONFIG_DEPS` entry and raising the
-  floor 1.80 -> 1.85, to buy nothing. Its case would return only on a toolchain
-  whose `<charconv>` is incomplete.
+  `find_package` component and a `CTBROWSER_CONFIG_DEPS` entry, to buy nothing.
+  Its case would return only on a toolchain whose `<charconv>` is incomplete.
 
-**So the version floor stays at 1.80.** All three would have needed it raised
-(1.84, 1.89 and 1.85), and that is nearly free here - `tools/mingw/build-boost-mingw.sh` reads the
-tag out of the host's headers and brew ships 1.90 on both machines - but raising
-a floor to admit a library the measurement says not to use is a cost with no
-purchase. It is a one-line change whenever something earns it.
+**The floor is 1.88 (2026-08-20), and it was 1.80 until then.** The reasoning
+above is unchanged and still refuses all three libraries - none of them is worth
+a component, and two of them are worth nothing at any floor. What moved it was
+Boost.Hash2, which arrived in 1.88 and which `ctbrowser/lib/Script/program_image.cpp`
+now uses for the script image's source hash. **So the Charconv line above no
+longer costs a floor raise**: 1.85 is beneath 1.88, and it still loses on the
+ground that actually decided it, which is that `<charconv>` already does the job
+on both toolchains.
+
+Raising a floor to admit a library the measurement says not to use is a cost
+with no purchase; raising it for one that deletes 3.9 ms from a page load is a
+one-line change, and this was it. It is nearly free here in any case -
+`tools/mingw/build-boost-mingw.sh` reads the tag out of the host's headers and
+brew ships 1.90 on both machines.
 
 ## BUILD SPEED (2026-07-25)
 

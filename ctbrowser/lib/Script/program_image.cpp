@@ -1,5 +1,7 @@
 #include <ctbrowser/script/program_image.hpp>
 
+#include <boost/hash2/xxhash.hpp>
+
 #include <cstring>
 #include <unordered_map>
 
@@ -21,6 +23,23 @@ namespace {
 
 constexpr std::uint32_t magic = 0x43544243; // 'CTBC'
 constexpr std::uint32_t format_version = 1;
+
+// FNV-1a's constants, used by `image_fingerprint()` and by nothing else in
+// this file - `image_source_hash` was the other consumer until it became
+// XXH64, which is why they are named here rather than written inline.
+//
+// The basis had a digit missing - 1469598103934665603 rather than
+// 14695981039346656037. It hashed perfectly well, any odd starting value does,
+// but it named a constant the code did not contain. Correcting it changes what
+// `image_fingerprint()` returns, which is the refusal an image written before
+// today was going to get regardless.
+constexpr std::uint64_t fnv_basis = 14695981039346656037ull;
+constexpr std::uint64_t fnv_prime = 1099511628211ull;
+
+// WHICH ALGORITHM `image_source_hash` IS, mixed into the fingerprint. See
+// image_fingerprint() for why it lives there and not in `format_version`.
+// 1 was byte-at-a-time FNV-1a; 2 is XXH64.
+constexpr std::uint32_t source_hash_algorithm = 2;
 
 thread_local std::string last_write_error;
 
@@ -115,28 +134,83 @@ std::uint64_t image_fingerprint() noexcept {
     // `enum class op`, and an image written before that describes different
     // instructions with the same bytes - which would run at full speed and be
     // wrong, the worst failure available here.
-    std::uint64_t h = 1469598103934665603ull; // FNV-1a offset basis
+    std::uint64_t h = fnv_basis;
     const auto mix = [&h](std::uint64_t v) {
         h ^= v;
-        h *= 1099511628211ull;
+        h *= fnv_prime;
     };
     mix(opcode_count);
     mix(sizeof(instruction));
     mix(sizeof(value));
     mix(sizeof(upvalue_desc));
     mix(format_version);
+    // THE SOURCE HASH ALGORITHM, because an image records what its source
+    // hashed to and that number means nothing across a change in how it is
+    // computed. It belongs here rather than in `format_version` for a precise
+    // reason: the byte layout did not change, the MEANING of one field did -
+    // and the version check runs first, so bumping the version would refuse an
+    // old image with a message about a format that is in fact identical. With
+    // the tag here the refusal says what is true.
+    //
+    // Without it the old image is still refused, by the source-hash comparison
+    // one field later, and told "the image was built from different source"
+    // about source that never changed. This is a message, not a safety net.
+    //
+    // NOT COVERED BY A TEST, and it cannot be from inside one build: producing
+    // an image carrying the old hash needs the old build. ProgramImage.cpp
+    // pins the precondition instead - that the algorithm really did change -
+    // by checking a corpus against the byte-at-a-time hash this replaced.
+    mix(source_hash_algorithm);
     return h;
 }
 
 std::uint64_t image_source_hash(std::string_view source) noexcept {
-    // FNV-1a over the bytes. Not a security property - see the header's note on
-    // trust - but enough that a changed script is a different number.
-    std::uint64_t h = 1469598103934665603ull;
-    for (const char c : source) {
-        h ^= static_cast<std::uint8_t>(c);
-        h *= 1099511628211ull;
-    }
-    return h;
+    // XXH64, FROM Boost.Hash2, because this runs on the page-load path and a
+    // byte at a time was 4.16 ms of it for p5 alone - measured, and bigger than
+    // anything left inside the loader it guards. 4.16 ms becomes 0.181 for p5,
+    // 8.17 becomes 0.346 for phaser, 10.31 becomes 0.454 for babylon.
+    //
+    // WHAT WAS WRITTEN FIRST WAS FNV-1a WIDENED TO 64-BIT WORDS - four lanes of
+    // `h = (h ^ w) * prime` - and it was wrong in a way no round-trip test can
+    // see. A multiply only ever carries a difference UPWARD, so a change in a
+    // word's most significant bits leaves the accumulator differing in its top
+    // three bits and nowhere else, and it is the SAME three bits wherever in the
+    // lane the change happened. Two different edits reach the same accumulator.
+    // Over 262,145 single-byte edits of real p5.js, 50,678 of them - ONE IN
+    // FIVE - hashed identically to another edit. FNV-1a a byte at a time does
+    // not have that problem, because a byte enters at the bottom where the
+    // multiply can spread it; widening it to words is what broke it.
+    //
+    // Rotating inside the round removes the collisions and replaces them with a
+    // magic number: swept over all 63 rotate amounts, 51 collide with FNV's
+    // prime and 49 with a dense one, and the amounts that work do so by dodging
+    // a property of ASCII - bit 7 of a byte is never set. A constant that is
+    // good because of the corpus is not a fix, it is a coincidence with a test
+    // suite in front of it.
+    //
+    // SO THE ALGORITHM IS SOMEBODY ELSE'S AND SO IS THE CODE. XXH64 leaves no
+    // constant to choose and was tested against SMHasher rather than against
+    // p5.js. It was first written out here by hand, forty lines of it, and that
+    // is the version this comment replaced: a hand transcription of a published
+    // algorithm is exactly the code most likely to be quietly wrong, and today
+    // is the day that argument stopped being hypothetical. Boost.Hash2 is
+    // header-only, `ctbrowser-script` ALREADY links `Boost::headers`, the
+    // header costs 0.02 s in this translation unit, and it measured 0.181 ms
+    // against the hand-written 0.183. Three implementations agree on all three
+    // corpora - this one, the hand-written one, and Yann Collet's own `xxhsum`.
+    //
+    // The endianness guarantee comes with it: Boost.Hash2 is endian-independent
+    // by contract, so the number is the same on a host of either byte order,
+    // which is what the rest of this file spells out by hand for its integers.
+    //
+    // Still not a security property; see the header's note on trust. XXH64 is
+    // unkeyed and this is not the defence an image from elsewhere would need.
+    boost::hash2::xxhash_64 hash;
+    // A default-constructed string_view has a NULL data(), and `update` may not
+    // be handed one. Skipping it is also the right answer: the hash of nothing
+    // is what an untouched xxhash_64 already holds.
+    if (!source.empty()) { hash.update(source.data(), source.size()); }
+    return hash.result();
 }
 
 std::string_view write_error() noexcept {

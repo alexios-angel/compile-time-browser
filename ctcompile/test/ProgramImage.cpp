@@ -10,13 +10,17 @@
 #include <ctbrowser/script/compile.hpp>
 #include <ctbrowser/script/program_image.hpp>
 
+#include <bit>
+#include <cstdint>
 #include <cstdio>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
 
 using ctbrowser::script::compiler;
 using ctbrowser::script::image_option;
+using ctbrowser::script::image_source_hash;
 using ctbrowser::script::load_image;
 using ctbrowser::script::program;
 using ctbrowser::script::write_image;
@@ -100,6 +104,136 @@ void must_refuse(std::string_view what, std::vector<std::byte> bytes,
     const auto back = load_image(bytes);
     if (back.ok) {
         std::printf("FAIL the loader accepted: %.*s\n", static_cast<int>(what.size()), what.data());
+        ++failures;
+    }
+}
+
+// --- THE HASHES THE SOURCE HASH MUST NOT BE ---------------------------
+//
+// `image_source_hash` is what makes the cache safe - an image built from other
+// source is refused rather than run - and it is XXH64 over 64-bit words rather
+// than a byte at a time because it also sits on the page-load path. Widening a
+// hash gives it failure modes a byte-at-a-time one cannot have, and these are
+// those failure modes, written out so the case that catches each can be
+// WATCHED failing. A negative case nobody has seen go red is not evidence.
+//
+// The first of them is not hypothetical. The four-lane FNV below is what this
+// file's hash was for most of a day, and it collides on one in five single-byte
+// edits to real JavaScript.
+
+constexpr std::uint64_t fnv_prime = 1099511628211ull;
+constexpr std::uint64_t fnv_basis = 14695981039346656037ull;
+
+[[nodiscard]] std::uint64_t word_le(const unsigned char * at) {
+    std::uint64_t w = 0;
+    for (int i = 0; i < 8; ++i) { w |= static_cast<std::uint64_t>(at[i]) << (8 * i); }
+    return w;
+}
+
+[[nodiscard]] std::uint64_t avalanche(std::uint64_t x) {
+    x ^= x >> 33;
+    x *= 0xff51afd7ed558ccdull;
+    x ^= x >> 33;
+    x *= 0xc4ceb9fe1a85ec53ull;
+    x ^= x >> 33;
+    return x;
+}
+
+// WHAT THE HASH WAS UNTIL TODAY: one multiply per byte. The fingerprint now
+// carries a tag naming which algorithm an image was written with, and that tag
+// is only worth its line if the two answers actually differ.
+[[nodiscard]] std::uint64_t legacy_byte_fnv(std::string_view s) {
+    std::uint64_t h = 1469598103934665603ull; // the basis as it was written
+    for (const char c : s) {
+        h ^= static_cast<std::uint8_t>(c);
+        h *= fnv_prime;
+    }
+    return h;
+}
+
+// FNV-1a WIDENED TO 64-BIT WORDS - the obvious way to make the hash above four
+// times faster, and the way that was taken first. It is fast, it round-trips,
+// every test in this file passed with it, and it is BROKEN: a multiply carries a
+// difference only upward, so an edit to a word's top bits leaves the lane
+// differing in its top three bits and nowhere else - the same three bits
+// wherever in the lane the edit landed. Distinct edits reach identical
+// accumulators. Kept here because a defect with a witness is worth more than a
+// paragraph saying it was avoided.
+[[nodiscard]] std::uint64_t word_fnv_four_lane(std::string_view s) {
+    std::uint64_t h0 = fnv_basis;
+    std::uint64_t h1 = fnv_basis ^ 0x9E3779B97F4A7C15ull;
+    std::uint64_t h2 = fnv_basis ^ 0xBF58476D1CE4E5B9ull;
+    std::uint64_t h3 = fnv_basis ^ 0x94D049BB133111EBull;
+    const auto * at = reinterpret_cast<const unsigned char *>(s.data());
+    std::size_t left = s.size();
+    while (left >= 32) {
+        h0 = (h0 ^ word_le(at)) * fnv_prime;
+        h1 = (h1 ^ word_le(at + 8)) * fnv_prime;
+        h2 = (h2 ^ word_le(at + 16)) * fnv_prime;
+        h3 = (h3 ^ word_le(at + 24)) * fnv_prime;
+        at += 32;
+        left -= 32;
+    }
+    for (std::size_t i = 0; i < left; ++i) { h0 = (h0 ^ at[i]) * fnv_prime; }
+    return avalanche(avalanche(h0) ^ std::rotl(avalanche(h1), 16) ^ std::rotl(avalanche(h2), 32) ^
+                     std::rotl(avalanche(h3), 48));
+}
+
+// THE SAME AGAIN WITH THE LANES INTERCHANGEABLE: one basis for all four and a
+// symmetric fold, so the hash cannot tell which lane a block went to. Moving
+// eight bytes from one lane to another is invisible to it.
+[[nodiscard]] std::uint64_t interchangeable_lanes(std::string_view s) {
+    std::uint64_t h[4] = {fnv_basis, fnv_basis, fnv_basis, fnv_basis};
+    const auto * at = reinterpret_cast<const unsigned char *>(s.data());
+    std::size_t left = s.size();
+    while (left >= 32) {
+        for (int i = 0; i < 4; ++i) { h[i] = (h[i] ^ word_le(at + 8 * i)) * fnv_prime; }
+        at += 32;
+        left -= 32;
+    }
+    unsigned char pad[32] = {};
+    for (std::size_t i = 0; i < left; ++i) { pad[i] = at[i]; }
+    for (std::size_t w = 0; w * 8 < left; ++w) { h[0] = (h[0] ^ word_le(pad + 8 * w)) * fnv_prime; }
+    return avalanche(h[0] ^ h[1] ^ h[2] ^ h[3]);
+}
+
+// AND ONE WITH A LANE READING ANOTHER'S WORD - the copy-paste four nearly
+// identical lines invite, in which bytes 16..23 of every block are never read.
+// It round-trips, it is exactly as fast, and it hashes a quarter of the source
+// to nothing.
+[[nodiscard]] std::uint64_t dropped_lane(std::string_view s) {
+    std::uint64_t h0 = fnv_basis;
+    std::uint64_t h1 = fnv_basis ^ 0x9E3779B97F4A7C15ull;
+    std::uint64_t h2 = fnv_basis ^ 0xBF58476D1CE4E5B9ull;
+    std::uint64_t h3 = fnv_basis ^ 0x94D049BB133111EBull;
+    const auto * at = reinterpret_cast<const unsigned char *>(s.data());
+    std::size_t left = s.size();
+    while (left >= 32) {
+        h0 = (h0 ^ word_le(at)) * fnv_prime;
+        h1 = (h1 ^ word_le(at + 8)) * fnv_prime;
+        h2 = (h2 ^ word_le(at + 8)) * fnv_prime; // the defect
+        h3 = (h3 ^ word_le(at + 24)) * fnv_prime;
+        at += 32;
+        left -= 32;
+    }
+    for (std::size_t i = 0; i < left; ++i) { h0 = (h0 ^ at[i]) * fnv_prime; }
+    return avalanche(avalanche(h0) ^ std::rotl(avalanche(h1), 16) ^ std::rotl(avalanche(h2), 32) ^
+                     std::rotl(avalanche(h3), 48));
+}
+
+// A case is evidence only if the blinded hash it is aimed at MISSES it. This
+// asserts both halves and names which half went wrong.
+void hash_case(std::string_view what, std::string_view a, std::string_view b,
+               std::uint64_t (*blinded)(std::string_view), std::string_view blinded_name) {
+    if (image_source_hash(a) == image_source_hash(b)) {
+        std::printf("FAIL %.*s: the source hash COLLIDES\n", static_cast<int>(what.size()),
+                    what.data());
+        ++failures;
+    }
+    if (blinded(a) != blinded(b)) {
+        std::printf("FAIL %.*s: %.*s does not collide either, so this case proves nothing\n",
+                    static_cast<int>(what.size()), what.data(),
+                    static_cast<int>(blinded_name.size()), blinded_name.data());
         ++failures;
     }
 }
@@ -231,6 +365,136 @@ int main() {
             if (load_image(corrupt).ok) { ++accepted; }
         }
         std::printf("  single-byte corruption: %zu of %zu offsets still loaded\n", accepted, tried);
+    }
+
+    // --- THE SOURCE HASH -------------------------------------------------
+    // The field that decides whether a cached image is this page's. It is now
+    // XXH64 over 64-bit words rather than FNV-1a a byte at a time, because it
+    // was 4.16 ms of a p5 page load on its own. Speed is why it changed; these
+    // are what it still has to be.
+
+    // THE PRECONDITION FOR THE FINGERPRINT TAG. `image_fingerprint()` mixes in
+    // `source_hash_algorithm` so an image written by the old build is refused
+    // as a different ENGINE rather than as different SOURCE. That tag is worth
+    // its line only if the two algorithms really disagree, and this is the one
+    // thing about it that a single build can check.
+    check(image_source_hash(rich_source) != legacy_byte_fnv(rich_source),
+          "the source hash is no longer the byte-at-a-time one it replaced");
+
+    // BLOCKS THAT SWAP LANES. Hashing 32 bytes at a time means bytes 0..7 and
+    // 8..15 go through different accumulators, and accumulators that start
+    // alike and are folded together symmetrically cannot tell one arrangement
+    // from the other - so an edit that moves one line past another produces the
+    // same image hash.
+    hash_case("two eight-byte blocks exchanged between lanes", "AAAAAAAABBBBBBBBCCCCCCCCDDDDDDDD",
+              "BBBBBBBBAAAAAAAACCCCCCCCDDDDDDDD", interchangeable_lanes,
+              "a hash whose lanes are interchangeable");
+
+    // A LAST PARTIAL WORD PADDED WITH ZEROS cannot see a trailing NUL. XXH64
+    // mixes the length in before it reads the tail, which is what closes this.
+    hash_case("a trailing NUL byte", std::string_view{"let x = 1;\0", 10},
+              std::string_view{"let x = 1;\0", 11}, interchangeable_lanes,
+              "a hash whose last word is zero-padded");
+
+    // A LANE THAT READS ANOTHER LANE'S WORD, so a quarter of every source is
+    // not hashed at all. The image would round-trip, load and run; it would
+    // simply stop noticing a class of edit.
+    hash_case("a change in the third eight bytes of a block", "0123456789abcdefghijklmnopqrstuv",
+              "0123456789abcdefghXjklmnopqrstuv", dropped_lane,
+              "a hash with one lane reading another's word");
+
+    // EVERY BYTE OF THE INPUT MUST MATTER, at every offset, across several
+    // blocks and into the tail - and THIS IS THE CASE THAT CAUGHT THE REAL ONE.
+    // The four-lane FNV that stood here for most of a day passes every other
+    // assertion in this file and fails this one on nine of two hundred edits;
+    // on 64 KB of real p5.js it collides on 50,678 of 262,145. A round trip
+    // cannot see it, because the hash is not what is round-tripped.
+    {
+        std::string base;
+        for (int i = 0; i < 200; ++i) { base += static_cast<char>('a' + (i % 26)); }
+        std::set<std::uint64_t> real_seen{image_source_hash(base)};
+        std::set<std::uint64_t> word_fnv_seen{word_fnv_four_lane(base)};
+        std::set<std::uint64_t> dropped_seen{dropped_lane(base)};
+        for (std::size_t at = 0; at < base.size(); ++at) {
+            std::string flipped = base;
+            flipped[at] = static_cast<char>(flipped[at] ^ 0x20);
+            real_seen.insert(image_source_hash(flipped));
+            word_fnv_seen.insert(word_fnv_four_lane(flipped));
+            dropped_seen.insert(dropped_lane(flipped));
+        }
+        const std::size_t all = base.size() + 1;
+        check(real_seen.size() == all,
+              "every one-byte change to a 200-byte source changes the hash");
+        check(word_fnv_seen.size() < all,
+              "and four-lane FNV does NOT, which is why this case exists");
+        check(dropped_seen.size() < all,
+              "nor does a hash with a lane missing, so the case sees that too");
+        std::printf("  one-byte edits distinguished: xxh64 %zu, four-lane fnv %zu, "
+                    "dropped lane %zu, of %zu\n",
+                    real_seen.size(), word_fnv_seen.size(), dropped_seen.size(), all);
+    }
+
+    // EVERY LENGTH IS ITS OWN, across the 32-byte boundary and both sides of
+    // it, and through each of XXH64's three tail steps - eight bytes, four, one.
+    {
+        std::set<std::uint64_t> seen;
+        for (std::size_t n = 0; n <= 96; ++n) {
+            seen.insert(image_source_hash(std::string(n, 'a')));
+        }
+        check(seen.size() == 97, "97 lengths of the same byte hash 97 different ways");
+    }
+
+    // WHERE THE BYTES SIT IN MEMORY IS NOT PART OF THE ANSWER. True today for
+    // free; here for the day somebody reaches for an aligned load.
+    {
+        const std::string content = "function f(a, b) { return a + b; } // and a tail";
+        bool same = true;
+        for (std::size_t off = 0; off < 8; ++off) {
+            std::string buffer(off, '.');
+            buffer += content;
+            same = same && image_source_hash(std::string_view{buffer}.substr(off)) ==
+                               image_source_hash(content);
+        }
+        check(same, "the same bytes at eight different alignments hash alike");
+    }
+
+    // KNOWN ANSWERS, AND NOT OURS. These came out of `xxhsum -H64`, Yann
+    // Collet's own tool, and the first two are the values XXH64's specification
+    // publishes; nothing in this repository computed them. So they check three
+    // things at once that a self-generated table checks none of: that the hash
+    // is really XXH64 at seed zero, that a host of the other byte order would
+    // fail here rather than quietly disagree, and that the algorithm cannot
+    // change without somebody also changing `source_hash_algorithm` in the
+    // fingerprint. Regenerate with `printf ... | xxhsum -H64`.
+    {
+        struct vector {
+            std::string_view what;
+            std::string_view input;
+            std::uint64_t expect;
+        };
+        const std::string long_input(65536, static_cast<char>(0xA5));
+        const vector vectors[] = {
+            {"empty", "", 0xef46db3751d8e999ull},
+            {"one byte", "a", 0xd24ec4f1a98c6e5bull},
+            {"31 bytes: no block, all three tail steps", "0123456789abcdefghijklmnopqrstu",
+             0x80adfc1d42020f39ull},
+            {"exactly one block, no tail", "0123456789abcdefghijklmnopqrstuv",
+             0xbf7c9dbe16b5c6e2ull},
+            {"one block and a one-byte tail", "0123456789abcdefghijklmnopqrstuv!",
+             0xfd219fb7f6d3e0adull},
+            {"a line of JavaScript", "function f(a, b) { return a + b; }\n", 0xc58480a990accb51ull},
+            {"64 KB of one byte", long_input, 0xf76434b97a550fecull},
+        };
+        for (const vector & v : vectors) {
+            if (image_source_hash(v.input) != v.expect) {
+                std::printf("FAIL the source hash of \"%.*s\" is %016llx, not the pinned %016llx"
+                            " - if that was deliberate, bump source_hash_algorithm\n",
+                            static_cast<int>(v.what.size()), v.what.data(),
+                            static_cast<unsigned long long>(image_source_hash(v.input)),
+                            static_cast<unsigned long long>(v.expect));
+                ++failures;
+            }
+        }
     }
 
     if (failures == 0) {

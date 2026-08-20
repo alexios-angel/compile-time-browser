@@ -747,8 +747,10 @@ profile settled it instead:
 ```
 
 **The atom table is 0.01% of a Phaser frame and interning does not appear at
-all.** A lock-free version of nothing is nothing. The Boost floor stays at 1.80,
-because raising it to 1.89 would buy a library that measurement says not to use.
+all.** A lock-free version of nothing is nothing, and it is not worth a floor
+raise to 1.89. (The floor itself moved 1.80 -> 1.88 on 2026-08-20, for
+Boost.Hash2 - see `docs/build.md`. It does not change this verdict: 1.89 is
+still above it, and the measurement is what refuses the library.)
 
 Boost.Bloom, as a negative filter on the prototype chain, is refused on the same
 grounds: the chain is 2.25 levels and the fix that removes the cost is atoms, not
