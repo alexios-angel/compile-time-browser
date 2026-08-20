@@ -418,6 +418,46 @@ What this does **not** decide is the ordering: there is no LLVM arm, and both
 backends run the same optimiser over the same functions. The only term EmitC
 pays alone is the frontend, and `clang -ftime-trace` is what separates it.
 
+---
+
+## Phase 15: the program image, which is where the time actually is
+
+The profiling above says it plainly — parsing and compiling JavaScript is ~40% of
+a page load and executing it is 1.4% — so the largest number this project can
+delete is the one in the baseline: **264 ms for Babylon, 70 for Phaser, 53 for
+p5, every single start.** A serialized `script::program` removes it, and needs no
+MLIR to do it.
+
+Measured before designing the format, not after
+(`ctcompile/docs/baseline/program-size.json`):
+
+| corpus | source | image | |
+|---|---|---|---|
+| p5 | 4.5 MB | 3.0 MB | 66% |
+| phaser | 8.6 MB | 3.8 MB | 44% |
+| **babylon** | **11.3 MB** | **15.7 MB** | **139%** |
+
+**An image is not automatically smaller than the source it replaces.** Babylon's
+31,905 protos carry 9.98 MB of eight-byte instructions on their own.
+
+**Pool the names.** Babylon's 166,396 name entries are 24,172 unique — 2686 KB
+collapses to 495 KB, Phaser 553→96, p5 333→68. That is a v1 decision rather than
+a later optimisation, because it changes the format. String literals do *not*
+duplicate that way (2050→1840 KB), so the effort belongs on names.
+
+### `program::source` is kept unless optimisation is asked for
+
+Retaining the source doubles the image — Babylon goes to 27 MB, 2.4× its own
+source — and dropping it breaks `f.toString()`, which is not academic: p5's error
+system reads its own source, and an engine with no answer there cannot run it.
+
+**So the default keeps it, and dropping it is something an explicit optimisation
+request buys.** A plain `ctcompile <app>` produces an image that behaves exactly
+like the interpreted page. Asking for optimisation permits the compiler to drop
+the source, and the cost is stated where it is chosen rather than discovered
+later: `f.toString()` degrades, and a library that reads itself may stop working.
+The image records which of the two it is, so a loader never has to guess.
+
 ## The ladder ahead
 
 | phase | what | where |
