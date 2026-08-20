@@ -33,7 +33,8 @@
     "basis": "linear in the 4000->16000 range, which was measured at 0.73 and 0.72 ms/function"
   },
   "findings": [
-    "THE PER-TU HEADER COST DOMINATES, and it is Boost. Including script/value.hpp costs 1.175 s per translation unit and boost/multiprecision/cpp_int.hpp is 0.940 s of that, dragged in because a `value` can hold a BigInt. Generated code that needed only the NaN-boxed integer operations would pay 0.028 s - a 40x reduction in the term that decides the whole build.",
+    "THE PER-TU HEADER COST IS WHAT MAKES FINE PARTITIONING EXPENSIVE - it does NOT dominate a coarse build, and an earlier version of this file overstated that. Including script/value.hpp costs 1.175 s per translation unit and boost/multiprecision/cpp_int.hpp is 0.940 s of it, dragged in because bigint_object holds a cpp_int BY VALUE. Weighed against the measurements here: at 500 functions per TU the header is about 41% of the build, at 2000 per TU about 10%. It is a large term that caps how finely the output may be split, not the term that decides a sanely partitioned build - that one is compiling the generated code itself.",
+    "THE CHEAPEST FIX KEEPS EVERY BIT OF THE INLINING. value.hpp reaches Boost ONLY because bigint_object holds boost::multiprecision::cpp_int by value; moving that member out of line removes 0.940 s from every consumer - the engine's own translation units included - while leaving the 31 leaf helpers inlinable, which is the entire irreducible advantage EmitC has over a frozen C ABI. A slim AOT prelude and a de-Boosted value.hpp are not the same trade: the first gives up inlining to save parse time, the second gives up nothing.",
     "PARTITION COARSELY, NOT FINELY. 4000 functions cost 9.09 s in 32 translation units and 2.88 s in 8, because every extra TU re-pays the header. The floor is set by having enough TUs to fill the cores and no more: 500 and 2000 functions per TU measured the same, since both saturate 8 cores.",
     "THE MARGINAL COST OF A FUNCTION IS ABOUT 0.72 ms and is stable from 4000 to 16000 functions, so the extrapolation to Babylon's 31,905 is a linear one rather than a guess.",
     "AT ~23 SECONDS FOR THE LARGEST CORPUS, compile time does NOT disqualify EmitC. The decision rule this half of S0 was written to test is not tripped."
@@ -42,5 +43,8 @@
     "The generated functions are simpler than real compiled output: 40 operations drawn from five shapes, one branch, no string constants, no varied helper calls. Real output will be larger, so 0.72 ms/function is a FLOOR.",
     "This measures compilation only - not linking, and not the optimiser's behaviour on a whole-image link (Phase 12A).",
     "Nothing here measures THROUGHPUT, which is the other half of S0 and the half that decides whether the compiled code is worth compiling."
+  ],
+  "limits": [
+    "THIS CANNOT DECIDE AN ORDERING, only an absolute budget. There is no LLVM arm here, and the LLVM backend runs the same optimiser and the same instruction selection over the same functions. The ONLY thing EmitC pays that it does not is the FRONTEND - lexing, parsing and sema of the generated text plus its headers - and `clang -ftime-trace` reports exactly that split. Comparing the two needs that split plus `-O0 -emit-llvm` then `opt -O2 | llc` on the same source; until then the honest claim is 'EmitC's build cost is affordable', not 'EmitC's build cost beats LLVM'."
   ]
 }
