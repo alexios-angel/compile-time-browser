@@ -1,22 +1,22 @@
 # ctcompile: an application directory in, a native executable out
 
-**Where it is. The repository is a monorepo and `ctcompile` is a project in it that
-builds, links against the engine's narrow compiler-facing libraries and reports
-what it was built against. It compiles nothing yet. The whole engine suite is
-green from the new layout — the number that matters for a migration is that it
-did not move.**
+**Where it is. The repository is a monorepo, `ctcompile` builds beside the
+engine, and Phase 0's four code-facing inventories exist as tables the build
+checks. It compiles nothing yet. 94 of 94 tests pass in both dispatch
+configurations.**
 
-**Done:** Phase -1, the repository restructure — `ctbrowser/` and `ctcompile/`
-as sibling projects, `ctbrowser/` as the configure root, the test suite split
-three ways, `third-party/` at repository scope, the presets that make a
-runtime-only build an *enforced* configuration rather than a claim, and a stub
-executable behind a real command line.
+**Done:** Phase -1, the repository restructure — sibling projects, `ctbrowser/`
+as the configure root, the suite split three ways, `third-party/` at repository
+scope, presets that make a runtime-only build an *enforced* configuration, and a
+stub behind a real command line · **Phase 0's bytecode, program-representation,
+call-path and GC-root inventories**, each an X-macro table or a wall of
+`static_assert`s rather than prose.
 
-**Next:** Phase 0, the inventories — and the one that sizes everything after it
-is the bytecode table: every opcode with its operands, allocation, GC, throwing,
-re-entrancy and suspension behaviour, as an X-macro `.def` that the VM's own
-decoder then consumes, so the compiler's table and the interpreter's cannot
-drift apart into a miscompile.
+**Next:** the rest of Phase 0 — the HTML and CSS startup inventories, which are
+harder than the three above because their deliverable is a *differential
+comparator* (the acceptance test for Phases 16A and 16B, written before the
+thing it accepts), and the performance baseline as committed JSON with the
+machine and build configuration beside it.
 
 The master plan is 21 files under `ctcompile-plan/`, and
 `01-objective-and-ground-truth.md` overrides the rest of it. This document is
@@ -140,6 +140,70 @@ The cost is real and is written down in `docs/LLVMUpgrade.md`: every ODS, PDLL
 and pass-generation construct the master plan spells was written against 20-era
 syntax and has to be **verified against 22 before it is relied on**. PDLL is the
 youngest of the three and moves fastest.
+
+---
+
+## Phase 0: four tables, because a document cannot be checked
+
+The inventories are not documents. A prose description of a layout drifts from
+the layout within weeks and nothing can tell you it has; a table can be walked
+by a test, and a `static_assert` cannot be ignored at all. So:
+
+| inventory | where | form |
+|---|---|---|
+| bytecode | `ctbrowser/include/ctbrowser/script/bytecode_opcodes.def` | 93 rows × 11 columns |
+| program representation | `ctcompile/include/ctcompile/JavaScript/EngineContract.hpp` | `static_assert`s |
+| call paths | `ctcompile/include/ctcompile/JavaScript/CallPaths.def` | 11 entries |
+| GC roots | `ctcompile/include/ctcompile/JavaScript/GCRoots.def` | 17 entries |
+
+### The opcode table, and the column that costs money
+
+Every row was read out of its handler in `run_loop.cpp` and whatever it
+delegates to, then re-derived independently by a second reader against the same
+code. **`may_reenter` is true for 31 of the 93** — a third of the instruction
+set can run page JavaScript in the middle of what looks like a primitive
+operation. Arithmetic reaches `valueOf` through `to_primitive`; a property read
+hits an accessor or a proxy trap; and `throw_value` does it on the path nobody
+instruments, because describing an *uncaught* throw reads `.name` and
+`.message` off the thrown object. An AOT backend that trusts the opcode's name
+omits a root exactly where one is needed.
+
+Two tiers of failure are kept apart in the table and must stay apart in the
+backend: `raise()` sets the failure flag and **no `try`/`catch` can see it** —
+the allocation ceiling and a missing module are raises — while `thrown_` plus
+`unwind_to_handler` is the catchable path. Both set `may_throw`.
+
+### One list, and the build that proves it
+
+`run_loop.cpp` kept a private 93-name macro for its computed-goto label table.
+The comment above it records what a second list costs: two opcodes were missing
+from it for as long as modules had existed, and the only reason nothing jumped
+to address zero is that computed gotos are off by default. That list is gone —
+the table is built by including the `.def`, and the count assert sits in
+`bytecode.hpp` beside the enum it checks.
+
+Which means **the change only compiles in the configuration nobody builds**, so
+that is the configuration it was verified in: `-DCTBROWSER_COMPUTED_GOTO=ON`,
+94 of 94.
+
+### What Phase 4 needs to know before it starts
+
+`set_external_roots` **assigns** a `std::function` rather than appending, and
+`dom_bindings::register_roots` is already its one caller. The plan tells Phase 4
+to route AOT shadow frames through that hook rather than inventing a parallel
+mechanism — and doing that naively unregisters every event listener, timer
+callback and pending fetch the page owns, whose failure mode is those objects
+being collected while the page is still using them. Either the hook grows a
+list, or the AOT registrar chains what it found. Decide it before writing the
+shadow frame, not after.
+
+### Still open in Phase 0
+
+The HTML and CSS startup inventories, whose deliverable is a **differential
+comparator** — the acceptance test for Phases 16A and 16B, written before the
+thing it accepts — and the performance baseline, stored as committed JSON with
+the machine and build configuration recorded beside it, because a baseline
+without its configuration is unusable six months later.
 
 ---
 
