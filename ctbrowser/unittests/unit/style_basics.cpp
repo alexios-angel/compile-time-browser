@@ -1842,6 +1842,49 @@ void test_flex_shorthand() {
     }
 }
 
+// A PAGE FONT IS FOUND BY ITS TOKENS, NOT BY SCANNING ITS TEXT.
+//
+// `url(` with an UNQUOTED body is its own token and a quoted one is a function
+// plus a string - so by the time a declaration is reassembled into text, the
+// two spellings share nothing to recognise: `url("f.ttf")` keeps its `url(`
+// and `url(f.ttf)` comes back as bare `f.ttf`.
+//
+// The engine used to search that text for a literal `url(`, so EVERY UNQUOTED
+// src produced an empty source and the face was dropped - silently, and for
+// the spelling most stylesheets use. The symptom was a web font that simply
+// never loaded and no diagnostic anywhere.
+void test_font_face_sources() {
+    const auto only_font = [](std::string_view css) -> std::string {
+        ctbrowser::atom_table atoms;
+        ctbrowser::style::engine styles{atoms};
+        styles.add_sheet(css, 1);
+        if (styles.page_fonts().size() != 1) { return "<none>"; }
+        return styles.page_fonts().front().family + " <- " + styles.page_fonts().front().source;
+    };
+
+    CHECK_EQ(only_font("@font-face { font-family: Fira; src: url(f.ttf) }"),
+             std::string{"Fira <- f.ttf"});
+    CHECK_EQ(only_font("@font-face { font-family: \"Fira\"; src: url(\"f.ttf\") }"),
+             std::string{"Fira <- f.ttf"});
+    CHECK_EQ(only_font("@font-face { font-family: Fira; src: url('f.ttf') }"),
+             std::string{"Fira <- f.ttf"});
+    // `format()` rides along on essentially every real @font-face.
+    CHECK_EQ(only_font("@font-face { font-family: Fira; src: url(f.ttf) format(\"truetype\") }"),
+             std::string{"Fira <- f.ttf"});
+    // Whitespace inside the parens belongs to the token but not to the file name.
+    CHECK_EQ(only_font("@font-face { font-family: Fira; src: url( f.ttf ) }"),
+             std::string{"Fira <- f.ttf"});
+    // A LIST is about formats a browser might not support rather than about
+    // different fonts, so the first url wins - and a leading local() is skipped
+    // rather than taken as one.
+    CHECK_EQ(only_font("@font-face { font-family: Fira; src: local(Fira), "
+                       "url(f.woff2) format(\"woff2\"), url(f.ttf) }"),
+             std::string{"Fira <- f.woff2"});
+    // And a face this engine cannot load is not registered at all.
+    CHECK_EQ(only_font("@font-face { font-family: Fira; src: local(Fira) }"),
+             std::string{"<none>"});
+}
+
 int main() {
     test_shorthands_expand();
     test_corner_and_axis_shorthands_expand();
@@ -1872,6 +1915,7 @@ int main() {
     test_calc();
     test_calc_in_the_cascade();
     test_flex_shorthand();
+    test_font_face_sources();
     test_deep_nesting_still_matches();
     test_unmatched_element_gets_empty_style();
     test_inline_style_applies();

@@ -63,8 +63,10 @@ std::optional<difference> compare(const engine & expected, const engine & actual
         // THE BUCKET FIRST, because it is the field nothing else could see and
         // the one whose failure is silent.
         if (x.where != y.where) {
-            return fail(where, std::string{"bucket "}.append(bucket_name(x.where)).append(" vs ").append(
-                                   bucket_name(y.where)));
+            return fail(where, std::string{"bucket "}
+                                   .append(bucket_name(x.where))
+                                   .append(" vs ")
+                                   .append(bucket_name(y.where)));
         }
         const std::string kx = key_text(expected.atoms(), x.key);
         const std::string ky = key_text(actual.atoms(), y.key);
@@ -78,17 +80,19 @@ std::optional<difference> compare(const engine & expected, const engine & actual
         const std::string py{actual.atoms().text(y.property)};
         if (px != py) { return fail(where, "property " + px + " vs " + py); }
         if (x.value != y.value) {
-            return fail(where + " (" + px + ")",
-                        "value \"" + std::string{x.value} + "\" vs \"" + std::string{y.value} + "\"");
+            return fail(where + " (" + px + ")", "value \"" + std::string{x.value} + "\" vs \"" +
+                                                     std::string{y.value} + "\"");
         }
-        if (x.important != y.important) { return fail(where + " (" + px + ")", "!important differs"); }
+        if (x.important != y.important) {
+            return fail(where + " (" + px + ")", "!important differs");
+        }
         // ORIGIN decides the cascade before specificity does, and it is set by
         // the CALLER of add_sheet rather than by the sheet - so a compiled
         // program that files an author rule as user-agent loses every tie it
         // should win, with no other field differing.
         if (x.origin != y.origin) {
-            return fail(where, "origin " + std::to_string(x.origin) + " vs " +
-                                   std::to_string(y.origin));
+            return fail(where,
+                        "origin " + std::to_string(x.origin) + " vs " + std::to_string(y.origin));
         }
         // The condition ORDINAL, which is engine-local: add_sheet remaps a
         // sheet's condition indices as it appends them, so this is not the

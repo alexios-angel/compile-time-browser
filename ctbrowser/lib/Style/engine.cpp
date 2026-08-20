@@ -37,12 +37,65 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
             }
             return {};
         };
+        // THE URL OUT OF THE TOKENS, not out of the text.
+        //
+        // `url(` WITH AN UNQUOTED BODY IS ITS OWN TOKEN and a quoted one is a
+        // function plus a string - §4.3.6, and token.hpp says so on the
+        // enumerator. So the two spellings do not look alike by the time a
+        // declaration's text is reassembled: `url("f.ttf")` comes back with its
+        // `url(` intact, while `url(f.ttf)` comes back as bare `f.ttf` with
+        // nothing left to recognise it by.
+        //
+        // Reading the text is what the old code did, and it searched for a
+        // literal `url(`. Every unquoted src therefore produced an empty source
+        // and the face was DROPPED ENTIRELY by the guard below - silently, and
+        // for the spelling most stylesheets actually use. Asking the tokens
+        // instead makes the two forms one case.
+        const auto src_url = [&]() -> std::string_view {
+            const atom want = atoms_->intern_lower("src");
+            for (const css::raw_declaration & d : sheet.declarations_of(face)) {
+                if (d.property != want) { continue; }
+                for (const css::component_value & v : sheet.values_of(d)) {
+                    const css::css_token & first = sheet.tokens[v.token];
+                    // The unquoted form: the token's text IS the url, already
+                    // unwrapped by the tokenizer.
+                    // TRIMMED: `url( f.ttf )` keeps the whitespace inside the
+                    // parens in the token's text, and a source with a trailing
+                    // space is a file name nothing can open. `unquoted` trims
+                    // and strips quotes; a url token's body is unquoted by
+                    // definition, so here it only trims.
+                    if (first.type == css::token_type::url) {
+                        return unquoted(sheet.text_of(first));
+                    }
+                    // The quoted form: `url` as a function, with the string
+                    // inside. A FUNCTION TOKEN'S TEXT CARRIES ITS `(` - the
+                    // token is the ident and the paren together, which is what
+                    // makes it a function rather than an ident - so the name is
+                    // `url(` and comparing it to `url` never matches.
+                    std::string_view name = sheet.text_of(first);
+                    if (!name.empty() && name.back() == '(') { name.remove_suffix(1); }
+                    if (first.type == css::token_type::function && ascii_iequals(name, "url")) {
+                        for (const css::component_value & arg : sheet.children_of(v)) {
+                            const css::css_token & inner = sheet.tokens[arg.token];
+                            if (inner.type == css::token_type::string) {
+                                return unquoted(sheet.text_of(inner));
+                            }
+                        }
+                    }
+                }
+                // A `src` with no url at all - `src: local(Fira)` - is not an
+                // error, it is a face this engine cannot load.
+                break;
+            }
+            return {};
+        };
+
         page_font entry;
         // UNQUOTED here: `font-family: 'Press Start 2P'` arrives with its quotes
         // on, so registering the name as it comes back files the face under a name
         // no element can ever ask for.
         entry.family = std::string{unquoted(value_of("font-family"))};
-        entry.source = std::string{url_of(value_of("src"))};
+        entry.source = std::string{src_url()};
         const std::string_view weight = value_of("font-weight");
         entry.bold = weight == "bold" || weight == "700" || weight == "800" || weight == "900" ||
                      weight == "600";
@@ -192,23 +245,6 @@ std::string_view engine::unquoted(std::string_view text) {
         text = text.substr(1, text.size() - 2);
     }
     return text;
-}
-
-std::string_view engine::url_of(std::string_view src) {
-    const std::size_t open = src.find("url(");
-    if (open == std::string_view::npos) { return {}; }
-    const std::size_t start = open + 4;
-    const std::size_t close = src.find(')', start);
-    if (close == std::string_view::npos) { return {}; }
-    std::string_view inner = src.substr(start, close - start);
-    while (!inner.empty() &&
-           (inner.front() == ' ' || inner.front() == '"' || inner.front() == '\'')) {
-        inner.remove_prefix(1);
-    }
-    while (!inner.empty() && (inner.back() == ' ' || inner.back() == '"' || inner.back() == '\'')) {
-        inner.remove_suffix(1);
-    }
-    return inner;
 }
 
 void engine::split_classes(std::string_view list,

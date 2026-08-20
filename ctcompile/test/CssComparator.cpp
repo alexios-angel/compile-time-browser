@@ -101,13 +101,12 @@ int main() {
                 "@font-face { font-family: \"Fira\"; src: url(\"f.ttf\") }");
 
     // !important, which is a cascade level of its own.
-    must_notice("a lost !important",
-                "p { color: red; margin: 0 }"
-                ".lead { font-size: 20px }"
-                "#main p { color: blue }"
-                "* { box-sizing: border-box }"
-                "@media (min-width: 100px) { p { color: green } }"
-                "@font-face { font-family: \"Fira\"; src: url(\"f.ttf\") }");
+    must_notice("a lost !important", "p { color: red; margin: 0 }"
+                                     ".lead { font-size: 20px }"
+                                     "#main p { color: blue }"
+                                     "* { box-sizing: border-box }"
+                                     "@media (min-width: 100px) { p { color: green } }"
+                                     "@font-face { font-family: \"Fira\"; src: url(\"f.ttf\") }");
 
     // THE BUCKET. `#main p` files under the rightmost compound, which is the
     // TAG p - change the rightmost to a class and it files elsewhere, matching
@@ -142,13 +141,13 @@ int main() {
     // @font-face is engine state too, and it is not a rule - so nothing in the
     // rule walk would catch a page font that changed.
     //
-    // QUOTED ON BOTH SIDES, and that is not incidental. The engine records a
-    // page font only when the family and the url() are STRING tokens: with
-    // `font-family: Fira; src: url(f.ttf)` - the spelling most real stylesheets
-    // use - page_fonts() comes back EMPTY, and so this case originally compared
-    // no fonts against no fonts and passed while proving nothing. The engine
-    // gap is real and is recorded in the plan; the fixture is quoted so that
-    // this case tests the comparator rather than that gap.
+    // Quoted here only because the rest of the fixture is: BOTH spellings work
+    // now. They did not when this case was written - the engine searched a
+    // declaration's reassembled text for a literal `url(`, which an unquoted
+    // url does not contain, so `src: url(f.ttf)` registered no font at all and
+    // this case compared no fonts against no fonts and passed while proving
+    // nothing. That is the failure the negative-case discipline exists to
+    // catch; the engine fix and its regression cases are in style_basics.
     must_notice("a changed @font-face source",
                 "p { color: red; margin: 0 }"
                 ".lead { font-size: 20px !important }"

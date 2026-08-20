@@ -1166,12 +1166,17 @@ private:
     // element per interaction.
     string_flat_map<inline_block> inline_cache_;
 
-    // `src: url("x.ttf") format("truetype")` -> `x.ttf`. Only the first url is
-    // taken: this loads one file per face, and a list of alternatives is about
-    // formats a browser might not support rather than different fonts.
+    // `'Press Start 2P'` -> `Press Start 2P`. A family name arrives with its
+    // quotes on, and registering it that way files the face under a name no
+    // element can ever ask for.
+    //
+    // The `src` url is NOT extracted by scanning text - see add_sheet. `url(`
+    // with an unquoted body is its own token and a quoted one is a function
+    // plus a string, so the two spellings do not resemble each other by the
+    // time a declaration is reassembled into text. Only the first url is taken:
+    // this loads one file per face, and a list of alternatives is about formats
+    // a browser might not support rather than about different fonts.
     [[nodiscard]] static std::string_view unquoted(std::string_view text);
-
-    [[nodiscard]] static std::string_view url_of(std::string_view src);
 
     std::vector<page_font> fonts_;
 

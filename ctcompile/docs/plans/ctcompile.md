@@ -267,12 +267,15 @@ the comparator:
 @font-face { font-family: "Fira"; src: url("f.ttf") format("truetype") }  /* NOTHING */
 ```
 
-The engine records a page font only when the family and the `url()` are quoted
-**string tokens**. An unquoted family, an unquoted `url()`, or the `format()`
-descriptor that every real `@font-face` carries each produce an empty
-`page_fonts()`. That is a defect for ordinary pages, not only for the compiler —
-a web font simply does not load — and it is worth fixing in the engine before
-Phase 16B serializes font state that is mostly missing.
+**Fixed.** The engine searched a declaration's reassembled *text* for a literal
+`url(` — but `url(` with an unquoted body is its own token and a quoted one is a
+function plus a string, so the two spellings share nothing by the time a
+declaration is text again: `url("f.ttf")` keeps its `url(` and `url(f.ttf)`
+comes back as bare `f.ttf`. Every unquoted src therefore produced an empty
+source and the face was dropped, silently, for the spelling most stylesheets
+use. It now reads the tokens instead, which makes the two forms one case, and
+`style_basics` pins all seven spellings including `format()`, a `local()` first
+in the list, and whitespace inside the parens.
 
 The immediate lesson is smaller and sharper: the case had been comparing *no
 fonts against no fonts* and passing while proving nothing, which is the exact
