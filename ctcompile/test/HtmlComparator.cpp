@@ -130,6 +130,63 @@ int main() {
                      build.create_element(doc.atoms().intern("title"), node_ns::svg));
     });
 
+    // A TORN TREE, which is the default failure mode of a loader written
+    // against document::builder: `append` sets the child's parent but does NOT
+    // remove it from its previous parent's list, and performs no cycle check -
+    // unlike document::append_child, which does both. So this is one call, and
+    // it leaves <p> reachable from two parents.
+    //
+    // A children-only comparator does not report this. It recurses until the
+    // stack dies, which is an acceptance test that crashes instead of failing.
+    must_notice("a node reachable from two parents", [](document & doc) {
+        auto build = doc.build();
+        build.append(find(doc, "div"), find(doc, "p"));
+    });
+
+    // THE CASE THE COUNT COMPARISON CANNOT SEE, and the reason the walk carries
+    // a visited set at all.
+    //
+    // Every mutation above is caught by a child count somewhere - a torn tree
+    // included, because appending an already-parented node makes its new
+    // parent one child longer. But a loader that MATERIALISES ONE NODE AND
+    // ATTACHES IT IN TWO PLACES - a shared-subtree optimisation gone wrong -
+    // produces a document whose counts match the original at EVERY node, and a
+    // children-only walk descends into it twice and reports nothing. Give it a
+    // cycle instead of a diamond and that walk does not return at all.
+    {
+        atom_table a1;
+        atom_table a2;
+        document d1{a1};
+        document d2{a2};
+        // expected: html > [ a > x, b > y ] - four distinct elements.
+        {
+            auto build = d1.build();
+            const node_id root = build.create_element(a1.intern("html"));
+            build.set_root(root);
+            const node_id ea = build.create_element(a1.intern("a"));
+            const node_id eb = build.create_element(a1.intern("b"));
+            build.append(root, ea);
+            build.append(root, eb);
+            build.append(ea, build.create_element(a1.intern("x")));
+            build.append(eb, build.create_element(a1.intern("x")));
+        }
+        // actual: the SAME x hung under both. Every child count matches.
+        {
+            auto build = d2.build();
+            const node_id root = build.create_element(a2.intern("html"));
+            build.set_root(root);
+            const node_id ea = build.create_element(a2.intern("a"));
+            const node_id eb = build.create_element(a2.intern("b"));
+            build.append(root, ea);
+            build.append(root, eb);
+            const node_id shared = build.create_element(a2.intern("x"));
+            build.append(ea, shared);
+            build.append(eb, shared);
+        }
+        const auto diff = ctcompile::html::compare(d1, d2);
+        check(diff.has_value(), "one node attached in two places, with every child count matching");
+    }
+
     if (failures == 0) { std::printf("ok html_comparator\n"); }
     return failures == 0 ? 0 : 1;
 }
