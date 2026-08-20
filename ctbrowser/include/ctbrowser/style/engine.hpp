@@ -146,6 +146,11 @@ public:
     };
     [[nodiscard]] const std::vector<page_font> & page_fonts() const noexcept { return fonts_; }
 
+    // The table every atom in this engine was interned into. Needed by anything
+    // comparing two engines: an atom id is meaningless outside the table that
+    // issued it, so a comparison resolves each side's atoms through its own.
+    [[nodiscard]] atom_table & atoms() const noexcept { return *atoms_; }
+
     // origin 0 = user agent, 1 = author. Author wins ties, per the cascade.
     void add_sheet(std::string_view css, std::uint8_t origin = 1);
 
@@ -513,6 +518,72 @@ public:
     }
 
     [[nodiscard]] std::size_t rule_count() const noexcept { return index_.rule_count(); }
+
+    // --- WHAT THE ENGINE ACTUALLY FILED -----------------------------------
+    // Every rule this engine holds, in a deterministic order, with the parts
+    // of it that nothing else exposes.
+    //
+    // `rule_count()` and `selector_count()` say HOW MANY; this says WHICH, and
+    // the difference matters to anything comparing one engine against another.
+    // A rule's origin, the condition ordinal it was remapped to, and above all
+    // WHICH BUCKET it landed in are decided inside add_sheet and were readable
+    // from nowhere - so a filed-in-the-wrong-bucket rule and a rule that simply
+    // never matched looked identical from outside. They are not the same
+    // defect: the first one silently never matches anything, and the only
+    // symptom is a page that renders slightly wrong.
+    //
+    // ORDERED BY (source order, selector), NOT by bucket. The buckets are
+    // unordered maps keyed by atom id, and an atom id is handed out in
+    // first-interning order at run time - so a bucket walk is neither stable
+    // across runs nor comparable across processes. Source order is a property
+    // of the stylesheet and nothing else.
+    //
+    // For inspection and for differential comparison, not for matching: the
+    // matcher reads the buckets directly, which is the whole point of having
+    // them. Nothing here is on a hot path.
+    struct filed_rule {
+        enum class bucket : std::uint8_t {
+            id,
+            class_name,
+            tag,
+            universal
+        };
+        bucket where = bucket::universal;
+        atom key;                   // the bucket's key; empty for universal
+        std::uint32_t selector = 0; // into this engine's selector table
+        specificity spec;
+        atom property;
+        std::string_view value;
+        std::int32_t order = 0;
+        std::uint32_t condition = 0;
+        std::uint8_t origin = 0;
+        bool important = false;
+    };
+
+    template <typename F> void for_each_rule(F && visit) const {
+        std::vector<filed_rule> filed;
+        filed.reserve(index_.rule_count());
+        const auto take = [&](const rule & r, filed_rule::bucket where, atom key) {
+            const declaration & d = declarations_[r.declaration];
+            filed.push_back(filed_rule{where, key, r.selector, selectors_[r.selector].spec,
+                                       d.property, d.value, r.order, r.condition, r.origin,
+                                       r.important});
+        };
+        for (const rule & r : index_.universal) { take(r, filed_rule::bucket::universal, atom{}); }
+        for (const auto & [key, rules] : index_.by_tag) {
+            for (const rule & r : rules) { take(r, filed_rule::bucket::tag, atom{key}); }
+        }
+        for (const auto & [key, rules] : index_.by_class) {
+            for (const rule & r : rules) { take(r, filed_rule::bucket::class_name, atom{key}); }
+        }
+        for (const auto & [key, rules] : index_.by_id) {
+            for (const rule & r : rules) { take(r, filed_rule::bucket::id, atom{key}); }
+        }
+        std::ranges::sort(filed, [](const filed_rule & a, const filed_rule & b) {
+            return a.order != b.order ? a.order < b.order : a.selector < b.selector;
+        });
+        for (const filed_rule & r : filed) { visit(r); }
+    }
     // How many COMPILED SELECTORS are retained. Observable because the count is a
     // correctness property, not just a size: it must be one per selector that can
     // match, and the front end this replaced compiled one per DECLARATION and kept

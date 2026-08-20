@@ -46,3 +46,12 @@ add_executable(ctcompile-test-html_comparator HtmlComparator.cpp)
 target_link_libraries(ctcompile-test-html_comparator PRIVATE ctcompile::html)
 ctcompile_target(ctcompile-test-html_comparator)
 add_test(NAME ctcompile_html_comparator COMMAND ctcompile-test-html_comparator)
+
+# THE COMPARATOR THAT ACCEPTS PHASE 16B. Every case below leaves
+# selector_count() and rule_count() untouched and changes what the page looks
+# like - which is exactly the class of difference the two counts cannot see and
+# the reason engine::for_each_rule exists.
+add_executable(ctcompile-test-css_comparator CssComparator.cpp)
+target_link_libraries(ctcompile-test-css_comparator PRIVATE ctcompile::css)
+ctcompile_target(ctcompile-test-css_comparator)
+add_test(NAME ctcompile_css_comparator COMMAND ctcompile-test-css_comparator)
