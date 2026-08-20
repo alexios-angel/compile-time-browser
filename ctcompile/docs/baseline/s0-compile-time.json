@@ -1,0 +1,46 @@
+{
+  "what": "S0, the compile-time half: can EmitC-shaped C++ be built at corpus scale",
+  "commit": "c2e8ee6",
+  "machine": {
+    "cpu": "AMD EPYC 9V45",
+    "cores": 8,
+    "compiler": "clang 24.0.0git",
+    "flags": "-std=c++23 -O2"
+  },
+  "generator": "ctcompile/utils/s0-emit.py, 40 operations per function, 16 registers",
+  "per_tu_header_cost_seconds": {
+    "nothing": 0.015,
+    "cstdint_and_bit": 0.028,
+    "core_hpp": 0.547,
+    "boost_multiprecision_cpp_int_alone": 0.94,
+    "script_value_hpp": 1.175,
+    "script_vm_hpp": 1.3
+  },
+  "tu_size_sweep_4000_functions_8way_seconds": {
+    "125_per_tu": 9.09,
+    "500_per_tu": 2.88,
+    "2000_per_tu": 2.9
+  },
+  "scaling_500_per_tu_8way_seconds": {
+    "1000": 1.63,
+    "4000": 2.94,
+    "16000": 11.47
+  },
+  "marginal_ms_per_function": 0.72,
+  "extrapolation": {
+    "babylon_functions": 31905,
+    "estimated_seconds_8way_at_500_per_tu": 22.9,
+    "basis": "linear in the 4000->16000 range, which was measured at 0.73 and 0.72 ms/function"
+  },
+  "findings": [
+    "THE PER-TU HEADER COST DOMINATES, and it is Boost. Including script/value.hpp costs 1.175 s per translation unit and boost/multiprecision/cpp_int.hpp is 0.940 s of that, dragged in because a `value` can hold a BigInt. Generated code that needed only the NaN-boxed integer operations would pay 0.028 s - a 40x reduction in the term that decides the whole build.",
+    "PARTITION COARSELY, NOT FINELY. 4000 functions cost 9.09 s in 32 translation units and 2.88 s in 8, because every extra TU re-pays the header. The floor is set by having enough TUs to fill the cores and no more: 500 and 2000 functions per TU measured the same, since both saturate 8 cores.",
+    "THE MARGINAL COST OF A FUNCTION IS ABOUT 0.72 ms and is stable from 4000 to 16000 functions, so the extrapolation to Babylon's 31,905 is a linear one rather than a guess.",
+    "AT ~23 SECONDS FOR THE LARGEST CORPUS, compile time does NOT disqualify EmitC. The decision rule this half of S0 was written to test is not tripped."
+  ],
+  "caveats": [
+    "The generated functions are simpler than real compiled output: 40 operations drawn from five shapes, one branch, no string constants, no varied helper calls. Real output will be larger, so 0.72 ms/function is a FLOOR.",
+    "This measures compilation only - not linking, and not the optimiser's behaviour on a whole-image link (Phase 12A).",
+    "Nothing here measures THROUGHPUT, which is the other half of S0 and the half that decides whether the compiled code is worth compiling."
+  ]
+}
