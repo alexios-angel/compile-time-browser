@@ -3,7 +3,9 @@
 **Where it is. The repository is a monorepo, `ctcompile` builds beside the
 engine, and PHASE 0 IS COMPLETE: six inventories the build checks, two
 differential comparators written before the things they will accept, and a
-recorded startup baseline. It compiles nothing yet. 96 of 96 tests pass.**
+recorded startup baseline. PHASE 15 IS WORKING: a page is handed its scripts
+already compiled, and that is now **70% of a p5 page load**. It compiles nothing
+of its own yet. 97 of 97 tests pass.**
 
 **Done:** Phase -1, the repository restructure — sibling projects, `ctbrowser/`
 as the configure root, the suite split three ways, `third-party/` at repository
@@ -457,6 +459,87 @@ like the interpreted page. Asking for optimisation permits the compiler to drop
 the source, and the cost is stated where it is chosen rather than discovered
 later: `f.toString()` degrades, and a library that reads itself may stop working.
 The image records which of the two it is, so a loader never has to guess.
+
+### The hash on the page path, and a hash that was fast and wrong
+
+`image_source_hash` is the field that decides whether a cached image is *this
+page's* — an image built from other source is not a slow path, it is different
+JavaScript running at full speed. It was FNV-1a a byte at a time, and it was
+**4.16 ms of a 65 ms p5 page load**, which nobody had noticed because it is
+called from `browser::run_scripts` rather than from anything named like a hash.
+It is now `boost::hash2::xxhash_64` and costs 0.181 ms.
+
+**The obvious fix was measured, committed to in a working tree, and is wrong.**
+FNV-1a widened to four lanes of 64-bit words is 0.127 ms — faster than what
+shipped — and it collides on **50,678 of 262,145 single-byte edits of real
+p5.js**. One edit in five. The reason is structural rather than a bug: FNV's
+round is `h = (h ^ w) * prime`, and a multiply carries a difference only
+*upward*, so a change to a word's most significant bits leaves the lane
+differing in its top three bits and nowhere else — and it is the *same* three
+bits wherever in the lane the change happened. Two different edits reach an
+identical accumulator. A byte at a time does not have the problem, because a
+byte enters at the bottom where the multiply can spread it. **Widening it is
+what broke it**, and every round-trip test passed the whole time, because the
+hash is not what is round-tripped.
+
+Rotating inside the round removes the collisions and replaces them with a magic
+number. Swept across all 63 rotate amounts on the same corpus, **51 collide with
+FNV's prime and 49 with a dense one**, and the amounts that work do so by
+dodging a property of ASCII — bit 7 of a byte is never set. A constant that is
+good because of the corpus is a coincidence with a test suite in front of it.
+
+So the algorithm is somebody else's and **so is the code**. XXH64 leaves no
+constant to choose and was tested against SMHasher rather than against p5.js. It
+was first written out here by hand, forty lines, and that version was deleted in
+favour of Boost.Hash2's: a hand transcription of a published algorithm is
+exactly the code most likely to be quietly wrong, and this is the entry that
+stopped that argument being hypothetical. `ctbrowser-script` already links
+`Boost::headers`, the header costs 0.02 s in that translation unit, and it
+measured 0.181 ms against the hand-written 0.183. The floor moves 1.80 → 1.88,
+where Hash2 arrived; 1.80 had been nominal for some time, since Boost.URL —
+required as a COMPONENT on the same line — did not exist until 1.81.
+
+**The known answers are not ours.** The test pins seven values from
+`xxhsum -H64`, Yann Collet's own tool, two of which are the vectors XXH64's
+specification publishes. Nothing in this repository computed them, so they check
+three things a self-generated table checks none of: that the hash really is
+XXH64 at seed zero, that a big-endian host would fail rather than quietly
+disagree, and that the algorithm cannot change without `source_hash_algorithm`
+changing with it.
+
+That tag goes in `image_fingerprint()` and not in `format_version`, because the
+byte layout did not change — the *meaning* of one field did — and the version
+check runs first, so a version bump would refuse an old image with a message
+about a format that is in fact identical. **It is a message rather than a safety
+net**, and it is not covered by a test: producing an image carrying the old hash
+needs the old build. The test pins the precondition instead.
+
+### What caught it, and what a whole-page number cost to believe
+
+The case that caught the four-lane FNV is one paragraph long: flip every byte of
+a 200-byte source in turn and require 201 distinct hashes. It is in the file
+beside three deliberately blinded hashes — four interchangeable lanes, a lane
+reading its neighbour's word, and the four-lane FNV itself — and each negative
+case asserts that its blinded control *does* collide, so a case that stops
+proving anything says so instead of passing quietly.
+
+`docs/baseline/page-load.json` is re-recorded: **65.38 ms to 19.78 ms, 70% of a
+p5 page load**, against the 53% it held at `e4aed22`. Two things about that
+number are worth more than the number:
+
+* **The saving is attributed by an A/B of two binaries, not by subtraction.**
+  The from-source arm also moved — 72.59 ms to 65.38 — and *no commit explains
+  it*; nothing on that path changed. Subtracting the old file's numbers from the
+  new ones would have credited this work with variance on a shared VM. Two
+  builds of this tree differing only in `image_source_hash`, run alternately,
+  say 23.7 ms against 19.8, which agrees within 0.1 ms with the hash measured
+  alone.
+* **A measurement was taken from a stale binary and nearly recorded.** The first
+  reading after a full remote build reported 23.9 ms for a tree that hashes in
+  0.181 — ninja had not relinked `ctpageload` against the rebuilt
+  `ctbrowser-script`, while the test binary *was* relinked and went green.
+  `rsync -az` preserves mtimes. The tell was that the number matched the A/B's
+  old arm exactly, which is not a coincidence a measurement gets to have.
 
 ## The ladder ahead
 

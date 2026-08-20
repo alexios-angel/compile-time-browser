@@ -1,20 +1,38 @@
 {
   "what": "what a precompiled script image saves on a WHOLE page load, not on one stage",
-  "commit": "e4aed22",
-  "machine": "devbox, AMD EPYC 9V45, 8 cores, clang 24, Release",
+  "measured_utc": "2026-08-20T23:40:00Z",
+  "commit": "4afa905",
+  "supersedes": {
+    "commit": "e4aed22",
+    "saved_percent_of_page_load": 53,
+    "why_stale": "it was recorded before three changes to the load path: two loader optimisations (3a59436, 59d0339) and the source hash (4afa905). Its 53% understated the current saving by 17 points."
+  },
+  "machine": {
+    "cpu": "AMD EPYC 9V45 96-Core Processor",
+    "cores": 8,
+    "ram_gib": 31,
+    "os": "Linux 6.17.0-1022-azure",
+    "compiler": "clang version 24.0.0git (alexios-angel/llvm-project e3986d2253e4cf600d9c55badda4ddb0ec0f0ce2)",
+    "build": "cmake --preset default (Release)",
+    "host": "devbox"
+  },
   "tool": "ctcompile/tools/ctpageload, run from ctbrowser/examples/pages so the page's <script src> resolves",
   "page": "p5-basic.html - three classic scripts: an inline flag, the p5 bundle, and the sketch",
   "functions": 4757,
   "source_bytes": 4575125,
   "image_bytes": 7335248,
-  "load_html_from_source_ms": 72.59,
-  "load_html_from_image_ms": 34.25,
-  "saved_ms": 38.33,
-  "saved_percent_of_page_load": 53,
+  "runs": 5,
+  "load_html_from_source_ms": {"median": 65.38, "min": 64.79, "max": 65.96},
+  "load_html_from_image_ms": {"median": 19.78, "min": 19.58, "max": 19.81},
+  "saved_ms": 45.60,
+  "saved_percent_of_page_load": 70,
   "findings": [
-    "MORE THAN HALF OF THIS PAGE'S LOAD WAS COMPILING ITS JAVASCRIPT. 72.59 ms becomes 34.25 ms, and what remains is HTML parsing, CSS, style, layout and the image load itself - the work Principle 6 says stays at run time.",
-    "THE MEASUREMENT PROVES THE PATH WAS TAKEN rather than assuming it: the tool exits non-zero unless browser::scripts_compiled_from_source() is 0 after the image run. It reported 'the image was REFUSED' twice during development - once because the tool guessed the script concatenation wrong, once because the page's <script src> did not resolve from the working directory - and both times the saving it printed would otherwise have been read as a finding.",
+    "SEVENTY PERCENT OF THIS PAGE'S LOAD WAS COMPILING ITS JAVASCRIPT. 65.38 ms becomes 19.78 ms. What remains is HTML parsing, CSS, style, layout and the image load itself - the work Principle 6 says stays at run time.",
+    "THE SOURCE HASH WAS 3.9 ms OF IT, and nobody had noticed it was on the page path. Measured as an interleaved A/B of two binaries built from this tree differing only in image_source_hash: 23.7 ms from image with byte-at-a-time FNV-1a against 19.8 ms with XXH64, six runs each, alternating. That agrees within 0.1 ms with the hash measured on its own (4.16 ms against 0.181 ms for p5's 4.5 MB), which is the only reason to believe either number.",
+    "THE 'FROM SOURCE' ARM ALSO MOVED, 72.59 ms to 65.38, and NO COMMIT EXPLAINS IT - nothing on that path changed. It is cross-session variance on a shared VM, and it is why the saving above is attributed by an A/B of two builds rather than by subtracting this file's previous numbers from these.",
+    "A MEASUREMENT WAS TAKEN FROM A STALE BINARY AND NEARLY RECORDED. The first reading after a full remote build said 19.8 ms had not happened - it reported 23.9 - because ninja had not relinked ctpageload against the rebuilt ctbrowser-script, while the test binary WAS relinked and went green. rsync -az preserves mtimes; the fix is to touch the source and rebuild the target explicitly. The tell was that the number matched the A/B's OLD arm exactly.",
+    "THE MEASUREMENT PROVES THE PATH WAS TAKEN rather than assuming it: the tool exits non-zero unless browser::scripts_compiled_from_source() is 0 after the image run.",
     "A TOOL MUST NOT REPRODUCE THE BROWSER'S CONCATENATION. p5-basic.html has THREE classic scripts, not the one-bundle-plus-sketch shape the first version assumed; a packager that guesses builds an image whose hash never matches, which presents as 'no saving' rather than as a bug. browser::script_source() exists for this and is the API a packager uses.",
-    "THE IMAGE IS 1.6x THE SOURCE for this page and the page still loads twice as fast. Size is not the figure of merit; the parse is."
+    "THE IMAGE IS 1.6x THE SOURCE for this page and the page still loads more than three times faster. Size is not the figure of merit; the parse is."
   ]
 }
