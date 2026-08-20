@@ -62,8 +62,7 @@ static_assert(instruction{op::jump, 0, 0xFFFF, 0xFFFF}.sbx() == -1,
 // value.hpp rather than restating them - a second copy that drifts is a
 // miscompile.
 static_assert(sizeof(value_t) == 8, "a JS value is one machine word");
-static_assert(std::is_trivially_copyable_v<value_t>,
-              "a constant pool is copied as bytes");
+static_assert(std::is_trivially_copyable_v<value_t>, "a constant pool is copied as bytes");
 
 // --- WHAT IS AND IS NOT FLAT ---------------------------------------------
 // `constants` holds IMMEDIATES ONLY. A string literal cannot live there: a
@@ -72,14 +71,12 @@ static_assert(std::is_trivially_copyable_v<value_t>,
 // That is why a compiled program is independent of any one VM instance, and it
 // is the single most important fact for Phase 15: the constant pool
 // serializes as bytes, the string tables do not.
-static_assert(std::is_trivially_copyable_v<upvalue_desc>,
-              "the upvalue table serializes as bytes");
+static_assert(std::is_trivially_copyable_v<upvalue_desc>, "the upvalue table serializes as bytes");
 static_assert(!std::is_trivially_copyable_v<function_proto>,
               "a proto owns strings and vectors - Phase 15 must WALK it, not copy it. If "
               "this ever becomes trivially copyable the serializer can be simplified, and "
               "this assert is where that is noticed");
-static_assert(!std::is_trivially_copyable_v<program>,
-              "the same, one level up");
+static_assert(!std::is_trivially_copyable_v<program>, "the same, one level up");
 
 // --- THE POD HEADER OF A PROTO -------------------------------------------
 // The fields a serialized proto can write as a fixed record, before the

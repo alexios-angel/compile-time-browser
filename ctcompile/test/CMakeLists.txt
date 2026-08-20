@@ -38,3 +38,11 @@ set_tests_properties(ctcompile_help PROPERTIES
 # reason the catch block names it separately.
 add_test(NAME ctcompile_rejects_nonsense COMMAND ctcompile-tool --not-an-option)
 set_tests_properties(ctcompile_rejects_nonsense PROPERTIES WILL_FAIL TRUE)
+
+# THE COMPARATOR THAT ACCEPTS PHASE 16A, and the negative cases that stop it
+# from accepting anything. A comparator too lenient does not fail to catch a
+# bad blueprint - it certifies one.
+add_executable(ctcompile-test-html_comparator HtmlComparator.cpp)
+target_link_libraries(ctcompile-test-html_comparator PRIVATE ctcompile::html)
+ctcompile_target(ctcompile-test-html_comparator)
+add_test(NAME ctcompile_html_comparator COMMAND ctcompile-test-html_comparator)

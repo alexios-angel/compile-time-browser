@@ -5,3 +5,4 @@
 # JavaScript, Lowering, Packaging and Support. They arrive as the phases that
 # need them do; a directory with nothing in it is not architecture.
 add_subdirectory(Support)
+add_subdirectory(HTML)

@@ -32,9 +32,18 @@ struct row {
 // is a token this file recognises.
 #define CT_OPCODE(name_, a_, b_, c_, writes_a_, allocates_, may_throw_, may_reenter_,              \
                   is_safepoint_, may_suspend_, resumable_, impl_)                                  \
-    row{#name_, #a_,          #b_,          #c_,          (writes_a_) != 0, (allocates_) != 0,     \
-        (may_throw_) != 0, (may_reenter_) != 0, (is_safepoint_) != 0, (may_suspend_) != 0,         \
-        (resumable_) != 0, impl_},
+    row{#name_,                                                                                    \
+        #a_,                                                                                       \
+        #b_,                                                                                       \
+        #c_,                                                                                       \
+        (writes_a_) != 0,                                                                          \
+        (allocates_) != 0,                                                                         \
+        (may_throw_) != 0,                                                                         \
+        (may_reenter_) != 0,                                                                       \
+        (is_safepoint_) != 0,                                                                      \
+        (may_suspend_) != 0,                                                                       \
+        (resumable_) != 0,                                                                         \
+        impl_},
 constexpr row table[] = {
 #include <ctbrowser/script/bytecode_opcodes.def>
 };
