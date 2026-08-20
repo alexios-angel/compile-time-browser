@@ -197,13 +197,78 @@ being collected while the page is still using them. Either the hook grows a
 list, or the AOT registrar chains what it found. Decide it before writing the
 shadow frame, not after.
 
+### The HTML comparator, which exists before the thing it accepts
+
+`ctcompile::html::compare` walks two documents in document order and returns the
+first field they disagree on, with a path rather than a handle — because a
+`node_id` is a generation-tagged handle whose tag is meaningless across
+processes, which is also why a blueprint serializes ordinals. Every atom is
+compared as **text through its own document's table**: ids are handed out in
+first-interning order at run time, so comparing ids would pass or fail on
+interning order rather than on the document. `atom_table::text()` returns an
+empty view for an id past the end rather than throwing, so resolving one
+document's atom through the other's table would fail *open* — both sides come
+back `""` and compare equal.
+
+It does not compare anything the viewport decides. `node` stores no layout rect,
+which is what makes Principle 6 checkable rather than aspirational.
+
+**The positive case is one line and the negative cases are the file**, because a
+comparator that is too lenient does not fail to catch a bad blueprint — it
+certifies one. Eight mutations must each be noticed, and all eight were re-run
+against a deliberately blinded comparator to prove they fire. Two are worth
+naming: an element in the wrong namespace, because an SVG `<title>` and an HTML
+`<title>` intern to the *same atom*; and one element attached in two places with
+every child count still matching, which is the only case the visited-set guard
+can catch and is the shape a loader with a shared-subtree optimisation actually
+produces.
+
+### CSS: the parse is readable, the compile is not
+
+The style inventory came back with a **blocker for 16B rather than a
+comparator**. Everything `parse_stylesheet` produces can be read and compared
+with total fidelity — the token stream, the component-value tree, rules,
+selector lists in compiled form, specificity, the declaration triple plus its
+sheet-wide `order`, the media-condition tree and `@font-face`.
+
+What `engine::add_sheet` then *files* cannot be read at all. The only windows on
+it are `selector_count()`, `rule_count()` and `page_fonts()`, so **origin, the
+sheet-local to engine-local condition remap, and bucket assignment are all
+unobservable**. A comparator built today verifies the parse completely and
+almost nothing about the compile, and the end-to-end alternative — `resolve()`
+on a pinned environment — cannot distinguish a rule filed in the wrong bucket
+from one that simply never matched, while dragging viewport-dependent state into
+an acceptance test that must not compare viewport-decided things.
+
+**So 16B's first task is a debug enumerator on `engine`** — `for_each_rule(F)`
+yielding (selector ordinal, property, value bytes, order, condition, origin,
+important) — and the comparator is written against that. Building the comparator
+first would produce one that certifies the half that was never in doubt.
+
+Three parse-side traps the inventory turned up, all of which a blueprint can get
+wrong silently: the parser appends selectors and condition entries **before** the
+rule is accepted and never rolls back, so orphans exist that a rule-keyed walk
+cannot see; `source_length` is the length of the **preprocessed** buffer, so a
+blueprint slicing original bytes disagrees on every CRLF-authored sheet; and
+`declaration.order` is dense across the whole sheet, which is the only trace of
+what the parser dropped.
+
+**Sequencing, per the ground truth's warning that serializing a moving
+representation guarantees churn:** settled and safe to serialize now are the
+tokenizer, the value tree, the rule/selector/declaration structure and the
+condition tree. Still moving, and excluded: the value representation (S3b is
+open — serialize value *bytes*, never the container), cascade output (`revert` is
+folded to `unset`, shorthand expansion is incomplete, `::before`/`::after` are
+S6), and at-rule coverage — S5 still owes `@supports`, `@layer`, `@charset` and
+`@import`, and when that lands **condition ordinals shift with no field changing
+shape to warn you**.
+
 ### Still open in Phase 0
 
-The HTML and CSS startup inventories, whose deliverable is a **differential
-comparator** — the acceptance test for Phases 16A and 16B, written before the
-thing it accepts — and the performance baseline, stored as committed JSON with
-the machine and build configuration recorded beside it, because a baseline
-without its configuration is unusable six months later.
+The CSS comparator, behind the engine enumerator above; and the performance
+baseline, stored as committed JSON with the machine and build configuration
+beside it, because a baseline without its configuration is unusable six months
+later.
 
 ---
 
