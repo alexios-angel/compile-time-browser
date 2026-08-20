@@ -90,10 +90,10 @@ gets.
 
 ## Building
 
-The repository is a monorepo and [`ctbrowser/`](ctbrowser) is the engine and the
-CMake configure root. `CMakePresets.json` lives there, so every command below
-runs from there; `CTBROWSER_ENABLE_PROJECTS` names sibling projects to build
-beside it.
+The repository is a monorepo: [`ctbrowser/`](ctbrowser) is the engine and the
+CMake configure root, [`ctcompile/`](ctcompile) is the ahead-of-time compiler
+that consumes it. `CMakePresets.json` lives in `ctbrowser/`, so every command
+below runs from there.
 
 ```bash
 git submodule update --init --recursive   # ctjs (+ ctc for tests) + benchmark-only ctcss
@@ -105,9 +105,10 @@ Needs CMake 3.20 and a clang or gcc with C++23 — the system default will do.
 SDL3 is found if installed; without it the engine still builds and still
 renders — `run_app` runs headless.
 
-`browser` is the engine alone, and `browser-no-llvm` is that plus
-`CMAKE_DISABLE_FIND_PACKAGE_{LLVM,MLIR,LLD}` — the runtime-only build, enforced
-rather than assumed.
+The `default` preset builds **both** projects, so it also needs
+Boost.program_options for `ctcompile`'s command line. `browser` is the engine
+alone, and `browser-no-llvm` is that plus `CMAKE_DISABLE_FIND_PACKAGE_{LLVM,MLIR,LLD}`
+— the runtime-only build, enforced rather than assumed.
 
 ```bash
 # TSan needs mimalloc OFF: the engine's operator delete overrides collide with

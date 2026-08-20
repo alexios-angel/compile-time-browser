@@ -3,12 +3,13 @@
   "configurePresets": [
     {
       "name": "default",
-      "displayName": "Ninja Release",
+      "displayName": "Ninja Release (the engine and ctcompile)",
       "generator": "Ninja",
       "binaryDir": "${sourceParentDir}/build",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_CXX_COMPILER": "${sourceParentDir}/tools/clang-std-embed/bin/clang++"
+        "CMAKE_CXX_COMPILER": "${sourceParentDir}/tools/clang-std-embed/bin/clang++",
+        "CTBROWSER_ENABLE_PROJECTS": "ctcompile"
       }
     },
     {
@@ -31,6 +32,11 @@
         "CMAKE_DISABLE_FIND_PACKAGE_MLIR": "ON",
         "CMAKE_DISABLE_FIND_PACKAGE_LLD": "ON"
       }
+    },
+    {
+      "name": "browser+compiler",
+      "displayName": "The engine and ctcompile (the default build, named)",
+      "inherits": "default"
     },
     {
       "name": "tsan",
@@ -84,6 +90,10 @@
     {
       "name": "browser-no-llvm",
       "configurePreset": "browser-no-llvm"
+    },
+    {
+      "name": "browser+compiler",
+      "configurePreset": "browser+compiler"
     },
     {
       "name": "windows",

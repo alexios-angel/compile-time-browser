@@ -5,13 +5,17 @@
 #                                          + ctest (Ninja)
 #
 # THE CONFIGURE ROOT IS ctbrowser/, NOT THE REPOSITORY ROOT. The repository
-# became a monorepo, the LLVM model - so CMakePresets.json lives in ctbrowser/ and every cmake and ctest
+# became a monorepo - ctbrowser/ and ctcompile/ as sibling projects, the LLVM
+# model - so CMakePresets.json lives in ctbrowser/ and every cmake and ctest
 # invocation below runs from there. The build trees still land at the
 # REPOSITORY root (build/, build-windows/, ...), which is where every tool in
 # here already looks for them.
 #
-# `browser` and `browser-no-llvm` are the engine-only configurations, the second
-# with LLVM and MLIR made unfindable - the runtime-only build, enforced.
+# The `default` preset builds BOTH projects: it sets
+# CTBROWSER_ENABLE_PROJECTS=ctcompile, so the compiler is covered by the same
+# one command. That is deliberate - this script is the whole gate, and a
+# sibling project nobody builds is a sibling project nobody notices breaking.
+# `browser` and `browser-no-llvm` are the engine-only configurations.
 #   ./remote-build.sh windows              windows-fetch preset: cross-compile
 #                                          the examples, collect exes+SDL3.dll
 #                                          via windows-dist, rsync them back

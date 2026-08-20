@@ -1,4 +1,4 @@
-# CLAUDE.md — compile-time-browser (a monorepo; ctbrowser is the engine)
+# CLAUDE.md — compile-time-browser (a monorepo: ctbrowser + ctcompile)
 
 A browser engine in C++23. `include/ctbrowser.hpp` is the one-include public
 API, `ctbrowser/include/ctbrowser/` the engine's headers and `ctbrowser/lib/<Sub>/` its implementations;
@@ -139,6 +139,7 @@ ctbrowser/                 the engine - and the CMake CONFIGURE ROOT
   vendor/                  p5.js, Phaser, Babylon.js, Bootstrap - the corpora
   cmake/                   dependencies.cmake, modules/CTTest.cmake
   docs/                    see ctbrowser/docs/README.md
+ctcompile/                 the whole-application compiler (a stub today)
 cmake/                     LLVMVersion.cmake, modules/CTProject.cmake,
                            toolchains/windows-x86_64.cmake
 third-party/               ctjs + ctcss submodules, and the fetched ANGLE
