@@ -155,8 +155,8 @@ int main(int argc, char ** argv) {
                     ctbrowser::script::context cx;
                     (void)cx.run(program);
                 });
-                stages.push_back(stage{"js_run_top_level", run, source.size(),
-                                       program.functions.size()});
+                stages.push_back(
+                    stage{"js_run_top_level", run, source.size(), program.functions.size()});
             }
         }
 

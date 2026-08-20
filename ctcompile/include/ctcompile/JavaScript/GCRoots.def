@@ -14,43 +14,54 @@
  * reachable is reachable from exactly these."
  */
 
-CT_GC_ROOT(globals, "context::globals_", "collect()",
-           "the global object's bindings")
-CT_GC_ROOT(registers, "context::registers_", "collect()",
-           "ONE FLAT VECTOR for every live frame's window, indexed by base. This is also "
+CT_GC_ROOT(/* name */ globals, /* owner */ "context::globals_", /* marked_in */ "collect()",
+           /* note */ "the global object's bindings")
+CT_GC_ROOT(/* name */ registers, /* owner */ "context::registers_", /* marked_in */ "collect()",
+           /* note */ "ONE FLAT VECTOR for every live frame's window, indexed by base. This is also "
            "why only the top frame can suspend - lifting one from the middle would move "
            "every frame above it")
-CT_GC_ROOT(current_this, "context::current_this_", "collect()",
-           "the receiver of a native call in progress. It lives in a C++ LOCAL, so nothing "
+CT_GC_ROOT(/* name */ current_this, /* owner */ "context::current_this_",
+           /* marked_in */ "collect()",
+           /* note */ "the receiver of a native call in progress. It lives in a C++ LOCAL, so nothing "
            "else keeps it alive")
-CT_GC_ROOT(pending_new_target, "context::pending_new_target_", "collect()",
-           "the constructor a super() call is handing on. Live only between two "
+CT_GC_ROOT(/* name */ pending_new_target, /* owner */ "context::pending_new_target_",
+           /* marked_in */ "collect()",
+           /* note */ "the constructor a super() call is handing on. Live only between two "
            "instructions, which is exactly the window a collection can fall in")
-CT_GC_ROOT(frame_closure, "call_frame::closure", "collect(), per frame",
-           "a function called from C++ via call() is otherwise referenced only from a C++ "
+CT_GC_ROOT(/* name */ frame_closure, /* owner */ "call_frame::closure",
+           /* marked_in */ "collect(), per frame",
+           /* note */ "a function called from C++ via call() is otherwise referenced only from a C++ "
            "local, and its upvalues would be freed while its body ran")
-CT_GC_ROOT(frame_receiver, "call_frame::receiver", "collect(), per frame", "")
-CT_GC_ROOT(frame_arguments, "call_frame::arguments_object", "collect(), per frame", "")
-CT_GC_ROOT(frame_async_promise, "call_frame::async_promise", "collect(), per frame",
-           "the promise an async function will settle")
-CT_GC_ROOT(frame_new_target, "call_frame::new_target", "collect(), per frame", "")
-CT_GC_ROOT(microtasks, "context::microtasks_", "collect()",
-           "a queued job and its arguments. Nothing refers to them between queueing and "
+CT_GC_ROOT(/* name */ frame_receiver, /* owner */ "call_frame::receiver",
+           /* marked_in */ "collect(), per frame", /* note */ "")
+CT_GC_ROOT(/* name */ frame_arguments, /* owner */ "call_frame::arguments_object",
+           /* marked_in */ "collect(), per frame", /* note */ "")
+CT_GC_ROOT(/* name */ frame_async_promise, /* owner */ "call_frame::async_promise",
+           /* marked_in */ "collect(), per frame",
+           /* note */ "the promise an async function will settle")
+CT_GC_ROOT(/* name */ frame_new_target, /* owner */ "call_frame::new_target",
+           /* marked_in */ "collect(), per frame", /* note */ "")
+CT_GC_ROOT(/* name */ microtasks, /* owner */ "context::microtasks_", /* marked_in */ "collect()",
+           /* note */ "a queued job and its arguments. Nothing refers to them between queueing and "
            "running")
-CT_GC_ROOT(module_exports, "module_record::exports", "collect(), per module",
-           "export CELLS, live in modules_ and in no register once a module has finished "
+CT_GC_ROOT(/* name */ module_exports, /* owner */ "module_record::exports",
+           /* marked_in */ "collect(), per module",
+           /* note */ "export CELLS, live in modules_ and in no register once a module has finished "
            "evaluating")
-CT_GC_ROOT(module_namespace, "module_record::namespace_object", "collect(), per module", "")
-CT_GC_ROOT(thrown, "context::thrown_", "collect()",
-           "a value in flight is reachable from nothing else")
-CT_GC_ROOT(prototypes, "context::prototypes_", "collect()",
-           "the builtin method tables. Without this the standard library is collected on "
+CT_GC_ROOT(/* name */ module_namespace, /* owner */ "module_record::namespace_object",
+           /* marked_in */ "collect(), per module", /* note */ "")
+CT_GC_ROOT(/* name */ thrown, /* owner */ "context::thrown_", /* marked_in */ "collect()",
+           /* note */ "a value in flight is reachable from nothing else")
+CT_GC_ROOT(/* name */ prototypes, /* owner */ "context::prototypes_", /* marked_in */ "collect()",
+           /* note */ "the builtin method tables. Without this the standard library is collected on "
            "the first gc")
-CT_GC_ROOT(string_cache, "context::string_cache_", "collect()",
-           "per-proto literal cache; a sweep without it frees a string a running loop is "
+CT_GC_ROOT(/* name */ string_cache, /* owner */ "context::string_cache_",
+           /* marked_in */ "collect()",
+           /* note */ "per-proto literal cache; a sweep without it frees a string a running loop is "
            "about to read again")
-CT_GC_ROOT(bigint_cache, "context::bigint_cache_", "collect()",
-           "the same, for BigInt literals, which are parsed from their text once per slot")
+CT_GC_ROOT(/* name */ bigint_cache, /* owner */ "context::bigint_cache_",
+           /* marked_in */ "collect()",
+           /* note */ "the same, for BigInt literals, which are parsed from their text once per slot")
 
 /* THE ONE HOOK OUT. Everything the embedder holds - every DOM listener, timer
  * callback, pending fetch, image load and file read - is reachable only
@@ -64,6 +75,7 @@ CT_GC_ROOT(bigint_cache, "context::bigint_cache_", "collect()",
  * whose failure mode is a page's listeners being collected while the page is
  * still using them. Either the hook grows a list, or the AOT registrar chains
  * the previous function. Decide it in Phase 4, before writing the shadow frame. */
-CT_GC_ROOT(external, "context::external_roots_", "collect(), last",
-           "SINGLE SLOT - set_external_roots assigns rather than appends; sole caller today "
+CT_GC_ROOT(/* name */ external, /* owner */ "context::external_roots_",
+           /* marked_in */ "collect(), last",
+           /* note */ "SINGLE SLOT - set_external_roots assigns rather than appends; sole caller today "
            "is dom_bindings::register_roots")

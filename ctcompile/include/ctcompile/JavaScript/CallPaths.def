@@ -26,75 +26,93 @@
 /* THE CANONICAL ONE. Everything an AOT-compiled function is entered through
  * should end up here, and `context::call` is where a mixed-mode dispatch check
  * belongs (Phase 3): one place decides interpreted or native. */
-CT_CALL_PATH(call, "value call(value callable, span<const value> args, value this_value)",
-             true, false, false, false,
-             "pushes a frame and runs to its depth; the receiver lives in a C++ local "
+CT_CALL_PATH(/* name */ call,
+             /* signature */ "value call(value callable, span<const value> args, value this_value)",
+             /* canonical */ true, /* resets_stack */ false, /* clears_failure */ false,
+             /* drains_microtasks */ false,
+             /* note */ "pushes a frame and runs to its depth; the receiver lives in a C++ local "
              "and is rooted through current_this_")
 
 /* Construction. A separate entry rather than a flag on call() because it also
  * builds the receiver and threads new.target. */
-CT_CALL_PATH(construct, "value construct(value callee, span<const value> args)",
-             false, false, false, false,
-             "reaches the VM through call(); pending_new_target_ is a GC root for exactly "
+CT_CALL_PATH(/* name */ construct,
+             /* signature */ "value construct(value callee, span<const value> args)",
+             /* canonical */ false, /* resets_stack */ false, /* clears_failure */ false,
+             /* drains_microtasks */ false,
+             /* note */ "reaches the VM through call(); pending_new_target_ is a GC root for exactly "
              "the window between the two instructions")
 
 /* THE TOP-LEVEL ENTRY, and the only one that may reset the stack. */
-CT_CALL_PATH(execute, "value execute(const program & prog, const function_proto & entry)",
-             false, true, false, false,
-             "clears frames_ and registers_ and points program_ at its argument")
+CT_CALL_PATH(/* name */ execute,
+             /* signature */ "value execute(const program & prog, const function_proto & entry)",
+             /* canonical */ false, /* resets_stack */ true, /* clears_failure */ false,
+             /* drains_microtasks */ false,
+             /* note */ "clears frames_ and registers_ and points program_ at its argument")
 
 /* A whole turn: execute() plus the bookkeeping that belongs to a turn rather
  * than to a program. */
-CT_CALL_PATH(run, "run_result run(const program & prog)",
-             false, true, true, true,
-             "the ordinary way a page's script runs")
+CT_CALL_PATH(/* name */ run, /* signature */ "run_result run(const program & prog)",
+             /* canonical */ false, /* resets_stack */ true, /* clears_failure */ true,
+             /* drains_microtasks */ true, /* note */ "the ordinary way a page's script runs")
 
 /* A program run from INSIDE a running one - an imported module evaluating
  * while its importer is mid-statement. */
-CT_CALL_PATH(run_reentrant, "run_result run_reentrant(const program & prog)",
-             false, false, false, false,
-             "saves and restores program_ so the importer's later calls still index its own "
+CT_CALL_PATH(/* name */ run_reentrant,
+             /* signature */ "run_result run_reentrant(const program & prog)",
+             /* canonical */ false, /* resets_stack */ false, /* clears_failure */ false,
+             /* drains_microtasks */ false,
+             /* note */ "saves and restores program_ so the importer's later calls still index its own "
              "function table; deliberately does NOT drain - that would run the importer's "
              "pending handlers before its next statement")
 
 /* `new Function(...)` evaluating its own body mid-statement. Not execute(),
  * for the same reason run_reentrant is not: it would discard the caller's
  * stack. Implemented as a closure over the program's entry, called normally. */
-CT_CALL_PATH(run_nested, "value run_nested(const program & prog)",
-             false, false, false, false,
-             "a wrapper over call(); the closure's `owner` is what makes every op::closure "
+CT_CALL_PATH(/* name */ run_nested, /* signature */ "value run_nested(const program & prog)",
+             /* canonical */ false, /* resets_stack */ false, /* clears_failure */ false,
+             /* drains_microtasks */ false,
+             /* note */ "a wrapper over call(); the closure's `owner` is what makes every op::closure "
              "inside it index the right function table")
 
 /* SUSPENSION, and the two paths that resume it. These are the ones Phase 14
  * has to reconcile with AOT frames: coroutine_object saves a frame by copying
  * its REGISTER WINDOW out of the flat registers_ vector, and an AOT frame has
  * no register window to copy. */
-CT_CALL_PATH(generator_resume, "value generator_resume(value generator, value sent, resume_mode how)",
-             false, false, false, false,
-             "next/throw/return on a generator; restores a saved register window and runs "
+CT_CALL_PATH(/* name */ generator_resume,
+             /* signature */ "value generator_resume(value generator, value sent, resume_mode how)",
+             /* canonical */ false, /* resets_stack */ false, /* clears_failure */ false,
+             /* drains_microtasks */ false,
+             /* note */ "next/throw/return on a generator; restores a saved register window and runs "
              "to the saved depth")
-CT_CALL_PATH(resume, "void resume(value coroutine, value with, bool rejected)",
-             false, false, false, false,
-             "an await settling; same register-window restore, driven by the microtask queue")
+CT_CALL_PATH(/* name */ resume,
+             /* signature */ "void resume(value coroutine, value with, bool rejected)",
+             /* canonical */ false, /* resets_stack */ false, /* clears_failure */ false,
+             /* drains_microtasks */ false,
+             /* note */ "an await settling; same register-window restore, driven by the microtask queue")
 
 /* The queue itself. Not a VM entry in its own right - it calls call() in a
  * loop - but it IS a place script starts running with no syntactic cause, and
  * a bounded one: a job that queues a job forever raises rather than hangs. */
-CT_CALL_PATH(drain_microtasks, "void drain_microtasks()",
-             false, false, false, true,
-             "FIFO, and a job queued BY a job runs in the same drain, which is what makes "
+CT_CALL_PATH(/* name */ drain_microtasks, /* signature */ "void drain_microtasks()",
+             /* canonical */ false, /* resets_stack */ false, /* clears_failure */ false,
+             /* drains_microtasks */ true,
+             /* note */ "FIFO, and a job queued BY a job runs in the same drain, which is what makes "
              "a promise chain complete before the turn ends")
 
 /* Class field initialisers, run as part of construction but compiled as their
  * own bodies. */
-CT_CALL_PATH(run_field_initialisers, "void run_field_initialisers(value constructor, value self)",
-             false, false, false, false,
-             "reaches the VM through call(), once per field, with self as the receiver")
+CT_CALL_PATH(/* name */ run_field_initialisers,
+             /* signature */ "void run_field_initialisers(value constructor, value self)",
+             /* canonical */ false, /* resets_stack */ false, /* clears_failure */ false,
+             /* drains_microtasks */ false,
+             /* note */ "reaches the VM through call(), once per field, with self as the receiver")
 
 /* Module instantiation. Runs no user code itself - it creates export cells
  * before anything evaluates, which is the specification's instantiate-then-
  * evaluate split - but it is listed because Phase 15 serializes its output and
  * a compiled module image has to reproduce the same cells. */
-CT_CALL_PATH(instantiate_module, "void instantiate_module(const program & prog, module_record & into)",
-             false, false, false, false,
-             "no user code; creates the bindings a cyclic importer needs before evaluation")
+CT_CALL_PATH(/* name */ instantiate_module,
+             /* signature */ "void instantiate_module(const program & prog, module_record & into)",
+             /* canonical */ false, /* resets_stack */ false, /* clears_failure */ false,
+             /* drains_microtasks */ false,
+             /* note */ "no user code; creates the bindings a cyclic importer needs before evaluation")

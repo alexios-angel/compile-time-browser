@@ -183,7 +183,8 @@ int main(int argc, char ** argv) {
                 const auto program = ctbrowser::script::compiler::compile(source);
                 functions = program.functions.size();
             });
-            stages.push_back(stage{"js_parse_and_compile", compile, source.size(), functions, true, {}});
+            stages.push_back(
+                stage{"js_parse_and_compile", compile, source.size(), functions, true, {}});
 
             // AND RUNNING THE TOP LEVEL, which for a UMD bundle is where the
             // library installs itself - the work a packaged application still

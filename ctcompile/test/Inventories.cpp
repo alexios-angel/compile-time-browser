@@ -15,6 +15,12 @@
 // surface, so this is the translation unit that makes it fire.
 #include <ctcompile/JavaScript/EngineContract.hpp>
 
+// AND THE AOT ABI, expanded HERE the way ctcompile will expand it - which is
+// the mechanism Principle 11 is about: the runtime declares the helpers from
+// aot_helpers.def and the compiler builds its descriptor table from the SAME
+// file, so the two cannot disagree without failing to build.
+#include <ctbrowser/aot/aot.hpp>
+
 #include <cstdio>
 #include <string_view>
 
@@ -88,6 +94,49 @@ constexpr gc_root gc_roots[] = {
 };
 #undef CT_GC_ROOT
 
+// THE HELPER DESCRIPTORS, as the compiler needs them: a name to emit, and the
+// three obligations a call site has to honour.
+struct helper {
+    std::string_view name;
+    bool may_throw, may_reenter, is_safepoint;
+};
+#define CT_AOT_HELPER(name_, ret_, params_, may_throw_, may_reenter_, is_safepoint_)               \
+    helper{#name_, (may_throw_) != 0, (may_reenter_) != 0, (is_safepoint_) != 0},
+constexpr helper helpers[] = {
+#include <ctbrowser/aot/aot_helpers.def>
+};
+
+// WHICH OPCODE EACH HELPER SERVES, and this is where drift becomes a BUILD
+// ERROR rather than a test failure: the opcode is spelled as a real
+// `ctbrowser::script::op::` enumerator, so renaming or deleting an opcode
+// without updating the ABI table stops the compiler's build at this line.
+// A test that ran later would be a weaker guarantee for the same information.
+struct coverage {
+    std::string_view helper;
+    ctbrowser::script::op opcode;
+};
+#define CT_AOT_COVERS(helper_, opcode_) coverage{#helper_, ctbrowser::script::op::opcode_},
+constexpr coverage covers[] = {
+#include <ctbrowser/aot/aot_helpers.def>
+};
+
+// The ten opcodes no helper serves, each because it needs no runtime call. Kept
+// here as well as in the .def's closing comment so that the TEST fails when the
+// two disagree - a list in a comment is not checkable, and this one is the
+// difference between "deliberately uncovered" and "quietly forgotten".
+constexpr ctbrowser::script::op uncovered[] = {
+    ctbrowser::script::op::load_const,
+    ctbrowser::script::op::load_undef,
+    ctbrowser::script::op::load_null,
+    ctbrowser::script::op::load_true,
+    ctbrowser::script::op::load_false,
+    ctbrowser::script::op::move,
+    ctbrowser::script::op::jump,
+    ctbrowser::script::op::jump_if_not_nullish,
+    ctbrowser::script::op::jump_if_defined,
+    ctbrowser::script::op::halt,
+};
+
 int main() {
     // The same count the header asserts, restated where a person reading the
     // suite can see it fail.
@@ -147,9 +196,67 @@ int main() {
           "through it",
           "GCRoots.def");
 
+    // --- THE AOT ABI ------------------------------------------------------
+    check(std::size(helpers) == ctbrowser::aot::helper_count,
+          "the descriptor table and the runtime's helper_id enum disagree", "aot_helpers.def");
+
+    for (const helper & h : helpers) {
+        check(h.name.starts_with("ct_aot_"), "a helper must be ct_aot_ prefixed", h.name);
+        // A HELPER THAT CAN RUN USER JAVASCRIPT IS A SAFEPOINT, always. The
+        // collector is precise and a value living only in a native frame is
+        // reachable from none of its roots, so a re-entering helper that did
+        // not declare itself a safepoint would tell every call site it is safe
+        // to keep values where the collector cannot see them.
+        check(!h.may_reenter || h.is_safepoint, "may_reenter implies is_safepoint", h.name);
+    }
+
+    // EVERY OPCODE IS ACCOUNTED FOR: served by a helper, or on the list of ten
+    // that need no runtime call. Neither silently.
+    for (const row & r : table) {
+        const auto op = static_cast<ctbrowser::script::op>(&r - table);
+        bool served = false;
+        for (const coverage & c : covers) {
+            if (c.opcode == op) { served = true; }
+        }
+        bool exempt = false;
+        for (const ctbrowser::script::op u : uncovered) {
+            if (u == op) { exempt = true; }
+        }
+        check(served != exempt,
+              served ? "covered AND listed as needing no helper"
+                     : "no helper serves it and it is not on the exempt list",
+              r.name);
+
+        // AND A SAFEPOINT OPCODE NEEDS A SAFEPOINT HELPER. If an opcode can
+        // collect but every helper serving it claims it cannot, the call sites
+        // will not keep their live values rooted across it.
+        // await_value and yield_value are safepoints only on the path that
+        // SUSPENDS - allocating a coroutine and a promise - and that path is
+        // deliberately unimplemented: Phase 14 has not decided how an AOT frame
+        // suspends when it has no register window to save, so the ABI offers
+        // ct_aot_suspend_unsupported and a diagnosable fault instead of a
+        // guess. Named here rather than weakening the rule, so that whoever
+        // implements suspension is told by a failing test that this exemption
+        // has to go.
+        const bool suspension_pending =
+            op == ctbrowser::script::op::await_value || op == ctbrowser::script::op::yield_value;
+        if (served && r.is_safepoint && !suspension_pending) {
+            bool any = false;
+            for (const coverage & c : covers) {
+                if (c.opcode != op) { continue; }
+                for (const helper & h : helpers) {
+                    if (h.name == c.helper && h.is_safepoint) { any = true; }
+                }
+            }
+            check(any, "a safepoint opcode is served only by non-safepoint helpers", r.name);
+        }
+    }
+
     if (failures == 0) {
-        std::printf("ok inventories (%zu opcodes, %zu call paths, %zu gc roots)\n",
-                    std::size(table), std::size(call_paths), std::size(gc_roots));
+        std::printf("ok inventories (%zu opcodes, %zu call paths, %zu gc roots, "
+                    "%zu abi helpers over %zu opcodes)\n",
+                    std::size(table), std::size(call_paths), std::size(gc_roots),
+                    std::size(helpers), std::size(covers));
     }
     return failures == 0 ? 0 : 1;
 }

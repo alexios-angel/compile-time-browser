@@ -1,0 +1,1881 @@
+/* THE AOT RUNTIME ABI: every helper compiled JavaScript may call, declared once.
+ *
+ * CT_AOT_HELPER(name, return_type, (parameters), may_throw, may_reenter,
+ *               is_safepoint)
+ * CT_AOT_COVERS(helper, opcode)          one line per opcode a helper serves
+ *
+ * PRINCIPLE 11: THE RUNTIME OWNS THIS FILE AND THE COMPILER READS IT. ctbrowser
+ * expands it to declare and define the helpers; ctcompile includes the SAME
+ * file and expands it to build its descriptor table and the declarations it
+ * emits. There is no generator and no dependency - an X-macro rather than
+ * TableGen, because generating this into ctbrowser would make a runtime-only
+ * build require llvm-tblgen and break Principles 2 and 8.
+ *
+ * THE POINT IS THAT DRIFT IS A COMPILE ERROR. A renamed, removed or misspelled
+ * helper fails to build in ctcompile rather than producing a link error, a
+ * crash, or - worst - a silently wrong call.
+ *
+ * PRINCIPLE 3 IS WHY THE LIST IS SHORT: AOT is a BACKEND of this runtime, not a
+ * second JavaScript engine. Every row below delegates to semantics the
+ * interpreter already implements. Nothing here reimplements property lookup,
+ * conversion, calls, classes, promises, proxies, iterators or modules.
+ *
+ * THE FLAGS ARE OBLIGATIONS, NOT DESCRIPTIONS:
+ *   may_throw     the caller must test the status it returns
+ *   may_reenter   this helper can run user JavaScript before it returns
+ *   is_safepoint  a collection can happen inside it, so every live value the
+ *                 caller holds must be reachable from a root ACROSS the call.
+ *                 The collector is precise and walks exactly the roots in
+ *                 ctcompile/include/ctcompile/JavaScript/GCRoots.def; a value
+ *                 living only in a native frame is reachable from NONE of them.
+ *
+ * TWO TIERS OF FAILURE, and they are not the same thing. raise() sets a flag no
+ * try/catch can see - the allocation ceiling, a missing module - and the only
+ * correct response is to unwind the whole native chain. thrown_ plus
+ * unwind_to_handler is the catchable path, and it completes INSIDE the callee:
+ * by the time a helper returns there is no exception in flight, only a frame
+ * stack that is shorter than it was. That is why the status vocabulary has no
+ * value meaning "threw".
+ *
+ * COVERAGE: 83 of the 93 opcodes in script/bytecode_opcodes.def are served here.
+ * The other ten need no runtime call and are listed at the bottom of this file
+ * with the reason. Nothing is uncovered by accident.
+ *
+ * THE POINT OF ALL THIS IS SPEED, SO READ THIS BEFORE ADDING A ROW.
+ *
+ * A CALL PER OPCODE WOULD BE AN INTERPRETER WITHOUT THE DISPATCH LOOP - and a
+ * slower one, because it would pay a call, a spill and a reload where the run
+ * loop pays a jump. This table is a SEMANTIC CONTRACT, not an instruction
+ * schedule, and it earns its keep in two different ways on the two backends:
+ *
+ *   EmitC (Phase 10A, THE PRIMARY BACKEND) emits ordinary C++ that INCLUDES the
+ *   runtime headers, so a call to a helper is a call to an inline function the
+ *   host compiler sees the body of. At -O2 the fast path - a number that is
+ *   already a number, a property that is a plain data slot - inlines away and
+ *   the slow path stays a call. That is why EmitC went first: the LLVM path
+ *   needs a bitcode archive and LTO to get the same thing.
+ *
+ *   The LLVM dialect backend (Phases 11-12A) cannot inline across a frozen C
+ *   ABI, so for THAT backend these signatures are the boundary and the fast
+ *   paths have to be open-coded in the IR before the call is emitted.
+ *
+ * Which gives the rule for every row here: A HELPER IS THE SLOW PATH. Where a
+ * check is a tag test against value's constants, a backend must be free to
+ * emit the test and skip the call entirely - which is exactly why the ten
+ * uncovered opcodes at the bottom of this file are uncovered, and why
+ * jump_if_false is NOT among them.
+ *
+ * Three rows exist for performance rather than for semantics, and deleting them
+ * would be correct and slow:
+ *
+ *   - the site pointer on the property and call helpers, which is where Phase
+ *     26's inline caches attach WITHOUT an ABI break. A register machine gives
+ *     `get_prop dst, obj, name` a stable identity, and that identity is the
+ *     whole reason the bytecode is a register machine rather than a stack one.
+ *   - the literal memos on ct_aot_new_string and ct_aot_new_bigint_literal.
+ *     These are NOT an optimisation an image may skip: context::allocate counts
+ *     TOTAL LIFETIME allocations against a 40,000,000 ceiling and nothing ever
+ *     resets it, so an un-memoised literal in a hot loop reaches an UNCATCHABLE
+ *     raise on a program the interpreter runs forever.
+ *   - ct_aot_failed, which is one load of one bool so that the failure poll can
+ *     sit on back edges and before returns rather than after every allocation.
+ *     That is sound because allocate() still returns a valid object past the
+ *     ceiling: running on is wasteful, never unsafe.
+ *
+ * And the standing performance HAZARD, which Phase 4 owns: is_safepoint means
+ * the caller's live values must be reachable across the call, and the cheapest
+ * way to guarantee that - spill everything to a shadow frame at every call
+ * site - would give back much of what compiling won. Precise rooting is Phase
+ * 29 for that reason. Do not let the conservative version become the ABI.
+ *
+ * DERIVED, NOT INVENTED. Every row was proposed against the handler in
+ * lib/Script/vm/ that owns its semantics today, then independently refuted by a
+ * second reader against the same code, then merged. Where a row disagrees with
+ * what an opcode's name suggests, its comment says why.
+ */
+
+/* A consumer defines whichever of the two it wants and ignores the other; both
+ * are UNDEFINED at the bottom of this file, so every inclusion starts clean and
+ * a translation unit can include it twice - once for the helpers and once for
+ * the coverage - which is exactly what ctcompile does. Without that, the
+ * fallback below survives the first include and collides with the second
+ * definition, which is a -Wmacro-redefined error and not an obvious one. */
+#ifndef CT_AOT_HELPER
+#define CT_AOT_HELPER(name, ret, params, may_throw, may_reenter, is_safepoint)
+#endif
+#ifndef CT_AOT_COVERS
+#define CT_AOT_COVERS(helper, opcode)
+#endif
+
+
+/* Declared in Phase 2 because every other row's first parameter has no
+ * producer without it, and because vm.hpp:954 writes registers_[base+slot]
+ * UNCONDITIONALLY for the winning handler - so the register span must exist
+ * before the first ct_aot_handler_push, which is an ABI shape fact, not a
+ * Phase 4 detail. `storage` is caller-allocated of CT_AOT_FRAME_BYTES so
+ * the layout stays Phase 4's and stays changeable. Keeping the real proto
+ * (not nullptr) is required or current_stack (vm.hpp:426-449) skips the
+ * frame and every AOT frame vanishes from .stack.
+ * DELEGATES TO: NEW, Phase 4 owns the body: push a call_frame carrying the
+ *   image's real function_proto, reserve reg_count slots in
+ *   context::registers_ (GC root 2), bump a new native_depth_ so the 512
+ *   guard (call.cpp:77) counts AOT frames, and consume-and-clear
+ *   pending_new_target_ exactly as call.cpp:90-91 does.
+ * FAILURE: Returns NULL on the 512-depth raise; caller returns
+ *   CT_AOT_FAILED without leaving. Never throws catchably. */
+CT_AOT_HELPER(/* name */ ct_aot_enter, /* ret */ struct ct_aot_frame *,
+              /* params */ (struct ct_aot_ctx *ctx, const struct ct_aot_site *site, uint32_t reg_count, void *storage),
+              /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 0)
+
+/* The handler truncation is a RESIZE, not a pop, so ct_aot_handler_pop is
+ * not it and must not be used for it - a `return` out of a try otherwise
+ * leaves its catch reachable from the caller, silently. Must NOT run on the
+ * CT_AOT_UNWOUND path (the unwinder already truncated and destroyed the
+ * frame) and is a harmless no-op on CT_AOT_FAILED (the search emptied
+ * handlers_).
+ * DELEGATES TO: pop the frame, truncate handlers_ to
+ *   call_frame::handler_base exactly as op::ret does
+ *   (run_loop.cpp:1039-1041), decrement native_depth_, release the register
+ *   span.
+ * FAILURE: None. */
+CT_AOT_HELPER(/* name */ ct_aot_leave, /* ret */ void, /* params */ (struct ct_aot_frame *fr),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+
+/* There is a universal DELIVERY point and no universal DETECTION point:
+ * nothing sets an 'unwind pending' flag, and the interpreter notices only
+ * because VM_NEXT re-derives the frame and re-tests. A native frame has no
+ * loop head. Exported rather than inlined because an AOT->AOT direct call
+ * bypasses every helper, and only the caller can reclassify a callee's
+ * status for ITS frame (a callee's UNWOUND is the caller's CAUGHT when the
+ * caller owns the winning handler). One implementation is also the only way
+ * the two projects cannot disagree about the precedence order.
+ * DELEGATES TO: the run-loop head's own exit test, VM_NEXT
+ *   (run_loop.cpp:94-103 `if (frames_.size() <= stop_depth || failed_) goto
+ *   vm_done`), plus context::failed() and the state unwind_to_handler
+ *   leaves: frames_.size() after the resize (vm.hpp:950) and call_frame::ip
+ *   after the assignment (vm.hpp:952).
+ * FAILURE: THE CLASSIFIER. Precedence is the run-loop head's, in order: (1)
+ *   frames_.size() < fr depth => CT_AOT_UNWOUND (the call_frame is
+ *   DESTROYED, so this must be first - every later test dereferences it);
+ *   (2) failed_ => CT_AOT_FAILED (before the caught test, because VM_NEXT
+ *   tests failed_ in the same disjunction and leaves regardless of a
+ *   handler that just fired); (3) CT_AOT_PAD_BIT set in fr->ip =>
+ *   CT_AOT_CAUGHT; (4) CT_AOT_OK. */
+CT_AOT_HELPER(/* name */ ct_aot_check, /* ret */ int32_t, /* params */ (struct ct_aot_frame *fr),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+
+/* MERGED: the objects and frames areas proposed identical rows; the frames
+ * spelling wins and both `covers` lists are emptied under the partition
+ * rule (new_object/new_array/own_keys/instance_of are owned by their own
+ * rows). VERIFIED that allocate() (vm.hpp:223-233) raises past the 40M
+ * ceiling and then STILL returns a valid linked object - so a compiled
+ * function running past the ceiling is WASTEFUL, NEVER UNSAFE. That is what
+ * licenses the poll discipline: back-edges and before returns only, not
+ * after every allocation. Return is uint32_t, not int32_t, under the
+ * return-type rule - it is data, not a status. Kept separate from
+ * ct_aot_check because the back-edge poll wants one load of one bool, not a
+ * frame-depth comparison.
+ * DELEGATES TO: context::failed() (vm.hpp:453) over the flag context::raise
+ *   sets (vm.hpp:932-936).
+ * FAILURE: IT IS THE SIGNAL. Nonzero means the run is over: no try/catch
+ *   can see it, no landing pad exists, the only correct response is to
+ *   return CT_AOT_FAILED up the whole native chain. Sticky until
+ *   context::take_error(), which belongs to the turn and never runs inside
+ *   compiled code. */
+CT_AOT_HELPER(/* name */ ct_aot_failed, /* ret */ uint32_t,
+              /* params */ (struct ct_aot_frame *fr), /* may_throw */ 0, /* may_reenter */ 0,
+              /* is_safepoint */ 0)
+
+/* `slot` is NOT droppable, and that correction is a memory-safety fix
+ * rather than a modelling quibble: vm.hpp:954 is `registers_[target.base +
+ * h.slot] = thrown_` and it is UNCONDITIONAL for whatever frame wins,
+ * native or interpreted, guarded above only by `registers_.size() <
+ * h.reg_top`. With slot defaulting to 0 and an AOT base at
+ * registers_.size() that is an out-of-bounds write that would not even fail
+ * loudly, because context::call over-allocates every window by 8 slots
+ * (call.cpp:73). Once the frame reserves a real delivery slot,
+ * unwind_to_handler is correct for a native target UNCHANGED - `pad` rides
+ * in handler::address and lands in call_frame::ip. slot must be <= 65535
+ * (handler::slot is uint16_t) and base+slot < reg_top. THE HELPER MUST READ
+ * registers_.size() ITSELF: this is the only opcode capturing the high-
+ * water mark ABSOLUTELY, so it may not be hoisted out of a loop or sunk
+ * past anything that pushes registers.
+ * DELEGATES TO: context::handlers_.push_back(handler{frames_.size()-1, pad,
+ *   registers_.size(), slot}) - run_loop.cpp:1490-1494; the handler struct
+ *   is vm.hpp:746-751.
+ * FAILURE: None. */
+CT_AOT_HELPER(/* name */ ct_aot_handler_push, /* ret */ void,
+              /* params */ (struct ct_aot_frame *fr, uint32_t pad, uint32_t slot),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_handler_push, /* opcode */ push_handler)
+
+/* It pops the GLOBALLY innermost handler without consulting
+ * call_frame::handler_base, so a mis-balanced emission silently drops a
+ * CALLER's catch and nothing reports it. Balance is a compiler invariant
+ * only - compile_break and compile_continue each emit one pop per open try
+ * when leaving the block (statements.cpp:282-284, 294-296) - and Phase 10
+ * inherits that obligation on every non-local exit path. `fr` is carried
+ * purely so a debug build can assert handlers_.back().frame == this frame's
+ * depth, turning a silent bug class into a loud one. It is NOT the frame-
+ * exit truncation; that is ct_aot_leave.
+ * DELEGATES TO: context::handlers_.pop_back() - run_loop.cpp:1499-1501, `if
+ *   (!handlers_.empty()) { handlers_.pop_back(); }`.
+ * FAILURE: None - a no-op on an empty stack, as the handler is. */
+CT_AOT_HELPER(/* name */ ct_aot_handler_pop, /* ret */ void,
+              /* params */ (struct ct_aot_frame *fr), /* may_throw */ 0, /* may_reenter */ 0,
+              /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_handler_pop, /* opcode */ pop_handler)
+
+/* THE ONE DESIGN DECISION THAT DISSOLVES THE PLAN'S BIGGEST BLOCKER.
+ * Verified: vm.hpp:955 sets `thrown_ = value::undefined()` BEFORE
+ * unwind_to_handler returns true, so any design where a helper reports 'a
+ * throw is in flight' and hands back thrown_ delivers undefined for every
+ * catch in the program. The fix is to stop fighting the VM: let the AOT
+ * frame carry the pad id in handler::address and a real delivery register
+ * in handler::slot, so all four of unwind_to_handler's steps remain correct
+ * for a native target and this becomes a pure READ of what it deposited.
+ * Zero change to unwind_to_handler, zero change to the interpreter, and the
+ * thrown value is delivered into registers_ (GC root 2) instead of into a
+ * native frame reachable from none of the 17 roots. It is the single
+ * delivery point for every area, which keeps a pad out-parameter and a
+ * value out-parameter off every throwing helper's signature.
+ * DELEGATES TO: READS BACK what unwind_to_handler already wrote:
+ *   call_frame::ip (assigned from handler::address, vm.hpp:952) and
+ *   registers_[call_frame::base + handler::slot] (written vm.hpp:954). Then
+ *   clears CT_AOT_PAD_BIT in ip. It does NOT perform those two writes.
+ * FAILURE: None. Called exactly once, only after CT_AOT_CAUGHT. Clearing
+ *   the pad marker makes a second call a debug assert rather than a second
+ *   catch. */
+CT_AOT_HELPER(/* name */ ct_aot_catch_land, /* ret */ uint32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t *out_thrown), /* may_throw */ 0,
+              /* may_reenter */ 0, /* is_safepoint */ 0)
+
+/* may_reenter=1 is the most surprising column in the table and it is real:
+ * describe_thrown calls lookup_property(thrown,"name") and ("message")
+ * (call.cpp:335-336), which runs an accessor, and anything not
+ * is_kind(object) falls to to_string, reaching to_primitive_string's
+ * `call(fn,{},v)` on toString then valueOf (coerce.cpp:172-176) - a full
+ * nested run_loop. Page JavaScript runs in the middle of formatting a fatal
+ * error. Every live value must be spilled across this call EXCEPT `thrown`
+ * itself, because the helper's first action is `thrown_ = thrown` and
+ * thrown_ is GC root 13 from that instant. The status is not hand-computed
+ * here; the body ends in ct_aot_check so this and every other throwing
+ * helper classify identically.
+ * DELEGATES TO: run_loop.cpp:1505-1510 `thrown_ = reg(in.a); if
+ *   (!unwind_to_handler()) raise("uncaught " + describe_thrown(thrown_));`
+ *   - vm.hpp:945-959, call.cpp:332-349, vm.hpp:932-936 - then ct_aot_check
+ *   for the status.
+ * FAILURE: BOTH TIERS, AND IT NEVER RETURNS CT_AOT_OK. CT_AOT_CAUGHT: the
+ *   winning handler is this frame's - call ct_aot_catch_land once and
+ *   branch to the pad. CT_AOT_UNWOUND: the winner is below, frames_ is
+ *   already resized past this frame - return immediately, run no epilogue,
+ *   write no result, do not call ct_aot_leave. CT_AOT_FAILED: nothing
+ *   caught it, and note unwind_to_handler pops as it SEARCHES
+ *   (vm.hpp:947-949), so handlers_ is left COMPLETELY EMPTY and thrown_ is
+ *   NOT cleared (vm.hpp:955 is only reached on a hit), which is what keeps
+ *   the object alive while its own toString runs. */
+CT_AOT_HELPER(/* name */ ct_aot_throw, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t thrown), /* may_throw */ 1,
+              /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_throw, /* opcode */ throw_value)
+
+/* MERGED AWAY a single ct_aot_frame_read(field) reader: a discriminator
+ * puts a RUNTIME switch in an out-of-line C function, so the constant
+ * cannot fold across the ABI boundary and every `this` in a Phaser method
+ * body pays a branch. Four symbols beat one symbol and an immediate, and
+ * their LLVM declarations differ anyway. Routing through effective_this
+ * rather than reading call_frame::receiver is non-negotiable under
+ * Principle 3 - the arrow rule (`is_arrow ? captured_this : receiver`) is
+ * the VM's definition, and knowing is_arrow statically is not permission to
+ * restate it. frame_receiver is GC root 6, so no new root.
+ * DELEGATES TO: context::effective_this(const call_frame &) -
+ *   vm.hpp:897-902, via run_loop.cpp:1059-1060.
+ * FAILURE: None. There is NO sloppy-mode globalThis substitution: a frame
+ *   entered with no receiver hands back raw undefined (op::call sets
+ *   receiver = undefined, run_loop.cpp:937), so `this` at top level or in a
+ *   bare call is undefined. */
+CT_AOT_HELPER(/* name */ ct_aot_this, /* ret */ uint64_t, /* params */ (struct ct_aot_frame *fr),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_this, /* opcode */ load_this)
+
+/* MERGE: the calls area proposed ct_aot_take_new_target, a PROLOGUE
+ * consume-and-clear of pending_new_target_. That is a different operation
+ * from this opcode, and it belongs to ct_aot_enter (which now performs it),
+ * not to a load site. This spelling wins for the opcode because
+ * run_loop.cpp:1078 reads the FRAME FIELD, not the pending flag. It must
+ * stay a frame read at every use and must never be cached in an SSA value
+ * across anything that can suspend or re-enter: context::resume rebuilds
+ * the frame WITHOUT copying new_target (call.cpp:673-692), so new.target
+ * reads undefined after an await, and a backend that cached it would be
+ * more correct than the interpreter and would diverge from it.
+ * frame_new_target is GC root 9.
+ * DELEGATES TO: call_frame::new_target (vm.hpp:865) -
+ *   run_loop.cpp:1077-1078 `reg(in.a) = vm_frame->new_target`.
+ * FAILURE: None - undefined for an ordinary call. */
+CT_AOT_HELPER(/* name */ ct_aot_new_target, /* ret */ uint64_t,
+              /* params */ (struct ct_aot_frame *fr), /* may_throw */ 0, /* may_reenter */ 0,
+              /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_new_target, /* opcode */ load_new_target)
+
+/* Emitted only for a named function expression's self-binding, and
+ * immediately followed by new_cell when the name is captured
+ * (statements.cpp:737-738), so its result feeds ct_aot_cell_new on the very
+ * next instruction. frame_closure is GC root 5, so this is a read of an
+ * existing root rather than a new one.
+ * DELEGATES TO: call_frame::closure (vm.hpp:851) - run_loop.cpp:1103-1104,
+ *   undefined when closure is null.
+ * FAILURE: None - undefined in the top-level script frame, which has no
+ *   closure. */
+CT_AOT_HELPER(/* name */ ct_aot_callee, /* ret */ uint64_t,
+              /* params */ (struct ct_aot_frame *fr), /* may_throw */ 0, /* may_reenter */ 0,
+              /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_callee, /* opcode */ load_callee)
+
+/* MERGED from two spellings: the objects area passed the closure
+ * explicitly, arguing the handler's implicit frames_.back() would resolve
+ * `super` against a stranger's home object for a native frame. That risk is
+ * real but disappears once ct_aot_enter puts the AOT frame IN frames_ with
+ * its own closure - and Phase 4 must carry closure anyway for op::closure's
+ * program selection and GC root 5, so passing it separately duplicates
+ * state and creates two sources of 'my closure' that can drift. This
+ * spelling wins; the helper reads fr->closure and debug-asserts it equals
+ * frames_.back().closure. Two facts keep it a helper: it is NOT a
+ * call_frame field but a property lookup over closure_object::props, whose
+ * returned pointer is invalidated by any later set() (so the helper copies
+ * the value out and never hands a pointer across the ABI); and __home is an
+ * ORDINARY observable property installed by op::set_prop (classes.cpp:136,
+ * 203), so the home object must never be baked into the image. All-zero
+ * flags verified: find() consults `props` only, never `accessors`, so no
+ * getter can run.
+ * DELEGATES TO: run_loop.cpp:1402-1411 - `closure_object *running =
+ *   frames_.back().closure; if (running) if (value *home =
+ *   running->find("__home")) reg(a) = *home;`, closure_object::find being
+ *   the linear scan at vm.hpp:117-123.
+ * FAILURE: None. Undefined when the frame has no closure and undefined when
+ *   the closure has no __home. */
+CT_AOT_HELPER(/* name */ ct_aot_home, /* ret */ uint64_t, /* params */ (struct ct_aot_frame *fr),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_home, /* opcode */ load_home)
+
+/* MERGED: the calls area passed the value explicitly, `(ctx, uint64_t
+ * new_target)`. This zero-operand spelling wins because run_loop.cpp:1374
+ * reads THIS frame's new_target, and an explicit parameter would let a
+ * backend hand over a stale or cached value - precisely what
+ * ct_aot_new_target's row forbids. It must reproduce the LEAK, not repair
+ * it: grep confirms exactly three writers in the tree
+ * (run_loop.cpp:1021-1022, call.cpp:90-91, run_loop.cpp:1374), and both
+ * clearing sites are JS-closure frame pushes, so a native or generator
+ * callee leaves the flag set and the next ordinary call anywhere sees a
+ * truthy new.target. The helper does the write and nothing else. Adjacency
+ * to the ct_aot_call that follows is a lowering invariant the ABI cannot
+ * enforce.
+ * DELEGATES TO: a one-line context member: `pending_new_target_ = fr's
+ *   new_target`, verbatim run_loop.cpp:1374. pending_new_target_ is private
+ *   and is GC root 4, so AOT cannot reach it structurally.
+ * FAILURE: None. */
+CT_AOT_HELPER(/* name */ ct_aot_pass_new_target, /* ret */ void,
+              /* params */ (struct ct_aot_frame *fr), /* may_throw */ 0, /* may_reenter */ 0,
+              /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_pass_new_target, /* opcode */ pass_new_target)
+
+/* MERGE REFUSED: the calls area fused this with gather_rest into one
+ * ct_aot_arg_array. They are not one operation - this one has a SECOND
+ * EFFECT, writing call_frame::arguments_object (GC root 7), and gather_rest
+ * READS that side-slot on one of its two paths. A fusion either drops the
+ * write (breaking gather_rest's first path) or adds it to gather_rest
+ * (wrong). But the calls area's parameter correction is adopted and is the
+ * important half: the interpreter reads the frame's LIVE slots (reg(i) for
+ * i < argc), which are the parameter locals themselves, so the ABI must not
+ * be founded on 'the incoming argv is immutable' - that holds today only
+ * because both opcodes are emitted in the prologue. Hence `slots`, a frame-
+ * local GC-rooted mutable array of size max(param_count, argc) that IS
+ * where the parameters live. Sequencing: this runs BEFORE the parameter
+ * prologue and claims a register an extra argument may sit in, so Phase 10
+ * must not sink it below the prologue.
+ * DELEGATES TO: context::make_array (vm.hpp:238) + the loop at
+ *   run_loop.cpp:1083-1100, INCLUDING the frame side-slot write
+ *   `vm_frame->arguments_object = list`.
+ * FAILURE: RAISE TIER ONLY (the allocation ceiling). Plain value return;
+ *   poll ct_aot_failed. No JS exception, no unwind. */
+CT_AOT_HELPER(/* name */ ct_aot_make_arguments, /* ret */ uint64_t,
+              /* params */ (struct ct_aot_frame *fr, const uint64_t *slots, uint32_t argc),
+              /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_make_arguments, /* opcode */ make_arguments)
+
+/* The consumer of the side-slot ct_aot_make_arguments writes; splitting a
+ * producer from its only consumer across two areas is how one of them goes
+ * missing, so both rows sit here. Both paths must be reproduced, not
+ * merged: the handler picks the arguments_object when the body built one,
+ * because building it claimed a register an extra argument may have been
+ * in, and the compiler happening to emit a == b is not a general invariant.
+ * `from` stays its own parameter and is not fused with argc - it indexes
+ * the arguments ARRAY on one path and is a frame-slot offset on the other,
+ * so it must not be lowered as a pure literal count.
+ * DELEGATES TO: run_loop.cpp:774-798 - make_array, then either
+ *   call_frame::arguments_object's items[from..] when it is an array, or
+ *   registers_[base+i] for i in [from, argc).
+ * FAILURE: RAISE TIER ONLY - the allocation ceiling, never a JS exception,
+ *   and it does not unwind. Plain value return; poll ct_aot_failed. */
+CT_AOT_HELPER(/* name */ ct_aot_gather_rest, /* ret */ uint64_t,
+              /* params */ (struct ct_aot_frame *fr, const uint64_t *slots, uint32_t argc, uint32_t from),
+              /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_gather_rest, /* opcode */ gather_rest)
+
+/* new_cell is the only in-out register operand in the set; modelling it
+ * VALUE->VALUE removes the register from the ABI so Phase 4 can change the
+ * frame layout without touching this file. `init` must be in a GC-visible
+ * slot before the call - allocate() does not collect today
+ * (collect_if_due's sole caller is Shell/browser.cpp:307, 'between
+ * callbacks'), but the interpreter is safe here only because its argument
+ * came out of registers_, and this helper's argument is reachable from none
+ * of the 17 roots.
+ * DELEGATES TO: context::allocate<cell_object>(value) - vm.hpp:223 via
+ *   run_loop.cpp:1515-1516; cell_object at vm.hpp:103-106.
+ * FAILURE: RAISE TIER ONLY, and non-diverting: allocate() raises past the
+ *   ceiling and STILL returns a valid cell, so this returns a value plainly
+ *   and never a status. Poll ct_aot_failed at back-edges. No try/catch can
+ *   see it and there is no landing pad for it. */
+CT_AOT_HELPER(/* name */ ct_aot_cell_new, /* ret */ uint64_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t init), /* may_throw */ 1,
+              /* may_reenter */ 0, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_cell_new, /* opcode */ new_cell)
+
+/* Constraint 1 makes this a helper and not a lowered load: heap_object has
+ * a virtual destructor (value.hpp:167), so the vtable pointer sits at
+ * offset 0 and `kind` is not where a structural emitter would put it. No
+ * handle at all, which lets the LLVM declaration carry
+ * memory(read)+nounwind+willreturn so a repeated read folds within a
+ * straight line but never across a call that could run user JS. It must NOT
+ * be memory(argmem:read) or readnone - the argument is an i64, not a
+ * pointer, so the only honest statement is a whole-memory read. It owns
+ * get_upvalue under the partition rule: the fused opcode is 'fetch the
+ * cell, then the cell op', and ct_aot_upvalue_cell supplies the fetch.
+ * Third producer worth knowing: compile/frames.cpp:141-149 marks every
+ * IMPORTED binding boxed and deliberately emits no new_cell, so this is
+ * also the read path for every `import`ed name.
+ * DELEGATES TO: run_loop.cpp:1521-1526 - `reg(b).is_kind(heap_kind::cell) ?
+ *   static_cast<cell_object*>(reg(b).as_heap())->slot :
+ *   value::undefined()`.
+ * FAILURE: None, and that is a semantic guarantee: a non-cell argument
+ *   yields undefined silently, so a mis-emitted boxing decision produces a
+ *   wrong value rather than a trap. NOT a TDZ check - an uninitialised
+ *   `let` reads as undefined. */
+CT_AOT_HELPER(/* name */ ct_aot_cell_get, /* ret */ uint64_t, /* params */ (uint64_t cell),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_cell_get, /* opcode */ cell_get)
+CT_AOT_COVERS(/* helper */ ct_aot_cell_get, /* opcode */ get_upvalue)
+
+/* The write half of the same primitive, split from the read for the same
+ * vtable reason. No write barrier exists or is needed today: collect()
+ * (objects.cpp:434-511) is a full mark from precise roots followed by a
+ * sweep of the intrusive list, not incremental - but see the GC note in
+ * `notes` for why this row is the one that would grow a frame parameter if
+ * that changes. Its declaration must NOT be argmemonly-with-a-known-object:
+ * it writes memory an arbitrary closure can observe, so it invalidates any
+ * cached ct_aot_cell_get. Because a module export cell is shared, this is
+ * also how a compiled module writes a binding an interpreted importer
+ * reads.
+ * DELEGATES TO: run_loop.cpp:1529-1533 - `if
+ *   (reg(a).is_kind(heap_kind::cell))
+ *   static_cast<cell_object*>(reg(a).as_heap())->slot = reg(b)`.
+ * FAILURE: None. A non-cell target drops the store silently - an assignment
+ *   that does nothing at all - and AOT must reproduce that rather than
+ *   diagnose it. */
+CT_AOT_HELPER(/* name */ ct_aot_cell_set, /* ret */ void,
+              /* params */ (uint64_t cell, uint64_t v), /* may_throw */ 0, /* may_reenter */ 0,
+              /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_cell_set, /* opcode */ cell_set)
+CT_AOT_COVERS(/* helper */ ct_aot_cell_set, /* opcode */ set_upvalue)
+
+/* `covers` is EMPTY under the partition rule - get_upvalue and set_upvalue
+ * are owned by the cell rows - but the decomposition is verified line by
+ * line against both handlers and composes exactly. It costs nothing new
+ * because op::closure's builder already needs the same fetch
+ * (run_loop.cpp:906-909), and an AOT frame with no register window cannot
+ * let a closure helper reach into it. `index` is typed uint32 and
+ * explicitly not a register so the register allocator is physically unable
+ * to renumber it - set_upvalue's `a` operand is an UPVALUE INDEX, the one
+ * opcode in the set whose first operand is not a frame slot. Note the
+ * asymmetry the helper erases: get_upvalue's index is in `b`, set_upvalue's
+ * is in `a`.
+ * DELEGATES TO: call_frame::closure (vm.hpp:851) + closure_object::upvalues
+ *   (vm.hpp:160) - the guarded fetch in run_loop.cpp:1537-1548 and
+ *   1551-1561.
+ * FAILURE: None, by returning undefined for all three miss cases the
+ *   handlers already have: no closure (a top-level script frame), index >=
+ *   upvalues.size(), or an entry that is not a cell. Feeding that undefined
+ *   to ct_aot_cell_get/ct_aot_cell_set reproduces the fused opcodes
+ *   EXACTLY, because both also no-op on a non-cell. */
+CT_AOT_HELPER(/* name */ ct_aot_upvalue_cell, /* ret */ uint64_t,
+              /* params */ (struct ct_aot_frame *fr, uint32_t index), /* may_throw */ 0,
+              /* may_reenter */ 0, /* is_safepoint */ 0)
+
+/* Verified: string_hash and string_equal both declare is_transparent
+ * (containers.hpp:64,87), so find(std::string_view) hits the heterogeneous
+ * path and allocates nothing - the image can point straight at its own
+ * static string data with no runtime name table. The operand is an sidx
+ * into proto->names, NOT constants (bytecode.hpp:52 gets this wrong);
+ * passing text sidesteps the disagreement. THE ABI MUST FORBID NOW: no
+ * `uint64_t hash` parameter so ctcompile can bake the hash in. string_hash
+ * is boost::hash over a string_view and containers.hpp:130-133 says of
+ * exactly this, 'Using anything else here is a lookup that silently never
+ * matches' - a hash baked by a different Boost version is not a wrong
+ * answer, it is a global that is permanently undefined.
+ * DELEGATES TO: context::globals_ (string_flat_map<value>, vm.hpp:1043;
+ *   containers.hpp:126) - run_loop.cpp:225-231.
+ * FAILURE: None, and the absence is load-bearing: an undeclared global does
+ *   NOT throw ReferenceError, it silently yields undefined. `foo` and
+ *   `typeof foo` are the same instruction, and feature detection written
+ *   against a ReferenceError gets undefined instead. A spec-conformant
+ *   backend that emitted a throw would break pages the interpreter runs. */
+CT_AOT_HELPER(/* name */ ct_aot_global_get, /* ret */ uint64_t,
+              /* params */ (struct ct_aot_frame *fr, const char *name, uint32_t name_len),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_global_get, /* opcode */ get_global)
+
+/* Cannot share with the read: different direction, different arity. Two
+ * things it must NOT become. (1) It bypasses accessors - if a binding layer
+ * mirrors globals through a window object with setters, this does not fire
+ * them - so it stays a raw map store and never grows into store_property.
+ * (2) `a` is the SOURCE operand on an opcode whose name says destination
+ * (writes_a is false), so the value comes last and there is no result. The
+ * DEFINE body must be find-then-assign, constructing a std::string only on
+ * insertion, keeping the update path allocation-free like the
+ * interpreter's; boost::unordered_flat_map's operator[] is not guaranteed
+ * heterogeneous. That insertion is a C++ allocation, not a GC one, so
+ * allocates and is_safepoint stay false - but a std::bad_alloc must
+ * terminate at this boundary, not unwind through a C-ABI frame.
+ * DELEGATES TO: context::globals_ - run_loop.cpp:234-236
+ *   `globals_[vm_proto->names[in.bx()]] = reg(in.a)`.
+ * FAILURE: None. */
+CT_AOT_HELPER(/* name */ ct_aot_global_set, /* ret */ void,
+              /* params */ (struct ct_aot_frame *fr, const char *name, uint32_t name_len, uint64_t v),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_global_set, /* opcode */ set_global)
+
+/* VERIFIED, AND IT IS THE ONE ROW WHERE 'the memo is just an optimisation'
+ * would be a semantic bug. I grepped `allocations_` across lib/Script: it
+ * is incremented in allocate() (vm.hpp:224) and appears NOWHERE else -
+ * never reset by collect(), take_error() or execute(). The 40,000,000
+ * ceiling therefore counts TOTAL allocations for the process lifetime, not
+ * live objects. Interpreted, a string literal in a per-pixel loop allocates
+ * ONE object for the whole run because run_loop.cpp:180-189 memoises it;
+ * the same loop AOT-compiled without the memo allocates one per iteration
+ * and at 480k pixels a frame reaches the ceiling in about a second, raising
+ * an UNCATCHABLE failure on a program the interpreter runs forever. That is
+ * a divergence in the raise tier introduced by an optimisation, so the memo
+ * is part of the ABI. SITE == NULL MEANS DO NOT MEMOISE, which is what lets
+ * ct_aot_type_of_name's companion allocation stay at parity
+ * (VM_CASE(type_of) has no cache at all). Pointer+length rather than a C
+ * string because function_proto::strings is std::vector<std::string> and a
+ * JS string may contain an embedded NUL, so `a\0b` would silently truncate.
+ * String identity is unobservable (strict_equals compares text), so the
+ * memo is safe; it is the ceiling, not identity, that makes it mandatory.
+ * DELEGATES TO: context::string (vm.hpp:234) ->
+ *   context::allocate<string_object> (vm.hpp:223), THROUGH string_cache_
+ *   (vm.hpp:984, GC root 15, marked objects.cpp:481-484, cleared by
+ *   context::execute at call.cpp:230). MUST BE EXTRACTED: the memo lives
+ *   inline in VM_CASE(load_string) at run_loop.cpp:178-192 and its key must
+ *   widen from `const function_proto *` to `const void *`. Proposed lift:
+ *   context::interned_string(const void *site, uint32_t slot,
+ *   std::string_view text).
+ * FAILURE: RAISE TIER ONLY - never a catchable throw. The sole failure is
+ *   allocate()'s ceiling raise, which sets failed_ without entering
+ *   unwind_to_handler and is invisible to a JS try. The returned value is a
+ *   well-formed string even after the raise, because allocate() still
+ *   constructs and returns the object. */
+CT_AOT_HELPER(/* name */ ct_aot_new_string, /* ret */ uint64_t,
+              /* params */ (struct ct_aot_frame *fr, const struct ct_aot_site *site, uint32_t slot, const char *utf8, uint32_t len),
+              /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_new_string, /* opcode */ load_string)
+
+/* Same verified ceiling argument as ct_aot_new_string: bigint_cache_ is
+ * what keeps a BigInt literal in a loop from charging the monotonic counter
+ * once per iteration. Unlike ct_aot_new_string there is no null-site arm,
+ * because every load_bigint site is memoised in the interpreter and nothing
+ * else materialises a bigint literal. Takes the SOURCE TEXT, not digits:
+ * the parse is bigint_from_literal's and must not be duplicated in
+ * ctcompile or `0x1fn`, `0b..n` and the 1.5n->0n substitution drift.
+ * Identity is unobservable (strict_equals compares digits), so only the
+ * ceiling makes the memo required.
+ * DELEGATES TO: bigint_from_literal (bigint.hpp:43) +
+ *   allocate<bigint_object> (vm.hpp:223), THROUGH bigint_cache_
+ *   (vm.hpp:987, GC root 16, marked objects.cpp:487-490, cleared
+ *   call.cpp:231). MUST BE EXTRACTED from VM_CASE(load_bigint) at
+ *   run_loop.cpp:154-177 into context::interned_bigint_literal(const void
+ *   *site, uint32_t slot, std::string_view text).
+ * FAILURE: RAISE TIER ONLY. A literal the lexer accepted but that is not an
+ *   integer (1.5n) does NOT throw - `parsed.value_or(bigint{0})` at
+ *   run_loop.cpp:169 substitutes 0n. The only failure is the allocation
+ *   ceiling; a well-formed value is returned on every path. */
+CT_AOT_HELPER(/* name */ ct_aot_new_bigint_literal, /* ret */ uint64_t,
+              /* params */ (struct ct_aot_frame *fr, const struct ct_aot_site *site, uint32_t slot, const char *literal, uint32_t len),
+              /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_new_bigint_literal, /* opcode */ load_bigint)
+
+/* Returns an OPAQUE POINTER rather than a struct by value, because
+ * prehashed_name is three words and constraint 5 admits only scalars and
+ * pointers; ctbrowser's DEFINE side reconstructs the prehashed_name behind
+ * the pointer. `covers` is EMPTY: in the original it claimed five opcodes
+ * that their own rows also claimed, and duplicate claims plus one silent
+ * omission is exactly the state that lets a coverage checker pass while a
+ * hole exists. The hash MUST come from hash_name and never from anything
+ * ctcompile computes - containers.hpp says outright 'Using anything else
+ * here is a lookup that silently never matches' - so the handle is produced
+ * at image init, never baked. The payoff is already built:
+ * object_object::find(prehashed_name) exists and lookup_property already
+ * constructs the key once to reuse across the chain, with the comment
+ * beside it measuring '2.25 hashes per property access on a Phaser frame'.
+ * GLOBAL AND IMMORTAL is safe here and the reason does not transfer to
+ * ct_aot_ic: a name record contains no heap pointer and is never GC-traced,
+ * so it is context-independent by construction, whereas an IC caches
+ * receivers.
+ * DELEGATES TO: NEW runtime-side immortal pool. The record OWNS its text:
+ *   {std::string text; std::size_t hash;} with hash == core/containers.hpp
+ *   hash_name(text). It is NOT prehashed_name itself - that is
+ *   {std::string_view, std::size_t}, a NON-OWNING view, and a pool built
+ *   out of it dangles. The pool hands out a prehashed_name constructed over
+ *   the record it owns.
+ * FAILURE: None - it cannot fail, is not a GC value, and interning is
+ *   idempotent. It may malloc; a C++ bad_alloc escaping a C-ABI helper must
+ *   terminate at this boundary. */
+CT_AOT_HELPER(/* name */ ct_aot_intern_name, /* ret */ const struct ct_aot_name *,
+              /* params */ (const char *utf8, uint32_t len), /* may_throw */ 0,
+              /* may_reenter */ 0, /* is_safepoint */ 0)
+
+/* COVERAGE FIX, and it is the one genuine GAP the five area proposals left.
+ * jump_if_false and jump_if_true were claimed by nobody: the values area
+ * covered only logical_not and listed the two jumps as 'shared with control
+ * flow', while the control-flow rows never appeared. Reading
+ * run_loop.cpp:692 and 701 confirms both call truthy(reg(in.a)), so they
+ * are not no-helper opcodes and rule (a) would have failed. All three now
+ * sit on one row. It must remain a call rather than a tag test because
+ * coerce.cpp:34-47 reads string_object::text and bigint_object::digits, and
+ * AOT must never inspect a heap_object structurally (constraint 1).
+ * ToBoolean never invokes valueOf, so every risk column is false and it may
+ * carry readonly/nounwind/willreturn. logical_not is then
+ * value::boolean(!r), a select over tag_true/tag_false needing no helper;
+ * the two jumps are a branch on the result.
+ * DELEGATES TO: context::truthy (static, declared vm.hpp:486, defined
+ *   vm/coerce.cpp:34). Already a function; no extraction needed.
+ * FAILURE: Infallible - no status, no handle, no out-pointer. */
+CT_AOT_HELPER(/* name */ ct_aot_truthy, /* ret */ uint32_t, /* params */ (uint64_t v),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_truthy, /* opcode */ logical_not)
+CT_AOT_COVERS(/* helper */ ct_aot_truthy, /* opcode */ jump_if_false)
+CT_AOT_COVERS(/* helper */ ct_aot_truthy, /* opcode */ jump_if_true)
+
+/* The original signature overloaded the status register - its own stated
+ * rule was 'the return value is ALWAYS the status' and it then returned a
+ * length in the same int32 slot, colliding only by the coincidence that the
+ * shortest answer is six bytes and the tiers are 0/1/2. The return-type
+ * rule in `notes` generalises the fix: signed int32 return means status,
+ * unsigned means data. The split itself is the win the inventory asks for -
+ * classification (pure) apart from allocation (ct_aot_new_string) - so
+ * `typeof x === 'function'` becomes a length compare plus memcmp with ZERO
+ * allocation where run_loop.cpp:1053 allocates a heap string per execution.
+ * Safe forever because coerce.cpp:183-191 returns string_view over string
+ * literals, so no interning table and no new GC root. This is the row that
+ * forces UNION rather than per-helper checking of the flags rule: (0,0,0,0)
+ * here OR ct_aot_new_string's (1,1,0,1) is exactly type_of's inventory row.
+ * DELEGATES TO: context::type_of (static, declared vm.hpp:511, defined
+ *   vm/coerce.cpp:182-192). Already a function; no extraction needed.
+ * FAILURE: Infallible. The return slot carries a LENGTH, and under the
+ *   return-type rule an unsigned return is data, never a status. *out_text
+ *   points to static storage with unbounded lifetime. */
+CT_AOT_HELPER(/* name */ ct_aot_type_of_name, /* ret */ uint32_t,
+              /* params */ (uint64_t v, const char **out_text), /* may_throw */ 0,
+              /* may_reenter */ 0, /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_type_of_name, /* opcode */ type_of)
+/* AND ct_aot_new_string, because `typeof` produces a VALUE and this helper
+ * produces a `const char *`. Two helpers for one opcode on purpose: the common
+ * shape `typeof x === "number"` never materialises a string at all - the
+ * backend compares the C string and skips the allocation entirely - and only a
+ * `typeof` whose result escapes into a variable pays for one. A single helper
+ * returning a value would have made the allocation unconditional. */
+CT_AOT_COVERS(/* helper */ ct_aot_new_string, /* opcode */ type_of)
+
+/* Returns a DOUBLE, not a value: run_loop.cpp:381 is
+ * value::number(to_number_value(...)), a bit_cast needing no runtime call,
+ * and nan("") is 0x7FF8... which cannot match qnan_mask 0x7FFC...
+ * (value.hpp:46,101), so the NaN result can never alias a tagged value.
+ * This is unary `+` only (expressions.cpp:340) and is a genuine conversion,
+ * not the move it used to be. Deliberately distinct from ct_aot_negate even
+ * though both go through to_number_value, because this one's RESULT is
+ * provably never heap so the backend can skip the shadow-frame store for
+ * it. It cannot skip it for the ARGUMENT.
+ * DELEGATES TO: context::to_number_value (declared vm.hpp:518, defined
+ *   vm/coerce.cpp:151-169). Already a function; no extraction needed.
+ * FAILURE: Full status. CT_AOT_CAUGHT/CT_AOT_UNWOUND on the BigInt
+ *   TypeError (coerce.cpp:156-158, reachable here - `+1n` throws where `1n
+ *   + 1n` does not) and on a user valueOf/toString throwing. CT_AOT_FAILED
+ *   on the 512-frame `call stack exhausted` (call.cpp:77-80) and the
+ *   allocation ceiling. *out is NaN on both failure paths: coerce.cpp:158
+ *   returns nan("") after the throw, and the exhausted-stack path returns
+ *   undefined, which to_number maps to nan. */
+CT_AOT_HELPER(/* name */ ct_aot_to_number, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t v, double *out), /* may_throw */ 1,
+              /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_to_number, /* opcode */ to_number)
+
+/* Shipped for a Principle 3 reason rather than a performance one. This is
+ * the NON-re-entering ToNumber that op::add and the six bitwise opcodes
+ * actually use, and it is not std::stod: coerce.cpp:54-59 routes a string
+ * through string_to_number precisely because stod reads LC_NUMERIC for the
+ * decimal separator, throws to report failure, and accepts neither '+5' nor
+ * the radix prefixes - I read the comment in place. Without this row, a
+ * backend wanting `x + 1` without a call must re-derive string-to-number in
+ * ctcompile, which is the second JavaScript engine Principle 3 forbids.
+ * Covers no opcode and is inert in both drift checks.
+ * DELEGATES TO: context::to_number (static, declared vm.hpp:504, defined
+ *   vm/coerce.cpp:49-61).
+ * FAILURE: Infallible - no status, no handle. NaN is the failure answer and
+ *   is a legitimate result, never a sentinel. */
+CT_AOT_HELPER(/* name */ ct_aot_to_number_primitive, /* ret */ double, /* params */ (uint64_t v),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+
+/* Shipped with ct_aot_to_uint32 as the pair that lets a backend inline the
+ * six bitwise opcodes with no call, no exception edge and no safepoint once
+ * both operands are known Numbers - the elision ct_aot_binary_op_static's
+ * may_reenter=0 exists to authorise, and unreachable without these rows.
+ * ECMA-262 ToInt32 is NOT a C cast: vm.hpp:497-503 maps every non-finite to
+ * 0, truncates toward zero and wraps with std::fmod against 4294967296.0,
+ * and the inventory records the two results a naive lowering gets wrong -
+ * `-1 >>> 0` is 4294967295, not -1, and `2.7 | 0` is 2.
+ * DELEGATES TO: context::to_int32 (static, vm.hpp:494-496, over to_uint32).
+ * FAILURE: Infallible. THE ONE DELIBERATE EXCEPTION to the return-type
+ *   rule, called out here and in the .def header: a signed int32 return
+ *   that is DATA, not a status, because ToInt32's result is signed by
+ *   definition. It takes no frame handle, which is the mechanical tell - no
+ *   status-returning helper in the table lacks one. */
+CT_AOT_HELPER(/* name */ ct_aot_to_int32, /* ret */ int32_t, /* params */ (uint64_t v),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+
+/* The other half of the pair, and the one the shift opcodes need on their
+ * own: run_loop.cpp:565, 578 and 597 all mask the shift count with
+ * `to_uint32(...) & 31U`, and ushr's result is
+ * static_cast<double>(to_uint32(b) >> ...) - unsigned - where shr at
+ * run_loop.cpp:578 is an arithmetic shift on int32. A backend inlining the
+ * two identically produces the wrong answer for negative left operands.
+ * DELEGATES TO: context::to_uint32 (static, vm.hpp:497-503).
+ * FAILURE: Infallible - no status, no handle. */
+CT_AOT_HELPER(/* name */ ct_aot_to_uint32, /* ret */ uint32_t, /* params */ (uint64_t v),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+
+/* Shipped in the first cut rather than deferred, because the alternative is
+ * worse than a missing optimisation: an ABSENT helper is an invitation to
+ * emit llvm.pow, and C99 F.10.4.4 defines pow(+-1, y) as exactly 1 for
+ * EVERY y while coerce.cpp:71-74 returns NaN for `1 ** NaN`, `(-1) **
+ * Infinity` and `(-1) ** -Infinity`. The resulting number is one a page
+ * keeps computing with where NaN is one isNaN catches. Covers no opcode, so
+ * it is invisible to rule (a) and contributes to no union under rule (b) -
+ * an empty covers list is inert in both checks.
+ * DELEGATES TO: context::exponentiate (static, declared vm.hpp:509, defined
+ *   vm/coerce.cpp:70-76).
+ * FAILURE: Infallible - no status, no handle. */
+CT_AOT_HELPER(/* name */ ct_aot_exponentiate, /* ret */ double,
+              /* params */ (double base, double exponent), /* may_throw */ 0, /* may_reenter */ 0,
+              /* is_safepoint */ 0)
+
+/* Cannot be lowered as ct_aot_to_number plus an fneg: run_loop.cpp:366-368
+ * returns a freshly ALLOCATED bigint_object on the bigint arm (-0n is 0n; a
+ * BigInt has one zero), so the result may be heap and the caller must treat
+ * it as an unrooted heap value. That is precisely why this is a value-
+ * returning helper and ct_aot_to_number is a double-returning one.
+ * DELEGATES TO: to_number_value (vm/coerce.cpp:151) +
+ *   allocate<bigint_object> (vm.hpp:223). MUST BE EXTRACTED from
+ *   VM_CASE(negate) at run_loop.cpp:363-379 into
+ *   context::negate_value(value).
+ * FAILURE: Full status. The reachable catchable path is a user
+ *   valueOf/toString throwing; to_number_value's own BigInt TypeError is
+ *   UNREACHABLE from here because run_loop.cpp:365 tests
+ *   is_kind(heap_kind::bigint) first, and an object whose valueOf RETURNS a
+ *   bigint is skipped by the `produced.is_heap() && !produced.is_string()`
+ *   continue at coerce.cpp:165. CT_AOT_FAILED on stack exhaustion and the
+ *   ceiling. *out is written on every path. */
+CT_AOT_HELPER(/* name */ ct_aot_negate, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t v, uint64_t *out),
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_negate, /* opcode */ negate)
+
+/* Kept out of the binary family because it is unary and because its failure
+ * profile is strictly weaker than the binary bitwise ops', which DO throw
+ * catchably (bigint_binary's mixed-type TypeError at coerce.cpp:283,
+ * shl/shr RangeErrors at coerce.cpp:309-310, ushr's unconditional TypeError
+ * at coerce.cpp:315). Merging would give bit_not a spurious exception edge
+ * and force a landing pad at every `~x`. No ToInt32 step on the BigInt arm
+ * - a BigInt has no width to truncate to - so the two arms genuinely
+ * differ. It keeps a status return despite being raise-tier-only, because
+ * the row is a safepoint whose result may be an unrooted heap bigint; see
+ * the status rule in `notes`.
+ * DELEGATES TO: context::to_int32 (vm.hpp:494, over to_uint32 at
+ *   vm.hpp:497) + bigint operator~ + allocate<bigint_object>. MUST BE
+ *   EXTRACTED from VM_CASE(bit_not) at run_loop.cpp:601-614 into
+ *   context::bit_not_value(value).
+ * FAILURE: CT_AOT_OK or CT_AOT_FAILED only - NEVER a catchable throw. `~1n`
+ *   computes (run_loop.cpp:604-606) and `~obj` is -1 (to_int32 -> to_uint32
+ *   -> STATIC to_number gives NaN, which to_uint32 maps to 0 at
+ *   vm.hpp:499), so neither arm has a JS-catchable throw; may_throw is
+ *   purely the ceiling on the BigInt arm. An AOT backend needs a FAULT edge
+ *   here, not an exception edge, and only on the BigInt arm. */
+CT_AOT_HELPER(/* name */ ct_aot_bit_not, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t v, uint64_t *out),
+              /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_bit_not, /* opcode */ bit_not)
+
+/* THE NON-RE-ENTERING FAMILY, honest because all seven inventory rows are
+ * byte-identical (1,1,1,0,1). These seven use only the STATIC conversions,
+ * which skip the valueOf/toString walk, so may_reenter is 0 and a backend
+ * that has proven both operands are Numbers may drop the call, the
+ * exception edge AND the safepoint. PARAMETER NAMED op_kind, NOT op, and
+ * that is not cosmetic: the .def is expanded on ctbrowser's DEFINE side
+ * inside namespace ctbrowser::script where `op` is the enum type, so a
+ * parameter of that name shadows it and the body cannot spell op::add -
+ * context::bigint_binary already dodges this by naming its parameter
+ * `kind`. `add` belongs HERE, not with add_generic: compile_binary maps
+ * source `+` to add_generic and op::add comes only from `++` and three
+ * internal counters, so `x++` on {valueOf:()=>3} is NaN and never runs user
+ * code. That is a deviation from the specification, not an optimisation,
+ * and if ctbrowser ever fixes it these seven move to ct_aot_binary_op -
+ * which rule (b) turns into a build failure in both projects rather than a
+ * miscompile.
+ * DELEGATES TO: context::bigint_binary (declared vm.hpp:543, defined
+ *   vm/coerce.cpp:276, already op-dispatched) + context::to_number (static,
+ *   vm.hpp:504/coerce.cpp:49) for add + to_int32/to_uint32 (vm.hpp:494/497)
+ *   for the six bitwise. MUST BE EXTRACTED from run_loop.cpp:241-253 (add)
+ *   and 518-600 (bit_and..ushr) into context::binary_op_static(op, value,
+ *   value).
+ * FAILURE: Full status, but the catchable paths reachable from THESE SEVEN
+ *   are exactly: bigint_binary's mixed-type TypeError (coerce.cpp:280-286),
+ *   the shl and shr 'BigInt shift is too large' RangeErrors
+ *   (coerce.cpp:309-310), and ushr's unconditional 'BigInts have no
+ *   unsigned right shift' default arm (coerce.cpp:311-317). div/mod/pow
+ *   RangeErrors are NOT here - none of those opcodes is in this helper.
+ *   CT_AOT_FAILED is the ceiling inside give() (coerce.cpp:289). On a throw
+ *   bigint_binary sets *out = undefined; on the pure-Number path there is
+ *   no failure at all. */
+CT_AOT_HELPER(/* name */ ct_aot_binary_op_static, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint32_t op_kind, uint64_t lhs, uint64_t rhs, uint64_t *out),
+              /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op_static, /* opcode */ add)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op_static, /* opcode */ bit_and)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op_static, /* opcode */ bit_or)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op_static, /* opcode */ bit_xor)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op_static, /* opcode */ shl)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op_static, /* opcode */ shr)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op_static, /* opcode */ ushr)
+
+/* THE RE-ENTERING FAMILY: all seven rows are byte-identical (1,1,1,1,1) and
+ * all seven run page JavaScript through ToPrimitive/ToNumber/ToString, so
+ * the caller must have every live value AND both operands reachable from
+ * the shadow frame FOR THE DURATION. THE LIFT MUST NOT ROUTE concat THROUGH
+ * bigint_binary: coerce.cpp:298-317's switch has no case op::concat, so a
+ * lifted binary_op that dispatched everything through bigint_binary first
+ * would send `${1n}` to the default arm and throw 'BigInts have no unsigned
+ * right shift'. VM_CASE(concat) is unconditionally
+ * string(to_string(b)+to_string(c)). The three `+` opcodes STAY THREE: add
+ * is a static-family immediate; add_generic does ToPrimitive on both sides
+ * then decides, with the string test taking first refusal so `1n + "a"`
+ * concatenates while `1n + 1` is a TypeError; concat unconditionally
+ * ToStrings both and is emitted only by template literals. Lowering facts
+ * the .def must carry: `**` is context::exponentiate, NOT libm; `%` is
+ * std::fmod, not an integer srem; `1/0` is Infinity on the Number path but
+ * `1n/0n` is a catchable RangeError, so the exception edge cannot be
+ * dropped by proving the operands finite.
+ * DELEGATES TO: context::to_primitive (vm.hpp:924 PRIVATE, defined
+ *   coerce.cpp:125), to_number_value (coerce.cpp:151), to_string
+ *   (vm.hpp:510, coerce.cpp:78), exponentiate (vm.hpp:509, coerce.cpp:70),
+ *   bigint_binary (coerce.cpp:276), context::string (vm.hpp:234). MUST BE
+ *   EXTRACTED from run_loop.cpp:254-352 and 353-362 into
+ *   context::binary_op(op, value, value).
+ * FAILURE: Full status. Catchable from any user valueOf/toString, from
+ *   to_number_value's BigInt TypeError (coerce.cpp:157), and from
+ *   bigint_binary's TypeError/RangeErrors including div's and mod's
+ *   'Division by zero' and pow's 'Exponent must be non-negative'
+ *   (coerce.cpp:303-305). CT_AOT_FAILED from stack exhaustion
+ *   (call.cpp:77-80) and the ceiling. *out is written on every path
+ *   (undefined on the bigint throw arms). */
+CT_AOT_HELPER(/* name */ ct_aot_binary_op, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint32_t op_kind, uint64_t lhs, uint64_t rhs, uint64_t *out),
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op, /* opcode */ sub)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op, /* opcode */ mul)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op, /* opcode */ div)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op, /* opcode */ mod)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op, /* opcode */ pow)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op, /* opcode */ add_generic)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op, /* opcode */ concat)
+
+/* A value member declared noexcept, so no handle is threaded at all. Both
+ * opcodes share it and the negation is one xor in the caller. Keeping it
+ * OFF ct_aot_loose_equals preserves the split the inventory calls out:
+ * compile_binary sends `==`/`!=` to loose_equal/loose_not_equal
+ * (expressions.cpp:265-268) and only `===`/`!==` here
+ * (expressions.cpp:257-260), so one family helper for all four would attach
+ * a throw edge and a safepoint to `switch`, which statements.cpp:523 lowers
+ * to a chain of op::equal.
+ * DELEGATES TO: value::strict_equals (declared value.hpp:146, defined
+ *   inline at value.hpp:271-287; the ABI shim gives it one out-of-line
+ *   body).
+ * FAILURE: Infallible - no status, no handle. */
+CT_AOT_HELPER(/* name */ ct_aot_strict_equals, /* ret */ uint32_t,
+              /* params */ (uint64_t a, uint64_t b), /* may_throw */ 0, /* may_reenter */ 0,
+              /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_strict_equals, /* opcode */ equal)
+CT_AOT_COVERS(/* helper */ ct_aot_strict_equals, /* opcode */ not_equal)
+
+/* One helper for both opcodes; the negation is one xor in the caller. `out`
+ * is a separate uint32 rather than a value because run_loop.cpp:406 wraps
+ * it in value::boolean, a select over two constants - and because an int-
+ * typed out slot is not a GC-relevant location the caller has to root,
+ * which a ct_value out-param would be. AOT SPECIALISATION THAT MATTERS:
+ * loose_equal's two hottest emission sites are not `==` at all -
+ * expressions.cpp:720 and 848 emit `loose_equal test, base, nullish` for
+ * optional chaining, and loose_equals returns at coerce.cpp:195-196 before
+ * any to_primitive - so a null/undefined-literal operand makes the site
+ * provably non-re-entering and the backend should emit an is_nullish tag
+ * test instead of this call. loose_not_equal has no such benign form.
+ * DELEGATES TO: context::loose_equals (declared vm.hpp:521, defined
+ *   vm/coerce.cpp:194-258). Already a function; no extraction needed.
+ * FAILURE: Full status - catchable from a user valueOf/toString reached
+ *   through to_primitive (coerce.cpp:251), CT_AOT_FAILED from stack
+ *   exhaustion. *out is 0 or 1 and is written on every path. */
+CT_AOT_HELPER(/* name */ ct_aot_loose_equals, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t a, uint64_t b, uint32_t *out),
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_loose_equals, /* opcode */ loose_equal)
+CT_AOT_COVERS(/* helper */ ct_aot_loose_equals, /* opcode */ loose_not_equal)
+
+/* FOUR OPCODES, ONE CALL, and the three-way result survives the C ABI
+ * because std::partial_ordering is not expressible in it: *out_ordering is
+ * CT_AOT_ORD_LESS(-1)/EQUIVALENT(0)/GREATER(1)/UNORDERED(2) and each opcode
+ * is a constant compare - is_lteq is (ord==-1||ord==0), false for
+ * UNORDERED, which is what makes `NaN <= NaN` false. OPERAND ORDER RE-
+ * DERIVED, NOT TAKEN: compile_binary compiles n.a into lhs and n.b into rhs
+ * (expressions.cpp:239-296) and run_loop.cpp:672 calls
+ * compare_relational(reg(in.b), reg(in.c)) then asks std::is_gt - so `a >
+ * b` IS ct_aot_compare(a,b) with ord==GREATER, and lowering `>` as
+ * compare(b,a) with ord==LESS runs the two valueOfs in the wrong order
+ * (coerce.cpp:327-328) and is observably wrong. Two lowering traps: two
+ * strings compare with std::string::compare (coerce.cpp:363), i.e. UTF-8
+ * byte order, so a numeric-only fast path silently reintroduces the all-
+ * false string comparison; and a BigInt compares EXACTLY against a Number
+ * via bigint_compare_double (coerce.cpp:343-348), so this must not fold to
+ * a double compare when either side may be a bigint.
+ * DELEGATES TO: context::compare_relational (declared vm.hpp:530, defined
+ *   vm/coerce.cpp:322-374). Already a function; no extraction needed.
+ * FAILURE: Full status - catchable from a user valueOf/toString inside
+ *   to_primitive, CT_AOT_FAILED from stack exhaustion. *out_ordering is
+ *   written on every path (CT_AOT_ORD_UNORDERED on failure). */
+CT_AOT_HELPER(/* name */ ct_aot_compare, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t lhs, uint64_t rhs, int32_t *out_ordering),
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_compare, /* opcode */ less)
+CT_AOT_COVERS(/* helper */ ct_aot_compare, /* opcode */ less_equal)
+CT_AOT_COVERS(/* helper */ ct_aot_compare, /* opcode */ greater)
+CT_AOT_COVERS(/* helper */ ct_aot_compare, /* opcode */ greater_equal)
+
+/* MERGED from two spellings: the values area gave it a status and an int32
+ * out-param, the objects area a direct value return. The objects DISCIPLINE
+ * wins (raise-tier-only helpers return their result and the caller polls)
+ * and the values area's boolean shape wins over a ct_value, because the
+ * interpreter's result is value::boolean of a bool and an int out-slot is
+ * not a GC location. Under the return-type rule that makes it uint32_t. It
+ * was covered by NOTHING in one area's own accounting and its inventory row
+ * sits at index 34 inside a contiguous block that area claimed on both
+ * sides - the kind of hole rule (a) exists to catch. IT IS THE ONE HELPER
+ * THAT ALLOCATES WITHOUT RETURNING AN UNROOTED VALUE: ensure_prototype's
+ * fresh object is installed on the ctor closure before it returns
+ * (call.cpp:310), so the caller has nothing new to root afterwards. IT
+ * MUTATES ITS RIGHT OPERAND - the first `x instanceof F` creates and
+ * installs F.prototype - so this is NOT a readonly call and must not be
+ * CSE'd or sunk past a write to F.
+ * DELEGATES TO: context::ensure_prototype (vm.hpp:926, defined
+ *   vm/call.cpp:301-312) + context::implicit_prototypes (vm.hpp:599, const,
+ *   non-allocating) + object_object::find. MUST BE EXTRACTED from
+ *   VM_CASE(instance_of) at run_loop.cpp:420-477 into
+ *   context::instance_of_value(value, value).
+ * FAILURE: RAISE TIER ONLY - never a catchable throw, so under the status
+ *   rule it returns its boolean plainly and the caller polls ct_aot_failed.
+ *   There is no throw_error anywhere in run_loop.cpp:420-477 or in
+ *   ensure_prototype: `x instanceof 5`, a non-callable RHS and `x
+ *   instanceof someProxy` are all silently FALSE where the specification
+ *   demands a TypeError, there is no Symbol.hasInstance, and the chain walk
+ *   stops at 64 links. may_throw is purely the ceiling reached through
+ *   ensure_prototype -> make_object (call.cpp:308). The result is 0 or 1 on
+ *   every path - run_loop.cpp:422 seeds it false first. */
+CT_AOT_HELPER(/* name */ ct_aot_instance_of, /* ret */ uint32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t target, uint64_t ctor),
+              /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_instance_of, /* opcode */ instance_of)
+
+/* MERGED, AND THE PARAMETER ORDER IS THE MERGE. I read the handler: b is
+ * the KEY and c is the TARGET (run_loop.cpp:482 tests reg(in.c) for proxy-
+ * ness, :491 does to_string(reg(in.b))), so one area proposed (key, target)
+ * to mirror the opcode. That loses. There is no uniform operand-to-argument
+ * rule to preserve - get_prop is a=dst/b=obj/c=name, set_prop is
+ * a=target/b=name/c=value, delete_index is a=target/b=key - so every row
+ * needs its own mapping anyway, which the .def's operand columns supply;
+ * and in a C ABI where both parameters are uint64_t no type can ever catch
+ * a swap. Uniformity across the table is the only defence available, so
+ * (target, key) it is, with the operand mapping recorded explicitly in the
+ * row. Deliberately NOT merged into any property-read helper: `in` is own-
+ * data-only and answers false where a real lookup answers true - a NATIVE
+ * right-hand side answers false for everything so `'PI' in Math` is false,
+ * an array answers only about integer indices parsed with from_chars
+ * requiring the WHOLE key so `'length' in []` and `'1x' in a` are false,
+ * and a non-object RHS is false rather than a TypeError. Routing it through
+ * lookup_property would silently fix all three and change what pages see.
+ * DELEGATES TO: run_loop.cpp:479-515 inline + context::proxy_trap
+ *   (vm.hpp:492, call.cpp:351) + context::call (vm.hpp:377) +
+ *   context::lookup_property (vm/objects.cpp:218) + context::to_string
+ *   (coerce.cpp:78) + std::from_chars for the array-index arm. MUST BE
+ *   EXTRACTED into context::has_property_value(value target, value key).
+ * FAILURE: Full status. Catchable from a proxy `has` trap running user code
+ *   (run_loop.cpp:486), from an accessor or proxy `get` trap through
+ *   lookup_property, and from to_string on an object key via
+ *   to_primitive_string. CT_AOT_FAILED from stack exhaustion and the
+ *   ceiling. *out is 0 or 1 and is written on every path. */
+CT_AOT_HELPER(/* name */ ct_aot_has_property, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t target, uint64_t key, uint32_t *out),
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_has_property, /* opcode */ has_property)
+
+/* Handler is `reg(in.a) = make_object();`, row 1,1,1,0,1,0,0. The argument
+ * against fusing with new_array into ct_aot_alloc(kind) stands - the
+ * discriminator is a compile-time constant at every emission site, so the
+ * fusion buys nothing and costs a runtime branch across an ABI boundary.
+ * This is the FIRST helper whose result must be published to the shadow
+ * frame immediately, because an object literal is new_object followed by a
+ * run of set_prop calls that are themselves safepoints.
+ * DELEGATES TO: context::make_object (vm.hpp:238, one line over
+ *   allocate<object_object>).
+ * FAILURE: RAISE TIER ONLY. allocate() (vm.hpp:223-233) raises past the
+ *   ceiling and then STILL returns a real object, so the return value is
+ *   always well-formed; the caller polls ct_aot_failed at back-edges,
+ *   exactly as run_loop's `while (frames_.size() > stop_depth && !failed_)`
+ *   tests it once per dispatch rather than once per operation. */
+CT_AOT_HELPER(/* name */ ct_aot_new_object, /* ret */ uint64_t,
+              /* params */ (struct ct_aot_frame *fr), /* may_throw */ 1, /* may_reenter */ 0,
+              /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_new_object, /* opcode */ new_object)
+
+/* The element count is NOT statically known at every literal site, and an
+ * overstated justification here would invite Phase 26 to trust the hint:
+ * expressions.cpp emits new_array at :610 and :909 and appends at
+ * :619/:918/:929, but :940 emits op::iterable for a spread element, so `[a,
+ * ...b, c]` has no static count, and destructuring.cpp:200's rest pattern
+ * has none either. So reserve_hint is a HINT with a defined zero - 0 means
+ * 'unknown, reserve nothing' and a non-zero value is a lower bound, never a
+ * size. make_array() takes no arguments today so Phase 2's wrapper ignores
+ * it entirely, which is still right: adding the parameter later is an ABI
+ * break and carrying it costs one register.
+ * DELEGATES TO: context::make_array (vm.hpp:238).
+ * FAILURE: RAISE TIER ONLY - same as ct_aot_new_object. */
+CT_AOT_HELPER(/* name */ ct_aot_new_array, /* ret */ uint64_t,
+              /* params */ (struct ct_aot_frame *fr, uint32_t reserve_hint), /* may_throw */ 1,
+              /* may_reenter */ 0, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_new_array, /* opcode */ new_array)
+
+/* THE HELPER OF THE PROPERTY AREA, and the row where the plan's original
+ * status contract died. It claimed a status meaning 'a catchable JS
+ * exception is in flight'; that state does not exist. throw_error
+ * (vm.hpp:367-370) calls unwind_to_handler INLINE, which resizes frames_,
+ * repoints an ip, writes thrown_ into a catch register and CLEARS it
+ * (vm.hpp:945-959) - then returns normally. The nested run_loop notices
+ * only because its while condition fails and returns value::undefined()
+ * (run_loop.cpp:1577), INDISTINGUISHABLE from a getter that returned
+ * undefined. What is observable is the frame-count watermark, which is why
+ * ct_aot_check exists and why ct_aot_enter must record a depth. THE ct_ic
+ * SLOT is kept: object_object is props+index+prototype+accessors with NO
+ * shape word (value.hpp:535-540), so a monomorphic IC needs a runtime-side
+ * shape word living entirely behind this pointer, and nullability is what
+ * makes Phase 26 additive. Its cookie must carry CONTEXT IDENTITY as well
+ * as layout version - a per-site mutable static is process-wide,
+ * bytecode.hpp:327 anticipates 'an agent per thread', and an IC caching a
+ * receiver caches a heap pointer into ONE context's heap. Second-order:
+ * object_object::erase REBUILDS `index` (value.hpp:612), so any slot-index
+ * cache is invalidated by any delete on the receiver's chain. `out` must
+ * point at storage whose address is stable across the call - the sharpest
+ * constraint this ABI puts on Phase 4. Finally: call_method's callee
+ * resolution IS lookup_property, so the calls area calls this helper rather
+ * than declaring a second property read.
+ * DELEGATES TO: context::lookup_property (vm/objects.cpp:218) - and Phase 2
+ *   should add the prehashed_name overload described under
+ *   ct_aot_intern_name, with the std::string one forwarding to it.
+ * FAILURE: Full status; *out written ONLY on CT_AOT_OK. The status is
+ *   produced by ct_aot_check, not by hand. */
+CT_AOT_HELPER(/* name */ ct_aot_get_prop, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t obj, const struct ct_aot_name *name, struct ct_aot_ic *site, uint64_t *out),
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_get_prop, /* opcode */ get_prop)
+
+/* The write-side IC argument is stronger than usually stated:
+ * assign_through_accessor walks up to 64 prototype levels on EVERY named
+ * write and returns false for the common plain-data case, and Phaser writes
+ * properties in per-frame loops. THE DEVIATION LIST MUST BE COMPLETE,
+ * because the two usually omitted are the two that decide whether this row
+ * re-enters. store_property has FIVE arms: PROXY is checked FIRST, before
+ * is_object(), and calls the trap after allocating string(name) for the
+ * argument vector - which is where much of set_prop's allocates=1 comes
+ * from; NATIVE lands the write, so `Math.foo = 1` is not dropped;
+ * FUNCTION/CLOSURE does find_accessor then call(setter), a SECOND re-entry
+ * path independent of assign_through_accessor; `arr.length = n` genuinely
+ * RESIZES (spec-capped at 2^32-1, no-op on a typed array, non-
+ * finite/negative dropped); and only then is a named write to an array
+ * other than length, or a write to a primitive, dropped. A Phase 26 fast
+ * path keyed only on is_object() would silently take over the proxy and
+ * native arms.
+ * DELEGATES TO: context::store_property (vm/objects.cpp), which reaches
+ *   context::assign_through_accessor in the same file.
+ * FAILURE: Full status. NO out-parameter - writes_a is FALSE and `a` names
+ *   the TARGET. */
+CT_AOT_HELPER(/* name */ ct_aot_set_prop, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t obj, const struct ct_aot_name *name, uint64_t v, struct ct_aot_ic *site),
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_set_prop, /* opcode */ set_prop)
+
+/* The refusal to merge with get_prop is confirmed by the code: lookup_index
+ * tests `target.is_array() && key.is_number()` (with a separate is_view()
+ * arm through view_get) and `target.is_string() && key.is_number()` BEFORE
+ * it ever reaches lookup_property, so these are two different functions,
+ * not one function with a boxed key. Folding them would build a heap string
+ * on every named access. Deviations confirmed in objects.cpp: the string
+ * path returns string(std::string{text[i]}) - a fresh one-BYTE heap string,
+ * not a code point - so `s[0]` allocates with no user code running; an out-
+ * of-range index on a view is undefined rather than a throw. The re-entry
+ * surprise is the KEY, not the property: the fall-through calls
+ * to_string(key), which for an object runs its toString/valueOf.
+ * DELEGATES TO: context::lookup_index (vm/objects.cpp) - array+number and
+ *   string+number fast paths, else context::to_string of the key then
+ *   context::lookup_property.
+ * FAILURE: Full status; *out on CT_AOT_OK only. */
+CT_AOT_HELPER(/* name */ ct_aot_get_index, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t obj, uint64_t key, struct ct_aot_ic *site, uint64_t *out),
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_get_index, /* opcode */ get_index)
+
+/* The most important Principle-3 extraction in the area: re-emitting it in
+ * ctcompile would be a second implementation of view_set/coerce_element's
+ * rules. THE FALL-THROUGH CONDITION IS NOT 'the non-array case': the guard
+ * is `target.is_array() && key.is_number()`, so an ARRAY WITH A STRING KEY
+ * also falls through to store_property and hits the drop-everything-but-
+ * length arm - `a['foo'] = 1` and `a[0] = 1` are different code paths on
+ * the same array, and a backend specialising on is_array() alone would
+ * miscompile the first. Also note `to_number` here is a MEMBER, not a
+ * static free function, and returns NaN for any object without calling
+ * valueOf, so `typed[i] = objWithValueOf` stores the coercion of NaN while
+ * the identical write to a plain object DOES run toString on the key
+ * through the other arm. Neither re-entry nor allocation nor throw is
+ * statically decidable, because all three depend on the runtime types of
+ * BOTH target and key.
+ * DELEGATES TO: TODAY AN INLINE HANDLER BODY (run_loop.cpp, op::set_index,
+ *   ~38 lines) that MUST be extracted to context::store_index for both
+ *   tiers; the non-fast-path arm falls through to context::store_property
+ *   with context::to_string of the key.
+ * FAILURE: Full status. No out-parameter - writes_a is FALSE, `a` is the
+ *   target. */
+CT_AOT_HELPER(/* name */ ct_aot_set_index, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t obj, uint64_t key, uint64_t v, struct ct_aot_ic *site),
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_set_index, /* opcode */ set_index)
+
+/* Verified all-zero, and distinct from set_index for reasons the code
+ * states: it is a SILENT NO-OP when the target is not heap_kind::array, it
+ * never touches `length`, never consults a prototype, and set_index on the
+ * same operands would resize or take the store_property path. One the
+ * original omitted: it is unguarded against a VIEW, whose `items` is kept
+ * empty while length() reports view_length, so an append onto a typed array
+ * pushes into storage nothing reports. Preserve that; do not 'fix' it in
+ * emitted code. Carrying `fr` on a mutating helper that does not need it
+ * today is deliberate and is a rule for the whole ABI - a generational or
+ * incremental collector needs a write barrier, a barrier needs the frame,
+ * and adding the parameter later is an ABI break.
+ * DELEGATES TO: run_loop.cpp op::append inline (`if (reg(in.a).is_array())
+ *   items.push_back(reg(in.b))`) - extract as context::array_append.
+ * FAILURE: None - an all-zero row: no throw edge, no safepoint, no poll.
+ *   The compiler may keep every live value in native registers across this
+ *   call. */
+CT_AOT_HELPER(/* name */ ct_aot_append, /* ret */ void,
+              /* params */ (struct ct_aot_frame *fr, uint64_t array, uint64_t v),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_append, /* opcode */ append)
+
+/* All-zero confirmed: object_object::set grows std::vector and
+ * boost::unordered_flat_map, which is malloc and not a heap_object, so
+ * nothing here is a GC allocation and no accessor is ever called. THE
+ * MISSING ARM: the handler has TWO, and if the source is an ARRAY it copies
+ * items[i] under the key std::to_string(i) - `{...[1,2]}` is `{0:1, 1:2}` -
+ * so an extraction keeping only the object arm would silently change it.
+ * The snapshot-before-loop discipline applies to both arms, because `set`
+ * can reallocate the target's storage and target and source may be the same
+ * object. Headline deviation to carry in the row: `{...o}` DROPS EVERY
+ * ACCESSOR, because accessors live in a separate table this handler never
+ * reads - which is also exactly why may_reenter is false where a backend
+ * that 'knows JavaScript' would emit a getter call.
+ * DELEGATES TO: run_loop.cpp op::copy_props inline - extract as
+ *   context::copy_own_properties.
+ * FAILURE: None - all-zero row. */
+CT_AOT_HELPER(/* name */ ct_aot_copy_props, /* ret */ void,
+              /* params */ (struct ct_aot_frame *fr, uint64_t target, uint64_t source),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_copy_props, /* opcode */ copy_props)
+
+/* The void return is not an assumption: compile_delete
+ * (expressions.cpp:216-234) emits op::delete_prop and then a SEPARATE
+ * emit_const(dst, true), and the non-member case emits false with no opcode
+ * at all - so the boolean never comes from this operation and a helper
+ * returning bool would be inventing a result the bytecode does not carry.
+ * The refusal to merge with delete_index is right and the columns say so:
+ * 0/0/0 against 1/1/1. Deviations confirmed: erase() removes a DATA
+ * property only (erase_accessor exists and is never called from here), so
+ * deleting a getter appears to do nothing; is_object() is heap_kind::object
+ * EXACTLY, so delete on an array, proxy, native or closure is a silent no-
+ * op; and erase() rebuilds `index` wholesale, which is the invalidation
+ * event for any future slot-index IC.
+ * DELEGATES TO: run_loop.cpp op::delete_prop inline (object_object::erase)
+ *   - extract as context::delete_property.
+ * FAILURE: None - all-zero row. */
+CT_AOT_HELPER(/* name */ ct_aot_delete_prop, /* ret */ void,
+              /* params */ (struct ct_aot_frame *fr, uint64_t target, const struct ct_aot_name *name),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_delete_prop, /* opcode */ delete_prop)
+
+/* Its entire difference from delete_prop is that the key arrives as a value
+ * and runs to_string, which for an object runs user JS - and the guard
+ * order is exactly as claimed: `if (reg(in.a).is_object())` WRAPS the
+ * to_string call, so `delete arr[objKey]`, `delete proxy[objKey]` and
+ * `delete "s"[objKey]` never run the key's toString at all, where the
+ * spec's ToPropertyKey is unconditional. Hoisting the key coercion out of
+ * the guard would start running user code the interpreter does not.
+ * DELEGATES TO: run_loop.cpp op::delete_index inline + context::to_string +
+ *   object_object::erase - extract as context::delete_index.
+ * FAILURE: Full status. No out-parameter - same separate load-true as
+ *   delete_prop. */
+CT_AOT_HELPER(/* name */ ct_aot_delete_index, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t target, uint64_t key),
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_delete_index, /* opcode */ delete_index)
+
+/* Both structural arguments hold. The aliasing point is real -
+ * statements.cpp:440 emits `{own_keys, source, source}` and the handler is
+ * safe only because make_array runs first and reg(in.a) is written last -
+ * and by-value-in/result-out removes the ordering constraint entirely. TWO
+ * ADDITIONS. (1) THE ARRAY ARM: an array source yields "0".."n-1" as heap
+ * strings and NOT "length", which is why `for (k in arr)` does not see it.
+ * (2) SYMBOL FILTERING: each_own_string_key is not each_own_key - it drops
+ * every key beginning with the engine's `@@sym:` spelling, and the two
+ * walks exist precisely because Object.assign and Reflect.ownKeys keep the
+ * unfiltered one, so the extracted member must take the FILTERED walk or
+ * for-in starts emitting internal symbol spellings into a page's output.
+ * Also: each_own_key interleaves data and accessor keys by insertion
+ * position, so definition order is observable and an AOT fast path may not
+ * reorder. The unrooted accumulator hazard is this helper's own to fix, not
+ * Phase 4's - see the GC note.
+ * DELEGATES TO: run_loop.cpp op::own_keys inline +
+ *   object_object::each_own_string_key + context::make_array +
+ *   context::string - extract as context::own_string_keys.
+ * FAILURE: RAISE TIER ONLY - returns a well-formed array even after the
+ *   ceiling fires; poll ct_aot_failed at back-edges. */
+CT_AOT_HELPER(/* name */ ct_aot_own_keys, /* ret */ uint64_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t source), /* may_throw */ 1,
+              /* may_reenter */ 0, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_own_keys, /* opcode */ own_keys)
+
+/* MERGED: two areas claimed this opcode with two spellings and a third
+ * almost let it fall between them. `ct_aot_iterable_values` wins over
+ * `ct_aot_iterable` because it matches the delegate's name so a grep finds
+ * both ends, and because a bare `ct_aot_iterable` reads as a predicate. It
+ * sits with own_keys - for-in and for-of are the same shape - and it is not
+ * rare: statements.cpp:445 emits it for EVERY for-of and
+ * expressions.cpp:940 for EVERY spread, so a Phaser corpus without it
+ * compiles nothing. Cannot be split or open-coded: every branch
+ * structurally inspects a heap_object, which constraint 1 forbids. THE
+ * ARRAY ARM RETURNS THE SAME ARRAY, not a copy ('Callers must not mutate
+ * what they get'), so `for (x of arr)` ALIASES while every other input
+ * yields a fresh array; a backend that assumed freshness and hoisted a
+ * length read would change behaviour. A GENERATOR IS DRAINED BY RUNNING IT
+ * under a 2^20 bound, so an infinite generator HANGS rather than iterating
+ * lazily - a deviation to preserve, not fix. `[...proxy]` is silently
+ * EMPTY. Both emitters spell it `{iterable, source, source}` with a and b
+ * ALIASED, which by-value-in/result-out removes by construction.
+ * DELEGATES TO: context::iterable_values (vm/call.cpp:358) - ALREADY A
+ *   NAMED MEMBER, no extraction needed. Its six-way dispatch stays put:
+ *   is_array passthrough BY IDENTITY (:361), string-by-character, non-
+ *   object INCLUDING a proxy to an empty array (:372), __co generator drain
+ *   under a 2^20 guard (:384-397), __entries copy (:400), __items copy
+ *   (:408), array-like via length + lookup_property under a 2^24 guard
+ *   (:416-424).
+ * FAILURE: Full status; *out on CT_AOT_OK. THREE CORRECTIONS. (1) The `if
+ *   (failed_) break;` swallow is at call.cpp:393 and exists ONLY in the
+ *   __co branch - the array-like branch at :416-424 calls lookup_property,
+ *   which re-enters accessors and proxy traps and can throw, up to 2^24
+ *   times with NO failed_ and NO depth test, so `[...{length: 1e9, get 0(){
+ *   throw 0 }}]` runs 16.7 million lookups after the throw was already
+ *   caught below. The helper must re-test after EVERY re-entry, not once
+ *   after the loop. (2) An unwind is NOT detectable from failed_: when a
+ *   generator body throws past its own handlers, generator_resume returns a
+ *   normal {value,done:true} record (call.cpp:668), the drain simply breaks
+ *   and failed_ is false - the only signal is the frame-depth watermark.
+ *   (3) On CT_AOT_FAILED the interpreter still executes `reg(in.a) = ...`
+ *   (run_loop.cpp:1112), so *out may be written on a failure path; the
+ *   contract is that the caller returns immediately, not that *out is
+ *   untouched. */
+CT_AOT_HELPER(/* name */ ct_aot_iterable_values, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t source, uint64_t *out),
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_iterable_values, /* opcode */ iterable)
+
+/* Its only emitter is classes.cpp:95, wiring `extends`. is_object() is
+ * heap_kind::object exactly, so it is a silent no-op on anything else - and
+ * therefore it CANNOT do what Object.setPrototypeOf does for a closure,
+ * which also writes closure_object::proto_link. There is also no cycle
+ * check, which is why lookup_property and assign_through_accessor both
+ * carry the depth-64 cap; an AOT backend must not assume chains are
+ * acyclic.
+ * DELEGATES TO: run_loop.cpp op::set_proto inline
+ *   (object_object::prototype) - extract as context::set_prototype.
+ * FAILURE: None - all-zero row. */
+CT_AOT_HELPER(/* name */ ct_aot_set_proto, /* ret */ void,
+              /* params */ (struct ct_aot_frame *fr, uint64_t target, uint64_t proto),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_set_proto, /* opcode */ set_proto)
+
+/* Returning the value directly rather than through status/out is right: the
+ * row is all zeros, there is no edge to branch on, and the type should say
+ * so. Emitted as `{get_proto, dst, dst}` right after load_home
+ * (expressions.cpp:598-599), so a and b alias in the interpreter and by-
+ * value-in/result-out removes that too. Deviations confirmed line by line:
+ * is_object() is heap_kind::object exactly, so this reports undefined for
+ * an array, string, proxy, native and CLOSURE (whose chain is
+ * closure_object::proto_link, never read here); and a fresh object's
+ * prototype defaults to value::null() while classes.cpp:95 sets it only
+ * when `extends` is present, so `super.m()` in a BASE-class method reads
+ * null. A backend that folded super-dispatch would produce a different
+ * program from the interpreter's.
+ * DELEGATES TO: run_loop.cpp op::get_proto inline - extract as
+ *   context::get_prototype.
+ * FAILURE: None - all-zero row. */
+CT_AOT_HELPER(/* name */ ct_aot_get_proto, /* ret */ uint64_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t target), /* may_throw */ 0,
+              /* may_reenter */ 0, /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_get_proto, /* opcode */ get_proto)
+
+/* THE ONE MERGE OF TWO OPCODES INTO ONE HELPER, and it survives the
+ * challenge. Verified: the shared handler computes g = getter ? reg(in.c) :
+ * undefined and st = getter ? undefined : reg(in.c) and does nothing else
+ * with the discriminator; the runtime primitive is already fused as
+ * define_accessor(name, getter, setter); and accessor_table::define SKIPS
+ * undefined halves, which is exactly what merges a get/set pair into one
+ * entry. The inventory's warning at define_setter is about the
+ * INTERPRETER's dispatch - the discriminator is the OPCODE ITSELF, read out
+ * of in.code - and an AOT site knows statically which it is compiling. The
+ * closure arm must stay: a `static get` installs onto the CONSTRUCTOR
+ * closure, and target.is_object() alone would drop every static accessor.
+ * ONE ASYMMETRY THE EXTRACTION MUST PRESERVE RATHER THAN TIDY:
+ * object_object::define_accessor calls erase() first so a shadowing data
+ * property is removed, closure_object::define_accessor does NOT, and
+ * lookup_property checks closure->find(name) before find_accessor - so a
+ * `static get x()` on a class that already has a static data property `x`
+ * NEVER RUNS. Harmonising the arms would change observable behaviour and
+ * break the Phase 13 differential. may_reenter is false HERE even though
+ * every later read or write of that property WILL re-enter; the cost moves
+ * to the access site, which is where the barrier and the cache both belong.
+ * DELEGATES TO: run_loop.cpp - the SHARED define_getter/define_setter
+ *   handler block - plus object_object::define_accessor and
+ *   closure_object::define_accessor.
+ * FAILURE: None - all-zero row. Installing an accessor only STORES the
+ *   function; it never invokes it. */
+CT_AOT_HELPER(/* name */ ct_aot_define_accessor, /* ret */ void,
+              /* params */ (struct ct_aot_frame *fr, uint64_t target, const struct ct_aot_name *name, uint64_t getter, uint64_t setter),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_define_accessor, /* opcode */ define_getter)
+CT_AOT_COVERS(/* helper */ ct_aot_define_accessor, /* opcode */ define_setter)
+
+/* The four call opcodes share ONE handler body -
+ * VM_CASE(call)/(call_method)/(call_computed)/(call_receiver) all fall into
+ * run_loop.cpp:927 - and differ only in how callee and receiver were
+ * produced, so call_method and call_computed lower as ct_aot_get_prop /
+ * ct_aot_get_index followed by this helper, preserving the bytecode's
+ * evaluation order without reimplementing a lookup. Routing THROUGH
+ * context::call rather than around it gets three things right for free: a
+ * generator callee RUNS NOTHING (call.cpp:64), a native callee's
+ * current_this_ save/restore (:47-50), and the pending_new_target_ handoff
+ * for a non-spread super(), which context::call consumes into
+ * entered.new_target (:90-91) and skips on the native and generator paths -
+ * exactly op::call_receiver's behaviour. `site` carries the baked
+ * diagnostic because callee_origin is a BACKWARDS SCAN of emitted bytecode
+ * run at error time against an ip and a register index, neither of which an
+ * AOT frame has; ctcompile runs the identical scan at compile time. `key`
+ * stays because op::call_computed names its callee with
+ * to_string(reg(in.c)) at run time - a SECOND to_string that can re-enter
+ * user JavaScript, so dropping it would be a behaviour change, not only a
+ * message change. TWO DIVERGENCES THE ORACLE WILL SEE, both because
+ * context::call is more careful than op::call: it sizes the window as
+ * max(frame_size, argc) and writes EVERY argument (call.cpp:68-73) where
+ * op::call reuses the caller's window and guarantees only frame_size+8, and
+ * it sets current_this_ for the whole nested loop where op::call sets it
+ * only around a native.
+ * DELEGATES TO: context::call (CallPaths.def canonical entry,
+ *   vm/call.cpp:43) for every accepted callee kind - native (:44-51),
+ *   generator (:64 -> make_generator), JS closure (:66-97). The pre-call
+ *   acceptance test is op::call's OWN predicate,
+ *   is_kind(native)||is_kind(function) (run_loop.cpp:942, 962), which is
+ *   NOT the one op::construct uses; only the message ASSEMBLY at
+ *   run_loop.cpp:964-991 needs factoring into
+ *   context::callee_type_error(form, callee, receiver, site) -
+ *   describe_callee (call.cpp:281) and callee_origin (call.cpp:251) are
+ *   ALREADY context members declared at vm.hpp:915-917.
+ * FAILURE: Full status via ct_aot_check. There is no pending-exception
+ *   state in this VM, so the three reachable states after context::call
+ *   returns are: OK (depth restored, failed_ clear, *out is the callee's
+ *   result); UNWOUND (frames_.size() < the recorded depth, thrown_ already
+ *   cleared, and context::call returned value::undefined() -
+ *   INDISTINGUISHABLE from a real undefined without the watermark, which is
+ *   why ct_aot_enter must record one); FAILED (the 512-deep guard at
+ *   call.cpp:77, the ceiling, an UNCAUGHT throw where thrown_ is still set
+ *   and must be left alone, or a nested op::halt returning above the
+ *   recorded depth). On any non-OK status *out is undefined and must not be
+ *   used. */
+CT_AOT_HELPER(/* name */ ct_aot_call, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t callee, uint64_t receiver, const uint64_t *argv, uint32_t argc, uint64_t key, const struct ct_aot_site *site, uint64_t *out),
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_call, /* opcode */ call)
+CT_AOT_COVERS(/* helper */ ct_aot_call, /* opcode */ call_method)
+CT_AOT_COVERS(/* helper */ ct_aot_call, /* opcode */ call_computed)
+CT_AOT_COVERS(/* helper */ ct_aot_call, /* opcode */ call_receiver)
+
+/* Cannot fold into ct_aot_call, and the reason is a distinction the
+ * bytecode already makes rather than a shape difference: for the same
+ * source construct a non-callable is an UNCATCHABLE raise here and a
+ * catchable TypeError there, and a callable proxy silently evaluates to
+ * undefined here and is a TypeError there. Merging makes the AOT backend
+ * pick which of the two the VM meant, which surfaces as a Phase 12A oracle
+ * failure rather than a build error. The argument shape reinforces it: the
+ * count was not known until the spread was evaluated, so the arguments
+ * arrive as an ARRAY VALUE, and unpacking it in AOT code would mean reading
+ * array_object::items structurally, which constraint 1 forbids. These two
+ * helpers collapse into one the day the VM makes the two failure tiers
+ * agree, and not before.
+ * DELEGATES TO: context::call, with the argument vector taken from
+ *   array_object::items exactly as run_loop.cpp:757-758 does. NO pre-call
+ *   acceptance test beyond is_callable().
+ * FAILURE: CT_AOT_FAILED when the callee is not callable - op::apply
+ *   raise()s 'attempted to call a non-function' (run_loop.cpp:765), the
+ *   UNCATCHABLE tier, destination left unwritten. A CALLABLE PROXY yields
+ *   CT_AOT_OK with the result undefined: is_callable() admits it
+ *   (value.hpp:300-306) and context::call then falls through
+ *   !is_kind(function) and returns undefined (call.cpp:52-54) - where the
+ *   same source through ct_aot_call is a TypeError. AN ARG_ARRAY THAT IS
+ *   NOT AN ARRAY IS NOT AN ERROR: run_loop.cpp:759 tests argv.is_array()
+ *   and otherwise leaves the vector EMPTY, so the callee runs with zero
+ *   arguments and the status is OK - a backend that asserts or throws there
+ *   diverges. Otherwise UNWOUND/FAILED on the same watermark rule. */
+CT_AOT_HELPER(/* name */ ct_aot_call_spread, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t callee, uint64_t arg_array, uint64_t receiver, const struct ct_aot_site *site, uint64_t *out),
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_call_spread, /* opcode */ apply)
+
+/* DELEGATING WHOLESALE TO context::construct WOULD BREAK THE VM IN TWO
+ * WAYS, which is why the delegate column reads as it does. (a) The
+ * acceptance tests DIFFER: op::call rejects a callable proxy
+ * (run_loop.cpp:962 accepts only is_kind(function)) while op::construct
+ * hands a proxy to context::construct so its construct trap runs
+ * (:1421-1428) - sharing one test would break `new Proxy(Renderer2D,
+ * {construct(){...}})`, which the code's own comment (call.cpp:430-432)
+ * says p5.js executes at its bundle's top level. (b) The ORDER differs:
+ * context::construct tests !is_callable() FIRST and raise()s UNCATCHABLY
+ * (call.cpp:443-446), whereas op::construct allocates, runs field
+ * initialisers and only then throws a CATCHABLE TypeError - delegating
+ * wholesale converts a catchable `new` TypeError into an uncatchable engine
+ * fault. The pending_new_target_ save/set/restore is what makes this a
+ * delegation rather than a reimplementation and removes any prerequisite VM
+ * change: op::construct sets fresh.new_target directly, context::call
+ * reaches the same field only through pending_new_target_ (already GC root
+ * 4), and SAVING AND RESTORING reproduces the second half - op::construct
+ * never consumes the flag, so a pass_new_target before a construct leaves
+ * it set for whatever pushes a frame next. Reproduce the set AND the leak,
+ * or neither. The `constructing` frame flag is deliberately NOT reproduced:
+ * its sole reader is run_loop.cpp:1034, and this helper applies
+ * is_object_like at the outer level exactly as call.cpp:472-473 does.
+ * DELEGATES TO: NOT context::construct wholesale - it must reproduce
+ *   op::construct's own dispatch, all of it by delegation: proxy ->
+ *   context::construct (call.cpp:428); native -> context::construct;
+ *   otherwise context::make_instance (call.cpp:313, byte-identical to the
+ *   inline derivation at run_loop.cpp:1447-1455) then
+ *   context::run_field_initialisers (call.cpp:477) then, if
+ *   !is_kind(function), context::callee_type_error in its `new` form, else
+ *   save pending_new_target_, set it to callee, context::call(callee, args,
+ *   self), restore, and return is_object_like(produced) ? produced : self.
+ * FAILURE: Full status. CAUGHT/UNWOUND for the catchable '`new` on ...'
+ *   TypeError of run_loop.cpp:1460 and for anything the field initialisers,
+ *   the construct trap or the constructor body throw. CT_AOT_FAILED for the
+ *   raise tier, which on the proxy and native paths now includes
+ *   context::construct's own non-constructor raise (call.cpp:444). THE
+ *   ORDERING IS PRESERVED AND MATTERS: the instance is allocated and
+ *   run_field_initialisers has been called BEFORE the is-a-function check,
+ *   so an UNWOUND here has already allocated an object with a prototype
+ *   installed. run_field_initialisers is a no-op for a non-function
+ *   (call.cpp:482), so nothing user-visible runs on that path - only the
+ *   allocation is observable, through the collector. */
+CT_AOT_HELPER(/* name */ ct_aot_construct, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t callee, const uint64_t *argv, uint32_t argc, const struct ct_aot_site *site, uint64_t *out),
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_construct, /* opcode */ construct)
+
+/* This is the ONE place delegating straight to context::construct is right,
+ * and stating that beside ct_aot_construct's correction is the point: the
+ * same source construct has two different observable behaviours depending
+ * only on whether a spread was written. Keeping them apart stops the AOT
+ * backend from deciding which the VM meant. It also inherits, deliberately,
+ * the new.target divergence: context::construct reaches the body through
+ * call(), which picks up pending_new_target_ - undefined - so `new
+ * C(...args)` reports new.target undefined while `new C(args)` reports C.
+ * That divergence is the INTERPRETER's, it is reproduced here rather than
+ * repaired, and repairing it is a separate change with its own before/after
+ * test.
+ * DELEGATES TO: context::construct (vm/call.cpp:428) WHOLESALE, with the
+ *   argument vector taken from array_object::items as run_loop.cpp:757-758
+ *   does, and with NO acceptance test and NO pending_new_target_
+ *   manipulation - precisely what op::construct_apply does at
+ *   run_loop.cpp:761.
+ * FAILURE: CT_AOT_FAILED when the callee is not a constructor -
+ *   context::construct raise()s 'attempted to construct a non-function'
+ *   (call.cpp:444), the UNCATCHABLE tier, whereas ct_aot_construct's
+ *   equivalent is a catchable TypeError. CAUGHT/UNWOUND only from the field
+ *   initialisers, the construct trap or the constructor body. A non-array
+ *   arg_array yields zero arguments and is not an error. */
+CT_AOT_HELPER(/* name */ ct_aot_construct_spread, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t callee, uint64_t arg_array, const struct ct_aot_site *site, uint64_t *out),
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_construct_spread, /* opcode */ construct_apply)
+
+/* Three things the AOT frame cannot supply structurally, all of which the
+ * runtime already has. (1) WHICH PROGRAM the index resolves against is a
+ * run-time choice - the enclosing closure's `owner`, not the AOT function's
+ * own program - so `new Function` bodies and dynamically imported modules
+ * index the right proto table only if the enclosing closure value is passed
+ * in; that makes closure_object the first thing Phase 4's frame must carry.
+ * (2) An upvalue is either a cell in the ENCLOSING FRAME'S REGISTER or one
+ * the enclosing closure already holds, and reading the second would mean
+ * walking closure_object::upvalues from AOT code, which constraint 1
+ * forbids - so local_upvalues is indexed in parallel with target.upvalues,
+ * only the from_parent_local entries are read, and the helper fills the
+ * rest from the enclosing closure, substituting undefined when out of range
+ * as run_loop.cpp:906-911 does. (3) An arrow's `this` is decided where it
+ * is WRITTEN, so the enclosing frame's effective_this is passed and used
+ * only when target.is_arrow. function_index is uint32_t rather than the
+ * encoders' uint16_t on purpose: three of four encoders are 16-bit against
+ * a 32-bit decoder, so a program with >65,535 protos silently builds the
+ * wrong closure, and ctcompile can make that a COMPILE error. WHAT THIS
+ * CANNOT DO, and Phase 3 must hear it: the closure_object it returns points
+ * at a function_proto in a program, so calling it always re-enters the
+ * interpreter - AOT stops at the first nested function unless
+ * closure_object or function_proto carries a compiled entry point.
+ * DELEGATES TO: a new context::make_closure factored out of
+ *   run_loop.cpp:884-920 verbatim - the program selection
+ *   (enclosing_closure->owner else *program_), allocate<closure_object>,
+ *   `made->owner = &prog`, the upvalue_desc walk, and the is_arrow
+ *   captured_this - so run_loop and AOT share one copy rather than two that
+ *   can drift.
+ * FAILURE: RAISE TIER ONLY, from three sources rather than one. (1)
+ *   allocate()'s ceiling. (2) program_ == nullptr with no enclosing
+ *   closure: run_loop.cpp:888-890 dereferences *program_ UNGUARDED, which
+ *   is undefined behaviour rather than a fault, and Phase 19's AOT-only
+ *   mode is exactly the configuration with no program loaded - the factored
+ *   member must guard and raise instead of inheriting the deref. (3)
+ *   upvalue_count != target.upvalues.size(), or function_index >=
+ *   prog.functions.size(): `prog.functions[in.bx()]` is not bounds-checked
+ *   either, and reading local_upvalues past the caller's buffer is worse
+ *   than a fault. Poll ct_aot_failed. */
+CT_AOT_HELPER(/* name */ ct_aot_make_closure, /* ret */ uint64_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t enclosing_closure, uint32_t function_index, const uint64_t *local_upvalues, uint32_t upvalue_count, uint64_t enclosing_this),
+              /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_make_closure, /* opcode */ closure)
+
+/* A TWO-ARGUMENT FORM IS A MISCOMPILE, which is why `constructing` is in
+ * the signature. The interpreter's guard is `if (vm_frame->constructing &&
+ * !returned.is_object_like())`, and `constructing` is a RUN-TIME property
+ * of the frame - set true only by op::construct's inline frame push
+ * (run_loop.cpp:1481) and false by every ordinary call including
+ * context::construct's own (call.cpp:472 applies the substitution outside
+ * instead) - while ONE compiled body serves both `f()` and `new f()`.
+ * Applied unconditionally, `function f(){ return 1; }` called as `f()`
+ * returns the receiver instead of 1. So it must arrive at run time, which
+ * makes the compiled-function entry ABI carry it - a Phase 3 constraint
+ * this signature states rather than hides. ret and ret_undef need no helper
+ * for the return itself, but lowering ret_undef to `return undefined`
+ * miscompiles every `new`, because the constructing-frame substitution is
+ * what makes a class constructor with no explicit return evaluate to the
+ * instance. Keeping is_object_like behind a helper also stops ctcompile
+ * hardcoding a predicate subtler than it looks: an array, a function AND a
+ * proxy all count. What this does NOT cover: op::ret also resizes handlers_
+ * to handler_base and pops the frame - both belong to ct_aot_leave.
+ * DELEGATES TO: value::is_object_like (value.hpp:138-140) - the
+ *   substitution at run_loop.cpp:1034-1036, guarded by the frame's
+ *   `constructing` flag exactly as the handler guards it.
+ * FAILURE: None. It takes no handle, cannot fail, cannot allocate and
+ *   cannot re-enter. Declare it nounwind willreturn READONLY - not
+ *   readnone: is_object_like calls is_callable, which for a proxy loads
+ *   proxy_object::target and recurses (value.hpp:300-306), so it reads
+ *   memory, and readnone would license hoisting it above a shadow-frame
+ *   pop. */
+CT_AOT_HELPER(/* name */ ct_aot_return_value, /* ret */ uint64_t,
+              /* params */ (uint64_t returned, uint64_t receiver, uint32_t constructing),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_return_value, /* opcode */ ret)
+CT_AOT_COVERS(/* helper */ ct_aot_return_value, /* opcode */ ret_undef)
+
+/* Has REAL tier-1 callers: an async function with no await contains
+ * wrap_promise and no await_value, so it is fully AOT-eligible, and the
+ * emission is unconditional on every async return path (statements.cpp:223,
+ * 604, 770). The test must live inside the helper because it reads an own
+ * '__value' off an object_object (constraint 1). THREE facts the lowering
+ * must keep: the test is is_object() EXACTLY, so an array, function or
+ * proxy returned from an async function is ALWAYS re-wrapped; with no
+ * promise_factory_ installed make_promise is the IDENTITY (vm.hpp:692), so
+ * AOT must not fold this to 'the result is always an object'; and a PENDING
+ * promise is passed through UNWRAPPED, because the pending factory builds
+ * it with detail::make_promise and only then flips __settled to false
+ * (async.cpp:50-52), so it carries an own __value. Two adjacent handlers
+ * therefore use two DIFFERENT shape tests for 'is a promise' - wrap_promise
+ * reads __value, is_pending_promise reads __settled (vm.hpp:823-824) - and
+ * a backend that unified them would change what `return somePendingPromise`
+ * does inside an async function.
+ * DELEGATES TO: the already-a-promise test at run_loop.cpp:1148-1149, then
+ *   context::make_promise (vm.hpp:691) -> the installed promise_factory_
+ *   (builtins/async.cpp:44-45 -> builtins/internal.hpp:339
+ *   detail::make_promise).
+ * FAILURE: RAISE TIER ONLY (the ceiling), uncatchable, unwinds nothing.
+ *   may_reenter=0 verified against the INSTALLED factory rather than the VM
+ *   stub: detail::make_promise (internal.hpp:339-347) is new_table,
+ *   promise_prototype, four sets and a make_array, with no call() anywhere.
+ *   allocate() raises and STILL returns a valid object, so the operation
+ *   completes and the result is written; FAILED means 'stop', not 'nothing
+ *   happened'. */
+CT_AOT_HELPER(/* name */ ct_aot_wrap_promise, /* ret */ uint64_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t v), /* may_throw */ 1,
+              /* may_reenter */ 0, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_wrap_promise, /* opcode */ wrap_promise)
+
+/* IT DISAGREES WITH THE INVENTORY ROW ON PURPOSE, and the disagreement is
+ * verified rather than asserted: await_value's row is (1,1,1,0,1,1,1) but
+ * the READ half contains no allocate<> and no call(); raise() only
+ * concatenates a std::string built by current_stack (const, allocates no GC
+ * object) and unwind_to_handler only resizes vectors. So the row is true of
+ * the SUSPEND half only. The split is legitimate ONLY because the DECISION
+ * is allocation-free - the interpreter creates vm_frame->async_promise and
+ * the coroutine_object strictly AFTER the three-way test at
+ * run_loop.cpp:1177-1182 - and that ordering is now an ABI contract, not an
+ * observation: if Phase 14 hoists promise creation above the test, this
+ * silently becomes a safepoint and every caller's flush disappears. It also
+ * preserves two facts: await NEVER re-enters user JS (no then() is called;
+ * state is read with own-property find), and is_pending_promise uses
+ * is_object() exactly, so a promise behind a Proxy is never seen as
+ * pending. Kept even though it has zero tier-1 callers today, because
+ * dropping it leaves await_value with no row and lets CT_AOT_SUSPENDED
+ * enter the shared enum in Phase 14, making every ctcompile status switch
+ * non-exhaustive at once.
+ * DELEGATES TO: context::is_pending_promise (vm.hpp:822) plus the read path
+ *   at run_loop.cpp:1207-1219 (__rejected -> thrown_ + unwind_to_handler,
+ *   else __value). It does NOT contain the suspend path.
+ * FAILURE: CT_AOT_OK with *out = the settled __value, or the awaited value
+ *   itself when it is not an object, or UNDEFINED when the input is a
+ *   pending promise in a context with no
+ *   pending_promise_factory_/promise_settler_ - such a promise still
+ *   carries __value = undefined (async.cpp:50-52) and run_loop.cpp:1218
+ *   takes it, which a headless AOT target must not be surprised by.
+ *   CAUGHT/UNWOUND for a settled REJECTED promise. CT_AOT_FAILED when
+ *   nothing catches it ('uncaught rejection'). CT_AOT_SUSPENDED when
+ *   is_pending_promise(awaited) AND pending_promise_factory_ AND
+ *   promise_settler_ are ALL present, exactly as run_loop.cpp:1177 tests
+ *   them - and until Phase 14 that status is produced only to be refused by
+ *   the caller. */
+CT_AOT_HELPER(/* name */ ct_aot_await_settled, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t awaited, uint64_t *out),
+              /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_await_settled, /* opcode */ await_value)
+
+/* COVERAGE, NOT CAPABILITY. yield_value sits between await_value and
+ * wrap_promise in the inventory and 'excluded by the tier-1 rule' is not
+ * coverage - Phase 13 checks 93 opcodes against the helper table, so an
+ * opcode with no row is a hole whichever way it was reasoned about. This
+ * particular hole is where the eligibility predicate sits: function_proto
+ * carries is_generator (statements.cpp:751) but the compiler's is_async
+ * (compiler_impl.hpp:119) is never copied to the proto and is absent from
+ * engine_contract::proto_header (EngineContract.hpp:86-93), so Phase 3's
+ * dispatch and ctcompile must each derive the predicate and CANNOT derive
+ * it from the same data. Today a disagreement means native code runs off
+ * the end of a yield with no diagnostic. This makes it a named engine fault
+ * with a stack, costs one call at a site that must be unreachable, and
+ * commits to NO suspend ABI - constraint 4 says Phase 14 owns that. Delete
+ * it in Phase 14 when a real suspend helper replaces it; the .def edit is
+ * one line either way. It covers yield_value ONLY: await_value is owned by
+ * ct_aot_await_settled, whose CT_AOT_SUSPENDED outcome is the decision
+ * point.
+ * DELEGATES TO: context::raise (vm.hpp:932), with the opcode's name from
+ *   bytecode_opcodes.def and the JS stack from current_stack()
+ *   (vm.hpp:426).
+ * FAILURE: Always CT_AOT_FAILED. It produces no value and takes no out-
+ *   parameter; the row exists so that 'this opcode has no tier-1 lowering'
+ *   is a DECLARED outcome with a diagnosable message rather than an absent
+ *   row. */
+CT_AOT_HELPER(/* name */ ct_aot_suspend_unsupported, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint32_t opcode), /* may_throw */ 1,
+              /* may_reenter */ 0, /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_suspend_unsupported, /* opcode */ yield_value)
+
+/* What lands in the result is a CELL, not a value - every later read must
+ * go through ct_aot_cell_get, because compile/frames.cpp:143-149 marks the
+ * local boxed and deliberately emits NO new_cell, so boxing a box would
+ * leave the importer reading a cell containing a cell. Both names are
+ * compile-time constants and both are genuinely available: the specifier is
+ * decode_string_literal(n.text) at frames.cpp:89 and the export name is
+ * spec.text/'default' at frames.cpp:136-139, i.e. text the compiler read
+ * out of the source. That asymmetry is what justifies string-literal
+ * parameters HERE and forbids them for the dynamic-import referrer. The
+ * encoding trap - b is the EXPORT name and c the SPECIFIER, the only opcode
+ * reading c as a standalone index - disappears by construction with named
+ * parameters. Not a safepoint: it reads two flat_maps and, on failure,
+ * builds a std::string, which is a C++ heap allocation and not a GC one.
+ * DELEGATES TO: run_loop.cpp:1295-1321 inline: current_module_->resolved
+ *   lookup (as-written then as-keyed), then modules_ lookup, then
+ *   module_record::exports lookup. Nothing new is written.
+ * FAILURE: RAISE TIER ONLY for both misses - 'module X was not loaded'
+ *   (:1310) and 'X has no export named Y' (:1316) - uncatchable engine
+ *   faults, NOT the ReferenceError a spec-conformant backend would emit.
+ *   Returns undefined on those paths; poll ct_aot_failed. The interpreter's
+ *   pre-write at :1297 is DEAD on the failure path (raise sets failed_,
+ *   VM_NEXT goes straight to vm_done, nothing reads the register), so the
+ *   lowering need not reproduce a store the interpreter never observes. */
+CT_AOT_HELPER(/* name */ ct_aot_module_import_cell, /* ret */ uint64_t,
+              /* params */ (struct ct_aot_frame *fr, const char *specifier, uint32_t specifier_len, const char *export_name, uint32_t export_name_len),
+              /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 0)
+CT_AOT_COVERS(/* helper */ ct_aot_module_import_cell, /* opcode */ load_import)
+
+/* Data flows record -> register, backwards from the name and from
+ * bytecode.hpp:201: it ADOPTS the pre-existing cell so a cyclic importer
+ * that already took the box keeps a live binding. Cannot merge with
+ * ct_aot_module_import_cell: different registry (this module's record vs
+ * another's), different failure tier (silent no-op vs uncatchable raise),
+ * and it can CREATE the cell where load_import can only find one. A
+ * safepoint solely because of that fallback allocation. It needs
+ * current_module_, private at vm.hpp:1009 with no accessor - but that is an
+ * implementation detail of ctbrowser's own DEFINE expansion, not an ABI
+ * question, since the helper is DEFINED in ctbrowser under Principle 11.
+ * DELEGATES TO: run_loop.cpp:1270-1292 inline:
+ *   current_module_->exports[name], creating a cell_object when absent
+ *   (:1287). instantiate_module (call.cpp:110-119) normally created them
+ *   all, but browser::instantiate_module is what calls it (browser.cpp:975)
+ *   - context::run_module (call.cpp:151-162) does NOT, so a host running a
+ *   module without instantiating it first reaches the fallback and the
+ *   allocation is live.
+ * FAILURE: CT_AOT_OK with *out = the record's cell; CT_AOT_NO_WRITE when
+ *   current_module_ is null; CT_AOT_FAILED on the ceiling. THE ONLY HELPER
+ *   IN THE TABLE THAT PRODUCES CT_AOT_NO_WRITE, and that is the status's
+ *   whole justification: the handler at :1284 simply breaks with no raise
+ *   and no thrown_, so execution CONTINUES with the destination register
+ *   untouched. writes_a is CONDITIONAL, and if AOT wrote undefined there it
+ *   would DESTROY the local being exported, because the register holds that
+ *   local on entry (entry.cpp:44-48 passes find_local(local_name) as the
+ *   destination). */
+CT_AOT_HELPER(/* name */ ct_aot_module_export_cell, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, const char *name, uint32_t name_len, uint64_t *out),
+              /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_module_export_cell, /* opcode */ bind_export)
+
+/* Kept separate from ct_aot_module_import_cell for a reason stronger than
+ * 'the bytecode made the distinction': the two RESULT KINDS have different
+ * downstream lowering - a cell every read must funnel through
+ * ct_aot_cell_get, versus an ordinary object whose reads are get_prop and
+ * therefore accessor RE-ENTRIES, since module_namespace installs a native
+ * GETTER per export (call.cpp:137-146). One helper with a nullable name
+ * would turn a static property of the lowering into a run-time one. The
+ * tempting third option - factoring the shared resolve+lookup into a helper
+ * returning module_record* - is UNSAFE: flat_map is
+ * boost::unordered_flat_map (core/containers.hpp:30), open-addressing with
+ * NO pointer or reference stability, and the installed loader INSERTS into
+ * it (browser.cpp:1220-1226), which is why the loader itself re-does find()
+ * at :1233 after loading. Any module_record* held across a module-loading
+ * helper dangles, so the lookup stays inside each helper. The allocation
+ * here is safe under a real collector because the half-built object is
+ * stored into of.namespace_object BEFORE the accessor loop
+ * (call.cpp:134-135) and that field is GC root 12 - the exact
+ * counterexample to ct_aot_iterable_values's unrooted C++ local.
+ * DELEGATES TO: the same resolved/modules_ lookup as load_import
+ *   (run_loop.cpp:1325-1341), then context::module_namespace (call.cpp:132,
+ *   public at vm.hpp:275).
+ * FAILURE: RAISE TIER ONLY - 'module X was not loaded' (:1338) or the
+ *   ceiling. Same correction as ct_aot_module_import_cell: the :1326 pre-
+ *   write of undefined is dead on the raise path and need not be
+ *   reproduced. */
+CT_AOT_HELPER(/* name */ ct_aot_module_namespace, /* ret */ uint64_t,
+              /* params */ (struct ct_aot_frame *fr, const char *specifier, uint32_t specifier_len),
+              /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_module_namespace, /* opcode */ load_namespace)
+
+/* THE REFERRER IS A PARAMETER NO COMPILER CAN FILL, and the tree says so in
+ * words: function_proto::module is stamped by the LOADER - `for
+ * (script::function_proto & fn : compiled->functions) fn.module =
+ * specifier;` at browser.cpp:976, under the comment 'The compiler cannot do
+ * this: a specifier is the loader's name for a file.' It is also absent
+ * from engine_contract::proto_header, so Phase 15 does not serialize it
+ * today. Baking a literal would make the image's referrer the compiler's
+ * GUESS at what the loader will call the file, and resolve_specifier
+ * (browser.cpp:917-918) rewrites only './' and '../' - so a wrong referrer
+ * leaves bare and absolute specifiers working and breaks exactly the
+ * relative ones, silently, the worst possible failure distribution. Reading
+ * it from fr costs nothing new because the frame must carry the owning
+ * proto ANYWAY for current_stack. The heaviest safepoint in the area: TWO
+ * user-JS re-entries before it returns (to_primitive_string's
+ * lookup_property then call, coerce.cpp:172-177; then a whole module graph
+ * through run_reentrant, call.cpp:169-200), and the loader INSERTS into
+ * modules_, which is the reference-invalidation hazard above. It may also
+ * set suspended_ via the imported module's top-level frame, a flag AOT must
+ * not read.
+ * DELEGATES TO: run_loop.cpp:1344-1368 inline: context::to_string(spec)
+ *   (coerce.cpp:78 -> to_primitive_string at :171 for an object), then the
+ *   embedder's module_loader_ (installed at Shell/browser.cpp:1216-1239),
+ *   which reaches the VM through run_reentrant. The REFERRER is read by the
+ *   helper from fr, not passed in.
+ * FAILURE: Full status; *out = the promise on OK. NO LOADER INSTALLED IS
+ *   CT_AOT_FAILED, not a no-write: run_loop.cpp:1346 raise()s 'dynamic
+ *   import() has no loader installed', which sets failed_, and VM_NEXT then
+ *   goes to vm_done - the interpreter does NOT keep going, so a status
+ *   meaning 'completed, keep going, do not write' would make AOT code
+ *   execute past an uncatchable engine fault. A MISSING MODULE, by
+ *   contrast, is CT_AOT_OK carrying an already-REJECTED settled promise
+ *   (browser.cpp:1221-1223, 1231-1233) - the lowering must not treat 'the
+ *   module was not found' as a control-flow event. */
+CT_AOT_HELPER(/* name */ ct_aot_dynamic_import, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t specifier, uint64_t *out),
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_dynamic_import, /* opcode */ dyn_import)
+
+/* THE TEN OPCODES WITH NO HELPER, and why each is correct rather than missing.
+ *
+ * load_const, load_undef, load_null, load_true, load_false
+ *     One-word immediates. The constant pool never holds a heap pointer, so a
+ *     compiled image materialises these as literals with no runtime call and no
+ *     pool. load_const is a legal RESUME TARGET, so it needs an entry label -
+ *     which is not a call.
+ * move
+ *     A register copy, and the commonest resume target in the instruction set.
+ *     Its entry label goes BEFORE the move: on the resume path its source was
+ *     filled by the runtime, not by the previous native instruction.
+ * jump
+ *     Control flow.
+ * jump_if_not_nullish, jump_if_defined
+ *     Pure tag tests against value's constants, touching no heap. They are
+ *     helper-free ONLY while a backend may open-code those constants, which
+ *     means value.hpp's qnan_mask, sign_bit, payload_mask and the four tags have
+ *     to be pinned the way EngineContract.hpp already pins sizeof(value) == 8.
+ *     jump_if_false and jump_if_true are NOT in this list: both call truthy(),
+ *     which reads a string's text and a bigint's digits, and a helper is the
+ *     only way for compiled code to ask.
+ * halt
+ *     The function epilogue. Note it does NOT pop a frame the way ret does.
+ */
+
+#undef CT_AOT_HELPER
+#undef CT_AOT_COVERS
