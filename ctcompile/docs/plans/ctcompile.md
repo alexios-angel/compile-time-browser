@@ -1,9 +1,9 @@
 # ctcompile: an application directory in, a native executable out
 
 **Where it is. The repository is a monorepo, `ctcompile` builds beside the
-engine, and Phase 0's four code-facing inventories exist as tables the build
-checks. It compiles nothing yet. 94 of 94 tests pass in both dispatch
-configurations.**
+engine, and PHASE 0 IS COMPLETE: six inventories the build checks, two
+differential comparators written before the things they will accept, and a
+recorded startup baseline. It compiles nothing yet. 96 of 96 tests pass.**
 
 **Done:** Phase -1, the repository restructure — sibling projects, `ctbrowser/`
 as the configure root, the suite split three ways, `third-party/` at repository
@@ -12,11 +12,11 @@ stub behind a real command line · **Phase 0's bytecode, program-representation,
 call-path and GC-root inventories**, each an X-macro table or a wall of
 `static_assert`s rather than prose.
 
-**Next:** the rest of Phase 0 — the HTML and CSS startup inventories, which are
-harder than the three above because their deliverable is a *differential
-comparator* (the acceptance test for Phases 16A and 16B, written before the
-thing it accepts), and the performance baseline as committed JSON with the
-machine and build configuration beside it.
+**Next:** Phases 1–6, the runtime preparation — and the one everything
+downstream reads is Phase 2's AOT ABI: the shared runtime helpers, declared once
+in `ctbrowser` in a dependency-free X-macro so that drift between the runtime
+that defines them and the compiler that emits calls to them is a *compile
+error*.
 
 The master plan is 21 files under `ctcompile-plan/`, and
 `01-objective-and-ground-truth.md` overrides the rest of it. This document is
@@ -299,12 +299,47 @@ S6), and at-rule coverage — S5 still owes `@supports`, `@layer`, `@charset` an
 `@import`, and when that lands **condition ordinals shift with no field changing
 shape to warn you**.
 
-### Still open in Phase 0
+### The baseline, and what it deliberately leaves out
 
-The CSS comparator, behind the engine enumerator above; and the performance
-baseline, stored as committed JSON with the machine and build configuration
-beside it, because a baseline without its configuration is unusable six months
-later.
+`tools/check/baseline.py` records `ctcompile/docs/baseline/startup.json`: what a
+packaged application pays before it draws anything, per stage, with the CPU,
+cores, RAM, OS, compiler, build flags and commit beside every timing — because a
+baseline without its configuration is unusable six months later.
+
+| corpus | stage | ms |
+|---|---|---|
+| babylon 11.6 MB | parse + compile to bytecode | **264** |
+| phaser 8.8 MB | parse + compile to bytecode | **70** |
+| p5 4.6 MB | parse + compile to bytecode | **53** |
+| bootstrap.css 298 KB | parse | 2.6 |
+| bootstrap.css 298 KB | parse **and file into the engine** | 2.9 |
+| kitchen fixture 10.7 KB | HTML parse + DOM build | 0.07 |
+
+The shape of the problem is in that table: **JavaScript is where startup goes**,
+by two orders of magnitude over HTML, and filing a stylesheet costs about 13% on
+top of parsing it.
+
+It says what it does not measure, in the file. Style resolution, layout, paint,
+raster and the first frame are absent on purpose — they stay runtime work by
+Principle 6 and the engine already benchmarks them. And the one stage that does
+not mean what it says is marked as such: running p5's top level "in 0.037 ms" is
+a bundle that raised on its first statement, because a bare `script::context` has
+no `Symbol`. Each stage records whether it *completed* and why not, so the file
+carries the `TypeError` rather than a timing that flatters the engine.
+
+### Three inventories that reduce to standing decisions
+
+The plan also asks for JSON, text-stack and layout/SDL3 inventories. Read
+closely, each is a *constraint* rather than a table, and recording them as
+decisions is more honest than a document nobody will check:
+
+* **JSON** — the existing implementation stays. Do not replace it with simdjson
+  as part of this project; change it only for correctness or a measured need.
+* **Text** — SDL3_ttf is the shaping and measurement stack. Do not add HarfBuzz
+  or ICU without a concrete unsupported requirement to point at.
+* **Layout/SDL3** — viewport → style → layout → paint → raster → present stays
+  runtime, entire. This is Principle 6 restated as a pipeline, and both
+  comparators already refuse to compare anything downstream of `style`.
 
 ---
 
