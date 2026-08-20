@@ -1,0 +1,27 @@
+{
+  "what": "where a program-image load actually spends its time, decomposed by experiment",
+  "commit": "3a59436",
+  "machine": "devbox, AMD EPYC 9V45, 8 cores, clang 24, -O2. NO hardware perf counters in this VM",
+  "corpus": "p5.js - 4,754 functions, 7.33 MB image",
+  "measurements": {
+    "load_median_ms": 5.52,
+    "load_without_operand_validation_ms": 2.36,
+    "validation_share_percent": 57,
+    "allocations": 22898,
+    "allocated_bytes": 17328267,
+    "instructions_before_optimisation": 237670787,
+    "instructions_after_optimisation": 71529503
+  },
+  "findings": [
+    "VALIDATION IS 57% OF THE LOAD - 3.16 ms of 5.52 - and that is the largest single item by far. Not allocation, not string copying, not reading the bytes. It is the price of the trust model stated in program_image.hpp: an image is executable input, the VM validates nothing, and one of its unchecked pool accesses is a WRITE.",
+    "ALLOCATION IS NOT THE PROBLEM, which corrects an earlier claim in this repository that the load is 'memory-bound'. dhat counts 22,898 allocations and 17.3 MB for a p5 load - about five allocations per function_proto, which mimalloc handles easily. The earlier claim was inferred from a 3.3x instruction reduction buying only ~10% of wall clock, and that inference was wrong.",
+    "FOLDING VALIDATION INTO THE READ PASS IS SLIGHTLY WORSE, NOT BETTER: 5.56-5.58 ms against 5.49-5.52, reproducible across runs. The hypothesis was that a second pass over several megabytes of instructions pays cache misses; it does not. Validation is compute - a shape lookup, a switch and bounds compares per instruction - and it costs the same wherever it runs. The change was reverted.",
+    "SO THE NEXT REAL WIN, IF ONE IS WANTED, IS IN THE VALIDATOR ITSELF and not in how the loader is structured around it. Roughly 40 instructions per bytecode instruction go into checking one, and the shape table is indexed per instruction."
+  ],
+  "how_this_was_measured": [
+    "callgrind for attribution, on a binary that loads and does NOTHING ELSE - the first attempt profiled one that compiled the program to build the image, and the compile drowned the load.",
+    "dhat for allocation count and bytes.",
+    "A/B wall clock between two builds of the loader, median of 9 loads in one warm process, because /usr/bin/time rounds to 10 ms and the load is 5.5.",
+    "NOT perf stat: this is a VM with no hardware performance counters, so cycles, instructions and IPC are all unavailable and any conclusion about being instruction- or memory-bound has to come from an experiment rather than from a counter."
+  ]
+}
