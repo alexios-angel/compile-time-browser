@@ -55,3 +55,12 @@ add_executable(ctcompile-test-css_comparator CssComparator.cpp)
 target_link_libraries(ctcompile-test-css_comparator PRIVATE ctcompile::css)
 ctcompile_target(ctcompile-test-css_comparator)
 add_test(NAME ctcompile_css_comparator COMMAND ctcompile-test-css_comparator)
+
+# THE PROGRAM IMAGE: a round trip that must be exact, and a loader that must
+# refuse. An image is executable input - the VM reads its pools with unchecked
+# operator[] and one of those reads is a WRITE - so the negative cases here are
+# the point of the file.
+add_executable(ctcompile-test-program_image ProgramImage.cpp)
+target_link_libraries(ctcompile-test-program_image PRIVATE ctcompile::javascript)
+ctcompile_target(ctcompile-test-program_image)
+add_test(NAME ctcompile_program_image COMMAND ctcompile-test-program_image)

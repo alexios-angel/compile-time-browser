@@ -20,6 +20,7 @@
 #include <ctbrowser/dom/document.hpp>
 #include <ctbrowser/dom/html.hpp>
 #include <ctbrowser/script/compile.hpp>
+#include <ctbrowser/script/program_image.hpp>
 #include <ctbrowser/script/vm.hpp>
 #include <ctbrowser/style/css/parser.hpp>
 #include <ctbrowser/style/engine.hpp>
@@ -185,6 +186,42 @@ int main(int argc, char ** argv) {
             });
             stages.push_back(
                 stage{"js_parse_and_compile", compile, source.size(), functions, true, {}});
+
+            // AND THE WHOLE POINT: loading the same program from an image
+            // instead of compiling it.
+            //
+            // TIMED AT THE SAME BOUNDARY as the compile above - the program is
+            // constructed AND DESTROYED inside the lambda either way. That is
+            // not a detail: tearing down babylon's ~255,000 containers is part
+            // of the 264 ms being compared against, and an image stage that
+            // skipped it would be measured against a padded baseline.
+            {
+                const auto whole = ctbrowser::script::compiler::compile(source);
+                const auto image = ctbrowser::script::write_image(whole);
+                if (!image.empty()) {
+                    std::size_t loaded = 0;
+                    bool ok = true;
+                    const double load = median_ms(3, [&] {
+                        auto back = ctbrowser::script::load_image(image);
+                        ok = back.ok;
+                        loaded = back.value.functions.size();
+                    });
+                    stages.push_back(
+                        stage{"js_image_load", load, image.size(), loaded, ok,
+                              ok ? std::string{} : std::string{"the image did not load"}});
+                    // A GUARD, NOT A STATISTIC: an image that quietly loads
+                    // fewer functions than the compile produced would read as a
+                    // win. The count has to match or the number means nothing.
+                    if (loaded != whole.functions.size()) {
+                        stages.back().completed = false;
+                        stages.back().stopped_because = "the image loaded " +
+                                                        std::to_string(loaded) +
+                                                        " functions, the "
+                                                        "compile produced " +
+                                                        std::to_string(whole.functions.size());
+                    }
+                }
+            }
 
             // AND RUNNING THE TOP LEVEL, which for a UMD bundle is where the
             // library installs itself - the work a packaged application still

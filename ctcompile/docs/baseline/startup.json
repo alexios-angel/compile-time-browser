@@ -1,7 +1,7 @@
 {
   "what": "startup cost per stage, before any of it is compiled ahead of time",
-  "measured_utc": "2026-08-20T17:00:55Z",
-  "commit": "a2ef736",
+  "measured_utc": "2026-08-20T21:01:06Z",
+  "commit": "c717017",
   "machine": {
     "cpu": "AMD EPYC 9V45 96-Core Processor",
     "cores": 8,
@@ -21,14 +21,14 @@
       "stages": [
         {
           "stage": "css_parse",
-          "ms": 2.557,
+          "ms": 2.761,
           "input_bytes": 297886,
           "produced": 2550,
           "completed": true
         },
         {
           "stage": "css_parse_and_file",
-          "ms": 2.933,
+          "ms": 3.165,
           "input_bytes": 297886,
           "produced": 6076,
           "completed": true
@@ -40,7 +40,7 @@
       "stages": [
         {
           "stage": "html_parse_and_dom_build",
-          "ms": 0.074,
+          "ms": 0.081,
           "input_bytes": 10721,
           "produced": 459,
           "completed": true
@@ -52,14 +52,21 @@
       "stages": [
         {
           "stage": "js_parse_and_compile",
-          "ms": 52.746,
+          "ms": 56.937,
           "input_bytes": 4574626,
           "produced": 4754,
           "completed": true
         },
         {
+          "stage": "js_image_load",
+          "ms": 14.285,
+          "input_bytes": 7333827,
+          "produced": 4754,
+          "completed": true
+        },
+        {
           "stage": "js_run_top_level",
-          "ms": 0.037,
+          "ms": 0.042,
           "input_bytes": 4574626,
           "produced": 4754,
           "completed": false,
@@ -72,14 +79,21 @@
       "stages": [
         {
           "stage": "js_parse_and_compile",
-          "ms": 69.906,
+          "ms": 79.196,
           "input_bytes": 8793523,
           "produced": 7725,
           "completed": true
         },
         {
+          "stage": "js_image_load",
+          "ms": 19.482,
+          "input_bytes": 12301660,
+          "produced": 7725,
+          "completed": true
+        },
+        {
           "stage": "js_run_top_level",
-          "ms": 0.228,
+          "ms": 0.281,
           "input_bytes": 8793523,
           "produced": 7725,
           "completed": false,
@@ -92,14 +106,21 @@
       "stages": [
         {
           "stage": "js_parse_and_compile",
-          "ms": 264.153,
+          "ms": 300.372,
           "input_bytes": 11585541,
           "produced": 31905,
           "completed": true
         },
         {
+          "stage": "js_image_load",
+          "ms": 77.499,
+          "input_bytes": 25893842,
+          "produced": 31905,
+          "completed": true
+        },
+        {
           "stage": "js_run_top_level",
-          "ms": 0.324,
+          "ms": 0.238,
           "input_bytes": 11585541,
           "produced": 31905,
           "completed": false,

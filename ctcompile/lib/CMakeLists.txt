@@ -7,3 +7,4 @@
 add_subdirectory(Support)
 add_subdirectory(HTML)
 add_subdirectory(CSS)
+add_subdirectory(JavaScript)

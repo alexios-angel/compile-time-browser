@@ -13,6 +13,7 @@
 add_library(ctbrowser-script)
 target_sources(ctbrowser-script
   PRIVATE
+    program_image.cpp
     # The compiler. compile.cpp is `compiler::compile()` alone; the class is
     # declared in compile/compiler_impl.hpp and its bodies live beside it.
     # compile.hpp still declares exactly one function.
@@ -52,6 +53,7 @@ target_sources(ctbrowser-script
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/script.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/value.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/bytecode.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/program_image.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/bigint.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/compile.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/number_format.hpp"
