@@ -28,7 +28,10 @@ namespace {
 
 struct row {
     std::string_view name;
-    std::string_view a, b, c;
+    // How each operand SLOT is encoded. Not what it means: `a` is the
+    // destination for get_prop and the target for set_prop, so there is no
+    // uniform role to name these after - see the .def's header.
+    std::string_view a_kind, b_kind, c_kind;
     bool writes_a, allocates, may_throw, may_reenter, is_safepoint, may_suspend, resumable;
     std::string_view impl;
 };
@@ -36,12 +39,12 @@ struct row {
 // The operand kind tokens are bare identifiers in the .def, so they are
 // stringised here rather than named - which also checks that every one of them
 // is a token this file recognises.
-#define CT_OPCODE(name_, a_, b_, c_, writes_a_, allocates_, may_throw_, may_reenter_,              \
-                  is_safepoint_, may_suspend_, resumable_, impl_)                                  \
+#define CT_OPCODE(name_, a_kind_, b_kind_, c_kind_, writes_a_, allocates_, may_throw_,             \
+                  may_reenter_, is_safepoint_, may_suspend_, resumable_, impl_)                    \
     row{#name_,                                                                                    \
-        #a_,                                                                                       \
-        #b_,                                                                                       \
-        #c_,                                                                                       \
+        #a_kind_,                                                                                  \
+        #b_kind_,                                                                                  \
+        #c_kind_,                                                                                  \
         (writes_a_) != 0,                                                                          \
         (allocates_) != 0,                                                                         \
         (may_throw_) != 0,                                                                         \
@@ -144,7 +147,7 @@ int main() {
           "the table and the engine disagree about how many opcodes exist", "bytecode_opcodes.def");
 
     for (const row & r : table) {
-        check(known_kind(r.a) && known_kind(r.b) && known_kind(r.c),
+        check(known_kind(r.a_kind) && known_kind(r.b_kind) && known_kind(r.c_kind),
               "an operand kind that is not one of reg/kidx/sidx/jump/count/bx_hi/unused", r.name);
 
         // A SAFEPOINT IS NOT AN OPINION. It is exactly "can a collection happen
@@ -161,11 +164,12 @@ int main() {
 
         // bx_hi is the HIGH HALF of the preceding field, so it can only follow
         // an operand that is read through bx(): an index or a jump.
-        if (r.c == "bx_hi") {
-            check(r.b == "kidx" || r.b == "sidx" || r.b == "jump",
+        if (r.c_kind == "bx_hi") {
+            check(r.b_kind == "kidx" || r.b_kind == "sidx" || r.b_kind == "jump",
                   "c is bx_hi but b is not an index or a jump", r.name);
         }
-        check(r.b != "bx_hi", "b cannot be a bx high half - a is not read through bx()", r.name);
+        check(r.b_kind != "bx_hi", "b cannot be a bx high half - a is not read through bx()",
+              r.name);
         check(!r.impl.empty(), "impl must say where the semantics live", r.name);
     }
 
