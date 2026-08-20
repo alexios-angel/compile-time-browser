@@ -31,125 +31,16 @@
 
 namespace ctbrowser::script {
 
-// EVERY OPCODE, ONCE, so the label table cannot silently lose an entry.
+// THE OPCODE LIST LIVES IN include/ctbrowser/script/bytecode_opcodes.def NOW,
+// and this file no longer keeps a second copy of it.
 //
-// `-Wswitch` makes a missing case a compile error today, and that guarantee had
-// to survive: a table built with array designators has no such check, and a
-// missing entry is a null pointer and a jump to address zero at run time. The
-// static_assert in run_loop ties this list's length to the enum's, so an opcode
-// added without a line here fails the BUILD rather than the process.
-#define VM_OPCODES(X)                                                                              \
-    X(load_const)                                                                                  \
-    X(load_string)                                                                                 \
-    X(load_bigint)                                                                                 \
-    X(load_undef)                                                                                  \
-    X(load_null)                                                                                   \
-    X(load_true)                                                                                   \
-    X(load_false)                                                                                  \
-    X(move)                                                                                        \
-    X(get_global)                                                                                  \
-    X(set_global)                                                                                  \
-    X(new_cell)                                                                                    \
-    X(cell_get)                                                                                    \
-    X(cell_set)                                                                                    \
-    X(get_upvalue)                                                                                 \
-    X(set_upvalue)                                                                                 \
-    X(add)                                                                                         \
-    X(concat)                                                                                      \
-    X(add_generic)                                                                                 \
-    X(sub)                                                                                         \
-    X(mul)                                                                                         \
-    X(div)                                                                                         \
-    X(mod)                                                                                         \
-    X(pow)                                                                                         \
-    X(negate)                                                                                      \
-    X(to_number)                                                                                   \
-    X(logical_not)                                                                                 \
-    X(equal)                                                                                       \
-    X(not_equal)                                                                                   \
-    X(loose_equal)                                                                                 \
-    X(loose_not_equal)                                                                             \
-    X(less)                                                                                        \
-    X(less_equal)                                                                                  \
-    X(greater)                                                                                     \
-    X(greater_equal)                                                                               \
-    X(instance_of)                                                                                 \
-    X(has_property)                                                                                \
-    X(bit_and)                                                                                     \
-    X(bit_or)                                                                                      \
-    X(bit_xor)                                                                                     \
-    X(shl)                                                                                         \
-    X(shr)                                                                                         \
-    X(ushr)                                                                                        \
-    X(bit_not)                                                                                     \
-    X(jump)                                                                                        \
-    X(jump_if_false)                                                                               \
-    X(jump_if_true)                                                                                \
-    X(jump_if_not_nullish)                                                                         \
-    X(jump_if_defined)                                                                             \
-    X(gather_rest)                                                                                 \
-    X(apply)                                                                                       \
-    X(construct_apply)                                                                             \
-    X(define_getter)                                                                               \
-    X(define_setter)                                                                               \
-    X(new_object)                                                                                  \
-    X(new_array)                                                                                   \
-    X(get_prop)                                                                                    \
-    X(set_prop)                                                                                    \
-    X(get_index)                                                                                   \
-    X(set_index)                                                                                   \
-    X(append)                                                                                      \
-    X(closure)                                                                                     \
-    X(call)                                                                                        \
-    X(call_method)                                                                                 \
-    X(call_computed)                                                                               \
-    X(construct)                                                                                   \
-    X(call_receiver)                                                                               \
-    X(copy_props)                                                                                  \
-    X(delete_prop)                                                                                 \
-    X(delete_index)                                                                                \
-    X(own_keys)                                                                                    \
-    X(iterable)                                                                                    \
-    X(set_proto)                                                                                   \
-    X(get_proto)                                                                                   \
-    X(load_home)                                                                                   \
-    X(await_value)                                                                                 \
-    X(yield_value)                                                                                 \
-    X(wrap_promise)                                                                                \
-    X(ret)                                                                                         \
-    X(ret_undef)                                                                                   \
-    X(type_of)                                                                                     \
-    X(load_this)                                                                                   \
-    X(load_new_target)                                                                             \
-    X(pass_new_target)                                                                             \
-    X(load_import)                                                                                 \
-    X(bind_export)                                                                                 \
-    X(dyn_import)                                                                                  \
-    X(load_namespace)                                                                              \
-    X(load_callee)                                                                                 \
-    X(make_arguments)                                                                              \
-    X(push_handler)                                                                                \
-    X(pop_handler)                                                                                 \
-    X(throw_value)                                                                                 \
-    X(halt)
-
-// COUNTED, NOT SIZED, and the difference is the whole guarantee. The table below
-// is built with array designators, so `std::size` on it reports the HIGHEST
-// designated index plus one - which is `op::halt + 1` whether or not the middle
-// of the list has holes in it. A hole is a null entry and a jump to address
-// zero, and the assert written to catch exactly that could not see one: two
-// opcodes (`load_import`, `bind_export`) were missing from the list for as long
-// as modules have existed, and the only reason nothing jumped to zero is that
-// computed gotos are off by default.
-//
-// Counting the list's ENTRIES catches a hole, and it holds in the switch build
-// too, where there is no table to size.
-#define VM_COUNT_OPCODE(name) +1
-static_assert(0 VM_OPCODES(VM_COUNT_OPCODE) == static_cast<std::size_t>(op::halt) + 1,
-              "VM_OPCODES(X) must list every opcode exactly once - a GAP is invisible to a "
-              "std::size check on a designated-initializer table, and is a null entry and a "
-              "jump to address zero in the computed-goto build");
-#undef VM_COUNT_OPCODE
+// It used to: a private VM_OPCODES(X) macro listing all 93 names, with a
+// static_assert tying its length to the enum's. That assert has moved to
+// bytecode.hpp beside the table it checks, and the label table below is built
+// by including the .def directly. One list, and the compiler reads the same
+// one - which is the point of Phase 0's inventory: a compiler's opcode table
+// and an interpreter's that can drift present as a MISCOMPILE rather than as a
+// build failure.
 
 // --- INSTRUCTION DISPATCH: computed goto, or a switch ------------------------
 //
@@ -227,12 +118,14 @@ value context::run_loop(std::size_t stop_depth) {
     // constexpr - checked in the emitted assembly to be plain .rodata with no
     // thread-safe-init guard, which on the hottest loop in the engine would
     // have cost an atomic load per dispatch.
-#define X(name) [static_cast<std::size_t>(op::name)] = &&VM_LABEL_##name,
-    static void * const vm_table[] = {VM_OPCODES(X)};
-#undef X
+#define CT_OPCODE(name, ...) [static_cast<std::size_t>(op::name)] = &&VM_LABEL_##name,
+    static void * const vm_table[] = {
+#include <ctbrowser/script/bytecode_opcodes.def>
+    };
+#undef CT_OPCODE
     static_assert(std::size(vm_table) == static_cast<std::size_t>(op::halt) + 1,
-                  "VM_OPCODES(X) must list every opcode - a gap here is a null table entry "
-                  "and a jump to address zero at run time");
+                  "bytecode_opcodes.def must list every opcode - a gap here is a null table "
+                  "entry and a jump to address zero at run time");
 #endif
 
     // HOISTED, because in computed-goto mode the handlers are jumped to

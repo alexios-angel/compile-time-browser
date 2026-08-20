@@ -239,6 +239,27 @@ enum class op : std::uint8_t {
     halt,
 };
 
+// THE TABLE THAT DESCRIBES THEM, and the assert that keeps it honest.
+//
+// bytecode_opcodes.def carries one CT_OPCODE line per enumerator above, with
+// the operand encoding and the behaviour an ahead-of-time compiler needs -
+// whether an operation allocates, throws, can run user JavaScript in the
+// middle of itself, or can suspend the frame. The VM builds its own dispatch
+// table from it, and ctcompile reads the same file, so there is ONE list.
+//
+// Counting the ENTRIES rather than sizing an array is deliberate and was
+// learned the hard way: a table built with array designators has no gap check,
+// and two opcodes went missing from the VM's private list for as long as
+// modules existed. A hole is a null entry and a jump to address zero in the
+// computed-goto build; here it is a build failure.
+#define CT_OPCODE(name, ...) +1
+inline constexpr std::size_t opcode_count = 0
+#include <ctbrowser/script/bytecode_opcodes.def>
+    ;
+#undef CT_OPCODE
+static_assert(opcode_count == static_cast<std::size_t>(op::halt) + 1,
+              "bytecode_opcodes.def must list every opcode in `enum class op` exactly once");
+
 struct instruction {
     op code = op::halt;
     std::uint16_t a = 0, b = 0, c = 0;

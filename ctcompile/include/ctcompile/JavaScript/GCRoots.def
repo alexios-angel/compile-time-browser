@@ -1,0 +1,69 @@
+/* Every root ctbrowser's collector walks, as an X-macro table.
+ *
+ * Phase 0's GC Root Inventory. An AOT backend's hardest constraint is that a
+ * value it holds in a native frame is reachable from NONE of these: the
+ * collector is precise, it walks exactly this list, and anything it cannot
+ * reach it frees. Phase 4's shadow frames exist to close that gap, and this
+ * table is the statement of what already exists so that work extends it rather
+ * than duplicating it.
+ *
+ * CT_GC_ROOT(name, owner, marked_in, note)
+ *
+ * VERIFIED against ctbrowser/lib/Script/vm/objects.cpp:435-495 (context::collect)
+ * at 9521928. The comment there says it plainly: "Precise roots: everything
+ * reachable is reachable from exactly these."
+ */
+
+CT_GC_ROOT(globals, "context::globals_", "collect()",
+           "the global object's bindings")
+CT_GC_ROOT(registers, "context::registers_", "collect()",
+           "ONE FLAT VECTOR for every live frame's window, indexed by base. This is also "
+           "why only the top frame can suspend - lifting one from the middle would move "
+           "every frame above it")
+CT_GC_ROOT(current_this, "context::current_this_", "collect()",
+           "the receiver of a native call in progress. It lives in a C++ LOCAL, so nothing "
+           "else keeps it alive")
+CT_GC_ROOT(pending_new_target, "context::pending_new_target_", "collect()",
+           "the constructor a super() call is handing on. Live only between two "
+           "instructions, which is exactly the window a collection can fall in")
+CT_GC_ROOT(frame_closure, "call_frame::closure", "collect(), per frame",
+           "a function called from C++ via call() is otherwise referenced only from a C++ "
+           "local, and its upvalues would be freed while its body ran")
+CT_GC_ROOT(frame_receiver, "call_frame::receiver", "collect(), per frame", "")
+CT_GC_ROOT(frame_arguments, "call_frame::arguments_object", "collect(), per frame", "")
+CT_GC_ROOT(frame_async_promise, "call_frame::async_promise", "collect(), per frame",
+           "the promise an async function will settle")
+CT_GC_ROOT(frame_new_target, "call_frame::new_target", "collect(), per frame", "")
+CT_GC_ROOT(microtasks, "context::microtasks_", "collect()",
+           "a queued job and its arguments. Nothing refers to them between queueing and "
+           "running")
+CT_GC_ROOT(module_exports, "module_record::exports", "collect(), per module",
+           "export CELLS, live in modules_ and in no register once a module has finished "
+           "evaluating")
+CT_GC_ROOT(module_namespace, "module_record::namespace_object", "collect(), per module", "")
+CT_GC_ROOT(thrown, "context::thrown_", "collect()",
+           "a value in flight is reachable from nothing else")
+CT_GC_ROOT(prototypes, "context::prototypes_", "collect()",
+           "the builtin method tables. Without this the standard library is collected on "
+           "the first gc")
+CT_GC_ROOT(string_cache, "context::string_cache_", "collect()",
+           "per-proto literal cache; a sweep without it frees a string a running loop is "
+           "about to read again")
+CT_GC_ROOT(bigint_cache, "context::bigint_cache_", "collect()",
+           "the same, for BigInt literals, which are parsed from their text once per slot")
+
+/* THE ONE HOOK OUT. Everything the embedder holds - every DOM listener, timer
+ * callback, pending fetch, image load and file read - is reachable only
+ * through this.
+ *
+ * AND IT IS A SINGLE SLOT: `set_external_roots` ASSIGNS a std::function, so a
+ * second caller silently replaces the first. Today the one caller is
+ * dom_bindings::register_roots (ctbrowser/lib/Shell/bindings/document.cpp:71).
+ * Phase 4 is told to route AOT frames through this mechanism rather than
+ * inventing a parallel one - and doing that naively would UNREGISTER THE DOM,
+ * whose failure mode is a page's listeners being collected while the page is
+ * still using them. Either the hook grows a list, or the AOT registrar chains
+ * the previous function. Decide it in Phase 4, before writing the shadow frame. */
+CT_GC_ROOT(external, "context::external_roots_", "collect(), last",
+           "SINGLE SLOT - set_external_roots assigns rather than appends; sole caller today "
+           "is dom_bindings::register_roots")

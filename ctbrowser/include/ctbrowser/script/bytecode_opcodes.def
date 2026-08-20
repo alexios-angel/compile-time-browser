@@ -1,0 +1,1112 @@
+/* EVERY BYTECODE OPERATION, ONCE, WITH WHAT AN AHEAD-OF-TIME COMPILER HAS TO
+ * KNOW ABOUT IT. Phase 0's Bytecode Inventory, and the AOT coverage checklist.
+ *
+ * CT_OPCODE(name, a, b, c,
+ *           writes_a, allocates, may_throw, may_reenter, is_safepoint,
+ *           may_suspend, resumable, impl)
+ *
+ * THE OPERANDS. This is a REGISTER machine: an instruction is eight bytes, an
+ * `op` and three uint16 operands a/b/c, and b and c can be read as ONE 32-bit
+ * field through bx() (unsigned) or sbx() (signed). There is no stack-effect
+ * column because there is no stack. Each operand column is one of:
+ *
+ *     reg      a frame slot index
+ *     kidx     an index into function_proto::constants
+ *     sidx     an index into function_proto::strings or ::names
+ *     jump     a signed displacement, read with sbx()
+ *     count    a literal count or flag, not an index
+ *     bx_hi    this operand is the high half of the preceding bx() field
+ *     unused   the handler never reads it
+ *
+ * THE BEHAVIOUR COLUMNS, and these definitions are what the rows were derived
+ * against - not the opcode's name:
+ *
+ *     writes_a      the handler stores a result into register a
+ *     allocates     it can allocate a GC-visible object on SOME path
+ *     may_throw     it can raise - see the two-tier note below
+ *     may_reenter   it can run USER JAVASCRIPT before it finishes
+ *     is_safepoint  a collection can happen inside it; == allocates||may_reenter
+ *     may_suspend   it can suspend the frame (await/yield)
+ *     resumable     execution can RESUME at this instruction after a suspension
+ *     impl          where the semantics live, or "inline"
+ *
+ * TWO TIERS OF FAILURE, and an AOT backend must keep them apart. `raise()` sets
+ * the failure flag and NO try/catch can see it - the allocation ceiling and a
+ * missing module are raises. `thrown_` plus unwind_to_handler is the catchable
+ * path. Both set may_throw here; only the second is a JavaScript exception.
+ *
+ * may_reenter IS THE COLUMN THAT COSTS MONEY IF IT IS WRONG. 31 of the 93 can
+ * run page JavaScript in the middle of what looks like a primitive operation:
+ * arithmetic through valueOf, a property read through an accessor or a proxy
+ * trap, and - least expected - `throw_value`, because describing an UNCAUGHT
+ * throw reads .name and .message off the thrown object.
+ *
+ * DERIVED, NOT ASSUMED. Every row was read out of the handler in
+ * lib/Script/vm/run_loop.cpp and whatever it delegates to, then independently
+ * re-derived by a second reader against the same code. Where a row disagrees
+ * with the opcode's name or with the comment on its enumerator, a note below
+ * says so - those disagreements are the most valuable thing in this table.
+ *
+ * THIS FILE IS THE ONE LIST. run_loop.cpp's dispatch table is built from it, so
+ * an opcode added to the enum without a line here fails the BUILD rather than
+ * becoming a null entry and a jump to address zero in the computed-goto build.
+ */
+
+/* The only pool it reads is `constants`, which never holds a heap pointer,
+ * so an AOT backend can materialize these as C++ literals with no runtime
+ * pool. `constants[bx()]` is not bounds-checked. Because it is a legal
+ * resume target, its native code needs an entry label. */
+CT_OPCODE(load_const, reg, kidx, bx_hi,
+          1, 0, 0, 0, 0, 0, 1,
+          "inline")
+
+/* Reads `strings`, NOT `constants`, so bytecode.hpp:39's `a =
+ * intern(strings[bx])` names the right table but the operand is an sidx.
+ * CORRECTION to the previous answer's 'once PER SITE' claim: the memo is
+ * only per RUN - context::execute clears string_cache_ and bigint_cache_ on
+ * every top-level program (call.cpp:229-231), so a second <script> or a
+ * devtools eval re-allocates every literal. Within one run the identity is
+ * stable and collect() roots the cache (objects.cpp:482-484). is_safepoint
+ * is the stated allocates||may_reenter derivation only; see new_cell for
+ * why no GC can actually run inside a handler. */
+CT_OPCODE(load_string, reg, sidx, bx_hi,
+          1, 1, 1, 0, 1, 0, 1,
+          "inline; vm.hpp:context::string")
+
+/* A literal the lexer accepted but that is not an integer (`1.5n`) does NOT
+ * throw - `parsed.value_or(bigint{0})` substitutes 0n (run_loop.cpp:276).
+ * Same cache-lifetime correction as load_string: bigint_cache_ is cleared
+ * by context::execute (call.cpp:231), so 'parsed once per site' holds
+ * within one run, not for the life of the context. */
+CT_OPCODE(load_bigint, reg, sidx, bx_hi,
+          1, 1, 1, 0, 1, 0, 1,
+          "inline; bigint.hpp:bigint_from_literal + vm.hpp:context::allocate<bigint_object>")
+
+/* The single most commonly emitted opcode in the compiler (17 emit sites),
+ * and one of them sits at ip 0 of a body, so an AOT backend needs entry
+ * labels here on both the normal and the resume path. */
+CT_OPCODE(load_undef, reg, unused, unused,
+          1, 0, 0, 0, 0, 0, 1,
+          "inline")
+
+CT_OPCODE(load_null, reg, unused, unused,
+          1, 0, 0, 0, 0, 0, 1,
+          "inline")
+
+/* Not the only way `true` reaches a register - expressions.cpp:223,230 emit
+ * load_const with value::boolean(true) - so an AOT backend must handle
+ * booleans arriving through load_const too. */
+CT_OPCODE(load_true, reg, unused, unused,
+          1, 0, 0, 0, 0, 0, 1,
+          "inline")
+
+/* expressions.cpp:232 also emits value::boolean(false) through load_const. */
+CT_OPCODE(load_false, reg, unused, unused,
+          1, 0, 0, 0, 0, 0, 1,
+          "inline")
+
+/* This is the commonest resume target in the whole instruction set. On
+ * entry to it the awaited value has already been written into the
+ * SUSPENDING instruction's register a by call.cpp:702 (`registers_[base +
+ * saved->await_reg] = with`) or call.cpp:639 for a generator - so the AOT
+ * entry label must be placed before the move and must assume its source
+ * register was filled by the runtime, not by the previous native
+ * instruction. */
+CT_OPCODE(move, reg, reg, unused,
+          1, 0, 0, 0, 0, 0, 1,
+          "inline")
+
+/* TWO disagreements with the name and the comment, both confirmed. (1)
+ * bytecode.hpp:52 says `a = globals[k[bx]]` but the handler indexes
+ * `names`, not `constants` - an sidx (intern_name, limits.cpp:41). (2) An
+ * undeclared global does NOT throw ReferenceError; it silently yields
+ * undefined, so `foo` and `typeof foo` are the same instruction and
+ * feature-detection that relies on a ReferenceError gets undefined instead. */
+CT_OPCODE(get_global, reg, sidx, bx_hi,
+          1, 0, 0, 0, 0, 0, 1,
+          "inline")
+
+/* a is the SOURCE, not a destination - writes_a is false on an opcode whose
+ * name suggests a store into a. Same names-vs-constants disagreement with
+ * bytecode.hpp:53 as get_global. The write also bypasses any accessor: if a
+ * binding layer mirrors globals through a window object with setters, this
+ * instruction will not fire them. */
+CT_OPCODE(set_global, reg, sidx, bx_hi,
+          0, 0, 0, 0, 0, 0, 1,
+          "inline")
+
+/* a is read AND written - the only in-out register operand in this set - so
+ * an AOT backend cannot treat it as a pure def, and on the resume path the
+ * value it boxes was written by the runtime (call.cpp:702), not by the
+ * preceding native instruction. may_throw is only the allocation ceiling,
+ * and raise() sets failed_ instead of entering unwind_to_handler
+ * (vm.hpp:932-936), so it is NOT catchable by JS try/catch. is_safepoint is
+ * the stated allocates||may_reenter derivation and DIFFERS from reality: I
+ * re-checked every call site of collect() - browser.cpp:307
+ * (collect_if_due, 'between callbacks'), browser.hpp:279 (collect_garbage)
+ * and unit tests only - and allocate() never collects, so today no GC can
+ * occur inside any handler in this table. */
+CT_OPCODE(new_cell, reg, unused, unused,
+          1, 1, 1, 0, 1, 0, 1,
+          "inline; vm.hpp:context::allocate<cell_object>")
+
+/* A non-cell in b is not a fault: it yields undefined silently, so a mis-
+ * emitted boxing decision produces a wrong value rather than a diagnosable
+ * trap. This is NOT a TDZ check either - an uninitialised let reads as
+ * undefined. */
+CT_OPCODE(cell_get, reg, reg, unused,
+          1, 0, 0, 0, 0, 0, 1,
+          "inline")
+
+/* writes_a is FALSE despite a being the first operand: a holds the cell and
+ * is only read. If a is not a cell the store is silently dropped - an
+ * assignment that does nothing at all. No write barrier exists or is
+ * needed: collect() (objects.cpp:434-490) is a full mark from precise
+ * roots, not incremental. */
+CT_OPCODE(cell_set, reg, reg, unused,
+          0, 0, 0, 0, 0, 0, 1,
+          "inline")
+
+/* b is NOT a frame slot: it indexes the running closure's upvalue vector
+ * (closure_object::upvalues, vm.hpp:167). The column vocabulary has no
+ * 'upvalue index', so 'count' is the least wrong of the offered kinds - an
+ * AOT backend must not renumber it with the register allocator. Out-of-
+ * range or non-cell entries silently give undefined. */
+CT_OPCODE(get_upvalue, reg, count, unused,
+          1, 0, 0, 0, 0, 0, 1,
+          "inline")
+
+/* THE BIGGEST OPERAND TRAP IN THIS SET, and it survives review: a is an
+ * UPVALUE INDEX, not a frame slot - the only opcode here whose a operand is
+ * not a register - and writes_a is false. An AOT backend that assumes 'a is
+ * always a reg' will renumber this during register allocation and corrupt
+ * closure state. Out-of-range index or a non-cell entry drops the write
+ * silently. */
+CT_OPCODE(set_upvalue, count, reg, unused,
+          0, 0, 0, 0, 0, 0, 1,
+          "inline")
+
+/* NAME/COLUMN DISAGREEMENT (three). (1) op::add is not source `+`:
+ * compile_binary maps `+` to add_generic (expressions.cpp:245-246); op::add
+ * comes only from ++ (expressions.cpp:514) and three internal counters
+ * (expressions.cpp:954, statements.cpp:490, destructuring.cpp:215). Beware
+ * compound_op returning op::add at expressions.cpp:442 - that is the
+ * ok=false arm and compile_assign refuses before emitting
+ * (expressions.cpp:487-493), so no `+=` reaches it. (2) It is the ONE
+ * arithmetic op using static to_number rather than to_number_value, so
+ * `x++` on {valueOf:()=>3} is NaN and never runs user code. (3) The prior
+ * table's blanket resumable=false is wrong for every row here, and add is
+ * the least obvious case - it needs a resume label because a loop counter
+ * sits behind an awaiting/yielding body. is_safepoint is the
+ * allocates||may_reenter derivation; no GC can actually occur inside any
+ * handler, since context::collect() is reached only from collect_if_due
+ * (vm.hpp:733) called at browser.cpp:307 "Collect between callbacks, never
+ * inside one" and from browser::collect_garbage (browser.hpp:279, used only
+ * by unittests) - so is_safepoint here is a contract for a future
+ * allocating collector, not observed behaviour. */
+CT_OPCODE(add, reg, reg, reg,
+          1, 1, 1, 0, 1, 0, 1,
+          "vm/coerce.cpp:bigint_binary + vm/coerce.cpp:to_number (static)")
+
+/* REFUTES THE PRIOR NOTE'S ORDERING HAZARD. In every emitted concat, in.b
+ * is the ACCUMULATOR: compile_template's append_literal is called with the
+ * empty leading literal while started==false (expressions.cpp:550-554 - the
+ * `text.empty() && started` guard does not fire on the first call), so dst
+ * is always seeded by `move dst, <string>` before any concat, and every
+ * later concat's b is the previous concat's string result. to_string of a
+ * string returns ->text (coerce.cpp:87) without calling anything, so only
+ * ONE of the two to_string calls can ever run user JS and two side-
+ * effecting toStrings cannot race here. What DOES survive is worse and
+ * unmentioned: reg() returns `value&` into registers_ (run_loop.cpp:245)
+ * and context::call does registers_.resize(new_base+window+8) at
+ * call.cpp:73, which reallocates - the two calls being indeterminately
+ * sequenced means a conforming compiler may materialise reg(in.b)'s
+ * reference, run to_string(reg(in.c)) into user JS, then read through the
+ * now-dangling reference. Emitted only by template literals; source `+`
+ * never reaches it. */
+CT_OPCODE(concat, reg, reg, reg,
+          1, 1, 1, 1, 1, 0, 1,
+          "vm/coerce.cpp:to_string")
+
+/* REFUTES THE PRIOR NOTE'S "only handler that sequences its operands
+ * correctly". The ToPrimitive step is sequenced (const value l = ...; const
+ * value r = ...), but the very next line 451 is `to_string(l) +
+ * to_string(r)` - two indeterminately sequenced calls that BOTH run user
+ * code whenever to_primitive handed the object back unchanged, which
+ * happens when valueOf and toString each return an object (coerce.cpp:142
+ * `continue`); to_primitive_string then calls both again
+ * (coerce.cpp:171-179) before giving up to "[object Object]". So the left-
+ * then-right guarantee covers ToPrimitive only, not ToString. This IS what
+ * the compiler emits for every source-level `+` (expressions.cpp:245-246) -
+ * the coverage-critical member of the family, not op::add. LATENT GC HAZARD
+ * confirmed: context::collect roots globals_, registers_, current_this_,
+ * pending_new_target_, frames_, microtasks_, modules_, thrown_, prototypes_
+ * and the two literal caches (objects.cpp:434-495) - never a handler's C++
+ * temporaries - so `l` and `r` are unrooted and this is safe only because
+ * allocate() never triggers collect(). */
+CT_OPCODE(add_generic, reg, reg, reg,
+          1, 1, 1, 1, 1, 0, 1,
+          "vm/coerce.cpp:to_primitive (+ to_string, bigint_binary, to_number)")
+
+/* THE HAZARD IS WORSE THAN INDETERMINATE ORDER. `to_number_value(reg(in.b))
+ * - to_number_value(reg(in.c))` are operands of a built-in `-`, so they are
+ * indeterminately sequenced (spec requires left first) - but reg() hands
+ * back a `value&` into registers_ (run_loop.cpp:245) and context::call
+ * resizes registers_ at call.cpp:73, so a legal ordering (evaluate
+ * reg(in.c) -> run to_number_value(reg(in.b))'s body -> read the parameter
+ * copy for call 2) reads through a DANGLING reference. add_generic avoids
+ * both by using separate const locals; sub/mul/div/mod/pow and concat do
+ * not. `--` also emits sub (expressions.cpp:514), and there the operand is
+ * a program variable, though that site is never a resume target because
+ * emit_const(one) always precedes it (expressions.cpp:508-514). */
+CT_OPCODE(sub, reg, reg, reg,
+          1, 1, 1, 1, 1, 0, 1,
+          "vm/coerce.cpp:to_number_value (+ vm/coerce.cpp:bigint_binary)")
+
+/* Same dangling-reg-reference and indeterminate-sequencing hazard as sub
+ * (the two to_number_value calls are operands of built-in `*` at
+ * run_loop.cpp:382, and context::call reallocates registers_ at
+ * call.cpp:73). Also emitted for `*=` (expressions.cpp:427). */
+CT_OPCODE(mul, reg, reg, reg,
+          1, 1, 1, 1, 1, 0, 1,
+          "vm/coerce.cpp:to_number_value (+ vm/coerce.cpp:bigint_binary)")
+
+/* Division by zero is asymmetric and the opcode name hides it: `1/0` on the
+ * Number path is Infinity and throws nothing, `1n/0n` is a catchable
+ * RangeError. Same dangling-reg-reference and indeterminate-sequencing
+ * hazard as sub. */
+CT_OPCODE(div, reg, reg, reg,
+          1, 1, 1, 1, 1, 0, 1,
+          "vm/coerce.cpp:to_number_value (+ vm/coerce.cpp:bigint_binary)")
+
+/* std::fmod, not integer remainder - correct for JS `%` on doubles
+ * including sign-of-dividend, so an AOT backend must not lower it to an
+ * integer `srem`. Same dangling-reg-reference and indeterminate-sequencing
+ * hazard as sub. */
+CT_OPCODE(mod, reg, reg, reg,
+          1, 1, 1, 1, 1, 0, 1,
+          "vm/coerce.cpp:to_number_value + std::fmod (+ vm/coerce.cpp:bigint_binary)")
+
+/* NOT std::pow: exponentiate overrides C99 F.10.4.4 so `1 ** NaN` and `(-1)
+ * ** Infinity` are NaN rather than 1 (coerce.cpp:71-74) - an AOT backend
+ * lowering `**` to a libm call reintroduces the bug. Same dangling-reg-
+ * reference and indeterminate-sequencing hazard as sub. */
+CT_OPCODE(pow, reg, reg, reg,
+          1, 1, 1, 1, 1, 0, 1,
+          "vm/coerce.cpp:to_number_value + vm/coerce.cpp:exponentiate (+ bigint_binary)")
+
+/* to_number_value's own "Cannot convert a BigInt value to a number"
+ * TypeError (coerce.cpp:156-158) is UNREACHABLE from here because the
+ * handler tests is_kind(heap_kind::bigint) first at line 472, and an object
+ * whose valueOf RETURNS a bigint is skipped by the `produced.is_heap() &&
+ * !produced.is_string()` continue (coerce.cpp:165) - so the reachable
+ * faults are a user valueOf/toString throwing, the 512-frame `raise("call
+ * stack exhausted")` (call.cpp:77-79, which sets failed_ and is NOT
+ * catchable by a JS try) and the allocation ceiling (vm.hpp:224-227). The
+ * long `+x IS A CONVERSION` comment inside this VM_CASE
+ * (run_loop.cpp:479-483) documents op::to_number, not negate. */
+CT_OPCODE(negate, reg, reg, unused,
+          1, 1, 1, 1, 1, 0, 1,
+          "vm/coerce.cpp:to_number_value (bigint arm inline)")
+
+/* The one opcode in this group whose BigInt TypeError is reachable without
+ * a bigint PAIR - `+1n` throws here while `1n + 1n` does not. Emitted only
+ * for unary `+` (expressions.cpp:340) and it is a genuine conversion, not
+ * the `move` it used to be. RESUME RULE FOR THE WHOLE GROUP, and it is why
+ * every row's resumable is true: the resume ip is the instruction AFTER the
+ * suspension for both await (run_loop.cpp:1287) and yield
+ * (run_loop.cpp:1347), and the compiler emits every one of these opcodes
+ * immediately after its last operand's code - so an AOT backend must be
+ * able to place a resume label at ANY of these instruction boundaries,
+ * including in front of a fully pure opcode. That is a lowering constraint
+ * (no cross-instruction value may live only in a machine register at these
+ * points), not merely a note. */
+CT_OPCODE(to_number, reg, reg, unused,
+          1, 1, 1, 1, 1, 0, 1,
+          "vm/coerce.cpp:to_number_value")
+
+/* Still the ONLY opcode of these 19 with every RISK column false -
+ * is_safepoint=false is the honest allocates||may_reenter derivation, and
+ * it is spec-correct because ToBoolean never invokes valueOf. But its
+ * resumable is true like all the rest, and that is the interesting pairing:
+ * an AOT backend can lower the operation itself to a tag test with no call,
+ * no exception edge and no safepoint, yet it must still be able to start
+ * executing at this instruction after a suspension, so whatever live state
+ * crosses it has to be recoverable from the coroutine's saved register
+ * window (coroutine_object::window, run_loop.cpp:1294) rather than from
+ * machine registers. */
+CT_OPCODE(logical_not, reg, reg, unused,
+          1, 0, 0, 0, 0, 0, 1,
+          "vm/coerce.cpp:truthy")
+
+/* Also the SWITCH dispatcher: statements.cpp:523 emits `equal matched,
+ * subject, candidate` per case, so `switch` is a chain of effect-free `===`
+ * and is the one comparison an AOT backend can lower with no safepoint, no
+ * exception edge and no call. */
+CT_OPCODE(equal, reg, reg, reg,
+          1, 0, 0, 0, 0, 0, 1,
+          "value.hpp:value::strict_equals")
+
+/* `!=` does NOT come here - expressions.cpp:265-268 sends it to
+ * loose_not_equal - so the pair (equal,not_equal) is effect-free while the
+ * pair (loose_equal,loose_not_equal) is not; an AOT peephole that treats
+ * all four as one family will attach the wrong effect bits. */
+CT_OPCODE(not_equal, reg, reg, reg,
+          1, 0, 0, 0, 0, 0, 1,
+          "value.hpp:value::strict_equals")
+
+/* Its two hottest emission sites are not `==` at all: expressions.cpp:720
+ * and 848 emit `loose_equal test, base, nullish` as the optional-chaining
+ * null test, and there loose_equals returns at coerce.cpp:195-196 before
+ * any to_primitive - so every `?.` site is provably non-reentering and an
+ * AOT backend should specialise on a null-literal operand rather than
+ * emitting the generic call. */
+CT_OPCODE(loose_equal, reg, reg, reg,
+          1, 1, 1, 1, 1, 0, 1,
+          "vm/coerce.cpp:context::loose_equals")
+
+/* Every dynamic instance of this opcode is a real `!=` on unknown operands
+ * - there is no benign specialisation the way there is for loose_equal - so
+ * it is a mandatory call site with a throw edge in any lowering. */
+CT_OPCODE(loose_not_equal, reg, reg, reg,
+          1, 1, 1, 1, 1, 0, 1,
+          "vm/coerce.cpp:context::loose_equals")
+
+/* Three of its four emission sites are COMPILER-INTERNAL loop bounds -
+ * `less test, index, length` for spread (expressions.cpp:950), array
+ * destructuring (destructuring.cpp:211) and for-of (statements.cpp:473) -
+ * where both operands are engine-produced numbers; those are statically
+ * safe, and only the compile_binary site (expressions.cpp:285) is a genuine
+ * call site. */
+CT_OPCODE(less, reg, reg, reg,
+          1, 1, 1, 1, 1, 0, 1,
+          "vm/coerce.cpp:context::compare_relational")
+
+/* `unordered` (either side NaN after coercion, coerce.cpp:370) makes
+ * is_lteq false, so NaN <= NaN is false; the ordering-based encoding is
+ * what gets that right for all four operators from a single comparison, and
+ * an AOT backend must keep the three-way result rather than lowering to a
+ * bool. */
+CT_OPCODE(less_equal, reg, reg, reg,
+          1, 1, 1, 1, 1, 0, 1,
+          "vm/coerce.cpp:context::compare_relational")
+
+/* Two strings compare with std::string::compare (coerce.cpp:359-364), i.e.
+ * UTF-8 byte order rather than UTF-16 code-unit order - identical for
+ * ASCII, different for non-BMP text - so a numeric-only AOT fast path
+ * silently reintroduces the all-false string comparison the comment at
+ * coerce.cpp:262-270 records. */
+CT_OPCODE(greater, reg, reg, reg,
+          1, 1, 1, 1, 1, 0, 1,
+          "vm/coerce.cpp:context::compare_relational")
+
+/* A BigInt compares exactly against a Number (coerce.cpp:333-354,
+ * bigint_compare_double) instead of rounding through a double, so `>=` is
+ * exact where `+` would have thrown - this opcode must not be folded to a
+ * double compare when either side may be a bigint. */
+CT_OPCODE(greater_equal, reg, reg, reg,
+          1, 1, 1, 1, 1, 0, 1,
+          "vm/coerce.cpp:context::compare_relational")
+
+/* Two columns fight the name. It MUTATES its right operand - the first `x
+ * instanceof F` creates and installs F.prototype (call.cpp:304-309) - and
+ * it never throws where the spec demands: `x instanceof 5`, a non-callable
+ * RHS and `x instanceof someProxy` (proxy fails is_object() at
+ * run_loop.cpp:543) are all silently false, there is no Symbol.hasInstance,
+ * and the chain walk stops at 64 links (run_loop.cpp:552). */
+CT_OPCODE(instance_of, reg, reg, reg,
+          1, 1, 1, 0, 1, 0, 1,
+          "inline; vm/call.cpp:context::ensure_prototype, vm.hpp:context::implicit_prototypes")
+
+/* b is the KEY and c is the TARGET. Beyond own-data-only lookup: a NATIVE
+ * right-hand side answers false for everything (`'PI' in Math` is false -
+ * native_object fails both is_object() and is_array() at
+ * run_loop.cpp:604-608), an array answers only about integer indices so
+ * `'length' in []` is false, and a non-object RHS is false rather than a
+ * TypeError. */
+CT_OPCODE(has_property, reg, reg, reg,
+          1, 1, 1, 1, 1, 0, 1,
+          "inline; vm/call.cpp:context::proxy_trap + context::call, vm/objects.cpp:context::lookup_property, vm/coerce.cpp:context::to_string")
+
+/* NAME/COLUMN DISAGREEMENT for the whole bitwise group: in a real engine a
+ * bitwise operator CAN re-enter because ToNumeric does ToPrimitive; here it
+ * cannot, because the static to_int32/to_uint32 skip the object walk
+ * entirely. Visible consequence: `[1] | 0` is 0 and `({valueOf:()=>3}) & 7`
+ * is 0 where a browser gives 1 and 3. Good for an AOT backend (no exception
+ * edge and no safepoint on the pure-Number path, which allocates nothing at
+ * all) but it is a deviation, not an optimisation -
+ * allocates/may_throw/is_safepoint on this row are entirely the BigInt
+ * arm's doing. */
+CT_OPCODE(bit_and, reg, reg, reg,
+          1, 1, 1, 0, 1, 0, 1,
+          "script/vm.hpp:to_int32 (+ vm/coerce.cpp:bigint_binary)")
+
+/* Same non-re-entrant ToInt32 deviation as bit_and. On the pure-Number path
+ * this handler allocates nothing and throws nothing, so a specialising AOT
+ * backend that has proven both operands are Numbers can drop the exception
+ * edge, the safepoint AND the runtime call - but not the resume label. */
+CT_OPCODE(bit_or, reg, reg, reg,
+          1, 1, 1, 0, 1, 0, 1,
+          "script/vm.hpp:to_int32 (+ vm/coerce.cpp:bigint_binary)")
+
+/* Same non-re-entrant ToInt32 deviation as bit_and; also emitted for `^=`
+ * (expressions.cpp:437). */
+CT_OPCODE(bit_xor, reg, reg, reg,
+          1, 1, 1, 0, 1, 0, 1,
+          "script/vm.hpp:to_int32 (+ vm/coerce.cpp:bigint_binary)")
+
+/* Two distinct BigInt exceptions (RangeError for an oversized shift,
+ * TypeError for a mixed pair) on an opcode whose Number path has no
+ * exception edge at all. The uint32 round-trip at run_loop.cpp:672-673
+ * exists to avoid signed-overflow UB - a naive AOT lowering of `int32 << n`
+ * reintroduces it, and so does dropping the & 31U mask. */
+CT_OPCODE(shl, reg, reg, reg,
+          1, 1, 1, 0, 1, 0, 1,
+          "script/vm.hpp:to_int32/to_uint32 (+ vm/coerce.cpp:bigint_binary)")
+
+/* Same non-re-entrant ToInt32 deviation as bit_and, plus the shift-too-
+ * large RangeError that shl also carries. Also emitted for `>>=`
+ * (expressions.cpp:439). */
+CT_OPCODE(shr, reg, reg, reg,
+          1, 1, 1, 0, 1, 0, 1,
+          "script/vm.hpp:to_int32/to_uint32 (+ vm/coerce.cpp:bigint_binary)")
+
+/* The only opcode of these 19 whose BigInt path is unconditionally a throw:
+ * allocates is true here SOLELY because throw_error -> make_error builds an
+ * Error object plus three strings (vm.hpp:350-364), not because any result
+ * is heap-allocated - so an AOT backend can treat the allocation as
+ * belonging to the throw edge rather than the value path. The two throws
+ * differ by operand shape: one bigint gives "Cannot mix BigInt..." because
+ * the a_big != b_big branch runs first (coerce.cpp:280-286), two bigints
+ * give "BigInts have no unsigned right shift". */
+CT_OPCODE(ushr, reg, reg, reg,
+          1, 1, 1, 0, 1, 0, 1,
+          "script/vm.hpp:to_uint32 (+ vm/coerce.cpp:bigint_binary)")
+
+/* NO JS-CATCHABLE THROW ON EITHER ARM - `~1n` computes and `~obj` is -1 -
+ * so may_throw is true only through allocate's ceiling raise
+ * (vm.hpp:224-227), which sets failed_ via raise() (vm.hpp:932-936) WITHOUT
+ * entering unwind_to_handler and is therefore not catchable by a JS `try`.
+ * bit_not is the only opcode here whose may_throw is purely a resource
+ * fault: an AOT backend needs a fault edge, not an exception edge, and the
+ * fault edge exists only on the BigInt arm. */
+CT_OPCODE(bit_not, reg, reg, unused,
+          1, 1, 1, 0, 1, 0, 1,
+          "script/vm.hpp:to_int32 (bigint arm inline)")
+
+/* Decoding trap: b is the HIGH half and c the LOW half
+ * (bytecode.hpp:245-248, with_bx does `wide >> 16` into b), so the schema's
+ * `bx-hi` label on c is the inverse of the physical layout. There is also
+ * no bounds check here - the loop head's `ip >= code.size()` test is the
+ * only guard, and an out-of-range target ends the whole run_loop invocation
+ * with undefined WITHOUT popping the frame. */
+CT_OPCODE(jump, unused, jump, bx_hi,
+          0, 0, 0, 0, 0, 0, 1,
+          "inline")
+
+/* ToBoolean never re-enters here because an object is truthy BY TAG
+ * (coerce.cpp:46) - no valueOf runs - which makes this and its three
+ * siblings the only branches in the ISA with neither a safepoint nor an
+ * exception edge. */
+CT_OPCODE(jump_if_false, reg, jump, bx_hi,
+          0, 0, 0, 0, 0, 0, 1,
+          "vm/coerce.cpp:context::truthy")
+
+/* Emitted for `||` (compile_logical, expressions.cpp:305) and for every
+ * `?.`; the optional-call form funnels many of these into one shared merge
+ * label through optional_exits_, so an AOT CFG builder must expect a join
+ * with many predecessors. */
+CT_OPCODE(jump_if_true, reg, jump, bx_hi,
+          0, 0, 0, 0, 0, 0, 1,
+          "vm/coerce.cpp:context::truthy")
+
+/* Tests null/undefined only, never falsiness - `0 ?? 5` is 0 and `"" ??
+ * "x"` is "" - and it is emitted for both `??` and `??=`, so rewriting it
+ * to jump_if_true during optimisation breaks both silently. */
+CT_OPCODE(jump_if_not_nullish, reg, jump, bx_hi,
+          0, 0, 0, 0, 0, 0, 1,
+          "inline")
+
+/* resumable is a property of CODE LAYOUT, not of the opcode. A resume
+ * restores frame.ip from coroutine_object::ip, which was captured AFTER the
+ * dispatch increment (run_loop.cpp:1287, 1347) and is reinstalled at
+ * call.cpp:617/685 with the sent value dropped into await_reg
+ * (call.cpp:639/702) - so the AOT backend must mark every instruction that
+ * follows an await_value/yield_value as an entry label rather than trusting
+ * this column. */
+CT_OPCODE(jump_if_defined, reg, jump, bx_hi,
+          0, 0, 0, 0, 0, 0, 0,
+          "inline")
+
+/* b is not a register operand in the a/b/c sense and not a pool index, but
+ * it is used as a frame-slot offset on one of its two paths - an AOT
+ * backend must not lower it as a pure literal count. The handler reads two
+ * different sources for the same instruction depending on whether the body
+ * also built an `arguments` array (:892), because building that array
+ * claimed a register an extra argument may have been sitting in. The
+ * compiler happens to emit a == b, which is not a general invariant.
+ * may_throw is only the allocation-ceiling raise(), never a JS exception,
+ * and it does not unwind. */
+CT_OPCODE(gather_rest, reg, count, unused,
+          1, 1, 1, 0, 1, 0, 0,
+          "inline")
+
+/* UNLIKE op::call THIS RUNS THE CALLEE SYNCHRONOUSLY, in a nested
+ * interpreter loop - an AOT backend that models 'call opcodes just transfer
+ * control' is wrong here. Second surprise: a CALLABLE PROXY silently
+ * evaluates to undefined - is_callable() (value.hpp:300-305) lets it past
+ * the check at :870, then context::call falls through
+ * !callable.is_kind(function) and returns undefined (call.cpp:53-55), where
+ * op::call would have raised a catchable TypeError. Third: may_suspend is
+ * false by the letter of the definition (this frame is never lifted; the
+ * promise just lands in reg(a)), but the instruction can still set the VM-
+ * wide suspended_ flag and corrupt an enclosing resume() - so 'does not
+ * suspend' is not the same as 'suspension-neutral'. */
+CT_OPCODE(apply, reg, reg, reg,
+          1, 1, 1, 1, 1, 0, 0,
+          "vm/call.cpp:call")
+
+/* Like apply, the constructor body runs to completion inside the
+ * instruction. Its failure mode differs from op::construct's: a non-
+ * constructor here hits raise("attempted to construct a non-function") at
+ * call.cpp:444 - an UNCATCHABLE VM fault that unwinds nothing - while
+ * op::construct's equivalent at run_loop.cpp:1568 is a catchable TypeError.
+ * Same source construct, two different observable behaviours depending only
+ * on whether a spread was written. */
+CT_OPCODE(construct_apply, reg, reg, unused,
+          1, 1, 1, 1, 1, 0, 0,
+          "vm/call.cpp:construct")
+
+/* writes_a is FALSE - a is the object being defined on. The two target
+ * paths differ and the closure one is buggy: object_object::define_accessor
+ * calls erase() first (value.hpp:564) so the data property is replaced, but
+ * closure_object::define_accessor (vm.hpp:138) does not - and
+ * lookup_property checks closure->find(name) at objects.cpp:387 BEFORE
+ * find_accessor at objects.cpp:403, so a `static get x()` on a class that
+ * already has a static data property `x` never runs. Note also that the
+ * unused half is passed as undefined and accessor_table::define
+ * (value.hpp:515-518) skips undefined halves, which is what merges a
+ * get/set pair into one entry. */
+CT_OPCODE(define_getter, reg, sidx, reg,
+          0, 0, 0, 0, 0, 0, 0,
+          "inline (shared block with define_setter)")
+
+/* Installing an accessor only STORES the function; it never invokes it, so
+ * may_reenter is false here even though every later read or write of that
+ * property through get_prop/set_prop WILL re-enter - the cost moves to the
+ * access site, which is where an AOT backend must place its barrier. Same
+ * closure-target asymmetry as define_getter (vm.hpp:138 does not erase a
+ * shadowing data property). Do not fuse the two opcodes into one handler
+ * keyed on a flag operand: the discriminator is the OPCODE ITSELF, read out
+ * of `in.code`, and no operand carries it. */
+CT_OPCODE(define_setter, reg, sidx, reg,
+          0, 0, 0, 0, 0, 0, 0,
+          "inline (shared block with define_getter)")
+
+/* may_throw is true only under the column's 'sets its failure state'
+ * clause: the ceiling calls raise() (vm.hpp:932), which sets failed_ and is
+ * NOT catchable by a JS try/catch, so an AOT backend needs an abort edge
+ * here, not an exception edge. is_safepoint is stated as
+ * allocates||may_reenter and DIFFERS from the code: allocate() (vm.hpp:223)
+ * never calls collect(); the only GC drivers in the tree are
+ * browser.cpp:307 (collect_if_due, between callbacks) and browser.hpp:279,
+ * neither reachable from any handler. */
+CT_OPCODE(new_object, reg, unused, unused,
+          1, 1, 1, 0, 1, 0, 0,
+          "vm.hpp:context::make_object")
+
+/* Same as new_object: the only failure is the allocation ceiling's raise()
+ * (a failure state, not a catchable throw). is_safepoint follows
+ * allocates||may_reenter but is not true in practice - no GC runs inside
+ * any handler today (see the new_object note). */
+CT_OPCODE(new_array, reg, unused, unused,
+          1, 1, 1, 0, 1, 0, 0,
+          "vm.hpp:context::make_array")
+
+/* REFUTING THE PREVIOUS NOTE: it warned that the destination store executes
+ * after a getter throws and writes through a stale `base`, implying an AOT
+ * backend could clobber the caught exception. The write is real but
+ * provably harmless under this front end - statements.cpp:561 allocates the
+ * catch register BEFORE compiling the try body, so every temporary in the
+ * body (including this dst) sits strictly above the catch slot, and a
+ * getter is entered through context::call (call.cpp:69), whose new_base ==
+ * registers_.size() puts it above every live frame. The genuine hazards
+ * that remain: (1) the bytecode comment calls this 'the inline-cache site'
+ * and there is NO cache - it is an unconditional call into lookup_property;
+ * (2) an innocent named load both runs user JS and allocates; (3) C++17
+ * sequences the RHS before `reg(in.a)`, which is the only reason the
+ * reference survives registers_ reallocation during the nested call - an
+ * AOT backend MUST re-derive the frame pointer after any reentrant call;
+ * (4) lookup_property's chain walk follows only object_object prototypes
+ * (objects.cpp:254-256), so a proxy on the prototype chain silently
+ * terminates the walk. */
+CT_OPCODE(get_prop, reg, reg, sidx,
+          1, 1, 1, 1, 1, 0, 0,
+          "vm/objects.cpp:lookup_property")
+
+/* writes_a is FALSE despite a being the first operand - a names the target
+ * object, so an AOT backend must not treat it as clobbered. Confirmed
+ * deviations: objects.cpp:159 honours only `length` on an array target and
+ * DROPS every other named write (`arr.foo = 1` is silently lost), and
+ * objects.cpp:190 drops a write to a number/string/boolean/undefined.
+ * Whether this opcode re-enters is decided by the RUNTIME TYPE of the
+ * target, not by the instruction. */
+CT_OPCODE(set_prop, reg, sidx, reg,
+          0, 1, 1, 1, 1, 0, 0,
+          "vm/objects.cpp:store_property")
+
+/* The surprise is the KEY, not the property: `o[k]` runs user code for the
+ * key's coercion as well as for any getter or proxy trap on the result.
+ * Only array-with-number and string-with-number are re-entry-free, and the
+ * string fast path still allocates one heap string per read AND indexes
+ * BYTES (`text[i]`, objects.cpp:123), not code points. */
+CT_OPCODE(get_index, reg, reg, reg,
+          1, 1, 1, 1, 1, 0, 0,
+          "vm/objects.cpp:lookup_index")
+
+/* writes_a is FALSE - a is the target object. Spec deviation confirmed in
+ * code: the typed-array/element path calls the NON-coercing to_number
+ * (coerce.cpp:49), so `typed[i] = objWithValueOf` stores the coercion of
+ * NaN instead of running valueOf, while the identical write to a plain
+ * object DOES run toString on the key. An AOT backend cannot decide re-
+ * entry, allocation or throw for this opcode statically - all three depend
+ * on the runtime types of BOTH a and b. */
+CT_OPCODE(set_index, reg, reg, reg,
+          0, 1, 1, 1, 1, 0, 0,
+          "inline + vm/objects.cpp:store_property")
+
+/* The comment says `a.push(b)` but this is NOT Array.prototype.push: it
+ * neither reads nor writes `length` as a property, never consults a
+ * prototype, and is a SILENT NO-OP when a is not heap_kind::array. It is
+ * also unguarded against a typed-array view - value.hpp:404-407 keeps
+ * `items` empty for a view and reports view_length - so an append onto one
+ * would push into storage length() never reports. An AOT backend must
+ * preserve the new_array-then-append invariant rather than assume it. */
+CT_OPCODE(append, reg, reg, unused,
+          0, 0, 0, 0, 0, 0, 0,
+          "inline")
+
+/* bx is a FUNCTION index into program::functions, not a constant-pool
+ * index, and WHICH program it indexes is a run-time choice - the same
+ * instruction resolves against a different proto table when the running
+ * closure came from another program. Encoder/decoder disagree: the decoder
+ * is 32-bit, three of four encoders are 16-bit, so a program with >65,535
+ * protos silently builds the wrong closure. may_throw is ONLY
+ * context::allocate's ceiling raise() (vm.hpp:223-227): it sets failed_ and
+ * ends the run, it does NOT unwind and no JS catch can see it. is_safepoint
+ * = allocates||may_reenter per the mandated rule, but it differs from
+ * reality: no VM handler is a real GC point - collect_if_due() has exactly
+ * one caller in the whole tree, Shell/browser.cpp:307 ('Collect between
+ * callbacks, never inside one'), and collect() only browser.hpp:279 which
+ * only a unit test calls. */
+CT_OPCODE(closure, reg, kidx, bx_hi,
+          1, 1, 1, 0, 1, 0, 0,
+          "inline")
+
+/* TWO NAME-CONTRADICTING FACTS, both confirmed. (1) A CALLABLE PROXY IS
+ * REJECTED: value::is_callable() is true for a proxy over a function
+ * (value.hpp:300-305) but the handler only accepts
+ * is_kind(function)/is_kind(native), so calling a function proxy takes the
+ * TypeError path at :1098 - whereas op::apply on the same value silently
+ * evaluates to undefined. (2) The JS-closure path does NOT run the callee:
+ * it pushes a frame at :1130 whose base IS the caller's argument window
+ * (base+a+1) and falls back to dispatch, so a is written later by the
+ * callee's ret (:1152). writes_a is therefore true only on the native
+ * (:1066) and generator (:1111) paths. may_reenter comes from natives and
+ * from the error path's ToString, never from the frame push. This is also
+ * where pending_new_target_ is consumed (:1128-1129) - and only on the
+ * frame-push path, so a native or generator callee leaves it set for the
+ * next call. */
+CT_OPCODE(call, reg, count, unused,
+          1, 1, 1, 1, 1, 0, 0,
+          "inline (frame push); vm/call.cpp:make_generator for a generator callee; vm/call.cpp:describe_callee + vm/call.cpp:callee_origin and vm.hpp:throw_error -> vm.hpp:unwind_to_handler on the TypeError path")
+
+/* The bytecode.hpp comment reads `a = call(a[k[c]], ...)` but c is a NAME-
+ * TABLE index, not a constant-pool index - the same mislabel get_prop's
+ * comment carries. Register a is the receiver on the way in and the result
+ * on the way out. The handler can enter user JavaScript twice in one
+ * instruction (getter or proxy trap during the lookup, then a native
+ * callee), and it can allocate on the lookup alone with no user code
+ * involved. */
+CT_OPCODE(call_method, reg, count, sidx,
+          1, 1, 1, 1, 1, 0, 0,
+          "vm/objects.cpp:lookup_property for the callee, then the shared op::call body (inline frame push / native fn / vm/call.cpp:make_generator)")
+
+/* Up to three user-JS entries in one instruction, in this order: the key's
+ * ToString, the property lookup's getter or proxy trap, and a native callee
+ * - all before the call is dispatched, and the key's ToString runs twice if
+ * the callee turns out not to be a function. The string-index fast path
+ * allocates a heap string, so even `s[0]()` on a plain string allocates
+ * with no user code running. */
+CT_OPCODE(call_computed, reg, count, reg,
+          1, 1, 1, 1, 1, 0, 0,
+          "vm/objects.cpp:lookup_index (-> vm/coerce.cpp:to_string, vm/objects.cpp:lookup_property) for the callee, then the shared op::call body")
+
+/* `new C()` RE-ENTERS USER JAVASCRIPT BEFORE C'S BODY STARTS, via class
+ * field initialisers run at :1564 in a nested interpreter loop - the column
+ * an AOT backend is most likely to guess wrong here. The instance is
+ * allocated at :1554 and the initialisers run at :1564 BEFORE the is-a-
+ * function check at :1567, so the failing path has already allocated an
+ * object with a prototype installed; it just has not run any initialiser.
+ * Unlike op::call this sets fresh.new_target = callee itself (:1589) and
+ * never consumes pending_new_target_, so a pass_new_target immediately
+ * before a construct leaves the flag set for whatever pushes a frame next. */
+CT_OPCODE(construct, reg, count, unused,
+          1, 1, 1, 1, 1, 0, 0,
+          "inline; vm/call.cpp:construct for proxy and native callees; vm/call.cpp:ensure_prototype and vm/call.cpp:run_field_initialisers on the closure path")
+
+/* The only call opcode that does no property lookup, so a getter cannot
+ * fire during callee resolution - but the error path can still run user
+ * JavaScript, so may_reenter is not native-only. It is the opcode a non-
+ * spread `super(...)` uses, which makes it (with op::apply) one of the two
+ * consumers of pending_new_target_; a native or generator callee returns at
+ * :1067/:1112 without consuming it, leaving it set for the next frame
+ * pushed. The comment at call.cpp:87 saying super() 'compiles to op::apply'
+ * is only true of the spread form. */
+CT_OPCODE(call_receiver, reg, count, reg,
+          1, 1, 1, 1, 1, 0, 0,
+          "inline (frame push); vm/call.cpp:make_generator for a generator callee; vm/call.cpp:describe_callee on the TypeError path")
+
+/* Biggest name/behaviour gap in the set: `{...o}` is specified to READ each
+ * own enumerable property and therefore to run source getters, but
+ * accessors live in a separate table (value.hpp:501-533) that this handler
+ * never touches - so spread silently DROPS every accessor property, and
+ * may_reenter is false where an AOT backend would guess true. Also a no-op
+ * when the target is not heap_kind::object, and a
+ * proxy/native/string/closure SOURCE copies nothing (no ownKeys/get traps).
+ * Latent: value.hpp:601 set() does not consult accessors, so copying onto a
+ * target that already has an accessor of that name would leave BOTH entries
+ * and make each_own_key (value.hpp:572) emit the key twice - unreachable
+ * today only because the target is always a fresh new_object
+ * (expressions.cpp:961/971, destructuring.cpp:223/224). */
+CT_OPCODE(copy_props, reg, reg, unused,
+          0, 0, 0, 0, 0, 0, 0,
+          "inline")
+
+/* The bytecode comment spells the operand `a[k[b]]`, suggesting the
+ * constant pool, but the handler reads vm_proto->NAMES[in.b] - the comment
+ * names the wrong table. Two behavioural gaps: (1) erase() removes a DATA
+ * property only; erase_accessor (value.hpp:567) is never called, so `delete
+ * o.x` on a getter/setter leaves the accessor live and the delete appears
+ * to do nothing; (2) is_object() is exactly heap_kind::object
+ * (value.hpp:127), so delete on an array, proxy, native or closure is a
+ * silent no-op. Either way the expression still evaluates to `true`. */
+CT_OPCODE(delete_prop, reg, sidx, unused,
+          0, 0, 0, 0, 0, 0, 0,
+          "inline")
+
+/* THE PAIR DISAGREES: delete_prop cannot re-enter, allocate or throw;
+ * delete_index can do all three - purely because the key arrives as a
+ * value. Extra deviation the previous answer missed: because the coercion
+ * is guarded, `delete arr[objKey]`, `delete proxy[objKey]` and `delete
+ * "s"[objKey]` never run the key's toString at all, where the spec's
+ * ToPropertyKey is unconditional. Same accessor-blind erase and same
+ * is_object()-only guard as delete_prop, and the same unconditional `true`
+ * result. */
+CT_OPCODE(delete_index, reg, reg, unused,
+          0, 1, 1, 1, 1, 0, 0,
+          "inline + vm/coerce.cpp:to_string")
+
+/* Emitted as `{op::own_keys, source, source}` (statements.cpp:440), so a
+ * and b ALIAS - safe only because make_array() runs first (1229) and
+ * reg(in.a) is written last (1246); an AOT backend must preserve that
+ * order. Deviations: OWN keys only (no prototype walk), no proxy ownKeys
+ * trap, and a proxy/native/string/closure operand yields an EMPTY array. GC
+ * HAZARD FOR AN AOT BACKEND: `out` lives only in a C++ local across N
+ * allocations and context::collect (objects.cpp:434-...) does not root C++
+ * locals - inserting a real allocation-triggered safepoint here, as the
+ * is_safepoint column would license, would free the array being built. The
+ * same shape appears at run_loop.cpp:1190-1202 (make_arguments), 881-905
+ * (gather_rest) and objects.cpp:279-285. */
+CT_OPCODE(own_keys, reg, reg, unused,
+          1, 1, 1, 0, 1, 0, 0,
+          "inline")
+
+/* Still one of the largest user-JS re-entry points (for-of at
+ * compile/statements.cpp:445, every spread at expressions.cpp:940), but for
+ * a narrower reason than the name or the prior evidence suggests: only a
+ * generator body or an accessor on an INDEX key runs. Three surprises for
+ * an AOT backend: it MATERIALIZES (an infinite generator hangs); [...proxy]
+ * is silently empty (call.cpp:372); and the is_array() fast path at
+ * call.cpp:361 returns THE SAME array, so `for (x of arr)` aliases rather
+ * than copies, while every other input is a fresh array. Also: because re-
+ * entry can throw, unwind_to_handler may redirect this very frame's ip
+ * before `reg(in.a) = ...` executes at 1219. */
+CT_OPCODE(iterable, reg, reg, unused,
+          1, 1, 1, 1, 1, 0, 0,
+          "vm/call.cpp:context::iterable_values")
+
+/* writes_a is FALSE even though a is written in the JS sense - it MUTATES
+ * the object in register a rather than storing into the register. No cycle
+ * check, which is exactly why lookup_property (objects.cpp:242) and
+ * assign_through_accessor (objects.cpp:196) both carry a depth-64 cap.
+ * Silently a no-op when a is a closure/array/proxy/native - and it
+ * therefore cannot do what Object.setPrototypeOf does for a closure
+ * (builtins/objects.cpp:225-231 also writes closure_object::proto_link). */
+CT_OPCODE(set_proto, reg, reg, unused,
+          0, 0, 0, 0, 0, 0, 0,
+          "inline")
+
+/* is_object() is heap_kind::object exactly (value.hpp:127), so this reports
+ * undefined for an array, string, proxy, native and CLOSURE (whose chain is
+ * closure_object::proto_link, vm.hpp:150, never read here). Worse for its
+ * only use: a fresh object's prototype defaults to value::null()
+ * (value.hpp:538) and classes.cpp:95 only sets it when `extends` is
+ * present, so `super.m()` in a base-class method reads NULL here. Emitted
+ * as `{op::get_proto, dst, dst}` right after load_home
+ * (expressions.cpp:598-599), so a and b alias. */
+CT_OPCODE(get_proto, reg, reg, unused,
+          1, 0, 0, 0, 0, 0, 0,
+          "inline")
+
+/* It takes NO operand for the object - the source is implicit VM state (the
+ * running frame's closure), which an AOT backend cannot constant-fold from
+ * the instruction alone and must model as a read of the frame. The home
+ * object is an ORDINARY, observable property named "__home" installed by
+ * op::set_prop (classes.cpp:136 on the constructor, classes.cpp:203 on each
+ * method closure), so it is reachable and enumerable from JS and a page
+ * that assigns obj.__home changes what `super` resolves against. */
+CT_OPCODE(load_home, reg, unused, unused,
+          1, 0, 0, 0, 0, 0, 0,
+          "inline")
+
+/* await NEVER re-enters user JS here (no `then` is called on a thenable,
+ * the promise state is read with own-property find) - the opposite of what
+ * the name suggests. Two additions to the prior note: (1) an AOT backend
+ * must compile this as a return-with-continuation, since the suspend path
+ * pops the frame and stores into the caller's slot, not into a; (2)
+ * is_pending_promise uses value::is_object() == heap_kind::object exactly
+ * (value.hpp:127), so a promise behind a Proxy is never seen as pending and
+ * `await proxyPromise` falls straight through to the read path. GC caveat
+ * that applies to every is_safepoint=true row below: allocate()
+ * (vm.hpp:223-233) only bumps a counter and links the object, and
+ * collect_if_due is called from exactly ONE place in the tree,
+ * Shell/browser.cpp:307, BETWEEN event-loop callbacks - so no collection
+ * can actually occur inside any handler. is_safepoint here is the mandated
+ * allocates||may_reenter derivation, not an observed collection point. */
+CT_OPCODE(await_value, reg, reg, unused,
+          1, 1, 1, 0, 1, 1, 1,
+          "inline (suspend path calls vm.hpp:context::attach_resume + the installed pending_promise_factory_; resumed by vm/call.cpp:context::resume)")
+
+/* writes_a is FALSE even though a is the destination of `var x = yield y`.
+ * Like await_value this is a FRAME EXIT - 1363 frames_.pop_back(), 1365
+ * returns the produced value out of run_loop to generator_resume - so a
+ * frame-suspending opcode comes out NOT a safepoint under the rule; an AOT
+ * backend must still keep the whole register window live across it, because
+ * it is copied wholesale at 1350. The 1370 raise is reachable only if a
+ * yield executes under a run_loop that is not generator_resume's. */
+CT_OPCODE(yield_value, reg, reg, unused,
+          0, 0, 1, 0, 0, 1, 1,
+          "inline (resumed by vm/call.cpp:context::generator_resume)")
+
+/* The "already a promise" test is is_object() && own __value, so any plain
+ * object carrying an own __value is left unwrapped, and because is_object()
+ * is heap_kind::object exactly (value.hpp:127) an array, function or proxy
+ * returned from an async function is ALWAYS re-wrapped. One qualifier the
+ * prior answer missed: in a context with no promise_factory_ installed,
+ * make_promise is the identity (vm.hpp:692), so allocates, may_throw and
+ * is_safepoint all collapse to false - the columns are true only because
+ * builtins install_promise ran. */
+CT_OPCODE(wrap_promise, reg, unused, unused,
+          1, 1, 1, 0, 1, 0, 0,
+          "vm.hpp:context::make_promise (-> the installed promise_factory_, builtins/internal.hpp:make_promise)")
+
+/* writes_a is FALSE even though the opcode produces a value: a is a SOURCE
+ * operand, and the destination is the caller's result_reg. Two effects an
+ * AOT backend must still model: a constructor frame's `return <primitive>`
+ * is silently rewritten to `this` (:1141-1143), and when frames_.size() <=
+ * stop_depth this RETURNS OUT OF run_loop entirely (:1151), which is how
+ * context::call (call.cpp:93), generator_resume (call.cpp:660) and resume
+ * (call.cpp:722) collect their result. is_safepoint = false matches the
+ * allocates||may_reenter rule exactly. */
+CT_OPCODE(ret, reg, unused, unused,
+          0, 0, 0, 0, 0, 0, 0,
+          "inline")
+
+/* All three operands are genuinely dead - the compiler emits a bare
+ * instruction{op::ret_undef} with a=b=c=0 (statements.cpp:599,
+ * entry.cpp:65, classes.cpp:54). Its one non-obvious effect is the shared
+ * constructing-frame substitution at :1141, which is what makes a class
+ * constructor with no explicit return evaluate to the instance rather than
+ * to undefined - so an AOT backend that lowers this to `return undefined`
+ * miscompiles every `new`. */
+CT_OPCODE(ret_undef, unused, unused, unused,
+          0, 0, 0, 0, 0, 0, 0,
+          "inline")
+
+/* NAME/COLUMN DISAGREEMENT: `typeof` looks like the cheapest opcode in the
+ * set and is in fact the only NON-arithmetic allocator here - one heap
+ * string per execution, so `typeof x === 'function'` in a hot dispatch loop
+ * allocates once per iteration and interning the eight fixed answers is an
+ * obvious AOT win. may_throw is true only through the allocation ceiling
+ * (vm.hpp:224-227 raise, which sets failed_ and is not catchable by a JS
+ * try), never as a JS exception. `typeof undeclared` is NOT special-cased
+ * in compile_unary (expressions.cpp:326-327), so whether it faults depends
+ * on op::get_global (run_loop.cpp:332-336, which yields undefined for a
+ * missing name), not on this handler. */
+CT_OPCODE(type_of, reg, reg, unused,
+          1, 1, 1, 0, 1, 0, 1,
+          "vm/coerce.cpp:type_of")
+
+/* No sloppy-mode substitution: a frame entered with no receiver hands back
+ * raw undefined (op::call sets receiver = undefined, run_loop.cpp:1037), so
+ * `this` at top level or in a bare call is undefined, not globalThis. The
+ * long new.target commentary at run_loop.cpp:1169-1182 sits INSIDE this
+ * block after its `break`, describes load_new_target rather than load_this,
+ * and is stale - see load_new_target. */
+CT_OPCODE(load_this, reg, unused, unused,
+          1, 0, 0, 0, 0, 0, 1,
+          "vm.hpp:context::effective_this")
+
+/* Both bytecode.hpp:182-185 ('the frame already carries `constructing`')
+ * and the misplaced comment at run_loop.cpp:1169-1182 describe an OLDER
+ * implementation that derived new.target from constructing+closure. Fix
+ * them in the .def. A REAL BUG for an AOT backend to know: context::resume
+ * rebuilds the frame without copying new_target (call.cpp:673-692 sets prot
+ * o/ip/base/argc/closure/receiver/constructing/handler_base/async_promise
+ * but never new_target), so `new.target` reads undefined after an await
+ * inside a constructor-invoked function. */
+CT_OPCODE(load_new_target, reg, unused, unused,
+          1, 0, 0, 0, 0, 0, 1,
+          "inline")
+
+/* A ZERO-OPERAND opcode, welded to the call that follows. NEW HAZARD the
+ * previous answer understated: the pending value is cleared in only two
+ * places, both of which are a JS-closure frame push (run_loop.cpp:1129,
+ * call.cpp:91). The inline call path RETURNS EARLY for a native callee
+ * (run_loop.cpp:1052-1067) and for a generator (1107-1112), context::call
+ * does the same (call.cpp:44-52, 64), and op::construct sets
+ * `fresh.new_target = callee` without clearing it (run_loop.cpp:1587-1590).
+ * So `class X extends Array { constructor(){ super(); } }` leaves
+ * pending_new_target_ = X set indefinitely, and the next ordinary JS call
+ * anywhere in the program sees a truthy `new.target`. An AOT backend must
+ * reproduce the set AND the leak, or reproduce neither. */
+CT_OPCODE(pass_new_target, unused, unused, unused,
+          0, 0, 0, 0, 0, 0, 0,
+          "inline")
+
+/* The only opcode in this set that reads c as an index rather than as a bx
+ * half. What lands in register a is a CELL, not a value, so every later
+ * read goes through cell_get (compile/frames.cpp:144-150 marks the local
+ * boxed and deliberately emits NO new_cell); on both failure paths register
+ * a keeps the undefined written at 1405. A missing module or missing export
+ * is an UNCATCHABLE engine fault here, not the ReferenceError a spec-
+ * conformant AOT backend might be tempted to emit. */
+CT_OPCODE(load_import, reg, sidx, sidx,
+          1, 0, 1, 0, 0, 0, 0,
+          "inline")
+
+/* Name and the bytecode.hpp comment ("Publish the cell in register a as
+ * this module's export") run BACKWARDS to the code: 1395 ADOPTS the
+ * record's pre-existing cell INTO register a, overwriting whatever the
+ * register held, because instantiate_module (call.cpp:111-119) created
+ * every cell before any module in the graph ran. Data flows record ->
+ * register. writes_a is conditional on being inside a module. Encoding trap
+ * for an AOT backend: b is structurally the bx high half but is ALWAYS 0
+ * here, so a decoder that reads only b gets index 0 and silently exports
+ * the wrong name. */
+CT_OPCODE(bind_export, reg, sidx, bx_hi,
+          1, 1, 1, 0, 1, 0, 0,
+          "inline")
+
+/* TWO independent user-JS re-entries before it returns (the specifier's
+ * toString, then the imported graph), and the referrer comes from
+ * vm_frame->proto->module rather than current_module_ (1471). ADDED, and
+ * the prior answer missed it: unlike load_import (1405) and load_namespace
+ * (1433), this handler does NOT pre-write undefined into register a, so on
+ * the no-loader raise at 1459 register a keeps whatever it held - an AOT
+ * backend that models dyn_import as "always defines a" is wrong on that
+ * path. may_suspend stays false: the imported module's top-level frame can
+ * suspend and set suspended_ (1309), but this frame does not, and nothing
+ * between here and context::resume (call.cpp:704) reads that flag. */
+CT_OPCODE(dyn_import, reg, reg, unused,
+          1, 1, 1, 1, 1, 0, 0,
+          "inline (calls the embedder's module_loader_; ctbrowser installs one at Shell/browser.cpp:1216-1240)")
+
+/* Encoding asymmetry an AOT backend must reproduce exactly: bind_export
+ * uses the bx pair while load_namespace and load_import read a plain 16-bit
+ * b - three module opcodes, two encodings for the same name table. The
+ * namespace object is identity-cached per module record (call.cpp:133-135),
+ * so two `import * as` of the same module must produce the same object; and
+ * note that reading a property OFF it later is an accessor call, so the re-
+ * entry cost is paid by get_prop, not here. */
+CT_OPCODE(load_namespace, reg, sidx, unused,
+          1, 1, 1, 0, 1, 0, 0,
+          "vm/call.cpp:context::module_namespace")
+
+/* Despite the name it does not build a function object; the closure already
+ * exists and is already a GC root through the frame (objects.cpp:452).
+ * Emitted only for a named function expression's self-binding, immediately
+ * followed by new_cell when the name is captured (statements.cpp:737-738).
+ * Yields undefined in the top-level script frame, which has no closure. The
+ * resumable=true here rests on the generator-start path, not on following
+ * an await - downgrade it only if you define resumable as 'after a
+ * suspension' strictly. */
+CT_OPCODE(load_callee, reg, unused, unused,
+          1, 0, 0, 0, 0, 0, 1,
+          "inline")
+
+/* REAL MISCOMPILE ALREADY IN THE VM, found by following that resume path:
+ * make_generator keeps the full count (`saved->argc = args.size()`,
+ * call.cpp:537) but TRUNCATES the register window
+ * (`saved->window.resize(closure->proto->frame_size)`, call.cpp:546), so on
+ * the first resume the loop at run_loop.cpp:1197-1199 reads reg(i) past the
+ * restored window - `function* g(){ return arguments; }` called as g(1,2,3)
+ * yields [1,2,undefined], and with more than frame_size+8 arguments it
+ * reads past registers_.end(). Also: b and c are unused but the instruction
+ * has a HIDDEN read of slots 0..argc-1, so an AOT backend must keep those
+ * live and must not sink it below the parameter prologue; argc comes from
+ * the frame, never from proto->param_count; and it writes the frame side-
+ * slot arguments_object that gather_rest reads (vm.hpp:883). is_safepoint
+ * is the stated derivation, not a real GC point. */
+CT_OPCODE(make_arguments, reg, unused, unused,
+          1, 1, 1, 0, 1, 0, 1,
+          "inline; vm.hpp:context::make_array")
+
+/* writes_a is FALSE despite bytecode.hpp:236's "a = catch register". The
+ * branch offset is added to the ALREADY-INCREMENTED ip (1600), which is
+ * exactly what patch_jump's `target - at_index - 1` (helpers.cpp:26)
+ * compensates for. It is also the only opcode that captures the register
+ * high-water ABSOLUTELY (handler::reg_top = registers_.size()), which
+ * await_value and yield_value must rebase to frame-relative when a frame
+ * suspends (run_loop.cpp:1299-1303, 1356-1361) and
+ * context::resume/generator_resume rebase back (call.cpp:697-700, 634-637). */
+CT_OPCODE(push_handler, reg, jump, bx_hi,
+          0, 0, 0, 0, 0, 0, 0,
+          "inline")
+
+/* It pops the GLOBALLY innermost handler without consulting
+ * vm_frame->handler_base, so a mis-balanced emission silently drops a
+ * CALLER's catch; balance is a compiler invariant only
+ * (compile_break/compile_continue emit one per open try when leaving the
+ * block, statements.cpp:281-283, 294-296). */
+CT_OPCODE(pop_handler, unused, unused, unused,
+          0, 0, 0, 0, 0, 0, 0,
+          "inline")
+
+/* may_reenter TRUE is the most surprising entry in this table and it hides
+ * on the path nobody instruments: only an UNCAUGHT throw reads
+ * .name/.message (or falls to to_string), so `throw` of an object with a
+ * getter for message, or of a Proxy, runs page JavaScript while formatting
+ * a fatal error. Also note the two-tier failure model an AOT backend must
+ * keep distinct: raise() sets failed_ and no try/catch can see it
+ * (vm.hpp:932), while thrown_ + unwind_to_handler is the catchable path -
+ * and unwind_to_handler searches the GLOBAL handlers_ stack, so a throw
+ * from inside a re-entrant handler can redirect the current frame's ip
+ * before that handler's own trailing register write executes. */
+CT_OPCODE(throw_value, reg, unused, unused,
+          0, 1, 1, 1, 1, 0, 0,
+          "inline (vm.hpp:context::unwind_to_handler, vm/call.cpp:context::describe_thrown)")
+
+/* Dead by construction: the compiler never emits halt, so its only
+ * reachable form is a zero-initialised instruction (bytecode.hpp:243 makes
+ * op::halt the default for instruction::code, i.e. an all-zero 64-bit word
+ * decodes as halt). Its handler returns out of run_loop WITHOUT popping the
+ * frame, so were it ever reached from a nested loop (context::call at
+ * call.cpp:93, generator_resume at 659, resume at 724, run_reentrant at
+ * 193) the caller would resume with a stale frame left on frames_ - a
+ * genuine difference from ret that an AOT backend must not paper over by
+ * treating halt as "return". */
+CT_OPCODE(halt, unused, unused, unused,
+          0, 0, 0, 0, 0, 0, 0,
+          "inline")
