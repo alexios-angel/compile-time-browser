@@ -20,7 +20,19 @@
  *
  *     reg      a frame slot index
  *     kidx     an index into function_proto::constants
- *     sidx     an index into function_proto::strings or ::names
+ *     sidx     an index into function_proto::strings
+ *     nidx     an index into function_proto::names
+ *     fidx     an index into program::functions - NOT the proto's own tables
+ *
+ * THOSE LAST THREE WERE ONE COLUMN UNTIL THEY WERE CHECKED AGAINST THE
+ * HANDLERS, and collapsing them is the kind of mistake that only hurts later:
+ * anything generating a bounds check from these columns - Phase 9's importer,
+ * Phase 15's image validator - would check the wrong table. `sidx` meaning
+ * "strings or names" cannot produce a correct check for either, and `closure`
+ * was labelled `kidx` while run_loop.cpp:894 reads `prog.functions[in.bx()]`,
+ * so a validator would have bounds-checked a small constant pool against a
+ * function index: too strict on most protos, and ACCEPTING an out-of-range
+ * function wherever the pool happened to be large enough.
  *     jump     a signed displacement, read with sbx()
  *     count    a literal count or flag, not an index
  *     bx_hi    this operand is the high half of the preceding bx() field
@@ -131,7 +143,7 @@ CT_OPCODE(/* name */ move, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ unus
  * undeclared global does NOT throw ReferenceError; it silently yields
  * undefined, so `foo` and `typeof foo` are the same instruction and
  * feature-detection that relies on a ReferenceError gets undefined instead. */
-CT_OPCODE(/* name */ get_global, /* a_kind */ reg, /* b_kind */ sidx, /* c_kind */ bx_hi, /* writes_a */ 1,
+CT_OPCODE(/* name */ get_global, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ bx_hi, /* writes_a */ 1,
           /* allocates */ 0, /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0,
           /* may_suspend */ 0, /* resumable */ 1, /* impl */ "inline")
 
@@ -140,7 +152,7 @@ CT_OPCODE(/* name */ get_global, /* a_kind */ reg, /* b_kind */ sidx, /* c_kind 
  * bytecode.hpp:53 as get_global. The write also bypasses any accessor: if a
  * binding layer mirrors globals through a window object with setters, this
  * instruction will not fire them. */
-CT_OPCODE(/* name */ set_global, /* a_kind */ reg, /* b_kind */ sidx, /* c_kind */ bx_hi, /* writes_a */ 0,
+CT_OPCODE(/* name */ set_global, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ bx_hi, /* writes_a */ 0,
           /* allocates */ 0, /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0,
           /* may_suspend */ 0, /* resumable */ 1, /* impl */ "inline")
 
@@ -618,7 +630,7 @@ CT_OPCODE(/* name */ construct_apply, /* a_kind */ reg, /* b_kind */ reg, /* c_k
  * unused half is passed as undefined and accessor_table::define
  * (value.hpp:515-518) skips undefined halves, which is what merges a
  * get/set pair into one entry. */
-CT_OPCODE(/* name */ define_getter, /* a_kind */ reg, /* b_kind */ sidx, /* c_kind */ reg, /* writes_a */ 0,
+CT_OPCODE(/* name */ define_getter, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ reg, /* writes_a */ 0,
           /* allocates */ 0, /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0,
           /* may_suspend */ 0, /* resumable */ 0,
           /* impl */ "inline (shared block with define_setter)")
@@ -631,7 +643,7 @@ CT_OPCODE(/* name */ define_getter, /* a_kind */ reg, /* b_kind */ sidx, /* c_ki
  * shadowing data property). Do not fuse the two opcodes into one handler
  * keyed on a flag operand: the discriminator is the OPCODE ITSELF, read out
  * of `in.code`, and no operand carries it. */
-CT_OPCODE(/* name */ define_setter, /* a_kind */ reg, /* b_kind */ sidx, /* c_kind */ reg, /* writes_a */ 0,
+CT_OPCODE(/* name */ define_setter, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ reg, /* writes_a */ 0,
           /* allocates */ 0, /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0,
           /* may_suspend */ 0, /* resumable */ 0,
           /* impl */ "inline (shared block with define_getter)")
@@ -673,7 +685,7 @@ CT_OPCODE(/* name */ new_array, /* a_kind */ reg, /* b_kind */ unused, /* c_kind
  * (4) lookup_property's chain walk follows only object_object prototypes
  * (objects.cpp:254-256), so a proxy on the prototype chain silently
  * terminates the walk. */
-CT_OPCODE(/* name */ get_prop, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ sidx, /* writes_a */ 1,
+CT_OPCODE(/* name */ get_prop, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ nidx, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0, /* impl */ "vm/objects.cpp:lookup_property")
 
@@ -684,7 +696,7 @@ CT_OPCODE(/* name */ get_prop, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ 
  * objects.cpp:190 drops a write to a number/string/boolean/undefined.
  * Whether this opcode re-enters is decided by the RUNTIME TYPE of the
  * target, not by the instruction. */
-CT_OPCODE(/* name */ set_prop, /* a_kind */ reg, /* b_kind */ sidx, /* c_kind */ reg, /* writes_a */ 0,
+CT_OPCODE(/* name */ set_prop, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ reg, /* writes_a */ 0,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0, /* impl */ "vm/objects.cpp:store_property")
 
@@ -733,7 +745,7 @@ CT_OPCODE(/* name */ append, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ un
  * one caller in the whole tree, Shell/browser.cpp:307 ('Collect between
  * callbacks, never inside one'), and collect() only browser.hpp:279 which
  * only a unit test calls. */
-CT_OPCODE(/* name */ closure, /* a_kind */ reg, /* b_kind */ kidx, /* c_kind */ bx_hi, /* writes_a */ 1,
+CT_OPCODE(/* name */ closure, /* a_kind */ reg, /* b_kind */ fidx, /* c_kind */ bx_hi, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0, /* impl */ "inline")
 
@@ -763,7 +775,7 @@ CT_OPCODE(/* name */ call, /* a_kind */ reg, /* b_kind */ count, /* c_kind */ un
  * instruction (getter or proxy trap during the lookup, then a native
  * callee), and it can allocate on the lookup alone with no user code
  * involved. */
-CT_OPCODE(/* name */ call_method, /* a_kind */ reg, /* b_kind */ count, /* c_kind */ sidx, /* writes_a */ 1,
+CT_OPCODE(/* name */ call_method, /* a_kind */ reg, /* b_kind */ count, /* c_kind */ nidx, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0,
           /* impl */ "vm/objects.cpp:lookup_property for the callee, then the shared op::call body (inline frame push / native fn / vm/call.cpp:make_generator)")
@@ -830,7 +842,7 @@ CT_OPCODE(/* name */ copy_props, /* a_kind */ reg, /* b_kind */ reg, /* c_kind *
  * to do nothing; (2) is_object() is exactly heap_kind::object
  * (value.hpp:127), so delete on an array, proxy, native or closure is a
  * silent no-op. Either way the expression still evaluates to `true`. */
-CT_OPCODE(/* name */ delete_prop, /* a_kind */ reg, /* b_kind */ sidx, /* c_kind */ unused, /* writes_a */ 0,
+CT_OPCODE(/* name */ delete_prop, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ unused, /* writes_a */ 0,
           /* allocates */ 0, /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0,
           /* may_suspend */ 0, /* resumable */ 0, /* impl */ "inline")
 
@@ -1035,7 +1047,7 @@ CT_OPCODE(/* name */ pass_new_target, /* a_kind */ unused, /* b_kind */ unused, 
  * a keeps the undefined written at 1405. A missing module or missing export
  * is an UNCATCHABLE engine fault here, not the ReferenceError a spec-
  * conformant AOT backend might be tempted to emit. */
-CT_OPCODE(/* name */ load_import, /* a_kind */ reg, /* b_kind */ sidx, /* c_kind */ sidx, /* writes_a */ 1,
+CT_OPCODE(/* name */ load_import, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ nidx, /* writes_a */ 1,
           /* allocates */ 0, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 0,
           /* may_suspend */ 0, /* resumable */ 0, /* impl */ "inline")
 
@@ -1048,7 +1060,7 @@ CT_OPCODE(/* name */ load_import, /* a_kind */ reg, /* b_kind */ sidx, /* c_kind
  * for an AOT backend: b is structurally the bx high half but is ALWAYS 0
  * here, so a decoder that reads only b gets index 0 and silently exports
  * the wrong name. */
-CT_OPCODE(/* name */ bind_export, /* a_kind */ reg, /* b_kind */ sidx, /* c_kind */ bx_hi, /* writes_a */ 1,
+CT_OPCODE(/* name */ bind_export, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ bx_hi, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0, /* impl */ "inline")
 
@@ -1074,7 +1086,7 @@ CT_OPCODE(/* name */ dyn_import, /* a_kind */ reg, /* b_kind */ reg, /* c_kind *
  * so two `import * as` of the same module must produce the same object; and
  * note that reading a property OFF it later is an accessor call, so the re-
  * entry cost is paid by get_prop, not here. */
-CT_OPCODE(/* name */ load_namespace, /* a_kind */ reg, /* b_kind */ sidx, /* c_kind */ unused, /* writes_a */ 1,
+CT_OPCODE(/* name */ load_namespace, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ unused, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0,
           /* impl */ "vm/call.cpp:context::module_namespace")

@@ -68,8 +68,12 @@ void check(bool ok, const char * what, std::string_view who) {
 }
 
 bool known_kind(std::string_view k) {
-    return k == "reg" || k == "kidx" || k == "sidx" || k == "jump" || k == "count" ||
-           k == "bx_hi" || k == "unused";
+    // kidx, sidx, nidx and fidx are FOUR DIFFERENT TABLES - constants, strings,
+    // names and the program's function list. They were two until the rows were
+    // checked against the handlers; anything generating a bounds check from
+    // these columns has to know which table it is checking.
+    return k == "reg" || k == "kidx" || k == "sidx" || k == "nidx" || k == "fidx" || k == "jump" ||
+           k == "count" || k == "bx_hi" || k == "unused";
 }
 
 } // namespace
@@ -148,7 +152,9 @@ int main() {
 
     for (const row & r : table) {
         check(known_kind(r.a_kind) && known_kind(r.b_kind) && known_kind(r.c_kind),
-              "an operand kind that is not one of reg/kidx/sidx/jump/count/bx_hi/unused", r.name);
+              "an operand kind that is not one of "
+              "reg/kidx/sidx/nidx/fidx/jump/count/bx_hi/unused",
+              r.name);
 
         // A SAFEPOINT IS NOT AN OPINION. It is exactly "can a collection happen
         // here", and a collection happens where something allocates or where
@@ -165,7 +171,8 @@ int main() {
         // bx_hi is the HIGH HALF of the preceding field, so it can only follow
         // an operand that is read through bx(): an index or a jump.
         if (r.c_kind == "bx_hi") {
-            check(r.b_kind == "kidx" || r.b_kind == "sidx" || r.b_kind == "jump",
+            check(r.b_kind == "kidx" || r.b_kind == "sidx" || r.b_kind == "nidx" ||
+                      r.b_kind == "fidx" || r.b_kind == "jump",
                   "c is bx_hi but b is not an index or a jump", r.name);
         }
         check(r.b_kind != "bx_hi", "b cannot be a bx high half - a is not read through bx()",
