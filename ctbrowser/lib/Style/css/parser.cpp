@@ -313,7 +313,39 @@ private:
     // §5.4.4/§5.4.5, over component values rather than tokens: split on top-level
     // semicolons, then `ident : value`. A `;` inside a function or a block is a
     // CHILD and is invisible here, which is the whole point.
-    void emit_declarations(std::span<const component_value> run) {
+    // THE RUN IS COPIED, AND THAT COPY IS THE FIX FOR A HEAP-USE-AFTER-FREE.
+    //
+    // `run` arrives as `sheet_.children_of(block)`, a span INTO `sheet_.values`.
+    // Every declaration this loop emits APPENDS to that same vector, so the
+    // first reallocation frees the buffer `run` points at - and the next
+    // iteration's `is_semicolon(run[end])` reads it. The append itself was a
+    // self-aliasing `insert` for the same reason, which the standard does not
+    // allow either.
+    //
+    // It looked harmless because it is: the freed bytes still hold the old
+    // component values, so every golden matches and no test has ever failed on
+    // it. An ASAN build says otherwise, and it fires on the UA stylesheet -
+    // which is to say on EVERY browser construction. 29 of the 52 tests in the
+    // asan preset could not run.
+    //
+    // Copying once, here, makes the span stable for the whole loop and makes
+    // the append a copy from somewhere else, which fixes both halves.
+    //
+    // IT IS NOT FREE, and the first draft of this comment said it was. Measured
+    // on bootstrap.css - 298 KB, the largest sheet in the corpus - interleaved,
+    // five pairs, the copy losing every one: parse 2.44 ms to 2.55, and parse
+    // plus file into the engine 2.80 to 2.94. About four percent, for a
+    // heap-use-after-free on every browser construction. Cheap, but say the
+    // number.
+    //
+    // Zero-copy is possible and was not done: hold (first, count) indices into
+    // `sheet_.values` rather than a span, since indices survive a reallocation
+    // and pointers do not. That is index arithmetic through three functions and
+    // a separate buffer for the append, in a parser this change had no other
+    // business being in.
+    void emit_declarations(std::span<const component_value> incoming) {
+        const std::vector<component_value> owned{incoming.begin(), incoming.end()};
+        const std::span<const component_value> run{owned};
         std::size_t at = 0;
         while (at <= run.size()) {
             std::size_t end = at;
@@ -394,10 +426,14 @@ private:
             if (!d.custom) { return; }
         }
 
+        // `value` is a subspan of the copy emit_declarations owns, so this
+        // append is not self-aliasing and the span survives it. Read first
+        // regardless: it costs nothing and it is one less thing depending on a
+        // caller three frames up.
+        const auto [text_at, text_len] = source_span(value);
         d.first_value = static_cast<std::uint32_t>(sheet_.values.size());
         d.value_count = static_cast<std::uint32_t>(value.size());
         sheet_.values.insert(sheet_.values.end(), value.begin(), value.end());
-        const auto [text_at, text_len] = source_span(value);
         d.text = text_at;
         d.length = text_len;
         d.order = order_++;
