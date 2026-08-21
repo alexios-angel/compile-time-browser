@@ -1657,6 +1657,7 @@ private:
     struct held_image {
         std::uint64_t source_hash = 0;
         script::script_kind kind = script::script_kind::classic;
+        script::image_option option = script::image_option::keep_source;
         std::vector<std::byte> bytes;
     };
     std::vector<held_image> script_images_;

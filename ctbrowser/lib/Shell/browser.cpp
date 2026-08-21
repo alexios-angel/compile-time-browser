@@ -1036,12 +1036,32 @@ bool browser::add_script_image(std::vector<std::byte> image) {
     const auto head = script::read_image_header(image);
     if (!head) { return false; }
     for (held_image & held : script_images_) {
-        if (held.source_hash == head->source_hash && held.kind == head->kind) {
-            held.bytes = std::move(image);
+        if (held.source_hash != head->source_hash || held.kind != head->kind) { continue; }
+        // TWO IMAGES OF ONE SCRIPT, AND ADDING THEM IS ORDER-INDEPENDENT.
+        //
+        // They can differ in one way and still both be this script's: one keeps
+        // `program::source` and one drops it. That is not a detail - it is
+        // whether `f.toString()` returns the function's text or
+        // "[native code]", and p5's own error system reads its source. Both are
+        // valid images and they are NOT interchangeable.
+        //
+        // Last-writer-wins made the answer depend on the order a packager
+        // happened to hand them over: measured, keep-then-drop degraded
+        // toString and drop-then-keep did not. THE ONE THAT KEEPS THE SOURCE
+        // WINS, whichever arrives first, because the other is an optimisation
+        // that removes behaviour and silently taking it when the better image
+        // was also offered is the wrong default. `clear_script_images` is how a
+        // caller says it means the lean one.
+        if (held.option == script::image_option::keep_source &&
+            head->option == script::image_option::drop_source) {
             return true;
         }
+        held.option = head->option;
+        held.bytes = std::move(image);
+        return true;
     }
-    script_images_.push_back(held_image{head->source_hash, head->kind, std::move(image)});
+    script_images_.push_back(
+        held_image{head->source_hash, head->kind, head->option, std::move(image)});
     return true;
 }
 

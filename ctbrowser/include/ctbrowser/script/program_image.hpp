@@ -81,6 +81,13 @@ enum class image_option : std::uint32_t {
 struct image_header {
     std::uint64_t source_hash = 0;
     script_kind kind = script_kind::classic;
+    // AND WHETHER IT KEPT THE SOURCE, which a holder of several images needs
+    // and which this deliberately did not report at first. Two images of ONE
+    // script differing only in this are both valid and are not interchangeable:
+    // `f.toString()` returns the text from one and "[native code]" from the
+    // other. A holder that cannot see the difference cannot avoid choosing at
+    // random.
+    image_option option = image_option::keep_source;
 };
 
 // The header, or nothing at all when these bytes are not an image this build

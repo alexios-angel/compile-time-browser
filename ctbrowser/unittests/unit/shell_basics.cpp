@@ -543,6 +543,57 @@ void test_nothing_leaks_from_one_script_into_the_next() {
     }
 }
 
+// TWO IMAGES OF ONE SCRIPT, AND WHICH ONE WINS MUST NOT DEPEND ON THE ORDER.
+//
+// An image can keep `program::source` or drop it, and both are valid images of
+// the same text with the same hash and the same kind - so they collide in the
+// cache. They are NOT interchangeable: one makes `f.toString()` return the
+// function's text and the other "[native code]", and p5's own error system
+// reads its source. Last-writer-wins made the answer depend on the order a
+// packager happened to call add_script_image in, which is measured here in both
+// directions.
+void test_an_image_that_keeps_its_source_outranks_one_that_drops_it() {
+    constexpr std::string_view page =
+        "<html><body><script>function shown() { return 'body'; }</script></body></html>";
+    std::vector<std::string> scripts;
+    {
+        browser probe{browser_options{200, 100}};
+        probe.load_html(page);
+        scripts = probe.script_sources();
+    }
+    check(scripts.size() == 1, "the fixture has one script");
+    if (scripts.size() != 1) { return; }
+
+    const auto compiled = ctbrowser::script::compiler::compile(scripts[0]);
+    const auto kept = ctbrowser::script::write_image(compiled);
+    const auto lean =
+        ctbrowser::script::write_image(compiled, ctbrowser::script::image_option::drop_source);
+    check(!kept.empty() && lean.size() < kept.size(), "dropping the source shrinks the image");
+
+    const auto says = [&page](const std::vector<std::vector<std::byte>> & images) {
+        browser p{browser_options{200, 100}};
+        for (const auto & one : images) { (void)p.add_script_image(one); }
+        p.load_html(page);
+        (void)p.run_script("alert(shown.toString());");
+        // THE COUNTER FIRST: a run that fell back to compiling would answer
+        // from source and look like a pass.
+        if (p.scripts_compiled_from_source() != 0) { return std::string{"<not from an image>"}; }
+        return p.alerts().empty() ? std::string{"<nothing>"} : p.alerts().back();
+    };
+
+    const std::string from_kept = says({kept});
+    check(from_kept.find("return 'body'") != std::string::npos,
+          "an image that kept its source gives toString the text");
+    check(says({lean}).find("native code") != std::string::npos,
+          "and one that dropped it does not");
+
+    // THE POINT. Both orders must agree, and both must agree with the better of
+    // the two - taking the degraded image when the other was also offered is
+    // the wrong default, not merely a different one.
+    check(says({kept, lean}) == from_kept, "keep then drop keeps the source");
+    check(says({lean, kept}) == from_kept, "and so does drop then keep");
+}
+
 // A SCRIPT THAT DIED INSIDE A `try` MUST NOT CATCH THE NEXT SCRIPT'S THROW.
 //
 // The VM's handler stack is not part of a call frame, and `context::execute`
@@ -822,6 +873,7 @@ int main() {
     test_a_dead_script_cannot_catch_the_next_scripts_throw();
     test_what_the_split_got_wrong_the_first_time();
     test_nothing_leaks_from_one_script_into_the_next();
+    test_an_image_that_keeps_its_source_outranks_one_that_drops_it();
     test_module_programs_do_not_accumulate_across_loads();
     test_wheel_and_keys_scroll();
     test_hover_restyles();

@@ -570,7 +570,7 @@ std::optional<image_header> read_image_header(std::span<const std::byte> bytes) 
     source_bytes in{bytes, 0, false, {}};
     prefix got;
     if (!read_prefix(in, got).empty()) { return std::nullopt; }
-    return image_header{got.source_hash, got.kind};
+    return image_header{got.source_hash, got.kind, got.option};
 }
 
 load_result load_image(std::span<const std::byte> bytes,
