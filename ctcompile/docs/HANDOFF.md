@@ -154,8 +154,11 @@ Measured, `ctcompile/docs/baseline/page-load.json`, p5-basic.html on the devbox:
   `cd ../infra/azure-build-server && ./server.sh start`.
 * **The devbox shell is zsh, which does NOT word-split unquoted variables.**
   `CXX="clang++ -O2"; $CXX foo.cpp` fails as one word. Inline your flags.
-* **Chain gates with `&&`, never `;`** — a `;` after `tools/format.sh --check`
-  let an unformatted commit through once.
+* **Chain gates with `&&`, never `;` — AND NEVER THROUGH A PIPE.** A `;` after
+  `tools/format.sh --check` let an unformatted commit through once; on
+  2026-08-21 `./tools/format.sh --check | tail -1 && git commit` did it again,
+  because a pipeline's exit status is the LAST command's and `tail` always
+  succeeds. Redirect to a file and read it, or check the status first.
 * **A green build does not mean the binary you are about to run was built.**
   `EXCLUDE_FROM_ALL` targets are not in `all` AT ALL, so `cmake --build`
   rebuilds the engine, relinks every test, reports 97/97 — and leaves an
