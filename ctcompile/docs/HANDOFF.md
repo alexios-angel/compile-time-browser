@@ -43,11 +43,12 @@ overwhelmingly in what it **deletes from startup**.
 
 Measured, `ctcompile/docs/baseline/page-load.json`, p5-basic.html on the devbox:
 
-| | ms |
+| p5-basic.html, three classic scripts | ms |
 |---|---|
-| `load_html` compiling its own scripts | **66.80** |
-| `load_html` handed a program image | **18.97** |
-| | **72% of the page load** |
+| `load_html` compiling its own scripts | **69.65** |
+| `load_html` handed one image per `<script>` | **19.93** |
+| | **71% of the page load** |
+| **editing the sketch only** | **19.77 — 3.5x, 1 of 3 recompiled** |
 
 ## What the last session did
 
@@ -65,6 +66,19 @@ Measured, `ctcompile/docs/baseline/page-load.json`, p5-basic.html on the devbox:
    was a ratchet check that could not fire. Image format 1 → 2, and the image is
    19 KB smaller for p5, 128 KB for babylon.
 5. **The measurement tools are built by `all` now** — see the trap below.
+6. **ONE PROGRAM PER `<script>`.** The image is keyed per script, so p5 is baked
+   once and editing a sketch no longer invalidates 4.5 MB. It is also a
+   conformance fix: a parse error or a throw in one script no longer stops the
+   next, and each script is its own microtask checkpoint. What it removed is a
+   forward call from an earlier script to a later script's function — Chrome
+   makes that a ReferenceError too.
+7. **Five defects found by adversarially reviewing that split**, three of them
+   the split's own and two older: a dead script's `try` catching the next
+   script's `throw` (`context::execute` never cleared `handlers_`), and a
+   use-after-free on synchronous navigation, now fixed by queueing the load.
+8. **The `asan` preset works again** — 29 of 52 tests were failing on a
+   heap-use-after-free in the CSS parser that fires on every browser
+   construction. 52 of 52 now.
 
 ## Do these next
 
@@ -89,6 +103,11 @@ Measured, `ctcompile/docs/baseline/page-load.json`, p5-basic.html on the devbox:
   script to a function declared in a later one works today and would stop.
   **This is what stands between the current win and "bake p5 once, reuse it",
   and it is the highest-value thing left on this path.**
+* **THE `asan` AND `tsan` PRESETS ARE NOT IN THE GATE.** `tools/remote-build.sh`
+  runs the default preset only, and the CSS use-after-free above sat there
+  through every green run until somebody built asan by hand. It is 52 of 52 now
+  and nothing will notice when that stops being true. Running asan in the gate
+  costs a second configure and build; deciding that is the next person's call.
 * **`ctbrowser`'s benchmarks are still `EXCLUDE_FROM_ALL` with no aggregate**,
   which is the defect that invalidated the first computed-goto measurement and
   then this session's first page-load reading. Fixing them is the same three

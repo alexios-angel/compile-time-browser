@@ -4,7 +4,8 @@
 engine, and PHASE 0 IS COMPLETE: six inventories the build checks, two
 differential comparators written before the things they will accept, and a
 recorded startup baseline. PHASE 15 IS WORKING: a page is handed its scripts
-already compiled, and that is now **72% of a p5 page load**. It compiles nothing
+already compiled, one per `<script>`, which is **71% of a p5 page load** and
+**3.5x on the edit-one-script case that used to cost a full recompile**. It compiles nothing
 of its own yet. 97 of 97 tests pass.**
 
 **Done:** Phase -1, the repository restructure — sibling projects, `ctbrowser/`
@@ -600,6 +601,89 @@ index trivially in range — which requires the minimum of five bounds, and that
 minimum is *zero* for any function with an empty constant pool. p5 has 23
 functions with no pools at all. It would have bought nothing on exactly the
 functions it was cheapest to check, and it weakens a validator to do it.
+
+### One `<script>`, one program — and the three defects that bought
+
+The image was keyed to a whole page's concatenated classic scripts, which made
+the compiled form of a page a single artefact: **editing a 473-byte sketch threw
+away the image for the 4.5 MB library beside it.** Each `<script>` is now its own
+program, run in document order on the one shared context — the shape modules
+already had — and each consults the image cache on its own bytes.
+
+| p5-basic.html, three classic scripts | ms |
+|---|---|
+| from source | 69.65 |
+| from images | 19.93 |
+| **edit the sketch only** | **19.77 — 3.5×, 1 of 3 scripts recompiled** |
+
+That last row is the one that could not exist before. **Splitting itself costs
+nothing**: three separate compiles are 50.61 ms against 51.44 for the
+concatenation, and the images total +0.005%. There was no whole-page pooling to
+lose, because a classic script's top level compiles to `set_global`/`get_global`
+by name and `predeclare_locals` is deliberately not called for it.
+
+**It is a conformance fix first and a caching change second**, and that half is
+worth more. Measured against the old engine: a parse error in script A used to
+stop script B, and no longer does; an uncaught throw likewise; a promise
+resolved in script A used to have its handler run after the *last* script and now
+runs before script B, because each script is its own microtask checkpoint. All
+three are what the specification asks for. What was lost is a call in an earlier
+script to a function declared in a later one — 42 before, a throw now, and a
+`ReferenceError` in Chrome, so concatenation was the outlier.
+
+### The review found three things wrong with it, and one older thing
+
+A five-lens adversarial fan-out over the uncommitted change returned thirteen
+confirmed findings. Three were the split's own, none visible from a rendered
+page, each now with a test watched failing without its fix: `script_sources()`
+listed contributions the loop then skipped, so a packager would have built images
+nothing could look up; a missing `<script src>` **masked every later error**,
+because the walk writes its complaint into the field the new first-failure-wins
+rule reads; and the compile counter never reset, so a second load reported the
+first load's misses against a per-load denominator.
+
+**The fourth was a use-after-free older than the split.** A script can navigate
+synchronously — `element.click()` reaches the embedder's navigate hook, and
+ctbrowse's hook calls `load_html` — which reset the context and freed the
+programs *while the interpreter was still executing one of them*. With one
+program there was nothing left to run afterwards, so it survived; with N it also
+let the abandoned page's remaining scripts read and overwrite the document that
+replaced theirs. `load_html` now queues a re-entrant navigation and performs it
+once the scripts stop, which is what a browser does anyway. Removing the queue
+makes the test SIGSEGV.
+
+### A dead script's `try` caught the next script's `throw`
+
+The sharpest finding, and the split is what made it reachable rather than what
+introduced it. `context::execute` cleared `frames_` and not `handlers_`, and a
+VM-level `raise` does not unwind — the loop condition is
+`frames_.size() > stop_depth && !failed_` and it simply stops. Every `try` live
+at that moment stayed on the handler stack recording frame 0. **A second
+top-level program has a frame 0 too**, so `unwind_to_handler` accepted the dead
+program's handler, wrote the thrown value into the wrong frame's register, and
+set `ip` to an address out of the *other program's bytecode*.
+
+Measured on a page whose first script exhausts the stack inside a `try` and whose
+second alerts 1–8 then throws: `12345678345678` — the throw swallowed, six
+statements run twice. Padding the first script's `try` body walked the
+resumption point through the second script, which is what proves where the
+address came from. Not memory-unsafe — `ip` is bounds-checked and the register
+file resized — just silently wrong, which is worse to find.
+
+### And the CSS parser had been reading freed memory the whole time
+
+The lens told to find a use-after-free in the new code found none, and reported
+this instead. `emit_declarations` iterates a `std::span` **into** `sheet_.values`
+while every declaration it emits appends to that same vector; the first
+reallocation frees the buffer the span points at and the next iteration reads it.
+It has always worked, because the freed bytes still hold the old values.
+
+**The measure of it is that this repository's own `asan` preset could not run:
+29 of 52 tests failed, all of them this, aborting at browser construction —
+which means every page this engine has ever loaded did it.** It is 52 of 52 now.
+The fix is one copy, and it costs 4% of a bootstrap.css parse (2.44 → 2.55 ms,
+interleaved, losing all five pairs). The first version of that comment said it
+was free; it is not, and the number is in the file.
 
 ## The ladder ahead
 
