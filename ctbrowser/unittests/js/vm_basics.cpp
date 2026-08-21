@@ -1640,11 +1640,94 @@ void test_exceptions_unwind_call_frames() {
                   "5");
 }
 
+// `finally` RUNS ON EVERY WAY OUT, and the two cases below were the only two it
+// used to get right. The block was emitted twice - once after the try body and
+// once after the catch - and every other exit left without reaching it. Six of
+// these nine were wrong until 2026-08-21, and the worst LOST AN EXCEPTION:
+// `try { throw x } finally { }` sent the throw to a catch path that had no catch
+// to run, ran the finally, and fell through with x discarded and no error.
 void test_finally() {
     expect_result("var r = 0; try { r = 1; } finally { r += 10; } return r;", "11");
     expect_result("var r = 0; try { throw 1; } catch (e) { r = 2; } finally { r += 10; }"
                   "return r;",
                   "12");
+
+    // A FINALLY WITH NO CATCH MUST RETHROW. This one returned 0.
+    expect_result("var r = 0;"
+                  "try { try { throw 7; } finally { r += 1; } } catch (e) { r += e; }"
+                  "return r;",
+                  "8");
+
+    // RETURN RUNS THE FINALLY ON ITS WAY OUT. `return` emitted op::ret straight
+    // away and never saw the block.
+    expect_result("var log = '';"
+                  "function g() { try { return 'T'; } finally { log += 'f'; } }"
+                  "var got = g(); return log + got;",
+                  "fT");
+
+    // AND THE FINALLY CAN REPLACE IT. This returned 'T'.
+    expect_result("function g() { try { return 'T'; } finally { return 'F'; } } return g();", "F");
+
+    // BREAK AND CONTINUE ARE EXITS TOO. Both jumped past the block.
+    expect_result("var log = '';"
+                  "for (;;) { try { break; } finally { log += 'f'; } }"
+                  "return log + 'done';",
+                  "fdone");
+    expect_result("var log = '';"
+                  "for (var i = 0; i < 2; i++) { try { continue; } finally { log += 'f'; } }"
+                  "return log + 'done';",
+                  "ffdone");
+
+    // A THROW FROM A CATCH STILL RUNS THAT TRY'S FINALLY. It did not, because
+    // unwinding into the catch had already consumed this try's handler.
+    expect_result("var log = '';"
+                  "try { try { throw 1; } catch (e) { throw 2; } finally { log += 'f'; } }"
+                  "catch (e) { log += 'outer' + e; } return log;",
+                  "fouter2");
+
+    // NESTING: a return crossing two finallys runs both, innermost first. The
+    // dispatch re-emits the return, which the next open finally then catches.
+    expect_result("var log = '';"
+                  "function g() { try { try { return 'R'; } finally { log += 'i'; } }"
+                  " finally { log += 'o'; } }"
+                  "var got = g(); return log + got;",
+                  "ioR");
+
+    // AND A BREAK CROSSING TWO OF THEM.
+    expect_result(
+        "var log = '';"
+        "for (;;) { try { try { break; } finally { log += 'i'; } } finally { log += 'o'; } }"
+        "return log + 'done';",
+        "iodone");
+
+    // A LOOP INSIDE THE TRY IS NOT CROSSED BY THE FINALLY. `break` here leaves
+    // the loop and stays in the try, so it must NOT be routed through the
+    // completion record - doing so made the dispatch re-emit a jump to a loop
+    // that had already been popped, which asan reported as a leaked patch list
+    // in the compiler and which the default preset could not see at all.
+    expect_result("var log = '';"
+                  "try { for (;;) { log += 'b'; break; } log += 't'; } finally { log += 'f'; }"
+                  "return log;",
+                  "btf");
+    // And the same shape with the loop labelled, which takes the other branch
+    // of loop_for.
+    expect_result("var log = '';"
+                  "try { outer: for (;;) { log += 'b'; break outer; } log += 't'; }"
+                  " finally { log += 'f'; } return log;",
+                  "btf");
+    // A break that DOES cross it still does, with the loop outside the try.
+    expect_result("var log = '';"
+                  "for (;;) { try { log += 'b'; break; } finally { log += 'f'; } }"
+                  "return log + 'done';",
+                  "bfdone");
+
+    // An async function's return is a promise, and the finally must not lose
+    // the wrapping - the dispatch re-applies op::wrap_promise because it IS the
+    // function's return.
+    expect_result("var log = '';"
+                  "async function g() { try { return 5; } finally { log += 'f'; } }"
+                  "var p = g(); return log + (typeof p.then);",
+                  "ffunction");
 }
 
 void test_nested_try() {

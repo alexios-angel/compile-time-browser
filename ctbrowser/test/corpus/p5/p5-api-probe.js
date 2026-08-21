@@ -1078,9 +1078,24 @@ globalThis.__probes = [
       if (typeof s[name] !== 'function') { wrong.push(name + ' absent'); }
     }
     if (wrong.length) { throw wrong.join(' | '); }
-    // curveDetail changes how finely a spline is walked; a value that throws or
-    // that silently stops the shape drawing is the failure worth catching.
-    s.curveDetail(10);
+    // curveDetail IS WEBGL-ONLY AND p5 THROWS FOR IT IN 2D, deliberately:
+    //   fn.curveDetail = function (d) {
+    //     if (!(this._renderer instanceof Renderer3D)) { throw new Error(
+    //       'curveDetail() only works in WebGL mode. ...'); }
+    //
+    // This probe used to call it on a 2D canvas and pass, which it could only do
+    // while the engine was LOSING the exception - `finally` with no `catch`
+    // swallowed a throw outright until 2026-08-21. Calling it and requiring the
+    // throw is the honest version, and it pins the gate that was invisible.
+    let gated = '';
+    try {
+      s.curveDetail(10);
+    } catch (e) {
+      gated = String(e && e.message ? e.message : e);
+    }
+    if (gated.indexOf('WebGL') < 0) {
+      throw 'curveDetail did not report that it is WebGL-only in 2D mode: ' + gated;
+    }
     s.background(255);
     s.noFill();
     s.stroke(0);

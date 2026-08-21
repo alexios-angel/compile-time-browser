@@ -674,6 +674,55 @@ public:
         std::size_t handler_depth = 0; // try blocks open when the loop started
     };
 
+    // AN OPEN `finally`, AND WHY THE COMPILER HAS TO KNOW ABOUT ONE.
+    //
+    // `finally` runs on EVERY way out of a try block, and a `return`, a `break`
+    // and a `continue` are three of those ways. Each of them used to emit its
+    // own instruction straight away and leave the block without ever reaching
+    // the finally - so `function g() { try { return 'T' } finally { ran() } }`
+    // never called ran(). The fix is the one every engine uses: an exit stores
+    // WHAT it was trying to do into two registers and jumps to the finally,
+    // which runs once and then does that thing.
+    //
+    // `kind` is 0 for a normal fall-through, 1 for a throw with the thrown value
+    // in `value`, 2 for a return with the returned value in `value`, and 3 + i
+    // for the i-th entry in `exits` - a break or a continue to a particular
+    // loop. Break and continue need the index because "which loop" cannot fit
+    // in the kind alone, and a numbered exit keeps the dispatch to one compare
+    // per target that actually occurs rather than one per loop in scope.
+    struct finally_context {
+        std::uint16_t kind_reg = 0;
+        std::uint16_t value_reg = 0;
+        // HOW MANY LOOPS WERE OPEN WHEN THIS `try` STARTED, which is what says
+        // whether a given break CROSSES this finally. A break to a loop opened
+        // INSIDE the try - `try { for (;;) { break } } finally {}` - never
+        // leaves the try block, so it must not be routed here: it would store a
+        // completion, jump to the finally, and have the dispatch try to
+        // re-emit a break to a loop that has since been popped.
+        std::size_t loops_open = 0;
+        std::vector<std::size_t> arrivals; // jumps into the finally, patched at it
+        struct exit {
+            std::size_t loop_index = 0; // into loops_, NOT a pointer: it reallocates
+            bool is_continue = false;
+        };
+        std::vector<exit> exits;
+    };
+
+    // The finallys between here and the top of the function, innermost last. A
+    // `return` crossing three of them stores its completion in the innermost and
+    // lets each dispatch hand it to the next, which is what makes nesting work
+    // without any of them knowing how deep they are.
+    std::vector<finally_context> finallies_;
+
+    // Where a `return` goes when a finally is open: into the innermost one.
+    // Returns false when there is none and the caller should just emit `ret`.
+    [[nodiscard]] bool route_return_through_finally(std::uint16_t value_reg);
+    // The same for a loop exit. `loop` must be one of loops_.
+    [[nodiscard]] bool route_exit_through_finally(std::size_t loop_index, bool is_continue);
+    // The tail of a finally: run the completion it was handed.
+    void emit_finally_dispatch(const finally_context & open);
+    void compile_try_with_finally(const vp::node & n);
+
     void patch_breaks(loop_context & loop);
     void patch_continues(loop_context & loop, std::size_t target);
 
