@@ -1,7 +1,7 @@
 {
   "what": "what a precompiled script image saves on a WHOLE page load, not on one stage",
   "measured_utc": "2026-08-20T23:40:00Z",
-  "commit": "PENDING-2",
+  "commit": "6f30646",
   "supersedes": {
     "commit": "e4aed22",
     "saved_percent_of_page_load": 53,
