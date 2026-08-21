@@ -80,6 +80,10 @@ struct load_result {
     std::string error;
     // What the image says it was built from, whether or not it kept the text.
     std::uint64_t source_hash = 0;
+    // And which kind of script it was compiled as. A DIFFERENT question from
+    // the hash, which only knows the text: the same text compiled as a module
+    // hashes identically and is a different program.
+    script_kind kind = script_kind::classic;
 };
 
 // Bytes back to a program, or a refusal with a reason.
@@ -93,7 +97,13 @@ struct load_result {
 // mismatch is a refusal. That is the whole cache-correctness story: an image
 // built from different source is not a slow path, it is WRONG CODE running at
 // full speed, and the only defence is to refuse it here.
+// `expect_kind` DEFAULTS TO CLASSIC AND IS CHECKED ALWAYS, not only when a hash
+// is given, because a mismatch here is not a cache miss - it is a program with
+// the right text and the wrong scope rules. A module's top level declares into
+// its own scope, so running one where a classic script belongs publishes
+// nothing to the page and raises no error at all.
 [[nodiscard]] load_result load_image(std::span<const std::byte> bytes,
-                                     std::optional<std::uint64_t> expect_source_hash = {});
+                                     std::optional<std::uint64_t> expect_source_hash = {},
+                                     script_kind expect_kind = script_kind::classic);
 
 } // namespace ctbrowser::script

@@ -52,11 +52,9 @@ namespace ctbrowser::script {
 // still reaches the global object because that is an explicit write, but a bare
 // declaration is the module's own. Getting this wrong is how "modules work"
 // while every module on a page silently shares state with every other.
-enum class script_kind {
-    classic,
-    module_
-};
-
+//
+// `script_kind` itself is declared in bytecode.hpp, beside `program`, because a
+// compiled program carries which one it is.
 class compiler {
 public:
     // Compile `source` to a program. On a parse error the program comes back

@@ -23,13 +23,14 @@ namespace {
 
 constexpr std::uint32_t magic = 0x43544243; // 'CTBC'
 
-// 2 dropped `function_proto::nested`, a per-function table of always zero.
+// 3 records `program::kind`. 2 dropped `function_proto::nested`, a per-function
+// table of always zero.
 // THE LAYOUT CHANGED, which is what this number is for and what the source hash
 // tag below deliberately is not: an image written by build 1 has four bytes per
 // function that build 2 would read as the next field, so the right refusal
 // names the format. The version check runs before the fingerprint for exactly
 // this reason.
-constexpr std::uint32_t format_version = 2;
+constexpr std::uint32_t format_version = 3;
 
 // FNV-1a's constants, used by `image_fingerprint()` and by nothing else in
 // this file - `image_source_hash` was the other consumer until it became
@@ -286,6 +287,14 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
     out.u32(format_version);
     out.u64(image_fingerprint());
     out.u32(static_cast<std::uint32_t>(option));
+    // WHICH KIND OF SCRIPT THIS WAS COMPILED AS. The same text compiles two
+    // ways and the source hash cannot tell them apart - it is a hash of the
+    // TEXT - so without this a module image answers to a classic script's
+    // lookup. Measured before the field existed: `var out = 41 + 1;` compiled
+    // as a module recorded source hash d52677f505aae6c3, exactly as the classic
+    // one did, loaded against it with ok=1 and no error, ran, and published
+    // `undefined` where the page expected 42.
+    out.u8(static_cast<std::uint8_t>(from.kind));
     // FROM THE PROGRAM'S OWN SOURCE, before any decision about keeping it: an
     // image that drops the text still has to be able to say what it was built
     // from, and that is precisely the build where nothing else can.
@@ -402,7 +411,7 @@ static_assert(std::size(shapes) == opcode_count, "one shape per opcode");
 } // namespace
 
 load_result load_image(std::span<const std::byte> bytes,
-                       std::optional<std::uint64_t> expect_source_hash) {
+                       std::optional<std::uint64_t> expect_source_hash, script_kind expect_kind) {
     load_result out;
     source_bytes in{bytes, 0, false, {}};
 
@@ -426,6 +435,22 @@ load_result load_image(std::span<const std::byte> bytes,
     const std::uint32_t option = in.u32();
     if (option > static_cast<std::uint32_t>(image_option::drop_source)) {
         out.error = "unknown image option " + std::to_string(option);
+        return out;
+    }
+    const std::uint8_t kind_byte = in.u8();
+    if (kind_byte > static_cast<std::uint8_t>(script_kind::module_)) {
+        out.error = "unknown script kind " + std::to_string(kind_byte);
+        return out;
+    }
+    out.kind = static_cast<script_kind>(kind_byte);
+    if (out.kind != expect_kind) {
+        // BEFORE THE SOURCE HASH, because it is the more specific answer: the
+        // text really is the text the caller asked for, and it is the COMPILE
+        // that differs. "built from different source" would send a reader
+        // looking for an edit that never happened.
+        out.error = out.kind == script_kind::module_
+                        ? "the image is a module, and a classic script was asked for"
+                        : "the image is a classic script, and a module was asked for";
         return out;
     }
     out.source_hash = in.u64();
@@ -482,6 +507,7 @@ load_result load_image(std::span<const std::byte> bytes,
         }
     }
     result.source = in.text();
+    result.kind = out.kind;
 
     const std::uint32_t function_count = in.u32();
     if (in.bad) {

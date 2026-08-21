@@ -8,6 +8,7 @@ namespace ctcompile::js {
 
 using ctbrowser::script::function_proto;
 using ctbrowser::script::program;
+using ctbrowser::script::script_kind;
 
 namespace {
 
@@ -58,6 +59,16 @@ std::optional<difference> compare(const program & expected, const program & actu
     // a namespace object's keys come from a hash map - but it is compared
     // anyway, because an image has no reason to reorder it and a change there
     // means something else moved.
+    // THE KIND FIRST, because everything below it means something different
+    // depending on the answer: a module's top-level declarations are its own
+    // scope's and a classic script's are the global object's, so two programs
+    // that differ here are not two versions of one thing.
+    if (expected.kind != actual.kind) {
+        return w.differ("kind", expected.kind == script_kind::module_
+                                    ? "expected a module, got a classic script"
+                                    : "expected a classic script, got a module"),
+               w.found;
+    }
     if (!w.texts(expected.imports, actual.imports, "", "imports")) { return w.found; }
     if (!w.texts(expected.exports, actual.exports, "", "exports")) { return w.found; }
     if (!w.count(expected.reexports.size(), actual.reexports.size(), "", "re-export count")) {

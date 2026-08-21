@@ -8,6 +8,7 @@ namespace ctbrowser::script {
 program compiler::compile(std::string_view source, script_kind kind) {
     const vp::ast tree = vp::parse(source);
     program out;
+    out.kind = kind;
     if (!tree.ok) {
         out.ok = false;
         // WITH THE POSITION, which was thrown away here for as long as this

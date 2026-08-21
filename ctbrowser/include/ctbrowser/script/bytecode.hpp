@@ -406,6 +406,21 @@ struct function_proto {
     }
 };
 
+// WHICH KIND OF SCRIPT A PROGRAM IS, and it lives here rather than in
+// compile.hpp because it is a property of the compiled thing rather than of the
+// compiler. A classic script's top level IS the global scope; a module's is a
+// scope of its own. See compile.hpp for what that means for a declaration.
+//
+// It is on `program` because the same TEXT compiles to two different programs,
+// and until 2026-08-21 nothing recorded which one you had: an image of
+// `var out = 41 + 1;` compiled as a module recorded the same source hash as the
+// classic one, loaded with ok=1 against that hash, ran without error, and left
+// `globalThis.out` undefined instead of 42.
+enum class script_kind : std::uint8_t {
+    classic,
+    module_
+};
+
 struct program {
     // WHAT THIS MODULE IMPORTS, in source order, so a loader can fetch the
     // graph without re-parsing. Empty for a classic script. The specifiers are
@@ -438,6 +453,7 @@ struct program {
     // A 4.5 MB bundle costs 4.5 MB, which it already cost to compile.
     std::string source;
     std::vector<function_proto> functions; // [0] is the top-level script
+    script_kind kind = script_kind::classic;
     bool ok = true;
     std::string error;
 };

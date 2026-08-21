@@ -24,6 +24,7 @@ using ctbrowser::script::image_option;
 using ctbrowser::script::image_source_hash;
 using ctbrowser::script::load_image;
 using ctbrowser::script::program;
+using ctbrowser::script::script_kind;
 using ctbrowser::script::write_image;
 
 namespace {
@@ -398,6 +399,47 @@ int main() {
             if (load_image(corrupt).ok) { ++accepted; }
         }
         std::printf("  single-byte corruption: %zu of %zu offsets still loaded\n", accepted, tried);
+    }
+
+    // --- THE SAME TEXT, COMPILED TWO WAYS ---------------------------------
+    // A source hash is a hash of the TEXT, and the same text compiles to two
+    // different programs: a classic script declares into the global object, a
+    // module into a scope of its own. Before the image recorded which,
+    // `var out = 41 + 1;` compiled as a module recorded source hash
+    // d52677f505aae6c3 - identical to the classic one - loaded against it with
+    // ok=1 and no error, ran without raising, and left `globalThis.out`
+    // undefined where the page expected 42. Silent wrong code at full speed,
+    // which is the one failure this format exists to prevent.
+    {
+        constexpr std::string_view same_text = "var out = 41 + 1;\n";
+        const program classic = compiler::compile(same_text, script_kind::classic);
+        const program module_ = compiler::compile(same_text, script_kind::module_);
+        check(classic.ok && module_.ok, "the same text compiles both ways");
+        check(ctbrowser::script::image_source_hash(same_text) ==
+                  ctbrowser::script::image_source_hash(same_text),
+              "and the source hash cannot tell them apart, because it hashes text");
+
+        const auto classic_bytes = write_image(classic);
+        const auto module_bytes = write_image(module_);
+        check(!classic_bytes.empty() && !module_bytes.empty(), "both write an image");
+
+        const auto want = ctbrowser::script::image_source_hash(same_text);
+        const auto right = load_image(classic_bytes, want, script_kind::classic);
+        check(right.ok, "the classic image loads when a classic script is asked for");
+        check(right.kind == script_kind::classic, "and reports the kind it was compiled as");
+
+        const auto wrong = load_image(module_bytes, want, script_kind::classic);
+        check(!wrong.ok, "THE MODULE IMAGE IS REFUSED when a classic script is asked for");
+        check(wrong.error.find("module") != std::string::npos,
+              "and the refusal says which way round it is, not 'different source'");
+
+        const auto other_way = load_image(classic_bytes, want, script_kind::module_);
+        check(!other_way.ok, "and a classic image is refused when a module is asked for");
+
+        const auto as_module = load_image(module_bytes, want, script_kind::module_);
+        check(as_module.ok, "while the module image loads when a module is asked for");
+        check(as_module.value.kind == script_kind::module_,
+              "and the program it hands back knows what it is");
     }
 
     // --- THE IDENTITY OF THE INSTRUCTION SET ------------------------------
