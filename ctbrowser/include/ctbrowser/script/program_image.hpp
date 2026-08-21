@@ -74,6 +74,21 @@ enum class image_option : std::uint32_t {
 // Why the last write_image on this thread produced nothing.
 [[nodiscard]] std::string_view write_error() noexcept;
 
+// WHAT AN IMAGE SAYS ABOUT ITSELF, without decoding it. A holder of several
+// images needs to key them without paying to load one, and the header is the
+// only place that answer lives - recomputing it from the source text would mean
+// having the source text, which is the thing an image exists to avoid.
+struct image_header {
+    std::uint64_t source_hash = 0;
+    script_kind kind = script_kind::classic;
+};
+
+// The header, or nothing at all when these bytes are not an image this build
+// would load: wrong magic, another format version, or another engine. Refusing
+// at the door means a packager hears about it when it hands the image over
+// rather than months later as a cache that never hits.
+[[nodiscard]] std::optional<image_header> read_image_header(std::span<const std::byte> bytes);
+
 struct load_result {
     program value;
     bool ok = false;

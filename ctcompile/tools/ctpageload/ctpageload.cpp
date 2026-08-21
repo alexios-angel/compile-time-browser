@@ -59,55 +59,97 @@ int main(int argc, char ** argv) {
     // ASK THE BROWSER WHAT IT COMPILES rather than reproducing it here. A page
     // has as many classic scripts as it likes - p5-basic.html has three, an
     // inline flag, the src'd bundle and the sketch - and a tool that guessed
-    // the concatenation would build an image whose hash never matches, which
-    // presents as "no saving" rather than as a bug in the tool.
-    std::string concatenated;
+    // the rule would build images whose hashes never match, which presents as
+    // "no saving" rather than as a bug in the tool.
+    std::vector<std::string> scripts;
     {
         ctbrowser::browser first{ctbrowser::browser_options{800, 600}};
         first.load_html(page);
-        concatenated = std::string{first.script_source()};
+        scripts = first.script_sources();
     }
-    if (concatenated.empty()) {
+    if (scripts.empty()) {
         std::fprintf(stderr, "ctpageload: the page compiled no classic scripts - is its <script "
                              "src> resolvable from this directory?\n");
         return 2;
     }
 
-    const auto compiled = ctbrowser::script::compiler::compile(concatenated);
-    if (!compiled.ok) {
-        std::fprintf(stderr, "ctpageload: the page's scripts do not compile: %s\n",
-                     compiled.error.c_str());
-        return 1;
+    // ONE IMAGE PER SCRIPT, which is the whole point: the page's own sketch and
+    // the library beside it are separate artefacts with separate keys.
+    std::vector<std::vector<std::byte>> images;
+    std::size_t functions = 0, source_bytes = 0, image_bytes = 0;
+    for (const std::string & text : scripts) {
+        const auto compiled = ctbrowser::script::compiler::compile(text);
+        if (!compiled.ok) {
+            std::fprintf(stderr, "ctpageload: a script does not compile: %s\n",
+                         compiled.error.c_str());
+            return 1;
+        }
+        images.push_back(ctbrowser::script::write_image(compiled));
+        functions += compiled.functions.size();
+        source_bytes += text.size();
+        image_bytes += images.back().size();
     }
-    const std::vector<std::byte> image = ctbrowser::script::write_image(compiled);
-    std::printf("%zu functions, %zu bytes of source, %zu bytes of image\n",
-                compiled.functions.size(), concatenated.size(), image.size());
+    std::printf("%zu classic scripts, %zu functions, %zu bytes of source, %zu bytes of image\n",
+                scripts.size(), functions, source_bytes, image_bytes);
+    for (std::size_t i = 0; i < scripts.size(); ++i) {
+        std::printf("  script %zu: %9zu B of source -> %9zu B of image\n", i, scripts[i].size(),
+                    images[i].size());
+    }
 
     std::size_t compiles_without = 0;
     std::size_t compiles_with = 0;
+    std::size_t compiles_edited = 0;
     const double without = median_ms(3, [&] {
         ctbrowser::browser browser{ctbrowser::browser_options{800, 600}};
         browser.load_html(page);
         compiles_without = browser.scripts_compiled_from_source();
     });
-    const double with_image = median_ms(3, [&] {
+    const double with_images = median_ms(3, [&] {
         ctbrowser::browser browser{ctbrowser::browser_options{800, 600}};
-        browser.set_script_image(image);
+        for (const auto & one : images) { (void)browser.add_script_image(one); }
         browser.load_html(page);
         compiles_with = browser.scripts_compiled_from_source();
     });
 
-    std::printf("load_html from source  %8.2f ms   (compiled %zu times)\n", without,
-                compiles_without);
-    std::printf("load_html from image   %8.2f ms   (compiled %zu times)\n", with_image,
-                compiles_with);
-    std::printf("saved %.2f ms of %.2f - %.0f%% of the page load\n", without - with_image, without,
-                100.0 * (without - with_image) / without);
+    std::printf("load_html from source  %8.2f ms   (compiled %zu of %zu scripts)\n", without,
+                compiles_without, scripts.size());
+    std::printf("load_html from images  %8.2f ms   (compiled %zu of %zu scripts)\n", with_images,
+                compiles_with, scripts.size());
+    std::printf("saved %.2f ms of %.2f - %.0f%% of the page load\n", without - with_images, without,
+                100.0 * (without - with_images) / without);
 
     if (compiles_with != 0) {
-        std::fprintf(stderr, "ctpageload: the image was REFUSED and the page compiled instead - "
-                             "the saving above is not a measurement of anything\n");
+        std::fprintf(stderr,
+                     "ctpageload: %zu image(s) were REFUSED and the page compiled "
+                     "instead - the saving above is not a measurement of anything\n",
+                     compiles_with);
         return 1;
+    }
+
+    // AND THE NUMBER THE SPLIT WAS FOR. Hand over every image EXCEPT the last
+    // script's - which is what a developer who edited their own sketch has -
+    // and see what the page still avoids recompiling.
+    if (scripts.size() > 1) {
+        const double edited = median_ms(3, [&] {
+            ctbrowser::browser browser{ctbrowser::browser_options{800, 600}};
+            for (std::size_t i = 0; i + 1 < images.size(); ++i) {
+                (void)browser.add_script_image(images[i]);
+            }
+            browser.load_html(page);
+            compiles_edited = browser.scripts_compiled_from_source();
+        });
+        std::printf("\nEDIT THE LAST SCRIPT, then load the page:\n");
+        std::printf("  before this change  %8.2f ms   (every script recompiled)\n", without);
+        std::printf("  one script rebuilt  %8.2f ms   (compiled %zu of %zu)\n", edited,
+                    compiles_edited, scripts.size());
+        std::printf("  %.1fx\n", without / edited);
+        if (compiles_edited != 1) {
+            std::fprintf(stderr,
+                         "ctpageload: expected exactly one script to recompile, got %zu - the "
+                         "figure above is not a measurement of anything\n",
+                         compiles_edited);
+            return 1;
+        }
     }
     return 0;
 }

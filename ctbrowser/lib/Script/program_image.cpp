@@ -410,39 +410,67 @@ static_assert(std::size(shapes) == opcode_count, "one shape per opcode");
 
 } // namespace
 
-load_result load_image(std::span<const std::byte> bytes,
-                       std::optional<std::uint64_t> expect_source_hash, script_kind expect_kind) {
-    load_result out;
-    source_bytes in{bytes, 0, false, {}};
+namespace {
 
-    if (in.u32() != magic) {
-        out.error = "not a ctbrowser program image";
-        return out;
-    }
+// THE FIXED PREFIX, READ IN ONE PLACE. `load_image` and `read_image_header`
+// both need it, and two readers of one layout is the drift this file's own
+// header warns about for the writer and the reader. Returns an empty string
+// when the prefix is one this build accepts.
+struct prefix {
+    image_option option = image_option::keep_source;
+    script_kind kind = script_kind::classic;
+    std::uint64_t source_hash = 0;
+};
+
+[[nodiscard]] std::string read_prefix(source_bytes & in, prefix & out) {
+    if (in.u32() != magic) { return "not a ctbrowser program image"; }
     if (const std::uint32_t v = in.u32(); v != format_version) {
-        out.error = "image format version " + std::to_string(v) + ", this build reads " +
-                    std::to_string(format_version);
-        return out;
+        return "image format version " + std::to_string(v) + ", this build reads " +
+               std::to_string(format_version);
     }
     if (const std::uint64_t got = in.u64(); got != image_fingerprint()) {
         // The most valuable refusal in the file. An image whose opcodes were
         // numbered differently would otherwise load and run at full speed,
         // executing different instructions than the ones that were compiled.
-        out.error = "image was written by a different engine build - opcode numbering, value "
-                    "layout or instruction layout has changed since it was written";
-        return out;
+        (void)got;
+        return "image was written by a different engine build - opcode numbering, value "
+               "layout or instruction layout has changed since it was written";
     }
     const std::uint32_t option = in.u32();
     if (option > static_cast<std::uint32_t>(image_option::drop_source)) {
-        out.error = "unknown image option " + std::to_string(option);
-        return out;
+        return "unknown image option " + std::to_string(option);
     }
+    out.option = static_cast<image_option>(option);
     const std::uint8_t kind_byte = in.u8();
     if (kind_byte > static_cast<std::uint8_t>(script_kind::module_)) {
-        out.error = "unknown script kind " + std::to_string(kind_byte);
-        return out;
+        return "unknown script kind " + std::to_string(kind_byte);
     }
     out.kind = static_cast<script_kind>(kind_byte);
+    out.source_hash = in.u64();
+    if (in.bad) { return in.why; }
+    return {};
+}
+
+} // namespace
+
+std::optional<image_header> read_image_header(std::span<const std::byte> bytes) {
+    source_bytes in{bytes, 0, false, {}};
+    prefix got;
+    if (!read_prefix(in, got).empty()) { return std::nullopt; }
+    return image_header{got.source_hash, got.kind};
+}
+
+load_result load_image(std::span<const std::byte> bytes,
+                       std::optional<std::uint64_t> expect_source_hash, script_kind expect_kind) {
+    load_result out;
+    source_bytes in{bytes, 0, false, {}};
+
+    prefix head;
+    if (std::string why = read_prefix(in, head); !why.empty()) {
+        out.error = std::move(why);
+        return out;
+    }
+    out.kind = head.kind;
     if (out.kind != expect_kind) {
         // BEFORE THE SOURCE HASH, because it is the more specific answer: the
         // text really is the text the caller asked for, and it is the COMPILE
@@ -453,7 +481,7 @@ load_result load_image(std::span<const std::byte> bytes,
                         : "the image is a classic script, and a module was asked for";
         return out;
     }
-    out.source_hash = in.u64();
+    out.source_hash = head.source_hash;
     if (expect_source_hash && *expect_source_hash != out.source_hash) {
         // THE REFUSAL THAT MAKES A CACHE SAFE. A stale image is not a slow
         // path - it is different JavaScript running at full speed, with the

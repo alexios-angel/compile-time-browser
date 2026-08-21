@@ -42,6 +42,14 @@ its own scope, its own binding namespace, and an execution *order* derived from
 a dependency graph. This is the architectural change; the syntax is the easy
 half.
 
+> **The classic half changed later too, on 2026-08-21, and the snapshot above is
+> of the engine as it was when this plan was written.** Each classic `<script>`
+> is now its own program as well — run in document order on the one shared
+> context, which is what the specification says and what let a page's compiled
+> form be cached one script at a time. It shares the global scope exactly as
+> before; what it stopped sharing is the compile. See
+> `ctcompile/docs/plans/ctcompile.md`.
+
 ## Why Babylon is the right corpus for it
 
 `ctbrowser/test/corpus/webgl2/webgl2-ratchet.txt` records where rung 10 stops. The vendored UMD build

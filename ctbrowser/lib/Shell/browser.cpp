@@ -23,6 +23,43 @@ void browser::use_renderer(renderer r) {
 }
 
 void browser::load_html(std::string_view html) {
+    // A NAVIGATION FROM INSIDE A SCRIPT IS QUEUED, NOT PERFORMED. `element.click()`
+    // reaches `browser::activate`, which calls the embedder's navigate hook, and
+    // an embedder's hook calls this - ctbrowse's does - so this function can be
+    // re-entered from inside a script that `run_scripts` is running.
+    //
+    // DOING IT IMMEDIATELY WAS A USE-AFTER-FREE, and one that predates giving
+    // every <script> its own program: the nested load resets `script_` and
+    // frees the programs, and then returns into an interpreter still executing
+    // one of them, on a context that no longer exists. It also let the
+    // abandoned page's remaining scripts run against the new document, read it
+    // and overwrite it - measured, with the discarded page's second script
+    // writing into a page that had already finished loading.
+    //
+    // Deferring is also what a browser does: navigation is not synchronous.
+    // The script that asked for it finishes, `run_scripts` stops at the next
+    // boundary because a load is pending, and the load happens below, once
+    // nothing is running on the context it is about to destroy.
+    if (loading_) {
+        pending_load_ = std::string{html};
+        return;
+    }
+    loading_ = true;
+    load_one_page(html);
+    loading_ = false;
+    // A queued navigation, and any it queues in turn. A page that navigates on
+    // load forever is a page that hangs in a real browser too, so there is no
+    // cap here that a real one does not also lack.
+    while (pending_load_) {
+        std::string next = std::move(*pending_load_);
+        pending_load_.reset();
+        loading_ = true;
+        load_one_page(next);
+        loading_ = false;
+    }
+}
+
+void browser::load_one_page(std::string_view html) {
     source_html_ = html; // what location.reload() re-runs
     // Both the document and the cascade are rebuilt. Keeping the old style
     // engine would accumulate every page's <style> rules across navigations,
@@ -752,7 +789,7 @@ void browser::run_scripts() {
     // Order matters on teardown too: the old context must go before the old
     // program it was executing.
     script_.reset();
-    script_program_.reset();
+    classic_programs_.clear();
     // AND THE PREVIOUS PAGE'S MODULES, which nothing cleared. Every
     // <script type="module"> is kept as its own program because its functions
     // close over its top-level frame, and the vector holding them was appended
@@ -805,7 +842,20 @@ void browser::run_scripts() {
     install_embedder_natives();
     script_error_.clear();
 
-    std::string source;
+    // ONE ENTRY PER CLASSIC <script>, NOT ONE STRING FOR THE PAGE. Gluing them
+    // together made the page's compiled form one artefact, so a two-line sketch
+    // and the 4.5 MB library beside it shared a cache key and an edit to either
+    // threw away both. It also made the page's scripts one PROGRAM, which is a
+    // deviation the split fixes on the way past: per the HTML specification each
+    // classic <script> is its own Script Record, so a parse error or an uncaught
+    // throw in one does not stop the next. Measured before and after - the first
+    // of two scripts failing to parse used to silence the second, and does not
+    // now.
+    //
+    // What it costs is the one thing concatenation bought: a call in an EARLIER
+    // script to a function declared in a LATER one. Chrome makes that a
+    // ReferenceError; this engine used to make it work.
+    std::vector<std::string> classic_scripts;
     // MODULES ARE COLLECTED SEPARATELY AND RUN SEPARATELY, because that is the
     // one thing they cannot share with a classic script: its top level is the
     // global scope and theirs is not. Concatenating them all - which is what
@@ -844,7 +894,8 @@ void browser::run_scripts() {
                 // the spec is a fixed string here rather than a MIME match.
                 const bool is_module = txn.attribute_value(at, type_attribute) == "module";
                 std::string module_text;
-                std::string * into = is_module ? &module_text : &source;
+                std::string classic_text;
+                std::string * into = is_module ? &module_text : &classic_text;
                 // THE SPECIFIER A MODULE SCRIPT IS KNOWN BY. `src` gives it a
                 // real one; an inline module gets a distinct synthetic one -
                 // distinct because it is the registry key, and shared keys made
@@ -868,35 +919,83 @@ void browser::run_scripts() {
                 *into += '\n';
                 if (is_module) {
                     modules.emplace_back(std::move(module_text), std::move(specifier));
+                } else if (classic_text.find_first_not_of(" \t\r\n\f\v") != std::string::npos) {
+                    // A CONTRIBUTION THAT IS ONLY THE NEWLINES THIS WALK ADDED
+                    // IS NOT A SCRIPT, and it is dropped HERE rather than
+                    // skipped later so that `script_sources()` lists exactly
+                    // what gets compiled. `<script src=missing.js></script>`
+                    // and `<script></script>` both leave one, and a packager
+                    // that built an image for it would be building one nothing
+                    // will ever look up.
+                    classic_scripts.push_back(std::move(classic_text));
                 }
             }
             for (const node_id child : txn.children(at)) { self(self, child); }
         };
         walk(walk, txn.root());
     }
-    // Kept whether or not it is compiled, so a packager can ask what this page
-    // would compile without having to reproduce the concatenation itself.
-    script_source_ = source;
-    if (!source.empty()) {
-        // THE IMAGE FIRST, WHEN IT IS THIS PAGE'S. Compiling is about forty
+    // Kept whether or not any of it is compiled, so a packager can ask what
+    // this page would compile without reproducing the rule itself.
+    script_sources_ = classic_scripts;
+    // PER LOAD, because that is the question it answers and what its
+    // documentation promises: "zero after a load whose every script was
+    // cached". Left to accumulate it could not be read against
+    // classic_programs_held(), which is per load, and a second load of a fully
+    // cached page would still report the first load's misses.
+    scripts_compiled_from_source_ = 0;
+    // A SCRIPT'S OWN FAILURE OUTRANKS A MISSING <script src>, which the walk
+    // above has already written into script_error_. Without this a page with
+    // one unresolvable src reported that and nothing else for the rest of its
+    // life - the first-failure-wins rule below would find the field already
+    // full and never overwrite it, so every later parse error and uncaught
+    // throw was silently discarded.
+    bool a_script_failed = false;
+    for (const std::string & text : classic_scripts) {
+        // THE IMAGE FIRST, WHEN IT IS THIS SCRIPT'S. Compiling is about forty
         // percent of a page load; loading the same program from bytes is four
-        // times faster on every corpus measured. The hash is what makes it
-        // safe: an image built from other source is refused here rather than
-        // run, and the fall-through costs only the compile it was avoiding.
-        bool from_image = false;
-        if (!script_image_.empty()) {
-            auto loaded = script::load_image(script_image_, script::image_source_hash(source));
+        // times faster on every corpus measured. Two things make it safe, and
+        // both are refusals rather than fallbacks: the image's recorded source
+        // hash must equal this text's, and it must have been compiled as a
+        // classic script - the same text compiled as a module hashes
+        // identically and publishes nothing to the page.
+        std::unique_ptr<script::program> compiled;
+        const std::uint64_t key = script::image_source_hash(text);
+        for (const held_image & held : script_images_) {
+            if (held.source_hash != key || held.kind != script::script_kind::classic) { continue; }
+            auto loaded = script::load_image(held.bytes, key, script::script_kind::classic);
             if (loaded.ok) {
-                script_program_ = std::make_unique<script::program>(std::move(loaded.value));
-                from_image = true;
+                compiled = std::make_unique<script::program>(std::move(loaded.value));
             }
+            break;
         }
-        if (!from_image) {
+        if (compiled == nullptr) {
             ++scripts_compiled_from_source_;
-            script_program_ = std::make_unique<script::program>(script::compiler::compile(source));
+            compiled = std::make_unique<script::program>(script::compiler::compile(text));
         }
-        const script::run_result result = script_->run(*script_program_);
-        if (!result.ok) { script_error_ = result.error; }
+
+        // KEPT BEFORE IT RUNS, because running it is what creates the closures
+        // that point into it - a function declared at a script's top level holds
+        // a `const function_proto *` into this program, and a timer or a
+        // listener dereferences it long after run_scripts returned.
+        //
+        // The reference survives the push_back, and it is worth saying why
+        // rather than leaving it to look wrong: the vector holds unique_ptrs, so
+        // a reallocation moves POINTERS. The program itself never moves.
+        const script::program & running = *compiled;
+        classic_programs_.push_back(std::move(compiled));
+        const script::run_result result = script_->run(running);
+        // A SCRIPT THAT NAVIGATED TOOK THE PAGE WITH IT. Every later script
+        // belongs to a document that is being replaced, so it does not run -
+        // and the replacement happens in load_html, after this returns, rather
+        // than under our feet.
+        if (pending_load_) { return; }
+        // THE FIRST FAILURE IS THE ONE REPORTED, and the rest of the page still
+        // runs. That is what the specification says: a script that throws or
+        // does not parse is that script's problem.
+        if (!result.ok && !a_script_failed) {
+            script_error_ = result.error;
+            a_script_failed = true;
+        }
     }
 
     // MODULES RUN AFTER THE CLASSIC SCRIPTS, each as its own program in its own
@@ -925,6 +1024,27 @@ void browser::run_scripts() {
 // The specification's answer is to create every binding in the graph BEFORE
 // evaluating any of it, so a cycle sees an UNINITIALISED binding rather than a
 // missing one. instantiate_module makes the cells; evaluation fills them.
+// ADMITTED AT THE DOOR OR NOT AT ALL. Anything that is not an image this build
+// would load - wrong magic, another format version, another engine's opcode
+// numbering - is refused here and returns false, so a packager learns when it
+// hands the bytes over. The alternative is a bag full of images that can never
+// match, which presents as "the cache does nothing" months later.
+//
+// The key comes from the image's OWN header rather than from anything the
+// caller says, so a caller cannot file an image under the wrong name.
+bool browser::add_script_image(std::vector<std::byte> image) {
+    const auto head = script::read_image_header(image);
+    if (!head) { return false; }
+    for (held_image & held : script_images_) {
+        if (held.source_hash == head->source_hash && held.kind == head->kind) {
+            held.bytes = std::move(image);
+            return true;
+        }
+    }
+    script_images_.push_back(held_image{head->source_hash, head->kind, std::move(image)});
+    return true;
+}
+
 void browser::load_module(const std::string & source, const std::string & specifier) {
     if (script_ == nullptr) { return; }
     instantiate_module(source, specifier);

@@ -79,10 +79,18 @@ blocker=no ES Babylon is vendored to boot - only the UMD build is vendored, and 
 # Replacing it is the change this ladder is really measuring, and the syntax is
 # the easy half.
 #
+# THE SNAPSHOT ABOVE IS OF THE ENGINE AS IT WAS (2026-08-21). Classic scripts
+# are no longer concatenated either: each <script> is its own program, run in
+# document order on the one shared context. They still share the global scope -
+# that part of the paragraph holds - but a parse error or a throw in one no
+# longer stops the next, which is what the specification asks for and what
+# concatenation could not give.
+#
 # STAGE 2 IS DONE (2026-08-02): a `<script type="module">` runs in its own
 # scope. `script_kind` on the compiler decides where top-level declarations go -
 # a classic script's become globals, which is what lets two <script> tags see
-# each other and what made concatenating them right; a module's stay in its own
+# each other and what makes running them as separate programs right; a module's
+# stay in its own
 # frame. browser::run_scripts collects modules SEPARATELY and runs each as its
 # own program after the classic ones, which is also what "deferred" means and is
 # the shape that stays right when the loader arrives.

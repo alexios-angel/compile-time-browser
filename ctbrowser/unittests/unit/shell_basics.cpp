@@ -318,40 +318,72 @@ void test_hit_testing_respects_escaped_context_clips() {
 // was actually taken, and an image built from OTHER source is refused instead
 // of run.
 void test_a_page_can_load_its_scripts_from_an_image() {
+    // TWO CLASSIC SCRIPTS, because one is the case that cannot show what this
+    // is for: a page's scripts are compiled and cached one at a time, so
+    // editing the second must not invalidate the first.
     constexpr std::string_view page =
-        "<html><body><div id=out></div><script>"
-        "document.getElementById('out').textContent = 'from ' + (1 + 1);"
-        "</script></body></html>";
+        "<html><body><div id=out></div>"
+        "<script>function shared() { return 'from ' + (1 + 1); }</script>"
+        "<script>document.getElementById('out').textContent = shared();</script>"
+        "</body></html>";
 
-    // What the browser will concatenate: every classic script, each followed by
-    // a newline. The image has to be built from exactly that text or its hash
-    // will not match - which is the point of the hash.
-    const std::string concatenated =
-        "document.getElementById('out').textContent = 'from ' + (1 + 1);\n";
-    const auto compiled = ctbrowser::script::compiler::compile(concatenated);
-    check(compiled.ok, "the fixture compiles");
-    const std::vector<std::byte> image = ctbrowser::script::write_image(compiled);
-    check(!image.empty(), "and an image is written for it");
+    // WHAT THE BROWSER WILL HASH, asked of the browser rather than written out
+    // here. A second implementation of that rule is a copy free to drift from
+    // the one that matters, and a drifted copy presents as "the cache does
+    // nothing" rather than as a broken test.
+    std::vector<std::string> scripts;
+    {
+        browser probe{browser_options{200, 100}};
+        probe.load_html(page);
+        scripts = probe.script_sources();
+    }
+    check(scripts.size() == 2, "the page has two classic scripts");
+    if (scripts.size() != 2) { return; }
+
+    std::vector<std::vector<std::byte>> images;
+    for (const std::string & text : scripts) {
+        const auto compiled = ctbrowser::script::compiler::compile(text);
+        check(compiled.ok, "each script compiles");
+        images.push_back(ctbrowser::script::write_image(compiled));
+        check(!images.back().empty(), "and an image is written for it");
+    }
 
     std::string without;
     {
         browser page_browser{browser_options{200, 100}};
         page_browser.load_html(page);
-        check(page_browser.scripts_compiled_from_source() == 1,
-              "with no image the page compiles its scripts");
+        check(page_browser.scripts_compiled_from_source() == 2,
+              "with no images the page compiles both scripts");
+        check(page_browser.classic_programs_held() == 2, "and holds one program per script");
         without = text_of(page_browser, "out");
+        check(!without.empty(), "and the page produced something");
     }
 
     {
         browser page_browser{browser_options{200, 100}};
-        page_browser.set_script_image(image);
+        for (const auto & one : images) {
+            check(page_browser.add_script_image(one), "the image is admitted");
+        }
         page_browser.load_html(page);
         // THE COUNTER IS THE PROOF. Without it a cache that silently misses
         // looks exactly like one that works: the page renders either way.
         check(page_browser.scripts_compiled_from_source() == 0,
-              "with a matching image the page compiles nothing");
-        check(text_of(page_browser, "out") == without && !without.empty(),
+              "with matching images the page compiles nothing");
+        check(text_of(page_browser, "out") == without,
               "and produces the same result it did from source");
+    }
+
+    {
+        // THE POINT OF THE SPLIT. Hand over only the FIRST script's image - the
+        // developer edited the second - and exactly one script recompiles. Under
+        // the concatenated scheme this was impossible: the two shared one key,
+        // so editing either threw away both.
+        browser page_browser{browser_options{200, 100}};
+        check(page_browser.add_script_image(images[0]), "the first script's image is admitted");
+        page_browser.load_html(page);
+        check(page_browser.scripts_compiled_from_source() == 1,
+              "ONE script recompiles and the other still comes from its image");
+        check(text_of(page_browser, "out") == without, "and the page is unchanged");
     }
 
     {
@@ -361,13 +393,192 @@ void test_a_page_can_load_its_scripts_from_an_image() {
         const auto other = ctbrowser::script::compiler::compile(
             "document.getElementById('out').textContent = 'STALE';\n");
         browser page_browser{browser_options{200, 100}};
-        page_browser.set_script_image(ctbrowser::script::write_image(other));
+        check(page_browser.add_script_image(ctbrowser::script::write_image(other)),
+              "the stale image is a valid image, so it is admitted");
+        page_browser.load_html(page);
+        check(page_browser.scripts_compiled_from_source() == 2,
+              "but it matches no script on this page, so both compile");
+        check(text_of(page_browser, "out") == without,
+              "and the page shows what its own scripts produce, not the image's");
+    }
+
+    {
+        // BYTES THAT ARE NOT AN IMAGE ARE REFUSED AT THE DOOR, so a packager
+        // hears about it when it hands them over rather than as a cache that
+        // never hits.
+        browser page_browser{browser_options{200, 100}};
+        check(!page_browser.add_script_image(std::vector<std::byte>{}),
+              "an empty buffer is not an image");
+        std::vector<std::byte> corrupt = images[0];
+        corrupt[0] = std::byte{0};
+        check(!page_browser.add_script_image(corrupt), "and neither is one with no magic");
+        std::vector<std::byte> wrong_engine = images[0];
+        wrong_engine[8] ^= std::byte{0xFF};
+        check(!page_browser.add_script_image(wrong_engine),
+              "nor one from a different engine build");
+    }
+
+    {
+        // A MODULE'S IMAGE IS NOT A CLASSIC SCRIPT'S, even when the text is
+        // identical. It is admitted - it is a valid image - and it must never
+        // answer a classic script's lookup, because a module's declarations go
+        // to its own scope and the page would see nothing.
+        const auto as_module = ctbrowser::script::compiler::compile(
+            scripts[0], ctbrowser::script::script_kind::module_);
+        browser page_browser{browser_options{200, 100}};
+        check(page_browser.add_script_image(ctbrowser::script::write_image(as_module)),
+              "a module image is a valid image");
+        check(page_browser.add_script_image(images[1]), "and so is the second script's");
         page_browser.load_html(page);
         check(page_browser.scripts_compiled_from_source() == 1,
-              "an image from other source is refused and the page compiles");
-        check(text_of(page_browser, "out") == without,
-              "and the page shows what its own script produces, not the image's");
+              "the module image does NOT answer the first script's lookup");
+        check(text_of(page_browser, "out") == without, "and the page is unchanged");
     }
+}
+
+// THE THREE THINGS AN ADVERSARIAL REVIEW FOUND WRONG WITH THE SPLIT ITSELF.
+// Each was introduced by giving every <script> its own program, each is invisible
+// from a rendered page, and none had a test.
+void test_what_the_split_got_wrong_the_first_time() {
+    // ONE. `script_sources()` IS WHAT GETS COMPILED, exactly. It used to list
+    // every <script>'s contribution including the ones the loop then skipped -
+    // a `<script></script>` or a `<script src>` that did not resolve leaves
+    // nothing but the newlines the walk added - so a packager building an image
+    // per entry built images nothing would ever look up, and a tool checking
+    // "one script recompiled" counted a script that never ran.
+    {
+        browser page{browser_options{200, 100}};
+        page.load_html("<html><body>"
+                       "<script>var a = 1;</script>"
+                       "<script></script>"
+                       "<script src='does-not-resolve.js'></script>"
+                       "<script>   \n  </script>"
+                       "<script>var b = 2;</script>"
+                       "</body></html>");
+        check(page.script_sources().size() == 2, "only the two scripts with content are listed");
+        check(page.classic_programs_held() == page.script_sources().size(),
+              "and there is exactly one program per listed script");
+        check(page.scripts_compiled_from_source() == 2, "and exactly two compiles");
+    }
+
+    // TWO. A MISSING <script src> MUST NOT MASK EVERY LATER ERROR. The walk
+    // writes its complaint into the same field the first-failure-wins rule
+    // reads, so the field was already full before any script ran and no script
+    // could ever report anything again.
+    {
+        browser page{browser_options{200, 100}};
+        page.load_html("<html><body><script src='does-not-resolve.js'></script>"
+                       "<script>throw new Error('the script itself failed');</script>"
+                       "</body></html>");
+        check(page.script_error().find("the script itself failed") != std::string::npos,
+              "a script's own failure outranks a missing src");
+    }
+    {
+        // ...and with no script failure the missing src is still reported,
+        // which is the half that would be lost by simply clearing the field.
+        browser page{browser_options{200, 100}};
+        page.load_html("<html><body><script src='does-not-resolve.js'></script>"
+                       "<script>var fine = 1;</script></body></html>");
+        check(page.script_error().find("does-not-resolve.js") != std::string::npos,
+              "and a missing src is still reported when nothing else failed");
+    }
+
+    // THREE. THE COMPILE COUNTER IS PER LOAD. It never reset, so the second
+    // load of a fully cached page still reported the first load's misses - and
+    // it is read against classic_programs_held(), which is per load, so the
+    // ratio was nonsense after the first navigation.
+    {
+        constexpr std::string_view page_html =
+            "<html><body><script>var counted = 1;</script></body></html>";
+        browser page{browser_options{200, 100}};
+        page.load_html(page_html);
+        check(page.scripts_compiled_from_source() == 1, "one script, one compile");
+        page.load_html(page_html);
+        check(page.scripts_compiled_from_source() == 1,
+              "and loading the same page again reports one compile, not two");
+        check(page.classic_programs_held() == 1, "with one program held, not two");
+    }
+}
+
+// TWO MORE THINGS THAT ONLY BECAME VISIBLE ONCE A PAGE'S SCRIPTS WERE SEPARATE
+// PROGRAMS. Both cross a boundary that did not exist when the page was one.
+void test_nothing_leaks_from_one_script_into_the_next() {
+    // A DEAD SCRIPT'S MICROTASKS DO NOT RUN INSIDE THE NEXT SCRIPT'S TURN.
+    // drain_microtasks stops on failure, so a script that threw used to leave
+    // its queued handlers behind - and the next script's checkpoint ran them,
+    // after that script's own code. See call.cpp for why they are dropped
+    // rather than run, and where that differs from Chrome.
+    {
+        browser page{browser_options{200, 100}};
+        page.load_html("<html><body>"
+                       "<script>Promise.resolve().then(function () { alert('ghost'); });"
+                       " throw new Error('first script dies');</script>"
+                       "<script>alert('second');</script></body></html>");
+        std::string said;
+        for (const std::string & one : page.alerts()) { said += one + ";"; }
+        check(said == "second;", "the dead script's handler does not surface in the next script");
+    }
+
+    // A SCRIPT THAT NAVIGATES SYNCHRONOUSLY ENDS ITS PAGE. The remaining
+    // <script>s belong to a document that is gone; running them against the new
+    // one let a discarded page read and overwrite it.
+    {
+        browser page{browser_options{200, 100}};
+        constexpr std::string_view next_page = "<html><body><div id=out>NEW</div>"
+                                               "<script>alert('new-page');</script></body></html>";
+        page.set_navigate_hook(
+            [&page, next_page](const std::string &) { page.load_html(next_page); });
+        page.load_html("<html><body><div id=out>OLD</div><a id=go href='next.html'>go</a>"
+                       "<script>alert('old-1'); document.getElementById('go').click();</script>"
+                       "<script>alert('old-2'); "
+                       "document.getElementById('out').textContent = 'CLOBBERED';</script>"
+                       "</body></html>");
+        std::string said;
+        for (const std::string & one : page.alerts()) { said += one + ";"; }
+        check(said.find("old-2") == std::string::npos,
+              "the abandoned page's later scripts do not run");
+        check(text_of(page, "out") != "CLOBBERED",
+              "and cannot write into the document that replaced theirs");
+        check(page.classic_programs_held() == 1, "and the new page holds only its own program");
+    }
+}
+
+// A SCRIPT THAT DIED INSIDE A `try` MUST NOT CATCH THE NEXT SCRIPT'S THROW.
+//
+// The VM's handler stack is not part of a call frame, and `context::execute`
+// cleared `frames_` without clearing it. A VM-level raise - the call-stack
+// ceiling here - returns out of the interpreter WITHOUT unwinding, so a `try`
+// that was live at that moment stays recorded against frame 0. The next
+// top-level program has a frame 0 as well, so the dead handler looked live: the
+// throw was swallowed and the interpreter jumped to an address out of the
+// PREVIOUS program's bytecode and carried on from there.
+//
+// Found by an adversarial review of the script split, which is what made it
+// reachable - one program per page meant a raise in the first script ended the
+// only top level.
+void test_a_dead_script_cannot_catch_the_next_scripts_throw() {
+    browser page{browser_options{200, 100}};
+    page.load_html("<html><body>"
+                   // Exhausts the call stack INSIDE a try, so the raise leaves
+                   // a handler behind. The catch never runs: a raise is not
+                   // catchable, which is the whole reason the handler is stale.
+                   "<script>try { var p0 = 0; (function r() { return r(); })(); } "
+                   "catch (e) { }</script>"
+                   "<script>alert('1');alert('2');alert('3');alert('4');"
+                   "alert('5');alert('6');alert('7');alert('8');"
+                   "throw 'x';alert('X');</script>"
+                   "</body></html>");
+    std::string said;
+    for (const std::string & one : page.alerts()) { said += one; }
+    // Each statement runs ONCE and the throw ends that script. The measured
+    // failure was "12345678345678" - eight alerts, then six of them again -
+    // with the throw never reported at all.
+    check(said == "12345678", "the second script runs once and stops at its throw");
+    check(said.find("345678345678") == std::string::npos,
+          "and does not re-execute a suffix of itself");
+    check(page.script_error().find("x") != std::string::npos ||
+              page.script_error().find("exhaust") != std::string::npos,
+          "and an error is reported rather than swallowed");
 }
 
 // A MODULE'S PROGRAM OUTLIVES THE LOAD, AND ONLY THIS LOAD. Each
@@ -403,6 +614,81 @@ void test_module_programs_do_not_accumulate_across_loads() {
     page_browser.load_html("<html><body><script>var x = 1;</script></body></html>");
     check(page_browser.module_programs_held() == 0,
           "and a page with no modules holds no module programs");
+    // AND THE SAME FOR CLASSIC PROGRAMS, which are kept for the same reason and
+    // were given the same treatment.
+    check(page_browser.classic_programs_held() == 1,
+          "and one classic script leaves exactly one classic program");
+}
+
+// WHAT SPLITTING THE PAGE'S SCRIPTS CHANGED, and it is not only caching. Per the
+// HTML specification each classic <script> is its own Script Record; gluing them
+// into one program made the page MORE permissive than the web platform in one
+// direction and LESS in two others. All four cases below were measured against
+// the concatenating engine before the change, and three of them behaved
+// differently.
+void test_each_classic_script_is_its_own_program() {
+    const auto said = [](std::string_view html) {
+        browser page{browser_options{200, 100}};
+        page.load_html(html);
+        std::string all;
+        for (const std::string & one : page.alerts()) { all += one + ";"; }
+        return all;
+    };
+
+    // A PARSE ERROR IS THAT SCRIPT'S PROBLEM. It used to silence the rest of the
+    // page: one concatenation, one compile, nothing ran.
+    check(said("<html><body><script>function ( {</script>"
+               "<script>alert('second ran');</script></body></html>") == "second ran;",
+          "a script that does not parse does not stop the next one");
+
+    // AND SO IS AN UNCAUGHT THROW.
+    check(said("<html><body><script>throw new Error('boom');</script>"
+               "<script>alert('second ran');</script></body></html>") == "second ran;",
+          "a script that throws does not stop the next one");
+
+    // WHAT WAS LOST, and it is what the specification says should be lost: a
+    // call in an earlier script to a function declared in a later one. It
+    // returned 42 when the page was one program. Chrome makes it a
+    // ReferenceError; this engine reports a TypeError on calling an undefined
+    // global, which is a separate difference that predates this change.
+    check(said("<html><body>"
+               "<script>try { alert('got ' + f()); } catch (e) { alert('threw'); }</script>"
+               "<script>function f() { return 42; }</script></body></html>") == "threw;",
+          "an earlier script cannot call a function declared in a later one");
+
+    // AND WHAT MUST NOT CHANGE: everything that goes through the global object.
+    check(said("<html><body><script>function g() { return 7; }</script>"
+               "<script>alert('got ' + g());</script></body></html>") == "got 7;",
+          "a later script still sees an earlier one's function");
+    check(said("<html><body><script>var v = 'shared';</script>"
+               "<script>alert(v);</script></body></html>") == "shared;",
+          "and its var");
+    check(said("<html><body><script>let L = 'lexical';</script>"
+               "<script>alert(L);</script></body></html>") == "lexical;",
+          "and its let");
+    check(said("<html><body><script>class K { hi() { return 'k'; } }</script>"
+               "<script>alert(new K().hi());</script></body></html>") == "k;",
+          "and its class");
+    check(said("<html><body><script>alert('one');</script><script>alert('two');</script>"
+               "<script>alert('three');</script></body></html>") == "one;two;three;",
+          "and three scripts still run in document order");
+
+    // A MICROTASK CHECKPOINT PER SCRIPT, which is what the split makes true and
+    // what the specification asks for: "run a classic script" ends by cleaning
+    // up, which drains the microtask queue once the stack is empty. One program
+    // per page meant ONE checkpoint, after the last script; a promise resolved
+    // in the first script had its handler run after the last one. Chrome runs it
+    // before the second script, and now so does this.
+    check(said("<html><body>"
+               "<script>Promise.resolve().then(function () { alert('then'); });</script>"
+               "<script>alert('two');</script></body></html>") == "then;two;",
+          "a promise resolved in one script settles before the next script runs");
+    // And the checkpoint is still at the END of a script rather than between two
+    // of its statements, which is the other half of the same rule.
+    check(said("<html><body><script>"
+               "Promise.resolve().then(function () { alert('then'); }); alert('sync');"
+               "</script></body></html>") == "sync;then;",
+          "while inside one script the handler still waits for its last statement");
 }
 
 void test_wheel_and_keys_scroll() {
@@ -532,6 +818,10 @@ int main() {
     test_hit_testing_follows_stacking_order();
     test_hit_testing_respects_escaped_context_clips();
     test_a_page_can_load_its_scripts_from_an_image();
+    test_each_classic_script_is_its_own_program();
+    test_a_dead_script_cannot_catch_the_next_scripts_throw();
+    test_what_the_split_got_wrong_the_first_time();
+    test_nothing_leaks_from_one_script_into_the_next();
     test_module_programs_do_not_accumulate_across_loads();
     test_wheel_and_keys_scroll();
     test_hover_restyles();

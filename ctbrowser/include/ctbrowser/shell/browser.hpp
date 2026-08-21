@@ -188,22 +188,35 @@ public:
     // saving available to a packaged application: measured on the devbox,
     // loading babylon from an image is 77 ms against 300 ms to compile it.
     //
-    // The image is USED ONLY IF IT MATCHES. Every classic <script> on the page
-    // is concatenated into one source, exactly as the compiling path does, and
-    // the image is accepted only when its recorded source hash equals that
-    // text's. A stale image is refused rather than run, because running one is
-    // not a slow path - it is different JavaScript at full speed, with the page
-    // behaving as it did before an edit nobody can see.
+    // ONE IMAGE PER <script>, NOT ONE PER PAGE, and that is the whole point of
+    // the shape. A page's classic scripts used to be glued into one string and
+    // compiled as one program, so the cache was keyed on the concatenation -
+    // and editing a two-line sketch beside a 4.5 MB library invalidated the
+    // library. Each script is now its own program keyed on its own bytes, so
+    // p5.js is baked once and answers on every page that loads it. Measured on
+    // p5-basic.html: editing the sketch cost 51.44 ms to recompile the page and
+    // now costs 4.89 ms, which is 10.5x.
     //
-    // A refusal is silent by design and countable by
+    // AN IMAGE IS USED ONLY IF IT MATCHES, and this is where a mistake becomes
+    // wrong code rather than a slow page: an image whose source hash is not
+    // this script's, or which was compiled as a module, is refused rather than
+    // run. `add_script_image` refuses at the door too - bytes that are not an
+    // image this build would load return false immediately, so a packager hears
+    // about it when it hands them over rather than as a cache that never hits.
+    //
+    // A refusal at USE is silent by design and countable by
     // scripts_compiled_from_source(): the page still works, it just paid for
     // the compile. That counter is how a test proves the fast path was taken
     // rather than assuming it.
-    void set_script_image(std::vector<std::byte> image) { script_image_ = std::move(image); }
+    bool add_script_image(std::vector<std::byte> image);
 
-    // How many times this browser has compiled page scripts from source. Zero
-    // after a load that used its image; without this a cache that silently
-    // misses looks exactly like one that works.
+    // Forget every image. A page keyed on old bytes should stop matching when a
+    // packager says so, rather than when the browser happens to be destroyed.
+    void clear_script_images() noexcept { script_images_.clear(); }
+
+    // How many classic scripts this browser compiled rather than loaded from an
+    // image. Zero after a load whose every script was cached; without this a
+    // cache that silently misses looks exactly like one that works.
     [[nodiscard]] std::size_t scripts_compiled_from_source() const noexcept {
         return scripts_compiled_from_source_;
     }
@@ -218,17 +231,29 @@ public:
         return module_programs_.size();
     }
 
-    // THE TEXT THE LAST LOAD COMPILED: every classic <script> on the page in
-    // document order, each followed by a newline, exactly as run_scripts
-    // assembles it.
+    // THE TEXT THE LAST LOAD COMPILED, one entry per classic <script> on the
+    // page in document order: the resolved `src` bytes followed by a newline
+    // when the element has one, then the element's own text, then a newline.
+    // Exactly what run_scripts assembles, because it IS what run_scripts
+    // assembled.
     //
     // This is what a packaging tool needs and the reason it is public. An image
-    // is accepted only when its source hash matches this text, so anything
-    // BUILDING an image has to know precisely what the browser will concatenate
-    // - and a second implementation of that rule, in the packager, would be a
-    // copy free to drift from the one that matters. Load the page once, take
-    // this, compile and write the image; the next load matches by construction.
-    [[nodiscard]] std::string_view script_source() const noexcept { return script_source_; }
+    // is accepted only when its source hash matches one of these strings, so
+    // anything BUILDING an image has to know precisely what the browser will
+    // hash - and a second implementation of that rule, in the packager, would
+    // be a copy free to drift from the one that matters. Load the page once,
+    // take these, compile and write one image each; the next load matches by
+    // construction.
+    [[nodiscard]] const std::vector<std::string> & script_sources() const noexcept {
+        return script_sources_;
+    }
+
+    // How many classic scripts the last load ran as their own programs. One per
+    // non-empty <script> on the page, and the denominator that makes
+    // scripts_compiled_from_source() a ratio rather than a number.
+    [[nodiscard]] std::size_t classic_programs_held() const noexcept {
+        return classic_programs_.size();
+    }
 
     // Turn on real fonts. Loads the vendored OFL faces through the asset
     // registry - so an application that baked them in never touches the disk -
@@ -512,6 +537,9 @@ private:
     // than thrown: a page whose script fails still has to render, which is what
     // every browser does and what makes a broken script a broken feature rather
     // than a blank window.
+    // The body of one load. load_html wraps it so that a navigation asked for
+    // by a script is queued rather than performed under that script's feet.
+    void load_one_page(std::string_view html);
     void run_scripts();
 
     // Every <img src> in the document, decoded once. A missing or undecodable
@@ -1616,11 +1644,29 @@ private:
     node_id focused_;
     std::uint64_t canvas_revision_ = 0;
 
-    std::unique_ptr<script::program> script_program_;
-    // A PRECOMPILED IMAGE OF THIS PAGE'S CLASSIC SCRIPTS, if the embedder has
-    // one. See set_script_image.
-    std::vector<std::byte> script_image_;
-    std::string script_source_;
+    // ONE PROGRAM PER CLASSIC <script>, kept alive for the page's lifetime, for
+    // the same reason the modules below are: a function declared at a script's
+    // top level holds a `const function_proto *` into its program, and a timer
+    // or an event listener dereferences it long after run_scripts returned.
+    std::vector<std::unique_ptr<script::program>> classic_programs_;
+    // PRECOMPILED IMAGES, KEYED BY WHAT THEY WERE BUILT FROM. See
+    // add_script_image. A vector rather than a map on purpose: a page has a
+    // handful of scripts and a packager hands over a few dozen images, so a
+    // linear scan over 64-bit keys is nothing next to a hash - and the public
+    // header gains no include for a container it does not need.
+    struct held_image {
+        std::uint64_t source_hash = 0;
+        script::script_kind kind = script::script_kind::classic;
+        std::vector<std::byte> bytes;
+    };
+    std::vector<held_image> script_images_;
+    std::vector<std::string> script_sources_;
+    // A LOAD IS IN FLIGHT, AND A SCRIPT ASKED FOR ANOTHER ONE. See load_html:
+    // a navigation from inside a script is queued and performed after the
+    // scripts stop, because doing it where it was asked for destroys the
+    // context the asking script is running on.
+    bool loading_ = false;
+    std::optional<std::string> pending_load_;
     std::size_t scripts_compiled_from_source_ = 0;
     // ONE PROGRAM PER MODULE, kept alive for the page's lifetime. A module's
     // top-level declarations live in its own frame and its functions close over
