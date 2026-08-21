@@ -42,6 +42,24 @@ template <typename F> [[nodiscard]] double median_ms(int runs, F && once) {
     return taken[taken.size() / 2];
 }
 
+// ONE LOAD FROM IMAGES, IN A FUNCTION WITH A NAME, so callgrind can be told to
+// collect only inside it:
+//
+//   valgrind --tool=callgrind --collect-atstart=no \
+//            --toggle-collect=ctpageload_load_from_images ... ctpageload page.html
+//
+// This tool BUILDS the images it hands over, so the compile it exists to avoid
+// happens in the same process - and profiling the whole run measures that
+// compile rather than the load. docs/plans/ctcompile.md records the first time
+// that happened here. `noinline` because a toggle needs a symbol to land on.
+[[gnu::noinline]] std::size_t ctpageload_load_from_images(
+    const std::string & page, const std::vector<std::vector<std::byte>> & images) {
+    ctbrowser::browser browser{ctbrowser::browser_options{800, 600}};
+    for (const auto & one : images) { (void)browser.add_script_image(one); }
+    browser.load_html(page);
+    return browser.scripts_compiled_from_source();
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -104,12 +122,8 @@ int main(int argc, char ** argv) {
         browser.load_html(page);
         compiles_without = browser.scripts_compiled_from_source();
     });
-    const double with_images = median_ms(3, [&] {
-        ctbrowser::browser browser{ctbrowser::browser_options{800, 600}};
-        for (const auto & one : images) { (void)browser.add_script_image(one); }
-        browser.load_html(page);
-        compiles_with = browser.scripts_compiled_from_source();
-    });
+    const double with_images =
+        median_ms(3, [&] { compiles_with = ctpageload_load_from_images(page, images); });
 
     std::printf("load_html from source  %8.2f ms   (compiled %zu of %zu scripts)\n", without,
                 compiles_without, scripts.size());

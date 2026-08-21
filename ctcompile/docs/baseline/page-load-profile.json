@@ -1,0 +1,50 @@
+{
+  "what": "where a page load spends its instructions once the compile is gone - the residual the image cannot delete",
+  "measured_utc": "2026-08-21T05:40:00Z",
+  "commit": "31d88cf",
+  "machine": {
+    "cpu": "AMD EPYC 9V45 96-Core Processor",
+    "cores": 8,
+    "os": "Linux 6.17.0-1022-azure",
+    "compiler": "clang 24.0.0git (alexios-angel/llvm-project e3986d225)",
+    "build": "cmake --preset default (Release)",
+    "host": "devbox"
+  },
+  "metric": "INSTRUCTIONS (callgrind Ir), not wall clock. A share here is not a share of time - a cache miss costs one instruction and hundreds of cycles - so this says where the WORK is, and page-load.json says what it costs.",
+  "page": "p5-basic.html: an inline flag, the 4.5 MB p5 bundle and a sketch, all three handed over as images",
+  "how_this_was_measured": [
+    "ctpageload BUILDS the images it hands over, so profiling the whole run measures the compile it exists to avoid - which is how the first callgrind run in this project was wasted. The image arm is therefore a named, noinline function and callgrind is told to collect only inside it: valgrind --tool=callgrind --collect-atstart=no '--toggle-collect=*ctpageload_load_from_images*'",
+    "586,350,095 instructions collected, against a whole-process count that is dominated by the compile. The tool asserts that no script was compiled from source on that path, so a run that fell back would not be recorded as this."
+  ],
+  "by_category_percent": {
+    "image loader": 26.0,
+    "unattributed": 18.1,
+    "interpreter (run_loop)": 17.4,
+    "property and object access": 12.0,
+    "libc memcpy/memset/memcmp": 9.6,
+    "allocator (mimalloc)": 8.2,
+    "regex engine": 6.4,
+    "source hash (xxh64)": 1.7,
+    "CSS and style": 0.5,
+    "DOM and HTML parsing": 0.0,
+    "layout": 0.0,
+    "paint and raster": 0.0
+  },
+  "top_functions_percent": {
+    "script::load_image": 17.53,
+    "context::run_loop": 12.25,
+    "load_image's per-operand check_slot": 7.49,
+    "context::run_loop (recursive)": 4.87,
+    "__memcpy_avx_unaligned_erms": 4.55,
+    "object_object::find": 4.22,
+    "__memset_avx2_unaligned_erms": 3.77,
+    "context::lookup_property": 2.89
+  },
+  "findings": [
+    "THE BASELINE'S OWN DESCRIPTION OF THIS RESIDUAL IS WRONG, and that is the most useful thing here. page-load.json says what remains is 'HTML parsing, CSS, style, layout and the image load itself'. Measured: HTML parsing is 0.0%, CSS and style together are 0.5%, and layout, paint and raster do not appear at all. Those four are under one percent of the work between them.",
+    "WHAT ACTUALLY REMAINS IS TWO THINGS. The IMAGE LOADER is 26% - the single largest item, and bigger than anything it replaced on this path. And RUNNING p5's OWN TOP LEVEL is most of the rest: interpreter 17.4%, property and object access 12.0%, allocator 8.2%, regex 6.4% - about 44% together, which is a 4.5 MB library building its API surface, not the engine's page pipeline.",
+    "SO PHASE 16A AND 16B WOULD BUY ALMOST NOTHING ON THIS PAGE. A compiled DOM blueprint and a compiled style program target the 0.5% that HTML, CSS and style cost here. That is a real answer to a real question - the ordering in the master plan assumes they matter - and it is measured rather than argued. It says nothing about a page that is mostly markup; it says a great deal about the corpus this project is justified by.",
+    "AND THE LOADER IS NOW THE THING TO OPTIMISE, which it was not before. Its operand pass alone - the check_slot lambda - is 7.49% of everything on this path, which is fifteen times what the whole CSS engine costs. The bound-table rewrite already took 19.74 ms to 19.18; this says where the rest of it is.",
+    "THE INTERPRETER'S SHARE IS NOT THE 1.4% THIS PROJECT QUOTES, and the two numbers are not in conflict. docs/performance.md measures a page load that INCLUDES compiling 4.5 MB of JavaScript, where the compile drowns everything; this measures the same page with the compile removed, in instructions rather than time. Once an image deletes the parse, what is left is a fifth interpreter by instruction count. Neither figure licenses a claim about what an AOT backend would save in milliseconds - that needs its own measurement, and page-load.json's 19 ms is the ceiling it would be a fraction of."
+  ]
+}
