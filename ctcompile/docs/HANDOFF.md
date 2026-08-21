@@ -103,10 +103,19 @@ Measured, `ctcompile/docs/baseline/page-load.json`, p5-basic.html on the devbox:
 
 ## Do these next
 
-1. **Phase 16B is unblocked** — `engine::for_each_rule` exists, so the CSS
-   comparator can go from parse-only to compile-checking whenever 16B starts.
-2. **Phases 1–6**, the runtime preparation, are the actual ladder. Phase 2 is
-   done; 1 and 3–6 are not.
+1. **NOT Phase 16A or 16B, on this corpus.** `docs/baseline/page-load-profile.json`
+   profiles what an image-loaded page load actually spends: HTML parsing is
+   0.0%, CSS and style 0.5%, layout and paint absent. A compiled DOM blueprint
+   and a compiled style program target under one percent between them. 16B is
+   still *unblocked* — `engine::for_each_rule` exists — it is just not worth
+   doing next for these pages.
+2. **The image LOADER is now the largest single item on the path**, at 26%, and
+   its operand pass alone is 7.49% — fifteen times the whole CSS engine. That
+   is where the next startup millisecond is.
+3. **Phases 1–6**, the runtime preparation. Phase 2's TABLE is done and its
+   GATE is not — nothing has ever called a hand-authored AOT function through
+   the ABI, which is the cheapest way to find out whether 1,881 lines of
+   contract are right before 68 helper bodies depend on them.
 
 ## Known problems, not yet acted on
 

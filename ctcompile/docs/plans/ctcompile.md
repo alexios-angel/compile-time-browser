@@ -801,6 +801,64 @@ anyway. What survived is above. One correction fell out of it: the coverage is
 is served by two helpers deliberately, which is the case the union rule exists
 for.
 
+### What is left of a page load, and why 16A and 16B are not next
+
+`page-load.json` said the residual after an image was *"HTML parsing, CSS,
+style, layout and the image load itself."* Profiled, in instructions, on the
+image-loaded path only:
+
+| | share |
+|---|---|
+| **image loader** | **26.0%** |
+| unattributed | 18.1% |
+| interpreter (`run_loop`) | 17.4% |
+| property and object access | 12.0% |
+| libc memcpy/memset | 9.6% |
+| allocator | 8.2% |
+| regex | 6.4% |
+| source hash | 1.7% |
+| **CSS and style** | **0.5%** |
+| **DOM and HTML parsing** | **0.0%** |
+| layout, paint, raster | absent |
+
+**HTML parsing, CSS, style and layout are under one percent of the work between
+them.** What remains is the *loader*, and p5's own top level running — the
+interpreter, property access, the allocator and the regex engine come to about
+44%, which is a 4.5 MB library building its API surface.
+
+That answers a question the master plan's ordering assumes. **Phase 16A compiles
+a DOM blueprint and 16B a style program; on this page they target the 0.5%.**
+Worth knowing before building either, and it needed nothing built to find out.
+It says nothing about a page that is mostly markup — and everything about the
+corpus this project's headline number comes from.
+
+It also moves the target. **The loader is now the largest single thing on the
+path**, which it was not while the compile dwarfed it, and its operand pass
+alone is 7.49% — fifteen times what the whole CSS engine costs.
+
+**Measured without measuring the compile**, which is the trap this project fell
+into once already: `ctpageload` builds the images it hands over, so the image
+arm is a named `noinline` function and callgrind collects only inside it. The
+metric is instructions, not time, and that is why the interpreter's 17.4% here
+does not contradict the 1.4% quoted from `docs/performance.md` — that figure
+measures a page load which *includes* compiling 4.5 MB of JavaScript. Neither
+licenses a claim about what an AOT backend would save in milliseconds.
+
+### Two images of one script, and the order they arrived in
+
+An image keeps `program::source` or drops it, and both are valid images of the
+same text with the same hash and kind — so they collide in the cache, and they
+are not interchangeable: one makes `f.toString()` return the function's text and
+the other `"[native code]"`. `read_image_header` reported the hash and the kind
+and deliberately not the option, so the browser could not tell them apart and
+took the last one. Measured both ways: **keep-then-drop degraded `toString`,
+drop-then-keep did not.** Same inputs, different answer, decided by call order.
+
+The one that keeps the source now wins whichever arrives first — not because
+last-writer-wins is unreasonable but because it is *order-dependent*, and
+because dropping the source is an optimisation that removes behaviour.
+`clear_script_images` is how a caller says it means the lean one.
+
 ## The ladder ahead
 
 | phase | what | where |
