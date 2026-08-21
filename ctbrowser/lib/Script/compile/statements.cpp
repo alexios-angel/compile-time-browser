@@ -610,7 +610,14 @@ void compiler_impl::compile_function_decl(std::int32_t idx) {
     const std::uint32_t index = compile_function_body(idx, std::string{n.text});
     const std::uint32_t mark = reg_mark();
     const std::uint16_t r = alloc_reg();
-    proto().emit(instruction::with_bx(op::closure, r, static_cast<std::uint16_t>(index)));
+    // `index` GOES IN WHOLE. `with_bx` takes a uint32 and splits it across b
+    // and c; three of the four op::closure sites narrowed it to uint16 first,
+    // which is not a bound, it is a WRAP. Measured before the casts went: a
+    // program with 70,001 functions called function 69,999 and ran function
+    // 4,463 - 69,999 minus 65,536 - with no error anywhere. Babylon is 31,905,
+    // so the corpus in this repository sat at 49% of a ceiling that the
+    // instruction encoding never had.
+    proto().emit(instruction::with_bx(op::closure, r, index));
     // AT THE TOP LEVEL a function declaration is a global, by design: a page
     // defines functions the host calls by name, and script scope is what
     // sibling declarations close over.

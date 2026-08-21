@@ -247,15 +247,16 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
                            "entry point and every caller assumes it exists";
         return {};
     }
-    // The compiler's own ceiling, restated where an image could otherwise
-    // exceed it: three of the four op::closure emitters narrow the function
-    // index to uint16 before building the wide operand, so a program with more
-    // than 65,535 functions is one the COMPILER already got wrong. Writing it
-    // would freeze that into an image and round-trip it perfectly.
-    if (from.functions.size() > 65535) {
-        last_write_error = "refusing to write a program with more than 65,535 functions - "
-                           "op::closure's operand is narrowed to 16 bits by the compiler, so "
-                           "such a program is already miscompiled";
+    // THE 65,535 REFUSAL THAT USED TO BE HERE IS GONE, because the reason for it
+    // is. Three of the four op::closure emitters narrowed the function index to
+    // uint16 before building a THIRTY-TWO BIT operand, so a program with more
+    // functions than that was one the compiler had already got wrong, and this
+    // refused to freeze the mistake into a file. The casts were deleted: a
+    // program of 140,001 functions now calls the one it means. The format's own
+    // limit is the u32 the count is written as.
+    if (from.functions.size() > 0xFFFFFFFFull) {
+        last_write_error = "refusing to write a program with more than 4,294,967,295 functions - "
+                           "the image records the count as a 32-bit number";
         return {};
     }
 
@@ -547,9 +548,17 @@ load_result load_image(std::span<const std::byte> bytes,
                     "caller assumes it exists";
         return out;
     }
-    if (function_count > 65535) {
-        out.error = "an image with more than 65,535 functions; op::closure's operand cannot "
-                    "address them";
+    // A COUNT AGAINST BYTES, NOT A CONSTANT. The bound here was 65,535, mirroring
+    // a compiler defect that no longer exists; what has to replace it is not a
+    // bigger constant but the same arithmetic the pools already use, because
+    // `resize` on a count out of a file is the reserve-the-world bug in another
+    // costume. The cheapest function this format can encode is 42 bytes of
+    // fields plus one 7-byte instruction, since a function with no code is
+    // refused below - so a count the remaining bytes cannot pay for is a count
+    // that is lying.
+    constexpr std::size_t least_bytes_per_function = 49;
+    if (!in.need(static_cast<std::size_t>(function_count) * least_bytes_per_function)) {
+        out.error = "the image claims more functions than its remaining bytes could describe";
         return out;
     }
 

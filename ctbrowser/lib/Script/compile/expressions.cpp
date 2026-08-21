@@ -92,7 +92,7 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
     case vp::nk::func_expr:
     case vp::nk::arrow: {
         const std::uint32_t index = compile_function_body(idx, std::string{n.text});
-        proto().emit(instruction::with_bx(op::closure, dst, static_cast<std::uint16_t>(index)));
+        proto().emit(instruction::with_bx(op::closure, dst, index));
         break;
     }
     case vp::nk::this_lit: proto().emit(instruction{op::load_this, dst}); break;

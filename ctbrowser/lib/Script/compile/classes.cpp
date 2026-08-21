@@ -153,7 +153,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     if (!instance_fields.empty()) {
         const std::uint32_t fields = compile_field_initialiser(instance_fields);
         const std::uint16_t init = alloc_reg();
-        proto().emit(instruction::with_bx(op::closure, init, static_cast<std::uint16_t>(fields)));
+        proto().emit(instruction::with_bx(op::closure, init, fields));
         proto().emit(instruction{op::set_prop, dst, name_operand("__fields"), init});
     }
 

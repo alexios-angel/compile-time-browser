@@ -401,6 +401,69 @@ int main() {
         std::printf("  single-byte corruption: %zu of %zu offsets still loaded\n", accepted, tried);
     }
 
+    // --- MORE FUNCTIONS THAN A 16-BIT OPERAND HOLDS ----------------------
+    // `op::closure` names its target with a THIRTY-TWO BIT operand, and three
+    // of the four sites that emit it narrowed the index to uint16 first. That
+    // is not a bound, it is a wrap: a program with 70,001 functions called
+    // function 69,999 and ran function 4,463 - 69,999 minus 65,536 - with no
+    // error from the compiler, the VM or this format. Babylon is 31,905
+    // functions, so the corpus in this repository was at 49% of a ceiling the
+    // instruction encoding never had.
+    //
+    // 70,001 functions compile in 17 ms, so this is a cheap thing to pin.
+    {
+        std::string many = "var a = [";
+        // ONE name for all of them: the compiler refuses a program with more
+        // than 65,536 distinct property names - a real guard, for the operand
+        // that selects one - and naming each function would hit that first and
+        // prove nothing about this.
+        constexpr int count = 70000;
+        for (int i = 0; i < count; ++i) {
+            if (i != 0) { many += ","; }
+            many += "()=>" + std::to_string(i);
+        }
+        many += "];\nvar answer = a[" + std::to_string(count - 1) + "]();\n";
+
+        const program wide = compiled(many);
+        check(wide.ok, "a program with 70,001 functions compiles");
+        check(wide.functions.size() > 65536, "and really does have more than 65,536 of them");
+
+        // THE INSTRUCTION, NOT THE OUTPUT. Running it would prove the same
+        // thing, but this says exactly which field was wrong: every op::closure
+        // must name a function index that exists, and the last one must reach
+        // past the old ceiling.
+        std::uint32_t highest = 0;
+        std::size_t closures = 0;
+        for (const auto & fn : wide.functions) {
+            for (const auto & one : fn.code) {
+                if (one.code == ctbrowser::script::op::closure) {
+                    ++closures;
+                    highest = std::max(highest, one.bx());
+                    if (one.bx() >= wide.functions.size()) {
+                        std::printf("FAIL an op::closure names function %u of %zu\n", one.bx(),
+                                    wide.functions.size());
+                        ++failures;
+                        break;
+                    }
+                }
+            }
+        }
+        check(closures >= static_cast<std::size_t>(count), "every function is closed over");
+        check(highest > 65535, "AND AN INDEX PAST 65,535 SURVIVES THE ENCODING");
+
+        // And the image carries it, which the writer used to refuse outright.
+        const auto image = write_image(wide);
+        check(!image.empty(), "an image is written for it");
+        if (!image.empty()) {
+            const auto back = load_image(image);
+            check(back.ok, "and loads");
+            if (back.ok) {
+                check(back.value.functions.size() == wide.functions.size(),
+                      "with every function present");
+            }
+        }
+    }
+
     // --- THE SAME TEXT, COMPILED TWO WAYS ---------------------------------
     // A source hash is a hash of the TEXT, and the same text compiles to two
     // different programs: a classic script declares into the global object, a
