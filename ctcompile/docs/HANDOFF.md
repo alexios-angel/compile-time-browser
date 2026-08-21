@@ -80,6 +80,15 @@ Measured, `ctcompile/docs/baseline/page-load.json`, p5-basic.html on the devbox:
    heap-use-after-free in the CSS parser that fires on every browser
    construction. 52 of 52 now.
 
+9. **`finally` was wrong on six of nine specified behaviours** and is rewritten
+   as a completion record. One of them lost exceptions outright. p5_api moved
+   172 → 175.
+10. **The 65,535 proto ceiling was three stray casts**, and Babylon sat at 49%
+    of it. Gone; 140,001 functions verified.
+11. **The fingerprint now hashes what the compiler EMITS**, not only which
+    opcodes exist — a canary compiled and folded. The `finally` rewrite is
+    exactly the change it was blind to.
+
 ## Do these next
 
 1. **Phase 16B is unblocked** — `engine::for_each_rule` exists, so the CSS
@@ -89,7 +98,9 @@ Measured, `ctcompile/docs/baseline/page-load.json`, p5-basic.html on the devbox:
 
 ## Known problems, not yet acted on
 
-* **The 65,535 proto ceiling is at 49% on a corpus that already exists.** Three
+* ~~The 65,535 proto ceiling~~ — FIXED 2026-08-21, it was three casts.
+* **OLD, KEPT FOR THE REASONING:** the 65,535 proto ceiling was at 49% on a
+  corpus that already existed. Three
   of four `op::closure` emitters cast the function index to `uint16` before the
   32-bit `with_bx` (`statements.cpp:613`, `expressions.cpp:95`,
   `classes.cpp:156`; `classes.cpp:109` does not). Above 65,535 protos the

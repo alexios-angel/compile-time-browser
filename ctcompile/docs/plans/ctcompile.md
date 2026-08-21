@@ -685,6 +685,70 @@ The fix is one copy, and it costs 4% of a bootstrap.css parse (2.44 → 2.55 ms,
 interleaved, losing all five pairs). The first version of that comment said it
 was free; it is not, and the number is in the file.
 
+### `finally` ran on two ways out of a try block, and JavaScript has five
+
+Scoping Phases 1 and 3–6 with a fan-out produced three orderings that disagreed,
+and the one that argued for **doing the least** was right: it pointed at a live
+defect in the reference implementation rather than at scaffolding for a backend
+that does not exist. `compile_try` emitted the finally block twice and let every
+other exit leave without it. Measured against what JavaScript specifies, **six of
+nine cases were wrong**, and the worst discarded an exception outright —
+`try { throw x } finally { }` sent the throw to a catch path with no catch,
+ran the finally and fell through, with no error anywhere.
+
+It is now a completion record and one copy of the block. Nesting falls out for
+free because the dispatch re-emits the *same* lowering the statement would have
+emitted, so a `return` crossing three finallys is handed outward one at a time
+and no finally knows how deep it is.
+
+**Two defects in the fix were mine and neither was found by reading.** A
+`return` inside a nested function was routed into the *enclosing* function's
+open finally — pushing a jump onto its arrival list to be patched into another
+proto's code array — which `compile_function_body` already guards against for
+`optional_exits_`, with a comment saying why. And a `break` to a loop opened
+*inside* the try was routed through a finally it never crosses, so the dispatch
+re-emitted a jump to a loop already popped: `loop_index 1 of 0 loops`. **Both
+were found by the asan preset**, the first as a leak in the compiler — which is
+what an arrival list that never gets patched looks like from outside.
+
+**The corpus moved, which is what a ratchet is for.** p5_api went 172 → 175:
+three advances recorded deliberately, because p5's
+`try { … } finally { this._inUserDraw = false }` now actually resets. The fourth
+change was a probe that had been passing *because* the engine swallowed
+exceptions — it called `curveDetail()` on a 2D canvas, where p5 throws on
+purpose. It now requires that throw, which turns an accidental pass into a
+deliberate test of the thing that was broken.
+
+### And the fingerprint could not see any of it
+
+That rewrite changed the bytecode of every `try/finally` in every program and
+changed **not one opcode**, so `image_fingerprint()` did not move: an image
+written that morning, carrying the broken `finally`, would have loaded into the
+fixed build and run at full speed. `opcode_set_identity` says what the opcodes
+*are* and nothing said what the compiler *emits*.
+
+So the fingerprint now **compiles a canary and hashes the result** — thirty
+lines covering closures, classes, generators, async, destructuring, optional
+chaining, labelled break, switch, for-in, a BigInt and three shapes of
+try/finally — folded over every instruction's opcode and operands and each
+function's frame shape. A version constant would have worked, and this
+function's own comment already argued against one: *a version says what someone
+remembered to bump*. Demonstrated on the change that motivated it: with the fix
+in place `1b0fb1310f6b5265`, with it bypassed `6b239364b59b87b2`, and an image
+written by one refused by the other.
+
+### A 32-bit operand that three sites made 16 bits wide
+
+`op::closure` names its target with `with_bx`, which takes a `uint32_t`. Three
+of the four sites emitting it cast the index to `uint16_t` first — not a bound,
+a **wrap**. Measured: a program of 70,001 functions called function 69,999 and
+ran function **4,463**, with no error from the compiler, the VM or the image
+validator. Babylon, vendored here, is 31,905 functions — **49% of a ceiling the
+encoding never had.** Deleting the three casts is the whole fix; 140,001
+functions now compile in 34 ms and call what they name. The image's own 65,535
+refusal went with it, replaced not by a bigger constant but by the arithmetic
+the pools already use: a count checked against the bytes remaining.
+
 ## The ladder ahead
 
 | phase | what | where |
