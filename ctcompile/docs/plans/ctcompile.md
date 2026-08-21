@@ -749,6 +749,58 @@ functions now compile in 34 ms and call what they name. The image's own 65,535
 refusal went with it, replaced not by a bigger constant but by the arithmetic
 the pools already use: a count checked against the bytes remaining.
 
+### Phase 2's table is done and Phase 2's gate was never met
+
+Scoping the next phases turned up a claim worth checking: the record says Phase
+2 is complete, and the plan's gate for it is *"VM code calls a hand-authored AOT
+closure through the real runtime ABI."* Nothing has ever done that. There is no
+helper body, no native entry on a `function_proto`, no `lib/AOT/`. That is a
+legitimate position — `aot.hpp` says so itself, "NO DEFINITIONS YET … a contract
+is useful before its implementation exists" — but "done" was the wrong word for
+it, and the handoff now distinguishes the two.
+
+**Worse, the runtime had never compiled its own contract.** `aot.hpp` expands
+the table into an enum and 68 prototypes, and the only file in the repository
+that included it was `ctcompile/test/Inventories.cpp`. The presets that most
+need the check are precisely the ones that skip it: `browser`,
+`browser-no-llvm`, `asan`, `tsan` and `windows` all configure with
+`CTBROWSER_ENABLE_PROJECTS` empty, so ctcompile is not built and **neither the
+ABI nor `EngineContract.hpp` is parsed at all** — one configuration in six
+checked any of it. Verified in the asan build tree, which has no `ctcompile/`
+directory.
+
+`ctbrowser/lib/Script/aot_contract.cpp` is a translation unit of nothing but
+`static_assert`s, inside `ctbrowser-script`, so all six now compile it. Each
+assertion was checked to **bite** by mutating the table on the devbox: changing
+`ct_aot_check`'s return column fails the classifier pin, and making
+`ct_aot_truthy` return `int32_t` fails the return-type rule with the error
+anchored at `aot_helpers.def:662`, naming the row.
+
+The rule it enforces is one the table stated only in prose: **a signed result is
+a status and a status carries a frame handle**, over all 68 rows, with the one
+documented exception — `ct_aot_to_int32`, *"a signed int32 return that is DATA,
+not a status … it takes no frame handle, which is the mechanical tell."* Twenty-
+five rows return `int32_t`; twenty-four take a frame.
+
+And the completion vocabulary exists. `CT_AOT_OK`, `CT_AOT_FAILED`,
+`CT_AOT_UNWOUND` and `CT_AOT_CAUGHT` were cited 35 times and defined nowhere, so
+24 prototypes returned a bare `int32_t` whose meaning lived only in prose while
+the table already assumed ctcompile would `switch` on it. `ct_aot_status` now
+derives its underlying type *from* `ct_aot_check`'s prototype. **The precedence
+is the contract; the numbers are not** — the table fixes the order a classifier
+tests in and fixes no integer, so none is invented here. `CT_AOT_PAD_BIT` and
+`CT_AOT_FRAME_BYTES` stay undeclared on purpose: both are Phase 4 layout
+decisions, and freezing either on no evidence would put a guess in a header two
+backends read.
+
+A fan-out of 28 agents proposed the assertions and then tried to kill them; the
+verify pass earned its keep by **rejecting several as tautologies**, one of them
+proved unfalsifiable by mutating the table and watching the assertion pass
+anyway. What survived is above. One correction fell out of it: the coverage is
+83 of 93 opcodes, not 84 — there are 84 `CT_AOT_COVERS` rows because `type_of`
+is served by two helpers deliberately, which is the case the union rule exists
+for.
+
 ## The ladder ahead
 
 | phase | what | where |
