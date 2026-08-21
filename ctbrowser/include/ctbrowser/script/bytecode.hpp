@@ -1,6 +1,8 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <ctbrowser/script/value.hpp>
@@ -259,6 +261,56 @@ inline constexpr std::size_t opcode_count = 0
 #undef CT_OPCODE
 static_assert(opcode_count == static_cast<std::size_t>(op::halt) + 1,
               "bytecode_opcodes.def must list every opcode in `enum class op` exactly once");
+
+// AND IN THE SAME ORDER, which the count above cannot see. Two lists of 93 names
+// can agree on the length and disagree on every position, and nothing here would
+// have said so: `shapes[]` in program_image.cpp is built from the .def and
+// INDEXED BY THE ENUM, so a table whose rows had drifted would bounds-check
+// every operand against some other opcode's pool - a validator quietly checking
+// the wrong thing, which is worse than no validator. Verified by swapping two
+// rows: without this the build is clean.
+//
+// The list still exists twice, and this is the cheapest honest fix rather than
+// the right one. Generating `enum class op` from the .def would leave ONE list -
+// which is what the paragraph above already claims - and the reason it was not
+// done here is that the enumerators carry the per-opcode commentary that makes
+// the file readable, and moving it into the .def's columns is a bigger change
+// than a build error deserves.
+#define CT_OPCODE(name_, ...) op::name_,
+inline constexpr op opcode_order[] = {
+#include <ctbrowser/script/bytecode_opcodes.def>
+};
+#undef CT_OPCODE
+static_assert(
+    [] {
+        for (std::size_t i = 0; i < opcode_count; ++i) {
+            if (static_cast<std::size_t>(opcode_order[i]) != i) { return false; }
+        }
+        return true;
+    }(),
+    "bytecode_opcodes.def lists the opcodes in a different ORDER than `enum class op`");
+
+// THE IDENTITY OF THE INSTRUCTION SET, as a number. Every opcode's spelling, in
+// order, folded together - so renaming one, reordering two or adding one to the
+// middle produces a different value, and the COUNT staying at 93 does not save
+// it. `image_fingerprint()` mixes this, because an image stores opcodes as bare
+// bytes: if byte 45 means `sub` when the image is written and `add` when it is
+// read, the program loads clean, runs at full speed and computes the wrong
+// answer. That is the worst failure this format has, and until now the only
+// thing standing against it was a count that a renumbering does not change.
+#define CT_OPCODE(name_, ...) #name_ ";"
+inline constexpr std::string_view opcode_names_joined =
+#include <ctbrowser/script/bytecode_opcodes.def>
+    ;
+#undef CT_OPCODE
+inline constexpr std::uint64_t opcode_set_identity = [] {
+    std::uint64_t h = 14695981039346656037ull; // FNV-1a, and only a name here
+    for (const char c : opcode_names_joined) {
+        h ^= static_cast<std::uint8_t>(c);
+        h *= 1099511628211ull;
+    }
+    return h;
+}();
 
 struct instruction {
     op code = op::halt;

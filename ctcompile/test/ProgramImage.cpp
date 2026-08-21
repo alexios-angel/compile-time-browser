@@ -10,6 +10,7 @@
 #include <ctbrowser/script/compile.hpp>
 #include <ctbrowser/script/program_image.hpp>
 
+#include <algorithm>
 #include <bit>
 #include <cstdint>
 #include <cstdio>
@@ -397,6 +398,56 @@ int main() {
             if (load_image(corrupt).ok) { ++accepted; }
         }
         std::printf("  single-byte corruption: %zu of %zu offsets still loaded\n", accepted, tried);
+    }
+
+    // --- THE IDENTITY OF THE INSTRUCTION SET ------------------------------
+    // An image stores opcodes as bare bytes, so if byte 45 means `sub` when it
+    // is written and `add` when it is read, the program loads clean and
+    // computes the wrong answer. `image_fingerprint()` guards that, and until
+    // today it guarded it with `opcode_count` alone - which a renumbering does
+    // not change. Measured before the fix: reordering two opcodes in both the
+    // enum and the table left the fingerprint at 19b2766c29d904c0 and the image
+    // loaded with ok=1. After it, the same reorder moves the fingerprint and
+    // the loader refuses.
+    //
+    // The value itself is NOT pinned here. Phases 13 and 14 add opcodes on
+    // purpose, so a golden number would be a line to edit rather than a fact to
+    // check. What is pinned is the property that makes it work: the identity
+    // depends on the ORDER of the names and not merely on their contents.
+    {
+        const auto fold = [](const std::vector<std::string_view> & names) {
+            std::uint64_t h = fnv_basis;
+            for (const std::string_view one : names) {
+                for (const char c : one) {
+                    h ^= static_cast<std::uint8_t>(c);
+                    h *= fnv_prime;
+                }
+                h ^= static_cast<std::uint8_t>(';');
+                h *= fnv_prime;
+            }
+            return h;
+        };
+        std::vector<std::string_view> forward;
+        for (std::size_t at = 0; at < ctbrowser::script::opcode_names_joined.size();) {
+            const std::size_t end = ctbrowser::script::opcode_names_joined.find(';', at);
+            forward.push_back(ctbrowser::script::opcode_names_joined.substr(at, end - at));
+            at = end + 1;
+        }
+        check(forward.size() == ctbrowser::script::opcode_count,
+              "the joined opcode names split back into one name per opcode");
+        check(fold(forward) == ctbrowser::script::opcode_set_identity,
+              "and folding them reproduces the identity the fingerprint mixes");
+
+        std::vector<std::string_view> swapped = forward;
+        if (swapped.size() > 1) { std::swap(swapped[0], swapped[1]); }
+        check(fold(swapped) != ctbrowser::script::opcode_set_identity,
+              "EXCHANGING TWO OPCODES CHANGES THE IDENTITY - which is the whole "
+              "point, and is what opcode_count could not see");
+
+        std::vector<std::string_view> reversed = forward;
+        std::ranges::reverse(reversed);
+        check(fold(reversed) != ctbrowser::script::opcode_set_identity,
+              "and so does reversing the whole instruction set");
     }
 
     // --- THE SOURCE HASH -------------------------------------------------

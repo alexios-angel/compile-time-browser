@@ -137,16 +137,27 @@ std::uint64_t image_fingerprint() noexcept {
     // version says what someone remembered to bump, and this says what is
     // actually true of the build reading the file.
     //
-    // opcode_count is the load-bearing one. Phases 13 and 14 renumber
-    // `enum class op`, and an image written before that describes different
-    // instructions with the same bytes - which would run at full speed and be
-    // wrong, the worst failure available here.
+    // `opcode_set_identity` is the load-bearing one, and it used to be
+    // `opcode_count`, which could not do the job this paragraph claimed for it.
+    // Phases 13 and 14 renumber `enum class op`, and an image written before
+    // that describes different instructions with the same bytes - which would
+    // run at full speed and be wrong, the worst failure available here. A
+    // renumbering that neither adds nor removes an opcode leaves the COUNT
+    // untouched, so the guard was blind to precisely the case it was written
+    // for. The identity folds every opcode's spelling in order; see
+    // bytecode.hpp.
     std::uint64_t h = fnv_basis;
     const auto mix = [&h](std::uint64_t v) {
         h ^= v;
         h *= fnv_prime;
     };
     mix(opcode_count);
+    // AND WHAT THE OPCODES ARE, not merely how many. A renumbering keeps the
+    // count at 93 and changes what every stored byte means - which is the exact
+    // failure the paragraph above names, and which `opcode_count` alone does not
+    // see. Proven before it was fixed: reordering the table left this function
+    // returning the identical 19b2766c29d904c0.
+    mix(opcode_set_identity);
     mix(sizeof(instruction));
     mix(sizeof(value));
     mix(sizeof(upvalue_desc));
