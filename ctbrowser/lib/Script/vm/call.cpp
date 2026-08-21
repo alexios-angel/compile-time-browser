@@ -215,6 +215,22 @@ run_result context::run(const program & prog) {
     // statement, not between two of them - so the checkpoint is here, once the
     // top level has finished.
     drain_microtasks();
+    // AND A FAILED SCRIPT'S QUEUE DIES WITH IT. `drain_microtasks` stops on
+    // `failed_`, so a script that threw left its already-queued jobs in the
+    // queue - and once a page's classic scripts became separate programs, the
+    // NEXT script's checkpoint ran them, after that script's synchronous code.
+    // A handler belonging to a script that is over should not surface in the
+    // middle of the following one.
+    //
+    // CHROME WOULD RUN THEM, and that difference is real: an uncaught throw
+    // does not cancel a microtask checkpoint there. It is not matched here
+    // because `raise` and an uncaught throw set the same `failed_` - the
+    // call-stack ceiling and the allocation ceiling look exactly like a page
+    // exception from this function - and draining after a resource ceiling
+    // would run more JavaScript precisely where the ceiling exists to stop it.
+    // Telling the two apart is the fix; dropping the queue is the safe half of
+    // it, and this comment is the record of which half was taken.
+    if (failed_) { microtasks_.clear(); }
     result.ok = !failed_;
     result.error = error_;
     return result;
@@ -223,6 +239,27 @@ run_result context::run(const program & prog) {
 value context::execute(const program & prog, const function_proto & entry) {
     registers_.assign(entry.frame_size + 8u, value::undefined());
     frames_.clear();
+    // AND THE HANDLER STACK, WHICH FRAMES_.CLEAR() DOES NOT IMPLY. A VM-level
+    // `raise` - the call-stack ceiling, the allocation ceiling - returns out of
+    // run_loop WITHOUT unwinding, because the loop's condition is
+    // `frames_.size() > stop_depth && !failed_` and it simply stops. Any `try`
+    // that was live at that moment stays on `handlers_` recording frame 0.
+    //
+    // A SECOND TOP-LEVEL PROGRAM ON THIS CONTEXT THEN HAS A FRAME 0 TOO, so
+    // `unwind_to_handler` accepts the dead program's handler: it only rejects
+    // one whose frame has returned. It writes the thrown value into the wrong
+    // frame's register and sets `ip` to an ADDRESS OUT OF THE OTHER PROGRAM'S
+    // BYTECODE, and the interpreter carries on from there. Measured: a page
+    // whose first script exhausts the stack inside a `try` and whose second
+    // alerts 1..8 then throws produced 1,2,3,4,5,6,7,8,3,4,5,6,7,8 - the throw
+    // swallowed, six statements run twice - and padding the first script moved
+    // where the second one resumed.
+    //
+    // It became reachable when a page's classic scripts stopped being one
+    // program: before that, a raise in the first script ended the only top
+    // level and nothing else ran on the dirtied context.
+    handlers_.clear();
+    thrown_ = value::undefined();
     frames_.push_back(call_frame{&entry, 0, 0, 0, 0, nullptr, value::undefined(), 0});
     program_ = &prog;
     // Per-frame string interning: a literal in a loop should allocate once,
