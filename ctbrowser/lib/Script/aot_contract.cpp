@@ -74,8 +74,8 @@ static_assert(std::is_same_v<std::underlying_type_t<ct_aot_status>,
                       signature<decltype(name_)>::takes_frame ||                                   \
                       std::string_view{#name_} == "ct_aot_to_int32",                               \
                   #name_ ": a signed result is a STATUS, and no status-returning helper "          \
-                          "lacks its frame handle - see ct_aot_to_int32 for the one "              \
-                          "exception the table documents");
+                         "lacks its frame handle - see ct_aot_to_int32 for the one "               \
+                         "exception the table documents");
 #include <ctbrowser/aot/aot_helpers.def>
 #undef CT_AOT_HELPER
 
@@ -89,7 +89,7 @@ static_assert(std::is_same_v<std::underlying_type_t<ct_aot_status>,
 #define CT_AOT_HELPER(name_, ret_, params_, may_throw_, may_reenter_, is_safepoint_)               \
     static_assert(std::is_void_v<ret_> || std::is_scalar_v<ret_>,                                  \
                   #name_ ": every helper answers in a register - a struct by value would "         \
-                          "add a hidden out-pointer ahead of the frame handle");
+                         "add a hidden out-pointer ahead of the frame handle");
 #include <ctbrowser/aot/aot_helpers.def>
 #undef CT_AOT_HELPER
 
@@ -120,6 +120,5 @@ static_assert(script::value::from_bits(0ull).bits() == 0ull &&
 // constexpr - so a change that made `number(1.0).bits()` disagree with the
 // NaN-boxing the table assumes would pass here. That belongs in a test rather
 // than an assertion, and vm_basics already exercises every constructor.
-
 
 } // namespace ctbrowser::aot
