@@ -45,9 +45,9 @@ Measured, `ctcompile/docs/baseline/page-load.json`, p5-basic.html on the devbox:
 
 | | ms |
 |---|---|
-| `load_html` compiling its own scripts | **65.38** |
-| `load_html` handed a program image | **19.78** |
-| | **70% of the page load** |
+| `load_html` compiling its own scripts | **66.80** |
+| `load_html` handed a program image | **18.97** |
+| | **72% of the page load** |
 
 ## What the last session did
 
@@ -57,20 +57,20 @@ Measured, `ctcompile/docs/baseline/page-load.json`, p5-basic.html on the devbox:
    collides on 50,678 of 262,145 single-byte edits of real p5.js. The plan
    explains why, and `ctcompile/test/ProgramImage.cpp` keeps that hash as a
    blinded control so the case that catches it can be watched failing.
-2. **`page-load.json` re-recorded**, 53% → 70%.
+2. **`page-load.json` re-recorded**, 53% → 72%.
 3. **Operand validation**: the per-operand switch became a bound table, 19.74 →
    19.18 ms, 15 of 15 paired runs. The "suspect fast path" the previous handoff
    proposed was NOT implemented and should not be — see the plan.
+4. **`function_proto::nested` deleted.** Nothing ever wrote it; its only reader
+   was a ratchet check that could not fire. Image format 1 → 2, and the image is
+   19 KB smaller for p5, 128 KB for babylon.
+5. **The measurement tools are built by `all` now** — see the trap below.
 
 ## Do these next
 
-1. **`function_proto::nested` is dead code.** Nothing writes it, and its only
-   reader is a check in `p5_ratchet.cpp` that can therefore never fire. The
-   image serializes it as a count so the day it starts being filled is a test
-   failure. Consider deleting it outright.
-2. **Phase 16B is unblocked** — `engine::for_each_rule` exists, so the CSS
+1. **Phase 16B is unblocked** — `engine::for_each_rule` exists, so the CSS
    comparator can go from parse-only to compile-checking whenever 16B starts.
-3. **Phases 1–6**, the runtime preparation, are the actual ladder. Phase 2 is
+2. **Phases 1–6**, the runtime preparation, are the actual ladder. Phase 2 is
    done; 1 and 3–6 are not.
 
 ## Known problems, not yet acted on
@@ -89,6 +89,10 @@ Measured, `ctcompile/docs/baseline/page-load.json`, p5-basic.html on the devbox:
   script to a function declared in a later one works today and would stop.
   **This is what stands between the current win and "bake p5 once, reuse it",
   and it is the highest-value thing left on this path.**
+* **`ctbrowser`'s benchmarks are still `EXCLUDE_FROM_ALL` with no aggregate**,
+  which is the defect that invalidated the first computed-goto measurement and
+  then this session's first page-load reading. Fixing them is the same three
+  lines as `ctcompile-tools`.
 * **The corruption fuzz prints a count it does not assert** —
   `ProgramImage.cpp` reports "1615 of 3205 offsets still loaded" and nothing
   pins it. Pinning it was considered and not done: the number depends on the
@@ -110,11 +114,19 @@ Measured, `ctcompile/docs/baseline/page-load.json`, p5-basic.html on the devbox:
   `CXX="clang++ -O2"; $CXX foo.cpp` fails as one word. Inline your flags.
 * **Chain gates with `&&`, never `;`** — a `;` after `tools/format.sh --check`
   let an unformatted commit through once.
-* **`rsync -az` preserves mtimes, and it will hand you a stale binary.** A
-  measurement taken straight after a green `remote-build.sh` reported the OLD
-  number, because ninja had relinked the test binary and not `ctpageload`.
-  `touch` the source and build the target explicitly before measuring, and
-  distrust any figure that exactly matches the arm you were replacing.
+* **A green build does not mean the binary you are about to run was built.**
+  `EXCLUDE_FROM_ALL` targets are not in `all` AT ALL, so `cmake --build`
+  rebuilds the engine, relinks every test, reports 97/97 — and leaves an
+  excluded executable at whatever revision someone last built by hand. That has
+  now produced a wrong number in this tree three times
+  (`docs/history/computed-goto.md`, `docs/performance.md`, and
+  `ctcompile/docs/baseline/page-load.json`). The ctcompile measurement tools are
+  fixed — `ctcompile-tools ALL` in `ctcompile/tools/CMakeLists.txt` — but
+  **`ctbrowser`'s benchmarks still have it**, so anything measured with
+  `ctbrowser-test-bench_*` must be built explicitly and checksummed.
+  Separately, `rsync -az` preserves mtimes, so restoring a file can leave ninja
+  thinking it is current; `touch` it. Distrust any figure that exactly matches
+  the arm you were replacing.
 * **No hardware perf counters on the devbox** (it is a VM) — `perf stat` reports
   `<not supported>`. Use callgrind for attribution, dhat for allocation, and an
   **interleaved A/B of two binaries** for wall clock. Not a before-and-after

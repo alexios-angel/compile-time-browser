@@ -329,7 +329,6 @@ struct function_proto {
     std::vector<std::string> strings;
     std::vector<std::string> names; // for get_global/get_prop operands
     std::vector<upvalue_desc> upvalues;
-    std::vector<std::uint32_t> nested; // indices into program::functions
 
     [[nodiscard]] std::uint32_t add_constant(value v) {
         constants.push_back(v);

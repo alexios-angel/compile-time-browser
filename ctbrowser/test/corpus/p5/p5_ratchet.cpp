@@ -210,10 +210,6 @@ private:
             return who + " holds " + std::to_string(fn.constants.size()) +
                    " constants; the limit is " + std::to_string(wide_max);
         }
-        if (fn.nested.size() > wide_max) {
-            return who + " nests " + std::to_string(fn.nested.size()) +
-                   " functions; the limit is " + std::to_string(wide_max);
-        }
         if (fn.code.size() > jump_max) {
             return who + " compiles to " + std::to_string(fn.code.size()) +
                    " instructions; a jump reaches " + std::to_string(jump_max);

@@ -108,6 +108,29 @@ void must_refuse(std::string_view what, std::vector<std::byte> bytes,
     }
 }
 
+// AND REFUSED FOR THE STATED REASON. Two decisions in program_image.cpp rest on
+// which check runs first - the source hash algorithm is tagged into the
+// FINGERPRINT rather than the version because the layout did not change, and
+// dropping `nested` bumped the VERSION because it did. Neither is worth
+// anything if the loader reports the wrong one, and "it was refused" cannot
+// tell them apart.
+void must_refuse_saying(std::string_view what, std::vector<std::byte> bytes,
+                        void (*corrupt)(std::vector<std::byte> &), std::string_view expected) {
+    corrupt(bytes);
+    const auto back = load_image(bytes);
+    if (back.ok) {
+        std::printf("FAIL the loader accepted: %.*s\n", static_cast<int>(what.size()), what.data());
+        ++failures;
+        return;
+    }
+    if (back.error.find(expected) == std::string::npos) {
+        std::printf("FAIL %.*s was refused as \"%s\", which does not mention \"%.*s\"\n",
+                    static_cast<int>(what.size()), what.data(), back.error.c_str(),
+                    static_cast<int>(expected.size()), expected.data());
+        ++failures;
+    }
+}
+
 // --- THE HASHES THE SOURCE HASH MUST NOT BE ---------------------------
 //
 // `image_source_hash` is what makes the cache safe - an image built from other
@@ -287,8 +310,17 @@ int main() {
                 [](std::vector<std::byte> & b) { b.resize(b.size() / 2); });
     must_refuse("an image with no magic", bytes,
                 [](std::vector<std::byte> & b) { b[0] = std::byte{0}; });
-    must_refuse("an image from a different engine build", bytes,
-                [](std::vector<std::byte> & b) { b[8] ^= std::byte{0xFF}; });
+    // THE TWO REFUSALS THAT MUST NOT BE CONFUSED WITH EACH OTHER. The version
+    // sits at offset 4 and the fingerprint at 8, and the loader reads them in
+    // that order on purpose: a changed LAYOUT has to be reported as a format
+    // version, and a changed MEANING as a different engine. Bumping the wrong
+    // one sends a reader looking for a format difference that is not there.
+    must_refuse_saying(
+        "an image in an older format version", bytes,
+        [](std::vector<std::byte> & b) { b[4] = std::byte{1}; }, "image format version 1");
+    must_refuse_saying(
+        "an image from a different engine build", bytes,
+        [](std::vector<std::byte> & b) { b[8] ^= std::byte{0xFF}; }, "different engine build");
     must_refuse("an empty image", bytes, [](std::vector<std::byte> & b) { b.clear(); });
     must_refuse("an image with a nonsense option", bytes,
                 [](std::vector<std::byte> & b) { b[16] = std::byte{9}; });

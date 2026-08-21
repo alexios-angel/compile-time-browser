@@ -137,13 +137,6 @@ std::optional<difference> compare(const program & expected, const program & actu
                        w.found;
             }
         }
-
-        if (!w.count(a.nested.size(), b.nested.size(), where, "nested count")) { return w.found; }
-        for (std::size_t i = 0; i < a.nested.size(); ++i) {
-            if (a.nested[i] != b.nested[i]) {
-                return w.differ(where + ", nested " + std::to_string(i), "function index"), w.found;
-            }
-        }
     }
     return std::nullopt;
 }

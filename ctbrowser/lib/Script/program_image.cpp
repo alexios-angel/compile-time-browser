@@ -22,7 +22,14 @@ namespace ctbrowser::script {
 namespace {
 
 constexpr std::uint32_t magic = 0x43544243; // 'CTBC'
-constexpr std::uint32_t format_version = 1;
+
+// 2 dropped `function_proto::nested`, a per-function table of always zero.
+// THE LAYOUT CHANGED, which is what this number is for and what the source hash
+// tag below deliberately is not: an image written by build 1 has four bytes per
+// function that build 2 would read as the next field, so the right refusal
+// names the format. The version check runs before the fingerprint for exactly
+// this reason.
+constexpr std::uint32_t format_version = 2;
 
 // FNV-1a's constants, used by `image_fingerprint()` and by nothing else in
 // this file - `image_source_hash` was the other consumer until it became
@@ -325,12 +332,6 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
             out.u8(up.from_parent_local ? 1u : 0u);
             out.u16(up.index);
         }
-        // `nested` is written as a count so the day the compiler starts filling
-        // it is a test failure rather than a silently unserialized field.
-        // Nothing writes it today and its only reader is a ratchet check that
-        // therefore cannot fire.
-        out.u32(static_cast<std::uint32_t>(fn.nested.size()));
-        for (const std::uint32_t n : fn.nested) { out.u32(n); }
     }
     return std::move(out.bytes);
 }
@@ -630,21 +631,6 @@ load_result load_image(std::span<const std::byte> bytes,
             fn.upvalues.push_back(up);
         }
         if (in.bad) { break; }
-
-        const std::uint32_t nested_count = in.u32();
-        if (!in.need(static_cast<std::size_t>(nested_count) * 4u)) {
-            in.fail(where() + "the nested table claims more entries than the image holds");
-            break;
-        }
-        fn.nested.reserve(nested_count);
-        for (std::uint32_t i = 0; i < nested_count && !in.bad; ++i) {
-            const std::uint32_t id = in.u32();
-            if (id >= function_count) {
-                in.fail(where() + "nested entry " + std::to_string(i) + " is not a function");
-                break;
-            }
-            fn.nested.push_back(id);
-        }
     }
     if (in.bad) {
         out.error = in.why;

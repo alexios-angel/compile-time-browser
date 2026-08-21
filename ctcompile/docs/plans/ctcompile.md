@@ -4,7 +4,7 @@
 engine, and PHASE 0 IS COMPLETE: six inventories the build checks, two
 differential comparators written before the things they will accept, and a
 recorded startup baseline. PHASE 15 IS WORKING: a page is handed its scripts
-already compiled, and that is now **70% of a p5 page load**. It compiles nothing
+already compiled, and that is now **72% of a p5 page load**. It compiles nothing
 of its own yet. 97 of 97 tests pass.**
 
 **Done:** Phase -1, the repository restructure — sibling projects, `ctbrowser/`
@@ -523,7 +523,7 @@ reading its neighbour's word, and the four-lane FNV itself — and each negative
 case asserts that its blinded control *does* collide, so a case that stops
 proving anything says so instead of passing quietly.
 
-`docs/baseline/page-load.json` is re-recorded: **65.38 ms to 19.78 ms, 70% of a
+`docs/baseline/page-load.json` is re-recorded: **66.80 ms to 18.97 ms, 72% of a
 p5 page load**, against the 53% it held at `e4aed22`. Two things about that
 number are worth more than the number:
 
@@ -534,12 +534,27 @@ number are worth more than the number:
   builds of this tree differing only in `image_source_hash`, run alternately,
   say 23.7 ms against 19.8, which agrees within 0.1 ms with the hash measured
   alone.
-* **A measurement was taken from a stale binary and nearly recorded.** The first
-  reading after a full remote build reported 23.9 ms for a tree that hashes in
-  0.181 — ninja had not relinked `ctpageload` against the rebuilt
-  `ctbrowser-script`, while the test binary *was* relinked and went green.
-  `rsync -az` preserves mtimes. The tell was that the number matched the A/B's
-  old arm exactly, which is not a coincidence a measurement gets to have.
+* **A measurement was taken from a stale binary and nearly recorded, and the
+  first explanation for it was wrong.** The first reading after a full remote
+  build reported 23.9 ms for a tree that hashes in 0.181. That was blamed on
+  `rsync -az` preserving mtimes. **It is not that.** `ctpageload` was
+  `EXCLUDE_FROM_ALL`, so `cmake --build` never built it at all, and the binary
+  in the build tree was the *previous session's* — which is exactly why its
+  number matched the A/B's old arm to the hundredth of a millisecond. Proven by
+  touching one engine `.cpp`, running a full default build and watching the
+  executable's mtime not move.
+
+  **This tree had been caught by the same mechanism twice before.**
+  `docs/history/computed-goto.md` withdrew a computed-goto result because the
+  benchmark "compared two things neither of which was computed goto";
+  `docs/performance.md` records the same run as invalid. Both write-ups end by
+  telling the next person to check the binary, and that instruction then failed
+  a third time. So it is a build edge now rather than a fourth paragraph:
+  `ctcompile/tools/CMakeLists.txt` grows a `ctcompile-tools ALL` aggregate —
+  the idiom `ctbrowser-tests` already used to keep EXCLUDE_FROM_ALL test
+  executables current — and both tools are verified to relink on a plain
+  `cmake --build`. It costs 3.1 s of a 4.1 s incremental build. The engine's own
+  benchmarks still have the defect and are left alone here.
 
 ### Validation is 15% of an image load, and a table beat a fast path
 
