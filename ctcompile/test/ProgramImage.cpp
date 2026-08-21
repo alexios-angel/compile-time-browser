@@ -401,6 +401,69 @@ int main() {
         std::printf("  single-byte corruption: %zu of %zu offsets still loaded\n", accepted, tried);
     }
 
+    // --- WHAT THE COMPILER EMITS, NOT ONLY WHICH OPCODES EXIST -----------
+    // `image_fingerprint()` folds a codegen identity: the canary in
+    // program_image.cpp is compiled and its bytecode hashed, so a change to
+    // what the compiler EMITS moves the fingerprint even though every opcode
+    // stayed the same. It exists because that happened - `finally` was
+    // rewritten on 2026-08-21 from two copies of the block to a completion
+    // record, which changed the bytecode of every try/finally in every program
+    // and changed not one opcode, so an image written that morning would have
+    // loaded into the fixed build carrying the old, wrong `finally`.
+    //
+    // The identity itself cannot be checked from inside one build - that needs
+    // two compilers. What IS checkable is that the fold it uses is sensitive to
+    // exactly the thing it claims: two programs whose bytecode differs must
+    // fold differently, and the same program must fold the same way twice.
+    {
+        const auto fold = [](const program & p) {
+            std::uint64_t h = fnv_basis;
+            const auto mix = [&h](std::uint64_t v) {
+                h ^= v;
+                h *= fnv_prime;
+            };
+            mix(p.ok ? 1u : 0u);
+            mix(p.functions.size());
+            for (const auto & fn : p.functions) {
+                mix(fn.param_count);
+                mix(fn.frame_size);
+                mix(fn.code.size());
+                for (const auto & one : fn.code) {
+                    mix(static_cast<std::uint64_t>(one.code));
+                    mix(one.a);
+                    mix(one.b);
+                    mix(one.c);
+                }
+            }
+            return h;
+        };
+
+        constexpr std::string_view base = "function g() { try { return 1; } finally { } }\n";
+        check(fold(compiled(base)) == fold(compiled(base)),
+              "one source folds to one codegen identity");
+
+        // A DIFFERENT `finally` LOWERING IS A DIFFERENT FOLD, which is the case
+        // that motivated the whole mechanism. The two-copy shape and the
+        // completion record produce different instruction streams for this
+        // source; anything that changes the stream must change the fold.
+        constexpr std::string_view moved = "function g() { try { return 1; } finally { g; } }\n";
+        check(fold(compiled(base)) != fold(compiled(moved)),
+              "A CHANGE INSIDE A FINALLY BLOCK CHANGES THE FOLD");
+
+        // And a change that adds no instruction but moves one register still
+        // counts, because the fold reads a, b and c and not only the opcode.
+        constexpr std::string_view same_ops = "function g(a) { return a; }\n";
+        constexpr std::string_view other_reg = "function g(a, b) { return b; }\n";
+        check(fold(compiled(same_ops)) != fold(compiled(other_reg)),
+              "and so does the same opcode on a different register");
+
+        // The fingerprint is stable within a build - the canary is compiled
+        // once and memoised, and a fingerprint that moved between two calls
+        // would refuse images it had just written.
+        check(ctbrowser::script::image_fingerprint() == ctbrowser::script::image_fingerprint(),
+              "the fingerprint is the same twice");
+    }
+
     // --- MORE FUNCTIONS THAN A 16-BIT OPERAND HOLDS ----------------------
     // `op::closure` names its target with a THIRTY-TWO BIT operand, and three
     // of the four sites that emit it narrowed the index to uint16 first. That

@@ -1,5 +1,7 @@
 #include <ctbrowser/script/program_image.hpp>
 
+#include <ctbrowser/script/compile.hpp>
+
 #include <boost/hash2/xxhash.hpp>
 
 #include <cstring>
@@ -133,6 +135,111 @@ struct source_bytes {
 
 } // namespace
 
+// WHAT THIS BUILD'S COMPILER EMITS, as a number, measured rather than declared.
+//
+// `opcode_set_identity` says what the opcodes ARE. It cannot say what the
+// compiler DOES with them, and a change there is just as fatal to a stored
+// image: on 2026-08-21 `finally` was rewritten from two copies of the block to
+// a completion record, which changed the bytecode for every `try/finally` in
+// every program and changed not one opcode. An image written that morning
+// contains the old, wrong `finally` and would have loaded into the fixed build
+// without a murmur.
+//
+// SO IT COMPILES A CANARY AND HASHES THE RESULT. A version constant would have
+// worked too and is what this file first reached for - and this function's own
+// comment argues against exactly that: "a version says what someone remembered
+// to bump, and this says what is actually true of the build reading the file."
+// A canary needs nobody to remember. Any codegen change that touches the
+// constructs below moves the number by itself.
+//
+// WHAT IT DOES NOT COVER is worth stating: a codegen change affecting only a
+// construct absent from this source is invisible to it. The canary is
+// deliberately broad rather than short for that reason, and adding to it is
+// free - the identity is allowed to change, that is the point.
+//
+// `image_fingerprint()` is `noexcept` and this allocates, so the compile is
+// wrapped: a throw here would terminate the process over a diagnostic. A
+// failure gets its own identity rather than a zero, so an engine that cannot
+// compile its own canary refuses every image instead of quietly agreeing with
+// one.
+[[nodiscard]] std::uint64_t codegen_identity() noexcept {
+    // Compiled ONCE. This is on the path of every image load and write.
+    static const std::uint64_t identity = []() noexcept -> std::uint64_t {
+        try {
+            constexpr std::string_view canary =
+                "var g = 0;\n"
+                "function plain(a, b) { return a + b * 2; }\n"
+                "const arrow = (x) => x === 0 ? 'z' : `t${x}`;\n"
+                "function loops(n) {\n"
+                "  let total = 0;\n"
+                "  outer: for (let i = 0; i < n; i++) {\n"
+                "    for (const c of [1, 2, 3]) { if (c === 2) { continue outer; } total += c; }\n"
+                "    while (total > 100) { break outer; }\n"
+                "    do { total += 1; } while (false);\n"
+                "  }\n"
+                "  return total;\n"
+                "}\n"
+                "function guards(x) {\n"
+                "  try { if (x) { return 'r'; } throw new Error('e'); }\n"
+                "  catch (e) { return e.message; }\n"
+                "  finally { g += 1; }\n"
+                "}\n"
+                "function bare() { try { return 1; } finally { g += 2; } }\n"
+                "function looped() { for (;;) { try { break; } finally { g += 3; } } return g; }\n"
+                "class Shape { constructor(n) { this.n = n; } get twice() { return this.n * 2; }\n"
+                "  set twice(v) { this.n = v / 2; } static make(n) { return new Shape(n); }\n"
+                "  #secret = 4; reveal() { return this.#secret; } }\n"
+                "class Round extends Shape { constructor() { super(7); } }\n"
+                "function* counter(n) { for (let i = 0; i < n; i++) { yield i; } }\n"
+                "async function later(p) { const v = await p; return v; }\n"
+                "function shapes({ a, b: [c] = [1] }, ...rest) { return a + c + rest.length; }\n"
+                "const chained = (o) => o?.a?.b ?? 'none';\n"
+                "const big = 9007199254740993n;\n"
+                "switch (g) { case 0: g = 1; break; default: g = 2; }\n"
+                "const { x = 1, ...others } = { y: 2 };\n"
+                "label: { if (g) { break label; } g = 3; }\n"
+                "for (const k in { a: 1 }) { g += k.length; }\n"
+                "g = plain(1, 2) + loops(3) + guards(0).length + bare() + looped();\n";
+
+            const program built = compiler::compile(canary);
+            std::uint64_t h = fnv_basis;
+            const auto mix = [&h](std::uint64_t v) {
+                h ^= v;
+                h *= fnv_prime;
+            };
+            // A COMPILE FAILURE IS AN IDENTITY OF ITS OWN rather than a crash or a
+            // silent zero: if this source ever stops compiling, every image this
+            // build reads should be refused until somebody looks.
+            mix(built.ok ? 1u : 0u);
+            mix(built.functions.size());
+            for (const function_proto & fn : built.functions) {
+                // The SHAPE of the frame as well as the code: a change that moves a
+                // value between registers without changing an opcode is still a
+                // change to what runs.
+                mix(fn.param_count);
+                mix(fn.frame_size);
+                mix(fn.code.size());
+                mix(fn.constants.size());
+                mix(fn.strings.size());
+                mix(fn.names.size());
+                mix(fn.upvalues.size());
+                for (const instruction & one : fn.code) {
+                    mix(static_cast<std::uint64_t>(one.code));
+                    mix(one.a);
+                    mix(one.b);
+                    mix(one.c);
+                }
+                for (const upvalue_desc & up : fn.upvalues) {
+                    mix(up.from_parent_local ? 1u : 0u);
+                    mix(up.index);
+                }
+            }
+            return h;
+        } catch (...) { return fnv_basis ^ 0xC0DE'0000'0000'DEADull; }
+    }();
+    return identity;
+}
+
 std::uint64_t image_fingerprint() noexcept {
     // The things whose MEANING an image depends on. Not a version number: a
     // version says what someone remembered to bump, and this says what is
@@ -180,6 +287,10 @@ std::uint64_t image_fingerprint() noexcept {
     // pins the precondition instead - that the algorithm really did change -
     // by checking a corpus against the byte-at-a-time hash this replaced.
     mix(source_hash_algorithm);
+    // AND WHAT THE COMPILER EMITS, which nothing above can see. See
+    // codegen_identity: the opcodes can stay identical while the bytecode
+    // built from a given source changes completely.
+    mix(codegen_identity());
     return h;
 }
 
@@ -435,7 +546,8 @@ struct prefix {
         // executing different instructions than the ones that were compiled.
         (void)got;
         return "image was written by a different engine build - opcode numbering, value "
-               "layout or instruction layout has changed since it was written";
+               "layout, instruction layout, or what the compiler EMITS for a given source has "
+               "changed since it was written";
     }
     const std::uint32_t option = in.u32();
     if (option > static_cast<std::uint32_t>(image_option::drop_source)) {
