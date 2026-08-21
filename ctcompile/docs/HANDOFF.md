@@ -26,8 +26,20 @@ primary backend, sources are in `lib/`, build on the devbox.
 * **Phase 0** — six inventories the build checks, two differential comparators,
   and a recorded startup baseline. See `ctcompile/docs/baseline/*.json`.
 * **Phase 2** — the AOT ABI: `ctbrowser/include/ctbrowser/aot/aot_helpers.def`,
-  68 helpers over 84 of the 93 opcodes, expanded by both projects so drift is a
-  compile error.
+  68 helpers over 83 of the 93 opcodes (84 `CT_AOT_COVERS` rows; `type_of` is
+  served by two helpers on purpose). **THE TABLE IS DONE; PHASE 2'S GATE IS
+  NOT** — the plan's gate is "VM code calls a hand-authored AOT closure through
+  the real runtime ABI", and no helper has a body, no `function_proto` has a
+  native entry, and nothing has ever called one. The record said "done" without
+  that distinction; it is a contract, and a good one, that has not been
+  executed.
+  The runtime now at least COMPILES it: `ctbrowser/lib/Script/aot_contract.cpp`
+  is a translation unit of nothing but `static_assert`s, in `ctbrowser-script`,
+  so every preset checks it. Until 2026-08-21 the only file in the repository
+  that included `aot.hpp` was `ctcompile/test/Inventories.cpp`, and `browser`,
+  `browser-no-llvm`, `asan`, `tsan` and `windows` all build with
+  `CTBROWSER_ENABLE_PROJECTS` empty — so the ABI and `EngineContract.hpp` were
+  parsed in exactly one configuration out of six.
 * **Phase 15** — a working program image, wired into the page load.
   `ctbrowser/{include,lib}/…/program_image.*` writes and reads a compiled
   `script::program`, validated exhaustively, and `browser::set_script_image()`

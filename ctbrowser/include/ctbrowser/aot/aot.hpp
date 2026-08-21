@@ -63,4 +63,36 @@ extern "C" {
 #include <ctbrowser/aot/aot_helpers.def>
 }
 
+// WHAT A HELPER ANSWERS WITH, and it did not exist until now: the four names
+// below are cited thirty-five times in aot_helpers.def and were defined
+// nowhere, so twenty-four prototypes returned a bare `int32_t` whose meaning
+// lived only in prose - and the table already assumes ctcompile will `switch`
+// on it, which needs a type.
+//
+// THE UNDERLYING TYPE IS TAKEN FROM THE TABLE rather than written down twice.
+// `ct_aot_check` is the classifier and its `ret` column IS this vocabulary's
+// type; deriving it means a change to that column moves this enum instead of
+// silently disagreeing with it.
+//
+// THE PRECEDENCE IS THE CONTRACT; THE NUMBERS ARE NOT. aot_helpers.def:157-163
+// fixes the ORDER a classifier must test in - unwound first, because the
+// call_frame is destroyed and every later test dereferences it; then failed,
+// because the run loop's own head tests it in the same disjunction and leaves
+// regardless of a handler that just fired; then caught; then ok. It fixes no
+// numeric value, and none is invented here: nothing may depend on `ok` being
+// zero until something measures a reason for it.
+//
+// NOT DECLARED, AND DELIBERATELY: `CT_AOT_PAD_BIT` and `CT_AOT_FRAME_BYTES`,
+// the other two names the table cites. Both are Phase 4 LAYOUT decisions - one
+// picks a spare bit in `call_frame::ip`, the other sizes a caller-allocated
+// block - and inventing either here would freeze a choice with no measurement
+// behind it into a header two backends will read. They are named here so the
+// gap is written down rather than discovered.
+enum class ct_aot_status : decltype(ct_aot_check(static_cast<ct_aot_frame *>(nullptr))) {
+    unwound, // the frame is GONE; test this first, the rest dereference it
+    failed,  // the uncatchable tier: no try/catch can see it
+    caught,  // a handler in THIS frame won; resume at its pad
+    ok,      // nothing happened
+};
+
 } // namespace ctbrowser::aot
