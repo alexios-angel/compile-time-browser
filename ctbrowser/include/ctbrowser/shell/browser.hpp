@@ -208,6 +208,16 @@ public:
         return scripts_compiled_from_source_;
     }
 
+    // How many module programs this browser is holding alive. One per
+    // <script type="module"> on the CURRENT page and none from any earlier one
+    // - a module's functions close over its top-level frame, so its program has
+    // to outlive the load, and for a while nothing emptied the vector on the
+    // way in. A count is the only way to see that from outside, because a leak
+    // and a working cache look identical from the page.
+    [[nodiscard]] std::size_t module_programs_held() const noexcept {
+        return module_programs_.size();
+    }
+
     // THE TEXT THE LAST LOAD COMPILED: every classic <script> on the page in
     // document order, each followed by a newline, exactly as run_scripts
     // assembles it.

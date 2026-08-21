@@ -370,6 +370,41 @@ void test_a_page_can_load_its_scripts_from_an_image() {
     }
 }
 
+// A MODULE'S PROGRAM OUTLIVES THE LOAD, AND ONLY THIS LOAD. Each
+// <script type="module"> is compiled to its own program and kept, because its
+// functions close over its top-level frame - so the vector holding them cannot
+// be emptied at the end of a load. It was emptied at the start of one either,
+// which made every navigation add another page's programs to a list nothing
+// could reach and nothing would free.
+//
+// The count is the only way to see it. A leak and a working cache look
+// identical from the page: the modules run, the DOM updates, and the memory
+// behind them never comes back.
+void test_module_programs_do_not_accumulate_across_loads() {
+    constexpr std::string_view page = "<html><body><div id=out></div>"
+                                      "<script type=\"module\">"
+                                      "document.getElementById('out').textContent = 'module ran';"
+                                      "</script>"
+                                      "<script type=\"module\">globalThis.__second = 1;</script>"
+                                      "</body></html>";
+    browser page_browser{browser_options{200, 100}};
+    page_browser.load_html(page);
+    check(text_of(page_browser, "out") == "module ran", "the module runs on the first load");
+    const std::size_t after_one = page_browser.module_programs_held();
+    check(after_one == 2, "and the page's two modules are the two programs held");
+
+    for (int again = 0; again < 4; ++again) { page_browser.load_html(page); }
+    check(text_of(page_browser, "out") == "module ran", "the modules still run after four reloads");
+    check(page_browser.module_programs_held() == after_one,
+          "and five loads of one page hold one page's modules, not five pages' worth");
+
+    // A page with no modules at all must end holding none, which is the case
+    // that catches a clear() placed after the loop instead of before it.
+    page_browser.load_html("<html><body><script>var x = 1;</script></body></html>");
+    check(page_browser.module_programs_held() == 0,
+          "and a page with no modules holds no module programs");
+}
+
 void test_wheel_and_keys_scroll() {
     browser page{browser_options{400, 200}};
     page.load_html(demo_page);
@@ -497,6 +532,7 @@ int main() {
     test_hit_testing_follows_stacking_order();
     test_hit_testing_respects_escaped_context_clips();
     test_a_page_can_load_its_scripts_from_an_image();
+    test_module_programs_do_not_accumulate_across_loads();
     test_wheel_and_keys_scroll();
     test_hover_restyles();
 

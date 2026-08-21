@@ -753,6 +753,15 @@ void browser::run_scripts() {
     // program it was executing.
     script_.reset();
     script_program_.reset();
+    // AND THE PREVIOUS PAGE'S MODULES, which nothing cleared. Every
+    // <script type="module"> is kept as its own program because its functions
+    // close over its top-level frame, and the vector holding them was appended
+    // to on every load and emptied on none - so a page that reloads ten times
+    // held ten pages' worth of dead programs, each up to megabytes, reachable
+    // only by this vector. The module registry itself lives in the context and
+    // therefore DID go, which is what kept this a leak rather than a
+    // correctness bug: nothing could still reach these to run them.
+    module_programs_.clear();
     script_ = std::make_unique<script::context>();
     // The standard library goes in FIRST, so a page's own globals can
     // shadow it rather than the other way round.
