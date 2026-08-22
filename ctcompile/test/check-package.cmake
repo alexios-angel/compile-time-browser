@@ -129,6 +129,21 @@ if(NOT ran EQUAL 0)
   message(FATAL_ERROR "the packaged application did not run (exit ${ran}):\n${run_out}${run_err}")
 endif()
 
+# A PACKAGED APPLICATION CAN SAY WHAT IT IS. It carries a manifest; `--info`
+# prints it, and `--help` does not start the application - which is what it used
+# to do with any argument at all.
+execute_process(
+  COMMAND ${OUT} --info
+  WORKING_DIRECTORY ${elsewhere}
+  RESULT_VARIABLE asked_info OUTPUT_VARIABLE info_out ERROR_VARIABLE info_err)
+if(NOT asked_info EQUAL 0)
+  message(FATAL_ERROR "the packaged application could not describe itself:\n${info_err}")
+endif()
+string(JSON info_entry GET "${info_out}" entry)
+if(NOT info_entry STREQUAL "index.html")
+  message(FATAL_ERROR "--info printed a manifest naming ${info_entry}")
+endif()
+
 # ---- and the same launcher with nothing appended to it --------------------
 #
 # THE BLINDED ARM, and it is the same binary. The executable that just ran is a

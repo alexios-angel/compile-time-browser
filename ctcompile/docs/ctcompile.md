@@ -125,6 +125,18 @@ ceiling of 60 frames — a static page settles after one.
   happens to sit in the user's working directory, under the name this document
   asked for.
 
+## A packaged application can describe itself
+
+```
+./myapp --info      # the manifest it carries, as JSON
+./myapp --help
+```
+
+Those two names are taken from the application, which is a real cost: there is
+no way yet for a packaged application to receive arguments of its own, so
+nothing is being shadowed today. When there is one, they become a `--ctrun-`
+prefix and an explicit `--` separator.
+
 ## Measured
 
 p5-basic.html on the devbox, seven runs each, whole-process wall clock including
@@ -144,8 +156,6 @@ bytecode still runs on the interpreter, and that is Phases 7–12A.
 * **Windows.** Finding the appended bundle uses `/proc/self/exe`, so a packaged
   application on Windows finds nothing and prints usage. The cross build exists;
   this half of it does not.
-* **`ctrun` ignores `argv` once a bundle is appended**, so `myapp --help` starts
-  the application.
 * **A `<script src>` ships its source twice** — once as the resource the runtime
   must re-read to reproduce the hash, and once inside the image, which keeps the
   source so `f.toString()` works. For p5 that is 4.5 MB each way.

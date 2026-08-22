@@ -12,9 +12,8 @@ namespace {
 // quantities. A decimal program id invites arithmetic on it.
 std::string hex(std::uint64_t value) {
     std::array<char, 32> buffer{};
-    const int written =
-        std::snprintf(buffer.data(), buffer.size(), "0x%016llx",
-                      static_cast<unsigned long long>(value));
+    const int written = std::snprintf(buffer.data(), buffer.size(), "0x%016llx",
+                                      static_cast<unsigned long long>(value));
     return written > 0 ? std::string{buffer.data(), static_cast<std::size_t>(written)}
                        : std::string{"0x0"};
 }

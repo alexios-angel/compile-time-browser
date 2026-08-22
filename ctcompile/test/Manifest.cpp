@@ -87,8 +87,7 @@ int main() {
     check(json.find("\"0xb13700f8d5f43be2\"") != std::string::npos, "and so is a program id");
     check(json.find("a\\\"quoted\\\".js") != std::string::npos,
           "A HOSTILE RESOURCE NAME IS ESCAPED where it lands in the document");
-    check(json.find("a\"quoted\".js") == std::string::npos,
-          "and the raw form is nowhere in it");
+    check(json.find("a\"quoted\".js") == std::string::npos, "and the raw form is nowhere in it");
     check(!json.empty() && json.back() == '\n', "the document ends with a newline");
 
     // EMPTY LISTS STILL PRODUCE A DOCUMENT. An application with no resources is
@@ -97,8 +96,7 @@ int main() {
     const ctcompile::manifest nothing;
     const std::string empty_json = ctcompile::to_json(nothing);
     check(empty_json.find("\"scripts\": [],") != std::string::npos, "no scripts is an empty list");
-    check(empty_json.find("\"resources\": []") != std::string::npos,
-          "and so is no resources");
+    check(empty_json.find("\"resources\": []") != std::string::npos, "and so is no resources");
 
     // BALANCED, which is the cheapest whole-document check there is and catches
     // a stray comma's neighbour: a brace or bracket left open by the list code.

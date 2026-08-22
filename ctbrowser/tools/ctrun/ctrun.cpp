@@ -18,6 +18,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -42,6 +43,44 @@ int main(int argc, char ** argv) {
     const std::vector<std::byte> self = ctbrowser::shell::this_executable_bytes();
     if (const std::span<const std::byte> found = ctbrowser::shell::find_appended_bundle(self);
         !found.empty()) {
+        // AND IT ANSWERS FOR ITSELF FIRST. A packaged application used to ignore
+        // its command line entirely, so `myapp --help` silently started the
+        // application - which is a wart on its own and a worse one for anybody
+        // trying to find out what a 15 MB executable they were handed actually
+        // is. It carries a manifest; it should be able to say so.
+        //
+        // TWO NAMES ARE TAKEN FROM THE APPLICATION, which is a real cost and is
+        // worth stating: there is no way yet for a packaged application to
+        // receive arguments of its own, so nothing is being shadowed today.
+        // When there is one, this becomes a `--ctrun-` prefix and an explicit
+        // `--` separator.
+        //
+        // `--info` prints the manifest RAW rather than summarising it. A
+        // summary would mean parsing JSON here to re-print it, and this is a
+        // launcher: the manifest is already the readable form, and anything
+        // that wants fields has a parser.
+        for (int i = 1; i < argc; ++i) {
+            const std::string_view flag{argv[i]};
+            if (flag == "--help" || flag == "-h") {
+                std::printf("This is a ctbrowser application, packaged by ctcompile.\n"
+                            "  --info   what it carries, as JSON\n");
+                return 0;
+            }
+            if (flag == "--info") {
+                const auto loaded = ctbrowser::shell::read_bundle(found);
+                if (!loaded.ok) {
+                    std::fprintf(stderr, "%s\n", loaded.error.c_str());
+                    return 2;
+                }
+                const std::string manifest = loaded.value.meta("manifest");
+                if (manifest.empty()) {
+                    std::fprintf(stderr, "this application carries no manifest\n");
+                    return 2;
+                }
+                std::fwrite(manifest.data(), 1, manifest.size(), stdout);
+                return 0;
+            }
+        }
         return ctbrowser::run_bundle(found);
     }
 
