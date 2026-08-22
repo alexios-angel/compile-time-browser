@@ -1564,10 +1564,15 @@ CT_AOT_COVERS(/* helper */ ct_aot_construct_spread, /* opcode */ construct_apply
  * rest from the enclosing closure, substituting undefined when out of range
  * as run_loop.cpp:906-911 does. (3) An arrow's `this` is decided where it
  * is WRITTEN, so the enclosing frame's effective_this is passed and used
- * only when target.is_arrow. function_index is uint32_t rather than the
- * encoders' uint16_t on purpose: three of four encoders are 16-bit against
- * a 32-bit decoder, so a program with >65,535 protos silently builds the
- * wrong closure, and ctcompile can make that a COMPILE error. WHAT THIS
+ * only when target.is_arrow. function_index is uint32_t because the operand
+ * is: `with_bx` splits a 32-bit value across b and c. THE REASON THIS ROW
+ * ORIGINALLY GAVE IS FIXED - three of the four op::closure encoders cast the
+ * index to uint16_t before building that 32-bit operand, so a program with
+ * more than 65,535 protos silently built the wrong closure (measured: 70,001
+ * functions, calling 69,999, running 4,463). The casts were deleted on
+ * 2026-08-21 and ctcompile/test/ProgramImage.cpp pins the encoding past the
+ * old ceiling; this row's uint32_t was right for the operand's own sake all
+ * along. WHAT THIS
  * CANNOT DO, and Phase 3 must hear it: the closure_object it returns points
  * at a function_proto in a program, so calling it always re-enters the
  * interpreter - AOT stops at the first nested function unless
