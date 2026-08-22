@@ -81,8 +81,8 @@ extern "C" std::int32_t sample_addup(ctbrowser::aot::ct_aot_ctx * ctx,
     // The status is asked for through the classifier rather than assumed - this
     // is the row every other status is defined against, and a body that skipped
     // it would be a body that cannot notice an unwind.
-    const auto status = static_cast<ctbrowser::aot::ct_aot_status>(
-        ctbrowser::aot::ct_aot_check(frame));
+    const auto status =
+        static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_check(frame));
     if (status != ctbrowser::aot::ct_aot_status::ok) {
         if (status != ctbrowser::aot::ct_aot_status::unwound) {
             ctbrowser::aot::ct_aot_leave(frame);
@@ -142,9 +142,9 @@ int main() {
     // `frames_` and `registers_`, the second entry would build on a stack that
     // never came back down.
     {
-        program twice = ctbrowser::script::compiler::compile(
-            "function addup(a, b) { return a + b; }\n"
-            "var answer = addup(20, 1) + addup(20, 1);\n");
+        program twice =
+            ctbrowser::script::compiler::compile("function addup(a, b) { return a + b; }\n"
+                                                 "var answer = addup(20, 1) + addup(20, 1);\n");
         check(twice.ok, "the two-call fixture compiles");
         for (function_proto & fn : twice.functions) {
             if (fn.name == "addup") { fn.aot_entry = &sample_addup; }

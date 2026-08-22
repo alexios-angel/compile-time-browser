@@ -239,6 +239,27 @@ CT_AOT_COVERS(/* helper */ ct_aot_handler_pop, /* opcode */ pop_handler)
  * native frame reachable from none of the 17 roots. It is the single
  * delivery point for every area, which keeps a pad out-parameter and a
  * value out-parameter off every throwing helper's signature.
+ * THIS ROW CANNOT BE IMPLEMENTED AS WRITTEN, found on 2026-08-22 by trying.
+ * It says to read back registers_[call_frame::base + handler::slot] - but
+ * unwind_to_handler POPS the handler (vm.hpp:947-948) before it writes
+ * (vm.hpp:954), and call_frame records no landing slot: proto, ip, base,
+ * result_reg, argc, closure, receiver, handler_base, new_target,
+ * constructing, arguments_object, async_promise, and none of them is it.
+ * `result_reg` is where the CALLER wants this frame's return value and is
+ * not the same register. So by the time a compiled body could ask, which
+ * register the thrown value went into is unknowable, and the signature
+ * above - (fr, out_thrown) - has nowhere to learn it from.
+ *
+ * TWO FIXES, both ABI changes, neither taken here because taking one
+ * without a compiled `try` to test it would be inventing on no evidence:
+ * record the slot on call_frame when unwind_to_handler writes it, or add
+ * the slot to this helper's parameters, since a generated body knows which
+ * register its own ct_aot_handler_push named. The second costs the runtime
+ * nothing and is probably right; it is written down rather than done.
+ *
+ * Until then ct_aot_check never returns CT_AOT_CAUGHT - see
+ * lib/Script/aot_bridge.cpp, which says so where the test would be.
+ *
  * DELEGATES TO: READS BACK what unwind_to_handler already wrote:
  *   call_frame::ip (assigned from handler::address, vm.hpp:952) and
  *   registers_[call_frame::base + handler::slot] (written vm.hpp:954). Then
@@ -252,7 +273,7 @@ CT_AOT_HELPER(/* name */ ct_aot_catch_land, /* ret */ uint32_t,
 
 /* may_reenter=1 is the most surprising column in the table and it is real:
  * describe_thrown calls lookup_property(thrown,"name") and ("message")
- * (call.cpp:335-336), which runs an accessor, and anything not
+ * (call.cpp:372-373), which runs an accessor, and anything not
  * is_kind(object) falls to to_string, reaching to_primitive_string's
  * `call(fn,{},v)` on toString then valueOf (coerce.cpp:172-176) - a full
  * nested run_loop. Page JavaScript runs in the middle of formatting a fatal
@@ -263,7 +284,7 @@ CT_AOT_HELPER(/* name */ ct_aot_catch_land, /* ret */ uint32_t,
  * helper classify identically.
  * DELEGATES TO: run_loop.cpp:1505-1510 `thrown_ = reg(in.a); if
  *   (!unwind_to_handler()) raise("uncaught " + describe_thrown(thrown_));`
- *   - vm.hpp:945-959, call.cpp:332-349, vm.hpp:932-936 - then ct_aot_check
+ *   - vm.hpp:945-959, call.cpp:369-386, vm.hpp:932-936 - then ct_aot_check
  *   for the status.
  * FAILURE: BOTH TIERS, AND IT NEVER RETURNS CT_AOT_OK. CT_AOT_CAUGHT: the
  *   winning handler is this frame's - call ct_aot_catch_land once and

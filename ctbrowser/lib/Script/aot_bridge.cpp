@@ -118,9 +118,7 @@ struct aot_bridge {
         // when nothing went wrong and the correct one when something did.
         if (cx.frames_.size() > held.frame_index) { cx.frames_.resize(held.frame_index); }
         if (cx.handlers_.size() > held.handler_base) { cx.handlers_.resize(held.handler_base); }
-        if (cx.registers_.size() > held.register_base) {
-            cx.registers_.resize(held.register_base);
-        }
+        if (cx.registers_.size() > held.register_base) { cx.registers_.resize(held.register_base); }
         held.~aot_frame_storage();
     }
 
