@@ -8,7 +8,7 @@ committed and green; nothing is pushed.
 
 * Repo: `/mnt/c/Users/aange/Downloads/claude/compile-time-browser`
 * Branch: **`ctcompile-v1`**, working tree clean
-* Suite: **97/97** via `./tools/remote-build.sh`
+* Suite: **100/100** via `./tools/remote-build.sh`
 * **Read `ctcompile/docs/plans/ctcompile.md` first** — it is the running plan in
   the house style (Done / Next, measured rungs) and it records every decision
   below with its reasoning. This file is a pointer to it, not a substitute.
@@ -62,6 +62,37 @@ Measured, `ctcompile/docs/baseline/page-load.json`, p5-basic.html on the devbox:
 | | **71% of the page load** |
 | **editing the sketch only** | **19.77 — 3.5x, 1 of 3 recompiled** |
 
+## There is an MVP, and it works
+
+```
+ctcompile app/ -o myapp        then ./myapp
+```
+
+`ctcompile` loads the entry page once with the engine that will run it, asks
+that engine which scripts it compiled and which resources it reached for,
+compiles each classic `<script>` to a program image, packs page + resources +
+images into a bundle, and appends the bundle to a copy of `ctrun`, a fixed
+launcher built like any other tool. The output is one executable. Nothing is
+generated and no linker runs — a linked ELF does not care what follows its last
+section, so packaging is a file copy plus a trailer.
+
+Measured on the devbox, p5-basic.html, seven runs each, whole-process wall clock
+including startup and rendering a frame:
+
+| | ms |
+|---|---|
+| `ctbrowse p5-basic.html`, reading the JavaScript | **78.0** |
+| the packaged executable, run from `/tmp` | **47.3** |
+
+That is the honest end-to-end figure, and it also settles a reasonable
+objection: the packaged binary is 15 MB against ctbrowse's 3 MB, because
+`this_executable_bytes()` reads the whole launcher back at every start to find
+its own trailer. Reading 12 MB more still wins by 30 ms.
+
+**WHAT IT DOES NOT DO IS GENERATE NATIVE CODE.** The bytecode still runs on the
+interpreter. This deletes the *parse*, which is ~40% of a page load; the
+interpreter is 1.4%. Phases 7–12A are the rest and are not started.
+
 ## What the last session did
 
 1. **The source hash was 4.16 ms of that page load.** It is now
@@ -101,6 +132,38 @@ Measured, `ctcompile/docs/baseline/page-load.json`, p5-basic.html on the devbox:
     opcodes exist — a canary compiled and folded. The `finally` rewrite is
     exactly the change it was blind to.
 
+12. **The MVP above**, and then an adversarial review of it that found eight
+    defects in the packaging path — every one of them SILENT, in the sense that
+    the application ran and produced the right document:
+    * **module scripts were invisible.** `script_sources()` lists classic
+      scripts only and there is no image path into `load_module`, so a page of
+      modules packaged as "0 scripts compiled" and the guard that asks whether
+      packaging worked read a truthful, useless zero. `module_sources()`
+      publishes them now; the packager refuses them and so does the launcher.
+    * **the guard was gated on "some images arrived"**, so the case where NONE
+      arrived — the most obviously broken package there is — was the one case it
+      skipped.
+    * **the probe never ticked the page.** `fetch` and `img.src` queue their
+      requests and are drained from `tick`; p5 loads in `preload` and Phaser in
+      the first game step. Every sprite, atlas and level was missed with no
+      warning. It now runs the page until it stops asking (ceiling 60 frames);
+      p5-basic settles after one.
+    * **the packager resolved assets through a second, base-less registry**
+      whose probe order differed from the one that answered the page — the exact
+      second copy of the rule `assets.hpp` spends a paragraph forbidding.
+    * **a packaged application fell back to the filesystem**, probing the
+      working directory first, so a missing resource was answered by whatever
+      sat next to the user. Registries can be SEALED now, and `run_bundle` does.
+    * `read_bundle` bounded each blob and not the total; `bundle_write_error()`
+      was a channel nothing ever wrote to, behind a header promising a check
+      that was never implemented.
+
+    All six new guards were removed one at a time and watched going red, each
+    for its own message. The one that could NOT be falsified is `write_bundle`'s
+    refusal of >4G entries or a >4G name — reaching it needs a bundle no machine
+    here can hold. It is written and untested, and that is better said than
+    implied.
+
 ## Do these next
 
 1. **NOT Phase 16A or 16B, on this corpus.** `docs/baseline/page-load-profile.json`
@@ -123,6 +186,17 @@ Measured, `ctcompile/docs/baseline/page-load.json`, p5-basic.html on the devbox:
 
 ## Known problems, not yet acted on
 
+* **A `<script src>` that ships its source TWICE.** `write_image` defaults to
+  `keep_source` and `ctcompile` takes the default, so p5.js is 4.5 MB as an
+  `asset` (which the run-time walk must re-read to reproduce the hash) and again
+  inside its 7.3 MB image. Dropping the source is not free — it is whether
+  `f.toString()` returns the text or `[native code]`, and p5's own error system
+  reads it — so this is a real decision, not an oversight to tidy.
+* **`ctrun` ignores `argv` once a bundle is appended.** `myapp --help` silently
+  starts the application.
+* **`this_executable_bytes()` is `/proc/self/exe` only**, so a packaged
+  application on Windows finds no bundle and prints usage. The cross build
+  exists; this half of it does not.
 * ~~The 65,535 proto ceiling~~ — FIXED 2026-08-21, it was three casts.
 * **OLD, KEPT FOR THE REASONING:** the 65,535 proto ceiling was at 49% on a
   corpus that already existed. Three

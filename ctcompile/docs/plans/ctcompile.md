@@ -910,6 +910,125 @@ handler. **−0.07% instructions on `bench_script`** — inside the noise, in th
 faster direction. 98 of 98, and 53 of 53 on asan, which matters more than usual
 for a change that pushes a real `call_frame` and resizes the register vector.
 
+## An application directory in, an executable out
+
+```
+ctcompile app/ -o myapp        then ./myapp
+```
+
+Phases 18–20 put "the generated launcher" near the end of the ladder, and the
+note beside them says the launcher is a fixed library rather than generated C++.
+Taking that seriously makes the whole of it available NOW, because if the
+launcher is fixed then packaging is not compilation: it is a file copy.
+
+`ctrun` is an ordinary tool in `ctbrowser/tools/`. A packaged application is a
+byte-for-byte copy of it with an application bundle appended and a 24-byte
+trailer saying where that bundle starts — a linked ELF does not care what
+follows its last section, verified by appending 4.5 MB to `ctbrowse` and finding
+it ran with a byte-identical screenshot. So the machine that RUNS the result
+needs no toolchain, and the machine that BUILDS it needs no linker.
+
+The bundle is `ctbrowser/{include,lib}/…/app_bundle.*`: magic, format version,
+**the engine fingerprint**, a table of `(kind, name, offset, length)` and a
+payload. The fingerprint is the same one the program image carries, and it is
+checked before anything else is read — a bundle whose images were compiled by
+another build of this engine describes different instructions with the same
+bytes, and refusing it here says so, rather than leaving one layer down to
+complain about opcode numbering.
+
+Measured on the devbox, p5-basic.html, seven runs each, whole-process wall clock
+including startup and rendering a frame:
+
+| | ms |
+|---|---|
+| `ctbrowse p5-basic.html`, reading the JavaScript | **78.0** |
+| the packaged executable, run from `/tmp` | **47.3** |
+
+The packaged binary is 15 MB against ctbrowse's 3 MB, because the launcher reads
+its own file back at every start to find its trailer. Reading 12 MB more still
+wins by 30 ms, which is worth stating because "the copy costs more than the
+parse it removes" is a reasonable objection and it is wrong here.
+
+**IT ASKS THE ENGINE WHAT THE APPLICATION IS.** Which scripts a page compiles
+and which resources it reaches for are decided by rules that live in the
+browser. A packager holding a second copy of them is a packager free to drift,
+and the drift presents as an application that quietly compiles from source and
+is merely slow. So the page is loaded, headless, by the same browser that will
+run it, and then asked: `script_sources()`, `module_sources()`,
+`assets().requested()`.
+
+### Eight silent defects in it, and the shape they share
+
+An adversarial review of the packaging path found eight. Every one of them left
+an application that RAN and produced the right document — which is the class of
+failure this project has repeatedly found to be the expensive one.
+
+* **Module scripts were invisible in both directions.** `script_sources()` is
+  classic scripts only, and there is no image path into `load_module`. A page of
+  modules packaged as "0 scripts compiled" and the run-time guard that asks
+  whether packaging worked read a truthful zero, because zero classic scripts
+  compiled from source is trivially true when there are no classic scripts.
+  Mixed pages were worse: one classic `<script>` made the image list non-empty,
+  the count was zero, and the module half still parsed at every start.
+* **The guard was gated on `!script_images.empty()`.** `require_script_images`
+  was only ever consulted INSIDE that test, so the one case where completeness
+  is most obviously violated — a bundle with no images at all — was the case the
+  outer `if` deleted.
+* **The probe never ticked the page.** `fetch` and `img.src` QUEUE their
+  requests and are drained from `tick`; p5 loads in `preload` and Phaser in the
+  first game step, both inside callbacks. Asking the moment `load_html` returned
+  saw the markup's resources and nothing a script wanted — every sprite, atlas
+  and level in the applications this is for, packaged as a warning-free success.
+  It now runs the page until it stops asking, ceiling 60 frames; p5-basic
+  settles after one.
+* **The packager built a second, base-less `asset_registry`** whose probe order
+  (`.`, then two levels up from ctcompile's OWN working directory) differed from
+  the one that had just answered the page. It could resolve a name from the
+  build tree that the page resolved from the application and ship those bytes
+  under the right name, silently — and it could miss a name the engine found,
+  warn, and exit 0. `assets.hpp` spends a paragraph forbidding exactly this.
+* **A packaged application fell back to the filesystem.** `run_bundle` never set
+  `asset_path`, and an empty base still probes `.` and `../..` — so a packaged
+  application missing a resource read whatever sat next to the USER, under the
+  name its own document asked for, and worked on the machine that built it.
+  Registries can be SEALED now: the registry and `data:` URLs, never the disk.
+* `read_bundle` bounded each blob against the payload and never the total, so
+  400,000 rows each claiming the whole 10 MB payload asked for four terabytes
+  before any single check failed. `least_bytes_per_entry` was 20 where the
+  minimum row is 24 — safe, because every read is bounds-checked anyway, but 20%
+  looser than its own comment claimed. And `bundle_write_error()` was a channel
+  nothing ever wrote to, behind a header promising a check that was never
+  implemented and a branch in ctcompile that printed an empty string.
+
+Six new guards, each removed and watched going red for its own message:
+
+| removed | what went red |
+|---|---|
+| the seal on the asset registry | a sealed registry answered from the working directory |
+| the running total in `read_bundle` | entries claiming more than the payload were accepted |
+| the probe's tick loop | `late.json` was not packaged |
+| `require_script_images` with no images | the launcher ran `no-images.ctapp` |
+| the module refusal in the launcher | it ran `module-page.ctapp` |
+| the module refusal in ctcompile | it packaged a page of modules |
+
+The seventh, `write_bundle`'s refusal of >4G entries or a >4G name, could not be
+falsified: reaching it needs a bundle no machine here can hold. It is written
+and untested and that is said rather than implied.
+
+### The newline nobody would think to look for
+
+`ctcompile_app_bundle` pins one thing that is not about bundles at all. The walk
+in `browser.cpp` appends a `\n` to every classic script's source — so a
+`<script src>` and the inline text after it are two lines, and so a trailing
+`//` comment terminates. It follows that a script's source is NOT the bytes
+between its tags, and an image built from the text an author typed hashes
+differently, matches nothing, and leaves the page working exactly as it did.
+
+That is the whole failure mode of this feature in one character, and the test
+that catches it was itself written wrong the first time — the typed-by-hand arm
+went red, which is how the rule was found. Both arms are in the file now: the
+one that matches, and the one that differs by that newline and matches nothing.
+
 ## The ladder ahead
 
 | phase | what | where |
