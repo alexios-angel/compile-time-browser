@@ -327,6 +327,169 @@ int main() {
         ctbrowser::aot::ct_aot_leave(frame);
     }
 
+    // ---- THE ROWS THAT ARE SHIMS OVER FUNCTIONS THAT ALREADY EXISTED ------
+    //
+    // Each of these adds a symbol and touches no handler, so it cannot change
+    // the interpreter - but it can still be wired to the WRONG function, or
+    // encode its answer differently from the row it implements. That is what is
+    // checked here, and for ct_aot_compare it is the whole substance: the four
+    // relational opcodes are constant comparisons against the ordering it
+    // writes, so the numbers are part of the contract.
+    {
+        ctbrowser::script::program tiny =
+            ctbrowser::script::compiler::compile("function host() { return 1; }\n"
+                                                 "var arr = [10, 20, 30];\n");
+        check(tiny.ok, "the host fixture compiles");
+        (void)ctx.run(tiny);
+        alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
+        ctbrowser::aot::ct_aot_frame * frame = ctbrowser::aot::ct_aot_enter(
+            reinterpret_cast<ctbrowser::aot::ct_aot_ctx *>(&ctx),
+            reinterpret_cast<const ctbrowser::aot::ct_aot_site *>(&tiny.functions[0]), 4u,
+            value::undefined().bits(), storage);
+        check(frame != nullptr, "a frame is entered");
+        if (frame == nullptr) { return 1; }
+
+        // TRUTHINESS, over the cases that are not the obvious ones.
+        struct truth {
+            value v;
+            bool expected;
+        };
+        const truth truths[] = {
+            {value::number(0), false},
+            {value::number(-0.0), false},
+            {value::number(std::nan("")), false},
+            {value::number(1), true},
+            {value::number(-1), true},
+            {value::undefined(), false},
+            {value::null(), false},
+            {value::boolean(false), false},
+            {value::boolean(true), true},
+            {ctx.string(""), false},
+            {ctx.string("0"), true},
+            {ctx.string("false"), true},
+        };
+        for (const truth & t : truths) {
+            const bool got = ctbrowser::aot::ct_aot_truthy(t.v.bits()) != 0u;
+            check(got == t.expected,
+                  "truthy(" + describe(ctx, t.v) + ") is " + (got ? "true" : "false"));
+        }
+
+        // ORDERING, and the whole point is NaN. It is unordered with
+        // everything INCLUDING ITSELF, which is what makes all four relational
+        // operators false against it - so they cannot be lowered as negations
+        // of one another, and a helper that returned `equivalent` or `greater`
+        // for it would make `NaN <= NaN` true.
+        struct comparison {
+            value lhs, rhs;
+            ctbrowser::aot::ct_aot_ordering expected;
+        };
+        const value nan = value::number(std::nan(""));
+        const comparison comparisons[] = {
+            {value::number(1), value::number(2), ctbrowser::aot::ct_aot_ordering::less},
+            {value::number(2), value::number(1), ctbrowser::aot::ct_aot_ordering::greater},
+            {value::number(2), value::number(2), ctbrowser::aot::ct_aot_ordering::equivalent},
+            {nan, value::number(1), ctbrowser::aot::ct_aot_ordering::unordered},
+            {value::number(1), nan, ctbrowser::aot::ct_aot_ordering::unordered},
+            {nan, nan, ctbrowser::aot::ct_aot_ordering::unordered},
+            // TWO STRINGS COMPARE AS BYTES, not as numbers. A numeric-only fast
+            // path in a backend silently reintroduces the all-false string
+            // comparison this pins.
+            {ctx.string("a"), ctx.string("b"), ctbrowser::aot::ct_aot_ordering::less},
+            {ctx.string("10"), ctx.string("9"), ctbrowser::aot::ct_aot_ordering::less},
+            {value::number(10), value::number(9), ctbrowser::aot::ct_aot_ordering::greater},
+        };
+        for (const comparison & c : comparisons) {
+            std::int32_t ordering = 99;
+            const auto status = static_cast<ctbrowser::aot::ct_aot_status>(
+                ctbrowser::aot::ct_aot_compare(frame, c.lhs.bits(), c.rhs.bits(), &ordering));
+            check(status == ctbrowser::aot::ct_aot_status::ok, "compare succeeds");
+            check(ordering == static_cast<std::int32_t>(c.expected),
+                  "compare(" + describe(ctx, c.lhs) + ", " + describe(ctx, c.rhs) + ") is " +
+                      std::to_string(ordering));
+        }
+        // AND THE NUMBERS THEMSELVES, because a backend derives `<=` as
+        // (ord == -1 || ord == 0) from them.
+        check(static_cast<std::int32_t>(ctbrowser::aot::ct_aot_ordering::less) == -1 &&
+                  static_cast<std::int32_t>(ctbrowser::aot::ct_aot_ordering::equivalent) == 0 &&
+                  static_cast<std::int32_t>(ctbrowser::aot::ct_aot_ordering::greater) == 1 &&
+                  static_cast<std::int32_t>(ctbrowser::aot::ct_aot_ordering::unordered) == 2,
+              "the ordering constants are the ones the row writes down");
+
+        // STRICT AGAINST LOOSE, on the three pairs where they disagree.
+        struct equality {
+            value a, b;
+            bool strict, loose;
+        };
+        const equality equalities[] = {
+            {value::number(1), ctx.string("1"), false, true},
+            {value::null(), value::undefined(), false, true},
+            {nan, nan, false, false},
+            {value::number(0), value::number(-0.0), true, true},
+            {value::number(1), value::number(1), true, true},
+        };
+        for (const equality & e : equalities) {
+            const bool strict = ctbrowser::aot::ct_aot_strict_equals(e.a.bits(), e.b.bits()) != 0u;
+            std::uint32_t loose = 99;
+            (void)ctbrowser::aot::ct_aot_loose_equals(frame, e.a.bits(), e.b.bits(), &loose);
+            check(strict == e.strict, describe(ctx, e.a) + " === " + describe(ctx, e.b));
+            check((loose != 0u) == e.loose, describe(ctx, e.a) + " == " + describe(ctx, e.b));
+        }
+
+        // typeof, WITHOUT ALLOCATING. The row's whole argument for splitting
+        // this into two helpers is that `typeof x === 'function'` should be a
+        // length compare and a memcmp.
+        {
+            const char * text = nullptr;
+            const std::uint32_t length =
+                ctbrowser::aot::ct_aot_type_of_name(value::number(1).bits(), &text);
+            check(text != nullptr && length == 6 && std::string_view{text, length} == "number",
+                  "typeof 1 is \"number\", as a length and a pointer");
+            const std::uint32_t undef =
+                ctbrowser::aot::ct_aot_type_of_name(value::undefined().bits(), &text);
+            check(std::string_view{text, undef} == "undefined", "and typeof undefined");
+        }
+
+        // THE ALLOCATING ONES produce the kinds they say they do.
+        {
+            const value made = value::from_bits(ctbrowser::aot::ct_aot_new_object(frame));
+            check(made.is_object(), "new_object makes an object");
+            const value list = value::from_bits(ctbrowser::aot::ct_aot_new_array(frame, 8u));
+            check(list.is_object_like(), "new_array makes an array");
+            const value cell =
+                value::from_bits(ctbrowser::aot::ct_aot_cell_new(frame, value::number(7).bits()));
+            // A CELL IS NOT "OBJECT-LIKE". It is a box a closure shares, not
+            // anything a page can see, so it answers no to every is_object
+            // question - which is why this asks for its kind instead.
+            check(cell.is_kind(ctbrowser::script::heap_kind::cell), "cell_new makes a cell");
+        }
+
+        // AN INDEXED READ, which needs no interned name and so is reachable
+        // before ct_aot_intern_name exists.
+        //
+        // THE ARRAY IS BUILT IN THE FIXTURE ABOVE, before the frame is entered.
+        // The first version ran a second program HERE, which fails: `run` is
+        // the entry point for a whole TURN and clears frames_, so it destroyed
+        // the frame this block is holding and ct_aot_check correctly reported
+        // it unwound. That is the hazard run_reentrant exists for, met from the
+        // other side.
+        {
+            std::uint64_t out = value::undefined().bits();
+            const auto status =
+                static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_get_index(
+                    frame, ctx.global("arr").bits(), value::number(1).bits(), nullptr, &out));
+            check(status == ctbrowser::aot::ct_aot_status::ok, "get_index succeeds");
+            check(value::from_bits(out).is_number() && value::from_bits(out).as_number() == 20.0,
+                  "and reads arr[1]");
+        }
+
+        // ct_aot_failed IS THE BACK-EDGE POLL, so it has to be false when
+        // nothing has gone wrong - a helper wired to the wrong bool would make
+        // every compiled loop exit on its first iteration.
+        check(ctbrowser::aot::ct_aot_failed(frame) == 0u, "nothing has failed");
+
+        ctbrowser::aot::ct_aot_leave(frame);
+    }
+
     if (ctbrowser_test_failures == 0) {
         std::printf("ok aot_helpers (%zu operand pairs across seven operations)\n", compared);
     }

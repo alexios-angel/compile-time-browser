@@ -36,8 +36,10 @@
 #include <ctbrowser/aot/aot.hpp>
 #include <ctbrowser/script/vm.hpp>
 
+#include <compare>
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 #include <vector>
 
 namespace ctbrowser::script {
@@ -187,6 +189,104 @@ struct aot_bridge {
         return status;
     }
 
+    // ---- THE ROWS THAT NEEDED NO EXTRACTION AT ALL ----------------------
+    //
+    // Phase 5 is mostly about lifting semantics out of the interpreter's
+    // handlers. These are the rows where the lift was already done - the
+    // runtime already had the function, and what was missing was the ABI shim
+    // in front of it.
+    //
+    // BATCHED, and the plan's one-helper-per-commit rule is about EXTRACTIONS
+    // rather than about this: an extraction can change the VM's behaviour and
+    // the discipline exists to keep that diagnosable. A shim adds a symbol and
+    // touches no handler, so it cannot.
+
+    // ct_aot_failed. The uncatchable-failure poll, one load of one bool, so
+    // that it can sit on back edges rather than after every allocation.
+    static std::uint32_t failed(aot::ct_aot_frame * f) {
+        return frame_of(f).ctx->failed() ? 1u : 0u;
+    }
+
+    // ct_aot_this. `this` as the frame sees it.
+    static std::uint64_t this_value(aot::ct_aot_frame * f) {
+        const aot_frame_storage & held = frame_of(f);
+        const context & cx = *held.ctx;
+        if (held.frame_index >= cx.frames_.size()) { return value::undefined().bits(); }
+        return cx.frames_[held.frame_index].receiver.bits();
+    }
+
+    static std::uint64_t cell_new(aot::ct_aot_frame * f, std::uint64_t init) {
+        context & cx = *frame_of(f).ctx;
+        return value::object(cx.allocate<cell_object>(value::from_bits(init))).bits();
+    }
+
+    static std::uint64_t new_object(aot::ct_aot_frame * f) {
+        return frame_of(f).ctx->make_object().bits();
+    }
+
+    // `reserve_hint` is a HINT: the row keeps it so a backend can size a
+    // literal's backing store, and an array that ignores it is merely slower.
+    static std::uint64_t new_array(aot::ct_aot_frame * f, std::uint32_t reserve_hint) {
+        context & cx = *frame_of(f).ctx;
+        const value made = cx.make_array();
+        if (reserve_hint != 0) {
+            static_cast<array_object *>(made.as_heap())->items.reserve(reserve_hint);
+        }
+        return made.bits();
+    }
+
+    static std::int32_t loose_equals(aot::ct_aot_frame * f, std::uint64_t a, std::uint64_t b,
+                                     std::uint32_t * out) {
+        context & cx = *frame_of(f).ctx;
+        const bool equal = cx.loose_equals(value::from_bits(a), value::from_bits(b));
+        *out = equal ? 1u : 0u;
+        return check(f);
+    }
+
+    // ct_aot_compare. The four relational opcodes are constant comparisons
+    // against the ordering this writes, so the NUMBERS matter and are taken
+    // from the row rather than from std::partial_ordering's representation.
+    static std::int32_t compare(aot::ct_aot_frame * f, std::uint64_t lhs, std::uint64_t rhs,
+                                std::int32_t * out_ordering) {
+        context & cx = *frame_of(f).ctx;
+        const std::partial_ordering ord =
+            cx.compare_relational(value::from_bits(lhs), value::from_bits(rhs));
+        // UNORDERED FIRST. A NaN on either side is unordered with everything
+        // INCLUDING ITSELF, so testing `ord == less` first would be right and
+        // testing `!(ord > 0)` for `<=` would not - which is exactly the
+        // mistake that makes `NaN <= NaN` true.
+        *out_ordering = static_cast<std::int32_t>(
+            ord == std::partial_ordering::unordered ? aot::ct_aot_ordering::unordered
+            : ord == std::partial_ordering::less    ? aot::ct_aot_ordering::less
+            : ord == std::partial_ordering::greater ? aot::ct_aot_ordering::greater
+                                                    : aot::ct_aot_ordering::equivalent);
+        return check(f);
+    }
+
+    static std::int32_t to_number(aot::ct_aot_frame * f, std::uint64_t v, double * out) {
+        context & cx = *frame_of(f).ctx;
+        *out = cx.to_number_value(value::from_bits(v));
+        return check(f);
+    }
+
+    static std::int32_t iterable_values(aot::ct_aot_frame * f, std::uint64_t source,
+                                        std::uint64_t * out) {
+        context & cx = *frame_of(f).ctx;
+        const value produced = cx.iterable_values(value::from_bits(source));
+        const std::int32_t status = check(f);
+        if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
+        return status;
+    }
+
+    static std::int32_t get_index(aot::ct_aot_frame * f, std::uint64_t obj, std::uint64_t key,
+                                  std::uint64_t * out) {
+        context & cx = *frame_of(f).ctx;
+        const value produced = cx.lookup_index(value::from_bits(obj), value::from_bits(key));
+        const std::int32_t status = check(f);
+        if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
+        return status;
+    }
+
     // ct_aot_slots. The row: the frame's own register span, which is where a
     // compiled body puts a value it needs to survive a safepoint.
     //
@@ -312,6 +412,90 @@ std::int32_t ct_aot_binary_op(ct_aot_frame * fr, std::uint32_t op_kind, std::uin
 std::int32_t ct_aot_binary_op_static(ct_aot_frame * fr, std::uint32_t op_kind, std::uint64_t lhs,
                                      std::uint64_t rhs, std::uint64_t * out) {
     return script::aot_bridge::binary_op_static(fr, op_kind, lhs, rhs, out);
+}
+
+std::uint32_t ct_aot_failed(ct_aot_frame * fr) {
+    return script::aot_bridge::failed(fr);
+}
+
+std::uint64_t ct_aot_this(ct_aot_frame * fr) {
+    return script::aot_bridge::this_value(fr);
+}
+
+std::uint64_t ct_aot_cell_new(ct_aot_frame * fr, std::uint64_t init) {
+    return script::aot_bridge::cell_new(fr, init);
+}
+
+std::uint64_t ct_aot_new_object(ct_aot_frame * fr) {
+    return script::aot_bridge::new_object(fr);
+}
+
+std::uint64_t ct_aot_new_array(ct_aot_frame * fr, std::uint32_t reserve_hint) {
+    return script::aot_bridge::new_array(fr, reserve_hint);
+}
+
+// PURE, AND THEREFORE HANDLE-FREE. These four take no frame because they
+// cannot throw, cannot re-enter and cannot collect - which is what lets a
+// backend fold them away entirely when it has proven the operand's type.
+std::uint32_t ct_aot_truthy(std::uint64_t v) {
+    return script::context::truthy(script::value::from_bits(v)) ? 1u : 0u;
+}
+
+std::uint32_t ct_aot_strict_equals(std::uint64_t a, std::uint64_t b) {
+    return script::value::from_bits(a).strict_equals(script::value::from_bits(b)) ? 1u : 0u;
+}
+
+std::int32_t ct_aot_to_int32(std::uint64_t v) {
+    return script::context::to_int32(script::value::from_bits(v));
+}
+
+std::uint32_t ct_aot_to_uint32(std::uint64_t v) {
+    return script::context::to_uint32(script::value::from_bits(v));
+}
+
+double ct_aot_to_number_primitive(std::uint64_t v) {
+    return script::context::to_number(script::value::from_bits(v));
+}
+
+double ct_aot_exponentiate(double base, double exponent) {
+    return script::context::exponentiate(base, exponent);
+}
+
+// THE RETURN SLOT CARRIES A LENGTH, and *out_text points at static storage:
+// context::type_of returns a string_view over string literals, which is what
+// lets `typeof x === 'function'` be a length compare and a memcmp with no
+// allocation at all.
+std::uint32_t ct_aot_type_of_name(std::uint64_t v, const char ** out_text) {
+    const std::string_view text = script::context::type_of(script::value::from_bits(v));
+    *out_text = text.data();
+    return static_cast<std::uint32_t>(text.size());
+}
+
+std::int32_t ct_aot_loose_equals(ct_aot_frame * fr, std::uint64_t a, std::uint64_t b,
+                                 std::uint32_t * out) {
+    return script::aot_bridge::loose_equals(fr, a, b, out);
+}
+
+std::int32_t ct_aot_compare(ct_aot_frame * fr, std::uint64_t lhs, std::uint64_t rhs,
+                            std::int32_t * out_ordering) {
+    return script::aot_bridge::compare(fr, lhs, rhs, out_ordering);
+}
+
+std::int32_t ct_aot_to_number(ct_aot_frame * fr, std::uint64_t v, double * out) {
+    return script::aot_bridge::to_number(fr, v, out);
+}
+
+// The `site` parameter is where Phase 26 attaches an inline cache without an
+// ABI break. Taken and ignored, because the signature is the thing two code
+// generators are written against and a parameter added later is a break.
+std::int32_t ct_aot_get_index(ct_aot_frame * fr, std::uint64_t obj, std::uint64_t key,
+                              ct_aot_ic * site, std::uint64_t * out) {
+    (void)site;
+    return script::aot_bridge::get_index(fr, obj, key, out);
+}
+
+std::int32_t ct_aot_iterable_values(ct_aot_frame * fr, std::uint64_t source, std::uint64_t * out) {
+    return script::aot_bridge::iterable_values(fr, source, out);
 }
 
 std::uint64_t * ct_aot_slots(ct_aot_frame * fr) {

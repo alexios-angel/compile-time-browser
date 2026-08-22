@@ -92,4 +92,26 @@ enum class ct_aot_status : decltype(ct_aot_check(static_cast<ct_aot_frame *>(nul
     ok,      // nothing happened
 };
 
+// AND THE ORDERING VOCABULARY, which was in the same position the status enum
+// was in before it existed: ct_aot_compare's row names CT_AOT_ORD_LESS,
+// EQUIVALENT, GREATER and UNORDERED, spells out that "is_lteq is
+// (ord == -1 || ord == 0), false for UNORDERED, which is what makes
+// `NaN <= NaN` false" - and nothing defined any of them.
+//
+// THE NUMBERS ARE PART OF THE CONTRACT HERE, unlike the status enum's. The row
+// writes them down as -1, 0, 1 and 2 and derives the four relational opcodes
+// from constant comparisons against them, so a backend that picked its own
+// would produce code that reads correctly and compares wrongly.
+enum class ct_aot_ordering : decltype(ct_aot_compare(static_cast<ct_aot_frame *>(nullptr), 0, 0,
+                                                     static_cast<int32_t *>(nullptr))) {
+    less = -1,
+    equivalent = 0,
+    greater = 1,
+    // NOT "incomparable with itself" - this is what a NaN on either side, and
+    // only that, produces. Every one of the four relational operators is FALSE
+    // against it, including `>=`, which is why they cannot be lowered as the
+    // negation of one another.
+    unordered = 2,
+};
+
 } // namespace ctbrowser::aot
