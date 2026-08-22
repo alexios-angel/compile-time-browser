@@ -29,6 +29,7 @@ file(REMOVE ${OUT})
 
 execute_process(
   COMMAND ${CTCOMPILE} ${APP} --entry index.html --launcher ${LAUNCHER} -o ${OUT} --verbose
+          --fonts ${FONTS}
   RESULT_VARIABLE packaged
   OUTPUT_VARIABLE packaging_out
   ERROR_VARIABLE packaging_err)
@@ -120,6 +121,58 @@ endif()
 if(NOT html_err MATCHES "not a ctbrowser application bundle")
   message(FATAL_ERROR "it refused, but not for the right reason:\n${html_out}${html_err}")
 endif()
+
+# ---- and it must look the SAME as the page it came from --------------------
+#
+# THE CHECK THAT CAUGHT THE FONTS. A packaged application is sealed - it answers
+# from what it carries and never from the disk - and the vendored faces are
+# loaded THROUGH the asset registry, so the first sealed build silently dropped
+# to the built-in bitmap font. It exited 0, it rendered, and it just looked
+# worse. Nothing in this file noticed, because everything above it runs with
+# CTBROWSER_FONTS=font8x8 and so was comparing two bitmap-font runs.
+#
+# So this arm renders the SAME page twice with real fonts - once from source,
+# once packaged - and compares the bytes. It is deliberately the last thing
+# here, because a byte comparison of two renders catches anything the packaging
+# lost, not only fonts.
+#
+# It proves less on a build without TTF support: both arms fall back and match.
+# That is worth knowing rather than hiding, and it is why the failure message
+# says what to check.
+unset(ENV{CTBROWSER_FONTS})
+set(ENV{CTBROWSER_FONT_PATH} ${FONTS})
+set(ENV{CTBROWSER_TEST_FRAMES} 2)
+# The packaged arm must not be reading these from the disk - it is sealed - but
+# the FROM-SOURCE arm needs them, and if this were left unset both arms would
+# fall back and match for the wrong reason.
+execute_process(
+  COMMAND ${CMAKE_COMMAND} -E env CTBROWSER_SCREENSHOT=${OUT}-from-source.ppm
+          ${BROWSE} ${APP}/index.html
+  RESULT_VARIABLE ran_source OUTPUT_QUIET ERROR_VARIABLE source_err)
+# THE PACKAGED ARM IS GIVEN NOTHING - no font path, and a working directory that
+# is not the application's. That is what "copy it and run it" means, and it is
+# the only way this comparison can see the bundle doing the work: with
+# CTBROWSER_FONT_PATH set, a packaged application finds the faces under the very
+# names the packaging machine recorded and passes for the wrong reason.
+unset(ENV{CTBROWSER_FONT_PATH})
+execute_process(
+  COMMAND ${CMAKE_COMMAND} -E env CTBROWSER_SCREENSHOT=${OUT}-packaged.ppm ${OUT}
+  WORKING_DIRECTORY ${elsewhere}
+  RESULT_VARIABLE ran_packaged OUTPUT_QUIET ERROR_VARIABLE packaged_err)
+if(NOT ran_source EQUAL 0 OR NOT ran_packaged EQUAL 0)
+  message(FATAL_ERROR "a render arm did not run:\n${source_err}${packaged_err}")
+endif()
+execute_process(
+  COMMAND ${CMAKE_COMMAND} -E compare_files ${OUT}-from-source.ppm ${OUT}-packaged.ppm
+  RESULT_VARIABLE same)
+if(NOT same EQUAL 0)
+  message(FATAL_ERROR
+          "the packaged application does not render what the page renders. It exits 0 and draws "
+          "something, so only this comparison can see it - check first whether the packaged "
+          "registry can reach everything it needs, fonts included:\n"
+          "  ${OUT}-from-source.ppm\n  ${OUT}-packaged.ppm")
+endif()
+set(ENV{CTBROWSER_FONTS} font8x8)
 
 # ---- what the compiler must refuse to package -----------------------------
 #

@@ -1005,6 +1005,15 @@ int run_bundle(std::span<const std::byte> bytes, app_options overrides) {
     // application missing a resource reads whatever happens to sit next to the
     // user, under the name its own document asked for. A miss has to be a miss.
     options.sealed_assets = true;
+    // AND THE FACES IT WAS PACKAGED WITH. The registry key for a face is
+    // "<directory>/Tinos-Regular.ttf", so the directory is part of the name and
+    // the bundle's answer has to win over this machine's - a run that resolved
+    // CTBROWSER_FONT_PATH to somewhere else would ask a sealed registry for a
+    // name nothing in it carries, and drop to the bitmap font without a word.
+    if (const std::string packaged_fonts = bundle.meta("font_path"); !packaged_fonts.empty()) {
+        options.real_fonts = true;
+        options.font_path = packaged_fonts;
+    }
 
     const std::span<const std::byte> html = bundle.html();
     return run_app(std::string_view{reinterpret_cast<const char *>(html.data()), html.size()},

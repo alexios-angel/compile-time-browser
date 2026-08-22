@@ -271,6 +271,11 @@ public:
         return classic_programs_.size();
     }
 
+    // Where the vendored faces are looked for when `use_real_fonts` is given no
+    // directory: $CTBROWSER_FONT_PATH, or `fonts` beside the executable. Public
+    // because a packager needs the same answer - see browser.cpp.
+    [[nodiscard]] static std::string default_font_directory();
+
     // Turn on real fonts. Loads the vendored OFL faces through the asset
     // registry - so an application that baked them in never touches the disk -
     // and leaves font8x8 in place if SDL3_ttf is absent or none of them load.

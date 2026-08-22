@@ -22,15 +22,15 @@
 #include <filesystem>
 #include <fstream>
 #include <span>
-#include <system_error>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 using ctbrowser::shell::app_bundle;
+using ctbrowser::shell::append_bundle_to;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
-using ctbrowser::shell::append_bundle_to;
 using ctbrowser::shell::bundle_kind;
 using ctbrowser::shell::find_appended_bundle;
 using ctbrowser::shell::read_bundle;
@@ -84,9 +84,9 @@ int main(int argc, char ** argv) {
     // A NAME THAT IS NOT A PATH RELATIVE TO ANYTHING, which is the case a
     // directory of files cannot represent and the reason this is a table.
     made.entries.push_back({bundle_kind::asset, "../../vendor/p5/p5.js", raw("// a library\n")});
-    made.entries.push_back({bundle_kind::asset, "sprites.bmp",
-                        std::vector<std::byte>{std::byte{'B'}, std::byte{'M'},
-                                               std::byte{0}, std::byte{0}}});
+    made.entries.push_back(
+        {bundle_kind::asset, "sprites.bmp",
+         std::vector<std::byte>{std::byte{'B'}, std::byte{'M'}, std::byte{0}, std::byte{0}}});
     made.entries.push_back({bundle_kind::script_image, {}, raw("not really an image")});
 
     const std::vector<std::byte> bytes = write_bundle(made);
@@ -146,17 +146,13 @@ int main(int argc, char ** argv) {
     {
         // A count the file cannot pay for - the reserve-the-world case.
         std::vector<std::byte> wrong = bytes;
-        for (std::size_t i = 0; i < 4; ++i) {
-            wrong[16 + i] = static_cast<std::byte>(0xFF);
-        }
+        for (std::size_t i = 0; i < 4; ++i) { wrong[16 + i] = static_cast<std::byte>(0xFF); }
         must_refuse(std::move(wrong), "an entry count of four billion");
     }
     {
         // A payload that does not fit inside the file it is in.
         std::vector<std::byte> wrong = bytes;
-        for (std::size_t i = 0; i < 8; ++i) {
-            wrong[20 + i] = static_cast<std::byte>(0xFF);
-        }
+        for (std::size_t i = 0; i < 8; ++i) { wrong[20 + i] = static_cast<std::byte>(0xFF); }
         must_refuse(std::move(wrong), "a payload offset past the end");
     }
     {
@@ -283,10 +279,10 @@ int main(int argc, char ** argv) {
             std::printf("FAIL %zu of %zu scripts were compiled from source despite their images\n",
                         packaged.scripts_compiled_from_source(), packaged.script_sources().size());
             for (const std::string & text : packaged.script_sources()) {
-                std::printf("     page has  %016llx  <<%s>>\n",
-                            static_cast<unsigned long long>(
-                                ctbrowser::script::image_source_hash(text)),
-                            text.c_str());
+                std::printf(
+                    "     page has  %016llx  <<%s>>\n",
+                    static_cast<unsigned long long>(ctbrowser::script::image_source_hash(text)),
+                    text.c_str());
             }
             ++failures;
         }
@@ -380,10 +376,10 @@ int main(int argc, char ** argv) {
         // image path into load_module, so every count reads a truthful zero
         // while the application parses all of its JavaScript at every start.
         app_bundle module_page;
-        module_page.entries.push_back(
-            {bundle_kind::html, {},
-             raw("<!doctype html><title>m</title>\n"
-                 "<script type=\"module\">var a = 1;</script>\n")});
+        module_page.entries.push_back({bundle_kind::html,
+                                       {},
+                                       raw("<!doctype html><title>m</title>\n"
+                                           "<script type=\"module\">var a = 1;</script>\n")});
         emit("module-page.ctapp", module_page);
     }
 

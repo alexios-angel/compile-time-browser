@@ -59,6 +59,8 @@ int main(int argc, char ** argv) try {
          "write the .ctapp bundle alone instead of an executable") //
         ("launcher", po::value<std::string>()->value_name("FILE"),
          "the launcher to build the executable from (default: ctrun beside this compiler)") //
+        ("fonts", po::value<std::string>()->value_name("DIR"),
+         "where the vendored faces are (default $CTBROWSER_FONT_PATH, else `fonts`)") //
         ("verbose", po::bool_switch(), "report each stage as it runs");
 
     po::options_description hidden;
@@ -131,12 +133,32 @@ int main(int argc, char ** argv) try {
     std::vector<std::string> modules;
     std::vector<std::pair<std::string, std::vector<std::byte>>> resources;
     std::string page_error;
+    std::string font_directory;
+    bool real_fonts = false;
     std::size_t ticks = 0;
     {
         ctbrowser::browser probe{ctbrowser::browser_options{800, 600}};
         // The page's own directory, so `<script src>` and an `<img src>` resolve
         // exactly as they do when the page is opened from there.
         probe.assets().set_base_path(entry.parent_path());
+
+        // REAL FONTS, BEFORE THE PAGE LOADS, exactly as run_app does it.
+        //
+        // Not a detail, and it was found by comparing renders: the vendored
+        // faces are loaded THROUGH the asset registry, and a packaged
+        // application's registry is sealed - so an application packaged without
+        // them silently drops to the built-in bitmap font. It exits 0, it
+        // renders, and it just looks worse, which is the failure this whole
+        // tool is built to refuse. Asking here puts the faces in `requested()`
+        // and the loop below packs them like any other resource.
+        //
+        // The DIRECTORY is recorded in the bundle because it is part of the
+        // name: the registry key is "<dir>/Tinos-Regular.ttf", so a run that
+        // resolved a different directory would ask for a name nothing carries.
+        font_directory = options.count("fonts") != 0 ? options["fonts"].as<std::string>()
+                                                     : ctbrowser::browser::default_font_directory();
+        real_fonts = probe.use_real_fonts(font_directory);
+
         probe.load_html(html);
 
         // AND THEN LET IT RUN, because a load is not when a page asks for its
@@ -261,6 +283,22 @@ int main(int argc, char ** argv) try {
             {ctbrowser::shell::bundle_kind::script_image, {}, std::move(image)});
     }
 
+    if (real_fonts) {
+        bundle.entries.push_back(
+            {ctbrowser::shell::bundle_kind::meta, "font_path",
+             std::vector<std::byte>(reinterpret_cast<const std::byte *>(font_directory.data()),
+                                    reinterpret_cast<const std::byte *>(font_directory.data() +
+                                                                        font_directory.size()))});
+    } else {
+        // NOT BEHIND --verbose. An application that renders with the built-in
+        // bitmap font because the faces were not found where this looked is an
+        // application that exits 0 and just looks worse, which is the failure
+        // this tool exists to refuse. Say it every time, and say where to put
+        // them.
+        std::cerr << "ctcompile: warning: no fonts were found in \"" << font_directory
+                  << "\", so the application will render with the built-in bitmap font"
+                     " - name the directory with --fonts\n";
+    }
     bundle.entries.push_back(
         {ctbrowser::shell::bundle_kind::meta, "title", std::vector<std::byte>{}});
     {

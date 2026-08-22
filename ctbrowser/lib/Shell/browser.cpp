@@ -146,14 +146,27 @@ void browser::define_native(std::string name, script::native_fn fn) {
     if (script_) { install_embedder_natives(); }
 }
 
+// WHERE THE VENDORED FACES ARE, and the reason it is a function rather than
+// three lines inside use_real_fonts: a PACKAGER has to ask the same question.
+// The faces are loaded through the asset registry under names that begin with
+// this directory, so an application that bakes them in has to bake them under
+// the names the run will ask for - and a packager that worked the directory out
+// for itself would be a second copy of this rule, free to drift from the one
+// that decides at run time.
+std::string browser::default_font_directory() {
+    const char * from_env = std::getenv("CTBROWSER_FONT_PATH");
+    return from_env != nullptr ? std::string{from_env} : std::string{"fonts"};
+}
+
 bool browser::use_real_fonts(std::string_view directory) {
     // An empty directory means "ask the build". Resolved HERE rather than as a
     // default argument because a default argument cannot read the environment,
     // and resolved for every caller rather than at seventeen call sites
     // because the eighteenth would be the one that forgot.
+    std::string resolved;
     if (directory.empty()) {
-        const char * from_env = std::getenv("CTBROWSER_FONT_PATH");
-        directory = from_env != nullptr ? std::string_view{from_env} : std::string_view{"fonts"};
+        resolved = default_font_directory();
+        directory = resolved;
     }
 #if CTBROWSER_WITH_TTF
     auto backend = std::make_unique<ctbrowser::raster::ttf_backend>();

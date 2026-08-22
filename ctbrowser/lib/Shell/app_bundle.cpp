@@ -272,9 +272,7 @@ std::vector<std::byte> append_bundle_to(std::span<const std::byte> launcher,
     const std::uint64_t at = out.size();
     out.insert(out.end(), bundle.begin(), bundle.end());
     for (const char c : trailer_magic) { out.push_back(static_cast<std::byte>(c)); }
-    for (int i = 0; i < 8; ++i) {
-        out.push_back(static_cast<std::byte>((at >> (8 * i)) & 0xFF));
-    }
+    for (int i = 0; i < 8; ++i) { out.push_back(static_cast<std::byte>((at >> (8 * i)) & 0xFF)); }
     const std::uint64_t length = bundle.size();
     for (int i = 0; i < 8; ++i) {
         out.push_back(static_cast<std::byte>((length >> (8 * i)) & 0xFF));
@@ -301,7 +299,8 @@ std::span<const std::byte> find_appended_bundle(std::span<const std::byte> whole
     // or a launcher that happens to contain these eight bytes in its own data,
     // fails this and is treated as having no bundle at all rather than as
     // having one at a made-up offset.
-    if (at > whole.size() || length > whole.size() - at || at + length + trailer_size != whole.size()) {
+    if (at > whole.size() || length > whole.size() - at ||
+        at + length + trailer_size != whole.size()) {
         return {};
     }
     return whole.subspan(at, length);

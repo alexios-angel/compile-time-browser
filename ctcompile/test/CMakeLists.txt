@@ -101,6 +101,8 @@ add_test(NAME ctcompile_package
                  -DAPP=${CMAKE_CURRENT_SOURCE_DIR}/app
                  -DOUT=${CMAKE_CURRENT_BINARY_DIR}/packaged-fixture
                  -DREFUSALS=${CMAKE_CURRENT_BINARY_DIR}
+                 -DBROWSE=$<TARGET_FILE:ctbrowser-tool-ctbrowse>
+                 -DFONTS=${CTBROWSER_MONOREPO_ROOT}/ctbrowser/resources/fonts
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/check-package.cmake)
 # ORDER, not a mere preference: the two bundles the launcher must refuse are
 # written by the test above.
