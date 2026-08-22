@@ -71,7 +71,9 @@ extern "C" std::int32_t sample_keeps(ctbrowser::aot::ct_aot_ctx * ctx,
     alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
     ctbrowser::aot::ct_aot_frame * frame =
         ctbrowser::aot::ct_aot_enter(ctx, site, /*reg_count*/ 4u, receiver, storage);
-    if (frame == nullptr) { return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed); }
+    if (frame == nullptr) {
+        return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed);
+    }
 
     // Allocated INSIDE the frame's lifetime and parked in a slot, which is the
     // whole discipline this phase exists to make possible.
@@ -80,9 +82,8 @@ extern "C" std::int32_t sample_keeps(ctbrowser::aot::ct_aot_ctx * ctx,
     ctbrowser::aot::ct_aot_slots(frame)[0] = kept.bits();
 
     std::uint64_t ignored = value::undefined().bits();
-    const auto called = static_cast<ctbrowser::aot::ct_aot_status>(
-        ctbrowser::aot::ct_aot_call(frame, callee, value::undefined().bits(), nullptr, 0u, 0u, site,
-                                    &ignored));
+    const auto called = static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_call(
+        frame, callee, value::undefined().bits(), nullptr, 0u, 0u, site, &ignored));
     if (called != ctbrowser::aot::ct_aot_status::ok) {
         if (called != ctbrowser::aot::ct_aot_status::unwound) {
             ctbrowser::aot::ct_aot_leave(frame);
@@ -110,16 +111,17 @@ extern "C" std::int32_t sample_ctor(ctbrowser::aot::ct_aot_ctx * ctx,
     alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
     ctbrowser::aot::ct_aot_frame * frame =
         ctbrowser::aot::ct_aot_enter(ctx, site, /*reg_count*/ 4u, receiver, storage);
-    if (frame == nullptr) { return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed); }
+    if (frame == nullptr) {
+        return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed);
+    }
 
     // A SAFEPOINT WITH THE INSTANCE LIVE. `this` is reachable only through the
     // frame the bridge pushed; if that field is not set, this collection frees
     // the object being constructed and everything after it is reading freed
     // memory.
     std::uint64_t ignored = value::undefined().bits();
-    const auto called = static_cast<ctbrowser::aot::ct_aot_status>(
-        ctbrowser::aot::ct_aot_call(frame, callee, value::undefined().bits(), nullptr, 0u, 0u, site,
-                                    &ignored));
+    const auto called = static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_call(
+        frame, callee, value::undefined().bits(), nullptr, 0u, 0u, site, &ignored));
     if (called != ctbrowser::aot::ct_aot_status::ok) {
         if (called != ctbrowser::aot::ct_aot_status::unwound) {
             ctbrowser::aot::ct_aot_leave(frame);
@@ -132,9 +134,7 @@ extern "C" std::int32_t sample_ctor(ctbrowser::aot::ct_aot_ctx * ctx,
     // keeps the property.
     auto & cx = *reinterpret_cast<context *>(ctx);
     const value self = value::from_bits(receiver);
-    if (self.is_object()) {
-        cx.store_property(self, "marker", value::number(1234));
-    }
+    if (self.is_object()) { cx.store_property(self, "marker", value::number(1234)); }
 
     *out = ctbrowser::aot::ct_aot_return_value(value::number(7).bits(), receiver, constructing);
     ctbrowser::aot::ct_aot_leave(frame);
@@ -150,7 +150,8 @@ constexpr std::string_view fixture =
     // USER JAVASCRIPT, and nothing has pushed a frame carrying it yet.
     "class Held { made = churn(); }\n"
     "function makeHeld() { return new Held(); }\n"
-    "function churn() { var s = ''; for (var i = 0; i < 40; i++) { s = s + i; } return s.length; }\n";
+    "function churn() { var s = ''; for (var i = 0; i < 40; i++) { s = s + i; } return s.length; "
+    "}\n";
 
 } // namespace
 
@@ -266,7 +267,8 @@ int main() {
             "  var acc = [];\n"
             "  for (var i = 0; i < n; i++) { acc.push({ n: i, s: 'v' + i }); }\n"
             "  var total = 0;\n"
-            "  for (var j = 0; j < acc.length; j++) { total = total + acc[j].n + acc[j].s.length; }\n"
+            "  for (var j = 0; j < acc.length; j++) { total = total + acc[j].n + acc[j].s.length; "
+            "}\n"
             "  return total;\n"
             "}\n";
         program builder = ctbrowser::script::compiler::compile(work);
@@ -287,8 +289,9 @@ int main() {
         const value with = stressed.call(stressed.global("build"), thirty, value::undefined());
         check(stressed.collections() > before,
               "entering a function collects under stress, so the interpreter really was exercised");
-        check(with.is_number() && without.is_number() && with.as_number() == without.as_number(),
-              "AND THE INTERPRETER COMPUTES THE SAME ANSWER WITH A COLLECTOR RUNNING AT EVERY CALL");
+        check(
+            with.is_number() && without.is_number() && with.as_number() == without.as_number(),
+            "AND THE INTERPRETER COMPUTES THE SAME ANSWER WITH A COLLECTOR RUNNING AT EVERY CALL");
     }
 
     ctx.set_gc_stress(false);

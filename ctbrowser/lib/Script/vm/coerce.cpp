@@ -273,6 +273,37 @@ bool context::loose_equals(value a, value b) {
 // exactly the required NaN behaviour.
 // The bigint half of every arithmetic opcode. See the declaration for why
 // mixing throws rather than coercing.
+// THE SEVEN NON-RE-ENTERING BINARY OPERATIONS. Phase 5's extraction, and the
+// row in aot_helpers.def names this function by name.
+//
+// Every one of them was the same eleven lines in run_loop.cpp: try the BigInt
+// arm, and otherwise convert statically and combine. They are here so that the
+// interpreter and a compiled body run the SAME code rather than two
+// implementations that agree today - which is the entire point of the phase,
+// and the reason its discipline is one helper per commit with the suite green
+// in between.
+value context::binary_op_static(op kind, value lhs, value rhs) {
+    if (value made; bigint_binary(kind, lhs, rhs, made)) { return made; }
+    switch (kind) {
+    case op::add: return value::number(to_number(lhs) + to_number(rhs));
+    case op::bit_and: return value::number(to_int32(lhs) & to_int32(rhs));
+    case op::bit_or: return value::number(to_int32(lhs) | to_int32(rhs));
+    case op::bit_xor: return value::number(to_int32(lhs) ^ to_int32(rhs));
+    case op::shl:
+        return value::number(static_cast<std::int32_t>(static_cast<std::uint32_t>(to_int32(lhs))
+                                                       << (to_uint32(rhs) & 31U)));
+    case op::shr: return value::number(to_int32(lhs) >> (to_uint32(rhs) & 31U));
+    case op::ushr:
+        return value::number(static_cast<double>(to_uint32(lhs) >> (to_uint32(rhs) & 31U)));
+    default: break;
+    }
+    // NOT REACHABLE FROM THE INTERPRETER, which only ever passes the seven, and
+    // deliberately not an assert: this is also the AOT entry point, and an
+    // image carrying a bad op_kind is untrusted input rather than a bug in this
+    // file. Undefined is what every other unreachable arm in this VM returns.
+    return value::undefined();
+}
+
 bool context::bigint_binary(op kind, value a, value b, value & out) {
     const bool a_big = a.is_kind(heap_kind::bigint);
     const bool b_big = b.is_kind(heap_kind::bigint);

@@ -543,6 +543,28 @@ public:
     // bigint. `kind` is the opcode being executed.
     [[nodiscard]] bool bigint_binary(op kind, value a, value b, value & out);
 
+    // THE SEVEN NON-RE-ENTERING BINARY OPERATIONS, in one place. Phase 5.
+    //
+    // add, bit_and, bit_or, bit_xor, shl, shr and ushr. They are together
+    // because they are the same function: try the BigInt arm, and otherwise
+    // apply a STATIC conversion - to_number for add, to_int32/to_uint32 for the
+    // six bitwise - which is what makes them non-re-entering. None of them can
+    // run a user valueOf or toString, so a backend that has proven both
+    // operands are Numbers may drop the call, the exception edge AND the
+    // safepoint.
+    //
+    // `add` BELONGS HERE AND NOT WITH THE RE-ENTERING FAMILY, which looks wrong
+    // and is not: compile_binary maps source `+` to add_generic, and op::add
+    // comes only from `++` and three internal counters. So `x++` on
+    // {valueOf: () => 3} is NaN and never runs user code. That is a deviation
+    // from the specification rather than an optimisation, and aot_helpers.def
+    // records it as one - if it is ever fixed, these seven move.
+    //
+    // Extracted rather than duplicated because the AOT backend must run the
+    // SAME semantics as the interpreter, not a second implementation of them:
+    // ct_aot_binary_op_static calls exactly this.
+    [[nodiscard]] value binary_op_static(op kind, value lhs, value rhs);
+
     // --- prototypes ---------------------------------------------------------
     //
     // `"abc".split(...)` and `[1,2].push(...)` resolve to nothing without these:

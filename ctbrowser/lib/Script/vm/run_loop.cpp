@@ -240,14 +240,7 @@ value context::run_loop(std::size_t stop_depth) {
         VM_NEXT;
 
         VM_CASE(add) do {
-            {
-                value made;
-                if (bigint_binary(op::add, reg(in.b), reg(in.c), made)) {
-                    reg(in.a) = made;
-                    break;
-                }
-            }
-            reg(in.a) = value::number(to_number(reg(in.b)) + to_number(reg(in.c)));
+            reg(in.a) = binary_op_static(op::add, reg(in.b), reg(in.c));
             break;
         }
         while (0);
@@ -517,84 +510,40 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(bit_and) do {
-            {
-                value made;
-                if (bigint_binary(op::bit_and, reg(in.b), reg(in.c), made)) {
-                    reg(in.a) = made;
-                    break;
-                }
-            }
-            reg(in.a) = value::number(to_int32(reg(in.b)) & to_int32(reg(in.c)));
+            reg(in.a) = binary_op_static(op::bit_and, reg(in.b), reg(in.c));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(bit_or) do {
-            {
-                value made;
-                if (bigint_binary(op::bit_or, reg(in.b), reg(in.c), made)) {
-                    reg(in.a) = made;
-                    break;
-                }
-            }
-            reg(in.a) = value::number(to_int32(reg(in.b)) | to_int32(reg(in.c)));
+            reg(in.a) = binary_op_static(op::bit_or, reg(in.b), reg(in.c));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(bit_xor) do {
-            {
-                value made;
-                if (bigint_binary(op::bit_xor, reg(in.b), reg(in.c), made)) {
-                    reg(in.a) = made;
-                    break;
-                }
-            }
-            reg(in.a) = value::number(to_int32(reg(in.b)) ^ to_int32(reg(in.c)));
+            reg(in.a) = binary_op_static(op::bit_xor, reg(in.b), reg(in.c));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(shl) do {
-            {
-                value made;
-                if (bigint_binary(op::shl, reg(in.b), reg(in.c), made)) {
-                    reg(in.a) = made;
-                    break;
-                }
-            }
-            reg(in.a) = value::number(static_cast<std::int32_t>(
-                static_cast<std::uint32_t>(to_int32(reg(in.b))) << (to_uint32(reg(in.c)) & 31U)));
+            reg(in.a) = binary_op_static(op::shl, reg(in.b), reg(in.c));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(shr) do {
-            {
-                value made;
-                if (bigint_binary(op::shr, reg(in.b), reg(in.c), made)) {
-                    reg(in.a) = made;
-                    break;
-                }
-            }
-            reg(in.a) = value::number(to_int32(reg(in.b)) >> (to_uint32(reg(in.c)) & 31U));
+            reg(in.a) = binary_op_static(op::shr, reg(in.b), reg(in.c));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(ushr) do {
-            {
-                // NO UNSIGNED SHIFT ON A BIGINT: the operator needs a WIDTH to
-                // fill from, and a BigInt has none. The specification names it
-                // as the one bitwise operator that simply does not apply.
-                value made;
-                if (bigint_binary(op::ushr, reg(in.b), reg(in.c), made)) {
-                    reg(in.a) = made;
-                    break;
-                }
-            }
-            reg(in.a) = value::number(
-                static_cast<double>(to_uint32(reg(in.b)) >> (to_uint32(reg(in.c)) & 31U)));
+            // The BigInt arm REFUSES this one: an unsigned shift needs a WIDTH
+            // to fill from and a BigInt has none. binary_op_static carries that
+            // refusal, which is where it belongs.
+            reg(in.a) = binary_op_static(op::ushr, reg(in.b), reg(in.c));
             break;
         }
         while (0);

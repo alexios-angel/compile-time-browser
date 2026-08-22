@@ -8,14 +8,17 @@
 // right is to make a few of them run before sixty-eight bodies and two code
 // generators are written against them.
 //
-// SIX ROWS. Four of them are what a non-throwing call needs - ct_aot_enter,
+// SEVEN ROWS. Four of them are what a non-throwing call needs - ct_aot_enter,
 // ct_aot_leave, ct_aot_check and ct_aot_return_value - and the fifth,
 // ct_aot_call, is what Phase 3 needs: without it a compiled body cannot call
 // anything, so three of the six transitions the plan requires could only be
 // demonstrated by a test reaching around the ABI it is supposed to be testing.
 // The sixth, ct_aot_slots, is what Phase 4 needs: a body had a register span
 // reserved for it and no way to address it, so the only place it could keep a
-// live value was a C++ local - which the collector does not trace.
+// live value was a C++ local - which the collector does not trace. The seventh,
+// ct_aot_binary_op_static, is Phase 5's first extracted SEMANTIC helper - the
+// first row here that computes a JavaScript answer rather than managing a
+// frame, and it computes it by calling the very function the interpreter calls.
 //
 // Each body is a transcription of its row's DELEGATES TO column, and where a
 // row could not be satisfied that is recorded rather than worked around - see
@@ -127,6 +130,35 @@ struct aot_bridge {
         cx.frames_.push_back(entered);
         cx.pending_new_target_ = value::undefined();
         return reinterpret_cast<aot::ct_aot_frame *>(held);
+    }
+
+    // ct_aot_binary_op_static. Phase 5's first extracted semantic helper: the
+    // seven non-re-entering binary operations, delegating to the SAME
+    // context::binary_op_static the interpreter now calls.
+    //
+    // That identity is the point of the phase. A helper that reimplemented
+    // `add` would agree with the interpreter on the day it was written and
+    // drift afterwards, and the difference would surface as a Phase 12A oracle
+    // mismatch on some page - not as a build error.
+    static std::int32_t binary_op_static(aot::ct_aot_frame * f, std::uint32_t op_kind,
+                                         std::uint64_t lhs, std::uint64_t rhs,
+                                         std::uint64_t * out) {
+        aot_frame_storage & held = frame_of(f);
+        context & cx = *held.ctx;
+        // AN OP KIND OUT OF AN IMAGE IS UNTRUSTED INPUT. The interpreter only
+        // ever passes the seven; a compiled body's operand came from a file.
+        // binary_op_static returns undefined for anything else, and checking
+        // the range here as well means the cast below cannot name an
+        // enumerator that does not exist.
+        if (op_kind >= opcode_count) {
+            *out = value::undefined().bits();
+            return static_cast<std::int32_t>(aot::ct_aot_status::ok);
+        }
+        const value produced = cx.binary_op_static(static_cast<op>(op_kind), value::from_bits(lhs),
+                                                   value::from_bits(rhs));
+        const std::int32_t status = check(f);
+        if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
+        return status;
     }
 
     // ct_aot_slots. The row: the frame's own register span, which is where a
@@ -244,6 +276,11 @@ extern "C" {
 ct_aot_frame * ct_aot_enter(ct_aot_ctx * ctx, const ct_aot_site * site, std::uint32_t reg_count,
                             std::uint64_t receiver, void * storage) {
     return script::aot_bridge::enter(ctx, site, reg_count, receiver, storage);
+}
+
+std::int32_t ct_aot_binary_op_static(ct_aot_frame * fr, std::uint32_t op_kind, std::uint64_t lhs,
+                                     std::uint64_t rhs, std::uint64_t * out) {
+    return script::aot_bridge::binary_op_static(fr, op_kind, lhs, rhs, out);
 }
 
 std::uint64_t * ct_aot_slots(ct_aot_frame * fr) {

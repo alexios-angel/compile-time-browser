@@ -11,6 +11,7 @@
 ctbrowser_test(unit/aot_basics)
 ctbrowser_test(unit/aot_dispatch)
 ctbrowser_test(unit/aot_gc)
+ctbrowser_test(unit/aot_helpers)
 ctbrowser_test(unit/core_basics)
 ctbrowser_test(unit/dom_basics)
 ctbrowser_test(unit/html_parse)

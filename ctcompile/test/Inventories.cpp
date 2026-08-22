@@ -221,6 +221,86 @@ int main() {
         check(!h.may_reenter || h.is_safepoint, "may_reenter implies is_safepoint", h.name);
     }
 
+    // THE HELPERS SERVING AN OPCODE MAY NOT UNDERSTATE WHAT IT DOES. Phase 5
+    // asks for this in as many words: "add a unit test asserting that every
+    // helper's flags match its opcode's flags in bytecode_opcodes.def".
+    //
+    // TWO THINGS "MATCH" DOES NOT MEAN, and the table already knew both.
+    //
+    // It is not per-helper. `type_of` is served by TWO rows on purpose -
+    // ct_aot_type_of_name classifies without allocating, ct_aot_new_string
+    // materialises the string only when the result escapes - and that row says
+    // so: "(0,0,0,0) here OR ct_aot_new_string's (1,1,0,1) is exactly type_of's
+    // inventory row". So the test is against the UNION, which is what a code
+    // generator emitting the pair actually faces.
+    //
+    // And it is not equality. A helper serving four call opcodes carries the
+    // union of what they can do, so equality would be wrong wherever one of
+    // them throws and another does not. Overstating is merely conservative - a
+    // call site roots a value it did not have to. UNDERSTATING tells a code
+    // generator it is safe to keep a value in a register across a collection,
+    // or to skip the status test after a call that can throw, and that is a
+    // miscompilation no verifier catches.
+    for (const row & r : table) {
+        const auto opcode = static_cast<ctbrowser::script::op>(&r - table);
+        bool any = false;
+        bool may_throw = false;
+        bool may_reenter = false;
+        bool is_safepoint = false;
+        for (const coverage & c : covers) {
+            if (c.opcode != opcode) { continue; }
+            for (const helper & h : helpers) {
+                if (h.name != c.helper) { continue; }
+                any = true;
+                may_throw = may_throw || h.may_throw;
+                may_reenter = may_reenter || h.may_reenter;
+                is_safepoint = is_safepoint || h.is_safepoint;
+            }
+        }
+        if (!any) { continue; } // the ten that need no helper are checked below
+
+        // ONE OPCODE IS ALLOWED TO UNDERSTATE, and it is named here so that a
+        // SECOND one cannot appear quietly.
+        //
+        // `await_value` is is_safepoint because the inventory derives that
+        // mechanically as allocates||may_reenter - its own row says "the
+        // mandated derivation, not an observed collection point". The helper
+        // covers the READ half only: no allocate<> and no call(), with the
+        // suspend half left to Phase 14. That split is legitimate only while
+        // the DECISION stays allocation-free, which its row states as an ABI
+        // contract rather than an observation - if promise creation is ever
+        // hoisted above the three-way test, this becomes a real safepoint and
+        // every caller's spill disappears. Then this exception has to go, and
+        // this line is where somebody finds that out.
+        const bool await_split = r.name == "await_value";
+        check(may_throw || !r.may_throw, "the opcode may throw and no helper serving it says so",
+              r.name);
+        check(may_reenter || !r.may_reenter,
+              "the opcode may re-enter user JavaScript and no helper serving it says so", r.name);
+        check(is_safepoint || !r.is_safepoint || await_split,
+              "the opcode is a safepoint and no helper serving it says so - a call site would "
+              "keep live values where the collector cannot see them",
+              r.name);
+        // AND THE EXCEPTION IS ITSELF CHECKED: if the helper ever declares the
+        // safepoint, the exemption is dead, and saying so is better than
+        // leaving a permanent hole shaped like one opcode.
+        check(!await_split || !is_safepoint,
+              "await_value's helper now declares the safepoint, so the exemption above is stale "
+              "and should be deleted",
+              r.name);
+    }
+
+    // AND EVERY COVERAGE ROW NAMES A REAL HELPER, which the loop above would
+    // otherwise pass over in silence: an opcode served only by a misspelled
+    // helper looks exactly like one served by nothing.
+    for (const coverage & c : covers) {
+        bool named = false;
+        for (const helper & h : helpers) {
+            if (h.name == c.helper) { named = true; }
+        }
+        check(named, "a coverage row names a helper that is not in the table", c.helper);
+    }
+
     // EVERY OPCODE IS ACCOUNTED FOR: served by a helper, or on the list of ten
     // that need no runtime call. Neither silently.
     for (const row & r : table) {

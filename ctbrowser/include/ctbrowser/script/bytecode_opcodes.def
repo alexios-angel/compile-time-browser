@@ -933,8 +933,11 @@ CT_OPCODE(/* name */ load_home, /* a_kind */ reg, /* b_kind */ unused, /* c_kind
  * that applies to every is_safepoint=true row below: allocate()
  * (vm.hpp:223-233) only bumps a counter and links the object, and
  * collect_if_due is called from exactly ONE place in the tree,
- * Shell/browser.cpp:307, BETWEEN event-loop callbacks - so no collection
- * can actually occur inside any handler. is_safepoint here is the mandated
+ * Shell/browser.cpp, BETWEEN event-loop callbacks - so no collection can
+ * actually occur inside any handler IN A PRODUCTION RUN. Phase 4 added
+ * context::set_gc_stress, a test mode that collects at every safepoint, and
+ * under it collections do occur inside handlers - which is the point of it,
+ * and which found two use-after-frees on `new` the first time it ran. is_safepoint here is the mandated
  * allocates||may_reenter derivation, not an observed collection point. */
 CT_OPCODE(/* name */ await_value, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ unused, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1,
