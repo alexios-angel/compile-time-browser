@@ -837,6 +837,14 @@ public:
     }
 
 private:
+    // THE AOT BRIDGE REACHES IN HERE, and it is one line rather than nine
+    // declarations because the helper bodies are the ABI's, not the VM's.
+    // ct_aot_enter pushes a real call_frame, ct_aot_leave truncates handlers_
+    // exactly as op::ret does, and ct_aot_check classifies against frames_ and
+    // failed_ - all of which are this class's private state and none of which
+    // should become public API for a rung. See lib/Script/aot_bridge.cpp.
+    friend struct aot_bridge;
+
     struct call_frame {
         const function_proto * proto = nullptr;
         std::size_t ip = 0;

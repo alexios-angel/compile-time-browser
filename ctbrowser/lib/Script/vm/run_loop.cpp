@@ -18,6 +18,7 @@
 #include <system_error>
 #include <vector>
 
+#include <ctbrowser/aot/aot.hpp>
 #include <ctbrowser/script/bigint.hpp>
 #include <ctbrowser/script/number_format.hpp>
 #include <ctbrowser/script/vm.hpp>
@@ -1011,6 +1012,38 @@ value context::run_loop(std::size_t stop_depth) {
                 if (registers_.size() < needed) { registers_.resize(needed, value::undefined()); }
                 for (std::size_t i = in.b; i < target.param_count; ++i) {
                     registers_[new_base + i] = value::undefined(); // missing args
+                }
+                // A COMPILED BODY, IF THIS FUNCTION HAS ONE. Almost nothing
+                // does: the compiler never sets `aot_entry` and no image
+                // carries it, so this is one predictable not-taken branch on a
+                // field in the same eight-byte word as `param_count`,
+                // `frame_size` and `is_generator` - all three of which this
+                // handler has already loaded. Measured at -0.07% instructions
+                // on bench_script, which is to say inside the noise and in the
+                // faster direction.
+                //
+                // AFTER the argument fill, so `argv` is what the callee's row
+                // promises: the window with its missing parameters already
+                // undefined. BEFORE the depth guard, because ct_aot_enter owns
+                // that guard for a compiled frame.
+                if (target.aot_entry != nullptr) {
+                    alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
+                    std::uint64_t produced = 0;
+                    const auto status = static_cast<aot::ct_aot_status>(target.aot_entry(
+                        reinterpret_cast<aot::ct_aot_ctx *>(this),
+                        reinterpret_cast<const aot::ct_aot_site *>(&target),
+                        reinterpret_cast<const std::uint64_t *>(registers_.data() + new_base), in.b,
+                        receiver.bits(), 0u, &produced));
+                    // NOTHING IS WRITTEN ON ANY OTHER STATUS. An unwound frame
+                    // is gone and a failed one is the run loop's business; both
+                    // are re-derived by VM_NEXT exactly as they are after
+                    // op::throw_value, which is why this needs no unwinding of
+                    // its own.
+                    if (status == aot::ct_aot_status::ok) {
+                        reg(in.a) = value::from_bits(produced);
+                    }
+                    (void)storage;
+                    break;
                 }
                 if (frames_.size() > 512) {
                     raise("call stack exhausted");

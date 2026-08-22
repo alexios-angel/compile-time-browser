@@ -1,5 +1,7 @@
 #pragma once
 
+#include <ctbrowser/aot/aot_entry.h>
+
 #include <cstdint>
 
 // THE AOT RUNTIME ABI, as the runtime declares it.
@@ -33,13 +35,8 @@ namespace ctbrowser::aot {
 //                 Where Phase 26 attaches an inline cache WITHOUT an ABI break
 //   ct_aot_ic     one inline cache's storage, caller-allocated
 //   ct_aot_name   an interned property name, prehashed once
-extern "C" {
-struct ct_aot_ctx;
-struct ct_aot_frame;
-struct ct_aot_site;
-struct ct_aot_ic;
-struct ct_aot_name;
-}
+// Declared in aot_entry.h, beside the entry signature that needs them, so there
+// is exactly one declaration of each rather than two that can drift.
 
 // EVERY HELPER, AS AN ENUMERATOR. An ODS operation names its helper by
 // identifier and that identifier is concatenated into a reference to this

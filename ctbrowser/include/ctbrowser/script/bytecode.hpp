@@ -5,6 +5,7 @@
 #include <string_view>
 #include <vector>
 
+#include <ctbrowser/aot/aot_entry.h>
 #include <ctbrowser/script/value.hpp>
 
 // A register-based instruction set.
@@ -381,6 +382,21 @@ struct function_proto {
     std::vector<std::string> strings;
     std::vector<std::string> names; // for get_global/get_prop operands
     std::vector<upvalue_desc> upvalues;
+
+    // THE COMPILED BODY, or null, which is almost always. Runtime-only: the
+    // compiler never sets it, no image ever carries it, and `image_fingerprint`
+    // cannot see it - an entry point is a property of THIS PROCESS, not of the
+    // program. It lives on the proto rather than on `closure_object` because it
+    // belongs to the CODE: stamped once here, every closure built from this
+    // proto inherits it through the existing closure builder with no diff at
+    // all, where on the closure it would have to be copied by op::closure, by
+    // run_nested, by make_generator and by ct_aot_make_closure.
+    //
+    // Measured cost: `function_proto` goes from 200 bytes to 208. On babylon,
+    // which is 31,905 protos, that is 255 KB of memory and nothing on disk.
+    // The dispatch that reads it was measured at -0.07% instructions on
+    // bench_script - inside the noise, and in the faster direction.
+    aot::ct_aot_entry_fn aot_entry = nullptr;
 
     [[nodiscard]] std::uint32_t add_constant(value v) {
         constants.push_back(v);

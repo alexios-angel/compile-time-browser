@@ -8,6 +8,7 @@
 # directory in the monorepo split, and the test names have not changed once.
 
 # The subsystems, one file each.
+ctbrowser_test(unit/aot_basics)
 ctbrowser_test(unit/core_basics)
 ctbrowser_test(unit/dom_basics)
 ctbrowser_test(unit/html_parse)
