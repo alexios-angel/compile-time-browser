@@ -1029,6 +1029,48 @@ that catches it was itself written wrong the first time — the typed-by-hand ar
 went red, which is how the rule was found. Both arms are in the file now: the
 one that matches, and the one that differs by that newline and matches nothing.
 
+## Phase 1's gate, closed
+
+"Documented CLI, manifest, identities, format versions, and functional compiler
+stub." The stub stopped being a stub above; the CLI is documented in
+`ctcompile/docs/ctcompile.md`; the identities and format versions already
+existed and were unexposed. What was missing was the manifest.
+
+`--manifest FILE` writes it and a copy travels in every bundle, so a packaged
+application can say what it is without the directory it was built from — and
+`myapp --info` prints it, which is also what stopped `myapp --help` from
+silently starting the application.
+
+`program_id` is the identity the runtime actually matches on: the hash of the
+source **the engine reported**. Writing the hash of the file instead would have
+produced a manifest that looks like it explains a cache miss and does not, and
+the two differ by the newline the script walk appends.
+
+Not `llvm::json`, which the master plan asks for. LLVM is behind
+`CTCOMPILE_ENABLE_MLIR`, OFF until Phase 7, for the plan's own reason: a
+compiler that needs a 2 GB dependency to write a JSON file is one a runtime-only
+machine cannot build. Forty lines with tested escaping instead, and switching is
+one file when Phase 7 turns MLIR on.
+
+`--mode` declares Phase 1's three modes and REFUSES two of them. There is no
+native code to prefer in `hybrid` and none to require in `aot-only`, so
+accepting either would be accepting a flag that changes nothing — and the
+refusal names the phase that implements them rather than reporting an unknown
+option.
+
+### What the manifest found in its first five minutes
+
+The packed faces were carrying the build machine's absolute paths as their
+registry names: `/home/ubuntu/projects/…/fonts/Tinos-Regular.ttf`. It worked,
+because the launcher is handed the same directory out of the bundle, and it
+baked a checkout path into every application it produced. They are renamed to a
+fixed `fonts/` now — a prefix substitution on names the ENGINE produced, not a
+second implementation of how a face is named.
+
+That is the argument for a manifest in one paragraph. Nothing was broken, no
+test could have failed, and the defect was visible the moment the artifact could
+describe itself.
+
 ## The ladder ahead
 
 | phase | what | where |
