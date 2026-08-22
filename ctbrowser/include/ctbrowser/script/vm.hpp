@@ -17,6 +17,7 @@
 #include <ctbrowser/core/core.hpp>
 
 #include <ctbrowser/script/bytecode.hpp>
+#include <ctbrowser/script/dispatch.hpp>
 #include <ctbrowser/script/value.hpp>
 
 // The interpreter.
@@ -843,7 +844,21 @@ private:
     // exactly as op::ret does, and ct_aot_check classifies against frames_ and
     // failed_ - all of which are this class's private state and none of which
     // should become public API for a rung. See lib/Script/aot_bridge.cpp.
+    // The one implementation of "enter this callable", which `call` and
+    // `construct` are the two public spellings of. Private because
+    // `constructing` is not a thing an embedder should be choosing.
+    value invoke(value callable, std::span<const value> args, value this_value, bool constructing);
+
     friend struct aot_bridge;
+    // The dispatch layer maintains `executing_` and reads it to attribute a
+    // transition. It is not a second implementation of anything - it is the
+    // ONE place that decides interpreted or native, and these are the two
+    // members it needs.
+    friend class executing_as;
+    friend bool enter_compiled(context & ctx, const function_proto & target, const value * argv,
+                               std::uint32_t argc, value receiver, bool constructing, value & out);
+    friend void note_transition_into_vm(const context & ctx) noexcept;
+    friend void note_transition_into_cxx(const context & ctx) noexcept;
 
     struct call_frame {
         const function_proto * proto = nullptr;
@@ -969,6 +984,15 @@ private:
     void mark(value v);
     void mark_object(heap_object * o);
     void sweep_all();
+
+    // WHAT IS RUNNING RIGHT NOW - the interpreter, a compiled body, or C++.
+    //
+    // The half of a mixed-mode transition that cannot be read off the call
+    // site: `enter_compiled` is reached from `op::call` and from `context::call`
+    // alike, and only this says whether the code doing the calling was itself
+    // compiled. Maintained by `executing_as`, which is one byte saved and
+    // restored on the C++ stack of whatever entered a body.
+    executing_kind executing_ = executing_kind::cxx;
 
     // Set while a native runs, so it can see its receiver.
     value current_this_ = value::undefined();

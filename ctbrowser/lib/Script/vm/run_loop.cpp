@@ -1013,36 +1013,18 @@ value context::run_loop(std::size_t stop_depth) {
                 for (std::size_t i = in.b; i < target.param_count; ++i) {
                     registers_[new_base + i] = value::undefined(); // missing args
                 }
-                // A COMPILED BODY, IF THIS FUNCTION HAS ONE. Almost nothing
-                // does: the compiler never sets `aot_entry` and no image
-                // carries it, so this is one predictable not-taken branch on a
-                // field in the same eight-byte word as `param_count`,
-                // `frame_size` and `is_generator` - all three of which this
-                // handler has already loaded. Measured at -0.07% instructions
-                // on bench_script, which is to say inside the noise and in the
-                // faster direction.
+                // A COMPILED BODY, IF THIS FUNCTION HAS ONE - asked in the one
+                // place that asks, so that every other entry into a function
+                // gets the same answer. See script/dispatch.hpp.
                 //
                 // AFTER the argument fill, so `argv` is what the callee's row
                 // promises: the window with its missing parameters already
                 // undefined. BEFORE the depth guard, because ct_aot_enter owns
                 // that guard for a compiled frame.
-                if (target.aot_entry != nullptr) {
-                    alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
-                    std::uint64_t produced = 0;
-                    const auto status = static_cast<aot::ct_aot_status>(target.aot_entry(
-                        reinterpret_cast<aot::ct_aot_ctx *>(this),
-                        reinterpret_cast<const aot::ct_aot_site *>(&target),
-                        reinterpret_cast<const std::uint64_t *>(registers_.data() + new_base), in.b,
-                        receiver.bits(), 0u, &produced));
-                    // NOTHING IS WRITTEN ON ANY OTHER STATUS. An unwound frame
-                    // is gone and a failed one is the run loop's business; both
-                    // are re-derived by VM_NEXT exactly as they are after
-                    // op::throw_value, which is why this needs no unwinding of
-                    // its own.
-                    if (status == aot::ct_aot_status::ok) {
-                        reg(in.a) = value::from_bits(produced);
-                    }
-                    (void)storage;
+                if (value produced = value::undefined();
+                    enter_compiled(*this, target, registers_.data() + new_base, in.b, receiver,
+                                   /*constructing*/ false, produced)) {
+                    reg(in.a) = produced;
                     break;
                 }
                 if (frames_.size() > 512) {
@@ -1508,6 +1490,18 @@ value context::run_loop(std::size_t stop_depth) {
                 }
                 if (frames_.size() > 512) {
                     raise("call stack exhausted");
+                    break;
+                }
+                // AND `new` ASKS TOO, which it never did: this handler pushed a
+                // frame of its own, so a constructor with a compiled body was
+                // interpreted and nothing said so. It also passes
+                // `constructing`, which is not a detail - it is what makes a
+                // constructor returning a primitive evaluate to its receiver,
+                // and the ABI hands that decision to ct_aot_return_value.
+                if (value produced = value::undefined();
+                    enter_compiled(*this, target, registers_.data() + new_base, in.b, self,
+                                   /*constructing*/ true, produced)) {
+                    reg(in.a) = produced.is_object_like() ? produced : self;
                     break;
                 }
                 call_frame fresh{&target, 0, new_base, in.a, in.b, fnobj, self, handlers_.size()};

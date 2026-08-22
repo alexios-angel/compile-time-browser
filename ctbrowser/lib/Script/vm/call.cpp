@@ -41,12 +41,28 @@ namespace ctbrowser::script {
 // caller's registers are untouched, so a listener that triggers another
 // listener works rather than corrupting the frame that dispatched it.
 value context::call(value callable, std::span<const value> args, value this_value) {
+    return invoke(callable, args, this_value, /*constructing*/ false);
+}
+
+// EVERY C++ ENTRY INTO JAVASCRIPT ENDS UP HERE - a DOM event, a timer, a
+// promise job, an animation frame, `Function.prototype.apply`, a getter, a
+// class field initialiser, `super()` - and until Phase 3 it could not reach a
+// compiled body, because it pushed a frame and ran the loop without ever asking
+// whether the function had one. That is not a failure: it returns the right
+// answer, interpreted, which is why the plan calls it "a performance cliff
+// rather than a bug" and makes centralising this a phase of its own.
+value context::invoke(value callable, std::span<const value> args, value this_value,
+                      bool constructing) {
     if (callable.is_kind(heap_kind::native)) {
         auto * nat = static_cast<native_object *>(callable.as_heap());
         std::vector<value> copy{args.begin(), args.end()};
         const value saved = current_this_;
         current_this_ = this_value;
-        const value out = nat->fn(*this, copy);
+        note_transition_into_cxx(*this);
+        const value out = [&] {
+            const executing_as running{*this, executing_kind::cxx};
+            return nat->fn(*this, copy);
+        }();
         current_this_ = saved;
         return out;
     }
@@ -74,6 +90,16 @@ value context::call(value callable, std::span<const value> args, value this_valu
     for (std::size_t i = 0; i < std::max<std::size_t>(target.param_count, args.size()); ++i) {
         registers_[new_base + i] = i < args.size() ? args[i] : value::undefined();
     }
+    // A COMPILED BODY, IF THIS FUNCTION HAS ONE, asked in the same place the
+    // interpreter asks. AFTER the argument fill, because that window is what
+    // the ABI's entry row promises, and BEFORE the depth guard, because
+    // ct_aot_enter owns that guard for a compiled frame.
+    if (value produced = value::undefined(); enter_compiled(
+            *this, target, registers_.data() + new_base, static_cast<std::uint32_t>(args.size()),
+            this_value, constructing, produced)) {
+        if (registers_.size() >= new_base) { registers_.resize(new_base); }
+        return produced;
+    }
     if (frames_.size() > 512) {
         raise("call stack exhausted");
         return value::undefined();
@@ -81,6 +107,8 @@ value context::call(value callable, std::span<const value> args, value this_valu
     const std::size_t depth = frames_.size();
     const value saved = current_this_;
     current_this_ = this_value;
+    note_transition_into_vm(*this);
+    const executing_as running{*this, executing_kind::vm};
     call_frame entered{
         &target, 0,          new_base,        0, static_cast<std::uint16_t>(args.size()),
         fnobj,   this_value, handlers_.size()};
@@ -188,6 +216,17 @@ run_result context::run_reentrant(const program & prog) {
     // its function protos in the wrong program.
     const program * const outer_program = program_;
     program_ = &prog;
+    // AND THE SAME QUESTION FOR A MODULE EVALUATING INSIDE ITS IMPORTER. This
+    // is the third place that entered a program's top level by pushing a frame
+    // of its own; leaving it out would mean an imported module's compiled body
+    // was interpreted purely because of who imported it.
+    if (value produced = value::undefined();
+        enter_compiled(*this, entry, registers_.data() + new_base, 0u, value::undefined(),
+                       /*constructing*/ false, produced)) {
+        program_ = outer_program;
+        if (registers_.size() >= new_base) { registers_.resize(new_base); }
+        return result;
+    }
     frames_.push_back(
         call_frame{&entry, 0, new_base, 0, 0, nullptr, value::undefined(), handlers_.size()});
     (void)run_loop(depth);
@@ -260,12 +299,29 @@ value context::execute(const program & prog, const function_proto & entry) {
     // level and nothing else ran on the dirtied context.
     handlers_.clear();
     thrown_ = value::undefined();
-    frames_.push_back(call_frame{&entry, 0, 0, 0, 0, nullptr, value::undefined(), 0});
     program_ = &prog;
+    // A COMPILED TOP LEVEL, IF THIS PROGRAM HAS ONE, and for ctcompile that is
+    // the ordinary case rather than an exotic one: a page's `<script>` IS a top
+    // level, so a backend that compiles anything compiles this. Asked after the
+    // reset above, so a compiled body enters a context in the state it expects,
+    // and before the frame push, because ct_aot_enter pushes its own.
+    if (value produced = value::undefined();
+        enter_compiled(*this, entry, registers_.data(), 0u, value::undefined(),
+                       /*constructing*/ false, produced)) {
+        return produced;
+    }
+    frames_.push_back(call_frame{&entry, 0, 0, 0, 0, nullptr, value::undefined(), 0});
     // Per-frame string interning: a literal in a loop should allocate once,
     // not once per iteration.
     string_cache_.clear();
     bigint_cache_.clear();
+    // A TOP-LEVEL PROGRAM IS A C++ ENTRY LIKE ANY OTHER. Marking it is what
+    // makes the transition INSIDE it attributable: without this, `executing_`
+    // is still `cxx` for the whole run, so an interpreted script calling a
+    // compiled function would be counted as C++ reaching it directly. The
+    // interpreter is what is running; say so.
+    note_transition_into_vm(*this);
+    const executing_as running{*this, executing_kind::vm};
     return run_loop(0);
 }
 
@@ -507,7 +563,12 @@ value context::construct(value callee, std::span<const value> args) {
     }
     // `new C()` evaluates to the new object unless the body returned one of its
     // own - the single case the spec lets override it.
-    const value produced = call(callee, args, self);
+    //
+    // `invoke` rather than `call`, so that a constructor with a COMPILED body
+    // is told it is constructing. The ABI hands that decision to
+    // ct_aot_return_value, and passing false would make `new C()` on a compiled
+    // constructor evaluate to whatever the body happened to return.
+    const value produced = invoke(callee, args, self, /*constructing*/ true);
     return produced.is_object_like() ? produced : self;
 }
 

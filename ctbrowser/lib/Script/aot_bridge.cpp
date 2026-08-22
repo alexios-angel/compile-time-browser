@@ -8,10 +8,14 @@
 // right is to make a few of them run before sixty-eight bodies and two code
 // generators are written against them.
 //
-// FOUR ROWS, CHOSEN BECAUSE A NON-THROWING CALL NEEDS EXACTLY THESE FOUR.
-// ct_aot_enter, ct_aot_leave, ct_aot_check and ct_aot_return_value. Each body
-// is a transcription of its row's DELEGATES TO column, and where a row could
-// not be satisfied that is recorded rather than worked around - see
+// FIVE ROWS. Four of them are what a non-throwing call needs - ct_aot_enter,
+// ct_aot_leave, ct_aot_check and ct_aot_return_value - and the fifth,
+// ct_aot_call, is what Phase 3 needs: without it a compiled body cannot call
+// anything, so three of the six transitions the plan requires could only be
+// demonstrated by a test reaching around the ABI it is supposed to be testing.
+//
+// Each body is a transcription of its row's DELEGATES TO column, and where a
+// row could not be satisfied that is recorded rather than worked around - see
 // ct_aot_catch_land in aot_helpers.def, which this rung found unimplementable
 // as written and did not implement.
 //
@@ -25,6 +29,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace ctbrowser::script {
 
@@ -144,6 +149,44 @@ struct aot_bridge {
         // and saying so here is better than a test that cannot fire.
         return static_cast<std::int32_t>(aot::ct_aot_status::ok);
     }
+
+    // ct_aot_call. The row: route THROUGH context::call rather than around it,
+    // which gets three things right for free - a generator callee runs nothing,
+    // a native callee's current_this_ save and restore, and the
+    // pending_new_target_ handoff a non-spread super() needs.
+    //
+    // `key` and `site` are the row's DIAGNOSTIC arguments and are unused here.
+    // They exist because op::call_computed names its callee with a run-time
+    // to_string and because callee_origin is a backwards scan over emitted
+    // bytecode that an AOT frame has no ip for; both matter for the MESSAGE a
+    // failed call produces, and neither is reachable until the throwing tier
+    // has a body. Taking them now keeps the signature the one the table
+    // declares - a helper whose parameters drift from its row is a helper the
+    // code generators will call wrongly.
+    static std::int32_t call(aot::ct_aot_frame * f, std::uint64_t callee, std::uint64_t receiver,
+                             const std::uint64_t * argv, std::uint32_t argc, std::uint64_t key,
+                             const aot::ct_aot_site * site, std::uint64_t * out) {
+        (void)key;
+        (void)site;
+        aot_frame_storage & held = frame_of(f);
+        context & cx = *held.ctx;
+
+        // COPIED OUT BEFORE THE CALL. `argv` points into registers_ for a
+        // compiled body, and context::call resizes that vector - so the span
+        // handed to it must not be the vector's own storage.
+        std::vector<value> args;
+        args.reserve(argc);
+        for (std::uint32_t i = 0; i < argc; ++i) { args.push_back(value::from_bits(argv[i])); }
+
+        const value produced = cx.call(value::from_bits(callee), args, value::from_bits(receiver));
+
+        // THE ROW'S THREE REACHABLE STATES, tested in ct_aot_check's order and
+        // for its reasons. *out is written only on OK, because an unwound
+        // call's undefined is indistinguishable from a real one.
+        const std::int32_t status = check(f);
+        if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
+        return status;
+    }
 };
 
 } // namespace ctbrowser::script
@@ -163,6 +206,12 @@ void ct_aot_leave(ct_aot_frame * fr) {
 
 std::int32_t ct_aot_check(ct_aot_frame * fr) {
     return script::aot_bridge::check(fr);
+}
+
+std::int32_t ct_aot_call(ct_aot_frame * fr, std::uint64_t callee, std::uint64_t receiver,
+                         const std::uint64_t * argv, std::uint32_t argc, std::uint64_t key,
+                         const ct_aot_site * site, std::uint64_t * out) {
+    return script::aot_bridge::call(fr, callee, receiver, argv, argc, key, site, out);
 }
 
 // ct_aot_return_value. The row is emphatic that a two-argument form is a

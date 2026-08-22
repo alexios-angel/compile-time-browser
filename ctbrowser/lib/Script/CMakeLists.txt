@@ -14,6 +14,7 @@ add_library(ctbrowser-script)
 target_sources(ctbrowser-script
   PRIVATE
     aot_bridge.cpp
+    dispatch.cpp
     aot_contract.cpp
     program_image.cpp
     # The compiler. compile.cpp is `compiler::compile()` alone; the class is
