@@ -89,6 +89,27 @@ objection: the packaged binary is 15 MB against ctbrowse's 3 MB, because
 `this_executable_bytes()` reads the whole launcher back at every start to find
 its own trailer. Reading 12 MB more still wins by 30 ms.
 
+**IT IS VALIDATED BY COMPARING RENDERS, not by exit codes.** Seven example
+pages package and run; six render byte-identically to the same page loaded from
+source, and the seventh did too once a real defect was fixed. That comparison is
+the only thing that found the defect, and it is now `ctcompile_package`'s last
+arm:
+
+> A packaged application is SEALED - it answers from what it carries and never
+> from the disk - and the vendored OFL faces are loaded THROUGH the asset
+> registry. So the first sealed build silently dropped to the bitmap font.
+> Exit 0, rendered, looked worse. The packager now asks for the faces the way
+> `run_app` does, which puts them in `requested()`, and records the DIRECTORY in
+> the bundle because it is part of the registry key.
+
+The test took two tries to mean anything, which is worth remembering: the first
+version compared two bitmap-font runs (everything in that file sets
+`CTBROWSER_FONTS=font8x8`), and the second still passed with the fonts blinded,
+because the packaged arm inherited `CTBROWSER_FONT_PATH` and found the faces
+under the names the packaging machine had recorded. **The packaged arm is now
+given nothing** - no font path, and a working directory that is not the
+application's, which is what "copy it and run it" means.
+
 **WHAT IT DOES NOT DO IS GENERATE NATIVE CODE.** The bytecode still runs on the
 interpreter. This deletes the *parse*, which is ~40% of a page load; the
 interpreter is 1.4%. Phases 7–12A are the rest and are not started.

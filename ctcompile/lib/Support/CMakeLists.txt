@@ -1,11 +1,13 @@
 add_library(ctcompile-support)
 target_sources(ctcompile-support
   PRIVATE
+    Manifest.cpp
     Version.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${PROJECT_SOURCE_DIR}/include"
       FILES
+        "${PROJECT_SOURCE_DIR}/include/ctcompile/Support/Manifest.hpp"
         "${PROJECT_SOURCE_DIR}/include/ctcompile/Support/Version.hpp")
 ctcompile_target(ctcompile-support)
 

@@ -65,6 +65,10 @@ struct app_bundle {
 // The bytes. Empty only if an entry is too large to describe, which no real
 // application reaches; see `bundle_write_error`.
 [[nodiscard]] std::vector<std::byte> write_bundle(const app_bundle & from);
+
+// The format version this build writes and reads. Exposed so a manifest can
+// record it without keeping a second copy of the number.
+[[nodiscard]] std::uint32_t bundle_format_version() noexcept;
 [[nodiscard]] std::string_view bundle_write_error() noexcept;
 
 struct bundle_load_result {

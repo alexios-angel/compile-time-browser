@@ -71,6 +71,10 @@ enum class image_option : std::uint32_t {
 [[nodiscard]] std::vector<std::byte> write_image(const program & from,
                                                  image_option option = image_option::keep_source);
 
+// The image format version this build writes and reads. Exposed so a manifest
+// can record it without keeping a second copy of the number.
+[[nodiscard]] std::uint32_t image_format_version() noexcept;
+
 // Why the last write_image on this thread produced nothing.
 [[nodiscard]] std::string_view write_error() noexcept;
 

@@ -26,7 +26,7 @@ namespace ctbrowser::shell {
 namespace {
 
 constexpr std::uint32_t bundle_magic = 0x43544150; // 'CTAP'
-constexpr std::uint32_t bundle_format_version = 1;
+constexpr std::uint32_t bundle_format_version_value = 1;
 constexpr char trailer_magic[8] = {'C', 'T', 'A', 'P', 'T', 'A', 'I', 'L'};
 constexpr std::size_t trailer_size = sizeof(trailer_magic) + 8 + 8;
 
@@ -109,6 +109,10 @@ std::string app_bundle::meta(std::string_view key) const {
     return {};
 }
 
+std::uint32_t bundle_format_version() noexcept {
+    return bundle_format_version_value;
+}
+
 std::string_view bundle_write_error() noexcept {
     return last_write_error;
 }
@@ -149,7 +153,7 @@ std::vector<std::byte> write_bundle(const app_bundle & from) {
 
     sink out;
     out.u32(bundle_magic);
-    out.u32(bundle_format_version);
+    out.u32(bundle_format_version_value);
     // WHICH ENGINE COMPILED THE IMAGES INSIDE. A bundle is only worth anything
     // if its images load, and an image from another build is refused one layer
     // down with a message about opcode numbering - true, but a long way from
@@ -181,9 +185,9 @@ bundle_load_result read_bundle(std::span<const std::byte> bytes) {
         out.error = "not a ctbrowser application bundle";
         return out;
     }
-    if (const std::uint32_t v = in.u32(); v != bundle_format_version) {
+    if (const std::uint32_t v = in.u32(); v != bundle_format_version_value) {
         out.error = "application bundle format version " + std::to_string(v) +
-                    ", this build reads " + std::to_string(bundle_format_version);
+                    ", this build reads " + std::to_string(bundle_format_version_value);
         return out;
     }
     if (const std::uint64_t got = in.u64(); got != script::image_fingerprint()) {

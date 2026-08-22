@@ -65,6 +65,14 @@ target_link_libraries(ctcompile-test-program_image PRIVATE ctcompile::javascript
 ctcompile_target(ctcompile-test-program_image)
 add_test(NAME ctcompile_program_image COMMAND ctcompile-test-program_image)
 
+# THE MANIFEST. Phase 1's gate asks for one; this checks the part of it that can
+# be wrong, which is the string escaping - a resource name is whatever the
+# document said, and a document may say `p5"; drop</script>`.
+add_executable(ctcompile-test-manifest Manifest.cpp)
+target_link_libraries(ctcompile-test-manifest PRIVATE ctcompile::support)
+ctcompile_target(ctcompile-test-manifest)
+add_test(NAME ctcompile_manifest COMMAND ctcompile-test-manifest)
+
 # THE APPLICATION BUNDLE, on the same terms as the program image above and for
 # a sharper reason: a bundle is a table of offsets read out of a file, and what
 # it carries is program images, which are executable input. The last section of

@@ -26,6 +26,7 @@
 // asked.
 //
 // The running plan is ctcompile/docs/plans/ctcompile.md.
+#include <ctcompile/Support/Manifest.hpp>
 #include <ctcompile/Support/Version.hpp>
 
 #include <ctbrowser.hpp>
@@ -59,6 +60,10 @@ int main(int argc, char ** argv) try {
          "write the .ctapp bundle alone instead of an executable") //
         ("launcher", po::value<std::string>()->value_name("FILE"),
          "the launcher to build the executable from (default: ctrun beside this compiler)") //
+        ("mode", po::value<std::string>()->value_name("MODE")->default_value("vm"),
+         "vm (the semantic reference), hybrid, or aot-only") //
+        ("manifest", po::value<std::string>()->value_name("FILE"),
+         "also write the application manifest here, as JSON") //
         ("fonts", po::value<std::string>()->value_name("DIR"),
          "where the vendored faces are (default $CTBROWSER_FONT_PATH, else `fonts`)") //
         ("verbose", po::bool_switch(), "report each stage as it runs");
@@ -104,6 +109,24 @@ int main(int argc, char ** argv) try {
         return 2;
     }
     const bool verbose = options["verbose"].as<bool>();
+
+    // THE THREE MODES ARE PHASE 1'S, AND TWO OF THEM DO NOT EXIST YET. `vm` is
+    // the semantic reference and the only one with anything behind it: there is
+    // no native code to prefer in `hybrid` and none to require in `aot-only`,
+    // so accepting either would be accepting a flag that changes nothing - the
+    // same silence this tool refuses everywhere else. Named in the refusal so
+    // the answer is "not yet, and here is which phase", not "unknown option".
+    const std::string mode = options["mode"].as<std::string>();
+    if (mode != "vm") {
+        if (mode == "hybrid" || mode == "aot-only") {
+            std::cerr << "ctcompile: --mode " << mode
+                      << " needs native code generation, which arrives with the EmitC backend in "
+                         "Phases 10A-10C; only --mode vm works today\n";
+        } else {
+            std::cerr << "ctcompile: --mode " << mode << " is not one of vm, hybrid, aot-only\n";
+        }
+        return 2;
+    }
     const std::filesystem::path entry = options.count("entry") != 0
                                             ? application / options["entry"].as<std::string>()
                                             : application / "index.html";
@@ -242,6 +265,15 @@ int main(int argc, char ** argv) try {
     // THE RESOURCES, UNDER THE NAMES THE DOCUMENT USED. p5-basic.html asks for
     // `../../vendor/p5/p5.js`, which is not a path relative to the application
     // directory and is not something a packager could invent.
+    ctcompile::manifest record;
+    record.compiler_version = ctcompile::version_string();
+    record.engine = ctcompile::engine_summary();
+    record.entry = entry.filename().string();
+    record.mode = mode;
+    record.bundle_format = ctbrowser::shell::bundle_format_version();
+    record.image_format = ctbrowser::script::image_format_version();
+    record.engine_fingerprint = ctbrowser::script::image_fingerprint();
+
     std::size_t assets_packed = 0;
     for (auto & [name, bytes] : resources) {
         if (bytes.empty()) {
@@ -255,6 +287,7 @@ int main(int argc, char ** argv) try {
             continue;
         }
         ++assets_packed;
+        record.resources.push_back({name, bytes.size()});
         if (verbose) {
             std::cerr << "ctcompile:   asset  " << name << "  " << bytes.size() << " bytes\n";
         }
@@ -279,11 +312,37 @@ int main(int argc, char ** argv) try {
                       << image.size() << " bytes of image (" << compiled.functions.size()
                       << " functions)\n";
         }
+        record.scripts.push_back({record.scripts.size(), text.size(), image.size(),
+                                  compiled.functions.size(),
+                                  ctbrowser::script::image_source_hash(text)});
         bundle.entries.push_back(
             {ctbrowser::shell::bundle_kind::script_image, {}, std::move(image)});
     }
 
     if (real_fonts) {
+        // THE FACES GO IN UNDER A NAME OF OUR OWN, not the build machine's.
+        //
+        // The registry key for a face is "<directory>/Tinos-Regular.ttf", and
+        // the directory that FOUND them is wherever this compiler was told to
+        // look - typically an absolute path into somebody's checkout. Shipping
+        // that as the name works, because the launcher is told the same
+        // directory, but it bakes a build path into every application and makes
+        // the bundle's keys depend on the machine that built it. Renaming to a
+        // fixed `fonts/` is a prefix substitution on names the ENGINE produced,
+        // not a second implementation of how a face is named.
+        const std::string from = font_directory + "/";
+        for (ctbrowser::shell::bundle_entry & one : bundle.entries) {
+            if (one.kind == ctbrowser::shell::bundle_kind::asset && one.name.rfind(from, 0) == 0) {
+                one.name = "fonts/" + one.name.substr(from.size());
+            }
+        }
+        for (ctcompile::manifest_resource & one : record.resources) {
+            if (one.name.rfind(from, 0) == 0) {
+                one.name = "fonts/" + one.name.substr(from.size());
+            }
+        }
+        font_directory = "fonts";
+        record.font_directory = font_directory;
         bundle.entries.push_back(
             {ctbrowser::shell::bundle_kind::meta, "font_path",
              std::vector<std::byte>(reinterpret_cast<const std::byte *>(font_directory.data()),
@@ -306,6 +365,19 @@ int main(int argc, char ** argv) try {
         auto & title = bundle.entries.back().bytes;
         title.assign(reinterpret_cast<const std::byte *>(name.data()),
                      reinterpret_cast<const std::byte *>(name.data() + name.size()));
+    }
+
+    // THE MANIFEST GOES IN THE BUNDLE, so a packaged application can always say
+    // what it is without the directory it was built from. `bundle_bytes` is the
+    // one number it cannot hold - writing the manifest is what changes it - so
+    // it stays 0 in the copy inside and is filled in for the copy on disk.
+    {
+        const std::string json = ctcompile::to_json(record);
+        bundle.entries.push_back(
+            {ctbrowser::shell::bundle_kind::meta, "manifest",
+             std::vector<std::byte>(
+                 reinterpret_cast<const std::byte *>(json.data()),
+                 reinterpret_cast<const std::byte *>(json.data() + json.size()))});
     }
 
     const std::vector<std::byte> bytes = ctbrowser::shell::write_bundle(bundle);
@@ -376,6 +448,21 @@ int main(int argc, char ** argv) try {
         write.write(reinterpret_cast<const char *>(written.data()),
                     static_cast<std::streamsize>(written.size()));
     }
+    // AND THE MANIFEST BESIDE IT, when asked. `bundle_bytes` is filled in only
+    // here, because it is the size of the file that was just written and the
+    // copy inside the bundle cannot know it - writing the manifest is what
+    // changes it.
+    if (options.count("manifest") != 0) {
+        record.bundle_bytes = written.size();
+        const std::filesystem::path where{options["manifest"].as<std::string>()};
+        std::ofstream write{where};
+        if (!write) {
+            std::cerr << "ctcompile: cannot write the manifest to " << where << '\n';
+            return 1;
+        }
+        write << ctcompile::to_json(record);
+    }
+
     if (!bundle_only) {
         std::error_code ignored;
         std::filesystem::permissions(out,

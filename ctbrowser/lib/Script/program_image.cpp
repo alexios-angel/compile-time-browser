@@ -343,6 +343,10 @@ std::uint64_t image_source_hash(std::string_view source) noexcept {
     return hash.result();
 }
 
+std::uint32_t image_format_version() noexcept {
+    return format_version;
+}
+
 std::string_view write_error() noexcept {
     return last_write_error;
 }

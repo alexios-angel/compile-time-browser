@@ -29,7 +29,7 @@ file(REMOVE ${OUT})
 
 execute_process(
   COMMAND ${CTCOMPILE} ${APP} --entry index.html --launcher ${LAUNCHER} -o ${OUT} --verbose
-          --fonts ${FONTS}
+          --fonts ${FONTS} --manifest ${OUT}.json
   RESULT_VARIABLE packaged
   OUTPUT_VARIABLE packaging_out
   ERROR_VARIABLE packaging_err)
@@ -66,6 +66,47 @@ if(NOT packaging_err MATCHES "asset  late\\.json")
           "the resource a script fetched was not packaged - the probe did not let the page "
           "run:\n${packaging_err}")
 endif()
+
+# ---- the manifest, PARSED rather than matched ------------------------------
+#
+# Phase 1's gate asks for a manifest. A grep for a field name would pass on a
+# document no parser accepts, so this uses CMake's own JSON reader: if the
+# emitter produced anything malformed, string(JSON) errors out here.
+if(NOT EXISTS ${OUT}.json)
+  message(FATAL_ERROR "--manifest was given and no manifest was written")
+endif()
+file(READ ${OUT}.json manifest_text)
+string(JSON manifest_entry GET "${manifest_text}" entry)
+string(JSON manifest_mode GET "${manifest_text}" mode)
+string(JSON manifest_fonts GET "${manifest_text}" font_directory)
+string(JSON script_count LENGTH "${manifest_text}" scripts)
+string(JSON resource_count LENGTH "${manifest_text}" resources)
+if(NOT manifest_entry STREQUAL "index.html")
+  message(FATAL_ERROR "the manifest names entry ${manifest_entry}")
+endif()
+if(NOT manifest_mode STREQUAL "vm")
+  message(FATAL_ERROR "the manifest names mode ${manifest_mode}")
+endif()
+if(NOT script_count EQUAL 2)
+  message(FATAL_ERROR "the manifest lists ${script_count} scripts, not 2")
+endif()
+# THE FACES ARE UNDER A NAME OF THE COMPILER'S OWN, not the build machine's.
+# Shipping the absolute path that found them works and bakes a checkout path
+# into every application, so the packer renames them and the launcher is told
+# the same. If that stops happening, this is where it shows.
+if(NOT manifest_fonts STREQUAL "fonts")
+  message(FATAL_ERROR "the manifest names the font directory ${manifest_fonts} - a packaged "
+                      "application should not carry the build machine's paths")
+endif()
+# EVERY PROGRAM ID DISTINCT, because two scripts sharing one would mean the
+# images cannot be told apart and the second lookup would take the first's.
+string(JSON first_id GET "${manifest_text}" scripts 0 program_id)
+string(JSON second_id GET "${manifest_text}" scripts 1 program_id)
+if(first_id STREQUAL second_id)
+  message(FATAL_ERROR "both scripts report program id ${first_id}")
+endif()
+message("ok manifest: ${script_count} scripts, ${resource_count} resources, entry "
+        "${manifest_entry}, mode ${manifest_mode}")
 
 file(SIZE ${OUT} packaged_size)
 file(SIZE ${LAUNCHER} launcher_size)
