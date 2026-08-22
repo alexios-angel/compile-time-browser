@@ -23,9 +23,20 @@
  * of them.
  */
 
-/* THE CANONICAL ONE. Everything an AOT-compiled function is entered through
- * should end up here, and `context::call` is where a mixed-mode dispatch check
- * belongs (Phase 3): one place decides interpreted or native. */
+/* THE CANONICAL ONE, and the entry every C++ caller uses.
+ *
+ * PHASE 3 LANDED, and not quite where this row predicted. The prediction was
+ * that `context::call` would be where the mixed-mode check belongs; what it is
+ * is one of FIVE places that ask the same question, and the question itself
+ * moved to `script/dispatch.hpp::enter_compiled` - the one read of
+ * `function_proto::aot_entry` in the engine.
+ *
+ * Five rather than one because the register-window handoff differs: `op::call`
+ * reuses the caller's window with no copying, `context::call` sizes its own,
+ * and the three top-level entries have no caller at all. Routing them all
+ * through one FUNCTION would have meant copying arguments on the interpreter's
+ * call path. Routing them all through one DECISION is what this phase actually
+ * needed, and is what "one place decides interpreted or native" means here. */
 CT_CALL_PATH(/* name */ call,
              /* signature */ "value call(value callable, span<const value> args, value this_value)",
              /* canonical */ true, /* resets_stack */ false, /* clears_failure */ false,

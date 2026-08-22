@@ -1071,6 +1071,86 @@ That is the argument for a manifest in one paragraph. Nothing was broken, no
 test could have failed, and the defect was visible the moment the artifact could
 describe itself.
 
+## Phase 3: the one line that read `aot_entry`
+
+The gate is "arbitrary nested mixed-mode invocation works", and the plan makes
+this a phase of its own for a reason it states and this rung confirmed: a call
+path that cannot reach a compiled body **does not fail**. It interprets, returns
+the right answer, and presents as a performance cliff under one particular
+browser callback long after the code that caused it ran.
+
+Before this, `function_proto::aot_entry` was read at exactly one line -
+`run_loop.cpp`'s `op::call`. So a compiled body was reachable from interpreted
+JavaScript and from nowhere else. Mapping every entry into JavaScript in the
+engine found four bypasses, and they are not obscure:
+
+| bypass | what could not reach a compiled body |
+|---|---|
+| `context::call` | every C++ entry: DOM events, timers, promise jobs, animation frames, `Function.prototype.apply`, getters, class field initialisers, `super()` — and one compiled body calling another, which goes through here too |
+| `op::construct` | `new C()`, which also would not have passed `constructing` |
+| `execute` | a program's TOP LEVEL |
+| `run_reentrant` | a module's top level, when evaluated inside its importer |
+
+The last two are the ones that matter most for this project, and they are easy
+to miss because they look like plumbing. **A page's `<script>` IS a top level.**
+A backend that compiles anything compiles that, so a whole compiled script would
+have been interpreted while the packager reported success — the same silent
+failure the packaging work spent a rung learning to refuse.
+
+### One decision, five askers
+
+`script/dispatch.hpp` is now the only read of `aot_entry` in the engine.
+Deliberately one DECISION rather than one FUNCTION: `op::call` reuses the
+caller's register window with no copying, `context::call` sizes its own, and the
+three top-level entries have no caller at all — so routing them through a single
+call function would have put an argument copy on the interpreter's hot path to
+buy a tidier diagram.
+
+`executing_kind` is the half of a transition that cannot be read off the call
+site. `enter_compiled` is reached from the interpreter and from C++ alike, and
+only the context knows whether the code doing the calling was itself compiled.
+One byte, saved and restored by an RAII guard on the stack of whatever entered a
+body.
+
+`ct_aot_call` is the ABI's fifth implemented row, and it had to be: without it a
+compiled body cannot call anything, so three of the six transitions could only
+have been demonstrated by a test reaching around the ABI it is meant to test.
+
+### The counters are the test
+
+Every arm of `aot_dispatch` returns the same number whether it dispatched or
+not, so the answer is not evidence and the counter is. Not behind `NDEBUG`
+either: each counter sits at a boundary that already costs a vector resize or an
+indirect call through the ABI, none is in the interpreter's inner loop, and a
+counter that only exists in a build the suite does not run is a counter that
+proves nothing.
+
+Eight removals, each watched going red:
+
+| removed | what went red |
+|---|---|
+| `op::call` reaching a compiled body | the script's own call |
+| `op::construct` reaching a compiled body | `new Point(3, 4)` |
+| passing `constructing` to a compiled constructor | `new` evaluating to a number |
+| `context::call` reaching a compiled body | C++ → AOT, and AOT → AOT with it |
+| `execute` reaching a compiled top level | a whole compiled script, interpreted |
+| `run_reentrant` reaching a compiled top level | a module's compiled body |
+| `ct_aot_call` | every transition with an AOT source |
+| marking the interpreter as what is running | VM → AOT counted as C++ → AOT |
+
+**Two of those arms did not exist until the removal left the suite green** —
+`new` on a compiled constructor, and a module evaluating inside its importer.
+That is the whole argument for removing a guard to watch its test fail: not to
+confirm the guard, but to find out which case nobody wrote.
+
+### Where it stops, said rather than left to be found
+
+A generator is not dispatched. Calling one runs nothing — it builds a coroutine
+— and resuming one restores a saved REGISTER WINDOW copied out of the flat
+register file, which a compiled frame does not have. That is what the master
+plan lists `generator_resume` and `resume` under Phase 14 for. The test asserts
+the current boundary, so the phase that changes it fails here and has to say so.
+
 ## The ladder ahead
 
 | phase | what | where |

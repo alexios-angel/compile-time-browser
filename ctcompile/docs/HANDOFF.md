@@ -8,7 +8,7 @@ committed and green; nothing is pushed.
 
 * Repo: `/mnt/c/Users/aange/Downloads/claude/compile-time-browser`
 * Branch: **`ctcompile-v1`**, working tree clean
-* Suite: **101/101** via `./tools/remote-build.sh`
+* Suite: **102/102** via `./tools/remote-build.sh`
 * **`ctcompile/docs/ctcompile.md` is the tool's own documentation** — the CLI,
   what it refuses and why, the manifest, and the gaps.
 * **Read `ctcompile/docs/plans/ctcompile.md` first** — it is the running plan in
@@ -47,6 +47,14 @@ primary backend, sources are in `lib/`, build on the devbox.
   identities (`program_id` is the source hash the runtime matches on), and both
   format versions exposed rather than copied. `--mode` declares Phase 1's three
   modes and refuses the two that need code generation.
+* **Phase 3** — mixed-mode dispatch, centralised. `script/dispatch.hpp` is the
+  one read of `aot_entry` in the engine and carries the six transition
+  counters; `unittests/unit/aot_dispatch` asserts all six, because every arm
+  returns the same answer whether it dispatched or not. Before it, `aot_entry`
+  was read at ONE line - `op::call` - so a compiled body was reachable from
+  interpreted JavaScript and from nowhere else: not from `context::call` (every
+  DOM event, timer, promise job and `apply`), not from `new`, and not from a
+  program's top level, which for ctcompile is the ordinary case.
 * **Phase 15** — a working program image, wired into the page load.
   `ctbrowser/{include,lib}/…/program_image.*` writes and reads a compiled
   `script::program`, validated exhaustively, and `browser::set_script_image()`
@@ -203,7 +211,10 @@ interpreter is 1.4%. Phases 7–12A are the rest and are not started.
 2. **The image LOADER is now the largest single item on the path**, at 26%, and
    its operand pass alone is 7.49% — fifteen times the whole CSS engine. That
    is where the next startup millisecond is.
-3. **Phases 1–6**, the runtime preparation. Phase 2's gate is MET as of
+3. **Phases 4, 5 and 6**, which are what is left of the runtime preparation:
+   AOT GC shadow frames, extracting the shared JavaScript runtime helpers, and
+   explicit completion semantics. Phase 3 is done and its gate is met.
+   PREVIOUSLY: **Phases 1–6**, the runtime preparation. Phase 2's gate is MET as of
    2026-08-22 — `ctbrowser/lib/Script/aot_bridge.cpp` has four helper bodies and
    `unittests/unit/aot_basics` calls a hand-authored compiled function from
    interpreted JavaScript. Doing it falsified `ct_aot_catch_land`, which cannot
