@@ -94,6 +94,26 @@ struct app_options {
     int screenshot_frame = -1;   // -1 = the last frame
 
     std::vector<asset> assets;
+    // PRECOMPILED SCRIPTS, baked in the same way assets are. Each entry is one
+    // program image - the bytes `script::write_image` produced for ONE classic
+    // <script> - and the page matches them to its own scripts by source hash, so
+    // the order they are given in does not matter and an image for a script this
+    // page does not have is simply never used.
+    //
+    // This is what makes a packaged application start without parsing its own
+    // JavaScript, which is about forty percent of a page load
+    // (ctcompile/docs/baseline/page-load.json: 69.65 ms to 19.93 on p5-basic).
+    // Without it the launcher could bake in every PNG a page needs and not the
+    // one thing that actually costs.
+    std::vector<std::vector<std::byte>> script_images;
+    // AND A PACKAGING MISTAKE IS AN ERROR, NOT A SLOW START. An image built by
+    // another engine build is refused at the door, and one that matches no
+    // script on the page is silently never used - both leave the application
+    // working and slow, which is the failure this project treats as worst
+    // because nothing reports it. With this set, `run_app` refuses to run an
+    // application whose scripts did not all come from images. Off by default:
+    // an embedder handing over a partial set is doing something reasonable.
+    bool require_script_images = false;
     // Where a relative asset path (an <img src>, a page-local fetch) resolves
     // from when the registry misses. Empty means the working directory.
     std::filesystem::path asset_path;

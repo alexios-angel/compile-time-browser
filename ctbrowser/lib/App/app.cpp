@@ -627,6 +627,21 @@ int run_app(std::string_view html, app_options options) {
     // Resources BEFORE the page: an <img src> is resolved while the document
     // loads, so a registry seeded afterwards would be seeded too late.
     for (const asset & item : options.assets) { page.assets().add(item.name, item.bytes); }
+    // AND THE COMPILED SCRIPTS, before the page for the same reason: they are
+    // consulted while it loads. A refusal here is a PACKAGING fault - bytes that
+    // are not an image this build would load, usually because they were built by
+    // another one - and it is reported rather than swallowed, because the
+    // application would otherwise run correctly and slowly with nothing said.
+    std::size_t images_refused = 0;
+    for (const std::vector<std::byte> & image : options.script_images) {
+        if (!page.add_script_image(image)) { ++images_refused; }
+    }
+    if (images_refused != 0) {
+        std::fprintf(stderr,
+                     "ctbrowser: %zu of %zu script images were refused - they were not built by "
+                     "this engine build\n",
+                     images_refused, options.script_images.size());
+    }
     page.assets().set_base_path(options.asset_path);
     page.allow_network(options.network);
     detail::install_image_decoder(page.images());
@@ -696,6 +711,24 @@ int run_app(std::string_view html, app_options options) {
         });
 
     page.load_html(html);
+    // DID THE PACKAGING ACTUALLY WORK? An image that matches no script on this
+    // page is not refused by anything - it is simply never looked up, and the
+    // page compiles from source and runs correctly. That is the silent failure
+    // worth catching, and the counter is the only thing that can see it.
+    if (!options.script_images.empty()) {
+        const std::size_t compiled = page.scripts_compiled_from_source();
+        if (compiled != 0) {
+            std::fprintf(stderr,
+                         "ctbrowser: %zu of this page's %zu classic scripts were compiled from "
+                         "source rather than loaded from an image\n",
+                         compiled, page.script_sources().size());
+            if (options.require_script_images) {
+                std::fprintf(stderr, "ctbrowser: refusing to run - the application was packaged "
+                                     "with images that do not match its scripts\n");
+                return 1;
+            }
+        }
+    }
     if (options.on_ready) { options.on_ready(page); }
 
     scheduler pool;

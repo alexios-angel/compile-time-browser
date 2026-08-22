@@ -543,6 +543,56 @@ void test_nothing_leaks_from_one_script_into_the_next() {
     }
 }
 
+// A PACKAGED APPLICATION CARRIES ITS COMPILED SCRIPTS, and a packaging mistake
+// has to be loud.
+//
+// `app_options` could bake in every PNG a page needs and not the one thing that
+// actually costs: reading its JavaScript is about forty percent of a page load.
+// The interesting half of this is the failure, though. An image built by
+// another engine build is refused at the door and countable; an image that
+// simply matches NO script on the page is refused by nothing at all - it is
+// never looked up, the page compiles from source, and the application works
+// perfectly and slowly with nothing said anywhere. That is the shape of failure
+// this project treats as worst, and the counter is the only thing that sees it.
+void test_a_page_reports_when_its_images_did_not_match() {
+    constexpr std::string_view page =
+        "<html><body><div id=out></div>"
+        "<script>document.getElementById('out').textContent = 'ran';</script></body></html>";
+    std::vector<std::string> scripts;
+    {
+        browser probe{browser_options{200, 100}};
+        probe.load_html(page);
+        scripts = probe.script_sources();
+    }
+    check(scripts.size() == 1, "the fixture has one script");
+    if (scripts.empty()) { return; }
+
+    {
+        // THE PACKAGED CASE: an image built from exactly what the page runs.
+        browser packaged{browser_options{200, 100}};
+        check(packaged.add_script_image(
+                  ctbrowser::script::write_image(ctbrowser::script::compiler::compile(scripts[0]))),
+              "the image is admitted");
+        packaged.load_html(page);
+        check(packaged.scripts_compiled_from_source() == 0, "and nothing was compiled from source");
+        check(text_of(packaged, "out") == "ran", "and the page ran");
+    }
+    {
+        // THE MISPACKAGED CASE: a valid image of some OTHER script. Nothing
+        // refuses it and the page still works - which is exactly why the count
+        // has to be checked rather than the output.
+        browser wrong{browser_options{200, 100}};
+        check(wrong.add_script_image(ctbrowser::script::write_image(
+                  ctbrowser::script::compiler::compile("var unrelated = 1;\n"))),
+              "an image of another script is still a valid image");
+        wrong.load_html(page);
+        check(wrong.scripts_compiled_from_source() == 1,
+              "THE MISMATCH IS COUNTABLE - the page compiled its own script");
+        check(text_of(wrong, "out") == "ran",
+              "while the page itself is perfectly fine, which is the problem");
+    }
+}
+
 // TWO IMAGES OF ONE SCRIPT, AND WHICH ONE WINS MUST NOT DEPEND ON THE ORDER.
 //
 // An image can keep `program::source` or drop it, and both are valid images of
@@ -874,6 +924,7 @@ int main() {
     test_what_the_split_got_wrong_the_first_time();
     test_nothing_leaks_from_one_script_into_the_next();
     test_an_image_that_keeps_its_source_outranks_one_that_drops_it();
+    test_a_page_reports_when_its_images_did_not_match();
     test_module_programs_do_not_accumulate_across_loads();
     test_wheel_and_keys_scroll();
     test_hover_restyles();
