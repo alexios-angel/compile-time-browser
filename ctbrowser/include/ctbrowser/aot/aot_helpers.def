@@ -92,6 +92,23 @@
  * lib/Script/vm/ that owns its semantics today, then independently refuted by a
  * second reader against the same code, then merged. Where a row disagrees with
  * what an opcode's name suggests, its comment says why.
+ *
+ * AND CITE BY NAME, NOT BY LINE. A line number in a comment is a fact with an
+ * expiry date. Phases 3, 4 and 5 moved several hundred lines of run_loop.cpp,
+ * call.cpp and vm.hpp, and the DELEGATES TO citations went stale WHOLESALE:
+ * six of them ended up pointing past the end of a file that had shrunk, and
+ * many more still land inside their file while naming a handler that has since
+ * moved elsewhere in it. `run_loop.cpp's VM_CASE(cell_get)` cannot drift; the
+ * line range that row used to carry did, and pointed past the end of the file.
+ * (Written out rather than quoted, because the checker below cannot tell a
+ * citation from a mention of one - which is the right way round.)
+ *
+ * ctcompile_def_citations checks the half a machine can see - a citation past
+ * the end of the file it names - and the rows repaired for it were rewritten
+ * as names rather than given fresh numbers to rot. The other half is on the
+ * reader: IF YOU FOLLOW A LINE CITATION HERE AND FIND SOMETHING ELSE, the row
+ * is stale rather than wrong about the semantics; the claims were checked, the
+ * addresses were not re-checked afterwards.
  */
 
 /* A consumer defines whichever of the two it wants and ignores the other; both
@@ -323,7 +340,7 @@ CT_AOT_HELPER(/* name */ ct_aot_catch_land, /* ret */ uint32_t,
  * thrown_ is GC root 13 from that instant. The status is not hand-computed
  * here; the body ends in ct_aot_check so this and every other throwing
  * helper classify identically.
- * DELEGATES TO: run_loop.cpp:1505-1510 `thrown_ = reg(in.a); if
+ * DELEGATES TO: run_loop.cpp's VM_CASE(throw_value) - `thrown_ = reg(in.a); if
  *   (!unwind_to_handler()) raise("uncaught " + describe_thrown(thrown_));`
  *   - vm.hpp:945-959, call.cpp:369-386, vm.hpp:932-936 - then ct_aot_check
  *   for the status.
@@ -492,7 +509,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_gather_rest, /* opcode */ gather_rest)
  * came out of registers_, and this helper's argument is reachable from none
  * of the 17 roots.
  * DELEGATES TO: context::allocate<cell_object>(value) - vm.hpp:223 via
- *   run_loop.cpp:1515-1516; cell_object at vm.hpp:103-106.
+ *   run_loop.cpp's VM_CASE(new_cell); cell_object in vm.hpp.
  * FAILURE: RAISE TIER ONLY, and non-diverting: allocate() raises past the
  *   ceiling and STILL returns a valid cell, so this returns a value plainly
  *   and never a status. Poll ct_aot_failed at back-edges. No try/catch can
@@ -515,7 +532,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_cell_new, /* opcode */ new_cell)
  * Third producer worth knowing: compile/frames.cpp:141-149 marks every
  * IMPORTED binding boxed and deliberately emits no new_cell, so this is
  * also the read path for every `import`ed name.
- * DELEGATES TO: run_loop.cpp:1521-1526 - `reg(b).is_kind(heap_kind::cell) ?
+ * DELEGATES TO: run_loop.cpp's VM_CASE(cell_get) - `reg(b).is_kind(heap_kind::cell) ?
  *   static_cast<cell_object*>(reg(b).as_heap())->slot :
  *   value::undefined()`.
  * FAILURE: None, and that is a semantic guarantee: a non-cell argument
@@ -537,7 +554,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_cell_get, /* opcode */ get_upvalue)
  * cached ct_aot_cell_get. Because a module export cell is shared, this is
  * also how a compiled module writes a binding an interpreted importer
  * reads.
- * DELEGATES TO: run_loop.cpp:1529-1533 - `if
+ * DELEGATES TO: run_loop.cpp's VM_CASE(cell_set) - `if
  *   (reg(a).is_kind(heap_kind::cell))
  *   static_cast<cell_object*>(reg(a).as_heap())->slot = reg(b)`.
  * FAILURE: None. A non-cell target drops the store silently - an assignment
@@ -561,7 +578,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_cell_set, /* opcode */ set_upvalue)
  * asymmetry the helper erases: get_upvalue's index is in `b`, set_upvalue's
  * is in `a`.
  * DELEGATES TO: call_frame::closure (vm.hpp:851) + closure_object::upvalues
- *   (vm.hpp:160) - the guarded fetch in run_loop.cpp:1537-1548 and
+ *   (vm.hpp:160) - the guarded fetch in run_loop.cpp's VM_CASE(get_upvalue) and
  *   1551-1561.
  * FAILURE: None, by returning undefined for all three miss cases the
  *   handlers already have: no closure (a top-level script frame), index >=
@@ -904,9 +921,9 @@ CT_AOT_COVERS(/* helper */ ct_aot_bit_not, /* opcode */ bit_not)
  * DELEGATES TO: context::bigint_binary (declared vm.hpp:543, defined
  *   vm/coerce.cpp:276, already op-dispatched) + context::to_number (static,
  *   vm.hpp:504/coerce.cpp:49) for add + to_int32/to_uint32 (vm.hpp:494/497)
- *   for the six bitwise. MUST BE EXTRACTED from run_loop.cpp:241-253 (add)
- *   and 518-600 (bit_and..ushr) into context::binary_op_static(op, value,
- *   value).
+ *   for the six bitwise. EXTRACTED IN PHASE 5 into
+ *   context::binary_op_static(op, value, value) (vm/coerce.cpp), out of the
+ *   seven handlers in run_loop.cpp that now call it. DONE.
  * FAILURE: Full status, but the catchable paths reachable from THESE SEVEN
  *   are exactly: bigint_binary's mixed-type TypeError (coerce.cpp:280-286),
  *   the shl and shr 'BigInt shift is too large' RangeErrors
@@ -947,9 +964,9 @@ CT_AOT_COVERS(/* helper */ ct_aot_binary_op_static, /* opcode */ ushr)
  * DELEGATES TO: context::to_primitive (vm.hpp:924 PRIVATE, defined
  *   coerce.cpp:125), to_number_value (coerce.cpp:151), to_string
  *   (vm.hpp:510, coerce.cpp:78), exponentiate (vm.hpp:509, coerce.cpp:70),
- *   bigint_binary (coerce.cpp:276), context::string (vm.hpp:234). MUST BE
- *   EXTRACTED from run_loop.cpp:254-352 and 353-362 into
- *   context::binary_op(op, value, value).
+ *   bigint_binary (coerce.cpp:276), context::string (vm.hpp:234). EXTRACTED IN PHASE 5 into
+ *   context::binary_op(op, value, value) (vm/coerce.cpp), out of the seven
+ *   handlers in run_loop.cpp that now call it. DONE.
  * FAILURE: Full status. Catchable from any user valueOf/toString, from
  *   to_number_value's BigInt TypeError (coerce.cpp:157), and from
  *   bigint_binary's TypeError/RangeErrors including div's and mod's
@@ -1025,7 +1042,8 @@ CT_AOT_COVERS(/* helper */ ct_aot_loose_equals, /* opcode */ loose_not_equal)
  * via bigint_compare_double (coerce.cpp:343-348), so this must not fold to
  * a double compare when either side may be a bigint.
  * DELEGATES TO: context::compare_relational (declared vm.hpp:530, defined
- *   vm/coerce.cpp:322-374). Already a function; no extraction needed.
+ *   vm/coerce.cpp - the row cited 322-374, which is now the middle of
+ *   context::binary_op). Already a function; no extraction needed.
  * FAILURE: Full status - catchable from a user valueOf/toString inside
  *   to_primitive, CT_AOT_FAILED from stack exhaustion. *out_ordering is
  *   written on every path (CT_AOT_ORD_UNORDERED on failure). */
@@ -1146,7 +1164,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_new_array, /* opcode */ new_array)
  * repoints an ip, writes thrown_ into a catch register and CLEARS it
  * (vm.hpp:945-959) - then returns normally. The nested run_loop notices
  * only because its while condition fails and returns value::undefined()
- * (run_loop.cpp:1577), INDISTINGUISHABLE from a getter that returned
+ * at run_loop.cpp's `vm_done:` label, INDISTINGUISHABLE from a getter that returned
  * undefined. What is observable is the frame-count watermark, which is why
  * ct_aot_check exists and why ct_aot_enter must record a depth. THE ct_ic
  * SLOT is kept: object_object is props+index+prototype+accessors with NO

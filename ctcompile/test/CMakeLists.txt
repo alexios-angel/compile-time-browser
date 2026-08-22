@@ -39,6 +39,15 @@ set_tests_properties(ctcompile_help PROPERTIES
 add_test(NAME ctcompile_rejects_nonsense COMMAND ctcompile-tool --not-an-option)
 set_tests_properties(ctcompile_rejects_nonsense PROPERTIES WILL_FAIL TRUE)
 
+# DOES THE ABI TABLE POINT AT CODE THAT EXISTS? Six of its DELEGATES TO
+# citations ended up past the end of files that Phases 3-5 shrank. See the
+# header of check-def-citations.cmake for what this can and cannot catch.
+add_test(NAME ctcompile_def_citations
+         COMMAND ${CMAKE_COMMAND}
+                 -DDEF=${CTBROWSER_MONOREPO_ROOT}/ctbrowser/include/ctbrowser/aot/aot_helpers.def
+                 -DROOT=${CTBROWSER_MONOREPO_ROOT}
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/check-def-citations.cmake)
+
 # THE COMPARATOR THAT ACCEPTS PHASE 16A, and the negative cases that stop it
 # from accepting anything. A comparator too lenient does not fail to catch a
 # bad blueprint - it certifies one.
