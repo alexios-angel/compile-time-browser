@@ -855,8 +855,9 @@ private:
     // ONE place that decides interpreted or native, and these are the two
     // members it needs.
     friend class executing_as;
-    friend bool enter_compiled(context & ctx, const function_proto & target, const value * argv,
-                               std::uint32_t argc, value receiver, bool constructing, value & out);
+    friend bool enter_compiled_body(context & ctx, const function_proto & target,
+                                    const value * argv, std::uint32_t argc, value receiver,
+                                    bool constructing, value & out);
     friend void note_transition_into_vm(const context & ctx) noexcept;
     friend void note_transition_into_cxx(const context & ctx) noexcept;
 

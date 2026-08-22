@@ -69,21 +69,14 @@ void note_transition_into_cxx(const context & ctx) noexcept {
     }
 }
 
-bool enter_compiled(context & ctx, const function_proto & target, const value * argv,
-                    std::uint32_t argc, value receiver, bool constructing, value & out) {
-    // THE ONE READ OF `aot_entry` IN THE ENGINE. Every entry into a function
-    // asks here, and almost every answer is no - the compiler does not set this
-    // field yet and no image carries it - so this is a predictable not-taken
-    // branch on a field in the same eight-byte word as `param_count`,
-    // `frame_size` and `is_generator`, which the interpreter's call handler has
-    // already loaded. Measured at -0.07% instructions on bench_script when it
-    // went into `op::call`, which is to say inside the noise.
-    if (target.aot_entry == nullptr) { return false; }
-
-    const transition crossing = ctx.executing_ == executing_kind::aot ? transition::aot_to_aot
-                                : ctx.executing_ == executing_kind::vm
-                                    ? transition::vm_to_aot
-                                    : transition::cxx_to_aot;
+// Reached only when there IS a compiled body - the header's inline half has
+// already asked. Everything here happens once per compiled call, so none of it
+// is on the interpreter's ordinary path.
+bool enter_compiled_body(context & ctx, const function_proto & target, const value * argv,
+                         std::uint32_t argc, value receiver, bool constructing, value & out) {
+    const transition crossing = ctx.executing_ == executing_kind::aot  ? transition::aot_to_aot
+                                : ctx.executing_ == executing_kind::vm ? transition::vm_to_aot
+                                                                       : transition::cxx_to_aot;
     ++counts[static_cast<std::size_t>(crossing)];
 
     // A body sizes its own frame storage with the number the ABI publishes, and

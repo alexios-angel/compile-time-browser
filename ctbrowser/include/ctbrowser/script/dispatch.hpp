@@ -1,5 +1,6 @@
 #pragma once
 #include <ctbrowser/aot/aot_entry.h>
+#include <ctbrowser/script/bytecode.hpp>
 #include <ctbrowser/script/value.hpp>
 
 #include <cstdint>
@@ -28,7 +29,6 @@
 namespace ctbrowser::script {
 
 class context;
-struct function_proto;
 
 // WHAT IS CURRENTLY RUNNING, which is the half of a transition that cannot be
 // read off the call site. `enter_compiled` is called from the interpreter and
@@ -76,9 +76,29 @@ void reset_transitions() noexcept;
 // compiled body reads it directly. It must also be read before anything that
 // can resize the register file; `ct_aot_enter` may, which is why the row says
 // so and why both call sites pass a window they have just finished filling.
-[[nodiscard]] bool enter_compiled(context & ctx, const function_proto & target, const value * argv,
-                                  std::uint32_t argc, value receiver, bool constructing,
-                                  value & out);
+[[nodiscard]] bool enter_compiled_body(context & ctx, const function_proto & target,
+                                       const value * argv, std::uint32_t argc, value receiver,
+                                       bool constructing, value & out);
+
+// THE TEST IS INLINE AND THE WORK IS NOT, which is the whole reason this is
+// two functions.
+//
+// `op::call` runs this on EVERY interpreted call, and almost every answer is
+// no - the compiler does not set `aot_entry` yet and no image carries it. Left
+// entirely out of line it would be a real function call per JavaScript call,
+// which is a cost the interpreter pays forever to buy a tidier diagram. Inline,
+// it is one predictable not-taken branch on a field in the same eight-byte word
+// as `param_count`, `frame_size` and `is_generator` - all three of which the
+// call handler has already loaded.
+//
+// It is still ONE decision: this is the only place that reads `aot_entry`, and
+// every entry into a function asks it.
+[[nodiscard]] inline bool enter_compiled(context & ctx, const function_proto & target,
+                                         const value * argv, std::uint32_t argc, value receiver,
+                                         bool constructing, value & out) {
+    if (target.aot_entry == nullptr) { return false; }
+    return enter_compiled_body(ctx, target, argv, argc, receiver, constructing, out);
+}
 
 // Counts a crossing into interpreted or native C++ code. `enter_compiled`
 // counts its own; these two are for the paths that do not go through it.

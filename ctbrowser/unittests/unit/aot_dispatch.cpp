@@ -68,7 +68,9 @@ extern "C" std::int32_t sample_leaf(ctbrowser::aot::ct_aot_ctx * ctx,
 
     alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
     ctbrowser::aot::ct_aot_frame * frame = ctbrowser::aot::ct_aot_enter(ctx, site, 4u, storage);
-    if (frame == nullptr) { return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed); }
+    if (frame == nullptr) {
+        return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed);
+    }
 
     const value sum = value::number(first.as_number() + second.as_number());
     const auto status =
@@ -103,7 +105,9 @@ extern "C" std::int32_t sample_caller(ctbrowser::aot::ct_aot_ctx * ctx,
 
     alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
     ctbrowser::aot::ct_aot_frame * frame = ctbrowser::aot::ct_aot_enter(ctx, site, 4u, storage);
-    if (frame == nullptr) { return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed); }
+    if (frame == nullptr) {
+        return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed);
+    }
 
     std::uint64_t produced = value::undefined().bits();
     const auto called = static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_call(
@@ -142,7 +146,9 @@ extern "C" std::int32_t sample_point(ctbrowser::aot::ct_aot_ctx * ctx,
 
     alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
     ctbrowser::aot::ct_aot_frame * frame = ctbrowser::aot::ct_aot_enter(ctx, site, 4u, storage);
-    if (frame == nullptr) { return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed); }
+    if (frame == nullptr) {
+        return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed);
+    }
 
     const value total = value::number(first.as_number() + second.as_number());
     const auto status =
@@ -229,7 +235,8 @@ int main() {
         leaf_calls = 0;
         const value args[2] = {value::number(41), value::number(1)};
         const value out = ctx.call(leaf, args, value::undefined());
-        check(out.is_number() && out.as_number() == 42.0, "C++ calling a compiled function gets 42");
+        check(out.is_number() && out.as_number() == 42.0,
+              "C++ calling a compiled function gets 42");
         check(transitions(transition::cxx_to_aot) == 1, "and it crossed C++ -> AOT exactly once");
         check(transitions(transition::cxx_to_vm) == 0, "without touching the interpreter at all");
         check(leaf_calls == 1, "the body ran");
@@ -336,8 +343,7 @@ int main() {
         caller_calls = 0;
         const value chain[4] = {caller, leaf, value::number(41), value::number(1)};
         const value out = ctx.call(relay, chain, value::undefined());
-        check(out.is_number() && out.as_number() == 42.0,
-              "C++ -> VM -> AOT -> AOT produces 42");
+        check(out.is_number() && out.as_number() == 42.0, "C++ -> VM -> AOT -> AOT produces 42");
         check(transitions(transition::cxx_to_vm) == 1, "C++ reached the interpreted relay");
         check(transitions(transition::vm_to_aot) == 1, "the relay reached the compiled caller");
         check(transitions(transition::aot_to_aot) == 1, "which reached the compiled leaf");
@@ -389,11 +395,11 @@ int main() {
         ctbrowser::script::reset_transitions();
         leaf_calls = 0;
         ctbrowser::script::module_record record;
-        ctx.define_native("evaluateModule", [&module_body, &record](context & cx,
-                                                                    std::span<value>) {
-            (void)cx.run_module(module_body, record);
-            return value::undefined();
-        });
+        ctx.define_native("evaluateModule",
+                          [&module_body, &record](context & cx, std::span<value>) {
+                              (void)cx.run_module(module_body, record);
+                              return value::undefined();
+                          });
         const value args[1] = {ctx.global("evaluateModule")};
         (void)ctx.call(caller, args, value::undefined());
         check(leaf_calls == 1, "AND THE MODULE'S COMPILED TOP LEVEL RAN");
@@ -446,10 +452,10 @@ int main() {
         const value three_vm[3] = {times_two, value::number(3), value::number(4)};
         const value three_aot[3] = {leaf, value::number(41), value::number(1)};
         const value three_native[3] = {native_add, value::number(41), value::number(1)};
-        (void)ctx.run(compiled);                                 // C++ -> VM, VM -> AOT
-        (void)ctx.call(leaf, two, value::undefined());           // C++ -> AOT
-        (void)ctx.call(caller, three_vm, value::undefined());    // AOT -> VM
-        (void)ctx.call(caller, three_aot, value::undefined());   // AOT -> AOT
+        (void)ctx.run(compiled);                                  // C++ -> VM, VM -> AOT
+        (void)ctx.call(leaf, two, value::undefined());            // C++ -> AOT
+        (void)ctx.call(caller, three_vm, value::undefined());     // AOT -> VM
+        (void)ctx.call(caller, three_aot, value::undefined());    // AOT -> AOT
         (void)ctx.call(caller, three_native, value::undefined()); // AOT -> C++
         for (std::uint8_t i = 0; i < static_cast<std::uint8_t>(transition::count); ++i) {
             const auto which = static_cast<transition>(i);
