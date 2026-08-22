@@ -3,7 +3,9 @@
 **Where it is. The repository is a monorepo, `ctcompile` builds beside the
 engine, and PHASE 0 IS COMPLETE: six inventories the build checks, two
 differential comparators written before the things they will accept, and a
-recorded startup baseline. PHASE 15 IS WORKING: a page is handed its scripts
+recorded startup baseline. PHASE 2'S GATE IS MET - a hand-authored
+compiled function runs through the real ABI, and doing it falsified a row. PHASE
+15 IS WORKING: a page is handed its scripts
 already compiled, one per `<script>`, which is **71% of a p5 page load** and
 **3.5x on the edit-one-script case that used to cost a full recompile**. It compiles nothing
 of its own yet. 97 of 97 tests pass.**
@@ -858,6 +860,55 @@ The one that keeps the source now wins whichever arrives first — not because
 last-writer-wins is unreasonable but because it is *order-dependent*, and
 because dropping the source is an optimisation that removes behaviour.
 `clear_script_images` is how a caller says it means the lean one.
+
+### Phase 2's gate, met — and the row it falsified
+
+The AOT ABI had been specified since Phase 2 and **not one line of it had ever
+run**. The gate is *"VM code calls a hand-authored AOT closure through the real
+runtime ABI"*, and a table nobody executes is prose however good — with 68
+helper bodies and two code generators still to be written against it.
+
+Four rows now have bodies, chosen because a non-throwing call needs exactly
+those four: `ct_aot_enter`, `ct_aot_leave`, `ct_aot_check`,
+`ct_aot_return_value`. A hand-written body for `function addup(a, b)` is stamped
+onto the proto the engine's own compiler produced, and `addup(41, 1)` from
+ordinary interpreted JavaScript reaches it through one branch in `op::call`.
+
+**The answer is not the evidence.** Both arms return 42, so a dispatch that
+never fired would look identical. The body counts its own calls and the test
+asserts that counter — disabling the branch leaves every *value* assertion
+passing and fails only the counters, which is how it was checked.
+
+**And it falsified a row, which is the whole reason to do this first.**
+`ct_aot_catch_land(fr, out_thrown)` is specified to read back
+`registers_[call_frame::base + handler::slot]` — but `unwind_to_handler` **pops
+the handler before it writes**, and `call_frame`'s twelve fields do not include
+the slot. By the time a compiled body could ask, the register the thrown value
+went into is unknowable, and the signature has nowhere to learn it from. Two
+fixes exist, both ABI changes, and neither was taken: choosing between them
+without a compiled `try` to test against would be inventing on no evidence. It
+is marked in the table.
+
+So the throwing tier is **not** here. Three rows executed and the fourth
+reported beats four bodies one of which quietly does something other than its
+row says — and `ct_aot_check` therefore never returns `CAUGHT`, and says so
+where the test would be.
+
+Three decisions the rows left open are now taken with evidence: the **entry
+signature** (the table specifies what compiled code may *call* and never what
+the runtime calls back — the first ABI here that is not a row, obeying the rows'
+own status-in-a-register convention); **`CT_AOT_FRAME_BYTES`**, left undeclared
+two days ago because nothing had measured it and now 64, `static_assert`ed
+against the 32-byte handle it sizes; and **where the entry hangs** — on
+`function_proto`, because an entry belongs to the code, so one stamp is
+inherited by every closure built from it.
+
+Measured, because the interpreter is on every page: the dispatch is a
+predictable not-taken branch on a field in the same eight-byte word as
+`param_count`, `frame_size` and `is_generator`, all three already loaded by that
+handler. **−0.07% instructions on `bench_script`** — inside the noise, in the
+faster direction. 98 of 98, and 53 of 53 on asan, which matters more than usual
+for a change that pushes a real `call_frame` and resizes the register vector.
 
 ## The ladder ahead
 

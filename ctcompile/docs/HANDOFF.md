@@ -112,8 +112,12 @@ Measured, `ctcompile/docs/baseline/page-load.json`, p5-basic.html on the devbox:
 2. **The image LOADER is now the largest single item on the path**, at 26%, and
    its operand pass alone is 7.49% — fifteen times the whole CSS engine. That
    is where the next startup millisecond is.
-3. **Phases 1–6**, the runtime preparation. Phase 2's TABLE is done and its
-   GATE is not — nothing has ever called a hand-authored AOT function through
+3. **Phases 1–6**, the runtime preparation. Phase 2's gate is MET as of
+   2026-08-22 — `ctbrowser/lib/Script/aot_bridge.cpp` has four helper bodies and
+   `unittests/unit/aot_basics` calls a hand-authored compiled function from
+   interpreted JavaScript. Doing it falsified `ct_aot_catch_land`, which cannot
+   be implemented as written; the row says so now. The throwing tier and Phases
+   1, 3–6 are still open. WAS: Phase 2's TABLE is done and its GATE is not — nothing has ever called a hand-authored AOT function through
    the ABI, which is the cheapest way to find out whether 1,881 lines of
    contract are right before 68 helper bodies depend on them.
 
