@@ -8,7 +8,9 @@ committed and green; nothing is pushed.
 
 * Repo: `/mnt/c/Users/aange/Downloads/claude/compile-time-browser`
 * Branch: **`ctcompile-v1`**, working tree clean
-* Suite: **100/100** via `./tools/remote-build.sh`
+* Suite: **101/101** via `./tools/remote-build.sh`
+* **`ctcompile/docs/ctcompile.md` is the tool's own documentation** — the CLI,
+  what it refuses and why, the manifest, and the gaps.
 * **Read `ctcompile/docs/plans/ctcompile.md` first** — it is the running plan in
   the house style (Done / Next, measured rungs) and it records every decision
   below with its reasoning. This file is a pointer to it, not a substitute.
@@ -40,6 +42,11 @@ primary backend, sources are in `lib/`, build on the devbox.
   `browser-no-llvm`, `asan`, `tsan` and `windows` all build with
   `CTBROWSER_ENABLE_PROJECTS` empty — so the ABI and `EngineContract.hpp` were
   parsed in exactly one configuration out of six.
+* **Phase 1** — the product. CLI documented in `ctcompile/docs/ctcompile.md`,
+  a JSON manifest (`--manifest`, and a copy inside every bundle), stable program
+  identities (`program_id` is the source hash the runtime matches on), and both
+  format versions exposed rather than copied. `--mode` declares Phase 1's three
+  modes and refuses the two that need code generation.
 * **Phase 15** — a working program image, wired into the page load.
   `ctbrowser/{include,lib}/…/program_image.*` writes and reads a compiled
   `script::program`, validated exhaustively, and `browser::set_script_image()`
