@@ -55,9 +55,51 @@ public:
     void set_base_path(std::filesystem::path base) { base_ = std::move(base); }
     [[nodiscard]] const std::filesystem::path & base_path() const { return base_; }
 
+    // SEALED: the registry and data: URLs only, never the filesystem.
+    //
+    // What a PACKAGED application is. Its resources travel inside it, so a name
+    // that misses is a packaging bug - and the probe order above would answer
+    // it from the WORKING DIRECTORY, which is wherever the user happened to be
+    // standing. That is not a fallback, it is serving a stranger's bytes under
+    // the name this document asked for, and it turns a broken package into
+    // something that works on the machine that built it.
+    //
+    // A miss on a sealed registry is a miss. That is the point: it fails where
+    // it is wrong rather than somewhere else later.
+    void set_sealed(bool sealed) { sealed_ = sealed; }
+    [[nodiscard]] bool sealed() const noexcept { return sealed_; }
+
     // The registry, then a data: URL, then the filesystem. Empty when none of
     // them has it.
+    // WHAT THIS PAGE ASKED FOR, in the order it asked, each name once and
+    // spelled exactly as the document spelled it.
+    //
+    // A PACKAGER CANNOT WORK THIS OUT FOR ITSELF, and the whole reason this
+    // exists is that it must not try. The lookup key is the LITERAL reference
+    // string - p5-basic.html says `../../vendor/p5/p5.js`, which is neither a
+    // path relative to the application directory nor anything a second
+    // implementation could re-derive without reproducing the engine's own
+    // resolution rules. `browser::script_sources()` exists for the same reason
+    // and says so: a copy of that rule in a packaging tool is a copy free to
+    // drift from the one that matters.
+    //
+    // Recorded on LOAD, not on find(), so it captures the request whether the
+    // bytes came from the registry, a data: URL, the filesystem or nowhere -
+    // and a name recorded here that resolved to nothing is exactly what a
+    // packager most needs to hear about.
+    [[nodiscard]] const std::vector<std::string> & requested() const noexcept { return requested_; }
+
     [[nodiscard]] std::vector<std::byte> load(std::string_view name) const {
+        if (!name.empty()) {
+            bool seen = false;
+            for (const std::string & already : requested_) {
+                if (already == name) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen) { requested_.emplace_back(name); }
+        }
         if (const std::span<const std::byte> baked = find(name); !baked.empty()) {
             return {baked.begin(), baked.end()};
         }
@@ -72,6 +114,7 @@ public:
             if (parse_data_url(name, inline_bytes)) { return std::move(inline_bytes.bytes); }
             return {};
         }
+        if (sealed_) { return {}; }
         const std::filesystem::path relative{name};
         if (relative.is_absolute()) { return read_file(relative); }
         for (const std::filesystem::path & root :
@@ -86,6 +129,13 @@ public:
     [[nodiscard]] std::size_t size() const noexcept { return entries_.size(); }
 
 private:
+    // `load` is const because every caller has a const registry and asking for
+    // a resource is not a change to the page. Recording the question is
+    // bookkeeping about this registry rather than about its contents, which is
+    // what mutable is for.
+    mutable std::vector<std::string> requested_;
+    bool sealed_ = false;
+
     [[nodiscard]] static std::vector<std::byte> read_file(const std::filesystem::path & path) {
         std::error_code failed;
         if (!std::filesystem::is_regular_file(path, failed)) { return {}; }

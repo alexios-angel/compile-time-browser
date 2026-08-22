@@ -12,7 +12,12 @@
 # tools/check/compare.py spawns ./build/tools/ctdrive by path, and the target
 # names moved from ctbrowser-example-* to ctbrowser-tool-* because they are not
 # examples any more - that is the one rename, and it is not cosmetic.
-foreach(tool ctbrowse ctdrive)
+# ctrun joins them: it is the LAUNCHER a packaged application is made of. An
+# application built by `ctcompile` is a copy of this binary with the application
+# bundle appended, so a launcher that was not built is a compiler that cannot
+# emit anything - which is why it is an ordinary tool here rather than anything
+# generated.
+foreach(tool ctbrowse ctdrive ctrun)
   add_executable(ctbrowser-tool-${tool} "${CMAKE_CURRENT_SOURCE_DIR}/${tool}/${tool}.cpp")
   target_link_libraries(ctbrowser-tool-${tool} PRIVATE ctbrowser::ctbrowser)
   ctbrowser_target(ctbrowser-tool-${tool})

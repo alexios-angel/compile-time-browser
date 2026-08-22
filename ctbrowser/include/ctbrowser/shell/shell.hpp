@@ -19,6 +19,7 @@
 // browser here needs no display, which is what lets tests render whole pages
 // and compare them byte for byte.
 
+#include <ctbrowser/shell/app_bundle.hpp>
 #include <ctbrowser/shell/bindings.hpp>
 #include <ctbrowser/shell/browser.hpp>
 #include <ctbrowser/shell/embedded_fonts.hpp>

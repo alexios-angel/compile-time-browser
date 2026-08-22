@@ -8,6 +8,7 @@
 add_library(ctbrowser-shell)
 target_sources(ctbrowser-shell
   PRIVATE
+    app_bundle.cpp
     # the assembly itself
     browser.cpp
     # The web platform bound to the VM. bindings.cpp was 3,926 lines and
@@ -42,6 +43,7 @@ target_sources(ctbrowser-shell
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
       FILES
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/app_bundle.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/embedded_fonts.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/shell.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/page/webgl.hpp"

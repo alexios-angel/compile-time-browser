@@ -64,3 +64,44 @@ add_executable(ctcompile-test-program_image ProgramImage.cpp)
 target_link_libraries(ctcompile-test-program_image PRIVATE ctcompile::javascript)
 ctcompile_target(ctcompile-test-program_image)
 add_test(NAME ctcompile_program_image COMMAND ctcompile-test-program_image)
+
+# THE APPLICATION BUNDLE, on the same terms as the program image above and for
+# a sharper reason: a bundle is a table of offsets read out of a file, and what
+# it carries is program images, which are executable input. The last section of
+# that file is the one that matters - it asserts the COUNTER that says the
+# images were used, because a page that quietly recompiled produces an
+# identical document.
+add_executable(ctcompile-test-app_bundle AppBundle.cpp)
+target_link_libraries(ctcompile-test-app_bundle PRIVATE ctbrowser::ctbrowser)
+ctcompile_target(ctcompile-test-app_bundle)
+# THE BINARY DIRECTORY IS AN ARGUMENT because two of its cases cannot be run
+# here: they are bundles the LAUNCHER has to refuse, and the guard that refuses
+# them lives behind a window. It writes them out and check-package.cmake below
+# feeds them to the real ctrun.
+add_test(NAME ctcompile_app_bundle
+         COMMAND ctcompile-test-app_bundle ${CMAKE_CURRENT_BINARY_DIR})
+
+# AND THE WHOLE THING, THE WAY SOMEONE USES IT: a directory in, an executable
+# out, and that executable started from somewhere else entirely. It is the only
+# test here that runs the compiler, the launcher and the engine together, and
+# the only one that could catch them disagreeing.
+#
+# A pass means more than "exit 0" - `run_bundle` sets require_script_images, so
+# the packaged application refuses to start if any of its scripts had to be
+# compiled from source. See the header of check-package.cmake.
+#
+# NOT GUARDED WITH if(TARGET). ctcompile is configured after ctbrowser's tools,
+# so the launcher is always there - and a guard would turn "the launcher stopped
+# being built" into a test that quietly stops existing, which is the failure
+# this file is least able to notice.
+add_test(NAME ctcompile_package
+         COMMAND ${CMAKE_COMMAND}
+                 -DCTCOMPILE=$<TARGET_FILE:ctcompile-tool>
+                 -DLAUNCHER=$<TARGET_FILE:ctbrowser-tool-ctrun>
+                 -DAPP=${CMAKE_CURRENT_SOURCE_DIR}/app
+                 -DOUT=${CMAKE_CURRENT_BINARY_DIR}/packaged-fixture
+                 -DREFUSALS=${CMAKE_CURRENT_BINARY_DIR}
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/check-package.cmake)
+# ORDER, not a mere preference: the two bundles the launcher must refuse are
+# written by the test above.
+set_tests_properties(ctcompile_package PROPERTIES DEPENDS ctcompile_app_bundle)

@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- The fixture application. Small on purpose: this test is about PACKAGING,
+     and a page that takes a second to compile would make it about p5.js. What
+     it does need is one of each thing the packager has to get right - a script
+     that lives in a separate file, a script written into the page, and a
+     resource asked for by a name that is not the page's own. -->
+<html>
+  <head>
+    <title>Packaged</title>
+    <link rel="stylesheet" href="app.css">
+    <script src="lib.js"></script>
+  </head>
+  <body>
+    <p id="where">unset</p>
+    <script>
+      document.getElementById('where').textContent = greeting() + ' from an image';
+      // A RESOURCE ASKED FOR BY A SCRIPT, not by the markup. fetch queues the
+      // request and it is drained from a tick, so a packager that asks what the
+      // page wanted the moment load_html returns never sees this one - which is
+      // every sprite and level in a real game, packaged as a warning-free
+      // success and broken at run time.
+      fetch('late.json');
+    </script>
+  </body>
+</html>

@@ -24,10 +24,12 @@
 #include <vector>
 
 #include <ctbrowser/app/app.hpp>
+
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/paint/paint.hpp>
 #include <ctbrowser/raster/raster.hpp>
 #include <ctbrowser/script/script.hpp>
+#include <ctbrowser/shell/app_bundle.hpp>
 #include <ctbrowser/shell/shell.hpp>
 
 // The window, the event loop and the only place SDL is read. See the note in
@@ -643,6 +645,7 @@ int run_app(std::string_view html, app_options options) {
                      images_refused, options.script_images.size());
     }
     page.assets().set_base_path(options.asset_path);
+    page.assets().set_sealed(options.sealed_assets);
     page.allow_network(options.network);
     detail::install_image_decoder(page.images());
     // THE REAL WALL CLOCK, because this is an application and a page showing the
@@ -715,7 +718,25 @@ int run_app(std::string_view html, app_options options) {
     // page is not refused by anything - it is simply never looked up, and the
     // page compiles from source and runs correctly. That is the silent failure
     // worth catching, and the counter is the only thing that can see it.
-    if (!options.script_images.empty()) {
+    //
+    // AND THE CONDITION IS NOT "SOME IMAGES ARRIVED". It was, and that deleted
+    // the sharpest case: an application packaged with NO images at all - every
+    // script a module, say, which nothing here can compile ahead of time - has
+    // an empty image list, so the check was skipped and the guard whose entire
+    // job is "did the packaging work" never ran. A caller that says its images
+    // are meant to be complete is asking to be checked either way.
+    if (!options.script_images.empty() || options.require_script_images) {
+        // MODULE SCRIPTS ARE NOT PACKAGEABLE YET and they are counted by
+        // nothing above: there is no image path into load_module, so a page of
+        // modules compiles all of its JavaScript at every start while
+        // scripts_compiled_from_source() reads a truthful, useless zero.
+        if (options.require_script_images && !page.module_sources().empty()) {
+            std::fprintf(stderr,
+                         "ctbrowser: this application has %zu module script(s), which cannot be "
+                         "compiled ahead of time yet - it would parse them at every start\n",
+                         page.module_sources().size());
+            return 1;
+        }
         const std::size_t compiled = page.scripts_compiled_from_source();
         if (compiled != 0) {
             std::fprintf(stderr,
@@ -942,6 +963,52 @@ int run_app_file(const std::filesystem::path & path, app_options options) {
     if (options.title == "ctbrowser") { options.title = path.filename().string(); }
     if (options.asset_path.empty()) { options.asset_path = path.parent_path(); }
     return run_app(buffer.str(), std::move(options));
+}
+
+// A PACKAGED APPLICATION, unpacked into the options `run_app` already takes.
+//
+// The unpacking is the whole of it, and every line is a place a launcher could
+// get it subtly wrong: an image put in `assets` instead of `script_images` is
+// a resource nobody asks for, and a page whose images arrive after `load_html`
+// is a page that already compiled from source. Doing it once here is what
+// stops a second launcher doing it differently.
+int run_bundle(std::span<const std::byte> bytes, app_options overrides) {
+    auto loaded = shell::read_bundle(bytes);
+    if (!loaded.ok) {
+        std::fprintf(stderr, "ctbrowser: %s\n", loaded.error.c_str());
+        return 2;
+    }
+    const shell::app_bundle & bundle = loaded.value;
+
+    app_options options = std::move(overrides);
+    if (options.title == "ctbrowser") {
+        if (const std::string title = bundle.meta("title"); !title.empty()) {
+            options.title = title;
+        }
+    }
+    for (const shell::bundle_entry & one : bundle.entries) {
+        switch (one.kind) {
+        case shell::bundle_kind::asset: options.assets.push_back(asset{one.name, one.bytes}); break;
+        case shell::bundle_kind::script_image: options.script_images.push_back(one.bytes); break;
+        case shell::bundle_kind::html:
+        case shell::bundle_kind::meta: break;
+        }
+    }
+    // A PACKAGED APPLICATION CARRIES EVERYTHING IT NEEDS, so a script that
+    // still compiles from source means the packaging is wrong - not that the
+    // application should start anyway and be slow. This is the one caller that
+    // can say that, because it is the one that knows the images were meant to
+    // be complete.
+    options.require_script_images = true;
+    // AND IT LOOKS NOWHERE ELSE FOR THEM. Without this the registry falls back
+    // to the filesystem, probing the WORKING DIRECTORY first - so a packaged
+    // application missing a resource reads whatever happens to sit next to the
+    // user, under the name its own document asked for. A miss has to be a miss.
+    options.sealed_assets = true;
+
+    const std::span<const std::byte> html = bundle.html();
+    return run_app(std::string_view{reinterpret_cast<const char *>(html.data()), html.size()},
+                   std::move(options));
 }
 
 } // namespace ctbrowser

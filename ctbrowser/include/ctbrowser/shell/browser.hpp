@@ -248,6 +248,22 @@ public:
         return script_sources_;
     }
 
+    // AND THE MODULE SCRIPTS, WHICH CANNOT BE PACKAGED YET.
+    //
+    // `script_sources()` above lists the CLASSIC scripts and nothing else,
+    // because those are the ones an image can stand in for: `load_module`
+    // compiles from source every time and there is no image path into it. That
+    // made a module page invisible to a packager and, worse, invisible to the
+    // check that asks whether packaging worked - zero classic scripts compiled
+    // from source is trivially true when there are no classic scripts.
+    //
+    // So the modules are published too, and both the packager and the launcher
+    // refuse rather than shipping an application that parses all of its
+    // JavaScript at every start and says nothing.
+    [[nodiscard]] const std::vector<std::string> & module_sources() const noexcept {
+        return module_sources_;
+    }
+
     // How many classic scripts the last load ran as their own programs. One per
     // non-empty <script> on the page, and the denominator that makes
     // scripts_compiled_from_source() a ratio rather than a number.
@@ -1662,6 +1678,7 @@ private:
     };
     std::vector<held_image> script_images_;
     std::vector<std::string> script_sources_;
+    std::vector<std::string> module_sources_;
     // A LOAD IS IN FLIGHT, AND A SCRIPT ASKED FOR ANOTHER ONE. See load_html:
     // a navigation from inside a script is queued and performed after the
     // scripts stop, because doing it where it was asked for destroys the

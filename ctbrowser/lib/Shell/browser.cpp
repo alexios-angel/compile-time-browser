@@ -937,6 +937,12 @@ void browser::run_scripts() {
     // Kept whether or not any of it is compiled, so a packager can ask what
     // this page would compile without reproducing the rule itself.
     script_sources_ = classic_scripts;
+    // AND THE MODULES, so that "this page has scripts no image can cover" is a
+    // question something can ask. Nothing here can package them; the point is
+    // that the packager and the launcher can both SEE them.
+    module_sources_.clear();
+    module_sources_.reserve(modules.size());
+    for (const auto & [text, specifier] : modules) { module_sources_.push_back(text); }
     // PER LOAD, because that is the question it answers and what its
     // documentation promises: "zero after a load whose every script was
     // cached". Left to accumulate it could not be read against

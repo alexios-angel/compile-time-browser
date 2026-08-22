@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <span>
 // <ostream> EXPLICITLY. `out << "P6\n"` needs the const char* inserter, and
 // without it the const void* one is chosen instead - which compiles, and
 // writes the POINTER as hex into the file. libstdc++ happened to make it
@@ -114,6 +115,12 @@ struct app_options {
     // application whose scripts did not all come from images. Off by default:
     // an embedder handing over a partial set is doing something reasonable.
     bool require_script_images = false;
+
+    // A PACKAGED APPLICATION LOOKS NOWHERE BUT INSIDE ITSELF. With this set the
+    // asset registry answers from what was baked in and from data: URLs, and
+    // never from the disk - see assets.hpp. Off for an ordinary page, which is
+    // opened from a directory and means to read it.
+    bool sealed_assets = false;
     // Where a relative asset path (an <img src>, a page-local fetch) resolves
     // from when the registry misses. Empty means the working directory.
     std::filesystem::path asset_path;
@@ -290,5 +297,19 @@ inline void apply_environment(app_options & options) {
 // A page loaded from a file resolves its images and page-local fetches next to
 // ITSELF, which is what a `<img src="cat.bmp">` beside the html means.
 [[nodiscard]] int run_app_file(const std::filesystem::path & path, app_options options = {});
+
+// AND A PACKAGED APPLICATION: the page, its resources and its already-compiled
+// scripts, all out of one blob of bytes.
+//
+// This is the other end of `ctcompile`. Everything it does could be done by a
+// caller filling an `app_options` by hand - which is exactly why it is here
+// once rather than in every launcher: a bundle whose script images were
+// unpacked into `assets` instead of `script_images`, or seeded after the page
+// rather than before it, would produce an application that runs correctly and
+// slowly with nothing said.
+//
+// `overrides` is applied on top of what the bundle says, so a launcher can
+// still force a window size or a screenshot for a test.
+[[nodiscard]] int run_bundle(std::span<const std::byte> bytes, app_options overrides = {});
 
 } // namespace ctbrowser
