@@ -8,7 +8,7 @@ committed and green; nothing is pushed.
 
 * Repo: `/mnt/c/Users/aange/Downloads/claude/compile-time-browser`
 * Branch: **`ctcompile-v1`**, working tree clean
-* Suite: **102/102** via `./tools/remote-build.sh`
+* Suite: **103/103** via `./tools/remote-build.sh`, and **asan 55/55**
 * **`ctcompile/docs/ctcompile.md` is the tool's own documentation** — the CLI,
   what it refuses and why, the manifest, and the gaps.
 * **Read `ctcompile/docs/plans/ctcompile.md` first** — it is the running plan in
@@ -55,6 +55,13 @@ primary backend, sources are in `lib/`, build on the devbox.
   interpreted JavaScript and from nowhere else: not from `context::call` (every
   DOM event, timer, promise job and `apply`), not from `new`, and not from a
   program's top level, which for ctcompile is the ordinary case.
+* **Phase 4** — AOT GC shadow frames. `context::set_gc_stress` collects at every
+  safepoint, which is the only way the ABI's `is_safepoint` obligations can be
+  exercised at all: nothing collects while script runs in an ordinary build.
+  **It found two real use-after-frees on `new` the first time it ran**, neither
+  in code this phase wrote — see the plan. `ct_aot_slots` is the ABI row a body
+  needs to keep a value where the collector can see it, and `context::rooted` is
+  the general "a C++ scope is holding this across a call" mechanism.
 * **Phase 15** — a working program image, wired into the page load.
   `ctbrowser/{include,lib}/…/program_image.*` writes and reads a compiled
   `script::program`, validated exhaustively, and `browser::set_script_image()`
@@ -211,10 +218,12 @@ interpreter is 1.4%. Phases 7–12A are the rest and are not started.
 2. **The image LOADER is now the largest single item on the path**, at 26%, and
    its operand pass alone is 7.49% — fifteen times the whole CSS engine. That
    is where the next startup millisecond is.
-3. **Phases 4, 5 and 6**, which are what is left of the runtime preparation:
-   AOT GC shadow frames, extracting the shared JavaScript runtime helpers, and
-   explicit completion semantics. Phase 3 is done and its gate is met.
-   PREVIOUSLY: **Phases 1–6**, the runtime preparation. Phase 2's gate is MET as of
+3. **Phases 5 and 6**, which are what is left of the runtime preparation:
+   extracting the shared JavaScript runtime helpers (a refactor with a strong
+   invariant — the VM's observable behaviour must not change, one helper per
+   commit) and explicit completion semantics. Phases 1–4 are done and their
+   gates are met.
+   PREVIOUSLY: **Phases 4, 5 and 6** / **Phases 1–6**, the runtime preparation. Phase 2's gate is MET as of
    2026-08-22 — `ctbrowser/lib/Script/aot_bridge.cpp` has four helper bodies and
    `unittests/unit/aot_basics` calls a hand-authored compiled function from
    interpreted JavaScript. Doing it falsified `ct_aot_catch_land`, which cannot
@@ -252,6 +261,10 @@ interpreter is 1.4%. Phases 7–12A are the rest and are not started.
   script to a function declared in a later one works today and would stop.
   **This is what stands between the current win and "bake p5 once, reuse it",
   and it is the highest-value thing left on this path.**
+* **`aot_gc` PROVES MUCH LESS OUTSIDE `asan`.** It asserts correct answers under
+  forced GC in every build, but a rooting bug is a use-after-free, and reading
+  freed memory usually returns the right bytes. Every one of its guards was
+  falsified under `asan`, and that is where a regression in them will show.
 * **THE `asan` AND `tsan` PRESETS ARE NOT IN THE GATE.** `tools/remote-build.sh`
   runs the default preset only, and the CSS use-after-free above sat there
   through every green run until somebody built asan by hand. It is 52 of 52 now

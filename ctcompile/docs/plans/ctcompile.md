@@ -1173,6 +1173,86 @@ register file, which a compiled frame does not have. That is what the master
 plan lists `generator_resume` and `resume` under Phase 14 for. The test asserts
 the current boundary, so the phase that changes it fails here and has to say so.
 
+## Phase 4: the collector that never ran, and what happened when it did
+
+The gate is "forced-GC mixed-mode tests pass under sanitizers", and the master
+plan calls a forced-GC mode the highest-value test in the phase. Finding out why
+took one run.
+
+**Nothing collects while script is running.** The only production trigger is
+`collect_if_due`, once per tick, from the browser's frame loop, under a comment
+that says "collect between callbacks, never inside one". `allocate` never
+collects. So every `is_safepoint` flag in `aot_helpers.def` — thirty-three rows
+— has been an obligation on callers that nothing has ever enforced, and any
+value kept where the precise collector cannot see it has been safe by accident.
+
+`context::set_gc_stress` collects the whole heap at every safepoint. Entering a
+function is one.
+
+### It found two use-after-frees on `new`, immediately
+
+Neither is in code this phase wrote:
+
+* **`context::construct`** allocates the instance, runs field initialisers, then
+  calls the constructor body. The instance is in a **C++ local** across both, and
+  both run user JavaScript.
+* **`op::construct`** does the same in the interpreter with its own local, and
+  `reg(in.a)` still holds the *callee* at that point, so nothing else refers to
+  the instance either.
+
+Both are genuine: an object freed while `new` is still building it. Neither is
+reachable today, because a collection cannot happen there — which is exactly the
+kind of latent defect the plan says this mode finds and nothing else will.
+
+A third came out of reviewing the bridge before the mode existed: **a compiled
+body's receiver was in no root at all.** The interpreted path stores it in
+`call_frame::receiver` and the collector marks that for every live frame; the
+bridge never set the field. Survivable by accident for an ordinary call — the
+receiver is usually still in the caller's register — and not survivable for
+`new`. `ct_aot_enter` takes the receiver now.
+
+### Two mechanisms, and why each is the general one
+
+`context::rooted` is a stack of temporaries the collector marks. The alternative
+was a third special-cased field beside `current_this_` and
+`pending_new_target_`, which are this same problem solved twice already, each
+with a comment explaining that the value "lives only in this slot, which is
+exactly the window a collection can fall in".
+
+`ct_aot_slots` is the ABI's sixth implemented row. A compiled body has had a
+register span reserved for it since Phase 2 — traced in full, initialised to
+undefined — and **no way to address it**, so the only place it could keep a live
+value was a C++ local. Its guard tests `base + count`, not `base` alone: an
+unwound frame truncates the register file to exactly `base`, so a `>` test
+passes at the moment the span ceases to exist and hands back a one-past-the-end
+pointer.
+
+### Falsified under asan, because that is where the bug is visible
+
+A rooting bug is a use-after-free, and reading freed memory usually returns the
+right bytes. Under the default preset a blinded guard mostly still passes.
+
+| removed | under asan |
+|---|---|
+| the receiver rooted by `ct_aot_enter` | heap-use-after-free |
+| the instance rooted by `context::construct` | heap-use-after-free |
+| the instance rooted by `op::construct` | heap-use-after-free |
+| the body parking its string in a frame slot | wrong string returned |
+| marking the temporaries in `collect()` | heap-use-after-free |
+
+**Two came back green, and both were acted on rather than explained away.**
+`op::construct`'s root was untested because the fixture's constructor was a
+plain function, so its field-initialiser run had nothing to run and could not
+collect — **a class field is the only shape that opens that window**, and there
+is an arm for it now. And the safepoint written into `ct_aot_call` was
+*redundant*: it delegates to `context::call`, whose first act is a safepoint. It
+is deleted, with the reason in its place.
+
+The frame-chain validation the plan asks for is in `collect()` under stress and
+**no test exercises it** — reaching it needs a corrupted frame stack that
+nothing outside the class can produce, and a test that reached in to corrupt one
+would be testing the corruption. Said in the code rather than implied.
+
 ## The ladder ahead
 
 | phase | what | where |
