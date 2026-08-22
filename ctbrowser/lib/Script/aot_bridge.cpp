@@ -8,11 +8,14 @@
 // right is to make a few of them run before sixty-eight bodies and two code
 // generators are written against them.
 //
-// FIVE ROWS. Four of them are what a non-throwing call needs - ct_aot_enter,
+// SIX ROWS. Four of them are what a non-throwing call needs - ct_aot_enter,
 // ct_aot_leave, ct_aot_check and ct_aot_return_value - and the fifth,
 // ct_aot_call, is what Phase 3 needs: without it a compiled body cannot call
 // anything, so three of the six transitions the plan requires could only be
 // demonstrated by a test reaching around the ABI it is supposed to be testing.
+// The sixth, ct_aot_slots, is what Phase 4 needs: a body had a register span
+// reserved for it and no way to address it, so the only place it could keep a
+// live value was a C++ local - which the collector does not trace.
 //
 // Each body is a transcription of its row's DELEGATES TO column, and where a
 // row could not be satisfied that is recorded rather than worked around - see
@@ -46,6 +49,10 @@ struct aot_frame_storage {
     std::size_t frame_index = 0;
     std::size_t register_base = 0;
     std::size_t handler_base = 0;
+    // HOW MANY SLOTS THE BODY ASKED FOR. Recorded so the span can be checked
+    // rather than assumed: without it `ct_aot_slots` hands back a base and
+    // nothing anywhere knows how far it is legal to walk.
+    std::uint32_t slot_count = 0;
 };
 
 // THE NUMBER IN THE HEADER, CHECKED AGAINST THE TYPE IT SIZES. A compiled body
@@ -69,7 +76,8 @@ struct aot_bridge {
     // pending_new_target_ exactly as call.cpp does. Returns NULL on the depth
     // raise, and the caller returns FAILED without leaving.
     static aot::ct_aot_frame * enter(aot::ct_aot_ctx * c, const aot::ct_aot_site * site,
-                                     std::uint32_t reg_count, void * storage) {
+                                     std::uint32_t reg_count, std::uint64_t receiver,
+                                     void * storage) {
         context & cx = ctx_of(c);
         const auto * proto = reinterpret_cast<const function_proto *>(site);
 
@@ -98,16 +106,47 @@ struct aot_bridge {
         cx.registers_.resize(held->register_base + reg_count + 8u, value::undefined());
 
         held->frame_index = cx.frames_.size();
+        held->slot_count = reg_count;
         context::call_frame entered{};
         entered.proto = proto;
         entered.base = held->register_base;
         entered.handler_base = held->handler_base;
-        // CONSUMED AND CLEARED, exactly as call.cpp does it: a new.target left
-        // set would be inherited by the next ordinary call.
+        // THE RECEIVER IS A ROOT AND THIS IS WHERE IT BECOMES ONE. objects.cpp
+        // marks call_frame::receiver for every live frame; a compiled body's
+        // `this` was in no frame field and therefore in no root. For `new` that
+        // was not survivable by accident: op::construct's fresh instance is a
+        // C++ local until the body returns.
+        entered.receiver = value::from_bits(receiver);
         entered.new_target = cx.pending_new_target_;
-        cx.pending_new_target_ = value::undefined();
+        // PUSHED BEFORE THE CLEAR, not after. Between copying
+        // pending_new_target_ into a C++ local and clearing the root, the
+        // constructor a super() is handing on is reachable from nothing - which
+        // is the precise window GCRoots.def warns about, reproduced here.
+        // Nothing collects in that gap today; ordering it correctly costs a
+        // line and removes the question.
         cx.frames_.push_back(entered);
+        cx.pending_new_target_ = value::undefined();
         return reinterpret_cast<aot::ct_aot_frame *>(held);
+    }
+
+    // ct_aot_slots. The row: the frame's own register span, which is where a
+    // compiled body puts a value it needs to survive a safepoint.
+    //
+    // VALID UNTIL THE NEXT SAFEPOINT AND NOT ONE INSTRUCTION LONGER. registers_
+    // is a std::vector and a nested call resizes it, so this recomputes the
+    // base every time - exactly as the interpreter's own reg() does, and for
+    // the same reason.
+    static std::uint64_t * slots(aot::ct_aot_frame * f) {
+        aot_frame_storage & held = frame_of(f);
+        context & cx = *held.ctx;
+        // THE WHOLE SPAN IS STILL THERE, checked rather than assumed - and the
+        // test is against base + count, not against base alone. An unwound
+        // frame truncates registers_ to EXACTLY register_base, so a `>` test
+        // passes at the moment the span has ceased to exist and hands back a
+        // one-past-the-end pointer; the write that follows is the kind of
+        // corruption that surfaces somewhere else entirely.
+        if (held.register_base + held.slot_count > cx.registers_.size()) { return nullptr; }
+        return reinterpret_cast<std::uint64_t *>(cx.registers_.data() + held.register_base);
     }
 
     // ct_aot_leave. The row: pop the frame, truncate handlers_ to
@@ -171,6 +210,13 @@ struct aot_bridge {
         aot_frame_storage & held = frame_of(f);
         context & cx = *held.ctx;
 
+        // NO SAFEPOINT HERE, and that is a deliberate deletion rather than an
+        // omission. The row declares ct_aot_call is_safepoint, and it is one:
+        // it delegates to context::call, whose first act IS a safepoint. A
+        // second collection immediately before that one satisfies nothing the
+        // first does not - it was written, and then removing it did not turn
+        // a single test red, which is the whole point of trying.
+        //
         // COPIED OUT BEFORE THE CALL. `argv` points into registers_ for a
         // compiled body, and context::call resizes that vector - so the span
         // handed to it must not be the vector's own storage.
@@ -196,8 +242,12 @@ namespace ctbrowser::aot {
 extern "C" {
 
 ct_aot_frame * ct_aot_enter(ct_aot_ctx * ctx, const ct_aot_site * site, std::uint32_t reg_count,
-                            void * storage) {
-    return script::aot_bridge::enter(ctx, site, reg_count, storage);
+                            std::uint64_t receiver, void * storage) {
+    return script::aot_bridge::enter(ctx, site, reg_count, receiver, storage);
+}
+
+std::uint64_t * ct_aot_slots(ct_aot_frame * fr) {
+    return script::aot_bridge::slots(fr);
 }
 
 void ct_aot_leave(ct_aot_frame * fr) {

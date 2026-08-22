@@ -67,7 +67,8 @@ extern "C" std::int32_t sample_leaf(ctbrowser::aot::ct_aot_ctx * ctx,
     const value second = argc > 1 ? value::from_bits(argv[1]) : value::undefined();
 
     alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
-    ctbrowser::aot::ct_aot_frame * frame = ctbrowser::aot::ct_aot_enter(ctx, site, 4u, storage);
+    ctbrowser::aot::ct_aot_frame * frame =
+        ctbrowser::aot::ct_aot_enter(ctx, site, 4u, receiver, storage);
     if (frame == nullptr) {
         return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed);
     }
@@ -104,7 +105,8 @@ extern "C" std::int32_t sample_caller(ctbrowser::aot::ct_aot_ctx * ctx,
     for (std::uint32_t i = 1; i < argc; ++i) { forwarded.push_back(argv[i]); }
 
     alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
-    ctbrowser::aot::ct_aot_frame * frame = ctbrowser::aot::ct_aot_enter(ctx, site, 4u, storage);
+    ctbrowser::aot::ct_aot_frame * frame =
+        ctbrowser::aot::ct_aot_enter(ctx, site, 4u, receiver, storage);
     if (frame == nullptr) {
         return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed);
     }
@@ -145,7 +147,8 @@ extern "C" std::int32_t sample_point(ctbrowser::aot::ct_aot_ctx * ctx,
     saw_constructing = constructing;
 
     alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
-    ctbrowser::aot::ct_aot_frame * frame = ctbrowser::aot::ct_aot_enter(ctx, site, 4u, storage);
+    ctbrowser::aot::ct_aot_frame * frame =
+        ctbrowser::aot::ct_aot_enter(ctx, site, 4u, receiver, storage);
     if (frame == nullptr) {
         return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed);
     }

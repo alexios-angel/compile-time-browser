@@ -69,7 +69,7 @@ extern "C" std::int32_t sample_addup(ctbrowser::aot::ct_aot_ctx * ctx,
     // A body sizes its own frame storage with the number the ABI publishes.
     alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
     ctbrowser::aot::ct_aot_frame * frame =
-        ctbrowser::aot::ct_aot_enter(ctx, site, /*reg_count*/ 4u, storage);
+        ctbrowser::aot::ct_aot_enter(ctx, site, /*reg_count*/ 4u, receiver, storage);
     if (frame == nullptr) {
         // The row's stated failure: NULL on the depth raise, and the caller
         // returns FAILED without leaving.

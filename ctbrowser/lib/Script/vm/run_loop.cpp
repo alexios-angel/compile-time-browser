@@ -1469,6 +1469,12 @@ value context::run_loop(std::size_t stop_depth) {
                     instance->prototype = ensure_prototype(callee);
                 }
                 const value self = value::object(instance);
+                // ROOTED FOR THE SAME REASON context::construct roots its own:
+                // the instance is in a C++ local while field initialisers run
+                // user JavaScript, and it stays in one until the frame that
+                // carries it as a receiver is pushed. reg(in.a) still holds the
+                // CALLEE at this point, so nothing else refers to it.
+                const rooted keep_instance{*this, self};
                 run_field_initialisers(callee, self);
                 const std::size_t arg_base = base + in.a + 1;
 

@@ -728,6 +728,63 @@ public:
         external_roots_ = std::move(enumerate);
     }
 
+    // A VALUE THE COLLECTOR CAN SEE, FOR AS LONG AS A C++ SCOPE HOLDS IT.
+    //
+    // The precise collector walks exactly the roots in GCRoots.def, and a value
+    // in a C++ local is in none of them. Most of the engine gets away with that
+    // because nothing collects while script is running - but `construct` does
+    // not: it allocates the instance, then runs field initialisers, then calls
+    // the constructor body, and the instance is in a C++ local across both.
+    // Under gc_stress that is a use-after-free, and it was a real one - found
+    // by turning the mode on for the first time.
+    //
+    // A STACK OF TEMPORARIES rather than a second special-cased field like
+    // `current_this_` and `pending_new_target_`, which are exactly this problem
+    // solved twice. Anything that must survive a call it makes can say so in
+    // one line and stop being a hazard.
+    class rooted {
+    public:
+        rooted(context & cx, value v) : cx_(&cx) { cx.temporaries_.push_back(v); }
+        ~rooted() {
+            if (!cx_->temporaries_.empty()) { cx_->temporaries_.pop_back(); }
+        }
+        rooted(const rooted &) = delete;
+        rooted & operator=(const rooted &) = delete;
+
+    private:
+        context * cx_;
+    };
+
+    // COLLECT AT EVERY SAFEPOINT, FOR TESTS. Phase 4.
+    //
+    // The only thing that collects in an ordinary run is `collect_if_due`, once
+    // per tick, from the browser's frame loop - so a collection NEVER happens
+    // while script is running. That makes every `is_safepoint` flag in
+    // aot_helpers.def a claim about a collector that does not yet run there,
+    // and it makes a rooting bug in a compiled body impossible to reach: the
+    // value in the C++ local the collector cannot see is never given a chance
+    // to be freed.
+    //
+    // Which is why the master plan calls a forced-GC mode the highest-value
+    // test in this phase. It is a TEST MODE and says so - it collects the whole
+    // heap at every safepoint, which is enormously slow - and it is the only
+    // way the rooting discipline the ABI demands can be exercised at all.
+    void set_gc_stress(bool on) noexcept { gc_stress_ = on; }
+    [[nodiscard]] bool gc_stress() const noexcept { return gc_stress_; }
+
+    // A point where the ABI says a collection may happen. Does nothing unless
+    // stress is on, so this is one predictable not-taken branch on the paths
+    // that call it.
+    void safepoint() {
+        if (gc_stress_) { (void)collect(); }
+    }
+
+    // HOW MANY COLLECTIONS HAVE RUN. A test that forces GC and asserts an
+    // answer proves nothing on its own - the answer is the same if no
+    // collection happened at all, which is exactly how a stress mode that
+    // silently does nothing looks.
+    [[nodiscard]] std::size_t collections() const noexcept { return collections_; }
+
     // Collect if the heap has grown enough to be worth it. Called once per
     // tick, so a long-running page's garbage is bounded instead of accumulating
     // for the life of the document.
@@ -1078,6 +1135,11 @@ private:
     std::vector<call_frame> frames_;
     heap_object * heap_ = nullptr;
     std::size_t live_objects_ = 0;
+    // Values a C++ scope is holding across something that can collect. See
+    // `rooted`; marked in collect() like any other root.
+    std::vector<value> temporaries_;
+    std::size_t collections_ = 0;
+    bool gc_stress_ = false;
     // TOTAL allocations, never reset: the cap is about a loop that does not
     // terminate, and a collector that keeps the live set small hides exactly
     // that if the count is reset.

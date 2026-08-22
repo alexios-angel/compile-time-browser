@@ -432,6 +432,34 @@ value context::lookup_property(value target, const std::string & name) {
 }
 
 std::size_t context::collect() {
+    // COUNTED, because a stress mode that silently stops collecting looks
+    // exactly like one that works: every answer is the same either way. A test
+    // that forces GC asserts this number, not the answer.
+    ++collections_;
+
+    // AND THE FRAME CHAIN CHECKED, under stress only, which is where the master
+    // plan puts it: "have the GC validate the whole frame chain on every
+    // collection - reachable, terminated, and with plausible slot counts".
+    //
+    // A compiled frame's slots live in `registers_` and are addressed as
+    // `registers_.data() + base`, so a base past the end of that vector is a
+    // body about to read and write somewhere else entirely - the kind of
+    // corruption that surfaces a long way from its cause.
+    //
+    // SAID PLAINLY: no test exercises this. Reaching it needs a corrupted
+    // frame stack, which nothing can produce from outside the class, and
+    // writing a test that reaches in to corrupt it would be testing the
+    // corruption rather than the guard. It is here because it costs one
+    // comparison per frame in a mode that already collects the whole heap.
+    if (gc_stress_) {
+        for (const call_frame & f : frames_) {
+            if (f.proto == nullptr || f.base > registers_.size()) {
+                raise("a call frame's register span is outside the register file");
+                break;
+            }
+        }
+    }
+
     // Precise roots: everything reachable is reachable from exactly these.
     for (const auto & [name, v] : globals_) { mark(v); }
     for (const value & v : registers_) { mark(v); }
@@ -471,6 +499,11 @@ std::size_t context::collect() {
     }
     // A thrown value in flight is reachable from nothing else.
     mark(thrown_);
+    // AND WHAT A C++ SCOPE IS HOLDING ACROSS A CALL. `construct` allocates the
+    // instance and then runs field initialisers and the constructor body with
+    // it in a local; without this the object being constructed is freed by any
+    // collection inside either. See context::rooted.
+    for (const value & v : temporaries_) { mark(v); }
     // The prototype tables hold every builtin method. Nothing else references
     // them, so without this the standard library is collected on the first gc.
     for (object_object * table : prototypes_) {

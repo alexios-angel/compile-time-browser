@@ -122,10 +122,51 @@
  *   guard (call.cpp:77) counts AOT frames, and consume-and-clear
  *   pending_new_target_ exactly as call.cpp:90-91 does.
  * FAILURE: Returns NULL on the 512-depth raise; caller returns
- *   CT_AOT_FAILED without leaving. Never throws catchably. */
+ *   CT_AOT_FAILED without leaving. Never throws catchably.
+ *
+ * `receiver` WAS ADDED IN PHASE 4, and it is a rooting fix rather than a
+ * convenience. The interpreted path stores the receiver in call_frame::receiver
+ * and objects.cpp marks it for every live frame; the compiled path stored it
+ * nowhere, so a compiled body's `this` was reachable from NO root. For an
+ * ordinary call that was survivable by accident - the receiver is usually still
+ * in the caller's register - but for `new` it was not: op::construct's fresh
+ * instance lives in a C++ local until the body returns, and the callee's own
+ * register still holds the callee. A collection at any safepoint inside a
+ * compiled constructor freed the object being constructed. */
 CT_AOT_HELPER(/* name */ ct_aot_enter, /* ret */ struct ct_aot_frame *,
-              /* params */ (struct ct_aot_ctx *ctx, const struct ct_aot_site *site, uint32_t reg_count, void *storage),
+              /* params */ (struct ct_aot_ctx *ctx, const struct ct_aot_site *site, uint32_t reg_count, uint64_t receiver, void *storage),
               /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 0)
+
+/* THE FRAME'S OWN SLOTS, which is how a compiled body keeps a value alive
+ * across a safepoint. Phase 4.
+ *
+ * ct_aot_enter reserves reg_count slots in context::registers_ - GC root 2,
+ * traced in full - and until this row there was no way to ADDRESS them. So a
+ * body had nowhere to put a live value except a C++ local, and the header of
+ * this file is explicit that a value living only in a native frame is
+ * reachable from NONE of the collector's roots. Every helper marked
+ * is_safepoint was therefore unusable by any body holding anything.
+ *
+ * THE POINTER IS VALID UNTIL THE NEXT SAFEPOINT AND NOT ONE INSTRUCTION
+ * LONGER. registers_ is a std::vector and a nested call resizes it, so the
+ * base moves; this is the same rule the interpreter's own reg() follows by
+ * recomputing registers_.data() + base on every access, and a backend that
+ * hoists this call out of a loop containing a safepoint has miscompiled.
+ *
+ * It is deliberately NOT a stack-allocated shadow frame with its own chain,
+ * which is what a generic version of this phase would build: vm.hpp writes
+ * registers_[base + slot] UNCONDITIONALLY for a winning handler, so the
+ * landing slot for a catch has to live in the register file. The ct_aot_enter
+ * row says so, and two shadow stacks would be two things to keep in step.
+ * DELEGATES TO: NEW, Phase 4 owns the body: registers_.data() + the span
+ *   ct_aot_enter recorded for this frame.
+ * FAILURE: None. The span exists for the life of the frame, and its slots
+ *   were initialised to undefined by ct_aot_enter - not left uninitialised,
+ *   because a collection before a slot is first assigned would otherwise
+ *   trace whatever was in the vector. */
+CT_AOT_HELPER(/* name */ ct_aot_slots, /* ret */ uint64_t *,
+              /* params */ (struct ct_aot_frame *fr),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
 
 /* The handler truncation is a RESIZE, not a pop, so ct_aot_handler_pop is
  * not it and must not be used for it - a `return` out of a try otherwise

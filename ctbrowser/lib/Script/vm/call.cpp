@@ -53,6 +53,13 @@ value context::call(value callable, std::span<const value> args, value this_valu
 // rather than a bug" and makes centralising this a phase of its own.
 value context::invoke(value callable, std::span<const value> args, value this_value,
                       bool constructing) {
+    // A SAFEPOINT, for the same reason ct_aot_call is one: entering a function
+    // is where a real collector would run, and it is the boundary across which
+    // a caller's live values have to be reachable. Does nothing unless stress
+    // is on. `args` and `this_value` are the caller's, and they are safe here
+    // because every caller reached this through a rooted path - which is the
+    // property this mode exists to test rather than assume.
+    safepoint();
     if (callable.is_kind(heap_kind::native)) {
         auto * nat = static_cast<native_object *>(callable.as_heap());
         std::vector<value> copy{args.begin(), args.end()};
@@ -538,6 +545,11 @@ value context::construct(value callee, std::span<const value> args) {
         return value::undefined();
     }
     const value self = make_instance(callee);
+    // THE INSTANCE IS IN A C++ LOCAL FOR THE REST OF THIS FUNCTION, across a
+    // field-initialiser run and a constructor body - both of which run user
+    // JavaScript and can collect. Nothing rooted it, and under gc_stress that
+    // is a heap-use-after-free on the object `new` is building.
+    const rooted keep_instance{*this, self};
     run_field_initialisers(callee, self);
     if (callee.is_kind(heap_kind::native)) {
         auto * nat = static_cast<native_object *>(callee.as_heap());
