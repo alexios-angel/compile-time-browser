@@ -1143,6 +1143,28 @@ Eight removals, each watched going red:
 That is the whole argument for removing a guard to watch its test fail: not to
 confirm the guard, but to find out which case nobody wrote.
 
+### And it costs the interpreter nothing, measured
+
+Centralising a decision that sits on the interpreter's call path is exactly the
+kind of change that quietly buys a diagram with a percent. The first version did
+- `enter_compiled` was entirely out of line, so `op::call` made a real function
+call per JavaScript call to ask a question whose answer is almost always no.
+
+Split so the header holds the `aot_entry == nullptr` test inline and the
+translation unit holds everything that happens when there IS a body. Interleaved
+A/B of two binaries, nine pairs, `bench_script` on the devbox (no hardware
+counters there, and both binaries checksummed so this is not the
+`EXCLUDE_FROM_ALL` trap again):
+
+| | ms |
+|---|---|
+| before Phase 3 | 1949.3 |
+| after Phase 3 | 1943.6 |
+| | **−0.29%, 6 of 9 pairs faster** |
+
+Inside the noise, in the faster direction — the same result the original inline
+branch measured, which is what it should be, because it is the same branch.
+
 ### Where it stops, said rather than left to be found
 
 A generator is not dispatched. Calling one runs nothing — it builds a coroutine
