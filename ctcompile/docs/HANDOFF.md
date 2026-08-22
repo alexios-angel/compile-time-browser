@@ -8,7 +8,7 @@ committed and green; nothing is pushed.
 
 * Repo: `/mnt/c/Users/aange/Downloads/claude/compile-time-browser`
 * Branch: **`ctcompile-v1`**, working tree clean
-* Suite: **103/103** via `./tools/remote-build.sh`, and **asan 55/55**
+* Suite: **105/105** via `./tools/remote-build.sh`, and **asan 56/56**
 * **`ctcompile/docs/ctcompile.md` is the tool's own documentation** — the CLI,
   what it refuses and why, the manifest, and the gaps.
 * **Read `ctcompile/docs/plans/ctcompile.md` first** — it is the running plan in
@@ -62,6 +62,12 @@ primary backend, sources are in `lib/`, build on the devbox.
   in code this phase wrote — see the plan. `ct_aot_slots` is the ABI row a body
   needs to keep a value where the collector can see it, and `context::rooted` is
   the general "a C++ scope is holding this across a call" mechanism.
+* **Phase 5** — in progress, and further than it looks. **26 of the ABI's 69
+  rows have bodies** (was 4). Two real extractions with the plan's discipline —
+  `context::binary_op_static` and `context::binary_op`, the fourteen binary
+  operations, one commit each with the suite green — and sixteen rows that
+  needed no extraction, only a shim over a function the runtime already had.
+  The flags-consistency test the plan asks for is in `Inventories.cpp`.
 * **Phase 15** — a working program image, wired into the page load.
   `ctbrowser/{include,lib}/…/program_image.*` writes and reads a compiled
   `script::program`, validated exhaustively, and `browser::set_script_image()`
@@ -218,11 +224,18 @@ interpreter is 1.4%. Phases 7–12A are the rest and are not started.
 2. **The image LOADER is now the largest single item on the path**, at 26%, and
    its operand pass alone is 7.49% — fifteen times the whole CSS engine. That
    is where the next startup millisecond is.
-3. **Phases 5 and 6**, which are what is left of the runtime preparation:
-   extracting the shared JavaScript runtime helpers (a refactor with a strong
-   invariant — the VM's observable behaviour must not change, one helper per
-   commit) and explicit completion semantics. Phases 1–4 are done and their
-   gates are met.
+3. **The rest of Phase 5, and Phase 6.** Phases 1–4 are done and their gates
+   are met; Phase 5 is 26 of 69 rows.
+   **`ct_aot_intern_name` is the one hard blocker on the path to a minimal
+   compiled function.** Every property helper's key is a `const ct_aot_name *`,
+   the row asks for an owning immortal pool that does not exist, and
+   `lookup_property` today takes a `const std::string &`. Until it exists,
+   `o.x` cannot be emitted at all — which is why `ct_aot_get_index` is
+   implemented and `ct_aot_get_prop` is not.
+   After that, the cheapest real extractions per opcode bought are
+   `ct_aot_cell_get`/`ct_aot_cell_set` (four opcodes for eight lines, and they
+   unblock every captured variable). Leave `ct_aot_construct` (~90 lines),
+   `ct_aot_instance_of` (~56) and `ct_aot_set_index` (~36) until last.
    PREVIOUSLY: **Phases 4, 5 and 6** / **Phases 1–6**, the runtime preparation. Phase 2's gate is MET as of
    2026-08-22 — `ctbrowser/lib/Script/aot_bridge.cpp` has four helper bodies and
    `unittests/unit/aot_basics` calls a hand-authored compiled function from
@@ -233,6 +246,16 @@ interpreter is 1.4%. Phases 7–12A are the rest and are not started.
    contract are right before 68 helper bodies depend on them.
 
 ## Known problems, not yet acted on
+
+* **THE ABI TABLE'S LINE CITATIONS ARE SYSTEMATICALLY STALE.** Every row cites
+  the runtime that owns its semantics by file and line; Phases 3–5 moved several
+  hundred lines of `run_loop.cpp`, `call.cpp` and `vm.hpp`. Six citations
+  pointed past the end of a file and are repaired **as names**;
+  `ctcompile_def_citations` keeps that class out. **Many more still land inside
+  their file while naming a handler that has since moved**, and no machine can
+  see that. If you follow a citation and find something else, the row is stale
+  rather than wrong about the semantics — the claims were checked, the addresses
+  were not re-checked afterwards. Cite by name in anything you touch.
 
 * **A `<script src>` that ships its source TWICE.** `write_image` defaults to
   `keep_source` and `ctcompile` takes the default, so p5.js is 4.5 MB as an

@@ -1253,6 +1253,84 @@ The frame-chain validation the plan asks for is in `collect()` under stress and
 nothing outside the class can produce, and a test that reached in to corrupt one
 would be testing the corruption. Said in the code rather than implied.
 
+## Phase 5: 26 of 69 rows, and the table that had stopped being true
+
+The gate is "existing VM tests pass with shared runtime helper semantics", and
+the discipline is one helper per change with the full suite green in between —
+because extraction is a refactor whose whole invariant is that nothing
+observable changes, and doing several at once destroys the diagnostic value of
+a failure.
+
+### The flags test found three things and the tables had answered two
+
+The plan asks for a test "asserting that every helper's flags match its
+opcode's flags". Writing it found three mismatches, and two were mine:
+
+* `type_of` is served by TWO helpers deliberately — one classifies without
+  allocating, the other materialises the string only when the result escapes —
+  and its row says so: *"(0,0,0,0) here OR ct_aot_new_string's (1,1,0,1) is
+  exactly type_of's inventory row"*. The rule is the **union** over the helpers
+  serving an opcode.
+* `await_value` is a real documented exception: the opcode's `is_safepoint` is
+  the mechanical `allocates||may_reenter` derivation, and its helper covers only
+  the allocation-free read half. It is **named** in the test so a second one
+  cannot appear quietly, and the exemption is itself asserted so it fails when
+  it goes stale.
+
+"Match" is at-least, not equal. Overstating is conservative; understating tells
+a code generator it may keep a value across a collection or skip a status test.
+
+### Two extractions, and the differential that guards them
+
+`context::binary_op_static` (add, and the six bitwise) and `context::binary_op`
+(sub, mul, div, mod, pow, add_generic, concat). The interpreter and the ABI
+helper now call the same function rather than two that agree today.
+
+The test is a **reference implementation transcribed from the pre-extraction
+handlers**, run over 10,976 operand pairs. It exists because of what a bad
+extraction of fourteen byte-identical handlers looks like: they differ by one
+operator each, so the plausible mistake is a transposed line, and a program that
+never ORs passes a whole suite over it. Five blindings, all red — including
+`concat` routed through the BigInt arm, which is the trap the row warns about:
+`${1n}` would reach a switch with no case for it and throw "BigInts have no
+unsigned right shift".
+
+### Sixteen rows needed no extraction at all
+
+The runtime already had the function; what was missing was the shim. Nineteen
+opcodes bought for no risk — those changes touch no handler, so the
+one-per-commit rule (whose invariant is *the VM does not change*) has nothing to
+protect.
+
+`ct_aot_ordering` **did not exist**. `ct_aot_compare`'s row names
+`CT_AOT_ORD_LESS`/`EQUIVALENT`/`GREATER`/`UNORDERED` and derives all four
+relational opcodes from constant comparisons against them, and nothing anywhere
+defined them — the same position the status vocabulary was in before Phase 2.
+Here the NUMBERS are contract, not just the precedence.
+
+### And the table had stopped pointing at the code
+
+A line number in a comment is a fact with an expiry date. Phases 3, 4 and 5
+moved several hundred lines, and the `DELEGATES TO` citations went stale
+wholesale: **six pointed past the end of a file that had shrunk** —
+`run_loop.cpp` is 1,502 lines and rows cited 1,505 through 1,577 — and one named
+a range that is now the middle of a different function entirely.
+
+Repaired **as names**, not as fresh numbers: `run_loop.cpp's VM_CASE(cell_get)`
+cannot drift. `ctcompile_def_citations` checks the half a machine can see and
+is falsified by adding a bad citation; the half it cannot see is now stated in
+the .def's header, because many citations still land inside their file while
+naming a handler that has moved. Two rows also still read as open work that
+Phase 5 had already done, which is how a table stops being believed.
+
+### What blocks a minimal compiled function
+
+`ct_aot_intern_name`. Every property helper's key is a `const ct_aot_name *`,
+the row asks for an owning immortal pool that does not exist, and
+`lookup_property` takes a `const std::string &`. Until that row has a body,
+`o.x` cannot be emitted at all — which is why `ct_aot_get_index`, which needs no
+name, is implemented and `ct_aot_get_prop` is not.
+
 ## The ladder ahead
 
 | phase | what | where |
