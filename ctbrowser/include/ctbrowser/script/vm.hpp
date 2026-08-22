@@ -565,6 +565,25 @@ public:
     // ct_aot_binary_op_static calls exactly this.
     [[nodiscard]] value binary_op_static(op kind, value lhs, value rhs);
 
+    // AND THE SEVEN THAT CAN RUN PAGE JAVASCRIPT. Phase 5.
+    //
+    // sub, mul, div, mod, pow, add_generic and concat. They are the same seven
+    // shapes as `binary_op_static` above except that their conversions are the
+    // RE-ENTERING ones - to_primitive, to_number_value, to_string - each of
+    // which runs a user `valueOf` or `toString` when handed an object. So every
+    // caller must have its live values reachable from a root for the duration,
+    // which is what is_safepoint means on these rows.
+    //
+    // THE THREE `+` OPCODES STAY THREE, and that is the trap in this
+    // extraction. `add` is the static-family immediate above; `add_generic`
+    // makes both sides primitive and then lets the operands decide, with the
+    // string test taking first refusal so `1n + "a"` concatenates while
+    // `1n + 1` is a TypeError; `concat` unconditionally ToStrings both and is
+    // emitted only by template literals. Routing concat through bigint_binary
+    // would send `${1n}` to a switch that has no case for it and throw "BigInts
+    // have no unsigned right shift".
+    [[nodiscard]] value binary_op(op kind, value lhs, value rhs);
+
     // --- prototypes ---------------------------------------------------------
     //
     // `"abc".split(...)` and `[1,2].push(...)` resolve to nothing without these:

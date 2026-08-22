@@ -8,7 +8,7 @@
 // right is to make a few of them run before sixty-eight bodies and two code
 // generators are written against them.
 //
-// SEVEN ROWS. Four of them are what a non-throwing call needs - ct_aot_enter,
+// EIGHT ROWS. Four of them are what a non-throwing call needs - ct_aot_enter,
 // ct_aot_leave, ct_aot_check and ct_aot_return_value - and the fifth,
 // ct_aot_call, is what Phase 3 needs: without it a compiled body cannot call
 // anything, so three of the six transitions the plan requires could only be
@@ -19,6 +19,9 @@
 // ct_aot_binary_op_static, is Phase 5's first extracted SEMANTIC helper - the
 // first row here that computes a JavaScript answer rather than managing a
 // frame, and it computes it by calling the very function the interpreter calls.
+// ct_aot_binary_op is the eighth and its re-entering twin: the seven operations
+// that can run a page's own valueOf and toString, and therefore the first rows
+// whose non-ok statuses are actually reachable.
 //
 // Each body is a transcription of its row's DELEGATES TO column, and where a
 // row could not be satisfied that is recorded rather than worked around - see
@@ -161,6 +164,29 @@ struct aot_bridge {
         return status;
     }
 
+    // ct_aot_binary_op. Phase 5's second extracted semantic helper: the seven
+    // that CAN run page JavaScript, through the same context::binary_op the
+    // interpreter now calls.
+    //
+    // The status test is not decoration here. Any of these can run a user
+    // valueOf or toString, which can throw, and can call something that
+    // exhausts the stack - so unlike the static family this one genuinely
+    // reaches its non-ok arms.
+    static std::int32_t binary_op(aot::ct_aot_frame * f, std::uint32_t op_kind, std::uint64_t lhs,
+                                  std::uint64_t rhs, std::uint64_t * out) {
+        aot_frame_storage & held = frame_of(f);
+        context & cx = *held.ctx;
+        if (op_kind >= opcode_count) {
+            *out = value::undefined().bits();
+            return static_cast<std::int32_t>(aot::ct_aot_status::ok);
+        }
+        const value produced =
+            cx.binary_op(static_cast<op>(op_kind), value::from_bits(lhs), value::from_bits(rhs));
+        const std::int32_t status = check(f);
+        if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
+        return status;
+    }
+
     // ct_aot_slots. The row: the frame's own register span, which is where a
     // compiled body puts a value it needs to survive a safepoint.
     //
@@ -276,6 +302,11 @@ extern "C" {
 ct_aot_frame * ct_aot_enter(ct_aot_ctx * ctx, const ct_aot_site * site, std::uint32_t reg_count,
                             std::uint64_t receiver, void * storage) {
     return script::aot_bridge::enter(ctx, site, reg_count, receiver, storage);
+}
+
+std::int32_t ct_aot_binary_op(ct_aot_frame * fr, std::uint32_t op_kind, std::uint64_t lhs,
+                              std::uint64_t rhs, std::uint64_t * out) {
+    return script::aot_bridge::binary_op(fr, op_kind, lhs, rhs, out);
 }
 
 std::int32_t ct_aot_binary_op_static(ct_aot_frame * fr, std::uint32_t op_kind, std::uint64_t lhs,

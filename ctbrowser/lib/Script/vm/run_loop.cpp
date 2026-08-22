@@ -246,111 +246,44 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(sub) do {
-            {
-                value made;
-                if (bigint_binary(op::sub, reg(in.b), reg(in.c), made)) {
-                    reg(in.a) = made;
-                    break;
-                }
-            }
-            reg(in.a) = value::number(to_number_value(reg(in.b)) - to_number_value(reg(in.c)));
+            reg(in.a) = binary_op(op::sub, reg(in.b), reg(in.c));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(mul) do {
-            {
-                value made;
-                if (bigint_binary(op::mul, reg(in.b), reg(in.c), made)) {
-                    reg(in.a) = made;
-                    break;
-                }
-            }
-            reg(in.a) = value::number(to_number_value(reg(in.b)) * to_number_value(reg(in.c)));
+            reg(in.a) = binary_op(op::mul, reg(in.b), reg(in.c));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(div) do {
-            {
-                value made;
-                if (bigint_binary(op::div, reg(in.b), reg(in.c), made)) {
-                    reg(in.a) = made;
-                    break;
-                }
-            }
-            reg(in.a) = value::number(to_number_value(reg(in.b)) / to_number_value(reg(in.c)));
+            reg(in.a) = binary_op(op::div, reg(in.b), reg(in.c));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(mod) do {
-            {
-                value made;
-                if (bigint_binary(op::mod, reg(in.b), reg(in.c), made)) {
-                    reg(in.a) = made;
-                    break;
-                }
-            }
-            reg(in.a) =
-                value::number(std::fmod(to_number_value(reg(in.b)), to_number_value(reg(in.c))));
+            reg(in.a) = binary_op(op::mod, reg(in.b), reg(in.c));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(pow) do {
-            {
-                value made;
-                if (bigint_binary(op::pow, reg(in.b), reg(in.c), made)) {
-                    reg(in.a) = made;
-                    break;
-                }
-            }
-            reg(in.a) =
-                value::number(exponentiate(to_number_value(reg(in.b)), to_number_value(reg(in.c))));
+            reg(in.a) = binary_op(op::pow, reg(in.b), reg(in.c));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(add_generic) do {
-            {
-                // JS `+`: string concatenation if EITHER side is a string, numeric
-                // addition otherwise. The one operator whose meaning is decided by
-                // its operands, which is why it is not folded into `add`.
-                // BOTH SIDES ARE MADE PRIMITIVE FIRST, and only then does the
-                // operator decide what it is. An object's own valueOf or toString
-                // is what settles it, so `{valueOf: () => 42} + 1` is 43 while
-                // `{toString: () => 'x'} + 1` is "x1".
-                const value l = to_primitive(reg(in.b));
-                const value r = to_primitive(reg(in.c));
-                // BEFORE the string-or-number decision: `1n + 1n` is addition
-                // and `1n + 1` is a TypeError, neither of which is either arm
-                // below. Note `1n + "a"` IS concatenation, so the string test
-                // still gets first refusal.
-                if (!l.is_string() && !r.is_string()) {
-                    value made;
-                    if (bigint_binary(op::add_generic, l, r, made)) {
-                        reg(in.a) = made;
-                        break;
-                    }
-                }
-                if (l.is_string() || r.is_string()) {
-                    reg(in.a) = string(to_string(l) + to_string(r));
-                } else {
-                    reg(in.a) = value::number(to_number(l) + to_number(r));
-                }
-                break;
-            }
+            reg(in.a) = binary_op(op::add_generic, reg(in.b), reg(in.c));
+            break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(concat) do {
-            reg(in.a) = string(to_string(reg(in.b)) + to_string(reg(in.c)));
+            reg(in.a) = binary_op(op::concat, reg(in.b), reg(in.c));
             break;
-            // `to_number_value`, NOT `to_number`, and for the same reason `-` and
-            // `*` already use it: ToNumber on an object runs valueOf/toString
-            // first. Without it `[] - 0` was 0 while `-[]` was NaN, which is one
-            // conversion spelled two ways.
         }
         while (0);
         VM_NEXT;

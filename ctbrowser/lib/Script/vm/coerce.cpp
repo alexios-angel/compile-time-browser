@@ -304,6 +304,61 @@ value context::binary_op_static(op kind, value lhs, value rhs) {
     return value::undefined();
 }
 
+// THE SEVEN RE-ENTERING BINARY OPERATIONS. Phase 5's second extraction, and its
+// row names this function.
+//
+// Every arm below is the handler it came from, unchanged. What is worth reading
+// twice is what is NOT uniform: concat never consults the BigInt arm, and
+// add_generic consults it only after both sides are primitive and only when
+// neither is a string.
+value context::binary_op(op kind, value lhs, value rhs) {
+    // CONCAT FIRST, because it is the one that must not reach bigint_binary at
+    // all: coerce.cpp's switch has no case for it, so `${1n}` would fall to the
+    // default arm and throw "BigInts have no unsigned right shift". It is
+    // emitted only by template literals and is unconditionally two ToStrings.
+    if (kind == op::concat) { return string(to_string(lhs) + to_string(rhs)); }
+
+    if (kind == op::add_generic) {
+        // JS `+`: string concatenation if EITHER side is a string, numeric
+        // addition otherwise. The one operator whose meaning is decided by its
+        // operands, which is why it is not folded into `add`.
+        //
+        // BOTH SIDES ARE MADE PRIMITIVE FIRST, and only then does the operator
+        // decide what it is. An object's own valueOf or toString is what settles
+        // it, so `{valueOf: () => 42} + 1` is 43 while `{toString: () => 'x'} + 1`
+        // is "x1".
+        const value l = to_primitive(lhs);
+        const value r = to_primitive(rhs);
+        // BEFORE the string-or-number decision: `1n + 1n` is addition and
+        // `1n + 1` is a TypeError, neither of which is either arm below. Note
+        // `1n + "a"` IS concatenation, so the string test still gets first
+        // refusal.
+        if (!l.is_string() && !r.is_string()) {
+            if (value made; bigint_binary(op::add_generic, l, r, made)) { return made; }
+        }
+        if (l.is_string() || r.is_string()) { return string(to_string(l) + to_string(r)); }
+        return value::number(to_number(l) + to_number(r));
+    }
+
+    if (value made; bigint_binary(kind, lhs, rhs, made)) { return made; }
+    // `to_number_value`, NOT `to_number`: ToNumber on an object runs
+    // valueOf/toString first. Without it `[] - 0` was 0 while `-[]` was NaN,
+    // which is one conversion spelled two ways.
+    switch (kind) {
+    case op::sub: return value::number(to_number_value(lhs) - to_number_value(rhs));
+    case op::mul: return value::number(to_number_value(lhs) * to_number_value(rhs));
+    case op::div: return value::number(to_number_value(lhs) / to_number_value(rhs));
+    case op::mod: return value::number(std::fmod(to_number_value(lhs), to_number_value(rhs)));
+    // `**` is context::exponentiate, not libm's pow: the specification's edge
+    // cases for it do not agree with C's.
+    case op::pow: return value::number(exponentiate(to_number_value(lhs), to_number_value(rhs)));
+    default: break;
+    }
+    // Same position as binary_op_static's default arm: unreachable from the
+    // interpreter, and untrusted input from an image rather than a bug.
+    return value::undefined();
+}
+
 bool context::bigint_binary(op kind, value a, value b, value & out) {
     const bool a_big = a.is_kind(heap_kind::bigint);
     const bool b_big = b.is_kind(heap_kind::bigint);

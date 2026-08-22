@@ -51,11 +51,46 @@ value reference(op kind, value lhs, value rhs) {
     case op::shl:
         return value::number(static_cast<std::int32_t>(
             static_cast<std::uint32_t>(context::to_int32(lhs)) << (context::to_uint32(rhs) & 31U)));
-    case op::shr:
-        return value::number(context::to_int32(lhs) >> (context::to_uint32(rhs) & 31U));
+    case op::shr: return value::number(context::to_int32(lhs) >> (context::to_uint32(rhs) & 31U));
     case op::ushr:
         return value::number(
             static_cast<double>(context::to_uint32(lhs) >> (context::to_uint32(rhs) & 31U)));
+    default: break;
+    }
+    return value::undefined();
+}
+
+// AND THE SEVEN RE-ENTERING ONES AS THEY WERE. Same rule as above: the BigInt
+// arm is private, so every operand pair below is chosen to miss it, leaving
+// exactly the part that moved. `concat` and `add_generic` are transcribed
+// whole, because their shapes are the two this extraction could most easily
+// have flattened into each other.
+value reference_reentering(context & cx, op kind, value lhs, value rhs) {
+    switch (kind) {
+    case op::sub: return value::number(cx.to_number_value(lhs) - cx.to_number_value(rhs));
+    case op::mul: return value::number(cx.to_number_value(lhs) * cx.to_number_value(rhs));
+    case op::div: return value::number(cx.to_number_value(lhs) / cx.to_number_value(rhs));
+    case op::mod: return value::number(std::fmod(cx.to_number_value(lhs), cx.to_number_value(rhs)));
+    case op::pow:
+        return value::number(
+            context::exponentiate(cx.to_number_value(lhs), cx.to_number_value(rhs)));
+    case op::concat: return cx.string(cx.to_string(lhs) + cx.to_string(rhs));
+    case op::add_generic: {
+        // NO ToPrimitive HERE, and the omission is the reason the operand
+        // matrix contains no objects: `context::to_primitive` is private, and
+        // adding a test-only accessor to the engine to reach it would be
+        // changing the thing under test to suit the test. On primitives
+        // ToPrimitive is the identity, so this arm is the extracted one exactly.
+        //
+        // WHAT THAT LEAVES UNCOVERED, said rather than glossed: the
+        // valueOf/toString walk that makes this family re-entering at all.
+        // `[] - 0` against `-[]`, `{valueOf: () => 42} + 1` and their kin are
+        // covered by the JavaScript suite, which runs them as source.
+        if (lhs.is_string() || rhs.is_string()) {
+            return cx.string(cx.to_string(lhs) + cx.to_string(rhs));
+        }
+        return value::number(context::to_number(lhs) + context::to_number(rhs));
+    }
     default: break;
     }
     return value::undefined();
@@ -76,7 +111,12 @@ bool same(value a, value b) {
 }
 
 std::string describe(context & cx, value v) {
-    return v.is_string() ? "\"" + cx.to_string(v) + "\"" : cx.to_string(v);
+    if (v.is_string()) { return "\"" + cx.to_string(v) + "\""; }
+    // -0 PRINTS AS "0", so a failure between the two zeroes reads "is 0, was 0"
+    // - which is the least useful message a differential can produce. It came
+    // up on the first run of the mod case.
+    if (v.is_number() && v.as_number() == 0.0 && std::signbit(v.as_number())) { return "-0"; }
+    return cx.to_string(v);
 }
 
 const char * name_of(op kind) {
@@ -88,6 +128,13 @@ const char * name_of(op kind) {
     case op::shl: return "shl";
     case op::shr: return "shr";
     case op::ushr: return "ushr";
+    case op::sub: return "sub";
+    case op::mul: return "mul";
+    case op::div: return "div";
+    case op::mod: return "mod";
+    case op::pow: return "pow";
+    case op::add_generic: return "add_generic";
+    case op::concat: return "concat";
     default: return "?";
     }
 }
@@ -104,19 +151,36 @@ int main() {
     // differ), a value above 2^31 (where to_int32 and to_uint32 differ), and
     // the two zeroes.
     const std::vector<value> operands = {
-        value::number(0),        value::number(-0.0),       value::number(1),
-        value::number(-1),       value::number(2.5),        value::number(-2.5),
-        value::number(31),       value::number(32),         value::number(33),
-        value::number(255),      value::number(-255),       value::number(2147483647),
-        value::number(-2147483648.0), value::number(2147483648.0),
-        value::number(4294967295.0), value::number(4294967296.0),
-        value::number(std::nan("")), value::number(HUGE_VAL), value::number(-HUGE_VAL),
-        value::boolean(true),    value::boolean(false),     value::undefined(),
-        value::null(),           ctx.string("3"),           ctx.string("-7"),
-        ctx.string("abc"),       ctx.string(""),            ctx.string("0x10"),
+        value::number(0),
+        value::number(-0.0),
+        value::number(1),
+        value::number(-1),
+        value::number(2.5),
+        value::number(-2.5),
+        value::number(31),
+        value::number(32),
+        value::number(33),
+        value::number(255),
+        value::number(-255),
+        value::number(2147483647),
+        value::number(-2147483648.0),
+        value::number(2147483648.0),
+        value::number(4294967295.0),
+        value::number(4294967296.0),
+        value::number(std::nan("")),
+        value::number(HUGE_VAL),
+        value::number(-HUGE_VAL),
+        value::boolean(true),
+        value::boolean(false),
+        value::undefined(),
+        value::null(),
+        ctx.string("3"),
+        ctx.string("-7"),
+        ctx.string("abc"),
+        ctx.string(""),
+        ctx.string("0x10"),
     };
-    const op kinds[] = {op::add, op::bit_and, op::bit_or, op::bit_xor,
-                        op::shl, op::shr,     op::ushr};
+    const op kinds[] = {op::add, op::bit_and, op::bit_or, op::bit_xor, op::shl, op::shr, op::ushr};
 
     std::size_t compared = 0;
     for (const op kind : kinds) {
@@ -127,14 +191,60 @@ int main() {
                 ++compared;
                 if (!same(expected, got)) {
                     check(false, std::string{name_of(kind)} + "(" + describe(ctx, lhs) + ", " +
-                                     describe(ctx, rhs) + ") is " + describe(ctx, got) +
-                                     ", was " + describe(ctx, expected));
+                                     describe(ctx, rhs) + ") is " + describe(ctx, got) + ", was " +
+                                     describe(ctx, expected));
                     return 1; // one failure is the whole story; 5,488 are not
                 }
             }
         }
     }
     check(compared == 7 * operands.size() * operands.size(), "every pair was compared");
+
+    // ---- AND THE RE-ENTERING FAMILY, over the same matrix ------------------
+    {
+        const op reentering[] = {op::sub, op::mul,         op::div,   op::mod,
+                                 op::pow, op::add_generic, op::concat};
+        std::size_t pairs = 0;
+        for (const op kind : reentering) {
+            for (const value lhs : operands) {
+                for (const value rhs : operands) {
+                    const value expected = reference_reentering(ctx, kind, lhs, rhs);
+                    const value got = ctx.binary_op(kind, lhs, rhs);
+                    ++pairs;
+                    const bool agree = (expected.is_string() && got.is_string())
+                                           ? ctx.to_string(expected) == ctx.to_string(got)
+                                           : same(expected, got);
+                    if (!agree) {
+                        check(false, std::string{name_of(kind)} + "(" + describe(ctx, lhs) + ", " +
+                                         describe(ctx, rhs) + ") is " + describe(ctx, got) +
+                                         ", was " + describe(ctx, expected));
+                        return 1;
+                    }
+                }
+            }
+        }
+        check(pairs == 7 * operands.size() * operands.size(),
+              "every re-entering pair was compared");
+        compared += pairs;
+
+        // THE THREE `+` OPCODES STAY THREE, pinned on the one input that
+        // separates them. `add` is the static immediate that never runs user
+        // code, `add_generic` lets the operands decide, and `concat`
+        // unconditionally ToStrings - so a flattening of any two into one shows
+        // up here and nowhere else in this file.
+        const value one = value::number(1);
+        const value two = value::number(2);
+        check(ctx.to_string(ctx.binary_op_static(op::add, one, two)) == "3", "add is numeric");
+        check(ctx.to_string(ctx.binary_op(op::add_generic, one, two)) == "3",
+              "add_generic on two numbers is numeric too");
+        check(ctx.to_string(ctx.binary_op(op::concat, one, two)) == "12",
+              "AND concat IS NOT - it ToStrings both sides unconditionally");
+        const value text = ctx.string("x");
+        check(ctx.to_string(ctx.binary_op(op::add_generic, one, text)) == "1x",
+              "add_generic concatenates when either side is a string");
+        check(ctx.binary_op_static(op::add, one, text).is_number(),
+              "and `add` does not - it is ToNumber on both sides, which is NaN here");
+    }
 
     // AND THE SEVEN ARE ACTUALLY DIFFERENT FUNCTIONS. A switch whose arms were
     // all accidentally `add` would pass everything above, because the reference
@@ -149,15 +259,14 @@ int main() {
             double answer;
         };
         const expectation pinned[] = {
-            {op::add, 25.0},          {op::bit_and, 34.0},   {op::bit_or, -9.0},
-            {op::bit_xor, -43.0},     {op::shl, -36.0},      {op::shr, -3.0},
-            {op::ushr, 1073741821.0},
+            {op::add, 25.0},  {op::bit_and, 34.0}, {op::bit_or, -9.0},       {op::bit_xor, -43.0},
+            {op::shl, -36.0}, {op::shr, -3.0},     {op::ushr, 1073741821.0},
         };
         for (const expectation & e : pinned) {
             const value got = ctx.binary_op_static(e.kind, lhs, rhs);
             check(got.is_number() && got.as_number() == e.answer,
-                  std::string{"-9 "} + name_of(e.kind) + " 34 is " + describe(ctx, got) +
-                      ", not " + std::to_string(e.answer));
+                  std::string{"-9 "} + name_of(e.kind) + " 34 is " + describe(ctx, got) + ", not " +
+                      std::to_string(e.answer));
         }
     }
 
@@ -184,14 +293,14 @@ int main() {
 
         for (const op kind : kinds) {
             std::uint64_t out = value::undefined().bits();
-            const auto status = static_cast<ctbrowser::aot::ct_aot_status>(
-                ctbrowser::aot::ct_aot_binary_op_static(frame, static_cast<std::uint32_t>(kind),
-                                                        value::number(-9).bits(),
-                                                        value::number(34).bits(), &out));
+            const auto status =
+                static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_binary_op_static(
+                    frame, static_cast<std::uint32_t>(kind), value::number(-9).bits(),
+                    value::number(34).bits(), &out));
             check(status == ctbrowser::aot::ct_aot_status::ok,
                   std::string{"the helper succeeds for "} + name_of(kind));
-            check(same(value::from_bits(out), ctx.binary_op_static(kind, value::number(-9),
-                                                                   value::number(34))),
+            check(same(value::from_bits(out),
+                       ctx.binary_op_static(kind, value::number(-9), value::number(34))),
                   std::string{"the helper agrees with the interpreter for "} + name_of(kind));
         }
 
@@ -209,9 +318,9 @@ int main() {
         // the check looked load-bearing when it was not.
         const auto disguised = 256u + static_cast<std::uint32_t>(op::bit_or);
         std::uint64_t out = value::number(1234).bits();
-        const auto status = static_cast<ctbrowser::aot::ct_aot_status>(
-            ctbrowser::aot::ct_aot_binary_op_static(frame, disguised, value::number(1).bits(),
-                                                    value::number(2).bits(), &out));
+        const auto status =
+            static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_binary_op_static(
+                frame, disguised, value::number(1).bits(), value::number(2).bits(), &out));
         check(status == ctbrowser::aot::ct_aot_status::ok, "an unknown op kind does not fail");
         check(value::from_bits(out).is_undefined(),
               "AND IT IS REFUSED RATHER THAN TRUNCATED INTO A REAL OPCODE");
