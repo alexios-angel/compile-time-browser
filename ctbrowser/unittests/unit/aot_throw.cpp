@@ -77,7 +77,9 @@ extern "C" std::int32_t compiled_guarded(ctbrowser::aot::ct_aot_ctx * ctx,
     alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
     ctbrowser::aot::ct_aot_frame * frame =
         ctbrowser::aot::ct_aot_enter(ctx, site, slot_count, receiver, storage);
-    if (frame == nullptr) { return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed); }
+    if (frame == nullptr) {
+        return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed);
+    }
 
     std::uint64_t * slots = ctbrowser::aot::ct_aot_slots(frame);
     slots[slot_arg] = callee;
@@ -156,9 +158,40 @@ extern "C" std::int32_t compiled_sloppy(ctbrowser::aot::ct_aot_ctx * ctx,
     alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
     ctbrowser::aot::ct_aot_frame * frame =
         ctbrowser::aot::ct_aot_enter(ctx, site, slot_count, receiver, storage);
-    if (frame == nullptr) { return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed); }
+    if (frame == nullptr) {
+        return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed);
+    }
     ctbrowser::aot::ct_aot_handler_pop(frame); // never pushed one
     *out = ctbrowser::aot::ct_aot_return_value(value::number(1).bits(), receiver, constructing);
+    ctbrowser::aot::ct_aot_leave(frame);
+    return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::ok);
+}
+
+// A COMPILED BODY THAT SIMPLY FORWARDS, for the stack-trace arrangement: the
+// point is that it sits BETWEEN a native and an interpreted frame while the
+// throw happens, so the trace has to name it in the right place.
+extern "C" std::int32_t compiled_middle(ctbrowser::aot::ct_aot_ctx * ctx,
+                                        const ctbrowser::aot::ct_aot_site * site,
+                                        const std::uint64_t * argv, std::uint32_t argc,
+                                        std::uint64_t receiver, std::uint32_t constructing,
+                                        std::uint64_t * out) {
+    const std::uint64_t callee = argc > 0 ? argv[0] : value::undefined().bits();
+    alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
+    ctbrowser::aot::ct_aot_frame * frame =
+        ctbrowser::aot::ct_aot_enter(ctx, site, slot_count, receiver, storage);
+    if (frame == nullptr) {
+        return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed);
+    }
+    std::uint64_t produced = value::undefined().bits();
+    const auto status = static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_call(
+        frame, callee, value::undefined().bits(), nullptr, 0u, 0u, site, &produced));
+    if (status != ctbrowser::aot::ct_aot_status::ok) {
+        if (status != ctbrowser::aot::ct_aot_status::unwound) {
+            ctbrowser::aot::ct_aot_leave(frame);
+        }
+        return static_cast<std::int32_t>(status);
+    }
+    *out = ctbrowser::aot::ct_aot_return_value(produced, receiver, constructing);
     ctbrowser::aot::ct_aot_leave(frame);
     return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::ok);
 }
@@ -180,6 +213,15 @@ constexpr std::string_view source =
     "function keepsCatch(f) {\n"
     "  try { f(); throw 'after'; }\n"
     "  catch (e) { return 'kept:' + e; }\n"
+    "}\n"
+    // THE HOSTILE ARRANGEMENT the plan asks for: a native built-in calls a
+    // COMPILED function, which calls an INTERPRETED one, which throws - and
+    // `stack` is captured at the throw site.
+    "function thrower() { throw new Error('from the bottom'); }\n"
+    "function middle(f) { return f(); }\n"
+    "function mixed() {\n"
+    "  try { return callThroughNative(middle, thrower); }\n"
+    "  catch (e) { return e.stack; }\n"
     "}\n";
 
 [[nodiscard]] std::string run(bool stamp, const char * entry, const char * argument,
@@ -193,10 +235,18 @@ constexpr std::string_view source =
         for (function_proto & fn : compiled.functions) {
             if (fn.name == "guarded") { fn.aot_entry = &compiled_guarded; }
             if (fn.name == "sloppy") { fn.aot_entry = &compiled_sloppy; }
+            if (fn.name == "middle") { fn.aot_entry = &compiled_middle; }
         }
     }
     context ctx;
     ctbrowser::script::install_builtins(ctx);
+    // The C++ frame in the middle of the sandwich: a native built-in that calls
+    // back into JavaScript, which is what every DOM event and timer is.
+    ctx.define_native("callThroughNative", [](context & cx, std::span<value> args) {
+        if (args.size() < 2) { return value::undefined(); }
+        const value forwarded[1] = {args[1]};
+        return cx.call(args[0], forwarded, value::undefined());
+    });
     const auto ran = ctx.run(compiled);
     if (!ran.ok) {
         failed = true;
@@ -269,6 +319,41 @@ int main() {
         check(bare_compiled == bare_interpreted, "an unguarded throw reads the same either way");
         check(failed == interpreted_failed && interpreted_failed,
               "and both arms record the uncatchable failure");
+    }
+
+    // ---- A MIXED STACK, WHICH IS PHASE 6'S OTHER HALF --------------------
+    //
+    // "A mixed VM/AOT/C++ stack must produce a single coherent JavaScript stack
+    // trace", tested with the arrangement the plan specifies: a native calling
+    // a compiled function calling an interpreted one that throws.
+    {
+        std::size_t calls = 0;
+        bool failed = false;
+        const std::string trace = run(true, "mixed", "fine", calls, failed);
+        check(!failed, "the mixed arrangement runs");
+
+        const std::size_t thrower_at = trace.find("at thrower");
+        const std::size_t middle_at = trace.find("at middle");
+        const std::size_t mixed_at = trace.find("at mixed");
+        check(thrower_at != std::string::npos, "the interpreted frame that threw is named");
+        check(middle_at != std::string::npos, "THE COMPILED FRAME IS NAMED TOO");
+        check(mixed_at != std::string::npos, "and the interpreted frame below the native");
+        // INNERMOST FIRST, which is the order every engine prints and the only
+        // one a reader can follow. The native itself has no JavaScript frame to
+        // name - it is C++ - so what has to be right is that the two JS frames
+        // either side of it are in the right order rather than collapsed.
+        check(thrower_at < middle_at && middle_at < mixed_at,
+              "AND THEY ARE IN CALL ORDER ACROSS THE NATIVE IN THE MIDDLE");
+
+        // A COMPILED FRAME CARRIES NO BYTECODE OFFSET. "+0" would be a number
+        // that looks like a position and is not one, and after a catch fires
+        // `ip` holds the landing pad with CT_AOT_PAD_BIT set - which would
+        // print as 9223372036854775815.
+        const std::size_t marker = trace.find("compiled)", middle_at);
+        check(marker != std::string::npos && marker - middle_at < 40,
+              "and the compiled frame says so instead of carrying a fake offset");
+        check(trace.find("922337203685") == std::string::npos,
+              "no pad bit ever reaches a stack trace");
     }
 
     if (ctbrowser_test_failures == 0) {

@@ -444,8 +444,19 @@ public:
                     }
                 }
             }
+            // A COMPILED FRAME HAS NO BYTECODE OFFSET, so it does not get one.
+            // Phase 6 asks for "a single coherent JavaScript stack trace" over a
+            // mixed stack, and printing "+0" for a native body is not coherent -
+            // it is a number that looks like a position and is not one. Worse,
+            // `ip` on a compiled frame is where the unwinder puts the LANDING
+            // PAD, with CT_AOT_PAD_BIT set, so a trace captured between a catch
+            // firing and ct_aot_catch_land reading it would print
+            // 9223372036854775815 as an offset.
+            const bool compiled = fp->aot_entry != nullptr;
             trace += "\n        at " + (fp->name.empty() ? std::string{"<anonymous>"} : fp->name) +
-                     " (fn#" + std::to_string(which) + " +" + std::to_string(frames_[i].ip) + ")";
+                     " (fn#" + std::to_string(which) +
+                     (compiled ? std::string{", compiled)"}
+                               : " +" + std::to_string(frames_[i].ip) + ")");
         }
         if (depth > 12) { trace += "\n        ... " + std::to_string(depth - 12) + " more"; }
         return trace;
