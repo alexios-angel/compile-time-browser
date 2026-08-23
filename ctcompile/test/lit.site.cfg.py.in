@@ -5,6 +5,13 @@ config.ctcompile_src_root = "@CTCOMPILE_SOURCE_DIR@"
 config.ctcompile_obj_root = "@CTCOMPILE_BINARY_DIR@"
 config.ctcompile_tools_dirs = "@CTCOMPILE_TOOLS_DIRS@".split(";")
 
+# THE HOST COMPILER AND THE ENGINE'S HEADERS, because an EmitC test that only
+# checks the emitted text proves the weaker half. What matters is that the
+# translation unit COMPILES against the real ABI - the C++ compiler is the
+# strictest verifier this pipeline has, and it is free.
+config.host_cxx = "@CMAKE_CXX_COMPILER@"
+config.ctbrowser_include = "@CTBROWSER_MONOREPO_ROOT@/ctbrowser/include"
+
 import lit.llvm
 lit.llvm.initialize(lit_config, config)
 

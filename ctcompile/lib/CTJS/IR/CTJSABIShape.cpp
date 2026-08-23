@@ -69,9 +69,8 @@ role_census census_of(const runtime_helper & helper) {
         default: ++census.ssa; break;
         }
     }
-    census.leads_with_frame =
-        helper.role_count > 0 &&
-        (helper.roles[0] == param_role::frame || helper.roles[0] == param_role::context);
+    census.leads_with_frame = helper.role_count > 0 && (helper.roles[0] == param_role::frame ||
+                                                        helper.roles[0] == param_role::context);
     return census;
 }
 
@@ -119,8 +118,8 @@ mlir::LogicalResult verifyABIShape(mlir::Operation * op) {
     const std::size_t expected = census.out + (return_carries_a_result(helper) ? 1 : 0);
     if (op->getNumResults() != expected) {
         return op->emitOpError() << "declares " << op->getNumResults() << " result(s), but "
-                                 << helper.symbol << " answers with " << expected
-                                 << " (" << census.out << " out-parameter(s) and a "
+                                 << helper.symbol << " answers with " << expected << " ("
+                                 << census.out << " out-parameter(s) and a "
                                  << (return_carries_a_result(helper) ? "value" : "status or void")
                                  << " return)";
     }
@@ -139,9 +138,8 @@ mlir::LogicalResult verifyABIShape(mlir::Operation * op) {
         // ct_aot_make_closure's uint64_t is honestly declared as !ctjs.closure.
         // !ctjs.program is NOT one - it is the importer's input, a compiled
         // script::program, and no helper returns one.
-        const bool is_js_value =
-            mlir::isa<ValueType>(first) || mlir::isa<ClosureType>(first) ||
-            mlir::isa<CoroutineType>(first);
+        const bool is_js_value = mlir::isa<ValueType>(first) || mlir::isa<ClosureType>(first) ||
+                                 mlir::isa<CoroutineType>(first);
         if (helper.ret == return_role::value && !is_js_value) {
             return op->emitOpError() << helper.symbol
                                      << " returns a JavaScript value, but the result is not "

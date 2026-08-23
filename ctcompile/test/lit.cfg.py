@@ -29,3 +29,20 @@ llvm_config.use_default_substitutions()
 # add_tool_substitutions accepts a search list, so nothing has to move.
 tools = ["ctjs-opt", "ctjs-translate", "ctcompile"]
 llvm_config.add_tool_substitutions(tools, config.ctcompile_tools_dirs)
+
+# mlir-translate IS LLVM'S, not ours, so it is looked for where LLVM's tools
+# are rather than in the three directories ctcompile builds into. It is what
+# turns an EmitC module into C++, which makes it part of the backend under test
+# rather than a convenience.
+llvm_config.add_tool_substitutions(["mlir-translate"], [config.llvm_tools_dir])
+
+# %cxx COMPILES THE EMITTED TRANSLATION UNIT AGAINST THE REAL ABI HEADERS.
+#
+# -fsyntax-only because the question is whether the C++ the backend emitted
+# agrees with aot.hpp - the argument types, the qualified names, the status
+# vocabulary - not whether it links. A backend that emits plausible C++ against
+# a signature it invented is exactly the failure this project keeps meeting,
+# and the host compiler catches it for nothing.
+config.substitutions.append(
+    ("%cxx",
+     f"{config.host_cxx} -std=c++23 -fsyntax-only -I {config.ctbrowser_include}"))
