@@ -441,6 +441,56 @@ interpreter is 1.4%. Phases 7–12A are the rest and are not started.
   accept stale code on one edit in five. Prefer somebody else's algorithm AND
   somebody else's code; check it against a third party's answers.
 
+## Phase 10: what was decided, and what was refuted
+
+**`ctjs.runtime_call` was designed, reviewed and NOT BUILT.** A three-lens
+adversarial panel refuted it against the checkout. Its only novel content was
+carrying the helper as a string, which converts the project's one *build-error*
+ABI check — `CTJS_RuntimeOp` concatenates the name into a `helper_id`
+enumerator — into a pass-time lookup. Worse, an `OpInterfaceRewritePattern` that
+matches every implementer and *produces* an implementer re-matches its own
+output until the iteration cap. The role walk it existed to hold is right and
+belongs in a header both backends call, not in an IR node.
+
+**The role table now reads the ABI's *failure tier*, not just `may_throw`.**
+37 rows declare `may_throw` and only 24 return a status; the rest fail in the
+RAISE tier, where the result is always well-formed and the caller polls
+`ct_aot_failed` at back-edges. `ct_aot_enter` is in neither tier — it returns
+NULL. Emitting a status test after `ct_aot_new_object` tests nothing.
+
+**Two committed checks were wrong and are corrected.** `classify_return` missed
+`ct_aot_to_int32`, the row the `.def` exempts by name ("a signed int32 return
+that is DATA, not a status"); the mechanical tell is that it takes no frame
+handle, and it is the only int32_t row that does not. And `values_only` admitted
+the out-parameters it claimed to exclude, because `"uint64_t *out"` starts with
+`"uint64_t "` — six rows passed a check whose comment said they could not.
+
+**The shape trait found four live defects the moment it existed.**
+`CTJS_ABIShaped` compares every runtime operation's ODS declaration against its
+helper's row. It caught `load_upvalue`/`store_upvalue` (an `$index` attribute
+against a helper with nowhere to put it — every captured-variable read compiled
+to `undefined`), `instanceof` (a `!ctjs.value` result against a `uint32_t` 0/1),
+and `delete_property` (a result against a helper that answers with a status).
+**There is deliberately no operand-count rule**: the dialect is higher-level
+than the ABI, so supplying *fewer* arguments is normal and only excess is
+checkable.
+
+**The EmitC entry shape is pinned and compiles.**
+`test/Lowering/EmitC/entry-shape.mlir` is the target, not any pass's output.
+Callees must be **qualified** (`ctbrowser::aot::ct_aot_*`) because the
+`extern "C"` prototypes live inside that namespace — the table's `symbol` is the
+LINKER name, not the callee string. `emitc.call_opaque` emits no declaration, so
+the TU just includes `aot.hpp`; `emitc.declare_func` is broken in this LLVM
+(drops parameter types). `--declare-variables-at-top` is mandatory, because the
+NULL test gives every body two blocks.
+
+**Next**: the four ops a trivial function needs — `ctjs.func` → `emitc.func`
+against `ct_aot_entry_fn`, `frame_enter` by hand inside it (its five arguments
+exist only there), `ctjs.return` → `ct_aot_return_value` + `*out =`, and a type
+converter. `!ctjs.value` maps to `!emitc.opaque<"uint64_t">` — **not** `i64`,
+which prints as `int64_t` and fails against `uint64_t *out`, and **not**
+`script::value`, which has a private `bits_` and no conversion.
+
 ## Using subagents
 
 The last two sessions used `Workflow` heavily and it paid for itself. Ask agents
