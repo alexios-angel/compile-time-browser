@@ -1385,6 +1385,57 @@ Worth keeping, because each is a way a differential can look like it is working:
   inside the frame guard pushes past it. The reload after the nested CALL is
   enforced — blinding it is a clean asan use-after-free.
 
+## Phase 6: the row that said it could not be written
+
+`aot_helpers.def` records, dated and by name, that `ct_aot_catch_land` **cannot
+be implemented as written, found by trying**. The problem was real: the row says
+to read back `registers_[call_frame::base + handler::slot]`, and
+`unwind_to_handler` **pops the handler before it writes**, so by the time a
+compiled body could ask, which register the thrown value went into was
+unknowable. `result_reg` is where the caller wants the return value and is a
+different register.
+
+The row then wrote down two fixes and took neither, for a reason worth quoting:
+*"taking one without a compiled `try` to test it would be inventing on no
+evidence"*. That is the right instinct and it is why this was cheap to finish —
+the evidence existed as soon as a body could be hand-written.
+
+**The fix is a third option the row did not consider.** `call_frame::landed_slot`
+records the slot at the moment `unwind_to_handler` writes it: two bytes on a
+frame the interpreter never reads. The row's own preferred option — adding the
+slot to the helper's parameters — would have changed a signature two code
+generators are written against, to save those two bytes.
+
+`CT_AOT_PAD_BIT` is defined too. `aot.hpp` left it out deliberately: *"inventing
+either here would freeze a choice with no measurement behind it into a header
+two backends will read"*. The measurement turned out to be arithmetic rather
+than a benchmark — `ip` is a `size_t` index into bytecode, and 2^63 instructions
+would be 74 exabytes, so the top bit cannot collide with a real one. With it,
+**the unwinder does not change at all**: the pad id rides in `handler::address`,
+and the same four steps that resume the interpreter at a catch block land a
+compiled body on its pad.
+
+### Completions, not unwinding
+
+No C++ exception is thrown through a compiled body. A helper returns
+`CT_AOT_CAUGHT` and the body branches, which is what the plan means by
+"generated functions are nounwind". The test checks five shapes against the
+interpreter: nothing thrown (the handler must come off, or it stays live for a
+frame that has returned), a string thrown, an object whose `toString` runs
+**inside** the compiled catch block, a throw passing through to a handler below
+(`UNWOUND` — no epilogue, no `leave`, because the frame is already gone), and an
+uncaught throw, which is the tier no `catch` may see.
+
+Five blindings, each red. **Two were green first, and the test was at fault both
+times:**
+
+* The landing slot was **slot zero**, so a `landed_slot` left at its default was
+  indistinguishable from one correctly recorded.
+* Nothing exercised a **mis-balanced handler stack** — the hazard the row names:
+  pop takes the globally innermost handler without consulting `handler_base`, so
+  a body popping one it never pushed silently takes its CALLER's catch. There is
+  a deliberately sloppy compiled body for that now.
+
 ## The ladder ahead
 
 | phase | what | where |

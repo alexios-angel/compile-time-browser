@@ -8,7 +8,7 @@ committed and green; nothing is pushed.
 
 * Repo: `/mnt/c/Users/aange/Downloads/claude/compile-time-browser`
 * Branch: **`ctcompile-v1`**, working tree clean
-* Suite: **106/106** via `./tools/remote-build.sh`, and **asan 57/57**
+* Suite: **107/107** via `./tools/remote-build.sh`, and **asan 58/58**
 * **`ctcompile/docs/ctcompile.md` is the tool's own documentation** — the CLI,
   what it refuses and why, the manifest, and the gaps.
 * **Read `ctcompile/docs/plans/ctcompile.md` first** — it is the running plan in
@@ -27,7 +27,7 @@ primary backend, sources are in `lib/`, build on the devbox.
   `ctcompile/` is a sibling project.
 * **Phase 0** — six inventories the build checks, two differential comparators,
   and a recorded startup baseline. See `ctcompile/docs/baseline/*.json`.
-* **Phase 2** — the AOT ABI: `ctbrowser/include/ctbrowser/aot/aot_helpers.def`,
+* **Phase 2** — the AOT ABI, and its gate is met: `ctbrowser/include/ctbrowser/aot/aot_helpers.def`,
   68 helpers over 83 of the 93 opcodes (84 `CT_AOT_COVERS` rows; `type_of` is
   served by two helpers on purpose). **THE TABLE IS DONE; PHASE 2'S GATE IS
   NOT** — the plan's gate is "VM code calls a hand-authored AOT closure through
@@ -69,6 +69,12 @@ primary backend, sources are in `lib/`, build on the devbox.
   interpreter running the same source, including under forced GC. **That is the
   Phase 12A oracle's shape, working on one function.** It also found the
   safepoint in `context::invoke` sitting before arguments were rooted.
+* **Phase 6 — the throwing tier works.** `ct_aot_catch_land` was recorded in the
+  ABI as **unimplementable as written**, found by trying, with two possible
+  fixes written down and neither taken "without a compiled `try` to test it".
+  `unittests/unit/aot_throw` is that `try`, and the fix is a third:
+  `call_frame::landed_slot`, which keeps the helper's signature. `CT_AOT_PAD_BIT`
+  is defined now too, with the measurement `aot.hpp` was waiting for.
 * **Phase 5** — in progress, and further than it looks. **29 of the ABI's 69
   rows have bodies** (was 4), including the interned-name pool the whole
   property family was blocked on. Two real extractions with the plan's discipline —
