@@ -1635,6 +1635,48 @@ registry as its third argument; `builder.create<Op>` is deprecated for
 `target_compile_options` cannot reach — so the importer is an ordinary library,
 which is right anyway since it is hand-written C++ and generates nothing.
 
+## Phase 10: one pattern, and what the arity check found
+
+The phase's claim is that `CTJS_RuntimeCallOpInterface` pays for itself — every
+operation implementing it lowers identically, so there is **one** conversion
+pattern rather than fifty near-identical files and fifty chances to get the
+operand order wrong.
+
+```
+%1 = ctjs.cell_get %arg0   ->  func.call @ct_aot_cell_get(%arg0)
+ctjs.frame_exit %0         ->  func.call @ct_aot_leave(%0)
+```
+
+**The pass names no operation.** That is the plan's acceptance criterion rather
+than a nicety: *"a pass that switches on operation names must be revisited every
+time an operation is added. A pass that queries a trait never is."*
+
+### The arity check fired on its first run and was right
+
+The plan's sketch assumes the call is "context, then the operation's operands in
+ODS order". Most of the table is not shaped like that:
+
+```
+ct_aot_binary_op(fr, op_kind, lhs, rhs, out)           ODS has 2 operands
+ct_aot_enter(ctx, site, reg_count, receiver, storage)  ODS has 0
+```
+
+`op_kind` is an **attribute**, `out` is an **out-parameter** carrying the
+result, `site` is the baked diagnostic and `storage` is caller-allocated frame
+space. None is an operand, and materialising each is its own small decision.
+
+So a mismatch is **"not yet", not "wrong"**: the pattern declines the match and
+leaves the operation for a later one, rather than failing the module or — far
+worse — emitting a call with a garbage argument. What it declines is the work
+list for the rest of the phase, exactly as the importer's refusals were.
+
+The check itself counts each helper's parameters by parsing the stringified list
+from `aot_helpers.def`, rather than a number written beside each row that could
+disagree with the row above it. That closes the ABI-drift hole from the side the
+name check cannot see: a helper that does not exist is already a compile error;
+an operation whose operands have drifted from its helper's parameters reads fine
+in both files.
+
 ## The ladder ahead
 
 | phase | what | where |

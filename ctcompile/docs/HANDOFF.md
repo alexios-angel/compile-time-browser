@@ -69,6 +69,14 @@ primary backend, sources are in `lib/`, build on the devbox.
   interpreter running the same source, including under forced GC. **That is the
   Phase 12A oracle's shape, working on one function.** It also found the
   safepoint in `context::invoke` sitting before arguments were rooted.
+* **Phase 10 — started: one conversion pattern, matching on the INTERFACE.**
+  `ctjs-opt --ctjs-lower-to-runtime` turns CTJS operations into `func.call`s on
+  the real helper symbols, and the pass **names no operation** — which the plan
+  calls the acceptance criterion. **Its arity check fired immediately and was
+  right**: most helpers are not "frame + operands" (`ct_aot_binary_op` is
+  `(fr, op_kind, lhs, rhs, out)` where the kind is an attribute and `out` is an
+  out-parameter). A mismatch declines the match rather than failing the module,
+  so what it declines is the work list for the rest of the phase.
 * **Phase 9 — THE IMPORTER WORKS AND ITS GATE IS MET.** Real bytecode functions
   translate into CTJS MLIR: **p5.js imports 3,200 of its functions and phaser
   6,069**, and both modules verify. `ctjs-translate --ctbrowser-js-to-ctjs f.js`
