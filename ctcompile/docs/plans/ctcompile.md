@@ -1574,6 +1574,67 @@ one block. Whole-function balance is a dataflow question and belongs to a pass.
 
 All four verifiers falsified.
 
+## Phase 9: bytecode into CTJS MLIR
+
+The gate is "real bytecode functions translate into equivalent CTJS MLIR".
+
+| corpus | imported | refused | module |
+|---|---|---|---|
+| p5.js | **3,200** | 1,554 | verifies |
+| phaser.js | **6,069** | 1,656 | verifies |
+
+### The register file is the block argument vector
+
+Every non-entry block takes `frame_size` arguments and every branch passes the
+whole file. That is **not** the SSA construction the plan forbids here — no
+dominance frontiers, no phi minimisation, no backpatching — because blocks are
+created with their full argument list before anything is emitted, so a back
+edge's operands are known when it is written. Pruning it to what is live is the
+plan's own "later transition toward SSA/block arguments".
+
+The dialect turned out to be built for it already: `ctjs.push_handler` carries
+`$bodyOperands` **and** `$handlerOperands` and implements `BranchOpInterface`,
+which only makes sense if a block carries a register vector.
+
+### Three bugs of the shape this project keeps meeting
+
+IR that verifies, prints plausibly, and is wrong:
+
+* **No fall-through edge.** Bytecode runs off the end of one instruction into
+  the next; an MLIR block does not. The entry block of every loop simply ended,
+  the terminator pass gave it `return undefined`, and the loop header was
+  reachable only from its own back edge.
+* **A block one past the end.** `ret` marks its successor a leader, and for the
+  last instruction that successor does not exist — so every function carried an
+  unreachable stub with an invented terminator.
+* **A duplicate symbol.** `ctjs.func` is a `Symbol` and p5.js has dozens of
+  functions called `constructor`. The symptom was `ctjs-translate` producing
+  **no output at all** for a 4,000-function file while every individual function
+  verified. The index is part of the name now.
+
+### The measurement is the work list
+
+The first cut imported **none** of p5.js — every function hit an unmapped
+opcode, which is the "never emit partially correct AOT code" invariant working
+rather than failing. But the refusals are *counted*, in a `ctjs.skipped`
+attribute and as warnings, so widening had a priority order rather than a guess:
+`get_upvalue` 1565, `call_method` 1084, `new_cell` 467, `new_array` 196. Doing
+exactly that list took it from 0 to 3,200.
+
+What still refuses is the same kind of list: `closure` 556 — which needs a
+producer for `!ctjs.program`, a design question rather than a mapping —
+`gather_rest` 173, `iterable` 117, `make_arguments` 111.
+
+### Four things MLIR 22 required
+
+Each a comment where it bit: dialects must be **loaded**, not merely registered
+(a registry says a dialect *may* be used; `Type::get` needs it loaded, and
+`mlir-translate` only registers); the translation registration takes the
+registry as its third argument; `builder.create<Op>` is deprecated for
+`Op::create`; and `add_mlir_library` compiles through an `obj.` target that
+`target_compile_options` cannot reach — so the importer is an ordinary library,
+which is right anyway since it is hand-written C++ and generates nothing.
+
 ## The ladder ahead
 
 | phase | what | where |

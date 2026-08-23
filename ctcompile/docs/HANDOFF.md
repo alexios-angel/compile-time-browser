@@ -69,7 +69,13 @@ primary backend, sources are in `lib/`, build on the devbox.
   interpreter running the same source, including under forced GC. **That is the
   Phase 12A oracle's shape, working on one function.** It also found the
   safepoint in `context::invoke` sitting before arguments were rooted.
-* **Phase 8 — the CTJS dialect exists: 32 operations in ODS**, round-tripped,
+* **Phase 9 — THE IMPORTER WORKS AND ITS GATE IS MET.** Real bytecode functions
+  translate into CTJS MLIR: **p5.js imports 3,200 of its functions and phaser
+  6,069**, and both modules verify. `ctjs-translate --ctbrowser-js-to-ctjs f.js`
+  is the fastest way to see it; `--ctbrowser-bytecode-to-ctjs` takes an image.
+  What still refuses is counted, not guessed: `closure` 556 (needs a producer
+  for `!ctjs.program`), `gather_rest` 173, `iterable` 117, `make_arguments` 111.
+* **Phase 8 — the CTJS dialect exists: 36 operations in ODS**, round-tripped,
   every verifier diagnostic tested under `-verify-diagnostics`, docs building.
   The operations name real `ctbrowser::aot::helper_id` enumerators through
   `CTJS_RuntimeOp`, so **an operation cannot claim a helper the runtime does not
@@ -251,12 +257,16 @@ interpreter is 1.4%. Phases 7–12A are the rest and are not started.
 2. **The image LOADER is now the largest single item on the path**, at 26%, and
    its operand pass alone is 7.49% — fifteen times the whole CSS engine. That
    is where the next startup millisecond is.
-3. **PHASE 9 — the bytecode importer**, which is the next rung and the first
-   one that produces IR rather than defining it. Read `08-phases-7-9-…` from
-   "Phase 9"; the control-flow decision is already made and is not to be
-   revisited: an **unstructured CFG** matching the bytecode, `cf` terminators,
-   explicit handler blocks. Structured regions "require inferring structure the
-   bytecode does not carry and being right about it".
+3. **WIDEN THE IMPORTER, or start Phase 10.** The importer's refusals are
+   counted in `ctjs.skipped` and printed as warnings, so the work list writes
+   itself — run it over a corpus and read the histogram. `closure` is the
+   largest single item and needs a producer for `!ctjs.program`, which is a
+   design question rather than a mapping.
+   **Handlers are NOT imported yet**: `push_handler`/`pop_handler` map to
+   operations but the importer has no handler-stack reconstruction, so any
+   function with a `try` is refused. The design for it is in the Phase 9 brief —
+   abstract interpretation over the CFG with a stack of push offsets, since
+   there is **no handler table** in `function_proto`.
 4. **The rest of Phase 5, and Phase 6.** Phases 1–4 are done and their gates
    are met; Phase 5 is 26 of 69 rows.
    **`ct_aot_intern_name` is the one hard blocker on the path to a minimal
