@@ -58,7 +58,7 @@ ctjs.func @bindings(%closure: !ctjs.value) -> !ctjs.value attributes {upvalue_co
 
 // CHECK-LABEL: ctjs.func @upvalues
 ctjs.func @upvalues(%v: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 1 : i32} {
-  %ctx = ctjs.frame_enter
+  %ctx = ctjs.frame_enter 4
   // A !ctjs.program FROM NOWHERE. ctjs.func takes only !ctjs.value parameters -
   // its verifier says so - and no operation produces a program yet: Phase 9's
   // importer is what will. builtin.unrealized_conversion_cast is the standard
@@ -207,7 +207,7 @@ ctjs.func @suspends(%v: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 
 // CHECK-LABEL: ctjs.func @frames
 ctjs.func @frames(%v: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
   // CHECK: %[[CTX:.*]] = ctjs.frame_enter
-  %ctx = ctjs.frame_enter
+  %ctx = ctjs.frame_enter 4
   // CHECK: ctjs.root %{{.*}} in %[[CTX]]
   ctjs.root %v in %ctx
   // CHECK: ctjs.frame_exit %[[CTX]]

@@ -33,7 +33,9 @@ function add(a, b) { return a + b; }
 // CHECK-SAME: %arg0: !ctjs.value, %arg1: !ctjs.value, %arg2: !ctjs.value,
 // CHECK-SAME: %arg3: !ctjs.value, %arg4: !ctjs.value) -> !ctjs.value
 
-// CHECK: %[[CTX:.*]] = ctjs.frame_enter
+// THE REGISTER WINDOW IS ON THE OPERATION. `add(a, b)` needs slots for its two
+// parameters, and ct_aot_enter has nowhere else to learn the number.
+// CHECK: %[[CTX:.*]] = ctjs.frame_enter {{[0-9]+}}
 // SOURCE `+` IS add_generic, which becomes the RE-ENTERING ctjs.binary - not
 // ctjs.binary_static. `op::add` comes only from `++` and three internal
 // counters, so `x++` on {valueOf: () => 3} is NaN and never runs user code.

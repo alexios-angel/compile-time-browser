@@ -16,7 +16,7 @@
 
 // CHECK-LABEL: ctjs.func @lowers
 ctjs.func @lowers(%v: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-  %ctx = ctjs.frame_enter
+  %ctx = ctjs.frame_enter 1
 
   // A HELPER WHOSE PARAMETERS ARE THE OPERATION'S OPERANDS lowers to a direct
   // call, with the frame handle first because that is the ABI's order.

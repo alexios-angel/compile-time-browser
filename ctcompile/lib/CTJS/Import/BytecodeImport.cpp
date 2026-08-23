@@ -266,8 +266,15 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         // every block in the region, so the context needs no threading - which
         // is fortunate, because push_handler's operands are !ctjs.value and
         // could not carry a !ctjs.context.
-        state.frame = ctjs::FrameEnterOp::create(into, state.location_for(0),
-                                                 ctjs::ContextType::get(context));
+        //
+        // AND IT CARRIES THE REGISTER WINDOW. proto.frame_size is read three
+        // lines below to size this importer's own register file, and until now
+        // it was dropped afterwards - so ct_aot_enter, which needs exactly this
+        // number, had nowhere to get it. A backend guessing param_count would
+        // size the window to the parameters and leave every local unslotted.
+        state.frame = ctjs::FrameEnterOp::create(
+            into, state.location_for(0), ctjs::ContextType::get(context),
+            into.getI32IntegerAttr(static_cast<std::int32_t>(proto.frame_size)));
 
         // Seed the register file: parameters where the callee expects them,
         // undefined everywhere else.

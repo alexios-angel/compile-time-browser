@@ -547,9 +547,29 @@ def CTJS_FrameEnterOp : CTJS_RuntimeOp<"frame_enter", "ct_aot_enter", [CTJS_MayT
     May throw, and only that: the depth guard raises when the frame stack is
     exhausted, and the row says the caller returns FAILED without leaving. It
     does not re-enter and is not a safepoint - nothing inside it allocates.
+
+    ITS FAILURE HAS A THIRD SHAPE and no backend may treat it as either of the
+    other two. ct_aot_enter returns NULL on the depth raise - not a status to
+    test, not a poll to defer - which is why RuntimeHelpers.hpp carves it out
+    of both tiers by name. A status compare here would be comparing a pointer
+    against an enumerator, and the next helper call would dereference null.
+
+    $reg_count IS THE FRAME'S REGISTER WINDOW, and it is carried here because
+    nothing else in the IR knows it. The importer reads proto.frame_size to
+    seed its register file and then dropped the number; ct_aot_enter needs it,
+    and a backend that guessed param_count instead would size the window to
+    the parameters and leave every local without a slot.
+
+    THE OTHER FOUR ARGUMENTS ARE NOT OPERANDS AND WILL NOT BECOME ANY. `ctx`
+    and `site` are parameters of ct_aot_entry_fn, `receiver` is another, and
+    `storage` is CT_AOT_FRAME_BYTES of caller-allocated space that exists only
+    in the emitted body. All four exist at the entry and nowhere else in the
+    IR, so this operation is lowered by the pattern that builds the entry
+    rather than by a generic one.
   }];
+  let arguments = (ins I32Attr:$reg_count);
   let results = (outs CTJS_ContextType:$context);
-  let assemblyFormat = "attr-dict";
+  let assemblyFormat = "$reg_count attr-dict";
 }
 
 def CTJS_FrameExitOp : CTJS_RuntimeOp<"frame_exit", "ct_aot_leave", []> {
