@@ -70,12 +70,24 @@ function(ctcompile_target name)
   target_compile_options(${name} PRIVATE ${CTCOMPILE_WARNING_OPTIONS})
   target_compile_features(${name} PUBLIC cxx_std_23)
   target_include_directories(${name} PUBLIC
-    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-    # AND THE GENERATED HEADERS, reached by their PROJECT path rather than by a
-    # relative one - "Do not #include a generated header by relative path from
-    # another project". mlir_tablegen writes them into the mirror of the source
-    # tree under the binary directory, so the two roots are spelled the same
-    # way and a .inc is included exactly as a hand-written header would be.
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>)
+  # AND THE GENERATED HEADERS, reached by their PROJECT path rather than by a
+  # relative one - "Do not #include a generated header by relative path from
+  # another project". mlir_tablegen writes them into the mirror of the source
+  # tree under the binary directory, so the two roots are spelled the same way
+  # and a .inc is included exactly as a hand-written header would be.
+  #
+  # SYSTEM, which this file predicted in Phase -1 and Phase 9 collected on:
+  # "mlir-tblgen's generated .inc files in particular do not compile clean under
+  # it - so when Phase 7 arrives the answer is to include those headers as
+  # SYSTEM". The specific construct is an unused `odsOperandsSize` parameter in
+  # every variadic operation's generated adaptor, and an unused `impl` in the
+  # interface Model - both -Wunused-parameter, both in code nobody here writes.
+  #
+  # The alternative was demoting -Wunused-parameter for these targets, which
+  # would have turned it off for the hand-written importer too. The engine's
+  # own bar does not move either way, which is the point.
+  target_include_directories(${name} SYSTEM PUBLIC
     $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>)
 endfunction()
 
@@ -131,6 +143,7 @@ if(CTCOMPILE_ENABLE_MLIR)
   add_subdirectory(include/ctcompile/CTJS/IR)
   add_subdirectory(include/ctcompile/CTJS/Transforms)
   add_subdirectory(lib/CTJS/IR)
+  add_subdirectory(lib/CTJS/Import)
 endif()
 
 add_subdirectory(lib)

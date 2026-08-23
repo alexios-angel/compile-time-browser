@@ -112,6 +112,9 @@ ctjs.func @operators(%a: !ctjs.value, %b: !ctjs.value) -> !ctjs.value
   %less = ctjs.compare lt %a, %b
   // CHECK: ctjs.convert to_boolean %{{.*}}
   %truthy = ctjs.convert to_boolean %a
+  // THE BRIDGE TO A BRANCH: an i1, not a JavaScript boolean.
+  // CHECK: ctjs.truthy %{{.*}}
+  %bit = ctjs.truthy %a
   // CHECK: ctjs.instanceof %{{.*}}, %{{.*}}
   %isa = ctjs.instanceof %a, %b
   ctjs.return %isa

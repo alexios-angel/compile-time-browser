@@ -220,6 +220,32 @@ def CTJS_ConvertOp : CTJS_Op<"convert", CTJS_GenericEffects> {
   let assemblyFormat = "$kind $operand attr-dict";
 }
 
+def CTJS_TruthyOp : CTJS_RuntimeOp<"truthy", "ct_aot_truthy", [Pure]> {
+  let summary = "ToBoolean, as an i1 - the only bridge from a value to a branch";
+  let description = [{
+    THE OPERATION THE DIALECT WAS MISSING, and its absence blocked the whole
+    importer. The plan's control-flow decision is "use the standard dialects
+    wherever they suffice: cf.br, cf.cond_br, and cf.switch cover all bytecode
+    branching" - and `cf.cond_br` takes an `i1`. Nothing in CTJS produced one:
+    `ctjs.convert to_boolean` yields a `!ctjs.value` holding a boolean, which is
+    a JavaScript value, not a branch condition.
+
+    PURE, AND IT IS ONE OF THE VERY FEW THAT QUALIFY. ToBoolean is total: it
+    inspects a tag, allocates nothing, calls nothing, and cannot throw - there
+    is no `valueOf` path into it, because ToBoolean is defined on every value
+    without conversion. The runtime agrees; ct_aot_truthy's row is (0, 0, 0) and
+    it takes no frame handle at all.
+
+    It is NOT ctjs.convert to_boolean by another name. That one produces a
+    JavaScript boolean a program can store; this produces a machine bit a
+    terminator can branch on, and conflating them would mean a `cf.cond_br`
+    operand that has to be unboxed by every backend.
+  }];
+  let arguments = (ins CTJS_ValueType:$value);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$value attr-dict";
+}
+
 def CTJS_InstanceOfOp
     : CTJS_RuntimeOp<"instanceof", "ct_aot_instance_of", CTJS_GenericEffects> {
   let summary = "`object instanceof constructor`";
