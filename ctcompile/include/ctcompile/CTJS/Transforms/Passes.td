@@ -35,4 +35,20 @@ def CTJSLowerToRuntime : Pass<"ctjs-lower-to-runtime", "mlir::ModuleOp"> {
   let dependentDialects = ["::mlir::func::FuncDialect"];
 }
 
+def CTJSLowerToEmitC : Pass<"ctjs-lower-to-emitc", "mlir::ModuleOp"> {
+  let summary = "Emit each CTJS function as a compiled C++ entry";
+  let description = [{
+    THE NARROW END OF THE BACKEND: a ctjs.func becomes an emitc.func shaped
+    exactly like ct_aot_entry_fn, so mlir-translate --mlir-to-cpp produces a
+    translation unit that compiles against the real aot.hpp.
+
+    IT REFUSES MOST FUNCTIONS AND RECORDS WHY on each one it leaves, as a
+    `ctjs.not_lowered` attribute. The importer set the precedent - the count of
+    what a stage leaves behind is the work list - and a backend that
+    half-lowered a function it did not understand would emit C++ that compiles
+    and computes the wrong thing.
+  }];
+  let dependentDialects = ["::mlir::emitc::EmitCDialect", "::mlir::cf::ControlFlowDialect"];
+}
+
 #endif // CTCOMPILE_CTJS_PASSES

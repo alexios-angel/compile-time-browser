@@ -1,6 +1,6 @@
 # The lowering, as an ordinary library for the reason the importer is one: it is
 # hand-written C++ and generates nothing.
-add_library(ctcompile-ctjs-lowering CTJSToRuntime.cpp)
+add_library(ctcompile-ctjs-lowering CTJSToEmitC.cpp CTJSToRuntime.cpp)
 ctcompile_target(ctcompile-ctjs-lowering)
 add_dependencies(ctcompile-ctjs-lowering MLIRCTJSOpsIncGen CTJSTransformsPassIncGen)
 
@@ -11,6 +11,8 @@ target_link_libraries(ctcompile-ctjs-lowering
     MLIRIR
     MLIRPass
     MLIRFuncDialect
+    MLIREmitCDialect
+    MLIRControlFlowDialect
     MLIRTransforms)
 
 target_include_directories(ctcompile-ctjs-lowering SYSTEM
