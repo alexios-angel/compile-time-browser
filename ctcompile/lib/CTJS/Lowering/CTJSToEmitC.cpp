@@ -141,17 +141,26 @@ void refuse(FuncOp function, llvm::StringRef because) {
 bool body_is_supported(FuncOp function, std::string & why) {
     bool supported = true;
     function.getBody().walk([&](mlir::Operation * op) {
-        if (mlir::isa<FrameEnterOp, FrameExitOp, ReturnOp>(op)) { return; }
+        if (mlir::isa<FrameEnterOp, FrameExitOp, ReturnOp, TruthyOp>(op)) { return; }
+        // THE BRANCHES, which is what makes a function with an `if` compilable.
+        // Their block arguments are handled by a pass of their own afterwards -
+        // see EmitCBlockArguments.cpp - because emitting them as they stand
+        // would hit the copy the C++ emitter loses.
+        if (mlir::isa<mlir::cf::BranchOp, mlir::cf::CondBranchOp>(op)) { return; }
         if (auto constant = mlir::dyn_cast<ConstantOp>(op)) {
-            // THE THREE THAT NEED NO ALLOCATION AND NO ROUNDING. A number's
-            // C++ spelling has to round-trip exactly - -0.0 and 0.0 are
-            // different values and `0.0` prints the same for both - and a
-            // string reaches ct_aot_new_string, which is a safepoint with
-            // nothing rooting the result yet. Refused rather than approximated.
-            if (mlir::isa<UndefinedAttr, NullAttr, BooleanAttr>(constant.getValue())) { return; }
+            // THE FOUR THAT NEED NO ALLOCATION. A number is included because
+            // its attribute carries the double's BIT PATTERN rather than a
+            // float, so it has an exact C++ spelling - see constant_value. A
+            // decimal literal would not: -0.0 and 0.0 are different JavaScript
+            // values and print identically. A string is still refused; it
+            // reaches ct_aot_new_string, which is a safepoint, and nothing
+            // roots the result yet.
+            if (mlir::isa<UndefinedAttr, NullAttr, BooleanAttr, NumberAttr>(constant.getValue())) {
+                return;
+            }
             supported = false;
-            why = "no lowering yet for this constant - only undefined, null and booleans have a "
-                  "C++ spelling that cannot allocate or round";
+            why = "no lowering yet for this constant - a string reaches ct_aot_new_string, which "
+                  "is a safepoint, and nothing roots the result yet";
             return;
         }
         supported = false;
@@ -186,6 +195,12 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             build.setInsertionPointToStart(module.getBody());
             // aot.hpp for the helpers, value.hpp for the one thing a constant
             // needs: value::bits(), so no NaN-boxing pattern is written here.
+            // <bit> for bit_cast and <cstdint> for UINT64_C, both of which a
+            // number constant spells; value.hpp for value::bits().
+            ec::IncludeOp::create(build, module.getLoc(), build.getStringAttr("bit"),
+                                  /*is_standard_include=*/build.getUnitAttr());
+            ec::IncludeOp::create(build, module.getLoc(), build.getStringAttr("cstdint"),
+                                  /*is_standard_include=*/build.getUnitAttr());
             ec::IncludeOp::create(build, module.getLoc(),
                                   build.getStringAttr("ctbrowser/script/value.hpp"),
                                   /*is_standard_include=*/build.getUnitAttr());
@@ -212,19 +227,12 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
         mlir::IRRewriter prune(context);
         (void)mlir::eraseUnreachableBlocks(prune, function.getBody());
 
-        // ONE BLOCK ONLY, because the emitter loses a copy on a
-        // block-argument edge. See the file header and the hazard test.
-        //
-        // CHECKED BEFORE THE OPERATIONS ARE, and the order is a choice. A
-        // function with a branch usually also contains an operation with no
-        // lowering, so both refusals apply and only one gets reported; this is
-        // the more fundamental of the two, because it would still hold if every
-        // operation in the body were supported.
-        if (!function.getBody().hasOneBlock()) {
-            refuse(function, "control flow needs block arguments lowered to variables first - the "
-                             "C++ emitter miscompiles a parallel copy on a block-argument edge");
-            return false;
-        }
+        // BLOCKS ARE NO LONGER A REASON TO REFUSE. They were, until
+        // --emitc-eliminate-block-arguments existed: emitting a block argument
+        // as it stands hits the copy the C++ emitter loses. That pass runs
+        // after this one and turns each into a variable, so what this pass
+        // emits may carry block arguments and what reaches mlir-translate must
+        // not. The pipeline order is the contract, and end-to-end.mlir runs it.
 
         std::string why;
         if (!body_is_supported(function, why)) {
@@ -358,52 +366,128 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             literal(build, where, status,
                     "static_cast<int32_t>(ctbrowser::aot::ct_aot_status::failed)"));
 
-        // ---- the body -----------------------------------------------------
-        build.setInsertionPointToStart(running);
+        // ---- the blocks ---------------------------------------------------
+        //
+        // Every CTJS block gets one here, arguments and all. They are NOT
+        // eliminated in this pass: --emitc-eliminate-block-arguments does that
+        // afterwards, and keeping the two separate is what lets the elimination
+        // be tested against a program that runs rather than only against the
+        // output of this file.
         mlir::IRMapping mapping;
         mapping.map(body.getArgument(arg_receiver), in_receiver);
         for (unsigned i = 0; i < declared; ++i) {
             mapping.map(body.getArgument(implicit_arguments + i), parameters[i]);
         }
         mapping.map(entered.getResult(), frame.getResult(0));
+        mapping.map(&body, running);
 
-        for (mlir::Operation & op : body.without_terminator()) {
-            if (mlir::isa<FrameEnterOp>(op)) { continue; }
-            if (auto exit = mlir::dyn_cast<FrameExitOp>(op)) {
-                ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_leave"),
-                                         mlir::ValueRange{mapping.lookup(exit.getContext())});
-                continue;
+        for (mlir::Block & block : llvm::drop_begin(function.getBody())) {
+            llvm::SmallVector<mlir::Type> types;
+            llvm::SmallVector<mlir::Location> places;
+            for (const mlir::BlockArgument argument : block.getArguments()) {
+                types.push_back(as_emitc(argument.getType(), value));
+                places.push_back(argument.getLoc());
             }
-            if (auto constant = mlir::dyn_cast<ConstantOp>(op)) {
-                mapping.map(constant.getResult(), constant_value(build, where, value, constant));
-                continue;
+            mlir::Block * fresh = entry.addBlock();
+            fresh->addArguments(types, places);
+            mapping.map(&block, fresh);
+            for (auto [before, after] : llvm::zip(block.getArguments(), fresh->getArguments())) {
+                mapping.map(before, after);
             }
-            // body_is_supported has already refused anything else.
-            llvm_unreachable("an unsupported operation reached the emitter");
         }
 
-        // ---- the return protocol ------------------------------------------
-        //
-        // ct_aot_return_value TAKES NO FRAME HANDLE, and that is why the entry
-        // delivers `receiver` and `constructing` by value: the body still needs
-        // them after ct_aot_leave has run. It is also why the three-argument
-        // form is not optional - one compiled body serves both `f()` and
-        // `new f()`, so `constructing` has to arrive at run time.
-        auto returned = mlir::cast<ReturnOp>(body.getTerminator());
-        const mlir::Value produced = returned.getValue() ? mapping.lookup(returned.getValue())
-                                                         : undefined(build, where, value);
-        auto result = ec::CallOpaqueOp::create(
-            build, where, mlir::TypeRange{value}, callee("ct_aot_return_value"),
-            mlir::ValueRange{produced, in_receiver, in_constructing});
-        auto destination =
-            ec::DereferenceOp::create(build, where, ec::LValueType::get(value), in_out);
-        ec::AssignOp::create(build, where, destination, result.getResult(0));
-        ec::ReturnOp::create(build, where,
-                             literal(build, where, status,
-                                     "static_cast<int32_t>(ctbrowser::aot::ct_aot_status::ok)"));
+        // ---- and their operations -----------------------------------------
+        for (mlir::Block & block : function.getBody()) {
+            build.setInsertionPointToEnd(mapping.lookup(&block));
+            for (mlir::Operation & op : block) {
+                convert(op, build, mapping, value, in_receiver, in_constructing, in_out, status);
+            }
+        }
 
         function.erase();
         return true;
+    }
+
+    // ONE CTJS TYPE, IN C++. Only !ctjs.value needs translating; an i1 from
+    // ctjs.truthy is already a machine bit and EmitC prints it as `bool`.
+    static mlir::Type as_emitc(mlir::Type type, mlir::Type value) {
+        return mlir::isa<ValueType>(type) ? value : type;
+    }
+
+    // ONE OPERATION.
+    //
+    // NO DEFAULT ARM AND NO FALLBACK. body_is_supported has already refused
+    // anything not listed here, so an operation reaching the end is a
+    // disagreement between the two - which is a bug in this file rather than in
+    // its input, and is worth crashing over rather than emitting a call to
+    // something plausible.
+    void convert(mlir::Operation & op, mlir::OpBuilder & build, mlir::IRMapping & mapping,
+                 mlir::Type value, mlir::Value receiver, mlir::Value constructing, mlir::Value out,
+                 mlir::Type status) {
+        const mlir::Location where = op.getLoc();
+
+        // The frame is established by the entry block, not by this operation.
+        if (mlir::isa<FrameEnterOp>(op)) { return; }
+
+        if (auto exit = mlir::dyn_cast<FrameExitOp>(op)) {
+            ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_leave"),
+                                     mlir::ValueRange{mapping.lookup(exit.getContext())});
+            return;
+        }
+
+        if (auto constant = mlir::dyn_cast<ConstantOp>(op)) {
+            mapping.map(constant.getResult(), constant_value(build, where, value, constant));
+            return;
+        }
+
+        // ToBoolean, AND THE COMPARISON IS PART OF IT. ct_aot_truthy answers
+        // with a uint32_t that is 0 or 1 - the ABI has no bool - while
+        // ctjs.truthy's result is an i1, because that is what cf.cond_br takes.
+        // Testing it against zero is the conversion, and doing it here rather
+        // than trusting C++'s implicit narrowing keeps the emitted code saying
+        // what it means.
+        if (auto truthy = mlir::dyn_cast<TruthyOp>(op)) {
+            const auto u32 = opaque(build.getContext(), "uint32_t");
+            auto answered = ec::CallOpaqueOp::create(
+                build, where, mlir::TypeRange{u32}, callee("ct_aot_truthy"),
+                mlir::ValueRange{mapping.lookup(truthy.getValue())});
+            auto bit = ec::CmpOp::create(
+                build, where, mlir::IntegerType::get(build.getContext(), 1), ec::CmpPredicate::ne,
+                answered.getResult(0), literal(build, where, u32, "0"));
+            mapping.map(truthy.getResult(), bit.getResult());
+            return;
+        }
+
+        if (auto returned = mlir::dyn_cast<ReturnOp>(op)) {
+            // ct_aot_return_value TAKES NO FRAME HANDLE, which is why the entry
+            // delivers `receiver` and `constructing` by value: the body still
+            // needs them after ct_aot_leave has run. The three-argument form is
+            // not optional - one compiled body serves both `f()` and `new f()`.
+            const mlir::Value produced = returned.getValue() ? mapping.lookup(returned.getValue())
+                                                             : undefined(build, where, value);
+            auto result = ec::CallOpaqueOp::create(
+                build, where, mlir::TypeRange{value}, callee("ct_aot_return_value"),
+                mlir::ValueRange{produced, receiver, constructing});
+            auto destination =
+                ec::DereferenceOp::create(build, where, ec::LValueType::get(value), out);
+            ec::AssignOp::create(build, where, destination, result.getResult(0));
+            ec::ReturnOp::create(
+                build, where,
+                literal(build, where, status,
+                        "static_cast<int32_t>(ctbrowser::aot::ct_aot_status::ok)"));
+            return;
+        }
+
+        // A BRANCH IS CLONED, NOT REBUILT. cf.br and cf.cond_br carry their
+        // successors as blocks, and IRMapping remaps a cloned operation's
+        // successors as well as its operands - so the block map built above is
+        // all this needs.
+        if (mlir::isa<mlir::cf::BranchOp, mlir::cf::CondBranchOp>(op)) {
+            build.clone(op, mapping);
+            return;
+        }
+
+        llvm_unreachable("body_is_supported and convert disagree about what is supported");
     }
 
     // A JavaScript `undefined`, spelled the way the runtime spells it.
@@ -427,6 +511,22 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             return literal(build, where, value,
                            boolean.getValue() ? "ctbrowser::script::value::boolean(true).bits()"
                                               : "ctbrowser::script::value::boolean(false).bits()");
+        }
+        if (auto number = mlir::dyn_cast<NumberAttr>(what)) {
+            // THE BITS, NOT A DECIMAL LITERAL, and that is what makes it exact.
+            //
+            // The attribute carries `bit_cast<uint64_t>(double)` - the double's
+            // pattern, not the value's - because "-0.0 and NaN are the reason
+            // for APFloat and for a dedicated attribute". Printing it back as
+            // decimal would reintroduce exactly what the attribute exists to
+            // avoid: 0.0 and -0.0 print identically and are different
+            // JavaScript values, and no decimal spelling round-trips a NaN
+            // payload. bit_cast reconstructs the double exactly, and
+            // value::number boxes it however script::value chooses to - so
+            // nothing here depends on the NaN-boxing scheme either.
+            return literal(build, where, value,
+                           "ctbrowser::script::value::number(std::bit_cast<double>(UINT64_C(" +
+                               std::to_string(number.getBits()) + "))).bits()");
         }
         // body_is_supported admits nothing else.
         return undefined(build, where, value);

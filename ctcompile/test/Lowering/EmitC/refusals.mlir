@@ -55,16 +55,16 @@ ctjs.func @uses_callee(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %callee
 }
 
-// --- HAS REAL CONTROL FLOW --------------------------------------------------
+// --- CONTROL FLOW IS NO LONGER REFUSED ------------------------------------
 //
-// Refused until block arguments are lowered to variables, because the C++
-// emitter loses a copy on a block-argument edge - see block-argument-hazard.mlir
-// in this directory, which compiles and RUNS the miscompile. The importer models
-// the register file as block arguments, so this is not an exotic case; it is
-// every function with a branch.
+// It was, until --emitc-eliminate-block-arguments existed: emitting a block
+// argument as it stands hits the copy the C++ emitter loses. That pass runs
+// after this one, so a function with branches lowers here with its block
+// arguments intact and is cleaned up downstream. The pipeline order is the
+// contract; end-to-end.mlir runs it and compiles the result.
 //
-// CHECK-LABEL: ctjs.func @has_a_branch
-// CHECK-SAME: ctjs.not_lowered = "control flow needs block arguments
+// CHECK-NOT: ctjs.func @has_a_branch
+// CHECK: emitc.func @has_a_branch
 ctjs.func @has_a_branch(%receiver: !ctjs.value, %new_target: !ctjs.value,
                         %callee: !ctjs.value, %cond: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
@@ -96,25 +96,26 @@ ctjs.func @adds(%receiver: !ctjs.value, %new_target: !ctjs.value, %callee: !ctjs
   ctjs.return %sum
 }
 
-// --- A CONSTANT THAT CANNOT BE SPELLED EXACTLY ------------------------------
+// --- A CONSTANT THAT CANNOT BE MATERIALISED WITHOUT ALLOCATING ------------
 //
-// undefined, null and booleans have a C++ spelling that neither allocates nor
-// rounds. A number does not: -0.0 and 0.0 are different JavaScript values and
-// print identically, so a decimal literal in the emitted source is a value that
-// looks right and is not. A string is worse - it reaches ct_aot_new_string,
-// which is a safepoint, with nothing yet rooting the result.
+// A NUMBER IS NO LONGER REFUSED, and the reason is worth keeping: its attribute
+// carries the double's BIT PATTERN, so `value::number(bit_cast<double>(bits))`
+// is exact for every double there is - both zeroes and every NaN payload. A
+// decimal literal in the emitted source would not be: 0.0 and -0.0 print
+// identically and are different JavaScript values.
 //
-// CHECK-LABEL: ctjs.func @returns_a_number
+// A STRING STILL IS. It reaches ct_aot_new_string, which allocates and is a
+// safepoint, and nothing roots the result across it yet.
+//
+// CHECK-LABEL: ctjs.func @returns_a_string
 // CHECK-SAME: ctjs.not_lowered = "no lowering yet for this constant
-ctjs.func @returns_a_number(%receiver: !ctjs.value, %new_target: !ctjs.value,
+ctjs.func @returns_a_string(%receiver: !ctjs.value, %new_target: !ctjs.value,
                             %callee: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
   %ctx = ctjs.frame_enter 1
-  // The attribute stores RAW BITS, which is the whole difficulty: turning
-  // them back into a C++ literal is where the rounding would enter.
-  %n = ctjs.constant #ctjs.number<4609434218613702656>
+  %s = ctjs.constant #ctjs.string<"hello">
   ctjs.frame_exit %ctx
-  ctjs.return %n
+  ctjs.return %s
 }
 
 // --- AND ONE THAT IS ACCEPTED, so the allow-list is not simply refusing all --

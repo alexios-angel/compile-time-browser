@@ -105,8 +105,8 @@ struct EmitCEliminateBlockArgumentsPass
             build.setInsertionPointToStart(block);
             const llvm::SmallVector<mlir::Value> & here = slots[block];
             for (auto [index, argument] : llvm::enumerate(block->getArguments())) {
-                auto read = ec::LoadOp::create(build, argument.getLoc(), argument.getType(),
-                                               here[index]);
+                auto read =
+                    ec::LoadOp::create(build, argument.getLoc(), argument.getType(), here[index]);
                 argument.replaceAllUsesWith(read.getResult());
             }
         }
@@ -153,9 +153,7 @@ struct EmitCEliminateBlockArgumentsPass
         }
 
         // ---- and the arguments are gone -----------------------------------
-        for (mlir::Block * block : carrying) {
-            block->eraseArguments(0, block->getNumArguments());
-        }
+        for (mlir::Block * block : carrying) { block->eraseArguments(0, block->getNumArguments()); }
         return mlir::success();
     }
 };
