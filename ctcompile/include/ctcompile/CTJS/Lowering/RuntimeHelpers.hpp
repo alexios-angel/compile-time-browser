@@ -205,12 +205,32 @@ struct runtime_helper {
     return count;
 }
 
-// One return type's role. The .def writes it as C source; this reads it.
-[[nodiscard]] constexpr return_role classify_return(std::string_view ret) {
+// One row's return role - FROM THE RETURN TYPE AND THE PARAMETERS BOTH.
+//
+// THE PARAMETERS ARE NOT OPTIONAL HERE, and the .def says why: ct_aot_to_int32
+// is "THE ONE DELIBERATE EXCEPTION to the return-type rule ... a signed int32
+// return that is DATA, not a status, because ToInt32's result is signed by
+// definition. It takes no frame handle, which is the mechanical tell - no
+// status-returning helper in the table lacks one" (aot_helpers.def:824-828).
+//
+// THE TELL IS EXACT, NOT A HEURISTIC: 24 rows return int32_t and take a frame,
+// exactly one returns int32_t and does not, and it is that row. So the rule is
+// READ rather than the row special-cased by name - a second frameless int32_t
+// row would classify correctly on arrival instead of being missed.
+//
+// AND GETTING IT WRONG IS THE WORST KIND OF WRONG. A backend that read
+// ct_aot_to_int32's result as a status would be testing the value of `x | 0`
+// against ct_aot_status: 1 is `failed` and unwinds the whole native chain, 2 is
+// `caught` and branches to a landing pad that does not exist, and 3 is `ok` by
+// coincidence. `2.7 | 0` is 2.
+[[nodiscard]] constexpr return_role classify_return(std::string_view ret, std::string_view params) {
     while (!ret.empty() && ret.front() == ' ') { ret.remove_prefix(1); }
     while (!ret.empty() && ret.back() == ' ') { ret.remove_suffix(1); }
     if (ret == "void") { return return_role::nothing; }
-    if (ret == "int32_t") { return return_role::status; }
+    if (ret == "int32_t") {
+        return params.find("ct_aot_frame *") == std::string_view::npos ? return_role::data
+                                                                       : return_role::status;
+    }
     if (ret == "uint64_t") { return return_role::value; }
     if (ret == "uint32_t") { return return_role::data; }
     if (ret == "double") { return return_role::number; }
@@ -241,44 +261,44 @@ struct runtime_helper {
     return "unknown";
 }
 
-// Whether a stringified parameter list is "optionally a frame, then uint64_t".
-[[nodiscard]] constexpr bool parameters_are_values_only(std::string_view params) {
-    std::size_t depth = 0;
-    std::size_t index = 0;
-    std::size_t start = 0;
-    bool ok = true;
-    const auto check_one = [&](std::string_view one, std::size_t which) {
-        // Trim.
-        while (!one.empty() && one.front() == ' ') { one.remove_prefix(1); }
-        while (!one.empty() && one.back() == ' ') { one.remove_suffix(1); }
-        if (one.empty()) { return; }
-        const bool is_frame =
-            one.starts_with("struct ct_aot_frame *") || one.starts_with("struct ct_aot_ctx *");
-        if (which == 0 && is_frame) { return; }
-        if (!one.starts_with("uint64_t ")) { ok = false; }
-    };
-    for (std::size_t i = 0; i < params.size(); ++i) {
-        const char c = params[i];
-        if (c == '(') {
-            ++depth;
-            if (depth == 1) { start = i + 1; }
+// Whether a helper's parameters are "optionally a frame, then values only".
+//
+// DEFINED FROM THE ROLES NOW, AND THAT IS A CORRECTION. This was a second
+// parser asking whether each parameter's text starts with "uint64_t " - and
+// `uint64_t *out` DOES start with "uint64_t ", because the space comes before
+// the `*`. So it admitted six rows that carry an out-parameter -
+// ct_aot_negate, ct_aot_bit_not, ct_aot_catch_land, ct_aot_iterable_values,
+// ct_aot_await_settled and ct_aot_dynamic_import - while the comment beside it
+// asserted in as many words that a `uint64_t *` was excluded.
+//
+// NOTHING HAD HIT IT, WHICH IS NOT A DEFENCE. No CTJS operation names any of
+// those six yet, and the arity check happened to cover them. It is the same
+// shape as the bug this predicate exists to stop - a check that looks
+// sufficient, reads correctly and is not - sitting inside the check itself,
+// waiting for the next operation to be added.
+//
+// classify() already reads the same text and already distinguishes `uint64_t`
+// from `uint64_t *`. Asking the roles cannot drift from the roles, and it
+// deletes the second parser rather than fixing it.
+[[nodiscard]] constexpr bool roles_are_values_only(const param_role * roles, std::size_t count) {
+    for (std::size_t i = 0; i < count; ++i) {
+        // A frame or a script context is allowed, but only in first position.
+        //
+        // THIS CLAUSE IS NOT EXERCISED BY THE TABLE AND THAT IS SAID HERE
+        // RATHER THAN LEFT TO BE DISCOVERED. Removing `i == 0` leaves the whole
+        // suite green, because no row in the ABI puts a frame anywhere but
+        // first - so the guard cannot be shown to be load-bearing by breaking
+        // it. What CAN be checked is the property it assumes, and
+        // frame_is_always_first() below does exactly that: if a future row ever
+        // takes a frame in second position, that assertion fires and this
+        // clause is what stops the row being read as values-only in the
+        // meantime.
+        if (i == 0 && (roles[i] == param_role::frame || roles[i] == param_role::context)) {
             continue;
         }
-        if (c == ')') {
-            if (depth == 1) {
-                check_one(params.substr(start, i - start), index);
-                ++index;
-            }
-            if (depth > 0) { --depth; }
-            continue;
-        }
-        if (c == ',' && depth == 1) {
-            check_one(params.substr(start, i - start), index);
-            ++index;
-            start = i + 1;
-        }
+        if (roles[i] != param_role::operand) { return false; }
     }
-    return ok;
+    return true;
 }
 
 // How many top-level parameters a stringified parameter list declares.
@@ -310,11 +330,12 @@ struct runtime_helper {
                            (may_throw_) != 0,                                                      \
                            (may_reenter_) != 0,                                                    \
                            (is_safepoint_) != 0,                                                   \
-                           parameters_are_values_only(#params_),                                   \
-                           classify_return(#ret_),                                                 \
+                           false,                                                                  \
+                           classify_return(#ret_, #params_),                                       \
                            {},                                                                     \
                            0};                                                                     \
         row.role_count = classify_all(#params_, row.roles, 12);                                    \
+        row.values_only = roles_are_values_only(row.roles, row.role_count);                        \
         return row;                                                                                \
     }(),
 inline constexpr runtime_helper runtime_helpers[] = {
@@ -383,6 +404,63 @@ static_assert(is_raise_tier_only(helper_for(ctbrowser::aot::helper_id::ct_aot_ne
 static_assert(helper_for(ctbrowser::aot::helper_id::ct_aot_new_object).may_throw,
               "and it IS may_throw, which is exactly why may_throw alone cannot tell a backend "
               "what edge to emit");
+
+// A FRAME OR A CONTEXT IS ALWAYS THE FIRST PARAMETER, NEVER A LATER ONE.
+//
+// This is the assumption roles_are_values_only's position clause rests on, and
+// it is asserted here because it cannot be demonstrated there: with the table
+// as it stands, deleting that clause changes no answer. Checking the property
+// over all 69 rows is the honest version of the same claim - and it is the one
+// that fires if a row ever arrives that breaks it.
+constexpr bool frame_is_always_first() {
+    for (const runtime_helper & row : runtime_helpers) {
+        for (std::size_t i = 1; i < row.role_count; ++i) {
+            if (row.roles[i] == param_role::frame || row.roles[i] == param_role::context) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+static_assert(frame_is_always_first(),
+              "a helper takes a frame handle somewhere other than first - decide what that means "
+              "for the values-only rule before a lowering decides for you");
+
+// THE ONE DELIBERATE EXCEPTION, PINNED BY NAME. ct_aot_to_int32 returns
+// int32_t and is NOT a status: ToInt32's result is signed by definition. Read
+// as a status it would test the value of `x | 0` against ct_aot_status - and
+// `2.7 | 0` is 2, which is `caught`.
+static_assert(helper_for(ctbrowser::aot::helper_id::ct_aot_to_int32).ret == return_role::data,
+              "ToInt32 returns DATA that happens to be signed - a backend testing it as a status "
+              "branches on the arithmetic");
+static_assert(!returns_status(helper_for(ctbrowser::aot::helper_id::ct_aot_to_int32)));
+// AND ITS SIBLING, which differs only in signedness and must stay data too.
+static_assert(helper_for(ctbrowser::aot::helper_id::ct_aot_to_uint32).ret == return_role::data);
+
+// THE SIX ROWS THE OLD values_only ADMITTED. Each carries a `uint64_t *out`,
+// which is an out-parameter and not something any CTJS operand can supply; the
+// text-prefix check accepted them because "uint64_t *out" starts with
+// "uint64_t ". Naming them here is what makes the correction stay corrected.
+static_assert(!helper_for(ctbrowser::aot::helper_id::ct_aot_negate).values_only,
+              "`uint64_t *out` is an out-parameter - passing a value there writes through a "
+              "JavaScript value reinterpreted as a pointer");
+static_assert(!helper_for(ctbrowser::aot::helper_id::ct_aot_bit_not).values_only);
+static_assert(!helper_for(ctbrowser::aot::helper_id::ct_aot_catch_land).values_only);
+static_assert(!helper_for(ctbrowser::aot::helper_id::ct_aot_iterable_values).values_only);
+static_assert(!helper_for(ctbrowser::aot::helper_id::ct_aot_await_settled).values_only);
+static_assert(!helper_for(ctbrowser::aot::helper_id::ct_aot_dynamic_import).values_only);
+
+// AND THE ROWS IT SHOULD STILL ADMIT, so the correction did not simply refuse
+// everything - which is the failure mode of a tightened check nobody measured.
+static_assert(helper_for(ctbrowser::aot::helper_id::ct_aot_cell_get).values_only,
+              "(uint64_t cell) is values-only");
+static_assert(helper_for(ctbrowser::aot::helper_id::ct_aot_leave).values_only,
+              "(struct ct_aot_frame *fr) is a bare frame, which is allowed in first position");
+static_assert(helper_for(ctbrowser::aot::helper_id::ct_aot_new_object).values_only);
+static_assert(helper_for(ctbrowser::aot::helper_id::ct_aot_append).values_only);
+// A FRAME ANYWHERE BUT FIRST IS NOT VALUES-ONLY, and ct_aot_binary_op is the
+// row that proves the position rule is doing work: frame, opcode, ...
+static_assert(!helper_for(ctbrowser::aot::helper_id::ct_aot_binary_op).values_only);
 
 // ct_aot_enter's failure has a THIRD shape and is excluded from both.
 static_assert(helper_for(ctbrowser::aot::helper_id::ct_aot_enter).ret == return_role::frame);
