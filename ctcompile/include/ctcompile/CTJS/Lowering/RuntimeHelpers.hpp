@@ -52,6 +52,47 @@ enum class param_role {
     storage,   // void * - caller-allocated frame space
 };
 
+// WHAT ONE HELPER RETURNS - AND THEREFORE HOW A CALLER LEARNS IT FAILED.
+//
+// THE .def STATES THIS AS A RULE AND THIS IS THAT RULE, READ: "an unsigned
+// return is data, never a status" (aot_helpers.def:761). It is not a
+// convention - ct_aot_failed argues for its own uint32_t return explicitly,
+// "it is data, not a status" (:232), and ct_aot_bit_not argues the other way,
+// keeping a status return "despite being raise-tier-only" because the row is a
+// safepoint. Both arguments are only decidable because the rule exists.
+enum class return_role {
+    unknown, // nothing should ever be this - a static_assert below says so
+    nothing, // void
+    status,  // int32_t - a ct_aot_status the caller MUST test
+    value,   // uint64_t - a JavaScript value
+    data,    // uint32_t - a length, a flag, a slot. DATA, NEVER A STATUS.
+    number,  // double
+    frame,   // struct ct_aot_frame * - ct_aot_enter alone; NULL is the failure
+    values,  // uint64_t * - ct_aot_slots' span
+    name,    // const struct ct_aot_name * - ct_aot_intern_name
+};
+
+// TWO TIERS OF FAILURE, AND A BACKEND THAT CONFLATES THEM IS WRONG TWICE OVER.
+//
+// aot_helpers.def opens by separating them: raise() "sets a flag no try/catch
+// can see" and unwinds the whole native chain, while thrown_ plus
+// unwind_to_handler "completes INSIDE the callee". The RETURN TYPE is what
+// tells them apart, which is why this is derived here rather than guessed at
+// each call site:
+//
+//   returns int32_t   ->  the catchable edge. Test the status after the call.
+//   may_throw, but returns data or a value  ->  RAISE TIER ONLY. The result is
+//       always well-formed - allocate() "raises past the ceiling and then STILL
+//       returns a real object" (:1132) - and the caller polls ct_aot_failed at
+//       BACK-EDGES, not after every allocation, because "a function running
+//       past the ceiling is WASTEFUL, NEVER UNSAFE" (:230).
+//
+// GETTING THIS BACKWARDS FAILS SILENTLY IN BOTH DIRECTIONS. Emit a status test
+// after ct_aot_new_object and there is no status to test - the uint64_t is a
+// value, and any bit pattern it compares equal to is a coincidence. Omit the
+// back-edge poll and a program past the allocation ceiling runs on forever
+// instead of ending.
+
 // `op_kind` IS A ctbrowser::script::op, NOT A CTJS ENUM ORDINAL.
 //
 // This is the sharpest thing about the table and it is invisible from the
@@ -93,6 +134,8 @@ struct runtime_helper {
     // which any CTJS operand can supply, and each of which needs its own
     // deliberate materialisation.
     bool values_only;
+    // WHAT IT RETURNS, under the .def's own return-type rule. See return_role.
+    return_role ret;
     // One per parameter, in ABI order. Twelve is wider than the widest row.
     param_role roles[12];
     std::size_t role_count;
@@ -160,6 +203,21 @@ struct runtime_helper {
         }
     }
     return count;
+}
+
+// One return type's role. The .def writes it as C source; this reads it.
+[[nodiscard]] constexpr return_role classify_return(std::string_view ret) {
+    while (!ret.empty() && ret.front() == ' ') { ret.remove_prefix(1); }
+    while (!ret.empty() && ret.back() == ' ') { ret.remove_suffix(1); }
+    if (ret == "void") { return return_role::nothing; }
+    if (ret == "int32_t") { return return_role::status; }
+    if (ret == "uint64_t") { return return_role::value; }
+    if (ret == "uint32_t") { return return_role::data; }
+    if (ret == "double") { return return_role::number; }
+    if (ret.starts_with("struct ct_aot_frame *")) { return return_role::frame; }
+    if (ret.starts_with("uint64_t *")) { return return_role::values; }
+    if (ret.starts_with("const struct ct_aot_name *")) { return return_role::name; }
+    return return_role::unknown;
 }
 
 [[nodiscard]] constexpr const char * role_name(param_role role) {
@@ -253,6 +311,7 @@ struct runtime_helper {
                            (may_reenter_) != 0,                                                    \
                            (is_safepoint_) != 0,                                                   \
                            parameters_are_values_only(#params_),                                   \
+                           classify_return(#ret_),                                                 \
                            {},                                                                     \
                            0};                                                                     \
         row.role_count = classify_all(#params_, row.roles, 12);                                    \
@@ -269,5 +328,67 @@ static_assert(std::size(runtime_helpers) == ctbrowser::aot::helper_count,
 [[nodiscard]] constexpr const runtime_helper & helper_for(ctbrowser::aot::helper_id which) {
     return runtime_helpers[static_cast<std::size_t>(which)];
 }
+
+// WHETHER A CALLER MUST TEST A STATUS AFTER THIS CALL.
+[[nodiscard]] constexpr bool returns_status(const runtime_helper & row) {
+    return row.ret == return_role::status;
+}
+
+// WHETHER THIS HELPER'S ONLY FAILURE IS THE RAISE TIER, so the caller takes its
+// result unconditionally and polls ct_aot_failed at the next back-edge.
+//
+// ct_aot_enter IS NOT ONE OF THESE and the carve-out is deliberate: it fails by
+// returning a NULL frame pointer, which is neither a status nor a poll, and a
+// backend that lumped it in with the value-returning rows would dereference the
+// null. It is the single row whose failure has its own shape.
+[[nodiscard]] constexpr bool is_raise_tier_only(const runtime_helper & row) {
+    return row.may_throw && row.ret != return_role::status && row.ret != return_role::frame;
+}
+
+// EVERY ROW CLASSIFIES. An unknown return type means the ABI grew a shape this
+// file has not been taught, and the compiler would otherwise decide what to do
+// about it by accident.
+constexpr bool every_return_classifies() {
+    for (const runtime_helper & row : runtime_helpers) {
+        if (row.ret == return_role::unknown) { return false; }
+    }
+    return true;
+}
+static_assert(every_return_classifies(),
+              "a helper's return type is not one this file knows - teach classify_return, and "
+              "decide which failure tier the new shape belongs to before a backend guesses");
+
+// THE ROW THE .def ARGUES ABOUT, PINNED. ct_aot_failed IS THE SIGNAL for the
+// raise tier and returns uint32_t "not int32_t, under the return-type rule - it
+// is data, not a status" (aot_helpers.def:232). If it ever returned int32_t,
+// every poll site would start testing it as a status - and CT_AOT_OK is zero,
+// so a raised program would read as healthy.
+static_assert(helper_for(ctbrowser::aot::helper_id::ct_aot_failed).ret == return_role::data,
+              "ct_aot_failed returns DATA - nonzero means the run is over; as a status, zero "
+              "would mean the opposite");
+static_assert(!returns_status(helper_for(ctbrowser::aot::helper_id::ct_aot_failed)));
+
+// AND THE CLASSIFIER ITSELF returns a status while NOT being may_throw: it is
+// how a caller of any other row obtains one, so it cannot need one of its own.
+static_assert(returns_status(helper_for(ctbrowser::aot::helper_id::ct_aot_check)));
+static_assert(!helper_for(ctbrowser::aot::helper_id::ct_aot_check).may_throw);
+
+// THE TWO TIERS, ONE ROW EACH. ct_aot_binary_op is the catchable edge - a
+// valueOf can throw - and ct_aot_new_object is the ceiling only.
+static_assert(returns_status(helper_for(ctbrowser::aot::helper_id::ct_aot_binary_op)));
+static_assert(!is_raise_tier_only(helper_for(ctbrowser::aot::helper_id::ct_aot_binary_op)));
+static_assert(is_raise_tier_only(helper_for(ctbrowser::aot::helper_id::ct_aot_new_object)),
+              "allocate() raises past the ceiling and STILL returns a real object, so there is "
+              "no status here to test - only a poll to schedule");
+static_assert(helper_for(ctbrowser::aot::helper_id::ct_aot_new_object).may_throw,
+              "and it IS may_throw, which is exactly why may_throw alone cannot tell a backend "
+              "what edge to emit");
+
+// ct_aot_enter's failure has a THIRD shape and is excluded from both.
+static_assert(helper_for(ctbrowser::aot::helper_id::ct_aot_enter).ret == return_role::frame);
+static_assert(!returns_status(helper_for(ctbrowser::aot::helper_id::ct_aot_enter)));
+static_assert(!is_raise_tier_only(helper_for(ctbrowser::aot::helper_id::ct_aot_enter)),
+              "it signals the depth raise with a NULL frame pointer - neither a status to test "
+              "nor a poll to defer");
 
 } // namespace ctcompile::ctjs
