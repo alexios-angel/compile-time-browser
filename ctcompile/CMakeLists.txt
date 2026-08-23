@@ -103,6 +103,15 @@ if(CTCOMPILE_ENABLE_MLIR)
   ct_require_llvm_version()
   message(STATUS "ctcompile: MLIR ${LLVM_PACKAGE_VERSION} at ${MLIR_DIR}")
 
+  # WHERE GENERATED DOCUMENTATION GOES. add_mlir_doc writes under
+  # ${MLIR_BINARY_DIR}/docs, and out of tree that variable is empty - so the
+  # doc target tried to mkdir("/docs") and failed with a permission error that
+  # says nothing about documentation. Pointing it at this build directory is
+  # the whole fix.
+  #
+  # It is never committed, which the policy states outright.
+  set(MLIR_BINARY_DIR "${CMAKE_BINARY_DIR}")
+
   list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}" "${LLVM_CMAKE_DIR}")
   include(TableGen)
   include(AddLLVM)

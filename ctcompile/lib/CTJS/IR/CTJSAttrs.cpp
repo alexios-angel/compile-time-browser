@@ -1,7 +1,9 @@
 #include "ctcompile/CTJS/IR/CTJSAttrs.h"
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
+#include "ctcompile/CTJS/IR/CTJSEnums.h"
 
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/TypeSwitch.h"
 
@@ -15,5 +17,21 @@
 //
 // CTJSTypes.cpp is the same shape for the same reason, and the types linked
 // only because it already existed.
+// The enum definitions - the stringification the attributes parse and print
+// through - before the attribute storage that uses them.
+#include "ctcompile/CTJS/IR/CTJSEnums.cpp.inc"
+
 #define GET_ATTRDEF_CLASSES
 #include "ctcompile/CTJS/IR/CTJSAttrs.cpp.inc"
+
+namespace ctcompile::ctjs {
+
+// Here for the same reason registerTypes is in CTJSTypes.cpp.
+void CTJSDialect::registerAttributes() {
+    addAttributes<
+#define GET_ATTRDEF_LIST
+#include "ctcompile/CTJS/IR/CTJSAttrs.cpp.inc"
+        >();
+}
+
+} // namespace ctcompile::ctjs

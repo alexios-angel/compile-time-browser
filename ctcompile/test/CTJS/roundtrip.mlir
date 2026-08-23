@@ -1,14 +1,14 @@
-// The five CTJS types, parsed, verified, printed, and parsed again.
+// EVERY OPERATION AND EVERY TYPE, parsed, verified, printed, and parsed again.
 //
 // THE SECOND ctjs-opt IS THE TEST. One pass proves the parser accepts the
-// syntax; the pair proves the PRINTER emits something the parser accepts,
-// which is the property that makes every later test's expected output
-// trustworthy. A printer that dropped a type's mnemonic would pass a
-// single-pass check against its own output forever.
+// syntax; the pair proves the PRINTER emits something the parser accepts, which
+// is the property that makes every later test's expected output trustworthy. A
+// printer that dropped an operand or a kind would pass a single-pass check
+// against its own output forever.
 //
-// There are no operations yet, so the types are carried on a func signature -
-// which is also a small check that the dialect coexists with the three the
-// pipeline registers alongside it.
+// The Phase 8 gate asks that this cover every operation. It does, and the
+// anti-pattern list names the alternative: "An operation added without a
+// roundtrip test."
 
 // RUN: ctjs-opt %s | ctjs-opt | FileCheck %s
 
@@ -22,11 +22,175 @@ func.func private @every_ctjs_type(%value: !ctjs.value, %context: !ctjs.context,
                                    %program: !ctjs.program, %closure: !ctjs.closure)
     -> !ctjs.coroutine
 
-// AND ONE IN A BODY, so the types survive a region rather than only a
-// signature: a block argument and a result are different code paths in the
-// printer from a function type's operand list.
-// CHECK-LABEL: func.func @carries
-// CHECK: return %{{.*}} : !ctjs.value
-func.func @carries(%v: !ctjs.value) -> !ctjs.value {
-  return %v : !ctjs.value
+// ---- constants -------------------------------------------------------------
+// EVERY CONSTANT SHAPE, because the reason these are dialect attributes rather
+// than builtin ones is that -0.0, NaN and BigInt have to survive exactly.
+// CHECK-LABEL: ctjs.func @constants
+ctjs.func @constants(%unused: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+  // CHECK: ctjs.constant #ctjs.undefined
+  %undef = ctjs.constant #ctjs.undefined
+  // CHECK: ctjs.constant #ctjs.null
+  %null = ctjs.constant #ctjs.null
+  // CHECK: ctjs.constant #ctjs.boolean<true>
+  %yes = ctjs.constant #ctjs.boolean<true>
+  // THE BITS OF -0.0, which is 0x8000000000000000 and is a DIFFERENT value from
+  // 0.0: Object.is(-0, 0) is false and 1 / -0 is -Infinity.
+  // CHECK: ctjs.constant #ctjs.number<9223372036854775808>
+  %negzero = ctjs.constant #ctjs.number<9223372036854775808>
+  // CHECK: ctjs.constant #ctjs.number<0>
+  %zero = ctjs.constant #ctjs.number<0>
+  // CHECK: ctjs.constant #ctjs.string<"hello">
+  %text = ctjs.constant #ctjs.string<"hello">
+  // CHECK: ctjs.constant #ctjs.bigint<"123456789012345678901234567890">
+  %big = ctjs.constant #ctjs.bigint<"123456789012345678901234567890">
+  ctjs.return %undef
+}
+
+// ---- bindings --------------------------------------------------------------
+// CHECK-LABEL: ctjs.func @bindings
+ctjs.func @bindings(%closure: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 2 : i32} {
+  // CHECK: ctjs.load_global "console"
+  %g = ctjs.load_global "console"
+  // CHECK: ctjs.store_global "answer", %{{.*}}
+  ctjs.store_global "answer", %g
+  ctjs.return %g
+}
+
+// CHECK-LABEL: ctjs.func @upvalues
+ctjs.func @upvalues(%v: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 1 : i32} {
+  %ctx = ctjs.frame_enter
+  // A !ctjs.program FROM NOWHERE. ctjs.func takes only !ctjs.value parameters -
+  // its verifier says so - and no operation produces a program yet: Phase 9's
+  // importer is what will. builtin.unrealized_conversion_cast is the standard
+  // way to write a value of a type nothing produces, and it keeps this file
+  // free of an unregistered dialect.
+  %program = builtin.unrealized_conversion_cast %v : !ctjs.value to !ctjs.program
+  // CHECK: ctjs.create_closure %{{.*}}[3] captures %{{.*}}
+  %fn = ctjs.create_closure %program[3] captures %v
+  // CHECK: ctjs.load_upvalue %{{.*}}[0]
+  %up = ctjs.load_upvalue %fn[0]
+  // CHECK: ctjs.store_upvalue %{{.*}}[0], %{{.*}}
+  ctjs.store_upvalue %fn[0], %up
+  ctjs.frame_exit %ctx
+  ctjs.return %up
+}
+
+// ---- properties ------------------------------------------------------------
+// CHECK-LABEL: ctjs.func @properties
+ctjs.func @properties(%obj: !ctjs.value, %key: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  // CHECK: ctjs.get_property %{{.*}}[%{{.*}}]
+  %read = ctjs.get_property %obj[%key]
+  // CHECK: ctjs.set_property %{{.*}}[%{{.*}}], %{{.*}}
+  ctjs.set_property %obj[%key], %read
+  // CHECK: ctjs.delete_property %{{.*}}[%{{.*}}]
+  %gone = ctjs.delete_property %obj[%key]
+  // CHECK: ctjs.has_property %{{.*}} in %{{.*}}
+  %has = ctjs.has_property %key in %obj
+  ctjs.return %has
+}
+
+// ---- operators -------------------------------------------------------------
+// CHECK-LABEL: ctjs.func @operators
+ctjs.func @operators(%a: !ctjs.value, %b: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  // CHECK: ctjs.binary add %{{.*}}, %{{.*}}
+  %sum = ctjs.binary add %a, %b
+  // CHECK: ctjs.binary concat %{{.*}}, %{{.*}}
+  %joined = ctjs.binary concat %a, %b
+  // THE STATIC FAMILY IS A DIFFERENT OPERATION, not a flag: it cannot run user
+  // code, which is a difference in traits.
+  // CHECK: ctjs.binary_static add %{{.*}}, %{{.*}}
+  %bumped = ctjs.binary_static add %a, %b
+  // CHECK: ctjs.unary neg %{{.*}}
+  %neg = ctjs.unary neg %a
+  // CHECK: ctjs.unary typeof %{{.*}}
+  %kind = ctjs.unary typeof %a
+  // CHECK: ctjs.compare strict_eq %{{.*}}, %{{.*}}
+  %same = ctjs.compare strict_eq %a, %b
+  // CHECK: ctjs.compare lt %{{.*}}, %{{.*}}
+  %less = ctjs.compare lt %a, %b
+  // CHECK: ctjs.convert to_boolean %{{.*}}
+  %truthy = ctjs.convert to_boolean %a
+  // CHECK: ctjs.instanceof %{{.*}}, %{{.*}}
+  %isa = ctjs.instanceof %a, %b
+  ctjs.return %isa
+}
+
+// ---- allocation ------------------------------------------------------------
+// CHECK-LABEL: ctjs.func @allocation
+ctjs.func @allocation(%v: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+  // CHECK: ctjs.create_object
+  %obj = ctjs.create_object
+  // CHECK: ctjs.create_array[%{{.*}}]
+  %arr = ctjs.create_array [%v]
+  // CHECK: ctjs.create_array[]
+  %empty = ctjs.create_array []
+  // CHECK: ctjs.create_regexp "ab+c", "gi"
+  %re = ctjs.create_regexp "ab+c", "gi"
+  ctjs.return %obj
+}
+
+// ---- calls -----------------------------------------------------------------
+// CHECK-LABEL: ctjs.func @calls
+ctjs.func @calls(%callee: !ctjs.value, %recv: !ctjs.value, %arg: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  // CHECK: ctjs.call %{{.*}}(%{{.*}}, %{{.*}})
+  %called = ctjs.call %callee(%recv, %arg)
+  // CHECK: ctjs.call %{{.*}}(%{{.*}})
+  %bare = ctjs.call %callee(%recv)
+  // CHECK: ctjs.construct %{{.*}}(%{{.*}}, %{{.*}})
+  %made = ctjs.construct %callee(%recv, %arg)
+  ctjs.return %made
+}
+
+// ---- control flow and completion -------------------------------------------
+// AN UNSTRUCTURED CFG, which is the plan's decision: "Import produces an
+// unstructured CFG matching the bytecode: basic blocks, cf terminators, and
+// explicit handler blocks derived from the bytecode handler table."
+// CHECK-LABEL: ctjs.func @control
+ctjs.func @control(%v: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+  // CHECK: ctjs.push_handler ^{{.*}} catch ^{{.*}}
+  ctjs.push_handler ^body catch ^handler
+^body:
+  // CHECK: ctjs.pop_handler
+  ctjs.pop_handler
+  cf.br ^done(%v : !ctjs.value)
+^handler:
+  // CHECK: ctjs.resume_throw
+  ctjs.resume_throw
+^done(%out: !ctjs.value):
+  ctjs.return %out
+}
+
+// CHECK-LABEL: ctjs.func @throws
+ctjs.func @throws(%v: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+  // CHECK: ctjs.throw %{{.*}}
+  ctjs.throw %v
+}
+
+// ---- suspension ------------------------------------------------------------
+// CHECK-LABEL: ctjs.func @suspends
+ctjs.func @suspends(%v: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+  // CHECK: ctjs.resume_point 0
+  ctjs.resume_point 0
+  // CHECK: ctjs.suspend await %{{.*}}
+  %awaited = ctjs.suspend await %v
+  // CHECK: ctjs.resume_point 1
+  ctjs.resume_point 1
+  // CHECK: ctjs.suspend yield %{{.*}}
+  %yielded = ctjs.suspend yield %awaited
+  ctjs.return %yielded
+}
+
+// ---- frames and rooting ----------------------------------------------------
+// CHECK-LABEL: ctjs.func @frames
+ctjs.func @frames(%v: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+  // CHECK: %[[CTX:.*]] = ctjs.frame_enter
+  %ctx = ctjs.frame_enter
+  // CHECK: ctjs.root %{{.*}} in %[[CTX]]
+  ctjs.root %v in %ctx
+  // CHECK: ctjs.frame_exit %[[CTX]]
+  ctjs.frame_exit %ctx
+  ctjs.return %v
 }

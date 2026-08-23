@@ -1,14 +1,28 @@
 //===- CTJSInterfaces.td - operation interfaces ---------------------------===//
 //
-// Empty and real, for the reason CTJSEnums.td gives.
-//
-// This is where the policy's "Per-operation switch or if-chain dispatch in a
-// lowering pass. Use an interface." lands when Phases 8 and 10 need it.
+// ONE INTERFACE, AND IT REPLACES ABOUT FIFTY LOWERING PATTERNS. See the
+// CTJS_RuntimeOp class in CTJSBase.td for what it buys.
 //
 //===----------------------------------------------------------------------===//
 #ifndef CTCOMPILE_CTJS_INTERFACES
 #define CTCOMPILE_CTJS_INTERFACES
 
-include "ctcompile/CTJS/IR/CTJSBase.td"
+include "mlir/IR/OpBase.td"
+
+def CTJS_RuntimeCallOpInterface : OpInterface<"RuntimeCallOpInterface"> {
+  let cppNamespace = "::ctcompile::ctjs";
+  let description = [{
+    Implemented by every CTJS operation whose semantics are defined by a
+    single shared runtime helper. A generic conversion pattern lowers all
+    such operations uniformly, so individual operations need no lowering
+    code of their own.
+  }];
+  let methods = [
+    InterfaceMethod<
+      /*desc=*/"The shared runtime helper this operation lowers to.",
+      /*retTy=*/"::ctbrowser::aot::helper_id",
+      /*methodName=*/"getHelperID">,
+  ];
+}
 
 #endif // CTCOMPILE_CTJS_INTERFACES

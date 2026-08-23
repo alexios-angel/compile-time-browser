@@ -20,15 +20,12 @@
 namespace ctcompile::ctjs {
 
 void CTJSDialect::initialize() {
-    // NO OPERATIONS YET. Phase 8 adds addOperations<> here, generated.
-    addTypes<
-#define GET_TYPEDEF_LIST
-#include "ctcompile/CTJS/IR/CTJSOpsTypes.cpp.inc"
+    addOperations<
+#define GET_OP_LIST
+#include "ctcompile/CTJS/IR/CTJSOps.cpp.inc"
         >();
-    addAttributes<
-#define GET_ATTRDEF_LIST
-#include "ctcompile/CTJS/IR/CTJSAttrs.cpp.inc"
-        >();
+    registerTypes();
+    registerAttributes();
 }
 
 // THE POLICY SETS hasConstantMaterializer AND THERE IS NOTHING TO MATERIALIZE.

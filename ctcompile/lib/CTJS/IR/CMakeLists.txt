@@ -18,6 +18,12 @@ add_mlir_library(CTJSDialect
     CTJSInterfacesIncGen
 
   LINK_LIBS PUBLIC
+    # THE ENGINE'S AOT HEADERS, because CTJS_RuntimeOp names a
+    # ctbrowser::aot::helper_id enumerator - which is what makes an operation
+    # unable to claim a helper the runtime does not declare. A narrow link:
+    # ctbrowser::script brings the ABI table and the bytecode it describes, not
+    # a windowing system.
+    ctbrowser::script
     MLIRIR
     MLIRSideEffectInterfaces
     MLIRControlFlowDialect
