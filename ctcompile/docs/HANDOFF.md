@@ -69,6 +69,11 @@ primary backend, sources are in `lib/`, build on the devbox.
   interpreter running the same source, including under forced GC. **That is the
   Phase 12A oracle's shape, working on one function.** It also found the
   safepoint in `context::invoke` sitting before arguments were rooted.
+* **Phase 8 — the CTJS dialect exists: 32 operations in ODS**, round-tripped,
+  every verifier diagnostic tested under `-verify-diagnostics`, docs building.
+  The operations name real `ctbrowser::aot::helper_id` enumerators through
+  `CTJS_RuntimeOp`, so **an operation cannot claim a helper the runtime does not
+  declare** — which is what ties the dialect to the ABI Phases 2–6 built.
 * **Phase 7 — MLIR is stood up and its gate is met.** `ctjs-opt` and
   `ctjs-translate` build and run, the CTJS dialect's five types round-trip, and
   the lit suite runs as ctest #108 so the gate this repo actually uses covers
@@ -246,7 +251,13 @@ interpreter is 1.4%. Phases 7–12A are the rest and are not started.
 2. **The image LOADER is now the largest single item on the path**, at 26%, and
    its operand pass alone is 7.49% — fifteen times the whole CSS engine. That
    is where the next startup millisecond is.
-3. **The rest of Phase 5, and Phase 6.** Phases 1–4 are done and their gates
+3. **PHASE 9 — the bytecode importer**, which is the next rung and the first
+   one that produces IR rather than defining it. Read `08-phases-7-9-…` from
+   "Phase 9"; the control-flow decision is already made and is not to be
+   revisited: an **unstructured CFG** matching the bytecode, `cf` terminators,
+   explicit handler blocks. Structured regions "require inferring structure the
+   bytecode does not carry and being right about it".
+4. **The rest of Phase 5, and Phase 6.** Phases 1–4 are done and their gates
    are met; Phase 5 is 26 of 69 rows.
    **`ct_aot_intern_name` is the one hard blocker on the path to a minimal
    compiled function.** Every property helper's key is a `const ct_aot_name *`,

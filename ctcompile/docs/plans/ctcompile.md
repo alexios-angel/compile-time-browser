@@ -1509,6 +1509,71 @@ which is what makes every later test's expected output trustworthy. Two
 blindings, both red: a mnemonic changed in the ODS, and the dialect not
 registering its types at all.
 
+## Phase 8: the dialect, and what ties it to the ABI
+
+32 operations in ODS, round-tripped, every verifier diagnostic watched firing,
+documentation building. `grep -r "public Op<" lib/` finds nothing.
+
+**The operations name real helpers.** `CTJS_RuntimeOp` takes an enumerator of
+`ctbrowser::aot::helper_id` — generated from `aot_helpers.def` — so an operation
+cannot claim a helper the runtime does not declare, and a wrong name is a C++
+compile error rather than a lowering that calls the wrong thing. That is the
+join between this dialect and the ABI the last several phases built: the same
+three obligations the helper rows carry (`may_throw`, `may_reenter`,
+`is_safepoint`) are the traits the operations carry, spelled the same way on
+purpose.
+
+**Folded where the policy asks, split where the traits differ.** Twelve binary
+operators are one `ctjs.binary` with a kind; six comparisons and six conversions
+likewise. But `ctjs.binary_static` is a *separate operation*, not a flag,
+because the static family cannot run user code — which is a difference in
+traits, and the policy says to split on exactly that.
+
+**Three operations are deliberately not `RuntimeOp`s**, each saying why in its
+description. `ctjs.unary` and `ctjs.compare` because their kinds reach three and
+four different helpers with different effect profiles, and one `getHelperID`
+cannot answer for all of them. `ctjs.create_regexp` because **the ABI declares
+no helper for a regexp literal at all** — a real gap in the table, recorded
+here rather than papered over by pointing at a helper that does something else.
+
+### Four things MLIR 22 wanted that the policy's snippets do not show
+
+Each is now a comment where it bit, because every one cost a build:
+
+* `genSpecializedAttr` **already generates** the `<Name>Attr` class. Adding
+  `EnumAttr` records for the same five was a redefinition — and the "no type
+  named BinaryKind" error that prompted it was one missing `#include`.
+* `FunctionOpInterface` **declares** `getArgumentTypes`, `getResultTypes` and
+  `getCallableRegion` and defines none of them. Putting them in
+  `extraClassDeclaration` is "cannot be redeclared"; omitting them is an
+  undefined reference from the interface's own Model. They go in the `.cpp`.
+* `addTypes<>` / `addAttributes<>` need the storage classes **complete**, and
+  those live in the `.cpp` that defines them — hence `registerTypes()` and
+  `registerAttributes()` split across those files, which is upstream MLIR's own
+  layout.
+* `add_mlir_doc` writes under `${MLIR_BINARY_DIR}/docs`, which is empty out of
+  tree, so the doc target tried to `mkdir("/docs")`.
+
+### One deviation, with its reason in the file
+
+`ctjs.number` carries the IEEE-754 **bit pattern** rather than an `APFloat`. The
+policy's objection to a builtin `FloatAttr` is exactly right — it compares
+`-0.0` equal to `0.0` and JavaScript does not — but MLIR 22 has **no
+`FieldParser` for `APFloat`**, so that parameter generates a parser that does not
+compile. The alternatives were a hand-written parser, which is on the never
+list, or a printer that cannot round-trip a NaN payload. The bits are exact for
+both zeroes and every NaN, and need no parser at all.
+
+### The verifier worth reading
+
+`ctjs.pop_handler`. The runtime's `ct_aot_handler_pop` takes the **globally**
+innermost handler without consulting the frame, so a body that pops one it never
+pushed silently takes its *caller's* catch — and nothing at run time reports it.
+The verifier makes it a build error, and it checks what a verifier *can* check:
+one block. Whole-function balance is a dataflow question and belongs to a pass.
+
+All four verifiers falsified.
+
 ## The ladder ahead
 
 | phase | what | where |
