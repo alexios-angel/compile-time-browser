@@ -15,6 +15,7 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <bit>
+#include <cctype>
 #include <iterator>
 #include <optional>
 #include <string_view>
@@ -234,10 +235,22 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         llvm::SmallVector<mlir::Type> inputs(implicit_arguments + proto.param_count, value_type);
         const auto signature = into.getFunctionType(inputs, {value_type});
 
-        const std::string name =
-            proto.name.empty() ? ("fn" + std::to_string(index)) : proto.name;
-        auto function = ctjs::FuncOp::create(into, 
-            into.getUnknownLoc(), into.getStringAttr(name), mlir::TypeAttr::get(signature),
+        // THE INDEX IS PART OF THE NAME, ALWAYS. ctjs.func is a Symbol, and a real
+        // program has many functions sharing one name - p5.js has dozens called
+        // `constructor` and dozens more anonymous. Without the suffix the module
+        // fails to verify on a duplicate symbol, which surfaces as
+        // ctjs-translate producing NO OUTPUT AT ALL for a 4,000-function file
+        // while every individual function verified perfectly well.
+        //
+        // The source name stays in front of it, because a trace that says
+        // @createCanvas$412 is worth reading and @fn412 is not.
+        std::string name = proto.name.empty() ? std::string{"fn"} : proto.name;
+        for (char & c : name) {
+            if (std::isalnum(static_cast<unsigned char>(c)) == 0 && c != '_') { c = '_'; }
+        }
+        name += "$" + std::to_string(index);
+        auto function = ctjs::FuncOp::create(
+            into, into.getUnknownLoc(), into.getStringAttr(name), mlir::TypeAttr::get(signature),
             into.getI32IntegerAttr(static_cast<std::int32_t>(proto.upvalues.size())),
             /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
 
@@ -245,8 +258,8 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         entry->addArguments(inputs,
                             llvm::SmallVector<mlir::Location>(inputs.size(), into.getUnknownLoc()));
 
-        function_importer state{into,    context, from, proto, program_id,
-                                static_cast<std::uint32_t>(index), skipped};
+        function_importer state{
+            into, context, from, proto, program_id, static_cast<std::uint32_t>(index), skipped};
         into.setInsertionPointToStart(entry);
 
         // THE FRAME, in the entry block and nowhere else. The entry dominates
@@ -254,7 +267,7 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         // is fortunate, because push_handler's operands are !ctjs.value and
         // could not carry a !ctjs.context.
         state.frame = ctjs::FrameEnterOp::create(into, state.location_for(0),
-                                                      ctjs::ContextType::get(context));
+                                                 ctjs::ContextType::get(context));
 
         // Seed the register file: parameters where the callee expects them,
         // undefined everywhere else.
@@ -323,8 +336,7 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             // that verifies, prints plausibly, and returns undefined.
             mlir::Block * previous = into.getInsertionBlock();
             if (previous != nullptr &&
-                (previous->empty() ||
-                 !previous->back().hasTrait<mlir::OpTrait::IsTerminator>())) {
+                (previous->empty() || !previous->back().hasTrait<mlir::OpTrait::IsTerminator>())) {
                 into.setInsertionPointToEnd(previous);
                 mlir::cf::BranchOp::create(into, into.getUnknownLoc(), block, state.outgoing());
             }
@@ -351,12 +363,12 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 mlir::Value made =
                     row.re_entering
                         ? ctjs::BinaryOp::create(into, where, value_type,
-                                                      ctjs::BinaryKindAttr::get(context, row.kind),
-                                                      reg(in.b), reg(in.c))
+                                                 ctjs::BinaryKindAttr::get(context, row.kind),
+                                                 reg(in.b), reg(in.c))
                               .getResult()
-                        : ctjs::BinaryStaticOp::create(into, 
-                                  where, value_type, ctjs::BinaryKindAttr::get(context, row.kind),
-                                  reg(in.b), reg(in.c))
+                        : ctjs::BinaryStaticOp::create(into, where, value_type,
+                                                       ctjs::BinaryKindAttr::get(context, row.kind),
+                                                       reg(in.b), reg(in.c))
                               .getResult();
                 set(in.a, made);
                 handled = true;
@@ -365,13 +377,13 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             if (handled) { continue; }
             for (const compare_row & row : compare_rows) {
                 if (row.code != in.code) { continue; }
-                mlir::Value made = ctjs::CompareOp::create(into, 
-                    where, value_type, ctjs::CompareKindAttr::get(context, row.kind), reg(in.b),
-                    reg(in.c));
+                mlir::Value made = ctjs::CompareOp::create(
+                    into, where, value_type, ctjs::CompareKindAttr::get(context, row.kind),
+                    reg(in.b), reg(in.c));
                 if (row.negate) {
-                    made = ctjs::UnaryOp::create(into, 
-                        where, value_type, ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Not),
-                        made);
+                    made = ctjs::UnaryOp::create(
+                        into, where, value_type,
+                        ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Not), made);
                 }
                 set(in.a, made);
                 handled = true;
@@ -380,9 +392,9 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             if (handled) { continue; }
             for (const unary_row & row : unary_rows) {
                 if (row.code != in.code) { continue; }
-                set(in.a, ctjs::UnaryOp::create(into, 
-                              where, value_type, ctjs::UnaryKindAttr::get(context, row.kind),
-                              reg(in.b)));
+                set(in.a,
+                    ctjs::UnaryOp::create(into, where, value_type,
+                                          ctjs::UnaryKindAttr::get(context, row.kind), reg(in.b)));
                 handled = true;
                 break;
             }
@@ -404,8 +416,8 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                     state.give_up(at, in.code, "string index out of range");
                     break;
                 }
-                set(in.a, state.constant(where, ctjs::StringAttr::get(
-                                                    context, proto.strings[in.bx()])));
+                set(in.a,
+                    state.constant(where, ctjs::StringAttr::get(context, proto.strings[in.bx()])));
                 break;
             case op::load_const: {
                 if (in.bx() >= proto.constants.size()) {
@@ -414,12 +426,13 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 }
                 const value k = proto.constants[in.bx()];
                 if (k.is_number()) {
-                    set(in.a, state.constant(where, ctjs::NumberAttr::get(
-                                                        context, std::bit_cast<std::uint64_t>(
-                                                                     k.as_number()))));
+                    set(in.a,
+                        state.constant(where,
+                                       ctjs::NumberAttr::get(
+                                           context, std::bit_cast<std::uint64_t>(k.as_number()))));
                 } else if (k.is_boolean()) {
-                    set(in.a, state.constant(
-                                  where, ctjs::BooleanAttr::get(context, k.as_boolean())));
+                    set(in.a,
+                        state.constant(where, ctjs::BooleanAttr::get(context, k.as_boolean())));
                 } else if (k.is_undefined()) {
                     set(in.a, state.undefined(where));
                 } else if (k.is_null()) {
@@ -428,8 +441,9 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                     // A CONSTANT POOL ENTRY THIS CUT CANNOT NAME. Abandoning is
                     // the whole point: guessing would produce a function that
                     // runs and computes something else.
-                    state.give_up(at, in.code, "constant is not a number, boolean, null or "
-                                               "undefined");
+                    state.give_up(at, in.code,
+                                  "constant is not a number, boolean, null or "
+                                  "undefined");
                 }
                 break;
             }
@@ -442,16 +456,16 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                     state.give_up(at, in.code, "name index out of range");
                     break;
                 }
-                set(in.a, ctjs::LoadGlobalOp::create(into, 
-                              where, value_type, into.getStringAttr(proto.names[in.bx()])));
+                set(in.a, ctjs::LoadGlobalOp::create(into, where, value_type,
+                                                     into.getStringAttr(proto.names[in.bx()])));
                 break;
             case op::set_global:
                 if (in.bx() >= proto.names.size()) {
                     state.give_up(at, in.code, "name index out of range");
                     break;
                 }
-                ctjs::StoreGlobalOp::create(into, 
-                    where, into.getStringAttr(proto.names[in.bx()]), reg(in.a));
+                ctjs::StoreGlobalOp::create(into, where, into.getStringAttr(proto.names[in.bx()]),
+                                            reg(in.a));
                 break;
             case op::get_prop: {
                 if (in.c >= proto.names.size()) {
@@ -474,8 +488,8 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 break;
             }
             case op::get_index:
-                set(in.a, ctjs::GetPropertyOp::create(into, where, value_type, reg(in.b),
-                                                           reg(in.c)));
+                set(in.a,
+                    ctjs::GetPropertyOp::create(into, where, value_type, reg(in.b), reg(in.c)));
                 break;
             case op::set_index:
                 ctjs::SetPropertyOp::create(into, where, reg(in.a), reg(in.b), reg(in.c));
@@ -483,6 +497,129 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             case op::new_object:
                 set(in.a, ctjs::CreateObjectOp::create(into, where, value_type));
                 break;
+            case op::new_cell:
+                // IN PLACE: the bytecode boxes the register's current value and
+                // leaves the box where the value was.
+                set(in.a, ctjs::CreateCellOp::create(into, where, value_type, reg(in.a)));
+                break;
+            case op::cell_get:
+                set(in.a, ctjs::CellGetOp::create(into, where, value_type, reg(in.b)));
+                break;
+            case op::cell_set: ctjs::CellSetOp::create(into, where, reg(in.a), reg(in.b)); break;
+            case op::get_upvalue:
+                // THE FRAME'S OWN CLOSURE, which arrives as the third implicit
+                // argument. The interpreter reads vm_frame->closure; a compiled
+                // body is handed the same thing.
+                set(in.a, ctjs::LoadUpvalueOp::create(into, where, value_type,
+                                                      entry->getArgument(arg_callee),
+                                                      into.getI32IntegerAttr(in.b)));
+                break;
+            case op::set_upvalue:
+                ctjs::StoreUpvalueOp::create(into, where, entry->getArgument(arg_callee),
+                                             into.getI32IntegerAttr(in.a), reg(in.b));
+                break;
+            case op::new_array:
+                set(in.a, ctjs::CreateArrayOp::create(into, where, value_type,
+                                                      llvm::SmallVector<mlir::Value>{}));
+                break;
+            case op::append: ctjs::AppendOp::create(into, where, reg(in.a), reg(in.b)); break;
+            case op::call:
+            case op::call_method:
+            case op::call_computed:
+            case op::call_receiver: {
+                // THE ARGUMENTS ARE THE REGISTERS ABOVE THE CALLEE, which is
+                // the interpreter's own layout: `arg_base = base + in.a + 1`,
+                // and `in.b` of them. The callee's frame starts where its
+                // arguments already are, which is why the bytecode puts them
+                // there.
+                mlir::Value callee = reg(in.a);
+                mlir::Value receiver = state.undefined(where);
+                if (in.code == op::call_receiver) {
+                    receiver = reg(in.c);
+                } else if (in.code == op::call_method) {
+                    if (in.c >= proto.names.size()) {
+                        state.give_up(at, in.code, "name index out of range");
+                        break;
+                    }
+                    // THROUGH THE SAME LOOKUP AS get_prop, which the
+                    // interpreter is explicit about: `s.split(...)` and
+                    // `var f = s.split; f(...)` must find the same function.
+                    receiver = reg(in.a);
+                    const mlir::Value key =
+                        state.constant(where, ctjs::StringAttr::get(context, proto.names[in.c]));
+                    callee = ctjs::GetPropertyOp::create(into, where, value_type, receiver, key);
+                } else if (in.code == op::call_computed) {
+                    receiver = reg(in.a);
+                    callee =
+                        ctjs::GetPropertyOp::create(into, where, value_type, receiver, reg(in.c));
+                }
+                llvm::SmallVector<mlir::Value> args;
+                bool reachable = true;
+                for (unsigned i = 0; i < in.b; ++i) {
+                    const auto slot = static_cast<std::uint16_t>(in.a + 1 + i);
+                    if (slot >= state.registers.size()) {
+                        state.give_up(at, in.code, "an argument register is outside the frame");
+                        reachable = false;
+                        break;
+                    }
+                    args.push_back(reg(slot));
+                }
+                if (!reachable) { break; }
+                set(in.a, ctjs::CallOp::create(into, where, value_type, callee, receiver, args));
+                break;
+            }
+            case op::construct: {
+                llvm::SmallVector<mlir::Value> args;
+                bool reachable = true;
+                for (unsigned i = 0; i < in.b; ++i) {
+                    const auto slot = static_cast<std::uint16_t>(in.a + 1 + i);
+                    if (slot >= state.registers.size()) {
+                        state.give_up(at, in.code, "an argument register is outside the frame");
+                        reachable = false;
+                        break;
+                    }
+                    args.push_back(reg(slot));
+                }
+                if (!reachable) { break; }
+                // NEW.TARGET IS THE CALLEE for a plain `new C()`. A super() call
+                // hands a different one along, and that is op::pass_new_target's
+                // business rather than this opcode's.
+                set(in.a,
+                    ctjs::ConstructOp::create(into, where, value_type, reg(in.a), reg(in.a), args));
+                break;
+            }
+            case op::jump_if_not_nullish:
+            case op::jump_if_defined: {
+                mlir::Block * taken = block_at(jump_target(at, in));
+                mlir::Block * fallthrough = block_at(static_cast<std::int64_t>(at) + 1);
+                if (taken == nullptr || fallthrough == nullptr) {
+                    state.give_up(at, in.code, "branch target is not a block leader");
+                    break;
+                }
+                // NOT TRUTHINESS. `jump_if_defined` branches when the value is
+                // not `undefined` - which 0, "" and false all are not - and
+                // `jump_if_not_nullish` when it is neither null nor undefined.
+                // Lowering either through ctjs.truthy would send `x ?? y` down
+                // the wrong arm for every falsy x, which is exactly the bug
+                // optional chaining exists to avoid.
+                const mlir::Value sentinel =
+                    in.code == op::jump_if_defined
+                        ? state.undefined(where)
+                        : state.constant(where, ctjs::NullAttr::get(context));
+                const auto kind = in.code == op::jump_if_defined ? ctjs::CompareKind::StrictEq
+                                                                 : ctjs::CompareKind::Eq;
+                const mlir::Value matches = ctjs::CompareOp::create(
+                    into, where, value_type, ctjs::CompareKindAttr::get(context, kind), reg(in.a),
+                    sentinel);
+                const mlir::Value bit =
+                    ctjs::TruthyOp::create(into, where, into.getI1Type(), matches);
+                const auto operands = state.outgoing();
+                // The comparison is TRUE when the value IS the sentinel, and
+                // both opcodes jump when it is NOT - so the arms are swapped.
+                mlir::cf::CondBranchOp::create(into, where, bit, fallthrough, operands, taken,
+                                               operands);
+                break;
+            }
             case op::jump: {
                 mlir::Block * target = block_at(jump_target(at, in));
                 if (target == nullptr) {
@@ -508,10 +645,10 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 const auto operands = state.outgoing();
                 if (in.code == op::jump_if_true) {
                     mlir::cf::CondBranchOp::create(into, where, bit, taken, operands, fallthrough,
-                                                        operands);
+                                                   operands);
                 } else {
                     mlir::cf::CondBranchOp::create(into, where, bit, fallthrough, operands, taken,
-                                                        operands);
+                                                   operands);
                 }
                 break;
             }
@@ -528,9 +665,7 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 break;
             }
             case op::throw_value: ctjs::ThrowOp::create(into, where, reg(in.a)); break;
-            default:
-                state.give_up(at, in.code, "no CTJS operation for this opcode yet");
-                break;
+            default: state.give_up(at, in.code, "no CTJS operation for this opcode yet"); break;
             }
         }
 
@@ -543,8 +678,8 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                     continue;
                 }
                 into.setInsertionPointToEnd(&block);
-                const mlir::Value returned = ctjs::ConstantOp::create(into, 
-                    into.getUnknownLoc(), value_type, ctjs::UndefinedAttr::get(context));
+                const mlir::Value returned = ctjs::ConstantOp::create(
+                    into, into.getUnknownLoc(), value_type, ctjs::UndefinedAttr::get(context));
                 ctjs::FrameExitOp::create(into, into.getUnknownLoc(), state.frame);
                 ctjs::ReturnOp::create(into, into.getUnknownLoc(), returned);
             }

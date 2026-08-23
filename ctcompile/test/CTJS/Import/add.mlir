@@ -24,7 +24,12 @@ function add(a, b) { return a + b; }
 // FIVE PARAMETERS FOR A TWO-PARAMETER FUNCTION. The first three are the frame
 // properties the bytecode reads with their own opcodes - `this`, `new.target`
 // and the callee - so load_this and its two siblings cost nothing.
-// CHECK-LABEL: ctjs.func @add(
+// THE INDEX IS PART OF THE SYMBOL. ctjs.func is a Symbol and a real program has
+// many functions sharing a name - p5.js has dozens called `constructor`. Without
+// the suffix a 4,000-function module fails to verify on a duplicate symbol,
+// which showed up as ctjs-translate producing no output at all while every
+// individual function verified.
+// CHECK-LABEL: ctjs.func @add$1(
 // CHECK-SAME: %arg0: !ctjs.value, %arg1: !ctjs.value, %arg2: !ctjs.value,
 // CHECK-SAME: %arg3: !ctjs.value, %arg4: !ctjs.value) -> !ctjs.value
 

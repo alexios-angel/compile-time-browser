@@ -73,14 +73,19 @@ def CTJS_LoadUpvalueOp : CTJS_RuntimeOp<"load_upvalue", "ct_aot_cell_get"> {
     throw, and cannot collect. The runtime row agrees - ct_aot_cell_get is
     (0, 0, 0).
   }];
-  let arguments = (ins CTJS_ClosureType:$closure, I32Attr:$index);
+  // THE CLOSURE IS A !ctjs.value, not a !ctjs.closure, and the change is the
+  // importer's doing: the bytecode's get_upvalue reads the CURRENT frame's
+  // closure, which arrives as an ordinary function argument - and ctjs.func
+  // takes only !ctjs.value parameters. A closure is a value at run time; the
+  // distinct type is for the one place that BUILDS one.
+  let arguments = (ins CTJS_ValueType:$closure, I32Attr:$index);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$closure `[` $index `]` attr-dict";
 }
 
 def CTJS_StoreUpvalueOp : CTJS_RuntimeOp<"store_upvalue", "ct_aot_cell_set"> {
   let summary = "Write a captured binding into its cell";
-  let arguments = (ins CTJS_ClosureType:$closure, I32Attr:$index, CTJS_ValueType:$value);
+  let arguments = (ins CTJS_ValueType:$closure, I32Attr:$index, CTJS_ValueType:$value);
   let assemblyFormat = "$closure `[` $index `]` `,` $value attr-dict";
 }
 
@@ -258,6 +263,36 @@ def CTJS_InstanceOfOp
 // Allocation
 //===----------------------------------------------------------------------===//
 
+def CTJS_CreateCellOp
+    : CTJS_RuntimeOp<"create_cell", "ct_aot_cell_new", [CTJS_MayThrow, CTJS_Safepoint]> {
+  let summary = "Box a value so a closure can share it";
+  let description = [{
+    A cell is a box this compiler creates, not anything a page can see. It is
+    what makes a captured `var` shared rather than copied: two closures over the
+    same binding hold the same cell, so one writing it is the other reading it.
+  }];
+  let arguments = (ins CTJS_ValueType:$initial);
+  let results = (outs CTJS_ValueType:$result);
+  let assemblyFormat = "$initial attr-dict";
+}
+
+def CTJS_CellGetOp : CTJS_RuntimeOp<"cell_get", "ct_aot_cell_get"> {
+  let summary = "Read a cell's slot";
+  let description = [{
+    No effects at all, and the runtime row agrees - ct_aot_cell_get is
+    (0, 0, 0). Reading a box cannot run user code, throw, or collect.
+  }];
+  let arguments = (ins CTJS_ValueType:$cell);
+  let results = (outs CTJS_ValueType:$result);
+  let assemblyFormat = "$cell attr-dict";
+}
+
+def CTJS_CellSetOp : CTJS_RuntimeOp<"cell_set", "ct_aot_cell_set"> {
+  let summary = "Write a cell's slot";
+  let arguments = (ins CTJS_ValueType:$cell, CTJS_ValueType:$value);
+  let assemblyFormat = "$cell `,` $value attr-dict";
+}
+
 def CTJS_CreateObjectOp
     : CTJS_RuntimeOp<"create_object", "ct_aot_new_object", [CTJS_MayThrow, CTJS_Safepoint]> {
   let summary = "A fresh empty object";
@@ -271,6 +306,17 @@ def CTJS_CreateArrayOp
   let arguments = (ins Variadic<CTJS_ValueType>:$elements);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "`[` ($elements^)? `]` attr-dict";
+}
+
+def CTJS_AppendOp : CTJS_RuntimeOp<"append", "ct_aot_append", [CTJS_MayThrow, CTJS_Safepoint]> {
+  let summary = "Push one element onto an array literal under construction";
+  let description = [{
+    An array literal is `new_array` followed by one `append` per element, which
+    is how the bytecode builds one - so importing `[a, b]` without this means
+    importing it as an empty array.
+  }];
+  let arguments = (ins CTJS_ValueType:$array, CTJS_ValueType:$element);
+  let assemblyFormat = "$element `to` $array attr-dict";
 }
 
 def CTJS_CreateRegExpOp : CTJS_Op<"create_regexp", [CTJS_MayThrow, CTJS_Safepoint]> {

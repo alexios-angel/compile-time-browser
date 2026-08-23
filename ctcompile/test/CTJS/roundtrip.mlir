@@ -67,10 +67,18 @@ ctjs.func @upvalues(%v: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 
   %program = builtin.unrealized_conversion_cast %v : !ctjs.value to !ctjs.program
   // CHECK: ctjs.create_closure %{{.*}}[3] captures %{{.*}}
   %fn = ctjs.create_closure %program[3] captures %v
+  // CHECK: ctjs.create_cell %{{.*}}
+  %cell = ctjs.create_cell %v
+  // CHECK: ctjs.cell_get %{{.*}}
+  %inside = ctjs.cell_get %cell
+  // CHECK: ctjs.cell_set %{{.*}}, %{{.*}}
+  ctjs.cell_set %cell, %inside
+  // THE CLOSURE OPERAND IS A VALUE, because a frame's own closure arrives as an
+  // ordinary argument and ctjs.func takes only !ctjs.value.
   // CHECK: ctjs.load_upvalue %{{.*}}[0]
-  %up = ctjs.load_upvalue %fn[0]
+  %up = ctjs.load_upvalue %v[0]
   // CHECK: ctjs.store_upvalue %{{.*}}[0], %{{.*}}
-  ctjs.store_upvalue %fn[0], %up
+  ctjs.store_upvalue %v[0], %up
   ctjs.frame_exit %ctx
   ctjs.return %up
 }
@@ -129,6 +137,8 @@ ctjs.func @allocation(%v: !ctjs.value) -> !ctjs.value attributes {upvalue_count 
   %arr = ctjs.create_array [%v]
   // CHECK: ctjs.create_array[]
   %empty = ctjs.create_array []
+  // CHECK: ctjs.append %{{.*}} to %{{.*}}
+  ctjs.append %v to %arr
   // CHECK: ctjs.create_regexp "ab+c", "gi"
   %re = ctjs.create_regexp "ab+c", "gi"
   ctjs.return %obj

@@ -16,7 +16,7 @@ function total(items) {
   return sum;
 }
 
-// CHECK-LABEL: ctjs.func @total(
+// CHECK-LABEL: ctjs.func @total$1(
 
 // THE ENTRY BLOCK BRANCHES INTO THE LOOP HEADER. Bytecode runs off the end of
 // one instruction into the next; an MLIR block does not. Without that branch
