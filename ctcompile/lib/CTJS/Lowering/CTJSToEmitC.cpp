@@ -97,7 +97,9 @@ ec::PointerType pointer_to(mlir::MLIRContext * context, llvm::StringRef spelling
 // qualified. An unqualified call compiles only by argument-dependent lookup off
 // a ct_aot_frame * argument, which the frameless rows do not have. The helper
 // table's `symbol` is the LINKER name and is not this string.
-std::string callee(llvm::StringRef helper) { return ("ctbrowser::aot::" + helper).str(); }
+std::string callee(llvm::StringRef helper) {
+    return ("ctbrowser::aot::" + helper).str();
+}
 
 // A C++ EXPRESSION WITH NO SSA SOURCE - an enumerator, a literal, nullptr.
 mlir::Value literal(mlir::OpBuilder & build, mlir::Location where, mlir::Type type,
@@ -316,8 +318,8 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
         for (unsigned i = 0; i < declared; ++i) {
             const mlir::Value at =
                 literal(build, where, mlir::IntegerType::get(context, 32), std::to_string(i));
-            auto slot = ec::SubscriptOp::create(build, where, element_slot, readable,
-                                                mlir::ValueRange{at});
+            auto slot =
+                ec::SubscriptOp::create(build, where, element_slot, readable, mlir::ValueRange{at});
             parameters.push_back(ec::LoadOp::create(build, where, element, slot.getResult()));
         }
 
@@ -329,11 +331,10 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
         // and converts that to the `void *` the row declares, which needs no
         // subscript, no address-of, and no size_t - and !emitc.size_t emits a
         // bare `size_t` that does not compile.
-        const auto block_type =
-            ec::ArrayType::get({static_cast<std::int64_t>(CT_AOT_FRAME_BYTES)},
-                               opaque(context, "unsigned char"));
-        auto storage = ec::VariableOp::create(build, where, block_type,
-                                              ec::OpaqueAttr::get(context, ""));
+        const auto block_type = ec::ArrayType::get({static_cast<std::int64_t>(CT_AOT_FRAME_BYTES)},
+                                                   opaque(context, "unsigned char"));
+        auto storage =
+            ec::VariableOp::create(build, where, block_type, ec::OpaqueAttr::get(context, ""));
         const mlir::Value registers =
             literal(build, where, u32, std::to_string(entered.getRegCount()));
         auto frame = ec::CallOpaqueOp::create(
@@ -389,17 +390,17 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
         // form is not optional - one compiled body serves both `f()` and
         // `new f()`, so `constructing` has to arrive at run time.
         auto returned = mlir::cast<ReturnOp>(body.getTerminator());
-        const mlir::Value produced =
-            returned.getValue() ? mapping.lookup(returned.getValue()) : undefined(build, where, value);
+        const mlir::Value produced = returned.getValue() ? mapping.lookup(returned.getValue())
+                                                         : undefined(build, where, value);
         auto result = ec::CallOpaqueOp::create(
             build, where, mlir::TypeRange{value}, callee("ct_aot_return_value"),
             mlir::ValueRange{produced, in_receiver, in_constructing});
-        auto destination = ec::DereferenceOp::create(build, where,
-                                                     ec::LValueType::get(value), in_out);
+        auto destination =
+            ec::DereferenceOp::create(build, where, ec::LValueType::get(value), in_out);
         ec::AssignOp::create(build, where, destination, result.getResult(0));
-        ec::ReturnOp::create(
-            build, where,
-            literal(build, where, status, "static_cast<int32_t>(ctbrowser::aot::ct_aot_status::ok)"));
+        ec::ReturnOp::create(build, where,
+                             literal(build, where, status,
+                                     "static_cast<int32_t>(ctbrowser::aot::ct_aot_status::ok)"));
 
         function.erase();
         return true;

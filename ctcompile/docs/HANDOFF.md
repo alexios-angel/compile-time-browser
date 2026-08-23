@@ -484,12 +484,45 @@ the TU just includes `aot.hpp`; `emitc.declare_func` is broken in this LLVM
 (drops parameter types). `--declare-variables-at-top` is mandatory, because the
 NULL test gives every body two blocks.
 
-**Next**: the four ops a trivial function needs — `ctjs.func` → `emitc.func`
-against `ct_aot_entry_fn`, `frame_enter` by hand inside it (its five arguments
-exist only there), `ctjs.return` → `ct_aot_return_value` + `*out =`, and a type
-converter. `!ctjs.value` maps to `!emitc.opaque<"uint64_t">` — **not** `i64`,
-which prints as `int64_t` and fails against `uint64_t *out`, and **not**
-`script::value`, which has a private `bits_` and no conversion.
+**THE PIPELINE IS CONNECTED.** `echo 'function f(a) { return a; }' |
+ctjs-translate | ctjs-opt --ctjs-lower-to-emitc | mlir-translate --mlir-to-cpp`
+produces a translation unit that compiles against the real `aot.hpp`.
+`test/Lowering/EmitC/end-to-end.mlir` runs all four stages and the last one is a
+C++ compiler. The backend can barely do anything - it refuses almost every
+function and records why as `ctjs.not_lowered` - and that is the point: every
+operation added from here is an increment on something that demonstrably works.
+
+**Three runtime facts the backend had to be told, none guessable from the IR:**
+
+* **`argv` dies at `ct_aot_enter`.** It is an interior pointer into
+  `context::registers_` and `enter` resizes that vector. Parameters are read
+  before the call; `ct_aot_slots` cannot recover it, since that hands back the
+  compiled frame's own span rather than the caller's window.
+* **`new.target` and the callee cannot be delivered at all.** The importer
+  prepends three implicit arguments and only `receiver` is in the entry
+  signature. `ct_aot_new_target` and `ct_aot_callee` are declared in `aot.hpp`
+  and **defined nowhere** — a call to either is a link error. Two more gaps sit
+  behind that: `ct_aot_enter` never sets `call_frame::closure`, so `callee`
+  would answer `undefined` anyway, and nothing sets `pending_new_target_` on the
+  compiled `new C()` path.
+* **`--mlir-to-cpp` miscompiles a parallel copy on a block-argument edge** in
+  LLVM 22.1.8 — measured by compiling and running it, see
+  `block-argument-hazard.mlir`. The importer's register file *is* block
+  arguments, so this is every function with a loop that permutes two registers.
+  Non-entry block arguments must become `emitc.variable`, reads before writes.
+  Until that exists the backend refuses any function with more than one block.
+
+**Smaller things worth not rediscovering:** `--declare-variables-at-top` is
+mandatory (EmitC refuses multi-block functions without it) and it declares
+every value at the top, so a `const` local is a build error — the argv pointer
+is cast once instead, because the signature must stay assignable to
+`ct_aot_entry_fn`. `$` in a symbol compiles only as a GCC/Clang extension. And
+`%cxx` in `test/lit.cfg.py` is what makes the compile step available to any
+EmitC test.
+
+**Next**: lower non-entry block arguments to variables, which unlocks every
+function with control flow; then `ctjs.binary` and the out-parameter/status
+pattern, which is the shape most of the remaining 50 operations share.
 
 ## Using subagents
 
