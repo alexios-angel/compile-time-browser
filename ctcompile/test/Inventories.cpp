@@ -13,6 +13,7 @@
 // representation inventory - the layout facts Phase 15's serializer will
 // depend on, written as build errors rather than as prose. It has no runtime
 // surface, so this is the translation unit that makes it fire.
+#include <ctcompile/CTJS/Lowering/RuntimeHelpers.hpp>
 #include <ctcompile/JavaScript/EngineContract.hpp>
 
 // AND THE AOT ABI, expanded HERE the way ctcompile will expand it - which is
@@ -206,6 +207,51 @@ int main() {
           "the external-roots hook must be in the table - AOT frames reach the collector "
           "through it",
           "GCRoots.def");
+
+    // --- EVERY PARAMETER OF EVERY HELPER, CLASSIFIED ----------------------
+    //
+    // THE EXPERIMENT PHASE 10'S DESIGN RESTS ON. The lowering supplies each
+    // helper parameter from somewhere - an operand, the frame, an immediate in
+    // an attribute, or nothing in the IR at all - and doing that with one
+    // pattern instead of fifty means DERIVING which from the ABI rather than
+    // writing a second copy of it beside the first.
+    //
+    // The derivation reads the .def's own parameter text. It is only sound if
+    // every parameter classifies; one that does not would mean a hand-kept
+    // table, which is the thing being avoided. So this asserts the whole table
+    // and prints what it found.
+    for (const helper & h : helpers) {
+        const ctcompile::ctjs::runtime_helper & row =
+            ctcompile::ctjs::runtime_helpers[&h - helpers];
+        for (std::size_t i = 0; i < row.role_count; ++i) {
+            check(row.roles[i] != ctcompile::ctjs::param_role::unknown,
+                  "every ABI parameter must classify - an unclassified one means the roles are a "
+                  "second copy of the ABI rather than a reading of it",
+                  h.name);
+        }
+        check(row.role_count == row.arity, "a helper's role count must equal its arity", h.name);
+    }
+
+    // AND THE ONE THE SIGNATURE CANNOT SHOW. `uint32_t op_kind` is a
+    // ctbrowser::script::op - aot_bridge.cpp does static_cast<op>(op_kind) and
+    // dispatches the interpreter's own switch on it - so a lowering that passed
+    // a CTJS enum ordinal would compile one operator into another. Pinning the
+    // classification is what makes that a build failure rather than an answer
+    // nobody checks.
+    {
+        const ctcompile::ctjs::runtime_helper & binary =
+            ctcompile::ctjs::helper_for(ctbrowser::aot::helper_id::ct_aot_binary_op);
+        check(binary.role_count == 5, "ct_aot_binary_op takes five parameters", "ct_aot_binary_op");
+        check(binary.roles[0] == ctcompile::ctjs::param_role::frame, "the first is the frame",
+              "ct_aot_binary_op");
+        check(binary.roles[1] == ctcompile::ctjs::param_role::opcode,
+              "AND THE SECOND IS AN OPCODE, not a count - a backend must spell it by name",
+              "ct_aot_binary_op");
+        check(binary.roles[2] == ctcompile::ctjs::param_role::operand, "then two values",
+              "ct_aot_binary_op");
+        check(binary.roles[4] == ctcompile::ctjs::param_role::out_value,
+              "and the result comes back through a pointer", "ct_aot_binary_op");
+    }
 
     // --- THE AOT ABI ------------------------------------------------------
     check(std::size(helpers) == ctbrowser::aot::helper_count,

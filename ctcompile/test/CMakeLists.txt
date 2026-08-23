@@ -11,6 +11,9 @@
 # later phases are built on. It also compiles EngineContract.hpp, which is
 # nothing but static_asserts about the engine's layout.
 add_executable(ctcompile-test-inventories Inventories.cpp)
+# THE ROLE CLASSIFIER IS HEADER-ONLY and reads only ctbrowser's ABI table, so
+# this test needs no MLIR - which is the point of the experiment it carries:
+# whether the roles are derivable is answerable before a line of MLIR is written.
 target_link_libraries(ctcompile-test-inventories PRIVATE ctcompile::support)
 ctcompile_target(ctcompile-test-inventories)
 add_test(NAME ctcompile_inventories COMMAND ctcompile-test-inventories)
