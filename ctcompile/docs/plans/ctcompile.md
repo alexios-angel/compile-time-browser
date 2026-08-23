@@ -1331,6 +1331,60 @@ the row asks for an owning immortal pool that does not exist, and
 `o.x` cannot be emitted at all — which is why `ct_aot_get_index`, which needs no
 name, is implemented and `ct_aot_get_prop` is not.
 
+## A whole function, hand-compiled, agreeing with the interpreter
+
+`ct_aot_intern_name` had no runtime target, and every property helper's key is a
+`const ct_aot_name *` — so `o.x` was not expressible and the entire property
+family was blocked. The record **owns its text**, which the row is emphatic
+about: `prehashed_name` is a `{string_view, hash}`, and a pool built out of one
+dangles the moment the characters go away. A compiled body's names come from an
+image that may be mapped or from a literal in generated C++.
+
+With that in place the minimal set a backend needs is complete, so the obvious
+thing was to use it:
+
+```js
+function total(items, scale) {
+  var sum = 0;
+  for (var i = 0; i < items.length; i = i + 1) {
+    sum = sum + scale(items[i].width);
+  }
+  return sum;
+}
+```
+
+Hand-written as a backend would emit it and checked against the interpreter on
+the same source — **which is the shape Phase 12A's oracle will have**. It runs
+under forced GC as well, so every live value crosses a safepoint in a frame slot
+and the pointer is reloaded afterwards.
+
+### It found the safepoint in the wrong place
+
+Phase 4 put the collection at the TOP of `context::invoke`, before the arguments
+are copied into the register window. So `ctx.call(fn, args, this)` collected
+while `args` was still a span the EMBEDDER owned, and any heap argument not
+separately rooted was freed. The first test written against it was a
+heap-use-after-free on its own array, and **the test was right**: the safepoint
+belongs after the copy, where the collector traces every argument, which is also
+where a real collector would run — at the point the frame it is about to enter
+is describable.
+
+### Three things the test got wrong about itself
+
+Worth keeping, because each is a way a differential can look like it is working:
+
+* **Two arms agreeing on NaN agree perfectly.** `is_number()` accepts NaN, and
+  NaN is exactly what this fixture produces if the getter never runs. The answer
+  is pinned at 396 now rather than merely compared against the other arm.
+* **A blinding is worthless if it goes red for the wrong reason.** Deepening the
+  getter until the slot pointer went stale also pushed the widest case past the
+  512-frame guard, so the control arm failed too. Reverted.
+* **One reload is not enforced, and the test says so where it happens.** A probe
+  showed the register file does not reallocate across the property read: it
+  grows geometrically, settles at a high-water mark, and nothing reachable
+  inside the frame guard pushes past it. The reload after the nested CALL is
+  enforced — blinding it is a clean asan use-after-free.
+
 ## The ladder ahead
 
 | phase | what | where |

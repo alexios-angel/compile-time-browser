@@ -8,7 +8,7 @@ committed and green; nothing is pushed.
 
 * Repo: `/mnt/c/Users/aange/Downloads/claude/compile-time-browser`
 * Branch: **`ctcompile-v1`**, working tree clean
-* Suite: **105/105** via `./tools/remote-build.sh`, and **asan 56/56**
+* Suite: **106/106** via `./tools/remote-build.sh`, and **asan 57/57**
 * **`ctcompile/docs/ctcompile.md` is the tool's own documentation** — the CLI,
   what it refuses and why, the manifest, and the gaps.
 * **Read `ctcompile/docs/plans/ctcompile.md` first** — it is the running plan in
@@ -62,8 +62,16 @@ primary backend, sources are in `lib/`, build on the devbox.
   in code this phase wrote — see the plan. `ct_aot_slots` is the ABI row a body
   needs to keep a value where the collector can see it, and `context::rooted` is
   the general "a C++ scope is holding this across a call" mechanism.
-* **Phase 5** — in progress, and further than it looks. **26 of the ABI's 69
-  rows have bodies** (was 4). Two real extractions with the plan's discipline —
+* **A WHOLE FUNCTION RUNS THROUGH THE ABI.** `unittests/unit/aot_program`
+  hand-compiles `total(items, scale)` — a loop, an interned name, a property
+  read through a getter, an indexed read, a comparison, both binary families, a
+  call back into the interpreter, the failure poll — and checks it against the
+  interpreter running the same source, including under forced GC. **That is the
+  Phase 12A oracle's shape, working on one function.** It also found the
+  safepoint in `context::invoke` sitting before arguments were rooted.
+* **Phase 5** — in progress, and further than it looks. **29 of the ABI's 69
+  rows have bodies** (was 4), including the interned-name pool the whole
+  property family was blocked on. Two real extractions with the plan's discipline —
   `context::binary_op_static` and `context::binary_op`, the fourteen binary
   operations, one commit each with the suite green — and sixteen rows that
   needed no extraction, only a shim over a function the runtime already had.
