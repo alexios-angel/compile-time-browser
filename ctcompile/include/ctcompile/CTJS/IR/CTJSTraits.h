@@ -36,4 +36,20 @@ class CTJSSafepoint : public mlir::OpTrait::TraitBase<ConcreteType, CTJSSafepoin
 template <typename ConcreteType>
 class CTJSMaySuspend : public mlir::OpTrait::TraitBase<ConcreteType, CTJSMaySuspend> {};
 
+/// Whether an operation's ODS declaration matches the ABI row it names -
+/// operand count, result count, the return register's type, and the attributes
+/// that have to correspond to parameters with no SSA source. Implemented in
+/// CTJSABIShape.cpp, which explains the four operations it found wrong.
+mlir::LogicalResult verifyABIShape(mlir::Operation * op);
+
+/// THE SHAPE CHECK, ON THE BASE CLASS SO NO OPERATION CAN OMIT IT. Attached by
+/// CTJS_RuntimeOp rather than written per operation: a per-operation verifier
+/// is one chance per operation to leave it out, and an operation added
+/// tomorrow would be added without one.
+template <typename ConcreteType>
+class CTJSABIShaped : public mlir::OpTrait::TraitBase<ConcreteType, CTJSABIShaped> {
+public:
+    static mlir::LogicalResult verifyTrait(mlir::Operation * op) { return verifyABIShape(op); }
+};
+
 } // namespace ctcompile::ctjs

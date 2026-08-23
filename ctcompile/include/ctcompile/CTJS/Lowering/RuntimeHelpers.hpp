@@ -20,6 +20,17 @@
 
 namespace ctcompile::ctjs {
 
+// A PREFIX TEST THAT DOES NOT NEED C++20.
+//
+// std::string_view::starts_with would be the obvious spelling and this header
+// cannot use it: CTJSDialect is built by add_mlir_library, which compiles at
+// MLIR's own language standard rather than this project's, and the same header
+// is read from a C++23 test. One four-line function is cheaper than making the
+// two agree, and keeps the table readable from anywhere.
+[[nodiscard]] constexpr bool begins(std::string_view text, std::string_view prefix) {
+    return text.size() >= prefix.size() && text.substr(0, prefix.size()) == prefix;
+}
+
 // WHAT ONE ABI PARAMETER IS FOR.
 //
 // The lowering has to supply every parameter of a helper, and they do not all
@@ -150,23 +161,22 @@ struct runtime_helper {
     while (split > 0 && one[split - 1] != ' ' && one[split - 1] != '*') { --split; }
     const std::string_view name = one.substr(split);
 
-    if (one.starts_with("struct ct_aot_frame *")) { return param_role::frame; }
-    if (one.starts_with("struct ct_aot_ctx *")) { return param_role::context; }
-    if (one.starts_with("const struct ct_aot_name *")) { return param_role::name; }
-    if (one.starts_with("const struct ct_aot_site *")) { return param_role::site; }
-    if (one.starts_with("struct ct_aot_ic *")) { return param_role::cache; }
-    if (one.starts_with("void *")) { return param_role::storage; }
-    if (one.starts_with("const uint64_t *")) { return param_role::values; }
-    if (one.starts_with("const char **")) { return param_role::out_other; }
-    if (one.starts_with("const char *")) { return param_role::text; }
-    if (one.starts_with("uint64_t *")) { return param_role::out_value; }
-    if (one.starts_with("uint32_t *") || one.starts_with("int32_t *") ||
-        one.starts_with("double *")) {
+    if (begins(one, "struct ct_aot_frame *")) { return param_role::frame; }
+    if (begins(one, "struct ct_aot_ctx *")) { return param_role::context; }
+    if (begins(one, "const struct ct_aot_name *")) { return param_role::name; }
+    if (begins(one, "const struct ct_aot_site *")) { return param_role::site; }
+    if (begins(one, "struct ct_aot_ic *")) { return param_role::cache; }
+    if (begins(one, "void *")) { return param_role::storage; }
+    if (begins(one, "const uint64_t *")) { return param_role::values; }
+    if (begins(one, "const char **")) { return param_role::out_other; }
+    if (begins(one, "const char *")) { return param_role::text; }
+    if (begins(one, "uint64_t *")) { return param_role::out_value; }
+    if (begins(one, "uint32_t *") || begins(one, "int32_t *") || begins(one, "double *")) {
         return param_role::out_other;
     }
-    if (one.starts_with("uint64_t")) { return param_role::operand; }
-    if (one.starts_with("double")) { return param_role::number; }
-    if (one.starts_with("uint32_t")) {
+    if (begins(one, "uint64_t")) { return param_role::operand; }
+    if (begins(one, "double")) { return param_role::number; }
+    if (begins(one, "uint32_t")) {
         // THE AMBIGUOUS ONE, RESOLVED BY NAME. Every uint32_t in the table is
         // an opcode or an immediate integer, and only its name says which.
         if (name == "op_kind" || name == "opcode") { return param_role::opcode; }
@@ -234,9 +244,9 @@ struct runtime_helper {
     if (ret == "uint64_t") { return return_role::value; }
     if (ret == "uint32_t") { return return_role::data; }
     if (ret == "double") { return return_role::number; }
-    if (ret.starts_with("struct ct_aot_frame *")) { return return_role::frame; }
-    if (ret.starts_with("uint64_t *")) { return return_role::values; }
-    if (ret.starts_with("const struct ct_aot_name *")) { return return_role::name; }
+    if (begins(ret, "struct ct_aot_frame *")) { return return_role::frame; }
+    if (begins(ret, "uint64_t *")) { return return_role::values; }
+    if (begins(ret, "const struct ct_aot_name *")) { return return_role::name; }
     return return_role::unknown;
 }
 

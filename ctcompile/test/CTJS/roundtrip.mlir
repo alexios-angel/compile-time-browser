@@ -91,8 +91,11 @@ ctjs.func @properties(%obj: !ctjs.value, %key: !ctjs.value) -> !ctjs.value
   %read = ctjs.get_property %obj[%key]
   // CHECK: ctjs.set_property %{{.*}}[%{{.*}}], %{{.*}}
   ctjs.set_property %obj[%key], %read
+  // NO RESULT: ct_aot_delete_index answers with a ct_aot_status, and the
+  // bytecode loads `true` as a separate step. Declaring a !ctjs.value here
+  // made `delete o[k]` evaluate to the status, whose `ok` is 3.
   // CHECK: ctjs.delete_property %{{.*}}[%{{.*}}]
-  %gone = ctjs.delete_property %obj[%key]
+  ctjs.delete_property %obj[%key]
   // CHECK: ctjs.has_property %{{.*}} in %{{.*}}
   %has = ctjs.has_property %key in %obj
   ctjs.return %has
@@ -123,9 +126,13 @@ ctjs.func @operators(%a: !ctjs.value, %b: !ctjs.value) -> !ctjs.value
   // THE BRIDGE TO A BRANCH: an i1, not a JavaScript boolean.
   // CHECK: ctjs.truthy %{{.*}}
   %bit = ctjs.truthy %a
+  // AN i1: ct_aot_instance_of returns a uint32_t 0 or 1. As a !ctjs.value it
+  // would have been value::from_bits(1) - a subnormal double.
   // CHECK: ctjs.instanceof %{{.*}}, %{{.*}}
   %isa = ctjs.instanceof %a, %b
-  ctjs.return %isa
+  // BOTH PREDICATES ARE i1 AND NEITHER IS RETURNABLE AS A VALUE, which is the
+  // point: boxing is a separate step the front end asks for when it needs one.
+  ctjs.return %a
 }
 
 // ---- allocation ------------------------------------------------------------

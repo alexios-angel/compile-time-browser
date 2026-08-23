@@ -65,13 +65,28 @@ def CTJS_StoreGlobalOp : CTJS_RuntimeOp<"store_global", "ct_aot_global_set", CTJ
   let assemblyFormat = "$name `,` $value attr-dict";
 }
 
-def CTJS_LoadUpvalueOp : CTJS_RuntimeOp<"load_upvalue", "ct_aot_cell_get"> {
+def CTJS_LoadUpvalueOp : CTJS_Op<"load_upvalue"> {
   let summary = "Read a captured binding out of its cell";
   let description = [{
+    NOT a CTJS_RuntimeOp, and that is a correction. It named ct_aot_cell_get,
+    whose only parameter is `(uint64_t cell)` - so the $index went nowhere.
+    The lowering matched on arity, passed the closure where the CELL belongs,
+    and dropped the index in silence; ct_aot_cell_get "no-ops on a non-cell",
+    so every read of a captured variable would have compiled to `undefined`
+    rather than to a failure anybody could see.
+
+    IT IS TWO CALLS, which is why no single helper can be named here - the
+    same reason ctjs.unary and ctjs.compare are not CTJS_RuntimeOps.
+    aot_helpers.def:568-586 spells the decomposition out: get_upvalue is
+    ct_aot_upvalue_cell(fr, index), which reads call_frame::closure from the
+    FRAME rather than from any operand, and then ct_aot_cell_get on what that
+    returns. "Pairing it with ct_aot_cell_get/ct_aot_cell_set reproduces the
+    fused opcodes."
+
     NO GENERIC EFFECTS, which is unusual here and is justified: a cell is a
     box this compiler created, reading one cannot run user code, cannot
-    throw, and cannot collect. The runtime row agrees - ct_aot_cell_get is
-    (0, 0, 0).
+    throw, and cannot collect. Both runtime rows agree - ct_aot_upvalue_cell
+    and ct_aot_cell_get are (0, 0, 0).
   }];
   // THE CLOSURE IS A !ctjs.value, not a !ctjs.closure, and the change is the
   // importer's doing: the bytecode's get_upvalue reads the CURRENT frame's
@@ -83,8 +98,14 @@ def CTJS_LoadUpvalueOp : CTJS_RuntimeOp<"load_upvalue", "ct_aot_cell_get"> {
   let assemblyFormat = "$closure `[` $index `]` attr-dict";
 }
 
-def CTJS_StoreUpvalueOp : CTJS_RuntimeOp<"store_upvalue", "ct_aot_cell_set"> {
+def CTJS_StoreUpvalueOp : CTJS_Op<"store_upvalue"> {
   let summary = "Write a captured binding into its cell";
+  let description = [{
+    NOT a CTJS_RuntimeOp, for the same reason as ctjs.load_upvalue and with
+    the same consequence reversed: it named ct_aot_cell_set, the index went
+    nowhere, and the write landed on whatever the closure value was - which
+    cell_set no-ops on. A captured variable would never have been updated.
+  }];
   let arguments = (ins CTJS_ValueType:$closure, I32Attr:$index, CTJS_ValueType:$value);
   let assemblyFormat = "$closure `[` $index `]` `,` $value attr-dict";
 }
@@ -143,8 +164,18 @@ def CTJS_SetPropertyOp : CTJS_RuntimeOp<"set_property", "ct_aot_set_index", CTJS
 def CTJS_DeletePropertyOp
     : CTJS_RuntimeOp<"delete_property", "ct_aot_delete_index", CTJS_GenericEffects> {
   let summary = "`delete obj[key]`";
+  let description = [{
+    NO RESULT, WHICH IS A CORRECTION. This declared a !ctjs.value result
+    against ct_aot_delete_index, whose int32_t is a ct_aot_status - so
+    `delete o[k]` would have evaluated to the STATUS, and `ok` is 3.
+
+    The helper has no out-parameter and the .def says why: "No out-parameter -
+    same separate load-true as delete_prop". The bytecode performs the delete
+    and then loads `true` as a separate step, because ECMAScript's `delete`
+    yields true in every case this runtime can reach. A front end that wants
+    the value materialises it; the call does not carry one.
+  }];
   let arguments = (ins CTJS_ValueType:$object, CTJS_ValueType:$key);
-  let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$object `[` $key `]` attr-dict";
 }
 
@@ -268,8 +299,20 @@ def CTJS_TruthyOp : CTJS_RuntimeOp<"truthy", "ct_aot_truthy", [Pure]> {
 def CTJS_InstanceOfOp
     : CTJS_RuntimeOp<"instanceof", "ct_aot_instance_of", CTJS_GenericEffects> {
   let summary = "`object instanceof constructor`";
+  let description = [{
+    AN i1, NOT A !ctjs.value, AND THAT IS A CORRECTION. ct_aot_instance_of
+    returns a uint32_t that is 0 or 1 - the .def puts it in the raise tier and
+    has it "return its boolean" rather than a status. Declared as a
+    !ctjs.value, `x instanceof C` would have produced value::from_bits(1): a
+    subnormal double, not value::boolean(true), and every later pass would have
+    been right to believe the type.
+
+    Boxing it is the front end's job, one ctjs.constant away, and keeping the
+    raw predicate is what lets `if (x instanceof C)` branch without boxing at
+    all.
+  }];
   let arguments = (ins CTJS_ValueType:$object, CTJS_ValueType:$constructor);
-  let results = (outs CTJS_ValueType:$result);
+  let results = (outs I1:$result);
   let assemblyFormat = "$object `,` $constructor attr-dict";
 }
 

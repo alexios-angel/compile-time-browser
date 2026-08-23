@@ -87,6 +87,11 @@ def CTJS_MayReenterJS : CTJS_NativeOpTrait<"CTJSMayReenterJS">;
 def CTJS_Safepoint : CTJS_NativeOpTrait<"CTJSSafepoint">;
 def CTJS_MaySuspend : CTJS_NativeOpTrait<"CTJSMaySuspend">;
 
+// AND THE SHAPE CHECK, which is not a semantic trait but travels the same way.
+// CTJS_RuntimeOp attaches it below, so every operation naming a helper has its
+// declaration compared against that helper's row. See CTJSABIShape.cpp.
+def CTJS_ABIShaped : CTJS_NativeOpTrait<"CTJSABIShaped">;
+
 // The common case for a generic JavaScript operation.
 //
 // EFFECTS ARE OPT-IN TO PURITY, NEVER OPT-OUT, which is the policy's heading
@@ -111,7 +116,8 @@ defvar CTJS_GenericEffects = [CTJS_MayThrow, CTJS_MayReenterJS, CTJS_Safepoint];
 // the ABI: an operation cannot claim a helper the runtime does not declare.
 class CTJS_RuntimeOp<string mnemonic, string helper, list<Trait> traits = []>
     : CTJS_Op<mnemonic, traits # [
-        DeclareOpInterfaceMethods<CTJS_RuntimeCallOpInterface>]> {
+        DeclareOpInterfaceMethods<CTJS_RuntimeCallOpInterface>,
+        CTJS_ABIShaped]> {
   let extraClassDefinition = [{
     ::ctbrowser::aot::helper_id $cppClass::getHelperID() {
       return ::ctbrowser::aot::helper_id::}] # helper # [{;

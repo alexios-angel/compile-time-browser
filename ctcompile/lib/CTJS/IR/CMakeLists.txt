@@ -6,6 +6,7 @@
 # MLIRCTJSOpsIncGen carries the MLIR prefix because add_mlir_dialect creates it;
 # the three hand-written targets do not.
 add_mlir_library(CTJSDialect
+  CTJSABIShape.cpp
   CTJSAttrs.cpp
   CTJSInterfaces.cpp
   CTJSDialect.cpp
