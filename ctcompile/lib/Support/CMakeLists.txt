@@ -55,6 +55,7 @@ if(CTCOMPILE_ENABLE_MLIR)
       MLIRIR
       MLIRArithDialect
       MLIRControlFlowDialect
-      MLIRFuncDialect)
+      MLIRFuncDialect
+      MLIREmitCDialect)
   add_library(ctcompile::mlir-support ALIAS ctcompile-mlir-support)
 endif()

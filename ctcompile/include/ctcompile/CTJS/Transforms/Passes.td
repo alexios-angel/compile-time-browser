@@ -51,4 +51,25 @@ def CTJSLowerToEmitC : Pass<"ctjs-lower-to-emitc", "mlir::ModuleOp"> {
   let dependentDialects = ["::mlir::emitc::EmitCDialect", "::mlir::cf::ControlFlowDialect"];
 }
 
+def EmitCEliminateBlockArguments
+    : Pass<"emitc-eliminate-block-arguments", "mlir::ModuleOp"> {
+  let summary = "Replace non-entry block arguments with EmitC variables";
+  let description = [{
+    BECAUSE THE C++ EMITTER LOSES A COPY on a block-argument edge. It
+    serialises the parallel copy one assignment at a time with no temporaries,
+    so an edge whose new value for one block argument is another block argument
+    of the same block reads a destination already overwritten.
+    test/Lowering/EmitC/block-argument-hazard.mlir compiles and RUNS that
+    miscompile.
+
+    Not a workaround - the lowering. Each block argument becomes an
+    emitc.variable declared in the entry block, read at the top of its block and
+    written on each incoming edge, so every read precedes every write.
+
+    THE ENTRY BLOCK IS LEFT ALONE: its arguments are the function's C++
+    parameters, no edge writes them, and the hazard cannot reach them.
+  }];
+  let dependentDialects = ["::mlir::emitc::EmitCDialect", "::mlir::cf::ControlFlowDialect"];
+}
+
 #endif // CTCOMPILE_CTJS_PASSES

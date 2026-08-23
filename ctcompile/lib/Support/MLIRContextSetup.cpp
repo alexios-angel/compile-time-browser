@@ -4,6 +4,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
+#include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/DialectRegistry.h"
 
@@ -19,6 +20,13 @@ void registerCTCompileDialects(mlir::DialectRegistry & registry) {
     registry.insert<mlir::func::FuncDialect>();
     registry.insert<mlir::cf::ControlFlowDialect>();
     registry.insert<mlir::arith::ArithDialect>();
+    // AND EmitC, WHICH IS THE PRIMARY BACKEND'S OUTPUT. It is registered for
+    // PARSING, not only for the pass that produces it: a pass declaring it as a
+    // dependent dialect gets it loaded when the pass runs, which is too late
+    // for ctjs-opt to read a file that already contains emitc operations. That
+    // is exactly what a lit test of --emitc-eliminate-block-arguments does, and
+    // without this it fails with "Dialect `emitc' not found".
+    registry.insert<mlir::emitc::EmitCDialect>();
     // WHAT IS NOT HERE: the LLVM dialect and its translation registrations,
     // which Phase 7's deliverable list names. They belong to the SECOND backend
     // (Phases 11-12A), and registering them now would link LLVM's translation

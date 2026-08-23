@@ -43,6 +43,21 @@ llvm_config.add_tool_substitutions(["mlir-translate"], [config.llvm_tools_dir])
 # vocabulary - not whether it links. A backend that emits plausible C++ against
 # a signature it invented is exactly the failure this project keeps meeting,
 # and the host compiler catches it for nothing.
+# %cxx_exe BUILDS AND LINKS, for the tests that have to RUN the emitted code.
+#
+# Syntax alone cannot settle a miscompile. The C++ emitter loses a copy on a
+# block-argument edge - it produces code that compiles perfectly and returns the
+# wrong number - so the test for the pass that fixes it compiles the output,
+# runs it, and lets the program's own exit status be the assertion.
+#
+# IT IS REGISTERED BEFORE %cxx AND THAT ORDER IS LOAD-BEARING. lit walks this
+# list and replaces the first pattern that matches, and "%cxx" matches the start
+# of "%cxx_exe" - registered the other way round, `%cxx_exe file.cpp` expands to
+# `<compiler> -fsyntax-only ... _exe file.cpp`, which fails with a message about
+# a file called "_exe" rather than about the order of this list.
+config.substitutions.append(
+    ("%cxx_exe", f"{config.host_cxx} -std=c++23 -I {config.ctbrowser_include}"))
+
 config.substitutions.append(
     ("%cxx",
      f"{config.host_cxx} -std=c++23 -fsyntax-only -I {config.ctbrowser_include}"))

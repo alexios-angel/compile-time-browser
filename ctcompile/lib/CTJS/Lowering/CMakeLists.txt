@@ -1,6 +1,9 @@
 # The lowering, as an ordinary library for the reason the importer is one: it is
 # hand-written C++ and generates nothing.
-add_library(ctcompile-ctjs-lowering CTJSToEmitC.cpp CTJSToRuntime.cpp)
+add_library(ctcompile-ctjs-lowering
+  CTJSToEmitC.cpp
+  CTJSToRuntime.cpp
+  EmitCBlockArguments.cpp)
 ctcompile_target(ctcompile-ctjs-lowering)
 add_dependencies(ctcompile-ctjs-lowering MLIRCTJSOpsIncGen CTJSTransformsPassIncGen)
 
