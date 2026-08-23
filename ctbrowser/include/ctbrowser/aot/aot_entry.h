@@ -34,6 +34,24 @@
 // with it before it has seen a single C++ declaration.
 #define CT_AOT_FRAME_BYTES 64
 
+// WHICH BIT OF call_frame::ip MARKS A LANDED CATCH, and the measurement that
+// picks it. Phase 6.
+//
+// aot.hpp records this as a gap on purpose: "inventing either here would freeze
+// a choice with no measurement behind it into a header two backends will read".
+// The measurement is now available and it is arithmetic rather than a
+// benchmark. `ip` is a std::size_t index into a function's bytecode; the image
+// writer refuses a program long before 2^32 instructions, and 2^63 of them
+// would be 74 exabytes of eight-byte instructions. The top bit cannot collide
+// with a real ip, and it does not narrow the field a real ip may use.
+//
+// It marks an AOT frame whose handler has just fired: unwind_to_handler assigns
+// `ip` from `handler::address`, which for a compiled frame is the body's own
+// PAD ID with this bit set - so the same four steps that resume the interpreter
+// at a catch block hand a compiled body its landing pad, with no change to the
+// unwinder at all.
+#define CT_AOT_PAD_BIT (((uint64_t)1) << 63)
+
 namespace ctbrowser::aot {
 
 extern "C" {

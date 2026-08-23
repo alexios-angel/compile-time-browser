@@ -89,7 +89,9 @@ extern "C" std::int32_t compiled_total(ctbrowser::aot::ct_aot_ctx * ctx,
     alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
     ctbrowser::aot::ct_aot_frame * frame =
         ctbrowser::aot::ct_aot_enter(ctx, site, slot_count, receiver, storage);
-    if (frame == nullptr) { return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed); }
+    if (frame == nullptr) {
+        return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed);
+    }
 
     const auto leave_with = [&](ctbrowser::aot::ct_aot_status status) {
         // UNWOUND MEANS THE FRAME IS ALREADY GONE, so leaving again would pop
@@ -117,9 +119,9 @@ extern "C" std::int32_t compiled_total(ctbrowser::aot::ct_aot_ctx * ctx,
 
     {
         std::uint64_t length = value::undefined().bits();
-        const auto status = static_cast<ctbrowser::aot::ct_aot_status>(
-            ctbrowser::aot::ct_aot_get_prop(frame, slots[slot_items], name_length, nullptr,
-                                            &length));
+        const auto status =
+            static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_get_prop(
+                frame, slots[slot_items], name_length, nullptr, &length));
         if (status != ctbrowser::aot::ct_aot_status::ok) { return leave_with(status); }
         // RELOADED, AND THIS ONE IS NOT PROVEN. Removing it leaves this test
         // green, and the reason is measurable rather than mysterious: a probe
@@ -145,9 +147,9 @@ extern "C" std::int32_t compiled_total(ctbrowser::aot::ct_aot_ctx * ctx,
         // makes `for (i = 0; i < NaN; ...)` run zero times.
         std::int32_t ordering = 0;
         {
-            const auto status = static_cast<ctbrowser::aot::ct_aot_status>(
-                ctbrowser::aot::ct_aot_compare(frame, slots[slot_index], slots[slot_length],
-                                               &ordering));
+            const auto status =
+                static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_compare(
+                    frame, slots[slot_index], slots[slot_length], &ordering));
             if (status != ctbrowser::aot::ct_aot_status::ok) { return leave_with(status); }
             slots = ctbrowser::aot::ct_aot_slots(frame);
         }
@@ -156,9 +158,9 @@ extern "C" std::int32_t compiled_total(ctbrowser::aot::ct_aot_ctx * ctx,
         // items[i]
         {
             std::uint64_t element = value::undefined().bits();
-            const auto status = static_cast<ctbrowser::aot::ct_aot_status>(
-                ctbrowser::aot::ct_aot_get_index(frame, slots[slot_items], slots[slot_index],
-                                                 nullptr, &element));
+            const auto status =
+                static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_get_index(
+                    frame, slots[slot_items], slots[slot_index], nullptr, &element));
             if (status != ctbrowser::aot::ct_aot_status::ok) { return leave_with(status); }
             slots = ctbrowser::aot::ct_aot_slots(frame);
             slots[slot_element] = element;
@@ -167,9 +169,9 @@ extern "C" std::int32_t compiled_total(ctbrowser::aot::ct_aot_ctx * ctx,
         // .width
         std::uint64_t width = value::undefined().bits();
         {
-            const auto status = static_cast<ctbrowser::aot::ct_aot_status>(
-                ctbrowser::aot::ct_aot_get_prop(frame, slots[slot_element], name_width, nullptr,
-                                                &width));
+            const auto status =
+                static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_get_prop(
+                    frame, slots[slot_element], name_width, nullptr, &width));
             if (status != ctbrowser::aot::ct_aot_status::ok) { return leave_with(status); }
             slots = ctbrowser::aot::ct_aot_slots(frame);
         }
@@ -192,8 +194,8 @@ extern "C" std::int32_t compiled_total(ctbrowser::aot::ct_aot_ctx * ctx,
         // are not provably numbers.
         {
             std::uint64_t sum = value::undefined().bits();
-            const auto status = static_cast<ctbrowser::aot::ct_aot_status>(
-                ctbrowser::aot::ct_aot_binary_op(
+            const auto status =
+                static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_binary_op(
                     frame, static_cast<std::uint32_t>(ctbrowser::script::op::add_generic),
                     slots[slot_sum], scaled, &sum));
             if (status != ctbrowser::aot::ct_aot_status::ok) { return leave_with(status); }
@@ -205,8 +207,8 @@ extern "C" std::int32_t compiled_total(ctbrowser::aot::ct_aot_ctx * ctx,
         // body produced, so nothing here can run user code.
         {
             std::uint64_t next = value::undefined().bits();
-            const auto status = static_cast<ctbrowser::aot::ct_aot_status>(
-                ctbrowser::aot::ct_aot_binary_op_static(
+            const auto status =
+                static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_binary_op_static(
                     frame, static_cast<std::uint32_t>(ctbrowser::script::op::add),
                     slots[slot_index], value::number(1).bits(), &next));
             if (status != ctbrowser::aot::ct_aot_status::ok) { return leave_with(status); }
@@ -265,8 +267,7 @@ constexpr std::string_view source =
 
 // Run `total(items)` on a context, with the function either interpreted or
 // stamped with the hand-compiled body.
-[[nodiscard]] value run_total(bool stamp, int count, bool stress, std::size_t & calls,
-                              bool & ok) {
+[[nodiscard]] value run_total(bool stamp, int count, bool stress, std::size_t & calls, bool & ok) {
     program compiled = ctbrowser::script::compiler::compile(source);
     if (!compiled.ok) {
         ok = false;

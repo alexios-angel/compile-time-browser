@@ -977,6 +977,19 @@ private:
         // back to it, so a handler in a caller cannot be caught by a callee.
         std::size_t handler_base = 0;
 
+        // WHERE THE THROWN VALUE WAS JUST PUT, recorded by unwind_to_handler at
+        // the moment it writes. Phase 6, and it exists for compiled frames.
+        //
+        // The interpreter never needs it: its catch block was compiled with the
+        // register baked into the instruction at `address`, so resuming at that
+        // address is enough. A compiled body has no bytecode to resume into -
+        // it asks ct_aot_catch_land where the value went, and the handler that
+        // knew has already been POPPED by the search. Two bytes on the frame is
+        // the whole of the fix, and it keeps ct_aot_catch_land's signature the
+        // one the ABI table declares, which two code generators are written
+        // against.
+        std::uint16_t landed_slot = 0;
+
         // `new.target`: the constructor this frame was entered with, or
         // undefined for an ordinary call. It is a VALUE rather than a flag
         // because it PROPAGATES - a base constructor reached through super()
@@ -1074,6 +1087,9 @@ private:
             target.ip = h.address;
             if (registers_.size() < h.reg_top) { registers_.resize(h.reg_top, value::undefined()); }
             registers_[target.base + h.slot] = thrown_;
+            // AND WHICH SLOT THAT WAS. The handler carrying it has already been
+            // popped above, so this is the last moment anything knows.
+            target.landed_slot = h.slot;
             thrown_ = value::undefined();
             return true;
         }

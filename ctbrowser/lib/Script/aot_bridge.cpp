@@ -409,6 +409,84 @@ struct aot_bridge {
         held.~aot_frame_storage();
     }
 
+    // ---- THE THROWING TIER. Phase 6. ------------------------------------
+    //
+    // Phase 2 declared ct_aot_catch_land unimplementable as written, having
+    // tried: it says to read back registers_[base + handler::slot], and
+    // unwind_to_handler POPS the handler before it writes, so by the time a
+    // compiled body could ask, which register the value went into is
+    // unknowable. The row wrote down two possible fixes and took neither,
+    // because "taking one without a compiled `try` to test it would be
+    // inventing on no evidence".
+    //
+    // There is a compiled `try` now - unittests/unit/aot_throw - and the fix
+    // taken is neither of the two: call_frame RECORDS the slot at the moment
+    // unwind_to_handler writes it. The row's second option, adding the slot to
+    // this helper's parameters, would have changed a signature two code
+    // generators are written against to avoid two bytes on a frame.
+
+    // ct_aot_handler_push. The pad id is the body's own label, carried in
+    // handler::address with CT_AOT_PAD_BIT set - so unwind_to_handler's
+    // `target.ip = h.address` hands a compiled body its landing pad using the
+    // same four steps that resume the interpreter at a catch block. No change
+    // to the unwinder.
+    static void handler_push(aot::ct_aot_frame * f, std::uint32_t pad, std::uint32_t slot) {
+        aot_frame_storage & held = frame_of(f);
+        context & cx = *held.ctx;
+        cx.handlers_.push_back(
+            context::handler{held.frame_index, static_cast<std::size_t>(pad) | CT_AOT_PAD_BIT,
+                             cx.registers_.size(), static_cast<std::uint16_t>(slot)});
+    }
+
+    // ct_aot_handler_pop. Pops the GLOBALLY innermost handler without
+    // consulting handler_base, exactly as op::pop_handler does - so a
+    // mis-balanced emission drops a CALLER's catch and nothing reports it.
+    // Balance is a compiler invariant; `fr` is carried so this can say so.
+    static void handler_pop(aot::ct_aot_frame * f) {
+        aot_frame_storage & held = frame_of(f);
+        context & cx = *held.ctx;
+        if (cx.handlers_.empty()) { return; }
+        // NOT AN ASSERT, because this is also reachable from an image: a body
+        // popping a handler it did not push is a broken image rather than a
+        // broken runtime, and refusing is better than corrupting a caller's.
+        if (cx.handlers_.back().frame != held.frame_index) { return; }
+        cx.handlers_.pop_back();
+    }
+
+    // ct_aot_throw. The row: `thrown_ = v; if (!unwind_to_handler()) raise(...)`
+    // and then ct_aot_check for the status, so this classifies identically to
+    // every other throwing helper. It never returns OK.
+    static std::int32_t throw_value(aot::ct_aot_frame * f, std::uint64_t thrown) {
+        aot_frame_storage & held = frame_of(f);
+        context & cx = *held.ctx;
+        cx.thrown_ = value::from_bits(thrown);
+        if (!cx.unwind_to_handler()) {
+            // NOTHING CAUGHT IT. unwind_to_handler pops as it SEARCHES, so
+            // handlers_ is empty and thrown_ is still set - which is what keeps
+            // the object alive while its own toString runs inside describe.
+            cx.raise("uncaught " + cx.describe_thrown(cx.thrown_));
+        }
+        return check(f);
+    }
+
+    // ct_aot_catch_land. A pure READ of what unwind_to_handler deposited: the
+    // pad id from `ip`, and the value from the slot the frame recorded.
+    static std::uint32_t catch_land(aot::ct_aot_frame * f, std::uint64_t * out_thrown) {
+        aot_frame_storage & held = frame_of(f);
+        context & cx = *held.ctx;
+        if (held.frame_index >= cx.frames_.size()) {
+            *out_thrown = value::undefined().bits();
+            return 0;
+        }
+        context::call_frame & frame = cx.frames_[held.frame_index];
+        const auto pad = static_cast<std::uint32_t>(frame.ip & ~CT_AOT_PAD_BIT);
+        // CLEARED, so a second call is not a second catch. The row asks for
+        // exactly this and calls it "a debug assert rather than a second catch".
+        frame.ip = 0;
+        *out_thrown = cx.registers_[frame.base + frame.landed_slot].bits();
+        return pad;
+    }
+
     // ct_aot_check. The row's precedence, in its order and for its reasons:
     // unwound FIRST because the call_frame is destroyed and every later test
     // would dereference it; failed BEFORE caught because the run loop's own head
@@ -421,14 +499,14 @@ struct aot_bridge {
             return static_cast<std::int32_t>(aot::ct_aot_status::unwound);
         }
         if (cx.failed_) { return static_cast<std::int32_t>(aot::ct_aot_status::failed); }
-        // CAUGHT IS NOT DETECTABLE HERE YET. The row tests CT_AOT_PAD_BIT in
-        // call_frame::ip, and no compiled body can set it because
-        // ct_aot_catch_land - the row that would consume it - cannot be written
-        // against this runtime at all: unwind_to_handler pops the handler before
-        // it writes, and call_frame records no landing slot, so the register the
-        // thrown value went into is unknowable by the time a body could ask.
-        // See aot_helpers.def. Until that row is fixed, no frame is ever CAUGHT,
-        // and saying so here is better than a test that cannot fire.
+        // AND CAUGHT, which this could not detect until Phase 6. The row's test
+        // is CT_AOT_PAD_BIT in call_frame::ip, and nothing could set it while
+        // ct_aot_catch_land was unimplementable; both work now, and the bit is
+        // put there by unwind_to_handler assigning `ip` from a handler whose
+        // address is the body's pad id.
+        if ((cx.frames_[held.frame_index].ip & CT_AOT_PAD_BIT) != 0) {
+            return static_cast<std::int32_t>(aot::ct_aot_status::caught);
+        }
         return static_cast<std::int32_t>(aot::ct_aot_status::ok);
     }
 
@@ -517,6 +595,22 @@ std::int32_t ct_aot_set_prop(ct_aot_frame * fr, std::uint64_t obj, const ct_aot_
     (void)site;
     return script::aot_bridge::set_prop(fr, obj,
                                         reinterpret_cast<const script::aot_name_record *>(name), v);
+}
+
+void ct_aot_handler_push(ct_aot_frame * fr, std::uint32_t pad, std::uint32_t slot) {
+    script::aot_bridge::handler_push(fr, pad, slot);
+}
+
+void ct_aot_handler_pop(ct_aot_frame * fr) {
+    script::aot_bridge::handler_pop(fr);
+}
+
+std::int32_t ct_aot_throw(ct_aot_frame * fr, std::uint64_t thrown) {
+    return script::aot_bridge::throw_value(fr, thrown);
+}
+
+std::uint32_t ct_aot_catch_land(ct_aot_frame * fr, std::uint64_t * out_thrown) {
+    return script::aot_bridge::catch_land(fr, out_thrown);
 }
 
 std::uint32_t ct_aot_failed(ct_aot_frame * fr) {

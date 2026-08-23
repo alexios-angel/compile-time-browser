@@ -297,26 +297,25 @@ CT_AOT_COVERS(/* helper */ ct_aot_handler_pop, /* opcode */ pop_handler)
  * native frame reachable from none of the 17 roots. It is the single
  * delivery point for every area, which keeps a pad out-parameter and a
  * value out-parameter off every throwing helper's signature.
- * THIS ROW CANNOT BE IMPLEMENTED AS WRITTEN, found on 2026-08-22 by trying.
- * It says to read back registers_[call_frame::base + handler::slot] - but
- * unwind_to_handler POPS the handler (vm.hpp:947-948) before it writes
- * (vm.hpp:954), and call_frame records no landing slot: proto, ip, base,
- * result_reg, argc, closure, receiver, handler_base, new_target,
- * constructing, arguments_object, async_promise, and none of them is it.
- * `result_reg` is where the CALLER wants this frame's return value and is
- * not the same register. So by the time a compiled body could ask, which
- * register the thrown value went into is unknowable, and the signature
- * above - (fr, out_thrown) - has nowhere to learn it from.
+ * WAS UNIMPLEMENTABLE AS WRITTEN, found on 2026-08-22 by trying, and
+ * IMPLEMENTED IN PHASE 6. The problem was real: this row says to read back
+ * registers_[call_frame::base + handler::slot], and unwind_to_handler POPS
+ * the handler before it writes, so by the time a compiled body could ask,
+ * which register the thrown value went into was unknowable.
  *
- * TWO FIXES, both ABI changes, neither taken here because taking one
- * without a compiled `try` to test it would be inventing on no evidence:
- * record the slot on call_frame when unwind_to_handler writes it, or add
- * the slot to this helper's parameters, since a generated body knows which
- * register its own ct_aot_handler_push named. The second costs the runtime
- * nothing and is probably right; it is written down rather than done.
+ * The row then wrote down two possible fixes and took neither, because
+ * "taking one without a compiled `try` to test it would be inventing on no
+ * evidence". There is one now - unittests/unit/aot_throw - and the fix
+ * taken is a THIRD: call_frame::landed_slot records the slot at the moment
+ * unwind_to_handler writes it. Two bytes on a frame the interpreter never
+ * reads, and this row's signature - which two code generators are written
+ * against - does not move. The row's own second option, adding the slot to
+ * these parameters, would have changed that signature to save the two bytes.
  *
- * Until then ct_aot_check never returns CT_AOT_CAUGHT - see
- * lib/Script/aot_bridge.cpp, which says so where the test would be.
+ * ct_aot_check returns CT_AOT_CAUGHT now, on CT_AOT_PAD_BIT in ip, and that
+ * bit is defined in aot_entry.h with the measurement aot.hpp was waiting
+ * for: `ip` is a size_t index into bytecode, and 2^63 instructions would be
+ * 74 exabytes, so the top bit cannot collide with a real one.
  *
  * DELEGATES TO: READS BACK what unwind_to_handler already wrote:
  *   call_frame::ip (assigned from handler::address, vm.hpp:952) and
