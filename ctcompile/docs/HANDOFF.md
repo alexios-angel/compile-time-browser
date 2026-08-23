@@ -8,7 +8,7 @@ committed and green; nothing is pushed.
 
 * Repo: `/mnt/c/Users/aange/Downloads/claude/compile-time-browser`
 * Branch: **`ctcompile-v1`**, working tree clean
-* Suite: **107/107** via `./tools/remote-build.sh`, and **asan 58/58**
+* Suite: **108/108** via `./tools/remote-build.sh`, and **asan 58/58**
 * **`ctcompile/docs/ctcompile.md` is the tool's own documentation** — the CLI,
   what it refuses and why, the manifest, and the gaps.
 * **Read `ctcompile/docs/plans/ctcompile.md` first** — it is the running plan in
@@ -69,6 +69,14 @@ primary backend, sources are in `lib/`, build on the devbox.
   interpreter running the same source, including under forced GC. **That is the
   Phase 12A oracle's shape, working on one function.** It also found the
   safepoint in `context::invoke` sitting before arguments were rooted.
+* **Phase 7 — MLIR is stood up and its gate is met.** `ctjs-opt` and
+  `ctjs-translate` build and run, the CTJS dialect's five types round-trip, and
+  the lit suite runs as ctest #108 so the gate this repo actually uses covers
+  it. **MLIR is not built by default and must not be**: `CTCOMPILE_ENABLE_MLIR`
+  is OFF, and a runtime-only configure was verified WITH MLIR installed, which
+  is the case that matters.
+  To build it: `-DCTBROWSER_ENABLE_PROJECTS=ctcompile -DCTCOMPILE_ENABLE_MLIR=ON
+  -DCMAKE_PREFIX_PATH="/home/linuxbrew/.linuxbrew;/home/linuxbrew/.linuxbrew/opt/llvm"`.
 * **Phase 6 — the throwing tier works.** `ct_aot_catch_land` was recorded in the
   ABI as **unimplementable as written**, found by trying, with two possible
   fixes written down and neither taken "without a compiled `try` to test it".
@@ -261,6 +269,12 @@ interpreter is 1.4%. Phases 7–12A are the rest and are not started.
 
 ## Known problems, not yet acted on
 
+* **lit LIVES IN A VIRTUAL ENVIRONMENT.** brew's llvm bottle ships FileCheck but
+  no llvm-lit, and both Ubuntu's python and brew's refuse `pip install` under
+  PEP 668. `python3 -m venv ~/.lit-venv && ~/.lit-venv/bin/pip install lit`, and
+  `tools/Brewfile` says so where somebody provisioning a box will read it. With
+  no lit, `check-ctcompile` reports that it is unavailable rather than silently
+  running nothing.
 * **THE ABI TABLE'S LINE CITATIONS ARE SYSTEMATICALLY STALE.** Every row cites
   the runtime that owns its semantics by file and line; Phases 3–5 moved several
   hundred lines of `run_loop.cpp`, `call.cpp` and `vm.hpp`. Six citations

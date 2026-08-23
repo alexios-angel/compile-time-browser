@@ -1436,6 +1436,79 @@ times:**
   a body popping one it never pushed silently takes its CALLER's catch. There is
   a deliberately sloppy compiled body for that now.
 
+## Phase 7: MLIR, stood up before a single operation exists
+
+The gate is four things and they are all met: `ctjs-opt` and `ctjs-translate`
+build and run; hand-authored CTJS MLIR containing only the five types parses,
+verifies, prints and round-trips; `check-ctcompile` runs and passes; and a
+runtime-only `ctbrowser` configure still succeeds with no LLVM or MLIR.
+
+That last one was checked **with MLIR installed**, which is the case that
+actually matters. A box without it was never the danger — the danger is a box
+with it that quietly starts requiring it, which is why `CTCOMPILE_ENABLE_MLIR`
+exists and stays OFF.
+
+### What Phase -1 had already built, and I nearly rebuilt
+
+`ct_require_llvm_version()` and `ct_add_tablegen_component()` have been sitting
+in `cmake/modules/` since the monorepo split, with the note: *"unused until
+Phase 7 stands MLIR up — it is here now so that phase adds dialects rather than
+build plumbing"*. My first version hand-rolled the version check next to them.
+
+**And that function had never run, and was broken.** It included the pin as
+`"${CMAKE_CURRENT_LIST_DIR}/../LLVMVersion.cmake"` — and inside a function body
+that variable is the **caller's** directory, not the module's. The include
+failed, the three variables it sets were empty everywhere, and the comparison
+that used one ran against an empty string, which CMake's `LESS`/`GREATER` treat
+as 0. It accepted every version. The module captures its own directory now.
+
+### Three policy rules that only mean something once you hit them
+
+* **The five types are generated from `CTJSOps.td`**, by `add_mlir_dialect` —
+  there is no `-gen-typedef-decls` call anywhere in the policy. So `CTJSOps.td`
+  must include `CTJSTypes.td` or the types are never generated. The file layout
+  implies otherwise; the CMake decides.
+* **"EXTRA_INCLUDES must reach both the project's own .td files and MLIR's" is
+  about a directory property.** LLVM's `tablegen()` does
+  `get_directory_property(tblgen_includes INCLUDE_DIRECTORIES)` and turns each
+  entry into a `-I`; `LLVM_TABLEGEN_FLAGS` is passed through untouched and never
+  becomes an include path. That cost a build to find out.
+* **The generated header is `CTJSOpsTypes.h.inc`** — named after the `.td` given
+  to `add_mlir_dialect`, not after `CTJSTypes.td`.
+
+### One deviation, with its reason in the file
+
+`useDefaultAttributePrinterParser` is 0 where the mandated `CTJSBase.td` says 1.
+Setting it makes the dialect **declare** `parseAttribute` and `printAttribute`,
+whose definitions come from `-gen-attrdef-defs` — and with zero `AttrDef`s that
+backend emits an empty file, so the library does not link. Nothing is
+hand-written to paper over it, because hand-writing those two is on the policy's
+never list. It returns to 1 in Phase 8 with the first attribute.
+
+### The action item, answered rather than deferred
+
+The policy ends its dialect section with: *"Verify `TypeDef` usability as a
+direct type constraint against the pinned MLIR version… Do not scatter `AnyType`
+as a workaround — that silently disables verification."* Generating an operation
+that uses `CTJS_ValueType` in `arguments` against MLIR 22.1.8 produces
+
+```cpp
+if (!((::llvm::isa<::ctcompile::ctjs::ValueType>(type)))) {
+  return op->emitOpError(valueKind) << " must be A generic, boxed ECMAScript
+      value, but got " << type;
+```
+
+a real `isa<>` check with the summary in the diagnostic. **Phase 8 uses the
+TypeDefs directly and needs no aliases.**
+
+### And the test is two passes, not one
+
+`ctjs-opt %s | ctjs-opt | FileCheck %s`. One pass proves the parser accepts the
+syntax; the pair proves the **printer** emits something the parser accepts,
+which is what makes every later test's expected output trustworthy. Two
+blindings, both red: a mnemonic changed in the ODS, and the dialect not
+registering its types at all.
+
 ## The ladder ahead
 
 | phase | what | where |
