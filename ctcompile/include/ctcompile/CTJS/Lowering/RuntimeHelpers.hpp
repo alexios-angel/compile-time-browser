@@ -29,7 +29,67 @@ struct runtime_helper {
     bool may_throw;
     bool may_reenter;
     bool is_safepoint;
+    // WHETHER ITS PARAMETERS ARE "FRAME, THEN VALUES" AND NOTHING ELSE.
+    //
+    // ARITY IS NOT ENOUGH AND THIS IS WHY. `ctjs.call` is variadic, so its
+    // operand count varies per call site - and a site with five arguments
+    // matches ct_aot_call's eight parameters exactly. The types do not save it
+    // either: the FIRST call site creates the declaration, so a wrong shape
+    // becomes self-consistent and every later site agrees with it. Running the
+    // pass over p5.js emitted 17,848 calls, some of which passed a value where
+    // ct_aot_call wants an argv pointer and an argc.
+    //
+    // That is the failure this project keeps meeting - code that verifies,
+    // prints plausibly and is wrong - reached by a check that looked sufficient.
+    //
+    // So the shape is READ, not counted: every parameter after an optional
+    // leading frame must be exactly `uint64_t`, which is what a JavaScript
+    // value is in this ABI. A `uint64_t *` is an out-parameter, a `uint32_t` is
+    // a kind or a count, and a `const struct ...*` is a site or a name - none of
+    // which any CTJS operand can supply, and each of which needs its own
+    // deliberate materialisation.
+    bool values_only;
 };
+
+// Whether a stringified parameter list is "optionally a frame, then uint64_t".
+[[nodiscard]] constexpr bool parameters_are_values_only(std::string_view params) {
+    std::size_t depth = 0;
+    std::size_t index = 0;
+    std::size_t start = 0;
+    bool ok = true;
+    const auto check_one = [&](std::string_view one, std::size_t which) {
+        // Trim.
+        while (!one.empty() && one.front() == ' ') { one.remove_prefix(1); }
+        while (!one.empty() && one.back() == ' ') { one.remove_suffix(1); }
+        if (one.empty()) { return; }
+        const bool is_frame =
+            one.starts_with("struct ct_aot_frame *") || one.starts_with("struct ct_aot_ctx *");
+        if (which == 0 && is_frame) { return; }
+        if (!one.starts_with("uint64_t ")) { ok = false; }
+    };
+    for (std::size_t i = 0; i < params.size(); ++i) {
+        const char c = params[i];
+        if (c == '(') {
+            ++depth;
+            if (depth == 1) { start = i + 1; }
+            continue;
+        }
+        if (c == ')') {
+            if (depth == 1) {
+                check_one(params.substr(start, i - start), index);
+                ++index;
+            }
+            if (depth > 0) { --depth; }
+            continue;
+        }
+        if (c == ',' && depth == 1) {
+            check_one(params.substr(start, i - start), index);
+            ++index;
+            start = i + 1;
+        }
+    }
+    return ok;
+}
 
 // How many top-level parameters a stringified parameter list declares.
 //
@@ -54,8 +114,12 @@ struct runtime_helper {
 }
 
 #define CT_AOT_HELPER(name_, ret_, params_, may_throw_, may_reenter_, is_safepoint_)               \
-    runtime_helper{#name_, count_parameters(#params_), (may_throw_) != 0, (may_reenter_) != 0,     \
-                   (is_safepoint_) != 0},
+    runtime_helper{#name_,                                                                         \
+                   count_parameters(#params_),                                                     \
+                   (may_throw_) != 0,                                                              \
+                   (may_reenter_) != 0,                                                            \
+                   (is_safepoint_) != 0,                                                           \
+                   parameters_are_values_only(#params_)},
 inline constexpr runtime_helper runtime_helpers[] = {
 #include <ctbrowser/aot/aot_helpers.def>
 };

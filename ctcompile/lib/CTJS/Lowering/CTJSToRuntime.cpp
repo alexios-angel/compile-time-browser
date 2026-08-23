@@ -31,6 +31,18 @@ struct RuntimeCallLowering : mlir::OpInterfaceRewritePattern<RuntimeCallOpInterf
                                         mlir::PatternRewriter & rewriter) const override {
         const runtime_helper & helper = helper_for(op.getHelperID());
 
+        // THE SHAPE IS READ FROM THE ABI, NOT INFERRED FROM A COUNT. See the
+        // note on `values_only` in RuntimeHelpers.hpp: matching on arity alone
+        // lowered ctjs.call - a VARIADIC operation - against ct_aot_call's
+        // eight parameters whenever a call site happened to have five
+        // arguments, and passed a value where the helper wants an argv pointer.
+        if (!helper.values_only) {
+            return rewriter.notifyMatchFailure(
+                op, "the helper takes arguments that are not JavaScript values - a kind, an "
+                    "out-parameter, a site or caller-allocated storage - and materialising each "
+                    "is its own decision");
+        }
+
         // THE FRAME HANDLE FIRST, then the operation's operands in ODS order.
         // That order is the ABI's, and the table is where it is written down.
         //
@@ -97,15 +109,40 @@ struct RuntimeCallLowering : mlir::OpInterfaceRewritePattern<RuntimeCallOpInterf
         // one it calls so the call verifies.
         auto module = op->getParentOfType<mlir::ModuleOp>();
         auto callee = module.lookupSymbol<mlir::func::FuncOp>(helper.symbol);
+        if (callee) {
+            // AND THE TYPES MUST AGREE WITH THE DECLARATION ALREADY THERE.
+            //
+            // ARITY ALONE IS NOT ENOUGH, which running this over p5.js proved
+            // within a minute: `ctjs.call` is VARIADIC, so its operand count
+            // varies per call site - and one site with seven arguments matched
+            // ct_aot_call's eight parameters by ACCIDENT, producing a call that
+            // passed a !ctjs.value where the declaration wanted a
+            // !ctjs.context. It verified as far as this pattern was concerned
+            // and failed in the module verifier, which is the good outcome; the
+            // bad one is a helper where the types happen to line up too.
+            //
+            // A count is a weak check on a variadic operation. The types are
+            // the rest of it.
+            const auto declared = callee.getFunctionType().getInputs();
+            if (declared.size() != arguments.size()) {
+                return rewriter.notifyMatchFailure(op, "argument count disagrees with the "
+                                                       "declaration already emitted");
+            }
+            for (std::size_t i = 0; i < declared.size(); ++i) {
+                if (declared[i] != arguments[i].getType()) {
+                    return rewriter.notifyMatchFailure(
+                        op, "an argument type disagrees with the declaration already emitted");
+                }
+            }
+        }
         if (!callee) {
             mlir::OpBuilder::InsertionGuard guard(rewriter);
             rewriter.setInsertionPointToStart(module.getBody());
             llvm::SmallVector<mlir::Type> inputs;
             for (const mlir::Value argument : arguments) { inputs.push_back(argument.getType()); }
             llvm::SmallVector<mlir::Type> results{op->getResultTypes()};
-            callee = mlir::func::FuncOp::create(
-                rewriter, op.getLoc(), helper.symbol,
-                rewriter.getFunctionType(inputs, results));
+            callee = mlir::func::FuncOp::create(rewriter, op.getLoc(), helper.symbol,
+                                                rewriter.getFunctionType(inputs, results));
             callee.setPrivate();
         }
 

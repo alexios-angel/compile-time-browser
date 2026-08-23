@@ -25,11 +25,31 @@ ctjs.func @lowers(%v: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 
 
   // AND ONE WHOSE PARAMETERS ARE NOT lowers to nothing yet, on purpose.
   // ct_aot_binary_op is (fr, op_kind, lhs, rhs, out): the kind is an ATTRIBUTE
-  // and `out` is an out-parameter, so neither is an operand and the arity check
-  // refuses the match rather than emitting a call with a garbage argument.
-  // Materialising those is the rest of this phase.
+  // and `out` is an out-parameter, so neither is an operand. The shape is READ
+  // from the ABI rather than counted, because counting is not enough - see
+  // below. Materialising those arguments is the rest of this phase.
   // CHECK: ctjs.binary add
   %sum = ctjs.binary add %v, %inside
+
+  // A VARIADIC OPERATION AGAINST A HELPER WITH A DIFFERENT SHAPE, which is the
+  // case that made arity insufficient. ct_aot_call is
+  // (fr, callee, receiver, argv, argc, key, site, out) - eight - and this call
+  // site has five arguments plus callee and receiver, so frame + operands is
+  // eight too. It matched by ACCIDENT and passed a value where the helper wants
+  // an argv pointer and an argc; running the pass over p5.js emitted 17,848
+  // such calls before the shape rule refused them.
+  // CHECK: ctjs.call
+  %called = ctjs.call %v(%inside, %v, %v, %v, %v, %v)
+
+  // A HELPER THAT NEEDS THE FRAME PREPENDED, which is a different path from the
+  // two above: ct_aot_new_object is (fr) and ctjs.create_object has NO operands,
+  // so the frame is supplied by the lowering rather than by the operation. The
+  // first version of this test used only helpers whose frame was already an
+  // operand, and blinding the prepend left it green.
+  // CHECK: func.call @ct_aot_new_object(%[[CTX:.*]]) : (!ctjs.context) -> !ctjs.value
+  %obj = ctjs.create_object
+  // CHECK: func.call @ct_aot_append(%[[CTX]], %{{.*}}, %{{.*}})
+  ctjs.append %v to %obj
 
   // CHECK: func.call @ct_aot_leave(%{{.*}}) : (!ctjs.context) -> ()
   ctjs.frame_exit %ctx
