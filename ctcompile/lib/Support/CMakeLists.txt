@@ -36,3 +36,25 @@ target_compile_definitions(ctcompile-support PRIVATE
   CTCOMPILE_CTBROWSER_VERSION="${engine-version}")
 
 add_library(ctcompile::support ALIAS ctcompile-support)
+
+# THE MLIR CONTEXT FACTORY, AS ITS OWN TARGET, and the separation is the point.
+#
+# ctcompile::support is linked by `ctcompile` - the packager, the product a user
+# runs - and that binary must never need MLIR. Adding MLIRContextSetup.cpp to
+# the library above would put a 2 GB dependency into an executable whose job is
+# to copy a launcher and append some bytes.
+#
+# Same reasoning as the CTCOMPILE_ENABLE_MLIR guard itself, one target further
+# down: the pipeline's dependencies stay inside the pipeline.
+if(CTCOMPILE_ENABLE_MLIR)
+  add_library(ctcompile-mlir-support MLIRContextSetup.cpp)
+  ctcompile_target(ctcompile-mlir-support)
+  target_link_libraries(ctcompile-mlir-support
+    PUBLIC
+      CTJSDialect
+      MLIRIR
+      MLIRArithDialect
+      MLIRControlFlowDialect
+      MLIRFuncDialect)
+  add_library(ctcompile::mlir-support ALIAS ctcompile-mlir-support)
+endif()

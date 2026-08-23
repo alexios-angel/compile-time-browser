@@ -70,7 +70,13 @@ function(ctcompile_target name)
   target_compile_options(${name} PRIVATE ${CTCOMPILE_WARNING_OPTIONS})
   target_compile_features(${name} PUBLIC cxx_std_23)
   target_include_directories(${name} PUBLIC
-    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>)
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    # AND THE GENERATED HEADERS, reached by their PROJECT path rather than by a
+    # relative one - "Do not #include a generated header by relative path from
+    # another project". mlir_tablegen writes them into the mirror of the source
+    # tree under the binary directory, so the two roots are spelled the same
+    # way and a .inc is included exactly as a hand-written header would be.
+    $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>)
 endfunction()
 
 # MLIR, and it is OFF until Phase 7 has something to do with it.
@@ -81,14 +87,41 @@ endfunction()
 # guard runs first and fails with a sentence rather than a template error.
 option(CTCOMPILE_ENABLE_MLIR "Build the MLIR-based compiler pipeline (Phase 7 onwards)" OFF)
 if(CTCOMPILE_ENABLE_MLIR)
-  find_package(LLVM REQUIRED CONFIG)
-  find_package(MLIR REQUIRED CONFIG)
+  # MLIR FIRST, THEN LLVM, and the order is not arbitrary: MLIRConfig.cmake
+  # locates the LLVM it was built against and sets LLVM_DIR, so finding LLVM
+  # first can bind a DIFFERENT installation and the two then disagree about
+  # everything from the ABI to the TableGen syntax.
+  find_package(MLIR CONFIG REQUIRED)
+  find_package(LLVM CONFIG REQUIRED)
+
+  # THE PIN, CHECKED AT CONFIGURE TIME, through the function that already owns
+  # that rule. Phase -1 put ct_require_llvm_version() in cmake/modules/ and
+  # wrote "unused until Phase 7 stands MLIR up - it is here now so that phase
+  # adds dialects rather than build plumbing". This is Phase 7, and a second
+  # copy of the check written here instead would be the drift the whole
+  # monorepo layout exists to prevent.
   ct_require_llvm_version()
-  message(STATUS "ctcompile: LLVM ${LLVM_PACKAGE_VERSION} at ${LLVM_DIR}")
+  message(STATUS "ctcompile: MLIR ${LLVM_PACKAGE_VERSION} at ${MLIR_DIR}")
+
   list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}" "${LLVM_CMAKE_DIR}")
+  include(TableGen)
   include(AddLLVM)
   include(AddMLIR)
-  include(TableGen)
+  # SYSTEM, so ctcompile's -Werror -Wconversion does not have to be relaxed to
+  # accommodate a dependency the engine does not have. That trade is spelled
+  # out where CTCOMPILE_WARNING_OPTIONS is set; this is the half of it that
+  # keeps the engine's bar where it is.
+  include_directories(SYSTEM ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
+endif()
+
+# THE DIALECT, ITS PASSES AND ITS DRIVERS, only when MLIR is on. Everything
+# under CTJS/ and both tools include MLIR headers, so a runtime-only box must
+# not descend into them at all - which is gate item 4 of Phase 7 and Principle 8
+# underneath it.
+if(CTCOMPILE_ENABLE_MLIR)
+  add_subdirectory(include/ctcompile/CTJS/IR)
+  add_subdirectory(include/ctcompile/CTJS/Transforms)
+  add_subdirectory(lib/CTJS/IR)
 endif()
 
 add_subdirectory(lib)

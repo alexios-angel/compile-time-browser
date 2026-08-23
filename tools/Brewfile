@@ -65,3 +65,29 @@ brew "simdutf"        # 9.0.0
 # rasterize identically and a byte comparison across Linux and Windows has to ask
 # for the bitmap font. This makes real text AVAILABLE, not mandatory.
 brew "sdl3_ttf"   # and sdl3 beneath it, as a dependency
+
+# LLVM AND MLIR, for ctcompile's compiler pipeline ONLY.
+#
+# NOT A RUNTIME DEPENDENCY, and the distinction is Principle 8 rather than
+# tidiness: `ctbrowser` builds and its whole suite runs with none of this
+# installed, and ctcompile's own CMakeLists keeps MLIR behind
+# CTCOMPILE_ENABLE_MLIR, OFF by default, so that a box which happens to have
+# LLVM does not silently start requiring 2 GB of it. This line makes the
+# dependency AVAILABLE on a provisioned box; it does not make it required.
+#
+# PINNED AT 22 by cmake/LLVMVersion.cmake and checked at configure time. ODS,
+# PDLL and pass-generation syntax move between releases, so an upgrade is its
+# own change rather than a surprise inside mlir-tblgen; see
+# ctcompile/docs/LLVMUpgrade.md.
+brew "llvm"   # 22.1.8: clang, LLVM, MLIR, mlir-tblgen, FileCheck
+
+# lit IS NOT IN THIS FILE and cannot be, which is worth saying here rather than
+# leaving to be rediscovered. brew's llvm bottle ships FileCheck but no
+# llvm-lit, Ubuntu's python is PEP 668 managed so `pip install lit` refuses,
+# and brew's python refuses for the same reason. ctcompile's lit suite is run
+# from a virtual environment:
+#
+#     python3 -m venv ~/.lit-venv && ~/.lit-venv/bin/pip install lit
+#
+# ctcompile/test/CMakeLists.txt finds it there or reports that check-ctcompile
+# is unavailable, rather than silently running no tests.

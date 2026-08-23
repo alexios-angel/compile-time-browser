@@ -5,13 +5,22 @@
 # only ctbrowser needs - that is ctbrowser/cmake/ - or anything only ctcompile
 # needs, which is ctcompile/cmake/.
 
+# WHERE THIS MODULE IS, captured while it is being READ.
+#
+# CMAKE_CURRENT_LIST_DIR inside a function body is the directory of the file
+# that CALLED the function, not the one that defined it - so the include below
+# resolved to <caller>/../LLVMVersion.cmake and the pin was never read. The
+# check that used it then compared LLVM_VERSION_MAJOR against an empty string,
+# which CMake's LESS/GREATER treat as 0: it accepted everything.
+set(CT_PROJECT_MODULE_DIR "${CMAKE_CURRENT_LIST_DIR}")
+
 # ct_require_llvm_version()
 #
 # Fails configuration with an explicit message when the discovered LLVM/MLIR is
 # outside the pinned range, rather than failing later inside mlir-tblgen with a
 # diagnostic that names a template rather than a version. Principle 12.
 function(ct_require_llvm_version)
-  include("${CMAKE_CURRENT_LIST_DIR}/../LLVMVersion.cmake")
+  include("${CT_PROJECT_MODULE_DIR}/../LLVMVersion.cmake")
   if(NOT DEFINED LLVM_PACKAGE_VERSION)
     message(FATAL_ERROR "ct_require_llvm_version(): call find_package(LLVM CONFIG) first")
   endif()

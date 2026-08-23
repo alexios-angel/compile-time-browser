@@ -1,0 +1,11 @@
+@LIT_SITE_CFG_IN_HEADER@
+
+config.llvm_tools_dir = lit_config.substitute("@LLVM_TOOLS_DIR@")
+config.ctcompile_src_root = "@CTCOMPILE_SOURCE_DIR@"
+config.ctcompile_obj_root = "@CTCOMPILE_BINARY_DIR@"
+config.ctcompile_tools_dirs = "@CTCOMPILE_TOOLS_DIRS@".split(";")
+
+import lit.llvm
+lit.llvm.initialize(lit_config, config)
+
+lit_config.load_config(config, "@CTCOMPILE_SOURCE_DIR@/test/lit.cfg.py")

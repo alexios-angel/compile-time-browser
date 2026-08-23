@@ -24,3 +24,10 @@ add_subdirectory(ctcompile)
 add_custom_target(ctcompile-tools ALL)
 add_subdirectory(ctbaseline)
 add_subdirectory(ctpageload)
+
+# THE MLIR DRIVERS. Built only with the pipeline they drive - see the comment on
+# the CTJS subdirectories in ctcompile/CMakeLists.txt.
+if(CTCOMPILE_ENABLE_MLIR)
+  add_subdirectory(ctjs-opt)
+  add_subdirectory(ctjs-translate)
+endif()
