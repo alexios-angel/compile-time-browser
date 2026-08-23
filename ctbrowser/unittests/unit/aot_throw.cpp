@@ -196,6 +196,117 @@ extern "C" std::int32_t compiled_middle(ctbrowser::aot::ct_aot_ctx * ctx,
     return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::ok);
 }
 
+constexpr std::uint32_t pad_finally = 11;
+
+// A COMPILED
+//
+//     function guardedFinally(f) {
+//       try { return f(); }
+//       finally { note(); }
+//     }
+//
+// `finally` is the subtle one and the plan says so: it must run on all three
+// completion kinds - normal, thrown, and returned-through - and must be able to
+// override the pending completion. It is NOT a catch: the thrown value is
+// re-thrown after the block runs, which is what ct_aot_throw's re-throw path is
+// for.
+//
+// Modelled the way the bytecode models it, which the plan also insists on: a
+// saved completion and a dispatch at the end of the block. Here the completion
+// is which of two ways the body reached the finally.
+extern "C" std::int32_t compiled_finally(ctbrowser::aot::ct_aot_ctx * ctx,
+                                         const ctbrowser::aot::ct_aot_site * site,
+                                         const std::uint64_t * argv, std::uint32_t argc,
+                                         std::uint64_t receiver, std::uint32_t constructing,
+                                         std::uint64_t * out) {
+    ++body_calls;
+    const std::uint64_t callee = argc > 0 ? argv[0] : value::undefined().bits();
+    const std::uint64_t note = argc > 1 ? argv[1] : value::undefined().bits();
+
+    alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
+    ctbrowser::aot::ct_aot_frame * frame =
+        ctbrowser::aot::ct_aot_enter(ctx, site, slot_count, receiver, storage);
+    if (frame == nullptr) {
+        return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed);
+    }
+    std::uint64_t * slots = ctbrowser::aot::ct_aot_slots(frame);
+    slots[slot_arg] = note;
+
+    // THE COMPLETION RECORD, which is the whole of the technique: what the body
+    // must do AFTER the finally block, decided before it runs.
+    enum class completion {
+        returning,
+        throwing
+    };
+    completion pending = completion::returning;
+    std::uint64_t carried = value::undefined().bits();
+
+    ctbrowser::aot::ct_aot_handler_push(frame, pad_finally, slot_caught);
+    {
+        std::uint64_t produced = value::undefined().bits();
+        const auto status = static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_call(
+            frame, callee, value::undefined().bits(), nullptr, 0u, 0u, site, &produced));
+        slots = ctbrowser::aot::ct_aot_slots(frame);
+        if (status == ctbrowser::aot::ct_aot_status::ok) {
+            ctbrowser::aot::ct_aot_handler_pop(frame);
+            pending = completion::returning;
+            carried = produced;
+        } else if (status == ctbrowser::aot::ct_aot_status::caught) {
+            // The handler has already been popped by the search. This is not a
+            // catch - the value is carried and re-thrown below.
+            std::uint64_t thrown = value::undefined().bits();
+            if (ctbrowser::aot::ct_aot_catch_land(frame, &thrown) != pad_finally) {
+                ctbrowser::aot::ct_aot_leave(frame);
+                return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed);
+            }
+            slots = ctbrowser::aot::ct_aot_slots(frame);
+            pending = completion::throwing;
+            carried = thrown;
+        } else {
+            // UNWOUND or FAILED: the finally block cannot run, because either
+            // this frame is gone or the failure tier is uncatchable. The
+            // interpreter does the same - a raise() is not a completion.
+            if (status != ctbrowser::aot::ct_aot_status::unwound) {
+                ctbrowser::aot::ct_aot_leave(frame);
+            }
+            return static_cast<std::int32_t>(status);
+        }
+    }
+
+    // THE FINALLY BLOCK ITSELF, run on both completions, with the pending one
+    // parked in a slot across it because calling note() is a safepoint.
+    slots[slot_caught] = carried;
+    {
+        std::uint64_t ignored = value::undefined().bits();
+        const auto status = static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_call(
+            frame, slots[slot_arg], value::undefined().bits(), nullptr, 0u, 0u, site, &ignored));
+        if (status != ctbrowser::aot::ct_aot_status::ok) {
+            // A THROW INSIDE THE FINALLY OVERRIDES THE PENDING COMPLETION,
+            // which is the behaviour the plan singles out. Nothing to do but
+            // hand the new one on: the old value is dropped, exactly as
+            // `try { throw 1 } finally { throw 2 }` drops the 1.
+            if (status != ctbrowser::aot::ct_aot_status::unwound) {
+                ctbrowser::aot::ct_aot_leave(frame);
+            }
+            return static_cast<std::int32_t>(status);
+        }
+        slots = ctbrowser::aot::ct_aot_slots(frame);
+    }
+
+    // THE DISPATCH AT THE END OF THE BLOCK.
+    if (pending == completion::throwing) {
+        const auto status = static_cast<ctbrowser::aot::ct_aot_status>(
+            ctbrowser::aot::ct_aot_throw(frame, slots[slot_caught]));
+        if (status != ctbrowser::aot::ct_aot_status::unwound) {
+            ctbrowser::aot::ct_aot_leave(frame);
+        }
+        return static_cast<std::int32_t>(status);
+    }
+    *out = ctbrowser::aot::ct_aot_return_value(slots[slot_caught], receiver, constructing);
+    ctbrowser::aot::ct_aot_leave(frame);
+    return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::ok);
+}
+
 constexpr std::string_view source =
     "function guarded(f) {\n"
     "  try { return f(); }\n"
@@ -219,6 +330,19 @@ constexpr std::string_view source =
     // `stack` is captured at the throw site.
     "function thrower() { throw new Error('from the bottom'); }\n"
     "function middle(f) { return f(); }\n"
+    "var notes = 0;\n"
+    "function note() { notes = notes + 1; }\n"
+    // `note` IS AN ARGUMENT rather than a global, because a compiled body
+    // cannot read a global yet - ct_aot_global_get has no body. Passing it
+    // keeps both arms running the same source.
+    "function guardedFinally(f, n) { try { return f(); } finally { n(); } }\n"
+    // THE COUNT IS PART OF THE ANSWER. A finally that never ran, or ran twice,
+    // produces the same string as one that ran once unless the count is in it.
+    "function aroundFinally(f) {\n"
+    "  notes = 0;\n"
+    "  try { return 'returned:' + guardedFinally(f, note) + '/notes=' + notes; }\n"
+    "  catch (e) { return 'threw:' + e + '/notes=' + notes; }\n"
+    "}\n"
     "function mixed() {\n"
     "  try { return callThroughNative(middle, thrower); }\n"
     "  catch (e) { return e.stack; }\n"
@@ -236,6 +360,7 @@ constexpr std::string_view source =
             if (fn.name == "guarded") { fn.aot_entry = &compiled_guarded; }
             if (fn.name == "sloppy") { fn.aot_entry = &compiled_sloppy; }
             if (fn.name == "middle") { fn.aot_entry = &compiled_middle; }
+            if (fn.name == "guardedFinally") { fn.aot_entry = &compiled_finally; }
         }
     }
     context ctx;
@@ -297,6 +422,16 @@ int main() {
     // The compiled body must return UNWOUND without running its epilogue: its
     // frame is already gone, and calling ct_aot_leave would pop somebody else's.
     agrees("outer", "rethrower", true);
+
+    // ---- A COMPILED `finally`, ON ALL THREE COMPLETIONS ------------------
+    //
+    // The plan singles this out: it must run on normal, thrown and
+    // returned-through completions, and must be able to override the pending
+    // one. `notes` is in the answer because a finally that never ran and one
+    // that ran twice both produce the same string otherwise.
+    agrees("aroundFinally", "fine", true);
+    agrees("aroundFinally", "boom", true);
+    agrees("aroundFinally", "boomObject", true);
 
     // A MIS-BALANCED BODY MUST NOT TAKE ITS CALLER'S CATCH. `keepsCatch` has a
     // live handler when it calls the compiled `sloppy`, which pops one it never
