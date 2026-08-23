@@ -144,6 +144,7 @@ if(CTCOMPILE_ENABLE_MLIR)
   add_subdirectory(include/ctcompile/CTJS/Transforms)
   add_subdirectory(lib/CTJS/IR)
   add_subdirectory(lib/CTJS/Import)
+  add_subdirectory(lib/CTJS/Lowering)
 endif()
 
 add_subdirectory(lib)

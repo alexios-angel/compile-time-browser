@@ -7,6 +7,7 @@
 # the three hand-written targets do not.
 add_mlir_library(CTJSDialect
   CTJSAttrs.cpp
+  CTJSInterfaces.cpp
   CTJSDialect.cpp
   CTJSOps.cpp
   CTJSTypes.cpp

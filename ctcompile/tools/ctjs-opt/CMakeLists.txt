@@ -3,6 +3,7 @@ llvm_update_compile_flags(ctjs-opt)
 target_link_libraries(ctjs-opt
   PRIVATE
     CTJSDialect
+    ctcompile::ctjs-lowering
     ctcompile::mlir-support
     MLIRIR
     MLIROptLib
