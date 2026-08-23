@@ -2,6 +2,7 @@
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTJS/Lowering/OpcodeMapping.hpp"
 #include "ctcompile/CTJS/Lowering/RuntimeHelpers.hpp"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
