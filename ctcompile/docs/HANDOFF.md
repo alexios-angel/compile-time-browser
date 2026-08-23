@@ -69,6 +69,16 @@ primary backend, sources are in `lib/`, build on the devbox.
   interpreter running the same source, including under forced GC. **That is the
   Phase 12A oracle's shape, working on one function.** It also found the
   safepoint in `context::invoke` sitting before arguments were rooted.
+* **Phase 10 — the argument strategy is DECIDED and its experiment passed.** A
+  three-way panel chose: Phase 10 normalises calls and each backend materialises
+  the arguments, with each parameter's ROLE **derived constexpr from
+  `aot_helpers.def`** rather than written down twice. The decisive experiment —
+  classify all 69 rows before writing any MLIR — gives **zero unknowns**, and
+  `ctcompile_inventories` asserts it.
+  **The finding that justifies the whole design:** `uint32_t op_kind` is a
+  `ctbrowser::script::op` **bytecode opcode**, not a CTJS enum ordinal —
+  `aot_bridge.cpp` does `static_cast<op>(op_kind)`. Passing the CTJS ordinal
+  would compile `**` into whatever `op(5)` is. A backend must spell it by name.
 * **Phase 10 — started: one conversion pattern, matching on the INTERFACE.**
   `ctjs-opt --ctjs-lower-to-runtime` turns CTJS operations into `func.call`s on
   the real helper symbols, and the pass **names no operation** — which the plan
@@ -265,7 +275,17 @@ interpreter is 1.4%. Phases 7–12A are the rest and are not started.
 2. **The image LOADER is now the largest single item on the path**, at 26%, and
    its operand pass alone is 7.49% — fifteen times the whole CSS engine. That
    is where the next startup millisecond is.
-3. **WIDEN THE IMPORTER, or start Phase 10.** The importer's refusals are
+3. **FINISH PHASE 10 FROM THE DECIDED DESIGN.** The next steps, in order, are in
+   the panel's verdict: an `OpcodeMapping.hpp` giving `BinaryKind ->
+   script::op` spelled by name (never a literal); a `ctjs.runtime_call`
+   operation carrying the helper, its role vector and its literals, with a
+   verifier that the roles consume the operands and literals exactly; then the
+   EmitC slice — `!ctjs.value -> !emitc.opaque<"ctbrowser::script::value">`,
+   out-parameters as `emitc.variable` plus `emitc.apply "&"`, and the status
+   compared against `ct_aot_status::ok` **by name**, never a baked number
+   (`aot.hpp` says outright "THE PRECEDENCE IS THE CONTRACT; THE NUMBERS ARE
+   NOT"). Note `ct_aot_enter` fails with a NULL POINTER, not a status.
+4. **WIDEN THE IMPORTER.** The importer's refusals are
    counted in `ctjs.skipped` and printed as warnings, so the work list writes
    itself — run it over a corpus and read the histogram. `closure` is the
    largest single item and needs a producer for `!ctjs.program`, which is a
