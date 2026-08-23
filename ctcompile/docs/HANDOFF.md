@@ -520,9 +520,30 @@ is cast once instead, because the signature must stay assignable to
 `%cxx` in `test/lit.cfg.py` is what makes the compile step available to any
 EmitC test.
 
-**Next**: lower non-entry block arguments to variables, which unlocks every
-function with control flow; then `ctjs.binary` and the out-parameter/status
-pattern, which is the shape most of the remaining 50 operations share.
+**Control flow compiles now too.** `function g(a) { if (a) { return 1; } return
+2; }` reaches a translation unit that compiles. The pipeline is
+`ctjs-opt --ctjs-lower-to-emitc --emitc-eliminate-block-arguments`, and **that
+order is a correctness requirement**: the first pass emits block arguments, the
+second removes them, and what reaches `mlir-translate` must have none.
+
+`--emitc-eliminate-block-arguments` gives each non-entry block argument an
+`emitc.variable`, reads it at the top of its block and writes it on each
+incoming edge — so every read precedes every write. **Edges are split rather
+than assigned in place**, because `cf.cond_br %c, ^B(%x), ^B(%y)` is legal and
+carries different values into one block; assigning both sets before the branch
+runs both on whichever path is taken. In-place assignment is correct for every
+single-successor terminator, which is exactly why the swap test does not catch
+it — that case has its own function.
+
+**Number constants are spelled from bits**, never as a decimal literal:
+`value::number(std::bit_cast<double>(UINT64_C(...)))`. The attribute carries the
+double's bit pattern precisely because `-0.0` and NaN payloads do not survive a
+decimal round-trip, and printing decimal would discard that at the last step.
+
+**Next**: `ctjs.binary` and the out-parameter/status pattern, which is the shape
+most of the remaining 50 operations share — a call, a status test against
+`ct_aot_status::ok` by name, and an exception edge. Strings need
+`ct_aot_new_string`, which is a safepoint, so they wait on rooting.
 
 ## Using subagents
 
