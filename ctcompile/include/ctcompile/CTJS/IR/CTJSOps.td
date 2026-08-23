@@ -107,27 +107,41 @@ def CTJS_CreateClosureOp
 // Property access
 //===----------------------------------------------------------------------===//
 
-def CTJS_GetPropertyOp : CTJS_RuntimeOp<"get_property", "ct_aot_get_prop", CTJS_GenericEffects> {
+def CTJS_GetPropertyOp : CTJS_RuntimeOp<"get_property", "ct_aot_get_index", CTJS_GenericEffects> {
   let summary = "Generic property read with full ECMAScript semantics";
   let description = [{
     Performs the complete `GetV` / `[[Get]]` sequence: prototype walk,
     accessor invocation, proxy traps, exotic object behavior. This operation
     must never be lowered to a direct slot load without a guard proving the
     receiver's shape and the absence of accessors.
+
+    ITS HELPER IS ct_aot_get_index, NOT ct_aot_get_prop, and the difference is
+    the KEY. The plan folds indexed and named access into one operation -
+    "ctjs.get_index and ctjs.get_property have identical semantics at the
+    generic level" - and the ABI does not: ct_aot_get_prop takes a
+    `const ct_aot_name *`, an INTERNED HANDLE produced by ct_aot_intern_name,
+    while ct_aot_get_index takes a `uint64_t` key. This operation's key is a
+    value, so the value-taking helper is the one it means. A named access is a
+    constant string key, which is exactly what the importer emits.
+
+    Pointing it at ct_aot_get_prop was wrong and would have passed a value
+    where an interned name pointer belongs. Using the name-taking helper - and
+    the inline cache Phase 26 attaches to it - needs a SECOND operation carrying
+    a name attribute, which is a specialisation rather than a fold.
   }];
   let arguments = (ins CTJS_ValueType:$object, CTJS_ValueType:$key);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$object `[` $key `]` attr-dict";
 }
 
-def CTJS_SetPropertyOp : CTJS_RuntimeOp<"set_property", "ct_aot_set_prop", CTJS_GenericEffects> {
+def CTJS_SetPropertyOp : CTJS_RuntimeOp<"set_property", "ct_aot_set_index", CTJS_GenericEffects> {
   let summary = "Generic property write with full ECMAScript semantics";
   let arguments = (ins CTJS_ValueType:$object, CTJS_ValueType:$key, CTJS_ValueType:$value);
   let assemblyFormat = "$object `[` $key `]` `,` $value attr-dict";
 }
 
 def CTJS_DeletePropertyOp
-    : CTJS_RuntimeOp<"delete_property", "ct_aot_delete_prop", CTJS_GenericEffects> {
+    : CTJS_RuntimeOp<"delete_property", "ct_aot_delete_index", CTJS_GenericEffects> {
   let summary = "`delete obj[key]`";
   let arguments = (ins CTJS_ValueType:$object, CTJS_ValueType:$key);
   let results = (outs CTJS_ValueType:$result);
