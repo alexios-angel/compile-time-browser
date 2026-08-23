@@ -53,13 +53,6 @@ value context::call(value callable, std::span<const value> args, value this_valu
 // rather than a bug" and makes centralising this a phase of its own.
 value context::invoke(value callable, std::span<const value> args, value this_value,
                       bool constructing) {
-    // A SAFEPOINT, for the same reason ct_aot_call is one: entering a function
-    // is where a real collector would run, and it is the boundary across which
-    // a caller's live values have to be reachable. Does nothing unless stress
-    // is on. `args` and `this_value` are the caller's, and they are safe here
-    // because every caller reached this through a rooted path - which is the
-    // property this mode exists to test rather than assume.
-    safepoint();
     if (callable.is_kind(heap_kind::native)) {
         auto * nat = static_cast<native_object *>(callable.as_heap());
         std::vector<value> copy{args.begin(), args.end()};
@@ -97,6 +90,21 @@ value context::invoke(value callable, std::span<const value> args, value this_va
     for (std::size_t i = 0; i < std::max<std::size_t>(target.param_count, args.size()); ++i) {
         registers_[new_base + i] = i < args.size() ? args[i] : value::undefined();
     }
+    // A SAFEPOINT, AND IT BELONGS EXACTLY HERE - after the arguments are in the
+    // register window and before anything runs.
+    //
+    // It was at the top of this function, which made the forced-GC mode
+    // unusable by its own callers: `ctx.call(fn, args, this)` takes a span the
+    // EMBEDDER owns, so collecting before the copy above frees any heap
+    // argument that is not separately rooted. The first thing written against
+    // it - a test calling an interpreted function with an array it held in a
+    // C++ local - was a heap-use-after-free on that array, and the test was
+    // right.
+    //
+    // Below the copy, `registers_` holds every argument and the collector
+    // traces it in full, which is also where a real collector would run: at the
+    // point where the frame it is about to enter is describable.
+    safepoint();
     // A COMPILED BODY, IF THIS FUNCTION HAS ONE, asked in the same place the
     // interpreter asks. AFTER the argument fill, because that window is what
     // the ABI's entry row promises, and BEFORE the depth guard, because
