@@ -338,7 +338,8 @@ int main() {
     {
         ctbrowser::script::program tiny =
             ctbrowser::script::compiler::compile("function host() { return 1; }\n"
-                                                 "var arr = [10, 20, 30];\n");
+                                                 "var arr = [10, 20, 30];\n"
+                                                 "var holder = { width: 640 };\n");
         check(tiny.ok, "the host fixture compiles");
         (void)ctx.run(tiny);
         alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
@@ -480,6 +481,97 @@ int main() {
             check(status == ctbrowser::aot::ct_aot_status::ok, "get_index succeeds");
             check(value::from_bits(out).is_number() && value::from_bits(out).as_number() == 20.0,
                   "and reads arr[1]");
+        }
+
+        // ---- INTERNED NAMES, WHICH EVERY PROPERTY HELPER IS KEYED BY -----
+        //
+        // The row that blocked the whole property family: every key parameter
+        // in the ABI is a `const ct_aot_name *`, and nothing produced one. It
+        // is an OWNING immortal record rather than the runtime's own
+        // `prehashed_name`, which is a {string_view, hash} - non-owning, so a
+        // pool built out of one dangles the moment the characters go away.
+        {
+            const char * text = "colour";
+            const ctbrowser::aot::ct_aot_name * first =
+                ctbrowser::aot::ct_aot_intern_name(text, 6u);
+            check(first != nullptr, "a name interns");
+
+            // IDEMPOTENT, and by ADDRESS. That is the property a backend
+            // depends on: two sites naming the same property must be able to
+            // compare their handles as pointers.
+            const ctbrowser::aot::ct_aot_name * again =
+                ctbrowser::aot::ct_aot_intern_name(text, 6u);
+            check(first == again, "AND INTERNING IT AGAIN GIVES THE SAME POINTER");
+
+            std::string elsewhere = "colour";
+            check(ctbrowser::aot::ct_aot_intern_name(elsewhere.data(), 6u) == first,
+                  "interning the same text from another buffer gives the same pointer");
+
+            // THE CALLER'S BUFFER IS NOT THE RECORD, and this is the case that
+            // proves it: a name is interned FIRST from a string that is then
+            // overwritten, and interning the same text again must still find
+            // it. An index keyed by the characters the caller supplied - rather
+            // than by a view into the record's own copy - holds a key that has
+            // silently changed underneath it, so the second interning misses
+            // and produces a second record for one name.
+            //
+            // A backend compares name handles by ADDRESS, so two records for
+            // one name is two properties that are not the same property.
+            const ctbrowser::aot::ct_aot_name * from_temporary = nullptr;
+            {
+                std::string temporary = "ephemeral-property-name";
+                from_temporary = ctbrowser::aot::ct_aot_intern_name(
+                    temporary.data(), static_cast<std::uint32_t>(temporary.size()));
+                temporary.assign(std::string(64, 'x')); // reallocates and overwrites
+            }
+            check(ctbrowser::aot::ct_aot_intern_name("ephemeral-property-name", 23u) ==
+                      from_temporary,
+                  "A NAME OUTLIVES THE BUFFER IT WAS INTERNED FROM");
+
+            check(ctbrowser::aot::ct_aot_intern_name("colours", 7u) != first,
+                  "a longer name is a different name");
+            check(ctbrowser::aot::ct_aot_intern_name("colour", 5u) != first,
+                  "and so is a prefix - the length is honoured, not a NUL");
+
+            // A NAME WITH AN EMBEDDED NUL, which a JavaScript property may have
+            // and a C string cannot express. This is why the row takes a length.
+            const ctbrowser::aot::ct_aot_name * nulled =
+                ctbrowser::aot::ct_aot_intern_name("a\0b", 3u);
+            check(nulled != ctbrowser::aot::ct_aot_intern_name("a", 1u),
+                  "an embedded NUL does not truncate the name");
+        }
+
+        // ---- AND A COMPILED BODY READING AND WRITING A PROPERTY ----------
+        {
+            const value obj = ctx.global("holder");
+            check(obj.is_object(), "the fixture object exists");
+
+            const ctbrowser::aot::ct_aot_name * width =
+                ctbrowser::aot::ct_aot_intern_name("width", 5u);
+            std::uint64_t out = value::undefined().bits();
+            auto status = static_cast<ctbrowser::aot::ct_aot_status>(
+                ctbrowser::aot::ct_aot_get_prop(frame, obj.bits(), width, nullptr, &out));
+            check(status == ctbrowser::aot::ct_aot_status::ok, "get_prop succeeds");
+            check(value::from_bits(out).is_number() && value::from_bits(out).as_number() == 640.0,
+                  "and reads holder.width");
+
+            status = static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_set_prop(
+                frame, obj.bits(), width, value::number(800).bits(), nullptr));
+            check(status == ctbrowser::aot::ct_aot_status::ok, "set_prop succeeds");
+            // ASKED THROUGH THE INTERPRETER, not through the helper that just
+            // wrote it: a get and a set that agree with each other and with
+            // nothing else would look identical to a pair that works.
+            check(ctx.lookup_property(obj, "width").as_number() == 800.0,
+                  "AND THE INTERPRETER SEES THE NEW VALUE");
+
+            // A MISSING PROPERTY IS undefined, not a failure.
+            const ctbrowser::aot::ct_aot_name * absent =
+                ctbrowser::aot::ct_aot_intern_name("nope", 4u);
+            status = static_cast<ctbrowser::aot::ct_aot_status>(
+                ctbrowser::aot::ct_aot_get_prop(frame, obj.bits(), absent, nullptr, &out));
+            check(status == ctbrowser::aot::ct_aot_status::ok,
+                  "a missing property is not an error");
+            check(value::from_bits(out).is_undefined(), "and reads undefined");
         }
 
         // ct_aot_failed IS THE BACK-EDGE POLL, so it has to be false when

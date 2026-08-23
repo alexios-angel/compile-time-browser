@@ -34,12 +34,16 @@
 // three rows and reporting the fourth as broken is worth more than four bodies
 // one of which quietly does something other than its row says.
 #include <ctbrowser/aot/aot.hpp>
+#include <ctbrowser/core/containers.hpp>
 #include <ctbrowser/script/vm.hpp>
 
 #include <compare>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace ctbrowser::script {
@@ -71,6 +75,50 @@ static_assert(sizeof(aot_frame_storage) <= CT_AOT_FRAME_BYTES,
               "CT_AOT_FRAME_BYTES must hold the frame handle it sizes");
 static_assert(alignof(aot_frame_storage) <= alignof(std::max_align_t),
               "and a body's plain byte array must be able to align it");
+
+// AN INTERNED PROPERTY NAME, and the record OWNS its text.
+//
+// The row is emphatic that this is NOT `prehashed_name`, which is
+// {string_view, hash} - a NON-OWNING view, so a pool built out of one dangles
+// the moment whoever supplied the characters goes away. A compiled body's names
+// come from an image that may be a memory-mapped file or a string literal in
+// generated C++; neither is something to hold a view into forever.
+//
+// GLOBAL AND IMMORTAL, which the row also says, and it is safe here for a
+// reason that does NOT transfer to ct_aot_ic: a name record contains no heap
+// pointer and is never GC-traced, so it is context-independent by construction.
+// An inline cache holds receivers and is not.
+//
+// THE HASH COMES FROM hash_name AND FROM NOWHERE ELSE. containers.hpp says
+// outright that using anything else is "a lookup that silently never matches",
+// which is why the handle is produced at image init and never baked into the
+// image: a hash computed by the compiler is a hash computed by a different
+// build of a different library.
+struct aot_name_record {
+    std::string text;
+    std::size_t hash;
+};
+
+namespace {
+
+// A DEQUE FOR THE RECORDS, because the handles are pointers a compiled body
+// keeps for the life of the process and a vector would move them. The index's
+// keys are views INTO those records, which is only sound because their
+// addresses are stable.
+//
+// SINGLE-THREADED, like everything else in this VM. Script runs on one thread;
+// if that ever changes this needs a lock, and so does most of the engine.
+std::deque<aot_name_record> & name_records() {
+    static std::deque<aot_name_record> records;
+    return records;
+}
+
+std::unordered_map<std::string_view, const aot_name_record *> & name_index() {
+    static std::unordered_map<std::string_view, const aot_name_record *> index;
+    return index;
+}
+
+} // namespace
 
 struct aot_bridge {
     static context & ctx_of(aot::ct_aot_ctx * c) { return *reinterpret_cast<context *>(c); }
@@ -287,6 +335,43 @@ struct aot_bridge {
         return status;
     }
 
+    // ct_aot_intern_name. Idempotent: the same characters always give the same
+    // pointer, which is what lets a backend compare names by address.
+    static const aot_name_record * intern(const char * utf8, std::uint32_t len) {
+        const std::string_view text{utf8, len};
+        auto & index = name_index();
+        if (const auto found = index.find(text); found != index.end()) { return found->second; }
+        auto & records = name_records();
+        records.push_back(aot_name_record{std::string{text}, hash_name(text)});
+        const aot_name_record * record = &records.back();
+        // KEYED BY A VIEW INTO THE RECORD'S OWN STRING, not by the caller's
+        // characters - which are a `const char *` the caller is free to free.
+        index.emplace(std::string_view{record->text}, record);
+        return record;
+    }
+
+    static std::int32_t get_prop(aot::ct_aot_frame * f, std::uint64_t obj,
+                                 const aot_name_record * name, std::uint64_t * out) {
+        context & cx = *frame_of(f).ctx;
+        // THROUGH THE INTERPRETER'S OWN lookup_property, hashing the name again
+        // as it does. The row's payoff - reusing the interned hash across the
+        // prototype chain - needs lookup_property to take a prehashed_name, and
+        // that is a refactor of a long function with two dozen `name == "..."`
+        // arms. It is an OPTIMISATION, worth its own change, and doing it here
+        // would mean an extraction and a new ABI row in one step.
+        const value produced = cx.lookup_property(value::from_bits(obj), name->text);
+        const std::int32_t status = check(f);
+        if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
+        return status;
+    }
+
+    static std::int32_t set_prop(aot::ct_aot_frame * f, std::uint64_t obj,
+                                 const aot_name_record * name, std::uint64_t v) {
+        context & cx = *frame_of(f).ctx;
+        cx.store_property(value::from_bits(obj), name->text, value::from_bits(v));
+        return check(f);
+    }
+
     // ct_aot_slots. The row: the frame's own register span, which is where a
     // compiled body puts a value it needs to survive a safepoint.
     //
@@ -412,6 +497,26 @@ std::int32_t ct_aot_binary_op(ct_aot_frame * fr, std::uint32_t op_kind, std::uin
 std::int32_t ct_aot_binary_op_static(ct_aot_frame * fr, std::uint32_t op_kind, std::uint64_t lhs,
                                      std::uint64_t rhs, std::uint64_t * out) {
     return script::aot_bridge::binary_op_static(fr, op_kind, lhs, rhs, out);
+}
+
+// THE HANDLE IS AN OPAQUE POINTER on the ABI's side and a record on this one,
+// which is what `struct ct_aot_name` being declared and never defined is for.
+const ct_aot_name * ct_aot_intern_name(const char * utf8, std::uint32_t len) {
+    return reinterpret_cast<const ct_aot_name *>(script::aot_bridge::intern(utf8, len));
+}
+
+std::int32_t ct_aot_get_prop(ct_aot_frame * fr, std::uint64_t obj, const ct_aot_name * name,
+                             ct_aot_ic * site, std::uint64_t * out) {
+    (void)site; // Phase 26 attaches an inline cache here without an ABI break
+    return script::aot_bridge::get_prop(
+        fr, obj, reinterpret_cast<const script::aot_name_record *>(name), out);
+}
+
+std::int32_t ct_aot_set_prop(ct_aot_frame * fr, std::uint64_t obj, const ct_aot_name * name,
+                             std::uint64_t v, ct_aot_ic * site) {
+    (void)site;
+    return script::aot_bridge::set_prop(fr, obj,
+                                        reinterpret_cast<const script::aot_name_record *>(name), v);
 }
 
 std::uint32_t ct_aot_failed(ct_aot_frame * fr) {
