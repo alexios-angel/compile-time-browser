@@ -346,6 +346,19 @@ struct aot_bridge {
         return check(f);
     }
 
+    // ct_aot_iterable_values. VM_CASE(iterable) is one line -
+    // `reg(in.a) = iterable_values(reg(in.b))` - and iterable_values is
+    // ALREADY a named member, so there is nothing to extract and no way for
+    // the two tiers to drift.
+    //
+    // DELEGATED WHOLESALE, INCLUDING THE ROW'S CORRECTION (1). That correction
+    // describes a real defect - the array-like arm calls lookup_property up to
+    // 2^24 times with no failed_ test, so a throw part-way through still runs
+    // millions of lookups - but it is the INTERPRETER's defect, and re-testing
+    // here and not there would make the compiled tier fail EARLIER than the
+    // interpreted one on a program that can observe the difference. Fixing it
+    // is a VM change with its own before/after test, in one place, for both
+    // tiers.
     static std::int32_t iterable_values(aot::ct_aot_frame * f, std::uint64_t source,
                                         std::uint64_t * out) {
         context & cx = *frame_of(f).ctx;

@@ -80,6 +80,9 @@ CT_ENTRY(newBad)
 CT_ENTRY(coalesce)
 CT_ENTRY(chain)
 CT_ENTRY(dflt)
+CT_ENTRY(total)
+CT_ENTRY(chars)
+CT_ENTRY(spread)
 #undef CT_ENTRY
 
 namespace {
@@ -294,6 +297,19 @@ int main() {
          "definedness against truthiness - `0 ?? 9` is 0, and a jump lowered through ctjs.truthy "
          "answers 9",
          "0//9/undefined/4/0"},
+        // for-of, WHICH IS ONE OPCODE AND THREE ARMS OF ONE HELPER.
+        {23u,
+         "for-of",
+         {{"total", 0u, &ctc_total}, {"chars", 0u, &ctc_chars}},
+         "the ORDER the values drain in and the non-object arm - `chars` prepends, so a "
+         "reversed drain answers abc, and a sum could not tell",
+         "6/cba/0"},
+        {24u,
+         "spread",
+         {{"spread", 0u, &ctc_spread}, {}},
+         "the same helper reached from a spread rather than a loop - the string arm yields one "
+         "element per character",
+         "3/2"},
         {17u,
          "literals",
          {{"pack", 0u, &ctc_pack}, {}},

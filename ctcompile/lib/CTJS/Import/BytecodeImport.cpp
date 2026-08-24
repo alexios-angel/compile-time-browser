@@ -547,6 +547,12 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 set(in.a,
                     ctjs::GetPropertyOp::create(into, where, value_type, reg(in.b), reg(in.c)));
                 break;
+            case op::iterable:
+                // b IN, a OUT, and the row warns that both emitters spell it
+                // `{iterable, source, source}` with a and b ALIASED - which
+                // reading b and writing a handles without needing to know.
+                set(in.a, ctjs::IterableOp::create(into, where, value_type, reg(in.b)));
+                break;
             case op::set_index:
                 ctjs::SetPropertyOp::create(into, where, reg(in.a), reg(in.b), reg(in.c));
                 break;

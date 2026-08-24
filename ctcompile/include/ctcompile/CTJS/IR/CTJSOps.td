@@ -225,6 +225,28 @@ def CTJS_HasPropertyOp
 // Operators
 //===----------------------------------------------------------------------===//
 
+def CTJS_IterableOp
+    : CTJS_RuntimeOp<"iterable", "ct_aot_iterable_values", CTJS_GenericEffects> {
+  let summary = "The values of an iterable, as an array";
+  let description = [{
+    Every `for (x of it)` and every spread compiles to this, so a corpus without
+    it compiles very little: 36 of Bootstrap's functions were skipped for this
+    one opcode alone, more than twice any other.
+
+    IT IS NOT THE ITERATOR PROTOCOL. There is no `Symbol.iterator` dispatch in
+    this runtime - `context::iterable_values` answers with a plain array and the
+    loop that follows indexes it, which is why a for-of needs no other new
+    operation. Two consequences a backend must not optimise away: the ARRAY ARM
+    RETURNS THE SAME ARRAY rather than a copy, so `for (x of arr)` aliases and a
+    hoisted length read would change behaviour; and a generator is DRAINED
+    eagerly under a bound rather than iterated lazily, so an infinite one hangs.
+    Both are the interpreter's semantics, reproduced rather than repaired.
+  }];
+  let arguments = (ins CTJS_ValueType:$source);
+  let results = (outs CTJS_ValueType:$result);
+  let assemblyFormat = "`of` $source attr-dict";
+}
+
 def CTJS_BinaryOp : CTJS_RuntimeOp<"binary", "ct_aot_binary_op", CTJS_GenericEffects> {
   let summary = "Generic binary operator with ToPrimitive semantics";
   let description = [{

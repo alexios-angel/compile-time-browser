@@ -1,4 +1,4 @@
-# `new` in compiled code — **DONE**
+# Closing the corpus: `new`, the missing jumps, and `for-of` — **DONE**
 
 `ctjs.construct` was the last operation refused anywhere in the Bootstrap
 corpus. With it lowered, **every function the importer produces from
@@ -88,3 +88,69 @@ has ever defined**.
 | construct's arguments never parked | the GC arm: `undefinedZ` where 65 characters are correct |
 
 Each mutation reddens exactly the cases that claim to cover it and no others.
+
+
+---
+
+# Two more, after `new`
+
+`ctjs.construct` closed the LOWERING. What was left was upstream, in the
+importer, which skips a function at the first opcode it has no operation for.
+
+```
+                imported   skipped   refused by the lowering
+after `new`          483        91         0
++ the two jumps      491        83         0
++ `iterable`         519        55         0
+```
+
+## The two conditional jumps the CFG classifier had never heard of
+
+`is_conditional_jump` named `jump_if_false` and `jump_if_true`. The VM has four.
+`jump_if_defined` and `jump_if_not_nullish` were **not unimplemented** — their
+emission was already written, correct, and unreachable, because that predicate
+is what marks a branch target as a block LEADER. Neither one's target nor
+fallthrough ever got a block, and the emitter then refused with "branch target
+is not a block leader": a message that reads like a malformed program rather
+than a classifier that has not heard of the opcode.
+
+Twelve functions, every one of them `??` or `?.`. The differential case passes
+arguments where truthiness and definedness disagree — `0 ?? 9` is 0 — because
+lowering either jump through `ctjs.truthy` is the plausible mistake and the one
+optional chaining exists to avoid.
+
+## `iterable`, at 36 functions the largest single opcode
+
+One opcode, one line in the interpreter, and `context::iterable_values` was
+already a named member — and `ct_aot_iterable_values` **already had a body**.
+Only the dialect operation, the importer case and the lowering were missing.
+
+It is not the iterator protocol: there is no `Symbol.iterator` dispatch, the
+helper answers with a plain array and the loop that follows indexes it, which is
+why a for-of needs no other new operation.
+
+The row asks for a correction the implementation deliberately does not make. Its
+array-like arm calls `lookup_property` up to 2^24 times with no `failed_` test,
+so a throw part-way through still runs millions of lookups. That is the
+INTERPRETER's defect; re-testing in the helper alone would make the compiled
+tier fail earlier than the interpreted one on a program that can observe it.
+Fixing it is a VM change with its own before/after test, in one place.
+
+## What these two cost
+
+* **A mutant that passed was the FIXTURE's fault, not the code's.** Reading
+  `op::iterable`'s source from operand `c` instead of `b` changed nothing,
+  because `c` is 0, 0 names r0, and r0 held the iterable — it was the function's
+  first parameter. The three bodies take a leading `pad` now, so r0 is a number
+  and iterating it yields nothing. Same mutation, red.
+
+* **An index-based edit put `ConstructOp` in the wrong allow-list.** It admitted
+  the operation, so everything worked and every test passed; it sat with the
+  globals rather than beside `CallOp`, where a reader would look. Asserting a
+  match count catches a patch that changes nothing — it does not catch one that
+  changes the wrong thing.
+
+* **`ct_aot_iterable_values` was implemented twice** for a few minutes, because
+  the row was on the "no body yet" list and the list was stale. The build said
+  so immediately. Worth remembering that the 24-rows-without-bodies count is
+  itself a measurement that rots.

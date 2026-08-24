@@ -424,7 +424,7 @@ bool body_is_supported(FuncOp function, std::string & why) {
         }
         if (mlir::isa<CompareOp, GetPropertyOp, SetPropertyOp, CallOp, CreateClosureOp,
                       CreateCellOp, CellGetOp, CellSetOp, CreateObjectOp, CreateArrayOp, AppendOp,
-                      ThrowOp>(op)) {
+                      ThrowOp, ConstructOp, IterableOp>(op)) {
             return;
         }
 
@@ -463,7 +463,7 @@ bool body_is_supported(FuncOp function, std::string & why) {
                   "to it compiles and fails at link";
             return;
         }
-        if (mlir::isa<LoadGlobalOp, StoreGlobalOp, ConstructOp>(op)) { return; }
+        if (mlir::isa<LoadGlobalOp, StoreGlobalOp>(op)) { return; }
         if (auto binary = mlir::dyn_cast<BinaryOp>(op)) {
             if (!is_valid_binary(binary.getKind())) {
                 supported = false;
@@ -1559,6 +1559,15 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                     mlir::ValueRange{scope.frame, array, mapping.lookup(element)});
             }
             mapping.map(made.getResult(), array);
+            return;
+        }
+        if (auto over = mlir::dyn_cast<IterableOp>(op)) {
+            // (1, 1, 1) and so a status call: it drains generators and calls
+            // lookup_property on an array-like, either of which runs user
+            // JavaScript and can throw.
+            mapping.map(over.getResult(),
+                        status_call(scope, build, where, callee("ct_aot_iterable_values"),
+                                    {scope.frame, mapping.lookup(over.getSource())}, value));
             return;
         }
         if (auto push = mlir::dyn_cast<AppendOp>(op)) {

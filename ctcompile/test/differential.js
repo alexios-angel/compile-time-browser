@@ -207,6 +207,25 @@ function coalesce(a, b) { return a ?? b; }
 function chain(o) { return o?.p; }
 function dflt(a) { if (a === undefined) { a = 5; } return a; }
 
+// for-of AND SPREAD, which are the same opcode: both compile to op::iterable,
+// whose helper answers with a plain ARRAY that the loop then indexes. There is
+// no Symbol.iterator dispatch in this runtime.
+//
+// `chars` PREPENDS rather than appends, so the answer records the ORDER the
+// values came out in: a drain that reverses gives "abc" where "cba" is right,
+// and a sum could not tell. `total(7)` is the non-object arm - iterable_values
+// yields nothing for a number, so the loop runs zero times and the answer is 0
+// rather than a throw, which the row calls out as deliberate.
+// THE LEADING `pad` IS LOAD-BEARING, not padding. Written `total(xs)`, the
+// iterable is the FIRST parameter and so lives in r0 - and a mutant that reads
+// the wrong operand field of op::iterable gets 0, which names r0, which is the
+// same register. The case passed with the source taken from `c` instead of `b`
+// and said nothing. With a pad in front, r0 is a number and iterating it yields
+// nothing.
+function total(pad, xs) { var s = 0; for (var v of xs) { s = s + v; } return s; }
+function chars(pad, t) { var s = ""; for (var ch of t) { s = ch + s; } return s; }
+function spread(pad, xs) { return [...xs].length; }
+
 function drive(which) {
   // A SENTINEL, so an arm that throws or never matches is visible. Without it
   // OUT keeps the PREVIOUS case's answer, both tiers read the same stale value
@@ -269,6 +288,8 @@ function drive(which) {
   if (which === 21) { try { newBad(5); OUT = "not thrown"; } catch (e) { OUT = "" + e; } }
   // 0 and "" are DEFINED, so `??` keeps them; a nullish left side takes the
   // right. `?.` on null is undefined rather than a throw.
+  if (which === 23) { OUT = "" + total(0, [1, 2, 3]) + "/" + chars(0, "abc") + "/" + total(0, 7); }
+  if (which === 24) { OUT = "" + spread(0, "hey") + "/" + spread(0, [1, 2]); }
   if (which === 22) {
     OUT = "" + coalesce(0, 9) + "/" + coalesce("", 9) + "/" + coalesce(nothing, 9) + "/" +
           chain(null) + "/" + chain({ p: 4 }) + "/" + dflt(0);
