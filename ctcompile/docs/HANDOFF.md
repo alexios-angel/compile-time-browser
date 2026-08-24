@@ -601,12 +601,39 @@ It now refuses to run when a `ctjs.func` remains. And `ctjs.frame_exit` must be
 the last thing before the return, or the shared failure path leaves the frame
 twice (harmless — `leave` truncates to its own index — but unchecked).
 
-**Next**: property access and calls, which is where the Phaser corpus starts —
-`ctjs.get_property` needs an inline cache, and `ctjs.call` needs an argv span
-marshalled into the frame's **GC-rooted slots**, so it is the first operation
-that cannot be done without `ct_aot_slots`. That is also the point at which
-rooting stops being deferrable: everything compiled so far keeps its live values
-in C++ locals, which the precise collector cannot see.
+**Property reads and calls compile.** A call is the first operation needing the
+frame for something other than rooting: `ct_aot_call` takes a **contiguous**
+`argv`, and the arguments are rooted in scattered slots — so each call site
+reserves a run in the register window and copies them in just before the call.
+In the frame, not a C++ array: the call is a safepoint that runs user JavaScript
+before reading them. The GC test now exercises exactly that.
+
+**ONLY 32 OF THE 69 ABI ROWS HAVE IMPLEMENTATIONS.** `aot.hpp` declares all of
+them; `aot_bridge.cpp` defines 32. A call to one of the other 37 **compiles
+perfectly and fails at link** — and that shipped: `ct_aot_global_get` and
+`ct_aot_negate` were emitted for two commits with a green suite, because every
+EmitC lit test uses `-fsyntax-only`. `runtime_defines()` in `CTJSToEmitC.cpp` is
+the list, and **`ctcompile_linkable`** keeps it honest in both directions by
+linking a TU that exercises everything the backend accepts.
+
+**Two limits that are upstream of the backend**, found writing that fixture:
+`+a` never arrives — the *importer* has no CTJS operation for `op::to_number`,
+so `ctjs.unary plus` is reachable only from hand-written IR. And `undefined` is
+a **global read** in JavaScript, so it needs the helper with no body; an
+uninitialised local is the same value and reaches nothing.
+
+**The three tests that can see what lit cannot:** `ctcompile_gc_roots` runs
+generated code with the collector hostile (a use-after-free nothing collects is
+invisible); `ctcompile_linkable` links it (a declared-but-undefined helper
+compiles fine); and the `%cxx` step in each EmitC lit test compiles it against
+the real `aot.hpp` (a signature the backend invented looks fluent).
+
+**Next**: `ct_aot_set_index` and the other 36 unimplemented rows are the
+critical path now — the backend can lower more than the runtime can execute.
+Either implement rows in `aot_bridge.cpp`, or widen into what is already
+implemented: `ct_aot_new_object`, `ct_aot_new_array` and `ct_aot_truthy` are
+there, `ct_aot_append` and `ct_aot_construct` are not, so object and array
+literals are half-reachable.
 
 ## Using subagents
 
