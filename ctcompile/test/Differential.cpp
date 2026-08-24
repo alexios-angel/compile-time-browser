@@ -159,7 +159,8 @@ int main() {
         {6u, "apply", "apply", &ctc_apply, "the contiguous argument window a call needs"},
         {7u, "step", "step", &ctc_step,
          "a captured cell against a copied value - a copy answers 1 twice, and a body that "
-         "cannot see its closure answers NaN"},
+         "cannot see its closure answers undefined, because the write lands on a non-cell and "
+         "is dropped"},
         // PATCHES step, NOT counters. The instance-versus-proto question is
         // about the two `step` closures, so `step` is what has to be running
         // compiled; `counters` is the interpreted driver that makes two of them.
