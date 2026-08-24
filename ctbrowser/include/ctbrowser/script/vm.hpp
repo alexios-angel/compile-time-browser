@@ -821,6 +821,21 @@ public:
     // store_property's drop-everything-but-length arm.
     void store_index(value target, value key, value v);
 
+    // THREE OPCODE BODIES LIFTED OUT OF run_loop VERBATIM, for the reason all
+    // the others were: a compiled `key in obj` and an interpreted one must not
+    // be able to disagree, and the only way to guarantee that is one copy.
+    //
+    // Each keeps its opcode's own quirks rather than tidying them. `in` on an
+    // ARRAY asks about an index, so the key must parse as a whole number and
+    // consume the whole string - "1x" is not index 1. `instanceof` walks the
+    // explicit prototype chain and THEN the implicit tables, but the second
+    // pass is object-like only, because `5 instanceof Number` is false in
+    // JavaScript however many methods a primitive resolves. `delete` on
+    // anything that is not an object is a silent no-op.
+    [[nodiscard]] bool has_property(value target, value key);
+    [[nodiscard]] bool instance_of(value target, value ctor);
+    void delete_index(value target, value key);
+
     // PUSH ONE ELEMENT ONTO AN ARRAY LITERAL UNDER CONSTRUCTION.
     //
     // SILENT ON A NON-ARRAY, which is the row's (0, 0, 0) rather than an

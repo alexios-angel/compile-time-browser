@@ -547,6 +547,25 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 set(in.a,
                     ctjs::GetPropertyOp::create(into, where, value_type, reg(in.b), reg(in.c)));
                 break;
+            case op::has_property:
+                // b IS THE KEY AND c IS THE TARGET, which is the reverse of
+                // both the operation's operand order and the reading order of
+                // `key in obj`. Swapping them answers about the wrong object.
+                set(in.a,
+                    ctjs::HasPropertyOp::create(into, where, value_type, reg(in.c), reg(in.b)));
+                break;
+            case op::instance_of:
+                // BOXED HERE, because ctjs.instanceof answers an i1 on purpose.
+                set(in.a, ctjs::FromBoolOp::create(
+                              into, where, value_type,
+                              ctjs::InstanceOfOp::create(into, where, into.getI1Type(), reg(in.b),
+                                                         reg(in.c))));
+                break;
+            case op::delete_index:
+                // a IS THE TARGET HERE, not the destination - delete_index
+                // produces nothing and writes no register.
+                ctjs::DeletePropertyOp::create(into, where, reg(in.a), reg(in.b));
+                break;
             case op::iterable:
                 // b IN, a OUT, and the row warns that both emitters spell it
                 // `{iterable, source, source}` with a and b ALIASED - which

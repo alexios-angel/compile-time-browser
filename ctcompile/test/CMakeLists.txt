@@ -245,7 +245,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
             -DOPT=$<TARGET_FILE:ctjs-opt>
             -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
             -DSOURCE=${_diff_js}
-            "-DENTRIES=plus;ge;strict;loose;pick;globals;apply;step;counter;middle;methodish;fn;neg;bnot;put;greet;pack;kindOf;thrower;build;Point;newBad;coalesce;chain;dflt;total;chars;spread"
+            "-DENTRIES=plus;ge;strict;loose;pick;globals;apply;step;counter;middle;methodish;fn;neg;bnot;put;greet;pack;kindOf;thrower;build;Point;newBad;coalesce;chain;dflt;total;chars;spread;hasIt;isA;drop"
             -DOUTPUT=${_diff_cpp}
             -P "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
     DEPENDS "${_diff_js}" ctjs-translate ctjs-opt

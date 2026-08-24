@@ -413,6 +413,38 @@ struct aot_bridge {
         return status;
     }
 
+    // ct_aot_has_property, ct_aot_instance_of, ct_aot_delete_index - the three
+    // shared members lifted out of run_loop so `key in obj` cannot mean one
+    // thing compiled and another interpreted.
+    //
+    // THEIR TIERS DIFFER AND THE SIGNATURES SAY SO. has_property and
+    // delete_index answer an int32_t status, so a caller tests. instance_of
+    // returns its BOOLEAN - it is raise tier, so on failure the uint32_t is
+    // meaningless and a caller polls ct_aot_failed at a back edge instead.
+    static std::int32_t has_property(aot::ct_aot_frame * f, std::uint64_t target, std::uint64_t key,
+                                     std::uint32_t * out) {
+        context & cx = *frame_of(f).ctx;
+        const bool present = cx.has_property(value::from_bits(target), value::from_bits(key));
+        const std::int32_t status = check(f);
+        if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) {
+            *out = present ? 1u : 0u;
+        }
+        return status;
+    }
+
+    static std::uint32_t instance_of(aot::ct_aot_frame * f, std::uint64_t target,
+                                     std::uint64_t ctor) {
+        context & cx = *frame_of(f).ctx;
+        return cx.instance_of(value::from_bits(target), value::from_bits(ctor)) ? 1u : 0u;
+    }
+
+    static std::int32_t delete_index(aot::ct_aot_frame * f, std::uint64_t target,
+                                     std::uint64_t key) {
+        context & cx = *frame_of(f).ctx;
+        cx.delete_index(value::from_bits(target), value::from_bits(key));
+        return check(f);
+    }
+
     // ct_aot_append. VM_CASE(append) through the shared context::array_append.
     //
     // (0, 0, 0): the push_back can grow a std::vector, which is malloc rather
@@ -1032,6 +1064,19 @@ std::int32_t ct_aot_get_index(ct_aot_frame * fr, std::uint64_t obj, std::uint64_
 
 std::int32_t ct_aot_iterable_values(ct_aot_frame * fr, std::uint64_t source, std::uint64_t * out) {
     return script::aot_bridge::iterable_values(fr, source, out);
+}
+
+std::int32_t ct_aot_has_property(ct_aot_frame * fr, std::uint64_t target, std::uint64_t key,
+                                 std::uint32_t * out) {
+    return script::aot_bridge::has_property(fr, target, key, out);
+}
+
+std::uint32_t ct_aot_instance_of(ct_aot_frame * fr, std::uint64_t target, std::uint64_t ctor) {
+    return script::aot_bridge::instance_of(fr, target, ctor);
+}
+
+std::int32_t ct_aot_delete_index(ct_aot_frame * fr, std::uint64_t target, std::uint64_t key) {
+    return script::aot_bridge::delete_index(fr, target, key);
 }
 
 std::uint64_t * ct_aot_slots(ct_aot_frame * fr) {

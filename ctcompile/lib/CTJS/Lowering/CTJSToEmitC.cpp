@@ -424,7 +424,8 @@ bool body_is_supported(FuncOp function, std::string & why) {
         }
         if (mlir::isa<CompareOp, GetPropertyOp, SetPropertyOp, CallOp, CreateClosureOp,
                       CreateCellOp, CellGetOp, CellSetOp, CreateObjectOp, CreateArrayOp, AppendOp,
-                      ThrowOp, ConstructOp, IterableOp>(op)) {
+                      ThrowOp, ConstructOp, IterableOp, HasPropertyOp, InstanceOfOp,
+                      DeletePropertyOp, FromBoolOp>(op)) {
             return;
         }
 
@@ -1559,6 +1560,50 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                     mlir::ValueRange{scope.frame, array, mapping.lookup(element)});
             }
             mapping.map(made.getResult(), array);
+            return;
+        }
+        if (auto asks = mlir::dyn_cast<HasPropertyOp>(op)) {
+            // ITS OUT-PARAMETER IS A uint32_t BOOLEAN, not a value - the same
+            // shape ct_aot_loose_equals has, and boxed the same way.
+            const auto u32 = opaque(build.getContext(), "uint32_t");
+            const mlir::Value answered = status_call(
+                scope, build, where, callee("ct_aot_has_property"),
+                {scope.frame, mapping.lookup(asks.getObject()), mapping.lookup(asks.getKey())},
+                u32);
+            auto truth =
+                ec::CmpOp::create(build, where, mlir::IntegerType::get(build.getContext(), 1),
+                                  ec::CmpPredicate::ne, answered, literal(build, where, u32, "0"));
+            mapping.map(asks.getResult(),
+                        box(build, where, value, "ctc_box_bool", truth.getResult()));
+            return;
+        }
+        if (auto is_a = mlir::dyn_cast<InstanceOfOp>(op)) {
+            // RAISE TIER: it returns its BOOLEAN rather than a status, so there
+            // is no out-parameter and no exception edge - a caller polls
+            // ct_aot_failed at a back edge. It is still a safepoint.
+            const auto u32 = opaque(build.getContext(), "uint32_t");
+            const mlir::Value answered =
+                ec::CallOpaqueOp::create(
+                    build, where, mlir::TypeRange{u32}, callee("ct_aot_instance_of"),
+                    mlir::ValueRange{scope.frame, mapping.lookup(is_a.getObject()),
+                                     mapping.lookup(is_a.getConstructor())})
+                    .getResult(0);
+            mapping.map(
+                is_a.getResult(),
+                ec::CmpOp::create(build, where, mlir::IntegerType::get(build.getContext(), 1),
+                                  ec::CmpPredicate::ne, answered, literal(build, where, u32, "0"))
+                    .getResult());
+            return;
+        }
+        if (auto boxed = mlir::dyn_cast<FromBoolOp>(op)) {
+            mapping.map(boxed.getResult(),
+                        box(build, where, value, "ctc_box_bool", mapping.lookup(boxed.getBit())));
+            return;
+        }
+        if (auto gone = mlir::dyn_cast<DeletePropertyOp>(op)) {
+            status_call_void(
+                scope, build, where, callee("ct_aot_delete_index"),
+                {scope.frame, mapping.lookup(gone.getObject()), mapping.lookup(gone.getKey())});
             return;
         }
         if (auto over = mlir::dyn_cast<IterableOp>(op)) {

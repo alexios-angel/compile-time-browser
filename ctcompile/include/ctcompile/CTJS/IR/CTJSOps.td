@@ -225,6 +225,25 @@ def CTJS_HasPropertyOp
 // Operators
 //===----------------------------------------------------------------------===//
 
+def CTJS_FromBoolOp : CTJS_Op<"from_bool", [Pure]> {
+  let summary = "A raw i1 as a JavaScript boolean";
+  let description = [{
+    THE OTHER HALF OF ctjs.truthy, and what ctjs.instanceof's own description
+    means by "boxing it is the front end's job". That operation answers an i1 on
+    purpose - `value::from_bits(1)` is a subnormal double, not
+    `value::boolean(true)` - so something has to put the bit back in a register,
+    and a register holds a !ctjs.value.
+
+    PURE, because a boolean is an immediate: nothing is allocated, nothing can
+    throw, and materializing it twice is indistinguishable from once. It is also
+    what lets `if (x instanceof C)` stay unboxed - the boxing op is simply not
+    emitted on that path.
+  }];
+  let arguments = (ins I1:$bit);
+  let results = (outs CTJS_ValueType:$result);
+  let assemblyFormat = "$bit attr-dict";
+}
+
 def CTJS_IterableOp
     : CTJS_RuntimeOp<"iterable", "ct_aot_iterable_values", CTJS_GenericEffects> {
   let summary = "The values of an iterable, as an array";

@@ -98,10 +98,11 @@ Each mutation reddens exactly the cases that claim to cover it and no others.
 importer, which skips a function at the first opcode it has no operation for.
 
 ```
-                imported   skipped   refused by the lowering
-after `new`          483        91         0
-+ the two jumps      491        83         0
-+ `iterable`         519        55         0
+                                imported   skipped   refused by the lowering
+after `new`                          483        91         0
++ the two jumps                      491        83         0
++ `iterable`                         519        55         0
++ `in`, `instanceof`, `delete`       527        47         0
 ```
 
 ## The two conditional jumps the CFG classifier had never heard of
@@ -154,3 +155,47 @@ Fixing it is a VM change with its own before/after test, in one place.
   the row was on the "no body yet" list and the list was stale. The build said
   so immediately. Worth remembering that the 24-rows-without-bodies count is
   itself a measurement that rots.
+
+
+## `in`, `instanceof` and `delete` — 13 functions, and three shared members
+
+All three already had a dialect operation and no body anywhere. Each was inline
+in `run_loop`, so each was lifted into a `context` member first — the same move
+`make_closure`, `construct_new` and `iterable_values` had already made, and for
+the same reason: a compiled `key in obj` and an interpreted one must not be able
+to disagree.
+
+Their ABI tiers differ and the signatures say so. `has_property` and
+`delete_index` answer an `int32_t` status, so a caller tests it. `instance_of`
+returns its **boolean** — it is raise tier, so on failure the `uint32_t` is
+meaningless and a caller polls `ct_aot_failed` at a back edge instead.
+
+`ctjs.instanceof` answers an `i1` on purpose, which its own description explains:
+`value::from_bits(1)` is a subnormal double, not `value::boolean(true)`. Boxing
+is the front end's job, so this added **`ctjs.from_bool`** — the other half of
+`ctjs.truthy`, Pure because a boolean is an immediate. Keeping the raw predicate
+is what will let `if (x instanceof C)` branch without boxing at all.
+
+Three falsifications, deliberately of three different kinds:
+
+| falsification | caught by |
+|---|---|
+| `in` on an array stops requiring the WHOLE key, so `"1x"` is index 1 | the ANCHOR — shared code, so both tiers agreed |
+| `instanceof`'s object-like guard dropped, so `5 instanceof Number` is true | the ANCHOR, same reason |
+| the lowering's object and key swapped | the COMPARISON — compiled tier only |
+
+The first two are the case the differential premise cannot see on its own, and
+they are why those cases carry expected answers at all.
+
+**And a negative test had to be repointed, for the second time.** `refusals.mlir`
+used `ctjs.has_property` as its example of an operation with no lowering; before
+that it used a property write. It names `ctjs.create_regexp` now, which is not a
+`CTJS_RuntimeOp` at all — `aot_helpers.def` declares no helper for a regexp
+literal, so there is nothing to call even if a conversion were written. A
+negative test has to keep naming something genuinely unsupported or it asserts
+nothing.
+
+**Four ABI citations rotted the moment `run_loop.cpp` got shorter.** Lifting
+three opcode bodies out of it moved the end of the file above four cited lines,
+and `ctcompile_def_citations` failed — which is the only citation defect it can
+see, and it saw this one. All four are cited by `VM_CASE(name)` now.

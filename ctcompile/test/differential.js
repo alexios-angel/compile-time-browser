@@ -226,6 +226,24 @@ function total(pad, xs) { var s = 0; for (var v of xs) { s = s + v; } return s; 
 function chars(pad, t) { var s = ""; for (var ch of t) { s = ch + s; } return s; }
 function spread(pad, xs) { return [...xs].length; }
 
+// `in`, `instanceof` AND `delete` - three opcode bodies that were inline in
+// run_loop and are now shared members, which is what stops the two tiers
+// spelling them differently.
+//
+// `in` ON AN ARRAY ASKS ABOUT AN INDEX, so the key must parse as a whole
+// number AND consume the whole string: "1x" is not index 1. On a non-object it
+// is simply false rather than a throw.
+//
+// `instanceof` HAS TWO CHAINS. A page's own class is found by walking the
+// explicit `prototype` links; an array or a function has no such link and is
+// found through the implicit tables property lookup falls back to. And
+// `5 instanceof Number` must be FALSE however many methods a primitive
+// resolves - applying the implicit pass to primitives is the mirror image of
+// the bug that pass fixed, so it is the case that pins the object-like guard.
+function hasIt(pad, o, k) { return k in o; }
+function isA(pad, x, C) { return x instanceof C; }
+function drop(pad, o, k) { delete o[k]; return "" + o.a + o.b; }
+
 function drive(which) {
   // A SENTINEL, so an arm that throws or never matches is visible. Without it
   // OUT keeps the PREVIOUS case's answer, both tiers read the same stale value
@@ -290,6 +308,14 @@ function drive(which) {
   // right. `?.` on null is undefined rather than a throw.
   if (which === 23) { OUT = "" + total(0, [1, 2, 3]) + "/" + chars(0, "abc") + "/" + total(0, 7); }
   if (which === 24) { OUT = "" + spread(0, "hey") + "/" + spread(0, [1, 2]); }
+  if (which === 25) {
+    OUT = "" + hasIt(0, [7, 8], 0) + "/" + hasIt(0, [7, 8], "1x") + "/" + hasIt(0, [7, 8], 2) +
+          "/" + hasIt(0, { a: 1 }, "a") + "/" + hasIt(0, 5, "x");
+  }
+  if (which === 26) {
+    OUT = "" + isA(0, new Point(1), Point) + "/" + isA(0, [], Array) + "/" + isA(0, 5, Number);
+  }
+  if (which === 27) { OUT = drop(0, { a: 1, b: 2 }, "a"); }
   if (which === 22) {
     OUT = "" + coalesce(0, 9) + "/" + coalesce("", 9) + "/" + coalesce(nothing, 9) + "/" +
           chain(null) + "/" + chain({ p: 4 }) + "/" + dflt(0);

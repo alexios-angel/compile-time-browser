@@ -427,7 +427,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_callee, /* opcode */ load_callee)
  * 203), so the home object must never be baked into the image. All-zero
  * flags verified: find() consults `props` only, never `accessors`, so no
  * getter can run.
- * DELEGATES TO: run_loop.cpp:1402-1411 - `closure_object *running =
+ * DELEGATES TO: run_loop.cpp's VM_CASE(load_home) - `closure_object *running =
  *   frames_.back().closure; if (running) if (value *home =
  *   running->find("__home")) reg(a) = *home;`, closure_object::find being
  *   the linear scan at vm.hpp:117-123.
@@ -438,19 +438,19 @@ CT_AOT_HELPER(/* name */ ct_aot_home, /* ret */ uint64_t, /* params */ (struct c
 CT_AOT_COVERS(/* helper */ ct_aot_home, /* opcode */ load_home)
 
 /* MERGED: the calls area passed the value explicitly, `(ctx, uint64_t
- * new_target)`. This zero-operand spelling wins because run_loop.cpp:1374
+ * new_target)`. This zero-operand spelling wins because VM_CASE(pass_new_target)
  * reads THIS frame's new_target, and an explicit parameter would let a
  * backend hand over a stale or cached value - precisely what
  * ct_aot_new_target's row forbids. It must reproduce the LEAK, not repair
  * it: grep confirms exactly three writers in the tree
- * (run_loop.cpp:1021-1022, call.cpp:90-91, run_loop.cpp:1374), and both
+ * (run_loop.cpp:1021-1022, call.cpp:90-91, VM_CASE(pass_new_target)), and both
  * clearing sites are JS-closure frame pushes, so a native or generator
  * callee leaves the flag set and the next ordinary call anywhere sees a
  * truthy new.target. The helper does the write and nothing else. Adjacency
  * to the ct_aot_call that follows is a lowering invariant the ABI cannot
  * enforce.
  * DELEGATES TO: a one-line context member: `pending_new_target_ = fr's
- *   new_target`, verbatim run_loop.cpp:1374. pending_new_target_ is private
+ *   new_target`, verbatim from VM_CASE(pass_new_target). pending_new_target_ is private
  *   and is GC root 4, so AOT cannot reach it structurally.
  * FAILURE: None. */
 CT_AOT_HELPER(/* name */ ct_aot_pass_new_target, /* ret */ void,
@@ -1948,13 +1948,13 @@ CT_AOT_COVERS(/* helper */ ct_aot_module_namespace, /* opcode */ load_namespace)
  * modules_, which is the reference-invalidation hazard above. It may also
  * set suspended_ via the imported module's top-level frame, a flag AOT must
  * not read.
- * DELEGATES TO: run_loop.cpp:1344-1368 inline: context::to_string(spec)
+ * DELEGATES TO: run_loop.cpp's VM_CASE(dyn_import) inline: context::to_string(spec)
  *   (coerce.cpp:78 -> to_primitive_string at :171 for an object), then the
  *   embedder's module_loader_ (installed at Shell/browser.cpp:1216-1239),
  *   which reaches the VM through run_reentrant. The REFERRER is read by the
  *   helper from fr, not passed in.
  * FAILURE: Full status; *out = the promise on OK. NO LOADER INSTALLED IS
- *   CT_AOT_FAILED, not a no-write: run_loop.cpp:1346 raise()s 'dynamic
+ *   CT_AOT_FAILED, not a no-write: VM_CASE(dyn_import) raise()s 'dynamic
  *   import() has no loader installed', which sets failed_, and VM_NEXT then
  *   goes to vm_done - the interpreter does NOT keep going, so a status
  *   meaning 'completed, keep going, do not write' would make AOT code

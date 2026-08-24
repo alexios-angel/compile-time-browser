@@ -330,100 +330,16 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(instance_of) do {
-            {
-                reg(in.a) = value::boolean(false);
-                value target = reg(in.b);
-                const value ctor = reg(in.c);
-                value wanted = value::undefined();
-                if (ctor.is_kind(heap_kind::function)) {
-                    wanted = ensure_prototype(ctor);
-                } else if (ctor.is_kind(heap_kind::native)) {
-                    // A BUILT-IN constructor is a native, and every one of them is
-                    // now something a page can extend - `class E extends Error`.
-                    // Without this, `e instanceof Error` was false for every one.
-                    if (value * p =
-                            static_cast<native_object *>(ctor.as_heap())->find("prototype")) {
-                        wanted = *p;
-                    }
-                } else if (ctor.is_object()) {
-                    if (value * p =
-                            static_cast<object_object *>(ctor.as_heap())->find("prototype")) {
-                        wanted = *p;
-                    }
-                }
-                if (!wanted.is_object()) { break; }
-                // The EXPLICIT chain first - a page's own classes, and every builtin
-                // whose instances carry a prototype (Error, Map, Blob).
-                value link = target.is_object()
-                                 ? static_cast<object_object *>(target.as_heap())->prototype
-                                 : value::undefined();
-                bool found = false;
-                for (int depth = 0; depth < 64 && link.is_object() && !found; ++depth) {
-                    if (link.as_heap() == wanted.as_heap()) {
-                        found = true;
-                    } else {
-                        link = static_cast<object_object *>(link.as_heap())->prototype;
-                    }
-                }
-                // Then the IMPLICIT one. An array, a function, a string and a plain
-                // object have no prototype field to walk - their chain is the tables
-                // property lookup falls back to - so instanceof answered false for
-                // every builtin while answering correctly for a page's own classes.
-                // OBJECT-LIKE ONLY. `5 instanceof Number` and `'x' instanceof
-                // String` are FALSE in JavaScript however many methods a primitive
-                // resolves - instanceof asks about a prototype chain and a primitive
-                // does not have one. Applying the fallback to everything made both
-                // of those true, which is the mirror image of the bug being fixed.
-                if (!found && target.is_object_like()) {
-                    for (object_object * table : implicit_prototypes(target)) {
-                        if (table != nullptr && table == wanted.as_heap()) {
-                            found = true;
-                            break;
-                        }
-                    }
-                }
-                reg(in.a) = value::boolean(found);
-                break;
-            }
+            reg(in.a) = value::boolean(instance_of(reg(in.b), reg(in.c)));
+            break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(has_property) do {
-            {
-                // A PROXY ANSWERS `in` ITSELF, or hands it to the target.
-                if (reg(in.c).is_kind(heap_kind::proxy)) {
-                    auto * p = static_cast<proxy_object *>(reg(in.c).as_heap());
-                    const value trap = proxy_trap(reg(in.c), "has");
-                    if (trap.is_callable()) {
-                        const value args[2] = {p->target, reg(in.b)};
-                        reg(in.a) = value::boolean(truthy(call(trap, args, p->handler)));
-                    } else {
-                        reg(in.a) = value::boolean(
-                            !lookup_property(p->target, to_string(reg(in.b))).is_undefined());
-                    }
-                    break;
-                }
-                const std::string key = to_string(reg(in.b));
-                const value target = reg(in.c);
-                bool present = false;
-                if (target.is_object()) {
-                    present = static_cast<object_object *>(target.as_heap())->find(key) != nullptr;
-                } else if (target.is_array()) {
-                    // `0 in [7, 8]` asks about an INDEX, so the key has to be a
-                    // whole number and the whole key - "1x" is not index 1.
-                    std::size_t index = 0;
-                    const char * first = key.data();
-                    const char * last = first + key.size();
-                    const auto [stopped, failed] = std::from_chars(first, last, index);
-                    present = failed == std::errc{} && stopped == last &&
-                              index < static_cast<array_object *>(target.as_heap())->items.size();
-                }
-                reg(in.a) = value::boolean(present);
-                break;
-            }
-
-            // ToInt32 / ToUint32 first: `-1 >>> 0` is 4294967295, not -1, and
-            // `2.7 | 0` is 2. Doing this on the raw double gets both wrong.
+            // b IS THE KEY AND c IS THE TARGET, which is the reverse of the
+            // reading order and the reason the member takes them named.
+            reg(in.a) = value::boolean(has_property(reg(in.c), reg(in.b)));
+            break;
         }
         while (0);
         VM_NEXT;
@@ -506,10 +422,7 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(delete_index) do {
-            if (reg(in.a).is_object()) {
-                (void)static_cast<object_object *>(reg(in.a).as_heap())
-                    ->erase(to_string(reg(in.b)));
-            }
+            delete_index(reg(in.a), reg(in.b));
             break;
         }
         while (0);

@@ -175,6 +175,83 @@ void context::store_index(value target, value key, value v) {
     store_property(target, to_string(key), v);
 }
 
+bool context::has_property(value target, value key) {
+    // A PROXY ANSWERS `in` ITSELF, or hands it to the target.
+    if (target.is_kind(heap_kind::proxy)) {
+        auto * p = static_cast<proxy_object *>(target.as_heap());
+        const value trap = proxy_trap(target, "has");
+        if (trap.is_callable()) {
+            const value args[2] = {p->target, key};
+            return truthy(call(trap, args, p->handler));
+        }
+        return !lookup_property(p->target, to_string(key)).is_undefined();
+    }
+    const std::string name = to_string(key);
+    if (target.is_object()) {
+        return static_cast<object_object *>(target.as_heap())->find(name) != nullptr;
+    }
+    if (target.is_array()) {
+        // `0 in [7, 8]` asks about an INDEX, so the key has to be a whole
+        // number and the WHOLE key - "1x" is not index 1.
+        std::size_t index = 0;
+        const char * first = name.data();
+        const char * last = first + name.size();
+        const auto [stopped, failed] = std::from_chars(first, last, index);
+        return failed == std::errc{} && stopped == last &&
+               index < static_cast<array_object *>(target.as_heap())->items.size();
+    }
+    return false;
+}
+
+bool context::instance_of(value target, value ctor) {
+    value wanted = value::undefined();
+    if (ctor.is_kind(heap_kind::function)) {
+        wanted = ensure_prototype(ctor);
+    } else if (ctor.is_kind(heap_kind::native)) {
+        // A BUILT-IN constructor is a native, and every one of them is now
+        // something a page can extend - `class E extends Error`. Without this,
+        // `e instanceof Error` was false for every one.
+        if (value * p = static_cast<native_object *>(ctor.as_heap())->find("prototype")) {
+            wanted = *p;
+        }
+    } else if (ctor.is_object()) {
+        if (value * p = static_cast<object_object *>(ctor.as_heap())->find("prototype")) {
+            wanted = *p;
+        }
+    }
+    if (!wanted.is_object()) { return false; }
+    // The EXPLICIT chain first - a page's own classes, and every builtin whose
+    // instances carry a prototype (Error, Map, Blob).
+    value link = target.is_object() ? static_cast<object_object *>(target.as_heap())->prototype
+                                    : value::undefined();
+    for (int depth = 0; depth < 64 && link.is_object(); ++depth) {
+        if (link.as_heap() == wanted.as_heap()) { return true; }
+        link = static_cast<object_object *>(link.as_heap())->prototype;
+    }
+    // Then the IMPLICIT one. An array, a function, a string and a plain object
+    // have no prototype field to walk - their chain is the tables property
+    // lookup falls back to - so instanceof answered false for every builtin
+    // while answering correctly for a page's own classes.
+    //
+    // OBJECT-LIKE ONLY. `5 instanceof Number` and `'x' instanceof String` are
+    // FALSE in JavaScript however many methods a primitive resolves -
+    // instanceof asks about a prototype chain and a primitive does not have
+    // one. Applying the fallback to everything made both of those true, which
+    // is the mirror image of the bug being fixed.
+    if (target.is_object_like()) {
+        for (object_object * table : implicit_prototypes(target)) {
+            if (table != nullptr && table == wanted.as_heap()) { return true; }
+        }
+    }
+    return false;
+}
+
+void context::delete_index(value target, value key) {
+    if (target.is_object()) {
+        (void)static_cast<object_object *>(target.as_heap())->erase(to_string(key));
+    }
+}
+
 void context::store_property(value target, const std::string & name, value v) {
     // A proxy's `set` trap first: it is the only thing that can decide the
     // write does not land on the target at all, which is the point of it.

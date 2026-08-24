@@ -83,6 +83,9 @@ CT_ENTRY(dflt)
 CT_ENTRY(total)
 CT_ENTRY(chars)
 CT_ENTRY(spread)
+CT_ENTRY(hasIt)
+CT_ENTRY(isA)
+CT_ENTRY(drop)
 #undef CT_ENTRY
 
 namespace {
@@ -310,6 +313,23 @@ int main() {
          "the same helper reached from a spread rather than a loop - the string arm yields one "
          "element per character",
          "3/2"},
+        {25u,
+         "in",
+         {{"hasIt", 0u, &ctc_hasIt}, {}},
+         "an INDEX against a name - `1x` is not index 1, and 2 is past the end - and the "
+         "non-object arm, which is false rather than a throw",
+         "true/false/false/true/false"},
+        {26u,
+         "instanceof",
+         {{"isA", 0u, &ctc_isA}, {}},
+         "the explicit prototype chain against the implicit tables, and the object-like guard - "
+         "`5 instanceof Number` is false however many methods a primitive resolves",
+         "true/true/false"},
+        {27u,
+         "delete",
+         {{"drop", 0u, &ctc_drop}, {}},
+         "the property actually going away - without the erase it reads back as 1, giving 12",
+         "undefined2"},
         {17u,
          "literals",
          {{"pack", 0u, &ctc_pack}, {}},

@@ -120,22 +120,24 @@ ctjs.func @has_a_branch(%receiver: !ctjs.value, %new_target: !ctjs.value,
 // --- CONTAINS AN OPERATION WITH NO LOWERING ---------------------------------
 //
 // The allow-list's default, and the reason names the operation so the work list
-// reads itself. `ctjs.has_property` is doubly refused: it has no conversion,
-// and ct_aot_has_property is one of the rows aot.hpp declares and
-// aot_bridge.cpp does not define.
+// reads itself. `ctjs.create_regexp` is not a CTJS_RuntimeOp at all -
+// aot_helpers.def declares no helper for a regexp literal - so there is nothing
+// to call even if a conversion were written.
 //
-// PROPERTY WRITES USED TO BE THIS CASE and are lowered now, which is the right
-// reason for a negative test to need rewriting.
+// PROPERTY WRITES USED TO BE THIS CASE, and then `ctjs.has_property` was, and
+// both are lowered now. That is the right reason for a negative test to need
+// rewriting, and it is worth saying twice: the case has to keep naming an
+// operation that is GENUINELY unsupported, or it asserts nothing.
 //
-// CHECK-LABEL: ctjs.func @asks
-// CHECK-SAME: ctjs.not_lowered = "no lowering yet for ctjs.has_property"
-ctjs.func @asks(%receiver: !ctjs.value, %new_target: !ctjs.value,
-                %callee: !ctjs.value, %o: !ctjs.value, %k: !ctjs.value)
-    -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-  %ctx = ctjs.frame_enter 2
-  %there = ctjs.has_property %k in %o
+// CHECK-LABEL: ctjs.func @matcher
+// CHECK-SAME: ctjs.not_lowered = "no lowering yet for ctjs.create_regexp"
+ctjs.func @matcher(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                   %callee: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  %ctx = ctjs.frame_enter 1
+  %re = ctjs.create_regexp "a.c", "gi"
   ctjs.frame_exit %ctx
-  ctjs.return %there
+  ctjs.return %re
 }
 
 // --- A BINARY KIND ITS FAMILY DOES NOT SERVE --------------------------------
