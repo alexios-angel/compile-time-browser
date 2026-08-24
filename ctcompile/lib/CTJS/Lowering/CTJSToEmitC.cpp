@@ -78,6 +78,10 @@ constexpr unsigned arg_new_target = 1;
 constexpr unsigned arg_callee = 2;
 constexpr unsigned implicit_arguments = 3;
 
+// The frame block's element type, aligned for whatever the runtime constructs
+// in it rather than for a byte.
+constexpr const char * kFrameStorageElement = "alignas(::std::max_align_t) unsigned char";
+
 // THE C++ SPELLINGS, IN ONE PLACE.
 //
 // A JavaScript value is `uint64_t` HERE and nothing else. It is not
@@ -172,7 +176,61 @@ struct compiled_entry {
     // Built on first use, because a function whose helpers cannot fail should
     // not carry an unreachable epilogue.
     mlir::Block * propagate = nullptr;
+
+    // WHERE EACH JAVASCRIPT VALUE IS ROOTED.
+    //
+    // THE COLLECTOR IS PRECISE and walks exactly the roots in GCRoots.def. A
+    // value living only in a C++ local of the emitted function is reachable
+    // from NONE of them, so a helper that collects can free it while the
+    // generated code still holds its bits - and 33 of the 69 ABI rows are
+    // is_safepoint, including every arithmetic one.
+    //
+    // This was a real defect, not a hypothetical: `function f(a,b,c){return
+    // a+b+c;}` compiled to code that kept (a+b) in a plain uint64_t across the
+    // second ct_aot_binary_op, and under set_gc_stress it returned "qqqqqZ"
+    // where the interpreter returned the correct 65-character string. ASan
+    // called it a heap-use-after-free, freed and read inside the same call.
+    //
+    // The runtime's own reference body says what to do instead - "parked in a
+    // slot, which is the whole discipline this phase exists to make possible" -
+    // so every value this backend produces goes into a frame slot as soon as it
+    // exists. The mapping is one slot per produced value, never reused: keeping
+    // a dead value alive is a leak until the frame is left, and losing a live
+    // one is a use-after-free.
+    llvm::DenseMap<mlir::Value, unsigned> slots;
 };
+
+// A C++ STRING LITERAL FOR ARBITRARY BYTES.
+//
+// OCTAL ESCAPES, NOT HEX, and the difference is a real bug rather than a taste.
+// A hex escape in C++ consumes as many hex digits as follow it, so a name
+// containing byte 0x01 followed by the character 'F' becomes "\x01F" - one
+// character, 0x1F - and the emitted program looks up a global nobody named. An
+// octal escape is exactly three digits and cannot run on.
+//
+// A GLOBAL'S NAME IS NOT ALWAYS AN IDENTIFIER, which is why this escapes at all
+// rather than trusting the input: `globalThis["\u0000"] = 1` is legal
+// JavaScript, and the importer carries whatever the source said.
+std::string c_string_literal(llvm::StringRef bytes) {
+    std::string spelled = "\"";
+    for (const char raw : bytes) {
+        const auto byte = static_cast<unsigned char>(raw);
+        if (byte == '"' || byte == '\\') {
+            spelled += '\\';
+            spelled += raw;
+        } else if (byte >= 0x20 && byte < 0x7f) {
+            spelled += raw;
+        } else {
+            static constexpr char digits[] = "01234567";
+            spelled += '\\';
+            spelled += digits[(byte >> 6) & 7u];
+            spelled += digits[(byte >> 3) & 7u];
+            spelled += digits[byte & 7u];
+        }
+    }
+    spelled += '"';
+    return spelled;
+}
 
 // WHY A FUNCTION WAS LEFT ALONE, in a form ctjs-opt prints.
 void refuse(FuncOp function, llvm::StringRef because) {
@@ -205,7 +263,7 @@ bool body_is_supported(FuncOp function, std::string & why) {
             }
             return;
         }
-        if (mlir::isa<CompareOp>(op)) { return; }
+        if (mlir::isa<CompareOp, LoadGlobalOp, StoreGlobalOp>(op)) { return; }
         if (auto binary = mlir::dyn_cast<BinaryOp>(op)) {
             if (!is_valid_binary(binary.getKind())) {
                 supported = false;
@@ -249,6 +307,10 @@ bool body_is_supported(FuncOp function, std::string & why) {
 
 struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
     using CTJSLowerToEmitCBase::CTJSLowerToEmitCBase;
+
+    // Which boxing shims this module's prelude has to define. See box().
+    bool boxes_bool = false;
+    bool boxes_number = false;
 
     void runOnOperation() override {
         mlir::ModuleOp module = getOperation();
@@ -317,10 +379,19 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             // static inline functions into its own translation unit. They are
             // generated code, not engine code: nothing links against them and
             // no other backend has to agree about them.
-            ec::VerbatimOp::create(build, module.getLoc(), build.getStringAttr(R"(namespace {
-inline uint64_t ctc_box_bool(bool b) { return ::ctbrowser::script::value::boolean(b).bits(); }
-inline uint64_t ctc_box_number(double d) { return ::ctbrowser::script::value::number(d).bits(); }
-})"));
+            std::string prelude;
+            if (boxes_bool) {
+                prelude += "\ninline uint64_t ctc_box_bool(bool b) { return "
+                           "::ctbrowser::script::value::boolean(b).bits(); }";
+            }
+            if (boxes_number) {
+                prelude += "\ninline uint64_t ctc_box_number(double d) { return "
+                           "::ctbrowser::script::value::number(d).bits(); }";
+            }
+            if (!prelude.empty()) {
+                ec::VerbatimOp::create(build, module.getLoc(),
+                                       build.getStringAttr("namespace {" + prelude + "\n}"));
+            }
         }
     }
 
@@ -445,20 +516,51 @@ inline uint64_t ctc_box_number(double d) { return ::ctbrowser::script::value::nu
             parameters.push_back(ec::LoadOp::create(build, where, element, slot.getResult()));
         }
 
+        llvm::DenseMap<mlir::Value, unsigned> scope_slots;
+
         // ---- the frame ----------------------------------------------------
         //
         // CT_AOT_FRAME_BYTES OF CALLER-ALLOCATED SPACE, sized from the macro
         // the runtime's own header defines rather than from a number written
+        // ALIGNED, because `unsigned char[N]` is aligned to 1 and ct_aot_enter
+        // constructs an aot_frame_storage in it - a struct with a pointer and
+        // three indices. aot_bridge.cpp asserts its size against
+        // CT_AOT_FRAME_BYTES but nothing asserted the ALIGNMENT, and an
+        // under-aligned placement is undefined behaviour that happens to work
+        // on x86-64 and need not elsewhere.
+        //
         // here. The array is passed directly: C++ decays it to `unsigned char *`
         // and converts that to the `void *` the row declares, which needs no
         // subscript, no address-of, and no size_t - and !emitc.size_t emits a
         // bare `size_t` that does not compile.
         const auto block_type = ec::ArrayType::get({static_cast<std::int64_t>(CT_AOT_FRAME_BYTES)},
-                                                   opaque(context, "unsigned char"));
+                                                   opaque(context, kFrameStorageElement));
         auto storage =
             ec::VariableOp::create(build, where, block_type, ec::OpaqueAttr::get(context, ""));
-        const mlir::Value registers =
-            literal(build, where, u32, std::to_string(entered.getRegCount()));
+        // THE REGISTER WINDOW HAS TO HOLD THE ROOTS TOO.
+        //
+        // proto.frame_size sizes the interpreter's register file, and this
+        // backend needs one slot for every JavaScript value it produces -
+        // because a value in a C++ local is invisible to a precise collector.
+        // The two are counted together and the larger wins: asking for more
+        // than frame_size is safe (ct_aot_enter uses the number verbatim and
+        // fills with undefined), asking for less makes ct_aot_slots hand back a
+        // null span far from the cause.
+        //
+        // SLOTS ARE NEVER REUSED. A liveness analysis would pack them; keeping
+        // a dead value alive until the frame is left is a bounded leak, and
+        // getting liveness wrong is a use-after-free. This is the MVP's trade.
+        unsigned parked = 0;
+        for (unsigned i = 0; i < declared; ++i) {
+            scope_slots[body.getArgument(implicit_arguments + i)] = parked++;
+        }
+        function.getBody().walk([&](mlir::Operation * inner) {
+            for (const mlir::Value result : inner->getResults()) {
+                if (mlir::isa<ValueType>(result.getType())) { scope_slots[result] = parked++; }
+            }
+        });
+        const unsigned window = std::max(static_cast<unsigned>(entered.getRegCount()), parked);
+        const mlir::Value registers = literal(build, where, u32, std::to_string(window));
         auto frame = ec::CallOpaqueOp::create(
             build, where, mlir::TypeRange{frame_ptr}, callee("ct_aot_enter"),
             mlir::ValueRange{in_ctx, in_site, registers, in_receiver, storage});
@@ -511,11 +613,32 @@ inline uint64_t ctc_box_number(double d) { return ::ctbrowser::script::value::nu
         }
 
         // ---- and their operations -----------------------------------------
-        compiled_entry scope{entry, frame.getResult(0), in_receiver, in_constructing, in_out, value,
-                             status};
+        compiled_entry scope{
+            entry,   frame.getResult(0), in_receiver, in_constructing, in_out, value, status,
+            nullptr, scope_slots};
+
+        // THE PARAMETERS ARE ROOTED FIRST, before anything can collect. They
+        // were read out of argv before the frame existed - argv dies at
+        // ct_aot_enter - so this is the earliest moment they can be.
+        build.setInsertionPointToEnd(running);
+        for (unsigned i = 0; i < declared; ++i) {
+            park_if_tracked(scope, build, where, body.getArgument(implicit_arguments + i),
+                            parameters[i]);
+        }
+
         for (mlir::Block & block : function.getBody()) {
             build.setInsertionPointToEnd(mapping.lookup(&block));
-            for (mlir::Operation & op : block) { convert(op, build, mapping, scope); }
+            for (mlir::Operation & op : block) {
+                convert(op, build, mapping, scope);
+                // EVERY VALUE THIS OPERATION PRODUCED, ROOTED IMMEDIATELY -
+                // after convert rather than inside it, so that no conversion
+                // can forget. Same reason the ABI shape check is a trait on the
+                // base class rather than a verifier written per operation.
+                for (const mlir::Value produced : op.getResults()) {
+                    if (!mapping.contains(produced)) { continue; }
+                    park_if_tracked(scope, build, op.getLoc(), produced, mapping.lookup(produced));
+                }
+            }
         }
 
         function.erase();
@@ -829,6 +952,42 @@ inline uint64_t ctc_box_number(double d) { return ::ctbrowser::script::value::nu
             return;
         }
 
+        // THE GLOBALS, WHICH ARE INFALLIBLE AND SO HAVE NO EDGE AT ALL.
+        // Both rows are (0, 0, 0): reading an undeclared global does NOT throw
+        // a ReferenceError here - the row says the absence is load-bearing -
+        // and neither reads nor writes can collect. So each is one call.
+        //
+        // THE NAME IS BYTES AND A LENGTH, not a NUL-terminated string, which is
+        // why the length is emitted rather than left to strlen: a global whose
+        // name contains a zero byte is legal JavaScript and strlen would stop
+        // at it.
+        if (auto global = mlir::dyn_cast<LoadGlobalOp>(op)) {
+            const llvm::StringRef name = global.getName();
+            mapping.map(global.getResult(),
+                        ec::CallOpaqueOp::create(
+                            build, where, mlir::TypeRange{value}, callee("ct_aot_global_get"),
+                            mlir::ValueRange{
+                                scope.frame,
+                                literal(build, where, pointer_to(build.getContext(), "const char"),
+                                        c_string_literal(name)),
+                                literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                        std::to_string(name.size()))})
+                            .getResult(0));
+            return;
+        }
+        if (auto global = mlir::dyn_cast<StoreGlobalOp>(op)) {
+            const llvm::StringRef name = global.getName();
+            ec::CallOpaqueOp::create(
+                build, where, mlir::TypeRange{}, callee("ct_aot_global_set"),
+                mlir::ValueRange{scope.frame,
+                                 literal(build, where, pointer_to(build.getContext(), "const char"),
+                                         c_string_literal(name)),
+                                 literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                         std::to_string(name.size())),
+                                 mapping.lookup(global.getValue())});
+            return;
+        }
+
         if (auto returned = mlir::dyn_cast<ReturnOp>(op)) {
             // ct_aot_return_value TAKES NO FRAME HANDLE, which is why the entry
             // delivers `receiver` and `constructing` by value: the body still
@@ -861,6 +1020,38 @@ inline uint64_t ctc_box_number(double d) { return ::ctbrowser::script::value::nu
         llvm_unreachable("body_is_supported and convert disagree about what is supported");
     }
 
+    // ROOT ONE VALUE IN THE FRAME.
+    //
+    // THE SPAN IS RE-FETCHED EVERY TIME, and that is not laziness. The row is
+    // explicit: the pointer "IS VALID UNTIL THE NEXT SAFEPOINT AND NOT ONE
+    // INSTRUCTION LONGER", because ct_aot_enter and every nested call resize
+    // context::registers_ and may reallocate it. "A backend that hoists this
+    // call out of a loop containing a safepoint has miscompiled." One extra
+    // load per store is the price of not being that backend.
+    //
+    // STORING ONCE IS ENOUGH because the collector does not MOVE: it marks, and
+    // then deletes what it did not mark. A value reachable from a slot keeps
+    // its bits, so the C++ local holding a copy stays valid. Against a moving
+    // collector every use would have to reload instead.
+    void park(compiled_entry & scope, mlir::OpBuilder & build, mlir::Location where,
+              mlir::Value rooted, unsigned slot) {
+        auto span = ec::CallOpaqueOp::create(build, where,
+                                             mlir::TypeRange{ec::PointerType::get(scope.value)},
+                                             callee("ct_aot_slots"), mlir::ValueRange{scope.frame});
+        auto cell = ec::SubscriptOp::create(
+            build, where, ec::LValueType::get(scope.value), span.getResult(0),
+            mlir::ValueRange{literal(build, where, mlir::IntegerType::get(build.getContext(), 32),
+                                     std::to_string(slot))});
+        ec::AssignOp::create(build, where, cell.getResult(), rooted);
+    }
+
+    // Park it if it is a JavaScript value this function tracks.
+    void park_if_tracked(compiled_entry & scope, mlir::OpBuilder & build, mlir::Location where,
+                         mlir::Value original, mlir::Value emitted) {
+        const auto found = scope.slots.find(original);
+        if (found != scope.slots.end()) { park(scope, build, where, emitted, found->second); }
+    }
+
     // A MACHINE QUANTITY, MADE INTO A JAVASCRIPT VALUE.
     //
     // Through one of the shims the module's prelude defines, because the ABI
@@ -869,6 +1060,13 @@ inline uint64_t ctc_box_number(double d) { return ::ctbrowser::script::value::nu
     // output is `callee(args)`, cannot spell.
     mlir::Value box(mlir::OpBuilder & build, mlir::Location where, mlir::Type value,
                     llvm::StringRef shim, mlir::Value machine) {
+        // ONLY THE SHIMS A MODULE ACTUALLY USES ARE EMITTED. A translation unit
+        // carrying a function nothing calls is dead code the host compiler will
+        // warn about - and this project builds with -Werror, so emitting all of
+        // them unconditionally would make the generated output unbuildable
+        // under the same flags as everything else.
+        if (shim == "ctc_box_bool") { boxes_bool = true; }
+        if (shim == "ctc_box_number") { boxes_number = true; }
         return ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value}, shim,
                                         mlir::ValueRange{machine})
             .getResult(0);

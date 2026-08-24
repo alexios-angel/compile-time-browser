@@ -1,0 +1,149 @@
+// DOES COMPILED CODE KEEP ITS VALUES ALIVE ACROSS A COLLECTION?
+//
+// This is the only test in the suite that runs code the backend generated,
+// against the real runtime, with the collector deliberately made hostile - and
+// it exists because nothing weaker caught the defect it now guards.
+//
+// WHAT WENT WRONG. The backend compiled `a + b + c` into two calls to
+// ct_aot_binary_op with the first result held in a plain C++ local across the
+// second. ct_aot_binary_op is is_safepoint, the collector is PRECISE and walks
+// exactly the roots in GCRoots.def, and a value living only in a native frame
+// is reachable from none of them. Under set_gc_stress the emitted function
+// returned a six-character string where the interpreter returned the correct
+// sixty-five; ASan called it a heap-use-after-free, the buffer freed and read
+// inside the same call. Without stress it was correct every time.
+//
+// WHY THE OTHER TESTS COULD NOT SEE IT. Every EmitC test compiles what the
+// backend emits and several run it, but a use-after-free that nothing collects
+// is invisible: the freed memory is still there and still holds the right
+// bytes. The bug needs a collection to happen at exactly the wrong moment, and
+// only set_gc_stress makes that reliable. A backend can be read, compiled and
+// executed and still be wrong here.
+//
+// HOW IT IS SET UP, and each part matters:
+//
+//   `c` IS AN OBJECT WITH A valueOf, so the second `+` runs ToPrimitive, which
+//   calls user JavaScript, which reaches context::call - the one place a
+//   collection can begin. Two plain numbers would never collect and the test
+//   would pass on a broken backend.
+//
+//   THE STRINGS ARE BUILT AT RUN TIME, never literals, so they are heap objects
+//   the collector can actually free.
+//
+//   EVERY VALUE THE HARNESS HOLDS LIVES IN A JAVASCRIPT GLOBAL, never in a C++
+//   local of this file - otherwise the harness would have the very bug it is
+//   testing for, and would fail whether or not the backend was fixed.
+//
+//   AND THE INTERPRETER RUNS THE SAME FIXTURE FIRST. If the expected answer
+//   were written down by hand and the fixture drifted, this would be asserting
+//   against a stale constant; the interpreter is the definition of correct
+//   here, exactly as the dialect's own policy says - "when a CTJS operation and
+//   the ctbrowser VM disagree, the VM is correct by definition".
+#include <ctbrowser/aot/aot.hpp>
+#include <ctbrowser/aot/aot_entry.h>
+#include <ctbrowser/script/builtins.hpp>
+#include <ctbrowser/script/compile.hpp>
+#include <ctbrowser/script/vm.hpp>
+
+#include <cstdint>
+#include <cstdio>
+#include <span>
+#include <string>
+#include <string_view>
+
+using ctbrowser::script::context;
+using ctbrowser::script::function_proto;
+using ctbrowser::script::program;
+using ctbrowser::script::value;
+
+// COMPILED BY THE BUILD, from test/gc-roots.js through the real pipeline:
+// ctjs-translate, then ctjs-opt, then mlir-translate, then this project's own
+// C++ compiler. The symbol is renamed by the build so this declaration does not
+// depend on how the importer numbers functions.
+extern "C" std::int32_t ctcompile_test_entry(ctbrowser::aot::ct_aot_ctx *,
+                                             const ctbrowser::aot::ct_aot_site *,
+                                             const std::uint64_t *, std::uint32_t, std::uint64_t,
+                                             std::uint32_t, std::uint64_t *);
+
+namespace {
+
+constexpr std::string_view fixture = R"JS(
+function f(a, b, c) { return a + b + c; }
+
+function repeat(ch) { var s = ''; for (var i = 0; i < 32; i++) { s = s + ch; } return s; }
+
+var A = '', B = '', R = '';
+
+// ITS valueOf ALLOCATES BEFORE IT ANSWERS, so the collection happens while the
+// caller is holding a value it has nowhere rooted.
+var c = { valueOf: function () { var j = ''; for (var i = 0; i < 8; i++) { j = j + 'q'; } return 'Z'; } };
+
+function setup() { A = repeat('A'); B = repeat('B'); }
+function run() { R = f(A, B, c); }
+)JS";
+
+int failures = 0;
+
+void report(const char * what, bool ok, const std::string & got, const std::string & want) {
+    std::printf("%-34s %s\n", what, ok ? "ok" : "FAILED");
+    if (!ok) {
+        std::printf("    expected %zu chars: %s\n    got      %zu chars: %s\n", want.size(),
+                    want.c_str(), got.size(), got.c_str());
+        ++failures;
+    }
+}
+
+} // namespace
+
+int main() {
+    program compiled = ctbrowser::script::compiler::compile(std::string(fixture));
+    if (!compiled.ok) {
+        std::printf("the fixture did not compile\n");
+        return 1;
+    }
+
+    context cx;
+    ctbrowser::script::install_builtins(cx);
+    if (!cx.run(compiled).ok) {
+        std::printf("the fixture did not run\n");
+        return 1;
+    }
+
+    function_proto * f = nullptr;
+    for (function_proto & each : compiled.functions) {
+        if (each.name == "f") { f = &each; }
+    }
+    if (f == nullptr) {
+        std::printf("no function_proto named f\n");
+        return 1;
+    }
+
+    const auto attempt = [&](ctbrowser::aot::ct_aot_entry_fn entry, bool stress) {
+        // THE FIXTURE IS REBUILT WITHOUT STRESS EACH TIME, so the strings are
+        // fresh heap objects and one run cannot leave the next a survivor.
+        f->aot_entry = nullptr;
+        cx.set_gc_stress(false);
+        cx.call(cx.global("setup"), std::span<const value>{}, value::undefined());
+        f->aot_entry = entry;
+        cx.set_gc_stress(stress);
+        cx.call(cx.global("run"), std::span<const value>{}, value::undefined());
+        const std::string answer = cx.to_string(cx.global("R"));
+        cx.set_gc_stress(false);
+        return answer;
+    };
+
+    // THE INTERPRETER DEFINES THE ANSWER. Nothing here is written down twice.
+    const std::string expected = attempt(nullptr, true);
+    report("the interpreter under stress", expected.size() == 65, expected, "65 characters");
+
+    // AND THE COMPILED BODY MUST AGREE WITH IT - under stress, which is the
+    // whole point, and without, which catches a backend that is wrong always
+    // rather than only when the collector runs.
+    report("compiled, collector hostile", attempt(&ctcompile_test_entry, true) == expected,
+           attempt(&ctcompile_test_entry, true), expected);
+    report("compiled, collector idle", attempt(&ctcompile_test_entry, false) == expected,
+           attempt(&ctcompile_test_entry, false), expected);
+
+    if (failures == 0) { std::printf("\nall %d checks passed\n", 3); }
+    return failures == 0 ? 0 : 1;
+}

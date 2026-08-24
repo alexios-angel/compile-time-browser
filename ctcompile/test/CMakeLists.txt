@@ -128,6 +128,63 @@ add_test(NAME ctcompile_package
 # written by the test above.
 set_tests_properties(ctcompile_package PROPERTIES DEPENDS ctcompile_app_bundle)
 
+# mlir-translate is LLVM's, and it is part of the backend rather than a
+# convenience: it is the stage that turns EmitC into C++.
+find_program(MLIR_TRANSLATE_EXE mlir-translate HINTS "${LLVM_TOOLS_BINARY_DIR}")
+
+# --- the one test that RUNS what the backend generated ------------------------
+#
+# Everything else about the EmitC backend is checked by reading its output or by
+# compiling it. Neither can see a use-after-free: the freed memory is still
+# there and still holds the right bytes until something reuses it. This runs the
+# generated code against the real runtime with set_gc_stress on, which is the
+# only way to make the collection happen at the moment that matters.
+#
+# It guards a defect that was real and shipped: `a + b + c` kept the first
+# addition's result in a plain C++ local across the second call, and
+# ct_aot_binary_op is a safepoint. Under stress the compiled body returned six
+# characters where the interpreter returned sixty-five.
+#
+# THE PIPELINE RUNS AT BUILD TIME rather than being checked in, because a
+# generated file in the tree is a copy that can disagree with the generator -
+# and this test's whole value is that it exercises the CURRENT backend.
+if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
+  set(_gc_js "${CMAKE_CURRENT_SOURCE_DIR}/gc-roots.js")
+  set(_gc_cpp "${CMAKE_CURRENT_BINARY_DIR}/gc-roots.generated.cpp")
+  add_custom_command(
+    OUTPUT "${_gc_cpp}"
+    # THE SYMBOL IS RENAMED so the driver's declaration does not depend on how
+    # the importer numbers functions - `f` becomes `f$1` becomes `f_1`, and a
+    # second function in the fixture would renumber it.
+    COMMAND "${CMAKE_COMMAND}"
+            -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
+            -DOPT=$<TARGET_FILE:ctjs-opt>
+            -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
+            -DSOURCE=${_gc_js}
+            -DOUTPUT=${_gc_cpp}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
+    DEPENDS "${_gc_js}" ctjs-translate ctjs-opt
+            "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
+    COMMENT "Compiling gc-roots.js through the EmitC backend"
+    VERBATIM)
+
+  # GENERATED CODE IS NOT THIS PROJECT'S CODE, and the flags that keep the
+  # hand-written sources honest do not apply to it. The entry's signature is
+  # fixed by ct_aot_entry_fn, so a function that never looks at `argc` has an
+  # unused parameter by construction - and -Werror would make every such
+  # program a build failure. Narrowed to the two warnings that are inherent to
+  # emitted code rather than turning -Werror off.
+  set_source_files_properties("${_gc_cpp}" PROPERTIES
+    COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable")
+
+  add_executable(ctcompile-test-gc_roots GCRoots.cpp "${_gc_cpp}")
+  target_link_libraries(ctcompile-test-gc_roots PRIVATE ctbrowser::script)
+  ctcompile_target(ctcompile-test-gc_roots)
+  add_test(NAME ctcompile_gc_roots COMMAND ctcompile-test-gc_roots)
+else()
+  message(STATUS "ctcompile: gc-roots test unavailable (needs ctjs-opt and mlir-translate)")
+endif()
+
 # --- check-ctcompile: the lit suite -------------------------------------------
 #
 # SEPARATE FROM ctest ON PURPOSE. The plan: "Keep it separate from the existing
