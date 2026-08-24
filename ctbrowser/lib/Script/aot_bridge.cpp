@@ -368,6 +368,38 @@ struct aot_bridge {
         return held.frame_index < cx.frames_.size() ? &cx.frames_[held.frame_index] : nullptr;
     }
 
+    // ct_aot_construct. op::construct's own dispatch through the shared
+    // context::construct_new.
+    //
+    // NOT context::construct WHOLESALE, which the row is emphatic about and is
+    // right: construct() tests !is_callable() FIRST and raise()s, which no
+    // try/catch can see, while the opcode allocates, runs the field
+    // initialisers and only then throws a CATCHABLE TypeError. Delegating
+    // wholesale turns `try { new obj() } catch` into an engine fault.
+    //
+    // `site` IS THIS FRAME'S OWN function_proto, which is what names the
+    // function in that TypeError. There is no origin scan to go with it -
+    // callee_origin walks emitted bytecode from an ip and a register index, and
+    // an AOT frame has neither - so describe_callee renders the callee as "the
+    // value".
+    static std::int32_t construct(aot::ct_aot_frame * f, std::uint64_t callee,
+                                  const std::uint64_t * argv, std::uint32_t argc,
+                                  const aot::ct_aot_site * site, std::uint64_t * out) {
+        aot_frame_storage & held = frame_of(f);
+        context & cx = *held.ctx;
+        // COPIED OUT BEFORE THE CALL, for ct_aot_call's reason: argv points
+        // into registers_ for a compiled body, and the call resizes it.
+        std::vector<value> args;
+        args.reserve(argc);
+        for (std::uint32_t i = 0; i < argc; ++i) { args.push_back(value::from_bits(argv[i])); }
+
+        const function_proto & from = *reinterpret_cast<const function_proto *>(site);
+        const value produced = cx.construct_new(value::from_bits(callee), args, from);
+        const std::int32_t status = check(f);
+        if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
+        return status;
+    }
+
     // ct_aot_append. VM_CASE(append) through the shared context::array_append.
     //
     // (0, 0, 0): the push_back can grow a std::vector, which is malloc rather
@@ -918,6 +950,11 @@ std::int32_t ct_aot_to_number(ct_aot_frame * fr, std::uint64_t v, double * out) 
 // The `site` parameter is where Phase 26 attaches an inline cache without an
 // ABI break. Taken and ignored, because the signature is the thing two code
 // generators are written against and a parameter added later is a break.
+std::int32_t ct_aot_construct(ct_aot_frame * fr, std::uint64_t callee, const std::uint64_t * argv,
+                              std::uint32_t argc, const ct_aot_site * site, std::uint64_t * out) {
+    return script::aot_bridge::construct(fr, callee, argv, argc, site, out);
+}
+
 void ct_aot_append(ct_aot_frame * fr, std::uint64_t array, std::uint64_t v) {
     script::aot_bridge::append(fr, array, v);
 }

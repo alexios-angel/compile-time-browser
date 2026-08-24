@@ -74,6 +74,9 @@ CT_ENTRY(greet)
 CT_ENTRY(pack)
 CT_ENTRY(kindOf)
 CT_ENTRY(thrower)
+CT_ENTRY(build)
+CT_ENTRY(Point)
+CT_ENTRY(newBad)
 #undef CT_ENTRY
 
 namespace {
@@ -237,6 +240,43 @@ int main() {
          {{"thrower", 0u, &ctc_thrower}, {}},
          "a real throw against a frame that merely unwound - a lost thrown_ catches undefined",
          "caught 7"},
+        // ONLY `build`, SO Point STAYS INTERPRETED - and that is the whole
+        // difference between this case and the next, which was found by a
+        // mutant that passed.
+        //
+        // THE PRIMITIVE-RETURN RULE IS WRITTEN TWICE and only one copy runs at
+        // a time. ct_aot_construct_result applies it INSIDE a compiled body
+        // before returning; context::construct_new applies it to what invoke()
+        // handed back. Patch both halves and the compiled Point has already
+        // done it, so construct_new's copy sees an object and can be deleted
+        // with every case still green. Leaving Point interpreted is what makes
+        // that copy load-bearing - and it is the only thing that does, because
+        // an interpreted frame entered through invoke() has `constructing`
+        // FALSE (the aggregate initialiser fills eight members and constructing
+        // is the twelfth), so run_loop's own copy of the rule does not fire
+        // either.
+        {20u,
+         "construct",
+         {{"build", 0u, &ctc_build}, {}},
+         "the fresh instance against the body's return value - `new` throws away the 7 Point "
+         "returns, and an ordinary call would answer it",
+         "9"},
+        // AND NOW BOTH HALVES, which is a different path rather than a stronger
+        // one: `Point` is entered with constructing set, so the rule is applied
+        // by the compiled body and construct_new never sees a primitive.
+        {20u,
+         "construct compiled",
+         {{"build", 0u, &ctc_build}, {"Point", 0u, &ctc_Point}},
+         "entering a COMPILED constructor - ct_aot_construct_result is where the rule lives on "
+         "that side, and `constructing` is what selects it",
+         "9"},
+        // THE ONE CASE THAT READS ct_aot_construct's `site`. See newBad.
+        {21u,
+         "new on a number",
+         {{"newBad", 0u, &ctc_newBad}, {}},
+         "the entry's own site against the memo marker - the site is only ever read to name "
+         "the enclosing function in this message",
+         "TypeError: `new` on the value is number (5), not a function - in `newBad`"},
         {17u,
          "literals",
          {{"pack", 0u, &ctc_pack}, {}},

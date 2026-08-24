@@ -150,6 +150,21 @@ find_program(MLIR_TRANSLATE_EXE mlir-translate HINTS "${LLVM_TOOLS_BINARY_DIR}")
 # and this test's whole value is that it exercises the CURRENT backend.
 if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   set(_gc_js "${CMAKE_CURRENT_SOURCE_DIR}/gc-roots.js")
+  # THE DRIVER READS THE SAME FILE THE PIPELINE COMPILES, for the reason
+  # spelled out over differential.js below - and gc-roots.js had the defect in
+  # a worse form. Its C++ copy was not a transcription that had drifted but a
+  # DIFFERENT PROGRAM: the compiled bodies here, the drivers there. `held`
+  # builds a closure and a compiled body bakes that closure's function index,
+  # so the two agreed only because the extra functions happened to sit after
+  # `keep`.
+  set(_gc_inc "${CMAKE_CURRENT_BINARY_DIR}/gc-roots.js.inc")
+  add_custom_command(
+    OUTPUT "${_gc_inc}"
+    COMMAND "${CMAKE_COMMAND}" -DSOURCE=${_gc_js} -DOUTPUT=${_gc_inc}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
+    DEPENDS "${_gc_js}" "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
+    COMMENT "Embedding gc-roots.js for the driver"
+    VERBATIM)
   set(_gc_cpp "${CMAKE_CURRENT_BINARY_DIR}/gc-roots.generated.cpp")
   add_custom_command(
     OUTPUT "${_gc_cpp}"
@@ -161,7 +176,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
             -DOPT=$<TARGET_FILE:ctjs-opt>
             -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
             -DSOURCE=${_gc_js}
-            "-DENTRIES=f;held"
+            "-DENTRIES=f;held;built"
             -DOUTPUT=${_gc_cpp}
             -P "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
     DEPENDS "${_gc_js}" ctjs-translate ctjs-opt
@@ -182,7 +197,8 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   set_source_files_properties("${_gc_cpp}" PROPERTIES
     COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
 
-  add_executable(ctcompile-test-gc_roots GCRoots.cpp "${_gc_cpp}")
+  add_executable(ctcompile-test-gc_roots GCRoots.cpp "${_gc_cpp}" "${_gc_inc}")
+  target_include_directories(ctcompile-test-gc_roots PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(ctcompile-test-gc_roots PRIVATE ctbrowser::script)
   ctcompile_target(ctcompile-test-gc_roots)
   add_test(NAME ctcompile_gc_roots COMMAND ctcompile-test-gc_roots)
@@ -229,7 +245,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
             -DOPT=$<TARGET_FILE:ctjs-opt>
             -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
             -DSOURCE=${_diff_js}
-            "-DENTRIES=plus;ge;strict;loose;pick;globals;apply;step;counter;middle;methodish;fn;neg;bnot;put;greet;pack;kindOf;thrower"
+            "-DENTRIES=plus;ge;strict;loose;pick;globals;apply;step;counter;middle;methodish;fn;neg;bnot;put;greet;pack;kindOf;thrower;build;Point;newBad"
             -DOUTPUT=${_diff_cpp}
             -P "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
     DEPENDS "${_diff_js}" ctjs-translate ctjs-opt

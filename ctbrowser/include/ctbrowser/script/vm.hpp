@@ -1178,6 +1178,29 @@ private:
     [[nodiscard]] value ensure_prototype(value fn);
     [[nodiscard]] value make_instance(value callee);
 
+    // THE `new` FORM OF THE CALLEE TYPE ERROR, factored so the two tiers
+    // cannot spell it differently. ct_aot_call's row asks for a general
+    // callee_type_error(form, callee, receiver, site); THAT FUNCTION HAS NEVER
+    // EXISTED - it is cited by two rows and defined nowhere - and this is its
+    // `new` half, which is the only half with a caller.
+    //
+    // `origin` IS THE BACKWARDS SCAN, PASSED IN. callee_origin walks emitted
+    // bytecode from an ip and a register index, and an AOT frame has neither,
+    // so the interpreter supplies the scan's result and a compiled frame
+    // supplies nothing - which describe_callee renders as "the value".
+    void new_callee_type_error(const function_proto & fn, std::string_view origin, value callee);
+
+    // op::construct's OWN DISPATCH, AS A VALUE - a different function from
+    // `construct` above rather than a wrapper round it, because VM_CASE
+    // (construct) ends in a frame PUSH and computes nothing, so a helper that
+    // must answer with a value cannot share it. What it CAN share is every
+    // branch, and each one is the same member the interpreter calls.
+    //
+    // `from` is the function the `new` was written in, used only to name it in
+    // the TypeError.
+    [[nodiscard]] value construct_new(value callee, std::span<const value> args,
+                                      const function_proto & from);
+
     [[nodiscard]] value execute(const program & prog, const function_proto & entry);
     [[nodiscard]] value run_loop(std::size_t stop_depth);
     // A FAILURE COMES WITH THE STACK IT HAPPENED ON.

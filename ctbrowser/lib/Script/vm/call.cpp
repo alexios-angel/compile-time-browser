@@ -533,6 +533,14 @@ value context::iterable_values(value v) {
     return make_array();
 }
 
+void context::new_callee_type_error(const function_proto & fn, std::string_view origin,
+                                    value callee) {
+    // CATCHABLE, and that is the whole difference from construct()'s
+    // raise("attempted to construct a non-function"): a page's own
+    // `try { new whatever() } catch` sees this one.
+    throw_error("TypeError", "`new` on " + describe_callee(fn, origin, callee));
+}
+
 value context::construct(value callee, std::span<const value> args) {
     // `new proxy(...)` runs the construct trap with (target, argsArray). p5.js
     // has exactly one of these and it runs at the bundle's top level:
@@ -589,6 +597,68 @@ value context::construct(value callee, std::span<const value> args) {
     // ct_aot_return_value, and passing false would make `new C()` on a compiled
     // constructor evaluate to whatever the body happened to return.
     const value produced = invoke(callee, args, self, /*constructing*/ true);
+    return produced.is_object_like() ? produced : self;
+}
+
+// `new callee(...)` AS THE OPCODE MEANS IT, which is not what construct() above
+// means. Three differences, and a page can see all three.
+//
+// (1) THE ACCEPTANCE TEST AND ITS TIER. construct() tests !is_callable() FIRST
+// and raise()s, which no try/catch can see; the opcode allocates, runs the field
+// initialisers and only THEN throws a catchable TypeError. Delegating wholesale
+// turns `try { new obj() } catch` into an engine fault.
+//
+// (2) NEW.TARGET. The opcode writes `fresh.new_target = callee` into the frame
+// it pushes; construct() reaches a frame only through invoke(), which takes
+// new.target from pending_new_target_ - undefined. SAVED AND RESTORED rather
+// than set and cleared, because the opcode never CONSUMES the flag.
+//
+// (3) THE ORDER. The instance exists and the field initialisers have run BEFORE
+// the is-a-function test, so a throw from here has already allocated an object
+// with a prototype installed. Only the collector can see that, and it is the
+// ordering the ABI row insists on.
+//
+// WHAT IT DOES NOT REPRODUCE, said rather than left to be found: a GENERATOR
+// callee. invoke() answers one with make_generator; the opcode has no such test
+// and runs the body as an ordinary frame, where the first `yield` raises. This
+// matches construct() and `new C(...args)` instead.
+value context::construct_new(value callee, std::span<const value> args,
+                             const function_proto & from) {
+    // A PROXY AND A NATIVE GO THE LONG WAY ROUND, exactly as the opcode sends
+    // them: the construct trap and the conversion flag both live in construct(),
+    // and duplicating either is what let the two disagree.
+    if (callee.is_kind(heap_kind::proxy) || callee.is_kind(heap_kind::native)) {
+        return construct(callee, args);
+    }
+    const value self = make_instance(callee);
+    // ROOTED FOR THE REASON BOTH OTHER SPELLINGS ROOT IT: the instance is in a
+    // C++ local while the field initialisers run user JavaScript.
+    const rooted keep{*this, self};
+    run_field_initialisers(callee, self);
+
+    if (!callee.is_kind(heap_kind::function)) {
+        new_callee_type_error(from, {}, callee);
+        return value::undefined();
+    }
+    // GUARDED ON program_ ALONE, and the conjunct a first draft had was wrong:
+    // invoke() bails on `program_ == nullptr` BEFORE it reaches
+    // enter_compiled, so a compiled body with an aot_entry and no program would
+    // have slipped past a test for both and returned a bare instance whose
+    // constructor never ran.
+    if (program_ == nullptr) {
+        raise("no program to construct in");
+        return value::undefined();
+    }
+    // A DEVIATION IN THE SAFE DIRECTION, not a reproduction: op::construct's
+    // compiled arm calls enter_compiled with no failed_ test, so it DOES enter
+    // a constructor body after a raise in a field initialiser.
+    if (failed_) { return value::undefined(); }
+
+    const value saved = pending_new_target_;
+    pending_new_target_ = callee;
+    const value produced = invoke(callee, args, self, /*constructing*/ true);
+    pending_new_target_ = saved;
+    // A CONSTRUCTOR RETURNING A PRIMITIVE EVALUATES TO ITS RECEIVER.
     return produced.is_object_like() ? produced : self;
 }
 

@@ -1503,8 +1503,11 @@ CT_AOT_COVERS(/* helper */ ct_aot_define_accessor, /* opcode */ define_setter)
  *   acceptance test is op::call's OWN predicate,
  *   is_kind(native)||is_kind(function) (run_loop.cpp:942, 962), which is
  *   NOT the one op::construct uses; only the message ASSEMBLY at
- *   run_loop.cpp:964-991 needs factoring into
- *   context::callee_type_error(form, callee, receiver, site) -
+ *   run_loop.cpp:964-991 needs factoring into a general
+ *   callee_type_error(form, callee, receiver, site) - A FUNCTION THAT HAS
+ *   NEVER EXISTED. Only its `new` half was ever needed and it now exists as
+ *   context::new_callee_type_error; this row's call half is still inline in
+ *   VM_CASE(call), which is unfinished work rather than a citation -
  *   describe_callee (call.cpp:281) and callee_origin (call.cpp:251) are
  *   ALREADY context members declared at vm.hpp:915-917.
  * FAILURE: Full status via ct_aot_check. There is no pending-exception
@@ -1559,47 +1562,72 @@ CT_AOT_COVERS(/* helper */ ct_aot_call_spread, /* opcode */ apply)
 
 /* DELEGATING WHOLESALE TO context::construct WOULD BREAK THE VM IN TWO
  * WAYS, which is why the delegate column reads as it does. (a) The
- * acceptance tests DIFFER: op::call rejects a callable proxy
- * (run_loop.cpp:962 accepts only is_kind(function)) while op::construct
- * hands a proxy to context::construct so its construct trap runs
- * (:1421-1428) - sharing one test would break `new Proxy(Renderer2D,
- * {construct(){...}})`, which the code's own comment (call.cpp:430-432)
- * says p5.js executes at its bundle's top level. (b) The ORDER differs:
- * context::construct tests !is_callable() FIRST and raise()s UNCATCHABLY
- * (call.cpp:443-446), whereas op::construct allocates, runs field
- * initialisers and only then throws a CATCHABLE TypeError - delegating
- * wholesale converts a catchable `new` TypeError into an uncatchable engine
- * fault. The pending_new_target_ save/set/restore is what makes this a
- * delegation rather than a reimplementation and removes any prerequisite VM
- * change: op::construct sets fresh.new_target directly, context::call
- * reaches the same field only through pending_new_target_ (already GC root
- * 4), and SAVING AND RESTORING reproduces the second half - op::construct
- * never consumes the flag, so a pass_new_target before a construct leaves
- * it set for whatever pushes a frame next. Reproduce the set AND the leak,
- * or neither. The `constructing` frame flag is deliberately NOT reproduced:
- * its sole reader is run_loop.cpp:1034, and this helper applies
- * is_object_like at the outer level exactly as call.cpp:472-473 does.
- * DELEGATES TO: NOT context::construct wholesale - it must reproduce
- *   op::construct's own dispatch, all of it by delegation: proxy ->
- *   context::construct (call.cpp:428); native -> context::construct;
- *   otherwise context::make_instance (call.cpp:313, byte-identical to the
- *   inline derivation in run_loop.cpp's VM_CASE(construct)) then
- *   context::run_field_initialisers (call.cpp:477) then, if
- *   !is_kind(function), context::callee_type_error in its `new` form, else
- *   save pending_new_target_, set it to callee, context::call(callee, args,
- *   self), restore, and return is_object_like(produced) ? produced : self.
+ * acceptance tests DIFFER: op::call rejects a callable proxy - VM_CASE(call)
+ * accepts only is_kind(function) - while op::construct hands a proxy to
+ * context::construct so its construct trap runs. Sharing one test would
+ * break `new Proxy(Renderer2D, {construct(){...}})`, which the code's own
+ * comment above context::construct says p5.js executes at its bundle's top
+ * level. (b) The ORDER differs: context::construct tests !is_callable()
+ * FIRST and raise()s UNCATCHABLY, whereas op::construct allocates, runs
+ * field initialisers and only then throws a CATCHABLE TypeError -
+ * delegating wholesale converts a catchable `new` TypeError into an
+ * uncatchable engine fault. The pending_new_target_ save/set/restore is what
+ * makes this a delegation rather than a reimplementation: op::construct sets
+ * fresh.new_target directly, context::invoke reaches the same field only
+ * through pending_new_target_ (already GC root 4), and SAVING AND RESTORING
+ * reproduces the second half - op::construct never consumes the flag, so a
+ * pass_new_target before a construct leaves it set for whatever pushes a
+ * frame next. Reproduce the set AND the leak, or neither.
+ *
+ * CITED BY NAME AND NOT BY LINE, and that is not a style preference. Every
+ * line number this row carried had rotted: context::construct had moved by
+ * more than a hundred lines, make_instance and run_field_initialisers by as
+ * much again, and nothing caught it because only a citation past EOF is
+ * checked. A stale line number reads as authority and points at unrelated
+ * code.
+ *
+ * THE `constructing` FRAME FLAG IS SUBTLER THAN THIS ROW ONCE CLAIMED, and
+ * the correction is worth keeping. Its readers are VM_CASE(ret) - which
+ * turns a constructor's primitive return into the receiver - and the
+ * generator save. context::invoke does NOT set it: its call_frame aggregate
+ * initialiser fills eight members and `constructing` is the twelfth, so a
+ * constructor entered through invoke() has it false and VM_CASE(ret)'s rule
+ * does not fire there. THREE PLACES APPLY THAT RULE and exactly one runs per
+ * construct: VM_CASE(ret) for a constructor the interpreter pushed a frame
+ * for, ct_aot_construct_result inside a COMPILED constructor before it
+ * returns, and context::construct_new on what invoke() hands back. Patch a
+ * differential case's constructor as well as its caller and the compiled
+ * body has already applied it, so construct_new's copy can be deleted with
+ * every case still green - which is how this was found.
+ * DELEGATES TO: context::construct_new, which IS op::construct's own
+ *   dispatch factored out so the two tiers cannot drift - NOT
+ *   context::construct wholesale. It routes proxy and native to
+ *   context::construct; otherwise context::make_instance (byte-identical to
+ *   the inline derivation in VM_CASE(construct)) then
+ *   context::run_field_initialisers then, if !is_kind(function),
+ *   context::new_callee_type_error - the `new` half of the general
+ *   callee_type_error two rows cite and nothing ever defined - else save
+ *   pending_new_target_, set it to callee, context::invoke(callee, args,
+ *   self, constructing), restore, and return is_object_like(produced) ?
+ *   produced : self.
+ * `site` IS THE ENTRY'S OWN function_proto and is read on ONE path: naming
+ *   the function the `new` was written in, inside that TypeError. It is not
+ *   the memo key ct_aot_new_string uses, which is a per-function marker
+ *   address; passing that one here reads a function_proto that does not
+ *   exist, and the differential case that catches it is the only case whose
+ *   callee is not a constructor.
  * FAILURE: Full status. CAUGHT/UNWOUND for the catchable '`new` on ...'
  *   TypeError VM_CASE(construct) raises, and for anything the field
- *   initialisers,
- *   the construct trap or the constructor body throw. CT_AOT_FAILED for the
- *   raise tier, which on the proxy and native paths now includes
- *   context::construct's own non-constructor raise (call.cpp:444). THE
- *   ORDERING IS PRESERVED AND MATTERS: the instance is allocated and
+ *   initialisers, the construct trap or the constructor body throw.
+ *   CT_AOT_FAILED for the raise tier, which on the proxy and native paths
+ *   includes context::construct's own non-constructor raise, and for
+ *   construct_new's own 'no program to construct in'. THE ORDERING IS
+ *   PRESERVED AND MATTERS: the instance is allocated and
  *   run_field_initialisers has been called BEFORE the is-a-function check,
  *   so an UNWOUND here has already allocated an object with a prototype
- *   installed. run_field_initialisers is a no-op for a non-function
- *   (call.cpp:482), so nothing user-visible runs on that path - only the
- *   allocation is observable, through the collector. */
+ *   installed. run_field_initialisers is a no-op for a non-function, so
+ *   nothing user-visible runs on that path - only the allocation is
+ *   observable, through the collector. */
 CT_AOT_HELPER(/* name */ ct_aot_construct, /* ret */ int32_t,
               /* params */ (struct ct_aot_frame *fr, uint64_t callee, const uint64_t *argv, uint32_t argc, const struct ct_aot_site *site, uint64_t *out),
               /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)

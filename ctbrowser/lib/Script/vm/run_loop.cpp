@@ -1286,11 +1286,12 @@ value context::run_loop(std::size_t stop_depth) {
                 const std::size_t arg_base = base + in.a + 1;
 
                 if (!callee.is_kind(heap_kind::function)) {
-                    throw_error("TypeError",
-                                "`new` on " + describe_callee((*vm_proto),
-                                                              callee_origin((*vm_proto),
-                                                                            vm_frame->ip - 1, in.a),
-                                                              callee));
+                    // THE MESSAGE IS SHARED NOW, so a compiled `new` on a
+                    // non-constructor cannot spell it differently. The origin
+                    // is the backwards scan, which only an interpreted frame
+                    // has an ip for.
+                    new_callee_type_error(
+                        (*vm_proto), callee_origin((*vm_proto), vm_frame->ip - 1, in.a), callee);
                     break;
                 }
                 auto * fnobj = static_cast<closure_object *>(callee.as_heap());

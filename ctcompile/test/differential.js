@@ -167,6 +167,33 @@ var zeroBig = 0n;
 
 function counters(a, b) { return counter(a)() + counter(b)(); }
 
+// `new`, AND ITS TWO ANSWERS THAT ARE NOT THE BODY'S.
+//
+// Point RETURNS A PRIMITIVE, which `new` throws away: the value of
+// `new Point(3)` is the fresh instance, not 7. Lowering ctjs.construct as an
+// ordinary call - the plausible mistake, since ct_aot_call takes the same
+// contiguous window - gives 7 instead, and then `p.twice` is undefined and the
+// arm throws rather than answering wrongly.
+//
+// AND THE INSTANCE HAS TO BE WIRED TO Point.prototype, which is
+// make_instance's half of the work rather than the body's: `twice` is on the
+// prototype and nothing in Point mentions it.
+function Point(x) { this.x = x; return 7; }
+Point.prototype.twice = function () { return this.x * 2; };
+
+function build(a) { var p = new Point(a); return p.twice() + p.x; }
+
+// A `new` ON SOMETHING THAT IS NOT A CONSTRUCTOR, which is the only case that
+// reads ct_aot_construct's `site`. Every other operand is a value the body
+// already had; `site` exists solely to name the ENCLOSING function in the
+// TypeError, so if the lowering passes the memo marker instead of the entry's
+// own site - two fields of one struct, one letter apart - this is what says so.
+//
+// THE try IS IN drive AND NOT HERE on purpose: push_handler has no CTJS
+// operation, so a catch in this function would make the backend refuse it and
+// the case would test the interpreter against itself.
+function newBad(f) { return new f(); }
+
 function drive(which) {
   // A SENTINEL, so an arm that throws or never matches is visible. Without it
   // OUT keeps the PREVIOUS case's answer, both tiers read the same stale value
@@ -221,4 +248,10 @@ function drive(which) {
   // THE VALUE MUST ARRIVE INTACT, which is what distinguishes a real throw from
   // a frame that merely unwound: a lost `thrown_` would catch undefined.
   if (which === 19) { try { thrower(7); OUT = "not thrown"; } catch (e) { OUT = "caught " + e; } }
+  // 3*2 + 3 = 9, and only if `new` answered the instance rather than the 7
+  // Point returns and the prototype came from Point.prototype.
+  if (which === 20) { OUT = build(3); }
+  // THE MESSAGE IS THE ASSERTION, because the function it names is the operand
+  // under test. `in \`newBad\`` is ct_aot_construct's `site`.
+  if (which === 21) { try { newBad(5); OUT = "not thrown"; } catch (e) { OUT = "" + e; } }
 }

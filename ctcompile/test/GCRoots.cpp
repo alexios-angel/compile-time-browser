@@ -74,27 +74,15 @@ extern "C" std::int32_t ctc_f(ctbrowser::aot::ct_aot_ctx *, const ctbrowser::aot
                               const std::uint64_t *, std::uint32_t, std::uint64_t, std::uint32_t,
                               std::uint64_t *);
 
+extern "C" std::int32_t ctc_built(ctbrowser::aot::ct_aot_ctx *, const ctbrowser::aot::ct_aot_site *,
+                                  const std::uint64_t *, std::uint32_t, std::uint64_t,
+                                  std::uint32_t, std::uint64_t *);
+
 namespace {
 
-constexpr std::string_view fixture = R"JS(
-function f(a, b, c, k) { return k(a + b, c); }
-
-function held(a, b, c, k) { var s = a + b; var keep = function () { return s; }; return k(keep(), c); }
-
-function cat(x, y) { return x + y; }
-
-function repeat(ch) { var s = ''; for (var i = 0; i < 32; i++) { s = s + ch; } return s; }
-
-var A = '', B = '', R = '';
-
-// ITS valueOf ALLOCATES BEFORE IT ANSWERS, so the collection happens while the
-// caller is holding a value it has nowhere rooted.
-var c = { valueOf: function () { var j = ''; for (var i = 0; i < 8; i++) { j = j + 'q'; } return 'Z'; } };
-
-function setup() { A = repeat('A'); B = repeat('B'); }
-function run() { R = f(A, B, c, cat); }
-function runHeld() { R = held(A, B, c, cat); }
-)JS";
+constexpr std::string_view fixture =
+#include "gc-roots.js.inc"
+    ;
 
 int failures = 0;
 
@@ -178,6 +166,23 @@ int main() {
     report("a closure, collector hostile", attempt(kept, "runHeld", &ctc_held, true) == want_held,
            attempt(kept, "runHeld", &ctc_held, true), want_held);
 
-    if (failures == 0) { std::printf("\nall %d checks passed\n", 4); }
+    // AND THE STRING HANDED TO A CONSTRUCTOR, which lives in a window of its
+    // own. ct_aot_construct allocates the instance before the body runs, so
+    // under stress the collection happens with `a + b` reachable from nothing
+    // but ct_aot_construct's parked arguments.
+    function_proto * builder = nullptr;
+    for (function_proto & candidate : compiled.functions) {
+        if (candidate.name == "built") { builder = &candidate; }
+    }
+    if (builder == nullptr) {
+        std::printf("no function_proto named built\n");
+        return 1;
+    }
+    const std::string want_built = attempt(builder, "runBuilt", nullptr, true);
+    report("a constructor, collector hostile",
+           attempt(builder, "runBuilt", &ctc_built, true) == want_built,
+           attempt(builder, "runBuilt", &ctc_built, true), want_built);
+
+    if (failures == 0) { std::printf("\nall %d checks passed\n", 5); }
     return failures == 0 ? 0 : 1;
 }

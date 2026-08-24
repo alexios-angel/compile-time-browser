@@ -228,6 +228,12 @@ struct compiled_entry {
     // allocation per site and slot, which is what the row requires.
     mlir::Value memo_site;
 
+    // AND THE ENTRY'S REAL `site`, a different thing from memo_site above,
+    // which is why they are two fields. This one IS the function_proto
+    // ct_aot_entry_fn was handed; ct_aot_construct uses it to name THIS
+    // function in the TypeError a `new` on a non-constructor throws.
+    mlir::Value entry_site;
+
     // WHICH MEMO SLOT EACH STRING CONSTANT USES. The slots must be unique
     // WITHIN the function and stable across calls; one per ctjs.constant
     // carrying a string is both. They are not frame slots - the cache is a map.
@@ -457,7 +463,7 @@ bool body_is_supported(FuncOp function, std::string & why) {
                   "to it compiles and fails at link";
             return;
         }
-        if (mlir::isa<LoadGlobalOp, StoreGlobalOp>(op)) { return; }
+        if (mlir::isa<LoadGlobalOp, StoreGlobalOp, ConstructOp>(op)) { return; }
         if (auto binary = mlir::dyn_cast<BinaryOp>(op)) {
             if (!is_valid_binary(binary.getKind())) {
                 supported = false;
@@ -789,6 +795,10 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                 windows[inner] = parked;
                 parked += static_cast<unsigned>(made.getUpvalues().size());
             }
+            if (auto built = mlir::dyn_cast<ConstructOp>(inner)) {
+                windows[inner] = parked;
+                parked += static_cast<unsigned>(built.getArgs().size());
+            }
             if (auto constant = mlir::dyn_cast<ConstantOp>(inner)) {
                 if (mlir::isa<StringAttr>(constant.getValue())) { memo_slots[inner] = next_memo++; }
             }
@@ -892,6 +902,7 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             windows,
             literal(build, where, pointer_to(context, "const ctbrowser::aot::ct_aot_site"),
                     "reinterpret_cast<const ctbrowser::aot::ct_aot_site *>(&" + marker + ")"),
+            in_site,
             memo_slots};
 
         // THE PARAMETERS ARE ROOTED FIRST, before anything can collect. They
@@ -1590,6 +1601,36 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                 mlir::ValueRange{scope.frame, mapping.lookup(thrown.getValue())});
             mlir::cf::BranchOp::create(build, where, failure_path(scope, build, where),
                                        mlir::ValueRange{answered.getResult(0)});
+            return;
+        }
+
+        // `new callee(...)`. The same contiguous argument window a call needs,
+        // for the same reason: ct_aot_construct is a safepoint that runs
+        // arbitrary user JavaScript - the field initialisers and then the body -
+        // before it is done with them.
+        //
+        // ITS `site` IS THE ENTRY'S OWN, unlike ct_aot_call's which the
+        // implementation ignores: construct uses it to name THIS function in
+        // the TypeError a `new` on a non-constructor throws.
+        //
+        // AND new.target IS NOT PASSED, because the ABI has nowhere to put it -
+        // ct_aot_construct sets it from the callee itself, which is what
+        // op::construct does with `fresh.new_target = callee`.
+        if (auto built = mlir::dyn_cast<ConstructOp>(op)) {
+            const unsigned base = scope.argument_windows.lookup(&op);
+            const auto arguments = built.getArgs();
+            for (auto [index, argument] : llvm::enumerate(arguments)) {
+                park(scope, build, where, mapping.lookup(argument),
+                     base + static_cast<unsigned>(index));
+            }
+            mapping.map(built.getResult(),
+                        status_call(scope, build, where, callee("ct_aot_construct"),
+                                    {scope.frame, mapping.lookup(built.getCallee()),
+                                     window_pointer(scope, build, where, base),
+                                     literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                             std::to_string(arguments.size())),
+                                     scope.entry_site},
+                                    value));
             return;
         }
 
