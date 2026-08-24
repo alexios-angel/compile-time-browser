@@ -622,11 +622,25 @@ so `ctjs.unary plus` is reachable only from hand-written IR. And `undefined` is
 a **global read** in JavaScript, so it needs the helper with no body; an
 uninitialised local is the same value and reaches nothing.
 
-**The three tests that can see what lit cannot:** `ctcompile_gc_roots` runs
-generated code with the collector hostile (a use-after-free nothing collects is
-invisible); `ctcompile_linkable` links it (a declared-but-undefined helper
-compiles fine); and the `%cxx` step in each EmitC lit test compiles it against
-the real `aot.hpp` (a signature the backend invented looks fluent).
+**The four tests that can see what lit cannot**, and each catches a failure the
+other three are green for:
+
+| test | asks | why nothing else can |
+|---|---|---|
+| `ctcompile_differential` | is the ANSWER right? | fluent, linkable, rooted code can still compute the wrong thing |
+| `ctcompile_gc_roots` | do values survive a collection? | a use-after-free nothing collects still holds the right bytes |
+| `ctcompile_linkable` | do the symbols exist? | a declared-but-undefined helper compiles perfectly |
+| `%cxx` in each lit test | does it agree with `aot.hpp`? | a signature the backend invented looks fluent |
+
+The differential test's inputs **separate** the lowerings rather than covering
+them — an object with a `valueOf` for the two `+` families, `NaN` for the
+relational operators, `0` against `"0"` for the equalities. A case whose answer
+is the same whether or not the compiler is right is worse than no case.
+
+**The two global rows are implemented** (`context::global` and
+`define_global` — the same lines the interpreter runs, so the tiers cannot
+drift), so globals compile and run. That is the pattern for the rest: most rows
+say "DELEGATES TO" a `context` method that already exists.
 
 **Next**: `ct_aot_set_index` and the other 36 unimplemented rows are the
 critical path now — the backend can lower more than the runtime can execute.

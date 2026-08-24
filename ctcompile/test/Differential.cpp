@@ -168,6 +168,8 @@ int main() {
         }
     }
 
-    if (failures == 0) { std::printf("\nall %zu bodies agree with the interpreter\n", std::size(subjects)); }
+    if (failures == 0) {
+        std::printf("\nall %zu bodies agree with the interpreter\n", std::size(subjects));
+    }
     return failures == 0 ? 0 : 1;
 }
