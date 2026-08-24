@@ -193,6 +193,19 @@ bool body_is_supported(FuncOp function, std::string & why) {
         // ct_aot_status::ok by name, and a branch to the shared failure path.
         // A kind the family does not serve is refused rather than compiled into
         // op::halt, which ct_aot_binary_op's switch would answer with undefined.
+        // `typeof` IS THE ONE UNARY KIND STILL REFUSED. It answers with a
+        // uint32_t length and a `const char **`, and turning that into a
+        // JavaScript value needs ct_aot_new_string - which allocates and is a
+        // safepoint, with nothing rooting the result yet.
+        if (auto unary = mlir::dyn_cast<UnaryOp>(op)) {
+            if (unary.getKind() == UnaryKind::TypeOf) {
+                supported = false;
+                why = "no lowering yet for `typeof` - its result is a string, and "
+                      "ct_aot_new_string is a safepoint";
+            }
+            return;
+        }
+        if (mlir::isa<CompareOp>(op)) { return; }
         if (auto binary = mlir::dyn_cast<BinaryOp>(op)) {
             if (!is_valid_binary(binary.getKind())) {
                 supported = false;
@@ -280,6 +293,34 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             ec::IncludeOp::create(build, module.getLoc(),
                                   build.getStringAttr("ctbrowser/aot/aot.hpp"),
                                   /*is_standard_include=*/build.getUnitAttr());
+
+            // A SMALL PRELUDE OF SHIMS, AND WHY THE BACKEND EMITS ITS OWN.
+            //
+            // Several helpers answer with a MACHINE quantity rather than a
+            // JavaScript value: ct_aot_strict_equals returns a uint32_t 0 or 1,
+            // ct_aot_compare an int32_t ordering, ct_aot_to_number a double.
+            // The result of the CTJS operation is a !ctjs.value, so each has to
+            // be boxed - and THE ABI HAS NO ROW THAT BOXES ONE. There is no
+            // ct_aot_from_bool and no ct_aot_from_double; every row that
+            // returns a value builds it from something else.
+            //
+            // THERE ARE ONLY TWO, because a shim exists only where an SSA
+            // value has to be boxed. `undefined` has no operand, so it is
+            // spelled inline as a literal - member call and all - and a third
+            // shim for it would be an unused function in every translation
+            // unit this backend emits.
+            //
+            // In C++ that is `value::boolean(b).bits()`, which is a member call
+            // on a temporary - and emitc.call_opaque emits `callee(args)` and
+            // nothing else, so it cannot spell one. Rather than add rows to a
+            // runtime ABI for a backend's convenience, the backend emits three
+            // static inline functions into its own translation unit. They are
+            // generated code, not engine code: nothing links against them and
+            // no other backend has to agree about them.
+            ec::VerbatimOp::create(build, module.getLoc(), build.getStringAttr(R"(namespace {
+inline uint64_t ctc_box_bool(bool b) { return ::ctbrowser::script::value::boolean(b).bits(); }
+inline uint64_t ctc_box_number(double d) { return ::ctbrowser::script::value::number(d).bits(); }
+})"));
         }
     }
 
@@ -557,11 +598,17 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
     // in the source block belongs to the second - which is why this leaves the
     // builder pointing at the continuation rather than restoring it.
     mlir::Value status_call(compiled_entry & scope, mlir::OpBuilder & build, mlir::Location where,
-                            const std::string & symbol, llvm::ArrayRef<mlir::Value> arguments) {
-        auto slot = ec::VariableOp::create(build, where, ec::LValueType::get(scope.value),
+                            const std::string & symbol, llvm::ArrayRef<mlir::Value> arguments,
+                            mlir::Type produces) {
+        // THE OUT-PARAMETER IS NOT ALWAYS A VALUE, which is why this takes a
+        // type. ct_aot_binary_op writes a `uint64_t *`, ct_aot_loose_equals a
+        // `uint32_t *` boolean and ct_aot_compare an `int32_t *` ORDERING. The
+        // pointer's pointee has to match the row or the emitted call is a type
+        // error at best and a reinterpreted write at worst.
+        auto slot = ec::VariableOp::create(build, where, ec::LValueType::get(produces),
                                            ec::OpaqueAttr::get(build.getContext(), ""));
-        auto address = ec::AddressOfOp::create(build, where, ec::PointerType::get(scope.value),
-                                               slot.getResult());
+        auto address =
+            ec::AddressOfOp::create(build, where, ec::PointerType::get(produces), slot.getResult());
 
         llvm::SmallVector<mlir::Value> passed(arguments.begin(), arguments.end());
         passed.push_back(address.getResult());
@@ -583,7 +630,7 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
         // permits: "*out written ONLY on CT_AOT_OK", so on any other status the
         // local still holds whatever it held before the call.
         build.setInsertionPointToEnd(carry_on);
-        return ec::LoadOp::create(build, where, scope.value, slot.getResult()).getResult();
+        return ec::LoadOp::create(build, where, produces, slot.getResult()).getResult();
     }
 
     void convert(mlir::Operation & op, mlir::OpBuilder & build, mlir::IRMapping & mapping,
@@ -641,7 +688,8 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             mapping.map(binary.getResult(),
                         status_call(scope, build, where, callee("ct_aot_binary_op"),
                                     {scope.frame, kind, mapping.lookup(binary.getLhs()),
-                                     mapping.lookup(binary.getRhs())}));
+                                     mapping.lookup(binary.getRhs())},
+                                    scope.value));
             return;
         }
         if (auto binary = mlir::dyn_cast<BinaryStaticOp>(op)) {
@@ -651,7 +699,133 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             mapping.map(binary.getResult(),
                         status_call(scope, build, where, callee("ct_aot_binary_op_static"),
                                     {scope.frame, kind, mapping.lookup(binary.getLhs()),
-                                     mapping.lookup(binary.getRhs())}));
+                                     mapping.lookup(binary.getRhs())},
+                                    scope.value));
+            return;
+        }
+
+        // THE UNARY OPERATORS, WHICH REACH FOUR DIFFERENT HELPERS AND ONE
+        // NONE AT ALL - which is why ctjs.unary is not a CTJS_RuntimeOp and
+        // why this switches on the kind.
+        if (auto unary = mlir::dyn_cast<UnaryOp>(op)) {
+            const mlir::Value operand = mapping.lookup(unary.getOperand());
+            switch (unary.getKind()) {
+            case UnaryKind::Neg:
+                mapping.map(unary.getResult(),
+                            status_call(scope, build, where, callee("ct_aot_negate"),
+                                        {scope.frame, operand}, value));
+                return;
+            case UnaryKind::BitNot:
+                mapping.map(unary.getResult(),
+                            status_call(scope, build, where, callee("ct_aot_bit_not"),
+                                        {scope.frame, operand}, value));
+                return;
+            case UnaryKind::Plus: {
+                // `+x` IS ToNumber, AND ITS OUT-PARAMETER IS A double, not a
+                // value - so the result is boxed rather than used directly.
+                const mlir::Value number =
+                    status_call(scope, build, where, callee("ct_aot_to_number"),
+                                {scope.frame, operand}, opaque(build.getContext(), "double"));
+                mapping.map(unary.getResult(), box(build, where, value, "ctc_box_number", number));
+                return;
+            }
+            case UnaryKind::Not: {
+                // `!x` IS ToBoolean NEGATED, and ToBoolean cannot fail - the
+                // row is (0, 0, 0) and takes no frame - so there is no status
+                // and no edge. Testing the uint32_t against zero IS the
+                // negation.
+                const auto u32 = opaque(build.getContext(), "uint32_t");
+                auto answered =
+                    ec::CallOpaqueOp::create(build, where, mlir::TypeRange{u32},
+                                             callee("ct_aot_truthy"), mlir::ValueRange{operand});
+                auto negated = ec::CmpOp::create(
+                    build, where, mlir::IntegerType::get(build.getContext(), 1),
+                    ec::CmpPredicate::eq, answered.getResult(0), literal(build, where, u32, "0"));
+                mapping.map(unary.getResult(),
+                            box(build, where, value, "ctc_box_bool", negated.getResult()));
+                return;
+            }
+            case UnaryKind::Void:
+                // `void x` EVALUATES ITS OPERAND AND YIELDS undefined. The
+                // operand is already evaluated - it is an SSA value - so there
+                // is nothing to emit but the answer.
+                mapping.map(unary.getResult(), undefined(build, where, value));
+                return;
+            case UnaryKind::TypeOf: break; // refused; see body_is_supported
+            }
+            llvm_unreachable("body_is_supported admitted a unary kind convert cannot emit");
+        }
+
+        // THE COMPARISONS, WHICH ARE THREE HELPERS AND THREE EFFECT PROFILES.
+        if (auto compare = mlir::dyn_cast<CompareOp>(op)) {
+            const mlir::Value lhs = mapping.lookup(compare.getLhs());
+            const mlir::Value rhs = mapping.lookup(compare.getRhs());
+            const auto u32 = opaque(build.getContext(), "uint32_t");
+            const auto i32 = opaque(build.getContext(), "int32_t");
+            const auto bit = mlir::IntegerType::get(build.getContext(), 1);
+
+            if (compare.getKind() == CompareKind::StrictEq) {
+                // STRICT EQUALITY CANNOT THROW AND TAKES NO FRAME: its row is
+                // (0, 0, 0) and it answers with a uint32_t directly, so there
+                // is no out-parameter, no status and no exception edge.
+                auto answered = ec::CallOpaqueOp::create(build, where, mlir::TypeRange{u32},
+                                                         callee("ct_aot_strict_equals"),
+                                                         mlir::ValueRange{lhs, rhs});
+                auto truth =
+                    ec::CmpOp::create(build, where, bit, ec::CmpPredicate::ne,
+                                      answered.getResult(0), literal(build, where, u32, "0"));
+                mapping.map(compare.getResult(),
+                            box(build, where, value, "ctc_box_bool", truth.getResult()));
+                return;
+            }
+            if (compare.getKind() == CompareKind::Eq) {
+                // LOOSE EQUALITY CAN, because it converts - and its
+                // out-parameter is a uint32_t boolean, not a value.
+                const mlir::Value answered =
+                    status_call(scope, build, where, callee("ct_aot_loose_equals"),
+                                {scope.frame, lhs, rhs}, u32);
+                auto truth = ec::CmpOp::create(build, where, bit, ec::CmpPredicate::ne, answered,
+                                               literal(build, where, u32, "0"));
+                mapping.map(compare.getResult(),
+                            box(build, where, value, "ctc_box_bool", truth.getResult()));
+                return;
+            }
+
+            // THE FOUR RELATIONAL KINDS SHARE ONE HELPER AND AN ORDERING, and
+            // they are NOT negations of one another. ct_aot_compare answers
+            // with less/equivalent/greater/UNORDERED, and unordered - a NaN on
+            // either side - makes all four false, including `>=`. Lowering `>=`
+            // as `!(<)` would make `NaN >= NaN` true.
+            //
+            // THE ORDERING'S NUMBERS ARE CONTRACTUAL, unlike the status enum's -
+            // aot.hpp says so in as many words - but they are still spelled as
+            // enumerators, because a name that is checked costs nothing.
+            const mlir::Value ordering = status_call(scope, build, where, callee("ct_aot_compare"),
+                                                     {scope.frame, lhs, rhs}, i32);
+            const auto is = [&](llvm::StringRef named) {
+                return ec::CmpOp::create(
+                           build, where, bit, ec::CmpPredicate::eq, ordering,
+                           literal(build, where, i32,
+                                   ("static_cast<int32_t>(ctbrowser::aot::ct_aot_ordering::" +
+                                    named + ")")
+                                       .str()))
+                    .getResult();
+            };
+            mlir::Value truth;
+            switch (compare.getKind()) {
+            case CompareKind::Lt: truth = is("less"); break;
+            case CompareKind::Gt: truth = is("greater"); break;
+            case CompareKind::Le:
+                truth = ec::LogicalOrOp::create(build, where, bit, is("less"), is("equivalent"))
+                            .getResult();
+                break;
+            case CompareKind::Ge:
+                truth = ec::LogicalOrOp::create(build, where, bit, is("greater"), is("equivalent"))
+                            .getResult();
+                break;
+            default: llvm_unreachable("the two equality kinds are handled above");
+            }
+            mapping.map(compare.getResult(), box(build, where, value, "ctc_box_bool", truth));
             return;
         }
 
@@ -685,6 +859,19 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
         }
 
         llvm_unreachable("body_is_supported and convert disagree about what is supported");
+    }
+
+    // A MACHINE QUANTITY, MADE INTO A JAVASCRIPT VALUE.
+    //
+    // Through one of the shims the module's prelude defines, because the ABI
+    // has no row that boxes a bool or a double and `value::boolean(b).bits()`
+    // is a member call on a temporary - which emitc.call_opaque, whose whole
+    // output is `callee(args)`, cannot spell.
+    mlir::Value box(mlir::OpBuilder & build, mlir::Location where, mlir::Type value,
+                    llvm::StringRef shim, mlir::Value machine) {
+        return ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value}, shim,
+                                        mlir::ValueRange{machine})
+            .getResult(0);
     }
 
     // A JavaScript `undefined`, spelled the way the runtime spells it.
