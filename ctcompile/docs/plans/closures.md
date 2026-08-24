@@ -33,7 +33,7 @@ top level declares anything is skipped whole.
   can carry a compiled entry. The row's warning that "AOT stops at the first
   nested function" predates that field and should be re-read, not trusted.
 
-## Stage 1 — the closure reaches the compiled frame
+## Stage 1 — the closure reaches the compiled frame — **DONE**
 
 The only stage that unblocks anything; the rest are ordinary helper work.
 
@@ -59,7 +59,7 @@ map a non-closure value to `nullptr` rather than casting, because
 `ct_aot_upvalue_cell` and `ct_aot_callee` both distinguish "no closure" from "a
 closure with no upvalues".
 
-## Stage 2 — reading upvalues
+## Stage 2 — reading upvalues — **DONE**
 
 Three helpers, all mechanical once Stage 1 lands, all currently bodyless:
 
@@ -78,6 +78,22 @@ guard the interpreter writes inline.
 In the dialect, `ctjs.load_upvalue` and `ctjs.store_upvalue` were demoted to
 plain `CTJS_Op`s precisely because each is **two** calls, so the backend lowers
 them by hand rather than through the one-helper interface.
+
+## What stages 1 and 2 cost, in the end
+
+Both landed as planned and the plan's two named findings held. Two things it
+did not predict:
+
+* **The callee had to be delivered before the `IRMapping` was built**, not
+  after. Mapping a block argument to a still-null `Value` is accepted silently
+  and the crash arrives later inside `Operation::create`, with a stack naming
+  neither.
+* **The two-closure case passed with the handoff removed**, because the
+  differential harness installs one entry at a time: driving `counters` while
+  patching `counters` runs `step` interpreted and exercises no closure at all. A
+  subject now names the proto it patches separately from the arm it drives. The
+  case was written to separate the instance from the proto and was separating
+  nothing; the mutant is what found it.
 
 ## Stage 3 — creating closures
 
