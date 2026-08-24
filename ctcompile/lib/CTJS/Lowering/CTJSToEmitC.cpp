@@ -426,7 +426,8 @@ bool body_is_supported(FuncOp function, std::string & why) {
                       CreateCellOp, CellGetOp, CellSetOp, CreateObjectOp, CreateArrayOp, AppendOp,
                       ThrowOp, ConstructOp, IterableOp, HasPropertyOp, InstanceOfOp,
                       DeletePropertyOp, FromBoolOp, LoadHomeOp, GetProtoOp, SetProtoOp,
-                      PassNewTargetOp, CallSpreadOp, ConstructSpreadOp, CopyPropsOp>(op)) {
+                      PassNewTargetOp, CallSpreadOp, ConstructSpreadOp, CopyPropsOp,
+                      DefineAccessorOp>(op)) {
             return;
         }
 
@@ -1575,6 +1576,35 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                     mlir::ValueRange{scope.frame, array, mapping.lookup(element)});
             }
             mapping.map(made.getResult(), array);
+            return;
+        }
+        if (auto accessor = mlir::dyn_cast<DefineAccessorOp>(op)) {
+            // TWO CALLS, WHICH IS WHY THIS IS NOT A CTJS_RuntimeOp. The helper
+            // wants an INTERNED name record rather than characters, so the
+            // name is interned first - the pool is immortal and hash-indexed,
+            // so the repeat cost is a lookup and a memo can come later.
+            //
+            // THE LENGTH IS EMITTED BESIDE THE TEXT for ct_aot_global_get's
+            // reason: a property name is BYTES, and one containing a zero byte
+            // is legal JavaScript that strlen would stop at.
+            const llvm::StringRef name = accessor.getName();
+            const mlir::Value interned =
+                ec::CallOpaqueOp::create(
+                    build, where,
+                    mlir::TypeRange{
+                        pointer_to(build.getContext(), "const ctbrowser::aot::ct_aot_name")},
+                    callee("ct_aot_intern_name"),
+                    mlir::ValueRange{literal(build, where,
+                                             pointer_to(build.getContext(), "const char"),
+                                             c_string_literal(name)),
+                                     literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                             std::to_string(name.size()))})
+                    .getResult(0);
+            ec::CallOpaqueOp::create(
+                build, where, mlir::TypeRange{}, callee("ct_aot_define_accessor"),
+                mlir::ValueRange{scope.frame, mapping.lookup(accessor.getTarget()), interned,
+                                 mapping.lookup(accessor.getGetter()),
+                                 mapping.lookup(accessor.getSetter())});
             return;
         }
         if (auto merge = mlir::dyn_cast<CopyPropsOp>(op)) {

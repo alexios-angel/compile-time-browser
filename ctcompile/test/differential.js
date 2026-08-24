@@ -332,6 +332,34 @@ function spreadOut(pad, o) { var m = merge(0, o); return "" + m.a + m.b; }
 // loop run four times and the answer be the number it stops at.
 function firstLoop(pad, n) { while (n > 3) { n = n - 1; } return n; }
 
+// ACCESSORS - op::define_getter and op::define_setter, which are ONE helper and
+// one operation. The half is decided by the OPCODE and by nothing else: no
+// operand encodes it, so the importer resolves it and passes undefined for the
+// other side.
+//
+// WHICH IS EXACTLY WHAT THIS SEPARATES. Swap the two and `o.v` stops reading 41
+// and starts reading undefined, while `o.v = 1` stops recording anything - so
+// the answer moves in both halves at once and cannot be right by accident.
+//
+// A PAIR UNDER ONE NAME IS ONE ENTRY, because accessor_table::define skips
+// undefined halves rather than overwriting the other one. Defining the getter
+// and then the setter must leave BOTH working, which a define that replaced the
+// entry would break.
+function accessors(pad, seed) {
+  var box = { hidden: seed, log: "" };
+  return {
+    get v() { return box.hidden; },
+    set v(x) { box.hidden = x; box.log = box.log + "s"; },
+    box: box
+  };
+}
+function useAccessor(pad, seed) {
+  var o = accessors(0, seed);
+  var first = o.v;
+  o.v = 7;
+  return "" + first + "/" + o.v + "/" + o.box.log;
+}
+
 function drive(which) {
   // A SENTINEL, so an arm that throws or never matches is visible. Without it
   // OUT keeps the PREVIOUS case's answer, both tiers read the same stale value
@@ -411,6 +439,7 @@ function drive(which) {
   if (which === 32) { OUT = spreadNew(0, [1, 2]); }
   if (which === 33) { OUT = spreadOut(0, { a: 2, b: 3 }) + "/" + mergeArray(0, [7, 8]); }
   if (which === 34) { OUT = "" + firstLoop(0, 9) + "/" + firstLoop(0, 1); }
+  if (which === 35) { OUT = useAccessor(0, 41); }
   if (which === 22) {
     OUT = "" + coalesce(0, 9) + "/" + coalesce("", 9) + "/" + coalesce(nothing, 9) + "/" +
           chain(null) + "/" + chain({ p: 4 }) + "/" + dflt(0);

@@ -71,8 +71,6 @@ constexpr pending not_yet[] = {
                      "CT_AOT_CAUGHT, which is why it is last rather than smallest"},
     {"pop_handler", "the other half of try/catch and meaningless without it"},
     {"make_arguments", "the `arguments` object, which gather_rest's ABI row says it READS"},
-    {"define_getter", "an accessor in a class or object literal"},
-    {"define_setter", "its twin, and they share one VM_CASE"},
     {"own_keys", "for-in, which compiles to a for-of over this"},
     {"delete_prop", "`delete o.k`, the NAMED form - delete_index, the computed one, is done"},
     {"load_bigint", "a BigInt literal, which needs a per-slot parse and cache"},

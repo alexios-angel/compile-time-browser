@@ -315,6 +315,36 @@ def CTJS_FromBoolOp : CTJS_Op<"from_bool", [Pure]> {
   let assemblyFormat = "$bit attr-dict";
 }
 
+def CTJS_DefineAccessorOp : CTJS_Op<"define_accessor", [CTJS_Safepoint]> {
+  let summary = "Install a getter, a setter, or both, under one name";
+  let description = [{
+    BOTH OPCODES ARE THIS ONE OPERATION. op::define_getter and op::define_setter
+    share a VM_CASE and a helper, because the runtime primitive is already
+    fused: accessor_table::define SKIPS undefined halves, which is exactly what
+    merges a get/set pair into one entry.
+
+    THE DISCRIMINATOR IS THE OPCODE, and it goes no further than the importer. A
+    compiled site knows statically which half it is compiling, so this carries
+    both operands and the caller passes `undefined` for the one it does not
+    have - there is no attribute saying which, and there must not be.
+
+    NOT A CTJS_RuntimeOp, AND THAT IS FORCED. ct_aot_define_accessor's parameter
+    roles are frame/operand/name/operand/operand, and the ABI shape verifier
+    counts a `name` as an SSA operand rather than an immediate - so the census
+    allows ZERO inherent attributes, and a CTJS_RuntimeOp carrying $name would
+    fail its own verifier. It is the same reason ctjs.load_upvalue is a plain
+    op: this lowers to TWO calls, ct_aot_intern_name and then the helper.
+
+    A SAFEPOINT BECAUSE INTERNING ALLOCATES - the name pool is immortal and a
+    new record is a heap allocation - even though installing an accessor only
+    STORES the function and never invokes it, which is why the helper's own row
+    is all zeros.
+  }];
+  let arguments = (ins CTJS_ValueType:$target, StrAttr:$name,
+                       CTJS_ValueType:$getter, CTJS_ValueType:$setter);
+  let assemblyFormat = "$name `on` $target `get` $getter `set` $setter attr-dict";
+}
+
 def CTJS_CopyPropsOp : CTJS_RuntimeOp<"copy_props", "ct_aot_copy_props"> {
   let summary = "Copy a source's own properties onto a target - object spread";
   let description = [{

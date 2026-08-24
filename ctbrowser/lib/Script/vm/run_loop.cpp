@@ -488,17 +488,13 @@ value context::run_loop(std::size_t stop_depth) {
         VM_CASE(define_getter)
         VM_CASE(define_setter) do {
             {
+                // THE DISCRIMINATOR IS THE OPCODE and it goes no further than
+                // this line: the member takes both halves and the caller passes
+                // undefined for the one it does not have.
                 const bool getter = in.code == op::define_getter;
-                const value g = getter ? reg(in.c) : value::undefined();
-                const value st = getter ? value::undefined() : reg(in.c);
-                if (reg(in.a).is_object()) {
-                    static_cast<object_object *>(reg(in.a).as_heap())
-                        ->define_accessor(vm_proto->names[in.b], g, st);
-                } else if (reg(in.a).is_kind(heap_kind::function)) {
-                    // a `static get` on a class, which IS the constructor closure
-                    static_cast<closure_object *>(reg(in.a).as_heap())
-                        ->define_accessor(vm_proto->names[in.b], g, st);
-                }
+                define_accessor(reg(in.a), vm_proto->names[in.b],
+                                getter ? reg(in.c) : value::undefined(),
+                                getter ? value::undefined() : reg(in.c));
             }
             break;
         }

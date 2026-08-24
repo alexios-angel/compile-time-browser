@@ -179,6 +179,15 @@ void context::pass_new_target(value from) {
     pending_new_target_ = from;
 }
 
+void context::define_accessor(value target, const std::string & name, value getter, value setter) {
+    if (target.is_object()) {
+        static_cast<object_object *>(target.as_heap())->define_accessor(name, getter, setter);
+    } else if (target.is_kind(heap_kind::function)) {
+        // a `static get` on a class, which IS the constructor closure
+        static_cast<closure_object *>(target.as_heap())->define_accessor(name, getter, setter);
+    }
+}
+
 void context::copy_own_properties(value target, value source) {
     if (!target.is_object()) { return; }
     auto * into = static_cast<object_object *>(target.as_heap());

@@ -868,6 +868,26 @@ public:
     // may be the SAME object.
     void copy_own_properties(value target, value source);
 
+    // `get x()` AND `set x(v)`, in a class or an object literal.
+    //
+    // BOTH OPCODES ARE THIS ONE MEMBER, because the runtime primitive is
+    // already fused: accessor_table::define SKIPS undefined halves, which is
+    // exactly what merges a get/set pair into one entry. The discriminator is
+    // the OPCODE, read out of in.code by the interpreter and known statically
+    // at a compiled site - so it never reaches here; the caller passes
+    // undefined for the half it does not have.
+    //
+    // ONE ASYMMETRY IS PRESERVED RATHER THAN TIDIED. object_object's arm
+    // erase()s a shadowing data property first and closure_object's does NOT,
+    // and lookup_property checks find() before find_accessor - so a
+    // `static get x()` on a class that already has a static data property `x`
+    // never runs. Harmonising the two would change observable behaviour.
+    //
+    // AND THE CLOSURE ARM MUST STAY: a `static get` installs onto the
+    // CONSTRUCTOR closure, so testing is_object() alone would silently drop
+    // every static accessor.
+    void define_accessor(value target, const std::string & name, value getter, value setter);
+
     [[nodiscard]] value get_prototype(value target);
     void set_prototype(value target, value proto);
 

@@ -614,6 +614,18 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 // produces nothing and writes no register.
                 ctjs::DeletePropertyOp::create(into, where, reg(in.a), reg(in.b));
                 break;
+            case op::define_getter:
+            case op::define_setter: {
+                // a IS THE TARGET, b NAMES THE PROPERTY and c IS THE FUNCTION -
+                // which half it is comes from the OPCODE and from nowhere else,
+                // so it is resolved here and the operation carries both.
+                const bool getter = in.code == op::define_getter;
+                const mlir::Value nothing = state.undefined(where);
+                ctjs::DefineAccessorOp::create(
+                    into, where, reg(in.a), into.getStringAttr(proto.names[in.b]),
+                    getter ? reg(in.c) : nothing, getter ? nothing : reg(in.c));
+                break;
+            }
             case op::copy_props:
                 // a IS THE TARGET and is NOT written back - the object is
                 // mutated in place, so this produces no value.

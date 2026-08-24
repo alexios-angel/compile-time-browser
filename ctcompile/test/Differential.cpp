@@ -94,6 +94,7 @@ CT_ENTRY(spreadNew)
 CT_ENTRY(merge)
 CT_ENTRY(mergeArray)
 CT_ENTRY(firstLoop)
+CT_ENTRY(accessors)
 #undef CT_ENTRY
 
 namespace {
@@ -387,6 +388,17 @@ int main() {
          "a back edge to instruction 0 - the importer marked it a leader and built no block for "
          "it, and the second call checks the loop is skipped rather than entered once",
          "3/1"},
+        // THE COMPILED BODY IS `accessors`, WHICH INSTALLS THEM - not
+        // useAccessor, which merely reads and writes. define_getter and
+        // define_setter are what is under test, and they run where the object
+        // literal is built.
+        {35u,
+         "accessors",
+         {{"accessors", 0u, &ctc_accessors}, {}},
+         "the getter half against the setter half, which no operand encodes - swapping them "
+         "makes the read answer undefined AND the write record nothing, so both halves of the "
+         "answer move at once",
+         "41/7/s"},
         {17u,
          "literals",
          {{"pack", 0u, &ctc_pack}, {}},
@@ -506,6 +518,7 @@ int main() {
         {"merge", 0u, &ctc_merge},
         {"mergeArray", 0u, &ctc_mergeArray},
         {"firstLoop", 0u, &ctc_firstLoop},
+        {"accessors", 0u, &ctc_accessors},
     };
 
     for (const subject & each : subjects) {

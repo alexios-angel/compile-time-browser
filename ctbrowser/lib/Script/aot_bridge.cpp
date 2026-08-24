@@ -596,6 +596,21 @@ struct aot_bridge {
         cx.set_prototype(value::from_bits(target), value::from_bits(proto));
     }
 
+    // ct_aot_define_accessor. `get x()` and `set x(v)`, both opcodes.
+    //
+    // (0, 0, 0) AND THE ROW SPELLS OUT WHY may_reenter IS FALSE HERE even
+    // though every later read or write of that property WILL re-enter:
+    // installing an accessor only STORES the function, it never invokes it.
+    // The cost moves to the access site, which is where the barrier and the
+    // cache both belong.
+    static void define_accessor(aot::ct_aot_frame * f, std::uint64_t target,
+                                const aot_name_record * name, std::uint64_t getter,
+                                std::uint64_t setter) {
+        context & cx = *frame_of(f).ctx;
+        cx.define_accessor(value::from_bits(target), name->text, value::from_bits(getter),
+                           value::from_bits(setter));
+    }
+
     // ct_aot_copy_props. Object spread, through the shared member.
     //
     // (0, 0, 0) AND THAT IS VERIFIED RATHER THAN COPIED. object_object::set
@@ -1186,6 +1201,12 @@ std::uint32_t ct_aot_instance_of(ct_aot_frame * fr, std::uint64_t target, std::u
 
 std::int32_t ct_aot_delete_index(ct_aot_frame * fr, std::uint64_t target, std::uint64_t key) {
     return script::aot_bridge::delete_index(fr, target, key);
+}
+
+void ct_aot_define_accessor(ct_aot_frame * fr, std::uint64_t target, const ct_aot_name * name,
+                            std::uint64_t getter, std::uint64_t setter) {
+    script::aot_bridge::define_accessor(
+        fr, target, reinterpret_cast<const script::aot_name_record *>(name), getter, setter);
 }
 
 void ct_aot_copy_props(ct_aot_frame * fr, std::uint64_t target, std::uint64_t source) {

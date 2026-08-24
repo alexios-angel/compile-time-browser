@@ -1917,11 +1917,11 @@ CT_AOT_COVERS(/* helper */ ct_aot_module_export_cell, /* opcode */ bind_export)
  * stored into of.namespace_object BEFORE the accessor loop
  * (call.cpp:134-135) and that field is GC root 12 - the exact
  * counterexample to ct_aot_iterable_values's unrooted C++ local.
- * DELEGATES TO: the same resolved/modules_ lookup as load_import
- *   (run_loop.cpp:1325-1341), then context::module_namespace (call.cpp:132,
- *   public at vm.hpp:275).
- * FAILURE: RAISE TIER ONLY - 'module X was not loaded' (:1338) or the
- *   ceiling. Same correction as ct_aot_module_import_cell: the :1326 pre-
+ * DELEGATES TO: the same resolved/modules_ lookup as load_import -
+ *   run_loop.cpp's VM_CASE(load_import) - then context::module_namespace.
+ * FAILURE: RAISE TIER ONLY - 'module X was not loaded', raised by
+ *   VM_CASE(load_namespace) itself, or the
+ *   ceiling. Same correction as ct_aot_module_import_cell: the pre-
  *   write of undefined is dead on the raise path and need not be
  *   reproduced. */
 CT_AOT_HELPER(/* name */ ct_aot_module_namespace, /* ret */ uint64_t,
