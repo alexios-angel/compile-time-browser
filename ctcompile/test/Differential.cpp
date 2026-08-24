@@ -93,6 +93,7 @@ CT_ENTRY(spreadMethod)
 CT_ENTRY(spreadNew)
 CT_ENTRY(merge)
 CT_ENTRY(mergeArray)
+CT_ENTRY(firstLoop)
 #undef CT_ENTRY
 
 namespace {
@@ -375,6 +376,17 @@ int main() {
          "after, so a copy in the wrong order changes both digits - and an array source, which "
          "spreads by index",
          "29/78"},
+        // THE SHAPE THAT JUMPS BACK TO INSTRUCTION ZERO. It is a differential
+        // case rather than an import test because importing it was only half
+        // the question: the entry now falls through into a header block
+        // carrying the whole register file, and getting that edge wrong loses
+        // the loop variable rather than failing to compile.
+        {34u,
+         "loop at zero",
+         {{"firstLoop", 0u, &ctc_firstLoop}, {}},
+         "a back edge to instruction 0 - the importer marked it a leader and built no block for "
+         "it, and the second call checks the loop is skipped rather than entered once",
+         "3/1"},
         {17u,
          "literals",
          {{"pack", 0u, &ctc_pack}, {}},
@@ -493,6 +505,7 @@ int main() {
         {"spreadNew", 0u, &ctc_spreadNew},
         {"merge", 0u, &ctc_merge},
         {"mergeArray", 0u, &ctc_mergeArray},
+        {"firstLoop", 0u, &ctc_firstLoop},
     };
 
     for (const subject & each : subjects) {

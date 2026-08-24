@@ -298,6 +298,7 @@ import_result import_program(const program & from, llvm::StringRef program_id,
 
         // ---- leaders ------------------------------------------------------
         std::vector<bool> leader(proto.code.size() + 1, false);
+        bool targets_zero = false;
         if (!proto.code.empty()) { leader[0] = true; }
         bool malformed = false;
         for (std::size_t at = 0; at < proto.code.size(); ++at) {
@@ -309,6 +310,10 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                     break;
                 }
                 leader[static_cast<std::size_t>(target)] = true;
+                // AND WHETHER ANYTHING BRANCHES BACK TO INSTRUCTION ZERO,
+                // which needs recording separately because leader[0] is true
+                // for every function whether or not anything targets it.
+                if (target == 0) { targets_zero = true; }
             }
             if (ends_a_block(in.code) && at + 1 <= proto.code.size()) { leader[at + 1] = true; }
         }
@@ -323,12 +328,34 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         // One block per leader, each carrying the whole register file.
         llvm::SmallVector<mlir::Type> slot_types(proto.frame_size, value_type);
         llvm::SmallVector<mlir::Location> slot_locs(proto.frame_size, into.getUnknownLoc());
-        for (std::size_t at = 1; at < proto.code.size(); ++at) {
+        for (std::size_t at = targets_zero ? 0 : 1; at < proto.code.size(); ++at) {
             // STRICTLY INSIDE THE CODE. `ret` marks its successor a leader, and
             // for the last instruction that successor is one past the end - a
             // block no instruction would ever fill, which then needs a
             // terminator invented for it and shows up as an unreachable stub in
             // every imported function.
+            //
+            // AND INSTRUCTION ZERO GETS ONE ONLY WHEN SOMETHING BRANCHES BACK
+            // TO IT. This loop started at 1, and the exclusion was never
+            // deliberate - the comment above explains the UPPER bound and says
+            // nothing about the lower one. leader[0] is set unconditionally, so
+            // a function whose FIRST statement is a loop marked index 0 a
+            // leader, got no block for it, and was refused whole with "jump
+            // target is not a block leader".
+            //
+            // It needs the flag rather than leader[0] because leader[0] is true
+            // for every function; without something actually targeting zero
+            // this would put a pointless header block in front of every
+            // imported body. Six functions across the three vendored corpora
+            // have the shape - a loop with no prologue ahead of it, like
+            // `while (a.length > n) a.pop();` as the first statement.
+            //
+            // THE ENTRY BLOCK CANNOT SIMPLY BE THE TARGET: MLIR forbids
+            // predecessors on a FunctionOpInterface entry block, and its
+            // arguments are the ABI's rather than the register file. So index 0
+            // becomes a real header the entry falls through into, which is the
+            // shape Import/loop-property.mlir already asserts for loops that
+            // start one instruction later.
             if (!leader[at]) { continue; }
             mlir::Block * block = &function.getBody().emplaceBlock();
             block->addArguments(slot_types, slot_locs);
@@ -364,7 +391,7 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         };
 
         for (std::size_t at = 0; at < proto.code.size() && !state.gave_up; ++at) {
-            if (at > 0 && leader[at]) { enter_block(at); }
+            if (leader[at] && (at > 0 || targets_zero)) { enter_block(at); }
             const instruction & in = proto.code[at];
             const mlir::Location where = state.location_for(at);
             const auto reg = [&](std::uint16_t slot) -> mlir::Value {

@@ -319,6 +319,19 @@ function merge(pad, o) { return { a: 1, ...o, b: 9 }; }
 function mergeArray(pad, xs) { var m = { ...xs }; return "" + m[0] + m[1]; }
 function spreadOut(pad, o) { var m = merge(0, o); return "" + m.a + m.b; }
 
+// A LOOP AS THE FIRST STATEMENT, which is the ONLY shape whose back edge
+// targets instruction ZERO - anything at all ahead of it, a `var` or a default
+// parameter, pushes the loop header to 1 and the shape disappears.
+//
+// The importer marked index 0 a leader and then never built a block for it, so
+// this was refused whole with "jump target is not a block leader". Six
+// functions across the three vendored corpora have it.
+//
+// IT MUST STILL LOOP. A body that ran the test once and fell through answers 9;
+// one that skipped the loop answers 9 too, so the input is chosen to make the
+// loop run four times and the answer be the number it stops at.
+function firstLoop(pad, n) { while (n > 3) { n = n - 1; } return n; }
+
 function drive(which) {
   // A SENTINEL, so an arm that throws or never matches is visible. Without it
   // OUT keeps the PREVIOUS case's answer, both tiers read the same stale value
@@ -397,6 +410,7 @@ function drive(which) {
   if (which === 31) { OUT = spreadMethod(0, [7]); }
   if (which === 32) { OUT = spreadNew(0, [1, 2]); }
   if (which === 33) { OUT = spreadOut(0, { a: 2, b: 3 }) + "/" + mergeArray(0, [7, 8]); }
+  if (which === 34) { OUT = "" + firstLoop(0, 9) + "/" + firstLoop(0, 1); }
   if (which === 22) {
     OUT = "" + coalesce(0, 9) + "/" + coalesce("", 9) + "/" + coalesce(nothing, 9) + "/" +
           chain(null) + "/" + chain({ p: 4 }) + "/" + dflt(0);
