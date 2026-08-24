@@ -313,6 +313,13 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 // AND WHETHER ANYTHING BRANCHES BACK TO INSTRUCTION ZERO,
                 // which needs recording separately because leader[0] is true
                 // for every function whether or not anything targets it.
+                //
+                // INSIDE THE COMBINED PREDICATE ON PURPOSE, not under is_jump
+                // alone. op::push_handler computes its target the same way and
+                // is handled here for that reason; narrowing this to jumps
+                // would leave a handler whose pad is instruction 0 refusing
+                // forever, and no corpus would show it - there are zero
+                // push_handler targets of 0 across bootstrap, p5 and phaser.
                 if (target == 0) { targets_zero = true; }
             }
             if (ends_a_block(in.code) && at + 1 <= proto.code.size()) { leader[at + 1] = true; }
