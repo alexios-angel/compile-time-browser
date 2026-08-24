@@ -353,6 +353,33 @@ function accessors(pad, seed) {
     box: box
   };
 }
+// try/catch, AND THE REGISTER FILE IS THE POINT.
+//
+// `n` IS WRITTEN INSIDE THE TRY, BEFORE THE THROW, and that is the whole
+// fixture. context::unwind_to_handler overwrites exactly ONE register - the
+// catch binding - and leaves every other one as the throw left it. So the
+// handler must see n == 1.
+//
+// A LOWERING THAT TOOK THE HANDLER EDGE FROM push_handler INSTEAD answers 0:1
+// rather than 1:1, because at the `try` n was still 0. That is the design this
+// whole thing is built around and a fixture without the write cannot see it -
+// with `try { return f(a); } catch ...` the two register files are identical
+// and the wrong lowering passes.
+//
+// AND THE THROWN VALUE HAS TO ARRIVE, which separates a real catch from a frame
+// that merely unwound: a lost thrown_ binds undefined.
+function guarded(pad, f, a) {
+  var n = 0;
+  try {
+    n = 1;
+    f(a);
+    n = 2;
+  } catch (e) {
+    return "" + n + ":" + e;
+  }
+  return "" + n;
+}
+
 function useAccessor(pad, seed) {
   var o = accessors(0, seed);
   var first = o.v;
@@ -440,6 +467,9 @@ function drive(which) {
   if (which === 33) { OUT = spreadOut(0, { a: 2, b: 3 }) + "/" + mergeArray(0, [7, 8]); }
   if (which === 34) { OUT = "" + firstLoop(0, 9) + "/" + firstLoop(0, 1); }
   if (which === 35) { OUT = useAccessor(0, 41); }
+  // thrower THROWS AND neg DOES NOT, so one arm takes the caught edge and the
+  // other runs the try to its end - the same compiled body, both ways through.
+  if (which === 36) { OUT = guarded(0, thrower, 7) + "/" + guarded(0, neg, 5); }
   if (which === 22) {
     OUT = "" + coalesce(0, 9) + "/" + coalesce("", 9) + "/" + coalesce(nothing, 9) + "/" +
           chain(null) + "/" + chain({ p: 4 }) + "/" + dflt(0);

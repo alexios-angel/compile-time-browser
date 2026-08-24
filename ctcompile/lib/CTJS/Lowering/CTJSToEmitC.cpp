@@ -238,6 +238,20 @@ struct compiled_entry {
     // WITHIN the function and stable across calls; one per ctjs.constant
     // carrying a string is both. They are not frame slots - the cache is a map.
     llvm::DenseMap<mlir::Operation *, unsigned> memo_slots;
+
+    // THE HANDLER THIS BLOCK'S FALLIBLE CALLS BRANCH TO, if it has one.
+    //
+    // Set from the SOURCE block's terminator before the block is converted: a
+    // ctjs.check names the pad and carries the register file as of the throw.
+    // Every status call in the block then tests CT_AOT_CAUGHT before it tests
+    // ok, and takes this edge instead of returning.
+    //
+    // THE OPERANDS CAN BE MAPPED THIS EARLY because the importer splits after
+    // EVERY instruction inside a protected region - so such a block holds one
+    // instruction, and the snapshot the check carries is the block's own
+    // arguments. If that ever stops being true this has to move.
+    mlir::Block * caught_target = nullptr;
+    llvm::SmallVector<mlir::Value> caught_operands{};
 };
 
 // A C++ STRING LITERAL FOR ARBITRARY BYTES.
@@ -422,12 +436,38 @@ bool body_is_supported(FuncOp function, std::string & why) {
             }
             return;
         }
+        // A ctjs.check's HANDLER OPERANDS MUST BE ITS OWN BLOCK'S ARGUMENTS.
+        //
+        // The lowering resolves them when it ENTERS the block, before the
+        // block's operations are converted, because that is where the caught
+        // edge has to be armed for every fallible call the block contains. That
+        // is sound exactly while the importer's one-instruction-per-protected-
+        // block split holds, which makes the snapshot the block's own
+        // arguments - and p5 contains shapes where it does not.
+        //
+        // REFUSED RATHER THAN ASSERTED. A null operand is accepted silently by
+        // MLIR and crashes later inside Operation::create with a stack naming
+        // neither this file nor the function - so the whole p5 run died instead
+        // of losing the handful of functions that actually have the shape.
+        if (auto guarded = mlir::dyn_cast<CheckOp>(op)) {
+            for (const mlir::Value each : guarded.getHandlerOperands()) {
+                const auto argument = mlir::dyn_cast<mlir::BlockArgument>(each);
+                if (argument == nullptr || argument.getOwner() != guarded->getBlock()) {
+                    supported = false;
+                    why = "a protected block carries a handler snapshot that is not its own "
+                          "block argument, so the caught edge cannot be armed before the block "
+                          "is converted";
+                    return;
+                }
+            }
+            return;
+        }
         if (mlir::isa<CompareOp, GetPropertyOp, SetPropertyOp, CallOp, CreateClosureOp,
                       CreateCellOp, CellGetOp, CellSetOp, CreateObjectOp, CreateArrayOp, AppendOp,
                       ThrowOp, ConstructOp, IterableOp, HasPropertyOp, InstanceOfOp,
                       DeletePropertyOp, FromBoolOp, LoadHomeOp, GetProtoOp, SetProtoOp,
                       PassNewTargetOp, CallSpreadOp, ConstructSpreadOp, CopyPropsOp,
-                      DefineAccessorOp>(op)) {
+                      DefineAccessorOp, PushHandlerOp, PopHandlerOp, CheckOp, CatchLandOp>(op)) {
             return;
         }
 
@@ -804,6 +844,15 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                 windows[inner] = parked;
                 parked += static_cast<unsigned>(built.getArgs().size());
             }
+            // ONE SLOT PER PROTECTED REGION, which is where the unwinder puts
+            // the thrown value: context::unwind_to_handler writes
+            // registers_[base + slot] and ct_aot_catch_land reads it back. It
+            // has to be inside the run ct_aot_enter reserves, so it is assigned
+            // here with everything else rather than invented at the call.
+            if (mlir::isa<PushHandlerOp>(inner)) {
+                windows[inner] = parked;
+                parked += 1;
+            }
             if (auto constant = mlir::dyn_cast<ConstantOp>(inner)) {
                 if (mlir::isa<StringAttr>(constant.getValue())) { memo_slots[inner] = next_memo++; }
             }
@@ -932,6 +981,20 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
 
         for (mlir::Block & block : function.getBody()) {
             build.setInsertionPointToEnd(mapping.lookup(&block));
+            scope.caught_target = nullptr;
+            scope.caught_operands.clear();
+            if (!block.empty()) {
+                if (auto guarded = mlir::dyn_cast<CheckOp>(block.back())) {
+                    scope.caught_target = mapping.lookup(guarded.getHandler());
+                    for (const mlir::Value each : guarded.getHandlerOperands()) {
+                        // NON-NULL BY CONSTRUCTION: body_is_supported refused
+                        // this function unless every handler operand is one of
+                        // THIS block's arguments, and every block's arguments
+                        // are mapped before any block is converted.
+                        scope.caught_operands.push_back(mapping.lookup(each));
+                    }
+                }
+            }
             for (mlir::Operation & op : block) {
                 convert(op, build, mapping, scope);
                 // EVERY VALUE THIS OPERATION PRODUCED, ROOTED IMMEDIATELY -
@@ -1013,6 +1076,36 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
         return propagate;
     }
 
+    // WHERE A FAILING STATUS GOES, WHICH IS NOT ALWAYS OUT.
+    //
+    // Outside a protected region it is the shared epilogue, unchanged. INSIDE
+    // one, CT_AOT_CAUGHT means a handler in THIS frame took the throw and
+    // execution continues at the pad rather than returning - so this emits a
+    // block that tests for caught first and branches to the handler with the
+    // register file as of the throw, falling through to the epilogue for
+    // UNWOUND and FAILED.
+    //
+    // PER CALL SITE rather than shared, because the epilogue takes the status
+    // as a block argument and this needs it twice: once to compare and once to
+    // hand on.
+    mlir::Block * caught_or_failure(compiled_entry & scope, mlir::OpBuilder & build,
+                                    mlir::Location where) {
+        if (scope.caught_target == nullptr) { return failure_path(scope, build, where); }
+        mlir::Block * sorted = scope.entry.addBlock();
+        sorted->addArgument(scope.status, where);
+        mlir::OpBuilder::InsertionGuard keep{build};
+        build.setInsertionPointToEnd(sorted);
+        const mlir::Value caught =
+            literal(build, where, scope.status,
+                    "static_cast<int32_t>(ctbrowser::aot::ct_aot_status::caught)");
+        auto landed = ec::CmpOp::create(build, where, mlir::IntegerType::get(build.getContext(), 1),
+                                        ec::CmpPredicate::eq, sorted->getArgument(0), caught);
+        mlir::cf::CondBranchOp::create(build, where, landed, scope.caught_target,
+                                       scope.caught_operands, failure_path(scope, build, where),
+                                       mlir::ValueRange{sorted->getArgument(0)});
+        return sorted;
+    }
+
     // A HELPER THAT ANSWERS WITH A STATUS AND A VALUE THROUGH A POINTER.
     //
     // Most of the ABI has this shape, so it is written once: declare a local
@@ -1050,7 +1143,7 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
 
         mlir::Block * carry_on = scope.entry.addBlock();
         mlir::cf::CondBranchOp::create(build, where, survived, carry_on, mlir::ValueRange{},
-                                       failure_path(scope, build, where),
+                                       caught_or_failure(scope, build, where),
                                        mlir::ValueRange{answered.getResult(0)});
 
         // LOADED ONLY ON THE OK PATH, which the ABI requires rather than merely
@@ -1078,7 +1171,7 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                               ec::CmpPredicate::eq, answered.getResult(0), ok);
         mlir::Block * carry_on = scope.entry.addBlock();
         mlir::cf::CondBranchOp::create(build, where, survived, carry_on, mlir::ValueRange{},
-                                       failure_path(scope, build, where),
+                                       caught_or_failure(scope, build, where),
                                        mlir::ValueRange{answered.getResult(0)});
         build.setInsertionPointToEnd(carry_on);
     }
@@ -1576,6 +1669,62 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                     mlir::ValueRange{scope.frame, array, mapping.lookup(element)});
             }
             mapping.map(made.getResult(), array);
+            return;
+        }
+        if (auto opened = mlir::dyn_cast<PushHandlerOp>(op)) {
+            // THE PAD ID IS THIS OPERATION'S OWN SLOT NUMBER, which makes it
+            // unique within the function without a second counter. It is what
+            // ct_aot_catch_land hands back to say WHICH handler fired - and
+            // with one region per function, nothing yet reads it.
+            //
+            // THE $handler EDGE IS DROPPED HERE, deliberately. It exists in the
+            // CTJS CFG so the pad is reachable and its arguments dominate; the
+            // edge the emitted code takes is ctjs.check's, at the throw site,
+            // because that is where the live register file is.
+            const unsigned slot = scope.argument_windows.lookup(&op);
+            const auto u32 = opaque(build.getContext(), "uint32_t");
+            ec::CallOpaqueOp::create(
+                build, where, mlir::TypeRange{}, callee("ct_aot_handler_push"),
+                mlir::ValueRange{scope.frame, literal(build, where, u32, std::to_string(slot)),
+                                 literal(build, where, u32, std::to_string(slot))});
+            llvm::SmallVector<mlir::Value> onward;
+            for (const mlir::Value each : opened.getBodyOperands()) {
+                onward.push_back(mapping.lookup(each));
+            }
+            mlir::cf::BranchOp::create(build, where, mapping.lookup(opened.getBody()), onward);
+            return;
+        }
+        if (mlir::isa<PopHandlerOp>(op)) {
+            ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_handler_pop"),
+                                     mlir::ValueRange{scope.frame});
+            return;
+        }
+        if (auto guarded = mlir::dyn_cast<CheckOp>(op)) {
+            // A PLAIN BRANCH. The caught edge was already emitted, once per
+            // fallible call in this block, by caught_or_failure - which is the
+            // only place the status exists to test.
+            llvm::SmallVector<mlir::Value> onward;
+            for (const mlir::Value each : guarded.getContOperands()) {
+                onward.push_back(mapping.lookup(each));
+            }
+            mlir::cf::BranchOp::create(build, where, mapping.lookup(guarded.getCont()), onward);
+            return;
+        }
+        if (auto landed = mlir::dyn_cast<CatchLandOp>(op)) {
+            // READS BACK WHAT THE UNWINDER WROTE and clears the pad marker, so
+            // it runs exactly once and only on a caught edge - which the
+            // importer enforces by refusing a pad reachable any other way.
+            const auto u32 = opaque(build.getContext(), "uint32_t");
+            auto slot = ec::VariableOp::create(build, where, ec::LValueType::get(value),
+                                               ec::OpaqueAttr::get(build.getContext(), ""));
+            auto address = ec::AddressOfOp::create(build, where, ec::PointerType::get(value),
+                                                   slot.getResult());
+            auto pad = ec::CallOpaqueOp::create(build, where, mlir::TypeRange{u32},
+                                                callee("ct_aot_catch_land"),
+                                                mlir::ValueRange{scope.frame, address.getResult()});
+            mapping.map(landed.getPad(), pad.getResult(0));
+            mapping.map(landed.getThrown(),
+                        ec::LoadOp::create(build, where, value, slot.getResult()).getResult());
             return;
         }
         if (auto accessor = mlir::dyn_cast<DefineAccessorOp>(op)) {

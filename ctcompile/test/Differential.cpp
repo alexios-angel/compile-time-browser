@@ -95,6 +95,7 @@ CT_ENTRY(merge)
 CT_ENTRY(mergeArray)
 CT_ENTRY(firstLoop)
 CT_ENTRY(accessors)
+CT_ENTRY(guarded)
 #undef CT_ENTRY
 
 namespace {
@@ -399,6 +400,17 @@ int main() {
          "makes the read answer undefined AND the write record nothing, so both halves of the "
          "answer move at once",
          "41/7/s"},
+        // ONLY `guarded` IS PATCHED, so `thrower` stays interpreted and the
+        // caught status reaches the compiled frame from ct_aot_call across a
+        // real throw. The AOT pass below runs the same arm with `thrower`
+        // compiled too, which is a different path through ct_aot_check: a
+        // callee's UNWOUND reclassified as the caller's CAUGHT.
+        {36u,
+         "try/catch",
+         {{"guarded", 0u, &ctc_guarded}, {}},
+         "the register file AS OF THE THROW against as of the `try` - n is written to 1 inside "
+         "the protected region, so a handler edge taken from push_handler answers 0:7",
+         "1:7/2"},
         {17u,
          "literals",
          {{"pack", 0u, &ctc_pack}, {}},
@@ -519,6 +531,7 @@ int main() {
         {"mergeArray", 0u, &ctc_mergeArray},
         {"firstLoop", 0u, &ctc_firstLoop},
         {"accessors", 0u, &ctc_accessors},
+        {"guarded", 0u, &ctc_guarded},
     };
 
     for (const subject & each : subjects) {
