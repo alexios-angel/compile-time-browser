@@ -259,7 +259,8 @@ CT_AOT_HELPER(/* name */ ct_aot_failed, /* ret */ uint32_t,
  * water mark ABSOLUTELY, so it may not be hoisted out of a loop or sunk
  * past anything that pushes registers.
  * DELEGATES TO: context::handlers_.push_back(handler{frames_.size()-1, pad,
- *   registers_.size(), slot}) - run_loop.cpp:1490-1494; the handler struct
+ *   registers_.size(), slot}) - run_loop.cpp's VM_CASE(push_handler); the
+ *   handler struct
  *   is vm.hpp:746-751.
  * FAILURE: None. */
 CT_AOT_HELPER(/* name */ ct_aot_handler_push, /* ret */ void,
@@ -276,7 +277,8 @@ CT_AOT_COVERS(/* helper */ ct_aot_handler_push, /* opcode */ push_handler)
  * purely so a debug build can assert handlers_.back().frame == this frame's
  * depth, turning a silent bug class into a loud one. It is NOT the frame-
  * exit truncation; that is ct_aot_leave.
- * DELEGATES TO: context::handlers_.pop_back() - run_loop.cpp:1499-1501, `if
+ * DELEGATES TO: context::handlers_.pop_back() - run_loop.cpp's
+ *   VM_CASE(pop_handler), `if
  *   (!handlers_.empty()) { handlers_.pop_back(); }`.
  * FAILURE: None - a no-op on an empty stack, as the handler is. */
 CT_AOT_HELPER(/* name */ ct_aot_handler_pop, /* ret */ void,

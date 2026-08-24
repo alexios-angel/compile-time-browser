@@ -647,6 +647,60 @@ void context::run_field_initialisers(value constructor, value self) {
 // `await` became. That helper needs exactly `.next(v)`, `.throw(e)` and a
 // `{value, done}` record back, which is what this implements.
 
+// op::closure's BODY, VERBATIM, plus the three guards a compiled caller needs.
+value context::make_closure(closure_object * enclosing, std::uint32_t function_index,
+                            upvalue_source parent, value enclosing_this) {
+    // PER FRAME, not per loop: a context can be running functions from more
+    // than one program at a time, and a function index means nothing outside
+    // the program it was compiled in.
+    //
+    // GUARDED, WHICH THE INLINE VERSION IS NOT. run_loop dereferences
+    // *program_ unguarded because an interpreted frame cannot exist without a
+    // program; Phase 19's AOT-only mode is exactly the configuration where one
+    // can, and a null deref is undefined behaviour rather than a fault.
+    const program * prog =
+        enclosing != nullptr && enclosing->owner != nullptr ? enclosing->owner : program_;
+    if (prog == nullptr) {
+        raise("no program to take a function from");
+        return value::undefined();
+    }
+    if (function_index >= prog->functions.size()) {
+        raise("closure function index out of range");
+        return value::undefined();
+    }
+    const function_proto & target = prog->functions[function_index];
+    // AND THE COUNT MUST AGREE WITH THE TARGET, because reading the caller's
+    // array past its end is worse than a fault: it is a closure that captured
+    // whatever was next in memory.
+    if (parent.by_descriptor != nullptr && parent.descriptor_count != target.upvalues.size()) {
+        raise("closure upvalue count disagrees with the function it names");
+        return value::undefined();
+    }
+
+    auto * made = allocate<closure_object>(&target);
+    made->owner = prog;
+    // Walk the descriptors the compiler resolved: each upvalue is either a cell
+    // sitting in the enclosing frame's register, or one the enclosing closure
+    // already holds. The second case is what carries a capture down through
+    // more than one level of nesting.
+    made->upvalues.reserve(target.upvalues.size());
+    for (std::size_t which = 0; which < target.upvalues.size(); ++which) {
+        const upvalue_desc & up = target.upvalues[which];
+        if (up.from_parent_local) {
+            made->upvalues.push_back(parent.at(which, up));
+        } else if (enclosing != nullptr && up.index < enclosing->upvalues.size()) {
+            made->upvalues.push_back(enclosing->upvalues[up.index]);
+        } else {
+            made->upvalues.push_back(value::undefined());
+        }
+    }
+    // An arrow's `this` is decided HERE, where it is written, not where it is
+    // called - which is what makes an arrow inside an arrow inside a method
+    // still see the method's object. The caller reads the EFFECTIVE receiver.
+    if (target.is_arrow) { made->captured_this = enclosing_this; }
+    return value::object(made);
+}
+
 value context::make_generator(closure_object * closure, value receiver,
                               std::span<const value> args) {
     auto * saved = allocate<coroutine_object>();

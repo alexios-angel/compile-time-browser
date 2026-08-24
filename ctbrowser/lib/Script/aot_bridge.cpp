@@ -356,6 +356,34 @@ struct aot_bridge {
         return held.frame_index < cx.frames_.size() ? &cx.frames_[held.frame_index] : nullptr;
     }
 
+    // ct_aot_make_closure. The shared context::make_closure, with the ABI's
+    // parallel array.
+    //
+    // A NON-CLOSURE ENCLOSING VALUE BECOMES nullptr, not a cast: the top level
+    // has no enclosing closure and passes undefined, and make_closure reads
+    // `enclosing->owner` to choose the program.
+    //
+    // RAISE TIER ONLY, from three sources rather than one - the allocation
+    // ceiling, no program with no enclosing closure, and a function index or
+    // upvalue count that does not match. make_closure raises for all three and
+    // the caller polls ct_aot_failed; there is no status to return, because the
+    // row answers with a value.
+    static std::uint64_t make_closure(aot::ct_aot_frame * f, std::uint64_t enclosing_closure,
+                                      std::uint32_t function_index,
+                                      const std::uint64_t * local_upvalues,
+                                      std::uint32_t upvalue_count, std::uint64_t enclosing_this) {
+        context & cx = *frame_of(f).ctx;
+        const value enclosing = value::from_bits(enclosing_closure);
+        closure_object * parent = enclosing.is_kind(heap_kind::function)
+                                      ? static_cast<closure_object *>(enclosing.as_heap())
+                                      : nullptr;
+        return cx
+            .make_closure(parent, function_index,
+                          context::upvalue_source{local_upvalues, upvalue_count, nullptr},
+                          value::from_bits(enclosing_this))
+            .bits();
+    }
+
     // ct_aot_callee. VM_CASE(load_callee) is
     // `closure != nullptr ? value::object(closure) : undefined`, and this is
     // that - which is also the only way a compiled body can reach its own
@@ -798,6 +826,14 @@ std::int32_t ct_aot_to_number(ct_aot_frame * fr, std::uint64_t v, double * out) 
 // generators are written against and a parameter added later is a break.
 std::uint64_t ct_aot_callee(ct_aot_frame * fr) {
     return script::aot_bridge::callee(fr);
+}
+
+std::uint64_t ct_aot_make_closure(ct_aot_frame * fr, std::uint64_t enclosing_closure,
+                                  std::uint32_t function_index,
+                                  const std::uint64_t * local_upvalues, std::uint32_t upvalue_count,
+                                  std::uint64_t enclosing_this) {
+    return script::aot_bridge::make_closure(fr, enclosing_closure, function_index, local_upvalues,
+                                            upvalue_count, enclosing_this);
 }
 
 std::uint64_t ct_aot_upvalue_cell(ct_aot_frame * fr, std::uint32_t index) {

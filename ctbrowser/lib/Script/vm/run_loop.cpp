@@ -766,38 +766,19 @@ value context::run_loop(std::size_t stop_depth) {
 
         VM_CASE(closure) do {
             {
-                // PER FRAME, not per loop: a context can be running functions from
-                // more than one program at a time, and a function index means
-                // nothing outside the program it was compiled in. Derived here
-                // because this is the only opcode that needs it.
-                const program & prog =
-                    vm_frame->closure != nullptr && vm_frame->closure->owner != nullptr
-                        ? *vm_frame->closure->owner
-                        : *program_;
-                const function_proto & target = prog.functions[in.bx()];
-                auto * made = allocate<closure_object>(&target);
-                made->owner = &prog;
-                // Walk the descriptors the compiler resolved: each upvalue is
-                // either a cell sitting in THIS (*vm_frame)'s register, or one this
-                // (*vm_frame)'s own closure already holds. The second case is what
-                // carries a capture down through more than one level of nesting.
-                made->upvalues.reserve(target.upvalues.size());
-                for (const upvalue_desc & up : target.upvalues) {
-                    if (up.from_parent_local) {
-                        made->upvalues.push_back(reg(up.index));
-                    } else if (vm_frame->closure != nullptr &&
-                               up.index < vm_frame->closure->upvalues.size()) {
-                        made->upvalues.push_back(vm_frame->closure->upvalues[up.index]);
-                    } else {
-                        made->upvalues.push_back(value::undefined());
-                    }
-                }
-                // An arrow's `this` is decided HERE, where it is written, not where
-                // it is called. Reading the effective receiver rather than the raw
-                // one is what makes an arrow inside an arrow inside a method still
-                // see the method's object.
-                if (target.is_arrow) { made->captured_this = effective_this((*vm_frame)); }
-                reg(in.a) = value::object(made);
+                // THE BODY IS context::make_closure NOW, shared with
+                // ct_aot_make_closure so the two tiers cannot drift - which is
+                // what the ABI row for that helper asks for. What stays here is
+                // the part that is the INTERPRETER's: its register window, and
+                // the effective receiver an arrow captures.
+                //
+                // BY REGISTER, because this frame has a window and a descriptor
+                // marked from_parent_local names a register in it. A compiled
+                // caller passes an array indexed in parallel with the
+                // descriptors instead; see context::upvalue_source.
+                reg(in.a) =
+                    make_closure(vm_frame->closure, in.bx(), upvalue_source{nullptr, 0, &reg(0)},
+                                 effective_this((*vm_frame)));
                 break;
             }
         }

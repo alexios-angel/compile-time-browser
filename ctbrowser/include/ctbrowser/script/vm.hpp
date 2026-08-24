@@ -924,6 +924,50 @@ public:
     };
     [[nodiscard]] value generator_resume(value generator, value sent, resume_mode how);
     // The object a generator function call hands back.
+    // WHERE THE PARENT'S HALF OF AN UPVALUE COMES FROM, and the two tiers
+    // genuinely differ - which is why this is a parameter and not an
+    // assumption.
+    //
+    // A descriptor marked from_parent_local names a REGISTER of the enclosing
+    // frame. The interpreter has that window and indexes it directly. A
+    // compiled body does not: its registers are the backend's own slots and its
+    // numbering is not the bytecode's, so the ABI has it pass an array indexed
+    // IN PARALLEL with the descriptors instead - ct_aot_make_closure's row
+    // spells that out, and packed is the plausible wrong reading.
+    //
+    // Exactly one pointer is set. Passing both, or neither, is a caller bug.
+    struct upvalue_source {
+        // RAW BITS, because that is what the ABI passes and a value is not
+        // layout-punnable: script::value keeps its bits private and offers
+        // from_bits/bits() as the only route in and out. Reinterpreting an
+        // array of one as an array of the other would be exactly the type
+        // punning this project refuses, and copying it would allocate once per
+        // closure a compiled body builds.
+        const std::uint64_t * by_descriptor = nullptr;
+        // HOW LONG by_descriptor IS, and only that form has a length to state.
+        // The register window is the enclosing frame's and is as long as that
+        // frame; the parallel array is the CALLER's, and reading past its end
+        // is a closure that captured whatever was next in memory.
+        std::uint32_t descriptor_count = 0;
+        const value * by_register = nullptr;
+
+        [[nodiscard]] value at(std::size_t which, const upvalue_desc & up) const {
+            return by_descriptor != nullptr ? value::from_bits(by_descriptor[which])
+                                            : by_register[up.index];
+        }
+    };
+
+    // ONE COPY OF op::closure's BODY, shared with the compiled tier.
+    //
+    // Factored so run_loop and ct_aot_make_closure cannot drift, which is the
+    // .def's instruction for this row. It also GUARDS three things the inline
+    // version dereferences unguarded, because a compiled caller can reach it in
+    // configurations the interpreter cannot: no program with no enclosing
+    // closure, a function index past the end, and an upvalue count that
+    // disagrees with the target's. Each raises; the row is raise-tier only.
+    [[nodiscard]] value make_closure(closure_object * enclosing, std::uint32_t function_index,
+                                     upvalue_source parent, value enclosing_this);
+
     [[nodiscard]] value make_generator(closure_object * closure, value receiver,
                                        std::span<const value> args);
     // Whether this value is a promise that has NOT settled - the one case
