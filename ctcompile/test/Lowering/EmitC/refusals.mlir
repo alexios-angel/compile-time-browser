@@ -81,19 +81,39 @@ ctjs.func @has_a_branch(%receiver: !ctjs.value, %new_target: !ctjs.value,
 
 // --- CONTAINS AN OPERATION WITH NO LOWERING ---------------------------------
 //
-// The allow-list's default. `ctjs.binary` needs an out-parameter, a status test
-// and an exception edge, none of which exist yet - and the reason names the
-// operation so the work list reads itself.
+// The allow-list's default. `ctjs.call` needs an argv span marshalled into the
+// frame's GC-rooted slots, an argc, a baked call site and a suspension edge -
+// and the reason names the operation, so the work list reads itself.
 //
-// CHECK-LABEL: ctjs.func @adds
-// CHECK-SAME: ctjs.not_lowered = "no lowering yet for ctjs.binary"
-ctjs.func @adds(%receiver: !ctjs.value, %new_target: !ctjs.value, %callee: !ctjs.value,
-                %x: !ctjs.value) -> !ctjs.value
+// CHECK-LABEL: ctjs.func @calls
+// CHECK-SAME: ctjs.not_lowered = "no lowering yet for ctjs.call"
+ctjs.func @calls(%receiver: !ctjs.value, %new_target: !ctjs.value, %callee: !ctjs.value,
+                 %f: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
   %ctx = ctjs.frame_enter 1
-  %sum = ctjs.binary add %x, %x
+  %r = ctjs.call %f(%receiver)
   ctjs.frame_exit %ctx
-  ctjs.return %sum
+  ctjs.return %r
+}
+
+// --- A BINARY KIND ITS FAMILY DOES NOT SERVE --------------------------------
+//
+// The two families are disjoint apart from `add`. ct_aot_binary_op's switch has
+// no arm for a bitwise opcode, so compiling `ctjs.binary shl` would pass
+// op::halt - which is in range, so aot_bridge's bounds check passes - and the
+// helper would answer `undefined` with status ok. A shift that silently
+// evaluates to undefined is exactly the class of defect this project keeps
+// meeting, so the kind is checked rather than the opcode trusted.
+//
+// CHECK-LABEL: ctjs.func @wrong_family
+// CHECK-SAME: ctjs.not_lowered = "ctjs.binary was given a kind only the static family serves"
+ctjs.func @wrong_family(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                        %callee: !ctjs.value, %x: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  %ctx = ctjs.frame_enter 1
+  %shifted = ctjs.binary shl %x, %x
+  ctjs.frame_exit %ctx
+  ctjs.return %shifted
 }
 
 // --- A CONSTANT THAT CANNOT BE MATERIALISED WITHOUT ALLOCATING ------------

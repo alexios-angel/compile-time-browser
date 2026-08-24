@@ -57,6 +57,9 @@
 #include "mlir/Transforms/RegionUtils.h"
 
 #include <ctbrowser/aot/aot_entry.h>
+#include <ctbrowser/script/bytecode.hpp>
+
+#include "ctcompile/CTJS/Lowering/OpcodeMapping.hpp"
 
 namespace ctcompile::ctjs {
 
@@ -88,6 +91,28 @@ ec::OpaqueType opaque(mlir::MLIRContext * context, llvm::StringRef spelling) {
 
 ec::PointerType pointer_to(mlir::MLIRContext * context, llvm::StringRef spelling) {
     return ec::PointerType::get(opaque(context, spelling));
+}
+
+// AN OPCODE'S C++ ENUMERATOR NAME, from the same file the enum is generated
+// from.
+//
+// `uint32_t op_kind` in the ABI is a ctbrowser::script::op and aot_bridge.cpp
+// casts it back, so the emitted call must name the OPERATOR. Spelling it as a
+// number would survive the renumbering Phases 13 and 14 do deliberately and
+// silently mean something else; spelling it as an enumerator makes that a build
+// error in the generated translation unit.
+#define CT_OPCODE(name_, ...) #name_,
+constexpr std::string_view opcode_names[] = {
+#include <ctbrowser/script/bytecode_opcodes.def>
+};
+#undef CT_OPCODE
+
+static_assert(std::size(opcode_names) == ctbrowser::script::opcode_count,
+              "the backend's opcode-name table and `enum class op` disagree");
+
+std::string opcode_spelling(ctbrowser::script::op which) {
+    const auto index = static_cast<std::size_t>(which);
+    return "static_cast<uint32_t>(ctbrowser::script::op::" + std::string(opcode_names[index]) + ")";
 }
 
 // EVERY HELPER IS CALLED BY ITS QUALIFIED C++ NAME.
@@ -128,6 +153,27 @@ std::string c_identifier(llvm::StringRef symbol) {
     return spelled;
 }
 
+// EVERYTHING ONE COMPILED ENTRY NEEDS TO KNOW ABOUT ITSELF.
+//
+// It exists because an operation with an exception edge needs more than its own
+// operands: the frame to leave, the entry's `receiver` and `constructing` for
+// the return protocol, the out-pointer to write, and a shared block to branch
+// to when a helper fails. Threading seven arguments through every conversion
+// was how this started and it did not survive the first one that needed an
+// eighth.
+struct compiled_entry {
+    ec::FuncOp entry;
+    mlir::Value frame;
+    mlir::Value receiver;
+    mlir::Value constructing;
+    mlir::Value out;
+    mlir::Type value;
+    mlir::Type status;
+    // Built on first use, because a function whose helpers cannot fail should
+    // not carry an unreachable epilogue.
+    mlir::Block * propagate = nullptr;
+};
+
 // WHY A FUNCTION WAS LEFT ALONE, in a form ctjs-opt prints.
 void refuse(FuncOp function, llvm::StringRef because) {
     function->setAttr("ctjs.not_lowered", mlir::StringAttr::get(function.getContext(), because));
@@ -142,6 +188,25 @@ bool body_is_supported(FuncOp function, std::string & why) {
     bool supported = true;
     function.getBody().walk([&](mlir::Operation * op) {
         if (mlir::isa<FrameEnterOp, FrameExitOp, ReturnOp, TruthyOp>(op)) { return; }
+        // THE ARITHMETIC, AND WITH IT THE FIRST EXCEPTION EDGE. Both families
+        // answer with a ct_aot_status, so each becomes a call, a test against
+        // ct_aot_status::ok by name, and a branch to the shared failure path.
+        // A kind the family does not serve is refused rather than compiled into
+        // op::halt, which ct_aot_binary_op's switch would answer with undefined.
+        if (auto binary = mlir::dyn_cast<BinaryOp>(op)) {
+            if (!is_valid_binary(binary.getKind())) {
+                supported = false;
+                why = "ctjs.binary was given a kind only the static family serves";
+            }
+            return;
+        }
+        if (auto binary = mlir::dyn_cast<BinaryStaticOp>(op)) {
+            if (!is_valid_binary_static(binary.getKind())) {
+                supported = false;
+                why = "ctjs.binary_static was given a kind only the re-entering family serves";
+            }
+            return;
+        }
         // THE BRANCHES, which is what makes a function with an `if` compilable.
         // Their block arguments are handled by a pass of their own afterwards -
         // see EmitCBlockArguments.cpp - because emitting them as they stand
@@ -203,6 +268,14 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                                   /*is_standard_include=*/build.getUnitAttr());
             ec::IncludeOp::create(build, module.getLoc(),
                                   build.getStringAttr("ctbrowser/script/value.hpp"),
+                                  /*is_standard_include=*/build.getUnitAttr());
+            // AND bytecode.hpp, because an opcode is spelled as an enumerator
+            // of ctbrowser::script::op rather than as the number the ABI
+            // actually passes. That is the whole point of spelling it: a
+            // renumbering becomes a build error here instead of a call to a
+            // different operator.
+            ec::IncludeOp::create(build, module.getLoc(),
+                                  build.getStringAttr("ctbrowser/script/bytecode.hpp"),
                                   /*is_standard_include=*/build.getUnitAttr());
             ec::IncludeOp::create(build, module.getLoc(),
                                   build.getStringAttr("ctbrowser/aot/aot.hpp"),
@@ -397,11 +470,11 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
         }
 
         // ---- and their operations -----------------------------------------
+        compiled_entry scope{entry, frame.getResult(0), in_receiver, in_constructing, in_out, value,
+                             status};
         for (mlir::Block & block : function.getBody()) {
             build.setInsertionPointToEnd(mapping.lookup(&block));
-            for (mlir::Operation & op : block) {
-                convert(op, build, mapping, value, in_receiver, in_constructing, in_out, status);
-            }
+            for (mlir::Operation & op : block) { convert(op, build, mapping, scope); }
         }
 
         function.erase();
@@ -421,10 +494,106 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
     // disagreement between the two - which is a bug in this file rather than in
     // its input, and is worth crashing over rather than emitting a call to
     // something plausible.
+    // WHERE A FAILED HELPER GOES, built once per function and shared.
+    //
+    // THE STATUS ARRIVES AS A BLOCK ARGUMENT, which is safe precisely because
+    // --emitc-eliminate-block-arguments runs after this pass and turns it into
+    // a variable. Every status test in the body branches here with its own
+    // status; writing that variable by hand would be the same thing done worse.
+    //
+    // ct_aot_leave IS CONDITIONAL, and that is the part that is easy to get
+    // wrong. On CT_AOT_UNWOUND the unwinder has already truncated the frame
+    // stack and destroyed this frame - the row says leave "must NOT run on the
+    // CT_AOT_UNWOUND path" - so calling it again would pop somebody else's
+    // frame. On CT_AOT_FAILED the frame is still standing and must be left.
+    //
+    // CT_AOT_CAUGHT CANNOT REACH HERE, and that is a fact about the input
+    // rather than an assumption: `caught` is reported only when a handler in
+    // THIS frame won, and nothing in the allow-list pushes one. When try/catch
+    // arrives this block needs a third arm - a `caught` escaping the entry is a
+    // SILENT wrong answer, because the caller writes no result and reports
+    // success, so the program sees `undefined` with no error at all.
+    mlir::Block * failure_path(compiled_entry & scope, mlir::OpBuilder & build,
+                               mlir::Location where) {
+        if (scope.propagate) { return scope.propagate; }
+        mlir::OpBuilder::InsertionGuard keep(build);
+
+        mlir::Block * propagate = scope.entry.addBlock();
+        propagate->addArgument(scope.status, where);
+        mlir::Block * leaving = scope.entry.addBlock();
+        mlir::Block * finish = scope.entry.addBlock();
+
+        build.setInsertionPointToEnd(propagate);
+        const mlir::Value gone =
+            literal(build, where, scope.status,
+                    "static_cast<int32_t>(ctbrowser::aot::ct_aot_status::unwound)");
+        auto destroyed =
+            ec::CmpOp::create(build, where, mlir::IntegerType::get(build.getContext(), 1),
+                              ec::CmpPredicate::eq, propagate->getArgument(0), gone);
+        mlir::cf::CondBranchOp::create(build, where, destroyed, finish, mlir::ValueRange{}, leaving,
+                                       mlir::ValueRange{});
+
+        build.setInsertionPointToEnd(leaving);
+        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_leave"),
+                                 mlir::ValueRange{scope.frame});
+        mlir::cf::BranchOp::create(build, where, finish);
+
+        build.setInsertionPointToEnd(finish);
+        ec::ReturnOp::create(build, where, propagate->getArgument(0));
+
+        scope.propagate = propagate;
+        return propagate;
+    }
+
+    // A HELPER THAT ANSWERS WITH A STATUS AND A VALUE THROUGH A POINTER.
+    //
+    // Most of the ABI has this shape, so it is written once: declare a local
+    // for the result, take its address, call, test the status against
+    // ct_aot_status::ok BY NAME, and continue in a fresh block where the result
+    // is loaded.
+    //
+    // THE BLOCK SPLITS AND THE CALLER KEEPS EMITTING INTO THE NEW ONE. An
+    // operation with an exception edge is two blocks, and everything after it
+    // in the source block belongs to the second - which is why this leaves the
+    // builder pointing at the continuation rather than restoring it.
+    mlir::Value status_call(compiled_entry & scope, mlir::OpBuilder & build, mlir::Location where,
+                            const std::string & symbol, llvm::ArrayRef<mlir::Value> arguments) {
+        auto slot = ec::VariableOp::create(build, where, ec::LValueType::get(scope.value),
+                                           ec::OpaqueAttr::get(build.getContext(), ""));
+        auto address = ec::AddressOfOp::create(build, where, ec::PointerType::get(scope.value),
+                                               slot.getResult());
+
+        llvm::SmallVector<mlir::Value> passed(arguments.begin(), arguments.end());
+        passed.push_back(address.getResult());
+        auto answered =
+            ec::CallOpaqueOp::create(build, where, mlir::TypeRange{scope.status}, symbol, passed);
+
+        const mlir::Value ok = literal(build, where, scope.status,
+                                       "static_cast<int32_t>(ctbrowser::aot::ct_aot_status::ok)");
+        auto survived =
+            ec::CmpOp::create(build, where, mlir::IntegerType::get(build.getContext(), 1),
+                              ec::CmpPredicate::eq, answered.getResult(0), ok);
+
+        mlir::Block * carry_on = scope.entry.addBlock();
+        mlir::cf::CondBranchOp::create(build, where, survived, carry_on, mlir::ValueRange{},
+                                       failure_path(scope, build, where),
+                                       mlir::ValueRange{answered.getResult(0)});
+
+        // LOADED ONLY ON THE OK PATH, which the ABI requires rather than merely
+        // permits: "*out written ONLY on CT_AOT_OK", so on any other status the
+        // local still holds whatever it held before the call.
+        build.setInsertionPointToEnd(carry_on);
+        return ec::LoadOp::create(build, where, scope.value, slot.getResult()).getResult();
+    }
+
     void convert(mlir::Operation & op, mlir::OpBuilder & build, mlir::IRMapping & mapping,
-                 mlir::Type value, mlir::Value receiver, mlir::Value constructing, mlir::Value out,
-                 mlir::Type status) {
+                 compiled_entry & scope) {
         const mlir::Location where = op.getLoc();
+        const mlir::Type value = scope.value;
+        const mlir::Value receiver = scope.receiver;
+        const mlir::Value constructing = scope.constructing;
+        const mlir::Value out = scope.out;
+        const mlir::Type status = scope.status;
 
         // The frame is established by the entry block, not by this operation.
         if (mlir::isa<FrameEnterOp>(op)) { return; }
@@ -455,6 +624,34 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                 build, where, mlir::IntegerType::get(build.getContext(), 1), ec::CmpPredicate::ne,
                 answered.getResult(0), literal(build, where, u32, "0"));
             mapping.map(truthy.getResult(), bit.getResult());
+            return;
+        }
+
+        // THE TWO BINARY FAMILIES, WHICH ARE TWO HELPERS AND TWO OPCODE
+        // TABLES. `ctjs.binary add` is source `+` and must reach
+        // op::add_generic, which runs ToPrimitive and can call a user valueOf;
+        // `ctjs.binary_static add` is op::add and cannot run user code at all.
+        // Folding them would make `x + y` and `x++` the same call, which is
+        // what OpcodeMapping.hpp exists to prevent - and the opcode is spelled
+        // as an ENUMERATOR, so the renumbering Phases 13 and 14 perform becomes
+        // a build error in the generated code rather than a different operator.
+        if (auto binary = mlir::dyn_cast<BinaryOp>(op)) {
+            const mlir::Value kind = literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                             opcode_spelling(opcode_for_binary(binary.getKind())));
+            mapping.map(binary.getResult(),
+                        status_call(scope, build, where, callee("ct_aot_binary_op"),
+                                    {scope.frame, kind, mapping.lookup(binary.getLhs()),
+                                     mapping.lookup(binary.getRhs())}));
+            return;
+        }
+        if (auto binary = mlir::dyn_cast<BinaryStaticOp>(op)) {
+            const mlir::Value kind =
+                literal(build, where, opaque(build.getContext(), "uint32_t"),
+                        opcode_spelling(opcode_for_binary_static(binary.getKind())));
+            mapping.map(binary.getResult(),
+                        status_call(scope, build, where, callee("ct_aot_binary_op_static"),
+                                    {scope.frame, kind, mapping.lookup(binary.getLhs()),
+                                     mapping.lookup(binary.getRhs())}));
             return;
         }
 
