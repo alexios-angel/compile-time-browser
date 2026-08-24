@@ -211,7 +211,7 @@ struct compiled_entry {
 // A GLOBAL'S NAME IS NOT ALWAYS AN IDENTIFIER, which is why this escapes at all
 // rather than trusting the input: `globalThis["\u0000"] = 1` is legal
 // JavaScript, and the importer carries whatever the source said.
-std::string c_string_literal(llvm::StringRef bytes) {
+constexpr std::string c_string_literal(std::string_view bytes) {
     std::string spelled = "\"";
     for (const char raw : bytes) {
         const auto byte = static_cast<unsigned char>(raw);
@@ -230,6 +230,57 @@ std::string c_string_literal(llvm::StringRef bytes) {
     }
     spelled += '"';
     return spelled;
+}
+
+// THE ESCAPE, CHECKED AT COMPILE TIME rather than by reading an emitted file.
+// "Prefer a build error to a test", and these are decidable here.
+static_assert(c_string_literal("Math") == "\"Math\"");
+// THE ONE THAT WOULD BREAK UNDER A HEX ESCAPE: `od`, byte 0x01, `Fd`.
+//
+// THE INPUT IS SPELLED OCTALLY HERE FOR THE SAME REASON THE OUTPUT IS, and the
+// first attempt at this assertion proved it: written "od\x01Fd" the C++
+// compiler refused the source with "hex escape sequence out of range", because
+// it read the escape as \x01F followed by `d`. The hazard is real enough to
+// have bitten the test written to demonstrate it.
+static_assert(c_string_literal("od\001Fd") == "\"od\\001Fd\"");
+static_assert(c_string_literal("od\001Fd").size() == 5 + 2 + 3,
+              "five source bytes, two quotes, and three extra characters for the one escape");
+// Quotes and backslashes close the literal or start an escape if they are not
+// themselves escaped.
+static_assert(c_string_literal("a\"b") == "\"a\\\"b\"");
+static_assert(c_string_literal("a\\b") == "\"a\\\\b\"");
+// AND A ZERO BYTE SURVIVES, which is why the length is emitted beside the
+// pointer: strlen would stop here.
+static_assert(c_string_literal(std::string_view("a\0b", 3)) == "\"a\\000b\"");
+
+// THE HELPERS THE RUNTIME DECLARES BUT DOES NOT DEFINE.
+//
+// aot_helpers.def declares 69 rows and aot_bridge.cpp defines 32 of them. The
+// other 37 have prototypes in aot.hpp and no body anywhere, so a call to one
+// COMPILES PERFECTLY and fails at link.
+//
+// THAT IS EXACTLY WHAT HAPPENED. This backend emitted ct_aot_global_get and
+// ct_aot_negate for two commits, and every test passed - because every EmitC
+// test compiled the output with -fsyntax-only and none of them linked it.
+// Linking it by hand gives "undefined reference to `ct_aot_global_get'".
+//
+// SO THE ROWS ARE NOT ENOUGH TO DECIDE WHAT TO EMIT, and this is the one place
+// where the .def cannot be the single source of truth: it records what the ABI
+// IS, not what has been built yet. This list is the second source, and it is
+// held honest by ctcompile_linkable, which links a translation unit exercising
+// every operation the backend accepts - so a name here that is wrong in either
+// direction fails the build rather than a program.
+bool runtime_defines(llvm::StringRef helper) {
+    static constexpr llvm::StringLiteral undefined_yet[] = {
+        llvm::StringLiteral("ct_aot_negate"),
+        llvm::StringLiteral("ct_aot_bit_not"),
+        llvm::StringLiteral("ct_aot_global_get"),
+        llvm::StringLiteral("ct_aot_global_set"),
+    };
+    for (const llvm::StringLiteral & absent : undefined_yet) {
+        if (helper == absent) { return false; }
+    }
+    return true;
 }
 
 // WHY A FUNCTION WAS LEFT ALONE, in a form ctjs-opt prints.
@@ -275,6 +326,14 @@ bool body_is_supported(FuncOp function, std::string & why) {
         // JavaScript value needs ct_aot_new_string - which allocates and is a
         // safepoint, with nothing rooting the result yet.
         if (auto unary = mlir::dyn_cast<UnaryOp>(op)) {
+            // TWO OF THE SIX REACH HELPERS THE RUNTIME HAS NOT BUILT.
+            if ((unary.getKind() == UnaryKind::Neg && !runtime_defines("ct_aot_negate")) ||
+                (unary.getKind() == UnaryKind::BitNot && !runtime_defines("ct_aot_bit_not"))) {
+                supported = false;
+                why = "the helper for this unary operator is declared in aot.hpp and defined "
+                      "nowhere - emitting a call to it compiles and fails at link";
+                return;
+            }
             if (unary.getKind() == UnaryKind::TypeOf) {
                 supported = false;
                 why = "no lowering yet for `typeof` - its result is a string, and "
@@ -282,7 +341,20 @@ bool body_is_supported(FuncOp function, std::string & why) {
             }
             return;
         }
-        if (mlir::isa<CompareOp, LoadGlobalOp, StoreGlobalOp>(op)) { return; }
+        if (mlir::isa<CompareOp>(op)) { return; }
+        if (mlir::isa<LoadGlobalOp>(op) && !runtime_defines("ct_aot_global_get")) {
+            supported = false;
+            why = "ct_aot_global_get is declared in aot.hpp and defined nowhere - emitting a call "
+                  "to it compiles and fails at link";
+            return;
+        }
+        if (mlir::isa<StoreGlobalOp>(op) && !runtime_defines("ct_aot_global_set")) {
+            supported = false;
+            why = "ct_aot_global_set is declared in aot.hpp and defined nowhere - emitting a call "
+                  "to it compiles and fails at link";
+            return;
+        }
+        if (mlir::isa<LoadGlobalOp, StoreGlobalOp>(op)) { return; }
         if (auto binary = mlir::dyn_cast<BinaryOp>(op)) {
             if (!is_valid_binary(binary.getKind())) {
                 supported = false;

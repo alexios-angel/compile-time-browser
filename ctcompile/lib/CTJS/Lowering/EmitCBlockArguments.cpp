@@ -62,14 +62,26 @@ struct EmitCEliminateBlockArgumentsPass
         //
         // A leftover ctjs.func is exactly that mistake, and nothing else looks
         // like it.
+        // A REFUSED FUNCTION IS NOT THIS MISTAKE, and telling the two apart is
+        // the whole difficulty. The lowering leaves behind every function it
+        // could not compile - that is its design, and the count of them is the
+        // work list - so "a CTJS function is present" cannot be the test.
+        //
+        // What distinguishes them is the ctjs.not_lowered attribute: a refusal
+        // carries one and says why, and a function the lowering never saw does
+        // not. So the check is for an UNEXPLAINED CTJS function.
         if (mlir::WalkResult early = getOperation().walk([](mlir::Operation * op) {
-                return op->getName().getDialectNamespace() == "ctjs" ? mlir::WalkResult::interrupt()
-                                                                     : mlir::WalkResult::advance();
+                if (op->getName().getStringRef() != "ctjs.func") {
+                    return mlir::WalkResult::advance();
+                }
+                return op->hasAttr("ctjs.not_lowered") ? mlir::WalkResult::advance()
+                                                       : mlir::WalkResult::interrupt();
             });
             early.wasInterrupted()) {
             getOperation().emitError()
-                << "--emitc-eliminate-block-arguments ran before the module was lowered - CTJS "
-                   "operations are still present. It must run AFTER "
+                << "--emitc-eliminate-block-arguments ran before the module was lowered - a CTJS "
+                   "function is present with no ctjs.not_lowered reason on it, which is what an "
+                   "un-run lowering looks like. It must run AFTER "
                    "--ctjs-lower-to-emitc, or the block arguments that lowering emits reach the "
                    "C++ emitter, which miscompiles a parallel copy on their edges";
             signalPassFailure();

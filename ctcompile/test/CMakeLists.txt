@@ -171,11 +171,15 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   # GENERATED CODE IS NOT THIS PROJECT'S CODE, and the flags that keep the
   # hand-written sources honest do not apply to it. The entry's signature is
   # fixed by ct_aot_entry_fn, so a function that never looks at `argc` has an
-  # unused parameter by construction - and -Werror would make every such
-  # program a build failure. Narrowed to the two warnings that are inherent to
-  # emitted code rather than turning -Werror off.
+  # unused parameter by construction; a JavaScript expression whose value is
+  # discarded leaves a variable that is set and never read; and the backend
+  # emits no dead-code elimination because that is a later phase's job.
+  # -Werror would make every such program a build failure. Narrowed to the
+  # three warnings inherent to emitted code rather than turning -Werror off.
+  set(CTCOMPILE_GENERATED_WARNINGS
+      "-Wno-unused-parameter;-Wno-unused-variable;-Wno-unused-but-set-variable")
   set_source_files_properties("${_gc_cpp}" PROPERTIES
-    COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable")
+    COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
 
   add_executable(ctcompile-test-gc_roots GCRoots.cpp "${_gc_cpp}")
   target_link_libraries(ctcompile-test-gc_roots PRIVATE ctbrowser::script)
@@ -183,6 +187,41 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   add_test(NAME ctcompile_gc_roots COMMAND ctcompile-test-gc_roots)
 else()
   message(STATUS "ctcompile: gc-roots test unavailable (needs ctjs-opt and mlir-translate)")
+endif()
+
+# --- and does any of it LINK? -------------------------------------------------
+#
+# aot.hpp declares 69 helpers and aot_bridge.cpp defines 32. A call to one of
+# the other 37 compiles perfectly and fails at link - which is exactly how
+# ct_aot_global_get and ct_aot_negate were emitted for two commits with a green
+# suite, because every EmitC lit test uses -fsyntax-only.
+#
+# This compiles a function exercising everything the backend accepts and LINKS
+# it. The link is the whole assertion; the executable barely does anything.
+if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
+  set(_link_js "${CMAKE_CURRENT_SOURCE_DIR}/linkable.js")
+  set(_link_cpp "${CMAKE_CURRENT_BINARY_DIR}/linkable.generated.cpp")
+  add_custom_command(
+    OUTPUT "${_link_cpp}"
+    COMMAND "${CMAKE_COMMAND}"
+            -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
+            -DOPT=$<TARGET_FILE:ctjs-opt>
+            -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
+            -DSOURCE=${_link_js}
+            -DENTRY=everything
+            -DOUTPUT=${_link_cpp}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
+    DEPENDS "${_link_js}" ctjs-translate ctjs-opt
+            "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
+    COMMENT "Compiling linkable.js through the EmitC backend"
+    VERBATIM)
+
+  set_source_files_properties("${_link_cpp}" PROPERTIES
+    COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
+  add_executable(ctcompile-test-linkable Linkable.cpp "${_link_cpp}")
+  target_link_libraries(ctcompile-test-linkable PRIVATE ctbrowser::script)
+  ctcompile_target(ctcompile-test-linkable)
+  add_test(NAME ctcompile_linkable COMMAND ctcompile-test-linkable)
 endif()
 
 # --- check-ctcompile: the lit suite -------------------------------------------
