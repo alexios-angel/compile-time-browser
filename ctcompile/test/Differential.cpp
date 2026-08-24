@@ -405,6 +405,60 @@ int main() {
          "302"},
     };
 
+    // ---- AND THE THIRD MODE ------------------------------------------------
+    //
+    // The plan asks for differential runs under VM, HYBRID and AOT. Everything
+    // above is HYBRID: one or two protos carry a compiled entry and the rest of
+    // the program is interpreted, which is what makes each case separate one
+    // lowering from its neighbours.
+    //
+    // IT IS ALSO THE MODE THAT CANNOT SEE A CROSS-FUNCTION DEFECT. A compiled
+    // caller reaching a compiled callee goes through paths a single patch never
+    // exercises - the argument window survives a callee that collects, a
+    // new.target handoff crosses a frame boundary that is compiled on BOTH
+    // sides - and exactly one case above (`nested compiled`) asks that question,
+    // about exactly two functions.
+    //
+    // So this installs EVERY entry the build produced and runs every arm again.
+    // It separates nothing on its own; it is the check that the cases above,
+    // which each hold one variable still, did not agree only because everything
+    // around them was interpreted.
+    const installed all[] = {
+        {"plus", 0u, &ctc_plus},
+        {"ge", 0u, &ctc_ge},
+        {"strict", 0u, &ctc_strict},
+        {"loose", 0u, &ctc_loose},
+        {"pick", 0u, &ctc_pick},
+        {"globals", 0u, &ctc_globals},
+        {"apply", 0u, &ctc_apply},
+        {"step", 0u, &ctc_step},
+        {"counter", 0u, &ctc_counter},
+        {"middle", 0u, &ctc_middle},
+        {"methodish", 0u, &ctc_methodish},
+        {"", 0u, &ctc_fn},
+        {"neg", 0u, &ctc_neg},
+        {"bnot", 0u, &ctc_bnot},
+        {"put", 0u, &ctc_put},
+        {"greet", 0u, &ctc_greet},
+        {"pack", 0u, &ctc_pack},
+        {"kindOf", 0u, &ctc_kindOf},
+        {"thrower", 0u, &ctc_thrower},
+        {"build", 0u, &ctc_build},
+        {"Point", 0u, &ctc_Point},
+        {"newBad", 0u, &ctc_newBad},
+        {"coalesce", 0u, &ctc_coalesce},
+        {"chain", 0u, &ctc_chain},
+        {"dflt", 0u, &ctc_dflt},
+        {"total", 0u, &ctc_total},
+        {"chars", 0u, &ctc_chars},
+        {"spread", 0u, &ctc_spread},
+        {"hasIt", 0u, &ctc_hasIt},
+        {"isA", 0u, &ctc_isA},
+        {"drop", 0u, &ctc_drop},
+        {"greetChain", 0u, &ctc_greetChain},
+        {"Kid", 0u, &ctc_Kid},
+    };
+
     for (const subject & each : subjects) {
         // EVERY PROTO THIS CASE INSTALLS ON, resolved before anything runs so a
         // missing one is reported rather than silently skipped.
@@ -476,6 +530,58 @@ int main() {
             ++failures;
         }
     }
+
+    // ---- the AOT pass ------------------------------------------------------
+    //
+    // RESOLVED FIRST AND ASSERTED, because a name that matches nothing would
+    // silently install nothing, and a pass that compiles nothing agrees with
+    // the interpreter perfectly. That is the shape of every vacuous test this
+    // project has already found.
+    function_proto * every[std::size(all)] = {};
+    for (std::size_t slot = 0; slot < std::size(all); ++slot) {
+        unsigned seen = 0;
+        for (function_proto & candidate : compiled.functions) {
+            if (candidate.name != all[slot].name) { continue; }
+            if (seen++ == all[slot].ordinal) { every[slot] = &candidate; }
+        }
+        if (every[slot] == nullptr) {
+            std::printf("AOT        FAILED - no function_proto named %s#%u\n", all[slot].name,
+                        all[slot].ordinal);
+            ++failures;
+        }
+    }
+
+    unsigned arms = 0;
+    unsigned disagreed = 0;
+    for (const subject & each : subjects) {
+        for (std::size_t slot = 0; slot < std::size(all); ++slot) {
+            if (every[slot] != nullptr) { every[slot]->aot_entry = nullptr; }
+        }
+        const value which = value::number(static_cast<double>(each.which));
+        const value arguments[] = {which};
+        cx.call(cx.global("drive"), std::span<const value>{arguments}, value::undefined());
+        const std::string interpreted = cx.to_string(cx.global("OUT"));
+
+        for (std::size_t slot = 0; slot < std::size(all); ++slot) {
+            if (every[slot] != nullptr) { every[slot]->aot_entry = all[slot].entry; }
+        }
+        cx.call(cx.global("drive"), std::span<const value>{arguments}, value::undefined());
+        const std::string whole = cx.to_string(cx.global("OUT"));
+        for (std::size_t slot = 0; slot < std::size(all); ++slot) {
+            if (every[slot] != nullptr) { every[slot]->aot_entry = nullptr; }
+        }
+
+        ++arms;
+        if (interpreted != whole) {
+            std::printf("AOT %-10s FAILED - every entry installed\n    interpreted %s\n"
+                        "    compiled    %s\n",
+                        each.name, interpreted.c_str(), whole.c_str());
+            ++disagreed;
+            ++failures;
+        }
+    }
+    std::printf("\nAOT: %u arms with all %zu entries installed, %u disagreed\n", arms,
+                std::size(all), disagreed);
 
     if (failures == 0) {
         std::printf("\nall %zu bodies agree with the interpreter\n", std::size(subjects));

@@ -105,11 +105,13 @@ bool dispatches(const std::string & source, std::string_view opcode) {
         // The name must END here: `op::add` must not match inside
         // `op::add_generic`.
         if (after < source.size() &&
-            (std::isalnum(static_cast<unsigned char>(source[after])) != 0 || source[after] == '_')) {
+            (std::isalnum(static_cast<unsigned char>(source[after])) != 0 ||
+             source[after] == '_')) {
             continue;
         }
         std::size_t tail = after;
-        while (tail < source.size() && std::isspace(static_cast<unsigned char>(source[tail])) != 0) {
+        while (tail < source.size() &&
+               std::isspace(static_cast<unsigned char>(source[tail])) != 0) {
             ++tail;
         }
         if (tail < source.size() && source[tail] == ':') { return true; } // a case label
@@ -186,17 +188,16 @@ int main() {
         }
     }
 
-    const auto suspending =
-        static_cast<std::size_t>(std::count_if(std::begin(table), std::end(table),
-                                               [](const row & r) { return r.may_suspend; }));
+    const auto suspending = static_cast<std::size_t>(std::count_if(
+        std::begin(table), std::end(table), [](const row & r) { return r.may_suspend; }));
     std::printf("%zu opcodes: %zu suspending, %zu imported, %zu pending\n", std::size(table),
                 suspending, std::size(table) - suspending - missing.size(), missing.size());
 
     if (failures == 0 && !missing.empty()) {
         std::printf("\nPhase 13 is complete when this list is empty:\n");
         for (const pending & each : not_yet) {
-            std::printf("  %-16.*s %.*s\n", static_cast<int>(each.opcode.size()), each.opcode.data(),
-                        static_cast<int>(each.why.size()), each.why.data());
+            std::printf("  %-16.*s %.*s\n", static_cast<int>(each.opcode.size()),
+                        each.opcode.data(), static_cast<int>(each.why.size()), each.why.data());
         }
     }
     return failures == 0 ? 0 : 1;
