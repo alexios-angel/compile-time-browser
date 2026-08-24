@@ -110,8 +110,6 @@ namespace ctbrowser::script {
 #endif
 
 value context::run_loop(std::size_t stop_depth) {
-    auto & string_cache = string_cache_;
-
 #if VM_COMPUTED_GOTO
     // Indexed BY OPCODE, which is what the array designators buy: the order of
     // this table cannot drift out of step with the enum. A label address is not
@@ -177,18 +175,8 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(load_string) do {
-            {
-                auto & cache = string_cache[&(*vm_proto)];
-                const auto it = cache.find(in.bx());
-                if (it != cache.end()) {
-                    reg(in.a) = it->second;
-                } else {
-                    const value v = string(vm_proto->strings[in.bx()]);
-                    cache.emplace(in.bx(), v);
-                    reg(in.a) = v;
-                }
-                break;
-            }
+            reg(in.a) = interned_string(&(*vm_proto), in.bx(), vm_proto->strings[in.bx()]);
+            break;
         }
         while (0);
         VM_NEXT;

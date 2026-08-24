@@ -787,6 +787,28 @@ public:
     // a string; anything else is a named lookup. Shared by get_index and by
     // computed method calls, because `a[0]()` and `a['push']()` must both work
     // and they take different branches.
+    // A STRING LITERAL, MEMOISED PER SITE - AND THE MEMO IS PART OF THE ABI
+    // RATHER THAN AN OPTIMISATION.
+    //
+    // `allocations_` counts TOTAL allocations for the process lifetime and is
+    // never reset, so the 40,000,000 ceiling is a lifetime budget. Interpreted,
+    // a string literal in a per-pixel loop allocates ONE object for the whole
+    // run because the handler memoises it; the same loop compiled without the
+    // memo allocates one per iteration, and at 480k pixels a frame it reaches
+    // the ceiling in about a second - raising an UNCATCHABLE failure on a
+    // program the interpreter runs forever. That is a divergence in the raise
+    // tier introduced by an optimisation, which is why it is mandatory.
+    //
+    // site == nullptr MEANS DO NOT MEMOISE, which is what lets a companion
+    // allocation with no cache of its own stay at parity.
+    //
+    // POINTER AND LENGTH, not a C string: a JavaScript string may contain an
+    // embedded NUL, and `a\0b` would silently truncate. String IDENTITY is
+    // unobservable - strict equality compares text - so sharing one object is
+    // safe; it is the ceiling, not identity, that makes it required.
+    [[nodiscard]] value interned_string(const void * site, std::uint32_t slot,
+                                        std::string_view text);
+
     [[nodiscard]] value lookup_index(value target, value key);
 
     // `target[key] = v` for an arbitrary key value - the write twin of
@@ -1215,7 +1237,12 @@ private:
     // so the running frame's proto belongs to a DIFFERENT program from the one
     // being executed. Subtracting its address from the wrong program's
     // functions vector gave a garbage index and read off the end of the cache.
-    flat_map<const function_proto *, flat_map<std::uint32_t, value>> string_cache_;
+    // KEYED BY const void *, NOT const function_proto *, so both tiers share
+    // one cache. The interpreter keys it by the proto it is running; a compiled
+    // body keys it by the `site` its entry was handed, which IS that proto -
+    // but the ABI hands it as an opaque const ct_aot_site *, and widening the
+    // key here is cheaper than a cast at every use.
+    flat_map<const void *, flat_map<std::uint32_t, value>> string_cache_;
     // The same idea for BigInt literals: the digits never change, so a site in
     // a loop parses them once. Keyed the same way and swept the same way.
     flat_map<const function_proto *, flat_map<std::uint32_t, value>> bigint_cache_;

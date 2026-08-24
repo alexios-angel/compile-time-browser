@@ -166,18 +166,27 @@ ctjs.func @wrong_family(%receiver: !ctjs.value, %new_target: !ctjs.value,
 // decimal literal in the emitted source would not be: 0.0 and -0.0 print
 // identically and are different JavaScript values.
 //
-// A STRING STILL IS. It reaches ct_aot_new_string, which allocates and is a
-// safepoint, and nothing roots the result across it yet.
+// A STRING IS NOT REFUSED ANY MORE, and the reason it used to give had gone
+// stale rather than been wrong: "ct_aot_new_string is a safepoint, and nothing
+// roots the result yet" was true when it was written and untrue from the moment
+// the backend started parking every value it produces. Nobody rechecked it, and
+// it was 383 of 417 refusals on bootstrap.bundle.js - 92% of the blockage
+// traced to one sentence.
 //
-// CHECK-LABEL: ctjs.func @returns_a_string
+// A BIGINT LITERAL STILL IS, and for a reason that is still true:
+// ct_aot_new_bigint_literal is one of the rows aot.hpp declares and
+// aot_bridge.cpp does not define, so a call to it would compile and fail at
+// link.
+//
+// CHECK-LABEL: ctjs.func @returns_a_bigint
 // CHECK-SAME: ctjs.not_lowered = "no lowering yet for this constant
-ctjs.func @returns_a_string(%receiver: !ctjs.value, %new_target: !ctjs.value,
+ctjs.func @returns_a_bigint(%receiver: !ctjs.value, %new_target: !ctjs.value,
                             %callee: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
   %ctx = ctjs.frame_enter 1
-  %s = ctjs.constant #ctjs.string<"hello">
+  %n = ctjs.constant #ctjs.bigint<"1">
   ctjs.frame_exit %ctx
-  ctjs.return %s
+  ctjs.return %n
 }
 
 // --- AND ONE THAT IS ACCEPTED, so the allow-list is not simply refusing all --

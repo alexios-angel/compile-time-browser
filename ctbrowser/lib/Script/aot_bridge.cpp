@@ -368,6 +368,28 @@ struct aot_bridge {
         return held.frame_index < cx.frames_.size() ? &cx.frames_[held.frame_index] : nullptr;
     }
 
+    // ct_aot_new_string. The same context::interned_string the interpreter
+    // now calls, memo and all.
+    //
+    // THE MEMO IS NOT AN OPTIMISATION HERE. `allocations_` counts TOTAL
+    // allocations for the process lifetime and is never reset, so the
+    // 40,000,000 ceiling is a lifetime budget: interpreted, a string literal
+    // in a per-pixel loop allocates ONE object for the whole run, while the
+    // same loop compiled without the memo allocates one per iteration and
+    // reaches the ceiling in about a second. That is a divergence in the raise
+    // tier, on a program the interpreter runs forever.
+    //
+    // RAISE TIER ONLY, so there is no status: the sole failure is allocate()'s
+    // ceiling, which sets failed_ without entering unwind_to_handler and is
+    // invisible to a JS try. The returned string is well-formed even after it.
+    static std::uint64_t new_string(aot::ct_aot_frame * f, const aot::ct_aot_site * site,
+                                    std::uint32_t slot, const char * utf8, std::uint32_t len) {
+        context & cx = *frame_of(f).ctx;
+        return cx
+            .interned_string(static_cast<const void *>(site), slot, std::string_view{utf8, len})
+            .bits();
+    }
+
     // ct_aot_set_index. `target[key] = v` through the same
     // context::store_index the interpreter now calls.
     //
@@ -886,6 +908,11 @@ std::int32_t ct_aot_to_number(ct_aot_frame * fr, std::uint64_t v, double * out) 
 // The `site` parameter is where Phase 26 attaches an inline cache without an
 // ABI break. Taken and ignored, because the signature is the thing two code
 // generators are written against and a parameter added later is a break.
+std::uint64_t ct_aot_new_string(ct_aot_frame * fr, const ct_aot_site * site, std::uint32_t slot,
+                                const char * utf8, std::uint32_t len) {
+    return script::aot_bridge::new_string(fr, site, slot, utf8, len);
+}
+
 std::int32_t ct_aot_set_index(ct_aot_frame * fr, std::uint64_t obj, std::uint64_t key,
                               std::uint64_t v, ct_aot_ic * site) {
     (void)site;

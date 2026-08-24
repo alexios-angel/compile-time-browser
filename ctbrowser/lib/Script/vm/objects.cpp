@@ -103,6 +103,17 @@ void context::mark(value v) {
     if (v.is_heap()) { mark_object(v.as_heap()); }
 }
 
+// VM_CASE(load_string)'s memo, extracted so a compiled body shares it.
+value context::interned_string(const void * site, std::uint32_t slot, std::string_view text) {
+    if (site == nullptr) { return string(std::string{text}); }
+    auto & cache = string_cache_[site];
+    const auto found = cache.find(slot);
+    if (found != cache.end()) { return found->second; }
+    const value made = string(std::string{text});
+    cache.emplace(slot, made);
+    return made;
+}
+
 value context::lookup_index(value target, value key) {
     if (target.is_array() && key.is_number()) {
         auto * arr = static_cast<array_object *>(target.as_heap());

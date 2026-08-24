@@ -208,6 +208,30 @@ struct compiled_entry {
     // everything else is: ct_aot_call is a safepoint that runs arbitrary user
     // JavaScript before it reads the arguments.
     llvm::DenseMap<mlir::Operation *, unsigned> argument_windows;
+
+    // THE KEY ct_aot_new_string MEMOISES BY, AND IT IS NOT THE ENTRY'S `site`.
+    //
+    // The entry's site IS the function_proto, and the interpreter keys the same
+    // cache by that proto with the string's CONSTANT-POOL index as the slot.
+    // This backend numbers its slots in walk order, which is a different
+    // numbering - so sharing the key means a compiled body can read a slot the
+    // interpreter filled with a DIFFERENT literal and return the wrong string.
+    //
+    // It coincided on the first fixture and hid a mutation that halved every
+    // length: the interpreted baseline ran first, filled the cache, and the
+    // compiled body never allocated at all.
+    //
+    // So each compiled function memoises under an address of its OWN. The two
+    // tiers then allocate one object each for the same literal instead of
+    // sharing one, which is invisible - string identity is unobservable, strict
+    // equality compares text - and the ceiling is still bounded by one
+    // allocation per site and slot, which is what the row requires.
+    mlir::Value memo_site;
+
+    // WHICH MEMO SLOT EACH STRING CONSTANT USES. The slots must be unique
+    // WITHIN the function and stable across calls; one per ctjs.constant
+    // carrying a string is both. They are not frame slots - the cache is a map.
+    llvm::DenseMap<mlir::Operation *, unsigned> memo_slots;
 };
 
 // A C++ STRING LITERAL FOR ARBITRARY BYTES.
@@ -463,12 +487,13 @@ bool body_is_supported(FuncOp function, std::string & why) {
             // values and print identically. A string is still refused; it
             // reaches ct_aot_new_string, which is a safepoint, and nothing
             // roots the result yet.
-            if (mlir::isa<UndefinedAttr, NullAttr, BooleanAttr, NumberAttr>(constant.getValue())) {
+            if (mlir::isa<UndefinedAttr, NullAttr, BooleanAttr, NumberAttr, StringAttr>(
+                    constant.getValue())) {
                 return;
             }
             supported = false;
-            why = "no lowering yet for this constant - a string reaches ct_aot_new_string, which "
-                  "is a safepoint, and nothing roots the result yet";
+            why = "no lowering yet for this constant - a BigInt literal reaches "
+                  "ct_aot_new_bigint_literal, which has no implementation";
             return;
         }
         supported = false;
@@ -637,6 +662,16 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
         const llvm::SmallVector<mlir::Type> inputs{ctx_ptr, site_ptr, argv_ptr, u32,
                                                    value,   u32,      out_ptr};
         build.setInsertionPoint(function);
+
+        // THE ADDRESS THIS FUNCTION'S STRING LITERALS MEMOISE UNDER, declared
+        // BEFORE the function that takes it. One byte per compiled function,
+        // never read - only its address matters, and it has to differ from the
+        // function_proto the interpreter keys the same cache by. See
+        // compiled_entry::memo_site.
+        const std::string marker = "ctc_memo_" + c_identifier(function.getName().str());
+        ec::VerbatimOp::create(build, where,
+                               build.getStringAttr("static const char " + marker + " = 0;"));
+
         auto entry = ec::FuncOp::create(build, where, c_identifier(function.getName()),
                                         build.getFunctionType(inputs, {status}));
         // extern "C" SO THE SYMBOL MATCHES ct_aot_entry_fn's expectations.
@@ -733,6 +768,11 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             scope_slots[body.getArgument(implicit_arguments + i)] = parked++;
         }
         llvm::DenseMap<mlir::Operation *, unsigned> windows;
+        // AND A MEMO SLOT PER STRING LITERAL. Not a frame slot: the cache
+        // ct_aot_new_string keys by (site, slot) is a map, so these only have
+        // to be unique within the function and stable across calls.
+        llvm::DenseMap<mlir::Operation *, unsigned> memo_slots;
+        unsigned next_memo = 0;
         function.getBody().walk([&](mlir::Operation * inner) {
             for (const mlir::Value result : inner->getResults()) {
                 if (mlir::isa<ValueType>(result.getType())) { scope_slots[result] = parked++; }
@@ -750,6 +790,9 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             if (auto made = mlir::dyn_cast<CreateClosureOp>(inner)) {
                 windows[inner] = parked;
                 parked += static_cast<unsigned>(made.getUpvalues().size());
+            }
+            if (auto constant = mlir::dyn_cast<ConstantOp>(inner)) {
+                if (mlir::isa<StringAttr>(constant.getValue())) { memo_slots[inner] = next_memo++; }
             }
         });
         const unsigned window = std::max(static_cast<unsigned>(entered.getRegCount()), parked);
@@ -839,8 +882,19 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
 
         // ---- and their operations -----------------------------------------
         compiled_entry scope{
-            entry,   frame.getResult(0), in_receiver, in_constructing, in_out, value, status,
-            nullptr, scope_slots,        windows};
+            entry,
+            frame.getResult(0),
+            in_receiver,
+            in_constructing,
+            in_out,
+            value,
+            status,
+            nullptr,
+            scope_slots,
+            windows,
+            literal(build, where, pointer_to(context, "const ctbrowser::aot::ct_aot_site"),
+                    "reinterpret_cast<const ctbrowser::aot::ct_aot_site *>(&" + marker + ")"),
+            memo_slots};
 
         // THE PARAMETERS ARE ROOTED FIRST, before anything can collect. They
         // were read out of argv before the frame existed - argv dies at
@@ -1022,6 +1076,33 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
         }
 
         if (auto constant = mlir::dyn_cast<ConstantOp>(op)) {
+            // A STRING LITERAL IS A CALL, not a spelling. It allocates, so it
+            // needs the frame - and it is MEMOISED by (site, slot), which the
+            // row insists is part of the ABI rather than an optimisation:
+            // without it a literal in a loop allocates once per iteration and
+            // reaches the process-lifetime allocation ceiling on a program the
+            // interpreter runs forever.
+            //
+            // `site` IS THE ENTRY'S OWN, which is the function_proto the
+            // interpreter keys the same cache by - so a literal shared between
+            // a compiled body and an interpreted one is one object, not two.
+            if (auto text = mlir::dyn_cast<StringAttr>(constant.getValue())) {
+                const llvm::StringRef bytes = text.getValue();
+                mapping.map(
+                    constant.getResult(),
+                    ec::CallOpaqueOp::create(
+                        build, where, mlir::TypeRange{value}, callee("ct_aot_new_string"),
+                        mlir::ValueRange{
+                            scope.frame, scope.memo_site,
+                            literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                    std::to_string(scope.memo_slots.lookup(&op))),
+                            literal(build, where, pointer_to(build.getContext(), "const char"),
+                                    c_string_literal(bytes)),
+                            literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                    std::to_string(bytes.size()))})
+                        .getResult(0));
+                return;
+            }
             mapping.map(constant.getResult(), constant_value(build, where, value, constant));
             return;
         }

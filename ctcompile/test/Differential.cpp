@@ -70,6 +70,7 @@ CT_ENTRY(fn)
 CT_ENTRY(neg)
 CT_ENTRY(bnot)
 CT_ENTRY(put)
+CT_ENTRY(greet)
 #undef CT_ENTRY
 
 namespace {
@@ -228,6 +229,12 @@ int main() {
         // function when it builds a SYMBOL - `fn$2` - and the proto's own name
         // is "". The two are not the same string, and the ordinal is there
         // because a second anonymous function would make "" ambiguous.
+        {16u,
+         "string literal",
+         {{"greet", 0u, &ctc_greet}, {}},
+         "ct_aot_new_string and its (site, slot) memo - a truncating escape or a wrong length "
+         "shows up in the text",
+         "ababab!"},
         {15u,
          "property write",
          {{"put", 0u, &ctc_put}, {}},

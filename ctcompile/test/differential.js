@@ -106,6 +106,21 @@ function bnot(a) { return ~a; }
 // would need a string constant too. `| 0` turns a missing property into 0.
 function put(o, k, v, s) { o[k] = v; return o[0] * 100 + (o[s] | 0); }
 
+// A STRING LITERAL, AND ITS MEMO.
+//
+// ct_aot_new_string caches by (site, slot) and that memo is part of the ABI
+// rather than an optimisation: `allocations_` counts TOTAL allocations for the
+// process lifetime and is never reset, so a literal in a loop that allocated
+// per iteration would reach the 40,000,000 ceiling and raise UNCATCHABLY on a
+// program the interpreter runs forever.
+//
+// SHARING ONE OBJECT IS SAFE because string identity is unobservable - strict
+// equality compares TEXT - which is also why this case cannot check the memo by
+// asking whether two reads are the same object. What it can check is that the
+// literal is still the right text after a loop, and that concatenating it works,
+// which is what a broken length or a truncating escape would break.
+function greet(n) { var out = ""; for (var i = 0; i < n; i++) { out = out + "ab"; } return out + "!"; }
+
 // --- the harness the driver calls -------------------------------------------
 //
 // It lives here rather than in the C++ so that the file the backend compiles
@@ -168,4 +183,5 @@ function drive(which) {
   // have to rely on what the UB happens to do, which is worse than not pinning
   // it.
   if (which === 15) { OUT = "" + put([1, 2], 0, 9, "0") + "/" + put([1, 2], "0", 9, "0"); }
+  if (which === 16) { OUT = greet(3); }
 }
