@@ -95,7 +95,7 @@ did not predict:
   case was written to separate the instance from the proto and was separating
   nothing; the mutant is what found it.
 
-## Stage 3 — creating closures
+## Stage 3 — creating closures — **DONE**
 
 The largest stage, and the only one with a design question in it.
 
@@ -135,6 +135,37 @@ ABI. This is the cost of that decision, paid once.
 
 The importer then emits `ctjs.create_closure` for `op::closure`, taking the
 enclosing closure from `ct_aot_callee(fr)` — which Stage 1 makes answerable.
+
+## What stage 3 cost
+
+Both of the plan's named findings held — the op was unproducible and the
+upvalue array is parallel — and three more turned up, **all found by mutants
+that passed**:
+
+* **The fixture was duplicated** in a `.js` and a C++ string, with a comment
+  saying they must stay identical. They drifted in *order*, and a compiled body
+  bakes the function index of every closure it builds — so a reordered fixture
+  makes it build a closure over a different function. It presented as a case
+  reporting 3 where 302 was right, and passing. There is one file now.
+* **`drive` left `OUT` stale** when an arm threw, so both tiers read the
+  previous answer and agreed. It sets a sentinel the driver rejects.
+* **The differential premise has a bound.** Where the two tiers share an
+  implementation, a bug in it breaks both and they agree —
+  `context::make_closure` is precisely that, factored out so the tiers cannot
+  drift, at the price of the comparison going blind to it. Swapping its two
+  descriptor arms made every closure case answer `undefined` and still agree.
+  Those cases carry an anchor now.
+
+And one that was not a test problem: `llvm_unreachable` is
+`__builtin_unreachable()` under `-DNDEBUG`, so the "no default arm" net in
+`convert()` was silent in release — an operation added to the allow-list and not
+to the switch survived into the output with its operands rewritten.
+
+Two things also changed shape. `arg0` is the **effective** receiver via
+`ct_aot_this`, not the entry's raw one — the importer maps `op::load_this` to
+it, and that is `effective_this`, which differs for every compiled arrow. And
+`--ctjs-drop-uncompiled` removes refused functions so one refusal costs that
+function rather than the whole translation unit.
 
 ## Stage 4 — nested compiled functions
 

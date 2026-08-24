@@ -47,9 +47,8 @@ struct CTJSDropUncompiledPass : impl::CTJSDropUncompiledBase<CTJSDropUncompiledP
         // --emitc-eliminate-block-arguments refuses for the same reason: this
         // pass would quietly delete every function in the module.
         if (mlir::WalkResult left = getOperation().walk([](mlir::Operation * op) {
-                return op->getName().getStringRef() == "ctjs.func"
-                           ? mlir::WalkResult::interrupt()
-                           : mlir::WalkResult::advance();
+                return op->getName().getStringRef() == "ctjs.func" ? mlir::WalkResult::interrupt()
+                                                                   : mlir::WalkResult::advance();
             });
             left.wasInterrupted()) {
             getOperation().emitError()
