@@ -52,19 +52,32 @@ if(NOT generated MATCHES "extern \"C\"")
     "ctjs.not_lowered attribute it leaves behind.\n${generated}")
 endif()
 
-# THE ENTRY'S NAME IS THE FIXTURE'S, SUFFIXED BY THE IMPORTER. `f` becomes
-# `f$1` becomes `f_1` - and the index depends on how many functions precede it,
-# so the caller says which function it means and this finds whatever index the
-# importer gave it.
-if(NOT DEFINED ENTRY)
-  set(ENTRY "f")
+# THE ENTRIES ARE RENAMED TO FIXED SYMBOLS.
+#
+# The importer suffixes every function with its index - `f` becomes `f$1`, which
+# the backend spells `f_1` - and the index depends on how many functions precede
+# it. A driver declaring the generated entry by that name would break the moment
+# the fixture grew a function above it, so the caller names the functions it
+# means and this finds whatever index each was given.
+#
+# ENTRIES IS A LIST, because a differential harness wants several bodies in one
+# translation unit: compiling each to its own file would multiply the pipeline
+# runs and the link steps for nothing.
+if(NOT DEFINED ENTRIES)
+  set(ENTRIES "f")
 endif()
-string(REGEX MATCH "${ENTRY}_[0-9]+" emitted_name "${generated}")
-if(emitted_name STREQUAL "")
-  message(FATAL_ERROR
-    "compile-js-to-cpp.cmake: no compiled entry named ${ENTRY} in the output - the backend "
-    "refused it. Run ctjs-opt --ctjs-lower-to-emitc on ${SOURCE} and read the "
-    "ctjs.not_lowered attribute.")
-endif()
-string(REGEX REPLACE "([^A-Za-z0-9_])${emitted_name}\\(" "\\1ctcompile_test_entry(" generated "${generated}")
+
+foreach(wanted IN LISTS ENTRIES)
+  string(REGEX MATCH "${wanted}_[0-9]+" emitted_name "${generated}")
+  if(emitted_name STREQUAL "")
+    message(FATAL_ERROR
+      "compile-js-to-cpp.cmake: no compiled entry named ${wanted} in the output - the backend "
+      "refused it. Run ctjs-opt --ctjs-lower-to-emitc on ${SOURCE} and read the "
+      "ctjs.not_lowered attribute it leaves behind.")
+  endif()
+  # THE PREFIX IS FIXED AND THE NAME IS THE FIXTURE'S, so a driver declares
+  # ctc_<name> and does not care what index the importer chose.
+  string(REGEX REPLACE "([^A-Za-z0-9_])${emitted_name}\\(" "\\1ctc_${wanted}(" generated "${generated}")
+endforeach()
+
 file(WRITE "${OUTPUT}" "${generated}")

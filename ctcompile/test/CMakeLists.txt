@@ -161,6 +161,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
             -DOPT=$<TARGET_FILE:ctjs-opt>
             -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
             -DSOURCE=${_gc_js}
+            -DENTRIES=f
             -DOUTPUT=${_gc_cpp}
             -P "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
     DEPENDS "${_gc_js}" ctjs-translate ctjs-opt
@@ -189,6 +190,43 @@ else()
   message(STATUS "ctcompile: gc-roots test unavailable (needs ctjs-opt and mlir-translate)")
 endif()
 
+# --- and does it compute what the interpreter computes? -----------------------
+#
+# The lit tests read the emitted C++ and compile it, ctcompile_linkable links
+# it, and ctcompile_gc_roots runs one body with the collector hostile. None of
+# them asks whether the ANSWER is right, and a backend can emit fluent,
+# linkable, correctly-rooted code that computes the wrong thing.
+#
+# This runs each body twice against the same context - interpreted, then with
+# its compiled entry installed - and compares. Nothing writes an expected answer
+# down: "when a CTJS operation and the ctbrowser VM disagree, the VM is correct
+# by definition."
+if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
+  set(_diff_js "${CMAKE_CURRENT_SOURCE_DIR}/differential.js")
+  set(_diff_cpp "${CMAKE_CURRENT_BINARY_DIR}/differential.generated.cpp")
+  add_custom_command(
+    OUTPUT "${_diff_cpp}"
+    COMMAND "${CMAKE_COMMAND}"
+            -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
+            -DOPT=$<TARGET_FILE:ctjs-opt>
+            -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
+            -DSOURCE=${_diff_js}
+            "-DENTRIES=plus;ge;strict;loose;pick;globals;apply"
+            -DOUTPUT=${_diff_cpp}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
+    DEPENDS "${_diff_js}" ctjs-translate ctjs-opt
+            "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
+    COMMENT "Compiling differential.js through the EmitC backend"
+    VERBATIM)
+
+  set_source_files_properties("${_diff_cpp}" PROPERTIES
+    COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
+  add_executable(ctcompile-test-differential Differential.cpp "${_diff_cpp}")
+  target_link_libraries(ctcompile-test-differential PRIVATE ctbrowser::script)
+  ctcompile_target(ctcompile-test-differential)
+  add_test(NAME ctcompile_differential COMMAND ctcompile-test-differential)
+endif()
+
 # --- and does any of it LINK? -------------------------------------------------
 #
 # aot.hpp declares 69 helpers and aot_bridge.cpp defines 32. A call to one of
@@ -208,7 +246,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
             -DOPT=$<TARGET_FILE:ctjs-opt>
             -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
             -DSOURCE=${_link_js}
-            -DENTRY=everything
+            -DENTRIES=everything
             -DOUTPUT=${_link_cpp}
             -P "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
     DEPENDS "${_link_js}" ctjs-translate ctjs-opt

@@ -19,15 +19,14 @@
 #include <cstdint>
 #include <cstdio>
 
-extern "C" std::int32_t ctcompile_test_entry(void *, const void *, const std::uint64_t *,
-                                             std::uint32_t, std::uint64_t, std::uint32_t,
-                                             std::uint64_t *);
+extern "C" std::int32_t ctc_everything(void *, const void *, const std::uint64_t *, std::uint32_t,
+                                       std::uint64_t, std::uint32_t, std::uint64_t *);
 
 int main() {
     // TAKING THE ADDRESS IS ENOUGH, and it has to be done at run time rather
     // than in a fold the optimiser can discard - otherwise a sufficiently
     // clever build could drop the reference and with it the link check.
-    void * const entry = reinterpret_cast<void *>(&ctcompile_test_entry);
+    void * const entry = reinterpret_cast<void *>(&ctc_everything);
     if (entry == nullptr) {
         std::printf("the compiled entry is null, which cannot happen\n");
         return 1;

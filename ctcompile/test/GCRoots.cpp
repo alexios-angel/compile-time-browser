@@ -66,10 +66,9 @@ using ctbrowser::script::value;
 // ctjs-translate, then ctjs-opt, then mlir-translate, then this project's own
 // C++ compiler. The symbol is renamed by the build so this declaration does not
 // depend on how the importer numbers functions.
-extern "C" std::int32_t ctcompile_test_entry(ctbrowser::aot::ct_aot_ctx *,
-                                             const ctbrowser::aot::ct_aot_site *,
-                                             const std::uint64_t *, std::uint32_t, std::uint64_t,
-                                             std::uint32_t, std::uint64_t *);
+extern "C" std::int32_t ctc_f(ctbrowser::aot::ct_aot_ctx *, const ctbrowser::aot::ct_aot_site *,
+                              const std::uint64_t *, std::uint32_t, std::uint64_t, std::uint32_t,
+                              std::uint64_t *);
 
 namespace {
 
@@ -147,10 +146,10 @@ int main() {
     // AND THE COMPILED BODY MUST AGREE WITH IT - under stress, which is the
     // whole point, and without, which catches a backend that is wrong always
     // rather than only when the collector runs.
-    report("compiled, collector hostile", attempt(&ctcompile_test_entry, true) == expected,
-           attempt(&ctcompile_test_entry, true), expected);
-    report("compiled, collector idle", attempt(&ctcompile_test_entry, false) == expected,
-           attempt(&ctcompile_test_entry, false), expected);
+    report("compiled, collector hostile", attempt(&ctc_f, true) == expected, attempt(&ctc_f, true),
+           expected);
+    report("compiled, collector idle", attempt(&ctc_f, false) == expected, attempt(&ctc_f, false),
+           expected);
 
     if (failures == 0) { std::printf("\nall %d checks passed\n", 3); }
     return failures == 0 ? 0 : 1;
