@@ -368,6 +368,16 @@ struct aot_bridge {
         return held.frame_index < cx.frames_.size() ? &cx.frames_[held.frame_index] : nullptr;
     }
 
+    // ct_aot_append. VM_CASE(append) through the shared context::array_append.
+    //
+    // (0, 0, 0): the push_back can grow a std::vector, which is malloc rather
+    // than allocate() - no GC object is created, so there is no safepoint and
+    // no ceiling to raise against.
+    static void append(aot::ct_aot_frame * f, std::uint64_t array, std::uint64_t v) {
+        context & cx = *frame_of(f).ctx;
+        cx.array_append(value::from_bits(array), value::from_bits(v));
+    }
+
     // ct_aot_new_string. The same context::interned_string the interpreter
     // now calls, memo and all.
     //
@@ -908,6 +918,10 @@ std::int32_t ct_aot_to_number(ct_aot_frame * fr, std::uint64_t v, double * out) 
 // The `site` parameter is where Phase 26 attaches an inline cache without an
 // ABI break. Taken and ignored, because the signature is the thing two code
 // generators are written against and a parameter added later is a break.
+void ct_aot_append(ct_aot_frame * fr, std::uint64_t array, std::uint64_t v) {
+    script::aot_bridge::append(fr, array, v);
+}
+
 std::uint64_t ct_aot_new_string(ct_aot_frame * fr, const ct_aot_site * site, std::uint32_t slot,
                                 const char * utf8, std::uint32_t len) {
     return script::aot_bridge::new_string(fr, site, slot, utf8, len);

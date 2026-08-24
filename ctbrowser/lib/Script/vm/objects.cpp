@@ -139,6 +139,11 @@ value context::lookup_index(value target, value key) {
 // op::set_index's body, extracted verbatim so the interpreter and a compiled
 // body run one implementation rather than two - ct_aot_set_index is the other
 // caller.
+// VM_CASE(append) verbatim.
+void context::array_append(value target, value v) {
+    if (target.is_array()) { static_cast<array_object *>(target.as_heap())->items.push_back(v); }
+}
+
 void context::store_index(value target, value key, value v) {
     if (target.is_array() && key.is_number()) {
         auto * arr = static_cast<array_object *>(target.as_heap());

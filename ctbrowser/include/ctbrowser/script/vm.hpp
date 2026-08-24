@@ -821,6 +821,14 @@ public:
     // store_property's drop-everything-but-length arm.
     void store_index(value target, value key, value v);
 
+    // PUSH ONE ELEMENT ONTO AN ARRAY LITERAL UNDER CONSTRUCTION.
+    //
+    // SILENT ON A NON-ARRAY, which is the row's (0, 0, 0) rather than an
+    // oversight: the bytecode only ever emits this against an array it has just
+    // built, so the guard is a belt on a thing that cannot happen and answering
+    // rather than faulting is what keeps the row free of an exception edge.
+    void array_append(value target, value v);
+
     // --- gc ----------------------------------------------------------------
     std::size_t collect();
 

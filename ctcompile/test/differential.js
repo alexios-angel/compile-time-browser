@@ -121,6 +121,21 @@ function put(o, k, v, s) { o[k] = v; return o[0] * 100 + (o[s] | 0); }
 // which is what a broken length or a truncating escape would break.
 function greet(n) { var out = ""; for (var i = 0; i < n; i++) { out = out + "ab"; } return out + "!"; }
 
+// OBJECT AND ARRAY LITERALS. Both allocate and are RAISE TIER ONLY - allocate()
+// raises past the ceiling and still returns a well-formed object - so neither
+// has a status to test, only a poll to schedule.
+//
+// The array is built the way the bytecode builds one: new_array, then one
+// append per element.
+function pack(a, b) { var o = {}; o[a] = b; var arr = [a, b, a]; return arr[0] * 100 + arr[2] * 10 + (o[a] | 0); }
+
+// `typeof`, WHICH IS TWO CALLS AND NOT MEMOISED. ct_aot_type_of_name answers
+// with a LENGTH and a pointer to static storage; ct_aot_new_string turns those
+// into a value, with a NULL site meaning do not memoise - because
+// VM_CASE(type_of) has no cache and memoising would allocate FEWER times than
+// the interpreter, which is a divergence in the raise tier.
+function kindOf(a) { return typeof a; }
+
 // --- the harness the driver calls -------------------------------------------
 //
 // It lives here rather than in the C++ so that the file the backend compiles
@@ -184,4 +199,8 @@ function drive(which) {
   // it.
   if (which === 15) { OUT = "" + put([1, 2], 0, 9, "0") + "/" + put([1, 2], "0", 9, "0"); }
   if (which === 16) { OUT = greet(3); }
+  // 1*100 + 1*10 + 2 = 112, with the object read through `| 0` so a missing
+  // property is 0 rather than a string.
+  if (which === 17) { OUT = pack(1, 2); }
+  if (which === 18) { OUT = kindOf(1) + "/" + kindOf(nan) + "/" + kindOf(big); }
 }

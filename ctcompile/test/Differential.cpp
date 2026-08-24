@@ -71,6 +71,8 @@ CT_ENTRY(neg)
 CT_ENTRY(bnot)
 CT_ENTRY(put)
 CT_ENTRY(greet)
+CT_ENTRY(pack)
+CT_ENTRY(kindOf)
 #undef CT_ENTRY
 
 namespace {
@@ -229,6 +231,17 @@ int main() {
         // function when it builds a SYMBOL - `fn$2` - and the proto's own name
         // is "". The two are not the same string, and the ordinal is there
         // because a second anonymous function would make "" ambiguous.
+        {17u,
+         "literals",
+         {{"pack", 0u, &ctc_pack}, {}},
+         "an array built by new_array plus appends, and an object literal written through "
+         "set_index",
+         "112"},
+        {18u,
+         "typeof",
+         {{"kindOf", 0u, &ctc_kindOf}, {}},
+         "a LENGTH and a static pointer turned into a string, with no memo",
+         "number/number/bigint"},
         {16u,
          "string literal",
          {{"greet", 0u, &ctc_greet}, {}},

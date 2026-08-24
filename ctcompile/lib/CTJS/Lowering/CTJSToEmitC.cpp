@@ -399,12 +399,14 @@ bool body_is_supported(FuncOp function, std::string & why) {
         // ct_aot_status::ok by name, and a branch to the shared failure path.
         // A kind the family does not serve is refused rather than compiled into
         // op::halt, which ct_aot_binary_op's switch would answer with undefined.
-        // `typeof` IS THE ONE UNARY KIND STILL REFUSED. It answers with a
-        // uint32_t length and a `const char **`, and turning that into a
-        // JavaScript value needs ct_aot_new_string - which allocates and is a
-        // safepoint, with nothing rooting the result yet.
+        // EVERY UNARY KIND LOWERS NOW. `typeof` was refused because its result
+        // is a string, and that reason went stale with the same sentence
+        // ctjs.constant's did: ct_aot_new_string has a body, and every value
+        // the backend produces is parked in a frame slot.
         if (auto unary = mlir::dyn_cast<UnaryOp>(op)) {
-            // TWO OF THE SIX REACH HELPERS THE RUNTIME HAS NOT BUILT.
+            // THE LIST STILL EXISTS, and it is empty. Every helper the backend
+            // can name has a body; the check stays because 27 rows still do
+            // not, and ctcompile_linkable is what keeps it honest.
             if ((unary.getKind() == UnaryKind::Neg && !runtime_defines("ct_aot_negate")) ||
                 (unary.getKind() == UnaryKind::BitNot && !runtime_defines("ct_aot_bit_not"))) {
                 supported = false;
@@ -412,15 +414,11 @@ bool body_is_supported(FuncOp function, std::string & why) {
                       "nowhere - emitting a call to it compiles and fails at link";
                 return;
             }
-            if (unary.getKind() == UnaryKind::TypeOf) {
-                supported = false;
-                why = "no lowering yet for `typeof` - its result is a string, and "
-                      "ct_aot_new_string is a safepoint";
-            }
             return;
         }
         if (mlir::isa<CompareOp, GetPropertyOp, SetPropertyOp, CallOp, CreateClosureOp,
-                      CreateCellOp, CellGetOp, CellSetOp>(op)) {
+                      CreateCellOp, CellGetOp, CellSetOp, CreateObjectOp, CreateArrayOp, AppendOp>(
+                op)) {
             return;
         }
 
@@ -1202,7 +1200,43 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                 // is nothing to emit but the answer.
                 mapping.map(unary.getResult(), undefined(build, where, value));
                 return;
-            case UnaryKind::TypeOf: break; // refused; see body_is_supported
+            case UnaryKind::TypeOf: {
+                // TWO CALLS, and the second is the point. ct_aot_type_of_name
+                // is INFALLIBLE and answers with a LENGTH plus a pointer to
+                // STATIC storage - "the return slot carries a LENGTH, and under
+                // the return-type rule an unsigned return is data, never a
+                // status" - so there is no edge. What it needs is a string.
+                //
+                // THE SITE IS nullptr, MEANING DO NOT MEMOISE, and
+                // ct_aot_new_string's row names this exact case: it "lets
+                // ct_aot_type_of_name's companion allocation stay at parity",
+                // because VM_CASE(type_of) has no cache at all. Memoising here
+                // would allocate FEWER times than the interpreter - a
+                // divergence in the same raise tier the memo exists to protect.
+                const auto u32 = opaque(build.getContext(), "uint32_t");
+                const auto text_ptr = pointer_to(build.getContext(), "const char");
+                auto slot = ec::VariableOp::create(build, where, ec::LValueType::get(text_ptr),
+                                                   ec::OpaqueAttr::get(build.getContext(), ""));
+                auto address = ec::AddressOfOp::create(build, where, ec::PointerType::get(text_ptr),
+                                                       slot.getResult());
+                auto len = ec::CallOpaqueOp::create(build, where, mlir::TypeRange{u32},
+                                                    callee("ct_aot_type_of_name"),
+                                                    mlir::ValueRange{operand, address.getResult()});
+                auto text = ec::LoadOp::create(build, where, text_ptr, slot.getResult());
+                mapping.map(
+                    unary.getResult(),
+                    ec::CallOpaqueOp::create(
+                        build, where, mlir::TypeRange{value}, callee("ct_aot_new_string"),
+                        mlir::ValueRange{
+                            scope.frame,
+                            literal(build, where,
+                                    pointer_to(build.getContext(), "const ctbrowser::aot::"
+                                                                   "ct_aot_site"),
+                                    "nullptr"),
+                            literal(build, where, u32, "0"), text.getResult(), len.getResult(0)})
+                        .getResult(0));
+                return;
+            }
             }
             llvm_unreachable("body_is_supported admitted a unary kind convert cannot emit");
         }
@@ -1478,6 +1512,50 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                  mapping.lookup(write.getValue()),
                  literal(build, where, pointer_to(build.getContext(), "ctbrowser::aot::ct_aot_ic"),
                          "nullptr")});
+            return;
+        }
+
+        // OBJECT AND ARRAY LITERALS.
+        //
+        // BOTH ALLOCATE AND ARE RAISE TIER ONLY: allocate() raises past the
+        // ceiling and STILL returns a well-formed object, so there is no status
+        // to test - only a poll to schedule at a back edge. They are safepoints,
+        // so their results are parked like every other value.
+        if (auto made = mlir::dyn_cast<CreateObjectOp>(op)) {
+            mapping.map(made.getResult(),
+                        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
+                                                 callee("ct_aot_new_object"),
+                                                 mlir::ValueRange{scope.frame})
+                            .getResult(0));
+            return;
+        }
+        if (auto made = mlir::dyn_cast<CreateArrayOp>(op)) {
+            // `reserve_hint` IS A HINT and the row says so - an array that
+            // ignores it is merely slower. The elements the operation carries
+            // are appended after, which is also how the bytecode builds one:
+            // new_array then one append per element.
+            const auto elements = made.getElements();
+            const mlir::Value array =
+                ec::CallOpaqueOp::create(
+                    build, where, mlir::TypeRange{value}, callee("ct_aot_new_array"),
+                    mlir::ValueRange{scope.frame,
+                                     literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                             std::to_string(elements.size()))})
+                    .getResult(0);
+            for (const mlir::Value element : elements) {
+                ec::CallOpaqueOp::create(
+                    build, where, mlir::TypeRange{}, callee("ct_aot_append"),
+                    mlir::ValueRange{scope.frame, array, mapping.lookup(element)});
+            }
+            mapping.map(made.getResult(), array);
+            return;
+        }
+        if (auto push = mlir::dyn_cast<AppendOp>(op)) {
+            // (0, 0, 0): growing a std::vector is malloc, not allocate(), so no
+            // GC object is created and there is nothing to test or park.
+            ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_append"),
+                                     mlir::ValueRange{scope.frame, mapping.lookup(push.getArray()),
+                                                      mapping.lookup(push.getElement())});
             return;
         }
 

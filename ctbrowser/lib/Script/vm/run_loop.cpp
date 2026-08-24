@@ -674,9 +674,7 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(append) do {
-            if (reg(in.a).is_array()) {
-                static_cast<array_object *>(reg(in.a).as_heap())->items.push_back(reg(in.b));
-            }
+            array_append(reg(in.a), reg(in.b));
             break;
         }
         while (0);
