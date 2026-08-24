@@ -595,6 +595,28 @@ public:
     // have no unsigned right shift".
     [[nodiscard]] value binary_op(op kind, value lhs, value rhs);
 
+    // UNARY MINUS, AND ITS TWO ARMS ARE NOT ONE OPERATION.
+    //
+    // It is NOT to_number_value plus a negation, which is the lowering the
+    // shape invites: a BigInt operand is negated as an unbounded integer and
+    // ALLOCATES, so `-0n` is `0n` - a BigInt has one zero - and the result may
+    // be an unrooted heap value. That is why this answers with a `value` where
+    // ct_aot_to_number answers with a double, and it is the whole reason the
+    // ABI gives the two separate rows.
+    //
+    // THE BIGINT TEST COMES FIRST AND THAT ORDERING IS LOAD-BEARING: it is what
+    // makes to_number_value's own "Cannot convert a BigInt value to a number"
+    // TypeError unreachable from `-x`. `+1n` throws; `-1n` does not.
+    [[nodiscard]] value negate_value(value v);
+
+    // BITWISE NOT, and the same split for a different reason.
+    //
+    // `~1n` is `-2n` on the unbounded two's-complement value: there is no
+    // ToInt32 step, because a BigInt has no width to truncate to. The Number
+    // arm does have one, so the two arms genuinely differ rather than one being
+    // the other's fast path.
+    [[nodiscard]] value bit_not_value(value v);
+
     // --- prototypes ---------------------------------------------------------
     //
     // `"abc".split(...)` and `[1,2].push(...)` resolve to nothing without these:

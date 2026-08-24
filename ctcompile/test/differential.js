@@ -78,6 +78,19 @@ function outer(a) { var x = a; return function middle(b) { var y = b; return fun
 // is undefined and the captured one is whatever `methodish` was called on.
 function methodish(ignored) { var seen = () => this; return seen(); }
 
+// UNARY MINUS AND BITWISE NOT, WHOSE TWO ARMS ARE NOT ONE OPERATION.
+//
+// The shape invites lowering `-x` as ToNumber plus a negation, and that is
+// wrong for a BigInt: it is negated as an unbounded integer and ALLOCATES, so
+// `-0n` is `0n` - a BigInt has one zero - and to_number_value's own "Cannot
+// convert a BigInt value to a number" TypeError would fire instead. `+1n`
+// throws; `-1n` does not.
+//
+// `~1n` is `-2n` for a related reason: there is no ToInt32 step, because a
+// BigInt has no width to truncate to.
+function neg(a) { return -a; }
+function bnot(a) { return ~a; }
+
 // --- the harness the driver calls -------------------------------------------
 //
 // It lives here rather than in the C++ so that the file the backend compiles
@@ -89,6 +102,8 @@ var DIFF_R = 0, DIFF_W = 0, OUT = "";
 // holds no JavaScript value in a C++ local of its own.
 var counter2 = { valueOf: function () { return 3; } };
 var nan = 0 / 0;
+var big = 9007199254740993n;
+var zeroBig = 0n;
 
 function counters(a, b) { return counter(a)() + counter(b)(); }
 
@@ -118,4 +133,12 @@ function drive(which) {
   // .call GIVES methodish A RECEIVER without needing an object literal, which
   // would reach ct_aot_set_index - one of the rows with no body yet.
   if (which === 11) { OUT = methodish.call("captured", 0); }
+  // THE NUMBER ARM, and -0 is the case a naive negation gets right by accident
+  // while `Object.is` can still tell: 1/-0 is -Infinity.
+  if (which === 12) { OUT = "" + neg(5) + "/" + (1 / neg(0)); }
+  // AND THE BIGINT ARM, which allocates. It reaches the compiled body as an
+  // ARGUMENT rather than a literal, because ct_aot_new_bigint_literal is one
+  // of the rows with no body yet.
+  if (which === 13) { OUT = "" + neg(big) + "/" + neg(zeroBig); }
+  if (which === 14) { OUT = "" + bnot(5) + "/" + bnot(big); }
 }

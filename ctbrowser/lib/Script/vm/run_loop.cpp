@@ -288,23 +288,20 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(negate) do {
-            // -0n is 0n, not -0: a BigInt has one zero.
-            if (reg(in.b).is_kind(heap_kind::bigint)) {
-                reg(in.a) = value::object(allocate<bigint_object>(
-                    -static_cast<bigint_object *>(reg(in.b).as_heap())->digits));
-                break;
-            }
-            reg(in.a) = value::number(-to_number_value(reg(in.b)));
+            reg(in.a) = negate_value(reg(in.b));
             break;
+        }
+        while (0);
+        VM_NEXT;
+        VM_CASE(to_number) do {
             // `+x` IS A CONVERSION. It compiled to a plain `move` for a long time,
             // so `+"2"` stayed the string "2" - and that is invisible in most of the
             // places it is written, because `+x + "/"` concatenates either way. It
             // shows up where the result is USED as a number: `d[(+y * 8 + +x) * 4]`
             // indexed with a string built by concatenation and read undefined.
-        }
-        while (0);
-        VM_NEXT;
-        VM_CASE(to_number) do {
+            //
+            // It was sitting in VM_CASE(negate), after a `break` and describing
+            // a different opcode.
             reg(in.a) = value::number(to_number_value(reg(in.b)));
             break;
         }
@@ -482,14 +479,7 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(bit_not) do {
-            // ~1n is -2n, on the unbounded two's-complement value - there is no
-            // ToInt32 step, because a BigInt has no width to truncate to.
-            if (reg(in.b).is_kind(heap_kind::bigint)) {
-                reg(in.a) = value::object(allocate<bigint_object>(
-                    ~static_cast<bigint_object *>(reg(in.b).as_heap())->digits));
-                break;
-            }
-            reg(in.a) = value::number(~to_int32(reg(in.b)));
+            reg(in.a) = bit_not_value(reg(in.b));
             break;
         }
         while (0);

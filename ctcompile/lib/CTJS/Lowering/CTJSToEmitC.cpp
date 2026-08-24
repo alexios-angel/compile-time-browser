@@ -322,13 +322,15 @@ static_assert(c_string_literal("a)\"b") == "\"a)\\\"b\"");
 // every operation the backend accepts - so a name here that is wrong in either
 // direction fails the build rather than a program.
 bool runtime_defines(llvm::StringRef helper) {
-    static constexpr llvm::StringLiteral undefined_yet[] = {
-        // ct_aot_global_get and ct_aot_global_set were here and are not any
-        // more: aot_bridge.cpp defines both now, and the list is the only
-        // thing that decides whether the backend emits a call.
-        llvm::StringLiteral("ct_aot_negate"),
-        llvm::StringLiteral("ct_aot_bit_not"),
-    };
+    // EMPTY, AND THAT IS THE POINT OF KEEPING IT. Every row the backend can
+    // name now has a body: ct_aot_global_get, ct_aot_global_set,
+    // ct_aot_negate and ct_aot_bit_not were all here and are all implemented.
+    //
+    // The list stays because 30 of the 69 rows still have none, and the next
+    // operation lowered will need it again - and because ctcompile_linkable is
+    // what keeps it honest in both directions, by linking a translation unit
+    // that exercises everything the backend accepts.
+    static constexpr llvm::StringLiteral undefined_yet[] = {llvm::StringLiteral("")};
     for (const llvm::StringLiteral & absent : undefined_yet) {
         if (helper == absent) { return false; }
     }

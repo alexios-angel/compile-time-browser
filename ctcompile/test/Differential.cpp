@@ -67,6 +67,8 @@ CT_ENTRY(counter)
 CT_ENTRY(middle)
 CT_ENTRY(methodish)
 CT_ENTRY(fn)
+CT_ENTRY(neg)
+CT_ENTRY(bnot)
 #undef CT_ENTRY
 
 namespace {
@@ -225,6 +227,21 @@ int main() {
         // function when it builds a SYMBOL - `fn$2` - and the proto's own name
         // is "". The two are not the same string, and the ordinal is there
         // because a second anonymous function would make "" ambiguous.
+        {12u,
+         "negate",
+         {{"neg", 0u, &ctc_neg}, {}},
+         "ToNumber-plus-negation against a real unary minus - and -0, whose 1/x is -Infinity",
+         "-5/-Infinity"},
+        {13u,
+         "negate bigint",
+         {{"neg", 0u, &ctc_neg}, {}},
+         "the BigInt arm, which allocates and which ToNumber would throw on",
+         "-9007199254740993/0"},
+        {14u,
+         "bitwise not",
+         {{"bnot", 0u, &ctc_bnot}, {}},
+         "the ToInt32 arm against the unbounded one - a BigInt has no width to truncate to",
+         "-6/-9007199254740994"},
         {11u,
          "arrow this",
          {{"methodish", 0u, &ctc_methodish}, {"", 0u, &ctc_fn}},

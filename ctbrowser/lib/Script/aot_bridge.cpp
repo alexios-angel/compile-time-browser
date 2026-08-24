@@ -368,6 +368,41 @@ struct aot_bridge {
         return held.frame_index < cx.frames_.size() ? &cx.frames_[held.frame_index] : nullptr;
     }
 
+    // ct_aot_negate. `-x` through the same context::negate_value the
+    // interpreter now calls.
+    //
+    // NOT ct_aot_to_number PLUS AN fneg, which is the lowering the shape
+    // invites. The BigInt arm ALLOCATES a fresh bigint_object, so the answer
+    // may be an unrooted heap value and the caller must park it - which is why
+    // this row's out-parameter is a uint64_t VALUE while ct_aot_to_number's is
+    // a double.
+    //
+    // NO OPERAND RANGE CHECK, unlike the two binary rows: there is no op_kind
+    // out of an untrusted image here, only a value, and every bit pattern is a
+    // legal one.
+    static std::int32_t negate(aot::ct_aot_frame * f, std::uint64_t v, std::uint64_t * out) {
+        context & cx = *frame_of(f).ctx;
+        const value produced = cx.negate_value(value::from_bits(v));
+        const std::int32_t status = check(f);
+        if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
+        return status;
+    }
+
+    // ct_aot_bit_not. The same shape, and the same reason for the value
+    // out-parameter: `~1n` allocates.
+    //
+    // ITS may_throw IS THE CEILING, NOT A CATCHABLE THROW. The row says so:
+    // `~1n` computes and `~obj` is -1, so neither arm has a JS-catchable
+    // throw - an AOT backend needs a FAULT edge here, not an exception edge,
+    // and only on the BigInt arm.
+    static std::int32_t bit_not(aot::ct_aot_frame * f, std::uint64_t v, std::uint64_t * out) {
+        context & cx = *frame_of(f).ctx;
+        const value produced = cx.bit_not_value(value::from_bits(v));
+        const std::int32_t status = check(f);
+        if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
+        return status;
+    }
+
     // ct_aot_make_closure. The shared context::make_closure, with the ABI's
     // parallel array.
     //
@@ -836,6 +871,14 @@ std::int32_t ct_aot_to_number(ct_aot_frame * fr, std::uint64_t v, double * out) 
 // The `site` parameter is where Phase 26 attaches an inline cache without an
 // ABI break. Taken and ignored, because the signature is the thing two code
 // generators are written against and a parameter added later is a break.
+std::int32_t ct_aot_negate(ct_aot_frame * fr, std::uint64_t v, std::uint64_t * out) {
+    return script::aot_bridge::negate(fr, v, out);
+}
+
+std::int32_t ct_aot_bit_not(ct_aot_frame * fr, std::uint64_t v, std::uint64_t * out) {
+    return script::aot_bridge::bit_not(fr, v, out);
+}
+
 std::uint64_t ct_aot_callee(ct_aot_frame * fr) {
     return script::aot_bridge::callee(fr);
 }

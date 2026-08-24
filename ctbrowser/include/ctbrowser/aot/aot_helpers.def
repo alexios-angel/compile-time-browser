@@ -1683,8 +1683,8 @@ CT_AOT_COVERS(/* helper */ ct_aot_make_closure, /* opcode */ closure)
  * the signature. The interpreter's guard is `if (vm_frame->constructing &&
  * !returned.is_object_like())`, and `constructing` is a RUN-TIME property
  * of the frame - set true only by op::construct's inline frame push
- * (run_loop.cpp:1481) and false by every ordinary call including
- * context::construct's own (call.cpp:472 applies the substitution outside
+ * (run_loop.cpp's VM_CASE(construct)) and false by every ordinary call
+ * including context::construct's own (call.cpp:472 applies it outside
  * instead) - while ONE compiled body serves both `f()` and `new f()`.
  * Applied unconditionally, `function f(){ return 1; }` called as `f()`
  * returns the receiver instead of 1. So it must arrive at run time, which

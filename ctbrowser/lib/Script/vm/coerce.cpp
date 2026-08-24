@@ -311,6 +311,30 @@ value context::binary_op_static(op kind, value lhs, value rhs) {
 // twice is what is NOT uniform: concat never consults the BigInt arm, and
 // add_generic consults it only after both sides are primitive and only when
 // neither is a string.
+// UNARY MINUS. The body is VM_CASE(negate) unchanged, in the order it had.
+// Both arms matter and neither is the other's fast path: the BigInt arm
+// allocates and cannot throw catchably; the Number arm re-enters through
+// to_number_value and cannot allocate.
+value context::negate_value(value v) {
+    // -0n is 0n, not -0: a BigInt has one zero.
+    if (v.is_kind(heap_kind::bigint)) {
+        return value::object(
+            allocate<bigint_object>(-static_cast<bigint_object *>(v.as_heap())->digits));
+    }
+    return value::number(-to_number_value(v));
+}
+
+// BITWISE NOT, likewise VM_CASE(bit_not) unchanged.
+value context::bit_not_value(value v) {
+    // ~1n is -2n, on the unbounded two's-complement value - there is no ToInt32
+    // step, because a BigInt has no width to truncate to.
+    if (v.is_kind(heap_kind::bigint)) {
+        return value::object(
+            allocate<bigint_object>(~static_cast<bigint_object *>(v.as_heap())->digits));
+    }
+    return value::number(~to_int32(v));
+}
+
 value context::binary_op(op kind, value lhs, value rhs) {
     // CONCAT FIRST, because it is the one that must not reach bigint_binary at
     // all: coerce.cpp's switch has no case for it, so `${1n}` would fall to the
