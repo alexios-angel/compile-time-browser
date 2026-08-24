@@ -568,6 +568,39 @@ can answer `unordered` — a NaN on either side — which makes all four false,
 from equality tests against the orderings that make it true. Unlike the status
 enum, **the ordering's numbers are contractual** and `aot.hpp` says so.
 
+**COMPILED VALUES ARE ROOTED IN THE FRAME, and this was a real shipped bug.**
+`a + b + c` kept the first addition's result in a plain C++ local across the
+second `ct_aot_binary_op`, which is a safepoint. The collector is precise; a
+value in a native frame is reachable from nothing. Under `set_gc_stress` the
+compiled body returned six characters where the interpreter returned
+sixty-five, and ASan called it a heap-use-after-free. **Without stress it was
+correct every time**, which is why every other test passed.
+
+The tell was an inconsistency in our own file: it refused string constants and
+`typeof` because "ct_aot_new_string is a safepoint, and nothing roots the result
+yet" — while admitting six operations with exactly that property.
+
+Every produced value now goes into a frame slot immediately, and **the span is
+re-fetched at every store**: the row says the pointer "IS VALID UNTIL THE NEXT
+SAFEPOINT AND NOT ONE INSTRUCTION LONGER". Storing once suffices because the
+collector marks and deletes rather than moving. Slots are never reused — a leak
+bounded by the frame beats a liveness analysis that is wrong once.
+
+**`ctcompile_gc_roots` is the only test that runs generated code against the
+real runtime with the collector hostile**, and it is the only kind that can see
+this class of defect: a use-after-free nothing collects is invisible, because
+the freed memory still holds the right bytes. It compiles `gc-roots.js` through
+the real pipeline at build time. Removing the parking makes it report 6
+characters against 65 while "collector idle" still passes.
+
+**Two ordering hazards are now refused rather than documented.**
+`--emitc-eliminate-block-arguments` walks `emitc.func` only, so run *before* the
+lowering it silently does nothing and the block arguments reach `mlir-translate`
+— measured: `sl(10,20,2)` answers 20 where 10 is correct, every tool exiting 0.
+It now refuses to run when a `ctjs.func` remains. And `ctjs.frame_exit` must be
+the last thing before the return, or the shared failure path leaves the frame
+twice (harmless — `leave` truncates to its own index — but unchecked).
+
 **Next**: property access and calls, which is where the Phaser corpus starts —
 `ctjs.get_property` needs an inline cache, and `ctjs.call` needs an argv span
 marshalled into the frame's **GC-rooted slots**, so it is the first operation
