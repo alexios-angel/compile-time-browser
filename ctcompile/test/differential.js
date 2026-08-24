@@ -136,6 +136,21 @@ function pack(a, b) { var o = {}; o[a] = b; var arr = [a, b, a]; return arr[0] *
 // the interpreter, which is a divergence in the raise tier.
 function kindOf(a) { return typeof a; }
 
+// A THROW, CAUGHT BY AN INTERPRETED CALLER.
+//
+// The catch has to be OUTSIDE the compiled body, and not for convenience:
+// ctjs.push_handler has no lowering, so a function containing a `try` is
+// refused whole and would never run compiled at all. That is also why
+// CT_AOT_CAUGHT cannot reach the failure path - the winning handler is never
+// this frame's.
+//
+// ct_aot_throw NEVER RETURNS ok. The throw completes INSIDE the callee: by the
+// time it returns there is no exception in flight, only a frame stack shorter
+// than it was. So the compiled body tests nothing and branches straight to the
+// epilogue, which must NOT call ct_aot_leave when the status is unwound - the
+// frame is already gone.
+function thrower(a) { throw a; }
+
 // --- the harness the driver calls -------------------------------------------
 //
 // It lives here rather than in the C++ so that the file the backend compiles
@@ -203,4 +218,7 @@ function drive(which) {
   // property is 0 rather than a string.
   if (which === 17) { OUT = pack(1, 2); }
   if (which === 18) { OUT = kindOf(1) + "/" + kindOf(nan) + "/" + kindOf(big); }
+  // THE VALUE MUST ARRIVE INTACT, which is what distinguishes a real throw from
+  // a frame that merely unwound: a lost `thrown_` would catch undefined.
+  if (which === 19) { try { thrower(7); OUT = "not thrown"; } catch (e) { OUT = "caught " + e; } }
 }

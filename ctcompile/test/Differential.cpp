@@ -73,6 +73,7 @@ CT_ENTRY(put)
 CT_ENTRY(greet)
 CT_ENTRY(pack)
 CT_ENTRY(kindOf)
+CT_ENTRY(thrower)
 #undef CT_ENTRY
 
 namespace {
@@ -231,6 +232,11 @@ int main() {
         // function when it builds a SYMBOL - `fn$2` - and the proto's own name
         // is "". The two are not the same string, and the ordinal is there
         // because a second anonymous function would make "" ambiguous.
+        {19u,
+         "throw",
+         {{"thrower", 0u, &ctc_thrower}, {}},
+         "a real throw against a frame that merely unwound - a lost thrown_ catches undefined",
+         "caught 7"},
         {17u,
          "literals",
          {{"pack", 0u, &ctc_pack}, {}},

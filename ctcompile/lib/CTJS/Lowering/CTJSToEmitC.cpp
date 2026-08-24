@@ -417,8 +417,8 @@ bool body_is_supported(FuncOp function, std::string & why) {
             return;
         }
         if (mlir::isa<CompareOp, GetPropertyOp, SetPropertyOp, CallOp, CreateClosureOp,
-                      CreateCellOp, CellGetOp, CellSetOp, CreateObjectOp, CreateArrayOp, AppendOp>(
-                op)) {
+                      CreateCellOp, CellGetOp, CellSetOp, CreateObjectOp, CreateArrayOp, AppendOp,
+                      ThrowOp>(op)) {
             return;
         }
 
@@ -1556,6 +1556,40 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_append"),
                                      mlir::ValueRange{scope.frame, mapping.lookup(push.getArray()),
                                                       mapping.lookup(push.getElement())});
+            return;
+        }
+
+        // A THROW, WHICH NEVER COMES BACK ok.
+        //
+        // The row is explicit: ct_aot_throw returns CAUGHT, UNWOUND or FAILED
+        // and never CT_AOT_OK, because the throw COMPLETES INSIDE THE CALLEE -
+        // by the time it returns there is no exception in flight, only a frame
+        // stack shorter than it was. So there is no status to TEST and no
+        // continuation: the operation is a terminator, and this branches
+        // straight to the shared failure path, which already gets the
+        // conditional ct_aot_leave right.
+        //
+        // THE CONDITIONAL ct_aot_leave ON THAT PATH IS NOT PINNED BY A CASE,
+        // and it is worth saying which way. Making it unconditional changes no
+        // answer, because leave TRUNCATES to this frame's own recorded index
+        // rather than popping - each resize guarded so it cannot destroy
+        // somebody else's frame - and its row calls a second call "a harmless
+        // no-op after a failure". So it is an unchecked invariant, not a live
+        // defect, and a case pinning it would be pinning the runtime's
+        // defensiveness rather than this backend's correctness.
+        //
+        // CT_AOT_CAUGHT CANNOT ARRIVE HERE, and that is a fact about the input
+        // rather than an assumption: `caught` is reported only when a handler
+        // in THIS frame won, and ctjs.push_handler has no lowering - so any
+        // function containing a `try` is refused whole and never reaches this
+        // line. When try/catch arrives, the failure path needs a third arm
+        // BEFORE this does.
+        if (auto thrown = mlir::dyn_cast<ThrowOp>(op)) {
+            auto answered = ec::CallOpaqueOp::create(
+                build, where, mlir::TypeRange{status}, callee("ct_aot_throw"),
+                mlir::ValueRange{scope.frame, mapping.lookup(thrown.getValue())});
+            mlir::cf::BranchOp::create(build, where, failure_path(scope, build, where),
+                                       mlir::ValueRange{answered.getResult(0)});
             return;
         }
 
