@@ -67,9 +67,6 @@ struct pending {
 constexpr pending not_yet[] = {
     // ---- Phase 13's own work list, in Bootstrap's order of cost -----------
     {"gather_rest", "a rest parameter, f(...xs) - 3 Bootstrap functions"},
-    {"push_handler", "try/catch - needs a THIRD arm on the shared failure path for "
-                     "CT_AOT_CAUGHT, which is why it is last rather than smallest"},
-    {"pop_handler", "the other half of try/catch and meaningless without it"},
     {"make_arguments", "the `arguments` object, which gather_rest's ABI row says it READS"},
     {"own_keys", "for-in, which compiles to a for-of over this"},
     {"delete_prop", "`delete o.k`, the NAMED form - delete_index, the computed one, is done"},

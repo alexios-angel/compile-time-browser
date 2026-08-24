@@ -143,6 +143,35 @@ mlir::LogicalResult PushHandlerOp::verify() {
     return mlir::success();
 }
 
+// ctjs.check IS SHAPED LIKE push_handler AND MEANS THE OPPOSITE END OF THE SAME
+// EDGE. push_handler's handler successor exists to keep the pad reachable;
+// this one is the edge the emitted code actually takes, and it carries the
+// register file AS OF THE THROW rather than as of the `try`.
+mlir::SuccessorOperands CheckOp::getSuccessorOperands(unsigned index) {
+    assert(index < 2 && "check has exactly two successors");
+    return mlir::SuccessorOperands(index == 0 ? getContOperandsMutable()
+                                              : getHandlerOperandsMutable());
+}
+
+mlir::LogicalResult CheckOp::verify() {
+    mlir::Region * here = getOperation()->getParentRegion();
+    if (getHandler()->getParent() != here || getCont()->getParent() != here) {
+        return emitOpError("both successors must be blocks in the same region");
+    }
+    return mlir::success();
+}
+
+mlir::LogicalResult CatchLandOp::verify() {
+    // FIRST IN ITS BLOCK, because ct_aot_catch_land CLEARS the pad marker. A
+    // second one is not a second catch, and one reached on a normal path reads
+    // a pad nothing set - neither of which the runtime can report.
+    if (getOperation() != &getOperation()->getBlock()->front()) {
+        return emitOpError("must be the first operation of its block - it consumes the pad "
+                           "marker, so anything before it can reach a second one");
+    }
+    return mlir::success();
+}
+
 mlir::LogicalResult PopHandlerOp::verify() {
     // BALANCED WITHIN A BLOCK. The runtime's pop takes the globally innermost
     // handler without consulting the frame, so a body that pops one it never

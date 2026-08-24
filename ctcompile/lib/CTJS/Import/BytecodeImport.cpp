@@ -103,6 +103,21 @@ constexpr unsigned arg_callee = 2;
            code == op::throw_value || code == op::push_handler;
 }
 
+// AN INSTRUCTION THAT ALREADY LEFT THE BLOCK cannot be followed by a check -
+// the block has a terminator and a second one does not verify. push_handler is
+// here for the same reason it is in ends_a_block: it IS a terminator.
+// WHETHER CONTROL CAN RUN OFF THIS INSTRUCTION INTO THE NEXT. Not the negation
+// of ends_a_block: a CONDITIONAL jump ends a block and still falls through, and
+// push_handler ends a block and its body IS the next instruction.
+[[nodiscard]] bool falls_through(op code) {
+    return code != op::jump && code != op::ret && code != op::ret_undef && code != op::halt &&
+           code != op::throw_value;
+}
+
+[[nodiscard]] bool in_terminator(op code) {
+    return ends_a_block(code) || code == op::halt;
+}
+
 // One function's worth of state.
 struct function_importer {
     mlir::OpBuilder & builder;
@@ -147,6 +162,18 @@ struct function_importer {
     [[nodiscard]] mlir::Value undefined(mlir::Location where) {
         return constant(where, ctjs::UndefinedAttr::get(context));
     }
+
+    // THE HANDLERS OPEN AT THIS POINT IN THE WALK, innermost last.
+    //
+    // A `pad` is the block the unwinder transfers to and `slot` is the register
+    // the thrown value lands in - which is bytecode's choice, not ours:
+    // context::unwind_to_handler writes registers_[base + slot] and nothing
+    // else, so the compiled tier has to put it in the same place.
+    struct open_handler {
+        mlir::Block * pad;
+        std::uint16_t slot;
+    };
+    llvm::SmallVector<open_handler> handlers{};
 
     // The register vector as successor operands - the whole file, every time.
     [[nodiscard]] llvm::SmallVector<mlir::Value> outgoing() const {
@@ -397,8 +424,59 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             }
         };
 
+        // WHICH REGISTER EACH PAD'S THROWN VALUE LANDS IN, collected before the
+        // walk because a pad block is reached from the CFG rather than from the
+        // instruction that named it.
+        llvm::DenseMap<std::int64_t, std::uint16_t> catch_slot_at;
+        for (std::size_t at = 0; at < proto.code.size(); ++at) {
+            if (proto.code[at].code == op::push_handler) {
+                catch_slot_at[jump_target(at, proto.code[at])] = proto.code[at].a;
+            }
+        }
+
+        // AND AT MOST ONE PROTECTED REGION PER FUNCTION, FOR NOW.
+        //
+        // Not because nesting is hard, but because TWO push_handlers is what
+        // try/FINALLY compiles to - compile_try_with_finally pushes its second
+        // one SEQUENTIALLY rather than nested, so a depth test would admit it -
+        // and finally brings a completion record, a rethrow through
+        // op::throw_value, and ctjs.resume_throw, which has no lowering. This
+        // refuses finally, nested try, and two sibling try blocks alike; the
+        // first is the one that would be WRONG rather than merely absent.
+        if (!state.gave_up) {
+            std::size_t pushes = 0;
+            for (const instruction & each : proto.code) {
+                if (each.code == op::push_handler) { ++pushes; }
+            }
+            if (pushes > 1) {
+                state.give_up(0, op::push_handler,
+                              "more than one protected region in a function, which is what "
+                              "try/finally and nested try both compile to");
+            }
+        }
+
         for (std::size_t at = 0; at < proto.code.size() && !state.gave_up; ++at) {
             if (leader[at] && (at > 0 || targets_zero)) { enter_block(at); }
+            // A PAD BLOCK CLOSES THE REGION IT LANDS FROM. The bytecode's
+            // pop_handler runs on the NORMAL path only, so a throw leaves the
+            // handler stack as the interpreter's unwinder left it - popped.
+            if (!state.handlers.empty() &&
+                state.handlers.back().pad == block_at(static_cast<std::int64_t>(at))) {
+                state.handlers.pop_back();
+            }
+            // A PAD BLOCK TAKES ITS THROWN VALUE FROM THE RUNTIME, not from a
+            // predecessor. ctjs.catch_land is the block's first operation and
+            // its result replaces the block argument for the catch register -
+            // that argument stays dead on purpose.
+            if (const auto landed = catch_slot_at.find(static_cast<std::int64_t>(at));
+                landed != catch_slot_at.end() &&
+                block_at(static_cast<std::int64_t>(at)) != nullptr) {
+                auto land = ctjs::CatchLandOp::create(into, state.location_for(at),
+                                                      into.getI32Type(), value_type);
+                if (landed->second < state.registers.size()) {
+                    state.registers[landed->second] = land.getThrown();
+                }
+            }
             const instruction & in = proto.code[at];
             const mlir::Location where = state.location_for(at);
             const auto reg = [&](std::uint16_t slot) -> mlir::Value {
@@ -407,6 +485,14 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             const auto set = [&](std::uint16_t slot, mlir::Value v) {
                 if (slot < state.registers.size()) { state.registers[slot] = v; }
             };
+
+            // THE REGISTER FILE AS OF THE THROW, SNAPSHOT BEFORE THE
+            // INSTRUCTION RUNS. It is what the handler block will be given, and
+            // taking it AFTER would name this instruction's own result in a
+            // block this instruction does not dominate - which is a verifier
+            // crash rather than a wrong answer, and only because MLIR checks.
+            const llvm::SmallVector<mlir::Value> before_instruction =
+                state.handlers.empty() ? llvm::SmallVector<mlir::Value>{} : state.outgoing();
 
             bool handled = false;
             for (const binary_row & row : binary_rows) {
@@ -613,6 +699,75 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 // a IS THE TARGET HERE, not the destination - delete_index
                 // produces nothing and writes no register.
                 ctjs::DeletePropertyOp::create(into, where, reg(in.a), reg(in.b));
+                break;
+            case op::push_handler: {
+                mlir::Block * pad = block_at(jump_target(at, in));
+                mlir::Block * body = block_at(static_cast<std::int64_t>(at) + 1);
+                if (pad == nullptr || body == nullptr) {
+                    state.give_up(at, in.code, "handler target is not a block leader");
+                    break;
+                }
+                // AND THE PAD MUST BE REACHABLE ONLY BY THROWING.
+                //
+                // ct_aot_catch_land reads back what the unwinder wrote and then
+                // CLEARS the pad marker; its row says it is "called exactly
+                // once, only after CT_AOT_CAUGHT". Reached on a normal path it
+                // clears a bit nothing set and binds a thrown value that was
+                // never thrown.
+                //
+                // `try { f(); } catch (e) {}` IS THAT SHAPE. With an empty catch
+                // the compiler emits no jump over it, so the try body falls
+                // straight into the pad. A non-empty catch is preceded by that
+                // jump, which is why this tests the instruction before the pad
+                // rather than the catch clause itself.
+                //
+                // TWO WAYS IN, AND BOTH HAVE TO BE CLOSED. The pad can be fallen
+                // into from the instruction above it, and it can be JUMPED to -
+                // which is not exotic: jumping over an EMPTY catch clause lands
+                // exactly on the pad, because the clause it is skipping has no
+                // instructions. `try { f(); } catch (e) {}` is that shape, and a
+                // test that only looked at the instruction above it let that
+                // through.
+                const std::int64_t landing = jump_target(at, in);
+                bool reachable_without_throwing =
+                    landing > 0 &&
+                    falls_through(proto.code[static_cast<std::size_t>(landing) - 1].code);
+                for (std::size_t other = 0;
+                     other < proto.code.size() && !reachable_without_throwing; ++other) {
+                    if (other == at || !is_jump(proto.code[other].code)) { continue; }
+                    if (jump_target(other, proto.code[other]) == landing) {
+                        reachable_without_throwing = true;
+                    }
+                }
+                if (reachable_without_throwing) {
+                    state.give_up(at, in.code,
+                                  "the catch clause is reachable without throwing, which would "
+                                  "run ct_aot_catch_land on a normal path");
+                    break;
+                }
+                // A TERMINATOR WITH TWO SUCCESSORS, and the handler edge here
+                // exists only to keep the pad reachable - the edge the emitted
+                // code takes is ctjs.check's, at the throw site, because that
+                // is the only place the live register vector exists.
+                ctjs::PushHandlerOp::create(into, where, state.outgoing(), state.outgoing(), body,
+                                            pad);
+                state.handlers.push_back(function_importer::open_handler{pad, in.a});
+                // AND THE WALK MOVES ON BY ITSELF. push_handler ends a block, so
+                // `body` is a leader and the next iteration's enter_block enters
+                // it and rebinds the registers - doing it here too made
+                // enter_block see `previous == body` and emit a branch from the
+                // block to ITSELF, which is a cf.br that does not terminate its
+                // parent and the only symptom is "the imported function did not
+                // verify".
+                break;
+            }
+            case op::pop_handler:
+                if (state.handlers.empty()) {
+                    state.give_up(at, in.code, "pop_handler with no open handler in this function");
+                    break;
+                }
+                ctjs::PopHandlerOp::create(into, where);
+                state.handlers.pop_back();
                 break;
             case op::define_getter:
             case op::define_setter: {
@@ -823,6 +978,32 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             }
             case op::throw_value: ctjs::ThrowOp::create(into, where, reg(in.a)); break;
             default: state.give_up(at, in.code, "no CTJS operation for this opcode yet"); break;
+            }
+
+            // ---- and the caught edge, if a region is open ------------------
+            //
+            // ONE ctjs.check PER INSTRUCTION, not per fallible operation, and
+            // the two are not the same: op::call_method emits a
+            // ctjs.get_property AND a ctjs.call, and `try { o.m(); } catch (e)
+            // {}` is about as ordinary as JavaScript gets. Splitting per
+            // instruction is still correct because an instruction writes its
+            // destination register LAST - so the snapshot taken before it is
+            // exactly what the interpreter would have in hand at either throw.
+            //
+            // AND IT IS EMITTED AFTER EVERY INSTRUCTION, not only after ones
+            // that can throw. A check whose block holds nothing fallible lowers
+            // to a plain branch and costs an eliminated block argument; deciding
+            // which instructions can throw is the lowering's job, because it is
+            // the lowering that knows which operations became status calls.
+            if (!state.gave_up && !state.handlers.empty() && !in_terminator(in.code)) {
+                mlir::Block * fresh = &function.getBody().emplaceBlock();
+                fresh->addArguments(slot_types, slot_locs);
+                ctjs::CheckOp::create(into, where, state.outgoing(), before_instruction, fresh,
+                                      state.handlers.back().pad);
+                into.setInsertionPointToEnd(fresh);
+                for (std::size_t slot = 0; slot < proto.frame_size; ++slot) {
+                    state.registers[slot] = fresh->getArgument(static_cast<unsigned>(slot));
+                }
             }
         }
 

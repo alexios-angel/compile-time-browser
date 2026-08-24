@@ -315,6 +315,63 @@ def CTJS_FromBoolOp : CTJS_Op<"from_bool", [Pure]> {
   let assemblyFormat = "$bit attr-dict";
 }
 
+def CTJS_CheckOp : CTJS_Op<"check", [DeclareOpInterfaceMethods<BranchOpInterface>,
+                                     AttrSizedOperandSegments, Terminator]> {
+  let summary = "Continue, or transfer to this region's handler if the call was caught";
+  let description = [{
+    THE HANDLER EDGE ORIGINATES HERE, NOT AT ctjs.push_handler, and that is the
+    whole design rather than a detail.
+
+    A handler block needs the register file AS OF THE THROW. ctjs.push_handler
+    also names the pad, but only to keep it reachable in the CFG - taking the
+    edge from there would hand the handler the registers as they were when the
+    `try` was ENTERED. `function g(f) { var n = 0; try { n = 1; f(); } catch (e)
+    {} return n; }` then answers 0 where the interpreter answers 1, because
+    context::unwind_to_handler overwrites exactly ONE slot - the catch register -
+    and leaves every other register as the throw left it.
+
+    SO THERE IS ONE OF THESE AFTER EVERY FALLIBLE OPERATION inside a protected
+    region, and its $handlerOperands are a snapshot taken BEFORE that operation
+    ran. Passing the post-operation vector instead would name the operation's own
+    result in a block the operation does not dominate.
+
+    AFTER EVERY FALLIBLE OPERATION, NOT AFTER EVERY INSTRUCTION. One bytecode
+    instruction can be two of them: op::call_method is a ctjs.get_property and
+    then a ctjs.call, and `try { o.m(); } catch (e) {}` is about as ordinary as
+    JavaScript gets.
+  }];
+  let arguments = (ins Variadic<CTJS_ValueType>:$contOperands,
+                       Variadic<CTJS_ValueType>:$handlerOperands);
+  let successors = (successor AnySuccessor:$cont, AnySuccessor:$handler);
+  let assemblyFormat = [{
+    $cont (`(` $contOperands^ `:` type($contOperands) `)`)?
+    `caught` $handler (`(` $handlerOperands^ `:` type($handlerOperands) `)`)? attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def CTJS_CatchLandOp : CTJS_Op<"catch_land", []> {
+  let summary = "Take the thrown value and the pad id a caught throw landed on";
+  let description = [{
+    THE FIRST OPERATION OF A HANDLER BLOCK, and only there. ct_aot_catch_land
+    reads back what context::unwind_to_handler already wrote - the frame's ip
+    and the catch register - and then CLEARS CT_AOT_PAD_BIT, so running it twice
+    is not a second catch and running it on a normal path reads a pad that was
+    never set.
+
+    IT ANSWERS TWO THINGS. The pad id says WHICH handler fired, which is what
+    lets one compiled frame carry several; the thrown value is what the catch
+    clause binds. The pad comes first because the ABI shape verifier requires
+    the helper's uint32_t return to be result 0 and its out-parameter to follow.
+
+    NOT A CTJS_RuntimeOp: it is the only operation with two results, and the
+    plain form keeps it out of the interface that assumes one.
+  }];
+  let results = (outs I32:$pad, CTJS_ValueType:$thrown);
+  let assemblyFormat = "attr-dict";
+  let hasVerifier = 1;
+}
+
 def CTJS_DefineAccessorOp : CTJS_Op<"define_accessor", [CTJS_Safepoint]> {
   let summary = "Install a getter, a setter, or both, under one name";
   let description = [{
