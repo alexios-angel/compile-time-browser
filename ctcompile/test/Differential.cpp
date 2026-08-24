@@ -77,6 +77,9 @@ CT_ENTRY(thrower)
 CT_ENTRY(build)
 CT_ENTRY(Point)
 CT_ENTRY(newBad)
+CT_ENTRY(coalesce)
+CT_ENTRY(chain)
+CT_ENTRY(dflt)
 #undef CT_ENTRY
 
 namespace {
@@ -277,6 +280,20 @@ int main() {
          "the entry's own site against the memo marker - the site is only ever read to name "
          "the enclosing function in this message",
          "TypeError: `new` on the value is number (5), not a function - in `newBad`"},
+        // THE TWO CONDITIONAL JUMPS THE IMPORTER'S CFG CLASSIFIER DID NOT
+        // KNOW. Their emission was written and correct; is_conditional_jump
+        // named two of the four, so neither one's target was ever marked a
+        // block leader and the emitter refused every function containing one.
+        //
+        // ALL THREE BODIES ARE PATCHED, because each compiles to a different
+        // one of the three shapes and a single entry would leave two
+        // interpreted.
+        {22u,
+         "nullish",
+         {{"coalesce", 0u, &ctc_coalesce}, {"chain", 0u, &ctc_chain}},
+         "definedness against truthiness - `0 ?? 9` is 0, and a jump lowered through ctjs.truthy "
+         "answers 9",
+         "0//9/undefined/4/0"},
         {17u,
          "literals",
          {{"pack", 0u, &ctc_pack}, {}},

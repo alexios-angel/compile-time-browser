@@ -162,6 +162,7 @@ var DIFF_R = 0, DIFF_W = 0, OUT = "";
 // holds no JavaScript value in a C++ local of its own.
 var counter2 = { valueOf: function () { return 3; } };
 var nan = 0 / 0;
+var nothing;
 var big = 9007199254740993n;
 var zeroBig = 0n;
 
@@ -193,6 +194,18 @@ function build(a) { var p = new Point(a); return p.twice() + p.x; }
 // operation, so a catch in this function would make the backend refuse it and
 // the case would test the interpreter against itself.
 function newBad(f) { return new f(); }
+
+// `??`, `?.` AND A DEFAULT PARAMETER - the three shapes that compile to the two
+// conditional jumps the importer's CFG classifier had never heard of.
+//
+// NOT TRUTHINESS, which is the whole point and what makes these arguments the
+// ones to pass. `0 ?? 9` is 0 and `"" ?? 9` is "", because both are DEFINED;
+// lowering either jump through ctjs.truthy answers 9 for each and is exactly
+// the bug optional chaining exists to avoid. A default parameter separates the
+// third: `dflt(0)` is 0 and `dflt()` is 5.
+function coalesce(a, b) { return a ?? b; }
+function chain(o) { return o?.p; }
+function dflt(a) { if (a === undefined) { a = 5; } return a; }
 
 function drive(which) {
   // A SENTINEL, so an arm that throws or never matches is visible. Without it
@@ -254,4 +267,10 @@ function drive(which) {
   // THE MESSAGE IS THE ASSERTION, because the function it names is the operand
   // under test. `in \`newBad\`` is ct_aot_construct's `site`.
   if (which === 21) { try { newBad(5); OUT = "not thrown"; } catch (e) { OUT = "" + e; } }
+  // 0 and "" are DEFINED, so `??` keeps them; a nullish left side takes the
+  // right. `?.` on null is undefined rather than a throw.
+  if (which === 22) {
+    OUT = "" + coalesce(0, 9) + "/" + coalesce("", 9) + "/" + coalesce(nothing, 9) + "/" +
+          chain(null) + "/" + chain({ p: 4 }) + "/" + dflt(0);
+  }
 }

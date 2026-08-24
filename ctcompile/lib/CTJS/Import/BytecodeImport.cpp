@@ -80,8 +80,18 @@ constexpr unsigned arg_callee = 2;
     return static_cast<std::int64_t>(at) + 1 + in.sbx();
 }
 
+// EVERY CONDITIONAL JUMP THE VM HAS, and the list is exhaustive on purpose.
+//
+// It named two of the four, and the other two were not unimplemented - their
+// emission was written, correct, and unreachable. This predicate is what marks
+// branch targets as block LEADERS, so an opcode missing from it gets no block
+// at its target, no block at its fallthrough, and its own emitter then refuses
+// with "branch target is not a block leader" - a message that reads like a
+// malformed program rather than a classifier that has not heard of the opcode.
+// It cost 12 of Bootstrap's functions, every one of them for `??` or `?.`.
 [[nodiscard]] bool is_conditional_jump(op code) {
-    return code == op::jump_if_false || code == op::jump_if_true;
+    return code == op::jump_if_false || code == op::jump_if_true || code == op::jump_if_defined ||
+           code == op::jump_if_not_nullish;
 }
 
 [[nodiscard]] bool is_jump(op code) {
