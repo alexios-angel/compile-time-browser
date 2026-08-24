@@ -789,6 +789,16 @@ public:
     // and they take different branches.
     [[nodiscard]] value lookup_index(value target, value key);
 
+    // `target[key] = v` for an arbitrary key value - the write twin of
+    // lookup_index, and the same shape: array-with-a-NUMBER is the fast path,
+    // with the typed-array and owning arms inside it, and everything else is a
+    // named write through store_property with to_string of the key.
+    //
+    // THE SLOW PATH IS NOT "THE NON-ARRAY CASE". The guard is is_array() AND
+    // is_number(), so `a['foo'] = 1` arrives there on an array and hits
+    // store_property's drop-everything-but-length arm.
+    void store_index(value target, value key, value v);
+
     // --- gc ----------------------------------------------------------------
     std::size_t collect();
 

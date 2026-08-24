@@ -368,6 +368,21 @@ struct aot_bridge {
         return held.frame_index < cx.frames_.size() ? &cx.frames_[held.frame_index] : nullptr;
     }
 
+    // ct_aot_set_index. `target[key] = v` through the same
+    // context::store_index the interpreter now calls.
+    //
+    // NO OUT-PARAMETER, and that is the row rather than an omission: the
+    // bytecode performs the write and evaluates the expression separately,
+    // exactly as delete does. `site` is where Phase 26 attaches an inline
+    // cache; it is taken and ignored, for the same reason ct_aot_get_index's
+    // is - the signature is what two code generators are written against.
+    static std::int32_t set_index(aot::ct_aot_frame * f, std::uint64_t obj, std::uint64_t key,
+                                  std::uint64_t v) {
+        context & cx = *frame_of(f).ctx;
+        cx.store_index(value::from_bits(obj), value::from_bits(key), value::from_bits(v));
+        return check(f);
+    }
+
     // ct_aot_negate. `-x` through the same context::negate_value the
     // interpreter now calls.
     //
@@ -871,6 +886,12 @@ std::int32_t ct_aot_to_number(ct_aot_frame * fr, std::uint64_t v, double * out) 
 // The `site` parameter is where Phase 26 attaches an inline cache without an
 // ABI break. Taken and ignored, because the signature is the thing two code
 // generators are written against and a parameter added later is a break.
+std::int32_t ct_aot_set_index(ct_aot_frame * fr, std::uint64_t obj, std::uint64_t key,
+                              std::uint64_t v, ct_aot_ic * site) {
+    (void)site;
+    return script::aot_bridge::set_index(fr, obj, key, v);
+}
+
 std::int32_t ct_aot_negate(ct_aot_frame * fr, std::uint64_t v, std::uint64_t * out) {
     return script::aot_bridge::negate(fr, v, out);
 }

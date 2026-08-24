@@ -120,19 +120,22 @@ ctjs.func @has_a_branch(%receiver: !ctjs.value, %new_target: !ctjs.value,
 // --- CONTAINS AN OPERATION WITH NO LOWERING ---------------------------------
 //
 // The allow-list's default, and the reason names the operation so the work list
-// reads itself. `ctjs.set_property` is doubly refused: it has no conversion,
-// and ct_aot_set_index is one of the 37 rows aot.hpp declares and aot_bridge.cpp
-// does not define.
+// reads itself. `ctjs.has_property` is doubly refused: it has no conversion,
+// and ct_aot_has_property is one of the rows aot.hpp declares and
+// aot_bridge.cpp does not define.
 //
-// CHECK-LABEL: ctjs.func @writes_a_property
-// CHECK-SAME: ctjs.not_lowered = "no lowering yet for ctjs.set_property"
-ctjs.func @writes_a_property(%receiver: !ctjs.value, %new_target: !ctjs.value,
-                             %callee: !ctjs.value, %o: !ctjs.value, %k: !ctjs.value)
+// PROPERTY WRITES USED TO BE THIS CASE and are lowered now, which is the right
+// reason for a negative test to need rewriting.
+//
+// CHECK-LABEL: ctjs.func @asks
+// CHECK-SAME: ctjs.not_lowered = "no lowering yet for ctjs.has_property"
+ctjs.func @asks(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                %callee: !ctjs.value, %o: !ctjs.value, %k: !ctjs.value)
     -> !ctjs.value attributes {upvalue_count = 0 : i32} {
   %ctx = ctjs.frame_enter 2
-  ctjs.set_property %o[%k], %k
+  %there = ctjs.has_property %k in %o
   ctjs.frame_exit %ctx
-  ctjs.return %o
+  ctjs.return %there
 }
 
 // --- A BINARY KIND ITS FAMILY DOES NOT SERVE --------------------------------

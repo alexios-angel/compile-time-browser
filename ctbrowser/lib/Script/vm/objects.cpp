@@ -125,6 +125,40 @@ value context::lookup_index(value target, value key) {
     return lookup_property(target, to_string(key));
 }
 
+// op::set_index's body, extracted verbatim so the interpreter and a compiled
+// body run one implementation rather than two - ct_aot_set_index is the other
+// caller.
+void context::store_index(value target, value key, value v) {
+    if (target.is_array() && key.is_number()) {
+        auto * arr = static_cast<array_object *>(target.as_heap());
+        const auto i = static_cast<std::ptrdiff_t>(key.as_number());
+        // A TYPED ARRAY COERCES ON WRITE AND DOES NOT GROW. Both are what makes
+        // it typed: `pixels[i] = 300` is 255 in a clamped byte array, and a
+        // write past the end is DROPPED rather than extending it.
+        if (arr->is_view()) {
+            if (i >= 0 && static_cast<std::size_t>(i) < arr->length()) {
+                view_set(*arr, static_cast<std::size_t>(i), to_number(v));
+            }
+            return;
+        }
+        if (arr->elements != element_kind::none) {
+            if (i >= 0 && static_cast<std::size_t>(i) < arr->items.size()) {
+                arr->items[static_cast<std::size_t>(i)] =
+                    value::number(coerce_element(arr->elements, to_number(v)));
+            }
+            return;
+        }
+        if (i >= 0) {
+            if (static_cast<std::size_t>(i) >= arr->items.size()) {
+                arr->items.resize(static_cast<std::size_t>(i) + 1, value::undefined());
+            }
+            arr->items[static_cast<std::size_t>(i)] = v;
+        }
+        return;
+    }
+    store_property(target, to_string(key), v);
+}
+
 void context::store_property(value target, const std::string & name, value v) {
     // A proxy's `set` trap first: it is the only thing that can decide the
     // write does not land on the target at all, which is the point of it.

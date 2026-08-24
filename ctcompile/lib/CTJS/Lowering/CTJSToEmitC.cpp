@@ -395,8 +395,8 @@ bool body_is_supported(FuncOp function, std::string & why) {
             }
             return;
         }
-        if (mlir::isa<CompareOp, GetPropertyOp, CallOp, CreateClosureOp, CreateCellOp, CellGetOp,
-                      CellSetOp>(op)) {
+        if (mlir::isa<CompareOp, GetPropertyOp, SetPropertyOp, CallOp, CreateClosureOp,
+                      CreateCellOp, CellGetOp, CellSetOp>(op)) {
             return;
         }
 
@@ -980,6 +980,29 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
         return ec::LoadOp::create(build, where, produces, slot.getResult()).getResult();
     }
 
+    // A HELPER THAT ANSWERS WITH A STATUS AND NOTHING ELSE.
+    //
+    // ct_aot_set_index is the first: the bytecode performs the write and
+    // evaluates the expression separately, so there is a status to test and no
+    // result to load. The edge is the same one; only the out-parameter is
+    // missing, and inventing a slot for a value the helper never writes would
+    // be a local read before it was ever assigned.
+    void status_call_void(compiled_entry & scope, mlir::OpBuilder & build, mlir::Location where,
+                          const std::string & symbol, llvm::ArrayRef<mlir::Value> arguments) {
+        auto answered = ec::CallOpaqueOp::create(build, where, mlir::TypeRange{scope.status},
+                                                 symbol, arguments);
+        const mlir::Value ok = literal(build, where, scope.status,
+                                       "static_cast<int32_t>(ctbrowser::aot::ct_aot_status::ok)");
+        auto survived =
+            ec::CmpOp::create(build, where, mlir::IntegerType::get(build.getContext(), 1),
+                              ec::CmpPredicate::eq, answered.getResult(0), ok);
+        mlir::Block * carry_on = scope.entry.addBlock();
+        mlir::cf::CondBranchOp::create(build, where, survived, carry_on, mlir::ValueRange{},
+                                       failure_path(scope, build, where),
+                                       mlir::ValueRange{answered.getResult(0)});
+        build.setInsertionPointToEnd(carry_on);
+    }
+
     void convert(mlir::Operation & op, mlir::OpBuilder & build, mlir::IRMapping & mapping,
                  compiled_entry & scope) {
         const mlir::Location where = op.getLoc();
@@ -1355,6 +1378,25 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_cell_set"),
                                      mlir::ValueRange{mapping.lookup(write.getCell()),
                                                       mapping.lookup(write.getValue())});
+            return;
+        }
+
+        // A PROPERTY WRITE. Its inline cache is nullptr for the reason
+        // ctjs.get_property's is: ct_aot_ic is forward-declared and nothing can
+        // allocate one.
+        //
+        // ITS STATUS EDGE IS NOT COVERED BY A CASE, and that is worth saying
+        // rather than leaving to be assumed. Nothing in the differential
+        // fixture makes a property write FAIL - that needs a setter that
+        // throws, or a proxy trap - so the branch this emits is built and never
+        // taken. The write itself is covered; the edge is not.
+        if (auto write = mlir::dyn_cast<SetPropertyOp>(op)) {
+            status_call_void(
+                scope, build, where, callee("ct_aot_set_index"),
+                {scope.frame, mapping.lookup(write.getObject()), mapping.lookup(write.getKey()),
+                 mapping.lookup(write.getValue()),
+                 literal(build, where, pointer_to(build.getContext(), "ctbrowser::aot::ct_aot_ic"),
+                         "nullptr")});
             return;
         }
 

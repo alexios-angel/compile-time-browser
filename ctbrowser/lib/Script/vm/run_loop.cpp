@@ -716,40 +716,8 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(set_index) do {
-            {
-                const value target = reg(in.a);
-                const value key = reg(in.b);
-                if (target.is_array() && key.is_number()) {
-                    auto * arr = static_cast<array_object *>(target.as_heap());
-                    const auto i = static_cast<std::ptrdiff_t>(key.as_number());
-                    // A TYPED ARRAY COERCES ON WRITE AND DOES NOT GROW. Both are
-                    // what makes it typed: `pixels[i] = 300` is 255 in a clamped
-                    // byte array, and a write past the end is DROPPED rather than
-                    // extending it.
-                    if (arr->is_view()) {
-                        if (i >= 0 && static_cast<std::size_t>(i) < arr->length()) {
-                            view_set(*arr, static_cast<std::size_t>(i), to_number(reg(in.c)));
-                        }
-                        break;
-                    }
-                    if (arr->elements != element_kind::none) {
-                        if (i >= 0 && static_cast<std::size_t>(i) < arr->items.size()) {
-                            arr->items[static_cast<std::size_t>(i)] =
-                                value::number(coerce_element(arr->elements, to_number(reg(in.c))));
-                        }
-                        break;
-                    }
-                    if (i >= 0) {
-                        if (static_cast<std::size_t>(i) >= arr->items.size()) {
-                            arr->items.resize(static_cast<std::size_t>(i) + 1, value::undefined());
-                        }
-                        arr->items[static_cast<std::size_t>(i)] = reg(in.c);
-                    }
-                } else {
-                    store_property(target, to_string(key), reg(in.c));
-                }
-                break;
-            }
+            store_index(reg(in.a), reg(in.b), reg(in.c));
+            break;
         }
         while (0);
         VM_NEXT;

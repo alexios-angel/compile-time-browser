@@ -69,6 +69,7 @@ CT_ENTRY(methodish)
 CT_ENTRY(fn)
 CT_ENTRY(neg)
 CT_ENTRY(bnot)
+CT_ENTRY(put)
 #undef CT_ENTRY
 
 namespace {
@@ -227,6 +228,13 @@ int main() {
         // function when it builds a SYMBOL - `fn$2` - and the proto's own name
         // is "". The two are not the same string, and the ordinal is there
         // because a second anonymous function would make "" ambiguous.
+        {15u,
+         "property write",
+         {{"put", 0u, &ctc_put}, {}},
+         "the numeric fast path against the named one - a STRING key on an array never reaches "
+         "items[0], and store_property's array arm DROPS it - so it reads back as nothing "
+         "at all",
+         "900/100"},
         {12u,
          "negate",
          {{"neg", 0u, &ctc_neg}, {}},

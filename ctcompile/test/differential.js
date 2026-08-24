@@ -91,6 +91,21 @@ function methodish(ignored) { var seen = () => this; return seen(); }
 function neg(a) { return -a; }
 function bnot(a) { return ~a; }
 
+// A PROPERTY WRITE, WHOSE SLOW PATH IS NOT "THE NON-ARRAY CASE". The fast path
+// is array AND number, so `a['0'] = ...` on an ARRAY takes the named path
+// through store_property and does NOT land in items[0] - which is why reading
+// it back as a[0] gives undefined.
+// IT READS BACK BOTH KEYS, because reading only o[0] does not separate the two
+// paths: a named write leaves items[0] alone, and a fast-path write with a
+// nonsense index is DROPPED and leaves it alone too. Both answer 1.
+// THE STRING KEY ARRIVES AS AN ARGUMENT, not a literal: a string constant
+// reaches ct_aot_new_string, which allocates and is one of the rows with no
+// body yet, so a literal here would make the whole function unlowerable.
+//
+// The answer packs both reads into one number for the same reason - `"" + x`
+// would need a string constant too. `| 0` turns a missing property into 0.
+function put(o, k, v, s) { o[k] = v; return o[0] * 100 + (o[s] | 0); }
+
 // --- the harness the driver calls -------------------------------------------
 //
 // It lives here rather than in the C++ so that the file the backend compiles
@@ -141,4 +156,16 @@ function drive(which) {
   // of the rows with no body yet.
   if (which === 13) { OUT = "" + neg(big) + "/" + neg(zeroBig); }
   if (which === 14) { OUT = "" + bnot(5) + "/" + bnot(big); }
+  // A NUMERIC key writes items[0]: 9*100 + 0 = 900. A STRING key does not -
+  // store_property's array arm drops everything but `length` - so items[0] is
+  // still 1 and nothing reads back: 1*100 + 0 = 100.
+  //
+  // WHAT THIS DOES NOT SEPARATE, said plainly: removing `key.is_number()` from
+  // store_index's guard leaves the answer unchanged. The fast path would then
+  // compute its index from as_number() of a STRING, which is undefined
+  // behaviour, and on this target it lands out of range and the write is
+  // dropped - the same observable result. A case that pins that guard would
+  // have to rely on what the UB happens to do, which is worse than not pinning
+  // it.
+  if (which === 15) { OUT = "" + put([1, 2], 0, 9, "0") + "/" + put([1, 2], "0", 9, "0"); }
 }

@@ -1583,13 +1583,14 @@ CT_AOT_COVERS(/* helper */ ct_aot_call_spread, /* opcode */ apply)
  *   op::construct's own dispatch, all of it by delegation: proxy ->
  *   context::construct (call.cpp:428); native -> context::construct;
  *   otherwise context::make_instance (call.cpp:313, byte-identical to the
- *   inline derivation at run_loop.cpp:1447-1455) then
+ *   inline derivation in run_loop.cpp's VM_CASE(construct)) then
  *   context::run_field_initialisers (call.cpp:477) then, if
  *   !is_kind(function), context::callee_type_error in its `new` form, else
  *   save pending_new_target_, set it to callee, context::call(callee, args,
  *   self), restore, and return is_object_like(produced) ? produced : self.
  * FAILURE: Full status. CAUGHT/UNWOUND for the catchable '`new` on ...'
- *   TypeError of run_loop.cpp:1460 and for anything the field initialisers,
+ *   TypeError VM_CASE(construct) raises, and for anything the field
+ *   initialisers,
  *   the construct trap or the constructor body throw. CT_AOT_FAILED for the
  *   raise tier, which on the proxy and native paths now includes
  *   context::construct's own non-constructor raise (call.cpp:444). THE
