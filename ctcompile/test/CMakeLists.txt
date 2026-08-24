@@ -18,6 +18,20 @@ target_link_libraries(ctcompile-test-inventories PRIVATE ctcompile::support)
 ctcompile_target(ctcompile-test-inventories)
 add_test(NAME ctcompile_inventories COMMAND ctcompile-test-inventories)
 
+# PHASE 13'S COVERAGE MEASUREMENT, derived from both sides rather than written
+# down. The opcode list comes from the X-macro so it cannot disagree with the
+# engine; what the importer handles is read out of the importer's own SOURCE, so
+# it cannot disagree with the importer. Neither side is a transcription, which
+# is what has drifted here before.
+#
+# IT NEEDS NO MLIR either - it reads a .cpp as text.
+add_executable(ctcompile-test-importer-coverage ImporterCoverage.cpp)
+target_compile_definitions(ctcompile-test-importer-coverage PRIVATE
+  CTCOMPILE_IMPORTER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../lib/CTJS/Import/BytecodeImport.cpp")
+target_link_libraries(ctcompile-test-importer-coverage PRIVATE ctcompile::support)
+ctcompile_target(ctcompile-test-importer-coverage)
+add_test(NAME ctcompile_importer_coverage COMMAND ctcompile-test-importer-coverage)
+
 # THE STUB HAS TO RUN. Phase -1's gate says ctcompile builds an executable, and
 # an executable that builds and then dies on a missing symbol has passed a
 # compile and failed the gate. This runs it.
