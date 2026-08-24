@@ -14,12 +14,17 @@
 
 function add(a, b) { return a + b; }
 
-// THE TOP-LEVEL FUNCTION IS NOT COMPILED, because it contains `closure` - the
-// declaration of `add` itself. Checked FIRST because it is a module attribute
-// and prints on the module line, above everything else; FileCheck matches in
-// order, so asserting it after the function body never matches.
-// CHECK: ctjs.skipped
-// CHECK-SAME: opcode = "closure"
+// THE TOP LEVEL COMPILES TOO, and it did not until closures did. It contains
+// `closure` - the declaration of `add` itself - and that opcode had no CTJS
+// operation, so every file whose top level declares anything was skipped whole.
+// Nothing is skipped here now.
+// CHECK-NOT: ctjs.skipped
+
+// CHECK: ctjs.func @_script_$0(
+// AND IT BUILDS THE CLOSURE from its own callee, which is where the enclosing
+// closure comes from: the program is selected from `enclosing->owner`, because
+// a context can be running functions from more than one program at a time.
+// CHECK: ctjs.create_closure %arg2[1]
 
 // FIVE PARAMETERS FOR A TWO-PARAMETER FUNCTION. The first three are the frame
 // properties the bytecode reads with their own opcodes - `this`, `new.target`

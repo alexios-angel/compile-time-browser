@@ -72,4 +72,19 @@ def EmitCEliminateBlockArguments
   let dependentDialects = ["::mlir::emitc::EmitCDialect", "::mlir::cf::ControlFlowDialect"];
 }
 
+def CTJSDropUncompiled : Pass<"ctjs-drop-uncompiled", "mlir::ModuleOp"> {
+  let summary = "Remove the functions the backend refused, so the rest can be translated";
+  let description = [{
+    A module still holding CTJS operations cannot be translated to C++ at all,
+    so a file where anything is refused produces nothing rather than the parts
+    that did compile. THAT IS WHAT A REAL COMPILER DOES WITH THIS: emit what it
+    can and leave the rest to the interpreter, which is safe because the runtime
+    only calls a compiled body when function_proto::aot_entry is set.
+
+    SEPARATE FROM THE LOWERING, because erasing there would destroy the
+    refusals before anybody could read them - and the refusals are the work
+    list. Running this is the caller saying "I want a translation unit now".
+  }];
+}
+
 #endif // CTCOMPILE_CTJS_PASSES

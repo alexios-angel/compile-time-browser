@@ -10,15 +10,17 @@
 
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %s 2>/dev/null | ctjs-opt | FileCheck %s
 
-function makesAClosure() {
-  var captured = 1;
-  return function () { return captured; };
-}
+// THE EXAMPLE USED TO BE A CLOSURE, and closures compile now - which is the
+// right reason for a negative test to need rewriting. `+a` is unary plus, and
+// it reaches op::to_number, for which the importer still has no operation.
+function coerces(a) { return +a; }
 
-// NO FUNCTION AT ALL, not a partial one.
+// NO FUNCTION AT ALL, not a partial one. The top level is skipped with it,
+// because it declares `coerces` and a function that cannot be imported cannot
+// be named by a closure either.
 // CHECK-NOT: ctjs.func
 
 // AND THE REASON, structured: which function, which opcode, where.
 // CHECK: ctjs.skipped
-// CHECK-SAME: opcode = "closure"
+// CHECK-SAME: opcode = "to_number"
 // CHECK-SAME: reason = "no CTJS operation for this opcode yet"

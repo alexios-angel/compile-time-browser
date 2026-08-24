@@ -59,4 +59,49 @@ function counter(start) { var n = start; return function step() { n = n + 1; ret
 // closure over `tally` shares it. A body that took its upvalues from there
 // would have the two counters share a binding, and the second would continue
 // the first's count instead of starting again.
+
+// TWO LEVELS OF NESTING SEPARATE THE TWO DESCRIPTOR ARMS. When `middle` builds
+// `inner`, `y` is a from_parent_local - a cell in middle's own register - while
+// `x` is NOT: it comes from middle's own closure, which is the arm that carries
+// a capture down through more than one level. A build that read both from the
+// registers, or both from the enclosing closure, gets one of them wrong.
+function outer(a) { var x = a; return function middle(b) { var y = b; return function inner() { return x + y; }; }; }
+
+// --- the harness the driver calls -------------------------------------------
+//
+// It lives here rather than in the C++ so that the file the backend compiles
+// and the file the interpreter runs are THE SAME FILE. The functions above are
+// what is compiled; these are what drives them.
+var DIFF_R = 0, DIFF_W = 0, OUT = "";
+
+// THE ARGUMENTS ARE BUILT HERE rather than passed from C++, so the harness
+// holds no JavaScript value in a C++ local of its own.
+var counter2 = { valueOf: function () { return 3; } };
+var nan = 0 / 0;
+
 function counters(a, b) { return counter(a)() + counter(b)(); }
+
+function drive(which) {
+  // A SENTINEL, so an arm that throws or never matches is visible. Without it
+  // OUT keeps the PREVIOUS case's answer, both tiers read the same stale value
+  // and agree - which is a broken case reporting success. That happened.
+  OUT = "<the arm did not run>";
+  DIFF_R = 41; DIFF_W = 0;
+  if (which === 0) { OUT = plus(counter2, 1); }
+  if (which === 1) { OUT = ge(nan, nan); }
+  if (which === 2) { OUT = strict(0, "0"); }
+  if (which === 3) { OUT = loose(0, "0"); }
+  if (which === 4) { OUT = pick(2, 7); }
+  if (which === 5) { OUT = "" + globals(7) + "/" + DIFF_W; }
+  if (which === 6) { OUT = apply(plus, counter2, 1); }
+  // CALLED TWICE, because one call cannot tell a captured cell from a copy:
+  // both answer 1. The second answer is 2 only if the binding persisted.
+  if (which === 7) { var c = counter(10); c(); OUT = c(); }
+  // 101 + 201 = 302 if the two closures capture separately; 101 + 102 = 203 if
+  // they share, which is what taking upvalues from the proto would do.
+  if (which === 8) { OUT = counters(100, 200); }
+  // BUILDING a closure rather than reading one.
+  if (which === 9) { var d = counter(50); d(); OUT = d(); }
+  // 1 + 2 = 3, and only if both descriptor arms picked the right binding.
+  if (which === 10) { OUT = outer(1)(2)(); }
+}

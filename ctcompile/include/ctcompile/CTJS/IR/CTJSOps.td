@@ -117,11 +117,45 @@ def CTJS_CreateClosureOp
     Allocating, so a safepoint and a throw edge for the allocation ceiling -
     but NOT re-entering: building a closure runs none of the function's own
     code.
+
+    ITS FIRST OPERAND WAS A !ctjs.program AND THAT WAS WRONG. Nothing produces
+    one - which is why the importer could not emit this operation at all and
+    skipped every `closure` opcode, and with it every function that declares
+    another. ct_aot_make_closure takes the ENCLOSING CLOSURE as a value,
+    because the program is selected from `enclosing->owner`: a context can be
+    running functions from more than one program, and a function index means
+    nothing outside the one it was compiled in.
+
+    $upvalues IS INDEXED IN PARALLEL WITH THE TARGET'S DESCRIPTORS, not packed.
+    Only the entries the compiler marked from_parent_local are read; the helper
+    fills the rest from the enclosing closure. A packed list is the plausible
+    wrong reading and captures the wrong bindings silently.
+
+    AND $enclosing_this IS THE EFFECTIVE RECEIVER, used only when the target is
+    an arrow - because an arrow's `this` is decided where it is WRITTEN, not
+    where it is called. Reading the effective one rather than the raw receiver
+    is what makes an arrow inside an arrow inside a method still see the
+    method's object.
+
+    THE RESULT IS A !ctjs.value, NOT A !ctjs.closure, and that is the second
+    half of the same correction. The importer's register file is entirely
+    !ctjs.value - because at run time a closure IS one, as ctjs.load_upvalue's
+    note already says - so a !ctjs.closure result could not be stored in the
+    register it is assigned to. The distinct type was "for the one place that
+    BUILDS one", and that place cannot use it either: it leaves !ctjs.closure
+    and !ctjs.program with no producer AND no consumer.
   }];
-  let arguments = (ins CTJS_ProgramType:$program, I32Attr:$function,
-                       Variadic<CTJS_ValueType>:$upvalues);
-  let results = (outs CTJS_ClosureType:$result);
-  let assemblyFormat = "$program `[` $function `]` (`captures` $upvalues^)? attr-dict";
+  // THE VARIADIC IS LAST, and it has to be: a Variadic followed by a fixed
+  // operand cannot be resolved without AttrSizedOperandSegments, and the
+  // verifier reports it as a type error on operand #0 rather than as the
+  // ordering problem it is. The ABI's own argument order is different again -
+  // (fr, closure, index, upvalues, count, this) - and the lowering maps
+  // between them, which is what a lowering is for.
+  let arguments = (ins CTJS_ValueType:$enclosing_closure, CTJS_ValueType:$enclosing_this,
+                       I32Attr:$function, Variadic<CTJS_ValueType>:$upvalues);
+  let results = (outs CTJS_ValueType:$result);
+  let assemblyFormat = "$enclosing_closure `[` $function `]` `this` $enclosing_this"
+                       " (`captures` $upvalues^)? attr-dict";
 }
 
 //===----------------------------------------------------------------------===//

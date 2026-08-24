@@ -393,7 +393,10 @@ bool body_is_supported(FuncOp function, std::string & why) {
             }
             return;
         }
-        if (mlir::isa<CompareOp, GetPropertyOp, CallOp>(op)) { return; }
+        if (mlir::isa<CompareOp, GetPropertyOp, CallOp, CreateClosureOp, CreateCellOp, CellGetOp,
+                      CellSetOp>(op)) {
+            return;
+        }
 
         // THE UPVALUE OPERATIONS, WHICH ARE TWO CALLS EACH - which is why they
         // are plain CTJS_Ops rather than CTJS_RuntimeOps. The ABI splits the
@@ -738,6 +741,14 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                 windows[inner] = parked;
                 parked += static_cast<unsigned>(call.getArgs().size());
             }
+            // A CLOSURE'S UPVALUE ARRAY IS AN ARGV BY ANOTHER NAME: a
+            // contiguous run the helper reads, and one that must live in the
+            // frame rather than in C++ locals, because ct_aot_make_closure
+            // allocates and is therefore a safepoint.
+            if (auto made = mlir::dyn_cast<CreateClosureOp>(inner)) {
+                windows[inner] = parked;
+                parked += static_cast<unsigned>(made.getUpvalues().size());
+            }
         });
         const unsigned window = std::max(static_cast<unsigned>(entered.getRegCount()), parked);
         const mlir::Value registers = literal(build, where, u32, std::to_string(window));
@@ -784,8 +795,24 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                                  .getResult(0);
         }
 
+        // ARGUMENT 0 IS THE EFFECTIVE RECEIVER, NOT THE ENTRY'S RAW ONE, and the
+        // difference is a live bug for arrows. The importer maps op::load_this
+        // to this argument, and VM_CASE(load_this) is
+        // `effective_this(*vm_frame)` - which returns the enclosing method's
+        // object when the frame's closure is an arrow, and the frame's own
+        // receiver otherwise. Delivering the entry's `receiver` agrees for
+        // every ordinary function and is wrong for every compiled arrow.
+        //
+        // THE RETURN PROTOCOL STILL USES THE RAW ONE. ct_aot_return_value
+        // substitutes `receiver` when a constructor returns a primitive, and
+        // that is the frame's own receiver by definition - an arrow cannot be
+        // constructed at all.
         mlir::IRMapping mapping;
-        mapping.map(body.getArgument(arg_receiver), in_receiver);
+        mapping.map(body.getArgument(arg_receiver),
+                    ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
+                                             callee("ct_aot_this"),
+                                             mlir::ValueRange{frame.getResult(0)})
+                        .getResult(0));
         if (mapping_callee) { mapping.map(body.getArgument(arg_callee), mapping_callee); }
         for (unsigned i = 0; i < declared; ++i) {
             mapping.map(body.getArgument(implicit_arguments + i), parameters[i]);
@@ -1227,18 +1254,7 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                      base + static_cast<unsigned>(index));
             }
 
-            auto span =
-                ec::CallOpaqueOp::create(build, where, mlir::TypeRange{ec::PointerType::get(value)},
-                                         callee("ct_aot_slots"), mlir::ValueRange{scope.frame});
-            auto first = ec::SubscriptOp::create(
-                build, where, ec::LValueType::get(value), span.getResult(0),
-                mlir::ValueRange{literal(build, where,
-                                         mlir::IntegerType::get(build.getContext(), 32),
-                                         std::to_string(base))});
-            const mlir::Value argv =
-                ec::AddressOfOp::create(build, where, ec::PointerType::get(value),
-                                        first.getResult())
-                    .getResult();
+            const mlir::Value argv = window_pointer(scope, build, where, base);
 
             // `key` AND `site` ARE THE ROW'S DIAGNOSTIC ARGUMENTS and the
             // implementation ignores both. `key` names the callee in the
@@ -1273,6 +1289,73 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             return;
         }
 
+        // BUILDING A CLOSURE.
+        //
+        // RAISE TIER ONLY, so there is no status and no exception edge: the
+        // row's three failures - the allocation ceiling, no program to take a
+        // function from, and an index or count that does not match - all raise,
+        // and a caller polls ct_aot_failed at a back edge. It IS a safepoint, so
+        // the result is parked like every other value.
+        //
+        // THE UPVALUES GO IN PARALLEL WITH THE DESCRIPTORS, which is what the
+        // importer built and what the helper reads. Packed would capture the
+        // wrong bindings and say nothing.
+        if (auto made = mlir::dyn_cast<CreateClosureOp>(op)) {
+            const unsigned base = scope.argument_windows.lookup(&op);
+            const auto upvalues = made.getUpvalues();
+            for (auto [index, captured] : llvm::enumerate(upvalues)) {
+                park(scope, build, where, mapping.lookup(captured),
+                     base + static_cast<unsigned>(index));
+            }
+            const auto u32 = opaque(build.getContext(), "uint32_t");
+            mapping.map(
+                made.getResult(),
+                ec::CallOpaqueOp::create(
+                    build, where, mlir::TypeRange{value}, callee("ct_aot_make_closure"),
+                    mlir::ValueRange{scope.frame, mapping.lookup(made.getEnclosingClosure()),
+                                     literal(build, where, u32, std::to_string(made.getFunction())),
+                                     window_pointer(scope, build, where, base),
+                                     literal(build, where, u32, std::to_string(upvalues.size())),
+                                     mapping.lookup(made.getEnclosingThis())})
+                    .getResult(0));
+            return;
+        }
+
+        // CELLS - the boxes a captured binding lives in.
+        //
+        // ALL THREE ARE EDGE-FREE. cell_get and cell_set are (0, 0, 0) and take
+        // no frame at all: their FAILURE line calls the silence a semantic
+        // guarantee, because a non-cell argument yields undefined or is
+        // dropped, and that is what lets them compose with ct_aot_upvalue_cell
+        // to reproduce the fused opcodes exactly.
+        //
+        // ct_aot_cell_new IS may_throw AND a safepoint, but RAISE TIER ONLY -
+        // allocate() raises past the ceiling and still returns a well-formed
+        // cell - so it is a plain call whose result is parked, not a status
+        // test.
+        if (auto cell = mlir::dyn_cast<CreateCellOp>(op)) {
+            mapping.map(cell.getResult(),
+                        ec::CallOpaqueOp::create(
+                            build, where, mlir::TypeRange{value}, callee("ct_aot_cell_new"),
+                            mlir::ValueRange{scope.frame, mapping.lookup(cell.getInitial())})
+                            .getResult(0));
+            return;
+        }
+        if (auto read = mlir::dyn_cast<CellGetOp>(op)) {
+            mapping.map(read.getResult(),
+                        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
+                                                 callee("ct_aot_cell_get"),
+                                                 mlir::ValueRange{mapping.lookup(read.getCell())})
+                            .getResult(0));
+            return;
+        }
+        if (auto write = mlir::dyn_cast<CellSetOp>(op)) {
+            ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_cell_set"),
+                                     mlir::ValueRange{mapping.lookup(write.getCell()),
+                                                      mapping.lookup(write.getValue())});
+            return;
+        }
+
         if (auto returned = mlir::dyn_cast<ReturnOp>(op)) {
             // ct_aot_return_value TAKES NO FRAME HANDLE, which is why the entry
             // delivers `receiver` and `constructing` by value: the body still
@@ -1302,7 +1385,16 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             return;
         }
 
-        llvm_unreachable("body_is_supported and convert disagree about what is supported");
+        // NOT llvm_unreachable, WHICH IS SILENT IN RELEASE. Under -DNDEBUG it
+        // is __builtin_unreachable(), so an operation reaching here does not
+        // abort - it produces whatever the compiler decided the impossible
+        // branch should do. That happened: ctjs.create_closure was added to
+        // body_is_supported and not to this switch, and instead of the loud
+        // failure this line was written to give, the operation survived into
+        // the output with its operands rewritten, and the module failed to
+        // verify somewhere else entirely.
+        llvm::report_fatal_error(llvm::Twine("ctcompile: body_is_supported admits ") +
+                                 op.getName().getStringRef() + " and convert() does not emit it");
     }
 
     // ROOT ONE VALUE IN THE FRAME.
@@ -1359,6 +1451,25 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                                         callee("ct_aot_cell_get"),
                                         mlir::ValueRange{cell.getResult(0)})
             .getResult(0);
+    }
+
+    // A POINTER TO A RESERVED RUN OF FRAME SLOTS.
+    //
+    // Two helpers want one - ct_aot_call's argv and ct_aot_make_closure's
+    // upvalue array - and both want it in the FRAME rather than in C++ locals,
+    // because both are safepoints that can collect before they read it.
+    mlir::Value window_pointer(compiled_entry & scope, mlir::OpBuilder & build,
+                               mlir::Location where, unsigned base) {
+        auto span = ec::CallOpaqueOp::create(build, where,
+                                             mlir::TypeRange{ec::PointerType::get(scope.value)},
+                                             callee("ct_aot_slots"), mlir::ValueRange{scope.frame});
+        auto first = ec::SubscriptOp::create(
+            build, where, ec::LValueType::get(scope.value), span.getResult(0),
+            mlir::ValueRange{literal(build, where, mlir::IntegerType::get(build.getContext(), 32),
+                                     std::to_string(base))});
+        return ec::AddressOfOp::create(build, where, ec::PointerType::get(scope.value),
+                                       first.getResult())
+            .getResult();
     }
 
     // A MACHINE QUANTITY, MADE INTO A JAVASCRIPT VALUE.

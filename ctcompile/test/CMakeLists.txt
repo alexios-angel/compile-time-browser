@@ -203,6 +203,24 @@ endif()
 # by definition."
 if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   set(_diff_js "${CMAKE_CURRENT_SOURCE_DIR}/differential.js")
+  # THE DRIVER READS THE SAME FILE THE PIPELINE COMPILES, as a raw string.
+  #
+  # It used to be transcribed into a C++ string beside it, with a comment saying
+  # the two must stay identical - and they drifted, in ORDER rather than in
+  # text: a function was appended in a different position in each. That is not
+  # cosmetic. A compiled body bakes the function INDEX of every closure it
+  # builds, and the ABI row for ct_aot_make_closure says outright that "a
+  # function index means nothing outside the program it was compiled in", so a
+  # reordered fixture makes a compiled body build a closure over a different
+  # function. It presented as a case that passed with the wrong answer.
+  set(_diff_inc "${CMAKE_CURRENT_BINARY_DIR}/differential.js.inc")
+  add_custom_command(
+    OUTPUT "${_diff_inc}"
+    COMMAND "${CMAKE_COMMAND}" -DSOURCE=${_diff_js} -DOUTPUT=${_diff_inc}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
+    DEPENDS "${_diff_js}" "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
+    COMMENT "Embedding differential.js for the driver"
+    VERBATIM)
   set(_diff_cpp "${CMAKE_CURRENT_BINARY_DIR}/differential.generated.cpp")
   add_custom_command(
     OUTPUT "${_diff_cpp}"
@@ -211,7 +229,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
             -DOPT=$<TARGET_FILE:ctjs-opt>
             -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
             -DSOURCE=${_diff_js}
-            "-DENTRIES=plus;ge;strict;loose;pick;globals;apply;step"
+            "-DENTRIES=plus;ge;strict;loose;pick;globals;apply;step;counter;middle"
             -DOUTPUT=${_diff_cpp}
             -P "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
     DEPENDS "${_diff_js}" ctjs-translate ctjs-opt
@@ -221,7 +239,8 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
 
   set_source_files_properties("${_diff_cpp}" PROPERTIES
     COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
-  add_executable(ctcompile-test-differential Differential.cpp "${_diff_cpp}")
+  add_executable(ctcompile-test-differential Differential.cpp "${_diff_cpp}" "${_diff_inc}")
+  target_include_directories(ctcompile-test-differential PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(ctcompile-test-differential PRIVATE ctbrowser::script)
   ctcompile_target(ctcompile-test-differential)
   add_test(NAME ctcompile_differential COMMAND ctcompile-test-differential)

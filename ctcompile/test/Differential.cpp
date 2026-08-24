@@ -63,48 +63,25 @@ CT_ENTRY(pick)
 CT_ENTRY(globals)
 CT_ENTRY(apply)
 CT_ENTRY(step)
+CT_ENTRY(counter)
+CT_ENTRY(middle)
 #undef CT_ENTRY
 
 namespace {
 
-// MUST STAY TEXTUALLY IDENTICAL TO differential.js. The two tiers have to be
-// compiling the same function_proto, and the count check below is a cheap guard
-// against them drifting apart silently.
-constexpr std::string_view fixture = R"JS(
-function plus(a, b) { return a + b; }
-function ge(a, b) { return a >= b; }
-function strict(a, b) { return a === b; }
-function loose(a, b) { return a == b; }
-function pick(a, b) { if (a < b) { return a; } return b; }
-function globals(a) { DIFF_W = a; return DIFF_R; }
-function apply(k, a, b) { return k(a, b); }
-function counter(start) { var n = start; return function step() { n = n + 1; return n; }; }
-function counters(a, b) { return counter(a)() + counter(b)(); }
-
-var DIFF_R = 0, DIFF_W = 0, OUT = "";
-
-// THE ARGUMENTS ARE BUILT HERE rather than passed from C++, so the harness
-// holds no JavaScript value in a C++ local of its own.
-var counter2 = { valueOf: function () { return 3; } };
-var nan = 0 / 0;
-
-function drive(which) {
-  DIFF_R = 41; DIFF_W = 0;
-  if (which === 0) { OUT = plus(counter2, 1); }
-  if (which === 1) { OUT = ge(nan, nan); }
-  if (which === 2) { OUT = strict(0, "0"); }
-  if (which === 3) { OUT = loose(0, "0"); }
-  if (which === 4) { OUT = pick(2, 7); }
-  if (which === 5) { OUT = "" + globals(7) + "/" + DIFF_W; }
-  if (which === 6) { OUT = apply(plus, counter2, 1); }
-  // CALLED TWICE, because one call cannot tell a captured cell from a copy:
-  // both answer 1. The second answer is 2 only if the binding persisted.
-  if (which === 7) { var c = counter(10); c(); OUT = c(); }
-  // 101 + 201 = 302 if the two closures capture separately; 101 + 102 = 203 if
-  // they share, which is what taking upvalues from the proto would do.
-  if (which === 8) { OUT = counters(100, 200); }
-}
-)JS";
+// THE SAME FILE THE PIPELINE COMPILES, not a transcription of it.
+//
+// It WAS a transcription, with a comment saying the two must stay identical -
+// and they drifted in ORDER: a function appended in a different position in
+// each. That is not cosmetic. A compiled body bakes the function INDEX of every
+// closure it builds, and ct_aot_make_closure's row says outright that "a
+// function index means nothing outside the program it was compiled in" - so a
+// reordered fixture makes a compiled body build a closure over a DIFFERENT
+// function. It presented as a case reporting the wrong answer and passing,
+// because both tiers agreed on a stale OUT.
+constexpr std::string_view fixture =
+#include "differential.js.inc"
+    ;
 
 struct subject {
     // WHICH ARM OF drive() THIS IS, written down rather than taken from the
@@ -122,9 +99,24 @@ struct subject {
     // removed, and that is how it was found.
     const char * patched;
     ctbrowser::aot::ct_aot_entry_fn entry;
+    // WHAT THE ANSWER MUST BE, and it is written down on purpose.
+    //
+    // THE INTERPRETER DEFINES CORRECT, which is this file's whole premise - but
+    // that premise has a bound, and it is worth stating rather than
+    // discovering. Where the two tiers share an implementation, a bug in the
+    // shared part breaks BOTH and they agree. context::make_closure is exactly
+    // that: it was factored out so run_loop and ct_aot_make_closure could not
+    // drift, and the price is that the differential comparison goes blind to
+    // it. Swapping its two descriptor arms makes every closure case answer
+    // `undefined` and every one of them still "agree".
+    //
+    // So the cases that reach shared code carry an anchor. It is not a second
+    // source of truth for the language - it is a tripwire on the one path the
+    // comparison cannot see.
     // WHY THIS CASE WOULD DIFFER, so a failure says what broke rather than only
     // that something did.
     const char * separates;
+    const char * expected;
 };
 
 int failures = 0;
@@ -147,26 +139,39 @@ int main() {
 
     const subject subjects[] = {
         {0u, "plus", "plus", &ctc_plus,
-         "op::add_generic against op::add - a valueOf that is or is not run"},
-        {1u, "ge", "ge", &ctc_ge, "UNORDERED - `>=` lowered as !(<) answers true for NaN"},
+         "op::add_generic against op::add - a valueOf that is or is not run", "4"},
+        {1u, "ge", "ge", &ctc_ge, "UNORDERED - `>=` lowered as !(<) answers true for NaN", "false"},
         {2u, "strict", "strict", &ctc_strict,
-         "ct_aot_strict_equals, which cannot throw and takes no frame"},
+         "ct_aot_strict_equals, which cannot throw and takes no frame", "false"},
         {3u, "loose", "loose", &ctc_loose,
-         "ct_aot_loose_equals, which converts and has an exception edge"},
+         "ct_aot_loose_equals, which converts and has an exception edge", "true"},
         {4u, "pick", "pick", &ctc_pick,
-         "block arguments, which the C++ emitter miscompiles as edges"},
-        {5u, "globals", "globals", &ctc_globals, "a global read and a global write"},
-        {6u, "apply", "apply", &ctc_apply, "the contiguous argument window a call needs"},
+         "block arguments, which the C++ emitter miscompiles as edges", "2"},
+        {5u, "globals", "globals", &ctc_globals, "a global read and a global write", "41/7"},
+        {6u, "apply", "apply", &ctc_apply, "the contiguous argument window a call needs", "4"},
         {7u, "step", "step", &ctc_step,
          "a captured cell against a copied value - a copy answers 1 twice, and a body that "
          "cannot see its closure answers undefined, because the write lands on a non-cell and "
-         "is dropped"},
+         "is dropped",
+         "12"},
         // PATCHES step, NOT counters. The instance-versus-proto question is
         // about the two `step` closures, so `step` is what has to be running
         // compiled; `counters` is the interpreted driver that makes two of them.
+        // PATCHES counter, WHICH BUILDS THE CLOSURE. Everything above reads
+        // one; this is the first case where ct_aot_make_closure runs in
+        // compiled code.
+        {9u, "make closure", "counter", &ctc_counter,
+         "building a closure at all - a wrong upvalue array captures the wrong binding and "
+         "says nothing",
+         "52"},
+        {10u, "two levels", "middle", &ctc_middle,
+         "the from_parent_local arm against the enclosing-closure arm - `y` is middle's own "
+         "register and `x` is not",
+         "3"},
         {8u, "two closures", "step", &ctc_step,
          "the closure INSTANCE against the shared function_proto - sharing makes the second "
-         "counter continue the first's count, giving 203 rather than 302"},
+         "counter continue the first's count, giving 203 rather than 302",
+         "302"},
     };
 
     for (const subject & each : subjects) {
@@ -193,6 +198,27 @@ int main() {
 
         const std::string interpreted = answer(nullptr);
         const std::string generated = answer(each.entry);
+
+        // THE ARM HAS TO HAVE RUN. Without this a case whose arm throws leaves
+        // OUT holding the PREVIOUS case's answer, both tiers read the same
+        // stale value, and the case reports success while testing nothing.
+        if (interpreted == "<the arm did not run>") {
+            std::printf("%-12s FAILED - drive(%u) set nothing, so the arm threw or does not "
+                        "exist\n",
+                        each.name, each.which);
+            ++failures;
+            continue;
+        }
+        // AND THE ANCHOR, for the paths the comparison cannot see. See the
+        // note on subject::expected: where the two tiers share an
+        // implementation, a bug in it breaks both and they agree.
+        if (interpreted != each.expected) {
+            std::printf("%-12s FAILED - the INTERPRETER answered %s where %s is correct, so "
+                        "something shared by both tiers is wrong\n",
+                        each.name, interpreted.c_str(), each.expected);
+            ++failures;
+            continue;
+        }
         if (interpreted == generated) {
             std::printf("%-10s ok    %s\n", each.name, interpreted.c_str());
         } else {

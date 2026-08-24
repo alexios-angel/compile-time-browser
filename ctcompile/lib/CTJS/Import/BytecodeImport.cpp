@@ -458,6 +458,45 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             case op::load_this: set(in.a, entry->getArgument(arg_receiver)); break;
             case op::load_new_target: set(in.a, entry->getArgument(arg_new_target)); break;
             case op::load_callee: set(in.a, entry->getArgument(arg_callee)); break;
+            case op::closure: {
+                // THE OPCODE THAT MADE EVERY DECLARING FUNCTION UNIMPORTABLE.
+                // ctjs.create_closure's first operand was a !ctjs.program that
+                // nothing produced, so this case did not exist and any function
+                // declaring another was skipped whole - which is every top
+                // level in a real file.
+                if (in.bx() >= state.prog.functions.size()) {
+                    state.give_up(at, in.code, "closure function index out of range");
+                    break;
+                }
+                const function_proto & target = state.prog.functions[in.bx()];
+                // IN PARALLEL WITH THE DESCRIPTORS, NOT PACKED. Only the
+                // entries the compiler marked from_parent_local are read by the
+                // helper; the rest it fills from the enclosing closure, and
+                // undefined here is a placeholder that is never looked at. A
+                // packed list would silently capture the wrong bindings.
+                llvm::SmallVector<mlir::Value> captured;
+                captured.reserve(target.upvalues.size());
+                bool reachable = true;
+                for (const upvalue_desc & up : target.upvalues) {
+                    if (!up.from_parent_local) {
+                        captured.push_back(state.undefined(where));
+                        continue;
+                    }
+                    if (up.index >= state.registers.size()) {
+                        state.give_up(at, in.code, "upvalue names a register past the frame");
+                        reachable = false;
+                        break;
+                    }
+                    captured.push_back(reg(up.index));
+                }
+                if (!reachable) { break; }
+                set(in.a,
+                    ctjs::CreateClosureOp::create(
+                        into, where, value_type, entry->getArgument(arg_callee),
+                        entry->getArgument(arg_receiver),
+                        into.getI32IntegerAttr(static_cast<std::int32_t>(in.bx())), captured));
+                break;
+            }
             case op::get_global:
                 if (in.bx() >= proto.names.size()) {
                     state.give_up(at, in.code, "name index out of range");

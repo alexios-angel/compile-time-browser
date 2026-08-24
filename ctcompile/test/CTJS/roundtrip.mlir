@@ -61,12 +61,17 @@ ctjs.func @upvalues(%v: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 
   %ctx = ctjs.frame_enter 4
   // A !ctjs.program FROM NOWHERE. ctjs.func takes only !ctjs.value parameters -
   // its verifier says so - and no operation produces a program yet: Phase 9's
-  // importer is what will. builtin.unrealized_conversion_cast is the standard
-  // way to write a value of a type nothing produces, and it keeps this file
-  // free of an unregistered dialect.
-  %program = builtin.unrealized_conversion_cast %v : !ctjs.value to !ctjs.program
-  // CHECK: ctjs.create_closure %{{.*}}[3] captures %{{.*}}
-  %fn = ctjs.create_closure %program[3] captures %v
+  // ITS FIRST OPERAND IS THE ENCLOSING CLOSURE, a value, and it used to be a
+  // !ctjs.program that nothing produced - which is exactly why the importer
+  // could not emit this operation and skipped every `closure` opcode. The
+  // program is selected from `enclosing->owner`, because a context can be
+  // running functions from more than one program and a function index means
+  // nothing outside the one it was compiled in.
+  //
+  // AND THE LAST IS THE EFFECTIVE RECEIVER, used only when the target is an
+  // arrow: an arrow's `this` is decided where it is WRITTEN.
+  // CHECK: ctjs.create_closure %{{.*}}[3] this %{{.*}} captures %{{.*}}
+  %fn = ctjs.create_closure %v[3] this %v captures %v
   // CHECK: ctjs.create_cell %{{.*}}
   %cell = ctjs.create_cell %v
   // CHECK: ctjs.cell_get %{{.*}}

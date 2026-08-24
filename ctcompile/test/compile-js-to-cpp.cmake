@@ -21,7 +21,11 @@ endforeach()
 
 execute_process(
   COMMAND "${TRANSLATE}" --ctbrowser-js-to-ctjs "${SOURCE}"
-  COMMAND "${OPT}" --ctjs-lower-to-emitc --emitc-eliminate-block-arguments
+  # --ctjs-drop-uncompiled BETWEEN THE TWO, because a module still holding CTJS
+  # operations cannot be translated at all - so one refused function would mean
+  # no translation unit rather than one missing that function.
+  COMMAND "${OPT}" --ctjs-lower-to-emitc --ctjs-drop-uncompiled
+                   --emitc-eliminate-block-arguments
   # --declare-variables-at-top IS NOT OPTIONAL: EmitC refuses a multi-block
   # function without it, and every compiled body has at least two blocks,
   # because ct_aot_enter's NULL test is a branch.

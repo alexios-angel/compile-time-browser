@@ -3,6 +3,7 @@
 add_library(ctcompile-ctjs-lowering
   CTJSToEmitC.cpp
   CTJSToRuntime.cpp
+  DropUncompiled.cpp
   EmitCBlockArguments.cpp)
 ctcompile_target(ctcompile-ctjs-lowering)
 add_dependencies(ctcompile-ctjs-lowering MLIRCTJSOpsIncGen CTJSTransformsPassIncGen)
