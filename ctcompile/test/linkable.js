@@ -31,10 +31,12 @@ function everything(a, b) {
   void a;
   // And constants of every kind the backend spells.
   if (a === null) { return true; }
-  // `undefined` IS A GLOBAL READ in JavaScript, so spelling it here would need
-  // ct_aot_global_get - which is one of the 37 rows with no body. An
-  // uninitialised local is the same value and reaches no helper.
-  var nothing;
+  // `undefined` IS A GLOBAL READ in JavaScript. It needed ct_aot_global_get,
+  // which had no body - so this was an uninitialised local, and it is spelled
+  // properly again now that the row is implemented. It is the link check for
+  // both global rows: a write follows.
+  var nothing = undefined;
+  globalThis = nothing;
   if (b === nothing) { return false; }
   // A property read, whose helper takes an inline cache this backend can only
   // pass as nullptr - ct_aot_ic is forward-declared and nothing can allocate

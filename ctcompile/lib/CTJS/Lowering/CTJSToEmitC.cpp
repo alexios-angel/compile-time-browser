@@ -221,7 +221,37 @@ struct compiled_entry {
 // A GLOBAL'S NAME IS NOT ALWAYS AN IDENTIFIER, which is why this escapes at all
 // rather than trusting the input: `globalThis["\u0000"] = 1` is legal
 // JavaScript, and the importer carries whatever the source said.
+// WHETHER A RAW STRING LITERAL WOULD BE BETTER THAN ESCAPING.
+//
+// R"(...)" is not a general answer and cannot be the only path: a raw string's
+// content is the LITERAL BYTES of the generated source file, so a name
+// containing a zero byte or a control character would have to have that byte
+// written into the .cpp - and a NUL truncates the file for most tooling. It
+// also cannot contain its own terminator.
+//
+// AND FOR AN ORDINARY IDENTIFIER IT IS WORSE, not better: `R"(Math)"` says
+// nothing that `"Math"` does not, with five more characters. The escaped form
+// IS the plain form whenever nothing needs escaping.
+//
+// So the raw form is used exactly where escaping is the noisy one - a name
+// containing a quote or a backslash, where `"a\"b\\c"` becomes `R"(a"b\c)"`.
+// That is a narrow win and it is taken because the emitted code is read by
+// people when something has gone wrong.
+constexpr bool raw_string_is_clearer(std::string_view bytes) {
+    bool noisy = false;
+    for (const char raw : bytes) {
+        const auto byte = static_cast<unsigned char>(raw);
+        // A raw string can only carry what the source file can carry plainly.
+        if (byte < 0x20 || byte >= 0x7f) { return false; }
+        if (byte == '"' || byte == '\\') { noisy = true; }
+    }
+    // The terminator cannot appear inside; a custom delimiter would only move
+    // the problem to choosing one nothing collides with.
+    return noisy && bytes.find(")\"") == std::string_view::npos;
+}
+
 constexpr std::string c_string_literal(std::string_view bytes) {
+    if (raw_string_is_clearer(bytes)) { return "R\"(" + std::string(bytes) + ")\""; }
     std::string spelled = "\"";
     for (const char raw : bytes) {
         const auto byte = static_cast<unsigned char>(raw);
@@ -255,13 +285,24 @@ static_assert(c_string_literal("Math") == "\"Math\"");
 static_assert(c_string_literal("od\001Fd") == "\"od\\001Fd\"");
 static_assert(c_string_literal("od\001Fd").size() == 5 + 2 + 3,
               "five source bytes, two quotes, and three extra characters for the one escape");
-// Quotes and backslashes close the literal or start an escape if they are not
-// themselves escaped.
-static_assert(c_string_literal("a\"b") == "\"a\\\"b\"");
-static_assert(c_string_literal("a\\b") == "\"a\\\\b\"");
+// QUOTES AND BACKSLASHES TAKE THE RAW FORM, because escaping them is exactly
+// the case where the escaped spelling is harder to read than the name.
+static_assert(c_string_literal("a\"b") == "R\"(a\"b)\"");
+static_assert(c_string_literal("a\\b") == "R\"(a\\b)\"");
 // AND A ZERO BYTE SURVIVES, which is why the length is emitted beside the
-// pointer: strlen would stop here.
+// pointer: strlen would stop here. It also forces the escaped path - a raw
+// string cannot carry a NUL, because a NUL in the generated source truncates
+// the file for most tooling.
 static_assert(c_string_literal(std::string_view("a\0b", 3)) == "\"a\\000b\"");
+static_assert(!raw_string_is_clearer(std::string_view("a\0b", 3)));
+
+// THE RAW FORM IS TAKEN ONLY WHERE ESCAPING IS THE NOISY ONE.
+static_assert(!raw_string_is_clearer("Math"), "nothing to escape - the plain form is clearer");
+static_assert(raw_string_is_clearer("a\"b"));
+static_assert(c_string_literal("a\"b\\c") == "R\"(a\"b\\c)\"");
+// AND NEVER WHERE THE CONTENT WOULD CLOSE IT.
+static_assert(!raw_string_is_clearer("a)\"b"), "the content contains the terminator");
+static_assert(c_string_literal("a)\"b") == "\"a)\\\"b\"");
 
 // THE HELPERS THE RUNTIME DECLARES BUT DOES NOT DEFINE.
 //
@@ -282,10 +323,11 @@ static_assert(c_string_literal(std::string_view("a\0b", 3)) == "\"a\\000b\"");
 // direction fails the build rather than a program.
 bool runtime_defines(llvm::StringRef helper) {
     static constexpr llvm::StringLiteral undefined_yet[] = {
+        // ct_aot_global_get and ct_aot_global_set were here and are not any
+        // more: aot_bridge.cpp defines both now, and the list is the only
+        // thing that decides whether the backend emits a call.
         llvm::StringLiteral("ct_aot_negate"),
         llvm::StringLiteral("ct_aot_bit_not"),
-        llvm::StringLiteral("ct_aot_global_get"),
-        llvm::StringLiteral("ct_aot_global_set"),
     };
     for (const llvm::StringLiteral & absent : undefined_yet) {
         if (helper == absent) { return false; }

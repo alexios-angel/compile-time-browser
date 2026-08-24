@@ -326,6 +326,37 @@ struct aot_bridge {
         return status;
     }
 
+    // ct_aot_global_get. THE ABSENCE IS LOAD-BEARING and the row says so: an
+    // undeclared global does NOT throw a ReferenceError in this runtime, it
+    // reads `undefined`. context::global already has exactly that behaviour -
+    // `globals_.find(name)`, undefined when absent - which is the same two
+    // lines VM_CASE(get_global) runs (run_loop.cpp:226-231), so the two tiers
+    // cannot drift.
+    //
+    // NO FRAME IS TOUCHED beyond finding the context, and nothing here can
+    // throw, allocate or re-enter - which is why the row is (0, 0, 0) and why
+    // the compiled form is a single call with no status and no edge.
+    static std::uint64_t global_get(aot::ct_aot_frame * f, const char * name,
+                                    std::uint32_t name_len) {
+        const context & cx = *frame_of(f).ctx;
+        return cx.global(std::string_view{name, name_len}).bits();
+    }
+
+    // ct_aot_global_set. VM_CASE(set_global) is
+    // `globals_[names[in.bx()]] = reg(in.a)` (run_loop.cpp:235), and
+    // context::define_global is that assignment - so a global created by
+    // compiled code and one created by the interpreter are the same entry.
+    //
+    // THE NAME IS COPIED because the map owns its keys and the caller's
+    // characters are a `const char *` pointing into a generated translation
+    // unit's rodata - which outlives everything here, but the map's contract is
+    // ownership and borrowing from it would be a second rule to remember.
+    static void global_set(aot::ct_aot_frame * f, const char * name, std::uint32_t name_len,
+                           std::uint64_t v) {
+        context & cx = *frame_of(f).ctx;
+        cx.define_global(std::string{name, name_len}, value::from_bits(v));
+    }
+
     static std::int32_t get_index(aot::ct_aot_frame * f, std::uint64_t obj, std::uint64_t key,
                                   std::uint64_t * out) {
         context & cx = *frame_of(f).ctx;
@@ -687,6 +718,15 @@ std::int32_t ct_aot_to_number(ct_aot_frame * fr, std::uint64_t v, double * out) 
 // The `site` parameter is where Phase 26 attaches an inline cache without an
 // ABI break. Taken and ignored, because the signature is the thing two code
 // generators are written against and a parameter added later is a break.
+std::uint64_t ct_aot_global_get(ct_aot_frame * fr, const char * name, std::uint32_t name_len) {
+    return script::aot_bridge::global_get(fr, name, name_len);
+}
+
+void ct_aot_global_set(ct_aot_frame * fr, const char * name, std::uint32_t name_len,
+                       std::uint64_t v) {
+    script::aot_bridge::global_set(fr, name, name_len, v);
+}
+
 std::int32_t ct_aot_get_index(ct_aot_frame * fr, std::uint64_t obj, std::uint64_t key,
                               ct_aot_ic * site, std::uint64_t * out) {
     (void)site;

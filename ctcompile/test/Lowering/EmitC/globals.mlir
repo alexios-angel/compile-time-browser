@@ -1,61 +1,58 @@
-// GLOBALS ARE LOWERED AND THEN REFUSED, WHICH IS NOT A CONTRADICTION.
+// GLOBALS, AND THE ESCAPE THAT IS A REAL BUG IF IT IS A HEX ONE.
 //
-// The lowering for them is written and correct - one infallible call each, the
-// name as bytes and a length. What is missing is the other side:
-// ct_aot_global_get and ct_aot_global_set are DECLARED in aot.hpp and DEFINED
-// NOWHERE. aot_helpers.def has 69 rows; aot_bridge.cpp has bodies for 32 of
-// them.
+// This file was a REFUSAL test one commit ago, and the reason is worth keeping:
+// aot.hpp declares all 69 ABI rows and aot_bridge.cpp defined 32 of them, so
+// emitting a call to ct_aot_global_get COMPILED PERFECTLY and failed at link.
+// It now has a body, so the lowering is enabled and this asserts what it emits.
 //
-// THIS WAS SHIPPED BROKEN FOR TWO COMMITS AND EVERY TEST PASSED. A call to an
-// undeclared function is a compile error; a call to a DECLARED-but-undefined
-// one compiles perfectly and fails at link - and every EmitC test compiled the
-// output with -fsyntax-only. Linking the same file by hand gives "undefined
-// reference to `ct_aot_global_get'". ctcompile_linkable now links a translation
-// unit exercising every operation the backend accepts, so this cannot recur
-// quietly.
-//
-// SO THE .def CANNOT BE THE ONLY SOURCE OF TRUTH HERE, and this is the one
-// place in the project where that is so: it records what the ABI IS, not what
-// has been built. The second list lives in CTJSToEmitC.cpp beside
-// runtime_defines(), and the link test is what keeps it honest in both
-// directions - a name wrongly present refuses an operation that works, and a
-// name wrongly absent fails the build.
-//
-// WHEN THE RUNTIME GROWS THE TWO BODIES, delete their entries from that list
-// and this file becomes a positive test again. The CHECK lines below are the
-// ones it will need, which is why the emitted forms are written down here
-// rather than only described.
+// Both rows are infallible - (0, 0, 0) - so each is a single call with no
+// status, no edge and no safepoint. Reading an undeclared global does NOT throw
+// a ReferenceError in this runtime; it reads `undefined`, and the row says that
+// absence is load-bearing rather than an oversight. The implementation goes
+// through context::global, which is the same two lines VM_CASE(get_global)
+// runs, so the two tiers cannot drift.
 
-// RUN: ctjs-opt %s --ctjs-lower-to-emitc | FileCheck %s
+// RUN: ctjs-opt %s --ctjs-lower-to-emitc --emitc-eliminate-block-arguments \
+// RUN:   | mlir-translate --mlir-to-cpp --declare-variables-at-top \
+// RUN:   | FileCheck %s
+
+// RUN: ctjs-opt %s --ctjs-lower-to-emitc --emitc-eliminate-block-arguments \
+// RUN:   | mlir-translate --mlir-to-cpp --declare-variables-at-top > %t.cpp \
+// RUN:   && %cxx %t.cpp
 
 ctjs.func @globals(%receiver: !ctjs.value, %new_target: !ctjs.value,
                    %callee: !ctjs.value, %v: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
   %ctx = ctjs.frame_enter 1
   %g = ctjs.load_global "Math"
+  // A NAME THAT IS NOT AN IDENTIFIER, which is legal JavaScript:
+  // `globalThis["odFd"] = 1`. The importer carries whatever the source
+  // said, so the backend cannot assume otherwise.
+  ctjs.store_global "od\01Fd", %v
   ctjs.frame_exit %ctx
   ctjs.return %g
 }
 
-// CHECK-LABEL: ctjs.func @globals
-// CHECK-SAME: ctjs.not_lowered = "ct_aot_global_get is declared in aot.hpp and defined nowhere
+// AN ORDINARY NAME KEEPS THE PLAIN FORM, with its length beside it. The length
+// is emitted rather than left to strlen because the name is BYTES: a global
+// whose name contains a zero byte is legal and strlen would stop at it.
+// CHECK: ctbrowser::aot::ct_aot_global_get({{v[0-9]+}}, "Math", 4);
 
-ctjs.func @writes(%receiver: !ctjs.value, %new_target: !ctjs.value,
-                  %callee: !ctjs.value, %v: !ctjs.value) -> !ctjs.value
-    attributes {upvalue_count = 0 : i32} {
-  %ctx = ctjs.frame_enter 1
-  ctjs.store_global "od\01Fd", %v
-  ctjs.frame_exit %ctx
-  ctjs.return %v
-}
+// AND THE ONE THAT WOULD BREAK UNDER A HEX ESCAPE. `od`, byte 0x01, `Fd` -
+// five characters. Written "od\x01Fd" the C++ compiler reads the escape as
+// \x01F followed by `d`, which is four characters against a length of five, and
+// the emitted program would look up a global nobody named. An octal escape is
+// exactly three digits and cannot run on.
+//
+// The hazard is real enough to have bitten the static_assert written to
+// demonstrate it: "od\x01Fd" in C++ source is a hex escape out of range and
+// does not compile at all.
+// CHECK: ctbrowser::aot::ct_aot_global_set({{v[0-9]+}}, "od\001Fd", 5, {{v[0-9]+}});
 
-// CHECK-LABEL: ctjs.func @writes
-// CHECK-SAME: ctjs.not_lowered = "ct_aot_global_set is declared in aot.hpp and defined nowhere
-
-// THE NAME ESCAPING IS PROVEN WHERE IT LIVES, not here. c_string_literal is
-// checked by static_asserts in CTJSToEmitC.cpp, including the case this file's
-// second function carries - `od`, byte 0x01, `Fd`, which under a hex escape
-// would emit "od\x01Fd" and be read by the C++ compiler as four characters
-// against a length of five. Writing that assertion found the same hazard in its
-// own source: "od\x01Fd" in C++ is a hex escape out of range and would not
-// compile at all.
+// THE RAW-STRING FORM IS NOT USED HERE and that is the rule working, not an
+// omission. `R"(Math)"` says nothing `"Math"` does not, with five more
+// characters, and a raw string cannot carry the 0x01 above at all - its content
+// is the literal bytes of this generated file. It is taken only where escaping
+// is the noisy spelling: a name containing a quote or a backslash. Both paths
+// are checked by static_asserts beside c_string_literal.
+// CHECK-NOT: R"(
