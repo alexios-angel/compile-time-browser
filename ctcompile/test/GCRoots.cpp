@@ -66,6 +66,10 @@ using ctbrowser::script::value;
 // ctjs-translate, then ctjs-opt, then mlir-translate, then this project's own
 // C++ compiler. The symbol is renamed by the build so this declaration does not
 // depend on how the importer numbers functions.
+extern "C" std::int32_t ctc_held(ctbrowser::aot::ct_aot_ctx *, const ctbrowser::aot::ct_aot_site *,
+                                 const std::uint64_t *, std::uint32_t, std::uint64_t, std::uint32_t,
+                                 std::uint64_t *);
+
 extern "C" std::int32_t ctc_f(ctbrowser::aot::ct_aot_ctx *, const ctbrowser::aot::ct_aot_site *,
                               const std::uint64_t *, std::uint32_t, std::uint64_t, std::uint32_t,
                               std::uint64_t *);
@@ -74,6 +78,8 @@ namespace {
 
 constexpr std::string_view fixture = R"JS(
 function f(a, b, c, k) { return k(a + b, c); }
+
+function held(a, b, c, k) { var s = a + b; var keep = function () { return s; }; return k(keep(), c); }
 
 function cat(x, y) { return x + y; }
 
@@ -87,6 +93,7 @@ var c = { valueOf: function () { var j = ''; for (var i = 0; i < 8; i++) { j = j
 
 function setup() { A = repeat('A'); B = repeat('B'); }
 function run() { R = f(A, B, c, cat); }
+function runHeld() { R = held(A, B, c, cat); }
 )JS";
 
 int failures = 0;
@@ -125,32 +132,52 @@ int main() {
         return 1;
     }
 
-    const auto attempt = [&](ctbrowser::aot::ct_aot_entry_fn entry, bool stress) {
+    const auto attempt = [&](function_proto * body, const char * driver,
+                             ctbrowser::aot::ct_aot_entry_fn entry, bool stress) {
         // THE FIXTURE IS REBUILT WITHOUT STRESS EACH TIME, so the strings are
         // fresh heap objects and one run cannot leave the next a survivor.
-        f->aot_entry = nullptr;
+        body->aot_entry = nullptr;
         cx.set_gc_stress(false);
         cx.call(cx.global("setup"), std::span<const value>{}, value::undefined());
-        f->aot_entry = entry;
+        body->aot_entry = entry;
         cx.set_gc_stress(stress);
-        cx.call(cx.global("run"), std::span<const value>{}, value::undefined());
+        cx.call(cx.global(driver), std::span<const value>{}, value::undefined());
         const std::string answer = cx.to_string(cx.global("R"));
         cx.set_gc_stress(false);
         return answer;
     };
 
     // THE INTERPRETER DEFINES THE ANSWER. Nothing here is written down twice.
-    const std::string expected = attempt(nullptr, true);
+    const std::string expected = attempt(f, "run", nullptr, true);
     report("the interpreter under stress", expected.size() == 65, expected, "65 characters");
 
     // AND THE COMPILED BODY MUST AGREE WITH IT - under stress, which is the
     // whole point, and without, which catches a backend that is wrong always
     // rather than only when the collector runs.
-    report("compiled, collector hostile", attempt(&ctc_f, true) == expected, attempt(&ctc_f, true),
-           expected);
-    report("compiled, collector idle", attempt(&ctc_f, false) == expected, attempt(&ctc_f, false),
-           expected);
+    report("compiled, collector hostile", attempt(f, "run", &ctc_f, true) == expected,
+           attempt(f, "run", &ctc_f, true), expected);
+    report("compiled, collector idle", attempt(f, "run", &ctc_f, false) == expected,
+           attempt(f, "run", &ctc_f, false), expected);
 
-    if (failures == 0) { std::printf("\nall %d checks passed\n", 3); }
+    // AND A CLOSURE BUILT IN COMPILED CODE, HELD ACROSS THE SAME COLLECTION.
+    //
+    // ct_aot_make_closure allocates and is a safepoint, and so is the call
+    // after it. THREE things have to survive: the string `a + b` builds, the
+    // CELL holding it, and the closure_object itself - and while `k` runs user
+    // JavaScript, none of them is reachable from anything but this frame's
+    // slots.
+    function_proto * kept = nullptr;
+    for (function_proto & candidate : compiled.functions) {
+        if (candidate.name == "held") { kept = &candidate; }
+    }
+    if (kept == nullptr) {
+        std::printf("no function_proto named held\n");
+        return 1;
+    }
+    const std::string want_held = attempt(kept, "runHeld", nullptr, true);
+    report("a closure, collector hostile", attempt(kept, "runHeld", &ctc_held, true) == want_held,
+           attempt(kept, "runHeld", &ctc_held, true), want_held);
+
+    if (failures == 0) { std::printf("\nall %d checks passed\n", 4); }
     return failures == 0 ? 0 : 1;
 }

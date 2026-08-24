@@ -161,7 +161,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
             -DOPT=$<TARGET_FILE:ctjs-opt>
             -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
             -DSOURCE=${_gc_js}
-            -DENTRIES=f
+            "-DENTRIES=f;held"
             -DOUTPUT=${_gc_cpp}
             -P "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
     DEPENDS "${_gc_js}" ctjs-translate ctjs-opt

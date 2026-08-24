@@ -186,22 +186,36 @@ BOTH compiled (stage 4)    12
 one proto, and until it has one, nothing in the suite covers a compiled body
 calling a closure another compiled body built.
 
-## WHAT IS STILL UNTESTED
+## DONE — all four stages, and what closed the last two gaps
 
-Two paths are wired and have never been exercised. Neither is a suspicion —
-both are code that runs today and that no case reaches:
+Both gaps named above are closed, and the arrow one was not a formality.
 
-* **Arrows.** `$enclosing_this` is passed to `ct_aot_make_closure` and used only
-  when the target `is_arrow`, and `arg0` was changed for EVERY function to come
-  from `ct_aot_this` (the effective receiver) rather than the entry's raw one.
-  That change is right — the importer maps `op::load_this` to `arg0` and that
-  opcode is `effective_this` — but an arrow inside a method is the only case
-  that would tell the two apart, and there isn't one. The plan named it from
-  the start.
-* **A collection across `ct_aot_make_closure`.** The row is a safepoint and
-  allocates; `ctcompile_gc_roots` covers `ct_aot_binary_op` and `ct_aot_call`
-  and not this. The upvalue array is in frame slots, so it should hold — but
-  "should" is what the GC test exists to replace.
+**`ct_aot_this` returned `call_frame::receiver` directly** while its ABI row has
+always said it delegates to `context::effective_this`. For every ordinary
+function the two are the same value, so nothing could tell them apart — an arrow
+is the only shape that separates them, and until compiled code could build one
+there was no way to write the test. `() => this` inside a method read the arrow
+frame's own receiver, undefined for a plain call, instead of the method's
+object.
+
+**A collection across `ct_aot_make_closure`** is covered: three things have to
+survive it and the call after it — the string, the cell holding it, and the
+closure_object — and none is reachable from anything but the frame's slots.
+Falsified: dropping the upvalue window's rooting gives `undefinedZ` where 65
+characters are correct.
+
+**The harness now installs entries on several protos**, which is what made both
+possible: `arrow this` needs the method and the arrow compiled, and
+`nested compiled` needs the creator and the created. The lookup takes a name
+**and an ordinal**, because an arrow has no name — the importer calls every
+anonymous function `fn` when it builds a symbol while the proto's own name is
+`""`, and this fixture has two anonymous protos.
+
+One method note. The probe written to isolate the arrow failure was **wrong**:
+it compiled a different program from the one the entries were built from, so the
+function indices a compiled body bakes pointed at other functions entirely and
+all four arms agreed for no good reason. The real isolation was inside the
+fixture, patching one half at a time.
 
 ## Stage 4 — original note
 

@@ -11,3 +11,11 @@
 // both kinds of rooting the backend does: one slot per produced value, and a
 // reserved run per call site.
 function f(a, b, c, k) { return k(a + b, c); }
+
+// AND A CLOSURE BUILT IN COMPILED CODE, HELD ACROSS A COLLECTION.
+//
+// ct_aot_make_closure allocates and is a safepoint, and so is the call below
+// it. Three things have to survive: the string `a + b` builds, the CELL holding
+// it, and the closure_object itself - none of which is reachable from anything
+// but this frame's slots while `k` runs user JavaScript.
+function held(a, b, c, k) { var s = a + b; var keep = function () { return s; }; return k(keep(), c); }
