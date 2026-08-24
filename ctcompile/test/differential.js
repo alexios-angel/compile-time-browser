@@ -67,6 +67,17 @@ function counter(start) { var n = start; return function step() { n = n + 1; ret
 // registers, or both from the enclosing closure, gets one of them wrong.
 function outer(a) { var x = a; return function middle(b) { var y = b; return function inner() { return x + y; }; }; }
 
+// AN ARROW DECIDES ITS `this` WHERE IT IS WRITTEN, and this is the only shape
+// that separates that from the raw receiver an entry is handed.
+//
+// The compiled body's argument 0 comes from ct_aot_this - which is
+// effective_this, the enclosing method's object when the frame's closure is an
+// arrow - rather than from the entry ABI's `receiver`. For every ordinary
+// function the two are equal, so nothing else in this file can tell them apart.
+// Here they differ: `seen()` is called with no receiver at all, so the raw one
+// is undefined and the captured one is whatever `methodish` was called on.
+function methodish(ignored) { var seen = () => this; return seen(); }
+
 // --- the harness the driver calls -------------------------------------------
 //
 // It lives here rather than in the C++ so that the file the backend compiles
@@ -104,4 +115,7 @@ function drive(which) {
   if (which === 9) { var d = counter(50); d(); OUT = d(); }
   // 1 + 2 = 3, and only if both descriptor arms picked the right binding.
   if (which === 10) { OUT = outer(1)(2)(); }
+  // .call GIVES methodish A RECEIVER without needing an object literal, which
+  // would reach ct_aot_set_index - one of the rows with no body yet.
+  if (which === 11) { OUT = methodish.call("captured", 0); }
 }

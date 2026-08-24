@@ -65,6 +65,8 @@ CT_ENTRY(apply)
 CT_ENTRY(step)
 CT_ENTRY(counter)
 CT_ENTRY(middle)
+CT_ENTRY(methodish)
+CT_ENTRY(fn)
 #undef CT_ENTRY
 
 namespace {
@@ -83,6 +85,18 @@ constexpr std::string_view fixture =
 #include "differential.js.inc"
     ;
 
+// One proto to install a compiled entry on.
+//
+// BY NAME AND ORDINAL, because an arrow has no name: the importer calls every
+// anonymous function `fn`, and picking the first match silently would be the
+// wrong closure the moment a fixture grows a second one. The lookup below
+// refuses an ambiguous name rather than guessing.
+struct installed {
+    const char * name;
+    unsigned ordinal;
+    ctbrowser::aot::ct_aot_entry_fn entry;
+};
+
 struct subject {
     // WHICH ARM OF drive() THIS IS, written down rather than taken from the
     // row's position. It was positional, and inserting a case in the middle
@@ -91,14 +105,19 @@ struct subject {
     // test that lies about which case failed is worse than one that fails.
     unsigned which;
     const char * name;
-    // WHOSE function_proto GETS THE COMPILED ENTRY, which is not always the
-    // function the arm calls. The harness installs ONE entry at a time, so a
-    // case that drives `counters` while installing `counters` runs `step`
-    // INTERPRETED and exercises no closure at all - which is what the first
-    // version of the two-closure case did. It passed with the closure handoff
-    // removed, and that is how it was found.
-    const char * patched;
-    ctbrowser::aot::ct_aot_entry_fn entry;
+    // WHICH function_protos GET A COMPILED ENTRY, which is not always the
+    // function the arm calls, and is not always ONE.
+    //
+    // Installing a single entry is what the harness did, and a case that drives
+    // `counters` while installing `counters` runs `step` INTERPRETED and
+    // exercises no closure at all - which is what the first two-closure case
+    // did. It passed with the closure handoff removed, and that is how it was
+    // found.
+    //
+    // MORE THAN ONE IS NOT A CONVENIENCE EITHER. Whether a closure BUILT by
+    // compiled code enters compiled code when called is a question no
+    // single-entry case can ask, and the ABI row claims it does not.
+    installed patches[2];
     // WHAT THE ANSWER MUST BE, and it is written down on purpose.
     //
     // THE INTERPRETER DEFINES CORRECT, which is this file's whole premise - but
@@ -138,18 +157,44 @@ int main() {
     }
 
     const subject subjects[] = {
-        {0u, "plus", "plus", &ctc_plus,
-         "op::add_generic against op::add - a valueOf that is or is not run", "4"},
-        {1u, "ge", "ge", &ctc_ge, "UNORDERED - `>=` lowered as !(<) answers true for NaN", "false"},
-        {2u, "strict", "strict", &ctc_strict,
-         "ct_aot_strict_equals, which cannot throw and takes no frame", "false"},
-        {3u, "loose", "loose", &ctc_loose,
-         "ct_aot_loose_equals, which converts and has an exception edge", "true"},
-        {4u, "pick", "pick", &ctc_pick,
-         "block arguments, which the C++ emitter miscompiles as edges", "2"},
-        {5u, "globals", "globals", &ctc_globals, "a global read and a global write", "41/7"},
-        {6u, "apply", "apply", &ctc_apply, "the contiguous argument window a call needs", "4"},
-        {7u, "step", "step", &ctc_step,
+        {0u,
+         "plus",
+         {{"plus", 0u, &ctc_plus}, {}},
+         "op::add_generic against op::add - a valueOf that is or is not run",
+         "4"},
+        {1u,
+         "ge",
+         {{"ge", 0u, &ctc_ge}, {}},
+         "UNORDERED - `>=` lowered as !(<) answers true for NaN",
+         "false"},
+        {2u,
+         "strict",
+         {{"strict", 0u, &ctc_strict}, {}},
+         "ct_aot_strict_equals, which cannot throw and takes no frame",
+         "false"},
+        {3u,
+         "loose",
+         {{"loose", 0u, &ctc_loose}, {}},
+         "ct_aot_loose_equals, which converts and has an exception edge",
+         "true"},
+        {4u,
+         "pick",
+         {{"pick", 0u, &ctc_pick}, {}},
+         "block arguments, which the C++ emitter miscompiles as edges",
+         "2"},
+        {5u,
+         "globals",
+         {{"globals", 0u, &ctc_globals}, {}},
+         "a global read and a global write",
+         "41/7"},
+        {6u,
+         "apply",
+         {{"apply", 0u, &ctc_apply}, {}},
+         "the contiguous argument window a call needs",
+         "4"},
+        {7u,
+         "step",
+         {{"step", 0u, &ctc_step}, {}},
          "a captured cell against a copied value - a copy answers 1 twice, and a body that "
          "cannot see its closure answers undefined, because the write lands on a non-cell and "
          "is dropped",
@@ -160,44 +205,89 @@ int main() {
         // PATCHES counter, WHICH BUILDS THE CLOSURE. Everything above reads
         // one; this is the first case where ct_aot_make_closure runs in
         // compiled code.
-        {9u, "make closure", "counter", &ctc_counter,
+        {9u,
+         "make closure",
+         {{"counter", 0u, &ctc_counter}, {}},
          "building a closure at all - a wrong upvalue array captures the wrong binding and "
          "says nothing",
          "52"},
-        {10u, "two levels", "middle", &ctc_middle,
+        {10u,
+         "two levels",
+         {{"middle", 0u, &ctc_middle}, {}},
          "the from_parent_local arm against the enclosing-closure arm - `y` is middle's own "
          "register and `x` is not",
          "3"},
-        {8u, "two closures", "step", &ctc_step,
+        // AN ARROW'S `this`, WITH BOTH HALVES COMPILED. `methodish` builds the
+        // arrow, so it exercises ct_aot_make_closure's enclosing_this; the
+        // arrow itself reads it, which exercises ct_aot_this.
+        //
+        // ITS PROTO NAME IS EMPTY. `fn` is what the IMPORTER calls an anonymous
+        // function when it builds a SYMBOL - `fn$2` - and the proto's own name
+        // is "". The two are not the same string, and the ordinal is there
+        // because a second anonymous function would make "" ambiguous.
+        {11u,
+         "arrow this",
+         {{"methodish", 0u, &ctc_methodish}, {"", 0u, &ctc_fn}},
+         "the EFFECTIVE receiver against the entry's raw one - `seen()` is called with no "
+         "receiver, so the raw one is undefined",
+         "captured"},
+        // A CLOSURE BUILT BY COMPILED CODE, CALLED FROM COMPILED CODE. No
+        // single-entry case can ask this, and the ABI row claims it does not
+        // work - a claim that predates function_proto::aot_entry.
+        {9u,
+         "nested compiled",
+         {{"counter", 0u, &ctc_counter}, {"step", 0u, &ctc_step}},
+         "whether a closure built by compiled code enters compiled code when called",
+         "52"},
+        {8u,
+         "two closures",
+         {{"step", 0u, &ctc_step}, {}},
          "the closure INSTANCE against the shared function_proto - sharing makes the second "
          "counter continue the first's count, giving 203 rather than 302",
          "302"},
     };
 
     for (const subject & each : subjects) {
-        function_proto * body = nullptr;
-        for (function_proto & candidate : compiled.functions) {
-            if (candidate.name == each.patched) { body = &candidate; }
+        // EVERY PROTO THIS CASE INSTALLS ON, resolved before anything runs so a
+        // missing one is reported rather than silently skipped.
+        function_proto * bodies[std::size(each.patches)] = {};
+        bool resolved = true;
+        for (std::size_t slot = 0; slot < std::size(each.patches); ++slot) {
+            const installed & want = each.patches[slot];
+            if (want.name == nullptr) { continue; }
+            unsigned seen = 0;
+            for (function_proto & candidate : compiled.functions) {
+                if (candidate.name != want.name) { continue; }
+                if (seen++ == want.ordinal) { bodies[slot] = &candidate; }
+            }
+            if (bodies[slot] == nullptr) {
+                std::printf("%-12s FAILED - no function_proto named %s#%u\n", each.name, want.name,
+                            want.ordinal);
+                resolved = false;
+            }
         }
-        if (body == nullptr) {
-            std::printf("%-10s FAILED - no function_proto, so differential.js and this file "
-                        "have drifted\n",
-                        each.name);
+        if (!resolved) {
             ++failures;
             continue;
         }
 
-        const auto answer = [&](ctbrowser::aot::ct_aot_entry_fn entry) {
-            body->aot_entry = entry;
+        const auto answer = [&](bool compiled_tier) {
+            for (std::size_t slot = 0; slot < std::size(each.patches); ++slot) {
+                if (bodies[slot] != nullptr) {
+                    bodies[slot]->aot_entry = compiled_tier ? each.patches[slot].entry : nullptr;
+                }
+            }
             const value which = value::number(static_cast<double>(each.which));
             const value arguments[] = {which};
             cx.call(cx.global("drive"), std::span<const value>{arguments}, value::undefined());
-            body->aot_entry = nullptr;
+            for (function_proto * each_body : bodies) {
+                if (each_body != nullptr) { each_body->aot_entry = nullptr; }
+            }
             return cx.to_string(cx.global("OUT"));
         };
 
-        const std::string interpreted = answer(nullptr);
-        const std::string generated = answer(each.entry);
+        const std::string interpreted = answer(false);
+        const std::string generated = answer(true);
 
         // THE ARM HAS TO HAVE RUN. Without this a case whose arm throws leaves
         // OUT holding the PREVIOUS case's answer, both tiers read the same

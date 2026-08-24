@@ -273,11 +273,23 @@ struct aot_bridge {
     }
 
     // ct_aot_this. `this` as the frame sees it.
+    //
+    // THROUGH effective_this, WHICH THE ROW ALWAYS SAID and this did not: it
+    // returned call_frame::receiver directly. For every ordinary function the
+    // two are the same value, so nothing could tell them apart - an ARROW is
+    // the only shape that separates them, and until compiled code could build
+    // one there was no way to write the test. `() => this` inside a method read
+    // the arrow frame's own receiver, which is undefined for a plain call,
+    // instead of the method's object.
+    //
+    // effective_this is also what VM_CASE(load_this) runs, which is where the
+    // importer sends op::load_this - so the two tiers now answer the same
+    // question rather than two similar ones.
     static std::uint64_t this_value(aot::ct_aot_frame * f) {
         const aot_frame_storage & held = frame_of(f);
         const context & cx = *held.ctx;
         if (held.frame_index >= cx.frames_.size()) { return value::undefined().bits(); }
-        return cx.frames_[held.frame_index].receiver.bits();
+        return context::effective_this(cx.frames_[held.frame_index]).bits();
     }
 
     static std::uint64_t cell_new(aot::ct_aot_frame * f, std::uint64_t init) {
