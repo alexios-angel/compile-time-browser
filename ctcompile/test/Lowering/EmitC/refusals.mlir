@@ -52,20 +52,45 @@ ctjs.func @uses_new_target(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %new_target
 }
 
-// --- USES THE CALLEE --------------------------------------------------------
+// --- THE CALLEE IS NO LONGER REFUSED ---------------------------------------
 //
-// Same gap, and one more behind it: ct_aot_callee reads call_frame::closure,
-// and ct_aot_enter never sets that field - so even once the helper exists it
-// would answer `undefined` for every compiled frame.
+// ct_aot_callee has a body now, and it is the only way a compiled function can
+// reach its own upvalues: they live on the closure INSTANCE, while `site` is
+// the function_proto that every closure over the same function shares. The
+// entry ABI delivers `site` and not the closure, so the value comes out of
+// call_frame::closure once ct_aot_enter has put one there.
 //
-// CHECK-LABEL: ctjs.func @uses_callee
-// CHECK-SAME: ctjs.not_lowered = "uses the callee
+// new.target IS STILL REFUSED and the two gaps are not the same.
+// ct_aot_new_target has no body either, and behind it ct_aot_enter takes
+// new.target from pending_new_target_, which op::construct never sets on the
+// compiled path - so implementing the helper alone would answer undefined.
+//
+// CHECK-NOT: ctjs.func @uses_callee
+// CHECK: emitc.func @uses_callee
 ctjs.func @uses_callee(%receiver: !ctjs.value, %new_target: !ctjs.value,
                        %callee: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
   %ctx = ctjs.frame_enter 1
   ctjs.frame_exit %ctx
   ctjs.return %callee
+}
+
+// --- AN UPVALUE OPERATION NAMING SOMEBODY ELSE'S CLOSURE ---------------------
+//
+// ct_aot_upvalue_cell reads the FRAME, so the operand is redundant with it -
+// the bytecode's get_upvalue reads the current frame's closure and the importer
+// only ever names the callee argument. An operation naming a different closure
+// would be lowered into a read of the wrong one, silently, so it is refused.
+//
+// CHECK-LABEL: ctjs.func @foreign_upvalue
+// CHECK-SAME: ctjs.not_lowered = "an upvalue operation names a closure other than
+ctjs.func @foreign_upvalue(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                           %callee: !ctjs.value, %other: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 1 : i32} {
+  %ctx = ctjs.frame_enter 1
+  %captured = ctjs.load_upvalue %other[0]
+  ctjs.frame_exit %ctx
+  ctjs.return %captured
 }
 
 // --- CONTROL FLOW IS NO LONGER REFUSED ------------------------------------

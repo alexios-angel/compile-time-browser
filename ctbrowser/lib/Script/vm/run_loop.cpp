@@ -903,9 +903,9 @@ value context::run_loop(std::size_t stop_depth) {
                 // promises: the window with its missing parameters already
                 // undefined. BEFORE the depth guard, because ct_aot_enter owns
                 // that guard for a compiled frame.
-                if (value produced = value::undefined();
-                    enter_compiled(*this, target, registers_.data() + new_base, in.b, receiver,
-                                   /*constructing*/ false, produced)) {
+                if (value produced = value::undefined(); enter_compiled(
+                        *this, target, callee, registers_.data() + new_base, in.b, receiver,
+                        /*constructing*/ false, produced)) {
                     reg(in.a) = produced;
                     break;
                 }
@@ -1387,7 +1387,7 @@ value context::run_loop(std::size_t stop_depth) {
                 // constructor returning a primitive evaluate to its receiver,
                 // and the ABI hands that decision to ct_aot_return_value.
                 if (value produced = value::undefined();
-                    enter_compiled(*this, target, registers_.data() + new_base, in.b, self,
+                    enter_compiled(*this, target, callee, registers_.data() + new_base, in.b, self,
                                    /*constructing*/ true, produced)) {
                     reg(in.a) = produced.is_object_like() ? produced : self;
                     break;

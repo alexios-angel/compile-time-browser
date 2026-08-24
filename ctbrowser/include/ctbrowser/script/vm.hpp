@@ -964,7 +964,7 @@ private:
     // ONE place that decides interpreted or native, and these are the two
     // members it needs.
     friend class executing_as;
-    friend bool enter_compiled_body(context & ctx, const function_proto & target,
+    friend bool enter_compiled_body(context & ctx, const function_proto & target, value closure,
                                     const value * argv, std::uint32_t argc, value receiver,
                                     bool constructing, value & out);
     friend void note_transition_into_vm(const context & ctx) noexcept;
@@ -1161,6 +1161,20 @@ private:
     // Set by `op::pass_new_target` and consumed by the very next frame push, so
     // a super() call hands its own new.target to the base constructor.
     value pending_new_target_ = value::undefined();
+    // THE CLOSURE A COMPILED BODY IS ABOUT TO BE ENTERED WITH.
+    //
+    // The entry ABI delivers `site` - the function_proto - and not the closure,
+    // and upvalues live on the closure INSTANCE: two closures over the same
+    // function share a proto and have different upvalues. So a compiled body
+    // could reach nothing it captured, and ct_aot_upvalue_cell, ct_aot_callee
+    // and ct_aot_home were all blocked at that one point.
+    //
+    // IT TRAVELS THE SAME WAY new.target DOES rather than through the ABI's
+    // signature, which aot_entry.h calls "the thing two code generators are
+    // written against". Set by enter_compiled_body, consumed and cleared by
+    // ct_aot_enter, and a GC root in the window between - the same window the
+    // comment on pending_new_target_ describes.
+    value pending_closure_ = value::undefined();
     flat_map<std::string, module_record> modules_;
     // The module being evaluated, so `bind_export` knows whose cells to adopt and
     // `load_import` knows who is asking. Null while a classic script runs.

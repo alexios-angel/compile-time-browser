@@ -110,8 +110,8 @@ value context::invoke(value callable, std::span<const value> args, value this_va
     // the ABI's entry row promises, and BEFORE the depth guard, because
     // ct_aot_enter owns that guard for a compiled frame.
     if (value produced = value::undefined(); enter_compiled(
-            *this, target, registers_.data() + new_base, static_cast<std::uint32_t>(args.size()),
-            this_value, constructing, produced)) {
+            *this, target, callable, registers_.data() + new_base,
+            static_cast<std::uint32_t>(args.size()), this_value, constructing, produced)) {
         if (registers_.size() >= new_base) { registers_.resize(new_base); }
         return produced;
     }
@@ -235,9 +235,9 @@ run_result context::run_reentrant(const program & prog) {
     // is the third place that entered a program's top level by pushing a frame
     // of its own; leaving it out would mean an imported module's compiled body
     // was interpreted purely because of who imported it.
-    if (value produced = value::undefined();
-        enter_compiled(*this, entry, registers_.data() + new_base, 0u, value::undefined(),
-                       /*constructing*/ false, produced)) {
+    if (value produced = value::undefined(); enter_compiled(
+            *this, entry, value::undefined(), registers_.data() + new_base, 0u, value::undefined(),
+            /*constructing*/ false, produced)) {
         program_ = outer_program;
         if (registers_.size() >= new_base) { registers_.resize(new_base); }
         return result;
@@ -321,7 +321,7 @@ value context::execute(const program & prog, const function_proto & entry) {
     // reset above, so a compiled body enters a context in the state it expects,
     // and before the frame push, because ct_aot_enter pushes its own.
     if (value produced = value::undefined();
-        enter_compiled(*this, entry, registers_.data(), 0u, value::undefined(),
+        enter_compiled(*this, entry, value::undefined(), registers_.data(), 0u, value::undefined(),
                        /*constructing*/ false, produced)) {
         return produced;
     }

@@ -76,7 +76,7 @@ void reset_transitions() noexcept;
 // compiled body reads it directly. It must also be read before anything that
 // can resize the register file; `ct_aot_enter` may, which is why the row says
 // so and why both call sites pass a window they have just finished filling.
-[[nodiscard]] bool enter_compiled_body(context & ctx, const function_proto & target,
+[[nodiscard]] bool enter_compiled_body(context & ctx, const function_proto & target, value closure,
                                        const value * argv, std::uint32_t argc, value receiver,
                                        bool constructing, value & out);
 
@@ -93,11 +93,17 @@ void reset_transitions() noexcept;
 //
 // It is still ONE decision: this is the only place that reads `aot_entry`, and
 // every entry into a function asks it.
+//
+// `closure` IS THE CALLEE ITSELF, and it is a parameter because the ABI has
+// nowhere to put it: ct_aot_entry_fn delivers `site`, the function_proto, and
+// upvalues live on the closure INSTANCE - two closures over one function share
+// a proto and capture different things. A top-level entry has none and passes
+// undefined, which is not the same as a closure with no upvalues.
 [[nodiscard]] inline bool enter_compiled(context & ctx, const function_proto & target,
-                                         const value * argv, std::uint32_t argc, value receiver,
-                                         bool constructing, value & out) {
+                                         value closure, const value * argv, std::uint32_t argc,
+                                         value receiver, bool constructing, value & out) {
     if (target.aot_entry == nullptr) { return false; }
-    return enter_compiled_body(ctx, target, argv, argc, receiver, constructing, out);
+    return enter_compiled_body(ctx, target, closure, argv, argc, receiver, constructing, out);
 }
 
 // Counts a crossing into interpreted or native C++ code. `enter_compiled`

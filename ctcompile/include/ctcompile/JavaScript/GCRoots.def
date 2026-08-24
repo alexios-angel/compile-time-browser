@@ -28,6 +28,12 @@ CT_GC_ROOT(/* name */ pending_new_target, /* owner */ "context::pending_new_targ
            /* marked_in */ "collect()",
            /* note */ "the constructor a super() call is handing on. Live only between two "
            "instructions, which is exactly the window a collection can fall in")
+CT_GC_ROOT(/* name */ pending_closure, /* owner */ "context::pending_closure_",
+           /* marked_in */ "collect()",
+           /* note */ "the closure a compiled body is about to be entered with. The entry ABI "
+           "delivers the function_proto and not the closure, so it travels here instead - live "
+           "only between enter_compiled_body and ct_aot_enter, which is a window a collection "
+           "can fall in")
 CT_GC_ROOT(/* name */ frame_closure, /* owner */ "call_frame::closure",
            /* marked_in */ "collect(), per frame",
            /* note */ "a function called from C++ via call() is otherwise referenced only from a C++ "

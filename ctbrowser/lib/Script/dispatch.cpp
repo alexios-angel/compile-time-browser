@@ -72,8 +72,9 @@ void note_transition_into_cxx(const context & ctx) noexcept {
 // Reached only when there IS a compiled body - the header's inline half has
 // already asked. Everything here happens once per compiled call, so none of it
 // is on the interpreter's ordinary path.
-bool enter_compiled_body(context & ctx, const function_proto & target, const value * argv,
-                         std::uint32_t argc, value receiver, bool constructing, value & out) {
+bool enter_compiled_body(context & ctx, const function_proto & target, value closure,
+                         const value * argv, std::uint32_t argc, value receiver, bool constructing,
+                         value & out) {
     const transition crossing = ctx.executing_ == executing_kind::aot  ? transition::aot_to_aot
                                 : ctx.executing_ == executing_kind::vm ? transition::vm_to_aot
                                                                        : transition::cxx_to_aot;
@@ -85,6 +86,12 @@ bool enter_compiled_body(context & ctx, const function_proto & target, const val
     (void)storage;
     std::uint64_t produced = 0;
     aot::ct_aot_status status = aot::ct_aot_status::failed;
+    // THE CLOSURE TRAVELS THROUGH THE CONTEXT, not through the signature, for
+    // the reason aot_entry.h gives about that signature: it "is the thing two
+    // code generators are written against and a parameter added later is a
+    // break". new.target already travels this way, and ct_aot_enter consumes
+    // both in the same place.
+    ctx.pending_closure_ = closure;
     {
         const executing_as running{ctx, executing_kind::aot};
         status = static_cast<aot::ct_aot_status>(

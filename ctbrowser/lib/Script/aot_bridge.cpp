@@ -174,6 +174,17 @@ struct aot_bridge {
         // C++ local until the body returns.
         entered.receiver = value::from_bits(receiver);
         entered.new_target = cx.pending_new_target_;
+        // AND THE CLOSURE, WHICH IS THE ONLY WAY A COMPILED BODY REACHES WHAT
+        // IT CAPTURED. The entry ABI delivers `site` - the shared
+        // function_proto - and upvalues live on the closure INSTANCE.
+        //
+        // A NON-CLOSURE BECOMES nullptr RATHER THAN A CAST. A top-level entry
+        // passes undefined, and "no closure" is not the same as "a closure with
+        // no upvalues": ct_aot_upvalue_cell and ct_aot_callee both distinguish
+        // them, exactly as VM_CASE(get_upvalue) and VM_CASE(load_callee) do.
+        entered.closure = cx.pending_closure_.is_kind(heap_kind::function)
+                              ? static_cast<closure_object *>(cx.pending_closure_.as_heap())
+                              : nullptr;
         // PUSHED BEFORE THE CLEAR, not after. Between copying
         // pending_new_target_ into a C++ local and clearing the root, the
         // constructor a super() is handing on is reachable from nothing - which
@@ -182,6 +193,12 @@ struct aot_bridge {
         // line and removes the question.
         cx.frames_.push_back(entered);
         cx.pending_new_target_ = value::undefined();
+        // CLEARED AFTER THE PUSH for the reason above it: between copying the
+        // handoff into the frame and clearing the root, the value is reachable
+        // from both - and clearing first would leave a window where it is
+        // reachable from neither. call_frame::closure is GC root 4, so once the
+        // frame is pushed the closure is traced.
+        cx.pending_closure_ = value::undefined();
         return reinterpret_cast<aot::ct_aot_frame *>(held);
     }
 
@@ -324,6 +341,67 @@ struct aot_bridge {
         const std::int32_t status = check(f);
         if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
         return status;
+    }
+
+    // THE call_frame THIS HANDLE NAMES.
+    //
+    // BY INDEX AND GUARDED, for the reason aot_frame_storage keeps an index
+    // rather than a pointer: frames_ is a vector, a nested call reallocates it,
+    // and after an unwind it can be SHORTER than this frame's index - the same
+    // state ct_aot_check reports as CT_AOT_UNWOUND. A helper reached in that
+    // window must answer, not dereference.
+    static context::call_frame * frame_record(aot::ct_aot_frame * f) {
+        aot_frame_storage & held = frame_of(f);
+        context & cx = *held.ctx;
+        return held.frame_index < cx.frames_.size() ? &cx.frames_[held.frame_index] : nullptr;
+    }
+
+    // ct_aot_callee. VM_CASE(load_callee) is
+    // `closure != nullptr ? value::object(closure) : undefined`, and this is
+    // that - which is also the only way a compiled body can reach its own
+    // upvalues, since they live on the closure INSTANCE and `site` is the
+    // shared function_proto.
+    static std::uint64_t callee(aot::ct_aot_frame * f) {
+        const context::call_frame * record = frame_record(f);
+        if (record == nullptr || record->closure == nullptr) { return value::undefined().bits(); }
+        return value::object(record->closure).bits();
+    }
+
+    // ct_aot_upvalue_cell. The guarded fetch from VM_CASE(get_upvalue), MINUS
+    // the cell read - which is ct_aot_cell_get's job.
+    //
+    // THE SPLIT IS WHAT MAKES THE PAIR EXACT. get_upvalue answers undefined for
+    // a missing closure, an out-of-range index, or a slot that is not a cell;
+    // this covers the first two and cell_get covers the third by no-oping on a
+    // non-cell. Composed, the two guards are the one guard the interpreter
+    // writes inline, so `cell_get(upvalue_cell(fr, i))` IS get_upvalue.
+    static std::uint64_t upvalue_cell(aot::ct_aot_frame * f, std::uint32_t index) {
+        const context::call_frame * record = frame_record(f);
+        if (record == nullptr || record->closure == nullptr) { return value::undefined().bits(); }
+        if (index >= record->closure->upvalues.size()) { return value::undefined().bits(); }
+        return record->closure->upvalues[index].bits();
+    }
+
+    // ct_aot_cell_get. VM_CASE(cell_get) verbatim.
+    //
+    // NO FRAME AND NO FAILURE: the row is (0, 0, 0) and takes no handle at all,
+    // and its FAILURE line calls the silence a semantic guarantee - "a non-cell
+    // argument yields undefined silently", which is what lets the pair above
+    // compose without a second test.
+    static std::uint64_t cell_get(std::uint64_t cell) {
+        const value held = value::from_bits(cell);
+        return held.is_kind(heap_kind::cell)
+                   ? static_cast<cell_object *>(held.as_heap())->slot.bits()
+                   : value::undefined().bits();
+    }
+
+    // ct_aot_cell_set. VM_CASE(cell_set) verbatim, and silent on a non-cell for
+    // the same reason.
+    static void cell_set(std::uint64_t cell, std::uint64_t v) {
+        const value held = value::from_bits(cell);
+        if (held.is_kind(heap_kind::cell)) {
+            static_cast<cell_object *>(held.as_heap())->slot = value::from_bits(v);
+        }
     }
 
     // ct_aot_global_get. THE ABSENCE IS LOAD-BEARING and the row says so: an
@@ -718,6 +796,22 @@ std::int32_t ct_aot_to_number(ct_aot_frame * fr, std::uint64_t v, double * out) 
 // The `site` parameter is where Phase 26 attaches an inline cache without an
 // ABI break. Taken and ignored, because the signature is the thing two code
 // generators are written against and a parameter added later is a break.
+std::uint64_t ct_aot_callee(ct_aot_frame * fr) {
+    return script::aot_bridge::callee(fr);
+}
+
+std::uint64_t ct_aot_upvalue_cell(ct_aot_frame * fr, std::uint32_t index) {
+    return script::aot_bridge::upvalue_cell(fr, index);
+}
+
+std::uint64_t ct_aot_cell_get(std::uint64_t cell) {
+    return script::aot_bridge::cell_get(cell);
+}
+
+void ct_aot_cell_set(std::uint64_t cell, std::uint64_t v) {
+    script::aot_bridge::cell_set(cell, v);
+}
+
 std::uint64_t ct_aot_global_get(ct_aot_frame * fr, const char * name, std::uint32_t name_len) {
     return script::aot_bridge::global_get(fr, name, name_len);
 }

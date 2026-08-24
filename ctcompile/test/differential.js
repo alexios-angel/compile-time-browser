@@ -41,3 +41,22 @@ function globals(a) { DIFF_W = a; return DIFF_R; }
 
 // A CALL, the only operation needing a contiguous run of frame slots.
 function apply(k, a, b) { return k(a, b); }
+
+// A CAPTURED BINDING. `counter` itself is NOT compiled - it contains the
+// `closure` opcode, which the importer has no operation for - so the
+// interpreter builds the closure and the compiled body is the INNER function.
+// That split is what makes this testable before closures can be created in
+// compiled code.
+//
+// IT SEPARATES A CAPTURED CELL FROM A COPIED VALUE: a copy answers the same
+// thing every time. Before the closure reached the compiled frame it answered
+// `undefined` - the write landed on a non-cell and was dropped, and the read
+// found no closure - against the interpreter's 12.
+function counter(start) { var n = start; return function step() { n = n + 1; return n; }; }
+
+// TWO CLOSURES OVER ONE FUNCTION SEPARATE THE INSTANCE FROM THE PROTO, which is
+// the mistake the entry ABI invites: `site` is the function_proto and every
+// closure over `tally` shares it. A body that took its upvalues from there
+// would have the two counters share a binding, and the second would continue
+// the first's count instead of starting again.
+function counters(a, b) { return counter(a)() + counter(b)(); }

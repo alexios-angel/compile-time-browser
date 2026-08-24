@@ -471,6 +471,7 @@ std::size_t context::collect() {
     // only in this slot between the two instructions, which is exactly the
     // window a collection can fall in.
     mark(pending_new_target_);
+    mark(pending_closure_);
     // And the closure each live frame is executing. A function called from C++
     // via call() is likewise only referenced from a C++ local; without this its
     // upvalues can be freed while its body is still running.

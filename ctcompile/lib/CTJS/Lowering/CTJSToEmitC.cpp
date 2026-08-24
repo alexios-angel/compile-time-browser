@@ -394,6 +394,30 @@ bool body_is_supported(FuncOp function, std::string & why) {
             return;
         }
         if (mlir::isa<CompareOp, GetPropertyOp, CallOp>(op)) { return; }
+
+        // THE UPVALUE OPERATIONS, WHICH ARE TWO CALLS EACH - which is why they
+        // are plain CTJS_Ops rather than CTJS_RuntimeOps. The ABI splits the
+        // fused opcode deliberately: ct_aot_upvalue_cell answers undefined for
+        // a missing closure or an out-of-range index, ct_aot_cell_get no-ops on
+        // a non-cell, and composed they are exactly the guard VM_CASE
+        // (get_upvalue) writes inline.
+        //
+        // THE OPERAND MUST BE THIS FRAME'S OWN CLOSURE. ct_aot_upvalue_cell
+        // reads the frame, so an operation naming a DIFFERENT closure would be
+        // lowered into a read of the wrong one - and the importer only ever
+        // names the callee argument, so refusing anything else costs nothing
+        // and closes the hole for hand-written IR.
+        if (mlir::isa<LoadUpvalueOp, StoreUpvalueOp>(op)) {
+            const mlir::Value named = mlir::isa<LoadUpvalueOp>(op)
+                                          ? mlir::cast<LoadUpvalueOp>(op).getClosure()
+                                          : mlir::cast<StoreUpvalueOp>(op).getClosure();
+            if (named != function.getBody().front().getArgument(arg_callee)) {
+                supported = false;
+                why = "an upvalue operation names a closure other than this frame's own - "
+                      "ct_aot_upvalue_cell reads the frame, so it would read the wrong one";
+            }
+            return;
+        }
         if (mlir::isa<LoadGlobalOp>(op) && !runtime_defines("ct_aot_global_get")) {
             supported = false;
             why = "ct_aot_global_get is declared in aot.hpp and defined nowhere - emitting a call "
@@ -578,10 +602,15 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             refuse(function, "uses new.target, and ct_aot_new_target has no implementation");
             return false;
         }
-        if (!body.getArgument(arg_callee).use_empty()) {
-            refuse(function, "uses the callee, and ct_aot_callee has no implementation");
-            return false;
-        }
+        // THE CALLEE IS DELIVERABLE NOW. ct_aot_callee has a body, and it is
+        // the only way a compiled function can reach its own upvalues: they
+        // live on the closure INSTANCE, while `site` is the function_proto that
+        // every closure over the same function shares.
+        //
+        // new.target IS STILL NOT, and the two are not the same gap.
+        // ct_aot_new_target has no body either, and behind that
+        // ct_aot_enter takes it from pending_new_target_, which op::construct
+        // never sets on the compiled path.
 
         FrameEnterOp entered;
         function.getBody().walk([&](FrameEnterOp op) { entered = op; });
@@ -660,6 +689,7 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
         }
 
         llvm::DenseMap<mlir::Value, unsigned> scope_slots;
+        mlir::Value mapping_callee;
 
         // ---- the frame ----------------------------------------------------
         //
@@ -739,8 +769,24 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
         // afterwards, and keeping the two separate is what lets the elimination
         // be tested against a program that runs rather than only against the
         // output of this file.
+        // THE CLOSURE, WHICH ONLY EXISTS ONCE THE FRAME DOES. ct_aot_callee
+        // reads call_frame::closure, so this cannot be hoisted above
+        // ct_aot_enter the way the parameters had to be pulled below it - and
+        // it must be emitted BEFORE the mapping is built rather than after,
+        // which is not a style point: mapping a block argument to a Value that
+        // is still null is accepted silently, and the crash arrives later
+        // inside Operation::create, with a stack that names neither.
+        build.setInsertionPointToEnd(running);
+        if (!body.getArgument(arg_callee).use_empty()) {
+            mapping_callee = ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
+                                                      callee("ct_aot_callee"),
+                                                      mlir::ValueRange{frame.getResult(0)})
+                                 .getResult(0);
+        }
+
         mlir::IRMapping mapping;
         mapping.map(body.getArgument(arg_receiver), in_receiver);
+        if (mapping_callee) { mapping.map(body.getArgument(arg_callee), mapping_callee); }
         for (unsigned i = 0; i < declared; ++i) {
             mapping.map(body.getArgument(implicit_arguments + i), parameters[i]);
         }
@@ -770,7 +816,6 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
         // THE PARAMETERS ARE ROOTED FIRST, before anything can collect. They
         // were read out of argv before the frame existed - argv dies at
         // ct_aot_enter - so this is the earliest moment they can be.
-        build.setInsertionPointToEnd(running);
         for (unsigned i = 0; i < declared; ++i) {
             park_if_tracked(scope, build, where, body.getArgument(implicit_arguments + i),
                             parameters[i]);
@@ -1216,6 +1261,18 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             return;
         }
 
+        // READING AND WRITING A CAPTURED BINDING, each a pair of calls.
+        if (auto load = mlir::dyn_cast<LoadUpvalueOp>(op)) {
+            mapping.map(load.getResult(), cell_of_upvalue(scope, build, where, load.getIndex(),
+                                                          /*read=*/true, mlir::Value{}));
+            return;
+        }
+        if (auto store = mlir::dyn_cast<StoreUpvalueOp>(op)) {
+            (void)cell_of_upvalue(scope, build, where, store.getIndex(), /*read=*/false,
+                                  mapping.lookup(store.getValue()));
+            return;
+        }
+
         if (auto returned = mlir::dyn_cast<ReturnOp>(op)) {
             // ct_aot_return_value TAKES NO FRAME HANDLE, which is why the entry
             // delivers `receiver` and `constructing` by value: the body still
@@ -1278,6 +1335,30 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                          mlir::Value original, mlir::Value emitted) {
         const auto found = scope.slots.find(original);
         if (found != scope.slots.end()) { park(scope, build, where, emitted, found->second); }
+    }
+
+    // THE CELL AN UPVALUE INDEX NAMES, then read or written.
+    //
+    // NEITHER CALL CAN FAIL. All three rows are (0, 0, 0) - no status, no
+    // exception edge, no safepoint - so this is two plain calls with nothing
+    // between them to test.
+    mlir::Value cell_of_upvalue(compiled_entry & scope, mlir::OpBuilder & build,
+                                mlir::Location where, std::uint32_t index, bool read,
+                                mlir::Value written) {
+        auto cell = ec::CallOpaqueOp::create(
+            build, where, mlir::TypeRange{scope.value}, callee("ct_aot_upvalue_cell"),
+            mlir::ValueRange{scope.frame,
+                             literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                     std::to_string(index))});
+        if (!read) {
+            ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_cell_set"),
+                                     mlir::ValueRange{cell.getResult(0), written});
+            return mlir::Value{};
+        }
+        return ec::CallOpaqueOp::create(build, where, mlir::TypeRange{scope.value},
+                                        callee("ct_aot_cell_get"),
+                                        mlir::ValueRange{cell.getResult(0)})
+            .getResult(0);
     }
 
     // A MACHINE QUANTITY, MADE INTO A JAVASCRIPT VALUE.
