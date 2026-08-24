@@ -198,6 +198,16 @@ struct compiled_entry {
     // a dead value alive is a leak until the frame is left, and losing a live
     // one is a use-after-free.
     llvm::DenseMap<mlir::Value, unsigned> slots;
+
+    // AND WHERE EACH CALL'S ARGUMENT WINDOW STARTS.
+    //
+    // ct_aot_call takes `const uint64_t *argv` - a CONTIGUOUS run - and the
+    // arguments are individually rooted in slots of their own, which are not
+    // adjacent. So each call site gets a run reserved for it, written just
+    // before the call. In the frame rather than in a C++ array, for the reason
+    // everything else is: ct_aot_call is a safepoint that runs arbitrary user
+    // JavaScript before it reads the arguments.
+    llvm::DenseMap<mlir::Operation *, unsigned> argument_windows;
 };
 
 // A C++ STRING LITERAL FOR ARBITRARY BYTES.
@@ -341,7 +351,7 @@ bool body_is_supported(FuncOp function, std::string & why) {
             }
             return;
         }
-        if (mlir::isa<CompareOp>(op)) { return; }
+        if (mlir::isa<CompareOp, GetPropertyOp, CallOp>(op)) { return; }
         if (mlir::isa<LoadGlobalOp>(op) && !runtime_defines("ct_aot_global_get")) {
             supported = false;
             why = "ct_aot_global_get is declared in aot.hpp and defined nowhere - emitting a call "
@@ -645,9 +655,16 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
         for (unsigned i = 0; i < declared; ++i) {
             scope_slots[body.getArgument(implicit_arguments + i)] = parked++;
         }
+        llvm::DenseMap<mlir::Operation *, unsigned> windows;
         function.getBody().walk([&](mlir::Operation * inner) {
             for (const mlir::Value result : inner->getResults()) {
                 if (mlir::isa<ValueType>(result.getType())) { scope_slots[result] = parked++; }
+            }
+            // A CONTIGUOUS RUN PER CALL SITE, reserved here so the register
+            // window can be sized to include it before ct_aot_enter is emitted.
+            if (auto call = mlir::dyn_cast<CallOp>(inner)) {
+                windows[inner] = parked;
+                parked += static_cast<unsigned>(call.getArgs().size());
             }
         });
         const unsigned window = std::max(static_cast<unsigned>(entered.getRegCount()), parked);
@@ -706,7 +723,7 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
         // ---- and their operations -----------------------------------------
         compiled_entry scope{
             entry,   frame.getResult(0), in_receiver, in_constructing, in_out, value, status,
-            nullptr, scope_slots};
+            nullptr, scope_slots,        windows};
 
         // THE PARAMETERS ARE ROOTED FIRST, before anything can collect. They
         // were read out of argv before the frame existed - argv dies at
@@ -1076,6 +1093,84 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                                  literal(build, where, opaque(build.getContext(), "uint32_t"),
                                          std::to_string(name.size())),
                                  mapping.lookup(global.getValue())});
+            return;
+        }
+
+        // A PROPERTY READ. Its helper's inline-cache parameter is nullptr and
+        // has to be: ct_aot_ic is FORWARD-DECLARED ONLY, so nothing can
+        // allocate one, and the implementation says the parameter is "taken and
+        // ignored, because the signature is the thing two code generators are
+        // written against and a parameter added later is a break". Phase 26
+        // attaches real storage; until then this is not a shortcut but the only
+        // spelling available.
+        if (auto get = mlir::dyn_cast<GetPropertyOp>(op)) {
+            const mlir::Value no_cache =
+                literal(build, where, pointer_to(build.getContext(), "ctbrowser::aot::ct_aot_ic"),
+                        "nullptr");
+            mapping.map(get.getResult(),
+                        status_call(scope, build, where, callee("ct_aot_get_index"),
+                                    {scope.frame, mapping.lookup(get.getObject()),
+                                     mapping.lookup(get.getKey()), no_cache},
+                                    value));
+            return;
+        }
+
+        // A CALL, WHICH IS THE FIRST OPERATION THAT NEEDS THE FRAME FOR
+        // SOMETHING OTHER THAN ROOTING.
+        //
+        // ct_aot_call takes `const uint64_t *argv` - a CONTIGUOUS run - and the
+        // arguments are rooted in slots of their own, which are not adjacent.
+        // So a run was reserved for this site and the arguments are copied into
+        // it here, immediately before the call. IN THE FRAME, not in a C++
+        // array: ct_aot_call is a safepoint that runs arbitrary user JavaScript
+        // before it reads them, and an array of locals is invisible to a
+        // precise collector.
+        //
+        // THE SPAN IS FETCHED ONCE PER STORE AND AGAIN FOR THE POINTER, because
+        // context::call resizes context::registers_ and the row says the
+        // pointer is valid "NOT ONE INSTRUCTION LONGER" than the next
+        // safepoint. Nothing between these stores is a safepoint, so one fetch
+        // would do - and hoisting it is a decision this backend has no analysis
+        // to justify.
+        if (auto call = mlir::dyn_cast<CallOp>(op)) {
+            const unsigned base = scope.argument_windows.lookup(&op);
+            const auto arguments = call.getArgs();
+            for (auto [index, argument] : llvm::enumerate(arguments)) {
+                park(scope, build, where, mapping.lookup(argument),
+                     base + static_cast<unsigned>(index));
+            }
+
+            auto span =
+                ec::CallOpaqueOp::create(build, where, mlir::TypeRange{ec::PointerType::get(value)},
+                                         callee("ct_aot_slots"), mlir::ValueRange{scope.frame});
+            auto first = ec::SubscriptOp::create(
+                build, where, ec::LValueType::get(value), span.getResult(0),
+                mlir::ValueRange{literal(build, where,
+                                         mlir::IntegerType::get(build.getContext(), 32),
+                                         std::to_string(base))});
+            const mlir::Value argv =
+                ec::AddressOfOp::create(build, where, ec::PointerType::get(value),
+                                        first.getResult())
+                    .getResult();
+
+            // `key` AND `site` ARE THE ROW'S DIAGNOSTIC ARGUMENTS and the
+            // implementation ignores both. `key` names the callee in the
+            // message op::call_computed would produce; `site` carries a
+            // backwards scan of bytecode that an AOT frame does not have.
+            // Passing undefined and nullptr is honest about having neither
+            // rather than inventing one.
+            mapping.map(call.getResult(),
+                        status_call(scope, build, where, callee("ct_aot_call"),
+                                    {scope.frame, mapping.lookup(call.getCallee()),
+                                     mapping.lookup(call.getReceiver()), argv,
+                                     literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                             std::to_string(arguments.size())),
+                                     undefined(build, where, value),
+                                     literal(build, where,
+                                             pointer_to(build.getContext(),
+                                                        "const ctbrowser::aot::ct_aot_site"),
+                                             "nullptr")},
+                                    value));
             return;
         }
 

@@ -36,5 +36,10 @@ function everything(a, b) {
   // uninitialised local is the same value and reaches no helper.
   var nothing;
   if (b === nothing) { return false; }
-  return sum;
+  // A property read, whose helper takes an inline cache this backend can only
+  // pass as nullptr - ct_aot_ic is forward-declared and nothing can allocate
+  // one - and a call, which is the only operation so far that needs a
+  // CONTIGUOUS run of frame slots rather than just rooting.
+  var got = a[b];
+  return got(a, b, sum);
 }

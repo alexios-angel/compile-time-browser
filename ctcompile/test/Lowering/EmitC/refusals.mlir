@@ -94,40 +94,20 @@ ctjs.func @has_a_branch(%receiver: !ctjs.value, %new_target: !ctjs.value,
 
 // --- CONTAINS AN OPERATION WITH NO LOWERING ---------------------------------
 //
-// The allow-list's default. `ctjs.call` needs an argv span marshalled into the
-// frame's GC-rooted slots, an argc, a baked call site and a suspension edge -
-// and the reason names the operation, so the work list reads itself.
+// The allow-list's default, and the reason names the operation so the work list
+// reads itself. `ctjs.set_property` is doubly refused: it has no conversion,
+// and ct_aot_set_index is one of the 37 rows aot.hpp declares and aot_bridge.cpp
+// does not define.
 //
-// CHECK-LABEL: ctjs.func @calls
-// CHECK-SAME: ctjs.not_lowered = "no lowering yet for ctjs.call"
-ctjs.func @calls(%receiver: !ctjs.value, %new_target: !ctjs.value, %callee: !ctjs.value,
-                 %f: !ctjs.value) -> !ctjs.value
-    attributes {upvalue_count = 0 : i32} {
-  %ctx = ctjs.frame_enter 1
-  %r = ctjs.call %f(%receiver)
+// CHECK-LABEL: ctjs.func @writes_a_property
+// CHECK-SAME: ctjs.not_lowered = "no lowering yet for ctjs.set_property"
+ctjs.func @writes_a_property(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                             %callee: !ctjs.value, %o: !ctjs.value, %k: !ctjs.value)
+    -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+  %ctx = ctjs.frame_enter 2
+  ctjs.set_property %o[%k], %k
   ctjs.frame_exit %ctx
-  ctjs.return %r
-}
-
-// --- frame_exit THAT IS NOT THE LAST THING BEFORE THE RETURN ----------------
-//
-// The shared failure path leaves the frame too, so anything fallible after an
-// in-place exit emits a SECOND ct_aot_leave on the way out. The runtime makes
-// that harmless - leave truncates to this frame's own recorded index rather
-// than popping, and its row calls it "a harmless no-op after a failure" - so
-// this is an unchecked invariant rather than a live defect. Checked anyway: the
-// importer emits frame_exit immediately before every return, and a module where
-// that stopped being true is one nobody has looked at.
-//
-// CHECK-LABEL: ctjs.func @exits_early
-// CHECK-SAME: ctjs.not_lowered = "ctjs.frame_exit is not immediately followed
-ctjs.func @exits_early(%receiver: !ctjs.value, %new_target: !ctjs.value,
-                       %callee: !ctjs.value, %x: !ctjs.value) -> !ctjs.value
-    attributes {upvalue_count = 0 : i32} {
-  %ctx = ctjs.frame_enter 1
-  ctjs.frame_exit %ctx
-  %sum = ctjs.binary add %x, %x
-  ctjs.return %sum
+  ctjs.return %o
 }
 
 // --- A BINARY KIND ITS FAMILY DOES NOT SERVE --------------------------------

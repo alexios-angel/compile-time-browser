@@ -13,6 +13,12 @@
 // sixty-five; ASan called it a heap-use-after-free, the buffer freed and read
 // inside the same call. Without stress it was correct every time.
 //
+// THE FIXTURE NOW MAKES THE SECOND SAFEPOINT A CALL, which covers the other
+// kind of rooting the backend does. ct_aot_call takes a CONTIGUOUS `argv`, so
+// the arguments are copied into a run of frame slots reserved for that site -
+// and the collection happens inside the call, after user JavaScript has run,
+// with the intermediate string reachable only from that run.
+//
 // WHY THE OTHER TESTS COULD NOT SEE IT. Every EmitC test compiles what the
 // backend emits and several run it, but a use-after-free that nothing collects
 // is invisible: the freed memory is still there and still holds the right
@@ -68,7 +74,9 @@ extern "C" std::int32_t ctcompile_test_entry(ctbrowser::aot::ct_aot_ctx *,
 namespace {
 
 constexpr std::string_view fixture = R"JS(
-function f(a, b, c) { return a + b + c; }
+function f(a, b, c, k) { return k(a + b, c); }
+
+function cat(x, y) { return x + y; }
 
 function repeat(ch) { var s = ''; for (var i = 0; i < 32; i++) { s = s + ch; } return s; }
 
@@ -79,7 +87,7 @@ var A = '', B = '', R = '';
 var c = { valueOf: function () { var j = ''; for (var i = 0; i < 8; i++) { j = j + 'q'; } return 'Z'; } };
 
 function setup() { A = repeat('A'); B = repeat('B'); }
-function run() { R = f(A, B, c); }
+function run() { R = f(A, B, c, cat); }
 )JS";
 
 int failures = 0;
