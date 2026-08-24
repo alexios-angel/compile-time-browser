@@ -167,7 +167,43 @@ it, and that is `effective_this`, which differs for every compiled arrow. And
 `--ctjs-drop-uncompiled` removes refused functions so one refusal costs that
 function rather than the whole translation unit.
 
-## Stage 4 — nested compiled functions
+## Stage 4 — nested compiled functions — **WORKS, measured**
+
+The ABI row warns that "AOT stops at the first nested function unless
+closure_object or function_proto carries a compiled entry point". That row
+predates `function_proto::aot_entry`, which exists — and the warning is stale.
+Measured by installing both entries at once, which the differential harness
+never does because it patches one proto at a time:
+
+```
+both interpreted           12
+creator compiled           12
+closure compiled           12
+BOTH compiled (stage 4)    12
+```
+
+**This is not yet a permanent test.** It needs a subject that patches more than
+one proto, and until it has one, nothing in the suite covers a compiled body
+calling a closure another compiled body built.
+
+## WHAT IS STILL UNTESTED
+
+Two paths are wired and have never been exercised. Neither is a suspicion —
+both are code that runs today and that no case reaches:
+
+* **Arrows.** `$enclosing_this` is passed to `ct_aot_make_closure` and used only
+  when the target `is_arrow`, and `arg0` was changed for EVERY function to come
+  from `ct_aot_this` (the effective receiver) rather than the entry's raw one.
+  That change is right — the importer maps `op::load_this` to `arg0` and that
+  opcode is `effective_this` — but an arrow inside a method is the only case
+  that would tell the two apart, and there isn't one. The plan named it from
+  the start.
+* **A collection across `ct_aot_make_closure`.** The row is a safepoint and
+  allocates; `ctcompile_gc_roots` covers `ct_aot_binary_op` and `ct_aot_call`
+  and not this. The upvalue array is in frame slots, so it should hold — but
+  "should" is what the GC test exists to replace.
+
+## Stage 4 — original note
 
 Out of scope for the first working version, and worth stating so it is not
 discovered as a surprise: a closure built by Stage 3 points at a
