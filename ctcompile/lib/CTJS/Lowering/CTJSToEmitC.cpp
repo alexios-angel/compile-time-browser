@@ -245,7 +245,26 @@ void refuse(FuncOp function, llvm::StringRef because) {
 bool body_is_supported(FuncOp function, std::string & why) {
     bool supported = true;
     function.getBody().walk([&](mlir::Operation * op) {
-        if (mlir::isa<FrameEnterOp, FrameExitOp, ReturnOp, TruthyOp>(op)) { return; }
+        // ctjs.frame_exit MUST BE THE LAST THING BEFORE THE RETURN.
+        //
+        // The shared failure path leaves the frame too, so a fallible operation
+        // AFTER an in-place exit would emit a second ct_aot_leave on the way
+        // out. The runtime makes that harmless - leave truncates to this
+        // frame's own recorded index rather than popping, and its row says it
+        // "is a harmless no-op after a failure" - so this is an unchecked
+        // invariant rather than a live defect. It is checked anyway, because
+        // the importer emits frame_exit immediately before every return and a
+        // module where that stopped being true would be one nobody had looked
+        // at.
+        if (mlir::isa<FrameExitOp>(op)) {
+            if (op->getNextNode() == nullptr || !mlir::isa<ReturnOp>(op->getNextNode())) {
+                supported = false;
+                why = "ctjs.frame_exit is not immediately followed by ctjs.return - anything "
+                      "fallible after it would leave the frame twice";
+            }
+            return;
+        }
+        if (mlir::isa<FrameEnterOp, ReturnOp, TruthyOp>(op)) { return; }
         // THE ARITHMETIC, AND WITH IT THE FIRST EXCEPTION EDGE. Both families
         // answer with a ct_aot_status, so each becomes a call, a test against
         // ct_aot_status::ok by name, and a branch to the shared failure path.

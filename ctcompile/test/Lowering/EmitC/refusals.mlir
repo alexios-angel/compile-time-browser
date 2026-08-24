@@ -15,6 +15,19 @@
 
 // RUN: ctjs-opt %s --ctjs-lower-to-emitc | FileCheck %s
 
+// AND THE PASS ORDER, WHICH IS THE ONE MISTAKE THAT IS SILENT.
+//
+// --emitc-eliminate-block-arguments walks emitc.func and nothing else, so run
+// BEFORE the lowering it finds nothing, returns success and says nothing - and
+// the lowering then emits block arguments that reach mlir-translate, which
+// loses a copy on their edges. Measured on a self-loop from real JavaScript:
+// reversed, `sl(10,20,2)` answers 20 where 10 is correct, with ctjs-opt,
+// mlir-translate and g++ all exiting 0. A leftover ctjs.func is exactly that
+// mistake and nothing else looks like it, so it is refused.
+// RUN: not ctjs-opt %s --emitc-eliminate-block-arguments 2>&1 \
+// RUN:   | FileCheck --check-prefix=ORDER %s
+// ORDER: ran before the module was lowered
+
 // --- USES new.target --------------------------------------------------------
 //
 // The importer gives every function three implicit arguments - receiver,
@@ -94,6 +107,27 @@ ctjs.func @calls(%receiver: !ctjs.value, %new_target: !ctjs.value, %callee: !ctj
   %r = ctjs.call %f(%receiver)
   ctjs.frame_exit %ctx
   ctjs.return %r
+}
+
+// --- frame_exit THAT IS NOT THE LAST THING BEFORE THE RETURN ----------------
+//
+// The shared failure path leaves the frame too, so anything fallible after an
+// in-place exit emits a SECOND ct_aot_leave on the way out. The runtime makes
+// that harmless - leave truncates to this frame's own recorded index rather
+// than popping, and its row calls it "a harmless no-op after a failure" - so
+// this is an unchecked invariant rather than a live defect. Checked anyway: the
+// importer emits frame_exit immediately before every return, and a module where
+// that stopped being true is one nobody has looked at.
+//
+// CHECK-LABEL: ctjs.func @exits_early
+// CHECK-SAME: ctjs.not_lowered = "ctjs.frame_exit is not immediately followed
+ctjs.func @exits_early(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                       %callee: !ctjs.value, %x: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  %ctx = ctjs.frame_enter 1
+  ctjs.frame_exit %ctx
+  %sum = ctjs.binary add %x, %x
+  ctjs.return %sum
 }
 
 // --- A BINARY KIND ITS FAMILY DOES NOT SERVE --------------------------------

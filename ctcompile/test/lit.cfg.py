@@ -34,7 +34,12 @@ llvm_config.add_tool_substitutions(tools, config.ctcompile_tools_dirs)
 # are rather than in the three directories ctcompile builds into. It is what
 # turns an EmitC module into C++, which makes it part of the backend under test
 # rather than a convenience.
-llvm_config.add_tool_substitutions(["mlir-translate"], [config.llvm_tools_dir])
+# `not` COMES FROM THE SAME PLACE and is not optional: use_default_substitutions
+# registers it only if it is already on PATH, and it is not here - so a RUN line
+# using it failed with "not: command not found" and FileCheck then reported the
+# missing string, which reads like a broken assertion rather than a missing
+# tool.
+llvm_config.add_tool_substitutions(["mlir-translate", "not"], [config.llvm_tools_dir])
 
 # %cxx COMPILES THE EMITTED TRANSLATION UNIT AGAINST THE REAL ABI HEADERS.
 #

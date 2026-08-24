@@ -49,6 +49,33 @@ struct EmitCEliminateBlockArgumentsPass
     using EmitCEliminateBlockArgumentsBase::EmitCEliminateBlockArgumentsBase;
 
     void runOnOperation() override {
+        // THE PASS ORDER IS LOAD-BEARING, SO IT IS CHECKED RATHER THAN
+        // DOCUMENTED.
+        //
+        // This pass walks emitc.func and nothing else. Run BEFORE
+        // --ctjs-lower-to-emitc it therefore finds nothing, returns success and
+        // says nothing - and the lowering then emits block arguments that reach
+        // mlir-translate, which loses a copy on their edges. Measured on a real
+        // self-loop from real JavaScript: reversed, `sl(10,20,2)` answers 20
+        // where 10 is correct, with ctjs-opt, mlir-translate and g++ all
+        // exiting 0.
+        //
+        // A leftover ctjs.func is exactly that mistake, and nothing else looks
+        // like it.
+        if (mlir::WalkResult early = getOperation().walk([](mlir::Operation * op) {
+                return op->getName().getDialectNamespace() == "ctjs" ? mlir::WalkResult::interrupt()
+                                                                     : mlir::WalkResult::advance();
+            });
+            early.wasInterrupted()) {
+            getOperation().emitError()
+                << "--emitc-eliminate-block-arguments ran before the module was lowered - CTJS "
+                   "operations are still present. It must run AFTER "
+                   "--ctjs-lower-to-emitc, or the block arguments that lowering emits reach the "
+                   "C++ emitter, which miscompiles a parallel copy on their edges";
+            signalPassFailure();
+            return;
+        }
+
         llvm::SmallVector<ec::FuncOp> functions;
         getOperation().walk([&](ec::FuncOp function) { functions.push_back(function); });
         for (ec::FuncOp function : functions) {
