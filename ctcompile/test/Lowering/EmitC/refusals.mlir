@@ -28,22 +28,26 @@
 // RUN:   | FileCheck --check-prefix=ORDER %s
 // ORDER: ran before the module was lowered
 
-// --- USES new.target --------------------------------------------------------
+// --- new.target IS NO LONGER REFUSED ---------------------------------------
 //
 // The importer gives every function three implicit arguments - receiver,
 // new.target, callee - because the bytecode reads them with their own opcodes.
-// Only `receiver` is in the entry signature. The other two come from
-// ct_aot_new_target and ct_aot_callee, and NEITHER HAS AN IMPLEMENTATION: both
-// are declared in aot.hpp and defined nowhere in the runtime, so emitting a
-// call to either is a link error rather than a wrong answer.
+// Only `receiver` is in the entry signature; the other two are fetched after
+// ct_aot_enter, from the frame it pushed.
 //
-// It would be easy to pass `undefined` instead - the row says new.target IS
-// undefined for an ordinary call, and today the runtime never populates it for
-// a compiled constructor either. That is precisely why it is refused: undefined
-// is an answer, and it would be the wrong one the moment either gap is closed.
+// THIS CASE WAS A REFUSAL, AND ITS COMMENT SAID WHY IT WOULD STOP BEING ONE.
+// Passing `undefined` instead would have been easy and wrong - "undefined is an
+// answer, and it would be the wrong one the moment either gap is closed". Both
+// are closed. ct_aot_new_target has a body, and behind it the real blocker was
+// that ct_aot_enter takes new.target from pending_new_target_ and op::construct
+// never set that on the compiled path; context::construct_new sets it, which is
+// what its save/set/restore is for.
 //
-// CHECK-LABEL: ctjs.func @uses_new_target
-// CHECK-SAME: ctjs.not_lowered = "uses new.target
+// It matters more than one opcode suggests: Babel's _classCallCheck guard is a
+// new.target test, so a transpiled bundle has one in nearly every class.
+//
+// CHECK-NOT: ctjs.func @uses_new_target
+// CHECK: emitc.func @uses_new_target
 ctjs.func @uses_new_target(%receiver: !ctjs.value, %new_target: !ctjs.value,
                            %callee: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
@@ -60,10 +64,8 @@ ctjs.func @uses_new_target(%receiver: !ctjs.value, %new_target: !ctjs.value,
 // entry ABI delivers `site` and not the closure, so the value comes out of
 // call_frame::closure once ct_aot_enter has put one there.
 //
-// new.target IS STILL REFUSED and the two gaps are not the same.
-// ct_aot_new_target has no body either, and behind it ct_aot_enter takes
-// new.target from pending_new_target_, which op::construct never sets on the
-// compiled path - so implementing the helper alone would answer undefined.
+// new.target IS DELIVERED THE SAME WAY NOW, above - the two gaps were not the
+// same and both are closed.
 //
 // CHECK-NOT: ctjs.func @uses_callee
 // CHECK: emitc.func @uses_callee

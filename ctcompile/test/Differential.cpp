@@ -86,6 +86,8 @@ CT_ENTRY(spread)
 CT_ENTRY(hasIt)
 CT_ENTRY(isA)
 CT_ENTRY(drop)
+CT_ENTRY(greetChain)
+CT_ENTRY(Kid)
 #undef CT_ENTRY
 
 namespace {
@@ -330,6 +332,18 @@ int main() {
          {{"drop", 0u, &ctc_drop}, {}},
          "the property actually going away - without the erase it reads back as 1, giving 12",
          "undefined2"},
+        {28u,
+         "super method",
+         {{"greetChain", 0u, &ctc_greetChain}, {}},
+         "the HOME object against `this` - Sub shadows hello, so a lookup starting at the "
+         "receiver's own prototype answers BSUB",
+         "BS"},
+        {29u,
+         "super constructor",
+         {{"Kid", 0u, &ctc_Kid}, {}},
+         "pass_new_target AND the base call, which are different halves: `v` is written by the "
+         "base constructor either way, so new.target is the only thing the handoff changes",
+         "20/true"},
         {17u,
          "literals",
          {{"pack", 0u, &ctc_pack}, {}},

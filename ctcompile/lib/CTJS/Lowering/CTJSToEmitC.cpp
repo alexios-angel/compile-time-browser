@@ -425,7 +425,8 @@ bool body_is_supported(FuncOp function, std::string & why) {
         if (mlir::isa<CompareOp, GetPropertyOp, SetPropertyOp, CallOp, CreateClosureOp,
                       CreateCellOp, CellGetOp, CellSetOp, CreateObjectOp, CreateArrayOp, AppendOp,
                       ThrowOp, ConstructOp, IterableOp, HasPropertyOp, InstanceOfOp,
-                      DeletePropertyOp, FromBoolOp>(op)) {
+                      DeletePropertyOp, FromBoolOp, LoadHomeOp, GetProtoOp, SetProtoOp,
+                      PassNewTargetOp>(op)) {
             return;
         }
 
@@ -631,21 +632,22 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             refuse(function, "fewer arguments than the importer's three implicit ones");
             return false;
         }
-        // THE TWO THAT CANNOT BE DELIVERED. Their helpers are declared and
-        // never defined; calling either is a link error.
-        if (!body.getArgument(arg_new_target).use_empty()) {
-            refuse(function, "uses new.target, and ct_aot_new_target has no implementation");
-            return false;
-        }
-        // THE CALLEE IS DELIVERABLE NOW. ct_aot_callee has a body, and it is
-        // the only way a compiled function can reach its own upvalues: they
-        // live on the closure INSTANCE, while `site` is the function_proto that
-        // every closure over the same function shares.
+        // BOTH IMPLICIT ARGUMENTS ARE DELIVERABLE NOW, and neither always was.
         //
-        // new.target IS STILL NOT, and the two are not the same gap.
-        // ct_aot_new_target has no body either, and behind that
-        // ct_aot_enter takes it from pending_new_target_, which op::construct
-        // never sets on the compiled path.
+        // ct_aot_callee is the only way a compiled function can reach its own
+        // upvalues: they live on the closure INSTANCE, while `site` is the
+        // function_proto every closure over the same function shares.
+        //
+        // ct_aot_new_target was refused here until it had a body, and behind
+        // that sat a real blocker in TWO halves: ct_aot_enter takes new_target
+        // from pending_new_target_, and neither of the two paths into a
+        // compiled constructor set it. context::construct_new does now, and so
+        // does VM_CASE(construct)'s compiled arm - which was the half nothing
+        // noticed until a differential case read new.target and disagreed.
+        //
+        // The refusal is gone, which matters more than one opcode suggests:
+        // Babel's _classCallCheck guard is a new.target test, so a transpiled
+        // bundle has one in almost every class.
 
         FrameEnterOp entered;
         function.getBody().walk([&](FrameEnterOp op) { entered = op; });
@@ -735,6 +737,7 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
 
         llvm::DenseMap<mlir::Value, unsigned> scope_slots;
         mlir::Value mapping_callee;
+        mlir::Value mapping_new_target;
 
         // ---- the frame ----------------------------------------------------
         //
@@ -848,6 +851,15 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                                                       mlir::ValueRange{frame.getResult(0)})
                                  .getResult(0);
         }
+        // AND new.target, THE SAME WAY AND FOR THE SAME REASON. It reads
+        // call_frame::new_target, so it cannot be hoisted above ct_aot_enter
+        // either, and it must be emitted before the mapping is built.
+        if (!body.getArgument(arg_new_target).use_empty()) {
+            mapping_new_target = ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
+                                                          callee("ct_aot_new_target"),
+                                                          mlir::ValueRange{frame.getResult(0)})
+                                     .getResult(0);
+        }
 
         // ARGUMENT 0 IS THE EFFECTIVE RECEIVER, NOT THE ENTRY'S RAW ONE, and the
         // difference is a live bug for arrows. The importer maps op::load_this
@@ -868,6 +880,9 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                                              mlir::ValueRange{frame.getResult(0)})
                         .getResult(0));
         if (mapping_callee) { mapping.map(body.getArgument(arg_callee), mapping_callee); }
+        if (mapping_new_target) {
+            mapping.map(body.getArgument(arg_new_target), mapping_new_target);
+        }
         for (unsigned i = 0; i < declared; ++i) {
             mapping.map(body.getArgument(implicit_arguments + i), parameters[i]);
         }
@@ -1560,6 +1575,39 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                     mlir::ValueRange{scope.frame, array, mapping.lookup(element)});
             }
             mapping.map(made.getResult(), array);
+            return;
+        }
+        if (mlir::isa<PassNewTargetOp>(op)) {
+            // (0, 0, 0) and no result: one write to a context field, consumed
+            // by whatever frame is pushed next.
+            ec::CallOpaqueOp::create(build, where, mlir::TypeRange{},
+                                     callee("ct_aot_pass_new_target"),
+                                     mlir::ValueRange{scope.frame});
+            return;
+        }
+        if (auto chain = mlir::dyn_cast<GetProtoOp>(op)) {
+            // (0, 0, 0): a plain field read behind a kind test.
+            mapping.map(chain.getResult(),
+                        ec::CallOpaqueOp::create(
+                            build, where, mlir::TypeRange{value}, callee("ct_aot_get_proto"),
+                            mlir::ValueRange{scope.frame, mapping.lookup(chain.getObject())})
+                            .getResult(0));
+            return;
+        }
+        if (auto link = mlir::dyn_cast<SetProtoOp>(op)) {
+            ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_set_proto"),
+                                     mlir::ValueRange{scope.frame, mapping.lookup(link.getObject()),
+                                                      mapping.lookup(link.getProto())});
+            return;
+        }
+        if (auto lookup = mlir::dyn_cast<LoadHomeOp>(op)) {
+            // (0, 0, 0): one call, no status, no edge, no parking. It reads a
+            // property whose lookup consults `props` only, so nothing runs.
+            mapping.map(lookup.getResult(),
+                        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
+                                                 callee("ct_aot_home"),
+                                                 mlir::ValueRange{scope.frame})
+                            .getResult(0));
             return;
         }
         if (auto asks = mlir::dyn_cast<HasPropertyOp>(op)) {

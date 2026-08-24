@@ -103,6 +103,7 @@ after `new`                          483        91         0
 + the two jumps                      491        83         0
 + `iterable`                         519        55         0
 + `in`, `instanceof`, `delete`       527        47         0
++ `super` (four opcodes)             551        23         0
 ```
 
 ## The two conditional jumps the CFG classifier had never heard of
@@ -199,3 +200,50 @@ nothing.
 three opcode bodies out of it moved the end of the file above four cited lines,
 and `ctcompile_def_citations` failed — which is the only citation defect it can
 see, and it saw this one. All four are cited by `VM_CASE(name)` now.
+
+
+## `super` — four opcodes, and lowering the first three moved nothing
+
+`load_home` was 24 skipped functions, the largest single opcode left. Lowering it
+moved the count by **zero**, because `super.m()` is `load_home`, then
+`get_proto`, then an ordinary property read — the same 24 functions simply
+stopped one opcode later. Then `get_proto` and `set_proto` freed 10 of them and
+the other 14 stopped at `pass_new_target`, which is `super(...)`. All four had to
+land before anything moved.
+
+`get_proto`, `set_proto` and `pass_new_target` became shared `context` members
+first, like everything before them. `load_home` and `new_target` read the frame
+directly, so they are bridge-only.
+
+### Three things this cost
+
+**Class methods had no names, which is also wrong JavaScript.** A method's name
+lives on the member node; the function expression under it is anonymous, so
+every method's proto was nameless and every stack trace, `TypeError` and
+`fn.name` through one said `<anonymous>`. The constructor already went through
+`compile_function_body` for exactly this reason. The differential harness cannot
+address a nameless function, so this was found by needing to patch one — but it
+is a runtime fix, not a test fix.
+
+**`new.target` was refused, and its refusal test predicted its own end.** The
+comment said passing `undefined` instead "would be the wrong one the moment
+either gap is closed". Both gaps are closed, so the case is a positive one now.
+This unblocks more than one opcode: Babel's `_classCallCheck` is a `new.target`
+test, so a transpiled bundle has one in nearly every class.
+
+**A real runtime bug, found by a case that was wrong first.** `op::construct`'s
+compiled arm never set `pending_new_target_`, so a compiled constructor entered
+from the INTERPRETER saw `undefined` while the same constructor entered from
+`context::construct_new` saw the callee. `class Kid extends Parent` then handed
+`Parent` an undefined `new.target`.
+
+Nothing found it for two rounds. The first `super constructor` case claimed to
+separate `pass_new_target` and did not — `this.v` is written by the base
+constructor either way, so the handoff changed nothing observable, and a mutant
+that deleted the `pass_new_target` lowering **entirely** left the case green.
+Making `Parent` read `new.target` is what separated it, and the moment it did,
+it failed against the interpreter.
+
+That is the second time in this batch that a mutant found a case testing less
+than it claimed, and both times the fix was to the case's INPUTS rather than to
+its structure.

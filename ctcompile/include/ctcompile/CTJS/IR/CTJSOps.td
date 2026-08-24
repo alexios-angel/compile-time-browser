@@ -225,6 +225,77 @@ def CTJS_HasPropertyOp
 // Operators
 //===----------------------------------------------------------------------===//
 
+def CTJS_PassNewTargetOp
+    : CTJS_RuntimeOp<"pass_new_target", "ct_aot_pass_new_target"> {
+  let summary = "Hand this frame's new.target to the next frame pushed";
+  let description = [{
+    What `super(...)` emits just before its call, and the other half of why
+    lowering `load_home` alone moved nothing: 14 of Bootstrap's 24 `super`
+    functions call `super(...)` rather than `super.m()`.
+
+    NO OPERANDS, deliberately. The helper reads THIS frame's new.target, and an
+    explicit operand would let a backend hand over a stale or cached one.
+
+    ADJACENCY TO THE CALL AFTER IT IS AN INVARIANT NOTHING CHECKS. The flag is
+    consumed by the next JS-closure frame push, whatever that turns out to be -
+    and if the callee is a native or a generator it is not consumed at all, so
+    the next ordinary call anywhere sees a truthy new.target. That leak is the
+    interpreter's and is reproduced rather than repaired.
+  }];
+  let assemblyFormat = "attr-dict";
+}
+
+def CTJS_GetProtoOp : CTJS_RuntimeOp<"get_proto", "ct_aot_get_proto"> {
+  let summary = "The prototype link of an object, or undefined";
+  let description = [{
+    THE SECOND HALF OF `super`, and the reason lowering `load_home` alone moved
+    no functions at all: `super.m()` is load_home, then this, then an ordinary
+    property read. All 24 of Bootstrap's `super` functions simply stopped one
+    opcode later.
+
+    Undefined for anything that is not heap_kind::object exactly - an array, a
+    string, a proxy, a native and a closure all report undefined, a closure's
+    chain being a different field. A fresh object's prototype is null and only
+    `extends` sets it, so `super.m()` in a BASE-class method reads null. A
+    backend that folded super-dispatch would produce a different program.
+  }];
+  let arguments = (ins CTJS_ValueType:$object);
+  let results = (outs CTJS_ValueType:$result);
+  let assemblyFormat = "$object attr-dict";
+}
+
+def CTJS_SetProtoOp : CTJS_RuntimeOp<"set_proto", "ct_aot_set_proto"> {
+  let summary = "Point an object's prototype link at another value";
+  let description = [{
+    What `class D extends B` writes, and a silent no-op on anything that is not
+    an object - which is the interpreter's behaviour, not an oversight.
+  }];
+  let arguments = (ins CTJS_ValueType:$object, CTJS_ValueType:$proto);
+  let assemblyFormat = "$proto `on` $object attr-dict";
+}
+
+def CTJS_LoadHomeOp : CTJS_RuntimeOp<"load_home", "ct_aot_home"> {
+  let summary = "The `__home` of the running closure - what `super` resolves against";
+  let description = [{
+    NO OPERANDS, because the answer is a property of the frame rather than of
+    anything in it: the helper reads `fr->closure` and looks `__home` up on it.
+    A compiled frame has a closure for the same reason it can read its own
+    upvalues - ct_aot_enter puts it there.
+
+    ALL THREE FLAGS ARE ZERO and that is verified rather than assumed:
+    closure_object::find consults `props` only and never `accessors`, so no
+    getter can run, nothing allocates and nothing can throw. Undefined when the
+    frame has no closure and undefined when the closure has no `__home` - the
+    top-level script frame is both.
+
+    `__home` IS AN ORDINARY OBSERVABLE PROPERTY installed by op::set_prop when a
+    class is built, which is why this is a lookup and not a field read, and why
+    the home object must never be baked into an image.
+  }];
+  let results = (outs CTJS_ValueType:$result);
+  let assemblyFormat = "attr-dict";
+}
+
 def CTJS_FromBoolOp : CTJS_Op<"from_bool", [Pure]> {
   let summary = "A raw i1 as a JavaScript boolean";
   let description = [{

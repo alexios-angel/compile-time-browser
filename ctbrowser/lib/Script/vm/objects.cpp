@@ -175,6 +175,19 @@ void context::store_index(value target, value key, value v) {
     store_property(target, to_string(key), v);
 }
 
+void context::pass_new_target(value from) {
+    pending_new_target_ = from;
+}
+
+value context::get_prototype(value target) {
+    return target.is_object() ? static_cast<object_object *>(target.as_heap())->prototype
+                              : value::undefined();
+}
+
+void context::set_prototype(value target, value proto) {
+    if (target.is_object()) { static_cast<object_object *>(target.as_heap())->prototype = proto; }
+}
+
 bool context::has_property(value target, value key) {
     // A PROXY ANSWERS `in` ITSELF, or hands it to the target.
     if (target.is_kind(heap_kind::proxy)) {

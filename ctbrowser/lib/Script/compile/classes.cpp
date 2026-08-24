@@ -189,7 +189,21 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
             continue;
         }
         if (m.b < 0) { continue; }
-        compile_expr(m.b, slot);
+        // A METHOD KNOWS ITS OWN NAME, and JavaScript says so: `({m(){}}).m.name`
+        // is "m". The name is on the MEMBER node; the function expression under
+        // it is anonymous, so compiling it through compile_expr gave every
+        // method a nameless proto - and every stack trace, every TypeError and
+        // every `fn.name` through one said "<anonymous>". The constructor above
+        // already goes through compile_function_body for exactly this reason.
+        //
+        // ONLY FOR c == 1. A STATIC FIELD reaches this line too and its `b` is
+        // an arbitrary expression rather than a function.
+        if (m.c == 1) {
+            const std::uint32_t index = compile_function_body(m.b, std::string{m.text});
+            proto().emit(instruction::with_bx(op::closure, slot, index));
+        } else {
+            compile_expr(m.b, slot);
+        }
         const std::uint16_t name = name_operand(std::string{m.text});
         // A static member goes on the constructor; everything else on the
         // prototype, where instances find it.

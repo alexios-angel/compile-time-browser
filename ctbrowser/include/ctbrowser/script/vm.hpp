@@ -832,6 +832,32 @@ public:
     // pass is object-like only, because `5 instanceof Number` is false in
     // JavaScript however many methods a primitive resolves. `delete` on
     // anything that is not an object is a silent no-op.
+    // THE PROTOTYPE LINK, READ AND WRITTEN - what `super` walks.
+    //
+    // is_object() is heap_kind::object EXACTLY, so both report or ignore an
+    // array, a string, a proxy, a native and a CLOSURE, whose chain is
+    // closure_object::proto_link and is never this field. And a fresh object's
+    // prototype is value::null() while `extends` is what sets it, so
+    // `super.m()` in a BASE-class method reads null - which a backend that
+    // folded super-dispatch would get wrong.
+    // WHAT super(...) HANDS THE BASE CONSTRUCTOR. The next frame pushed gets
+    // THIS frame's new.target instead of undefined.
+    //
+    // IT MUST REPRODUCE THE LEAK, NOT REPAIR IT. Only two places clear
+    // pending_new_target_ and both are JS-closure frame pushes, so a native or
+    // generator callee leaves the flag set and the next ordinary call anywhere
+    // sees a truthy new.target. That is the interpreter's behaviour and the two
+    // tiers have to agree on it.
+    //
+    // IT TAKES THE VALUE rather than the frame only because call_frame is
+    // declared further down this class. The ABI helper above it is
+    // zero-operand on purpose - reading THIS frame's field is the point, and an
+    // explicit ABI parameter would let a backend hand over a stale one.
+    void pass_new_target(value from);
+
+    [[nodiscard]] value get_prototype(value target);
+    void set_prototype(value target, value proto);
+
     [[nodiscard]] bool has_property(value target, value key);
     [[nodiscard]] bool instance_of(value target, value ctor);
     void delete_index(value target, value key);

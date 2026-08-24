@@ -468,6 +468,20 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             case op::load_this: set(in.a, entry->getArgument(arg_receiver)); break;
             case op::load_new_target: set(in.a, entry->getArgument(arg_new_target)); break;
             case op::load_callee: set(in.a, entry->getArgument(arg_callee)); break;
+            // NOT arg_callee AND THEN A LOOKUP. The callee is a block argument
+            // because the ABI hands it to the entry; __home is a property ON
+            // that closure, and reading it is the helper's job rather than two
+            // operations here - the row's flags are all zero precisely because
+            // closure_object::find touches no accessors.
+            case op::load_home: set(in.a, ctjs::LoadHomeOp::create(into, where, value_type)); break;
+            case op::pass_new_target: ctjs::PassNewTargetOp::create(into, where); break;
+            case op::get_proto:
+                set(in.a, ctjs::GetProtoOp::create(into, where, value_type, reg(in.b)));
+                break;
+            case op::set_proto:
+                // a IS THE TARGET, b THE NEW LINK, and nothing is written back.
+                ctjs::SetProtoOp::create(into, where, reg(in.a), reg(in.b));
+                break;
             case op::closure: {
                 // THE OPCODE THAT MADE EVERY DECLARING FUNCTION UNIMPORTABLE.
                 // ctjs.create_closure's first operand was a !ctjs.program that

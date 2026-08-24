@@ -566,6 +566,67 @@ struct aot_bridge {
         return value::object(record->closure).bits();
     }
 
+    // ct_aot_pass_new_target. Zero-operand at the ABI because it reads THIS
+    // frame's new.target - an explicit parameter would let a caller hand over a
+    // stale or cached one, which ct_aot_new_target's row forbids outright.
+    //
+    // ADJACENCY TO THE ct_aot_call THAT FOLLOWS IS A LOWERING INVARIANT the ABI
+    // cannot enforce: the flag is consumed by the next JS-closure frame push,
+    // whatever that turns out to be.
+    static void pass_new_target(aot::ct_aot_frame * f) {
+        context & cx = *frame_of(f).ctx;
+        const context::call_frame * record = frame_record(f);
+        cx.pass_new_target(record == nullptr ? value::undefined() : record->new_target);
+    }
+
+    // ct_aot_get_proto and ct_aot_set_proto, through the shared members the
+    // rows themselves named. Both all-zero: the link is a plain field, so
+    // nothing allocates, nothing throws and no accessor can run.
+    //
+    // BY VALUE IN, RESULT OUT, which removes an aliasing question the
+    // interpreter has: get_proto is emitted as `{get_proto, dst, dst}` right
+    // after load_home, so a and b are the same register there.
+    static std::uint64_t get_proto(aot::ct_aot_frame * f, std::uint64_t target) {
+        context & cx = *frame_of(f).ctx;
+        return cx.get_prototype(value::from_bits(target)).bits();
+    }
+
+    static void set_proto(aot::ct_aot_frame * f, std::uint64_t target, std::uint64_t proto) {
+        context & cx = *frame_of(f).ctx;
+        cx.set_prototype(value::from_bits(target), value::from_bits(proto));
+    }
+
+    // ct_aot_new_target. VM_CASE(load_new_target), which is one field read.
+    //
+    // IT WAS BLOCKED BY SOMETHING THAT WAS HALF FIXED. The lowering refused any
+    // function mentioning new.target, and the reason it gave was that
+    // ct_aot_enter takes new_target from pending_new_target_ and op::construct
+    // never set that on the compiled path. context::construct_new set it - so a
+    // compiled constructor reached from COMPILED code was already right, and a
+    // compiled constructor reached from the INTERPRETER still saw undefined.
+    // Only the differential case that read new.target found the second half;
+    // it went in claiming to cover pass_new_target, and a mutant that deleted
+    // that lowering entirely left it green.
+    //
+    // THAT UNBLOCKS EVERY TRANSPILED CLASS: Babel's _classCallCheck guard is a
+    // new.target test, so it appears in almost every bundled class.
+    static std::uint64_t new_target(aot::ct_aot_frame * f) {
+        const context::call_frame * record = frame_record(f);
+        return record == nullptr ? value::undefined().bits() : record->new_target.bits();
+    }
+
+    // ct_aot_home. VM_CASE(load_home), which is what `super` resolves against.
+    //
+    // THE VALUE IS COPIED OUT AND NO POINTER CROSSES THE ABI: find() answers a
+    // pointer into closure_object::props, and any later set() on that closure
+    // invalidates it.
+    static std::uint64_t home(aot::ct_aot_frame * f) {
+        const context::call_frame * record = frame_record(f);
+        if (record == nullptr || record->closure == nullptr) { return value::undefined().bits(); }
+        if (value * found = record->closure->find("__home")) { return found->bits(); }
+        return value::undefined().bits();
+    }
+
     // ct_aot_upvalue_cell. The guarded fetch from VM_CASE(get_upvalue), MINUS
     // the cell read - which is ct_aot_cell_get's job.
     //
@@ -1077,6 +1138,26 @@ std::uint32_t ct_aot_instance_of(ct_aot_frame * fr, std::uint64_t target, std::u
 
 std::int32_t ct_aot_delete_index(ct_aot_frame * fr, std::uint64_t target, std::uint64_t key) {
     return script::aot_bridge::delete_index(fr, target, key);
+}
+
+std::uint64_t ct_aot_new_target(ct_aot_frame * fr) {
+    return script::aot_bridge::new_target(fr);
+}
+
+std::uint64_t ct_aot_home(ct_aot_frame * fr) {
+    return script::aot_bridge::home(fr);
+}
+
+void ct_aot_pass_new_target(ct_aot_frame * fr) {
+    script::aot_bridge::pass_new_target(fr);
+}
+
+std::uint64_t ct_aot_get_proto(ct_aot_frame * fr, std::uint64_t target) {
+    return script::aot_bridge::get_proto(fr, target);
+}
+
+void ct_aot_set_proto(ct_aot_frame * fr, std::uint64_t target, std::uint64_t proto) {
+    script::aot_bridge::set_proto(fr, target, proto);
 }
 
 std::uint64_t * ct_aot_slots(ct_aot_frame * fr) {

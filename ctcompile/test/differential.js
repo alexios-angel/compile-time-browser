@@ -244,6 +244,42 @@ function hasIt(pad, o, k) { return k in o; }
 function isA(pad, x, C) { return x instanceof C; }
 function drop(pad, o, k) { delete o[k]; return "" + o.a + o.b; }
 
+// `super`, WHICH IS THREE OPCODES AND TWO SHAPES.
+//
+// `super.hello()` is load_home, then get_proto, then an ordinary method call -
+// which is why lowering load_home alone moved no functions at all. `super(...)`
+// is pass_new_target and a call.
+//
+// SUB SHADOWS hello ON PURPOSE, and that is the whole case. `super.hello()`
+// must start ABOVE the class the running method was WRITTEN in - Sub's home -
+// and so answers "S". Resolved against `this` instead it would start at Sub's
+// own prototype, find Sub.hello, and answer "SUB"; in a deeper hierarchy the
+// same mistake calls the running method again forever.
+//
+// NEITHER hello NEEDS COMPILING. greetChain is the body holding load_home and
+// get_proto, and its name is unique, which is what lets a single patch reach
+// it - the build's entry lookup takes a name and no ordinal.
+class Sup { hello() { return "S"; } }
+class Sub extends Sup {
+  hello() { return "SUB"; }
+  greetChain() { return "B" + super.hello(); }
+}
+function useSuper(pad) { return new Sub().greetChain(); }
+
+// AND THE CONSTRUCTOR FORM. `super(v * 2)` hands Parent this frame's
+// new.target and calls it.
+//
+// PARENT READS new.target, AND THAT IS THE ONLY REASON THIS SEPARATES
+// pass_new_target AT ALL. Written without it the case passed with the
+// pass_new_target lowering emitting nothing whatsoever: `this.v` is written by
+// the base constructor either way, and new.target is the single observable
+// difference. The mutant found that, not review.
+//
+// `v` COVERS THE CALL and `nt` covers the handoff, so a failure says which.
+class Parent { constructor(v) { this.v = v; this.nt = new.target === Kid; } }
+class Kid extends Parent { constructor(v) { super(v * 2); } }
+function useSuperCtor(pad, n) { var o = new Kid(n); return "" + o.v + "/" + o.nt; }
+
 function drive(which) {
   // A SENTINEL, so an arm that throws or never matches is visible. Without it
   // OUT keeps the PREVIOUS case's answer, both tiers read the same stale value
@@ -316,6 +352,8 @@ function drive(which) {
     OUT = "" + isA(0, new Point(1), Point) + "/" + isA(0, [], Array) + "/" + isA(0, 5, Number);
   }
   if (which === 27) { OUT = drop(0, { a: 1, b: 2 }, "a"); }
+  if (which === 28) { OUT = useSuper(0); }
+  if (which === 29) { OUT = useSuperCtor(0, 10); }
   if (which === 22) {
     OUT = "" + coalesce(0, 9) + "/" + coalesce("", 9) + "/" + coalesce(nothing, 9) + "/" +
           chain(null) + "/" + chain({ p: 4 }) + "/" + dflt(0);

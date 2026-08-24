@@ -1106,31 +1106,26 @@ value context::run_loop(std::size_t stop_depth) {
         VM_CASE(pass_new_target) do {
             // The NEXT (*vm_frame) pushed - the base constructor super() is about to
             // enter - gets this (*vm_frame)'s new.target rather than undefined.
-            pending_new_target_ = vm_frame->new_target;
+            pass_new_target(vm_frame->new_target);
             break;
         }
         while (0);
         VM_NEXT;
 
         VM_CASE(set_proto) do {
-            if (reg(in.a).is_object()) {
-                static_cast<object_object *>(reg(in.a).as_heap())->prototype = reg(in.b);
-            }
+            set_prototype(reg(in.a), reg(in.b));
             break;
         }
         while (0);
         VM_NEXT;
 
         VM_CASE(get_proto) do {
-            reg(in.a) = reg(in.b).is_object()
-                            ? static_cast<object_object *>(reg(in.b).as_heap())->prototype
-                            : value::undefined();
+            // `super` has to start its lookup at the prototype ABOVE the class
+            // the running method was written in - not above `this`, which in a
+            // three-deep hierarchy is a different object and would call the
+            // method again forever. So each method carries its home object.
+            reg(in.a) = get_prototype(reg(in.b));
             break;
-
-            // `super` has to start its lookup at the prototype ABOVE the class the
-            // running method was written in - not above `this`, which in a
-            // three-deep hierarchy is a different object and would call the method
-            // again forever. So each method carries its home object.
         }
         while (0);
         VM_NEXT;
@@ -1225,12 +1220,30 @@ value context::run_loop(std::size_t stop_depth) {
                 // `constructing`, which is not a detail - it is what makes a
                 // constructor returning a primitive evaluate to its receiver,
                 // and the ABI hands that decision to ct_aot_return_value.
+                //
+                // AND IT MUST HAND OVER new.target, which it did not. The
+                // interpreted path below sets fresh.new_target directly;
+                // ct_aot_enter can only read it from pending_new_target_, so a
+                // compiled constructor entered from HERE saw undefined while
+                // the same constructor entered from context::construct_new saw
+                // the callee. `class Kid extends Parent { constructor(v) {
+                // super(v * 2); } }` then handed Parent an undefined
+                // new.target, which is what Babel's _classCallCheck tests.
+                //
+                // SET AND RESTORED rather than set and cleared: op::construct
+                // never consumes the flag on its own path, and ct_aot_enter
+                // clears it once the frame is pushed. Restoring keeps the
+                // interpreted path's behaviour identical either way.
+                const value saved_new_target = pending_new_target_;
+                pending_new_target_ = callee;
                 if (value produced = value::undefined();
                     enter_compiled(*this, target, callee, registers_.data() + new_base, in.b, self,
                                    /*constructing*/ true, produced)) {
+                    pending_new_target_ = saved_new_target;
                     reg(in.a) = produced.is_object_like() ? produced : self;
                     break;
                 }
+                pending_new_target_ = saved_new_target;
                 call_frame fresh{&target, 0, new_base, in.a, in.b, fnobj, self, handlers_.size()};
                 fresh.constructing = true;
                 fresh.new_target = callee;
