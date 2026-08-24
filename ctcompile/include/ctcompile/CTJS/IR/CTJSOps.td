@@ -315,6 +315,27 @@ def CTJS_FromBoolOp : CTJS_Op<"from_bool", [Pure]> {
   let assemblyFormat = "$bit attr-dict";
 }
 
+def CTJS_CopyPropsOp : CTJS_RuntimeOp<"copy_props", "ct_aot_copy_props"> {
+  let summary = "Copy a source's own properties onto a target - object spread";
+  let description = [{
+    `{...o}` in an object literal and `{a, ...rest}` in a destructuring pattern,
+    which are its only two emitters. Both always run it against a freshly built
+    object, so the target is never a value the program can also be holding under
+    another name.
+
+    ALL THREE FLAGS ARE ZERO, and that is a measurement rather than an
+    assumption: object_object::set grows a std::vector and a hash map, which is
+    malloc and not allocate(), so nothing is collected, nothing throws and no
+    accessor can run. It looks like ctjs.append and it is NOT a safepoint the
+    way append's row is.
+
+    AN ARRAY SOURCE SPREADS BY INDEX - `{...[7, 8]}` is `{"0": 7, "1": 8}` -
+    and anything that is neither object nor array contributes nothing.
+  }];
+  let arguments = (ins CTJS_ValueType:$target, CTJS_ValueType:$source);
+  let assemblyFormat = "$source `into` $target attr-dict";
+}
+
 def CTJS_CallSpreadOp
     : CTJS_RuntimeOp<"call_spread", "ct_aot_call_spread", CTJS_GenericEffects # [CTJS_MaySuspend]> {
   let summary = "Call with an argument ARRAY rather than a window";

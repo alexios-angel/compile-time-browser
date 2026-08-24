@@ -66,7 +66,6 @@ struct pending {
 
 constexpr pending not_yet[] = {
     // ---- Phase 13's own work list, in Bootstrap's order of cost -----------
-    {"copy_props", "object spread, {...o} - 6 Bootstrap functions"},
     {"gather_rest", "a rest parameter, f(...xs) - 3 Bootstrap functions"},
     {"push_handler", "try/catch - needs a THIRD arm on the shared failure path for "
                      "CT_AOT_CAUGHT, which is why it is last rather than smallest"},

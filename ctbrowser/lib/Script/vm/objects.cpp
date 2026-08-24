@@ -179,6 +179,21 @@ void context::pass_new_target(value from) {
     pending_new_target_ = from;
 }
 
+void context::copy_own_properties(value target, value source) {
+    if (!target.is_object()) { return; }
+    auto * into = static_cast<object_object *>(target.as_heap());
+    if (source.is_object()) {
+        // A COPY OF THE SOURCE'S ENTRIES FIRST: `set` can reallocate the
+        // target's storage, and target and source may be the same object.
+        const std::vector<std::pair<std::string, value>> entries =
+            static_cast<object_object *>(source.as_heap())->props;
+        for (const auto & [name, item] : entries) { into->set(name, item); }
+    } else if (source.is_array()) {
+        const std::vector<value> items = static_cast<array_object *>(source.as_heap())->items;
+        for (std::size_t i = 0; i < items.size(); ++i) { into->set(std::to_string(i), items[i]); }
+    }
+}
+
 value context::get_prototype(value target) {
     return target.is_object() ? static_cast<object_object *>(target.as_heap())->prototype
                               : value::undefined();

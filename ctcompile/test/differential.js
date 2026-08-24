@@ -306,6 +306,19 @@ function spreadMethod(pad, xs) { return recvObj.m(...xs); }
 function Pt(a, b) { this.s = "" + a + b; }
 function spreadNew(pad, xs) { return new Pt(...xs).s; }
 
+// OBJECT SPREAD - op::copy_props, which is not a call at all: it mutates a
+// freshly built object in place and produces nothing.
+//
+// THE ORDER IS THE ASSERTION. A later key WINS, so `{a: 1, ...o, b: 9}` with
+// o = {a: 2, b: 3} is a=2 (the spread overwrote the literal) and b=9 (the
+// literal overwrote the spread). Copying in the wrong direction, or copying
+// before the earlier keys are written, changes both.
+//
+// AND AN ARRAY SOURCE SPREADS BY INDEX: `{...[7, 8]}` is {"0": 7, "1": 8}.
+function merge(pad, o) { return { a: 1, ...o, b: 9 }; }
+function mergeArray(pad, xs) { var m = { ...xs }; return "" + m[0] + m[1]; }
+function spreadOut(pad, o) { var m = merge(0, o); return "" + m.a + m.b; }
+
 function drive(which) {
   // A SENTINEL, so an arm that throws or never matches is visible. Without it
   // OUT keeps the PREVIOUS case's answer, both tiers read the same stale value
@@ -383,6 +396,7 @@ function drive(which) {
   if (which === 30) { OUT = spreadCall(0, [1, 2, 3]) + "|" + spreadCall(0, 5); }
   if (which === 31) { OUT = spreadMethod(0, [7]); }
   if (which === 32) { OUT = spreadNew(0, [1, 2]); }
+  if (which === 33) { OUT = spreadOut(0, { a: 2, b: 3 }) + "/" + mergeArray(0, [7, 8]); }
   if (which === 22) {
     OUT = "" + coalesce(0, 9) + "/" + coalesce("", 9) + "/" + coalesce(nothing, 9) + "/" +
           chain(null) + "/" + chain({ p: 4 }) + "/" + dflt(0);

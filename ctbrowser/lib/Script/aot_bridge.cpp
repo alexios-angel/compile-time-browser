@@ -596,6 +596,18 @@ struct aot_bridge {
         cx.set_prototype(value::from_bits(target), value::from_bits(proto));
     }
 
+    // ct_aot_copy_props. Object spread, through the shared member.
+    //
+    // (0, 0, 0) AND THAT IS VERIFIED RATHER THAN COPIED. object_object::set
+    // grows a std::vector and a hash map - malloc, not allocate() - so no GC
+    // object is created, nothing can throw and no accessor runs. Taking
+    // ct_aot_append's TRAITS because the shape looks alike would overstate the
+    // row; it is the lowering shape that is alike, not the effects.
+    static void copy_props(aot::ct_aot_frame * f, std::uint64_t target, std::uint64_t source) {
+        context & cx = *frame_of(f).ctx;
+        cx.copy_own_properties(value::from_bits(target), value::from_bits(source));
+    }
+
     // ct_aot_call_spread and ct_aot_construct_spread - the two halves of
     // VM_CASE(apply), through the shared members.
     //
@@ -1174,6 +1186,10 @@ std::uint32_t ct_aot_instance_of(ct_aot_frame * fr, std::uint64_t target, std::u
 
 std::int32_t ct_aot_delete_index(ct_aot_frame * fr, std::uint64_t target, std::uint64_t key) {
     return script::aot_bridge::delete_index(fr, target, key);
+}
+
+void ct_aot_copy_props(ct_aot_frame * fr, std::uint64_t target, std::uint64_t source) {
+    script::aot_bridge::copy_props(fr, target, source);
 }
 
 std::int32_t ct_aot_call_spread(ct_aot_frame * fr, std::uint64_t callee, std::uint64_t arg_array,

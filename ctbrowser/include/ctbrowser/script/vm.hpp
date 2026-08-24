@@ -855,6 +855,19 @@ public:
     // explicit ABI parameter would let a backend hand over a stale one.
     void pass_new_target(value from);
 
+    // `{...o}` AND `{a, ...rest}` - object spread, both directions.
+    //
+    // THE ROW HAS CITED THIS BY NAME SINCE BEFORE IT EXISTED. Its DELEGATES TO
+    // read "context::copy_own_properties" while nothing in the tree defined
+    // one, which is the second fictional delegate found here - the first was
+    // context::callee_type_error, cited by two rows and defined nowhere. The
+    // row is now true.
+    //
+    // THE SOURCE'S ENTRIES ARE COPIED FIRST, and that is not a micro-optimisation
+    // to undo: set() can reallocate the target's storage, and target and source
+    // may be the SAME object.
+    void copy_own_properties(value target, value source);
+
     [[nodiscard]] value get_prototype(value target);
     void set_prototype(value target, value proto);
 

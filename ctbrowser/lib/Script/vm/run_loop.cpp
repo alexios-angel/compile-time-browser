@@ -390,25 +390,10 @@ value context::run_loop(std::size_t stop_depth) {
         VM_NEXT;
 
         VM_CASE(copy_props) do {
-            {
-                if (!reg(in.a).is_object()) { break; }
-                auto * target = static_cast<object_object *>(reg(in.a).as_heap());
-                if (reg(in.b).is_object()) {
-                    // A copy of the source's entries first: `set` can reallocate
-                    // the target's storage, and target and source may be the same
-                    // object.
-                    const std::vector<std::pair<std::string, value>> entries =
-                        static_cast<object_object *>(reg(in.b).as_heap())->props;
-                    for (const auto & [name, item] : entries) { target->set(name, item); }
-                } else if (reg(in.b).is_array()) {
-                    const std::vector<value> items =
-                        static_cast<array_object *>(reg(in.b).as_heap())->items;
-                    for (std::size_t i = 0; i < items.size(); ++i) {
-                        target->set(std::to_string(i), items[i]);
-                    }
-                }
-                break;
-            }
+            // a IS THE TARGET AND b THE SOURCE, and the target is not written
+            // back - the object is mutated in place.
+            copy_own_properties(reg(in.a), reg(in.b));
+            break;
         }
         while (0);
         VM_NEXT;

@@ -91,6 +91,8 @@ CT_ENTRY(Kid)
 CT_ENTRY(spreadCall)
 CT_ENTRY(spreadMethod)
 CT_ENTRY(spreadNew)
+CT_ENTRY(merge)
+CT_ENTRY(mergeArray)
 #undef CT_ENTRY
 
 namespace {
@@ -366,6 +368,13 @@ int main() {
          "op::construct_apply, a different opcode and helper from both ctjs.construct and "
          "ctjs.call_spread",
          "12"},
+        {33u,
+         "object spread",
+         {{"merge", 0u, &ctc_merge}, {"mergeArray", 0u, &ctc_mergeArray}},
+         "which key wins - the spread overwrites the literal before it and loses to the one "
+         "after, so a copy in the wrong order changes both digits - and an array source, which "
+         "spreads by index",
+         "29/78"},
         {17u,
          "literals",
          {{"pack", 0u, &ctc_pack}, {}},
@@ -482,6 +491,8 @@ int main() {
         {"spreadCall", 0u, &ctc_spreadCall},
         {"spreadMethod", 0u, &ctc_spreadMethod},
         {"spreadNew", 0u, &ctc_spreadNew},
+        {"merge", 0u, &ctc_merge},
+        {"mergeArray", 0u, &ctc_mergeArray},
     };
 
     for (const subject & each : subjects) {

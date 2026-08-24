@@ -426,7 +426,7 @@ bool body_is_supported(FuncOp function, std::string & why) {
                       CreateCellOp, CellGetOp, CellSetOp, CreateObjectOp, CreateArrayOp, AppendOp,
                       ThrowOp, ConstructOp, IterableOp, HasPropertyOp, InstanceOfOp,
                       DeletePropertyOp, FromBoolOp, LoadHomeOp, GetProtoOp, SetProtoOp,
-                      PassNewTargetOp, CallSpreadOp, ConstructSpreadOp>(op)) {
+                      PassNewTargetOp, CallSpreadOp, ConstructSpreadOp, CopyPropsOp>(op)) {
             return;
         }
 
@@ -1575,6 +1575,14 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                     mlir::ValueRange{scope.frame, array, mapping.lookup(element)});
             }
             mapping.map(made.getResult(), array);
+            return;
+        }
+        if (auto merge = mlir::dyn_cast<CopyPropsOp>(op)) {
+            // (0, 0, 0): one call, no status, no edge and nothing to park.
+            ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_copy_props"),
+                                     mlir::ValueRange{scope.frame,
+                                                      mapping.lookup(merge.getTarget()),
+                                                      mapping.lookup(merge.getSource())});
             return;
         }
         // THE SPREAD CALLS, WHICH NEED NO WINDOW. Their arguments arrived as

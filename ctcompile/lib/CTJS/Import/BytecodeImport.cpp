@@ -580,6 +580,11 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 // produces nothing and writes no register.
                 ctjs::DeletePropertyOp::create(into, where, reg(in.a), reg(in.b));
                 break;
+            case op::copy_props:
+                // a IS THE TARGET and is NOT written back - the object is
+                // mutated in place, so this produces no value.
+                ctjs::CopyPropsOp::create(into, where, reg(in.a), reg(in.b));
+                break;
             case op::apply:
                 // a IS BOTH THE CALLEE AND THE DESTINATION, b the argument
                 // array, c the receiver - and the destination being an operand
