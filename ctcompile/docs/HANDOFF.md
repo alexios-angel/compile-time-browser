@@ -540,10 +540,40 @@ it — that case has its own function.
 double's bit pattern precisely because `-0.0` and NaN payloads do not survive a
 decimal round-trip, and printing decimal would discard that at the last step.
 
-**Next**: `ctjs.binary` and the out-parameter/status pattern, which is the shape
-most of the remaining 50 operations share — a call, a status test against
-`ct_aot_status::ok` by name, and an exception edge. Strings need
-`ct_aot_new_string`, which is a safepoint, so they wait on rooting.
+**The out-parameter/status pattern is done**, which is the shape most of the ABI
+has. `status_call()` writes it once: a local for the result, its address, the
+call, a test against `ct_aot_status::ok` **by name**, and a block split so the
+result is loaded only on the surviving path — which the row requires, not merely
+permits (`*out` is written only on `CT_AOT_OK`). The failure edge is shared per
+function and **tests for `unwound` before leaving**: on that status the unwinder
+has already destroyed this frame, so an unconditional `ct_aot_leave` pops
+somebody else's.
+
+`a + b`, `!a`, `+a`, `void a`, `a === b`, `a == b` and the four relational
+operators all compile now.
+
+**A GAP IN THE ABI, worth knowing before designing against it:** *no row boxes a
+machine quantity into a JavaScript value.* `ct_aot_strict_equals` returns a
+`uint32_t`, `ct_aot_compare` an `int32_t` ordering, `ct_aot_to_number` a
+`double` — and there is no `ct_aot_from_bool` and no `ct_aot_from_double`. In
+C++ that boxing is `value::boolean(b).bits()`, a **member call on a temporary**,
+which `emitc.call_opaque` cannot spell because its entire output is
+`callee(args)`. The backend therefore emits two `static inline` shims into its
+own translation unit rather than adding rows to a runtime ABI for a compiler's
+convenience. If the ABI ever grows those rows, the shims go.
+
+**The relational operators are not negations of one another.** `ct_aot_compare`
+can answer `unordered` — a NaN on either side — which makes all four false,
+`>=` included. `a >= b` as `!(a < b)` makes `NaN >= NaN` true. Each is built
+from equality tests against the orderings that make it true. Unlike the status
+enum, **the ordering's numbers are contractual** and `aot.hpp` says so.
+
+**Next**: property access and calls, which is where the Phaser corpus starts —
+`ctjs.get_property` needs an inline cache, and `ctjs.call` needs an argv span
+marshalled into the frame's **GC-rooted slots**, so it is the first operation
+that cannot be done without `ct_aot_slots`. That is also the point at which
+rooting stops being deferrable: everything compiled so far keeps its live values
+in C++ locals, which the precise collector cannot see.
 
 ## Using subagents
 
