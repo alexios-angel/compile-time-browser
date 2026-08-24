@@ -45,3 +45,79 @@ function everything(a, b) {
   var got = a[b];
   return got(a, b, sum);
 }
+
+// EVERY FUNCTION IN THIS FILE COUNTS, not only the one the driver declares.
+// mlir-translate emits the whole module into one translation unit and the test
+// binary links all of it, so a helper named by ANY function here is checked.
+// That is what lets the operations below sit in shapes of their own rather than
+// being crammed into `everything` - a class method cannot go there at all.
+
+// STRINGS, ARRAYS, OBJECTS AND typeof.
+//
+// ct_aot_new_string memoises per (site, slot); ct_aot_new_array takes a
+// reserve HINT and the elements follow as ct_aot_append; an object literal is
+// ct_aot_new_object written through ct_aot_set_index; and typeof reaches
+// ct_aot_type_of_name, which answers a LENGTH and a static pointer.
+function literals(a) {
+  var text = "ab\u0001cd";
+  var list = [1, a, 3];
+  var box = { k: a, j: 2 };
+  list[0] = box.k;
+  return text + list.length + box.j + typeof a;
+}
+
+// UNARY MINUS AND BITWISE NOT, which are two different helpers because one has
+// a BigInt arm with no width to truncate to.
+function unaries(a) { return -a + ~a; }
+
+// A THROW, WHICH NEVER COMES BACK ok. ct_aot_throw returns CAUGHT, UNWOUND or
+// FAILED and never CT_AOT_OK, so the lowering makes it a terminator that
+// branches straight to the shared failure path.
+function thrower(a) { throw a; }
+
+// CLOSURES, WHICH ARE FIVE HELPERS AT ONCE: ct_aot_cell_new boxes the captured
+// binding, ct_aot_make_closure builds the instance, ct_aot_callee is how the
+// body reaches its own closure at all, and ct_aot_upvalue_cell plus
+// ct_aot_cell_get / ct_aot_cell_set read and write through it.
+function counter(start) {
+  var n = start;
+  return function () { n = n + 1; return n; };
+}
+
+// for-of AND SPREAD, which are the same helper reached two ways.
+function iterate(xs) {
+  var total = 0;
+  for (var v of xs) { total = total + v; }
+  return total + [...xs].length;
+}
+
+// `in`, `instanceof` and `delete` - three helpers with three different shapes:
+// a status with a uint32_t out-parameter, a RAISE-tier call that returns its
+// boolean, and a status with no out-parameter at all.
+function predicates(o, k, C) {
+  var there = k in o;
+  var kind = o instanceof C;
+  delete o[k];
+  return there && kind;
+}
+
+// `new`, WHOSE `site` IS THE ENTRY'S OWN - the only helper that reads it for
+// anything but a memo key.
+function Maker(v) { this.v = v; }
+function build(n) { return new Maker(n).v; }
+
+// AND new.target, WHICH WAS REFUSED UNTIL BOTH HALVES OF ITS BLOCKER CLOSED.
+function guarded() { return new.target === undefined; }
+
+// `super`, WHICH IS FOUR HELPERS AND ONLY WORKS AS A CLASS. ct_aot_home and
+// ct_aot_get_proto are the method form; ct_aot_pass_new_target is the
+// constructor form; ct_aot_set_proto is what `extends` itself writes.
+class LinkBase {
+  constructor(v) { this.v = v; }
+  tag() { return "base"; }
+}
+class LinkDerived extends LinkBase {
+  constructor(v) { super(v); }
+  tag() { return "derived" + super.tag(); }
+}
+function hierarchy(n) { return new LinkDerived(n).tag(); }
