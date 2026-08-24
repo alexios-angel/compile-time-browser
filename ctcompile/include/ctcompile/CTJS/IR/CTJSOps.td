@@ -315,6 +315,55 @@ def CTJS_FromBoolOp : CTJS_Op<"from_bool", [Pure]> {
   let assemblyFormat = "$bit attr-dict";
 }
 
+def CTJS_CallSpreadOp
+    : CTJS_RuntimeOp<"call_spread", "ct_aot_call_spread", CTJS_GenericEffects # [CTJS_MaySuspend]> {
+  let summary = "Call with an argument ARRAY rather than a window";
+  let description = [{
+    WHAT A SPREAD CALL COMPILES TO - and only a spread call. `f(a, b)` is
+    ctjs.call; `f(...xs)`, `o.m(...xs)`, `o[k](...xs)`, `super.m(...xs)` and
+    `super(...xs)` are this. Nine of Bootstrap's functions need it, the largest
+    single opcode left after `super`.
+
+    THE ARRAY IS ALREADY BUILT BY OPERATIONS THAT ALREADY LOWER: new_array, one
+    append per plain argument, and for a spread an iterable-plus-index loop.
+    Nothing new was needed for the arguments themselves.
+
+    SO THIS NEEDS NONE OF ctjs.call's WINDOW MACHINERY. ct_aot_call takes a
+    contiguous `argv` and an `argc`, which is why its lowering parks each
+    argument into a reserved run of frame slots and passes the run's address.
+    Here the count was not known until the spread ran, so the arguments arrive
+    as ONE value that is already a rooted array - there is no run to reserve.
+
+    A NON-ARRAY YIELDS NO ARGUMENTS, not one. `f(...undefined)` calls f with
+    nothing.
+  }];
+  let arguments = (ins CTJS_ValueType:$callee, CTJS_ValueType:$args,
+                       CTJS_ValueType:$receiver);
+  let results = (outs CTJS_ValueType:$result);
+  let assemblyFormat = "$callee `(` $receiver `,` $args `)` attr-dict";
+}
+
+def CTJS_ConstructSpreadOp
+    : CTJS_RuntimeOp<"construct_spread", "ct_aot_construct_spread",
+                     CTJS_GenericEffects # [CTJS_MaySuspend]> {
+  let summary = "`new C(...args)`";
+  let description = [{
+    THE OTHER HALF OF ONE VM_CASE, and NOT the spread form of ctjs.construct.
+    op::construct_apply calls context::construct wholesale - no acceptance test
+    of its own and no pending_new_target_ handling - so `new C(...xs)` reports
+    new.target UNDEFINED where `new C(x)` reports C, and a non-constructor gets
+    an uncatchable raise where the plain form throws a catchable TypeError.
+
+    That divergence is the INTERPRETER's. It is reproduced here rather than
+    repaired, because repairing it in one tier only would be worse than the
+    divergence; repairing it in both is a separate change with its own
+    before/after test.
+  }];
+  let arguments = (ins CTJS_ValueType:$callee, CTJS_ValueType:$args);
+  let results = (outs CTJS_ValueType:$result);
+  let assemblyFormat = "$callee `(` $args `)` attr-dict";
+}
+
 def CTJS_IterableOp
     : CTJS_RuntimeOp<"iterable", "ct_aot_iterable_values", CTJS_GenericEffects> {
   let summary = "The values of an iterable, as an array";

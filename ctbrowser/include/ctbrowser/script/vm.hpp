@@ -1239,6 +1239,19 @@ private:
     //
     // `from` is the function the `new` was written in, used only to name it in
     // the TypeError.
+    // THE SPREAD FORMS OF A CALL AND A `new`, which are one VM_CASE because
+    // they differ only in which member they end in.
+    //
+    // THE ARGUMENTS ARRIVED AS AN ARRAY because their count was not known until
+    // the spread was evaluated - so there is no argc and no contiguous window,
+    // and a compiled caller needs none of the window machinery ct_aot_call
+    // needs. A non-array yields NO arguments rather than one, which is the
+    // interpreter's behaviour and is why the unpack is shared rather than
+    // written twice.
+    [[nodiscard]] std::vector<value> spread_arguments(value arg_array);
+    [[nodiscard]] value call_spread(value callee, value arg_array, value receiver);
+    [[nodiscard]] value construct_spread(value callee, value arg_array);
+
     [[nodiscard]] value construct_new(value callee, std::span<const value> args,
                                       const function_proto & from);
 

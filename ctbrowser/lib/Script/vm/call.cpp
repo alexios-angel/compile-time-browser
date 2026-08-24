@@ -622,6 +622,38 @@ value context::construct(value callee, std::span<const value> args) {
 // callee. invoke() answers one with make_generator; the opcode has no such test
 // and runs the body as an ordinary frame, where the first `yield` raises. This
 // matches construct() and `new C(...args)` instead.
+std::vector<value> context::spread_arguments(value arg_array) {
+    // A NON-ARRAY IS NO ARGUMENTS, NOT ONE ARGUMENT. That is what the
+    // interpreter does and it is load-bearing: `f(...undefined)` calls f with
+    // nothing rather than with undefined.
+    if (!arg_array.is_array()) { return {}; }
+    return static_cast<array_object *>(arg_array.as_heap())->items;
+}
+
+value context::call_spread(value callee, value arg_array, value receiver) {
+    const std::vector<value> args = spread_arguments(arg_array);
+    if (!callee.is_callable()) {
+        // AND THE DESTINATION IS LEFT ALONE, which is why this answers the
+        // callee rather than undefined. VM_CASE(apply) writes reg(in.a) only in
+        // its else branch, and reg(in.a) is where the callee came from - so
+        // returning it reproduces "unchanged" exactly. The raise is the
+        // uncatchable tier, so nothing observes the register either way; it is
+        // written this way so the two tiers cannot be READ as differing.
+        raise("attempted to call a non-function");
+        return callee;
+    }
+    return call(callee, args, receiver);
+}
+
+value context::construct_spread(value callee, value arg_array) {
+    // NOT construct_new. op::construct_apply calls context::construct
+    // WHOLESALE - no acceptance test of its own, no pending_new_target_
+    // handling - and its row is emphatic that the divergence from `new C(args)`
+    // is the INTERPRETER's and is reproduced rather than repaired: a spread
+    // `new` reports new.target undefined where a plain one reports C.
+    return construct(callee, spread_arguments(arg_array));
+}
+
 value context::construct_new(value callee, std::span<const value> args,
                              const function_proto & from) {
     // A PROXY AND A NATIVE GO THE LONG WAY ROUND, exactly as the opcode sends

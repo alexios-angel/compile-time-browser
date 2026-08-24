@@ -426,7 +426,7 @@ bool body_is_supported(FuncOp function, std::string & why) {
                       CreateCellOp, CellGetOp, CellSetOp, CreateObjectOp, CreateArrayOp, AppendOp,
                       ThrowOp, ConstructOp, IterableOp, HasPropertyOp, InstanceOfOp,
                       DeletePropertyOp, FromBoolOp, LoadHomeOp, GetProtoOp, SetProtoOp,
-                      PassNewTargetOp>(op)) {
+                      PassNewTargetOp, CallSpreadOp, ConstructSpreadOp>(op)) {
             return;
         }
 
@@ -1575,6 +1575,27 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                     mlir::ValueRange{scope.frame, array, mapping.lookup(element)});
             }
             mapping.map(made.getResult(), array);
+            return;
+        }
+        // THE SPREAD CALLS, WHICH NEED NO WINDOW. Their arguments arrived as
+        // one already-rooted array rather than as a run of values, so there is
+        // nothing to park and no argc to pass - which is the entire difference
+        // from the ctjs.call and ctjs.construct branches below.
+        if (auto spread = mlir::dyn_cast<CallSpreadOp>(op)) {
+            mapping.map(spread.getResult(),
+                        status_call(scope, build, where, callee("ct_aot_call_spread"),
+                                    {scope.frame, mapping.lookup(spread.getCallee()),
+                                     mapping.lookup(spread.getArgs()),
+                                     mapping.lookup(spread.getReceiver()), scope.entry_site},
+                                    value));
+            return;
+        }
+        if (auto spread = mlir::dyn_cast<ConstructSpreadOp>(op)) {
+            mapping.map(spread.getResult(),
+                        status_call(scope, build, where, callee("ct_aot_construct_spread"),
+                                    {scope.frame, mapping.lookup(spread.getCallee()),
+                                     mapping.lookup(spread.getArgs()), scope.entry_site},
+                                    value));
             return;
         }
         if (mlir::isa<PassNewTargetOp>(op)) {

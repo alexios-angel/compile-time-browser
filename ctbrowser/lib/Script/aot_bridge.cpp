@@ -596,6 +596,42 @@ struct aot_bridge {
         cx.set_prototype(value::from_bits(target), value::from_bits(proto));
     }
 
+    // ct_aot_call_spread and ct_aot_construct_spread - the two halves of
+    // VM_CASE(apply), through the shared members.
+    //
+    // NO ARGUMENT WINDOW AND NO argc, which is the whole difference from
+    // ct_aot_call. The arguments arrived as an ARRAY because their count was
+    // not known until the spread ran, so the array is one already-rooted value
+    // and there is nothing to copy out and nothing to park a run of.
+    //
+    // THE site IS IGNORED BY BOTH, exactly as ct_aot_call ignores its own: the
+    // messages these paths raise are the interpreter's, and neither names the
+    // enclosing function. It is taken so the ABI does not have to change if one
+    // of them ever does.
+    static std::int32_t call_spread(aot::ct_aot_frame * f, std::uint64_t callee,
+                                    std::uint64_t arg_array, std::uint64_t receiver,
+                                    const aot::ct_aot_site * site, std::uint64_t * out) {
+        (void)site;
+        context & cx = *frame_of(f).ctx;
+        const value produced = cx.call_spread(value::from_bits(callee), value::from_bits(arg_array),
+                                              value::from_bits(receiver));
+        const std::int32_t status = check(f);
+        if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
+        return status;
+    }
+
+    static std::int32_t construct_spread(aot::ct_aot_frame * f, std::uint64_t callee,
+                                         std::uint64_t arg_array, const aot::ct_aot_site * site,
+                                         std::uint64_t * out) {
+        (void)site;
+        context & cx = *frame_of(f).ctx;
+        const value produced =
+            cx.construct_spread(value::from_bits(callee), value::from_bits(arg_array));
+        const std::int32_t status = check(f);
+        if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
+        return status;
+    }
+
     // ct_aot_new_target. VM_CASE(load_new_target), which is one field read.
     //
     // IT WAS BLOCKED BY SOMETHING THAT WAS HALF FIXED. The lowering refused any
@@ -1138,6 +1174,18 @@ std::uint32_t ct_aot_instance_of(ct_aot_frame * fr, std::uint64_t target, std::u
 
 std::int32_t ct_aot_delete_index(ct_aot_frame * fr, std::uint64_t target, std::uint64_t key) {
     return script::aot_bridge::delete_index(fr, target, key);
+}
+
+std::int32_t ct_aot_call_spread(ct_aot_frame * fr, std::uint64_t callee, std::uint64_t arg_array,
+                                std::uint64_t receiver, const ct_aot_site * site,
+                                std::uint64_t * out) {
+    return script::aot_bridge::call_spread(fr, callee, arg_array, receiver, site, out);
+}
+
+std::int32_t ct_aot_construct_spread(ct_aot_frame * fr, std::uint64_t callee,
+                                     std::uint64_t arg_array, const ct_aot_site * site,
+                                     std::uint64_t * out) {
+    return script::aot_bridge::construct_spread(fr, callee, arg_array, site, out);
 }
 
 std::uint64_t ct_aot_new_target(ct_aot_frame * fr) {

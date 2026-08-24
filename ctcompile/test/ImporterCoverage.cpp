@@ -66,7 +66,6 @@ struct pending {
 
 constexpr pending not_yet[] = {
     // ---- Phase 13's own work list, in Bootstrap's order of cost -----------
-    {"apply", "spread calls, f(...args) - 9 Bootstrap functions, the largest remaining"},
     {"copy_props", "object spread, {...o} - 6 Bootstrap functions"},
     {"gather_rest", "a rest parameter, f(...xs) - 3 Bootstrap functions"},
     {"push_handler", "try/catch - needs a THIRD arm on the shared failure path for "
@@ -75,7 +74,6 @@ constexpr pending not_yet[] = {
     {"make_arguments", "the `arguments` object, which gather_rest's ABI row says it READS"},
     {"define_getter", "an accessor in a class or object literal"},
     {"define_setter", "its twin, and they share one VM_CASE"},
-    {"construct_apply", "`new C(...args)` - the spread form of construct"},
     {"own_keys", "for-in, which compiles to a for-of over this"},
     {"delete_prop", "`delete o.k`, the NAMED form - delete_index, the computed one, is done"},
     {"load_bigint", "a BigInt literal, which needs a per-slot parse and cache"},

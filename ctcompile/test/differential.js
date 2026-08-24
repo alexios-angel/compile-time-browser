@@ -280,6 +280,32 @@ class Parent { constructor(v) { this.v = v; this.nt = new.target === Kid; } }
 class Kid extends Parent { constructor(v) { super(v * 2); } }
 function useSuperCtor(pad, n) { var o = new Kid(n); return "" + o.v + "/" + o.nt; }
 
+// SPREAD CALLS - op::apply, which is a DIFFERENT opcode from op::call and not a
+// variant of it. `f(a, b)` passes a contiguous window of values; `f(...xs)`
+// passes ONE array, because the count was not known until the spread ran.
+//
+// sum3 TAKES THREE PARAMETERS AND PRINTS ALL OF THEM, which is what separates
+// the two. Passing the array as a single argument - the plausible mistake, and
+// what lowering apply as an ordinary call would do - answers "1,2,3/undefined/
+// undefined" instead of "1/2/3".
+//
+// AND A NON-ITERABLE SPREAD YIELDS NOTHING, not one argument: `sum3(...5)` is
+// sum3() and answers three undefineds, where passing 5 along would answer
+// "5/undefined/undefined".
+function sum3(a, b, c) { return "" + a + "/" + b + "/" + c; }
+function spreadCall(pad, xs) { return sum3(...xs); }
+
+// THE RECEIVER IS A SEPARATE OPERAND from the callee and the array, and only a
+// method call can tell: ct_aot_call_spread takes it third, and passing
+// undefined instead makes `this.tag` read undefined.
+var recvObj = { tag: "R", m: function (a) { return this.tag + a; } };
+function spreadMethod(pad, xs) { return recvObj.m(...xs); }
+
+// AND THE `new` FORM, which is op::construct_apply - a different opcode again,
+// with a different helper, sharing one VM_CASE with apply.
+function Pt(a, b) { this.s = "" + a + b; }
+function spreadNew(pad, xs) { return new Pt(...xs).s; }
+
 function drive(which) {
   // A SENTINEL, so an arm that throws or never matches is visible. Without it
   // OUT keeps the PREVIOUS case's answer, both tiers read the same stale value
@@ -354,6 +380,9 @@ function drive(which) {
   if (which === 27) { OUT = drop(0, { a: 1, b: 2 }, "a"); }
   if (which === 28) { OUT = useSuper(0); }
   if (which === 29) { OUT = useSuperCtor(0, 10); }
+  if (which === 30) { OUT = spreadCall(0, [1, 2, 3]) + "|" + spreadCall(0, 5); }
+  if (which === 31) { OUT = spreadMethod(0, [7]); }
+  if (which === 32) { OUT = spreadNew(0, [1, 2]); }
   if (which === 22) {
     OUT = "" + coalesce(0, 9) + "/" + coalesce("", 9) + "/" + coalesce(nothing, 9) + "/" +
           chain(null) + "/" + chain({ p: 4 }) + "/" + dflt(0);

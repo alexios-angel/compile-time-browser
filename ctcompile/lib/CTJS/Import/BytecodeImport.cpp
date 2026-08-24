@@ -580,6 +580,17 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 // produces nothing and writes no register.
                 ctjs::DeletePropertyOp::create(into, where, reg(in.a), reg(in.b));
                 break;
+            case op::apply:
+                // a IS BOTH THE CALLEE AND THE DESTINATION, b the argument
+                // array, c the receiver - and the destination being an operand
+                // is why this reads all three before writing.
+                set(in.a, ctjs::CallSpreadOp::create(into, where, value_type, reg(in.a), reg(in.b),
+                                                     reg(in.c)));
+                break;
+            case op::construct_apply:
+                set(in.a,
+                    ctjs::ConstructSpreadOp::create(into, where, value_type, reg(in.a), reg(in.b)));
+                break;
             case op::iterable:
                 // b IN, a OUT, and the row warns that both emitters spell it
                 // `{iterable, source, source}` with a and b ALIASED - which

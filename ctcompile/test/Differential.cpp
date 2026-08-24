@@ -88,6 +88,9 @@ CT_ENTRY(isA)
 CT_ENTRY(drop)
 CT_ENTRY(greetChain)
 CT_ENTRY(Kid)
+CT_ENTRY(spreadCall)
+CT_ENTRY(spreadMethod)
+CT_ENTRY(spreadNew)
 #undef CT_ENTRY
 
 namespace {
@@ -344,6 +347,25 @@ int main() {
          "pass_new_target AND the base call, which are different halves: `v` is written by the "
          "base constructor either way, so new.target is the only thing the handoff changes",
          "20/true"},
+        {30u,
+         "spread call",
+         {{"spreadCall", 0u, &ctc_spreadCall}, {}},
+         "an argument ARRAY against a contiguous window - passing the array as one argument "
+         "answers 1,2,3/undefined/undefined, and a non-iterable spread yields NO arguments "
+         "rather than one",
+         "1/2/3|undefined/undefined/undefined"},
+        {31u,
+         "spread method",
+         {{"spreadMethod", 0u, &ctc_spreadMethod}, {}},
+         "the receiver, which ct_aot_call_spread takes as its own operand - dropping it makes "
+         "`this.tag` read undefined",
+         "R7"},
+        {32u,
+         "spread new",
+         {{"spreadNew", 0u, &ctc_spreadNew}, {}},
+         "op::construct_apply, a different opcode and helper from both ctjs.construct and "
+         "ctjs.call_spread",
+         "12"},
         {17u,
          "literals",
          {{"pack", 0u, &ctc_pack}, {}},
@@ -457,6 +479,9 @@ int main() {
         {"drop", 0u, &ctc_drop},
         {"greetChain", 0u, &ctc_greetChain},
         {"Kid", 0u, &ctc_Kid},
+        {"spreadCall", 0u, &ctc_spreadCall},
+        {"spreadMethod", 0u, &ctc_spreadMethod},
+        {"spreadNew", 0u, &ctc_spreadNew},
     };
 
     for (const subject & each : subjects) {

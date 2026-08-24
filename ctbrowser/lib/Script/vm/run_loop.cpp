@@ -522,25 +522,12 @@ value context::run_loop(std::size_t stop_depth) {
 
         VM_CASE(apply)
         VM_CASE(construct_apply) do {
-            {
-                // The arguments arrived as an ARRAY because their count was not
-                // known until the spread was evaluated. Both go through the same
-                // re-entrant call path a native callback uses, which is why one
-                // opcode covers plain, method and computed calls: the receiver is
-                // just a register the compiler already filled in.
-                const value callee = reg(in.a);
-                const value argv = reg(in.b);
-                std::vector<value> args;
-                if (argv.is_array()) { args = static_cast<array_object *>(argv.as_heap())->items; }
-                if (in.code == op::construct_apply) {
-                    reg(in.a) = construct(callee, args);
-                } else if (!callee.is_callable()) {
-                    raise("attempted to call a non-function");
-                } else {
-                    reg(in.a) = call(callee, args, reg(in.c));
-                }
-                break;
-            }
+            // a IS BOTH THE CALLEE AND THE DESTINATION, b is the argument
+            // array and c is the receiver.
+            reg(in.a) = in.code == op::construct_apply
+                            ? construct_spread(reg(in.a), reg(in.b))
+                            : call_spread(reg(in.a), reg(in.b), reg(in.c));
+            break;
         }
         while (0);
         VM_NEXT;
