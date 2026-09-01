@@ -19,6 +19,16 @@ function_proto & compiler_impl::proto() {
     return out_.functions[fn().proto];
 }
 
+std::uint32_t compiler_impl::new_proto([[maybe_unused]] std::uint32_t at_offset) {
+    const auto index = static_cast<std::uint32_t>(out_.functions.size());
+    out_.functions.emplace_back();
+#if CTBROWSER_SCRIPT_DEBUG_NAMES
+    out_.functions.back().debug_offsets = true;
+    out_.functions.back().emit_offset = at_offset == function_proto::no_offset ? 0u : at_offset;
+#endif
+    return index;
+}
+
 std::uint16_t compiler_impl::alloc_reg() {
     const std::uint32_t r = fn().next_reg++;
     if (fn().next_reg > fn().high_water) { fn().high_water = fn().next_reg; }
@@ -44,18 +54,72 @@ void compiler_impl::pop_scope() {
 }
 
 void compiler_impl::add_local(frame & f, local l) {
+#if CTBROWSER_SCRIPT_DEBUG_NAMES
+    // THE DEBUG TABLE IS WRITTEN HERE AND NOWHERE ELSE, because this is the one
+    // place a name comes into existence. `finish_frame` cannot do it - the plan
+    // suggested it could - since `frame::locals` is a STACK that `pop_scope`
+    // has already emptied of everything but the outermost scope by then.
+    function_proto & fp = out_.functions[f.proto];
+    const auto pc = static_cast<std::uint32_t>(fp.code.size());
+    l.debug_slot = static_cast<std::uint32_t>(fp.locals.size());
+    fp.locals.push_back(local_desc{l.name, l.reg, pc, pc, l.boxed});
+#endif
     f.local_index[l.name].push_back(static_cast<std::uint32_t>(f.locals.size()));
     f.locals.push_back(std::move(l));
 }
 
+void compiler_impl::close_local([[maybe_unused]] const frame & f,
+                                [[maybe_unused]] const local & l) {
+#if CTBROWSER_SCRIPT_DEBUG_NAMES
+    if (l.debug_slot == local::no_slot) { return; }
+    function_proto & fp = out_.functions[f.proto];
+    local_desc & d = fp.locals[l.debug_slot];
+    d.last_pc = static_cast<std::uint32_t>(fp.code.size());
+    // THE BOXEDNESS AT THE END, not at the declaration. `mark_captured`,
+    // `bind_export` and `bind_imports` all set `boxed` on a local that was
+    // declared already, so the value copied at `add_local` is a guess and this
+    // one is the answer.
+    d.boxed = l.boxed;
+#endif
+}
+
 void compiler_impl::shrink_locals(frame & f, std::size_t mark) {
     for (std::size_t i = f.locals.size(); i-- > mark;) {
+        close_local(f, f.locals[i]);
         const auto it = f.local_index.find(std::string_view{f.locals[i].name});
         if (it == f.local_index.end()) { continue; }
         it->second.pop_back();
         if (it->second.empty()) { f.local_index.erase(it); }
     }
     f.locals.resize(mark);
+}
+
+std::uint32_t compiler_impl::offset_of([[maybe_unused]] std::int32_t idx) const {
+#if CTBROWSER_SCRIPT_DEBUG_NAMES
+    // A SUB-AST ANSWERS NOTHING. A template literal's interpolation and
+    // `compile_owned_expr`'s synthesised text are parsed from OTHER buffers, so
+    // a lexeme in one is not an offset into the program at all. Keeping the
+    // enclosing statement's position is right as well as safe: that is where
+    // the template was written.
+    if (idx < 0 || current_ast_ != &ast_ || source_view_.empty()) {
+        return function_proto::no_offset;
+    }
+    const vp::node & n = at(idx);
+    if (n.begin != 0) { return n.begin; } // a function; see node::begin
+    const char * const base = source_view_.data();
+    const char * const text = n.text.data();
+    // BOUNDS-CHECKED WITH std::less, not with `<`. Comparing pointers into
+    // different objects with a relational operator is unspecified, and this is
+    // exactly that comparison: the whole question is whether `text` points into
+    // this buffer or into some other one.
+    if (text == nullptr || std::less<const void *>{}(text, base) ||
+        std::less<const void *>{}(base + source_view_.size(), text)) {
+        return function_proto::no_offset;
+    }
+    return static_cast<std::uint32_t>(text - base);
+#else
+    return function_proto::no_offset;
+#endif
 }
 
 std::uint16_t compiler_impl::declare_local(std::string name) {

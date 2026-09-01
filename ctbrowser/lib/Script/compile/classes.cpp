@@ -12,8 +12,7 @@
 namespace ctbrowser::script::detail {
 
 std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::int32_t> & fields) {
-    const auto index = static_cast<std::uint32_t>(out_.functions.size());
-    out_.functions.emplace_back();
+    const std::uint32_t index = new_proto(offset_of(fields.empty() ? -1 : fields.front()));
     out_.functions[index].name = "<fields>";
 
     frames_.emplace_back();

@@ -63,4 +63,12 @@ public:
                                          script_kind kind = script_kind::classic);
 };
 
+// WHETHER THIS BUILD FILLS `function_proto::locals` AND `code_offsets`.
+//
+// A build knob - CTBROWSER_SCRIPT_DEBUG_NAMES, ON by default - so it has to be
+// ASKABLE at run time rather than tested with a preprocessor conditional in
+// every reader. The same reason `allocator_name()` exists: a test that guesses
+// which build it is in is a test that passes for the wrong reason.
+[[nodiscard]] bool debug_names_enabled() noexcept;
+
 } // namespace ctbrowser::script

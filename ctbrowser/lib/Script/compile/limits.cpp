@@ -57,6 +57,14 @@ std::uint16_t compiler_impl::name_operand(std::string text) {
 }
 
 void compiler_impl::finish_frame(std::size_t index, std::size_t params) {
+    // EVERY LOCAL STILL IN SCOPE ENDS HERE. `pop_scope` closes the ones whose
+    // block ended; this closes the rest, and it is the one place guaranteed to
+    // run exactly once per function - all three callers spell
+    // `finish_frame(); pop_scope(); frames_.pop_back();`, and a body that
+    // returned early would otherwise leave its parameters with a live range of
+    // length zero. Closing twice writes the same numbers.
+    for (const local & each : fn().locals) { close_local(fn(), each); }
+
     function_proto & fp = out_.functions[index];
     const std::uint32_t wanted = fn().high_water;
     fp.frame_size = static_cast<std::uint16_t>(wanted);

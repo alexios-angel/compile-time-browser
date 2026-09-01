@@ -37,6 +37,7 @@
 #include <array>
 #include <charconv>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -51,6 +52,20 @@ namespace ctbrowser::script {
 // The alias stays at `script` scope, where it was: `compiler::compile()` in
 // compile.cpp names `vp::ast` and `vp::parse` too, and `detail` finds it by
 // enclosing-namespace lookup.
+// THE DEBUG SIDE TABLES ARE A BUILD OPTION, and the default is ON.
+//
+// Phase 44 of the lexical-backend plan asks for the measurement before the
+// decision: a table that doubles an image is a different bargain from one that
+// adds three percent. The measurement is in the commit that added this, and it
+// is why the default is ON - see docs/plans/ or `git log` for the numbers.
+//
+// OFF is not a stub: nothing is populated, `emit_offset` never leaves
+// `no_offset`, and both vectors on every proto stay empty. Every reader must
+// already cope with empty, because an image loader produces exactly that.
+#ifndef CTBROWSER_SCRIPT_DEBUG_NAMES
+#define CTBROWSER_SCRIPT_DEBUG_NAMES 1
+#endif
+
 namespace vp = ctjs::vp;
 
 namespace detail {
@@ -61,6 +76,15 @@ public:
         std::string name;
         std::uint16_t reg = 0;
         bool boxed = false; // lives in a heap cell; see mark_captured
+        // WHERE THIS LOCAL'S ENTRY IN `function_proto::locals` IS, or none when
+        // the debug tables are off. The compiler's `locals` is a STACK that
+        // shrinks at every scope exit, so by the time a function is finished
+        // the only names left are the ones still in scope - which for a body
+        // full of blocks is almost none of them. The debug table is written as
+        // each local is DECLARED and closed as its scope is popped, and this is
+        // the link between the two.
+        static constexpr std::uint32_t no_slot = 0xFFFFFFFFu;
+        std::uint32_t debug_slot = no_slot;
     };
     // Heterogeneous lookup, so is_captured can ask with a string_view without
     // building a std::string to throw away.
@@ -141,6 +165,58 @@ public:
     // the distinction is not cosmetic.
     bool module_scope_ = false;
 
+    // THE BYTES THE AST WAS PARSED FROM, which is NOT `out_.source`.
+    //
+    // `compiler::compile` copies the source into the program, so the copy's
+    // characters are at different addresses from the ones every `node::text`
+    // views. Offsets are the same in both, and this is the buffer they are
+    // offsets INTO - so it is the one a subtraction may be taken against.
+    //
+    // Empty when the caller did not say, which turns the whole of `offset_of`
+    // off rather than producing wrong line numbers.
+    std::string_view source_view_{};
+
+    // WHERE A NODE WAS WRITTEN, as a byte offset into `source_view_`, or
+    // `function_proto::no_offset` when this node cannot answer.
+    //
+    // `node::begin` is set for FUNCTIONS ONLY - the parser's comment says so
+    // outright, and it is zero on every other kind - so the offset of an
+    // ordinary statement has to come from somewhere else. It comes from the
+    // lexeme: `node::text` is a std::string_view INTO the source rather than a
+    // copy, so the address of its first character minus the address of the
+    // source IS the offset. That is the same subtraction `vp::parser::offset_at`
+    // makes, and it is the only reason per-instruction positions are available
+    // at all without changing the parser.
+    [[nodiscard]] std::uint32_t offset_of(std::int32_t idx) const;
+
+    // SETS THE EMIT CURSOR FOR ONE SUBTREE AND PUTS IT BACK.
+    //
+    // Restoring matters: in `a + b` the `add` instruction is emitted AFTER both
+    // operands, and without a restore it would be attributed to `b`. With one,
+    // the operands carry their own positions and the operator carries the
+    // position of the operator.
+    //
+    // It holds the compiler and not the proto, deliberately. `out_.functions`
+    // is a vector that GROWS while a nested function is compiled, so a
+    // `function_proto &` taken here would dangle across any function
+    // expression in the subtree this guard covers.
+    class at_source {
+    public:
+        at_source(compiler_impl & c, std::int32_t node) : owner_(c), saved_(c.proto().emit_offset) {
+            const std::uint32_t to = c.offset_of(node);
+            if (to != function_proto::no_offset) { c.proto().emit_offset = to; }
+        }
+        ~at_source() { owner_.proto().emit_offset = saved_; }
+        at_source(const at_source &) = delete;
+        at_source & operator=(const at_source &) = delete;
+        at_source(at_source &&) = delete;
+        at_source & operator=(at_source &&) = delete;
+
+    private:
+        compiler_impl & owner_;
+        std::uint32_t saved_;
+    };
+
     // --- AST access -------------------------------------------------------
     // A NEGATIVE INDEX IS "NOTHING", not an address.
     //
@@ -214,7 +290,31 @@ public:
     // Unwind from the TOP, which is what makes `pop_back` on each name's stack
     // the right inverse: entries went on in increasing position order, so the
     // highest position is the last one pushed for its name.
-    static void shrink_locals(frame & f, std::size_t mark);
+    //
+    // NOT static any more, because closing a local's live range needs the proto
+    // the frame belongs to and a `frame` only carries its index.
+    void shrink_locals(frame & f, std::size_t mark);
+    // A LOCAL HAS JUST GONE OUT OF SCOPE: stamp the end of its live range, and
+    // the boxedness it FINISHED with. Idempotent - closing twice at the same
+    // program counter writes the same numbers - which is what lets both
+    // `finish_frame` and `pop_scope` do it without either having to know
+    // whether the other already did.
+    void close_local(const frame & f, const local & l);
+
+    // A NEW, EMPTY PROTO AT THE END OF `out_.functions`, RETURNING ITS INDEX.
+    //
+    // It exists so that arming the debug tables happens in exactly one place.
+    // `function_proto::code_offsets` may only be empty or exactly parallel to
+    // `code`, and which of the two it is is a decision per FUNCTION - a
+    // per-instruction decision is what produced three offsets for six
+    // instructions before this existed.
+    //
+    // `at_offset` is where the cursor STARTS: the function's own first byte.
+    // The prologue, the parameter defaults and the implicit `return undefined`
+    // are emitted with no statement in hand, and attributing them to the
+    // function's opening is both true and what a debugger wants - it is where
+    // a breakpoint on entry belongs.
+    [[nodiscard]] std::uint32_t new_proto(std::uint32_t at_offset);
     [[nodiscard]] std::uint16_t declare_local(std::string name);
     // A NAME THAT IS ALREADY A CELL. An imported binding is the EXPORTER's
     // cell - that is what makes it live - so unlike declare_local this must not

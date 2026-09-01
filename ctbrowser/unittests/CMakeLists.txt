@@ -18,6 +18,11 @@ ctbrowser_test(unit/core_basics)
 ctbrowser_test(unit/dom_basics)
 ctbrowser_test(unit/html_parse)
 ctbrowser_test(unit/page_scripts)
+# The compiler's debug side tables - local names, live ranges, and one source
+# offset per instruction. Its own file rather than more of page_scripts: it asks
+# about the SHAPE of a compiled program rather than about running one, and it
+# carries the corpus measurement behind CTBROWSER_DEBUG_TABLE_COST=1.
+ctbrowser_test(unit/script_debug)
 ctbrowser_test(unit/gl_basics)
 ctbrowser_test(unit/net_basics)
 ctbrowser_test(unit/data_url)

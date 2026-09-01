@@ -62,6 +62,25 @@ enum class image_option : std::uint32_t {
     // behaviour: `f.toString()` can no longer return the text, and p5's own
     // error system reads its source. So it is KEPT unless dropping it is asked
     // for, and the image records which it is so a loader never guesses.
+    // AND IT DROPS THE PER-INSTRUCTION SOURCE OFFSETS WITH IT, which is not a
+    // second decision hidden inside the first - it is the same one. An offset
+    // into text the image no longer carries cannot be turned into a line, a
+    // column or a snippet by anybody, because doing that needs the newline
+    // positions and those are in the text. Keeping the table would be paying
+    // for information that has already been destroyed.
+    //
+    // MEASURED, which is why it is written this way round. One 32-bit word per
+    // instruction is most of what the debug tables cost. A source-dropped
+    // image, with both tables and then with the names alone:
+    //
+    //     bootstrap  207 KB   ->  313 KB (+51.5%)  ->  233 KB (+12.7%)
+    //     p5        2729 KB   -> 4171 KB (+52.8%)  -> 3071 KB (+12.5%)
+    //     phaser    3456 KB   -> 5346 KB (+54.7%)  -> 3941 KB (+14.0%)
+    //
+    // Local NAMES are kept either way: a name is still a name without the
+    // source, and it is what makes a stack trace and the AOT backend's C++
+    // readable. Numbers from `CTBROWSER_DEBUG_TABLE_COST=1
+    // ctbrowser-test-script_debug`, which retakes them.
     keep_source = 0,
     drop_source = 1,
 };

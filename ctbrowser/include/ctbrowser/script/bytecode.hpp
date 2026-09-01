@@ -341,6 +341,37 @@ struct upvalue_desc {
     std::uint16_t index = 0;
 };
 
+// A LOCAL VARIABLE'S NAME, AND THE WINDOW OF CODE IT WAS ALIVE FOR.
+//
+// The register machine has no notion of a variable: `r4` is a frame slot, and
+// the same slot holds a `let` in one block and a temporary in the next. The
+// name existed in the compiler - `declare_local(name)` is called for every one
+// of them - and was thrown away at the end of the scope that introduced it.
+//
+// Throwing it away costs two things that are worth more than the table. A
+// stack trace cannot say which variable was undefined, and the AOT backend
+// emits `v18[4] = v17` where the source said `this._isEnabled = ...`, which is
+// why nine differential defects in this project were found by a harness and
+// none by reading the output.
+//
+// `first_pc` and `last_pc` are a HALF-OPEN range of indices into `code`, taken
+// when the local is declared and when its scope is popped. They are the
+// compiler's scopes, not a liveness analysis: a slot reused by a temporary
+// after `last_pc` is genuinely a different variable, and one still named here
+// at `last_pc` genuinely was that variable for the whole window.
+//
+// `boxed` is the state at the END of the scope, not at the declaration. A
+// local becomes a cell when something nested captures it, and that is
+// discovered after the fact - `mark_captured`, `bind_export` and `bind_imports`
+// all set it on a local that was already declared.
+struct local_desc {
+    std::string name;
+    std::uint16_t reg = 0;
+    std::uint32_t first_pc = 0;
+    std::uint32_t last_pc = 0;
+    bool boxed = false;
+};
+
 // One compiled function. `constants` holds every literal and every property
 // name the body mentions, so the dispatch loop never touches a std::string
 // except through an index.
@@ -383,6 +414,52 @@ struct function_proto {
     std::vector<std::string> names; // for get_global/get_prop operands
     std::vector<upvalue_desc> upvalues;
 
+    // --- the debug side tables, and they are OPTIONAL ------------------------
+    //
+    // Both are empty when the compiler was built with
+    // CTBROWSER_SCRIPT_DEBUG_NAMES=OFF, and every reader must cope with that
+    // rather than index them blind. They are not part of what a program MEANS:
+    // `image_fingerprint` does not mix them and two programs differing only in
+    // these are the same program.
+    //
+    // Kept as separate vectors rather than fields on `instruction` because the
+    // dispatch loop reads `code` and nothing else - widening an instruction
+    // from 8 bytes to 12 to carry a line number would be paid by every
+    // execution of every program, to serve a reader who is not there.
+    std::vector<local_desc> locals;
+    // PARALLEL TO `code`, one byte offset into `program::source` per
+    // instruction - or empty. `emit` maintains the two together precisely so
+    // that they cannot drift: there is no other way to append an instruction.
+    std::vector<std::uint32_t> code_offsets;
+    // THE OFFSET THE NEXT `emit` WILL STAMP, and it is COMPILE-TIME STATE on a
+    // structure that is otherwise a compiled artefact - the same bargain
+    // `aot_entry` below makes in the other direction.
+    //
+    // It is here rather than on the compiler because `proto().emit(...)` is
+    // spelled 245 times across seven files, and threading an argument through
+    // all of them would put the burden of remembering on every call site. A
+    // cursor the compiler moves at statement and expression boundaries puts it
+    // in two.
+    //
+    // `no_offset` means "this node cannot say where it was written" - a
+    // template literal's interpolation is parsed from a different buffer, so a
+    // lexeme in it is not an offset into this program at all. It is a value the
+    // CURSOR takes, never one that reaches the table: the cursor starts at the
+    // function's own first byte and a node that cannot answer leaves it where
+    // it was.
+    static constexpr std::uint32_t no_offset = 0xFFFFFFFFu;
+    std::uint32_t emit_offset = no_offset;
+    // WHETHER THIS PROTO KEEPS A SOURCE-OFFSET TABLE AT ALL, set by the
+    // compiler when it creates the proto and false everywhere else.
+    //
+    // EMPTY AND PARALLEL ARE THE ONLY TWO STATES THE TABLE MAY BE IN, and the
+    // choice between them has to be made once per FUNCTION. Deciding it per
+    // instruction - "stamp an offset when one is known" - produced three
+    // offsets for six instructions, because the prologue and the implicit
+    // return are emitted with no statement in hand. The image loader's
+    // parallelism check is what said so.
+    bool debug_offsets = false;
+
     // THE COMPILED BODY, or null, which is almost always. Runtime-only: the
     // compiler never sets it, no image ever carries it, and `image_fingerprint`
     // cannot see it - an entry point is a property of THIS PROCESS, not of the
@@ -416,8 +493,11 @@ struct function_proto {
         names.push_back(std::move(n));
         return static_cast<std::uint32_t>(names.size() - 1);
     }
+    // THE ONLY PLACE AN INSTRUCTION IS APPENDED, which is what makes
+    // `code_offsets` parallel to `code` an invariant rather than a convention.
     std::size_t emit(instruction i) {
         code.push_back(i);
+        if (debug_offsets) { code_offsets.push_back(emit_offset); }
         return code.size() - 1;
     }
 };

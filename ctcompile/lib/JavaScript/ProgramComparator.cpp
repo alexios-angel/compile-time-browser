@@ -148,6 +148,32 @@ std::optional<difference> compare(const program & expected, const program & actu
                        w.found;
             }
         }
+
+        // THE DEBUG SIDE TABLES, compared for the same reason everything above
+        // is: a round trip that silently drops them looks exactly like a build
+        // with CTBROWSER_SCRIPT_DEBUG_NAMES off, and the round-trip test is the
+        // only thing that can tell the two apart.
+        if (!w.count(a.locals.size(), b.locals.size(), where, "local count")) { return w.found; }
+        for (std::size_t i = 0; i < a.locals.size(); ++i) {
+            if (a.locals[i].name != b.locals[i].name || a.locals[i].reg != b.locals[i].reg ||
+                a.locals[i].first_pc != b.locals[i].first_pc ||
+                a.locals[i].last_pc != b.locals[i].last_pc ||
+                a.locals[i].boxed != b.locals[i].boxed) {
+                return w.differ(where + ", local " + std::to_string(i),
+                                "name, register, live range or boxedness"),
+                       w.found;
+            }
+        }
+
+        if (!w.count(a.code_offsets.size(), b.code_offsets.size(), where, "source-offset count")) {
+            return w.found;
+        }
+        for (std::size_t i = 0; i < a.code_offsets.size(); ++i) {
+            if (a.code_offsets[i] != b.code_offsets[i]) {
+                return w.differ(where + ", instruction " + std::to_string(i), "source offset"),
+                       w.found;
+            }
+        }
     }
     return std::nullopt;
 }

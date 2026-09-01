@@ -32,7 +32,7 @@ constexpr std::uint32_t magic = 0x43544243; // 'CTBC'
 // function that build 2 would read as the next field, so the right refusal
 // names the format. The version check runs before the fingerprint for exactly
 // this reason.
-constexpr std::uint32_t format_version = 3;
+constexpr std::uint32_t format_version = 4;
 
 // FNV-1a's constants, used by `image_fingerprint()` and by nothing else in
 // this file - `image_source_hash` was the other consumer until it became
@@ -396,6 +396,10 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
     for (const function_proto & fn : from.functions) {
         for (const std::string & s : fn.names) { (void)intern(names, name_at, s); }
         for (const std::string & s : fn.strings) { (void)intern(strings, string_at, s); }
+        // A LOCAL'S NAME GOES IN THE SAME POOL. `n`, `i`, `this` and every
+        // method name a bundle uses are already there as property names, so a
+        // separate pool would store most of them twice.
+        for (const local_desc & d : fn.locals) { (void)intern(names, name_at, d.name); }
     }
 
     sink out;
@@ -467,6 +471,25 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
         for (const upvalue_desc & up : fn.upvalues) {
             out.u8(up.from_parent_local ? 1u : 0u);
             out.u16(up.index);
+        }
+        // THE DEBUG SIDE TABLES, and both may be empty - a compiler built
+        // without CTBROWSER_SCRIPT_DEBUG_NAMES produces exactly that, and so
+        // does any proto an image round-tripped through such a build. The
+        // counts are written unconditionally so the format has one shape.
+        out.u32(static_cast<std::uint32_t>(fn.locals.size()));
+        for (const local_desc & d : fn.locals) {
+            out.u32(intern(names, name_at, d.name));
+            out.u16(d.reg);
+            out.u32(d.first_pc);
+            out.u32(d.last_pc);
+            out.u8(d.boxed ? 1u : 0u);
+        }
+        // AND THE OFFSETS GO WITH THE SOURCE. See image_option::drop_source:
+        // an offset into text that is not in the image is not information.
+        const bool keep_offsets = option == image_option::keep_source;
+        out.u32(keep_offsets ? static_cast<std::uint32_t>(fn.code_offsets.size()) : 0u);
+        if (keep_offsets) {
+            for (const std::uint32_t offset : fn.code_offsets) { out.u32(offset); }
         }
     }
     return std::move(out.bytes);
@@ -819,6 +842,70 @@ load_result load_image(std::span<const std::byte> bytes,
             up.from_parent_local = from_local != 0;
             up.index = in.u16();
             fn.upvalues.push_back(up);
+        }
+        if (in.bad) { break; }
+
+        // THE DEBUG SIDE TABLES. Nothing executes them, which is exactly why
+        // they are validated: an out-of-range `reg` or a `last_pc` past the end
+        // of the code is a reader indexing off the end of a vector, and the
+        // reader that will do it - a stack trace, the AOT importer - is the one
+        // running when something has ALREADY gone wrong.
+        const std::uint32_t local_count = in.u32();
+        if (!in.need(static_cast<std::size_t>(local_count) * 15u)) {
+            in.fail(where() + "the local table claims more entries than the image holds");
+            break;
+        }
+        fn.locals.reserve(local_count);
+        for (std::uint32_t i = 0; i < local_count && !in.bad; ++i) {
+            const std::uint32_t id = in.u32();
+            if (id >= names.size()) {
+                in.fail(where() + "local " + std::to_string(i) + " points outside the name pool");
+                break;
+            }
+            local_desc d;
+            d.name = names[id];
+            d.reg = in.u16();
+            d.first_pc = in.u32();
+            d.last_pc = in.u32();
+            const std::uint8_t boxed = in.u8();
+            if (boxed > 1) {
+                in.fail(where() + "local " + std::to_string(i) +
+                        " has a boolean that is neither 0 nor 1");
+                break;
+            }
+            d.boxed = boxed != 0;
+            if (d.reg >= fn.frame_size) {
+                in.fail(where() + "local " + std::to_string(i) + " names register " +
+                        std::to_string(d.reg) + " in a frame of " + std::to_string(fn.frame_size));
+                break;
+            }
+            if (d.first_pc > d.last_pc || d.last_pc > fn.code.size()) {
+                in.fail(where() + "local " + std::to_string(i) + " is live for [" +
+                        std::to_string(d.first_pc) + ", " + std::to_string(d.last_pc) + ") of " +
+                        std::to_string(fn.code.size()) + " instructions");
+                break;
+            }
+            fn.locals.push_back(std::move(d));
+        }
+        if (in.bad) { break; }
+
+        const std::uint32_t offset_count = in.u32();
+        // EITHER ALL OF THEM OR NONE. A half-filled table would silently
+        // attribute every instruction past the end to nowhere, which is the
+        // failure that looks like working debug information.
+        if (offset_count != 0 && offset_count != fn.code.size()) {
+            in.fail(where() + "the source-offset table has " + std::to_string(offset_count) +
+                    " entries for " + std::to_string(fn.code.size()) +
+                    " instructions - it is parallel to the code or it is absent");
+            break;
+        }
+        if (!in.need(static_cast<std::size_t>(offset_count) * 4u)) {
+            in.fail(where() + "the source-offset table claims more entries than the image holds");
+            break;
+        }
+        fn.code_offsets.reserve(offset_count);
+        for (std::uint32_t i = 0; i < offset_count && !in.bad; ++i) {
+            fn.code_offsets.push_back(in.u32());
         }
         if (in.bad) { break; }
     }

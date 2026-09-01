@@ -25,3 +25,14 @@ tools/clang-std-embed/*
 # A port of ctjs's backtracking matcher. Reformatting it would make "the
 # port changed" and "the formatter ran" indistinguishable in the diff.
 ctbrowser/include/ctbrowser/script/regex.hpp
+
+# VENDORED, which is the third category and the strictest. This is upstream's
+# EmitC emitter forked at llvmorg-22.1.8, kept so that `diff` against upstream
+# is three hunks and re-syncing at the next LLVM bump is mechanical. Every line
+# reformatted toward this project's style is a line that has to be re-applied by
+# hand forever. See ctcompile/lib/Target/Cpp/TranslateToCpp.cpp.
+#
+# TranslateRegistration.cpp is NOT here: it is rewritten rather than vendored -
+# a different namespace, a different function name and our own comments - so it
+# is ours to format.
+ctcompile/lib/Target/Cpp/TranslateToCpp.cpp

@@ -16,6 +16,7 @@
 // 10A and 10B and are still absent rather than stubbed.
 #include <ctcompile/CTJS/Import/BytecodeImport.hpp>
 #include <ctcompile/Support/MLIRContextSetup.hpp>
+#include <ctcompile/Target/Cpp/CppEmitter.h>
 
 #include <ctbrowser/script/compile.hpp>
 #include <ctbrowser/script/program_image.hpp>
@@ -137,5 +138,17 @@ void register_translations() {
 
 int main(int argc, char ** argv) {
     register_translations();
+    // AND THE FORKED C++ EMITTER, under upstream's own `-mlir-to-cpp` name.
+    //
+    // HERE RATHER THAN IN A DRIVER OF ITS OWN. An mlir-translate binary hosts
+    // every translation it is given - that is what the tool IS - and a second
+    // executable would have to be added to the lit suite's DEPENDS to be built
+    // before the tests that call it. This one already is.
+    //
+    // It is what makes ctcompile/test/Target/Cpp/upstream/ work: those 35 files
+    // are upstream's, verbatim, and their RUN lines say `mlir-translate
+    // -mlir-to-cpp`. A lit.local.cfg beside them points `mlir-translate` at
+    // this binary, and nothing in a vendored test is edited.
+    ctcompile::cpp::registerToCppTranslation();
     return mlir::failed(mlir::mlirTranslateMain(argc, argv, "CTJS translation driver\n")) ? 1 : 0;
 }

@@ -32,6 +32,8 @@ target_sources(ctbrowser-script
     compile/frames.cpp
     compile/capture.cpp
     compile/strings.cpp
+    # The line table the debug offsets are read through.
+    source_lines.cpp
     # The standard library. builtins.cpp is now just install_builtins() calling
     # the five files beside it; builtins/internal.hpp is private to them and is
     # deliberately in NO file set - builtins.hpp still declares one function.
@@ -59,6 +61,7 @@ target_sources(ctbrowser-script
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/program_image.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/bigint.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/compile.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/source_lines.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/number_format.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/vm.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/builtins.hpp"
@@ -70,6 +73,15 @@ target_compile_features(ctbrowser-script PUBLIC cxx_std_23)
 # nothing a consumer compiles against can see it.
 if(CTBROWSER_COMPUTED_GOTO)
   target_compile_definitions(ctbrowser-script PRIVATE CTBROWSER_COMPUTED_GOTO)
+endif()
+
+# PRIVATE for the same reason: the debug side tables are filled by the compiler
+# and read through `debug_names_enabled()`, so no header a consumer compiles
+# against changes shape with the flag. That is deliberate - the alternative,
+# #ifdef-ing the vectors off `function_proto`, would make the struct a different
+# type in a consumer built without the flag.
+if(NOT CTBROWSER_SCRIPT_DEBUG_NAMES)
+  target_compile_definitions(ctbrowser-script PRIVATE CTBROWSER_SCRIPT_DEBUG_NAMES=0)
 endif()
 
 # PUBLIC, unlike the one above, and it MUST be: CTBROWSER_WITH_GMP selects the

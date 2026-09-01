@@ -41,8 +41,21 @@ program compiler::compile(std::string_view source, script_kind kind) {
     out.source = std::string{source};
     detail::compiler_impl c{tree, out};
     c.module_scope_ = kind == script_kind::module_;
+    // THE CALLER'S BYTES, not `out.source`. Every `node::text` is a view into
+    // the buffer the PARSER saw, and `out.source` is a copy at a different
+    // address - so the copy is the wrong thing to subtract against. See
+    // compiler_impl::offset_of.
+    c.source_view_ = source;
     c.compile_program();
     return out;
+}
+
+bool debug_names_enabled() noexcept {
+#if CTBROWSER_SCRIPT_DEBUG_NAMES
+    return true;
+#else
+    return false;
+#endif
 }
 
 } // namespace ctbrowser::script
