@@ -4,8 +4,14 @@
 #   tools/format.sh          rewrite every file in place
 #   tools/format.sh --check  exit non-zero and print the diff
 #
-# The file list is `git ls-files`, so a file that is not tracked is not
-# formatted and a build directory cannot be picked up by accident. It covers
+# The file list is `git ls-files`, tracked AND untracked-but-not-ignored, so a
+# build directory still cannot be picked up by accident - build/ is gitignored,
+# and --exclude-standard honours that.
+#
+# TRACKED-ONLY WAS A HOLE, and it was found the way these things are: an agent
+# added two new files, ran --check, was told the tree was clean, and committed
+# both unformatted. A gate that cannot see a file nobody has `git add`ed yet is
+# a gate that passes precisely when a new file is at its least reviewed. It covers
 # the WHOLE monorepo - ctbrowser/ and ctcompile/ both - because there is one
 # .clang-format and one house style, and a second formatter invocation is a
 # second chance to forget one. What NOT to
@@ -28,10 +34,25 @@ if [[ -z $format ]]; then
 fi
 echo "format.sh: using $("$format" --version)"
 
-mapfile -t files < <(git ls-files '*.cpp' '*.cppm' '*.hpp' '*.h' \
+mapfile -t files < <({ git ls-files '*.cpp' '*.cppm' '*.hpp' '*.h'
+                       git ls-files --others --exclude-standard \
+                                    '*.cpp' '*.cppm' '*.hpp' '*.h'; } \
                      | grep -v '^third-party/' | grep -v '^build')
 if [[ ${#files[@]} -eq 0 ]]; then
-    echo "format.sh: nothing to format" >&2
+    # WHICH KIND OF NOTHING, because the two have different fixes and the old
+    # message covered both. `git ls-files` failing is the common one for an
+    # agent working in a worktree synced to another machine: the .git there is a
+    # POINTER FILE whose target does not exist on that box, so git errors, the
+    # list comes back empty, and the script exits 1 having formatted nothing.
+    # Chained as `format.sh && remote-build.sh` that reads as the build
+    # mysteriously not running.
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        echo "format.sh: this is not a usable git repository - git ls-files cannot" >&2
+        echo "  run, so NOTHING was formatted. In a worktree synced to another" >&2
+        echo "  machine, .git is a pointer file whose target is not there." >&2
+        exit 2
+    fi
+    echo "format.sh: no source files matched" >&2
     exit 1
 fi
 
