@@ -101,6 +101,10 @@ CT_ENTRY(coerce)
 CT_ENTRY(keysOf)
 CT_ENTRY(dropNamed)
 CT_ENTRY(bigLits)
+CT_ENTRY(howMany)
+CT_ENTRY(sumAll)
+CT_ENTRY(restOf)
+CT_ENTRY(bothOf)
 #undef CT_ENTRY
 
 namespace {
@@ -441,6 +445,20 @@ int main() {
          "different literals in one body, so a shared key returns the other one - and the hex "
          "form, which only bigint_from_literal parses correctly",
          "900000000000000000009/16/900000000000000000010"},
+        {41u,
+         "arguments",
+         {{"howMany", 0u, &ctc_howMany}, {"sumAll", 0u, &ctc_sumAll}},
+         "arguments PAST the declared parameters, which a compiled frame could not see at all - "
+         "its own registers sit above the caller's window and the prologue reads only the "
+         "declared ones, so a body limited to them answers 2 and 0",
+         "4/1/18"},
+        {42u,
+         "rest parameter",
+         {{"restOf", 0u, &ctc_restOf}, {"bothOf", 0u, &ctc_bothOf}},
+         "the rest array, and the path that only exists when `arguments` was built too - that "
+         "claims a register an extra argument may be in, so gather_rest must read the frame's "
+         "copy rather than the window",
+         "2:2,3/0:/3/2,3"},
         {17u,
          "literals",
          {{"pack", 0u, &ctc_pack}, {}},
@@ -567,6 +585,10 @@ int main() {
         {"keysOf", 0u, &ctc_keysOf},
         {"dropNamed", 0u, &ctc_dropNamed},
         {"bigLits", 0u, &ctc_bigLits},
+        {"howMany", 0u, &ctc_howMany},
+        {"sumAll", 0u, &ctc_sumAll},
+        {"restOf", 0u, &ctc_restOf},
+        {"bothOf", 0u, &ctc_bothOf},
     };
 
     for (const subject & each : subjects) {

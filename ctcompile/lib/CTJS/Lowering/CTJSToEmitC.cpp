@@ -467,8 +467,8 @@ bool body_is_supported(FuncOp function, std::string & why) {
                       ThrowOp, ConstructOp, IterableOp, HasPropertyOp, InstanceOfOp,
                       DeletePropertyOp, FromBoolOp, LoadHomeOp, GetProtoOp, SetProtoOp,
                       PassNewTargetOp, CallSpreadOp, ConstructSpreadOp, CopyPropsOp,
-                      DefineAccessorOp, DeleteNamedOp, OwnKeysOp, PushHandlerOp, PopHandlerOp,
-                      CheckOp, CatchLandOp>(op)) {
+                      DefineAccessorOp, DeleteNamedOp, OwnKeysOp, MakeArgumentsOp, GatherRestOp,
+                      PushHandlerOp, PopHandlerOp, CheckOp, CatchLandOp>(op)) {
             return;
         }
 
@@ -1759,6 +1759,46 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             mapping.map(landed.getPad(), pad.getResult(0));
             mapping.map(landed.getThrown(),
                         ec::LoadOp::create(build, where, value, slot.getResult()).getResult());
+            return;
+        }
+        // THE ARRIVING ARGUMENT WINDOW, WHICH IS NOT THIS FRAME'S SLOTS.
+        //
+        // ct_aot_enter puts this frame's registers ABOVE the caller's window,
+        // and the entry prologue reads argv only for the DECLARED parameters -
+        // so an extra argument is reachable from neither. ct_aot_args and
+        // ct_aot_argc answer for the frame, and both operations take what they
+        // need from there rather than from operands the importer could not
+        // build.
+        if (mlir::isa<MakeArgumentsOp, GatherRestOp>(op)) {
+            const auto u32 = opaque(build.getContext(), "uint32_t");
+            const mlir::Value window =
+                ec::CallOpaqueOp::create(
+                    build, where, mlir::TypeRange{pointer_to(build.getContext(), "uint64_t")},
+                    callee("ct_aot_args"), mlir::ValueRange{scope.frame})
+                    .getResult(0);
+            const mlir::Value count =
+                ec::CallOpaqueOp::create(build, where, mlir::TypeRange{u32}, callee("ct_aot_argc"),
+                                         mlir::ValueRange{scope.frame})
+                    .getResult(0);
+            // RAISE TIER, both: they answer the array rather than a status, so
+            // there is no edge - a caller polls at a back edge. Both allocate,
+            // so the result is parked like every other value.
+            if (auto rest = mlir::dyn_cast<GatherRestOp>(op)) {
+                mapping.map(rest.getResult(),
+                            ec::CallOpaqueOp::create(
+                                build, where, mlir::TypeRange{value}, callee("ct_aot_gather_rest"),
+                                mlir::ValueRange{
+                                    scope.frame, window, count,
+                                    literal(build, where, u32, std::to_string(rest.getFrom()))})
+                                .getResult(0));
+                return;
+            }
+            auto made = mlir::cast<MakeArgumentsOp>(op);
+            mapping.map(made.getResult(),
+                        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
+                                                 callee("ct_aot_make_arguments"),
+                                                 mlir::ValueRange{scope.frame, window, count})
+                            .getResult(0));
             return;
         }
         if (auto gone = mlir::dyn_cast<DeleteNamedOp>(op)) {

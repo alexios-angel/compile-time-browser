@@ -73,8 +73,14 @@ void note_transition_into_cxx(const context & ctx) noexcept {
 // already asked. Everything here happens once per compiled call, so none of it
 // is on the interpreter's ordinary path.
 bool enter_compiled_body(context & ctx, const function_proto & target, value closure,
-                         const value * argv, std::uint32_t argc, value receiver, bool constructing,
-                         value & out) {
+                         const value * argv, std::size_t argv_base, std::uint32_t argc,
+                         value receiver, bool constructing, value & out) {
+    // WHERE THE ARGUMENTS ARE, HANDED ON AS AN INDEX. ct_aot_enter consumes
+    // both and clears them, exactly as it does pending_new_target_ and
+    // pending_closure_ - and for the same reason they are set here rather than
+    // read there: this is the last place that knows.
+    ctx.pending_argv_base_ = argv_base;
+    ctx.pending_argc_ = argc;
     const transition crossing = ctx.executing_ == executing_kind::aot  ? transition::aot_to_aot
                                 : ctx.executing_ == executing_kind::vm ? transition::vm_to_aot
                                                                        : transition::cxx_to_aot;

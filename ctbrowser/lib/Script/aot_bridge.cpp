@@ -65,6 +65,21 @@ struct aot_frame_storage {
     // rather than assumed: without it `ct_aot_slots` hands back a base and
     // nothing anywhere knows how far it is legal to walk.
     std::uint32_t slot_count = 0;
+
+    // WHERE THE ARRIVING ARGUMENTS ARE, AS AN INDEX INTO registers_, and how
+    // many arrived.
+    //
+    // NOT A POINTER. `argv` is one, and ct_aot_enter's resize of registers_ may
+    // reallocate it - which aot_entry.h warns about. An index survives that,
+    // because registers_ only grows during a call and the caller's window is
+    // not truncated until this frame returns. The VALUES stay rooted either
+    // way: collect() marks registers_ in full.
+    //
+    // THIS FRAME'S OWN register_base IS NOT IT. That is above the caller's
+    // window, which is exactly why a compiled body cannot reach the arguments
+    // past its declared parameters without being told where they are.
+    std::size_t argv_base = 0;
+    std::uint32_t argv_count = 0;
 };
 
 // THE NUMBER IN THE HEADER, CHECKED AGAINST THE TYPE IT SIZES. A compiled body
@@ -174,6 +189,18 @@ struct aot_bridge {
         // C++ local until the body returns.
         entered.receiver = value::from_bits(receiver);
         entered.new_target = cx.pending_new_target_;
+        // AND HOW MANY ARGUMENTS ARRIVED, which this frame reported as ZERO
+        // until now - the field simply was never set for a compiled frame. Any
+        // shared member that loops to the frame's argc therefore built an empty
+        // `arguments` object and an empty rest array in the compiled tier while
+        // the interpreted one was correct.
+        //
+        // TRUNCATED THE SAME WAY context::call TRUNCATES IT. call_frame::argc is
+        // a uint16_t and the ABI's argc is 32-bit, so a call with more than
+        // 65535 arguments already miscounts in the VM. Reproducing that is
+        // right: a compiled tier that was MORE correct here would be a
+        // differential failure rather than a fix.
+        entered.argc = static_cast<std::uint16_t>(cx.pending_argc_);
         // AND THE CLOSURE, WHICH IS THE ONLY WAY A COMPILED BODY REACHES WHAT
         // IT CAPTURED. The entry ABI delivers `site` - the shared
         // function_proto - and upvalues live on the closure INSTANCE.
@@ -192,6 +219,13 @@ struct aot_bridge {
         // Nothing collects in that gap today; ordering it correctly costs a
         // line and removes the question.
         cx.frames_.push_back(entered);
+        // THE ARRIVING WINDOW, CONSUMED AND CLEARED like the two roots below -
+        // set by enter_compiled_body, which is the last place that knows where
+        // the caller put them.
+        held->argv_base = cx.pending_argv_base_;
+        held->argv_count = cx.pending_argc_;
+        cx.pending_argv_base_ = 0;
+        cx.pending_argc_ = 0;
         cx.pending_new_target_ = value::undefined();
         // CLEARED AFTER THE PUSH for the reason above it: between copying the
         // handoff into the frame and clearing the root, the value is reachable
@@ -854,6 +888,52 @@ struct aot_bridge {
     // is a std::vector and a nested call resizes it, so this recomputes the
     // base every time - exactly as the interpreter's own reg() does, and for
     // the same reason.
+    // ct_aot_make_arguments and ct_aot_gather_rest, through the shared members.
+    //
+    // RAISE TIER: both answer the ARRAY rather than a status, so on failure the
+    // value is meaningless and a caller polls ct_aot_failed at a back edge.
+    // They allocate, so both are safepoints; neither can run user code.
+    //
+    // AN UNWOUND FRAME STILL GETS A WELL-FORMED VALUE. frame_record answers
+    // null once frames_ has been truncated below this frame, and a raise-tier
+    // helper has no status to report it with - so the honest answer is an empty
+    // array, not a dereference.
+    static std::uint64_t make_arguments(aot::ct_aot_frame * f, const std::uint64_t * slots,
+                                        std::uint32_t argc) {
+        context & cx = *frame_of(f).ctx;
+        context::call_frame * record = frame_record(f);
+        if (record == nullptr) { return cx.make_array().bits(); }
+        return cx.make_arguments_object(*record, reinterpret_cast<const value *>(slots), argc)
+            .bits();
+    }
+
+    static std::uint64_t gather_rest(aot::ct_aot_frame * f, const std::uint64_t * slots,
+                                     std::uint32_t argc, std::uint32_t from) {
+        context & cx = *frame_of(f).ctx;
+        const context::call_frame * record = frame_record(f);
+        if (record == nullptr) { return cx.make_array().bits(); }
+        return cx.gather_rest_values(*record, reinterpret_cast<const value *>(slots), argc, from)
+            .bits();
+    }
+
+    // ct_aot_args and ct_aot_argc. Where the arriving arguments are, and how
+    // many - neither of which this frame's own slots can answer, because
+    // ct_aot_enter puts them above the caller's window.
+    static std::uint64_t * args(aot::ct_aot_frame * f) {
+        aot_frame_storage & held = frame_of(f);
+        context & cx = *held.ctx;
+        // THE SAME BOUND TEST ct_aot_slots MAKES, against base + count rather
+        // than base alone: an unwound frame truncates registers_ to exactly the
+        // base, and a one-past-the-end pointer is worse than a null one.
+        if (held.argv_base + held.argv_count > cx.registers_.size()) { return nullptr; }
+        return reinterpret_cast<std::uint64_t *>(cx.registers_.data() + held.argv_base);
+    }
+
+    static std::uint32_t argc(aot::ct_aot_frame * f) {
+        const context::call_frame * record = frame_record(f);
+        return record == nullptr ? 0u : record->argc;
+    }
+
     static std::uint64_t * slots(aot::ct_aot_frame * f) {
         aot_frame_storage & held = frame_of(f);
         context & cx = *held.ctx;
@@ -1301,6 +1381,24 @@ std::uint64_t ct_aot_get_proto(ct_aot_frame * fr, std::uint64_t target) {
 
 void ct_aot_set_proto(ct_aot_frame * fr, std::uint64_t target, std::uint64_t proto) {
     script::aot_bridge::set_proto(fr, target, proto);
+}
+
+std::uint64_t ct_aot_make_arguments(ct_aot_frame * fr, const std::uint64_t * slots,
+                                    std::uint32_t argc) {
+    return script::aot_bridge::make_arguments(fr, slots, argc);
+}
+
+std::uint64_t ct_aot_gather_rest(ct_aot_frame * fr, const std::uint64_t * slots, std::uint32_t argc,
+                                 std::uint32_t from) {
+    return script::aot_bridge::gather_rest(fr, slots, argc, from);
+}
+
+std::uint64_t * ct_aot_args(ct_aot_frame * fr) {
+    return script::aot_bridge::args(fr);
+}
+
+std::uint32_t ct_aot_argc(ct_aot_frame * fr) {
+    return script::aot_bridge::argc(fr);
 }
 
 std::uint64_t * ct_aot_slots(ct_aot_frame * fr) {

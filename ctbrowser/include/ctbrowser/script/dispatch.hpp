@@ -77,8 +77,9 @@ void reset_transitions() noexcept;
 // can resize the register file; `ct_aot_enter` may, which is why the row says
 // so and why both call sites pass a window they have just finished filling.
 [[nodiscard]] bool enter_compiled_body(context & ctx, const function_proto & target, value closure,
-                                       const value * argv, std::uint32_t argc, value receiver,
-                                       bool constructing, value & out);
+                                       const value * argv, std::size_t argv_base,
+                                       std::uint32_t argc, value receiver, bool constructing,
+                                       value & out);
 
 // THE TEST IS INLINE AND THE WORK IS NOT, which is the whole reason this is
 // two functions.
@@ -99,11 +100,18 @@ void reset_transitions() noexcept;
 // upvalues live on the closure INSTANCE - two closures over one function share
 // a proto and capture different things. A top-level entry has none and passes
 // undefined, which is not the same as a closure with no upvalues.
+//
+// `argv_base` IS argv's INDEX INTO registers_, passed rather than derived.
+// Subtracting two pointers would be undefined behaviour the moment argv pointed
+// anywhere else, and this signature only promises the window is FILLED, not
+// where it lives - so every caller states the number it already has.
 [[nodiscard]] inline bool enter_compiled(context & ctx, const function_proto & target,
-                                         value closure, const value * argv, std::uint32_t argc,
-                                         value receiver, bool constructing, value & out) {
+                                         value closure, const value * argv, std::size_t argv_base,
+                                         std::uint32_t argc, value receiver, bool constructing,
+                                         value & out) {
     if (target.aot_entry == nullptr) { return false; }
-    return enter_compiled_body(ctx, target, closure, argv, argc, receiver, constructing, out);
+    return enter_compiled_body(ctx, target, closure, argv, argv_base, argc, receiver, constructing,
+                               out);
 }
 
 // Counts a crossing into interpreted or native C++ code. `enter_compiled`

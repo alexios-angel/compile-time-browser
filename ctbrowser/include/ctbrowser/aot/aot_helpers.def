@@ -185,6 +185,56 @@ CT_AOT_HELPER(/* name */ ct_aot_slots, /* ret */ uint64_t *,
               /* params */ (struct ct_aot_frame *fr),
               /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
 
+/* THE ARGUMENTS THIS FRAME WAS CALLED WITH, WHICH ARE NOT ITS SLOTS.
+ *
+ * ct_aot_slots hands back THIS frame's registers, which ct_aot_enter placed
+ * ABOVE the caller's argument window - so a compiled body has no way to
+ * reach the arguments past its declared parameters, and its entry reads
+ * argv[i] only for i < declared. That is why ct_aot_make_arguments and
+ * ct_aot_gather_rest take `slots` and `argc` as PARAMETERS rather than
+ * reading the frame: nothing in the frame could answer. These two rows are
+ * what answers, and they are the reason those parameters can now be filled.
+ *
+ * IT IS THE CALLER'S WINDOW, IN PLACE, NOT A COPY. The row for
+ * ct_aot_make_arguments refuses to be founded on "the incoming argv is
+ * immutable", and a copy would be exactly that. context::call and op::call
+ * both fill the window to max(param_count, argc) with undefined before
+ * entering, and collect() marks registers_ in FULL rather than per frame -
+ * so the window already is what that row asks `slots` to be: a frame-local,
+ * GC-rooted, mutable array where the parameters actually live.
+ *
+ * uint64_t * AND NOT const uint64_t *, matching ct_aot_slots. It is
+ * read-only by contract; the const spelling has no arm in the compiler's
+ * classify_return and would classify as unknown, which Inventories.cpp
+ * asserts against.
+ * DELEGATES TO: aot_frame_storage::argv_base, set by ct_aot_enter from
+ *   context::pending_argv_base_, which enter_compiled_body sets because it
+ *   is the last place that knows where the caller put the window.
+ * FAILURE: None. NULL if the window no longer exists, on the same bound test
+ *   ct_aot_slots makes and for the same reason: an unwound frame truncates
+ *   registers_ and a one-past-the-end pointer is worse than a null one. */
+CT_AOT_HELPER(/* name */ ct_aot_args, /* ret */ uint64_t *,
+              /* params */ (struct ct_aot_frame *fr),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+
+/* HOW MANY ARGUMENTS ARRIVED, which is not how many were declared - and
+ * whenever `arguments` or a rest parameter is worth reading at all, the two
+ * differ.
+ *
+ * IT ANSWERS call_frame::argc AND NOT THE ENTRY'S OWN 32-BIT argc, and the
+ * difference is deliberate. context::call pushes
+ * static_cast<uint16_t>(args.size()), so a call with more than 65535
+ * arguments already miscounts in the interpreter. Routing both tiers through
+ * the one field is what stops them disagreeing; answering the honest 32-bit
+ * count would make the compiled tier MORE correct than the VM, which this
+ * project's own policy makes a differential FAILURE rather than a fix.
+ * DELEGATES TO: call_frame::argc, which ct_aot_enter now sets - it was left
+ *   at its default of 0 for every compiled frame until these rows existed.
+ * FAILURE: None. Zero for an unwound frame. */
+CT_AOT_HELPER(/* name */ ct_aot_argc, /* ret */ uint32_t,
+              /* params */ (struct ct_aot_frame *fr),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+
 /* The handler truncation is a RESIZE, not a pop, so ct_aot_handler_pop is
  * not it and must not be used for it - a `return` out of a try otherwise
  * leaves its catch reachable from the caller, silently. Must NOT run on the
@@ -1884,9 +1934,9 @@ CT_AOT_COVERS(/* helper */ ct_aot_module_import_cell, /* opcode */ load_import)
  * current_module_, private at vm.hpp:1009 with no accessor - but that is an
  * implementation detail of ctbrowser's own DEFINE expansion, not an ABI
  * question, since the helper is DEFINED in ctbrowser under Principle 11.
- * DELEGATES TO: run_loop.cpp:1270-1292 inline:
- *   current_module_->exports[name], creating a cell_object when absent
- *   (:1287). instantiate_module (call.cpp:110-119) normally created them
+ * DELEGATES TO: run_loop.cpp's VM_CASE(bind_export), inline:
+ *   current_module_->exports[name], creating a cell_object when absent.
+ *   context::instantiate_module normally created them
  *   all, but browser::instantiate_module is what calls it (browser.cpp:975)
  *   - context::run_module (call.cpp:151-162) does NOT, so a host running a
  *   module without instantiating it first reaches the fallback and the

@@ -498,30 +498,9 @@ value context::run_loop(std::size_t stop_depth) {
         VM_NEXT;
 
         VM_CASE(gather_rest) do {
-            {
-                // The arguments past the declared parameters. They are still in
-                // this (*vm_frame)'s registers - the caller wrote them there and the
-                // callee's base IS the argument base - so this reads them in place.
-                //
-                // UNLESS the body also built an `arguments` object, which happens
-                // before this and claims a register an extra argument may be in.
-                // Then the (*vm_frame)'s copy is the one that still has them.
-                value out = make_array();
-                auto * rest = static_cast<array_object *>(out.as_heap());
-                if (vm_frame->arguments_object.is_array()) {
-                    const auto & held =
-                        static_cast<array_object *>(vm_frame->arguments_object.as_heap())->items;
-                    for (std::size_t i = in.b; i < held.size(); ++i) {
-                        rest->items.push_back(held[i]);
-                    }
-                } else {
-                    for (std::size_t i = in.b; i < vm_frame->argc; ++i) {
-                        rest->items.push_back(registers_[base + i]);
-                    }
-                }
-                reg(in.a) = out;
-                break;
-            }
+            reg(in.a) =
+                gather_rest_values(*vm_frame, registers_.data() + base, vm_frame->argc, in.b);
+            break;
         }
         while (0);
         VM_NEXT;
@@ -693,9 +672,9 @@ value context::run_loop(std::size_t stop_depth) {
                 // promises: the window with its missing parameters already
                 // undefined. BEFORE the depth guard, because ct_aot_enter owns
                 // that guard for a compiled frame.
-                if (value produced = value::undefined(); enter_compiled(
-                        *this, target, callee, registers_.data() + new_base, in.b, receiver,
-                        /*constructing*/ false, produced)) {
+                if (value produced = value::undefined();
+                    enter_compiled(*this, target, callee, registers_.data() + new_base, new_base,
+                                   in.b, receiver, /*constructing*/ false, produced)) {
                     reg(in.a) = produced;
                     break;
                 }
@@ -768,22 +747,13 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(make_arguments) do {
-            {
-                // The (*vm_frame) knows how many arguments ARRIVED; the proto only knows
-                // how many were declared, and those are different numbers whenever
-                // `arguments` is worth reading at all.
-                value list = make_array();
-                auto * items = static_cast<array_object *>(list.as_heap());
-                items->items.reserve(vm_frame->argc);
-                for (std::uint16_t i = 0; i < vm_frame->argc; ++i) {
-                    items->items.push_back(reg(i));
-                }
-                // On the (*vm_frame) too: this claims a register that an extra argument
-                // may be in, so whatever still needs the raw ones reads them here.
-                vm_frame->arguments_object = list;
-                reg(in.a) = list;
-                break;
-            }
+            // THE POINTER IS COMPUTED AT THE CALL, not hoisted. make_array()
+            // inside the member allocates, and allocation can collect - but it
+            // does not resize registers_, so the pointer survives. That is a
+            // fact about context::allocate rather than an accident, and it is
+            // why this is safe.
+            reg(in.a) = make_arguments_object(*vm_frame, registers_.data() + base, vm_frame->argc);
+            break;
         }
         while (0);
         VM_NEXT;
@@ -1168,8 +1138,8 @@ value context::run_loop(std::size_t stop_depth) {
                 const value saved_new_target = pending_new_target_;
                 pending_new_target_ = callee;
                 if (value produced = value::undefined();
-                    enter_compiled(*this, target, callee, registers_.data() + new_base, in.b, self,
-                                   /*constructing*/ true, produced)) {
+                    enter_compiled(*this, target, callee, registers_.data() + new_base, new_base,
+                                   in.b, self, /*constructing*/ true, produced)) {
                     pending_new_target_ = saved_new_target;
                     reg(in.a) = produced.is_object_like() ? produced : self;
                     break;

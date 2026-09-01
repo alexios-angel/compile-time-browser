@@ -775,6 +775,18 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 ctjs::PopHandlerOp::create(into, where);
                 state.handlers.pop_back();
                 break;
+            case op::make_arguments:
+                set(in.a, ctjs::MakeArgumentsOp::create(into, where, value_type));
+                break;
+            case op::gather_rest:
+                // b IS A COUNT - how many parameters were declared before the
+                // rest one - not a register. The emitter spells it
+                // `{gather_rest, i, i}` with both fields equal, which makes a
+                // mutation from b to a invisible; that is recorded in
+                // docs/plans/arguments-and-rest.md rather than papered over.
+                set(in.a, ctjs::GatherRestOp::create(into, where, value_type,
+                                                     static_cast<std::uint32_t>(in.b)));
+                break;
             case op::load_bigint:
                 if (in.bx() >= proto.strings.size()) {
                     state.give_up(at, in.code, "bigint literal index out of range");

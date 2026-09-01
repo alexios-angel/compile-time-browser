@@ -110,7 +110,7 @@ value context::invoke(value callable, std::span<const value> args, value this_va
     // the ABI's entry row promises, and BEFORE the depth guard, because
     // ct_aot_enter owns that guard for a compiled frame.
     if (value produced = value::undefined(); enter_compiled(
-            *this, target, callable, registers_.data() + new_base,
+            *this, target, callable, registers_.data() + new_base, new_base,
             static_cast<std::uint32_t>(args.size()), this_value, constructing, produced)) {
         if (registers_.size() >= new_base) { registers_.resize(new_base); }
         return produced;
@@ -235,9 +235,9 @@ run_result context::run_reentrant(const program & prog) {
     // is the third place that entered a program's top level by pushing a frame
     // of its own; leaving it out would mean an imported module's compiled body
     // was interpreted purely because of who imported it.
-    if (value produced = value::undefined(); enter_compiled(
-            *this, entry, value::undefined(), registers_.data() + new_base, 0u, value::undefined(),
-            /*constructing*/ false, produced)) {
+    if (value produced = value::undefined();
+        enter_compiled(*this, entry, value::undefined(), registers_.data() + new_base, new_base, 0u,
+                       value::undefined(), /*constructing*/ false, produced)) {
         program_ = outer_program;
         if (registers_.size() >= new_base) { registers_.resize(new_base); }
         return result;
@@ -320,9 +320,9 @@ value context::execute(const program & prog, const function_proto & entry) {
     // level, so a backend that compiles anything compiles this. Asked after the
     // reset above, so a compiled body enters a context in the state it expects,
     // and before the frame push, because ct_aot_enter pushes its own.
-    if (value produced = value::undefined();
-        enter_compiled(*this, entry, value::undefined(), registers_.data(), 0u, value::undefined(),
-                       /*constructing*/ false, produced)) {
+    if (value produced = value::undefined(); enter_compiled(
+            *this, entry, value::undefined(), registers_.data(), 0u, 0u, value::undefined(),
+            /*constructing*/ false, produced)) {
         return produced;
     }
     frames_.push_back(call_frame{&entry, 0, 0, 0, 0, nullptr, value::undefined(), 0});
@@ -692,6 +692,37 @@ value context::construct_new(value callee, std::span<const value> args,
     pending_new_target_ = saved;
     // A CONSTRUCTOR RETURNING A PRIMITIVE EVALUATES TO ITS RECEIVER.
     return produced.is_object_like() ? produced : self;
+}
+
+value context::make_arguments_object(call_frame & fr, const value * slots, std::uint32_t argc) {
+    // The FRAME knows how many arguments ARRIVED; the proto only knows how many
+    // were declared, and those are different numbers whenever `arguments` is
+    // worth reading at all.
+    value list = make_array();
+    auto * items = static_cast<array_object *>(list.as_heap());
+    items->items.reserve(argc);
+    for (std::uint32_t i = 0; i < argc; ++i) { items->items.push_back(slots[i]); }
+    // ON THE FRAME TOO, and inside this member rather than at the call: this
+    // claims a register an extra argument may be in, so whatever still needs
+    // the raw ones reads them from here.
+    fr.arguments_object = list;
+    return list;
+}
+
+value context::gather_rest_values(const call_frame & fr, const value * slots, std::uint32_t argc,
+                                  std::uint32_t from) {
+    value out = make_array();
+    auto * rest = static_cast<array_object *>(out.as_heap());
+    // UNLESS THE BODY ALSO BUILT AN `arguments` OBJECT, which happens before
+    // this and claims a register an extra argument may be in. Then the frame's
+    // copy is the one that still has them.
+    if (fr.arguments_object.is_array()) {
+        const auto & held = static_cast<array_object *>(fr.arguments_object.as_heap())->items;
+        for (std::size_t i = from; i < held.size(); ++i) { rest->items.push_back(held[i]); }
+    } else {
+        for (std::uint32_t i = from; i < argc; ++i) { rest->items.push_back(slots[i]); }
+    }
+    return out;
 }
 
 void context::run_field_initialisers(value constructor, value self) {

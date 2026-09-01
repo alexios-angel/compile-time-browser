@@ -372,6 +372,50 @@ def CTJS_CatchLandOp : CTJS_Op<"catch_land", []> {
   let hasVerifier = 1;
 }
 
+def CTJS_MakeArgumentsOp
+    : CTJS_RuntimeOp<"make_arguments", "ct_aot_make_arguments", CTJS_GenericEffects> {
+  let summary = "The `arguments` object";
+  let description = [{
+    NO OPERANDS, because what it needs is not in the IR at all. The window and
+    the count come from the FRAME - ct_aot_args and ct_aot_argc - and the
+    lowering materialises both. The importer has no SSA value for an argument
+    past the declared parameters: it seeds register i for i >= param_count with
+    `ctjs.constant undefined`, so there is nothing here to pass.
+
+    IT ALSO WRITES call_frame::arguments_object, which is not a detail:
+    ctjs.gather_rest READS that side-slot on one of its two paths, because
+    building this array claims a register an extra argument may be sitting in.
+    The write belongs to the shared context member rather than to either
+    caller, so a fusion of the two operations cannot drop it.
+
+    RAISE TIER: it answers the array rather than a status.
+  }];
+  let results = (outs CTJS_ValueType:$result);
+  let assemblyFormat = "attr-dict";
+}
+
+def CTJS_GatherRestOp
+    : CTJS_RuntimeOp<"gather_rest", "ct_aot_gather_rest", CTJS_GenericEffects> {
+  let summary = "A rest parameter - the arguments past the declared ones";
+  let description = [{
+    `function f(a, ...xs)`. NOT array rest and NOT destructuring rest, which
+    compile to an index loop and to new_object plus copy_props respectively -
+    this opcode has exactly one emitter, the parameter prologue.
+
+    `from` IS A COUNT, NOT A REGISTER, and it is the only operand: the window
+    and the count come from the frame for ctjs.make_arguments' reason.
+
+    TWO PATHS AND THE FIRST IS THE SUBTLE ONE. If the body also built an
+    `arguments` object - which happens BEFORE this and claims a register an
+    extra argument may be in - then the frame's copy is the one that still has
+    them, and reading the window instead would return the wrong values. Landing
+    this without ctjs.make_arguments leaves that path dead in the compiled tier.
+  }];
+  let arguments = (ins UI32Attr:$from);
+  let results = (outs CTJS_ValueType:$result);
+  let assemblyFormat = "`from` $from attr-dict";
+}
+
 def CTJS_DeleteNamedOp : CTJS_Op<"delete_named", [CTJS_Safepoint]> {
   let summary = "`delete o.k` - the NAMED form";
   let description = [{

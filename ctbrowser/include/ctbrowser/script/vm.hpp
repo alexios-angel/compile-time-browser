@@ -1171,9 +1171,12 @@ private:
     // ONE place that decides interpreted or native, and these are the two
     // members it needs.
     friend class executing_as;
+    // THE SIGNATURE MUST MATCH EXACTLY or this friends a different overload and
+    // every private access inside dispatch.cpp fails at once - which is how it
+    // reports a widened parameter list.
     friend bool enter_compiled_body(context & ctx, const function_proto & target, value closure,
-                                    const value * argv, std::uint32_t argc, value receiver,
-                                    bool constructing, value & out);
+                                    const value * argv, std::size_t argv_base, std::uint32_t argc,
+                                    value receiver, bool constructing, value & out);
     friend void note_transition_into_vm(const context & ctx) noexcept;
     friend void note_transition_into_cxx(const context & ctx) noexcept;
 
@@ -1260,6 +1263,21 @@ private:
     // extends, BASE FIRST, against a freshly made instance. The chain is walked
     // here rather than threaded through the compiler because the compiler does
     // not know what `extends` will evaluate to.
+    // `arguments` AND A REST PARAMETER, which are one problem: both need the
+    // arguments PAST the declared parameters, and both take the window and the
+    // count as arguments rather than reading the frame - because a compiled
+    // frame's own `base` is above the caller's window, not at it.
+    //
+    // THE SIDE-SLOT WRITE IS PART OF make_arguments_object, not of its caller.
+    // It is the half a fusion of these two would drop: gather_rest READS
+    // call_frame::arguments_object on one of its two paths, because building
+    // the arguments object claims a register an extra argument may be sitting
+    // in, so after it runs the frame's copy is the one that still has them.
+    [[nodiscard]] value make_arguments_object(call_frame & fr, const value * slots,
+                                              std::uint32_t argc);
+    [[nodiscard]] value gather_rest_values(const call_frame & fr, const value * slots,
+                                           std::uint32_t argc, std::uint32_t from);
+
     void run_field_initialisers(value constructor, value self);
 
     // The fresh object `new` builds, with its prototype taken from the
@@ -1430,6 +1448,25 @@ private:
     // ct_aot_enter, and a GC root in the window between - the same window the
     // comment on pending_new_target_ describes.
     value pending_closure_ = value::undefined();
+
+    // WHERE THE ARRIVING ARGUMENTS ARE, AS AN INDEX, and how many.
+    //
+    // A compiled frame's own `base` is ABOVE the caller's window - ct_aot_enter
+    // resizes registers_ and starts the frame at the new end - so a compiled
+    // body has no way to reach the arguments past its declared parameters. The
+    // entry ABI delivers `argv` and `argc`, but argv is a POINTER into
+    // registers_ and ct_aot_enter's resize may reallocate it.
+    //
+    // AN INDEX SURVIVES WHAT A POINTER DOES NOT, which is the whole design.
+    // registers_ only grows during a call and the caller's window is not
+    // truncated until the compiled body returns, so the index stays valid and
+    // the VALUES stay rooted - collect() marks registers_ in full.
+    //
+    // NOT IN GCRoots.def, deliberately, unlike pending_new_target_ and
+    // pending_closure_ beside them: these root an integer. There is nothing
+    // here for the collector to trace.
+    std::size_t pending_argv_base_ = 0;
+    std::uint32_t pending_argc_ = 0;
     flat_map<std::string, module_record> modules_;
     // The module being evaluated, so `bind_export` knows whose cells to adopt and
     // `load_import` knows who is asking. Null while a classic script runs.

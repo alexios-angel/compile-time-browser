@@ -404,6 +404,28 @@ function plusOf(pad, x) { return +x; }
 // AND `0x` IS NOT THE SAME PARSE AS DECIMAL. bigint_from_literal owns the hex,
 // binary and octal forms; a lowering that parsed the digits itself would get
 // 0x10n wrong and nothing else would notice.
+// `arguments` AND A REST PARAMETER, which are one problem: both need the
+// arguments PAST the declared parameters, and a compiled frame could not see
+// them at all - ct_aot_enter puts the frame's own registers ABOVE the caller's
+// window and the entry prologue reads argv only for the declared ones.
+//
+// EVERY CALL PASSES MORE THAN IT DECLARES, which is the whole point: a body
+// that could only see its declared parameters answers 2 and [] here.
+function howMany(a, b) { return arguments.length; }
+function sumAll() {
+  var t = 0;
+  for (var i = 0; i < arguments.length; i = i + 1) { t = t + arguments[i]; }
+  return t;
+}
+function restOf(a, ...xs) { return xs.length + ":" + xs.join(","); }
+
+// AND THE PATH THAT ONLY EXISTS WHEN BOTH RUN. Building `arguments` claims a
+// register an extra argument may be sitting in, so gather_rest reads the
+// FRAME'S COPY rather than the window once it has - and a body with both is the
+// only shape that reaches it. No corpus contains one; this fixture is the only
+// coverage that arm will get.
+function bothOf(a, ...xs) { return arguments.length + "/" + xs.join(","); }
+
 function bigLits(pad) {
   var a = 900000000000000000009n;
   var b = 0x10n;
@@ -532,6 +554,8 @@ function drive(which) {
   if (which === 38) { OUT = keysOf(0, { x: 1, y: 2 }) + "/" + keysOf(0, [7, 8]) + "/" + keysOf(0, 5); }
   if (which === 39) { OUT = dropNamed(0); }
   if (which === 40) { OUT = bigLits(0); }
+  if (which === 41) { OUT = howMany(1, 2, 3, 4) + "/" + howMany(1) + "/" + sumAll(5, 6, 7); }
+  if (which === 42) { OUT = restOf(1, 2, 3) + "/" + restOf(1) + "/" + bothOf(1, 2, 3); }
   if (which === 22) {
     OUT = "" + coalesce(0, 9) + "/" + coalesce("", 9) + "/" + coalesce(nothing, 9) + "/" +
           chain(null) + "/" + chain({ p: 4 }) + "/" + dflt(0);
