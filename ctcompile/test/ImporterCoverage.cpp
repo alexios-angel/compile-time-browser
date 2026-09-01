@@ -70,7 +70,11 @@ constexpr pending not_yet[] = {
     {"make_arguments", "the `arguments` object, which gather_rest's ABI row says it READS"},
 
     // ---- NOT Phase 13. Listed so the gap is visible, not so it is worked. --
-    {"wrap_promise", "async - Phase 14, and it is only non-suspending because the WRAP is"},
+    // wrap_promise WAS HERE, and its line said it was "only non-suspending
+    // because the WRAP is". That turned out to be the whole reason it could be
+    // landed on its own: an async function containing no `await` carries this
+    // opcode and no await_value at all, so it is fully AOT-eligible. It is
+    // Phase 14's, and it is done.
     {"load_import", "ES modules - Phases 15-16"},
     {"bind_export", "ES modules - Phases 15-16"},
     {"dyn_import", "dynamic import() - Phases 15-16"},

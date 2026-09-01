@@ -767,6 +767,37 @@ public:
         return promise_factory_ ? promise_factory_(*this, v, rejected) : v;
     }
 
+    // WHAT AN ASYNC FUNCTION'S `return` DOES - op::wrap_promise, and the one
+    // half of async that never suspends.
+    //
+    // Here rather than in run_loop because the compiled tier calls it too:
+    // `ct_aot_wrap_promise` is this member and nothing else, so the two tiers
+    // cannot spell the already-a-promise test differently. Three properties a
+    // caller must not "simplify":
+    //
+    //   is_object() is heap_kind::object EXACTLY (value.hpp), so an array, a
+    //   function or a proxy returned from an async function is ALWAYS
+    //   re-wrapped. That is the interpreter's behaviour and therefore correct
+    //   by definition.
+    //
+    //   The shape test is an own `__value`, which is NOT the test
+    //   is_pending_promise uses (`__settled` present and false). The two are
+    //   deliberately different and unifying them would change what
+    //   `return somePendingPromise` does inside an async function: a pending
+    //   promise carries an own __value of undefined, so it is passed through
+    //   UNWRAPPED here.
+    //
+    //   With no promise_factory_ installed make_promise is the IDENTITY, so
+    //   this is not "the result is always an object" and nothing may fold it
+    //   that way. A context without install_builtins has no factory at all.
+    [[nodiscard]] value wrap_in_promise(value v) {
+        if (v.is_object() &&
+            static_cast<object_object *>(v.as_heap())->find("__value") != nullptr) {
+            return v;
+        }
+        return make_promise(v, false);
+    }
+
     // One property lookup, shared by get_prop, get_index-with-a-string-key and
     // call_method. Three copies of this is three chances for `a.length` and
     // `a["length"]` to disagree.
