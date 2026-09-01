@@ -52,6 +52,10 @@ if(CTCOMPILE_ENABLE_MLIR)
   target_link_libraries(ctcompile-mlir-support
     PUBLIC
       CTJSDialect
+      # Phase 53's dialect, registered beside CTJS by MLIRContextSetup.cpp so
+      # that ctjs-opt can parse and print !ctnative types. See the comment there
+      # for why that is done here rather than in a separate ctnative-opt.
+      CTNativeDialect
       MLIRIR
       MLIRArithDialect
       MLIRControlFlowDialect

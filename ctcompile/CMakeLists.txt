@@ -145,6 +145,13 @@ if(CTCOMPILE_ENABLE_MLIR)
   add_subdirectory(lib/CTJS/IR)
   add_subdirectory(lib/CTJS/Import)
   add_subdirectory(lib/CTJS/Lowering)
+  # THE SECOND DIALECT, Phase 53. ctnative carries STATIC types where CTJS
+  # carries one boxed !ctjs.value; it is types only today, and the phases that
+  # bring its operations are told not to start until it lands, because "they
+  # would each invent a type lattice". Behind the same guard as CTJS for the
+  # same reason - it is MLIR all the way down.
+  add_subdirectory(include/ctcompile/CTNative/IR)
+  add_subdirectory(lib/CTNative/IR)
   # The forked EmitC C++ emitter, for the same reason: it is MLIR all the way
   # down. See lib/Target/Cpp/TranslateToCpp.cpp.
   add_subdirectory(lib/Target/Cpp)

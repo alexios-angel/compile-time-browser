@@ -628,3 +628,34 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/check-launcher-page.cmake)
 endif()
+
+# --- PHASE 53: the ctnative type lattice --------------------------------------
+#
+# ONE BLOCK, APPENDED, which is what Appendix A.3 of the plan's part 23 asks of
+# every agent working in this file: it names test/CMakeLists.txt as the most
+# collided-on file in the tree and asks for a concatenation rather than an edit.
+# Everything this needs is its own file.
+#
+# WHY IT IS AN EXECUTABLE AND NOT A LIT TEST. test/CTNative/*.mlir already
+# covers what lit is for - that the ODS parses and prints what it claims. What
+# this asks cannot be written as text: whether `meet` is a lattice join. The
+# associativity sweep alone is 9261 triples, and the divergence pin has to
+# COMPILE AND RUN JavaScript in the real interpreter to find out what
+# `"\u{1F600}".length` answers, because writing the number down here is exactly
+# the stale-constant failure GCRoots.cpp records at the other end of the tree.
+#
+# IT LINKS BOTH SIDES, and it is the only test that does: CTNativeDialect for
+# the lattice, ctbrowser::script for the interpreter that judges it. That is the
+# point - part 24 §A.2, "Every phase's gate is a comparison against the
+# interpreter."
+if(CTCOMPILE_ENABLE_MLIR)
+  add_executable(ctcompile-test-ctnative-lattice CTNativeLattice.cpp)
+  # MLIRAsmParser IS NOT OPTIONAL AND ITS ABSENCE LOOKS LIKE NOTHING. The meet
+  # table spells its types the way a .mlir file does and calls mlir::parseType,
+  # which lives there and not in MLIRIR: without it every line COMPILES and the
+  # link fails on a mangled name that says nothing about parsing.
+  target_link_libraries(ctcompile-test-ctnative-lattice
+    PRIVATE CTNativeDialect MLIRIR MLIRAsmParser ctbrowser::script)
+  ctcompile_target(ctcompile-test-ctnative-lattice)
+  add_test(NAME ctcompile_ctnative_lattice COMMAND ctcompile-test-ctnative-lattice)
+endif()

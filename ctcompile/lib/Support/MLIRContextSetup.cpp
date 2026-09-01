@@ -1,6 +1,7 @@
 #include <ctcompile/Support/MLIRContextSetup.hpp>
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
+#include "ctcompile/CTNative/IR/CTNativeDialect.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
@@ -14,6 +15,21 @@ namespace ctcompile {
 
 void registerCTCompileDialects(mlir::DialectRegistry & registry) {
     registry.insert<ctjs::CTJSDialect>();
+    // AND ctnative, WHICH IS WHAT THIS HEADER MEANT BY "the list is the
+    // pipeline's, and it grows when a phase needs it to". Phase 53's dialect:
+    // the static types that sit between CTJS and the C++ emitter.
+    //
+    // PART 24's STAGE 53A ASKS FOR A SEPARATE `ctnative-opt` DRIVER AND THIS IS
+    // THE DEVIATION. Standing one up means a new tools/ subdirectory, a line in
+    // tools/CMakeLists.txt, and then two MID-FILE edits: the tool's build
+    // directory into CTCOMPILE_TOOLS_DIRS and its name into lit.cfg.py's tool
+    // list. Appendix A.3 of part 23 names test/CMakeLists.txt as the most
+    // collided-on file in the tree and asks agents to APPEND ONE BLOCK AT THE
+    // END rather than edit it in the middle. Registering the dialect here
+    // instead is two additive lines, gives ctjs-opt the same round-trip the
+    // plan wanted ctnative-opt for, and costs nothing: a driver that can parse
+    // ctnative is the requirement, not a second executable.
+    registry.insert<ctnative::CTNativeDialect>();
     // THE THREE THE DIALECT DECLARES AS dependentDialects, and no more. A
     // compiled function is a func.func with cf branches between its blocks and
     // arith on the integers that are genuinely integers - shift counts, block
