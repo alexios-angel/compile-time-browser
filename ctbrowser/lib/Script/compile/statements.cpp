@@ -12,6 +12,8 @@ namespace ctbrowser::script::detail {
 
 void compiler_impl::compile_stmt(std::int32_t idx) {
     if (idx < 0 || !out_.ok) { return; }
+    // ONE OF THE TWO PLACES THE EMIT CURSOR MOVES. See compiler_impl::at_source.
+    const at_source here{*this, idx};
     const vp::node & n = at(idx);
     const std::uint32_t mark = reg_mark();
     switch (n.kind) {
@@ -831,8 +833,7 @@ void compiler_impl::compile_function_decl(std::int32_t idx) {
 
 std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string name) {
     const vp::node & n = at(idx);
-    const auto index = static_cast<std::uint32_t>(out_.functions.size());
-    out_.functions.emplace_back();
+    const std::uint32_t index = new_proto(offset_of(idx));
     out_.functions[index].name = std::move(name);
     // The VM cannot tell an arrow from a function once it is bytecode, and
     // it has to: an arrow sees the `this` where it was written.

@@ -11,10 +11,10 @@
 namespace ctbrowser::script::detail {
 
 void compiler_impl::compile_program() {
-    out_.functions.emplace_back();
-    out_.functions[0].name = "<script>";
+    const std::uint32_t script = new_proto(0);
+    out_.functions[script].name = "<script>";
     frames_.emplace_back();
-    frames_.back().proto = 0;
+    frames_.back().proto = script;
     push_scope();
 
     const vp::node & root = at(ast_.root);

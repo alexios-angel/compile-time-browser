@@ -11,6 +11,10 @@
 namespace ctbrowser::script::detail {
 
 void compiler_impl::compile_expr(std::int32_t idx, std::uint16_t dst) {
+    // AND THE OTHER ONE. Every expression node the compiler visits passes
+    // through here, including the operands of the one that contains it - which
+    // is what makes the position per-INSTRUCTION rather than per-statement.
+    const at_source here{*this, idx};
     if (idx >= 0 && out_.ok && !in_chain_ && chain_has_optional(idx)) {
         compile_chain(idx, dst);
         return;

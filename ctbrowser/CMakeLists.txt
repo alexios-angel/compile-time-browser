@@ -126,6 +126,26 @@ endif()
 
 option(CTBROWSER_COMPUTED_GOTO "Dispatch the script VM with computed gotos (GNU only)" OFF)
 
+# Local variable names and per-instruction source offsets, on every compiled
+# proto. They are what lets a stack trace and the AOT backend's C++ say
+# `_isEnabled` rather than `v18[4]`.
+#
+# ON, AND THE COST IS NOT SMALL - measured on the three corpora in vendor/ by
+# `CTBROWSER_DEBUG_TABLE_COST=1 ctbrowser-test-script_debug`, which retakes it:
+#
+#     image, source kept     bootstrap +31.6%   p5 +20.0%   phaser +15.7%
+#     image, source dropped  bootstrap +12.7%   p5 +12.5%   phaser +14.0%
+#
+# The two rows differ because a source-dropped image also drops the
+# per-instruction offsets - an offset into text the image does not carry cannot
+# be turned into a line by anybody - so the shipped number is the names alone.
+# See image_option::drop_source.
+#
+# OFF leaves both vectors empty on every proto and stops the compiler moving
+# its source cursor. It is for a build that will never read them; the packaging
+# lever is `image_option`, which needs no rebuild.
+option(CTBROWSER_SCRIPT_DEBUG_NAMES "Compile local names and per-instruction source offsets" ON)
+
 # GMP behind Boost.Multiprecision, for the BigInt type. OFF BY DEFAULT AND
 # DELIBERATELY NOT "on when GMP is found", which is the obvious spelling and the
 # wrong one, for two reasons measured rather than assumed:
