@@ -30,6 +30,14 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 host="${DEVBOX_HOST:-devbox}"
+# WHERE ON THE BOX, because the rsync below carries --delete and two checkouts
+# building at once would each erase the other's tree mid-compile. One worktree
+# per remote directory keeps parallel work honest:
+#
+#   DEVBOX_DIR=projects/ctbrowser-lexical ./tools/remote-build.sh
+#
+# The default is unchanged, so nothing that does not set it notices.
+remote_dir="${DEVBOX_DIR:-projects/compile-time-browser}"
 # The embed repo's pinned toolchain release. sync-to-ctbrowser.sh may install a
 # locally-built one instead — the rsync protect filter keeps whichever is on the
 # server. This used to say "same knob and default as CI"; there is no CI any
@@ -92,24 +100,24 @@ rsync -az --delete \
   --filter 'protect tools/clang-std-embed/' --filter 'protect third-party/angle/' \
   --filter 'protect tools/.venv/' \
   --filter 'protect *.d' \
-  "$repo_root"/ "$host:projects/compile-time-browser/"
+  "$repo_root"/ "$host:$remote_dir/"
 
 # Converge project-owned deps on the box: brew-only deps ride in
 # tools/Brewfile (glm >= 1.0 for constexpr math); apt glm is the
 # brew-less fallback (everything but the constexpr-math tests).
-ssh "$host" CLANG_STD_EMBED_RELEASE="$CLANG_STD_EMBED_RELEASE" 'bash -s' <<'REMOTE'
+ssh "$host" CLANG_STD_EMBED_RELEASE="$CLANG_STD_EMBED_RELEASE" CT_REMOTE_DIR="$remote_dir" 'bash -s' <<'REMOTE'
 set -euo pipefail
 BREW=/home/linuxbrew/.linuxbrew/bin/brew
 if [ -x "$BREW" ]; then
   export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1
-  "$BREW" bundle check --file="$HOME/projects/compile-time-browser/tools/Brewfile" >/dev/null 2>&1 \
-    || "$BREW" bundle install --file="$HOME/projects/compile-time-browser/tools/Brewfile"
+  "$BREW" bundle check --file="$HOME/$CT_REMOTE_DIR/tools/Brewfile" >/dev/null 2>&1 \
+    || "$BREW" bundle install --file="$HOME/$CT_REMOTE_DIR/tools/Brewfile"
 else
   # no linuxbrew on this box: apt glm builds everything except the
   # constexpr-math tests (needs glm >= 1.0)
   dpkg -s libglm-dev >/dev/null 2>&1 || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libglm-dev
 fi
-tool="$HOME/projects/compile-time-browser/tools/clang-std-embed"
+tool="$HOME/$CT_REMOTE_DIR/tools/clang-std-embed"
 # KEYED ON THE RELEASE, not merely on the binary existing. The guard used to be
 # `[ ! -x "$tool/bin/clang++" ]`, which installs once and then never upgrades:
 # bumping the pin above changed nothing, and the box quietly kept building with
@@ -127,7 +135,7 @@ fi
 # needs it too, and because a fetch that failed should stop the build before it
 # configures with the option off and reports a green suite that never linked
 # ANGLE at all.
-cd "$HOME/projects/compile-time-browser" && tools/fetch-angle.sh
+cd "$HOME/$CT_REMOTE_DIR" && tools/fetch-angle.sh
 REMOTE
 
 if [ "${1:-}" = windows ]; then
@@ -147,9 +155,9 @@ if [ "${1:-}" = windows ]; then
   ssh "$host" 'inc="$HOME/projects/boost-inc"; mkdir -p "$inc";
     [ -e "$inc/boost" ] || ln -s /home/linuxbrew/.linuxbrew/include/boost "$inc/boost";
     ls "$inc/boost/version.hpp" >/dev/null'
-  ssh "$host" "cd projects/compile-time-browser && tools/mingw/build-image-libs-mingw.sh && tools/mingw/build-boost-mingw.sh && tools/mingw/build-mimalloc-mingw.sh && tools/mingw/build-simdutf-mingw.sh && tools/mingw/build-cpptrace-mingw.sh"
-  ssh "$host" "cd projects/compile-time-browser/ctbrowser && cmake --preset windows -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE && cmake --build --preset windows && cmake --build --preset windows --target windows-dist"
-  rsync -az "$host:projects/compile-time-browser/examples-windows/" "$repo_root/examples-windows/"
+  ssh "$host" "cd $remote_dir && tools/mingw/build-image-libs-mingw.sh && tools/mingw/build-boost-mingw.sh && tools/mingw/build-mimalloc-mingw.sh && tools/mingw/build-simdutf-mingw.sh && tools/mingw/build-cpptrace-mingw.sh"
+  ssh "$host" "cd $remote_dir/ctbrowser && cmake --preset windows -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE && cmake --build --preset windows && cmake --build --preset windows --target windows-dist"
+  rsync -az "$host:$remote_dir/examples-windows/" "$repo_root/examples-windows/"
   echo "examples-windows/ refreshed from the devbox"
 else
   # THE BREW PREFIX AS A CMAKE PREFIX PATH. The compiled libraries this box gets
@@ -164,8 +172,8 @@ else
   fi
   configure="cmake --preset default -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE $prefix"
   if [ $# -gt 0 ]; then
-    ssh "$host" "cd projects/compile-time-browser/ctbrowser && $configure && cmake --build --preset default --target $*"
+    ssh "$host" "cd $remote_dir/ctbrowser && $configure && cmake --build --preset default --target $*"
   else
-    ssh "$host" "cd projects/compile-time-browser/ctbrowser && $configure && cmake --build --preset default && ctest --preset default"
+    ssh "$host" "cd $remote_dir/ctbrowser && $configure && cmake --build --preset default && ctest --preset default"
   fi
 fi
