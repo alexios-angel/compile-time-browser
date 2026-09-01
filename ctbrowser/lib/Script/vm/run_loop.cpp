@@ -69,6 +69,35 @@ namespace ctbrowser::script {
 #define VM_COMPUTED_GOTO 0
 #endif
 
+// --- THE TYPE ORACLE'S HOOK, ctcompile Phase 54B -----------------------------
+//
+// ONE LINE, AND IT IS `if constexpr`. The loop below is a template on `Record`
+// and is instantiated twice; in the instantiation a build without a recorder
+// runs, this expands to nothing at all. The measurement that made it a template
+// rather than a run-time test is in the comment above `run_loop_impl`.
+//
+// PLACED AFTER THE FETCH, so `record_step` sees the instruction ABOUT to run
+// and `vm_frame->ip` already pointing past it. What it actually records is the
+// PREVIOUS instruction's destination: a def is not readable until the handler
+// that made it returned, and `op::call`'s handler does not return until the
+// callee does. Everything that means - the deferred flush, the interning, the
+// parameter sweep - is in type_record.cpp, out of this translation unit.
+//
+// Compiled out entirely with -DCTBROWSER_SCRIPT_RECORD_TYPES=0, on the same
+// terms as CTBROWSER_SCRIPT_DEBUG_NAMES: a private definition, because
+// `context::recorder_` exists in every build and only this call does not.
+#ifndef CTBROWSER_SCRIPT_RECORD_TYPES
+#define CTBROWSER_SCRIPT_RECORD_TYPES 1
+#endif
+#if CTBROWSER_SCRIPT_RECORD_TYPES
+#define VM_RECORD_STEP()                                                                           \
+    do {                                                                                           \
+        if constexpr (Record) { record_step(in); }                                                 \
+    } while (0)
+#else
+#define VM_RECORD_STEP() ((void)0)
+#endif
+
 #if VM_COMPUTED_GOTO
 // GNU extensions, suppressed HERE and nowhere else: the address-of-label and
 // indirect-goto forms, and the C99 array designators that index the table by
@@ -100,6 +129,7 @@ namespace ctbrowser::script {
         if (vm_frame->ip >= vm_proto->code.size()) { goto vm_done; }                               \
         in = vm_proto->code[vm_frame->ip++];                                                       \
         base = vm_frame->base;                                                                     \
+        VM_RECORD_STEP();                                                                          \
         goto * vm_table[static_cast<std::size_t>(in.code)];                                        \
     } while (0)
 #else
@@ -109,7 +139,20 @@ namespace ctbrowser::script {
 #define VM_NEXT break
 #endif
 
-value context::run_loop(std::size_t stop_depth) {
+// THE ONE PER-INSTRUCTION TEST, AND WHY IT IS NOT ONE.
+//
+// The obvious hook is `if (recorder_ != nullptr) record_step(in);` at the loop
+// head, and it was measured: +0.53% on benchmarks/bench_script and +0.48% on
+// test/corpus/phaser/phaser_invaders (callgrind, 14.25 G -> 14.32 G
+// instructions). A perfectly predicted not-taken branch is not free here
+// because this loop runs a hundred million times and the branch is inside it.
+//
+// So the whole loop is a template on ONE bool, instantiated twice, and
+// `run_loop` below picks. The `Record=false` instantiation contains no trace of
+// the hook and is what every shipped build runs; the `Record=true` one is cold
+// code nothing loads unless a recorder is installed. The cost moved from time
+// to ~15 KB of object file, which is the right currency for a developer mode.
+template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
 #if VM_COMPUTED_GOTO
     // Indexed BY OPCODE, which is what the array designators buy: the order of
     // this table cannot drift out of step with the enum. A label address is not
@@ -142,6 +185,7 @@ value context::run_loop(std::size_t stop_depth) {
         if (vm_frame->ip >= vm_proto->code.size()) { break; }
         in = vm_proto->code[vm_frame->ip++];
         base = vm_frame->base;
+        VM_RECORD_STEP();
 
         VM_DISPATCH_BEGIN
         VM_CASE(load_const) do {
@@ -1228,5 +1272,19 @@ vm_done:
 #pragma GCC diagnostic pop
 #endif
 #endif
+
+// AND THE PICK, ONCE PER ENTRY rather than once per instruction. A recorder is
+// installed before the context that should record is constructed and never
+// changes while a body runs, so there is nothing to re-decide inside the loop.
+//
+// BOTH INSTANTIATIONS ARE NAMED HERE, which is what makes them exist: they are
+// used from this translation unit and nowhere else, so nothing else needs the
+// definition and no explicit instantiation is required.
+value context::run_loop(std::size_t stop_depth) {
+#if CTBROWSER_SCRIPT_RECORD_TYPES
+    if (recorder_ != nullptr) { return run_loop_impl<true>(stop_depth); }
+#endif
+    return run_loop_impl<false>(stop_depth);
+}
 
 } // namespace ctbrowser::script

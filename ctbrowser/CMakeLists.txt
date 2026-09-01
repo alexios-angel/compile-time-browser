@@ -146,6 +146,16 @@ option(CTBROWSER_COMPUTED_GOTO "Dispatch the script VM with computed gotos (GNU 
 # lever is `image_option`, which needs no rebuild.
 option(CTBROWSER_SCRIPT_DEBUG_NAMES "Compile local names and per-instruction source offsets" ON)
 
+# THE TYPE ORACLE'S HOOK IN THE DISPATCH LOOP - ctcompile Phase 54B. ON, on the
+# same terms as the debug names above and for the same reason: there is no CI,
+# so a facility that only exists under a non-default flag is a facility nobody
+# ever runs. What it costs when ON and unused is NOTHING: run_loop is a template
+# on one bool and the instantiation a build without a recorder runs has no trace
+# of the hook in it. The per-instruction `if (recorder_)` that came first was
+# measured at +0.53% on bench_script and +0.48% on phaser_invaders, which is why
+# it is not what is there. What OFF buys is ~15 KB of cold object code.
+option(CTBROWSER_SCRIPT_RECORD_TYPES "Compile the type-oracle hook into the interpreter" ON)
+
 # GMP behind Boost.Multiprecision, for the BigInt type. OFF BY DEFAULT AND
 # DELIBERATELY NOT "on when GMP is found", which is the obvious spelling and the
 # wrong one, for two reasons measured rather than assumed:
