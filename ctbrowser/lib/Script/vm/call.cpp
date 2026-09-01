@@ -191,6 +191,92 @@ value context::module_namespace(module_record & of) {
     return of.namespace_object;
 }
 
+namespace {
+
+// AS WRITTEN IS NOT AS KEYED: `./dep.js` in one module and in another are two
+// different files. The loader left the translation in the record - see
+// module_record::resolved - and the bytecode can only carry what was written,
+// so every lookup by specifier goes through here first.
+//
+// A REFERENCE INTO `written` when there is no translation, which is why the
+// caller must keep the string alive across the lookup. Both callers below hold
+// it in a parameter.
+[[nodiscard]] const std::string & keyed_by(const module_record * current,
+                                           const std::string & written) {
+    if (current == nullptr) { return written; }
+    const auto mapped = current->resolved.find(written);
+    return mapped == current->resolved.end() ? written : mapped->second;
+}
+
+} // namespace
+
+// THE FOUR MODULE OPCODE BODIES. See the declarations in vm.hpp for why they
+// are members rather than four blocks inside run_loop: a compiled module and an
+// interpreted one must not be able to disagree, and one copy is the only way to
+// guarantee it.
+
+value context::module_import_cell(const std::string & specifier, const std::string & export_name) {
+    // The exporter has been evaluated already - the loader walks the graph
+    // depth-first - so its cell is there to be taken.
+    const std::string & from = keyed_by(current_module_, specifier);
+    const auto found = modules_.find(from);
+    if (found == modules_.end()) {
+        raise("module `" + from + "` was not loaded");
+        return value::undefined();
+    }
+    const auto cell = found->second.exports.find(export_name);
+    if (cell == found->second.exports.end()) {
+        raise("`" + from + "` has no export named `" + export_name + "`");
+        return value::undefined();
+    }
+    return cell->second;
+}
+
+value context::module_export_cell(const std::string & name, value current) {
+    // NOT IN A MODULE IS NOT AN ERROR, and it must not write. The register
+    // holds the local being exported, so answering undefined here would destroy
+    // it - the interpreter simply skips the store, and answering `current` is
+    // the same thing in a form both tiers can express.
+    if (current_module_ == nullptr) { return current; }
+    // ADOPT THE RECORD'S CELL, do not publish this register's. The cell is
+    // created before ANY module in the graph runs - see instantiate_module - so
+    // by the time this executes it already exists and something in a cycle may
+    // already be holding it. Overwriting the record here would hand that
+    // importer a box nobody ever writes to again.
+    //
+    // THE CREATING ARM IS LIVE, not a belt: instantiate_module is called by
+    // browser::instantiate_module and by nothing else, so a host that runs a
+    // module through run_module without instantiating it first arrives here
+    // with an empty `exports` map.
+    value & slot = current_module_->exports[name];
+    if (!slot.is_kind(heap_kind::cell)) {
+        slot = value::object(allocate<cell_object>(value::undefined()));
+    }
+    return slot;
+}
+
+value context::module_namespace_for(const std::string & specifier) {
+    const std::string & from = keyed_by(current_module_, specifier);
+    const auto found = modules_.find(from);
+    if (found == modules_.end()) {
+        raise("module `" + from + "` was not loaded");
+        return value::undefined();
+    }
+    return module_namespace(found->second);
+}
+
+value context::dynamic_import(value specifier, const std::string & referrer) {
+    if (!module_loader_) {
+        raise("dynamic import() has no loader installed");
+        return value::undefined();
+    }
+    // to_string BEFORE the loader and INSIDE this member. For an object it runs
+    // the page's own toString, which can throw and can re-enter - so a tier that
+    // converted at its call site instead would be a second conversion with a
+    // second set of effects.
+    return module_loader_(*this, to_string(specifier), referrer);
+}
+
 // A MODULE IS RUN LIKE ANY OTHER PROGRAM, with two differences: it knows which
 // record it is filling in, so `bind_export` knows which cells to adopt, and its
 // exports outlive the call.

@@ -286,6 +286,70 @@ public:
     // only needs to look a name up when `load_import` runs.
     [[nodiscard]] flat_map<std::string, module_record> & modules() noexcept { return modules_; }
 
+    // THE FOUR MODULE OPCODE BODIES, LIFTED OUT OF run_loop, for the reason
+    // every other lift here was made: a compiled `import` and an interpreted
+    // one must not be able to disagree, and the only way to guarantee that is
+    // one copy. AOT reaches these through ct_aot_module_import_cell,
+    // ct_aot_module_export_cell, ct_aot_module_namespace and
+    // ct_aot_dynamic_import; the interpreter reaches them through
+    // VM_CASE(load_import), VM_CASE(bind_export), VM_CASE(load_namespace) and
+    // VM_CASE(dyn_import). Nothing else calls them.
+    //
+    // EACH KEEPS ITS OWN modules_ LOOKUP rather than sharing one that answers
+    // a module_record *. flat_map is boost::unordered_flat_map, which is open
+    // addressing with NO reference stability, and the dynamic-import loader
+    // INSERTS into modules_ - so a record reference held across anything that
+    // can load is a dangling one. Keeping the lookup inside each member is the
+    // rule ct_aot_module_namespace's ABI row states, applied on both sides.
+
+    // `a = the cell exported as `export_name` by the module at `specifier``.
+    //
+    // A CELL, NOT A VALUE. An imported binding is LIVE, so the importer must
+    // hold the very box the exporter writes through; copying the value is the
+    // CommonJS behaviour and is observably wrong.
+    //
+    // RAISE TIER on both misses - a module that was not loaded and a name it
+    // does not export are uncatchable engine faults, not the ReferenceError a
+    // spec-conformant engine would throw. It answers undefined on those paths
+    // and the caller polls failed().
+    [[nodiscard]] value module_import_cell(const std::string & specifier,
+                                           const std::string & export_name);
+
+    // Publish `name` as an export of the module being evaluated, and answer the
+    // cell that has to land in the destination register.
+    //
+    // IT ADOPTS THE RECORD'S CELL rather than publishing the register's.
+    // instantiate_module creates every cell before ANY module in the graph
+    // runs, so by the time this executes one may already be held by a cyclic
+    // importer; overwriting the record would hand that importer a box nobody
+    // ever writes to again.
+    //
+    // `current` IS ANSWERED UNCHANGED when no module is being evaluated, and
+    // that arm is the whole reason the parameter exists. The interpreter simply
+    // does not write the register, and the register holds the local being
+    // exported - so a second implementation that wrote undefined there would
+    // DESTROY it. Returning what was already there is the same thing said in a
+    // form a register-to-SSA lowering can express.
+    [[nodiscard]] value module_export_cell(const std::string & name, value current);
+
+    // `a = the namespace object of the module at `specifier``, live and cached.
+    // Same resolve-then-find as module_import_cell and the same raise, but the
+    // RESULT KIND differs: an ordinary object whose properties are accessors
+    // over the cells, not a cell.
+    [[nodiscard]] value module_namespace_for(const std::string & specifier);
+
+    // `a = import(specifier)` - a promise for the namespace object.
+    //
+    // THE REFERRER IS THE CALLER'S, not current_module_'s: a dynamic import is
+    // usually called long after its module finished evaluating, from a
+    // callback, where current_module_ is null. Both tiers read it off the
+    // running frame's function_proto::module and pass it in.
+    //
+    // to_string IS INSIDE THIS, not at the call sites: it can run a page's own
+    // toString, and converting on one side only would let the two tiers
+    // disagree about what was asked for.
+    [[nodiscard]] value dynamic_import(value specifier, const std::string & referrer);
+
     // The receiver of the method call currently running, for natives. JS
     // methods get `this` from the call site; a native has no frame to read it
     // from, so the VM hands it over here. It is how one native object's methods

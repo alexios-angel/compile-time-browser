@@ -934,74 +934,44 @@ value context::run_loop(std::size_t stop_depth) {
         VM_NEXT;
 
         VM_CASE(bind_export) do {
-            // ADOPT THE RECORD'S CELL, do not publish this register's. The cell
-            // is created before ANY module in the graph runs - see
-            // instantiate_module - so by the time this executes it already
-            // exists and something in a cycle may already be holding it.
-            // Overwriting the record here would hand that importer a box
-            // nobody ever writes to again.
+            // bx(), NOT b. b is the HIGH half of the pair and c the low one, so
+            // a decoder that reads b alone gets name index 0 for every module
+            // with fewer than 65,536 names - which is all of them - and exports
+            // an unrelated binding under this name.
             //
-            // THE CELL, NOT THE VALUE, either way: an importer holds the box,
-            // which is what makes the binding LIVE. Handing over the value
-            // passes "an importer sees an export" and fails "an imported
-            // binding is live" - the shortcut docs/plans/modules.md names in
-            // advance.
-            if (current_module_ != nullptr) {
-                value & slot = current_module_->exports[vm_proto->names[in.bx()]];
-                if (!slot.is_kind(heap_kind::cell)) {
-                    slot = value::object(allocate<cell_object>(value::undefined()));
-                }
-                reg(in.a) = slot;
-            }
+            // THE DESTINATION IS ALSO A SOURCE, and that is the shape the
+            // conditional write needs. Outside a module the interpreter writes
+            // nothing at all and the register holds the local being exported;
+            // context::module_export_cell answers that same value back, so
+            // "does not write" and "writes what was there" are one expression
+            // both tiers can spell. See its declaration.
+            const value published = module_export_cell(vm_proto->names[in.bx()], reg(in.a));
+            reg(in.a) = published;
             break;
         }
         while (0);
         VM_NEXT;
 
         VM_CASE(load_import) do {
-            // The exporter has been evaluated already - the loader walks the
-            // graph depth-first - so its cell is there to be taken.
-            reg(in.a) = value::undefined();
-            const std::string & written = vm_proto->names[in.c];
-            const std::string & what = vm_proto->names[in.b];
-            // AS WRITTEN IS NOT AS KEYED: `./dep.js` in one module and in
-            // another are two different files. The loader left the translation
-            // in the record - see module_record::resolved.
-            const std::string & from = [&]() -> const std::string & {
-                if (current_module_ == nullptr) { return written; }
-                const auto mapped = current_module_->resolved.find(written);
-                return mapped == current_module_->resolved.end() ? written : mapped->second;
-            }();
-            const auto found = modules_.find(from);
-            if (found == modules_.end()) {
-                raise("module `" + from + "` was not loaded");
-                break;
-            }
-            const auto cell = found->second.exports.find(what);
-            if (cell == found->second.exports.end()) {
-                raise("`" + from + "` has no export named `" + what + "`");
-                break;
-            }
-            reg(in.a) = cell->second;
+            // b IS THE EXPORT NAME AND c IS THE SPECIFIER, which is the reverse
+            // of the reading order and makes this the only opcode that reads c
+            // as a standalone index. bytecode.hpp says the same thing: "a = the
+            // cell exported as names[b] by the module at specifier names[c]".
+            //
+            // A CELL LANDS HERE, not a value, which is what makes the binding
+            // live - and the local was marked boxed with NO new_cell for that
+            // reason, so boxing this would leave every read seeing a cell
+            // containing a cell.
+            const value cell = module_import_cell(vm_proto->names[in.c], vm_proto->names[in.b]);
+            reg(in.a) = cell;
             break;
         }
         while (0);
         VM_NEXT;
 
         VM_CASE(load_namespace) do {
-            reg(in.a) = value::undefined();
-            const std::string & written = vm_proto->names[in.b];
-            const std::string & from = [&]() -> const std::string & {
-                if (current_module_ == nullptr) { return written; }
-                const auto mapped = current_module_->resolved.find(written);
-                return mapped == current_module_->resolved.end() ? written : mapped->second;
-            }();
-            const auto found = modules_.find(from);
-            if (found == modules_.end()) {
-                raise("module `" + from + "` was not loaded");
-                break;
-            }
-            reg(in.a) = module_namespace(found->second);
+            const value ns = module_namespace_for(vm_proto->names[in.b]);
+            reg(in.a) = ns;
             break;
         }
         while (0);
@@ -1014,21 +984,29 @@ value context::run_loop(std::size_t stop_depth) {
             // evaluating, from a callback, where current_module_ is null. The
             // proto knows which module it was compiled in - see
             // function_proto::module.
-            if (!module_loader_) {
-                raise("dynamic import() has no loader installed");
-                break;
-            }
-            const value spec = reg(in.b);
+            //
             // THE RESULT INTO A LOCAL FIRST, and it is not a style choice. The
             // loader evaluates the module it fetches, which RE-ENTERS this VM
             // and grows `registers_` - so a reference to reg(in.a) taken before
             // the call points into a freed buffer by the time the value comes
             // back. Written that way it stored the promise into memory nobody
             // owned and `import(...)` read undefined, with no error anywhere.
-            const value loaded = module_loader_(
-                *this, to_string(spec),
-                vm_frame->proto == nullptr ? std::string{} : vm_frame->proto->module);
-            reg(in.a) = loaded;
+            const value loaded = dynamic_import(
+                reg(in.b), vm_frame->proto == nullptr ? std::string{} : vm_frame->proto->module);
+            // NO PRE-WRITE OF undefined, unlike the three above: on the
+            // no-loader raise this register keeps whatever it held, which the
+            // opcode row calls out for an AOT backend that would model this as
+            // "always defines a".
+            //
+            // AND THE STORE IS SKIPPED ON ANY raise, not only that one. This
+            // narrows a store the previous shape made after a loader that had
+            // already failed - which is DEAD, for the reason the ABI rows give
+            // about the other three handlers' pre-writes: raise sets failed_,
+            // the loop's condition is `!failed_`, so VM_NEXT reaches vm_done
+            // and nothing ever reads the register. Narrowing it here is what
+            // makes ct_aot_dynamic_import's "*out written ONLY on CT_AOT_OK"
+            // the same rule rather than a second one.
+            if (!failed_) { reg(in.a) = loaded; }
             break;
         }
         while (0);

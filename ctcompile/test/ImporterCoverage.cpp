@@ -21,7 +21,7 @@
 // test exists to prevent. The build passes the path in as
 // CTCOMPILE_IMPORTER_SOURCE.
 //
-// IT IS A RATCHET, NOT A GATE. Eighteen non-suspending opcodes are unhandled
+// IT IS A RATCHET, NOT A GATE. Three non-suspending opcodes are unhandled
 // today and the Phase 13 gate is that none are, so a test demanding zero would
 // simply be red. Instead the pending list below must match EXACTLY: an opcode
 // that stops being handled fails, a newly added opcode fails, and an opcode
@@ -57,8 +57,12 @@ constexpr row table[] = {
 #undef CT_OPCODE
 
 // WHAT IS NOT IMPORTED YET, WITH WHY - and the why matters, because these are
-// not one backlog. Three of them are other phases' work and would be wrong to
+// not one backlog. One of them is another phase's work and would be wrong to
 // pull forward; the rest are Phase 13's own.
+//
+// THE FOUR ES-MODULE ROWS ARE GONE, which is what the ratchet is for: making
+// load_import, bind_export, load_namespace and dyn_import dispatched meant
+// deleting their lines in the same commit or this test goes red.
 struct pending {
     std::string_view opcode;
     std::string_view why;
@@ -71,10 +75,6 @@ constexpr pending not_yet[] = {
 
     // ---- NOT Phase 13. Listed so the gap is visible, not so it is worked. --
     {"wrap_promise", "async - Phase 14, and it is only non-suspending because the WRAP is"},
-    {"load_import", "ES modules - Phases 15-16"},
-    {"bind_export", "ES modules - Phases 15-16"},
-    {"dyn_import", "dynamic import() - Phases 15-16"},
-    {"load_namespace", "ES modules - Phases 15-16"},
 };
 
 int failures = 0;

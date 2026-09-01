@@ -10,23 +10,41 @@
 
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %s 2>/dev/null | ctjs-opt | FileCheck %s
 
-// THE EXAMPLE HAS NOW BEEN REWRITTEN TWICE, and both times for the right
+// THE EXAMPLE HAS NOW BEEN REWRITTEN THREE TIMES, and every time for the right
 // reason: it named something that started working. It was a closure, then it
-// was `+a` - unary plus, op::to_number - and the importer handles both.
+// was `+a` - unary plus, op::to_number - then it was `import(u)`, which was
+// chosen "to outlast the phase" and lasted until the ES-modules commit that
+// removed op::dyn_import from ImporterCoverage's pending list.
 //
-// SO THIS ONE IS CHOSEN TO OUTLAST THE PHASE. `import(u)` is op::dyn_import,
-// which belongs to the ES-modules phases and is not on Phase 13's list at all;
-// picking any of Phase 13's own remaining opcodes would mean rewriting this
-// file again within the week. A negative test has to keep naming something
-// GENUINELY unsupported or it asserts nothing.
-function loads(u) { return import(u); }
+// SO THIS ONE IS CHOSEN FOR THE OPCODE FURTHEST FROM BEING IMPLEMENTED, which
+// is not the same as the one furthest down a plan. op::yield_value is
+// may_suspend, and the ABI has NO SUSPEND HELPER AT ALL: the only row covering
+// it is ct_aot_suspend_unsupported, which exists to make "this opcode has no
+// tier-1 lowering" a declared outcome with a diagnosable message. Its own
+// comment says Phase 14 owns the suspend ABI and that this table "commits to
+// NO suspend ABI" until then. A suspending opcode is also invisible to
+// ImporterCoverage's ratchet - that test skips may_suspend rows - so nothing
+// else can make this file stale by accident.
+//
+// WHEN PHASE 14 LANDS A SUSPEND ABI, THIS FILE NEEDS A NEW EXAMPLE AGAIN, and
+// if by then nothing is genuinely unsupported the honest move is to delete it
+// rather than to pick something that merely looks obscure. A negative test has
+// to keep naming something GENUINELY unsupported or it asserts nothing.
+function* counted(n) { yield n; }
 
-// NO FUNCTION AT ALL, not a partial one. The top level is skipped with it,
-// because it declares `loads` and a function that cannot be imported cannot be
-// named by a closure either.
+// NO FUNCTION AT ALL, not a partial one.
+//
+// READ WHAT THIS ACTUALLY CHECKS, because it is narrower than it looks. A
+// CHECK-NOT before the first CHECK constrains only the text BEFORE that CHECK
+// matches - and `ctjs.skipped` is a module attribute, so it matches on line one
+// and this covers the module header alone. The top level itself IS imported and
+// prints below: it declares `counted` with a create_closure over a function
+// index, and the importer does not refuse a closure whose target was skipped.
+// What this line rules out is a ctjs.func emitted BEFORE the skip record - a
+// partial `counted` - which is the shape the invariant is about.
 // CHECK-NOT: ctjs.func
 
 // AND THE REASON, structured: which function, which opcode, where.
 // CHECK: ctjs.skipped
-// CHECK-SAME: opcode = "dyn_import"
+// CHECK-SAME: opcode = "yield_value"
 // CHECK-SAME: reason = "no CTJS operation for this opcode yet"

@@ -1846,27 +1846,29 @@ CT_AOT_HELPER(/* name */ ct_aot_suspend_unsupported, /* ret */ int32_t,
 CT_AOT_COVERS(/* helper */ ct_aot_suspend_unsupported, /* opcode */ yield_value)
 
 /* What lands in the result is a CELL, not a value - every later read must
- * go through ct_aot_cell_get, because compile/frames.cpp:143-149 marks the
- * local boxed and deliberately emits NO new_cell, so boxing a box would
- * leave the importer reading a cell containing a cell. Both names are
+ * go through ct_aot_cell_get, because compile/frames.cpp's bind_imports
+ * marks the local boxed and deliberately emits NO new_cell, so boxing a box
+ * would leave the importer reading a cell containing a cell. Both names are
  * compile-time constants and both are genuinely available: the specifier is
- * decode_string_literal(n.text) at frames.cpp:89 and the export name is
- * spec.text/'default' at frames.cpp:136-139, i.e. text the compiler read
- * out of the source. That asymmetry is what justifies string-literal
+ * bind_imports' decode_string_literal(n.text) and the export name is its
+ * `exported` ternary - spec.text, or 'default' - i.e. text the compiler
+ * read out of the source. That asymmetry is what justifies string-literal
  * parameters HERE and forbids them for the dynamic-import referrer. The
  * encoding trap - b is the EXPORT name and c the SPECIFIER, the only opcode
  * reading c as a standalone index - disappears by construction with named
  * parameters. Not a safepoint: it reads two flat_maps and, on failure,
  * builds a std::string, which is a C++ heap allocation and not a GC one.
- * DELEGATES TO: run_loop.cpp's VM_CASE(load_import), inline:
- *   current_module_->resolved lookup (as-written then as-keyed), then
- *   modules_ lookup, then module_record::exports lookup. Nothing new is
- *   written.
+ * DELEGATES TO: context::module_import_cell (vm/call.cpp), which is now
+ *   the whole of run_loop.cpp's VM_CASE(load_import): the
+ *   current_module_->resolved lookup (as-written then as-keyed) through
+ *   call.cpp's keyed_by, then modules_, then module_record::exports.
+ *   Nothing new is written. LIFTED so the two tiers cannot spell it
+ *   differently.
  * FAILURE: RAISE TIER ONLY for both misses - 'module X was not loaded' and
  *   'X has no export named Y', both raised there - uncatchable engine
  *   faults, NOT the ReferenceError a spec-conformant backend would emit.
  *   Returns undefined on those paths; poll ct_aot_failed. The interpreter's
- *   pre-write at :1297 is DEAD on the failure path (raise sets failed_,
+ *   pre-write of undefined was DEAD on the failure path (raise sets failed_,
  *   VM_NEXT goes straight to vm_done, nothing reads the register), so the
  *   lowering need not reproduce a store the interpreter never observes. */
 CT_AOT_HELPER(/* name */ ct_aot_module_import_cell, /* ret */ uint64_t,
@@ -1875,31 +1877,50 @@ CT_AOT_HELPER(/* name */ ct_aot_module_import_cell, /* ret */ uint64_t,
 CT_AOT_COVERS(/* helper */ ct_aot_module_import_cell, /* opcode */ load_import)
 
 /* Data flows record -> register, backwards from the name and from
- * bytecode.hpp:201: it ADOPTS the pre-existing cell so a cyclic importer
+ * bytecode.hpp's own comment on the opcode: it ADOPTS the pre-existing cell
+ * so a cyclic importer
  * that already took the box keeps a live binding. Cannot merge with
  * ct_aot_module_import_cell: different registry (this module's record vs
  * another's), different failure tier (silent no-op vs uncatchable raise),
  * and it can CREATE the cell where load_import can only find one. A
  * safepoint solely because of that fallback allocation. It needs
- * current_module_, private at vm.hpp:1009 with no accessor - but that is an
+ * current_module_, which is private and has no accessor - but that is an
  * implementation detail of ctbrowser's own DEFINE expansion, not an ABI
- * question, since the helper is DEFINED in ctbrowser under Principle 11.
- * DELEGATES TO: run_loop.cpp:1270-1292 inline:
- *   current_module_->exports[name], creating a cell_object when absent
- *   (:1287). instantiate_module (call.cpp:110-119) normally created them
- *   all, but browser::instantiate_module is what calls it (browser.cpp:975)
- *   - context::run_module (call.cpp:151-162) does NOT, so a host running a
- *   module without instantiating it first reaches the fallback and the
- *   allocation is live.
- * FAILURE: CT_AOT_OK with *out = the record's cell; CT_AOT_NO_WRITE when
- *   current_module_ is null; CT_AOT_FAILED on the ceiling. THE ONLY HELPER
- *   IN THE TABLE THAT PRODUCES CT_AOT_NO_WRITE, and that is the status's
- *   whole justification: the handler at :1284 simply breaks with no raise
- *   and no thrown_, so execution CONTINUES with the destination register
- *   untouched. writes_a is CONDITIONAL, and if AOT wrote undefined there it
- *   would DESTROY the local being exported, because the register holds that
- *   local on entry (entry.cpp:44-48 passes find_local(local_name) as the
- *   destination). */
+ * question, since the helper is DEFINED in ctbrowser under Principle 11,
+ * and `aot_bridge` is a friend of `context` in any case.
+ * DELEGATES TO: context::module_export_cell (vm/call.cpp), which is now
+ *   the whole of run_loop.cpp's VM_CASE(bind_export):
+ *   current_module_->exports[name], creating a cell_object when absent.
+ *   context::instantiate_module normally created them all, but
+ *   browser::instantiate_module is the ONLY caller of it in the tree -
+ *   context::run_module does NOT, so a host running a module without
+ *   instantiating it first reaches the fallback and the allocation is
+ *   live.
+ * FAILURE: CT_AOT_OK with *out = the cell, always; CT_AOT_FAILED on the
+ *   ceiling.
+ *
+ *   THIS ROW ASKED FOR A STATUS THAT DOES NOT EXIST. It said CT_AOT_NO_WRITE
+ *   when current_module_ is null and called itself "the only helper in the
+ *   table that produces" it. ct_aot_status has four members - unwound,
+ *   failed, caught, ok - and NO_WRITE was never one of them, here or
+ *   anywhere else in the tree. Nor would adding it be one enumerator: every
+ *   status test the EmitC backend emits compares against `ok` and branches
+ *   to the shared failure path, so a fifth value would make a compiled body
+ *   RETURN on the ordinary no-module path.
+ *
+ *   WHAT IT WAS ASKING FOR, and the reason is still the row's own: the
+ *   handler simply breaks with no raise and no thrown_, so execution
+ *   CONTINUES with the destination register untouched. writes_a is
+ *   CONDITIONAL, and if AOT wrote undefined there it would DESTROY the local
+ *   being exported, because the register holds that local on entry -
+ *   compile/entry.cpp's export loop passes find_local(local_name) as the
+ *   destination. So THE CALLER SEEDS *out with the destination's current
+ *   value and this writes it straight back when there is no module: "does
+ *   not write" and "writes back what was there" are the same thing, and only
+ *   the second is expressible once registers are SSA values rather than
+ *   memory. context::module_export_cell takes that value as a parameter and
+ *   answers it, so the arm lives in code BOTH tiers call rather than in a
+ *   status one of them would have to interpret. */
 CT_AOT_HELPER(/* name */ ct_aot_module_export_cell, /* ret */ int32_t,
               /* params */ (struct ct_aot_frame *fr, const char *name, uint32_t name_len, uint64_t *out),
               /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1)
@@ -1909,22 +1930,26 @@ CT_AOT_COVERS(/* helper */ ct_aot_module_export_cell, /* opcode */ bind_export)
  * 'the bytecode made the distinction': the two RESULT KINDS have different
  * downstream lowering - a cell every read must funnel through
  * ct_aot_cell_get, versus an ordinary object whose reads are get_prop and
- * therefore accessor RE-ENTRIES, since module_namespace installs a native
- * GETTER per export (call.cpp:137-146). One helper with a nullable name
+ * therefore accessor RE-ENTRIES, since context::module_namespace installs
+ * a native GETTER per export. One helper with a nullable name
  * would turn a static property of the lowering into a run-time one. The
  * tempting third option - factoring the shared resolve+lookup into a helper
  * returning module_record* - is UNSAFE: flat_map is
- * boost::unordered_flat_map (core/containers.hpp:30), open-addressing with
- * NO pointer or reference stability, and the installed loader INSERTS into
- * it (browser.cpp:1220-1226), which is why the loader itself re-does find()
- * at :1233 after loading. Any module_record* held across a module-loading
+ * boost::unordered_flat_map (core/containers.hpp), open-addressing with NO
+ * pointer or reference stability, and the installed loader INSERTS into it -
+ * which is why browser.cpp's set_module_loader lambda itself re-does find()
+ * after loading. Any module_record* held across a module-loading
  * helper dangles, so the lookup stays inside each helper. The allocation
  * here is safe under a real collector because the half-built object is
- * stored into of.namespace_object BEFORE the accessor loop
- * (call.cpp:134-135) and that field is GC root 12 - the exact
- * counterexample to ct_aot_iterable_values's unrooted C++ local.
- * DELEGATES TO: the same resolved/modules_ lookup as load_import -
- *   run_loop.cpp's VM_CASE(load_import) - then context::module_namespace.
+ * stored into of.namespace_object BEFORE the accessor loop, and that field
+ * is GCRoots.def's `module_namespace` row - the exact counterexample to
+ * ct_aot_iterable_values's unrooted C++ local. (It said "GC root 12";
+ * GCRoots.def lists module_exports twelfth and module_namespace
+ * thirteenth. Cite a root by NAME - an ordinal moves whenever one is
+ * inserted above it, and one was.)
+ * DELEGATES TO: context::module_namespace_for (vm/call.cpp) - the same
+ *   keyed_by/modules_ lookup context::module_import_cell does, then
+ *   context::module_namespace.
  * FAILURE: RAISE TIER ONLY - 'module X was not loaded', raised by
  *   VM_CASE(load_namespace) itself, or the
  *   ceiling. Same correction as ct_aot_module_import_cell: the pre-
@@ -1938,36 +1963,40 @@ CT_AOT_COVERS(/* helper */ ct_aot_module_namespace, /* opcode */ load_namespace)
 /* THE REFERRER IS A PARAMETER NO COMPILER CAN FILL, and the tree says so in
  * words: function_proto::module is stamped by the LOADER - `for
  * (script::function_proto & fn : compiled->functions) fn.module =
- * specifier;` at browser.cpp:976, under the comment 'The compiler cannot do
- * this: a specifier is the loader's name for a file.' It is also absent
- * from engine_contract::proto_header, so Phase 15 does not serialize it
- * today. Baking a literal would make the image's referrer the compiler's
- * GUESS at what the loader will call the file, and resolve_specifier
- * (browser.cpp:917-918) rewrites only './' and '../' - so a wrong referrer
+ * specifier;` in browser::instantiate_module, under the comment 'The
+ * compiler cannot do this: a specifier is the loader's name for a file.' It
+ * is also absent from engine_contract::proto_header, so Phase 15 does not
+ * serialize it today. Baking a literal would make the image's referrer the
+ * compiler's GUESS at what the loader will call the file, and browser.cpp's
+ * resolve_specifier rewrites only './' and '../' - so a wrong referrer
  * leaves bare and absolute specifiers working and breaks exactly the
  * relative ones, silently, the worst possible failure distribution. Reading
  * it from fr costs nothing new because the frame must carry the owning
  * proto ANYWAY for current_stack. The heaviest safepoint in the area: TWO
  * user-JS re-entries before it returns (to_primitive_string's
- * lookup_property then call, coerce.cpp:172-177; then a whole module graph
- * through run_reentrant, call.cpp:169-200), and the loader INSERTS into
+ * lookup_property then call, in vm/coerce.cpp; then a whole module graph
+ * through context::run_reentrant), and the loader INSERTS into
  * modules_, which is the reference-invalidation hazard above. It may also
  * set suspended_ via the imported module's top-level frame, a flag AOT must
  * not read.
- * DELEGATES TO: run_loop.cpp's VM_CASE(dyn_import) inline: context::to_string(spec)
- *   (coerce.cpp:78 -> to_primitive_string at :171 for an object), then the
- *   embedder's module_loader_ (installed at Shell/browser.cpp:1216-1239),
- *   which reaches the VM through run_reentrant. The REFERRER is read by the
- *   helper from fr, not passed in.
+ * DELEGATES TO: context::dynamic_import (vm/call.cpp), which is now the
+ *   whole of run_loop.cpp's VM_CASE(dyn_import): context::to_string(spec)
+ *   (vm/coerce.cpp, then to_primitive_string for an object), then the
+ *   embedder's module_loader_ (ctbrowser installs one in Shell/browser.cpp's
+ *   set_module_loader call), which reaches the VM through run_reentrant.
+ *   THE CONVERSION IS INSIDE THE SHARED MEMBER, so the two tiers cannot run
+ *   a page's toString differently. The REFERRER is read by the helper from
+ *   fr, not passed in.
  * FAILURE: Full status; *out = the promise on OK. NO LOADER INSTALLED IS
  *   CT_AOT_FAILED, not a no-write: VM_CASE(dyn_import) raise()s 'dynamic
  *   import() has no loader installed', which sets failed_, and VM_NEXT then
  *   goes to vm_done - the interpreter does NOT keep going, so a status
  *   meaning 'completed, keep going, do not write' would make AOT code
  *   execute past an uncatchable engine fault. A MISSING MODULE, by
- *   contrast, is CT_AOT_OK carrying an already-REJECTED settled promise
- *   (browser.cpp:1221-1223, 1231-1233) - the lowering must not treat 'the
- *   module was not found' as a control-flow event. */
+ *   contrast, is CT_AOT_OK carrying an already-REJECTED settled promise -
+ *   browser.cpp's loader answers make_promise(make_error(...), true) for a
+ *   specifier no asset matches - so the lowering must not treat 'the module
+ *   was not found' as a control-flow event. */
 CT_AOT_HELPER(/* name */ ct_aot_dynamic_import, /* ret */ int32_t,
               /* params */ (struct ct_aot_frame *fr, uint64_t specifier, uint64_t *out),
               /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)

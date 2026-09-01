@@ -276,6 +276,77 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   add_test(NAME ctcompile_differential COMMAND ctcompile-test-differential)
 endif()
 
+# --- and the same question for a MODULE ---------------------------------------
+#
+# ctcompile_differential compiles ONE CLASSIC SCRIPT and runs it with cx.run.
+# op::load_import, op::bind_export and op::load_namespace are emitted by
+# compile_program's module arm and by nowhere else, so a classic script cannot
+# contain one and that harness cannot reach three of the four ES-module opcodes
+# at all. This builds a three-module graph the way browser.cpp does and installs
+# a compiled entry on the IMPORTING module's TOP LEVEL - the first time the
+# backend is run over functions[0] rather than over a named function.
+#
+# ONLY module-main.js IS COMPILED. dep and user stay interpreted in every arm,
+# which is what holds one variable still: dep is where the live binding is
+# written, and user is the only thing that can see what bind_export decided.
+if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
+  set(_mod_main "${CMAKE_CURRENT_SOURCE_DIR}/module-main.js")
+  set(_mod_dep "${CMAKE_CURRENT_SOURCE_DIR}/module-dep.js")
+  set(_mod_user "${CMAKE_CURRENT_SOURCE_DIR}/module-user.js")
+  # ALL THREE ARE EMBEDDED, for the reason differential.js is: the driver must
+  # read the same bytes the pipeline compiled. A compiled body bakes the
+  # function INDEX of every closure it builds, so a transcription that drifted
+  # in ORDER makes it close over a different function while both tiers agree.
+  set(_mod_incs "")
+  foreach(_mod_js IN ITEMS "${_mod_main}" "${_mod_dep}" "${_mod_user}")
+    get_filename_component(_mod_name "${_mod_js}" NAME)
+    set(_mod_inc "${CMAKE_CURRENT_BINARY_DIR}/${_mod_name}.inc")
+    add_custom_command(
+      OUTPUT "${_mod_inc}"
+      COMMAND "${CMAKE_COMMAND}" -DSOURCE=${_mod_js} -DOUTPUT=${_mod_inc}
+              -P "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
+      DEPENDS "${_mod_js}" "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
+      COMMENT "Embedding ${_mod_name} for the module driver"
+      VERBATIM)
+    list(APPEND _mod_incs "${_mod_inc}")
+  endforeach()
+
+  set(_mod_cpp "${CMAKE_CURRENT_BINARY_DIR}/module-main.generated.cpp")
+  add_custom_command(
+    OUTPUT "${_mod_cpp}"
+    # -DKIND=module SELECTS --ctbrowser-module-to-ctjs. Without it the fixture
+    # is compiled as a classic script, every `import` is a syntax error, and the
+    # failure reads as a bad fixture rather than as a missing flag.
+    #
+    # `_script_` IS THE TOP LEVEL. compile/entry.cpp names functions[0]
+    # "<script>", the importer sanitises that to `_script_$0` and the backend
+    # spells it `_script__0`, which this script renames to ctc__script_.
+    COMMAND "${CMAKE_COMMAND}"
+            -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
+            -DOPT=$<TARGET_FILE:ctjs-opt>
+            -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
+            -DSOURCE=${_mod_main}
+            -DKIND=module
+            "-DENTRIES=_script_;raise2;loadTwo;fn"
+            -DOUTPUT=${_mod_cpp}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
+    DEPENDS "${_mod_main}" ctjs-translate ctjs-opt
+            "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
+    COMMENT "Compiling module-main.js through the EmitC backend as a MODULE"
+    VERBATIM)
+
+  set_source_files_properties("${_mod_cpp}" PROPERTIES
+    COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
+  add_executable(ctcompile-test-module_differential
+                 ModuleDifferential.cpp "${_mod_cpp}" ${_mod_incs})
+  target_include_directories(ctcompile-test-module_differential
+                             PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+  target_link_libraries(ctcompile-test-module_differential PRIVATE ctbrowser::script)
+  ctcompile_target(ctcompile-test-module_differential)
+  add_test(NAME ctcompile_module_differential
+           COMMAND ctcompile-test-module_differential)
+endif()
+
 # --- and does any of it LINK? -------------------------------------------------
 #
 # aot.hpp declares 69 helpers and aot_bridge.cpp defines 32. A call to one of
