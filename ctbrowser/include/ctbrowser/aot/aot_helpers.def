@@ -678,16 +678,21 @@ CT_AOT_COVERS(/* helper */ ct_aot_new_string, /* opcode */ load_string)
  * ctcompile or `0x1fn`, `0b..n` and the 1.5n->0n substitution drift.
  * Identity is unobservable (strict_equals compares digits), so only the
  * ceiling makes the memo required.
- * DELEGATES TO: bigint_from_literal (bigint.hpp:43) +
- *   allocate<bigint_object> (vm.hpp:223), THROUGH bigint_cache_
- *   (vm.hpp:987, GC root 16, marked objects.cpp:487-490, cleared
- *   call.cpp:231). MUST BE EXTRACTED from VM_CASE(load_bigint) at
- *   run_loop.cpp:154-177 into context::interned_bigint_literal(const void
- *   *site, uint32_t slot, std::string_view text).
+ * DELEGATES TO: context::interned_bigint_literal, which IS the extraction
+ *   this row asked for and no longer merely proposes - bigint_from_literal
+ *   plus allocate<bigint_object>, through bigint_cache_ (GC root
+ *   bigint_cache, marked in collect()). VM_CASE(load_bigint) calls the same
+ *   member, so the parse and the 0n substitution cannot drift.
+ * THE CACHE KEY IS A void POINTER AND NOT A function_proto, which is the
+ *   half of the extraction the row did not anticipate. A compiled body
+ *   numbers its memo slots in WALK ORDER and the interpreter numbers them by
+ *   constant-pool index, so sharing a key lets one read a slot the other
+ *   filled with a different literal. That exact bug shipped once for
+ *   strings; string_cache_ was widened for it and this followed.
  * FAILURE: RAISE TIER ONLY. A literal the lexer accepted but that is not an
- *   integer (1.5n) does NOT throw - `parsed.value_or(bigint{0})` at
- *   run_loop.cpp:169 substitutes 0n. The only failure is the allocation
- *   ceiling; a well-formed value is returned on every path. */
+ *   integer (1.5n) does NOT throw - value_or(bigint{0}) substitutes 0n. The
+ *   only failure is the allocation ceiling; a well-formed value is returned
+ *   on every path. */
 CT_AOT_HELPER(/* name */ ct_aot_new_bigint_literal, /* ret */ uint64_t,
               /* params */ (struct ct_aot_frame *fr, const struct ct_aot_site *site, uint32_t slot, const char *literal, uint32_t len),
               /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1)
@@ -1853,11 +1858,12 @@ CT_AOT_COVERS(/* helper */ ct_aot_suspend_unsupported, /* opcode */ yield_value)
  * reading c as a standalone index - disappears by construction with named
  * parameters. Not a safepoint: it reads two flat_maps and, on failure,
  * builds a std::string, which is a C++ heap allocation and not a GC one.
- * DELEGATES TO: run_loop.cpp:1295-1321 inline: current_module_->resolved
- *   lookup (as-written then as-keyed), then modules_ lookup, then
- *   module_record::exports lookup. Nothing new is written.
- * FAILURE: RAISE TIER ONLY for both misses - 'module X was not loaded'
- *   (:1310) and 'X has no export named Y' (:1316) - uncatchable engine
+ * DELEGATES TO: run_loop.cpp's VM_CASE(load_import), inline:
+ *   current_module_->resolved lookup (as-written then as-keyed), then
+ *   modules_ lookup, then module_record::exports lookup. Nothing new is
+ *   written.
+ * FAILURE: RAISE TIER ONLY for both misses - 'module X was not loaded' and
+ *   'X has no export named Y', both raised there - uncatchable engine
  *   faults, NOT the ReferenceError a spec-conformant backend would emit.
  *   Returns undefined on those paths; poll ct_aot_failed. The interpreter's
  *   pre-write at :1297 is DEAD on the failure path (raise sets failed_,

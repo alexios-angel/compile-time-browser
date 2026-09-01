@@ -151,25 +151,10 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(load_bigint) do {
-            {
-                // Parsed ONCE per site and cached beside the string cache: the
-                // digits never change, and a BigInt in a loop should not re-read
-                // them. A literal the lexer accepted but that is not an integer
-                // - `1.5n` - has no value to load, and 0n is the honest answer
-                // for a program that should have been refused at compile time.
-                auto & cache = bigint_cache_[&(*vm_proto)];
-                const auto it = cache.find(in.bx());
-                if (it != cache.end()) {
-                    reg(in.a) = it->second;
-                } else {
-                    const std::optional<bigint> parsed =
-                        bigint_from_literal(vm_proto->strings[in.bx()]);
-                    const value v =
-                        value::object(allocate<bigint_object>(parsed.value_or(bigint{0})));
-                    cache.emplace(in.bx(), v);
-                    reg(in.a) = v;
-                }
-            }
+            // MEMOISED UNDER THIS PROTO, which is the interpreter's own key -
+            // a compiled body passes a marker address of its own instead,
+            // because the two number their slots differently.
+            reg(in.a) = interned_bigint_literal(&(*vm_proto), in.bx(), vm_proto->strings[in.bx()]);
             break;
         }
         while (0);

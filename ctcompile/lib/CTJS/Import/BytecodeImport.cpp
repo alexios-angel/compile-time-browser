@@ -775,6 +775,17 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 ctjs::PopHandlerOp::create(into, where);
                 state.handlers.pop_back();
                 break;
+            case op::load_bigint:
+                if (in.bx() >= proto.strings.size()) {
+                    state.give_up(at, in.code, "bigint literal index out of range");
+                    break;
+                }
+                // THE SOURCE TEXT, NOT A PARSED INTEGER. bigint_from_literal
+                // owns `0x1fn`, `0b..n` and the 1.5n-to-0n substitution, and
+                // parsing here would be a second implementation of all three.
+                set(in.a,
+                    state.constant(where, ctjs::BigIntAttr::get(context, proto.strings[in.bx()])));
+                break;
             case op::delete_prop:
                 // a IS THE TARGET, b NAMES THE PROPERTY, and nothing is
                 // written back - the delete produces no value.

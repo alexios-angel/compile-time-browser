@@ -177,13 +177,26 @@ ctjs.func @wrong_family(%receiver: !ctjs.value, %new_target: !ctjs.value,
 // it was 383 of 417 refusals on bootstrap.bundle.js - 92% of the blockage
 // traced to one sentence.
 //
-// A BIGINT LITERAL STILL IS, and for a reason that is still true:
-// ct_aot_new_bigint_literal is one of the rows aot.hpp declares and
-// aot_bridge.cpp does not define, so a call to it would compile and fail at
-// link.
+// A BIGINT LITERAL IS NOT REFUSED ANY MORE EITHER, and its stale reason is
+// worth recording beside the string's: "ct_aot_new_bigint_literal is one of the
+// rows aot.hpp declares and aot_bridge.cpp does not define, so a call would
+// compile and fail at link." That was true when written. The helper has a body
+// now, delegating to context::interned_bigint_literal - which the ABI row had
+// asked for by name and which nothing had extracted.
 //
-// CHECK-LABEL: ctjs.func @returns_a_bigint
-// CHECK-SAME: ctjs.not_lowered = "no lowering yet for this constant
+// SO THE CONSTANT ARM HAS NO NEGATIVE CASE LEFT, and inventing an attribute to
+// keep one would be asserting against a shape the importer cannot produce. What
+// remains is the POSITIVE assertion: it must reach the helper, memoised under
+// the marker rather than the entry's site, because the two number their slots
+// differently and sharing the key lets a compiled body read a slot the
+// interpreter filled with another literal.
+//
+// CHECK-NOT: ctjs.func @returns_a_bigint
+// CHECK: emitc.func @returns_a_bigint
+// The marker is materialised as its own literal and passed by SSA value, so
+// the name and the call are on different lines.
+// CHECK: ctc_memo_returns_a_bigint
+// CHECK: ct_aot_new_bigint_literal
 ctjs.func @returns_a_bigint(%receiver: !ctjs.value, %new_target: !ctjs.value,
                             %callee: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {

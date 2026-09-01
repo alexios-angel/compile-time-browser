@@ -68,7 +68,6 @@ constexpr pending not_yet[] = {
     // ---- Phase 13's own work list, in Bootstrap's order of cost -----------
     {"gather_rest", "a rest parameter, f(...xs) - 3 Bootstrap functions"},
     {"make_arguments", "the `arguments` object, which gather_rest's ABI row says it READS"},
-    {"load_bigint", "a BigInt literal, which needs a per-slot parse and cache"},
 
     // ---- NOT Phase 13. Listed so the gap is visible, not so it is worked. --
     {"wrap_promise", "async - Phase 14, and it is only non-suspending because the WRAP is"},

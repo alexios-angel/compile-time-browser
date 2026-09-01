@@ -535,13 +535,12 @@ bool body_is_supported(FuncOp function, std::string & why) {
             // values and print identically. A string is still refused; it
             // reaches ct_aot_new_string, which is a safepoint, and nothing
             // roots the result yet.
-            if (mlir::isa<UndefinedAttr, NullAttr, BooleanAttr, NumberAttr, StringAttr>(
+            if (mlir::isa<UndefinedAttr, NullAttr, BooleanAttr, NumberAttr, StringAttr, BigIntAttr>(
                     constant.getValue())) {
                 return;
             }
             supported = false;
-            why = "no lowering yet for this constant - a BigInt literal reaches "
-                  "ct_aot_new_bigint_literal, which has no implementation";
+            why = "no lowering yet for this constant";
             return;
         }
         supported = false;
@@ -855,7 +854,13 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                 parked += 1;
             }
             if (auto constant = mlir::dyn_cast<ConstantOp>(inner)) {
-                if (mlir::isa<StringAttr>(constant.getValue())) { memo_slots[inner] = next_memo++; }
+                // A BIGINT LITERAL MEMOISES THE SAME WAY AND SHARES THE
+                // NUMBERING. Both helpers key on (site, slot) and this backend
+                // hands them the same marker, so one counter across both keeps
+                // a string and a bigint from ever claiming the same slot.
+                if (mlir::isa<StringAttr, BigIntAttr>(constant.getValue())) {
+                    memo_slots[inner] = next_memo++;
+                }
             }
         });
         const unsigned window = std::max(static_cast<unsigned>(entered.getRegCount()), parked);
@@ -1220,6 +1225,34 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                                     c_string_literal(bytes)),
                             literal(build, where, opaque(build.getContext(), "uint32_t"),
                                     std::to_string(bytes.size()))})
+                        .getResult(0));
+                return;
+            }
+            // A BIGINT LITERAL IS THE SOURCE TEXT, PARSED AT RUN TIME, and
+            // that is deliberate: bigint_from_literal owns `0x1fn`, `0b..n` and
+            // the 1.5n-to-0n substitution, and parsing here would be a second
+            // implementation of all three.
+            //
+            // MEMOISED UNDER scope.memo_site, NOT scope.entry_site, for the
+            // reason ct_aot_new_string is: the entry's site IS the
+            // function_proto, the interpreter keys the same cache by that proto
+            // with the CONSTANT-POOL index as the slot, and this backend numbers
+            // its slots in walk order. Sharing the key lets a compiled body read
+            // a slot the interpreter filled with a different literal.
+            if (auto digits = mlir::dyn_cast<BigIntAttr>(constant.getValue())) {
+                const llvm::StringRef text = digits.getText();
+                mapping.map(
+                    constant.getResult(),
+                    ec::CallOpaqueOp::create(
+                        build, where, mlir::TypeRange{value}, callee("ct_aot_new_bigint_literal"),
+                        mlir::ValueRange{
+                            scope.frame, scope.memo_site,
+                            literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                    std::to_string(scope.memo_slots.lookup(&op))),
+                            literal(build, where, pointer_to(build.getContext(), "const char"),
+                                    c_string_literal(text)),
+                            literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                    std::to_string(text.size()))})
                         .getResult(0));
                 return;
             }

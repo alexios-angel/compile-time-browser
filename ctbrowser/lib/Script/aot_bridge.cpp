@@ -596,6 +596,27 @@ struct aot_bridge {
         cx.set_prototype(value::from_bits(target), value::from_bits(proto));
     }
 
+    // ct_aot_new_bigint_literal. A BigInt literal, parsed once per site.
+    //
+    // RAISE TIER: it answers the VALUE rather than a status, and the row is
+    // explicit that a literal the lexer accepted but that is not an integer
+    // does not throw - 1.5n substitutes 0n. The only failure is the allocation
+    // ceiling, so a well-formed value comes back on every path.
+    //
+    // THE SITE IS THE CALLER'S MARKER, not a function_proto, which is why the
+    // cache key is a void pointer. A compiled body numbers its slots in walk
+    // order and the interpreter numbers them by constant-pool index; sharing a
+    // key would let one read a slot the other filled with a different literal.
+    static std::uint64_t new_bigint_literal(aot::ct_aot_frame * f, const aot::ct_aot_site * site,
+                                            std::uint32_t slot, const char * text,
+                                            std::uint32_t len) {
+        context & cx = *frame_of(f).ctx;
+        return cx
+            .interned_bigint_literal(static_cast<const void *>(site), slot,
+                                     std::string_view{text, len})
+            .bits();
+    }
+
     // ct_aot_delete_prop. `delete o.k`, the named form.
     //
     // (0, 0, 0): erasing from a hash map is malloc's business, not the
@@ -1223,6 +1244,12 @@ std::uint32_t ct_aot_instance_of(ct_aot_frame * fr, std::uint64_t target, std::u
 
 std::int32_t ct_aot_delete_index(ct_aot_frame * fr, std::uint64_t target, std::uint64_t key) {
     return script::aot_bridge::delete_index(fr, target, key);
+}
+
+std::uint64_t ct_aot_new_bigint_literal(ct_aot_frame * fr, const ct_aot_site * site,
+                                        std::uint32_t slot, const char * literal,
+                                        std::uint32_t len) {
+    return script::aot_bridge::new_bigint_literal(fr, site, slot, literal, len);
 }
 
 void ct_aot_delete_prop(ct_aot_frame * fr, std::uint64_t target, const ct_aot_name * name) {

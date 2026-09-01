@@ -104,6 +104,24 @@ void context::mark(value v) {
 }
 
 // VM_CASE(load_string)'s memo, extracted so a compiled body shares it.
+value context::interned_bigint_literal(const void * site, std::uint32_t slot,
+                                       std::string_view text) {
+    const auto parse = [&] {
+        // A LITERAL THE LEXER ACCEPTED BUT THAT IS NOT AN INTEGER - `1.5n` -
+        // has no value to load, and 0n is the honest answer for a program that
+        // should have been refused at compile time. It does NOT throw.
+        const std::optional<bigint> parsed = bigint_from_literal(std::string{text});
+        return value::object(allocate<bigint_object>(parsed.value_or(bigint{0})));
+    };
+    if (site == nullptr) { return parse(); }
+    auto & cache = bigint_cache_[site];
+    const auto found = cache.find(slot);
+    if (found != cache.end()) { return found->second; }
+    const value made = parse();
+    cache.emplace(slot, made);
+    return made;
+}
+
 value context::interned_string(const void * site, std::uint32_t slot, std::string_view text) {
     if (site == nullptr) { return string(std::string{text}); }
     auto & cache = string_cache_[site];

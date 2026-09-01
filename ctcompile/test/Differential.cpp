@@ -100,6 +100,7 @@ CT_ENTRY(plusOf)
 CT_ENTRY(coerce)
 CT_ENTRY(keysOf)
 CT_ENTRY(dropNamed)
+CT_ENTRY(bigLits)
 #undef CT_ENTRY
 
 namespace {
@@ -433,6 +434,13 @@ int main() {
          "the NAMED delete against the computed one - a different opcode and a different "
          "helper, and the key must actually leave the enumeration as well as read undefined",
          "ac/undefined"},
+        {40u,
+         "bigint literals",
+         {{"bigLits", 0u, &ctc_bigLits}, {}},
+         "the per-slot memo, which the string version once got wrong the same way - two "
+         "different literals in one body, so a shared key returns the other one - and the hex "
+         "form, which only bigint_from_literal parses correctly",
+         "900000000000000000009/16/900000000000000000010"},
         {17u,
          "literals",
          {{"pack", 0u, &ctc_pack}, {}},
@@ -558,6 +566,7 @@ int main() {
         {"coerce", 0u, &ctc_coerce},
         {"keysOf", 0u, &ctc_keysOf},
         {"dropNamed", 0u, &ctc_dropNamed},
+        {"bigLits", 0u, &ctc_bigLits},
     };
 
     for (const subject & each : subjects) {

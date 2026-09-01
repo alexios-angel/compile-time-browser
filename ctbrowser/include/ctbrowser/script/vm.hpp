@@ -806,6 +806,17 @@ public:
     // embedded NUL, and `a\0b` would silently truncate. String IDENTITY is
     // unobservable - strict equality compares text - so sharing one object is
     // safe; it is the ceiling, not identity, that makes it required.
+    // A BIGINT LITERAL, PARSED ONCE PER SITE. The digits never change, and a
+    // BigInt in a loop should not re-read them - which is the only reason the
+    // memo is required, since identity is unobservable (strict equality
+    // compares digits).
+    //
+    // IT TAKES THE SOURCE TEXT, not digits. The parse is bigint_from_literal's
+    // and must not be duplicated, or `0x1fn`, `0b..n` and the 1.5n-to-0n
+    // substitution drift between the two tiers.
+    [[nodiscard]] value interned_bigint_literal(const void * site, std::uint32_t slot,
+                                                std::string_view text);
+
     [[nodiscard]] value interned_string(const void * site, std::uint32_t slot,
                                         std::string_view text);
 
@@ -1379,7 +1390,14 @@ private:
     flat_map<const void *, flat_map<std::uint32_t, value>> string_cache_;
     // The same idea for BigInt literals: the digits never change, so a site in
     // a loop parses them once. Keyed the same way and swept the same way.
-    flat_map<const function_proto *, flat_map<std::uint32_t, value>> bigint_cache_;
+    // KEYED BY const void *, NOT BY function_proto *, for the reason
+    // string_cache_ was widened: a COMPILED body memoises under a marker
+    // address of its own, because this backend numbers its slots in walk order
+    // and the interpreter numbers them by constant-pool index. Sharing the key
+    // means a compiled body can read a slot the interpreter filled with a
+    // DIFFERENT literal. That exact bug shipped once for strings, and it hid a
+    // mutation that halved every length.
+    flat_map<const void *, flat_map<std::uint32_t, value>> bigint_cache_;
     // Live try blocks, innermost last. Not per-frame, because a throw has to be
     // able to find a handler several frames up.
     std::vector<handler> handlers_;

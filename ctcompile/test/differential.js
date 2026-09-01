@@ -392,6 +392,24 @@ function plusOf(pad, x) { return +x; }
 // AND delete IS THE NAMED FORM HERE - `delete o.b`, not `delete o[k]` - which
 // is a different opcode with a different helper: a name cannot run a to_string
 // the way a value key can.
+// BIGINT LITERALS - op::load_bigint, which is parsed at RUN TIME from the
+// source text and memoised per (site, slot).
+//
+// TWO DIFFERENT LITERALS IN ONE FUNCTION, which is the whole point: the memo is
+// keyed by SLOT, and this backend numbers its slots in walk order while the
+// interpreter numbers them by constant-pool index. A compiled body that shared
+// the interpreter's key would read a slot the interpreter filled with the OTHER
+// literal - so the two must differ, and both must be returned.
+//
+// AND `0x` IS NOT THE SAME PARSE AS DECIMAL. bigint_from_literal owns the hex,
+// binary and octal forms; a lowering that parsed the digits itself would get
+// 0x10n wrong and nothing else would notice.
+function bigLits(pad) {
+  var a = 900000000000000000009n;
+  var b = 0x10n;
+  return "" + a + "/" + b + "/" + (a + 1n);
+}
+
 function keysOf(pad, o) {
   var out = "";
   for (var k in o) { out = out + k; }
@@ -513,6 +531,7 @@ function drive(which) {
   if (which === 37) { OUT = coerce(0); }
   if (which === 38) { OUT = keysOf(0, { x: 1, y: 2 }) + "/" + keysOf(0, [7, 8]) + "/" + keysOf(0, 5); }
   if (which === 39) { OUT = dropNamed(0); }
+  if (which === 40) { OUT = bigLits(0); }
   if (which === 22) {
     OUT = "" + coalesce(0, 9) + "/" + coalesce("", 9) + "/" + coalesce(nothing, 9) + "/" +
           chain(null) + "/" + chain({ p: 4 }) + "/" + dflt(0);
