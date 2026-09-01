@@ -98,6 +98,8 @@ CT_ENTRY(accessors)
 CT_ENTRY(guarded)
 CT_ENTRY(plusOf)
 CT_ENTRY(coerce)
+CT_ENTRY(keysOf)
+CT_ENTRY(dropNamed)
 #undef CT_ENTRY
 
 namespace {
@@ -419,6 +421,18 @@ int main() {
          "ToNumber against truthiness - the empty string is 0 and undefined is NaN, and NaN is "
          "the only value that is not equal to itself",
          "42/0/true"},
+        {38u,
+         "for-in",
+         {{"keysOf", 0u, &ctc_keysOf}, {}},
+         "definition ORDER, which a key count would not see - and an array enumerates its "
+         "indices as STRINGS, while a non-object yields nothing rather than throwing",
+         "xy/01/"},
+        {39u,
+         "delete named",
+         {{"dropNamed", 0u, &ctc_dropNamed}, {"keysOf", 0u, &ctc_keysOf}},
+         "the NAMED delete against the computed one - a different opcode and a different "
+         "helper, and the key must actually leave the enumeration as well as read undefined",
+         "ac/undefined"},
         {17u,
          "literals",
          {{"pack", 0u, &ctc_pack}, {}},
@@ -542,6 +556,8 @@ int main() {
         {"guarded", 0u, &ctc_guarded},
         {"plusOf", 0u, &ctc_plusOf},
         {"coerce", 0u, &ctc_coerce},
+        {"keysOf", 0u, &ctc_keysOf},
+        {"dropNamed", 0u, &ctc_dropNamed},
     };
 
     for (const subject & each : subjects) {

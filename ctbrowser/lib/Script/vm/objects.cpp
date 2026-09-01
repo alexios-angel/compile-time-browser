@@ -179,6 +179,27 @@ void context::pass_new_target(value from) {
     pending_new_target_ = from;
 }
 
+void context::delete_named(value target, const std::string & name) {
+    if (target.is_object()) { (void)static_cast<object_object *>(target.as_heap())->erase(name); }
+}
+
+value context::own_keys(value source) {
+    value out = make_array();
+    auto * keys = static_cast<array_object *>(out.as_heap());
+    if (source.is_object()) {
+        // In DEFINITION ORDER, data and accessors interleaved - which is what a
+        // page sees from for-in and has to match Object.keys. for-in
+        // enumerates STRING keys only.
+        static_cast<object_object *>(source.as_heap())
+            ->each_own_string_key(
+                [&](const std::string & name) { keys->items.push_back(string(name)); });
+    } else if (source.is_array()) {
+        const std::size_t n = static_cast<array_object *>(source.as_heap())->items.size();
+        for (std::size_t i = 0; i < n; ++i) { keys->items.push_back(string(std::to_string(i))); }
+    }
+    return out;
+}
+
 void context::define_accessor(value target, const std::string & name, value getter, value setter) {
     if (target.is_object()) {
         static_cast<object_object *>(target.as_heap())->define_accessor(name, getter, setter);

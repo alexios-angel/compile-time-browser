@@ -775,6 +775,15 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 ctjs::PopHandlerOp::create(into, where);
                 state.handlers.pop_back();
                 break;
+            case op::delete_prop:
+                // a IS THE TARGET, b NAMES THE PROPERTY, and nothing is
+                // written back - the delete produces no value.
+                ctjs::DeleteNamedOp::create(into, where, reg(in.a),
+                                            into.getStringAttr(proto.names[in.b]));
+                break;
+            case op::own_keys:
+                set(in.a, ctjs::OwnKeysOp::create(into, where, value_type, reg(in.b)));
+                break;
             case op::define_getter:
             case op::define_setter: {
                 // a IS THE TARGET, b NAMES THE PROPERTY and c IS THE FUNCTION -

@@ -379,6 +379,29 @@ function accessors(pad, seed) {
 // path - and the empty string and the empty array both coerce to 0 while
 // undefined coerces to NaN, which is what separates ToNumber from truthiness.
 function plusOf(pad, x) { return +x; }
+
+// for-in AND NAMED delete - op::own_keys and op::delete_prop.
+//
+// `for (k in o)` COMPILES TO A for-of OVER own_keys, so this exercises the new
+// helper and the iterable machinery together. The keys arrive in DEFINITION
+// ORDER, which is why concatenating them is the assertion: a set that answered
+// the right keys in the wrong order would still have the right length.
+//
+// AN ARRAY ENUMERATES ITS INDICES AS STRINGS, so `"0" + "1"` is "01" and not 1.
+//
+// AND delete IS THE NAMED FORM HERE - `delete o.b`, not `delete o[k]` - which
+// is a different opcode with a different helper: a name cannot run a to_string
+// the way a value key can.
+function keysOf(pad, o) {
+  var out = "";
+  for (var k in o) { out = out + k; }
+  return out;
+}
+function dropNamed(pad) {
+  var o = { a: 1, b: 2, c: 3 };
+  delete o.b;
+  return keysOf(0, o) + "/" + o.b;
+}
 function coerce(pad) {
   return "" + plusOf(0, "42") + "/" + plusOf(0, "") + "/" + (plusOf(0, undef) !== plusOf(0, undef));
 }
@@ -488,6 +511,8 @@ function drive(which) {
   // NaN !== NaN, so the third field is `true` only if `+undefined` really is
   // NaN - a coercion that answered 0 would make it false.
   if (which === 37) { OUT = coerce(0); }
+  if (which === 38) { OUT = keysOf(0, { x: 1, y: 2 }) + "/" + keysOf(0, [7, 8]) + "/" + keysOf(0, 5); }
+  if (which === 39) { OUT = dropNamed(0); }
   if (which === 22) {
     OUT = "" + coalesce(0, 9) + "/" + coalesce("", 9) + "/" + coalesce(nothing, 9) + "/" +
           chain(null) + "/" + chain({ p: 4 }) + "/" + dflt(0);

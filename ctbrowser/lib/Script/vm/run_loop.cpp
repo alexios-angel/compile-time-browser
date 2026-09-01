@@ -398,10 +398,9 @@ value context::run_loop(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(delete_prop) do {
-            if (reg(in.a).is_object()) {
-                (void)static_cast<object_object *>(reg(in.a).as_heap())
-                    ->erase(vm_proto->names[in.b]);
-            }
+            // a IS THE TARGET and b NAMES THE PROPERTY - nothing is written
+            // back, so this produces no value.
+            delete_named(reg(in.a), vm_proto->names[in.b]);
             break;
         }
         while (0);
@@ -819,29 +818,8 @@ value context::run_loop(std::size_t stop_depth) {
         VM_NEXT;
 
         VM_CASE(own_keys) do {
-            {
-                // The own property names of an object, as an array. `for (k in o)`
-                // compiles to a for-of over this, which keeps one iteration
-                // mechanism instead of two.
-                value out = make_array();
-                auto * keys = static_cast<array_object *>(out.as_heap());
-                if (reg(in.b).is_object()) {
-                    // In DEFINITION ORDER, data and accessors interleaved - which
-                    // is what a page sees from for-in and has to match Object.keys.
-                    // for-in enumerates STRING keys only.
-                    static_cast<object_object *>(reg(in.b).as_heap())
-                        ->each_own_string_key(
-                            [&](const std::string & name) { keys->items.push_back(string(name)); });
-                } else if (reg(in.b).is_array()) {
-                    const std::size_t n =
-                        static_cast<array_object *>(reg(in.b).as_heap())->items.size();
-                    for (std::size_t i = 0; i < n; ++i) {
-                        keys->items.push_back(string(std::to_string(i)));
-                    }
-                }
-                reg(in.a) = out;
-                break;
-            }
+            reg(in.a) = own_keys(reg(in.b));
+            break;
         }
         while (0);
         VM_NEXT;

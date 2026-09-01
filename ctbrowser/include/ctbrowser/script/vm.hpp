@@ -888,6 +888,22 @@ public:
     // every static accessor.
     void define_accessor(value target, const std::string & name, value getter, value setter);
 
+    // `delete o.k` - the NAMED form. delete_index is the computed one and they
+    // are separate opcodes because the key arrives differently: a name is a
+    // constant-pool index here and a VALUE there, and converting a value key
+    // runs to_string, which for an object runs user JavaScript.
+    void delete_named(value target, const std::string & name);
+
+    // THE OWN STRING KEYS OF AN OBJECT, AS AN ARRAY - what `for (k in o)`
+    // iterates. for-in compiles to a for-of over this array, which is how the
+    // runtime keeps ONE iteration mechanism instead of two.
+    //
+    // IN DEFINITION ORDER, data and accessors interleaved, because that is what
+    // a page sees and what Object.keys has to match. An ARRAY source enumerates
+    // its indices as strings; anything else yields an empty array rather than
+    // throwing.
+    [[nodiscard]] value own_keys(value source);
+
     [[nodiscard]] value get_prototype(value target);
     void set_prototype(value target, value proto);
 

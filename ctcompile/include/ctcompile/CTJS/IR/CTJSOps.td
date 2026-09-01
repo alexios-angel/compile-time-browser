@@ -372,6 +372,50 @@ def CTJS_CatchLandOp : CTJS_Op<"catch_land", []> {
   let hasVerifier = 1;
 }
 
+def CTJS_DeleteNamedOp : CTJS_Op<"delete_named", [CTJS_Safepoint]> {
+  let summary = "`delete o.k` - the NAMED form";
+  let description = [{
+    NOT ctjs.delete_property, WHICH IS THE COMPUTED ONE. They are separate
+    opcodes in the bytecode because the key arrives differently: a
+    constant-pool name here, a VALUE there - and converting a value key runs
+    to_string, which for an object runs user JavaScript. So delete_index can
+    throw and re-enter, and this cannot.
+
+    A PLAIN CTJS_Op FOR ctjs.define_accessor's REASON. ct_aot_delete_prop's
+    parameter roles are frame/operand/name, and the ABI shape verifier counts a
+    `name` as an SSA operand rather than an immediate, so the census allows ZERO
+    inherent attributes and a CTJS_RuntimeOp carrying $name would fail its own
+    verifier. It lowers to TWO calls: ct_aot_intern_name, then the helper.
+
+    A SAFEPOINT because interning allocates, even though the helper's own row is
+    all zeros - erasing from a hash map is malloc's business, not the
+    collector's.
+  }];
+  let arguments = (ins CTJS_ValueType:$object, StrAttr:$name);
+  let assemblyFormat = "$name `from` $object attr-dict";
+}
+
+def CTJS_OwnKeysOp : CTJS_RuntimeOp<"own_keys", "ct_aot_own_keys", CTJS_GenericEffects> {
+  let summary = "The own string keys of an object, as an array - what for-in iterates";
+  let description = [{
+    `for (k in o)` COMPILES TO A for-of OVER THIS, which is how the runtime
+    keeps one iteration mechanism instead of two: own_keys builds the array and
+    ctjs.iterable and an index loop do the rest, both of which already lower.
+
+    IN DEFINITION ORDER, data properties and accessors interleaved, because
+    that is what a page sees and what Object.keys has to match. An ARRAY source
+    enumerates its indices AS STRINGS - `for (k in [7,8])` binds "0" and "1",
+    not 0 and 1 - and anything else yields an empty array rather than throwing.
+
+    RAISE TIER: the helper returns the ARRAY rather than a status, so on failure
+    the value is meaningless and a caller polls ct_aot_failed at a back edge. It
+    allocates, so it is a safepoint even though it cannot run user code.
+  }];
+  let arguments = (ins CTJS_ValueType:$source);
+  let results = (outs CTJS_ValueType:$result);
+  let assemblyFormat = "`of` $source attr-dict";
+}
+
 def CTJS_DefineAccessorOp : CTJS_Op<"define_accessor", [CTJS_Safepoint]> {
   let summary = "Install a getter, a setter, or both, under one name";
   let description = [{

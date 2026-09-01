@@ -596,6 +596,28 @@ struct aot_bridge {
         cx.set_prototype(value::from_bits(target), value::from_bits(proto));
     }
 
+    // ct_aot_delete_prop. `delete o.k`, the named form.
+    //
+    // (0, 0, 0): erasing from a hash map is malloc's business, not the
+    // collector's, and a NAME cannot run a to_string the way delete_index's
+    // value key can - which is the entire reason the two are separate opcodes.
+    static void delete_prop(aot::ct_aot_frame * f, std::uint64_t target,
+                            const aot_name_record * name) {
+        context & cx = *frame_of(f).ctx;
+        cx.delete_named(value::from_bits(target), name->text);
+    }
+
+    // ct_aot_own_keys. for-in, which compiles to a for-of over this array.
+    //
+    // RAISE TIER: it returns the ARRAY rather than a status, so on failure the
+    // value is meaningless and a caller polls ct_aot_failed at a back edge. It
+    // allocates - make_array plus one string per key - which is why it is a
+    // safepoint even though it cannot run user code.
+    static std::uint64_t own_keys(aot::ct_aot_frame * f, std::uint64_t source) {
+        context & cx = *frame_of(f).ctx;
+        return cx.own_keys(value::from_bits(source)).bits();
+    }
+
     // ct_aot_define_accessor. `get x()` and `set x(v)`, both opcodes.
     //
     // (0, 0, 0) AND THE ROW SPELLS OUT WHY may_reenter IS FALSE HERE even
@@ -1201,6 +1223,15 @@ std::uint32_t ct_aot_instance_of(ct_aot_frame * fr, std::uint64_t target, std::u
 
 std::int32_t ct_aot_delete_index(ct_aot_frame * fr, std::uint64_t target, std::uint64_t key) {
     return script::aot_bridge::delete_index(fr, target, key);
+}
+
+void ct_aot_delete_prop(ct_aot_frame * fr, std::uint64_t target, const ct_aot_name * name) {
+    script::aot_bridge::delete_prop(fr, target,
+                                    reinterpret_cast<const script::aot_name_record *>(name));
+}
+
+std::uint64_t ct_aot_own_keys(ct_aot_frame * fr, std::uint64_t source) {
+    return script::aot_bridge::own_keys(fr, source);
 }
 
 void ct_aot_define_accessor(ct_aot_frame * fr, std::uint64_t target, const ct_aot_name * name,

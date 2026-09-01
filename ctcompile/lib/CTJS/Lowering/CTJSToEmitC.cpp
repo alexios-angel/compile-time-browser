@@ -467,7 +467,8 @@ bool body_is_supported(FuncOp function, std::string & why) {
                       ThrowOp, ConstructOp, IterableOp, HasPropertyOp, InstanceOfOp,
                       DeletePropertyOp, FromBoolOp, LoadHomeOp, GetProtoOp, SetProtoOp,
                       PassNewTargetOp, CallSpreadOp, ConstructSpreadOp, CopyPropsOp,
-                      DefineAccessorOp, PushHandlerOp, PopHandlerOp, CheckOp, CatchLandOp>(op)) {
+                      DefineAccessorOp, DeleteNamedOp, OwnKeysOp, PushHandlerOp, PopHandlerOp,
+                      CheckOp, CatchLandOp>(op)) {
             return;
         }
 
@@ -1725,6 +1726,40 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             mapping.map(landed.getPad(), pad.getResult(0));
             mapping.map(landed.getThrown(),
                         ec::LoadOp::create(build, where, value, slot.getResult()).getResult());
+            return;
+        }
+        if (auto gone = mlir::dyn_cast<DeleteNamedOp>(op)) {
+            // TWO CALLS, for ctjs.define_accessor's reason: the helper wants an
+            // INTERNED name record rather than characters. The length travels
+            // beside the text because a property name is BYTES and one
+            // containing a zero byte is legal JavaScript that strlen stops at.
+            const llvm::StringRef name = gone.getName();
+            const mlir::Value interned =
+                ec::CallOpaqueOp::create(
+                    build, where,
+                    mlir::TypeRange{
+                        pointer_to(build.getContext(), "const ctbrowser::aot::ct_aot_name")},
+                    callee("ct_aot_intern_name"),
+                    mlir::ValueRange{literal(build, where,
+                                             pointer_to(build.getContext(), "const char"),
+                                             c_string_literal(name)),
+                                     literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                             std::to_string(name.size()))})
+                    .getResult(0);
+            ec::CallOpaqueOp::create(
+                build, where, mlir::TypeRange{}, callee("ct_aot_delete_prop"),
+                mlir::ValueRange{scope.frame, mapping.lookup(gone.getObject()), interned});
+            return;
+        }
+        if (auto keys = mlir::dyn_cast<OwnKeysOp>(op)) {
+            // RAISE TIER: it answers the array itself, so there is no status to
+            // test and no exception edge - a caller polls at a back edge. It IS
+            // a safepoint, so the result is parked like every other value.
+            mapping.map(keys.getResult(),
+                        ec::CallOpaqueOp::create(
+                            build, where, mlir::TypeRange{value}, callee("ct_aot_own_keys"),
+                            mlir::ValueRange{scope.frame, mapping.lookup(keys.getSource())})
+                            .getResult(0));
             return;
         }
         if (auto accessor = mlir::dyn_cast<DefineAccessorOp>(op)) {
