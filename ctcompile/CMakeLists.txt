@@ -145,6 +145,9 @@ if(CTCOMPILE_ENABLE_MLIR)
   add_subdirectory(lib/CTJS/IR)
   add_subdirectory(lib/CTJS/Import)
   add_subdirectory(lib/CTJS/Lowering)
+  # The forked EmitC C++ emitter, for the same reason: it is MLIR all the way
+  # down. See lib/Target/Cpp/TranslateToCpp.cpp.
+  add_subdirectory(lib/Target/Cpp)
 endif()
 
 add_subdirectory(lib)

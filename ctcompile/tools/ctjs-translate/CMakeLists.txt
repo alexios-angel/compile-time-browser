@@ -5,5 +5,6 @@ target_link_libraries(ctjs-translate
     CTJSDialect
     ctcompile::ctjs-import
     ctcompile::mlir-support
+    ctcompile::target-cpp
     MLIRIR
     MLIRTranslateLib)
