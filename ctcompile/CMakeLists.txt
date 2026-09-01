@@ -20,7 +20,19 @@ cmake_minimum_required(VERSION 3.20)
 project(ctcompile
   HOMEPAGE_URL "https://github.com/alexios-angel/compile-time-browser"
   VERSION 0.1.0
-  LANGUAGES CXX)
+  # C IS ENABLED FOR LLVM'S SAKE, not for ours - not one line of C is compiled
+  # here. find_package(MLIR) pulls in LLVM's FindLibEdit, which probes for
+  # histedit.h with check_include_file, and that writes a .c file and calls
+  # try_compile. With only CXX enabled CMake answers "Unknown extension .c for
+  # file ... try_compile() works only for enabled languages" and CONFIGURE
+  # FAILS OUTRIGHT.
+  #
+  # It was invisible while CTCOMPILE_ENABLE_MLIR defaulted OFF: nobody reached
+  # find_package(MLIR) on a fresh tree, and anyone who had configured by hand
+  # once kept a warm cache. Putting ctcompile into tools/remote-build.sh's gate
+  # turned it into "the documented build command does not work on a fresh
+  # checkout".
+  LANGUAGES CXX C)
 set(PROJECT_DESCRIPTION "Ahead-of-time compiler for ctbrowser applications.")
 
 get_filename_component(CTCOMPILE_MONOREPO_ROOT "${PROJECT_SOURCE_DIR}/.." ABSOLUTE)

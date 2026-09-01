@@ -409,6 +409,25 @@ if(CTCOMPILE_ENABLE_MLIR)
       "python3 -m venv ~/.lit-venv && ~/.lit-venv/bin/pip install lit")
   else()
     message(STATUS "ctcompile: lit at ${CTCOMPILE_LIT}")
+    # AND TELL AddLLVM WHICH ONE, or a FRESH TREE CANNOT CONFIGURE AT ALL.
+    #
+    # add_lit_testsuite goes through get_llvm_lit_path, which defaults
+    # LLVM_EXTERNAL_LIT to <llvm-prefix>/bin/llvm-lit - and brew's LLVM bottle
+    # ships no llvm-lit, so that path does not exist and configure FAILS. The
+    # find_program above had already located a working lit two lines earlier;
+    # the two were simply never introduced.
+    #
+    # IT ONLY STARTED MATTERING WHEN ctcompile JOINED THE GATE. This block runs
+    # under CTCOMPILE_ENABLE_MLIR, which used to default OFF - so the failure
+    # was invisible to anyone whose tree had been configured by hand once and
+    # kept a warm cache. Making tools/remote-build.sh default it ON turned that
+    # into "the documented build command does not work on a fresh checkout".
+    #
+    # FORCE, because get_llvm_lit_path reads the CACHE entry, and LLVM's own
+    # AddLLVM.cmake has already created it with the wrong default by the time
+    # find_package(MLIR) returns.
+    set(LLVM_EXTERNAL_LIT "${CTCOMPILE_LIT}" CACHE FILEPATH
+      "The lit ctcompile found - see ctcompile/test/CMakeLists.txt" FORCE)
     set(CTCOMPILE_SOURCE_DIR "${PROJECT_SOURCE_DIR}")
     set(CTCOMPILE_BINARY_DIR "${PROJECT_BINARY_DIR}")
     set(CTCOMPILE_TOOLS_DIRS
