@@ -90,11 +90,13 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
                     std::string refusal;
                     mlir::FailureOr<bool> lifted = mlir::failure();
                     {
-                        mlir::ScopedDiagnosticHandler quiet{
-                            &getContext(), [&](mlir::Diagnostic & note) {
-                                if (refusal.empty()) { refusal = note.str(); }
-                                return mlir::success();
-                            }};
+                        mlir::ScopedDiagnosticHandler quiet{&getContext(),
+                                                            [&](mlir::Diagnostic & note) {
+                                                                if (refusal.empty()) {
+                                                                    refusal = note.str();
+                                                                }
+                                                                return mlir::success();
+                                                            }};
                         lifted = mlir::transformCFGToSCF(region, transformation, dominance);
                     }
                     if (mlir::failed(lifted)) {
@@ -112,7 +114,9 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
         // blocks, so a cached DominanceInfo describes a CFG that no longer
         // exists - and a stale dominance analysis is the kind of thing that
         // produces a verifier failure three passes later.
-        if (changed) { getAnalysisManager().invalidate(mlir::AnalysisManager::PreservedAnalyses{}); }
+        if (changed) {
+            getAnalysisManager().invalidate(mlir::AnalysisManager::PreservedAnalyses{});
+        }
     }
 };
 

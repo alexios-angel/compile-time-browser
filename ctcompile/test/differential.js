@@ -163,6 +163,7 @@ var DIFF_R = 0, DIFF_W = 0, OUT = "";
 var counter2 = { valueOf: function () { return 3; } };
 var nan = 0 / 0;
 var nothing;
+var undef;
 var big = 9007199254740993n;
 var zeroBig = 0n;
 
@@ -368,6 +369,20 @@ function accessors(pad, seed) {
 //
 // AND THE THROWN VALUE HAS TO ARRIVE, which separates a real catch from a frame
 // that merely unwound: a lost thrown_ binds undefined.
+// UNARY PLUS - ToNumber, and the ONE operation in this dialect that was fully
+// lowered and completely unreachable: the helper had a body, operators.mlir
+// exercised it from hand-written IR, and the importer's unary table simply had
+// no row, so no JavaScript could ever produce it.
+//
+// IT IS NOT `x * 1` AND NOT `Number(x)`. The row is the NON-re-entering
+// ToNumber, so an object with a valueOf is where it differs from the generic
+// path - and the empty string and the empty array both coerce to 0 while
+// undefined coerces to NaN, which is what separates ToNumber from truthiness.
+function plusOf(pad, x) { return +x; }
+function coerce(pad) {
+  return "" + plusOf(0, "42") + "/" + plusOf(0, "") + "/" + (plusOf(0, undef) !== plusOf(0, undef));
+}
+
 function guarded(pad, f, a) {
   var n = 0;
   try {
@@ -470,6 +485,9 @@ function drive(which) {
   // thrower THROWS AND neg DOES NOT, so one arm takes the caught edge and the
   // other runs the try to its end - the same compiled body, both ways through.
   if (which === 36) { OUT = guarded(0, thrower, 7) + "/" + guarded(0, neg, 5); }
+  // NaN !== NaN, so the third field is `true` only if `+undefined` really is
+  // NaN - a coercion that answered 0 would make it false.
+  if (which === 37) { OUT = coerce(0); }
   if (which === 22) {
     OUT = "" + coalesce(0, 9) + "/" + coalesce("", 9) + "/" + coalesce(nothing, 9) + "/" +
           chain(null) + "/" + chain({ p: 4 }) + "/" + dflt(0);

@@ -96,6 +96,8 @@ CT_ENTRY(mergeArray)
 CT_ENTRY(firstLoop)
 CT_ENTRY(accessors)
 CT_ENTRY(guarded)
+CT_ENTRY(plusOf)
+CT_ENTRY(coerce)
 #undef CT_ENTRY
 
 namespace {
@@ -411,6 +413,12 @@ int main() {
          "the register file AS OF THE THROW against as of the `try` - n is written to 1 inside "
          "the protected region, so a handler edge taken from push_handler answers 0:7",
          "1:7/2"},
+        {37u,
+         "unary plus",
+         {{"plusOf", 0u, &ctc_plusOf}, {"coerce", 0u, &ctc_coerce}},
+         "ToNumber against truthiness - the empty string is 0 and undefined is NaN, and NaN is "
+         "the only value that is not equal to itself",
+         "42/0/true"},
         {17u,
          "literals",
          {{"pack", 0u, &ctc_pack}, {}},
@@ -532,6 +540,8 @@ int main() {
         {"firstLoop", 0u, &ctc_firstLoop},
         {"accessors", 0u, &ctc_accessors},
         {"guarded", 0u, &ctc_guarded},
+        {"plusOf", 0u, &ctc_plusOf},
+        {"coerce", 0u, &ctc_coerce},
     };
 
     for (const subject & each : subjects) {

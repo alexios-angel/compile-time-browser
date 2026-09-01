@@ -239,6 +239,12 @@ constexpr unary_row unary_rows[] = {
     {op::bit_not, ctjs::UnaryKind::BitNot},
     {op::logical_not, ctjs::UnaryKind::Not},
     {op::type_of, ctjs::UnaryKind::TypeOf},
+    // UNARY PLUS, which was the only operation in this dialect that was fully
+    // lowered and completely unreachable. ctjs.unary plus emits ct_aot_to_number
+    // and boxes the double, operators.mlir has exercised it from hand-written
+    // IR since it was written, and the helper has had a body all along - the
+    // table simply had no row, so no JavaScript could ever produce it.
+    {op::to_number, ctjs::UnaryKind::Plus},
 };
 
 } // namespace

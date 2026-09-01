@@ -10,17 +10,23 @@
 
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %s 2>/dev/null | ctjs-opt | FileCheck %s
 
-// THE EXAMPLE USED TO BE A CLOSURE, and closures compile now - which is the
-// right reason for a negative test to need rewriting. `+a` is unary plus, and
-// it reaches op::to_number, for which the importer still has no operation.
-function coerces(a) { return +a; }
+// THE EXAMPLE HAS NOW BEEN REWRITTEN TWICE, and both times for the right
+// reason: it named something that started working. It was a closure, then it
+// was `+a` - unary plus, op::to_number - and the importer handles both.
+//
+// SO THIS ONE IS CHOSEN TO OUTLAST THE PHASE. `import(u)` is op::dyn_import,
+// which belongs to the ES-modules phases and is not on Phase 13's list at all;
+// picking any of Phase 13's own remaining opcodes would mean rewriting this
+// file again within the week. A negative test has to keep naming something
+// GENUINELY unsupported or it asserts nothing.
+function loads(u) { return import(u); }
 
 // NO FUNCTION AT ALL, not a partial one. The top level is skipped with it,
-// because it declares `coerces` and a function that cannot be imported cannot
-// be named by a closure either.
+// because it declares `loads` and a function that cannot be imported cannot be
+// named by a closure either.
 // CHECK-NOT: ctjs.func
 
 // AND THE REASON, structured: which function, which opcode, where.
 // CHECK: ctjs.skipped
-// CHECK-SAME: opcode = "to_number"
+// CHECK-SAME: opcode = "dyn_import"
 // CHECK-SAME: reason = "no CTJS operation for this opcode yet"
