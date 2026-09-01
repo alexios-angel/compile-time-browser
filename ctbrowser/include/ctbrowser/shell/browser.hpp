@@ -455,6 +455,32 @@ public:
     // http(s) URL to the system browser, and a program with no hook does
     // nothing rather than pretending it followed the link.
     void set_navigate_hook(std::function<void(const std::string &)> hook);
+
+    // EVERY CLASSIC SCRIPT'S PROGRAM, ONCE, BEFORE IT RUNS - which is where a
+    // packaged application stamps its compiled bodies on.
+    //
+    // The runtime enters native code only when `function_proto::aot_entry` is
+    // set, and a page's programs are built inside `run_scripts` and never leave
+    // it: `classic_programs_` is private and only its size is published. So a
+    // compiler that generates perfect bodies had nowhere to install them, which
+    // made every generated APPLICATION interpret its own JavaScript while every
+    // count on the way in read a truthful zero.
+    //
+    // ENGINE TYPES ONLY, deliberately. The dependency runs one way - ctcompile
+    // depends on ctbrowser and never the reverse - so this hands over a
+    // `script::program` and the text it was compiled from and knows nothing
+    // about entry tables. `ctcompile::aot::install` is the caller.
+    //
+    // The TEXT and not the hash, because an installer has to know WHICH script
+    // this is, and `script_sources()` is the list it was given. It is the same
+    // string this browser hashed to look for an image.
+    //
+    // AFTER the image lookup, so the hook sees the program that will actually
+    // run whether it came from an image or from a compile - a hook that only
+    // fired on one of those paths would work until the page was packaged.
+    void set_script_prepared_hook(std::function<void(script::program &, std::string_view)> hook) {
+        script_prepared_hook_ = std::move(hook);
+    }
     // What the last activated link recorded. A fragment lands in the hash, like
     // the previous engine, because scrolling to an anchor IS navigation within a document.
     [[nodiscard]] const std::string & location_href() const noexcept { return location_href_; }
@@ -1625,6 +1651,7 @@ private:
     std::function<void(const std::string &)> alert_hook_;
     std::vector<std::string> alerts_;
     std::function<void(const std::string &)> navigate_hook_;
+    std::function<void(script::program &, std::string_view)> script_prepared_hook_;
     std::string source_html_;
     std::size_t layouts_ = 0;
     frame_timing timing_;

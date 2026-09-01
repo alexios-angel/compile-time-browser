@@ -1000,6 +1000,10 @@ void browser::run_scripts() {
         // The reference survives the push_back, and it is worth saying why
         // rather than leaving it to look wrong: the vector holds unique_ptrs, so
         // a reallocation moves POINTERS. The program itself never moves.
+        // THE EMBEDDER'S TURN, BEFORE THE SCRIPT RUNS. A packaged application
+        // stamps its compiled bodies onto this program here; nothing else can
+        // reach it. See browser::set_script_prepared_hook.
+        if (script_prepared_hook_) { script_prepared_hook_(*compiled, text); }
         const script::program & running = *compiled;
         classic_programs_.push_back(std::move(compiled));
         const script::run_result result = script_->run(running);
