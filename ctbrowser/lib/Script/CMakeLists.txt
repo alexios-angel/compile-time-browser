@@ -34,6 +34,9 @@ target_sources(ctbrowser-script
     compile/strings.cpp
     # The line table the debug offsets are read through.
     source_lines.cpp
+    # The type oracle's recorder - ctcompile Phase 54B. Its hook in the dispatch
+    # loop is one null test; everything it does lives here.
+    type_record.cpp
     # The standard library. builtins.cpp is now just install_builtins() calling
     # the five files beside it; builtins/internal.hpp is private to them and is
     # deliberately in NO file set - builtins.hpp still declares one function.
@@ -64,6 +67,7 @@ target_sources(ctbrowser-script
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/source_lines.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/number_format.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/vm.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/type_record.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/builtins.hpp"
         # builtins.cpp includes it. Absent from this list until 2026-08-09, so it
         # was compiled against and never installed.
@@ -82,6 +86,16 @@ endif()
 # type in a consumer built without the flag.
 if(NOT CTBROWSER_SCRIPT_DEBUG_NAMES)
   target_compile_definitions(ctbrowser-script PRIVATE CTBROWSER_SCRIPT_DEBUG_NAMES=0)
+endif()
+
+# AND PRIVATE FOR THE SAME REASON, which is sharper here than it is above:
+# `context::recorder_` is a member in EVERY build, so vm.hpp has the same layout
+# either way and only run_loop's recording INSTANTIATION disappears. Gating the
+# member instead would compile this library against one `context` and every
+# consumer against another - which links, and then reads the wrong offsets.
+# `script::type_recording_enabled()` is how a caller finds out.
+if(NOT CTBROWSER_SCRIPT_RECORD_TYPES)
+  target_compile_definitions(ctbrowser-script PRIVATE CTBROWSER_SCRIPT_RECORD_TYPES=0)
 endif()
 
 # PUBLIC, unlike the one above, and it MUST be: CTBROWSER_WITH_GMP selects the

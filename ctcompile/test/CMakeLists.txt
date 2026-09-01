@@ -628,3 +628,47 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/check-launcher-page.cmake)
 endif()
+
+# ============================================================================
+# PHASE 54B - THE TYPE ORACLE. Appended as ONE block, per part 23's Appendix
+# A.3: this file is contended and every agent that touches it appends at the
+# end rather than editing in the middle.
+#
+# The native backend compiles a function to statically typed C++ only where it
+# can PROVE the function is in the static subset, and every later phase consumes
+# that proof. The interpreter is what settles whether the proof is right: it
+# knows every value's real type at run time, so `--record-types` writes down
+# what it saw and the checker compares a static claim against it.
+#
+# TWO EXECUTABLES OF THE CHECK, DELIBERATELY. TypeOracle.cpp walks the recorder
+# in memory and tools/check/type-oracle.py parses the file it writes; the cmake
+# script below runs both and makes one's counters the other's expectations. The
+# file format is what sits between them, so a bug in the writer or the parser
+# shows up in exactly one side - which is the only way to catch it.
+#
+# It needs no MLIR: a recording is the INTERPRETER's opinion, and asking the
+# compiler anything here would beg the question.
+add_executable(ctcompile-test-type-oracle TypeOracle.cpp)
+target_link_libraries(ctcompile-test-type-oracle PRIVATE ctbrowser::ctbrowser)
+ctcompile_target(ctcompile-test-type-oracle)
+
+# THE SELF-TEST ALONE, always registered. Its numbers are hand-computed - see
+# the fixture's comment in TypeOracle.cpp - so it fails with a name rather than
+# with a diff.
+add_test(NAME ctcompile_type_oracle COMMAND ctcompile-test-type-oracle)
+
+# AND THE TWO-IMPLEMENTATION COMPARISON, which needs an interpreter for the
+# checker. Optional the way plutosvg and SDL are: without Python the C++ half
+# still runs and says so, rather than the suite silently shrinking.
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME ctcompile_type_oracle_checker
+           COMMAND ${CMAKE_COMMAND}
+                   -DEXE=$<TARGET_FILE:ctcompile-test-type-oracle>
+                   -DPYTHON=${Python3_EXECUTABLE}
+                   -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/type-oracle.py
+                   -DWORK=${CMAKE_CURRENT_BINARY_DIR}
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/check-type-oracle.cmake)
+else()
+  message(STATUS "ctcompile: no Python3 - the type oracle's checker is not registered")
+endif()

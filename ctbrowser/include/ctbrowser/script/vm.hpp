@@ -42,6 +42,13 @@ namespace ctbrowser::script {
 
 struct closure_object;
 
+// THE TYPE ORACLE'S RECORDER - ctcompile Phase 54B, defined in
+// script/type_record.hpp. Forward-declared rather than included: the recorder
+// is a developer mode nothing in a shipped build touches, and vm.hpp is
+// included by every subsystem that can run script.
+class type_recorder;
+[[nodiscard]] type_recorder * active_type_recorder() noexcept;
+
 using native_fn = std::function<value(class context &, std::span<value>)>;
 
 // THE LINEAR SCAN ON `native_object` AND `closure_object` BELOW IS DELIBERATE,
@@ -1082,6 +1089,22 @@ public:
     void set_gc_stress(bool on) noexcept { gc_stress_ = on; }
     [[nodiscard]] bool gc_stress() const noexcept { return gc_stress_; }
 
+    // --- the type oracle, ctcompile Phase 54B ------------------------------
+    //
+    // ANOTHER TEST MODE, and the same shape as the one above: off by default,
+    // one predictable not-taken branch when it is off, and enormously more
+    // expensive when it is on. A context picks up whatever
+    // `set_active_type_recorder` last installed when it is CONSTRUCTED, which
+    // is what lets a whole page be recorded - a `shell::browser` builds its own
+    // context and never hands it out - and this setter is for a caller holding
+    // one already.
+    void set_type_recorder(type_recorder * r) noexcept { recorder_ = r; }
+    [[nodiscard]] type_recorder * type_recorder_installed() const noexcept { return recorder_; }
+    // ONE INTERPRETER STEP, called from the dispatch loop and defined in
+    // type_record.cpp. Public only because the macro in run_loop.cpp is
+    // clearer than a friend declaration; nothing else should call it.
+    void record_step(instruction in);
+
     // A point where the ABI says a collection may happen. Does nothing unless
     // stress is on, so this is one predictable not-taken branch on the paths
     // that call it.
@@ -1429,7 +1452,16 @@ private:
                                       const function_proto & from);
 
     [[nodiscard]] value execute(const program & prog, const function_proto & entry);
+    // THE DISPATCH LOOP, IN TWO INSTANTIATIONS - see run_loop.cpp.
+    //
+    // `Record` is the type oracle's hook and it is `if constexpr`, so the
+    // instantiation a shipped build runs is byte-identical to the loop that
+    // existed before Phase 54B: a per-instruction `if (recorder_)` measured
+    // +0.48% on phaser_invaders, and a branch that is never taken is still a
+    // branch in the hottest loop in the engine. Two instantiations cost ~15 KB
+    // of COLD object code instead, which costs a page nothing.
     [[nodiscard]] value run_loop(std::size_t stop_depth);
+    template <bool Record> [[nodiscard]] value run_loop_impl(std::size_t stop_depth);
     // A FAILURE COMES WITH THE STACK IT HAPPENED ON.
     void raise(std::string message) {
         if (failed_) { return; }
@@ -1602,6 +1634,16 @@ private:
     string_flat_map<value> globals_;
     std::vector<value> registers_;
     std::vector<call_frame> frames_;
+    // WHERE THE TYPE ORACLE'S OBSERVATIONS GO, or null - which it is in every
+    // build that has not deliberately installed one. See
+    // script/type_record.hpp; `record_step` is its whole interface to the
+    // dispatch loop and the loop's cost when this is null is one test.
+    //
+    // NOT BEHIND THE #if. `context` is a public type, and a member that exists
+    // in one build and not another compiles this library against one layout and
+    // its consumers against a second. CTBROWSER_SCRIPT_RECORD_TYPES gates the
+    // CALL, in run_loop.cpp, where it costs nothing to a consumer.
+    type_recorder * recorder_ = active_type_recorder();
     heap_object * heap_ = nullptr;
     std::size_t live_objects_ = 0;
     // Values a C++ scope is holding across something that can collect. See

@@ -51,6 +51,19 @@ with it.
   zlib. `encode_png` uses STORED deflate blocks and no compression library, so
   "the chunk names look right" is not evidence; the CRCs and the Adler-32 are
   silent when wrong.
+- `tools/check/type-oracle.py` — **the type oracle's checker**, ctcompile Phase
+  54B. `--record-types` on the interpreter writes down every type each
+  `(function, register)` actually held while a corpus ran; this compares a
+  static type claim against that recording and reports SOUNDNESS (did the claim
+  ever say something NARROWER than reality - a defect, named by function and
+  register) and PRECISION (how often it beat "boxed" - a backlog item)
+  separately, plus a third number that is neither: how many registers no
+  execution ever reached. **`--infer all-i32` and `--infer all-boxed` are
+  deliberately wrong and deliberately trivial stubs**, and running them is what
+  proves the tool measures anything - a checker that has never caught something
+  is not known to work. `ctcompile-test-type-oracle` produces the recordings and
+  is a SECOND implementation of the same check, compared against this one by
+  `ctcompile/test/check-type-oracle.cmake`.
 - `tools/mingw/build-boost-mingw.sh` — compiles Boost.URL for the llvm-mingw target
   into the cross sysroot. Boost.URL is the one COMPILED Boost library the engine
   links (it cannot be header-only), so the Windows presets need this run once.
