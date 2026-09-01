@@ -628,3 +628,19 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/check-launcher-page.cmake)
 endif()
+
+# ---------------------------------------------------------------------------
+# PHASE 58 - GENERATORS AS C++ COROUTINES. Appended as one block at the end of
+# this file, per Appendix A.3 of `23-lexical-implementation.md`.
+#
+# OUTSIDE THE MLIR GUARD ON PURPOSE. It compiles no IR and runs no pass: it
+# runs the ENGINE's generators against hand-written `ctnative::generator<T>`
+# coroutines, which is the only way to ask whether Phase 58's mapping is sound
+# before there is a lowering to ask it of. That also means it keeps running on
+# a machine with no LLVM, which is where the `<generator>` fact it prints
+# matters most.
+add_executable(ctcompile-test-native-generator NativeGenerator.cpp)
+target_link_libraries(ctcompile-test-native-generator PRIVATE ctbrowser::ctbrowser)
+ctcompile_target(ctcompile-test-native-generator)
+add_test(NAME ctcompile_native_generator COMMAND ctcompile-test-native-generator)
+# ---------------------------------------------------------------------------

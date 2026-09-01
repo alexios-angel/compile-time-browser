@@ -496,6 +496,201 @@ frame is 32 bytes and caller-allocated precisely so that its layout stays
 Phase 4's to change, and making every compiled call heap-allocate to serve the
 minority that suspend inverts the cost.
 
+## Phase 58 landed the generator TYPE, and measured the phase out of its own ordering
+
+Added 2026-09-01 by the Phase 58 track (`24-native-cpp-backend.md`, the NATIVE
+backend). It does not change anything above; it settles two things this document
+left open and contradicts one thing it concluded.
+
+### What landed
+
+* **`ctbrowser/include/ctbrowser/aot/generator.hpp`** - `ctnative::generator<T>`
+  over C++20 `<coroutine>`: a lazy, move-only, single-pass input range, with the
+  move-only / input-range / not-forward-range invariants written as
+  `static_assert`s rather than as tests. `namespace ctbrowser::ctnative`, not a
+  bare global `ctnative`; the emitter is expected to put `namespace ctnative =
+  ctbrowser::ctnative;` in the generated TU's preamble so generated code reads
+  the way the specification writes it.
+* **`ctcompile/test/NativeGenerator.cpp`** (`ctcompile_native_generator`, added
+  as one appended block at the end of `ctcompile/test/CMakeLists.txt`) - four JS
+  generator shapes run in the interpreter and compared against hand-written
+  coroutines. Two must agree, and **two are declared divergences whose exact
+  shape the test asserts**. It is outside the MLIR guard: it compiles no IR.
+
+**Nothing lowers.** The `ctnative` dialect does not exist yet, and the
+importer's `may_suspend` pre-walk (design (a) above) still refuses every
+`function*` for the reason it already gives. Stage 58B is a refusal, and the
+paragraphs below are why that is the right answer rather than an unfinished one.
+
+### The toolchain fact is about the LIBRARY, not the compiler
+
+`24-native-cpp-backend.md` §2 says `<generator>` is absent from "GCC 13.3.0 and
+clang 18.1.3". Measured again today, with a third compiler:
+
+| compiler on the devbox | `__cpp_lib_generator` |
+|---|---|
+| g++ 13.3.0 | absent |
+| clang++ 18.1.3 (Ubuntu) | absent |
+| clang++ 22.1.8 (brew) | **absent** |
+
+The brew clang is four major versions newer and still answers no, because all
+three use the system **libstdc++ 13.3** headers and libc++ is not installed.
+Upgrading the compiler does not fix this; installing a newer libstdc++, or
+libc++, would. The header records that, and its detection macro tests
+`__cpp_lib_generator` rather than `__has_include(<generator>)` alone, because a
+header can exist while the feature does not.
+
+**And adoption is a separate switch from detection**, which is a correction to
+the plan's wording. "Adopt `std::generator` behind `__has_include`" taken
+literally means the type silently differs between the devbox and any newer
+machine - `std::generator<T>`'s reference type is `T&&` where this one's is
+`T&`, so `auto & x = *it` compiles on one and not the other. That is the same
+machine-dependence the instruction exists to prevent, pointed the other way. So
+`CTNATIVE_HAS_STD_GENERATOR` is detected automatically and
+`CTNATIVE_USE_STD_GENERATOR` is set by hand.
+
+### The ordering argument is right about the numbers and wrong about what follows
+
+This document's strongest finding - repeated in `23-lexical-implementation.md`
+Appendix A.6 and in `24-native-cpp-backend.md` Phase 58 - is *"Babylon has 598
+generators and zero awaits, so generators first."* The corpus was re-measured
+today, this time by reading the bundle rather than by counting refusals:
+
+| measurement over `ctbrowser/vendor/babylon/babylon.js` | count |
+|---|---:|
+| `function*` bodies | **622** |
+| of those, passed as the fourth argument to `ct(...)` | **622** |
+| `function*` bodies that are anything else | **0** |
+| `async function` | 0 |
+| distinct source prefixes before `function*` | 9, every one a `ct(` call |
+
+`ct` is TypeScript's `__awaiter`, minified. Its body is the helper verbatim:
+
+```js
+function ct(e, t, i, n) {
+  return new (i || (i = Promise))(function (r, s) {
+    function a(e) { try { l(n.next(e)) } catch (e) { s(e) } }
+    function o(e) { try { l(n.throw(e)) } catch (e) { s(e) } }
+    function l(e) { e.done ? r(e.value) : (t = e.value, ...).then(a, o) }
+    l((n = n.apply(e, t || [])).next())
+  })
+}
+```
+
+So this document's own open item - *"Not verified: WHY Babylon's 598 generators
+are generators"* - is now verified, and the inference in it was correct: they
+are transpiled `async`/`await`. The evidence it offered was not. It looked for
+`__awaiter` and `__generator` **by name**, and there are zero of either string
+in the bundle: the helper is minified to two letters, and the `__generator`
+state-machine helper is not used at all, because this is downlevel-to-ES6 rather
+than downlevel-to-ES5.
+
+**What that costs Phase 58 is the whole phase.** `__awaiter` drives its
+generator with all three of the features a C++ `generator<T>` does not have:
+
+1. `n.next(e)` - **a value sent in**. In the body this is `const x = yield p`,
+   the awaited result. `co_yield` produces nothing: the promise type's
+   `yield_value` returns `suspend_always`, and that is true of `std::generator`
+   too, by specification - so adopting the standard type would not change it.
+   There is no C++ expression that receives the sent value.
+2. `n.throw(e)` - **an exception injected at the suspension point**, which is
+   how a rejected promise becomes a `throw` inside the async function. A C++
+   coroutine can be resumed and destroyed; it cannot be resumed *throwing*.
+3. `e.done ? r(e.value)` - **the generator's return value**, read off the done
+   record. `return_void` is what `std::generator` has, and no C++ range can
+   observe a return value at all.
+
+So the mapping `function*` -> coroutine, `yield` -> `co_yield` compiles **zero
+of Babylon's 622 generators**. p5, phaser and bootstrap have none at all - their
+`function *` text hits are all inside comment prose. Across every corpus in this
+tree, the population Stage 58B's clean lowering would newly compile is **zero**.
+
+**The corrected ordering:** the 598 refusals are not a generator problem that
+happens to look like async, they are *async wearing a generator's clothes*, and
+they need design (b), the state machine, for exactly the reasons `await` does.
+"Generators first" is still right as a statement about which OPCODE the
+suspension transform should handle first - `op::yield_value` is what those
+functions contain, and `op::await_value` is not. It is wrong as a statement
+about which PHASE is cheap. Phase 58 is not a shortcut past Phase 14; it is a
+different feature, and this tree's corpora do not use it.
+
+### Where the mapping IS exact, said precisely
+
+Worth writing down because it is the eligibility predicate a future Stage 58B
+proof has to discharge, and because the two agreeing cases in the new test are
+exactly it:
+
+* A generator whose `yield` expression's **value is discarded** (`yield e;` as a
+  statement) maps exactly.
+* A generator that **falls off its end, or executes a bare `return;`**, maps
+  exactly.
+* Consumption through **`for...of`** maps exactly - `for...of` cannot see a
+  returned value in JavaScript either, so nothing is lost there. Consumption
+  through explicit `.next()` is lossy at exactly one field, which is what the
+  `earlyValue` case measures.
+* `yield*` needs nothing extra: `op::yield_value` is the only yield opcode, so a
+  delegating yield is already a loop. (The dialect's unreachable
+  `SuspendKind::yield_star` enumerator, flagged above, is still unreachable.)
+* **Resuming a finished coroutine is undefined behaviour**, where "a generator
+  that has finished keeps answering" is free in JavaScript. Any `.next()`
+  emulation has to carry that check; `record_native` in the test does, and it is
+  commented as a cost rather than as a detail.
+
+### Candidate (c) is refused for the BOXED backend, and that is not this question
+
+The "C++20 coroutines in the emitted C++" candidate above is refused with four
+arguments. Three are about the boxed backend specifically - the collector cannot
+walk an opaque coroutine frame, `coroutine_object` cannot hold a
+`std::coroutine_handle` without becoming a variant, and `ct_aot_entry_fn`'s
+signature no longer describes a coroutine - and **the first does not apply to
+the native backend at all**, because a native-subset function's values are
+`double`, `std::string` and structs, not GC-managed `value`s. There is nothing
+in such a frame for the collector to find.
+
+That does not rescue candidate (c); it relocates it. The surviving objections
+are the two structural ones: a coroutine's return type is not
+`ct_aot_entry_fn`'s, so a compiled generator cannot be dispatched through
+`proto->aot_entry` as it stands, and the mechanism would exist in one backend
+only. **A native generator therefore needs an entry point of its own, and that
+is the first thing Stage 58B has to design** - not the `co_yield` lowering,
+which is the easy half and is why the phase looks cheaper than it is.
+
+### The §1.4 ratio
+
+`def` lines of new TableGen: **0**. New C++: **258** lines of header and **309**
+of test. That needs the sentence §1.4 demands, and it is the one §1.2 of part 23
+already grants: neither file is IR. `generator.hpp` is a runtime header - the
+C++ the emitter will *print*, which has no TableGen surface, exactly as the
+emitter fork itself does not - and `NativeGenerator.cpp` is a test. **No
+operation, attribute, type or pattern was added, so there was nothing this phase
+could have written declaratively and did not.** The moment Stage 58B adds a
+suspension operation or a generator type to a dialect, the rule applies to it in
+full and this exemption stops covering it.
+
+### What was falsified
+
+Three mutations, each built on the devbox and run:
+
+1. **`initial_suspend` changed to `suspend_never`** - an eager generator. `ids`
+   and `early` both went red with the whole sequence shifted by one, and
+   `earlyValue`'s divergence assertion went red too because the divergence moved
+   from one field to four. The laziness the JS `.next()` protocol requires is
+   load-bearing and the test sees it.
+2. **`echo_native` changed to yield an increasing sequence** rather than a
+   constant. The two answers still differ - so a test that only asserted "these
+   differ" would have stayed green - and the case went red, because the
+   assertion pins the field COUNT and the FIRST DIFFERING INDEX, which moved
+   from (5, 1) to (4, 2). A declared divergence has to be pinned that tightly or
+   it certifies any wrong answer at all.
+3. **One `must_agree` call removed.** The first attempt at this was not a
+   falsification: deleting the call left `early_native` unused and the build
+   failed on `-Werror,-Wunused-function` before any test ran, which is the
+   warning set doing its job and says nothing about the counter. Re-done with
+   both sides still computed and only the comparison dropped, the counter fired
+   alone - three cases printed pass, nothing printed FAILED, and the test still
+   exited 1 with "expected 4 comparisons, 2 agreements and 2 declared
+   divergences; got 3, 1 and 2".
+
 ## Recommendation
 
 **Design (a) now, design (b) next, and (c) never — and when (b) is written it
@@ -888,12 +1083,13 @@ Phases 11–12A are unwritten; the argument in candidate (c) that a C++20
 coroutine mechanism "applies to ONE backend" is a statement about the plan, not
 about code.
 
-**Not verified: WHY Babylon's 598 generators are generators.** The inference
-that they are TypeScript's `__generator` driving transpiled `async`/`await` is
-strongly supported by the corpus having zero `await_value` and zero
-`wrap_promise` alongside them, and by `context::call`'s own comment naming
-`__awaiter` — but the 598 were not read. Some fraction are certainly ordinary
-`function*`.
+**~~Not verified: WHY Babylon's 598 generators are generators.~~ VERIFIED
+2026-09-01, and the "some fraction are certainly ordinary `function*`" guess was
+wrong: there is no such fraction.** All 622 `function*` bodies in the bundle are
+the fourth argument to `ct(...)`, which is `__awaiter` minified. The inference
+was right; the evidence offered for it could not have found it, because there
+are zero occurrences of the strings `__awaiter` and `__generator` in the file.
+See "Phase 58 landed the generator TYPE" above.
 
 **Not verified: whether the 14 p5 functions this work made compilable actually
 lower.** The corpus numbers above count what the IMPORTER accepts; a function
