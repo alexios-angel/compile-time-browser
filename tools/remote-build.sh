@@ -170,7 +170,22 @@ else
   if ssh "$host" '[ -d /home/linuxbrew/.linuxbrew ]'; then
     prefix="-DCMAKE_PREFIX_PATH=/home/linuxbrew/.linuxbrew"
   fi
-  configure="cmake --preset default -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE $prefix"
+  # ctcompile IS PART OF THE GATE, and it was not.
+  #
+  # The `default` preset never sets CTCOMPILE_ENABLE_MLIR, whose default is OFF,
+  # so this script - the thing CLAUDE.md calls the whole gate, there being no CI
+  # - built no dialect, no importer and no EmitC backend, and ran none of
+  # ctcompile_lit, ctcompile_differential, ctcompile_linkable,
+  # ctcompile_gc_roots or ctcompile_importer_coverage. It printed "gc-roots test
+  # unavailable" and moved on. A tree that had been configured by hand once kept
+  # the setting in its CMakeCache and looked fine forever; a fresh checkout ran
+  # 108 tests that tested none of the compiler.
+  #
+  # NOT IN THE PRESET, deliberately: the guard exists so a runtime-only build
+  # needs no LLVM, and CMakePresets.json is shared with people who have none.
+  # The devbox has it, and this script is the gate, so this is where it belongs.
+  configure="cmake --preset default -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE \
+    -DCTCOMPILE_ENABLE_MLIR=${CTCOMPILE_MLIR:-ON} $prefix"
   if [ $# -gt 0 ]; then
     ssh "$host" "cd $remote_dir/ctbrowser && $configure && cmake --build --preset default --target $*"
   else

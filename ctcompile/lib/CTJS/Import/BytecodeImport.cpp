@@ -4,6 +4,7 @@
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 
 #include <ctbrowser/script/bytecode.hpp>
+#include <ctbrowser/script/source_lines.hpp>
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -134,17 +135,40 @@ struct function_importer {
     mlir::Value frame{};
     bool gave_up = false;
 
+    // THE PROGRAM'S LINE TABLE, built once and borrowed. Null when the source
+    // was dropped from the image or the debug tables were compiled out.
+    const ctbrowser::script::line_table * lines = nullptr;
+
     [[nodiscard]] mlir::Location location_for(std::size_t at) const {
         // FUSED, WHICH THE PHASE 7 CONVENTION ASKS FOR: a name that identifies
-        // the instruction inside its program, and the source span the function
-        // came from. "Retrofitting locations later is far more expensive."
+        // the instruction inside its program, and the source position it came
+        // from. "Retrofitting locations later is far more expensive."
         const std::string name = "program:" + program_id.str() + ":" +
                                  std::to_string(function_index) + ":" + std::to_string(at);
         mlir::Location where = mlir::NameLoc::get(mlir::StringAttr::get(context, name));
-        const mlir::Location span = mlir::FileLineColLoc::get(
-            mlir::StringAttr::get(context, proto.name.empty() ? "<anonymous>" : proto.name),
-            proto.source_begin, proto.source_end);
-        return mlir::FusedLoc::get(context, {where, span});
+
+        // THIS INSTRUCTION'S OWN LINE, when the program carries the table.
+        //
+        // It was the FUNCTION's span on every instruction in the function -
+        // source_begin and source_end, identical for all of them - which is a
+        // location that cannot tell two statements apart and is worth nothing
+        // to a debugger. code_offsets is per instruction and line_table turns
+        // one into a line and a column.
+        //
+        // THE OLD SPAN IS THE FALLBACK RATHER THAN A REGRESSION: code_offsets
+        // is empty when the debug tables were compiled out or the image
+        // dropped its source, and a per-function span still beats nothing.
+        const mlir::StringAttr file =
+            mlir::StringAttr::get(context, proto.name.empty() ? "<anonymous>" : proto.name);
+        if (lines != nullptr && at < proto.code_offsets.size()) {
+            const std::uint32_t offset = proto.code_offsets[at];
+            return mlir::FusedLoc::get(
+                context, {where, mlir::FileLineColLoc::get(file, lines->line_of(offset),
+                                                           lines->column_of(offset))});
+        }
+        return mlir::FusedLoc::get(
+            context,
+            {where, mlir::FileLineColLoc::get(file, proto.source_begin, proto.source_end)});
     }
 
     void give_up(std::size_t at, op code, std::string reason) {
@@ -252,6 +276,16 @@ constexpr unary_row unary_rows[] = {
 import_result import_program(const program & from, llvm::StringRef program_id,
                              mlir::MLIRContext * context) {
     import_result out;
+    // ONE LINE TABLE FOR THE WHOLE PROGRAM, built once. Every function's
+    // instruction offsets index the same source text, so building it per
+    // function would scan that text once per function.
+    //
+    // EMPTY SOURCE MEANS NO TABLE, not an empty one: an image that dropped its
+    // source also dropped code_offsets, because an offset into text nobody has
+    // cannot be turned into a line.
+    const ctbrowser::script::line_table lines{from.source};
+    const ctbrowser::script::line_table * const lines_or_null =
+        from.source.empty() ? nullptr : &lines;
     // LOADED, NOT MERELY REGISTERED. A DialectRegistry says a dialect MAY be
     // used; `Type::get` and `Op::create` need it actually loaded into the
     // context, and mlir-translate's harness only registers. Without this the
@@ -303,6 +337,7 @@ import_result import_program(const program & from, llvm::StringRef program_id,
 
         function_importer state{
             into, context, from, proto, program_id, static_cast<std::uint32_t>(index), skipped};
+        state.lines = lines_or_null;
         into.setInsertionPointToStart(entry);
 
         // THE FRAME, in the entry block and nowhere else. The entry dominates
