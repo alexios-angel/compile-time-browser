@@ -4,7 +4,8 @@ add_library(ctcompile-ctjs-lowering
   CTJSToEmitC.cpp
   CTJSToRuntime.cpp
   DropUncompiled.cpp
-  EmitCBlockArguments.cpp)
+  EmitCBlockArguments.cpp
+  LiftToSCF.cpp)
 ctcompile_target(ctcompile-ctjs-lowering)
 add_dependencies(ctcompile-ctjs-lowering MLIRCTJSOpsIncGen CTJSTransformsPassIncGen)
 
@@ -17,6 +18,9 @@ target_link_libraries(ctcompile-ctjs-lowering
     MLIRFuncDialect
     MLIREmitCDialect
     MLIRControlFlowDialect
+    MLIRSCFDialect
+    MLIRUBDialect
+    MLIRControlFlowToSCF
     MLIRTransforms)
 
 target_include_directories(ctcompile-ctjs-lowering SYSTEM

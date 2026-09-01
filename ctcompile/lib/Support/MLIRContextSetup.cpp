@@ -6,6 +6,8 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/DialectRegistry.h"
 
 namespace ctcompile {
@@ -27,6 +29,17 @@ void registerCTCompileDialects(mlir::DialectRegistry & registry) {
     // is exactly what a lit test of --emitc-eliminate-block-arguments does, and
     // without this it fails with "Dialect `emitc' not found".
     registry.insert<mlir::emitc::EmitCDialect>();
+
+    // AND THE TWO THE CFG LIFTING PASS CREATES.
+    //
+    // --lift-cf-to-scf rewrites cf.br/cf.cond_br into scf.if, scf.while and
+    // scf.index_switch, and it materialises ub.poison on the paths its edge
+    // multiplexers prove unreachable. Neither dialect is ever produced by this
+    // project's own code, which is why they were absent - but a pass cannot
+    // build an operation of a dialect the context has not loaded, and the
+    // failure is a crash inside OperationName rather than a diagnostic.
+    registry.insert<mlir::scf::SCFDialect>();
+    registry.insert<mlir::ub::UBDialect>();
     // WHAT IS NOT HERE: the LLVM dialect and its translation registrations,
     // which Phase 7's deliverable list names. They belong to the SECOND backend
     // (Phases 11-12A), and registering them now would link LLVM's translation

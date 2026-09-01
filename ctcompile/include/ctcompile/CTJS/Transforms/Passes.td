@@ -72,6 +72,35 @@ def EmitCEliminateBlockArguments
   let dependentDialects = ["::mlir::emitc::EmitCDialect", "::mlir::cf::ControlFlowDialect"];
 }
 
+def CTJSLiftToSCF : Pass<"ctjs-lift-to-scf", "mlir::ModuleOp"> {
+  let summary = "Recover structured control flow from the CFG the importer built";
+  let description = [{
+    Bytecode is a register machine with relative jumps, so the importer emits
+    blocks and cf.br - and the C++ that falls out is a chain of `goto label9`.
+    That is correct, unreadable, and opaque to the C++ optimiser, which cannot
+    see a loop to unroll or a value to keep in a register.
+
+    THE ALGORITHM IS UPSTREAM'S AND SO IS THE HARD PART. transformCFGToSCF
+    implements Bahmann et al.'s "Perfect Reconstructability of Control Flow
+    from Demand Dependence Graphs", lifting an ARBITRARY CFG - irreducible ones
+    included - by inserting edge multiplexers. mlir::ControlFlowToSCFTransformation
+    is a public implementation of the interface it needs.
+
+    WHAT IS OURS IS THE WALK, AND ONLY BECAUSE UPSTREAM'S IS TOO NARROW:
+    --lift-cf-to-scf does `op->walk([](func::FuncOp))`, matching by TYPE rather
+    than by FunctionOpInterface. ctjs.func is a FunctionOpInterface and is not a
+    func::FuncOp, so that pass matches nothing, reports success, and changes
+    nothing - measured as twelve cf operations before and twelve after.
+
+    A REGION THE UTILITY REFUSES IS LEFT IN CFG FORM rather than failing the
+    module. The EmitC backend reads CFG perfectly well; lifting is an
+    improvement, not a precondition.
+  }];
+  let dependentDialects = ["::mlir::scf::SCFDialect", "::mlir::ub::UBDialect",
+                           "::mlir::arith::ArithDialect",
+                           "::mlir::cf::ControlFlowDialect"];
+}
+
 def CTJSDropUncompiled : Pass<"ctjs-drop-uncompiled", "mlir::ModuleOp"> {
   let summary = "Remove the functions the backend refused, so the rest can be translated";
   let description = [{

@@ -10,5 +10,11 @@ target_link_libraries(ctjs-opt
     MLIRPass
     MLIRArithDialect
     MLIRControlFlowDialect
-    MLIRFuncDialect)
+    MLIRFuncDialect
+    MLIRSCFDialect
+    MLIRUBDialect
+    MLIRControlFlowToSCF
+    MLIRSCFToEmitC
+    MLIRTransforms
+    MLIRSCFTransforms)
 add_dependencies(ctjs-opt CTJSTransformsPassIncGen)
