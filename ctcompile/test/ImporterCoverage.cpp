@@ -21,7 +21,7 @@
 // test exists to prevent. The build passes the path in as
 // CTCOMPILE_IMPORTER_SOURCE.
 //
-// IT IS A RATCHET, NOT A GATE. Eighteen non-suspending opcodes are unhandled
+// IT IS A RATCHET, NOT A GATE. Three non-suspending opcodes are unhandled
 // today and the Phase 13 gate is that none are, so a test demanding zero would
 // simply be red. Instead the pending list below must match EXACTLY: an opcode
 // that stops being handled fails, a newly added opcode fails, and an opcode
@@ -57,8 +57,12 @@ constexpr row table[] = {
 #undef CT_OPCODE
 
 // WHAT IS NOT IMPORTED YET, WITH WHY - and the why matters, because these are
-// not one backlog. Three of them are other phases' work and would be wrong to
+// not one backlog. One of them is another phase's work and would be wrong to
 // pull forward; the rest are Phase 13's own.
+//
+// THE FOUR ES-MODULE ROWS ARE GONE, which is what the ratchet is for: making
+// load_import, bind_export, load_namespace and dyn_import dispatched meant
+// deleting their lines in the same commit or this test goes red.
 struct pending {
     std::string_view opcode;
     std::string_view why;
@@ -70,15 +74,25 @@ constexpr pending not_yet[] = {
     // imported. That is Phase 13's gate.
 
     // ---- NOT Phase 13. Listed so the gap is visible, not so it is worked. --
-    // wrap_promise WAS HERE, and its line said it was "only non-suspending
-    // because the WRAP is". That turned out to be the whole reason it could be
-    // landed on its own: an async function containing no `await` carries this
-    // opcode and no await_value at all, so it is fully AOT-eligible. It is
-    // Phase 14's, and it is done.
-    {"load_import", "ES modules - Phases 15-16"},
-    {"bind_export", "ES modules - Phases 15-16"},
-    {"dyn_import", "dynamic import() - Phases 15-16"},
-    {"load_namespace", "ES modules - Phases 15-16"},
+    // EMPTY, AND THAT IS THE GATE.
+    //
+    // Two tracks emptied it from opposite ends and the merge is the proof:
+    // wrap_promise was Phase 14's - "only non-suspending because the WRAP is",
+    // which turned out to be exactly why it could land alone, since an async
+    // function with no `await` carries it and no await_value at all - and the
+    // four module rows were Phases 15-16's. Every non-suspending opcode in the
+    // table is now dispatched by the importer.
+    //
+    // THE LIST IS KEPT RATHER THAN DELETED because the ratchet still works in
+    // the other direction: an opcode ADDED to bytecode_opcodes.def with no
+    // importer case fails this test until someone writes one or writes down
+    // why not.
+    //
+    // AND THE SENTINEL IS HERE BECAUSE C++ HAS NO ZERO-LENGTH ARRAY. Its
+    // opcode is the empty string, which matches no opcode, so it is skipped
+    // everywhere below - and the next person to add a real row can just type it
+    // above this one and delete nothing.
+    {"", "not an opcode - see above"},
 };
 
 int failures = 0;
@@ -150,8 +164,9 @@ int main() {
     }
 
     const auto listed = [](std::string_view name) {
-        return std::any_of(std::begin(not_yet), std::end(not_yet),
-                           [&](const pending & p) { return p.opcode == name; });
+        return std::any_of(std::begin(not_yet), std::end(not_yet), [&](const pending & p) {
+            return !p.opcode.empty() && p.opcode == name;
+        });
     };
 
     // A GAP NOBODY DECLARED. Either an opcode was added to the table with no
@@ -169,6 +184,7 @@ int main() {
     // AND A LINE THAT IS NO LONGER TRUE, which matters just as much: a stale
     // entry makes the list stop being a measurement.
     for (const pending & each : not_yet) {
+        if (each.opcode.empty()) { continue; }
         const bool still_missing =
             std::find(missing.begin(), missing.end(), each.opcode) != missing.end();
         if (!still_missing) {
@@ -187,6 +203,7 @@ int main() {
     if (failures == 0 && !missing.empty()) {
         std::printf("\nPhase 13 is complete when this list is empty:\n");
         for (const pending & each : not_yet) {
+            if (each.opcode.empty()) { continue; }
             std::printf("  %-16.*s %.*s\n", static_cast<int>(each.opcode.size()),
                         each.opcode.data(), static_cast<int>(each.why.size()), each.why.data());
         }

@@ -1044,55 +1044,62 @@ CT_OPCODE(/* name */ pass_new_target, /* a_kind */ unused, /* b_kind */ unused, 
           /* is_safepoint */ 0, /* may_suspend */ 0, /* resumable */ 0, /* impl */ "inline")
 
 /* The only opcode in this set that reads c as an index rather than as a bx
- * half. What lands in register a is a CELL, not a value, so every later
- * read goes through cell_get (compile/frames.cpp:144-150 marks the local
- * boxed and deliberately emits NO new_cell); on both failure paths register
- * a keeps the undefined written at 1405. A missing module or missing export
- * is an UNCATCHABLE engine fault here, not the ReferenceError a spec-
+ * half - b is the EXPORT NAME and c the SPECIFIER, which is the reverse of
+ * the reading order. What lands in register a is a CELL, not a value, so
+ * every later read goes through cell_get (compile/frames.cpp's bind_imports
+ * marks the local boxed and deliberately emits NO new_cell); on both failure
+ * paths register a is left holding undefined, which is what
+ * context::module_import_cell answers there. A missing module or missing
+ * export is an UNCATCHABLE engine fault here, not the ReferenceError a spec-
  * conformant AOT backend might be tempted to emit. */
 CT_OPCODE(/* name */ load_import, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ nidx, /* writes_a */ 1,
           /* allocates */ 0, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 0,
-          /* may_suspend */ 0, /* resumable */ 0, /* impl */ "inline")
+          /* may_suspend */ 0, /* resumable */ 0,
+          /* impl */ "vm/call.cpp:context::module_import_cell")
 
 /* Name and the bytecode.hpp comment ("Publish the cell in register a as
- * this module's export") run BACKWARDS to the code: 1395 ADOPTS the
+ * this module's export") run BACKWARDS to the code: the handler ADOPTS the
  * record's pre-existing cell INTO register a, overwriting whatever the
- * register held, because instantiate_module (call.cpp:111-119) created
- * every cell before any module in the graph ran. Data flows record ->
- * register. writes_a is conditional on being inside a module. Encoding trap
- * for an AOT backend: b is structurally the bx high half but is ALWAYS 0
- * here, so a decoder that reads only b gets index 0 and silently exports
- * the wrong name. */
+ * register held, because context::instantiate_module created every cell
+ * before any module in the graph ran. Data flows record -> register.
+ * writes_a is conditional on being inside a module - outside one the
+ * register keeps the local it already held, which is why
+ * context::module_export_cell takes that value and answers it rather than
+ * answering undefined. Encoding trap for an AOT backend: b is structurally
+ * the bx high half but is ALWAYS 0 here, so a decoder that reads only b gets
+ * index 0 and silently exports the wrong name. */
 CT_OPCODE(/* name */ bind_export, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ bx_hi, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1,
-          /* may_suspend */ 0, /* resumable */ 0, /* impl */ "inline")
+          /* may_suspend */ 0, /* resumable */ 0,
+          /* impl */ "vm/call.cpp:context::module_export_cell")
 
 /* TWO independent user-JS re-entries before it returns (the specifier's
  * toString, then the imported graph), and the referrer comes from
- * vm_frame->proto->module rather than current_module_ (1471). ADDED, and
- * the prior answer missed it: unlike load_import (1405) and load_namespace
- * (1433), this handler does NOT pre-write undefined into register a, so on
- * the no-loader raise at 1459 register a keeps whatever it held - an AOT
- * backend that models dyn_import as "always defines a" is wrong on that
- * path. may_suspend stays false: the imported module's top-level frame can
- * suspend and set suspended_ (1309), but this frame does not, and nothing
- * between here and context::resume (call.cpp:704) reads that flag. */
+ * vm_frame->proto->module rather than current_module_. ADDED, and the prior
+ * answer missed it: unlike load_import and load_namespace, this handler does
+ * NOT write undefined into register a on its way in, so on the no-loader
+ * raise register a keeps whatever it held - an AOT backend that models
+ * dyn_import as "always defines a" is wrong on that path, and the store is
+ * skipped after any raise for the same reason. may_suspend stays false: the
+ * imported module's top-level frame can suspend and set suspended_, but this
+ * frame does not, and nothing between here and context::resume reads that
+ * flag. */
 CT_OPCODE(/* name */ dyn_import, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ unused, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0,
-          /* impl */ "inline (calls the embedder's module_loader_; ctbrowser installs one at Shell/browser.cpp:1216-1240)")
+          /* impl */ "vm/call.cpp:context::dynamic_import (calls the embedder's module_loader_; ctbrowser installs one in Shell/browser.cpp)")
 
 /* Encoding asymmetry an AOT backend must reproduce exactly: bind_export
  * uses the bx pair while load_namespace and load_import read a plain 16-bit
  * b - three module opcodes, two encodings for the same name table. The
- * namespace object is identity-cached per module record (call.cpp:133-135),
- * so two `import * as` of the same module must produce the same object; and
- * note that reading a property OFF it later is an accessor call, so the re-
- * entry cost is paid by get_prop, not here. */
+ * namespace object is identity-cached in module_record::namespace_object by
+ * context::module_namespace, so two `import * as` of the same module must
+ * produce the same object; and note that reading a property OFF it later is
+ * an accessor call, so the re-entry cost is paid by get_prop, not here. */
 CT_OPCODE(/* name */ load_namespace, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ unused, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0,
-          /* impl */ "vm/call.cpp:context::module_namespace")
+          /* impl */ "vm/call.cpp:context::module_namespace_for")
 
 /* Despite the name it does not build a function object; the closure already
  * exists and is already a GC root through the frame (objects.cpp:452).

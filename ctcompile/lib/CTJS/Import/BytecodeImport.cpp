@@ -892,6 +892,67 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 set(in.a,
                     state.constant(where, ctjs::BigIntAttr::get(context, proto.strings[in.bx()])));
                 break;
+            // ---- ES modules ---------------------------------------------
+            //
+            // THREE OF THESE FOUR ONLY EXIST IN functions[0] OF A MODULE
+            // PROGRAM. compile_program emits load_import, bind_export and
+            // load_namespace from its `if (module_scope_)` arm and from
+            // nowhere else, so a classic script cannot contain one and a
+            // fixture that means to reach them has to be compiled with
+            // script_kind::module. dyn_import is the exception: `import(x)` is
+            // an expression and appears in ordinary functions.
+            case op::load_import:
+                // b IS THE EXPORT NAME AND c IS THE SPECIFIER, which is the
+                // reverse of the reading order and makes this the only opcode
+                // that reads c as a standalone index. bytecode.hpp says the
+                // same thing from the other side: "a = the cell exported as
+                // names[b] by the module at specifier names[c]". Filling the
+                // operation in reading order compiles and raises `module
+                // `count` was not loaded` at run time.
+                if (in.b >= proto.names.size() || in.c >= proto.names.size()) {
+                    state.give_up(at, in.code, "name index out of range");
+                    break;
+                }
+                // WHAT LANDS HERE IS A CELL, and it must NOT be boxed again -
+                // the compiler marked this local boxed and deliberately emitted
+                // no new_cell, so every later read is already a ctjs.cell_get.
+                set(in.a, ctjs::ModuleImportCellOp::create(into, where, value_type,
+                                                           into.getStringAttr(proto.names[in.c]),
+                                                           into.getStringAttr(proto.names[in.b])));
+                break;
+            case op::bind_export:
+                // bx(), NOT b. b is the HIGH half of the pair, so it is 0 for
+                // every module with fewer than 65,536 names - which is all of
+                // them - and a decoder that reads b alone publishes name 0
+                // under this name, silently.
+                if (in.bx() >= proto.names.size()) {
+                    state.give_up(at, in.code, "name index out of range");
+                    break;
+                }
+                // reg(in.a) IS A SOURCE AS WELL AS THE DESTINATION. The write
+                // is conditional on a module being evaluated, and outside one
+                // the register keeps the local being exported - so the
+                // operation carries that value and answers it back rather than
+                // answering undefined and destroying the local.
+                set(in.a, ctjs::ModuleExportCellOp::create(into, where, value_type,
+                                                           into.getStringAttr(proto.names[in.bx()]),
+                                                           reg(in.a)));
+                break;
+            case op::load_namespace:
+                if (in.b >= proto.names.size()) {
+                    state.give_up(at, in.code, "name index out of range");
+                    break;
+                }
+                // A PLAIN 16-BIT b HERE, where bind_export uses the bx pair:
+                // three module opcodes, two encodings for one name table.
+                set(in.a, ctjs::ModuleNamespaceOp::create(into, where, value_type,
+                                                          into.getStringAttr(proto.names[in.b])));
+                break;
+            case op::dyn_import:
+                // b IS A REGISTER, not a name index - the specifier is computed,
+                // which is the whole difference between this and load_namespace.
+                set(in.a, ctjs::DynamicImportOp::create(into, where, value_type, reg(in.b)));
+                break;
             case op::delete_prop:
                 // a IS THE TARGET, b NAMES THE PROPERTY, and nothing is
                 // written back - the delete produces no value.

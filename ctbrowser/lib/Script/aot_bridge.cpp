@@ -758,6 +758,92 @@ struct aot_bridge {
         return status;
     }
 
+    // ---- THE FOUR MODULE ROWS -------------------------------------------
+    //
+    // Each delegates to the context member VM_CASE(load_import),
+    // VM_CASE(bind_export), VM_CASE(load_namespace) and VM_CASE(dyn_import)
+    // now call, so the two tiers cannot resolve a specifier, raise a message
+    // or adopt a cell differently.
+    //
+    // A std::string PER CALL, and it is not a shortcut. modules_,
+    // module_record::resolved and module_record::exports are plain
+    // flat_map<std::string, ...>, and core/containers.hpp says at length that
+    // `flat_map<std::string, V>::find` takes the KEY TYPE - there is no
+    // heterogeneous overload without string_hash, which these three maps do not
+    // use. Building the key is what the interpreter does too; it simply has one
+    // already, because its names came out of the constant pool. Every one of
+    // these opcodes runs once per binding in a module prologue, never in a
+    // loop, which is why the allocation is not worth a wider map.
+
+    // ct_aot_module_import_cell. RAISE TIER: it answers the CELL rather than a
+    // status, so on either miss the value is undefined and a caller polls
+    // ct_aot_failed at a back edge. Not a safepoint - it allocates nothing.
+    static std::uint64_t module_import_cell(aot::ct_aot_frame * f, const char * specifier,
+                                            std::uint32_t specifier_len, const char * export_name,
+                                            std::uint32_t export_name_len) {
+        context & cx = *frame_of(f).ctx;
+        return cx
+            .module_import_cell(std::string{specifier, specifier_len},
+                                std::string{export_name, export_name_len})
+            .bits();
+    }
+
+    // ct_aot_module_export_cell. THE CALLER SEEDS *out, which is what makes the
+    // conditional write expressible without a status the enum does not have.
+    //
+    // The row asked for CT_AOT_NO_WRITE when there is no module being
+    // evaluated; ct_aot_status has four members and none of them is that. So
+    // the lowering initialises the out-slot with the destination register's
+    // current value and this hands the same value straight back on that arm -
+    // the register ends up holding what it held, which is what the interpreter
+    // leaving it alone means. See the row.
+    static std::int32_t module_export_cell(aot::ct_aot_frame * f, const char * name,
+                                           std::uint32_t name_len, std::uint64_t * out) {
+        context & cx = *frame_of(f).ctx;
+        const value published =
+            cx.module_export_cell(std::string{name, name_len}, value::from_bits(*out));
+        const std::int32_t status = check(f);
+        if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) {
+            *out = published.bits();
+        }
+        return status;
+    }
+
+    // ct_aot_module_namespace. RAISE TIER like the import row, and a SAFEPOINT
+    // unlike it: context::module_namespace allocates the namespace object and
+    // one native getter per export. Safe under a real collector because the
+    // half-built object is stored into module_record::namespace_object - a GC
+    // root - before the accessor loop runs.
+    static std::uint64_t module_namespace(aot::ct_aot_frame * f, const char * specifier,
+                                          std::uint32_t specifier_len) {
+        context & cx = *frame_of(f).ctx;
+        return cx.module_namespace_for(std::string{specifier, specifier_len}).bits();
+    }
+
+    // ct_aot_dynamic_import. The heaviest safepoint in the table: the
+    // specifier's toString and then a whole module graph, both user JavaScript.
+    //
+    // THE REFERRER COMES OFF THE FRAME, exactly as the row says and as the
+    // handler does. A literal could not be right: function_proto::module is
+    // stamped by the LOADER after compilation, so the compiler would be baking
+    // its guess at what the loader will call the file.
+    //
+    // THE REFERRER IS COPIED BEFORE THE CALL. frames_ is a vector and the
+    // loader pushes frames, so a reference into frames_[i].proto->module taken
+    // before it would dangle - and `module` is a std::string on a proto the
+    // loader may also be assigning to.
+    static std::int32_t dynamic_import(aot::ct_aot_frame * f, std::uint64_t specifier,
+                                       std::uint64_t * out) {
+        context & cx = *frame_of(f).ctx;
+        const context::call_frame * record = frame_record(f);
+        const std::string referrer =
+            (record == nullptr || record->proto == nullptr) ? std::string{} : record->proto->module;
+        const value produced = cx.dynamic_import(value::from_bits(specifier), referrer);
+        const std::int32_t status = check(f);
+        if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
+        return status;
+    }
+
     // ct_aot_new_target. VM_CASE(load_new_target), which is one field read.
     //
     // IT WAS BLOCKED BY SOMETHING THAT WAS HALF FIXED. The lowering refused any
@@ -1365,6 +1451,28 @@ std::uint64_t ct_aot_own_keys(ct_aot_frame * fr, std::uint64_t source) {
 
 std::uint64_t ct_aot_wrap_promise(ct_aot_frame * fr, std::uint64_t v) {
     return script::aot_bridge::wrap_promise(fr, v);
+}
+
+std::uint64_t ct_aot_module_import_cell(ct_aot_frame * fr, const char * specifier,
+                                        std::uint32_t specifier_len, const char * export_name,
+                                        std::uint32_t export_name_len) {
+    return script::aot_bridge::module_import_cell(fr, specifier, specifier_len, export_name,
+                                                  export_name_len);
+}
+
+std::int32_t ct_aot_module_export_cell(ct_aot_frame * fr, const char * name, std::uint32_t name_len,
+                                       std::uint64_t * out) {
+    return script::aot_bridge::module_export_cell(fr, name, name_len, out);
+}
+
+std::uint64_t ct_aot_module_namespace(ct_aot_frame * fr, const char * specifier,
+                                      std::uint32_t specifier_len) {
+    return script::aot_bridge::module_namespace(fr, specifier, specifier_len);
+}
+
+std::int32_t ct_aot_dynamic_import(ct_aot_frame * fr, std::uint64_t specifier,
+                                   std::uint64_t * out) {
+    return script::aot_bridge::dynamic_import(fr, specifier, out);
 }
 
 void ct_aot_define_accessor(ct_aot_frame * fr, std::uint64_t target, const ct_aot_name * name,

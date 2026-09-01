@@ -468,7 +468,9 @@ bool body_is_supported(FuncOp function, std::string & why) {
                       DeletePropertyOp, FromBoolOp, LoadHomeOp, GetProtoOp, SetProtoOp,
                       PassNewTargetOp, CallSpreadOp, ConstructSpreadOp, CopyPropsOp,
                       DefineAccessorOp, DeleteNamedOp, OwnKeysOp, MakeArgumentsOp, GatherRestOp,
-                      WrapPromiseOp, PushHandlerOp, PopHandlerOp, CheckOp, CatchLandOp>(op)) {
+                      WrapPromiseOp, PushHandlerOp, PopHandlerOp, CheckOp, CatchLandOp,
+                      ModuleImportCellOp, ModuleExportCellOp, ModuleNamespaceOp, DynamicImportOp>(
+                op)) {
             return;
         }
 
@@ -1123,9 +1125,25 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
     // operation with an exception edge is two blocks, and everything after it
     // in the source block belongs to the second - which is why this leaves the
     // builder pointing at the continuation rather than restoring it.
+    //
+    // `seed` IS THE OUT-SLOT'S STARTING VALUE, and exactly one row needs it.
+    // ct_aot_module_export_cell's write is CONDITIONAL - outside a module the
+    // interpreter leaves the destination register alone, and the register holds
+    // the local being exported - and the row asked for a CT_AOT_NO_WRITE status
+    // to say so. `ct_aot_status` has four members and none of them is that one,
+    // and adding a fifth would not be one enumerator: every test below compares
+    // against `ok` and branches to the shared failure path, so a compiled body
+    // would RETURN on the ordinary no-module path. Seeding the slot says the
+    // same thing without a new status - the helper hands the seed straight back
+    // and the register ends up holding what it held.
+    //
+    // AN emitc.assign RATHER THAN A VariableOp INITIALISER, because
+    // `emitc.variable` takes an ATTRIBUTE and this is an SSA value - and
+    // because --declare-variables-at-top hoists the declaration, so an
+    // initialiser would be evaluated in the wrong place even if it fitted.
     mlir::Value status_call(compiled_entry & scope, mlir::OpBuilder & build, mlir::Location where,
                             const std::string & symbol, llvm::ArrayRef<mlir::Value> arguments,
-                            mlir::Type produces) {
+                            mlir::Type produces, mlir::Value seed = nullptr) {
         // THE OUT-PARAMETER IS NOT ALWAYS A VALUE, which is why this takes a
         // type. ct_aot_binary_op writes a `uint64_t *`, ct_aot_loose_equals a
         // `uint32_t *` boolean and ct_aot_compare an `int32_t *` ORDERING. The
@@ -1133,6 +1151,7 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
         // error at best and a reinterpreted write at worst.
         auto slot = ec::VariableOp::create(build, where, ec::LValueType::get(produces),
                                            ec::OpaqueAttr::get(build.getContext(), ""));
+        if (seed != nullptr) { ec::AssignOp::create(build, where, slot.getResult(), seed); }
         auto address =
             ec::AddressOfOp::create(build, where, ec::PointerType::get(produces), slot.getResult());
 
@@ -1846,6 +1865,88 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                             build, where, mlir::TypeRange{value}, callee("ct_aot_wrap_promise"),
                             mlir::ValueRange{scope.frame, mapping.lookup(wrapped.getValue())})
                             .getResult(0));
+            return;
+        }
+        // ---- THE FOUR MODULE OPERATIONS ------------------------------
+        //
+        // Three of them take their names as BYTES AND A LENGTH rather than a
+        // NUL-terminated string, for ct_aot_global_get's reason: a specifier or
+        // an export name is bytes, and one containing a zero byte is a string
+        // strlen stops at. `default` is an export name the compiler synthesises
+        // and the rest come out of the source, so the length is always known
+        // here and never worth a strlen.
+        if (auto imported = mlir::dyn_cast<ModuleImportCellOp>(op)) {
+            // RAISE TIER: it answers the CELL rather than a status, so there is
+            // no exception edge - a missing module and a missing export are
+            // both uncatchable engine faults and a caller polls at a back edge.
+            // NOT a safepoint either: two flat_map lookups allocate nothing.
+            const llvm::StringRef specifier = imported.getSpecifier();
+            const llvm::StringRef exported = imported.getExportName();
+            mapping.map(imported.getResult(),
+                        ec::CallOpaqueOp::create(
+                            build, where, mlir::TypeRange{value},
+                            callee("ct_aot_module_import_cell"),
+                            mlir::ValueRange{
+                                scope.frame,
+                                literal(build, where, pointer_to(build.getContext(), "const char"),
+                                        c_string_literal(specifier)),
+                                literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                        std::to_string(specifier.size())),
+                                literal(build, where, pointer_to(build.getContext(), "const char"),
+                                        c_string_literal(exported)),
+                                literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                        std::to_string(exported.size()))})
+                            .getResult(0));
+            return;
+        }
+        if (auto published = mlir::dyn_cast<ModuleExportCellOp>(op)) {
+            // THE ONLY SEEDED status_call IN THE FILE. $current is the
+            // destination register's value on entry, and the helper hands it
+            // straight back when no module is being evaluated - which is how
+            // op::bind_export's CONDITIONAL write is expressed without the
+            // CT_AOT_NO_WRITE status its ABI row asked for and the enum never
+            // had. See status_call.
+            const llvm::StringRef name = published.getName();
+            mapping.map(
+                published.getResult(),
+                status_call(scope, build, where, callee("ct_aot_module_export_cell"),
+                            {scope.frame,
+                             literal(build, where, pointer_to(build.getContext(), "const char"),
+                                     c_string_literal(name)),
+                             literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                     std::to_string(name.size()))},
+                            value, mapping.lookup(published.getCurrent())));
+            return;
+        }
+        if (auto space = mlir::dyn_cast<ModuleNamespaceOp>(op)) {
+            // RAISE TIER like the import row, and a SAFEPOINT unlike it: the
+            // namespace object and one native getter per export are allocated
+            // here. The result is parked like every other value.
+            const llvm::StringRef specifier = space.getSpecifier();
+            mapping.map(space.getResult(),
+                        ec::CallOpaqueOp::create(
+                            build, where, mlir::TypeRange{value}, callee("ct_aot_module_namespace"),
+                            mlir::ValueRange{
+                                scope.frame,
+                                literal(build, where, pointer_to(build.getContext(), "const char"),
+                                        c_string_literal(specifier)),
+                                literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                        std::to_string(specifier.size()))})
+                            .getResult(0));
+            return;
+        }
+        if (auto dynamic = mlir::dyn_cast<DynamicImportOp>(op)) {
+            // A FULL STATUS, and the two failing arms are not what they look
+            // like. A module that was not FOUND is CT_AOT_OK carrying an
+            // already-rejected promise - the embedder's loader builds it - so
+            // it must not reach this edge. Only "no loader is installed" is a
+            // failure, because the interpreter raise()s there and stops.
+            //
+            // NO SEED: unlike bind_export this genuinely does not write on a
+            // failure, and the interpreter does not write the register either.
+            mapping.map(dynamic.getResult(),
+                        status_call(scope, build, where, callee("ct_aot_dynamic_import"),
+                                    {scope.frame, mapping.lookup(dynamic.getSpecifier())}, value));
             return;
         }
         if (auto accessor = mlir::dyn_cast<DefineAccessorOp>(op)) {

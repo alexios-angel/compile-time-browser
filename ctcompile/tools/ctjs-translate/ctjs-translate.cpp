@@ -73,10 +73,18 @@ void record_skipped(mlir::ModuleOp module,
     module->setAttr("ctjs.skipped", builder.getArrayAttr(rows));
 }
 
+// WHICH KIND OF SCRIPT THE TEXT IS, and it is not a detail. A classic script's
+// top-level `var` is a GLOBAL and a module's is a local of a scope of its own -
+// but the difference that matters here is that compile_program emits
+// op::load_import, op::bind_export and op::load_namespace from its module arm
+// and from NOWHERE ELSE. Until this parameter existed, no fixture in
+// ctcompile/test/ could contain one of those three at all, so no lowering for
+// them could be shown to compute anything.
 mlir::OwningOpRef<mlir::Operation *> import_source(llvm::StringRef text, llvm::StringRef name,
-                                                   mlir::MLIRContext * context) {
+                                                   mlir::MLIRContext * context,
+                                                   ctbrowser::script::script_kind kind) {
     const ctbrowser::script::program compiled =
-        ctbrowser::script::compiler::compile(std::string{text});
+        ctbrowser::script::compiler::compile(std::string{text}, kind);
     if (!compiled.ok) {
         mlir::emitError(mlir::UnknownLoc::get(context))
             << "the JavaScript did not compile: " << compiled.error;
@@ -123,7 +131,21 @@ void register_translations() {
     static mlir::TranslateToMLIRRegistration from_source(
         "ctbrowser-js-to-ctjs", "compile JavaScript source and import it as CTJS MLIR",
         [](llvm::StringRef text, mlir::MLIRContext * context) {
-            return import_source(text, "<source>", context);
+            return import_source(text, "<source>", context,
+                                 ctbrowser::script::script_kind::classic);
+        },
+        dialects);
+    // A SEPARATE FLAG RATHER THAN AN OPTION ON THE ONE ABOVE. mlir-translate's
+    // registrations are selected BY FLAG, and a translation whose behaviour
+    // depends on a second unrelated option is one a pipeline can get wrong
+    // silently - the module would compile as a classic script, every `import`
+    // would be a syntax error, and the failure would read as a bad fixture.
+    static mlir::TranslateToMLIRRegistration from_module(
+        "ctbrowser-module-to-ctjs",
+        "compile JavaScript source AS AN ES MODULE and import it as CTJS MLIR",
+        [](llvm::StringRef text, mlir::MLIRContext * context) {
+            return import_source(text, "<module>", context,
+                                 ctbrowser::script::script_kind::module_);
         },
         dialects);
     static mlir::TranslateToMLIRRegistration from_image(

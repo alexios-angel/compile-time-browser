@@ -19,8 +19,21 @@ foreach(required TRANSLATE OPT MLIR_TRANSLATE SOURCE OUTPUT)
   endif()
 endforeach()
 
+# CLASSIC OR MODULE, and the default is classic so no existing caller changes.
+# It is a real difference rather than a spelling: op::load_import,
+# op::bind_export and op::load_namespace are emitted by compile_program's module
+# arm and by nothing else, so a fixture meaning to exercise them must be
+# compiled with -DKIND=module or it is a syntax error instead.
+if(DEFINED KIND AND KIND STREQUAL "module")
+  set(translate_flag --ctbrowser-module-to-ctjs)
+elseif(NOT DEFINED KIND OR KIND STREQUAL "classic")
+  set(translate_flag --ctbrowser-js-to-ctjs)
+else()
+  message(FATAL_ERROR "compile-js-to-cpp.cmake: -DKIND= must be classic or module, not ${KIND}")
+endif()
+
 execute_process(
-  COMMAND "${TRANSLATE}" --ctbrowser-js-to-ctjs "${SOURCE}"
+  COMMAND "${TRANSLATE}" ${translate_flag} "${SOURCE}"
   # --ctjs-drop-uncompiled BETWEEN THE TWO, because a module still holding CTJS
   # operations cannot be translated at all - so one refused function would mean
   # no translation unit rather than one missing that function.
