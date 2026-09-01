@@ -121,3 +121,12 @@ class LinkDerived extends LinkBase {
   tag() { return "derived" + super.tag(); }
 }
 function hierarchy(n) { return new LinkDerived(n).tag(); }
+
+// AN ASYNC FUNCTION'S `return`, WHICH IS ct_aot_wrap_promise AND NOTHING ELSE.
+//
+// The whole of async that does not suspend. A body with no `await` carries
+// op::wrap_promise on every return path - the explicit one and the implicit
+// one at the end - and no await_value at all, so it compiles like any other
+// function. One with an `await` is refused by the importer with a reason of
+// its own; see BytecodeImport.cpp.
+async function settles(a) { return a + 1; }

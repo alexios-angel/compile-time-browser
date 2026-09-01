@@ -967,7 +967,7 @@ CT_OPCODE(/* name */ yield_value, /* a_kind */ reg, /* b_kind */ reg, /* c_kind 
 CT_OPCODE(/* name */ wrap_promise, /* a_kind */ reg, /* b_kind */ unused, /* c_kind */ unused, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0,
-          /* impl */ "vm.hpp:context::make_promise (-> the installed promise_factory_, builtins/internal.hpp:make_promise)")
+          /* impl */ "vm.hpp:context::wrap_in_promise (the already-a-promise test AND context::make_promise -> the installed promise_factory_, builtins/internal.hpp:make_promise). Shared with the compiled tier: ct_aot_wrap_promise is that member and nothing else")
 
 /* writes_a is FALSE even though the opcode produces a value: a is a SOURCE
  * operand, and the destination is the caller's result_reg. Two effects an

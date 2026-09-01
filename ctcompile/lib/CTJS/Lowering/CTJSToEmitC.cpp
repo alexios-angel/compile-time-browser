@@ -468,7 +468,7 @@ bool body_is_supported(FuncOp function, std::string & why) {
                       DeletePropertyOp, FromBoolOp, LoadHomeOp, GetProtoOp, SetProtoOp,
                       PassNewTargetOp, CallSpreadOp, ConstructSpreadOp, CopyPropsOp,
                       DefineAccessorOp, DeleteNamedOp, OwnKeysOp, MakeArgumentsOp, GatherRestOp,
-                      PushHandlerOp, PopHandlerOp, CheckOp, CatchLandOp>(op)) {
+                      WrapPromiseOp, PushHandlerOp, PopHandlerOp, CheckOp, CatchLandOp>(op)) {
             return;
         }
 
@@ -1832,6 +1832,19 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
                         ec::CallOpaqueOp::create(
                             build, where, mlir::TypeRange{value}, callee("ct_aot_own_keys"),
                             mlir::ValueRange{scope.frame, mapping.lookup(keys.getSource())})
+                            .getResult(0));
+            return;
+        }
+        if (auto wrapped = mlir::dyn_cast<WrapPromiseOp>(op)) {
+            // RAISE TIER, exactly like ct_aot_own_keys above: the helper
+            // answers the promise rather than a status, so there is no
+            // exception edge and a caller polls at a back edge. It allocates -
+            // a table, a prototype, four property writes and an array - so it
+            // IS a safepoint and the result is parked like every other value.
+            mapping.map(wrapped.getResult(),
+                        ec::CallOpaqueOp::create(
+                            build, where, mlir::TypeRange{value}, callee("ct_aot_wrap_promise"),
+                            mlir::ValueRange{scope.frame, mapping.lookup(wrapped.getValue())})
                             .getResult(0));
             return;
         }

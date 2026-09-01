@@ -64,6 +64,37 @@ static_assert(std::size(opcode_names) == opcode_count,
     return index < std::size(opcode_names) ? opcode_names[index] : "<unknown>";
 }
 
+// WHICH OPCODES LIFT THE FRAME OUT OF THE STACK, from the .def's own column and
+// not from a list of two names. `await_value` and `yield_value` are the two
+// today; the point of deriving it is that a third would be refused the moment
+// it existed rather than falling through to `default:` with a message that
+// blames a missing operation.
+//
+// THE DISTINCTION IS NOT PEDANTRY. Every other refusal in this file means "the
+// importer has not learned this yet" and closes when somebody writes a case.
+// This one does not: a compiled body is a C++ stack frame and a suspension
+// point has to lift it OUT, save its live values, and put it back somewhere
+// else later. `coroutine_object` saves a suspended frame by copying its
+// REGISTER WINDOW out of the flat register file, and a compiled frame has no
+// register window - so there is nothing for a `case` to emit until Phase 14
+// decides what a compiled frame suspends INTO. Saying that here is the
+// difference between a work item and a design decision.
+#define CT_OPCODE(name_, a_kind_, b_kind_, c_kind_, writes_a_, allocates_, may_throw_,             \
+                  may_reenter_, is_safepoint_, may_suspend_, resumable_, impl_)                    \
+    (may_suspend_) != 0,
+constexpr bool opcode_may_suspend[] = {
+#include <ctbrowser/script/bytecode_opcodes.def>
+};
+#undef CT_OPCODE
+
+static_assert(std::size(opcode_may_suspend) == opcode_count,
+              "the importer's may_suspend table and `enum class op` disagree");
+
+[[nodiscard]] bool may_suspend(op code) {
+    const auto index = static_cast<std::size_t>(code);
+    return index < std::size(opcode_may_suspend) && opcode_may_suspend[index];
+}
+
 // WHAT A FUNCTION'S ENTRY BLOCK RECEIVES, in order, before its declared
 // parameters. `this`, `new.target` and the callee are frame properties the
 // bytecode reads with their own opcodes, and passing them as arguments makes
@@ -496,6 +527,34 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             }
         }
 
+        // AND A SUSPENSION POINT REFUSES THE FUNCTION WITH ITS OWN REASON.
+        //
+        // BEFORE THE WALK RATHER THAN AS A `case`, for two reasons that both
+        // matter. First, a `case` label naming a suspending opcode is what
+        // ctcompile_importer_coverage reads as "the importer DISPATCHES this",
+        // and a refusal is not a dispatch - the ratchet would stop measuring
+        // anything. That test's own sanity check caught the first draft of THIS
+        // COMMENT, which spelled the label out and was therefore matched as
+        // one; it is deliberately paraphrased now, and the guard is load-
+        // bearing rather than decorative. Second, the reason belongs to the
+        // FUNCTION, not to the instruction: nothing in a body containing an
+        // `await` is compilable, including the parts before it.
+        //
+        // It reports the FIRST suspension point rather than instruction 0, so
+        // the offset in the diagnostic names something a person can go and
+        // read.
+        if (!state.gave_up) {
+            for (std::size_t at = 0; at < proto.code.size(); ++at) {
+                if (!may_suspend(proto.code[at].code)) { continue; }
+                state.give_up(at, proto.code[at].code,
+                              "a suspension point, which lifts the frame out of the register "
+                              "stack and puts it back later - a compiled body is a C++ stack "
+                              "frame with no register window to save, so this is Phase 14's "
+                              "design decision and not a missing importer case");
+                break;
+            }
+        }
+
         for (std::size_t at = 0; at < proto.code.size() && !state.gave_up; ++at) {
             if (leader[at] && (at > 0 || targets_zero)) { enter_block(at); }
             // A PAD BLOCK CLOSES THE REGION IT LANDS FROM. The bytecode's
@@ -841,6 +900,14 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 break;
             case op::own_keys:
                 set(in.a, ctjs::OwnKeysOp::create(into, where, value_type, reg(in.b)));
+                break;
+            // AN ASYNC FUNCTION'S `return`, AND `a` IS BOTH SOURCE AND
+            // DESTINATION. The compiler emits `{op::wrap_promise, r}` over the
+            // register the return value is already in - b and c are unused, and
+            // the opcode row says so - so reading a and writing a is the whole
+            // encoding rather than a coincidence to be careful about.
+            case op::wrap_promise:
+                set(in.a, ctjs::WrapPromiseOp::create(into, where, value_type, reg(in.a)));
                 break;
             case op::define_getter:
             case op::define_setter: {

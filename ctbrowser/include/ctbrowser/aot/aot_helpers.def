@@ -1796,26 +1796,35 @@ CT_AOT_HELPER(/* name */ ct_aot_return_value, /* ret */ uint64_t,
 CT_AOT_COVERS(/* helper */ ct_aot_return_value, /* opcode */ ret)
 CT_AOT_COVERS(/* helper */ ct_aot_return_value, /* opcode */ ret_undef)
 
-/* Has REAL tier-1 callers: an async function with no await contains
- * wrap_promise and no await_value, so it is fully AOT-eligible, and the
- * emission is unconditional on every async return path (statements.cpp:223,
- * 604, 770). The test must live inside the helper because it reads an own
+/* IMPLEMENTED. It had REAL tier-1 callers before it had a body and now it
+ * has both: an async function with no await contains wrap_promise and no
+ * await_value, so it is fully AOT-eligible, and the emission is
+ * unconditional on every async return path (statements.cpp:227, 713, 792,
+ * 983). The test must live inside the helper because it reads an own
  * '__value' off an object_object (constraint 1). THREE facts the lowering
  * must keep: the test is is_object() EXACTLY, so an array, function or
  * proxy returned from an async function is ALWAYS re-wrapped; with no
- * promise_factory_ installed make_promise is the IDENTITY (vm.hpp:692), so
+ * promise_factory_ installed context::make_promise is the IDENTITY, so
  * AOT must not fold this to 'the result is always an object'; and a PENDING
  * promise is passed through UNWRAPPED, because the pending factory builds
  * it with detail::make_promise and only then flips __settled to false
- * (async.cpp:50-52), so it carries an own __value. Two adjacent handlers
+ * (async.cpp:49-53), so it carries an own __value. Two adjacent handlers
  * therefore use two DIFFERENT shape tests for 'is a promise' - wrap_promise
- * reads __value, is_pending_promise reads __settled (vm.hpp:823-824) - and
- * a backend that unified them would change what `return somePendingPromise`
+ * reads __value, context::is_pending_promise reads __settled - and a
+ * backend that unified them would change what `return somePendingPromise`
  * does inside an async function.
- * DELEGATES TO: the already-a-promise test at run_loop.cpp:1148-1149, then
- *   context::make_promise (vm.hpp:691) -> the installed promise_factory_
+ * DELEGATES TO: context::wrap_in_promise (vm.hpp), which is the WHOLE
+ *   handler - VM_CASE(wrap_promise) in run_loop.cpp is one call to it, so
+ *   the two tiers cannot spell the already-a-promise test differently. It
+ *   ends in context::make_promise -> the installed promise_factory_
  *   (builtins/async.cpp:44-45 -> builtins/internal.hpp:339
  *   detail::make_promise).
+ *   CITED BY NAME, and every number this paragraph used to carry was wrong:
+ *   it named run_loop.cpp:1148-1149 for the test (that is inside
+ *   VM_CASE(construct)'s compiled arm) and vm.hpp:691-692 for make_promise
+ *   (that is inside prototype-chain selection). The rot predates this
+ *   commit; check-def-citations.cmake cannot see it, because both land
+ *   inside a file that has since grown.
  * FAILURE: RAISE TIER ONLY (the ceiling), uncatchable, unwinds nothing.
  *   may_reenter=0 verified against the INSTALLED factory rather than the VM
  *   stub: detail::make_promise (internal.hpp:339-347) is new_table,

@@ -673,6 +673,28 @@ struct aot_bridge {
         return cx.own_keys(value::from_bits(source)).bits();
     }
 
+    // ct_aot_wrap_promise. An async function's `return`, and the ONE half of
+    // async that does not suspend - which is what makes it implementable
+    // ahead of Phase 14's suspension work rather than with it. An async
+    // function containing no `await` compiles to a body carrying this opcode
+    // and no await_value at all.
+    //
+    // RAISE TIER: the row is may_throw only through the allocation ceiling,
+    // uncatchable and unwinding nothing, so this returns a value plainly and
+    // never a status - allocate() raises past the ceiling and STILL returns a
+    // well-formed object, so the operation completes and its result is
+    // written. Returning a bare 0 on failure would hand back
+    // value::from_bits(0), which is not undefined, and the lowering parks the
+    // result as a GC root and traces it.
+    //
+    // may_reenter is 0 and that was verified against the INSTALLED factory
+    // rather than the VM stub: detail::make_promise is new_table, a
+    // prototype, four sets and a make_array, with no call() anywhere.
+    static std::uint64_t wrap_promise(aot::ct_aot_frame * f, std::uint64_t v) {
+        context & cx = *frame_of(f).ctx;
+        return cx.wrap_in_promise(value::from_bits(v)).bits();
+    }
+
     // ct_aot_define_accessor. `get x()` and `set x(v)`, both opcodes.
     //
     // (0, 0, 0) AND THE ROW SPELLS OUT WHY may_reenter IS FALSE HERE even
@@ -1339,6 +1361,10 @@ void ct_aot_delete_prop(ct_aot_frame * fr, std::uint64_t target, const ct_aot_na
 
 std::uint64_t ct_aot_own_keys(ct_aot_frame * fr, std::uint64_t source) {
     return script::aot_bridge::own_keys(fr, source);
+}
+
+std::uint64_t ct_aot_wrap_promise(ct_aot_frame * fr, std::uint64_t v) {
+    return script::aot_bridge::wrap_promise(fr, v);
 }
 
 void ct_aot_define_accessor(ct_aot_frame * fr, std::uint64_t target, const ct_aot_name * name,

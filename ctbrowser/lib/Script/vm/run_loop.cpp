@@ -781,11 +781,10 @@ value context::run_loop(std::size_t stop_depth) {
 
         VM_CASE(wrap_promise) do {
             // Already a promise (`return somePromise` inside an async function)
-            // stays as it is rather than nesting.
-            if (!(reg(in.a).is_object() &&
-                  static_cast<object_object *>(reg(in.a).as_heap())->find("__value") != nullptr)) {
-                reg(in.a) = make_promise(reg(in.a), false);
-            }
+            // stays as it is rather than nesting. The test itself lives on
+            // `context` because the compiled tier runs the same one - see
+            // wrap_in_promise.
+            reg(in.a) = wrap_in_promise(reg(in.a));
             break;
         }
         while (0);

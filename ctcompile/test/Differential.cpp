@@ -105,6 +105,9 @@ CT_ENTRY(howMany)
 CT_ENTRY(sumAll)
 CT_ENTRY(restOf)
 CT_ENTRY(bothOf)
+CT_ENTRY(wrapped)
+CT_ENTRY(passes)
+CT_ENTRY(arrayOut)
 #undef CT_ENTRY
 
 namespace {
@@ -459,6 +462,25 @@ int main() {
          "claims a register an extra argument may be in, so gather_rest must read the frame's "
          "copy rather than the window",
          "2:2,3/0:/3/2,3"},
+        // ASYNC WITHOUT await. op::wrap_promise is the only opcode async
+        // adds to a body with no suspension point in it, and it is the only
+        // one of Phase 14's three that a compiled C++ stack frame can execute
+        // at all.
+        {50u,
+         "wrap_promise",
+         {{"wrapped", 0u, &ctc_wrapped}, {}},
+         "the wrap itself - a body that returned its value raw answers "
+         "\"number/2/undefined\" and the second field still looks nearly right",
+         "object/2/true/false"},
+        // BOTH SHAPE TESTS, and they are the two a plausible simplification
+        // gets wrong in opposite directions.
+        {51u,
+         "promise shapes",
+         {{"passes", 0u, &ctc_passes}, {"arrayOut", 0u, &ctc_arrayOut}},
+         "the already-a-promise test (dropping it nests, so === is false) against the "
+         "EXACTNESS of is_object() (widening it to is_object_like passes an array through "
+         "unwrapped, so __value is undefined)",
+         "true/7/object"},
         {17u,
          "literals",
          {{"pack", 0u, &ctc_pack}, {}},
@@ -589,6 +611,9 @@ int main() {
         {"sumAll", 0u, &ctc_sumAll},
         {"restOf", 0u, &ctc_restOf},
         {"bothOf", 0u, &ctc_bothOf},
+        {"wrapped", 0u, &ctc_wrapped},
+        {"passes", 0u, &ctc_passes},
+        {"arrayOut", 0u, &ctc_arrayOut},
     };
 
     for (const subject & each : subjects) {

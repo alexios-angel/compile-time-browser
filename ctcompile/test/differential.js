@@ -465,6 +465,40 @@ function useAccessor(pad, seed) {
   return "" + first + "/" + o.v + "/" + o.box.log;
 }
 
+// ASYNC WITHOUT await - op::wrap_promise, the only half of async that does not
+// suspend, and therefore the only half a compiled C++ stack frame can do.
+//
+// A body with an `await` in it is refused whole by the importer, with a reason
+// of its own that says why it is a design decision rather than a missing case.
+// These three have none, so they compile like any other function and the
+// promise they hand back is the ordinary settled object the standard library
+// builds.
+//
+// THEY ARE READ THROUGH __value AND __settled ON PURPOSE. Those are own
+// properties of the promise the runtime's own factory makes - not an API - and
+// reading them is what lets this compare the OBJECT rather than whatever a
+// `.then` chain would eventually deliver. A driver that awaited would need the
+// microtask queue and would be testing the event loop instead.
+async function wrapped(a) { return a + 1; }
+
+// RETURNING A PROMISE MUST NOT NEST IT, which is the already-a-promise test.
+// `passes(p) === p` is the separator: a lowering that dropped the test answers
+// false and every other field here stays right.
+//
+// AND IT IS NOT ENOUGH ON ITS OWN, which was measured rather than reasoned. A
+// compiled tier that wraps NOTHING still answers `true` here - two unwrapped
+// values are trivially identical - so `===` separates a lowering that NESTS
+// and says nothing about one that no-ops. The other two fields of arm 51 are
+// what caught that mutation.
+async function passes(p) { return p; }
+
+// AND is_object() IS heap_kind::object EXACTLY, so an ARRAY returned from an
+// async function is ALWAYS re-wrapped. A lowering that used is_object_like -
+// which is what "is it already a promise" reads like in English - would pass
+// the array straight through, and then __value is undefined instead of the
+// array. This is the one case that separates the exact shape test.
+async function arrayOut() { return [7, 8]; }
+
 function drive(which) {
   // A SENTINEL, so an arm that throws or never matches is visible. Without it
   // OUT keeps the PREVIOUS case's answer, both tiers read the same stale value
@@ -556,6 +590,26 @@ function drive(which) {
   if (which === 40) { OUT = bigLits(0); }
   if (which === 41) { OUT = howMany(1, 2, 3, 4) + "/" + howMany(1) + "/" + sumAll(5, 6, 7); }
   if (which === 42) { OUT = restOf(1, 2, 3) + "/" + restOf(1) + "/" + bothOf(1, 2, 3); }
+  // 50 AND 51, NOT 41 AND 42, and the gap is deliberate: the `arguments` and
+  // rest-parameter work is landing 40-43 on a branch of its own, and two tracks
+  // numbering the same arm differently is a merge that compiles and tests the
+  // wrong thing.
+  //
+  // typeof IS IN THE ANSWER because "object" is what separates a promise from
+  // the number 2 - a lowering that skipped the wrap entirely would answer
+  // "number/2/undefined", with the __value field looking almost right.
+  if (which === 50) {
+    var p = wrapped(1);
+    OUT = "" + (typeof p) + "/" + p.__value + "/" + p.__settled + "/" + p.__rejected;
+  }
+  // THE TWO SHAPE QUESTIONS IN ONE LINE. `passes(p) === p` is the
+  // already-a-promise test; `arrayOut().__value[0]` is the exactness of
+  // is_object(), because an array must be re-wrapped and not passed through.
+  if (which === 51) {
+    var q = wrapped(2);
+    OUT = "" + (passes(q) === q) + "/" + arrayOut().__value[0] + "/" +
+          (typeof arrayOut().__value);
+  }
   if (which === 22) {
     OUT = "" + coalesce(0, 9) + "/" + coalesce("", 9) + "/" + coalesce(nothing, 9) + "/" +
           chain(null) + "/" + chain({ p: 4 }) + "/" + dflt(0);
