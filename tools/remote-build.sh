@@ -38,6 +38,13 @@ host="${DEVBOX_HOST:-devbox}"
 #
 # The default is unchanged, so nothing that does not set it notices.
 remote_dir="${DEVBOX_DIR:-projects/compile-time-browser}"
+
+# HOW MANY COMPILES AT ONCE. Ninja defaults to nproc+2, which is 10 on this
+# box, and an MLIR translation unit peaks at 1-2 GB - so two workspaces
+# building at once can exhaust 32 GB between them. Several agents share this
+# machine, so the default is bounded rather than maximal; raise it with
+# CT_BUILD_JOBS=10 when you know you are alone on the box.
+build_jobs="${CT_BUILD_JOBS:-6}"
 # The embed repo's pinned toolchain release. sync-to-ctbrowser.sh may install a
 # locally-built one instead — the rsync protect filter keeps whichever is on the
 # server. This used to say "same knob and default as CI"; there is no CI any
@@ -188,8 +195,8 @@ else
   configure="cmake --preset default -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE \
     -DCTCOMPILE_ENABLE_MLIR=${CTCOMPILE_MLIR:-ON} $prefix"
   if [ $# -gt 0 ]; then
-    ssh "$host" "cd $remote_dir/ctbrowser && $configure && cmake --build --preset default --target $*"
+    ssh "$host" "cd $remote_dir/ctbrowser && $configure && cmake --build --preset default -j$build_jobs --target $*"
   else
-    ssh "$host" "cd $remote_dir/ctbrowser && $configure && cmake --build --preset default && ctest --preset default"
+    ssh "$host" "cd $remote_dir/ctbrowser && $configure && cmake --build --preset default -j$build_jobs && ctest --preset default"
   fi
 fi

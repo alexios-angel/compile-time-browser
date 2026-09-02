@@ -1084,7 +1084,11 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate)
     find_program(_native_nm NAMES llvm-nm nm)
   endif()
   if(NOT _native_nm)
-    message(WARNING "ctcompile: no nm found - the Phase 62½-D native gate is NOT registered")
+    # FATAL, not WARNING: `ctcompile_add_native_unit` guards ~20 tests, and a
+    # skip here unregisters all of them while ctest still reports green - a
+    # suite green on nothing, which is what the comment above forbids. The
+    # Phase 63 Step 7 block below treats a missing compiler the same way.
+    message(FATAL_ERROR "ctcompile: no nm found - the Phase 62½-D native gate cannot be registered, and it IS the definition of native")
   else()
     # ONE FUNCTION, so a second fixture is one line: the module, the program,
     # and any of the driver's negative-proof switches after them.
@@ -1240,3 +1244,72 @@ add_test(NAME ctcompile_deduction_probe
                  "-DCOMPILERS=/usr/bin/g++;/usr/bin/clang++;${CMAKE_CXX_COMPILER}"
                  -DWORK=${CMAKE_CURRENT_BINARY_DIR}
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/check-deduction-probe.cmake)
+
+# === PHASE 63 STEPS 2 AND 3: the claimed set, per corpus ===
+# ============================================================================
+# Part 24 Phase 63 Step 2 asks for per-function selection WITH A REASON and
+# says of the refusals "that list is the roadmap"; Step 3 asks how many
+# functions the backend claims. tools/check/native-claims.py runs the native
+# pipeline over one program and sorts every function into claimed, refused
+# (with the reason it carries) or never imported, then asserts two things the
+# other gates cannot see:
+#
+#   * every function not claimed carries a `ctnative.not_native` reason. One
+#     left behind WITHOUT a diagnostic is the silent drop part 24 SS2 forbids,
+#     and no fixture gate would notice, because fixtures are programs the
+#     compiler already handles.
+#   * the run is not vacuous - a corpus that failed to parse would otherwise
+#     report "0 refused".
+#
+# --min-claimed is a FLOOR AGAINST SILENT NARROWING, set at the number
+# measured on 2026-09-02 (073ea1f). A change that refuses functions it used to
+# claim fails here while every fixture stays green. Raising a floor belongs in
+# the same commit that earns it.
+#
+# The corpora are the four Phase 54B and 55O already use. The two large
+# bundles take about eight seconds and 1.5 GB each; that is the price of
+# measuring the roadmap on real code rather than on the fixture.
+if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Python3_EXECUTABLE)
+  function(ctcompile_add_native_claims name js floor)
+    add_test(NAME ctcompile_native_claims_${name}
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CTBROWSER_MONOREPO_ROOT}/tools/check/native-claims.py
+                     --translate $<TARGET_FILE:ctjs-translate>
+                     --opt $<TARGET_FILE:ctjs-opt>
+                     --corpus ${js}
+                     --name ${name}
+                     --json ${CMAKE_CURRENT_BINARY_DIR}/native-claims-${name}.json
+                     --min-claimed ${floor})
+  endfunction()
+  # THE FIXTURE IS THE VACUITY CHECK: 9 of 9, so a run that reports nothing
+  # claimed anywhere is not mistaken for a clean sheet.
+  ctcompile_add_native_claims(fixture "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.js" 9)
+  ctcompile_add_native_claims(bootstrap
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 4)
+  ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 37)
+  ctcompile_add_native_claims(phaser
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 43)
+
+  # BOTH TEETH, PROVED. Each runs the same check as a child and passes only
+  # when that child failed for the stated reason - not ctest's WILL_FAIL,
+  # which a crash or a missing corpus would satisfy just as well.
+  function(ctcompile_add_native_claims_negative name js)
+    add_test(NAME ctcompile_native_claims_${name}
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CTBROWSER_MONOREPO_ROOT}/tools/check/native-claims.py
+                     --translate $<TARGET_FILE:ctjs-translate>
+                     --opt $<TARGET_FILE:ctjs-opt>
+                     --corpus ${js}
+                     --name ${name}
+                     ${ARGN})
+  endfunction()
+  # 1: the floor bites. The fixture claims 9 of 9; a floor of 10 must fail.
+  ctcompile_add_native_claims_negative(floor_bites
+    "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.js"
+    --min-claimed 10 "--expect-failure=the native tier NARROWED")
+  # 2: a function left behind with no diagnostic is caught. One refusal reason
+  # is deleted from the lowered module, and the check must name the count.
+  ctcompile_add_native_claims_negative(silent_drop_caught
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+    --mutate-drop-one-reason "--expect-failure=were dropped silently")
+endif()
