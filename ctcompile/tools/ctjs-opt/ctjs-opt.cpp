@@ -13,6 +13,7 @@
 #include "mlir/Conversion/Passes.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
+#include "mlir/Transforms/Passes.h"
 
 int main(int argc, char ** argv) {
     mlir::DialectRegistry registry;
@@ -38,6 +39,12 @@ int main(int argc, char ** argv) {
     // AND arith -> emitc, because --ctjs-lift-to-scf encodes its edge
     // multiplexers as arith i32 flags (Phase 62½-C).
     mlir::registerConvertArithToEmitC();
+    // AND THE CANONICALIZER, between the native lowering and the scf
+    // conversion: it drops the values the lowering leaves dead (the undefined
+    // a top level returns, an unused lift multiplexer result) that -Werror
+    // would otherwise reject in the emitted C++.
+    mlir::registerCanonicalizerPass();
+    mlir::registerCSEPass();
     // ctcompile::registerLoweringPasses() is Phase 10's and has no source yet.
     // The policy's snippet calls it; calling it here would not compile, and
     // stubbing it would be a registration that silently does nothing.

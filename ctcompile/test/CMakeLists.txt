@@ -1139,3 +1139,29 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate)
       "-DEXPECT_FAILURE=reaches the interpreter")
   endif()
 endif()
+
+# === PHASE 62½-C+D: JavaScript through the native pipeline and the gate ===
+#
+# The first program that goes all the way. native-pipeline.cmake runs the
+# lowering over a JavaScript file and refuses to write a module while any
+# function carries a diagnostic; the gate then compiles it with no ctbrowser
+# library, runs it, and compares every numeric global with the interpreter.
+# One appended block, per Appendix A.3.
+if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
+   AND COMMAND ctcompile_add_native_unit)
+  set(_pipeline_js "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline-fixture.js")
+  set(_pipeline_module "${CMAKE_CURRENT_BINARY_DIR}/native-pipeline-fixture.emitc.mlir")
+  add_custom_command(
+    OUTPUT "${_pipeline_module}"
+    COMMAND ${CMAKE_COMMAND}
+            -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
+            -DOPT=$<TARGET_FILE:ctjs-opt>
+            -DSOURCE=${_pipeline_js}
+            -DOUTPUT=${_pipeline_module}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline.cmake"
+    DEPENDS "${_pipeline_js}" "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline.cmake"
+            ctjs-translate ctjs-opt
+    COMMENT "Lowering native-pipeline-fixture.js to a native EmitC module")
+  add_custom_target(ctcompile-native-pipeline-module ALL DEPENDS "${_pipeline_module}")
+  ctcompile_add_native_unit(pipeline "${_pipeline_module}" "${_pipeline_js}")
+endif()

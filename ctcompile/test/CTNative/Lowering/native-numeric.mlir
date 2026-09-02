@@ -35,10 +35,10 @@ function scale(x) { return x * 2; }
 // level of the body and WITH it inside an scf region, so the patterns below
 // name the operation and not the prefix.
 //
+// CHECK: emitc.include <"cmath">
 // CHECK: emitc.global static @g_big : f64 = 0x7FF8000000000000
 // CHECK: emitc.global static @g_count : f64
 // CHECK: emitc.global static @g_total : f64
-// CHECK: emitc.include <"cmath">
 // CHECK-LABEL: emitc.func @main() -> i32
 // CHECK-NOT: ctjs.
 // CHECK: scf.while
@@ -49,7 +49,7 @@ function scale(x) { return x * 2; }
 // CHECK: div
 // CHECK: unary_minus
 // CHECK: call_opaque "std::pow"
-// CHECK: call_opaque "printf"({{.*}}) : (!emitc.opaque<"const char *">, f64) -> ()
+// CHECK: call_opaque "printf"({{.*}}) : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
 // CHECK: return %{{.*}} : i32
 
 // --- A FUNCTION NOBODY PROVES IS REFUSED, BY NAME --------------------------

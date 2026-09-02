@@ -203,7 +203,14 @@ struct admission {
             switch (u.getKind()) {
             case UnaryKind::Neg:
             case UnaryKind::Plus: return numeric(u.getOperand(), "unary");
-            case UnaryKind::Not: return boolean(u.getOperand(), "!");
+            case UnaryKind::Not:
+                // `!x` is ToBoolean then negation, on ANY carrier: a number's
+                // truthiness is exact under the NaN representation (undefined
+                // and NaN are both falsy), so `!` on a number is admitted too.
+                if (carrierOf(typeOf(u.getOperand())) == carrier::none) {
+                    return refuse("! of " + printed(typeOf(u.getOperand())));
+                }
+                return true;
             default: return refuse("typeof, void and ~ are not native yet");
             }
         }
@@ -369,6 +376,17 @@ struct lowering {
         });
     }
 
+    // THE ONLY ERASE. An operation with uses is never erased: in a release
+    // build that is a use-after-free with no diagnostic - it surfaced as a
+    // crash at context teardown that came and went with the heap layout.
+    static void eraseIfUnused(mlir::Operation * o) {
+        if (!o->use_empty()) {
+            llvm::report_fatal_error(llvm::Twine("ctnative lowering: erasing `") +
+                                     o->getName().getStringRef() + "` while it still has uses");
+        }
+        o->erase();
+    }
+
     void replace(mlir::Operation * o, bool isEntry, mlir::Type returnType) {
         using namespace ctjs;
         mlir::OpBuilder b(o);
@@ -377,17 +395,21 @@ struct lowering {
         const auto i1 = mlir::IntegerType::get(context, 1);
         const auto swap = [&](mlir::Value with) {
             o->getResult(0).replaceAllUsesWith(with);
-            o->erase();
+            eraseIfUnused(o);
         };
 
-        if (llvm::isa<FrameEnterOp, FrameExitOp, RootOp>(o)) {
-            o->erase();
+        // FRAME BOOKKEEPING LOWERS TO NOTHING - but frame_enter's result is
+        // used by every frame_exit and root after it, and walk order visits
+        // it first, so its users go now and it goes in the sweep at the end.
+        if (llvm::isa<FrameExitOp, RootOp>(o)) {
+            eraseIfUnused(o);
             return;
         }
+        if (llvm::isa<FrameEnterOp>(o)) { return; }
         if (admission::isDeclarationStore(o)) {
             mlir::Operation * closure = llvm::cast<StoreGlobalOp>(o).getValue().getDefiningOp();
-            o->erase();
-            closure->erase();
+            eraseIfUnused(o);
+            eraseIfUnused(closure);
             return;
         }
         if (auto k = llvm::dyn_cast<ConstantOp>(o)) {
@@ -423,9 +445,12 @@ struct lowering {
                 swap(ec::UnaryMinusOp::create(b, where, f64, u.getOperand()));
                 return;
             case UnaryKind::Plus: swap(u.getOperand()); return;
-            case UnaryKind::Not:
-                swap(ec::LogicalNotOp::create(b, where, i1, u.getOperand()));
+            case UnaryKind::Not: {
+                mlir::Value v = u.getOperand();
+                if (!llvm::isa<mlir::IntegerType>(v.getType())) { v = truthyNumber(b, where, v); }
+                swap(ec::LogicalNotOp::create(b, where, i1, v));
                 return;
+            }
             default: llvm_unreachable("admission refused it");
             }
         }
@@ -454,7 +479,7 @@ struct lowering {
         if (auto store = llvm::dyn_cast<StoreGlobalOp>(o)) {
             ec::AssignOp::create(b, where, lvalueOfGlobal(b, where, store.getName()),
                                  store.getValue());
-            o->erase();
+            eraseIfUnused(o);
             return;
         }
         if (auto ret = llvm::dyn_cast<ReturnOp>(o)) {
@@ -468,7 +493,7 @@ struct lowering {
                     mlir::Value current =
                         ec::LoadOp::create(b, where, f64, lvalueOfGlobal(b, where, name));
                     mlir::Value format = ec::LiteralOp::create(
-                        b, where, ec::OpaqueType::get(context, "const char *"),
+                        b, where, ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
                         b.getStringAttr(("\"" + name + "=%.17g\\n\"").str()));
                     ec::CallOpaqueOp::create(b, where, mlir::TypeRange{}, b.getStringAttr("printf"),
                                              mlir::ValueRange{format, current});
@@ -480,7 +505,7 @@ struct lowering {
                 (void)returnType;
                 ec::ReturnOp::create(b, where, ret.getValue());
             }
-            o->erase();
+            eraseIfUnused(o);
             return;
         }
         // scf ops stay for --convert-scf-to-emitc.
@@ -529,6 +554,22 @@ struct lowering {
         });
         for (mlir::Operation * o : ops) { replace(o, isEntry, returnType); }
 
+        // SWEEP THE CONSTANTS THE REWRITE ORPHANED - the NaN for an `undefined`
+        // that main no longer returns, a literal folded into nothing. The
+        // canonicalizer will not: emitc.constant carries no memory-effect
+        // interface, so dead-code elimination keeps it, and the C++ it prints
+        // is an unused variable that -Werror rejects. Reverse order, so a
+        // constant whose only user was another dead constant goes too.
+        llvm::SmallVector<mlir::Operation *> dead;
+        made.getBody().walk([&](mlir::Operation * o) {
+            if (llvm::isa<ec::ConstantOp, ec::LiteralOp, ctjs::FrameEnterOp>(o)) {
+                dead.push_back(o);
+            }
+        });
+        for (mlir::Operation * o : llvm::reverse(dead)) {
+            if (o->use_empty()) { eraseIfUnused(o); }
+        }
+
         // Every call of the old symbol now names the new one.
         if (!isEntry) {
             (void)mlir::SymbolTable::replaceAllSymbolUses(fn.getOperation(), made.getSymNameAttr(),
@@ -540,6 +581,11 @@ struct lowering {
     void declareGlobals() {
         mlir::OpBuilder b(context);
         b.setInsertionPointToStart(module.getBody());
+        // INCLUDES FIRST: the builder advances past each op it creates, so
+        // creation order is file order, and a global initialised to NAN
+        // needs <cmath> above it.
+        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cmath"), b.getUnitAttr());
+        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstdio"), b.getUnitAttr());
         llvm::SmallVector<llvm::StringRef> names(globals.keys().begin(), globals.keys().end());
         llvm::sort(names);
         for (llvm::StringRef name : names) {
@@ -549,10 +595,6 @@ struct lowering {
                                  b.getF64FloatAttr(std::numeric_limits<double>::quiet_NaN()),
                                  /*extern_specifier=*/false, /*static_specifier=*/true,
                                  /*const_specifier=*/false);
-        }
-        if (!names.empty() || true) {
-            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cmath"), b.getUnitAttr());
-            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstdio"), b.getUnitAttr());
         }
     }
 };
