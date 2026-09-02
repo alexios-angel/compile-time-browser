@@ -99,8 +99,19 @@ bool mayBeUndefined(mlir::Type type) {
 }
 
 mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
-    return which == carrier::boolean ? mlir::Type(mlir::IntegerType::get(c, 1))
-                                     : mlir::Type(mlir::Float64Type::get(c));
+    // `none` HAS NO REPRESENTATION, and returning f64 for it was a silent
+    // guess at the one thing this tier exists not to guess at. A value with no
+    // proved carrier must be refused by admission long before it gets here;
+    // reaching this point means a rule let one through, and a crash naming
+    // that is worth far more than a double that happens to verify.
+    switch (which) {
+    case carrier::boolean: return mlir::IntegerType::get(c, 1);
+    case carrier::number: return mlir::Float64Type::get(c);
+    case carrier::structure:
+    case carrier::none: break;
+    }
+    llvm::report_fatal_error("ctnative lowering: asked for the C++ carrier of a value that has "
+                             "none - admission should have refused it");
 }
 
 std::string printed(mlir::Type type) {
@@ -916,12 +927,32 @@ struct lowering {
             // the miscompile would have surfaced as a wrong answer at the
             // gate rather than here. Admission refuses every such function;
             // reaching this line is a bug in admission, and says so.
-            if (c == carrier::none && !admission::lowersToNothing(v)) {
-                llvm::report_fatal_error(llvm::Twine("ctnative lowering: `") + fn.getSymName() +
-                                         "` holds a value of type " + printed(typeOf(v)) +
-                                         " that has no native carrier - admission should "
-                                         "have refused it (a literal that reaches a loop is "
-                                         "obligation O-3, and whyOpen names it)");
+            if (c == carrier::none) {
+                if (!admission::lowersToNothing(v)) {
+                    llvm::report_fatal_error(llvm::Twine("ctnative lowering: `") + fn.getSymName() +
+                                             "` holds a value of type " + printed(typeOf(v)) +
+                                             " that has no native carrier - admission should "
+                                             "have refused it (a literal that reaches a loop is "
+                                             "obligation O-3, and whyOpen names it)");
+                }
+                // A PLACEHOLDER, AND ONLY FOR VALUES THAT ARE ABOUT TO BE
+                // ERASED: the lift's poison, a key constant, a declaration
+                // closure, the three implicit arguments. Nothing ever reads
+                // this type - replace() removes each of them - but the IR has
+                // to stay verifiable in between, and `!ctjs.value` among
+                // retyped operands does not. It is a double for the same
+                // reason `undefined` is: it is the type this tier can always
+                // spell.
+                //
+                // It is written HERE rather than left to carrierType(), which
+                // now aborts on a carrier it cannot represent. That default
+                // used to answer f64 for everything non-boolean, and the
+                // difference matters: a value admission never looked at got a
+                // representation and was lowered as a number, so the
+                // miscompile surfaced as a wrong answer at the gate instead of
+                // as a diagnostic here.
+                v.setType(mlir::Float64Type::get(context));
+                return;
             }
             v.setType(carrierType(context, c));
         };
