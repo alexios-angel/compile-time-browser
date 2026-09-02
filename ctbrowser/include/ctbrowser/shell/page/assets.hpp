@@ -55,6 +55,25 @@ public:
     void set_base_path(std::filesystem::path base) { base_ = std::move(base); }
     [[nodiscard]] const std::filesystem::path & base_path() const { return base_; }
 
+    // WHAT A LEADING `/` MEANS. Empty by default, and then it means what it has
+    // always meant here: a path from the root of this filesystem.
+    //
+    // A page written for a SERVER uses server-absolute paths for its shared
+    // resources - `<script src="/resources/testharness.js">` is the first line
+    // of every web-platform-test - and there is no server here. Without this
+    // the registry reads `/resources/testharness.js` off the root of the disk,
+    // misses, and the page loads with no harness at all: every test in the
+    // suite reports the same harness error and none of them is about the
+    // engine. Set it and a leading `/` is resolved from that directory, which
+    // is exactly the document root a server would have been serving.
+    //
+    // NOT a general URL feature and deliberately not in the URL parser: it is a
+    // property of where the bytes come from, the same question base_path
+    // answers for a relative name. tools/wpt/run-wpt.py sets it through
+    // CTBROWSER_DOC_ROOT; nothing else in the tree sets it at all.
+    void set_document_root(std::filesystem::path root) { document_root_ = std::move(root); }
+    [[nodiscard]] const std::filesystem::path & document_root() const { return document_root_; }
+
     // SEALED: the registry and data: URLs only, never the filesystem.
     //
     // What a PACKAGED application is. Its resources travel inside it, so a name
@@ -116,7 +135,18 @@ public:
         }
         if (sealed_) { return {}; }
         const std::filesystem::path relative{name};
-        if (relative.is_absolute()) { return read_file(relative); }
+        if (relative.is_absolute()) {
+            // The document root FIRST when there is one, and the filesystem
+            // still after it: a checkout is not a chroot, and an application
+            // that hands the engine a genuine absolute path must keep working
+            // whether or not something else set a root.
+            if (!document_root_.empty()) {
+                std::vector<std::byte> served =
+                    read_file(document_root_ / relative.relative_path());
+                if (!served.empty()) { return served; }
+            }
+            return read_file(relative);
+        }
         for (const std::filesystem::path & root :
              {std::filesystem::path{"."}, base_, base_ / ".." / ".."}) {
             if (root.empty()) { continue; }
@@ -151,6 +181,7 @@ private:
 
     std::vector<std::pair<std::string, std::vector<std::byte>>> entries_;
     std::filesystem::path base_;
+    std::filesystem::path document_root_;
 };
 
 } // namespace ctbrowser::shell
