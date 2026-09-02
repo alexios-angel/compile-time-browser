@@ -186,8 +186,25 @@ int main() {
          "!ctnative.boxed"},
         {"`~` on an unknown operand could be BigInt", "  %r = ctjs.unary bitnot %p {check}\n",
          "!ctnative.boxed"},
-        {"generic `+` concatenates, so it stays boxed even on two numbers",
-         five + "  %r = ctjs.binary add %a, %b {check}\n", "!ctnative.boxed"},
+        {"generic `+` on unknown operands could concatenate or be BigInt",
+         "  %r = ctjs.binary add %p, %q {check}\n", "!ctnative.boxed"},
+        {"generic `+` on one unknown operand stays boxed even beside a number",
+         five + "  %r = ctjs.binary add %a, %p {check}\n", "!ctnative.boxed"},
+        // --- and the two halves of `+` that ARE provable ---------------------
+        {"generic `+` on two numbers is a double", five + "  %r = ctjs.binary add %a, %b {check}\n",
+         "!ctnative.num<f64>"},
+        {"generic `+` on a number and undefined is a double (NaN, but a number)",
+         five + "  %u = ctjs.constant #ctjs.undefined\n"
+                "  %r = ctjs.binary add %a, %u {check}\n",
+         "!ctnative.num<f64>"},
+        {"generic `+` with a proved string on either side is a string",
+         five + "  %s = ctjs.constant #ctjs.string<\"x\">\n"
+                "  %r = ctjs.binary add %a, %s {check}\n",
+         "!ctnative.str<utf8>"},
+        {"generic `+` of a string and an unknown operand is still a string",
+         "  %s = ctjs.constant #ctjs.string<\"x\">\n"
+         "  %r = ctjs.binary add %s, %p {check}\n",
+         "!ctnative.str<utf8>"},
 
         // --- A SECOND BLOCK, which the single-block rows above cannot test --
         //
@@ -204,6 +221,33 @@ int main() {
          "  ctjs.return %r\n"
          "^no:\n",
          "!ctnative.str<utf8>"},
+
+        // --- THE CLOSED WORLD FOR GLOBALS (part 24 Phase 62½-A) -------------
+        //
+        // A load of a global is the join of every store of that name in the
+        // module. Three rows: a stored number is a number; a name nothing
+        // stores is boxed (it is a builtin or undeclared); and the mere
+        // presence of a `globalThis` load anywhere makes every global boxed,
+        // because the table may then be written by a path this rule cannot
+        // see.
+        {"a global stored a number loads as a number OR undefined - nothing orders the load after "
+         "the store",
+         five + "  ctjs.store_global \"g\", %a\n"
+                "  %r = ctjs.load_global \"g\" {check}\n",
+         "!ctnative.opt<!ctnative.num<i32>>"},
+        {"a global stored a number and a string loads as their join",
+         five + "  ctjs.store_global \"g\", %a\n"
+                "  %s = ctjs.constant #ctjs.string<\"x\">\n"
+                "  ctjs.store_global \"g\", %s\n"
+                "  %r = ctjs.load_global \"g\" {check}\n",
+         "!ctnative.opt<!ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>>>"},
+        {"a global nothing stores is boxed - it is a builtin or undeclared",
+         "  %r = ctjs.load_global \"Math\" {check}\n", "!ctnative.boxed"},
+        {"a globalThis load anywhere makes every global boxed",
+         five + "  ctjs.store_global \"g\", %a\n"
+                "  %w = ctjs.load_global \"globalThis\"\n"
+                "  %r = ctjs.load_global \"g\" {check}\n",
+         "!ctnative.boxed"},
 
         // --- and the positive halves of the same operators ------------------
         {"`|` on two numbers is an int32", five + "  %r = ctjs.binary bitor %a, %b {check}\n",

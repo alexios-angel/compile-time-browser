@@ -173,6 +173,10 @@ if(CTCOMPILE_ENABLE_MLIR)
   # Phase 54A's type inference. Separate from the IR library because it links
   # CTJSDialect and that library must not: see lib/CTNative/Analysis/CMakeLists.txt.
   add_subdirectory(lib/CTNative/Analysis)
+  # Phase 62½: the native lowering, ctnative's own passes (a second
+  # -gen-pass-decls, named CTNative so its registration does not collide).
+  add_subdirectory(include/ctcompile/CTNative/Transforms)
+  add_subdirectory(lib/CTNative/Lowering)
   # The forked EmitC C++ emitter, for the same reason: it is MLIR all the way
   # down. See lib/Target/Cpp/TranslateToCpp.cpp.
   add_subdirectory(lib/Target/Cpp)

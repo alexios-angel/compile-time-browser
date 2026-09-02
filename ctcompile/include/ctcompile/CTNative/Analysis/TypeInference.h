@@ -39,6 +39,9 @@
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
+
 namespace ctcompile::ctnative {
 
 // One SSA value's inferred type, as a lattice element.
@@ -90,6 +93,24 @@ public:
     mlir::LogicalResult visitOperation(mlir::Operation * op,
                                        llvm::ArrayRef<const TypeLattice *> operands,
                                        llvm::ArrayRef<TypeLattice *> results) override;
+
+    /// THE CLOSED WORLD FOR GLOBALS (part 24 Phase 62½-A). A whole-program
+    /// compile sees every `ctjs.store_global` of a name, so a
+    /// `ctjs.load_global` of that name is the join of everything ever stored
+    /// under it - and the framework re-visits the load when any of those
+    /// stores' operands change, because the load subscribes to them. Three
+    /// cases keep it sound:
+    ///   * no store anywhere: the name is a builtin (`Math`) or undeclared,
+    ///     and the load is `boxed`;
+    ///   * any dynamic write to the globals table in the program (a property
+    ///     store through `globalThis`/`window`): every load is `boxed`;
+    ///   * otherwise: the join over the stores' operand types.
+    /// The index is built once, in initialize(), from the module being solved.
+    mlir::LogicalResult initialize(mlir::Operation * top) override;
+
+private:
+    llvm::StringMap<llvm::SmallVector<mlir::Value, 4>> globalStores_;
+    bool globalsAreDynamic_ = false;
 
     /// ANYTHING THIS ANALYSIS DID NOT DERIVE IS `boxed`. Function parameters,
     /// values crossing a call boundary, and every operation the switch does not

@@ -4,6 +4,8 @@ target_link_libraries(ctjs-opt
   PRIVATE
     CTJSDialect
     ctcompile::ctjs-lowering
+    ctcompile::ctnative-lowering
+    MLIRArithToEmitC
     ctcompile::mlir-support
     MLIRIR
     MLIROptLib

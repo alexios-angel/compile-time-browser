@@ -102,6 +102,24 @@ bool couldBeBigInt(mlir::Type type) {
     return true;
 }
 
+// A proved string: `str` or `strview`, and not an optional of one - an
+// undefined-or-string does not concatenate the way a string does.
+bool isProvedString(const TypeLattice * operand) {
+    return llvm::isa_and_nonnull<StrType, StrViewType>(operand->getValue().getType());
+}
+
+// A value on which `+` is numeric addition: a number, a boolean, undefined
+// or null - the types ToPrimitive leaves alone and ToNumber accepts.
+bool isProvedNumeric(const TypeLattice * operand) {
+    const mlir::Type type = operand->getValue().getType();
+    if (type == nullptr) { return false; }
+    if (llvm::isa<BoolType, NumType>(type)) { return true; }
+    if (auto opt = llvm::dyn_cast<OptType>(type)) {
+        return llvm::isa<BottomType, NumType, BoolType>(opt.getElementType());
+    }
+    return false;
+}
+
 bool noneAreBigInt(llvm::ArrayRef<const TypeLattice *> operands) {
     for (const TypeLattice * operand : operands) {
         if (couldBeBigInt(operand->getValue().getType())) { return false; }
@@ -215,6 +233,28 @@ mlir::Type staticResultType(mlir::Operation * op) {
 
 // --- the analysis ------------------------------------------------------------
 
+mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
+    globalStores_.clear();
+    globalsAreDynamic_ = false;
+    top->walk([&](mlir::Operation * op) {
+        if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op)) {
+            globalStores_[store.getName()].push_back(store.getValue());
+            return;
+        }
+        // A PROPERTY WRITE THROUGH THE GLOBAL OBJECT is a write to the globals
+        // table this index cannot see. `globalThis` and `window` are the two
+        // names that reach it; a load of either anywhere in the program is
+        // taken as "the table may be written dynamically" - coarse, and the
+        // safe side of coarse.
+        if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
+            if (load.getName() == "globalThis" || load.getName() == "window") {
+                globalsAreDynamic_ = true;
+            }
+        }
+    });
+    return SparseForwardDataFlowAnalysis::initialize(top);
+}
+
 void TypeInference::setToEntryState(TypeLattice * lattice) {
     propagateIfChanged(lattice,
                        lattice->join(TypeValue{BoxedType::get(lattice->getAnchor().getContext())}));
@@ -239,7 +279,15 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         const auto kind = llvm::isa<ctjs::BinaryOp>(op)
                               ? llvm::cast<ctjs::BinaryOp>(op).getKind()
                               : llvm::cast<ctjs::BinaryStaticOp>(op).getKind();
-        if (noneAreBigInt(operands)) {
+        // A PROVED STRING ON EITHER SIDE OF GENERIC `+` MAKES A STRING, and
+        // this sits OUTSIDE the BigInt guard on purpose: `"x" + 1n` is "x1".
+        // The other operand's ToPrimitive then ToString always yields a
+        // string; a Symbol throws and produces no value at all.
+        if (llvm::isa<ctjs::BinaryOp>(op) && kind == ctjs::BinaryKind::Add &&
+            (isProvedString(operands[0]) || isProvedString(operands[1]))) {
+            numeric = stringType(c);
+        }
+        if (numeric == nullptr && noneAreBigInt(operands)) {
             switch (kind) {
             // THE INT32 FAMILY. ECMAScript defines all five through ToInt32,
             // and to_int32 in this VM returns an int32_t, so the result is one.
@@ -261,19 +309,60 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             case ctjs::BinaryKind::Pow:
                 if (llvm::isa<ctjs::BinaryOp>(op)) { numeric = doubleType(c); }
                 break;
-            // `+` IS THE ONE THAT STAYS BOXED in the generic family, because
-            // it concatenates when either side is a string. The STATIC family
-            // reaches it only from `++` and its internal counters, which go
-            // through to_number - so there it is a number.
+            // `+` IN THE GENERIC FAMILY concatenates when either side is a
+            // string and adds otherwise, and both halves are provable from
+            // the operand types: a proved string on either side makes the
+            // result a string (ToPrimitive on the other side then ToString -
+            // every value has one; a Symbol throws and produces nothing);
+            // two operands that are each a number, a boolean, undefined or
+            // null add numerically, because ToPrimitive is the identity on
+            // all four and none is a string or a BigInt. Anything else - an
+            // object with its own valueOf, a value nothing proved - is boxed.
+            // The STATIC family reaches `+` only from `++` and its counters,
+            // through to_number, so there it is a number outright.
             case ctjs::BinaryKind::Add:
-                if (llvm::isa<ctjs::BinaryStaticOp>(op)) { numeric = doubleType(c); }
+                if (llvm::isa<ctjs::BinaryStaticOp>(op)) {
+                    numeric = doubleType(c);
+                } else if (isProvedNumeric(operands[0]) && isProvedNumeric(operands[1])) {
+                    numeric = doubleType(c);
+                }
                 break;
             default: break;
             }
         }
     }
 
-    const mlir::Type fromOperation = numeric != nullptr ? numeric : staticResultType(op);
+    // THE CLOSED-WORLD GLOBAL: see TypeInference.h. getLatticeElementFor
+    // subscribes this load to every store's operand, so a store whose type
+    // widens later re-visits the load.
+    mlir::Type global{};
+    bool globalKnown = false;
+    if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
+        const auto stores = globalStores_.find(load.getName());
+        if (!globalsAreDynamic_ && stores != globalStores_.end() && !stores->second.empty()) {
+            globalKnown = true;
+            // A GLOBAL IS UNDEFINED UNTIL ITS FIRST STORE RUNS, and nothing here
+            // proves a load comes after one - `function f() { return g; }` can
+            // be called before `var g = 5` executes. So the join starts from
+            // the absent case: a numeric global is `opt<num>`, number OR
+            // undefined, and the lowering represents that as a double whose
+            // undefined is NaN - right in every arithmetic and relational
+            // context, refused where the difference is observable.
+            global = absentType(c);
+            for (mlir::Value stored : stores->second) {
+                const TypeLattice * lattice =
+                    getLatticeElementFor(getProgramPointAfter(op), stored);
+                // A store the solver has not reached yet contributes nothing
+                // now and re-visits this load when it does; a store it will
+                // NEVER reach is dead code and never executes.
+                if (lattice->getValue().isUninitialized()) { continue; }
+                global = meet(global, lattice->getValue().getType());
+            }
+        }
+    }
+
+    const mlir::Type fromOperation =
+        globalKnown ? global : (numeric != nullptr ? numeric : staticResultType(op));
     for (TypeLattice * result : results) {
         const mlir::Type answer = fromOperation != nullptr ? fromOperation : BoxedType::get(c);
         propagateIfChanged(result, result->join(TypeValue{answer}));
